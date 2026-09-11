@@ -260,7 +260,7 @@ function makeMockHub() {
           sessions: [],
         };
       }
-      if (method === 'spaceAgent.list') return { agents: [] };
+      if (method === 'spaceAgentV2.list') return { agents: [] };
       if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [] };
       if (method === 'spaceAgent.listTemplates') return { templates: templateListResult ?? [] };
       if (method === 'spaceAgent.createTemplate')
@@ -467,7 +467,7 @@ describe('SpaceStore — space selection', () => {
   it('does not eagerly fetch agents/workflows on selectSpace() — they are lazy-loaded', async () => {
     await spaceStore.selectSpace('space-1');
     const calledMethods = mockHub.request.mock.calls.map((c: unknown[]) => c[0]);
-    expect(calledMethods).not.toContain('spaceAgent.list');
+    expect(calledMethods).not.toContain('spaceAgentV2.list');
     expect(calledMethods).not.toContain('spaceAgent.listBuiltInTemplates');
     expect(calledMethods).not.toContain('spaceAgent.listTemplates');
     expect(calledMethods).not.toContain('spaceWorkflow.list');
@@ -480,7 +480,7 @@ describe('SpaceStore — space selection', () => {
     mockHub.request.mockClear();
 
     await spaceStore.ensureConfigData();
-    expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.list', { spaceId: 'space-1' });
+    expect(mockHub.request).toHaveBeenCalledWith('spaceAgentV2.list', { spaceId: 'space-1' });
     expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.listTemplates', {
       spaceId: 'space-1',
     });
@@ -521,12 +521,12 @@ describe('SpaceStore — space selection', () => {
     await spaceStore.selectSpace('space-1');
     let resolveList: (value: { agents: SpaceLongHorizonAgent[] }) => void = () => {};
     mockHub.request.mockImplementation((method: string, params?: Record<string, unknown>) => {
-      if (method === 'spaceAgent.list' && params?.spaceId === 'space-1') {
+      if (method === 'spaceAgentV2.list' && params?.spaceId === 'space-1') {
         return new Promise<{ agents: SpaceLongHorizonAgent[] }>((resolve) => {
           resolveList = resolve;
         });
       }
-      if (method === 'spaceAgent.list') return Promise.resolve({ agents: [] });
+      if (method === 'spaceAgentV2.list') return Promise.resolve({ agents: [] });
       if (method === 'spaceAgent.listBuiltInTemplates') return Promise.resolve({ templates: [] });
       if (method === 'spaceWorkflow.list') return Promise.resolve({ workflows: [] });
       if (method === 'spaceWorkflow.listBuiltInTemplates')
@@ -583,7 +583,7 @@ describe('SpaceStore — ensureWorkflowDetails', () => {
         if (method === 'spaceWorkflow.get') {
           return { workflow: makeWorkflow((params?.id as string) ?? 'wf1') };
         }
-        if (method === 'spaceAgent.list') return { agents: [] };
+        if (method === 'spaceAgentV2.list') return { agents: [] };
         if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [] };
         if (method === 'spaceWorkflow.listBuiltInTemplates') return { workflows: [] };
         if (method === 'spaceLongHorizonAgent.list') return { agents: [] };
@@ -829,7 +829,7 @@ describe('SpaceStore — ensureWorkflowDetails', () => {
           return { workflows: [makeWorkflowSummary('wf1')] };
         }
         if (method === 'spaceWorkflow.get') return { workflow: makeWorkflow('wf1') };
-        if (method === 'spaceAgent.list') return { agents: [] };
+        if (method === 'spaceAgentV2.list') return { agents: [] };
         if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [] };
         if (method === 'spaceWorkflow.listBuiltInTemplates') return { workflows: [] };
         if (method === 'spaceLongHorizonAgent.list') return { agents: [] };
@@ -862,7 +862,7 @@ describe('SpaceStore — ensureWorkflowDetails', () => {
           return { space: makeSpace('space-1'), tasks: [], workflowRuns: [], sessions: [] };
         }
         if (method === 'spaceWorkflow.list') throw new Error('summary fetch failed');
-        if (method === 'spaceAgent.list') return { agents: [] };
+        if (method === 'spaceAgentV2.list') return { agents: [] };
         if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [] };
         if (method === 'spaceWorkflow.listBuiltInTemplates') return { workflows: [] };
         if (method === 'spaceLongHorizonAgent.list') return { agents: [] };
@@ -1061,7 +1061,7 @@ describe('SpaceStore — promise-chain lock', () => {
     mockHub.request.mockImplementation(async (method: string) => {
       if (method === 'space.overview')
         return { space: makeSpace('space-2'), tasks: [], workflowRuns: [], sessions: [] };
-      if (method === 'spaceAgent.list') return { agents: [] };
+      if (method === 'spaceAgentV2.list') return { agents: [] };
       if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [] };
       if (method === 'spaceWorkflow.list') return { workflows: [] };
       return {};
@@ -2560,7 +2560,7 @@ describe('SpaceStore — refresh', () => {
         if (method === 'spaceWorkflow.get') {
           return { workflow: makeWorkflow((params?.id as string) ?? 'wf1') };
         }
-        if (method === 'spaceAgent.list') return { agents: [] };
+        if (method === 'spaceAgentV2.list') return { agents: [] };
         if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [] };
         if (method === 'spaceWorkflow.listBuiltInTemplates') return { workflows: [] };
         if (method === 'spaceLongHorizonAgent.list') return { agents: [] };
@@ -3103,7 +3103,7 @@ describe('SpaceStore — node execution LiveQuery subscriptions', () => {
     mockHub.request.mockImplementation(async (method: string) => {
       if (method === 'space.overview')
         return { space: makeSpace('space-2'), tasks: [], workflowRuns: [], sessions: [] };
-      if (method === 'spaceAgent.list') return { agents: [] };
+      if (method === 'spaceAgentV2.list') return { agents: [] };
       if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [] };
       if (method === 'spaceWorkflow.list') return { workflows: [] };
       if (method === 'nodeExecution.list') return { executions: [] };
@@ -3198,7 +3198,7 @@ describe('SpaceStore — refreshAgents preserves cache on failure', () => {
     spaceStore.spaceId.value = 'space-1';
     spaceStore.agents.value = [makeLongHorizonAgent('lh-1')];
     mockHub.request.mockImplementation((method: string) => {
-      if (method === 'spaceAgent.list') return Promise.reject(new Error('timeout'));
+      if (method === 'spaceAgentV2.list') return Promise.reject(new Error('timeout'));
       return Promise.resolve({});
     });
     await spaceStore.refreshAgents();
@@ -3210,7 +3210,7 @@ describe('SpaceStore — refreshAgents preserves cache on failure', () => {
     spaceStore.agents.value = [makeLongHorizonAgent('seeded')];
     let resolveList: (value: { agents: SpaceLongHorizonAgent[] }) => void = () => {};
     mockHub.request.mockImplementation(((method: string) => {
-      if (method === 'spaceAgent.list') {
+      if (method === 'spaceAgentV2.list') {
         return new Promise<{ agents: SpaceLongHorizonAgent[] }>((r) => {
           resolveList = r;
         });
@@ -3219,7 +3219,7 @@ describe('SpaceStore — refreshAgents preserves cache on failure', () => {
     }) as never);
     const pending = spaceStore.refreshAgents();
     await vi.waitFor(() =>
-      expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.list', {
+      expect(mockHub.request).toHaveBeenCalledWith('spaceAgentV2.list', {
         spaceId: 'space-1',
       })
     );
