@@ -16,7 +16,6 @@ export function runMigration249(db: BunDatabase): void {
   try {
     if (soleSpace === null) {
       db.prepare(`DELETE FROM space_agent_templates WHERE space_id = ?`).run(SENTINEL);
-      clearCounters(db);
     } else {
       const taken = db.prepare(
         `SELECT 1 FROM space_agent_templates WHERE space_id = ? AND key = ?`
@@ -42,11 +41,6 @@ function onlySpaceId(db: BunDatabase): string | null {
   if (!tableExists(db, 'spaces')) return null;
   const rows = db.prepare(`SELECT id FROM spaces LIMIT 2`).all() as Array<{ id: string }>;
   return rows.length === 1 ? rows[0].id : null;
-}
-
-function clearCounters(db: BunDatabase): void {
-  if (!tableHasColumn(db, 'space_agent_template_version_seq', 'space_id')) return;
-  db.prepare(`DELETE FROM space_agent_template_version_seq WHERE space_id = ?`).run(SENTINEL);
 }
 
 function moveCounters(db: BunDatabase, spaceId: string): void {

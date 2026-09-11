@@ -6,6 +6,7 @@ import { runMigration238 } from '../../../../../src/storage/schema/m238-space-ag
 import { runMigration243 } from '../../../../../src/storage/schema/m243-space-agent-template-space-key.ts';
 import { runMigration246 } from '../../../../../src/storage/schema/m246-template-version-seq-space-key.ts';
 import { runMigration249 } from '../../../../../src/storage/schema/m249-resolve-template-sentinel-rows.ts';
+import { SpaceAgentTemplateRepository } from '../../../../../src/storage/repositories/space-agent-template-repository.ts';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat.ts';
 
 function migratedDb(spaceIds: string[]): BunDatabase {
@@ -80,11 +81,26 @@ describe('migration 249: leftover sentinel template rows', () => {
 
     expect(owners(db, 'legacy.custom')).toEqual([]);
     expect(owners(db, 'kept.custom')).toEqual(['space-a']);
-    expect(
-      db
-        .prepare(`SELECT COUNT(*) AS n FROM space_agent_template_version_seq WHERE space_id = ''`)
-        .get()
-    ).toEqual({ n: 0 });
+    db.close();
+  });
+
+  test('keeps deleted rows version counters as tombstones', () => {
+    const db = migratedDb(['space-a', 'space-b']);
+    seed(db, '', 'legacy.custom');
+
+    runMigration249(db);
+
+    const tombstone = db
+      .prepare(
+        `SELECT next_version FROM space_agent_template_version_seq
+          WHERE space_id = '' AND key = 'legacy.custom'`
+      )
+      .get() as { next_version: number } | undefined;
+    expect(tombstone?.next_version).toBe(4);
+
+    const repo = new SpaceAgentTemplateRepository(db);
+    const recreated = repo.createOwned('space-a', { key: 'legacy.custom', handle: 'h' });
+    expect(repo.getOwnedWithVersion('space-a', recreated.key)!.version).toBeGreaterThan(4);
     db.close();
   });
 
