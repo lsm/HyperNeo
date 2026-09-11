@@ -21,7 +21,7 @@ export function SpaceTemplatesPanel({
 }: {
   spaceId: string;
   templates: SpaceLongHorizonAgentTemplate[];
-  templateInstanceCounts: Map<string, number>;
+  templateInstanceCounts?: Map<string, number>;
   userTemplateKeys: ReadonlySet<string>;
   onUseTemplate: (template: SpaceLongHorizonAgentTemplate) => void;
 }) {
@@ -70,7 +70,7 @@ export function SpaceTemplatesPanel({
                   <TemplateCard
                     key={t.key}
                     template={t}
-                    addedCount={templateInstanceCounts.get(t.key) ?? 0}
+                    addedCount={templateInstanceCounts?.get(t.key) ?? 0}
                     isUserTemplate={userTemplateKeys.has(t.key)}
                     onClick={() => onUseTemplate(t)}
                     onEdit={() => {
