@@ -1214,11 +1214,15 @@ describe('space-task-handlers', () => {
         })),
       } as unknown as SpaceRuntimeService;
       setup(mockSpace, activeTask, runtime);
-      (taskManager.updateTask as ReturnType<typeof mock>).mockResolvedValue({
+      const persisted = {
         ...activeTask,
         dependsOn: ['dep-open'],
         status: 'blocked' as const,
         blockReason: 'dependency_added' as const,
+      };
+      (taskManager.updateTask as ReturnType<typeof mock>).mockImplementation(async () => {
+        (taskManager.getTask as ReturnType<typeof mock>).mockResolvedValue(persisted);
+        return persisted;
       });
 
       const result = await call('spaceTask.update', {
@@ -1233,13 +1237,97 @@ describe('space-task-handlers', () => {
         expect.objectContaining({ onCascadedTasks: expect.any(Function) })
       );
       expect(runtime.stopWorkflowBackedTask).toHaveBeenCalledWith('space-1', 'task-1', {
-        dependsOn: ['dep-open'],
         status: 'blocked',
         blockReason: 'dependency_added',
         result: 'Dependency added while task was in progress',
         completedAt: null,
       });
       expect((result as SpaceTask).status).toBe('blocked');
+    });
+
+    it.each(['reject', 'clear', 'replace', 'no-runtime'] as const)(
+      'dependency-only RPC preserves shared cleanup after cascade %s',
+      async (mode) => {
+        let current = makeTask({ status: 'in_progress', workflowRunId: 'run-1' });
+        const effects: string[] = [];
+        const runtime = {
+          stopWorkflowBackedTask: mock(
+            async (_space: string, _id: string, fields: Partial<SpaceTask>) => {
+              effects.push('cleanup');
+              current = { ...current, ...fields };
+              return current;
+            }
+          ),
+        } as unknown as SpaceRuntimeService;
+        setup(mockSpace, current, mode === 'no-runtime' ? undefined : runtime);
+        (taskManager.getTask as ReturnType<typeof mock>).mockImplementation(async () => current);
+        (taskManager.updateTask as ReturnType<typeof mock>).mockImplementation(
+          async (
+            _id: string,
+            fields: Partial<SpaceTask>,
+            options: { onCascadedTasks: (tasks: SpaceTask[]) => Promise<void> }
+          ) => {
+            current = { ...current, ...fields, status: 'blocked', blockReason: 'dependency_added' };
+            const persisted = current;
+            await options.onCascadedTasks([makeTask({ id: 'dependent', status: 'blocked' })]);
+            return persisted;
+          }
+        );
+        (internalEventBus.publish as ReturnType<typeof mock>).mockImplementation(
+          async (_event: string, payload: { task: SpaceTask }) => {
+            effects.push(payload.task.id);
+            if (payload.task.id !== 'dependent') return;
+            if (mode === 'reject') throw new Error('offline');
+            if (mode === 'clear')
+              current = { ...current, dependsOn: [], status: 'open', blockReason: null };
+            if (mode === 'replace') current = { ...current, dependsOn: ['newer'] };
+          }
+        );
+        const result = (await call('spaceTask.update', {
+          spaceId: 'space-1',
+          taskId: 'task-1',
+          dependsOn: ['dep', 'dep'],
+        })) as SpaceTask;
+        expect(result.spaceId).toBe('space-1');
+        expect(result.description).toBe(mockTask.description);
+        expect(result.dependsOn).toEqual(
+          mode === 'clear' ? [] : mode === 'replace' ? ['newer'] : ['dep', 'dep']
+        );
+        expect(taskManager.updateTask).toHaveBeenCalledWith(
+          'task-1',
+          { dependsOn: ['dep', 'dep'] },
+          expect.anything()
+        );
+        const blocked = mode === 'reject' || mode === 'replace';
+        expect(runtime.stopWorkflowBackedTask).toHaveBeenCalledTimes(blocked ? 1 : 0);
+        expect(effects).toEqual(['dependent', blocked ? 'cleanup' : 'task-1']);
+        if (blocked)
+          expect(runtime.stopWorkflowBackedTask).toHaveBeenCalledWith('space-1', 'task-1', {
+            status: 'blocked',
+            blockReason: 'dependency_added',
+            result: 'Dependency added while task was in progress',
+            completedAt: null,
+          });
+      }
+    );
+
+    it('dependency-only primary publication does not delay the legacy RPC response', async () => {
+      let release!: () => void;
+      const publication = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      (internalEventBus.publish as ReturnType<typeof mock>).mockReturnValue(publication);
+      try {
+        const result = await call('spaceTask.update', {
+          spaceId: 'space-1',
+          taskId: 'task-1',
+          dependsOn: [],
+        });
+        expect(result).toMatchObject({ id: 'task-1', spaceId: 'space-1', dependsOn: [] });
+        expect(internalEventBus.publish).toHaveBeenCalledTimes(1);
+      } finally {
+        release();
+      }
     });
 
     it('routes same-status unmet dependency updates through runtime', async () => {
@@ -1436,11 +1524,15 @@ describe('space-task-handlers', () => {
         handleTaskTerminal: mock(() => {}),
       };
       setup(mockSpace, activeTask, runtime, goalService);
-      (taskManager.updateTask as ReturnType<typeof mock>).mockResolvedValue({
+      const persisted = {
         ...activeTask,
         dependsOn: ['dep-open'],
         status: 'blocked' as const,
         blockReason: 'dependency_added' as const,
+      };
+      (taskManager.updateTask as ReturnType<typeof mock>).mockImplementation(async () => {
+        (taskManager.getTask as ReturnType<typeof mock>).mockResolvedValue(persisted);
+        return persisted;
       });
 
       await call('spaceTask.update', {
@@ -1464,10 +1556,14 @@ describe('space-task-handlers', () => {
         stopWorkflowBackedTask: mock(async () => activeTask),
       } as unknown as SpaceRuntimeService;
       setup(mockSpace, activeTask, runtime);
-      (taskManager.updateTask as ReturnType<typeof mock>).mockResolvedValue({
+      const persisted = {
         ...activeTask,
         dependsOn: ['dep-done'],
         status: 'in_progress' as const,
+      };
+      (taskManager.updateTask as ReturnType<typeof mock>).mockImplementation(async () => {
+        (taskManager.getTask as ReturnType<typeof mock>).mockResolvedValue(persisted);
+        return persisted;
       });
 
       await call('spaceTask.update', {
@@ -1570,7 +1666,9 @@ describe('space-task-handlers', () => {
           options?: { onCascadedTasks?: (tasks: SpaceTask[]) => Promise<void> }
         ) => {
           await options?.onCascadedTasks?.([cascadedTask]);
-          return { ...mockTask, ...params };
+          const persisted = { ...mockTask, ...params };
+          (taskManager.getTask as ReturnType<typeof mock>).mockResolvedValue(persisted);
+          return persisted;
         }
       );
 
