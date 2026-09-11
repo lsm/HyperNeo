@@ -1,6 +1,6 @@
 import { setStandaloneTaskDependencies } from '../../storage/tasks/set-task-dependencies.ts';
 import { transitionStandaloneTask } from '../../storage/tasks/transition-task.ts';
-import { editStandaloneTask } from '../../storage/tasks/edit-task.ts';
+import { createStandaloneTaskMetadataEditor } from '../operations/task-metadata-standalone.ts';
 import { listTaskCores } from '../../storage/tasks/list-tasks.ts';
 import { createStandaloneTask } from '../../storage/tasks/create-task.ts';
 import { readTaskCore } from '../../storage/tasks/task-reader.ts';
@@ -331,8 +331,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
         deps.db.notifyChange('space_tasks')
       ),
     listTasks: (input) => listTaskCores(deps.db.getDatabase(), input),
-    editTask: (input) =>
-      editStandaloneTask(deps.db.getDatabase(), input, () => deps.db.notifyChange('space_tasks')),
+    editTask: createStandaloneTaskMetadataEditor(deps.db.getDatabase(), () =>
+      deps.db.notifyChange('space_tasks')
+    ),
     transitionTask: (input) =>
       transitionStandaloneTask(deps.db.getDatabase(), input, () =>
         deps.db.notifyChange('space_tasks')

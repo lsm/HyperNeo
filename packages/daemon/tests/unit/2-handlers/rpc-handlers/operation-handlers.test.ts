@@ -1,6 +1,6 @@
 import { setStandaloneTaskDependencies } from '../../../../src/storage/tasks/set-task-dependencies';
 import { transitionStandaloneTask } from '../../../../src/storage/tasks/transition-task';
-import { editStandaloneTask } from '../../../../src/storage/tasks/edit-task';
+import { createStandaloneTaskMetadataEditor } from '../../../../src/lib/operations/task-metadata-standalone';
 import { listTaskCores } from '../../../../src/storage/tasks/list-tasks';
 import { createStandaloneTask } from '../../../../src/storage/tasks/create-task';
 import type { TaskCore } from '@hyperneo/shared/types/task-core';
@@ -37,7 +37,7 @@ describe('operation.invoke RPC registration', () => {
       createTask: (input, creatorSessionId) =>
         createStandaloneTask(taskDb, input, creatorSessionId, () => {}),
       listTasks: (input) => listTaskCores(taskDb, input),
-      editTask: (input) => editStandaloneTask(taskDb, input, () => {}),
+      editTask: createStandaloneTaskMetadataEditor(taskDb, () => {}),
       transitionTask: (input) => transitionStandaloneTask(taskDb, input, () => {}),
       setDependencies: (input) => setStandaloneTaskDependencies(taskDb, input, () => {}),
     });
