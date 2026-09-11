@@ -161,18 +161,23 @@ export function createOwnedPendingCompletionOperation(
     .pipe(
       bindOwnedCompletion,
       ['previous', 'getTaskManager', 'dispatchApproval', 'warn'],
-      ['getTask', 'dispatchApproval', 'reopenTask', 'updateTask', 'warn']
+      [
+        'getTask:readOwnedTask',
+        'dispatchApproval:dispatchOwnedApproval',
+        'reopenTask',
+        'updateTask',
+      ]
     )
     .pipe(normalizePendingCompletion, 'input', 'decision')
     .pipe(rejectPendingCompletion, ['decision', 'reopenTask', 'updateTask'], 'rejection')
     .pipe(dispatchPendingCompletion, [
       'decision',
-      'dispatchApproval',
-      'getTask',
+      'dispatchOwnedApproval',
+      'readOwnedTask',
       'updateTask',
       'warn',
     ])
-    .pipe(readPendingCompletionResult, ['getTask', 'decision', 'rejection'], 'result:task')
+    .pipe(readPendingCompletionResult, ['readOwnedTask', 'decision', 'rejection'], 'result:task')
     .pipe(notifyOwnedCompletion, ['actor', 'previous', 'input', 'task', 'emitTaskUpdated', 'audit'])
     .endAsync('task') as (
     input: PendingCompletionInput,
