@@ -21,6 +21,8 @@ import {
 import type { SpaceWorkflowManager } from '../space/managers/space-workflow-manager.ts';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
 import { mapPostApprovalDispatchWarning } from '../space/runtime/post-approval-router.ts';
+import { createWorkflowTaskRecoveryExecutor } from '../space/runtime/task-recovery-executor.ts';
+import { recoverTaskExecution } from '../tasks/recover-task-execution.ts';
 import { arraysEqual } from '../utils/array-utils.ts';
 
 const log = new Logger('space-task-handlers');
@@ -610,11 +612,13 @@ export function setupSpaceTaskHandlers(
       throw new Error(`Space not found: ${params.spaceId}`);
     }
 
-    return spaceRuntimeService.recoverWorkflowBackedTask(
-      params.spaceId,
+    const recovered = await recoverTaskExecution(
+      createWorkflowTaskRecoveryExecutor(params.spaceId, spaceRuntimeService),
       params.taskId,
       params.status
     );
+    if (typeof recovered === 'string') throw new Error(recovered);
+    return recovered;
   });
 
   messageHub.onRequest('spaceTask.submitForReview', async (data) => {
