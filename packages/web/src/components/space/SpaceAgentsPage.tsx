@@ -15,6 +15,7 @@ import { spaceStore } from '../../lib/space-store';
 import { ModelPoolEditor } from './ModelPoolEditor';
 import { type ToolsSelection, ToolsEditor } from './ToolsEditor';
 import { SettingSourcesEditor } from './SettingSourcesEditor';
+import { agentFormFrom, type AgentFormFields, blankAgentForm } from './agent-form-state';
 import {
   decideToolsChange,
   differsFromBaseline,
@@ -36,19 +37,6 @@ const UNSET_AUTONOMY = 'none';
 const AUTONOMY_LEVELS = [1, 2, 3, 4, 5] as const;
 
 type TemplateOption = SpaceLongHorizonAgentTemplate;
-
-function poolFromAgent(agent: SpaceAgent): AgentModelPoolEntry[] {
-  if (agent.modelPool && agent.modelPool.length > 0) return agent.modelPool;
-  if (!agent.model) return [];
-  return [
-    {
-      model: agent.model,
-      provider: agent.provider ?? undefined,
-      maxConcurrent: 1,
-      weight: 100,
-    },
-  ];
-}
 
 function matchesSelectedHandle(agent: SpaceAgent, handle: string): boolean {
   if (agent.handle === handle) return true;
@@ -101,6 +89,20 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
   const toolsBaselineRef = useRef<string[]>([]);
   const toolsRemovedRef = useRef<string[]>([]);
   const toolsAddedRef = useRef<string[]>([]);
+
+  function applyForm(fields: AgentFormFields) {
+    setFormStatus(fields.status);
+    setFormAutonomy(fields.autonomy);
+    setFormModelPool(fields.modelPool);
+    setFormTools(fields.tools);
+    setFormSettingSources(fields.settingSources);
+    setFormThinkingLevel(fields.thinkingLevel);
+    setFormTemplateKey(fields.templateKey);
+    setToolsExplicit(fields.toolsExplicit);
+    toolsBaselineRef.current = [];
+    toolsRemovedRef.current = [];
+    toolsAddedRef.current = fields.toolsExplicit ? fields.tools.tools : [];
+  }
   const activeSpaceRef = useRef(spaceId);
   const formGenerationRef = useRef(0);
   const appliedLinkRef = useRef<string | null>(null);
@@ -121,17 +123,7 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
     setDeleting(null);
     setDeleteBusy(false);
     setDeleteError(null);
-    setFormStatus('active');
-    setFormAutonomy('');
-    setFormModelPool([]);
-    setFormTools({ tools: [], toolsOverridden: false });
-    setFormSettingSources(null);
-    setFormThinkingLevel(null);
-    setFormTemplateKey('');
-    setToolsExplicit(false);
-    toolsBaselineRef.current = [];
-    toolsRemovedRef.current = [];
-    toolsAddedRef.current = [];
+    applyForm(blankAgentForm());
     appliedLinkRef.current = null;
     handledLinkRef.current = null;
     deleteGenerationRef.current += 1;
@@ -210,17 +202,7 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
     setFormError(null);
     setEditing(null);
     setCreating(true);
-    setFormStatus('active');
-    setFormAutonomy('');
-    setFormModelPool([]);
-    setFormTools({ tools: [], toolsOverridden: false });
-    setFormSettingSources(null);
-    setFormThinkingLevel(null);
-    setFormTemplateKey('');
-    setToolsExplicit(false);
-    toolsBaselineRef.current = [];
-    toolsRemovedRef.current = [];
-    toolsAddedRef.current = [];
+    applyForm(blankAgentForm());
   }
 
   function openEdit(agent: SpaceAgent) {
@@ -228,25 +210,14 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
     setFormError(null);
     setCreating(false);
     setEditing(agent);
-    setFormStatus(agent.status);
-    setFormAutonomy(agent.autonomyLevel ? String(agent.autonomyLevel) : '');
-    setFormModelPool(poolFromAgent(agent));
-    setFormTools({ tools: agent.tools ?? [], toolsOverridden: agent.tools !== null });
-    setFormSettingSources(agent.settingSources ?? null);
-    setFormThinkingLevel(agent.thinkingLevel ?? null);
-    setFormTemplateKey('');
-    setToolsExplicit(agent.tools !== null);
-    toolsBaselineRef.current = [];
-    toolsRemovedRef.current = [];
-    toolsAddedRef.current = agent.tools ?? [];
+    applyForm(agentFormFrom(agent));
   }
 
   function closeForm() {
     setCreating(false);
     setEditing(null);
     setFormError(null);
-    setFormThinkingLevel(null);
-    setFormTemplateKey('');
+    applyForm(blankAgentForm());
   }
 
   async function submitForm(event: Event) {
