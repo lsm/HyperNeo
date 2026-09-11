@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  decideToolsChange,
   differsFromBaseline,
   rebaseTemplateTools,
   trackAddedTools,
+  type ToolsChangeInput,
   trackRemovedTools,
 } from '../template-tools';
 
@@ -81,5 +83,100 @@ describe('differsFromBaseline', () => {
     [['Grep'], ['Read'], true],
   ])('compares %j against %j', (tools, baseline, expected) => {
     expect(differsFromBaseline(tools as string[], baseline as string[])).toBe(expected);
+  });
+});
+
+describe('agent tools change pipeline', () => {
+  const base = (over: Partial<ToolsChangeInput> = {}): ToolsChangeInput => ({
+    origin: 'edit',
+    tools: ['Read'],
+    overridden: true,
+    baseline: ['Read'],
+    state: { tools: ['Read'], overridden: false, explicit: false, added: [], removed: [] },
+    ...over,
+  });
+
+  it('returns to inherited when a preset clears the override', () => {
+    const out = decideToolsChange(
+      base({ origin: 'preset', overridden: false, baseline: ['Read', 'Bash'] })
+    );
+    expect(out).toEqual({
+      tools: ['Read', 'Bash'],
+      overridden: false,
+      explicit: false,
+      added: [],
+      removed: [],
+    });
+  });
+
+  it('marks a preset choice explicit and overridden', () => {
+    const out = decideToolsChange(base({ origin: 'preset', tools: ['Read', 'Grep', 'Glob'] }));
+    expect(out.explicit).toBe(true);
+    expect(out.overridden).toBe(true);
+  });
+
+  it('keeps an emptied explicit preset overridden', () => {
+    const out = decideToolsChange(
+      base({
+        tools: [],
+        overridden: false,
+        baseline: ['Bash'],
+        state: { tools: ['Read'], overridden: true, explicit: true, added: [], removed: [] },
+      })
+    );
+    expect(out.overridden).toBe(true);
+    expect(out.tools).toEqual([]);
+  });
+
+  it('tracks a scoped add made under an explicit preset', () => {
+    const out = decideToolsChange(
+      base({
+        tools: ['Read', 'Bash(gh:*)'],
+        baseline: ['Bash(gh:*)'],
+        state: { tools: ['Read'], overridden: true, explicit: true, added: [], removed: [] },
+      })
+    );
+    expect(out.added).toContain('Bash(gh:*)');
+  });
+
+  it('clears provenance when an explicit edit restores the baseline', () => {
+    const out = decideToolsChange(
+      base({
+        tools: ['Read'],
+        baseline: ['Read'],
+        state: { tools: ['Grep'], overridden: true, explicit: true, added: [], removed: ['Bash'] },
+      })
+    );
+    expect(out).toEqual({
+      tools: ['Read'],
+      overridden: false,
+      explicit: false,
+      added: [],
+      removed: [],
+    });
+  });
+
+  it('records a removal on a baseline edit and stays overridden', () => {
+    const out = decideToolsChange(base({ tools: [], overridden: false, baseline: ['Bash'] }));
+    expect(out.removed).toEqual(['Bash']);
+    expect(out.overridden).toBe(true);
+  });
+
+  it('returns to inherited when a baseline edit restores it', () => {
+    const out = decideToolsChange(
+      base({
+        tools: ['Read'],
+        baseline: ['Read'],
+        state: {
+          tools: ['Read', 'Bash(x:*)'],
+          overridden: true,
+          explicit: false,
+          added: ['Bash(x:*)'],
+          removed: [],
+        },
+      })
+    );
+    expect(out.overridden).toBe(false);
+    expect(out.added).toEqual([]);
   });
 });
