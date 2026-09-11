@@ -289,6 +289,65 @@ describe('SpaceAgentTemplateRepository — Space-scoped methods', () => {
     expect(repo.getOwned('space-a', 'k')?.handle).toBe('h');
   });
 
+  test('version tokens never repeat for a key across namespaces', () => {
+    const seen = new Set<number>();
+    const record = (version: number | undefined): void => {
+      expect(version).toBeDefined();
+      expect(seen.has(version!)).toBe(false);
+      seen.add(version!);
+    };
+
+    repo.createOwned('space-a', { key: 'shared', handle: 'h' });
+    record(repo.getOwnedWithVersion('space-a', 'shared')?.version);
+    repo.createOwned('space-b', { key: 'shared', handle: 'h' });
+    record(repo.getOwnedWithVersion('space-b', 'shared')?.version);
+
+    for (const spaceId of ['space-a', 'space-b', 'space-a', 'space-a', 'space-b']) {
+      repo.casUpdateOwned(spaceId, 'shared', { displayName: spaceId });
+      record(repo.getOwnedWithVersion(spaceId, 'shared')?.version);
+    }
+  });
+
+  test('a stale owned version cannot overwrite the sentinel row it falls back to', () => {
+    repo.create({ key: 'shared', handle: 'h' });
+    repo.createOwned('space-a', { key: 'shared', handle: 'h' });
+    const staleOwnedVersion = repo.getOwnedWithVersion('space-a', 'shared')!.version;
+    repo.deleteOwned('space-a', 'shared');
+
+    expect(repo.getOwned('space-a', 'shared')).not.toBeNull();
+    expect(
+      repo.casUpdateOwned('space-a', 'shared', { displayName: 'Hijacked' }, staleOwnedVersion)
+    ).toBeNull();
+  });
+
+  test('a legacy delete removes one namespace even when versions coincide', () => {
+    repo.createOwned('space-a', { key: 'shared', handle: 'h' });
+    repo.createOwned('space-b', { key: 'shared', handle: 'h' });
+    const versionA = repo.getOwnedWithVersion('space-a', 'shared')!.version;
+
+    expect(repo.delete('shared', versionA)).toBe(true);
+
+    const survivors = [
+      repo.getOwned('space-a', 'shared'),
+      repo.getOwned('space-b', 'shared'),
+    ].filter((row) => row !== null);
+    expect(survivors).toHaveLength(1);
+  });
+
+  test('a legacy read, update and return all resolve the same row', () => {
+    repo.createOwned('space-a', { key: 'shared', handle: 'h', displayName: 'A' });
+    repo.createOwned('space-b', { key: 'shared', handle: 'h', displayName: 'B' });
+
+    const read = repo.getByKeyWithVersion('shared')!;
+    const updated = repo.casUpdate('shared', { displayName: 'Legacy' }, read.version);
+
+    expect(updated?.displayName).toBe('Legacy');
+    const owners = ['space-a', 'space-b'].filter(
+      (spaceId) => repo.getOwned(spaceId, 'shared')?.displayName === 'Legacy'
+    );
+    expect(owners).toHaveLength(1);
+  });
+
   test('a legacy global update touches one namespace and leaves the other Space CAS intact', () => {
     repo.createOwned('space-a', { key: 'shared', handle: 'h' });
     repo.createOwned('space-b', { key: 'shared', handle: 'h' });

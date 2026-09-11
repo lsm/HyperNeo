@@ -50,16 +50,12 @@ export class SpaceAgentTemplateRepository {
   }
 
   getByKey(key: string): SpaceAgentTemplate | null {
-    const row = this.db.prepare(`SELECT * FROM space_agent_templates WHERE key = ?`).get(key) as
-      | Record<string, unknown>
-      | undefined;
+    const row = this.legacyRow(key);
     return row ? rowToTemplate(row) : null;
   }
 
   getByKeyWithVersion(key: string): SpaceAgentTemplateRecord | null {
-    const row = this.db.prepare(`SELECT * FROM space_agent_templates WHERE key = ?`).get(key) as
-      | Record<string, unknown>
-      | undefined;
+    const row = this.legacyRow(key);
     return row ? rowToTemplateRecord(row) : null;
   }
 
@@ -94,7 +90,7 @@ export class SpaceAgentTemplateRepository {
       return current !== null && current.version === expectedVersion ? this.getByKey(key) : null;
     }
 
-    const namespace = this.versionNamespaceForKey(key);
+    const namespace = this.legacyNamespace(key);
     const nextVersion = this.nextVersionFor(namespace, key);
     fields.push('updated_at = ?');
     fields.push('version = ?');
@@ -113,16 +109,24 @@ export class SpaceAgentTemplateRepository {
       .prepare(`UPDATE space_agent_templates SET ${fields.join(', ')} ${where}`)
       .run(...values);
     if (result.changes === 0) return null;
-    return this.getByKey(key);
+    const updated = this.db
+      .prepare(`SELECT * FROM space_agent_templates WHERE space_id = ? AND key = ?`)
+      .get(namespace, key) as Record<string, unknown> | undefined;
+    return updated ? rowToTemplate(updated) : null;
   }
 
   delete(key: string, expectedVersion?: number): boolean {
+    const namespace = this.legacyNamespace(key);
     const result =
       expectedVersion === undefined
-        ? this.db.prepare(`DELETE FROM space_agent_templates WHERE key = ?`).run(key)
+        ? this.db
+            .prepare(`DELETE FROM space_agent_templates WHERE space_id = ? AND key = ?`)
+            .run(namespace, key)
         : this.db
-            .prepare(`DELETE FROM space_agent_templates WHERE key = ? AND version = ?`)
-            .run(key, expectedVersion);
+            .prepare(
+              `DELETE FROM space_agent_templates WHERE space_id = ? AND key = ? AND version = ?`
+            )
+            .run(namespace, key, expectedVersion);
     return result.changes > 0;
   }
 
@@ -256,11 +260,17 @@ export class SpaceAgentTemplateRepository {
       .all(spaceId, OWNERSHIP_MIGRATION_SENTINEL) as Record<string, unknown>[];
   }
 
-  private versionNamespaceForKey(key: string): string {
+  private legacyNamespace(key: string): string {
     const row = this.db
-      .prepare(`SELECT space_id FROM space_agent_templates WHERE key = ? ORDER BY space_id LIMIT 1`)
-      .get(key) as { space_id: string } | undefined;
+      .prepare(`SELECT MIN(space_id) AS space_id FROM space_agent_templates WHERE key = ?`)
+      .get(key) as { space_id: string | null } | undefined;
     return row?.space_id ?? OWNERSHIP_MIGRATION_SENTINEL;
+  }
+
+  private legacyRow(key: string): Record<string, unknown> | undefined {
+    return this.db
+      .prepare(`SELECT * FROM space_agent_templates WHERE space_id = ? AND key = ?`)
+      .get(this.legacyNamespace(key), key) as Record<string, unknown> | undefined;
   }
 
   private nextVersionFor(spaceId: string, key: string): number {
@@ -275,7 +285,12 @@ export class SpaceAgentTemplateRepository {
 							 0
 						 ) + 1
 					 )
-					 ON CONFLICT(space_id, key) DO UPDATE SET next_version = next_version + 1
+					 ON CONFLICT(space_id, key) DO UPDATE SET next_version =
+						 COALESCE(
+							 (SELECT MAX(seq.next_version) FROM space_agent_template_version_seq seq
+								 WHERE seq.key = ?2),
+							 0
+						 ) + 1
 					 RETURNING next_version`
       )
       .get(spaceId, key) as { next_version: number } | undefined;
