@@ -713,7 +713,12 @@ export function setupSpaceExportImportHandlers(
     for (const key of referencedStoredTemplateKeys(workflows, resolveAgentId)) {
       if (ownsTemplate(destinationSpaceId, key)) continue;
       const source = templateRepo.getOwned(sourceSpaceId, key);
-      if (!source) continue;
+      if (!source) {
+        throw new Error(
+          `Cannot import: template "${key}" is no longer available in the exporting space; ` +
+            `re-export the bundle and retry`
+        );
+      }
       templateRepo.createOwned(destinationSpaceId, {
         key: source.key,
         handle: source.handle,

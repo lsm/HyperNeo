@@ -699,6 +699,29 @@ describe('Space Export/Import RPC Handlers', () => {
       expect(workflow.nodes[0].agents![0].agentId).not.toBe('');
     });
 
+    it('fails the import when the source template vanished after preview', async () => {
+      const repo = new SpaceAgentTemplateRepository(db);
+      repo.createOwned(OTHER_SPACE_ID, {
+        key: 'team.auditor',
+        handle: 'auditor',
+        displayName: 'Auditor',
+      });
+      const bundle = templateBundle(OTHER_SPACE_ID);
+
+      const preview = await call<ImportPreviewResult>(handlers, 'spaceImport.preview', {
+        spaceId: SPACE_ID,
+        bundle,
+      });
+      expect(preview.validationErrors.some((e) => e.includes('unknown template'))).toBe(false);
+
+      repo.deleteOwned(OTHER_SPACE_ID, 'team.auditor');
+
+      await expect(
+        call(handlers, 'spaceImport.execute', { spaceId: SPACE_ID, bundle })
+      ).rejects.toThrow(/no longer available in the exporting space/);
+      expect(workflowRepo.listWorkflows(SPACE_ID).map((w) => w.name)).not.toContain('Copied Pipe');
+    });
+
     it('strips relocation markers from a copied template so reimport stays repeatable', async () => {
       const repo = new SpaceAgentTemplateRepository(db);
       repo.createOwned(OTHER_SPACE_ID, {
