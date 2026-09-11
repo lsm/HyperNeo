@@ -28,7 +28,22 @@ export interface TemplateOwnershipEvidence {
 }
 
 const MIGRATED_KEY_PREFIX = `${MIGRATED_AGENT_TEMPLATE_KEY_PREFIX}.`;
-const PROBE_SUFFIX = /\.m228(?:-\d+)?$/;
+const PROBE_SUFFIX = /\.m228(?:-(\d+))?$/;
+const MIN_M228_PROBE = 2;
+const MAX_M228_PROBE = 100;
+
+function m228ProbeStripped(remainder: string): string | null {
+  const match = PROBE_SUFFIX.exec(remainder);
+  if (!match) return null;
+  const ordinal = match[1];
+  if (ordinal !== undefined) {
+    const parsed = Number(ordinal);
+    if (String(parsed) !== ordinal) return null;
+    if (parsed < MIN_M228_PROBE || parsed > MAX_M228_PROBE) return null;
+  }
+  const stripped = remainder.slice(0, match.index);
+  return stripped === '' ? null : stripped;
+}
 
 function addSpace(target: string[], spaceId: string | null | undefined): void {
   const trimmed = typeof spaceId === 'string' ? spaceId.trim() : '';
@@ -45,8 +60,8 @@ export function migratedAgentIdCandidates(key: string): string[] {
   const remainder = key.slice(MIGRATED_KEY_PREFIX.length);
   if (remainder === '') return [];
   const candidates = [remainder];
-  const stripped = remainder.replace(PROBE_SUFFIX, '');
-  if (stripped !== remainder && stripped !== '') candidates.push(stripped);
+  const stripped = m228ProbeStripped(remainder);
+  if (stripped !== null) candidates.push(stripped);
   return candidates;
 }
 

@@ -29,6 +29,15 @@ describe('migratedAgentIdCandidates', () => {
   test('does not strip a suffix that only looks like a probe', () => {
     expect(migratedAgentIdCandidates('migrated.agent.a1.m228-x')).toEqual(['a1.m228-x']);
   });
+
+  test('strips only the ordinals the m228 probe loop can emit', () => {
+    expect(migratedAgentIdCandidates('migrated.agent.a.m228-2')).toEqual(['a.m228-2', 'a']);
+    expect(migratedAgentIdCandidates('migrated.agent.a.m228-100')).toEqual(['a.m228-100', 'a']);
+    expect(migratedAgentIdCandidates('migrated.agent.a.m228-1')).toEqual(['a.m228-1']);
+    expect(migratedAgentIdCandidates('migrated.agent.a.m228-0')).toEqual(['a.m228-0']);
+    expect(migratedAgentIdCandidates('migrated.agent.a.m228-101')).toEqual(['a.m228-101']);
+    expect(migratedAgentIdCandidates('migrated.agent.a.m228-02')).toEqual(['a.m228-02']);
+  });
 });
 
 describe('collectTemplateOwnershipEvidence', () => {
