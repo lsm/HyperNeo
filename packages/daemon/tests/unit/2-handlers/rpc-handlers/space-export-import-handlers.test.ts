@@ -629,6 +629,92 @@ describe('Space Export/Import RPC Handlers', () => {
       expect(workflow.nodes[0].agents![0].templateKey).toBeUndefined();
     });
 
+    function templateBundle(exportedFrom?: string): Record<string, unknown> {
+      return {
+        version: 6,
+        type: 'bundle',
+        name: 'Test Bundle',
+        exportedAt: 1000,
+        ...(exportedFrom ? { exportedFrom } : {}),
+        agents: [],
+        workflows: [
+          {
+            version: 6,
+            type: 'workflow',
+            name: 'Copied Pipe',
+            nodes: [
+              {
+                agents: [{ templateKey: 'team.auditor', name: 'auditor' }],
+                name: 'Audit',
+              },
+            ],
+            startNode: 'Audit',
+            tags: [],
+          },
+        ],
+      };
+    }
+
+    it('rejects a stored-template slot the destination Space does not own', async () => {
+      new SpaceAgentTemplateRepository(db).createOwned(OTHER_SPACE_ID, {
+        key: 'team.auditor',
+        handle: 'auditor',
+        displayName: 'Auditor',
+      });
+
+      const preview = await call<ImportPreviewResult>(handlers, 'spaceImport.preview', {
+        spaceId: SPACE_ID,
+        bundle: templateBundle(),
+      });
+
+      expect(preview.validationErrors.some((e) => e.includes('unknown template'))).toBe(true);
+    });
+
+    it('accepts and copies a stored template the exporting Space owns', async () => {
+      new SpaceAgentTemplateRepository(db).createOwned(OTHER_SPACE_ID, {
+        key: 'team.auditor',
+        handle: 'auditor',
+        displayName: 'Auditor',
+        instructions: 'Audit the release.',
+      });
+      const bundle = templateBundle(OTHER_SPACE_ID);
+
+      const preview = await call<ImportPreviewResult>(handlers, 'spaceImport.preview', {
+        spaceId: SPACE_ID,
+        bundle,
+      });
+      expect(preview.validationErrors.some((e) => e.includes('unknown template'))).toBe(false);
+
+      await call(handlers, 'spaceImport.execute', { spaceId: SPACE_ID, bundle });
+
+      const copied = new SpaceAgentTemplateRepository(db).getOwned(SPACE_ID, 'team.auditor');
+      expect(copied?.instructions).toBe('Audit the release.');
+      expect(
+        new SpaceAgentTemplateRepository(db).getOwned(OTHER_SPACE_ID, 'team.auditor')
+      ).not.toBeNull();
+    });
+
+    it('leaves a template the destination Space already owns untouched', async () => {
+      const repo = new SpaceAgentTemplateRepository(db);
+      repo.createOwned(OTHER_SPACE_ID, {
+        key: 'team.auditor',
+        handle: 'auditor',
+        instructions: 'Source copy.',
+      });
+      repo.createOwned(SPACE_ID, {
+        key: 'team.auditor',
+        handle: 'auditor',
+        instructions: 'Destination copy.',
+      });
+
+      await call(handlers, 'spaceImport.execute', {
+        spaceId: SPACE_ID,
+        bundle: templateBundle(OTHER_SPACE_ID),
+      });
+
+      expect(repo.getOwned(SPACE_ID, 'team.auditor')?.instructions).toBe('Destination copy.');
+    });
+
     it('imports stored-template slots whose key exists in the target template library', async () => {
       new SpaceAgentTemplateRepository(db).create({
         key: 'team.reviewer',
