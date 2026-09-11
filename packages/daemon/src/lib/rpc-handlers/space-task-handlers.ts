@@ -23,6 +23,8 @@ import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service
 import { mapPostApprovalDispatchWarning } from '../space/runtime/post-approval-router.ts';
 import { createWorkflowTaskRecoveryExecutor } from '../space/runtime/task-recovery-executor.ts';
 import { recoverTaskExecution } from '../tasks/recover-task-execution.ts';
+import { parkTaskExecution } from '../tasks/park-task-execution.ts';
+import { createWorkflowTaskParkingExecutor } from '../space/runtime/task-parking-executor.ts';
 import { arraysEqual } from '../utils/array-utils.ts';
 
 const log = new Logger('space-task-handlers');
@@ -491,7 +493,13 @@ export function setupSpaceTaskHandlers(
                 `Cannot stop workflow-backed task ${taskId}: SpaceRuntimeService is unavailable.`
               );
             }
-            task = await spaceRuntimeService.parkStoppedWorkflowTask(spaceId, taskId);
+            const parked = await parkTaskExecution(
+              createWorkflowTaskParkingExecutor(spaceId, spaceRuntimeService),
+              taskId
+            );
+            if (typeof parked === 'string') throw new Error(parked);
+            if (!parked) throw new Error(`Failed to stop (park) workflow-backed task ${taskId}`);
+            task = parked;
             emitTaskUpdated = false;
 
             const {
