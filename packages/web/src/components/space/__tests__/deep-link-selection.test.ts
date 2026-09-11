@@ -7,6 +7,11 @@ import {
   type DeepLinkState,
   matchesSelectedHandle,
   findLinkTarget,
+  gateHandlePresent,
+  gateNotYetApplied,
+  gateTargetPresent,
+  type LinkedRequest,
+  type MatchedRequest,
 } from '../deep-link-selection';
 
 const agent = (id: string, handle: string, spaceId = 'space-1') =>
@@ -173,5 +178,70 @@ describe('decideDeepLink', () => {
       link: deepLinkKey('space-2', 'alpha') as string,
       agentId: 'b1',
     });
+  });
+});
+
+describe('gateHandlePresent', () => {
+  it.each([
+    ['a handle is selected', 'alpha', 'value'],
+    ['no handle is selected', null, 'reason'],
+    ['the handle is an empty string', '', 'reason'],
+  ])('yields a %s arm when %s', (_label, handle, arm) => {
+    const outcome = gateHandlePresent(input({ selectedHandle: handle as string | null }));
+    expect(arm in outcome).toBe(true);
+    if ('reason' in outcome) expect(outcome.reason).toEqual({ kind: 'forget' });
+    else expect(outcome.value.link).toBe(deepLinkKey('space-1', handle as string));
+  });
+});
+
+describe('gateTargetPresent', () => {
+  const linked = (overrides: Partial<DeepLinkState> = {}, agents = [agent('a1', 'alpha')]) =>
+    ({ input: input({ agents, state: state(overrides) }), link: KEY }) as LinkedRequest;
+
+  it.each([
+    ['a match exists', {}, [agent('a1', 'alpha')], 'value', undefined],
+    ['nothing matches and nothing was handled', {}, [], 'reason', 'clear'],
+    [
+      'the same unmatched link was already cleared',
+      { handledLink: KEY, appliedLink: null },
+      [],
+      'reason',
+      'idle',
+    ],
+    [
+      'the applied agent vanished',
+      { handledLink: KEY, appliedLink: KEY, appliedAgentId: 'a1', selectedId: 'a1' },
+      [],
+      'reason',
+      'clear',
+    ],
+  ])('yields %s', (_label, st, agents, arm, kind) => {
+    const outcome = gateTargetPresent(linked(st as Partial<DeepLinkState>, agents as never));
+    expect(arm in outcome).toBe(true);
+    if ('reason' in outcome) expect(outcome.reason.kind).toBe(kind);
+  });
+});
+
+describe('gateNotYetApplied', () => {
+  const matched = (overrides: Partial<DeepLinkState> = {}) =>
+    ({
+      input: input({ state: state(overrides) }),
+      link: KEY,
+      target: agent('a1', 'alpha'),
+    }) as MatchedRequest;
+
+  it.each([
+    ['nothing applied yet', {}, 'value'],
+    ['a different link is applied', { appliedLink: 'other', appliedAgentId: 'a1' }, 'value'],
+    [
+      'the same link resolved to another agent',
+      { appliedLink: KEY, appliedAgentId: 'zz' },
+      'value',
+    ],
+    ['the same link and agent are applied', { appliedLink: KEY, appliedAgentId: 'a1' }, 'reason'],
+  ])('yields a %s arm when %s', (_label, st, arm) => {
+    const outcome = gateNotYetApplied(matched(st as Partial<DeepLinkState>));
+    expect(arm in outcome).toBe(true);
+    if ('reason' in outcome) expect(outcome.reason).toEqual({ kind: 'idle' });
   });
 });
