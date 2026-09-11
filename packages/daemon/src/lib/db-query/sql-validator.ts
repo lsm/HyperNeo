@@ -192,7 +192,7 @@ function recordTableRef(
     while (sql[probe] === '(') probe = skipWhitespace(sql, probe + 1);
     const inner = matchIdentifier(sql, probe);
     if (!inner || SUBQUERY_START_WORDS.has(inner.ident)) return null;
-    return recordTableRef(sql, probe, exclude, refs);
+    return recordTableRef(sql, probe, exclude, refs, spans);
   }
   const first = matchIdentifier(sql, start);
   if (!first) return null;
