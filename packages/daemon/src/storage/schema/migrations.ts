@@ -1,3 +1,4 @@
+import { runMigration252 } from './m252-direct-kickoff-intents.ts';
 import { runMigration251 } from './m251-direct-session-provenance.ts';
 import { runMigration250 } from './m250-direct-stop-requests.ts';
 import { runMigration248 } from './m248-direct-task-execution.ts';
@@ -580,6 +581,7 @@ export function runMigrations(
   run(migrationMarkerKey(249), () => runMigration249(db));
   run(migrationMarkerKey(250), () => runMigration250(db));
   run(migrationMarkerKey(251), () => runMigration251(db));
+  run(migrationMarkerKey(252), () => runMigration252(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }

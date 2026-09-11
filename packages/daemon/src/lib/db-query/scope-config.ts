@@ -459,6 +459,7 @@ const EXCLUDED_TABLE_NAMES: string[] = [
   'direct_task_execution_selection',
   'direct_task_execution_attempts',
   'direct_task_session_provenance',
+  'direct_task_kickoff_intents',
   'direct_task_stop_requests',
   'auth_config',
   'global_tools_config',

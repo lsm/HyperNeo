@@ -46,6 +46,7 @@ type IndexInfoRow = {
 export const HELPER_SCHEMA_TABLES = [
   'direct_task_execution_attempts',
   'direct_task_session_provenance',
+  'direct_task_kickoff_intents',
   'direct_task_stop_requests',
   'direct_task_execution_selection',
   'channel_cycle_events',
