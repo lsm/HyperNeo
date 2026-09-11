@@ -13,7 +13,6 @@ import { spaceStore } from '../../lib/space-store';
 import { ModelPoolEditor } from './ModelPoolEditor';
 import { type ToolsSelection, ToolsEditor } from './ToolsEditor';
 import { SettingSourcesEditor } from './SettingSourcesEditor';
-import { decideDeepLink, deepLinkKey, matchesSelectedHandle } from './deep-link-selection';
 import { Button } from '../ui/Button';
 import { ConfirmModal } from '../ui/ConfirmModal';
 import { EmptyState } from '../ui/EmptyState';
@@ -41,6 +40,11 @@ function poolFromAgent(agent: SpaceAgent): AgentModelPoolEntry[] {
       weight: 100,
     },
   ];
+}
+
+function matchesSelectedHandle(agent: SpaceAgent, handle: string): boolean {
+  if (agent.handle === handle) return true;
+  return handle === 'coordinator' && PROTECTED_HANDLES.has(agent.handle);
 }
 
 export function usablePoolEntries(entries: AgentModelPoolEntry[]): AgentModelPoolEntry[] {
@@ -88,7 +92,6 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
   const formGenerationRef = useRef(0);
   const appliedLinkRef = useRef<string | null>(null);
   const handledLinkRef = useRef<string | null>(null);
-  const appliedAgentIdRef = useRef<string | null>(null);
   const lastLinkRef = useRef<string | null>(null);
   const sawFirstLinkRef = useRef(false);
   const deleteGenerationRef = useRef(0);
@@ -113,7 +116,6 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
     setFormTemplateKey('');
     appliedLinkRef.current = null;
     handledLinkRef.current = null;
-    appliedAgentIdRef.current = null;
     deleteGenerationRef.current += 1;
   }
 
@@ -142,7 +144,7 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
   const agentSignature = agents.map((agent) => `${agent.id}:${agent.handle}`).join('|');
 
   useEffect(() => {
-    const link = deepLinkKey(spaceId, selectedHandle);
+    const link = selectedHandle ? `${spaceId}\u0000${selectedHandle}` : null;
     const previousLink = lastLinkRef.current;
     lastLinkRef.current = link;
     if (!sawFirstLinkRef.current) sawFirstLinkRef.current = true;
@@ -156,37 +158,25 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
       setDeleteError(null);
     }
 
-    const decision = decideDeepLink({
-      spaceId,
-      selectedHandle,
-      agents,
-      state: {
-        appliedLink: appliedLinkRef.current,
-        appliedAgentId: appliedAgentIdRef.current,
-        handledLink: handledLinkRef.current,
-        selectedId: selectedIdRef.current,
-      },
-    });
-
-    if (decision.kind === 'idle') return;
-    if (decision.kind === 'forget') {
+    if (!link) {
       appliedLinkRef.current = null;
       handledLinkRef.current = null;
-      appliedAgentIdRef.current = null;
-      return;
-    }
-    if (decision.kind === 'clear') {
-      handledLinkRef.current = decision.link;
-      appliedLinkRef.current = null;
-      appliedAgentIdRef.current = null;
-      if (decision.clearSelection) setSelectedId(null);
       return;
     }
 
-    appliedLinkRef.current = decision.link;
-    handledLinkRef.current = decision.link;
-    appliedAgentIdRef.current = decision.agentId;
-    setSelectedId(decision.agentId);
+    const matched = deepLinked && deepLinked.spaceId === spaceId ? deepLinked : null;
+    if (!matched) {
+      if (handledLinkRef.current === link) return;
+      handledLinkRef.current = link;
+      appliedLinkRef.current = null;
+      setSelectedId(null);
+      return;
+    }
+
+    if (appliedLinkRef.current === link) return;
+    appliedLinkRef.current = link;
+    handledLinkRef.current = link;
+    setSelectedId(matched.id);
   }, [spaceId, selectedHandle, agentSignature]);
   const selectedTemplateSources = formTemplateKey
     ? (templateOptions().find((template) => template.key === formTemplateKey)?.settingSources ??
