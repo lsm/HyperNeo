@@ -1,3 +1,5 @@
+import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager';
+import { createPendingCompletionOperation } from '../../../../src/lib/space/operations/pending-completion';
 import { JobQueueProcessor } from '../../../../src/storage/job-queue-processor';
 import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
@@ -166,7 +168,15 @@ test('pruned job receipt is not silently recreated by duplicate request', () => 
   expect(jobs.getJob(job.id)).toBeNull();
   expect(count()).toBe(1);
 });
-test('review rejection job retains admitted feedback after checkpoint is consumed', async () => {
+test.each([
+  'request',
+  'shared-rejection',
+  'paused-rejection',
+  'manual-review',
+  'manual-review-stale',
+  'manual-review-stopped',
+  'manual-review-stopped-stale',
+] as const)('review rejection via %s retains frozen feedback', async (route) => {
   const initial = await start({ taskId, requestKey: 'initial' });
   if (!initial.started) throw new Error(initial.reason);
   let cached = {
@@ -194,20 +204,90 @@ test('review rejection job retains admitted feedback after checkpoint is consume
     attemptId: initial.attempt.id,
     sessionId: initial.attempt.sessionId,
     generation: initial.attempt.generation,
-    status: 'review',
+    status: route.includes('stopped')
+      ? 'stopped'
+      : route.startsWith('manual-review')
+        ? 'blocked'
+        : 'review',
   });
   expect(done.finalized).toBe(true);
-  const ack = request({
-    taskId,
-    requestKey: 'rejected',
-    retryFrom: { attemptId: initial.attempt.id, generation: initial.attempt.generation },
-    reviewRejection: {
-      expectedPendingCompletionGeneration: tasks.getTask(taskId)!.pendingCompletionGeneration!,
-      reason: '  Fix edge case  ',
-    },
-  });
+  if (route.startsWith('manual-review')) {
+    const manager = new SpaceTaskManager(db, tasks.getTask(taskId)!.spaceId);
+    await manager.submitTaskForReview(taskId, { reason: 'manual review', submittedByNodeId: null });
+    if (route.endsWith('-stale')) {
+      tasks.updateTask(taskId, { status: 'in_progress' });
+      tasks.updateTask(taskId, { status: 'review' });
+      await expect(
+        manager.reopenPendingCompletion(taskId, 'stale', {
+          expectedPendingCompletionGeneration: tasks.getTask(taskId)!.pendingCompletionGeneration!,
+        })
+      ).rejects.toThrow('superseded');
+      expect(attempts.getActive(taskId)).toBeNull();
+      expect(count()).toBe(0);
+      return;
+    }
+  }
+  const generation = tasks.getTask(taskId)!.pendingCompletionGeneration!;
+  const spaces = new SpaceRepository(db);
+  const spaceId = tasks.getTask(taskId)!.spaceId;
+  if (route === 'paused-rejection') spaces.pauseSpace(spaceId);
+  const ack =
+    route === 'request'
+      ? request({
+          taskId,
+          requestKey: 'rejected',
+          retryFrom: { attemptId: initial.attempt.id, generation: initial.attempt.generation },
+          reviewRejection: {
+            expectedPendingCompletionGeneration:
+              tasks.getTask(taskId)!.pendingCompletionGeneration!,
+            reason: '  Fix edge case  ',
+          },
+        })
+      : await (async () => {
+          const manager = new SpaceTaskManager(db, tasks.getTask(taskId)!.spaceId);
+          const update = mock(async () => {
+            throw new Error('atomic rejection must not write twice');
+          });
+          const rejected = await createPendingCompletionOperation({
+            getTask: (id) => manager.getTask(id),
+            reopenTask: (id, reason) =>
+              manager.reopenPendingCompletion(id, reason, {
+                expectedPendingCompletionGeneration: generation,
+              }),
+            updateTask: update,
+            dispatchApproval: async () => {
+              throw new Error('not approval');
+            },
+            warn: () => {},
+          })({ taskId, approved: false, reason: '  Fix edge case  ' });
+          expect(rejected.status).toBe('open');
+          expect(rejected.approvalReason).toBe('  Fix edge case  ');
+          expect(update).not.toHaveBeenCalled();
+          const next = attempts.getActive(taskId)!;
+          const receipt = readDirectStartRequest(db, next.id)!;
+          await expect(
+            manager.reopenPendingCompletion(taskId, 'different', {
+              expectedPendingCompletionGeneration: generation,
+            })
+          ).rejects.toThrow('superseded');
+          expect(attempts.getActive(taskId)?.id).toBe(next.id);
+          return { accepted: true as const, jobId: receipt.jobId };
+        })();
   if (!ack.accepted || !ack.jobId) throw new Error('expected retry receipt');
   expect(tasks.getTask(taskId)?.pendingCheckpointType).toBeNull();
+  if (route === 'paused-rejection') {
+    const reserved = attempts.getActive(taskId)!;
+    const [claimed] = jobs.dequeue(DIRECT_TASK_START, 1);
+    expect(await createDirectStartJobHandler(db, start, jobs, control)(claimed)).toMatchObject({
+      parked: 'direct_start_not_ready',
+    });
+    expect(attempts.getActive(taskId)?.phase).toBe('reserved');
+    expect(readDirectKickoffIntent(db, reserved.id)).toBeNull();
+    expect(readDirectStartRequest(db, reserved.id)?.input.reviewRejection?.reason).toBe(
+      '  Fix edge case  '
+    );
+    spaces.resumeSpace(spaceId);
+  }
   tasks.updateTask(taskId, { approvalReason: 'Mutated note' });
   const result = await createDirectStartJobHandler(
     db,
@@ -379,4 +459,63 @@ test('configured worker resumes the durable request without eager loading or ord
   expect(count()).toBe(1);
   expect(attempts.getActive(ordinary.id)).toBeNull();
   expect(tasks.getTask(ordinary.id)?.status).toBe('open');
+});
+
+test('legacy UI review rejection resumes only its matching active direct worker', async () => {
+  const initial = await start({ taskId, requestKey: 'ui-review' });
+  if (!initial.started) throw new Error(initial.reason);
+  const manager = new SpaceTaskManager(db, tasks.getTask(taskId)!.spaceId);
+  const review = await manager.submitTaskForReview(taskId, {
+    reason: 'ready',
+    submittedByNodeId: null,
+  });
+  const guard = { expectedPendingCompletionGeneration: review.pendingCompletionGeneration! };
+  const rejected = await createPendingCompletionOperation({
+    getTask: (id) => manager.getTask(id),
+    reopenTask: (id, reason) => manager.reopenPendingCompletion(id, reason, guard),
+    updateTask: (id, fields) => manager.updateTask(id, fields),
+    dispatchApproval: async () => {
+      throw new Error('not approval');
+    },
+    warn: () => {},
+  })({ taskId, approved: false, reason: '  UI feedback  ' });
+  expect(rejected.status).toBe('in_progress');
+  expect(rejected.approvalReason).toBe('  UI feedback  ');
+  expect(rejected.pendingCheckpointType).toBeNull();
+  expect(attempts.getActive(taskId)?.id).toBe(initial.attempt.id);
+  expect(count()).toBe(0);
+  const nextReview = await manager.submitTaskForReview(taskId, {
+    reason: 'again',
+    submittedByNodeId: null,
+  });
+  attempts.requestStop(initial.attempt.id, initial.attempt.sessionId, 'cancelled');
+  await expect(
+    manager.reopenPendingCompletion(taskId, 'no', {
+      expectedPendingCompletionGeneration: nextReview.pendingCompletionGeneration!,
+    })
+  ).rejects.toThrow('superseded');
+  expect(tasks.getTask(taskId)?.status).toBe('review');
+});
+
+test('review submission cannot invalidate an unactivated direct request', async () => {
+  const job = acceptedJob();
+  const reserved = attempts.getActive(taskId)!;
+  const before = tasks.getTask(taskId)!;
+  const generation = tasks.getLifecycleGeneration(taskId);
+  const requestBefore = readDirectStartRequest(db, reserved.id);
+  const manager = new SpaceTaskManager(db, before.spaceId);
+  await expect(
+    manager.submitTaskForReview(taskId, {
+      reason: 'premature review',
+      submittedByNodeId: null,
+    })
+  ).rejects.toThrow('direct start is queued');
+  expect(tasks.getTask(taskId)).toEqual(before);
+  expect(tasks.getLifecycleGeneration(taskId)).toBe(generation);
+  expect(readDirectStartRequest(db, reserved.id)).toEqual(requestBefore);
+  expect(attempts.getActive(taskId)).toEqual(reserved);
+  expect(await createDirectStartJobHandler(db, start, jobs, control)(job)).toMatchObject({
+    started: true,
+    attempt: { id: reserved.id },
+  });
 });

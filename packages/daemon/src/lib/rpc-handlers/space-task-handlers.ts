@@ -704,7 +704,7 @@ export function setupSpaceTaskHandlers(
           },
           guard
         ),
-      reopenTask: (taskId) => taskManager.setTaskStatus(taskId, 'in_progress', guard),
+      reopenTask: (taskId, reason) => taskManager.reopenPendingCompletion(taskId, reason, guard),
       updateTask: (taskId, fields) => taskManager.updateTask(taskId, fields),
       warn: (taskId, detail) => {
         log.warn(

@@ -222,3 +222,13 @@ test('direct composition skips approval effects and retains rejected result with
   ).toEqual({ value: reopened });
   expect(dependencies.getTask).not.toHaveBeenCalled();
 });
+
+test('atomic rejection forwards raw reason and avoids the separate reason write', async () => {
+  const atomic = { ...reopened, status: 'open', approvalReason: '  revise  ' } as SpaceTask;
+  const reopenTask = mock(async () => ({ task: atomic, reasonPersisted: true as const }));
+  const { resolve, dependencies } = setup({ reopenTask });
+  expect(await resolve({ taskId: 'task', approved: false, reason: '  revise  ' })).toBe(atomic);
+  expect(reopenTask).toHaveBeenCalledWith('task', '  revise  ');
+  expect(dependencies.updateTask).not.toHaveBeenCalled();
+  expect(dependencies.dispatchApproval).not.toHaveBeenCalled();
+});

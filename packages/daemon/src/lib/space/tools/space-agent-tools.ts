@@ -3568,7 +3568,8 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           getTask: (taskId) => taskRepo.getTask(taskId),
           dispatchApproval: (taskId, approvalReason) =>
             runtime.dispatchPostApproval(taskId, 'human', { approvalReason }, guard),
-          reopenTask: (taskId) => taskManager.setTaskStatus(taskId, 'in_progress', guard),
+          reopenTask: (taskId, reason) =>
+            taskManager.reopenPendingCompletion(taskId, reason, guard),
           updateTask: (taskId, fields) => taskManager.updateTask(taskId, fields),
           warn: (taskId, detail) =>
             log.warn(
@@ -4786,7 +4787,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
     ),
     tool(
       'approve_pending_completion',
-      "Approve or reject a task paused at a submit_for_approval checkpoint (the human-approval path). This is the coordinator's programmatic equivalent of the UI 'Approve' banner: approved transitions review → approved and fires the post-approval router; rejected transitions review → in_progress. Coordinator/task-agent sessions only — worker node agents use approve_task to self-close.",
+      "Approve or reject a task paused at a submit_for_approval checkpoint (the human-approval path). This is the coordinator's programmatic equivalent of the UI 'Approve' banner: approved transitions review → approved and fires the post-approval router; rejected resumes an existing active worker in in_progress, or queues a fresh direct worker with the task open until execution is ready. Coordinator/task-agent sessions only — worker node agents use approve_task to self-close.",
       ApprovePendingCompletionSchema.shape,
       (args) => handlers.approve_pending_completion(args)
     ),

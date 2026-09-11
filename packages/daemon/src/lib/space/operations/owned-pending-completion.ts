@@ -30,7 +30,7 @@ export interface OwnedPendingCompletionDependencies {
   policyContext?: SpaceMcpSessionPolicyContext;
   getTaskManager: (
     spaceId: string
-  ) => Pick<SpaceTaskManager, 'getTask' | 'setTaskStatus' | 'updateTask'>;
+  ) => Pick<SpaceTaskManager, 'getTask' | 'reopenPendingCompletion' | 'updateTask'>;
   dispatchApproval: (
     spaceId: string,
     taskId: string,
@@ -120,7 +120,7 @@ function bindOwnedCompletion(
     getTask: (id) => manager.getTask(id),
     dispatchApproval: (id, reason) =>
       dispatchApproval(previous.spaceId, id, 'human', reason, guard),
-    reopenTask: (id) => manager.setTaskStatus(id, 'in_progress', guard),
+    reopenTask: (id, reason) => manager.reopenPendingCompletion(id, reason, guard),
     updateTask: (id, fields) => manager.updateTask(id, fields),
     warn,
   };

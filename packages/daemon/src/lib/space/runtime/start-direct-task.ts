@@ -1,3 +1,4 @@
+import type { TaskLifecycleStatus } from '@hyperneo/shared/types/task-core';
 import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
 import { enqueueDirectStartRequest, readDirectStartRequest } from './direct-start-request.ts';
 import { SessionRepository } from '../../../storage/repositories/session-repository.ts';
@@ -15,6 +16,7 @@ import { SpaceTaskRepository } from '../../../storage/repositories/space-task-re
 import { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
 import { prepareSpaceTaskStatusUpdate } from '../managers/task-status-preparation.ts';
 import {
+  isValidTaskTransition,
   assertValidTaskTransition,
   assertQueuedTaskRetryTransition,
 } from '../../tasks/transitions.ts';
@@ -84,7 +86,7 @@ export function claimDirectStart(
         task.workflowRunId ||
         task.archivedAt ||
         space?.status !== 'active' ||
-        space.paused ||
+        (space.paused && !(startJobs && input.reviewRejection)) ||
         space.stopped
       )
         return unavailable;
@@ -127,23 +129,29 @@ export function claimDirectStart(
           } | null;
           const finalization = row?.payload
             ? (JSON.parse(row.payload) as {
-                status: string;
+                status: TaskLifecycleStatus;
                 lifecycleGeneration: number;
                 generation: number;
               })
             : null;
+          const manualReview =
+            !!input.reviewRejection &&
+            !!finalization &&
+            isValidTaskTransition(finalization.status, 'review') &&
+            task.status === 'review';
           if (
             row?.state !== 'completed' ||
             !finalization ||
             finalization.generation !== previous.generation ||
-            finalization.status !== task.status ||
+            (!manualReview && finalization.status !== task.status) ||
             !(input.reviewRejection
               ? task.status === 'review' &&
                 task.pendingCheckpointType === 'task_completion' &&
                 task.pendingCompletionGeneration ===
                   input.reviewRejection.expectedPendingCompletionGeneration
               : ['blocked', 'cancelled', 'stopped'].includes(task.status)) ||
-            tasks.getLifecycleGeneration(task.id) !== finalization.lifecycleGeneration + 1 ||
+            tasks.getLifecycleGeneration(task.id) !==
+              finalization.lifecycleGeneration + (manualReview ? 2 : 1) ||
             task.taskAgentSessionId !== previous.sessionId
           )
             return unavailable;

@@ -136,6 +136,14 @@ function createMockTaskManager(task: SpaceTask | null = mockTask): SpaceTaskMana
       tasks: task ? [task] : [],
       total: task ? 1 : 0,
     })),
+    reopenPendingCompletion: async function (
+      this: SpaceTaskManager,
+      id: string,
+      _reason: string | null,
+      guard: { expectedPendingCompletionGeneration: number }
+    ) {
+      return this.setTaskStatus(id, 'in_progress', guard);
+    },
     setTaskStatus: mock(async () => ({ ...task!, status: 'in_progress' as const })),
     updateTask: mock(
       async (

@@ -13,10 +13,12 @@ export interface PendingCompletionInput {
 
 type PendingCompletionDecision = Omit<PendingCompletionInput, 'reason'> & { reason: string | null };
 
+export type PendingCompletionReopenResult = SpaceTask | { task: SpaceTask; reasonPersisted: true };
+
 export interface PendingCompletionDependencies {
   getTask: (taskId: string) => Awaitable<SpaceTask | null>;
   dispatchApproval: (taskId: string, reason: string | null) => Promise<unknown>;
-  reopenTask: (taskId: string) => Promise<SpaceTask>;
+  reopenTask: (taskId: string, reason: string | null) => Promise<PendingCompletionReopenResult>;
   updateTask: (
     taskId: string,
     fields: { approvalReason?: string | null; postApprovalBlockedReason?: string }
@@ -36,7 +38,8 @@ export async function rejectPendingCompletion(
   updateTask: PendingCompletionDependencies['updateTask']
 ): Promise<{ value: PendingCompletionDecision } | { reason: SpaceTask }> {
   if (decision.approved) return { value: decision };
-  await reopenTask(decision.taskId);
+  const reopened = await reopenTask(decision.taskId, decision.reason);
+  if ('reasonPersisted' in reopened) return { reason: reopened.task };
   return { reason: await updateTask(decision.taskId, { approvalReason: decision.reason }) };
 }
 
