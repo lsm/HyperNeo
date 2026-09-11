@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   applyToolsPreset,
   detectToolsPreset,
+  removeScopedTool,
+  scopedToolEntries,
   ToolsEditor,
   type ToolsPresetName,
   type ToolsSelection,
@@ -376,5 +378,67 @@ describe('ToolsEditor', () => {
       }
       expectDomMatchesLegacy(container, legacy);
     }
+  });
+});
+
+describe('scoped tool entries', () => {
+  it('separates scoped entries from known tools', () => {
+    expect(scopedToolEntries(['Read', 'Bash(gh pr view:*)', 'Grep'])).toEqual([
+      'Bash(gh pr view:*)',
+    ]);
+  });
+
+  it('keeps scoped entries when a preset is applied', () => {
+    const next = applyToolsPreset('Read Only', ['Read', 'Bash(ls:*)']);
+    expect(next.tools).toEqual(['Read', 'Grep', 'Glob', 'Bash(ls:*)']);
+    expect(next.toolsOverridden).toBe(true);
+  });
+
+  it('keeps scoped entries when switching to Custom', () => {
+    const next = applyToolsPreset('Custom', ['Bash(ls:*)']);
+    expect(next.tools).toContain('Bash(ls:*)');
+  });
+
+  it('drops scoped entries when returning to inherited', () => {
+    expect(applyToolsPreset('Inherit defaults', ['Bash(ls:*)'])).toEqual({
+      tools: [],
+      toolsOverridden: false,
+    });
+  });
+
+  it('does not accumulate duplicates across repeated presets', () => {
+    const once = applyToolsPreset('Read Only', ['Read', 'Bash(ls:*)']);
+    const twice = applyToolsPreset('Read Only', once.tools);
+    expect(twice.tools.filter((tool) => tool === 'Bash(ls:*)')).toHaveLength(1);
+  });
+
+  it('removes a single scoped entry', () => {
+    const next = removeScopedTool(['Read', 'Bash(ls:*)', 'Bash(gh:*)'], 'Bash(ls:*)');
+    expect(next.tools).toEqual(['Read', 'Bash(gh:*)']);
+    expect(next.toolsOverridden).toBe(true);
+  });
+
+  it('falls back to inherited when the last entry is removed', () => {
+    expect(removeScopedTool(['Bash(ls:*)'], 'Bash(ls:*)')).toEqual({
+      tools: [],
+      toolsOverridden: false,
+    });
+  });
+
+  it('renders scoped entries and removes one on click', () => {
+    const onChange = vi.fn();
+    const { getByTestId } = render(
+      <ToolsEditor tools={['Read', 'Bash(ls:*)']} toolsOverridden={true} onChange={onChange} />
+    );
+    expect(getByTestId('tools-editor-scoped-Bash(ls:*)')).toBeTruthy();
+    fireEvent.click(getByTestId('tools-editor-scoped-remove-Bash(ls:*)'));
+    expect(onChange).toHaveBeenCalledWith({ tools: ['Read'], toolsOverridden: true });
+  });
+
+  it('shows no scoped section while tools are inherited', () => {
+    const { queryByTestId } = render(
+      <ToolsEditor tools={['Bash(ls:*)']} toolsOverridden={false} onChange={vi.fn()} />
+    );
+    expect(queryByTestId('tools-editor-scoped')).toBeNull();
   });
 });

@@ -32,14 +32,26 @@ export function detectToolsPreset(toolList: string[] | null | undefined): string
   return 'Custom';
 }
 
-export function applyToolsPreset(preset: ToolsPresetName): ToolsSelection {
+export function scopedToolEntries(tools: string[]): string[] {
+  const known = new Set<string>(KNOWN_TOOLS);
+  return tools.filter((tool) => !known.has(tool));
+}
+
+export function applyToolsPreset(preset: ToolsPresetName, keep: string[] = []): ToolsSelection {
+  const scoped = scopedToolEntries(keep);
   if (preset === 'Inherit defaults') return { tools: [], toolsOverridden: false };
   if (preset === 'Custom') {
-    return { tools: [...(KNOWN_TOOLS as readonly string[])], toolsOverridden: true };
+    return { tools: [...(KNOWN_TOOLS as readonly string[]), ...scoped], toolsOverridden: true };
   }
   const presetTools: readonly ToolName[] = TOOL_PRESETS[preset];
-  if (presetTools.length === 0) return { tools: [], toolsOverridden: false };
-  return { tools: [...presetTools], toolsOverridden: true };
+  const next = [...presetTools, ...scoped];
+  if (next.length === 0) return { tools: [], toolsOverridden: false };
+  return { tools: next, toolsOverridden: true };
+}
+
+export function removeScopedTool(tools: string[], entry: string): ToolsSelection {
+  const next = tools.filter((tool) => tool !== entry);
+  return { tools: next, toolsOverridden: next.length > 0 };
 }
 
 export function toggleKnownTool(tools: string[], tool: string): ToolsSelection {
@@ -74,7 +86,7 @@ export function ToolsEditor({ tools, toolsOverridden, onChange }: ToolsEditorPro
                 key={preset}
                 type="button"
                 data-testid={`tools-editor-preset-${preset.toLowerCase().replace(/\s+/g, '-')}`}
-                onClick={() => onChange(applyToolsPreset(preset))}
+                onClick={() => onChange(applyToolsPreset(preset, tools))}
                 class={`text-xs px-2.5 py-1 rounded border transition-colors ${
                   active
                     ? 'border-accent-hover bg-accent/20 text-accent-soft'
@@ -160,6 +172,32 @@ export function ToolsEditor({ tools, toolsOverridden, onChange }: ToolsEditorPro
           );
         })}
       </div>
+
+      {toolsOverridden && scopedToolEntries(tools).length > 0 && (
+        <div class="mt-3" data-testid="tools-editor-scoped">
+          <p class="mb-1.5 text-xs text-fg-faint">Scoped entries</p>
+          <div class="flex flex-wrap gap-1.5">
+            {scopedToolEntries(tools).map((entry) => (
+              <span
+                key={entry}
+                data-testid={`tools-editor-scoped-${entry}`}
+                class="flex items-center gap-1.5 rounded border border-line-strong px-2 py-1 font-mono text-xs text-fg-soft"
+              >
+                {entry}
+                <button
+                  type="button"
+                  aria-label={`Remove ${entry}`}
+                  data-testid={`tools-editor-scoped-remove-${entry}`}
+                  onClick={() => onChange(removeScopedTool(tools, entry))}
+                  class="text-fg-muted hover:text-danger"
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
