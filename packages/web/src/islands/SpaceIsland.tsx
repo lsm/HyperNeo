@@ -57,8 +57,8 @@ const SpaceTaskPane = lazy(() =>
   import('../components/space/SpaceTaskPane').then((m) => ({ default: m.SpaceTaskPane }))
 );
 const SpaceAgentsView = lazy(() =>
-  import('../components/space/SpaceAgentsView').then((m) => ({
-    default: m.SpaceAgentsView,
+  import('../components/space/SpaceLongHorizonAgents').then((m) => ({
+    default: m.SpaceLongHorizonAgents,
   }))
 );
 const SpaceMemories = lazy(() =>
