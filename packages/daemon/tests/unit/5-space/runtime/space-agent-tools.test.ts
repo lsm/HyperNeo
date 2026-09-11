@@ -10026,9 +10026,14 @@ describe('createSpaceAgentToolHandlers — update_task', () => {
     ctx.db.close();
   });
 
-  test.each([false, true])(
-    'dependency updates stop workflow only when unmet (met=%s)',
-    async (met) => {
+  test.each([
+    [false, false],
+    [true, false],
+    [false, true],
+    [true, true],
+  ])(
+    'dependency updates stop workflow executions and emit once only when unmet (met=%s, mixed=%s)',
+    async (met, mixed) => {
       const wf = buildSingleStepWorkflow(
         ctx.spaceId,
         ctx.workflowManager,
@@ -10087,13 +10092,13 @@ describe('createSpaceAgentToolHandlers — update_task', () => {
       const result = parseResult(
         await makeHandlers(ctx, { runtime, internalEventBus }).update_task({
           task_id: task.id,
-          title: 'Edited task',
+          ...(mixed ? { title: 'Edited task' } : {}),
           depends_on: [dependency.id],
         })
       );
       expect(result.success).toBe(true);
       expect(result.task).toMatchObject({
-        title: 'Edited task',
+        title: mixed ? 'Edited task' : 'Active task',
         dependsOn: [dependency.id],
         status: met ? 'in_progress' : 'blocked',
       });
@@ -10107,6 +10112,73 @@ describe('createSpaceAgentToolHandlers — update_task', () => {
       if (!met) expect(ctx.taskRepo.getTask(task.id)?.completedAt).toBeNull();
     }
   );
+
+  test('dependency-only updates retain raw lists, full results and audit-before-event timing', async () => {
+    const task = await ctx.taskManager.createTask({ title: 'Task', description: 'Details' });
+    const dep = await ctx.taskManager.createTask({ title: 'Dependency', description: '' });
+    const auditLogRepo = new McpAuditLogRepository(ctx.db);
+    const emitted: string[] = [];
+    const auditCounts: number[] = [];
+    const handlers = makeHandlers(ctx, {
+      auditLogRepo,
+      internalEventBus: {
+        publish: (event: string, payload: { taskId: string }) => {
+          if (event === 'space.task.updated') {
+            emitted.push(payload.taskId);
+            auditCounts.push(auditLogRepo.listByTask(task.id).length);
+          }
+          return new Promise<void>(() => {});
+        },
+      } as unknown as NonNullable<Parameters<typeof makeHandlers>[1]>['internalEventBus'],
+    });
+    for (const dependsOn of [[dep.id, dep.id], []]) {
+      const result = parseResult(
+        await handlers.update_task({ task_id: task.id, depends_on: dependsOn })
+      );
+      expect(result).toEqual({ success: true, task: ctx.taskRepo.getTask(task.id) });
+      expect((result.task as SpaceTask).dependsOn).toEqual(dependsOn);
+      expect((result.task as SpaceTask).spaceId).toBe(ctx.spaceId);
+    }
+    expect(emitted).toEqual([task.id, task.id]);
+    expect(auditCounts).toEqual([1, 2]);
+    expect(
+      auditLogRepo.listByTask(task.id).map((entry) => JSON.parse(entry.paramsSummary ?? '{}'))
+    ).toEqual(expect.arrayContaining([{ depends_on: [dep.id, dep.id] }, { depends_on: [] }]));
+  });
+
+  test('dependency-only graph failures and wrong-Space admission do not mutate or emit', async () => {
+    const task = await ctx.taskManager.createTask({ title: 'Task', description: '' });
+    const dep = await ctx.taskManager.createTask({
+      title: 'Dependency',
+      description: '',
+      dependsOn: [task.id],
+    });
+    const publish = mock(async () => {});
+    const auditLogRepo = new McpAuditLogRepository(ctx.db);
+    const handlers = makeHandlers(ctx, {
+      auditLogRepo,
+      internalEventBus: { publish } as unknown as NonNullable<
+        Parameters<typeof makeHandlers>[1]
+      >['internalEventBus'],
+    });
+    for (const dependsOn of [[task.id], ['missing-task'], [dep.id]]) {
+      const result = parseResult(
+        await handlers.update_task({ task_id: task.id, depends_on: dependsOn })
+      );
+      expect(result.success).toBe(false);
+      expect(typeof result.error).toBe('string');
+      expect(ctx.taskRepo.getTask(task.id)?.dependsOn).toEqual([]);
+    }
+    const wrongSpace = parseResult(
+      await makeHandlers(ctx, { spaceId: 'other-space' }).update_task({
+        task_id: task.id,
+        depends_on: [],
+      })
+    );
+    expect(wrongSpace.success).toBe(false);
+    expect(publish).not.toHaveBeenCalled();
+    expect(auditLogRepo.listByTask(task.id)).toEqual([]);
+  });
 
   test('updates title only', async () => {
     const created = await ctx.taskManager.createTask({
