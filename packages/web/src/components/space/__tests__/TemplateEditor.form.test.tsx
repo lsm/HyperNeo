@@ -84,7 +84,11 @@ function makeTemplate(overrides: Record<string, unknown> = {}) {
 }
 
 function renderEditor(template: Record<string, unknown> | null) {
-  return render(<TemplateEditor template={template} onSaved={vi.fn()} onCancel={vi.fn()} />);
+  const onSaved = vi.fn();
+  return {
+    onSaved,
+    ...render(<TemplateEditor template={template} onSaved={onSaved} onCancel={vi.fn()} />),
+  };
 }
 
 function fillRequiredFields(view: ReturnType<typeof renderEditor>) {
@@ -131,6 +135,14 @@ describe('TemplateEditor form', () => {
 
     await waitFor(() => expect(view.getByText('Template key is required')).toBeTruthy());
     expect(mockCreateTemplate).not.toHaveBeenCalled();
+
+    fireEvent.input(view.getByPlaceholderText('e.g. release-readiness.custom'), {
+      target: { value: 'release-readiness.custom' },
+    });
+    fireEvent.click(view.getByRole('button', { name: 'Create template' }));
+
+    await waitFor(() => expect(view.getByText('Handle is required')).toBeTruthy());
+    expect(mockCreateTemplate).not.toHaveBeenCalled();
   });
 
   it('shows the store error and keeps the form open with its values when create fails', async () => {
@@ -145,7 +157,7 @@ describe('TemplateEditor form', () => {
     await waitFor(() =>
       expect(view.getByText('Template key already exists: release-readiness.custom')).toBeTruthy()
     );
-    expect(view.getByRole('button', { name: 'Create template' })).toBeTruthy();
+    expect(view.onSaved).not.toHaveBeenCalled();
     expect((view.getByPlaceholderText('e.g. Release Readiness') as HTMLInputElement).value).toBe(
       'Release Readiness'
     );
