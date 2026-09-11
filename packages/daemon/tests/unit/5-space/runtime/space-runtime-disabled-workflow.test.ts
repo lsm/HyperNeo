@@ -236,4 +236,39 @@ describe('SpaceRuntime — disabled workflow filtering', () => {
     expect(result.tasks[0].workflowRunId).toBe(result.run.id);
     expect(workflowRunRepo.listBySpace(SPACE_ID)).toHaveLength(1);
   });
+  test('fresh runtime recovers a crash immediately after attached run commit', async () => {
+    const workflow = createWorkflow('Enabled', ['default']);
+    const task = taskRepo.createTask({ spaceId: SPACE_ID, title: 'Workflow', description: '' });
+    const run = workflowRunRepo.createPinnedRun({
+      spaceId: SPACE_ID,
+      workflowId: workflow.id,
+      title: 'Run',
+      rawWorkflow: workflow,
+      parentTaskId: task.id,
+    });
+    expect(nodeExecutionRepo.listByWorkflowRun(run.id)).toHaveLength(0);
+    const restarted = buildRuntime();
+    await restarted.recoverStalledRuns();
+    const recovered = nodeExecutionRepo.listByWorkflowRun(run.id);
+    expect(recovered).toHaveLength(1);
+    expect(recovered[0]).toMatchObject({ workflowNodeId: workflow.startNodeId, status: 'pending' });
+    await buildRuntime().recoverStalledRuns();
+    expect(nodeExecutionRepo.listByWorkflowRun(run.id)).toEqual(recovered);
+    expect(taskRepo.getTask(task.id)?.workflowRunId).toBe(run.id);
+  });
+
+  test('recovery does not seed a cancelled task after an attached-run crash', async () => {
+    const workflow = createWorkflow('Enabled', ['default']);
+    const task = taskRepo.createTask({ spaceId: SPACE_ID, title: 'Cancelled', description: '' });
+    const run = workflowRunRepo.createPinnedRun({
+      spaceId: SPACE_ID,
+      workflowId: workflow.id,
+      title: 'Run',
+      rawWorkflow: workflow,
+      parentTaskId: task.id,
+    });
+    taskRepo.updateTask(task.id, { status: 'cancelled' });
+    await buildRuntime().recoverStalledRuns();
+    expect(nodeExecutionRepo.listByWorkflowRun(run.id)).toHaveLength(0);
+  });
 });

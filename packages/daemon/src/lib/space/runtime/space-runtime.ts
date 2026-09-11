@@ -4930,18 +4930,49 @@ export class SpaceRuntime {
     run: SpaceWorkflowRun
   ): Promise<'completion-pending' | 'blocked' | 'skipped'> {
     const workflow = this.config.spaceWorkflowManager.getWorkflowForRun(run);
-    const executions = this.config.nodeExecutionRepo.listByWorkflowRun(run.id);
+    let executions = this.config.nodeExecutionRepo.listByWorkflowRun(run.id);
     if (!workflow) {
       await this.blockRunWithMissingWorkflow(run, executions);
       return 'blocked';
     }
     const space = await this.config.spaceManager.getSpace(run.spaceId);
-    if (executions.length === 0) return 'skipped';
-    if (hasDriveableExecution(executions)) return 'skipped';
 
     const tasks = this.config.taskRepo.listByWorkflowRun(run.id);
     const canonicalTask = this.pickCanonicalTaskForRun(run, tasks);
     if (canonicalTask?.status === 'stopped') return 'skipped';
+    if (executions.length === 0 && canonicalTask) {
+      this.config.reactiveDb?.beginTransaction();
+      try {
+        this.config.db.transaction(() => {
+          const currentRun = this.config.workflowRunRepo.getRun(run.id);
+          const currentTask = this.config.taskRepo.getTask(canonicalTask.id);
+          if (
+            currentRun?.status !== 'in_progress' ||
+            currentTask?.workflowRunId !== run.id ||
+            !['open', 'in_progress'].includes(currentTask.status) ||
+            this.config.nodeExecutionRepo.listByWorkflowRun(run.id).length !== 0
+          )
+            return;
+          const start = workflow.nodes.find((node) => node.id === workflow.startNodeId);
+          if (!start) return;
+          for (const agent of resolveNodeAgents(start)) {
+            this.createNodeExecutionOrIgnore({
+              workflowRunId: run.id,
+              workflowNodeId: start.id,
+              agentName: agent.name,
+              agentId: this.slotAgentId(agent),
+              status: 'pending',
+            });
+          }
+        })();
+        this.config.reactiveDb?.commitTransaction();
+      } catch (error) {
+        this.config.reactiveDb?.abortTransaction();
+        throw error;
+      }
+      executions = this.config.nodeExecutionRepo.listByWorkflowRun(run.id);
+    }
+    if (executions.length === 0 || hasDriveableExecution(executions)) return 'skipped';
 
     const completionSignalled =
       canonicalTask !== null &&
