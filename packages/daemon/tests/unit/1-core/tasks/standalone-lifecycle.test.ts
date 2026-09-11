@@ -3,6 +3,9 @@ import type { TaskCore } from '@hyperneo/shared/types/task-core';
 import {
   planStandaloneTaskTransition as decide,
   STANDALONE_TASK_STATUSES,
+  requireManualStates,
+  requireValidTransition,
+  requireCompletionResult,
   type StandaloneTaskStatus,
 } from '../../../../src/lib/tasks/standalone-lifecycle';
 import { isValidTaskTransition } from '../../../../src/lib/tasks/transitions';
@@ -125,5 +128,60 @@ describe('standalone lifecycle decisions', () => {
   test('accepts an empty completion result but rejects result edits on other transitions', () => {
     expect(planStandaloneTaskTransition(task, { status: 'done', result: '' }, 10).result).toBe('');
     expect(decide(task, { status: 'blocked', result: 'No' }, 10)).toBe('result_requires_done');
+  });
+});
+
+describe('standalone lifecycle gate decision tables', () => {
+  test.each([
+    'open',
+    'in_progress',
+    'blocked',
+    'done',
+    'cancelled',
+    'archived',
+    'draft',
+    'review',
+    'approved',
+    'rate_limited',
+    'usage_limited',
+    'stopped',
+  ] as const)('checks both manual state boundaries for %s', (status) => {
+    const allowed = STANDALONE_TASK_STATUSES.some((manual) => manual === status);
+    const input = { status: 'open' as const };
+    expect(requireManualStates({ ...task, status }, input)).toEqual(
+      allowed ? { value: input } : { reason: 'unsupported_status' }
+    );
+    const target = { status: status as StandaloneTaskStatus };
+    expect(requireManualStates(task, target)).toEqual(
+      allowed ? { value: target } : { reason: 'unsupported_status' }
+    );
+  });
+
+  test.each([
+    ['open', 'done', true],
+    ['done', 'in_progress', true],
+    ['archived', 'open', false],
+    ['open', 'open', false],
+    ['done', 'open', false],
+    ['review', 'approved', true],
+  ] as const)('checks transition %s to %s', (from, to, allowed) => {
+    const input = { status: to as StandaloneTaskStatus };
+    expect(requireValidTransition({ ...task, status: from }, input)).toEqual(
+      allowed ? { value: input } : { reason: 'invalid_transition' }
+    );
+  });
+
+  test.each([
+    ['done', undefined, true],
+    ['done', '', true],
+    ['done', 'Result', true],
+    ['open', undefined, true],
+    ['open', '', false],
+    ['cancelled', 'Result', false],
+  ] as const)('checks result for %s with %s', (status, result, allowed) => {
+    const input = { status, result };
+    expect(requireCompletionResult(input)).toEqual(
+      allowed ? { value: input } : { reason: 'result_requires_done' }
+    );
   });
 });

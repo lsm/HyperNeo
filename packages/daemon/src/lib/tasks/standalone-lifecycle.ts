@@ -26,20 +26,20 @@ export type StandaloneTaskLifecyclePatch = Pick<
 type Rejection = 'unsupported_status' | 'invalid_transition' | 'result_requires_done';
 type Gate = { value: StandaloneTaskTransitionInput } | { reason: Rejection };
 
-function requireManualStates(task: TaskCore, input: StandaloneTaskTransitionInput): Gate {
+export function requireManualStates(task: TaskCore, input: StandaloneTaskTransitionInput): Gate {
   return STANDALONE_TASK_STATUSES.some((status) => status === task.status) &&
     STANDALONE_TASK_STATUSES.includes(input.status)
     ? { value: input }
     : { reason: 'unsupported_status' };
 }
 
-function requireValidTransition(task: TaskCore, input: StandaloneTaskTransitionInput): Gate {
+export function requireValidTransition(task: TaskCore, input: StandaloneTaskTransitionInput): Gate {
   return isValidTaskTransition(task.status, input.status)
     ? { value: input }
     : { reason: 'invalid_transition' };
 }
 
-function requireCompletionResult(input: StandaloneTaskTransitionInput): Gate {
+export function requireCompletionResult(input: StandaloneTaskTransitionInput): Gate {
   return input.result === undefined || input.status === 'done'
     ? { value: input }
     : { reason: 'result_requires_done' };
