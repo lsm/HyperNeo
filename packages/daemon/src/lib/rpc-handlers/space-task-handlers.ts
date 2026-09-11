@@ -27,6 +27,10 @@ import { parkTaskExecution } from '../tasks/park-task-execution.ts';
 import { stopTaskExecution } from '../tasks/stop-task-execution.ts';
 import { createWorkflowTaskStoppingExecutor } from '../space/runtime/task-stopping-executor.ts';
 import { createWorkflowTaskParkingExecutor } from '../space/runtime/task-parking-executor.ts';
+import {
+  createBoundSpaceTaskMetadataEditor,
+  isTaskMetadataOnlyUpdate,
+} from '../space/operations/bound-task-metadata.ts';
 import { arraysEqual } from '../utils/array-utils.ts';
 
 const log = new Logger('space-task-handlers');
@@ -581,10 +585,16 @@ export function setupSpaceTaskHandlers(
         throw new Error(`Task not found: ${taskId}`);
       }
       await ensureWorkflowOverridesStillUnlocked(updateParams);
-      const dependencyUpdate = await updateTaskWithRuntimeDependencyBlock(currentTask);
-      task = dependencyUpdate.task;
-      if (dependencyUpdate.handledByRuntime) {
-        emitTaskUpdated = false;
+      if (isTaskMetadataOnlyUpdate(updateParams)) {
+        task = await createBoundSpaceTaskMetadataEditor(spaceId, taskManager, {
+          onCascadedTasks: emitCascadedTasks,
+        })({ taskId, ...updateParams }, { source: 'rpc' });
+      } else {
+        const dependencyUpdate = await updateTaskWithRuntimeDependencyBlock(currentTask);
+        task = dependencyUpdate.task;
+        if (dependencyUpdate.handledByRuntime) {
+          emitTaskUpdated = false;
+        }
       }
     }
 

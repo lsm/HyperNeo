@@ -1077,6 +1077,60 @@ describe('space-task-handlers', () => {
       });
     });
 
+    it.each(['', '  raw title  '])(
+      'preserves legacy metadata title %j and publishes once',
+      async (title) => {
+        const result = await call('spaceTask.update', {
+          spaceId: 'space-1',
+          taskId: 'task-1',
+          title,
+          labels: [],
+        });
+        expect(result).toEqual({ ...mockTask, title, labels: [] });
+        expect(taskManager.updateTask).toHaveBeenCalledTimes(1);
+        expect(taskManager.updateTask).toHaveBeenCalledWith(
+          'task-1',
+          { title, labels: [] },
+          expect.objectContaining({ onCascadedTasks: expect.any(Function) })
+        );
+        expect(internalEventBus.publish).toHaveBeenCalledTimes(1);
+        expect(internalEventBus.publish).toHaveBeenCalledWith('space.task.updated', {
+          sessionId: 'global',
+          spaceId: 'space-1',
+          taskId: 'task-1',
+          task: result,
+        });
+      }
+    );
+
+    it('preserves explicit undefined metadata fields', async () => {
+      await call('spaceTask.update', {
+        spaceId: 'space-1',
+        taskId: 'task-1',
+        description: undefined,
+      });
+      expect(taskManager.updateTask).toHaveBeenCalledWith(
+        'task-1',
+        { description: undefined },
+        expect.objectContaining({ onCascadedTasks: expect.any(Function) })
+      );
+    });
+
+    it('preserves mixed workspace metadata updates', async () => {
+      await call('spaceTask.update', {
+        spaceId: 'space-1',
+        taskId: 'task-1',
+        title: '  raw  ',
+        workspacePath: '/another',
+      });
+      expect(taskManager.updateTask).toHaveBeenCalledWith(
+        'task-1',
+        { title: '  raw  ', workspacePath: '/another' },
+        expect.objectContaining({ onCascadedTasks: expect.any(Function) })
+      );
+      expect(internalEventBus.publish).toHaveBeenCalledTimes(1);
+    });
+
     it('routes workflow-backed pause transitions through runtime cleanup', async () => {
       const activeTask = {
         ...mockTask,
