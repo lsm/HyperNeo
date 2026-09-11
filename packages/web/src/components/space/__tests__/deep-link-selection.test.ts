@@ -84,7 +84,7 @@ describe('decideDeepLink', () => {
     expect(decideDeepLink(input({ agents: [] }))).toEqual({
       kind: 'clear',
       link: KEY,
-      clearSelection: false,
+      clearSelection: true,
     });
   });
 
@@ -101,6 +101,41 @@ describe('decideDeepLink', () => {
       })
     );
     expect(decision).toEqual({ kind: 'clear', link: KEY, clearSelection: true });
+  });
+
+  it('clears the selection when navigating to a different unmatched handle', () => {
+    const decision = decideDeepLink(
+      input({
+        selectedHandle: 'ghost',
+        agents: [agent('other', 'other')],
+        state: state({
+          appliedLink: KEY,
+          appliedAgentId: 'a1',
+          handledLink: KEY,
+          selectedId: 'other',
+        }),
+      })
+    );
+    expect(decision).toEqual({
+      kind: 'clear',
+      link: deepLinkKey('space-1', 'ghost') as string,
+      clearSelection: true,
+    });
+  });
+
+  it('clears the selection when an unmatched link arrives from no link at all', () => {
+    const decision = decideDeepLink(
+      input({
+        selectedHandle: 'ghost',
+        agents: [agent('other', 'other')],
+        state: state({ selectedId: 'other' }),
+      })
+    );
+    expect(decision).toEqual({
+      kind: 'clear',
+      link: deepLinkKey('space-1', 'ghost') as string,
+      clearSelection: true,
+    });
   });
 
   it('keeps an unrelated manual selection when the applied agent disappears', () => {

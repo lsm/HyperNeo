@@ -64,11 +64,13 @@ export function gateTargetPresent(linked: LinkedRequest): DeepLinkGate<MatchedRe
   const { state } = linked.input;
   const alreadyCleared = state.handledLink === linked.link && state.appliedLink === null;
   if (alreadyCleared) return { reason: { kind: 'idle' } };
+  const isNewLink = state.handledLink !== linked.link;
+  const selectionWasLinked = state.selectedId !== null && state.selectedId === state.appliedAgentId;
   return {
     reason: {
       kind: 'clear',
       link: linked.link,
-      clearSelection: state.selectedId !== null && state.selectedId === state.appliedAgentId,
+      clearSelection: isNewLink || selectionWasLinked,
     },
   };
 }
