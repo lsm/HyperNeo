@@ -1,5 +1,13 @@
 import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager';
 import { createPendingCompletionOperation } from '../../../../src/lib/space/operations/pending-completion';
+import { createSpaceOperationRegistryProvider } from '../../../../src/lib/space/operations/registry';
+import type { Database as AppDatabase } from '../../../../src/storage/database';
+import { createStartTaskOperation } from '../../../../src/lib/space/operations/start-task';
+import { createOperationRegistry } from '../../../../src/lib/operations/registry';
+import { createOperationRpcHandler } from '../../../../src/lib/operations/rpc-adapter';
+import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-adapter';
+import { createTestSession } from '../../../helpers/database';
+import type { CallContext } from '@hyperneo/shared';
 import { JobQueueProcessor } from '../../../../src/storage/job-queue-processor';
 import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
@@ -518,4 +526,143 @@ test('review submission cannot invalidate an unactivated direct request', async 
     started: true,
     attempt: { id: reserved.id },
   });
+});
+
+test('shared start transports return one durable receipt without preparing a session', async () => {
+  const operation = createStartTaskOperation(() => db, jobs, {}, { onTaskReopened: () => {} });
+  const registry = createOperationRegistry([operation]);
+  const caller = 'member';
+  sessions.createSession(
+    { ...createTestSession(caller), context: { spaceId: tasks.getTask(taskId)!.spaceId } },
+    { enforceWorkspaceOwnership: false }
+  );
+  const invocation = { name: 'task.start', input: { taskId, requestKey: 'shared' } };
+  const rpc = createOperationRpcHandler(registry, () => ({}));
+  const accepted = await rpc(invocation, {} as CallContext);
+  expect(accepted).toMatchObject({ accepted: true, jobId: expect.any(String) });
+  expect(
+    JSON.parse(
+      (await createOperationMcpHandler(registry, () => ({ sessionId: caller }))(invocation))
+        .content[0].text
+    )
+  ).toEqual(accepted);
+  expect(count()).toBe(1);
+  expect(attempts.getActive(taskId)?.phase).toBe('reserved');
+  expect(load).not.toHaveBeenCalled();
+  expect(
+    await operation.execute({ taskId, requestKey: 'competing' }, { source: 'rpc' })
+  ).toMatchObject({ accepted: false });
+  expect(
+    operation.inputSchema.safeParse({
+      taskId,
+      requestKey: 'spoof',
+      retryFrom: { attemptId: 'foreign', generation: 1 },
+    }).success
+  ).toBe(false);
+});
+
+test.each(['missing', 'foreign', 'ended'] as const)(
+  'shared start rejects %s MCP caller without claiming',
+  async (kind) => {
+    if (kind !== 'missing')
+      sessions.createSession(
+        {
+          ...createTestSession('caller'),
+          status: kind === 'ended' ? 'ended' : 'active',
+          context: { spaceId: kind === 'foreign' ? 'other' : tasks.getTask(taskId)!.spaceId },
+        },
+        { enforceWorkspaceOwnership: false }
+      );
+    const operation = createStartTaskOperation(() => db, jobs, {}, { onTaskReopened: () => {} });
+    expect(
+      await operation.execute(
+        { taskId, requestKey: 'denied' },
+        { source: 'mcp', sessionId: 'caller' }
+      )
+    ).toMatchObject({ accepted: false });
+    expect(attempts.getActive(taskId)).toBeNull();
+    expect(count()).toBe(0);
+  }
+);
+
+test.each(['blocked', 'cancelled', 'stopped'] as const)(
+  'shared start derives verified %s retry identity and replays its receipt',
+  async (status) => {
+    const initial = await start({ taskId, requestKey: 'initial' });
+    if (!initial.started) throw new Error(initial.reason);
+    let cached = {
+      getSessionData: () => sessions.getSession(initial.attempt.sessionId)!,
+      getProcessingState: () => ({ status: 'idle' }),
+      isInterruptInProgress: () => false,
+      getTrackedAgentRootPidsSplit: () => ({ live: [], exited: [] }),
+      handleInterrupt: async () => {},
+      cleanup: async () => {},
+    } as unknown as AgentSession | null;
+    const owner = Object.assign(Object.create(SessionManager.prototype), {
+      directStopVerificationJobs: new Map(),
+    }) as SessionManager;
+    const finalized = await createDirectTaskFinalizer({
+      db,
+      sessionManager: {
+        coalesceDirectStopVerification: owner.coalesceDirectStopVerification.bind(owner),
+        getCachedSession: () => cached,
+        isSessionLoading: () => false,
+        unregisterSession: async () => {
+          cached = null;
+        },
+      },
+    })({
+      attemptId: initial.attempt.id,
+      sessionId: initial.attempt.sessionId,
+      generation: initial.attempt.generation,
+      status,
+    });
+    expect(finalized.finalized).toBe(true);
+    const reopened = mock(() => {});
+    const operation = createStartTaskOperation(() => db, jobs, {}, { onTaskReopened: reopened });
+    const input = { taskId, requestKey: 'retry' };
+    const accepted = await operation.execute(input, { source: 'rpc' });
+    expect(accepted).toMatchObject({ accepted: true, jobId: expect.any(String) });
+    const next = attempts.getActive(taskId)!;
+    expect(next.generation).toBe(initial.attempt.generation + 1);
+    expect(readDirectStartRequest(db, next.id)?.input.retryFrom).toEqual({
+      attemptId: initial.attempt.id,
+      generation: initial.attempt.generation,
+    });
+    expect(await operation.execute(input, { source: 'rpc' })).toEqual(accepted);
+    expect(reopened).toHaveBeenCalledTimes(1);
+  }
+);
+
+test('configured start capability is lazy and requires bound lifecycle callbacks', async () => {
+  const getDatabase = mock(() => db);
+  const database = { getDatabase, notifyChange: () => {} } as unknown as AppDatabase;
+  const dependencies = {
+    getSession: (id: string) => sessions.getSession(id),
+    getTaskManager: (id: string) => new SpaceTaskManager(db, id),
+    taskRepo: tasks,
+    notifyStandalone: () => {},
+    emitTaskUpdated: async () => {},
+    blockExecution: async () => {
+      throw new Error('unexpected workflow');
+    },
+  };
+  expect(
+    createSpaceOperationRegistryProvider(database, jobs, dependencies)().get('task.start')
+  ).toBeUndefined();
+  const provider = createSpaceOperationRegistryProvider(database, jobs, dependencies, undefined, {
+    onTaskReopened: () => {},
+  });
+  const rpc = createOperationRpcHandler(provider, () => ({}));
+  expect(
+    await rpc({ name: 'operations.describe', input: { name: 'task.start' } }, {} as CallContext)
+  ).toMatchObject({ found: true });
+  expect(getDatabase).not.toHaveBeenCalled();
+  expect(
+    await rpc(
+      { name: 'task.start', input: { taskId, requestKey: 'configured' } },
+      {} as CallContext
+    )
+  ).toMatchObject({ accepted: true });
+  expect(load).not.toHaveBeenCalled();
 });
