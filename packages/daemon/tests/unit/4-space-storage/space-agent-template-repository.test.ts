@@ -402,4 +402,31 @@ describe('SpaceAgentTemplateRepository — Space-scoped methods', () => {
 
     expect(repo.listOwned('space-a').map((t) => t.key)).toEqual(['Z.one', '_.one', 'a.one']);
   });
+  test('ordering matches SQLite for keys outside the basic plane', () => {
+    const at = 7_000;
+    for (const key of ['\u{10000}.one', '\ue000.one']) {
+      db.prepare(
+        `INSERT INTO space_agent_templates
+           (space_id, key, handle, display_name, description, instructions,
+            suggested_autonomy_level, created_at, updated_at, version)
+         VALUES ('space-a', ?, 'h', 'H', '', '', 2, ?, ?, 1)`
+      ).run(key, at, at);
+    }
+
+    const viaSql = (
+      db
+        .prepare(
+          `SELECT key FROM space_agent_templates WHERE space_id = 'space-a' AND created_at = ?
+            ORDER BY created_at ASC, key ASC`
+        )
+        .all(at) as Array<{ key: string }>
+    ).map((row) => row.key);
+
+    expect(
+      repo
+        .listOwned('space-a')
+        .filter((t) => t.key.endsWith('.one'))
+        .map((t) => t.key)
+    ).toEqual(viaSql);
+  });
 });

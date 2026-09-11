@@ -238,27 +238,17 @@ export class SpaceAgentTemplateRepository {
   }
 
   private ownedRows(spaceId: string): Record<string, unknown>[] {
-    const rows = this.db
+    return this.db
       .prepare(
-        `SELECT * FROM space_agent_templates
-          WHERE space_id IN (?, ?)
-          ORDER BY created_at ASC, key ASC`
+        `SELECT t.* FROM space_agent_templates t
+          WHERE t.space_id IN (?1, ?2)
+            AND t.space_id = (
+              SELECT MAX(shadow.space_id) FROM space_agent_templates shadow
+               WHERE shadow.key = t.key AND shadow.space_id IN (?1, ?2)
+            )
+          ORDER BY t.created_at ASC, t.key ASC`
       )
       .all(spaceId, OWNERSHIP_MIGRATION_SENTINEL) as Record<string, unknown>[];
-    const byKey = new Map<string, Record<string, unknown>>();
-    for (const row of rows) {
-      const key = row.key as string;
-      const existing = byKey.get(key);
-      if (!existing || row.space_id !== OWNERSHIP_MIGRATION_SENTINEL) byKey.set(key, row);
-    }
-    return [...byKey.values()].sort((a, b) => {
-      const byCreatedAt = (a.created_at as number) - (b.created_at as number);
-      if (byCreatedAt !== 0) return byCreatedAt;
-      const left = a.key as string;
-      const right = b.key as string;
-      if (left === right) return 0;
-      return left < right ? -1 : 1;
-    });
   }
 
   private nextVersionFor(key: string): number {
