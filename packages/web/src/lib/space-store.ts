@@ -2481,10 +2481,12 @@ class SpaceStore {
       'spaceAgent.deleteTemplate',
       expectedVersion === undefined ? { key, spaceId } : { key, spaceId, expectedVersion }
     );
-    this.agentTemplates.value = this.agentTemplates.value.filter((t) => t.key !== key);
-    this.userTemplateKeys.value = new Set(
-      [...this.userTemplateKeys.value].filter((existing) => existing !== key)
-    );
+    if (this.spaceId.value === spaceId) {
+      this.agentTemplates.value = this.agentTemplates.value.filter((t) => t.key !== key);
+      this.userTemplateKeys.value = new Set(
+        [...this.userTemplateKeys.value].filter((existing) => existing !== key)
+      );
+    }
     try {
       await this.refreshTemplateLibrary(hub);
     } catch (err) {

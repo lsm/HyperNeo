@@ -167,10 +167,10 @@ describe('withRunTemplateSnapshots', () => {
 describe('createAgentTemplateResolver', () => {
   test('prefers built-in templates over stored templates with the same key', () => {
     const stored = {
-      getByKey: (key: string) =>
+      getByKey: (_spaceId: string, key: string) =>
         key === 'worker.custom' ? template({ instructions: 'stored copy' }) : null,
     };
-    const resolve = createAgentTemplateResolver(stored);
+    const resolve = createAgentTemplateResolver('space-1', stored);
 
     const builtIn = resolve('worker.swe');
     expect(builtIn?.key).toBe('worker.swe');
@@ -183,7 +183,7 @@ describe('createAgentTemplateResolver', () => {
   });
 
   test('resolves built-ins when no template repository is provided', () => {
-    const resolve = createAgentTemplateResolver();
+    const resolve = createAgentTemplateResolver('space-1');
 
     expect(resolve('worker.swe')?.key).toBe('worker.swe');
     expect(resolve('worker.unheard-of')).toBeNull();
