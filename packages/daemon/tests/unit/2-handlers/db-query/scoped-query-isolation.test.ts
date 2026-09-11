@@ -5,7 +5,7 @@ import { runScopedQuery } from '../../../../src/lib/db-query/scoped-query.ts';
 function makeDb(): Database {
   const db = new Database(':memory:');
   db.exec(`
-    CREATE TABLE tasks (id TEXT, room_id TEXT, title TEXT, restrictions TEXT, created_at INTEGER,
+    CREATE TABLE tasks (id TEXT PRIMARY KEY, room_id TEXT, title TEXT, restrictions TEXT, created_at INTEGER,
       norm TEXT GENERATED ALWAYS AS (COALESCE(title, '')) VIRTUAL);
     CREATE INDEX idx_tasks_room ON tasks(room_id);
     CREATE INDEX idx_tasks_hidden ON tasks (json_extract(restrictions, '$.x'));
@@ -100,6 +100,30 @@ describe('runScopedQuery — the scratch database is the security boundary', () 
     expect(() =>
       run(db, 'SELECT id FROM tasks INDEXED BY idx_tasks_room WHERE room_id = ?', ['room-1'])
     ).not.toThrow();
+    db.close();
+  });
+
+  it('keeps scanning the table list after a parenthesized factor', () => {
+    const db = makeDb();
+    const rows = run(db, 'SELECT * FROM (tasks), goals').rows;
+
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.every((r) => r.room_id === 'room-1' && r['room_id:1'] === 'room-1')).toBe(true);
+    db.close();
+  });
+
+  it('refuses connection-state functions, whose values would report the scratch copy', () => {
+    const db = makeDb();
+
+    expect(() => run(db, 'SELECT changes() AS c FROM tasks')).toThrow(/connection state/);
+    expect(() => run(db, 'SELECT last_insert_rowid() AS r FROM tasks')).toThrow(/connection state/);
+    db.close();
+  });
+
+  it('recreates automatic primary-key indexes under their original names', () => {
+    const db = makeDb();
+
+    expect(() => run(db, 'SELECT id FROM tasks INDEXED BY sqlite_autoindex_tasks_1')).not.toThrow();
     db.close();
   });
 

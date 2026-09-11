@@ -318,6 +318,7 @@ function consumeCommaTableList(
       continue;
     }
     probe = skipWhitespace(sql, pos);
+    while (sql[probe] === ')') probe = skipWhitespace(sql, probe + 1);
     if (sql[probe] !== ',') return pos;
     const next = recordTableRef(sql, probe + 1, exclude, refs, spans);
     if (next === null) return pos;
@@ -331,7 +332,7 @@ export interface TableRefSpan {
   end: number;
 }
 
-function maskCommentsAndStrings(sql: string): string {
+export function maskCommentsAndStrings(sql: string): string {
   const out = sql.split('');
   const len = sql.length;
   let i = 0;

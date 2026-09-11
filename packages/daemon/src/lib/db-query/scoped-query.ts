@@ -1,6 +1,6 @@
 import { Database } from '../../storage/sqlite-compat.ts';
 import { type DbScopeType, type ScopeTableConfig, getScopeConfig } from './scope-config.ts';
-import { validateSql } from './sql-validator.ts';
+import { maskCommentsAndStrings, validateSql } from './sql-validator.ts';
 
 export const DEFAULT_LIMIT = 200;
 export const MAX_LIMIT = 1000;
@@ -133,6 +133,16 @@ function enableBigInts(stmt: unknown): void {
   s.setReadBigInts?.(true);
 }
 
+const CONNECTION_STATE_FUNCTIONS = /\b(?:changes|total_changes|last_insert_rowid)\s*\(/i;
+
+function assertNoConnectionState(sql: string): void {
+  if (CONNECTION_STATE_FUNCTIONS.test(maskCommentsAndStrings(sql))) {
+    throw new Error(
+      'Query cannot be scoped: changes(), total_changes() and last_insert_rowid() report connection state, which is not meaningful for a scoped read'
+    );
+  }
+}
+
 function normalizeBigInts(row: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(row)) {
@@ -144,6 +154,40 @@ function normalizeBigInts(row: Record<string, unknown>): Record<string, unknown>
     out[key] = Number.isSafeInteger(asNumber) ? asNumber : value.toString();
   }
   return out;
+}
+
+function constraintClauses(
+  source: Database,
+  config: ScopeTableConfig,
+  present: Set<string>
+): string[] {
+  const clauses: string[] = [];
+  const info = source.query(`PRAGMA table_xinfo(${quoteIdent(config.tableName)})`).all() as Array<{
+    name: string;
+    pk: number;
+  }>;
+  const pk = info
+    .filter((c) => c.pk > 0)
+    .sort((a, b) => a.pk - b.pk)
+    .map((c) => c.name);
+  if (pk.length > 0 && pk.every((c) => present.has(c))) {
+    clauses.push(`PRIMARY KEY (${pk.map(quoteIdent).join(', ')})`);
+  }
+
+  const indexes = source
+    .query(`PRAGMA index_list(${quoteIdent(config.tableName)})`)
+    .all() as Array<{ name: string; origin: string }>;
+  for (const index of [...indexes].reverse()) {
+    if (index.origin !== 'u') continue;
+    const columns = (
+      source.query(`PRAGMA index_info(${quoteIdent(index.name)})`).all() as Array<{ name: string }>
+    ).map((c) => c.name);
+    if (columns.length > 0 && columns.every((c) => present.has(c))) {
+      clauses.push(`UNIQUE (${columns.map(quoteIdent).join(', ')})`);
+    }
+  }
+
+  return clauses;
 }
 
 function copySourceIndexes(
@@ -216,7 +260,8 @@ function materializeScopedTable(
   const declaration = columns
     .map((c) => (c.type ? `${quoteIdent(c.name)} ${c.type}` : quoteIdent(c.name)))
     .join(', ');
-  scratch.exec(`CREATE TABLE ${table} (${declaration})`);
+  const constraints = constraintClauses(source, config, new Set(names));
+  scratch.exec(`CREATE TABLE ${table} (${[declaration, ...constraints].join(', ')})`);
   copySourceIndexes(source, scratch, config.tableName, names[0]);
   if (rows.length === 0) return;
 
@@ -259,6 +304,8 @@ export function runScopedQuery(
       throw new Error(`Table "${tableRef}" is not accessible in ${scopeType} scope`);
     }
   }
+
+  assertNoConnectionState(sql);
 
   const cappedLimit = Math.min(limit ?? DEFAULT_LIMIT, MAX_LIMIT);
   const { sql: strippedSql, userLimit: existingLimit } = stripLimit(sql);
