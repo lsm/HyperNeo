@@ -12,7 +12,10 @@ import {
 import { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
 import { prepareSpaceTaskStatusUpdate } from '../managers/task-status-preparation.ts';
-import { assertValidTaskTransition } from '../../tasks/transitions.ts';
+import {
+  assertValidTaskTransition,
+  assertQueuedTaskRetryTransition,
+} from '../../tasks/transitions.ts';
 import { buildCustomAgentTaskMessage } from '../agents/custom-agent.ts';
 import { resolveTaskWorkspace } from './spawn-slot-resolution.ts';
 import {
@@ -31,6 +34,7 @@ export interface DirectTaskStartInput {
   taskId: string;
   requestKey: string;
   retryFrom?: { attemptId: string; generation: number };
+  reviewRejection?: { expectedPendingCompletionGeneration: number; reason?: string | null };
 }
 export type DirectTaskStartResult =
   | { started: true; attempt: DirectTaskAttempt }
@@ -43,9 +47,20 @@ function claimDirectStart(
   onTaskReopened?: (taskId: string) => void
 ): { value: DirectTaskAttempt } | { reason: DirectTaskStartResult } {
   const unavailable = { reason: { started: false as const, reason: 'direct_start_unavailable' } };
-  if (!input.requestKey.trim()) return unavailable;
+  if (!input.requestKey.trim() || (input.reviewRejection && !input.retryFrom)) return unavailable;
   const id = createHash('sha256')
-    .update(JSON.stringify([input.taskId, input.requestKey]))
+    .update(
+      JSON.stringify(
+        input.reviewRejection
+          ? [
+              input.taskId,
+              input.requestKey,
+              input.reviewRejection.expectedPendingCompletionGeneration,
+              input.reviewRejection.reason ?? null,
+            ]
+          : [input.taskId, input.requestKey]
+      )
+    )
     .digest('hex');
   const attemptId = `direct-${id}`;
   const sessionId = `${attemptId}:session`;
@@ -107,19 +122,35 @@ function claimDirectStart(
             !finalization ||
             finalization.generation !== previous.generation ||
             finalization.status !== task.status ||
-            !['blocked', 'cancelled', 'stopped'].includes(task.status) ||
+            !(input.reviewRejection
+              ? task.status === 'review' &&
+                task.pendingCheckpointType === 'task_completion' &&
+                task.pendingCompletionGeneration ===
+                  input.reviewRejection.expectedPendingCompletionGeneration
+              : ['blocked', 'cancelled', 'stopped'].includes(task.status)) ||
             tasks.getLifecycleGeneration(task.id) !== finalization.lifecycleGeneration + 1 ||
             task.taskAgentSessionId !== previous.sessionId
           )
             return unavailable;
-          assertValidTaskTransition(task.status, 'open');
+          assertQueuedTaskRetryTransition(task.status);
           const { updates, reopened } = prepareSpaceTaskStatusUpdate(
             task,
             'open',
             undefined,
             Date.now()
           );
-          task = tasks.updateTask(task.id, { ...updates, taskAgentSessionId: null }, task.status);
+          task = tasks.updateTask(
+            task.id,
+            {
+              ...updates,
+              taskAgentSessionId: null,
+              ...(input.reviewRejection
+                ? { approvalReason: input.reviewRejection.reason ?? null }
+                : {}),
+            },
+            task.status,
+            input.reviewRejection?.expectedPendingCompletionGeneration
+          );
           if (!task) throw new Error('Direct retry lost its atomic reopen');
           if (reopened) reopenedTaskId = task.id;
         }

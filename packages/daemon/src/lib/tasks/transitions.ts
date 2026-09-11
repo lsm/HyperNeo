@@ -56,3 +56,8 @@ export function assertValidTaskTransition(
     );
   }
 }
+
+export function assertQueuedTaskRetryTransition(from: TaskLifecycleStatus): void {
+  if (from === 'review') return;
+  assertValidTaskTransition(from, 'open');
+}

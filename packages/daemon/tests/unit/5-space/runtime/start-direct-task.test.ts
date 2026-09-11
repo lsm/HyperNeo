@@ -272,7 +272,7 @@ test('rejected activation retains a preexisting frozen intent without renewing i
   expect(readDirectKickoffIntent(db, attempt.id)).toEqual(recorded.entry);
 });
 
-async function finalizedAttempt(status: 'blocked' | 'cancelled' | 'stopped') {
+async function finalizedAttempt(status: 'blocked' | 'cancelled' | 'stopped' | 'review') {
   const started = await start({ taskId, requestKey });
   if (!started.started) throw new Error(started.reason);
   let cached = {
@@ -393,4 +393,123 @@ test('reopen bookkeeping failure rolls back the new owner and task changes', asy
   expect(tasks.getTask(taskId)).toEqual(previous);
   expect(attempts.getActive(taskId)).toBeNull();
   expect(mailCount()).toBe(1);
+});
+
+async function reviewRetryRequest(reason: string | null = '  Please revise  ') {
+  const retryFrom = await finalizedAttempt('review');
+  return {
+    taskId,
+    requestKey: 'review-retry',
+    retryFrom,
+    reviewRejection: {
+      expectedPendingCompletionGeneration: tasks.getTask(taskId)!.pendingCompletionGeneration!,
+      reason,
+    },
+  };
+}
+test('review rejection consumes exact checkpoint, preserves raw reason and starts one new attempt', async () => {
+  const request = await reviewRetryRequest();
+  tasks.updateTask(taskId, {
+    result: 'Rejected result',
+    reportedSummary: 'Rejected summary',
+    approvalSource: 'human',
+    approvedAt: 123,
+    postApprovalSourceNodeId: 'old-node',
+  });
+  const result = await start(request);
+  expect(result.started).toBe(true);
+  expect(tasks.getTask(taskId)).toMatchObject({
+    status: 'in_progress',
+    pendingCheckpointType: null,
+    pendingCompletionSubmittedAt: null,
+    pendingCompletionReason: null,
+    approvalReason: '  Please revise  ',
+    result: null,
+    reportedSummary: null,
+    approvalSource: null,
+    approvedAt: null,
+    postApprovalSourceNodeId: null,
+  });
+  expect(await start(request)).toEqual(result);
+  expect(
+    (
+      await start({
+        ...request,
+        reviewRejection: { ...request.reviewRejection, reason: 'Changed' },
+      })
+    ).started
+  ).toBe(false);
+  expect(mailCount()).toBe(2);
+  expect(onTaskReopened).not.toHaveBeenCalled();
+});
+test('approval winning before rejection preserves approved review and stopped owner', async () => {
+  const request = await reviewRetryRequest();
+  const approved = tasks.updateTask(
+    taskId,
+    { status: 'approved' },
+    'review',
+    request.reviewRejection.expectedPendingCompletionGeneration
+  );
+  expect(approved).not.toBeNull();
+  expect((await start(request)).started).toBe(false);
+  expect(tasks.getTask(taskId)?.status).toBe('approved');
+  expect(attempts.getActive(taskId)).toBeNull();
+  expect(mailCount()).toBe(1);
+});
+test('rejection reserves before load and makes competing approval lose its CAS', async () => {
+  const request = await reviewRetryRequest();
+  getSessionForControl.mockImplementationOnce(async (id) => {
+    expect(
+      tasks.updateTask(
+        taskId,
+        { status: 'approved' },
+        'review',
+        request.reviewRejection.expectedPendingCompletionGeneration
+      )
+    ).toBeNull();
+    return {
+      getSessionData: () => sessions.getSession(id)!,
+      isQueryActiveOrStarting: () => false,
+    } as AgentSession;
+  });
+  expect((await start(request)).started).toBe(true);
+  expect(mailCount()).toBe(2);
+});
+test('stale review generation cannot consume a resubmitted checkpoint', async () => {
+  const request = await reviewRetryRequest();
+  tasks.updateTask(taskId, {
+    pendingCheckpointType: 'task_completion',
+    pendingCompletionReason: 'New submission',
+    status: 'review',
+  });
+  expect((await start(request)).started).toBe(false);
+  expect(tasks.getTask(taskId)).toMatchObject({
+    status: 'review',
+    pendingCompletionReason: 'New submission',
+  });
+  expect(attempts.getActive(taskId)).toBeNull();
+});
+test('failed review retry claim restores checkpoint and raw reason', async () => {
+  const request = await reviewRetryRequest();
+  const before = tasks.getTask(taskId);
+  db.exec(
+    "CREATE TRIGGER reject_review_retry BEFORE INSERT ON direct_task_execution_attempts BEGIN SELECT RAISE(ABORT, 'reject review retry'); END"
+  );
+  await expect(start(request)).rejects.toThrow('reject review retry');
+  expect(tasks.getTask(taskId)).toEqual(before);
+  expect(attempts.getActive(taskId)).toBeNull();
+});
+test('review rejection retry after a failed load resumes reserved ownership and does not consume another generation', async () => {
+  const request = await reviewRetryRequest(null);
+  getSessionForControl.mockResolvedValueOnce(null);
+  expect((await start(request)).started).toBe(false);
+  const reserved = attempts.getActive(taskId)!;
+  const generation = tasks.getTask(taskId)?.pendingCompletionGeneration;
+  expect(tasks.getTask(taskId)).toMatchObject({
+    status: 'open',
+    approvalReason: null,
+    pendingCheckpointType: null,
+  });
+  expect(await start(request)).toMatchObject({ started: true, attempt: { id: reserved.id } });
+  expect(tasks.getTask(taskId)?.pendingCompletionGeneration).toBe(generation);
 });
