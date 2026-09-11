@@ -836,6 +836,61 @@ describe('createSpaceAgentMcpServer — agent/goal/Forge tool schema extraction 
   });
 });
 
+describe('createSpaceAgentToolHandlers — template change events', () => {
+  let ctx: TestCtx;
+  beforeEach(() => {
+    ctx = makeCtx();
+  });
+  afterEach(() => {
+    ctx.db.close();
+  });
+
+  function makeEventingHandlers() {
+    const publish = mock(async () => ({ delivered: 0, failures: [] }));
+    const handlers = makeHandlers(ctx, {
+      templateManager: new SpaceAgentTemplateManager(new SpaceAgentTemplateRepository(ctx.db)),
+      getSpaceAutonomyLevel: async () => 4,
+      internalEventBus: { publish } as unknown as Parameters<
+        typeof createSpaceAgentToolHandlers
+      >[0]['internalEventBus'],
+    });
+    const events = () =>
+      publish.mock.calls.filter((c: unknown[]) => String(c[0]).startsWith('spaceAgentTemplate.'));
+    return { handlers, events };
+  }
+
+  test('publishes created when an agent adds a template', async () => {
+    const { handlers, events } = makeEventingHandlers();
+    await handlers.create_agent_template({ key: 'reviewer.custom', handle: 'reviewer' });
+
+    const published = events();
+    expect(published).toHaveLength(1);
+    expect(published[0][0]).toBe('spaceAgentTemplate.created');
+    expect((published[0][1] as { spaceId: string }).spaceId).toBe(ctx.spaceId);
+  });
+
+  test('publishes updated and deleted through the agent tools', async () => {
+    const { handlers, events } = makeEventingHandlers();
+    await handlers.create_agent_template({ key: 'reviewer.custom', handle: 'reviewer' });
+    await handlers.update_agent_template({ key: 'reviewer.custom', display_name: 'Rev' });
+    await handlers.delete_agent_template({ key: 'reviewer.custom' });
+
+    expect(events().map((c) => c[0])).toEqual([
+      'spaceAgentTemplate.created',
+      'spaceAgentTemplate.updated',
+      'spaceAgentTemplate.deleted',
+    ]);
+  });
+
+  test('publishes nothing when the mutation is rejected', async () => {
+    const { handlers, events } = makeEventingHandlers();
+    const result = parseResult(await handlers.delete_agent_template({ key: 'never.existed' }));
+
+    expect(result.success).toBe(false);
+    expect(events()).toHaveLength(0);
+  });
+});
+
 describe('createSpaceAgentToolHandlers — create_agent_template', () => {
   let ctx: TestCtx;
   beforeEach(() => {

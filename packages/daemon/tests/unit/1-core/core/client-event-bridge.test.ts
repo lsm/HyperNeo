@@ -143,7 +143,7 @@ describe('ClientEventBridge', () => {
       bridge.start();
       bridge.start();
 
-      expect(eventHandlers.size).toBe(30);
+      expect(eventHandlers.size).toBe(33);
     });
   });
 
@@ -154,7 +154,7 @@ describe('ClientEventBridge', () => {
       bridge.start();
       bridge.stop();
 
-      expect(unsubscribers.length).toBe(31);
+      expect(unsubscribers.length).toBe(34);
     });
   });
 

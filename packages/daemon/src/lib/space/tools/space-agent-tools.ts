@@ -56,6 +56,11 @@ import {
   publishUnifiedAgentCreated,
   publishUnifiedAgentUpdated,
 } from '../agents/unified-agent-events.ts';
+import {
+  publishTemplateCreated,
+  publishTemplateDeleted,
+  publishTemplateUpdated,
+} from '../agents/template-events.ts';
 import { MIGRATED_WORKER_TEMPLATE_KEY } from '../agents/worker-long-horizon-mapper.ts';
 import { formatAgentMessage } from '../agent-message-envelope.ts';
 import {
@@ -2056,6 +2061,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         }
         const result = await requireTemplateManager().createIn(spaceId, params);
         if (!result.ok) return jsonResult({ success: false, error: result.error });
+        await publishTemplateCreated(internalEventBus, spaceId, result.value);
         logAudit('create_agent_template', { key: args.key, from_agent_id: args.from_agent_id });
         return jsonResult({ success: true, template: result.value });
       } catch (err) {
@@ -2102,6 +2108,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             error: `Template "${args.key}" was modified concurrently${expected}; re-check the template and retry with its current version`,
           });
         }
+        await publishTemplateUpdated(internalEventBus, spaceId, result.value);
         logAudit('update_agent_template', {
           key: args.key,
           expected_version: args.expected_version,
@@ -2126,6 +2133,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         await requireSessionWriteAutonomy('delete_agent_template');
         const result = requireTemplateManager().deleteIn(spaceId, args.key, args.expected_version);
         if (!result.ok) return jsonResult({ success: false, error: result.error });
+        await publishTemplateDeleted(internalEventBus, spaceId, args.key);
         logAudit('delete_agent_template', { key: args.key, version: args.expected_version });
         return jsonResult({ success: true, deleted: args.key });
       } catch (err) {

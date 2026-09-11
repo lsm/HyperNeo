@@ -6,47 +6,41 @@ const log = new Logger('template-events');
 
 type TemplateEventBus = InternalEventBus<DaemonInternalEventMap> | undefined;
 
-export async function publishTemplateCreated(
-  internalEventBus: TemplateEventBus,
+async function emit(
+  bus: TemplateEventBus,
+  event: 'spaceAgentTemplate.created' | 'spaceAgentTemplate.updated',
   spaceId: string,
   template: SpaceAgentTemplate
 ): Promise<void> {
-  if (!internalEventBus) return;
-  await internalEventBus
-    .publish('spaceAgentTemplate.created', {
-      sessionId: `space:${spaceId}`,
-      spaceId,
-      template,
-    })
-    .catch((err) => {
-      log.warn('Failed to emit spaceAgentTemplate.created:', err);
-    });
+  if (!bus) return;
+  await bus.publish(event, { sessionId: `space:${spaceId}`, spaceId, template }).catch((err) => {
+    log.warn(`Failed to emit ${event}:`, err);
+  });
 }
 
-export async function publishTemplateUpdated(
-  internalEventBus: TemplateEventBus,
+export function publishTemplateCreated(
+  bus: TemplateEventBus,
   spaceId: string,
   template: SpaceAgentTemplate
 ): Promise<void> {
-  if (!internalEventBus) return;
-  await internalEventBus
-    .publish('spaceAgentTemplate.updated', {
-      sessionId: `space:${spaceId}`,
-      spaceId,
-      template,
-    })
-    .catch((err) => {
-      log.warn('Failed to emit spaceAgentTemplate.updated:', err);
-    });
+  return emit(bus, 'spaceAgentTemplate.created', spaceId, template);
+}
+
+export function publishTemplateUpdated(
+  bus: TemplateEventBus,
+  spaceId: string,
+  template: SpaceAgentTemplate
+): Promise<void> {
+  return emit(bus, 'spaceAgentTemplate.updated', spaceId, template);
 }
 
 export async function publishTemplateDeleted(
-  internalEventBus: TemplateEventBus,
+  bus: TemplateEventBus,
   spaceId: string,
   key: string
 ): Promise<void> {
-  if (!internalEventBus) return;
-  await internalEventBus
+  if (!bus) return;
+  await bus
     .publish('spaceAgentTemplate.deleted', { sessionId: `space:${spaceId}`, spaceId, key })
     .catch((err) => {
       log.warn('Failed to emit spaceAgentTemplate.deleted:', err);
