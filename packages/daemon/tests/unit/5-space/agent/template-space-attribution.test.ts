@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  attributeTemplate,
+  claimBySoleSpace,
+  claimBySynthesis,
+  claimByWorkflowSlot,
   planTemplateSpaceAssignments,
   type TemplateAttributionInputs,
 } from '../../../../src/lib/space/agents/template-space-attribution.ts';
@@ -7,6 +11,68 @@ import {
 function inputs(overrides: Partial<TemplateAttributionInputs> = {}): TemplateAttributionInputs {
   return { templates: [], agents: [], workflowSlots: [], spaceIds: [], ...overrides };
 }
+
+function unclaimed(
+  overrides: {
+    synthesizedFromSpaces?: string[];
+    workflowSlotSpaces?: string[];
+    spaceIds?: string[];
+  } = {}
+) {
+  return {
+    evidence: {
+      synthesizedFromSpaces: overrides.synthesizedFromSpaces ?? [],
+      workflowSlotSpaces: overrides.workflowSlotSpaces ?? [],
+    },
+    spaceIds: overrides.spaceIds ?? [],
+  };
+}
+
+describe('rung stages', () => {
+  test('claimBySynthesis passes the template on when there is no provenance', () => {
+    const input = unclaimed();
+    expect(claimBySynthesis(input)).toEqual({ value: input });
+  });
+
+  test('claimBySynthesis claims the template when provenance exists', () => {
+    expect(claimBySynthesis(unclaimed({ synthesizedFromSpaces: ['sp1'] }))).toEqual({
+      reason: { spaceIds: ['sp1'], rung: 'synthesized-from-agent' },
+    });
+  });
+
+  test('claimByWorkflowSlot claims every referencing Space', () => {
+    expect(claimByWorkflowSlot(unclaimed({ workflowSlotSpaces: ['sp1', 'sp2'] }))).toEqual({
+      reason: { spaceIds: ['sp1', 'sp2'], rung: 'workflow-slot-reference' },
+    });
+  });
+
+  test('claimBySoleSpace claims only when exactly one Space exists', () => {
+    expect(claimBySoleSpace(unclaimed({ spaceIds: ['only'] }))).toEqual({
+      reason: { spaceIds: ['only'], rung: 'sole-space' },
+    });
+    const many = unclaimed({ spaceIds: ['sp1', 'sp2'] });
+    expect(claimBySoleSpace(many)).toEqual({ value: many });
+  });
+
+  test('attributeTemplate falls through to unattributed when no rung claims it', () => {
+    expect(attributeTemplate(unclaimed({ spaceIds: ['sp1', 'sp2'] }))).toEqual({
+      spaceIds: [],
+      rung: 'unattributed',
+    });
+  });
+
+  test('attributeTemplate keeps first-match ordering across rungs', () => {
+    expect(
+      attributeTemplate(
+        unclaimed({
+          synthesizedFromSpaces: ['origin'],
+          workflowSlotSpaces: ['borrower'],
+          spaceIds: ['origin', 'borrower'],
+        })
+      )
+    ).toEqual({ spaceIds: ['origin'], rung: 'synthesized-from-agent' });
+  });
+});
 
 describe('planTemplateSpaceAssignments', () => {
   test('assigns a synthesized template to the Space of its source agent', () => {

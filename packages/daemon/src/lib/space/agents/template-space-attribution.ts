@@ -1,3 +1,4 @@
+import superpipe, { type PipelineAPI } from 'superpipe';
 import {
   collectTemplateOwnershipEvidence,
   type TemplateOwnershipEvidence,
@@ -10,10 +11,18 @@ export type TemplateAttributionRung =
   | 'sole-space'
   | 'unattributed';
 
-export interface TemplateAssignment {
-  key: string;
+export interface TemplateRungClaim {
   spaceIds: string[];
   rung: TemplateAttributionRung;
+}
+
+export interface UnclaimedTemplate {
+  evidence: TemplateOwnershipEvidence;
+  spaceIds: readonly string[];
+}
+
+export interface TemplateAssignment extends TemplateRungClaim {
+  key: string;
 }
 
 export interface TemplateAttributionPlan {
@@ -25,20 +34,35 @@ export interface TemplateAttributionInputs extends TemplateOwnershipInputs {
   spaceIds: readonly string[];
 }
 
-function pickRung(
-  evidence: TemplateOwnershipEvidence,
-  spaceIds: readonly string[]
-): { spaceIds: string[]; rung: TemplateAttributionRung } {
-  if (evidence.synthesizedFromSpaces.length > 0) {
-    return { spaceIds: [...evidence.synthesizedFromSpaces], rung: 'synthesized-from-agent' };
-  }
-  if (evidence.workflowSlotSpaces.length > 0) {
-    return { spaceIds: [...evidence.workflowSlotSpaces], rung: 'workflow-slot-reference' };
-  }
-  if (spaceIds.length === 1) {
-    return { spaceIds: [spaceIds[0]], rung: 'sole-space' };
-  }
-  return { spaceIds: [], rung: 'unattributed' };
+type RungGate = { value: UnclaimedTemplate } | { reason: TemplateRungClaim };
+
+export function claimBySynthesis(unclaimed: UnclaimedTemplate): RungGate {
+  const spaces = unclaimed.evidence.synthesizedFromSpaces;
+  if (spaces.length === 0) return { value: unclaimed };
+  return { reason: { spaceIds: [...spaces], rung: 'synthesized-from-agent' } };
+}
+
+export function claimByWorkflowSlot(unclaimed: UnclaimedTemplate): RungGate {
+  const spaces = unclaimed.evidence.workflowSlotSpaces;
+  if (spaces.length === 0) return { value: unclaimed };
+  return { reason: { spaceIds: [...spaces], rung: 'workflow-slot-reference' } };
+}
+
+export function claimBySoleSpace(unclaimed: UnclaimedTemplate): RungGate {
+  if (unclaimed.spaceIds.length !== 1) return { value: unclaimed };
+  return { reason: { spaceIds: [unclaimed.spaceIds[0]], rung: 'sole-space' } };
+}
+
+const runAttributeTemplate = (superpipe()('attributeTemplateToSpaces') as PipelineAPI)
+  .input(['unclaimed'])
+  .pipe(claimBySynthesis, 'unclaimed', 'result:unclaimed')
+  .pipe(claimByWorkflowSlot, 'unclaimed', 'result:unclaimed')
+  .pipe(claimBySoleSpace, 'unclaimed', 'result:unclaimed')
+  .end('unclaimed') as (unclaimed: UnclaimedTemplate) => UnclaimedTemplate | TemplateRungClaim;
+
+export function attributeTemplate(unclaimed: UnclaimedTemplate): TemplateRungClaim {
+  const outcome = runAttributeTemplate(unclaimed);
+  return 'rung' in outcome ? outcome : { spaceIds: [], rung: 'unattributed' };
 }
 
 export function planTemplateSpaceAssignments(
@@ -57,13 +81,13 @@ export function planTemplateSpaceAssignments(
   const deletions: string[] = [];
 
   for (const [key, entry] of evidence) {
-    const picked = pickRung(entry, spaceIds);
-    const live = picked.spaceIds.filter((spaceId) => known.has(spaceId));
+    const claim = attributeTemplate({ evidence: entry, spaceIds });
+    const live = claim.spaceIds.filter((spaceId) => known.has(spaceId));
     if (live.length === 0) {
       deletions.push(key);
       continue;
     }
-    assignments.push({ key, spaceIds: live, rung: picked.rung });
+    assignments.push({ key, spaceIds: live, rung: claim.rung });
   }
 
   return { assignments, deletions };
