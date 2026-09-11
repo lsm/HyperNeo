@@ -17,6 +17,12 @@ const columns = `id, task_id AS taskId, generation, session_id AS sessionId,
 export class DirectTaskExecutionRepository {
   constructor(private db: Database) {}
 
+  hasSessionProvenance(sessionId: string): boolean {
+    return !!this.db
+      .prepare('SELECT 1 FROM direct_task_session_provenance WHERE session_id = ?')
+      .get(sessionId);
+  }
+
   isSelected(taskId: string): boolean {
     return !!this.db
       .prepare('SELECT 1 FROM direct_task_execution_selection WHERE task_id = ?')
