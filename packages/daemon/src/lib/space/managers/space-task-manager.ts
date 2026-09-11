@@ -1,3 +1,4 @@
+import { DirectTaskExecutionRepository } from '../../../storage/repositories/direct-task-execution-repository.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { reopenDirectCompletion } from '../operations/reopen-pending-completion.ts';
 import type { PendingCompletionReopenResult } from '../operations/pending-completion.ts';
@@ -310,10 +311,13 @@ export class SpaceTaskManager {
       );
     }
 
-    const updated = this.taskRepo.updateTask(
-      taskId,
-      prepareSpaceTaskReviewUpdate(opts, Date.now())
-    );
+    const updated = this.db.transaction(() => {
+      if (new DirectTaskExecutionRepository(this.db).getActive(taskId)?.phase === 'reserved')
+        throw new Error(
+          `Task ${taskId} cannot be submitted for review while its direct start is queued`
+        );
+      return this.taskRepo.updateTask(taskId, prepareSpaceTaskReviewUpdate(opts, Date.now()));
+    }, 'immediate')();
     if (!updated) {
       throw new Error(`Failed to submit task for review: ${taskId}`);
     }

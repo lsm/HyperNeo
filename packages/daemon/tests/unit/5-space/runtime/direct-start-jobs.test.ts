@@ -490,3 +490,26 @@ test('legacy UI review rejection resumes only its matching active direct worker'
   ).rejects.toThrow('superseded');
   expect(tasks.getTask(taskId)?.status).toBe('review');
 });
+
+test('review submission cannot invalidate an unactivated direct request', async () => {
+  const job = acceptedJob();
+  const reserved = attempts.getActive(taskId)!;
+  const before = tasks.getTask(taskId)!;
+  const generation = tasks.getLifecycleGeneration(taskId);
+  const requestBefore = readDirectStartRequest(db, reserved.id);
+  const manager = new SpaceTaskManager(db, before.spaceId);
+  await expect(
+    manager.submitTaskForReview(taskId, {
+      reason: 'premature review',
+      submittedByNodeId: null,
+    })
+  ).rejects.toThrow('direct start is queued');
+  expect(tasks.getTask(taskId)).toEqual(before);
+  expect(tasks.getLifecycleGeneration(taskId)).toBe(generation);
+  expect(readDirectStartRequest(db, reserved.id)).toEqual(requestBefore);
+  expect(attempts.getActive(taskId)).toEqual(reserved);
+  expect(await createDirectStartJobHandler(db, start, jobs, control)(job)).toMatchObject({
+    started: true,
+    attempt: { id: reserved.id },
+  });
+});
