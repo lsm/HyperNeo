@@ -1,5 +1,6 @@
 import type { SpaceTaskStatus } from '@hyperneo/shared';
 import { isRateOrUsageLimited } from '@hyperneo/shared';
+import { decideTaskPublication } from '../../tasks/publication.ts';
 import type { AutonomyAdmissionDenyReason } from './tool-admission-gates.ts';
 import { isAgentCeilingBinding } from './tool-admission-gates.ts';
 
@@ -313,7 +314,7 @@ export function routePublishTask(input: PublishTaskRoutingInput): PublishTaskRou
   if (target.action === 'reject') {
     return target;
   }
-  if (input.currentStatus !== 'draft') {
+  if (decideTaskPublication(input.currentStatus) === 'not_draft') {
     return {
       action: 'reject',
       reason: 'not_draft',
