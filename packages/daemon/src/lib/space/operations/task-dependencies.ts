@@ -45,19 +45,26 @@ async function persistSpaceDependencies(
   const manager = getTaskManager(spaceId);
   return updateTaskFields(
     await manager.getTask(input.taskId),
-    () =>
-      manager.updateTask(
+    async () => {
+      await manager.updateTask(
         input.taskId,
         { dependsOn: input.dependsOn },
         {
           onCascadedTasks: async (tasks) => {
-            for (const task of tasks) await emitTaskUpdated(spaceId, task);
+            for (const task of tasks) {
+              await emitTaskUpdated(spaceId, task).catch((error: unknown) =>
+                log.warn('Failed to emit space.task.updated:', error)
+              );
+            }
           },
         }
-      ),
+      );
+      const current = await manager.getTask(input.taskId);
+      if (!current) throw new Error(`Task not found: ${input.taskId}`);
+      return current;
+    },
     (taskId) =>
       blockExecution(spaceId, taskId, {
-        dependsOn: input.dependsOn,
         status: 'blocked',
         blockReason: 'dependency_added',
         result: 'Dependency added while task was in progress',

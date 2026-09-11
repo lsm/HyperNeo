@@ -148,9 +148,15 @@ test('clearing dependencies reopens a dependency-blocked task without execution 
   expect(emit).toHaveBeenCalledTimes(1);
 });
 
-test.each([false, true])(
-  'real workflow cleanup and cascades honor dependency completion %s',
-  async (met) => {
+test.each([
+  { met: false, cascade: 'normal' },
+  { met: true, cascade: 'normal' },
+  { met: false, cascade: 'reject' },
+  { met: false, cascade: 'replace' },
+  { met: false, cascade: 'clear' },
+])(
+  'real workflow cleanup honors completion=$met and cascade=$cascade',
+  async ({ met, cascade }) => {
     const workflows = new SpaceWorkflowRepository(db);
     const workflow = workflows.createWorkflow({
       spaceId,
@@ -172,6 +178,16 @@ test.each([false, true])(
     const dependent = dependency('in_progress');
     tasks.updateTask(dependent.id, { dependsOn: [target.id] });
     const dep = dependency(met ? 'done' : 'open');
+    const newer = dependency();
+    emit.mockImplementation(async (_spaceId: string, task: SpaceTask) => {
+      if (task.id !== dependent.id) return;
+      if (cascade === 'reject') throw new Error('subscriber failed');
+      if (cascade === 'replace' || cascade === 'clear') {
+        await new SpaceTaskManager(db, spaceId).updateTask(target.id, {
+          dependsOn: cascade === 'clear' ? [] : [newer.id],
+        });
+      }
+    });
     const cancel = mock(() => {});
     const runtime = new SpaceRuntime({
       db,
@@ -183,21 +199,31 @@ test.each([false, true])(
       taskAgentManager: { cancelBySessionId: cancel } as unknown as TaskAgentManager,
       onTaskUpdated: ({ spaceId, task }) => emit(spaceId, task),
     });
-    const result = await editor({ blockExecution: runtime.blockWorkflowBackedTask.bind(runtime) })(
+    const blockExecution = mock(runtime.blockWorkflowBackedTask.bind(runtime));
+    const result = await editor({ blockExecution })(
       { taskId: target.id, dependsOn: [dep.id] },
       rpc
     );
-    expect(result).toMatchObject({ status: met ? 'in_progress' : 'blocked' });
-    expect(runs.getRun(run.id)?.status).toBe(met ? 'in_progress' : 'blocked');
+    const blocked = !met && cascade !== 'clear';
+    const expectedDependencies =
+      cascade === 'clear' ? [] : [cascade === 'replace' ? newer.id : dep.id];
+    expect(result).toMatchObject({
+      status: cascade === 'clear' ? 'open' : met ? 'in_progress' : 'blocked',
+      dependsOn: expectedDependencies,
+    });
+    expect(tasks.getTask(target.id)?.dependsOn).toEqual(expectedDependencies);
+    expect(runs.getRun(run.id)?.status).toBe(blocked ? 'blocked' : 'in_progress');
     expect(nodes.getById(node.id)).toMatchObject({
-      status: met ? 'in_progress' : 'cancelled',
-      agentSessionId: met ? 'live' : null,
+      status: blocked ? 'cancelled' : 'in_progress',
+      agentSessionId: blocked ? null : 'live',
     });
     expect(tasks.getTask(dependent.id)?.status).toBe(met ? 'in_progress' : 'blocked');
     expect(emit.mock.calls.map((args) => args[1].id)).toEqual(
       met ? [target.id] : [dependent.id, target.id]
     );
-    expect(cancel).toHaveBeenCalledTimes(met ? 0 : 1);
+    expect(cancel).toHaveBeenCalledTimes(blocked ? 1 : 0);
+    expect(blockExecution).toHaveBeenCalledTimes(blocked ? 1 : 0);
+    if (blocked) expect(blockExecution.mock.calls[0][2]).not.toHaveProperty('dependsOn');
     if (!met) expect(tasks.getTask(target.id)?.completedAt).toBeNull();
   }
 );
