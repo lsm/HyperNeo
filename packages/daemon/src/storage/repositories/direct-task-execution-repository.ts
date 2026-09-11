@@ -37,6 +37,14 @@ export class DirectTaskExecutionRepository {
     return rows.map((row) => row.task_id);
   }
 
+  listRunning(spaceId?: string): DirectTaskAttempt[] {
+    return this.db
+      .prepare(`SELECT ${columns} FROM direct_task_execution_attempts
+        WHERE phase = 'running' AND (? IS NULL OR task_id IN (
+          SELECT id FROM space_tasks WHERE space_id = ?))`)
+      .all(spaceId ?? null, spaceId ?? null) as DirectTaskAttempt[];
+  }
+
   select(taskId: string): boolean {
     this.db
       .prepare(`INSERT INTO direct_task_execution_selection(task_id)
