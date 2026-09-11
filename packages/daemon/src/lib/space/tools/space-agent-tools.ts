@@ -87,7 +87,7 @@ import {
   createBoundSpaceTaskMetadataEditor,
   isTaskMetadataOnlyUpdate,
 } from '../operations/bound-task-metadata.ts';
-import { updateTaskFields } from './update-task-fields.ts';
+import { createSpaceTaskFieldUpdater } from '../operations/task-field-effects.ts';
 import {
   createBoundSpaceTaskDependencyEditor,
   isTaskDependenciesOnlyUpdate,
@@ -2767,31 +2767,19 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         const hasFieldUpdates = Object.keys(fieldParams).length > 0;
         let fieldUpdateHandledByRuntime = false;
         const applyFieldUpdates = async (): Promise<SpaceTask> => {
-          const result = await updateTaskFields(
-            taskRepo.getTask(args.task_id),
-            () => {
-              const options = {
-                onCascadedTasks: async (cascadedTasks: SpaceTask[]) => {
-                  for (const cascadedTask of cascadedTasks) emitTaskUpdated(cascadedTask);
-                },
-              };
-              return args.status === undefined && isTaskMetadataOnlyUpdate(fieldParams)
-                ? createBoundSpaceTaskMetadataEditor(
-                    spaceId,
-                    taskManager,
-                    options
-                  )({ taskId: args.task_id, ...fieldParams }, { source: 'mcp' })
-                : taskManager.updateTask(args.task_id, fieldParams, options);
-            },
-            (taskId) =>
-              runtime.blockWorkflowBackedTask(spaceId, taskId, {
-                ...fieldParams,
-                status: 'blocked',
-                blockReason: 'dependency_added',
-                result: 'Dependency added while task was in progress',
-                completedAt: null,
-              })
-          );
+          if (args.status === undefined && isTaskMetadataOnlyUpdate(fieldParams)) {
+            return createBoundSpaceTaskMetadataEditor(spaceId, taskManager, {
+              onCascadedTasks: async (tasks) => {
+                for (const changed of tasks) emitTaskUpdated(changed);
+              },
+            })({ taskId: args.task_id, ...fieldParams }, { source: 'mcp' });
+          }
+          const result = await createSpaceTaskFieldUpdater({
+            getTaskManager: () => taskManager,
+            emitTaskUpdated: (_ownerId, changed) => emitTaskUpdated(changed),
+            blockExecution: (ownerId, taskId, fields) =>
+              runtime.blockWorkflowBackedTask(ownerId, taskId, fields),
+          })(spaceId, args.task_id, fieldParams);
           fieldUpdateHandledByRuntime = result.handledByRuntime;
           return result.task;
         };
