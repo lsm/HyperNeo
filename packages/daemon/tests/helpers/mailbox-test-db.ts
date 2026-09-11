@@ -43,6 +43,7 @@ export type MailboxTestDb = {
 export function createMailboxTestDb(): MailboxTestDb {
   const db = new Database(':memory:');
   db.exec(`
+    CREATE TABLE direct_task_session_provenance (session_id TEXT PRIMARY KEY);
     CREATE TABLE job_queue (
       id TEXT PRIMARY KEY,
       queue TEXT NOT NULL,

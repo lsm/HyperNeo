@@ -1,3 +1,4 @@
+import { captureDirectMailboxAdmission } from '../space/runtime/direct-mailbox-admission.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/database.ts';
 import type { JobQueueProcessor } from '../../storage/job-queue-processor.ts';
@@ -90,6 +91,7 @@ function registerDelivery(
       db: deps.db.getDatabase(),
       sdkMessageRepo: deps.db.getSDKMessageRepo(),
       getSession: deps.getSession,
+      captureAdmission: (entry) => captureDirectMailboxAdmission(deps.db.getDatabase(), entry),
       isSessionArchived: deps.isSessionArchived,
       publishStatusChanged: (sessionId, dbId, status) => {
         void deps.internalEventBus

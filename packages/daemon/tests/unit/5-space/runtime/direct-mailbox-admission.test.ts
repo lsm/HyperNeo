@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
+import { createMailboxDeliveryHandler } from '../../../../src/lib/mailbox/delivery';
+import { afterEach, beforeEach, expect, mock, spyOn, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { createTables, runMigrations } from '../../../../src/storage/schema';
 import { DirectTaskExecutionRepository } from '../../../../src/storage/repositories/direct-task-execution-repository';
@@ -178,4 +179,78 @@ test('elapsed TTL is not renewed by mutating both input and stored policy', () =
   } finally {
     clock.mockRestore();
   }
+});
+
+test.each(['valid', 'stopped', 'settled'] as const)(
+  'mailbox wire rechecks %s owner after session loading',
+  async (change) => {
+    activate();
+    createDirectKickoffReconciler(db)(input);
+    const jobs = new JobQueueRepository(db);
+    const sdk = new SDKMessageRepository(db);
+    const [job] = jobs.dequeue('mailbox');
+    const publish = mock(() => {});
+    const getSession = mock(async () => {
+      await Promise.resolve();
+      if (change === 'stopped') attempts.requestStop(input.attemptId, input.sessionId, 'cancelled');
+      if (change === 'settled') {
+        ensurePrompt({
+          ...planMailboxAdmission({
+            ...entry,
+            to: { kind: 'session', sessionId: input.sessionId },
+          }),
+          db,
+          sdkMessageRepo: sdk,
+          jobQueue: jobs,
+        });
+        db.prepare("UPDATE sdk_messages SET send_status = 'failed' WHERE session_id = ?").run(
+          input.sessionId
+        );
+      }
+      return {};
+    });
+    const handler = createMailboxDeliveryHandler({
+      db,
+      jobQueue: jobs,
+      sdkMessageRepo: sdk,
+      getSession,
+      isSessionArchived: () => false,
+      captureAdmission: (incoming) => captureDirectMailboxAdmission(db, incoming),
+      publishStatusChanged: publish,
+    });
+    if (change === 'stopped') {
+      await expect(handler(job)).rejects.toThrow('direct owner unavailable');
+      expect(sdk.getDeliveryContent(input.sessionId, entry.messageUuid!)).toBeNull();
+    } else if (change === 'settled') {
+      expect(await handler(job)).toEqual({ outcome: 'already_settled' });
+      expect(sdk.getDeliveryContent(input.sessionId, entry.messageUuid!)?.sendStatus).toBe(
+        'failed'
+      );
+    } else {
+      await handler(job);
+      expect(sdk.getDeliveryContent(input.sessionId, entry.messageUuid!)?.sendStatus).toBe(
+        'enqueued'
+      );
+    }
+    expect(getSession).toHaveBeenCalledTimes(1);
+    expect(publish).toHaveBeenCalledTimes(change === 'valid' ? 1 : 0);
+  }
+);
+test('mailbox does not load a stopped direct session', async () => {
+  activate();
+  createDirectKickoffReconciler(db)(input);
+  const jobs = new JobQueueRepository(db);
+  const [job] = jobs.dequeue('mailbox');
+  attempts.requestStop(input.attemptId, input.sessionId, 'cancelled');
+  const getSession = mock(async () => ({}));
+  const handler = createMailboxDeliveryHandler({
+    db,
+    jobQueue: jobs,
+    sdkMessageRepo: new SDKMessageRepository(db),
+    getSession,
+    isSessionArchived: () => false,
+    captureAdmission: (incoming) => captureDirectMailboxAdmission(db, incoming),
+  });
+  await expect(handler(job)).rejects.toThrow('direct owner unavailable');
+  expect(getSession).not.toHaveBeenCalled();
 });

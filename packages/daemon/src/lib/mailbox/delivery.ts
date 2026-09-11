@@ -4,7 +4,7 @@ import type { SDKMessageRepository } from '../../storage/repositories/sdk-messag
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import { activatePrompts, ensurePrompt, retryPrompt } from '../agent/message-delivery-outbox.ts';
 import { planMailboxAdmission } from './admission-plan.ts';
-import { parseMailboxEntry } from './entry.ts';
+import { parseMailboxEntry, type MailboxEntry } from './entry.ts';
 import { type MailboxSettlement, settleMailboxEntry } from './settlement.ts';
 import { mailboxEntryExpired } from './entry.ts';
 
@@ -16,6 +16,7 @@ export interface MailboxDeliveryDeps {
   sdkMessageRepo: SDKMessageRepository;
   getSession(sessionId: string): Promise<object | null>;
   isSessionArchived(sessionId: string): boolean;
+  captureAdmission?(entry: MailboxEntry): (() => 'admit' | 'settled' | 'blocked') | undefined;
   publishStatusChanged?(sessionId: string, dbId: string, status: 'enqueued'): void | Promise<void>;
   publishFailed?(sessionId: string, dbMessageId: string): Promise<void>;
   publishDeferredStatus?(sessionId: string, dbMessageId: string): Promise<void>;
@@ -54,6 +55,13 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
     if (deps.isSessionArchived(target)) {
       throw new DeadLetterImmediatelyError('mailbox: target session archived');
     }
+    const admission = deps.captureAdmission?.(entry);
+    const canDeliver = () => {
+      const status = admission?.();
+      if (status === 'blocked') throw new Error('mailbox: direct owner unavailable');
+      return status !== 'settled';
+    };
+    if (!canDeliver()) return { outcome: 'already_settled' };
     if ((await deps.getSession(target)) === null) {
       throw new Error(`mailbox: session ${target} not found`);
     }
@@ -66,6 +74,7 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
     if (mailboxEntryExpired(entry, Date.now())) {
       throw new DeadLetterImmediatelyError('mailbox: entry expired (ttl)');
     }
+    if (!canDeliver()) return { outcome: 'already_settled' };
     const admissionRowid = readAdmissionRowid(deps.db, job.id);
     const plan = planMailboxAdmission({ ...entry, to: entry.to }, admissionRowid);
     const messageUuid = plan.message.uuid;
@@ -95,7 +104,7 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
         db: deps.db,
         sdkMessageRepo: deps.sdkMessageRepo,
         jobQueue: deps.jobQueue,
-        claimValid: () => deps.jobQueue.isClaimCurrent(job.id, job.claimToken),
+        claimValid: () => deps.jobQueue.isClaimCurrent(job.id, job.claimToken) && canDeliver(),
       });
       if (retried) publish(retried.dbId);
     } else if (existing?.sendStatus === 'deferred' && entry.deliveryMode !== 'defer') {
@@ -107,7 +116,7 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
         origin: plan.delivery.origin,
         admittedAt: plan.delivery.admittedAt,
         ...(admissionRowid !== undefined ? { admissionRowid } : {}),
-        claimValid: () => deps.jobQueue.isClaimCurrent(job.id, job.claimToken),
+        claimValid: () => deps.jobQueue.isClaimCurrent(job.id, job.claimToken) && canDeliver(),
       });
       if (activated[0]) publish(activated[0].dbId);
     } else if (
@@ -135,6 +144,7 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
       }
       throw new DeadLetterImmediatelyError('mailbox: target session archived');
     }
+    if (!canDeliver()) return { outcome: 'already_settled' };
     if (entry.deliveryMode === 'defer' && deps.scheduleDeferredReplay) {
       await deps.scheduleDeferredReplay(target);
     }
