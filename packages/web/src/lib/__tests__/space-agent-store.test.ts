@@ -27,6 +27,7 @@ function makeAgent(id: string, overrides: Partial<SpaceAgent> = {}): SpaceAgent 
     spaceId: 'space-1',
     handle: id,
     displayName: id,
+    templateKey: null,
     description: null,
     instructions: '',
     status: 'active',
