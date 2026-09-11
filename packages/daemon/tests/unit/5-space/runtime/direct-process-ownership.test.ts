@@ -41,10 +41,16 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+function ownedLaunch(): DirectProcessLaunch {
+  const launch = ledger.reserveLaunch(identity)!;
+  expect(ledger.claimGuardian(launch, 'test-owner')).toBe(true);
+  return launch;
+}
+
 function managedLaunch(): DirectProcessLaunch {
   expect(ledger.manageAttempt(identity)).toBe(true);
   expect(attempts.activate('attempt', 'worker')?.phase).toBe('running');
-  return ledger.reserveLaunch(identity)!;
+  return ownedLaunch();
 }
 
 test('coverage is opt-in before execution and zero launch rows do not imply managed ownership', () => {
@@ -65,7 +71,7 @@ test('coverage and launch reservation require exact identity and reject stop fen
 
 test('authorization is committed once and a stop fence prevents new reservations and authorizations', () => {
   const first = managedLaunch();
-  const second = ledger.reserveLaunch(identity)!;
+  const second = ownedLaunch();
   expect(first.id).not.toBe(second.id);
   expect(first.token).not.toBe(second.token);
   expect(ledger.authorizeLaunch(first)).toBe(true);
@@ -83,17 +89,17 @@ for (const field of ['id', 'token', 'attemptId', 'sessionId', 'generation'] as c
     const changed = { ...launch, [field]: field === 'generation' ? 2 : 'wrong' };
     expect(ledger.authorizeLaunch(changed)).toBe(false);
     expect(ledger.authorizeLaunch(launch)).toBe(true);
-    expect(ledger.recordGuardianTerminal(changed, 'exited')).toBe(false);
+    expect(ledger.recordGuardianTerminal(changed, 'test-owner', 'exited')).toBe(false);
     expect(ledger.get(launch)?.state).toBe('authorized');
   });
 }
 
 test('all launch receipts survive reopening and deleting their attempt, without hiding older unknown launches', () => {
   const unknown = managedLaunch();
-  const exited = ledger.reserveLaunch(identity)!;
+  const exited = ownedLaunch();
   ledger.authorizeLaunch(unknown);
   ledger.authorizeLaunch(exited);
-  expect(ledger.recordGuardianTerminal(exited, 'exited')).toBe(true);
+  expect(ledger.recordGuardianTerminal(exited, 'test-owner', 'exited')).toBe(true);
   db.close();
   db = new Database(join(dir, 'db.sqlite'));
   ledger = new DirectProcessOwnershipRepository(db);
@@ -111,20 +117,20 @@ test('all launch receipts survive reopening and deleting their attempt, without 
 
 test('terminal attestation is idempotent but cannot change or authorize a terminal launch', () => {
   const beforeGo = managedLaunch();
-  expect(ledger.recordGuardianTerminal(beforeGo, 'exited')).toBe(false);
-  expect(ledger.recordGuardianTerminal(beforeGo, 'never_started')).toBe(true);
-  expect(ledger.recordGuardianTerminal(beforeGo, 'never_started')).toBe(true);
+  expect(ledger.recordGuardianTerminal(beforeGo, 'test-owner', 'exited')).toBe(false);
+  expect(ledger.recordGuardianTerminal(beforeGo, 'test-owner', 'never_started')).toBe(true);
+  expect(ledger.recordGuardianTerminal(beforeGo, 'test-owner', 'never_started')).toBe(true);
   expect(ledger.authorizeLaunch(beforeGo)).toBe(false);
-  expect(ledger.recordGuardianTerminal(beforeGo, 'exited')).toBe(false);
-  const lostGo = ledger.reserveLaunch(identity)!;
+  expect(ledger.recordGuardianTerminal(beforeGo, 'test-owner', 'exited')).toBe(false);
+  const lostGo = ownedLaunch();
   ledger.authorizeLaunch(lostGo);
   expect(ledger.get(lostGo)?.state).toBe('authorized');
-  expect(ledger.recordGuardianTerminal(lostGo, 'never_started')).toBe(true);
-  const exited = ledger.reserveLaunch(identity)!;
+  expect(ledger.recordGuardianTerminal(lostGo, 'test-owner', 'never_started')).toBe(true);
+  const exited = ownedLaunch();
   ledger.authorizeLaunch(exited);
-  expect(ledger.recordGuardianTerminal(exited, 'exited')).toBe(true);
-  expect(ledger.recordGuardianTerminal(exited, 'exited')).toBe(true);
-  expect(ledger.recordGuardianTerminal(exited, 'never_started')).toBe(false);
+  expect(ledger.recordGuardianTerminal(exited, 'test-owner', 'exited')).toBe(true);
+  expect(ledger.recordGuardianTerminal(exited, 'test-owner', 'exited')).toBe(true);
+  expect(ledger.recordGuardianTerminal(exited, 'test-owner', 'never_started')).toBe(false);
 });
 
 test('failed authorization transaction never leaves an authorized launch', () => {
@@ -219,4 +225,19 @@ test('parent loss during spawn cannot turn a later live SDK into never-started p
   expect(
     decideDirectGuardianTransition(launch, 'stopping_launch', { kind: 'spawn_failed' })
   ).toEqual({ state: 'terminal', action: 'record_never_started' });
+});
+
+test('only one guardian claims a launch and only its receipts are accepted', () => {
+  ledger.manageAttempt(identity);
+  attempts.activate('attempt', 'worker');
+  const launch = ledger.reserveLaunch(identity)!;
+  expect(ledger.authorizeLaunch(launch)).toBe(false);
+  expect(ledger.claimGuardian(launch, '')).toBe(false);
+  expect(ledger.claimGuardian(launch, 'first')).toBe(true);
+  expect(ledger.claimGuardian(launch, 'first')).toBe(false);
+  expect(ledger.claimGuardian(launch, 'second')).toBe(false);
+  expect(ledger.authorizeLaunch(launch)).toBe(true);
+  expect(ledger.recordGuardianTerminal(launch, 'second', 'exited')).toBe(false);
+  expect(ledger.recordGuardianTerminal(launch, 'first', 'exited')).toBe(true);
+  expect(ledger.recordGuardianTerminal(launch, 'second', 'exited')).toBe(false);
 });

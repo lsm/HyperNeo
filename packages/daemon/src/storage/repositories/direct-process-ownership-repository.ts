@@ -11,12 +11,13 @@ export interface DirectProcessIdentity extends DirectProcessAttempt {
   token: string;
 }
 export interface DirectProcessLaunch extends DirectProcessIdentity {
+  guardianInstance: string | null;
   state: 'reserved' | 'authorized' | 'exited' | 'never_started';
   createdAt: number;
   updatedAt: number;
 }
 const columns = `id, token, attempt_id AS attemptId, session_id AS sessionId,
-  generation, state, created_at AS createdAt, updated_at AS updatedAt`;
+  generation, state, guardian_instance AS guardianInstance, created_at AS createdAt, updated_at AS updatedAt`;
 const active = `EXISTS (SELECT 1 FROM direct_task_execution_attempts a
   WHERE a.id = ? AND a.session_id = ? AND a.generation = ? AND a.phase = ?
   AND NOT EXISTS (SELECT 1 FROM direct_task_stop_requests s WHERE s.attempt_id = a.id))`;
@@ -103,7 +104,7 @@ export class DirectProcessOwnershipRepository {
       this.db
         .prepare(`UPDATE direct_task_process_launches SET state = 'authorized', updated_at = ?
       WHERE id = ? AND token = ? AND attempt_id = ? AND session_id = ? AND generation = ?
-        AND state = 'reserved' AND ${active}`)
+        AND state = 'reserved' AND guardian_instance IS NOT NULL AND ${active}`)
         .run(
           Date.now(),
           identity.id,
@@ -121,11 +122,13 @@ export class DirectProcessOwnershipRepository {
 
   recordGuardianTerminal(
     identity: DirectProcessIdentity,
+    guardianInstance: string,
     state: 'exited' | 'never_started'
   ): boolean {
     this.db
       .prepare(`UPDATE direct_task_process_launches SET state = ?, updated_at = ?
       WHERE id = ? AND token = ? AND attempt_id = ? AND session_id = ? AND generation = ?
+        AND guardian_instance = ?
         AND (state = 'authorized' OR (state = 'reserved' AND ? = 'never_started'))`)
       .run(
         state,
@@ -135,8 +138,29 @@ export class DirectProcessOwnershipRepository {
         identity.attemptId,
         identity.sessionId,
         identity.generation,
+        guardianInstance,
         state
       );
-    return this.get(identity)?.state === state;
+    const current = this.get(identity);
+    return current?.state === state && current.guardianInstance === guardianInstance;
+  }
+
+  claimGuardian(identity: DirectProcessIdentity, instance: string): boolean {
+    if (!instance) return false;
+    return (
+      this.db
+        .prepare(`UPDATE direct_task_process_launches SET guardian_instance = ?, updated_at = ?
+      WHERE id = ? AND token = ? AND attempt_id = ? AND session_id = ? AND generation = ?
+        AND state = 'reserved' AND guardian_instance IS NULL`)
+        .run(
+          instance,
+          Date.now(),
+          identity.id,
+          identity.token,
+          identity.attemptId,
+          identity.sessionId,
+          identity.generation
+        ).changes === 1
+    );
   }
 }
