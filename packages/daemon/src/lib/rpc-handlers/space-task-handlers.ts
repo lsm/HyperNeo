@@ -35,7 +35,7 @@ import {
   createBoundSpaceTaskDependencyEditor,
   isTaskDependenciesOnlyUpdate,
 } from '../space/operations/task-dependencies.ts';
-import { arraysEqual } from '../utils/array-utils.ts';
+import { createSpaceTaskFieldUpdater } from '../space/operations/task-field-effects.ts';
 
 const log = new Logger('space-task-handlers');
 
@@ -323,71 +323,14 @@ export function setupSpaceTaskHandlers(
       }
     };
 
-    const updateTaskWithRuntimeDependencyBlock = async (
-      currentTask: SpaceTask,
-      params: typeof updateParams = updateParams
-    ): Promise<{ task: SpaceTask; handledByRuntime: boolean }> => {
-      let dependencyCheckResult: SpaceTask | null = null;
-      let runtimeForDependencyBlock: SpaceRuntimeService | null = null;
-      let dependencyAddedToActiveWorkflow = false;
-      if (
-        spaceRuntimeService &&
-        params.dependsOn !== undefined &&
-        currentTask.status === 'in_progress' &&
-        currentTask.workflowRunId &&
-        !arraysEqual(currentTask.dependsOn ?? [], params.dependsOn)
-      ) {
-        const {
-          taskAgentSessionId: _taskAgentSessionId,
-          workflowRunId: _workflowRunId,
-          ...safeParams
-        } = params;
-        dependencyCheckResult = await taskManager.updateTask(taskId, safeParams, {
-          onCascadedTasks: emitCascadedTasks,
-        });
-        dependencyAddedToActiveWorkflow =
-          dependencyCheckResult.status === 'blocked' &&
-          dependencyCheckResult.blockReason === 'dependency_added';
-        runtimeForDependencyBlock = spaceRuntimeService;
-      }
-
-      if (dependencyAddedToActiveWorkflow && runtimeForDependencyBlock) {
-        return {
-          task: await runtimeForDependencyBlock.stopWorkflowBackedTask(spaceId, taskId, {
-            ...params,
-            status: 'blocked',
-            blockReason: 'dependency_added',
-            result: 'Dependency added while task was in progress',
-            completedAt: null,
-          }),
-          handledByRuntime: true,
-        };
-      }
-
-      if (dependencyCheckResult) {
-        const pointerParams: UpdateSpaceTaskParams = {};
-        if ('taskAgentSessionId' in params) {
-          pointerParams.taskAgentSessionId = params.taskAgentSessionId;
-        }
-        if ('workflowRunId' in params) {
-          pointerParams.workflowRunId = params.workflowRunId;
-        }
-        if (Object.keys(pointerParams).length > 0) {
-          dependencyCheckResult = await taskManager.updateTask(taskId, pointerParams, {
-            onCascadedTasks: emitCascadedTasks,
-          });
-        }
-      }
-
-      return {
-        task:
-          dependencyCheckResult ??
-          (await taskManager.updateTask(taskId, params, {
-            onCascadedTasks: emitCascadedTasks,
-          })),
-        handledByRuntime: false,
-      };
-    };
+    const updateTaskFields = (params: typeof updateParams = updateParams) =>
+      createSpaceTaskFieldUpdater({
+        getTaskManager: () => taskManager,
+        emitTaskUpdated: (_spaceId, cascadedTask) => emitCascadedTasks([cascadedTask]),
+        blockExecution: spaceRuntimeService
+          ? (ownerId, id, fields) => spaceRuntimeService.stopWorkflowBackedTask(ownerId, id, fields)
+          : undefined,
+      })(spaceId, taskId, params);
 
     if (updateParams.status !== undefined) {
       const currentTask = await taskManager.getTask(taskId);
@@ -434,7 +377,7 @@ export function setupSpaceTaskHandlers(
           if (Object.keys(otherFields).length > 0) {
             emitTaskUpdated = true;
             await ensureWorkflowOverridesStillUnlocked(otherFields);
-            const dependencyUpdate = await updateTaskWithRuntimeDependencyBlock(task, otherFields);
+            const dependencyUpdate = await updateTaskFields(otherFields);
             task = dependencyUpdate.task;
             if (dependencyUpdate.handledByRuntime) emitTaskUpdated = false;
           }
@@ -570,10 +513,7 @@ export function setupSpaceTaskHandlers(
             } = updateParams;
             if (Object.keys(otherFields).length > 0) {
               await ensureWorkflowOverridesStillUnlocked(otherFields);
-              const dependencyUpdate = await updateTaskWithRuntimeDependencyBlock(
-                task,
-                otherFields
-              );
+              const dependencyUpdate = await updateTaskFields(otherFields);
               task = dependencyUpdate.task;
               if (dependencyUpdate.handledByRuntime) emitTaskUpdated = false;
             }
@@ -581,7 +521,7 @@ export function setupSpaceTaskHandlers(
         }
       } else {
         await ensureWorkflowOverridesStillUnlocked(updateParams);
-        const dependencyUpdate = await updateTaskWithRuntimeDependencyBlock(currentTask);
+        const dependencyUpdate = await updateTaskFields();
         task = dependencyUpdate.task;
         if (dependencyUpdate.handledByRuntime) {
           emitTaskUpdated = false;
@@ -617,7 +557,7 @@ export function setupSpaceTaskHandlers(
           onCascadedTasks: emitCascadedTasks,
         })({ taskId, ...updateParams }, { source: 'rpc' });
       } else {
-        const dependencyUpdate = await updateTaskWithRuntimeDependencyBlock(currentTask);
+        const dependencyUpdate = await updateTaskFields();
         task = dependencyUpdate.task;
         if (dependencyUpdate.handledByRuntime) {
           emitTaskUpdated = false;
