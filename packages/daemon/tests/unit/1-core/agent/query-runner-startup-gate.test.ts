@@ -387,6 +387,7 @@ describe('QueryRunner startup gate', () => {
     });
     await waitFor(() => getSdkStartupGate().getStats().queued === 1);
     allowed = false;
+    deliverFirstMessage(spawned[0]);
     await completeQuery(spawned[0], waitFor);
     await first.ctx.queryPromise;
     await second.ctx.queryPromise;

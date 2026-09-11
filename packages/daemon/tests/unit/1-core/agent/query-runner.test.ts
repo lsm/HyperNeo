@@ -2140,9 +2140,11 @@ describe('QueryRunner', () => {
     it('retains the captured guard when retrying a missing resume message', async () => {
       mockSession.sdkSessionId = 'sdk-session-id';
       mockSession.sdkOriginPath = mockSession.workspacePath;
-      buildSpy.mockRejectedValueOnce(
-        new Error('No message found with message.uuid of: missing-message-uuid')
-      );
+      buildSpy
+        .mockRejectedValueOnce(
+          new Error('No message found with message.uuid of: missing-message-uuid')
+        )
+        .mockResolvedValueOnce({ model: 'claude-sonnet-4-20250514', canUseTool: undefined });
       const check = mock(() => {
         throw Object.assign(new Error('Stopped direct owner'), { name: 'AbortError' });
       });
