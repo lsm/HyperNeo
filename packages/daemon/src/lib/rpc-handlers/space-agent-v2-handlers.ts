@@ -40,7 +40,7 @@ export interface SpaceAgentV2Deps {
   getSession(sessionId: string): SessionLookup | null;
   internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
   legacyAgents?: Pick<SpaceLongHorizonAgentRepository, 'getById'>;
-  reminders: Pick<SpaceLongHorizonAgentRepository, 'listReminders'>;
+  reminders: Pick<SpaceLongHorizonAgentRepository, 'countActiveRemindersByAgent'>;
   removeAgentSubscriptions?(spaceId: string, agentId: string): void;
   refreshAgentSubscriptions?(
     spaceId: string,
@@ -219,11 +219,10 @@ export function setupSpaceAgentV2Handlers(messageHub: MessageHub, deps: SpaceAge
   messageHub.onRequest(method('listReminderCounts'), async (data) => {
     const params = data as { spaceId?: string };
     const spaceId = requireString(params.spaceId, 'spaceId');
-    const counts: Record<string, number> = {};
-    for (const agent of deps.agents.listOwnedBySpaceId(spaceId)) {
-      const reminders = deps.reminders.listReminders(agent.id);
-      counts[agent.id] = reminders.filter((reminder) => reminder.status === 'active').length;
-    }
+    const active = deps.reminders.countActiveRemindersByAgent(spaceId);
+    const counts = Object.fromEntries(
+      deps.agents.listOwnedBySpaceId(spaceId).map((agent) => [agent.id, active.get(agent.id) ?? 0])
+    );
     return { counts };
   });
 

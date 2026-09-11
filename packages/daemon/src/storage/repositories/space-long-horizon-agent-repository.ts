@@ -430,6 +430,18 @@ export class SpaceLongHorizonAgentRepository {
     return row ? rowToReminder(row) : null;
   }
 
+  countActiveRemindersByAgent(spaceId: string): Map<string, number> {
+    const rows = this.db
+      .prepare(
+        `SELECT agent_id, COUNT(*) AS reminder_count
+         FROM space_long_horizon_agent_reminders
+         WHERE space_id = ? AND status = 'active'
+         GROUP BY agent_id`
+      )
+      .all(spaceId) as { agent_id: string; reminder_count: number }[];
+    return new Map(rows.map((row) => [row.agent_id, Number(row.reminder_count)]));
+  }
+
   listReminders(agentId: string): SpaceLongHorizonAgentReminder[] {
     const rows = this.db
       .prepare(

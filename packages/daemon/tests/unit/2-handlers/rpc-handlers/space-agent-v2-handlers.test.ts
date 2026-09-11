@@ -225,6 +225,24 @@ describe('setupSpaceAgentV2Handlers', () => {
       expect(counts['mirror-1']).toBeUndefined();
     });
 
+    test('keeps the count for an agent whose id is __proto__', async () => {
+      const { agent } = await call<{ agent: SpaceAgent }>(handlers, 'spaceAgentV2.create', {
+        id: '__proto__',
+        spaceId: 'space-1',
+        displayName: 'Proto',
+      });
+      addReminder(agent.id, 'active');
+
+      const { counts } = await call<{ counts: Record<string, number> }>(
+        handlers,
+        'spaceAgentV2.listReminderCounts',
+        { spaceId: 'space-1' }
+      );
+
+      expect(Object.hasOwn(counts, '__proto__')).toBe(true);
+      expect(Object.getOwnPropertyDescriptor(counts, '__proto__')?.value).toBe(1);
+    });
+
     test('rejects a request without a spaceId', async () => {
       await expect(call(handlers, 'spaceAgentV2.listReminderCounts', {})).rejects.toThrow(
         'spaceId is required'
