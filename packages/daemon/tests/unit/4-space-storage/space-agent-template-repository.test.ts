@@ -431,13 +431,13 @@ describe('SpaceAgentTemplateRepository — Space-scoped methods', () => {
     ).toEqual(['legacy', 'mine']);
   });
   test('an update from one Space never rewrites the shared sentinel row', () => {
-    repo.createOwned(OWNER, { key: 'k', handle: 'sentinel' });
+    repo.createOwned(SENTINEL, { key: 'k', handle: 'sentinel' });
     repo.createOwned('space-a', { key: 'k', handle: 'owned' });
 
     repo.casUpdateOwned('space-a', 'k', { displayName: 'Changed' });
 
     expect(repo.getOwned('space-a', 'k')?.displayName).toBe('Changed');
-    expect(repo.getOwned('space-b', 'k')?.displayName).not.toBe('Changed');
+    expect(repo.getOwned('space-b', 'k')?.handle).toBe('sentinel');
   });
 
   test('deleting an owned row leaves the sentinel other Spaces still use', () => {
@@ -451,7 +451,7 @@ describe('SpaceAgentTemplateRepository — Space-scoped methods', () => {
   });
 
   test('a versioned write refuses when the version belongs to the shadowed row', () => {
-    repo.createOwned(OWNER, { key: 'k', handle: 'sentinel' });
+    repo.createOwned(SENTINEL, { key: 'k', handle: 'sentinel' });
     const owned = repo.createOwned('space-a', { key: 'k', handle: 'owned' });
     const sentinelVersion = (owned.version ?? 1) + 99;
 
@@ -460,7 +460,7 @@ describe('SpaceAgentTemplateRepository — Space-scoped methods', () => {
   });
 
   test('listOwned reports one row per key when a sentinel is shadowed', () => {
-    repo.createOwned(OWNER, { key: 'k', handle: 'sentinel' });
+    repo.createOwned(SENTINEL, { key: 'k', handle: 'sentinel' });
     repo.createOwned('space-a', { key: 'k', handle: 'owned' });
 
     const listed = repo.listOwned('space-a').filter((t) => t.key === 'k');
@@ -473,7 +473,7 @@ describe('SpaceAgentTemplateRepository — Space-scoped methods', () => {
     expect(repo.deleteOwned('space-a', 'missing')).toBe(false);
   });
   test('dedupe keeps creation order when an owned row replaces an older sentinel', () => {
-    repo.createOwned(OWNER, { key: 'shadowed', handle: 'sentinel' });
+    repo.createOwned(SENTINEL, { key: 'shadowed', handle: 'sentinel' });
     repo.createOwned('space-a', { key: 'middle', handle: 'mid' });
     repo.createOwned('space-a', { key: 'shadowed', handle: 'owned' });
 
