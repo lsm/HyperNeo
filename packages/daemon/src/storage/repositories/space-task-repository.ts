@@ -626,7 +626,8 @@ export class SpaceTaskRepository {
       const stmt = this.db.prepare(
         `UPDATE space_tasks SET ${fields.join(', ')} WHERE space_id IS NOT NULL AND id = ?${expectedStatus === undefined ? '' : ' AND status = ?'}`
       );
-      if (stmt.run(...values).changes === 0) return null;
+      const result = stmt.run(...values);
+      if (expectedStatus !== undefined && result.changes === 0) return null;
       this.upsertTaskSearchRow(id);
       if (params.status === 'archived') {
         this.deleteTaskMessageRows(id);
