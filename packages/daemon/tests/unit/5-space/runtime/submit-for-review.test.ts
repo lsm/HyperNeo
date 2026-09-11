@@ -1,4 +1,11 @@
-import { afterEach, beforeEach, expect, test } from 'bun:test';
+import type { CallContext } from '@hyperneo/shared';
+import type { Database as AppDatabase } from '../../../../src/storage/database';
+import { createSpaceOperationRegistryProvider } from '../../../../src/lib/space/operations/registry';
+import { createDatabaseOperationCatalog } from '../../../../src/lib/operations/database-catalog';
+import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager';
+import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-adapter';
+import { createOperationRpcHandler } from '../../../../src/lib/operations/rpc-adapter';
+import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { createTables, runMigrations } from '../../../../src/storage/schema';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
@@ -58,7 +65,7 @@ beforeEach(async () => {
   if (!started.started) throw new Error(started.reason);
   sessionId = started.attempt.sessionId;
   attemptId = started.attempt.id;
-  operation = createSubmitTaskForReviewOperation(db, jobs);
+  operation = createSubmitTaskForReviewOperation(() => db, jobs);
 });
 afterEach(() => db.close());
 function outcomeCount() {
@@ -187,4 +194,39 @@ test('completed frozen submission acknowledges again without granting execution 
     await operation.execute({ taskId, reason: 'Changed' }, { source: 'mcp', sessionId })
   ).toMatchObject({ accepted: false });
   expect(outcomeCount()).toBe(1);
+});
+
+test('configured shared catalog discovers lazily and both transports persist the same request', async () => {
+  const getDatabase = mock(() => db);
+  const database = { getDatabase, notifyChange: () => {} } as unknown as AppDatabase;
+  const provider = createSpaceOperationRegistryProvider(database, jobs, {
+    getSession: (id) => sessions.getSession(id),
+    getTaskManager: (id) => new SpaceTaskManager(db, id),
+    taskRepo: tasks,
+    notifyStandalone: () => {},
+    emitTaskUpdated: async () => {},
+    blockExecution: async () => {
+      throw new Error('unexpected workflow cleanup');
+    },
+  });
+  const rpc = createOperationRpcHandler(provider, () => ({}));
+  const mcp = createOperationMcpHandler(provider, () => ({ sessionId }));
+  const context = {} as CallContext;
+  const invocation = { name: 'task.submitForReview', input: { taskId, reason: 'Ready' } };
+  expect(provider()).toBe(provider());
+  expect(
+    await rpc({ name: 'operations.describe', input: { name: invocation.name } }, context)
+  ).toMatchObject({ found: true, name: invocation.name });
+  expect(getDatabase).not.toHaveBeenCalled();
+  expect(createDatabaseOperationCatalog(database, jobs).get(invocation.name)).toBeUndefined();
+  const foreign = createOperationMcpHandler(provider, () => ({ sessionId: 'foreign' }));
+  expect(JSON.parse((await foreign(invocation)).content[0].text)).toMatchObject({
+    accepted: false,
+  });
+  expect(outcomeCount()).toBe(0);
+  const accepted = await rpc(invocation, context);
+  expect(accepted).toMatchObject({ accepted: true });
+  expect(JSON.parse((await mcp(invocation)).content[0].text)).toEqual(accepted);
+  expect(outcomeCount()).toBe(1);
+  expect(tasks.getTask(taskId)?.status).toBe('in_progress');
 });

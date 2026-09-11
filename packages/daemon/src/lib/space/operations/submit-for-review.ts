@@ -71,9 +71,13 @@ function admitSubmission(
   return { value: target };
 }
 
-export function createSubmitTaskForReviewOperation(db: Database, jobQueue: JobQueueRepository) {
-  const submit = (superpipe({ db, jobQueue })('submit-task-for-review') as PipelineAPI)
+export function createSubmitTaskForReviewOperation(
+  getDatabase: () => Database,
+  jobQueue: JobQueueRepository
+) {
+  const submit = (superpipe({ getDatabase, jobQueue })('submit-task-for-review') as PipelineAPI)
     .input(['input', 'caller'])
+    .pipe(getDatabase, undefined, 'db')
     .pipe(admitSubmission, ['db', 'input', 'caller'], 'result:outcome')
     .pipe(enqueueDirectOutcome, ['db', 'jobQueue', 'outcome'], 'outcome')
     .end('outcome') as (input: Input, caller: OperationCaller) => DirectOutcomeAcknowledgement;
