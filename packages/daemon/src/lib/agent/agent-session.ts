@@ -1,3 +1,4 @@
+import { DirectTaskExecutionRepository } from '../../storage/repositories/direct-task-execution-repository.ts';
 import { createDatabaseOperationCatalog } from '../operations/database-catalog.ts';
 import type { OperationRegistry, OperationRegistryProvider } from '../operations/registry.ts';
 import { createOperationMcpServer } from '../operations/mcp-server.ts';
@@ -772,6 +773,11 @@ export class AgentSession
     if (this.session.status === 'archived' || this.session.status === 'ended') {
       throw new Error(
         `Session ${this.session.id} is ${this.session.status}; refusing to start the query`
+      );
+    }
+    if (new DirectTaskExecutionRepository(this.db.getDatabase()).getBySessionId(this.session.id)) {
+      throw new Error(
+        `Direct task session ${this.session.id} requires executor activation admission`
       );
     }
     const wantsAcp = this.session.config.provider === 'acp';

@@ -1,3 +1,4 @@
+import type { DirectTaskWorkerIdentity } from './direct-task-worker-identity.ts';
 import type { Session } from '@hyperneo/shared';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
@@ -7,12 +8,15 @@ export type SpaceMcpSessionRole =
   | 'coordinator'
   | 'ad_hoc_member'
   | 'workflow_worker'
+  | 'direct_task_worker'
   | 'long_term_agent'
   | 'universal_read'
   | 'legacy_task_agent'
   | 'outside_space';
 
 export interface SpaceMcpSessionPolicyContext {
+  readonly hasDirectWorkerProvenance?: (sessionId: string) => boolean;
+  readonly resolveDirectWorker?: (sessionId: string) => DirectTaskWorkerIdentity | null;
   readonly nodeExecutionRepo?: Pick<NodeExecutionRepository, 'getByAgentSessionId' | 'getById'>;
   readonly taskRepo?: Pick<SpaceTaskRepository, 'getTask'>;
 }
@@ -20,7 +24,7 @@ export interface SpaceMcpSessionPolicyContext {
 export interface SpaceMcpSessionPolicy {
   readonly role: SpaceMcpSessionRole;
   readonly spaceId?: string;
-  readonly owner: 'space-runtime' | 'task-agent-manager' | 'none';
+  readonly owner: 'space-runtime' | 'task-agent-manager' | 'direct-task-executor' | 'none';
   readonly requiredServers: readonly string[];
   readonly attachGenericSpaceTools: boolean;
   readonly attachCoordinatorTools: boolean;
@@ -37,6 +41,20 @@ export function resolveSpaceMcpSessionPolicy(
   context: SpaceMcpSessionPolicyContext = {}
 ): SpaceMcpSessionPolicy {
   const spaceId = session.context?.spaceId;
+
+  const directWorker = context.resolveDirectWorker?.(session.id);
+  if (directWorker || context.hasDirectWorkerProvenance?.(session.id)) {
+    return {
+      role: 'direct_task_worker',
+      spaceId: directWorker?.spaceId,
+      owner: directWorker ? 'direct-task-executor' : 'none',
+      requiredServers: [],
+      attachGenericSpaceTools: false,
+      attachCoordinatorTools: false,
+      attachLongTermAgentTools: false,
+      isWorkflowWorker: false,
+    };
+  }
 
   if (session.type === 'space_task_agent') {
     return {
