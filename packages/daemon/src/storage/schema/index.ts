@@ -1,3 +1,4 @@
+import { runMigration253 } from './m253-direct-kickoff-dispatches.ts';
 import { runMigration252 } from './m252-direct-kickoff-intents.ts';
 import { runMigration251 } from './m251-direct-session-provenance.ts';
 import { runMigration250 } from './m250-direct-stop-requests.ts';
@@ -870,6 +871,7 @@ export function createTables(db: BunDatabase): void {
   runMigration250(db);
   runMigration251(db);
   runMigration252(db);
+  runMigration253(db);
   createSessionCounters(db);
   backfillSessionCounters(db);
 

@@ -29,11 +29,11 @@ export interface DirectTaskQueryState {
   stopRequested: boolean;
 }
 
-function directQuerySessionId(input: DirectTaskQueryAdmissionInput): string {
+export function directQuerySessionId(input: DirectTaskQueryAdmissionInput): string {
   return input.sessionId;
 }
 
-function loadDirectTaskQueryState(
+export function loadDirectTaskQueryState(
   identity: DirectTaskWorkerIdentity,
   getSpace: DirectTaskQueryLookups['getSpace'],
   isStopRequested: DirectTaskQueryLookups['isStopRequested']
