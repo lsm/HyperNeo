@@ -48,7 +48,12 @@ function rebuildVersionSeq(db: BunDatabase): void {
     `CREATE INDEX IF NOT EXISTS idx_space_agent_template_version_seq_key
        ON space_agent_template_version_seq(key, next_version)`
   );
-  if (tableHasColumn(db, 'space_agent_templates', 'space_id')) renumberSharedKeys(db);
+  if (tableHasColumn(db, 'space_agent_templates', 'space_id')) {
+    db.exec(
+      `CREATE INDEX IF NOT EXISTS idx_space_agent_templates_key ON space_agent_templates(key)`
+    );
+    renumberSharedKeys(db);
+  }
 }
 
 function renumberSharedKeys(db: BunDatabase): void {
