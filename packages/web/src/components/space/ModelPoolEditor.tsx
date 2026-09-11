@@ -1,4 +1,5 @@
-import type { AgentModelPoolEntry } from '@hyperneo/shared';
+import type { AgentModelPoolEntry, ThinkingLevel } from '@hyperneo/shared';
+import { getThinkingOptionsForProvider } from '@hyperneo/shared';
 import { useState } from 'preact/hooks';
 import {
   WorkflowModelSelect,
@@ -159,6 +160,27 @@ export function ModelPoolEditor({
                     testId="pool-entry-model-select"
                     className="flex-1 min-w-0 bg-surface border border-line-strong rounded px-2.5 py-1.5 text-fg focus:outline-none focus:border-accent font-mono text-sm"
                   />
+                  <label class="flex items-center gap-1 text-xs text-fg-muted flex-shrink-0">
+                    Think
+                    <select
+                      data-testid="pool-entry-thinking-select"
+                      value={entry.thinkingLevel ?? ''}
+                      onInput={(e) =>
+                        updateEntry(index, {
+                          thinkingLevel:
+                            ((e.target as HTMLSelectElement).value as ThinkingLevel) || null,
+                        })
+                      }
+                      class="bg-surface border border-line-strong rounded px-2 py-1 text-fg text-sm focus:outline-none focus:border-accent"
+                    >
+                      <option value="">Agent default</option>
+                      {getThinkingOptionsForProvider(entry.provider).map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
                   <label class="flex items-center gap-1 text-xs text-fg-muted flex-shrink-0">
                     Max
                     <input
