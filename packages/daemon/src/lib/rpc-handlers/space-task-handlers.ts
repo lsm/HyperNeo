@@ -726,13 +726,22 @@ export function setupSpaceTaskHandlers(
         'spaceRuntimeService is required to approve pending completion — post-approval routing is the sole approval path.'
       );
     }
+    const guard = {
+      expectedPendingCompletionGeneration: currentTask.pendingCompletionGeneration ?? 0,
+    };
     const task = await createPendingCompletionOperation({
       getTask: (taskId) => taskManager.getTask(taskId),
       dispatchApproval: (taskId, reason) =>
-        spaceRuntimeService!.dispatchPostApproval(params.spaceId, taskId, 'human', {
-          approvalReason: reason,
-        }),
-      reopenTask: (taskId) => taskManager.setTaskStatus(taskId, 'in_progress'),
+        spaceRuntimeService!.dispatchPostApproval(
+          params.spaceId,
+          taskId,
+          'human',
+          {
+            approvalReason: reason,
+          },
+          guard
+        ),
+      reopenTask: (taskId) => taskManager.setTaskStatus(taskId, 'in_progress', guard),
       updateTask: (taskId, fields) => taskManager.updateTask(taskId, fields),
       warn: (taskId, detail) => {
         log.warn(

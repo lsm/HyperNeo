@@ -1,3 +1,4 @@
+import { PendingCompletionSupersededError } from '../../../../src/lib/space/operations/pending-completion-guard';
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import { execSync } from 'node:child_process';
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
@@ -7103,6 +7104,42 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
       { taskId, source: 'human', extras: { approvalReason: 'ship it' } },
     ]);
   });
+
+  test.each([true, false])(
+    'superseded MCP decision has no audit or event (approved=%s)',
+    async (approved) => {
+      const taskId = await createReviewTask();
+      const generation = ctx.taskRepo.getTask(taskId)!.pendingCompletionGeneration;
+      const error = new PendingCompletionSupersededError(taskId);
+      const dispatch = spyOn(ctx.runtime, 'dispatchPostApproval').mockRejectedValue(error);
+      const transition = spyOn(ctx.taskManager, 'setTaskStatus').mockRejectedValue(error);
+      const auditLogRepo = new McpAuditLogRepository(ctx.db);
+      const publish = mock(async () => {});
+      const result = await makeHandlers(ctx, {
+        isDefaultAgent: true,
+        auditLogRepo,
+        internalEventBus: { publish } as unknown as NonNullable<
+          Parameters<typeof createSpaceAgentToolHandlers>[0]['internalEventBus']
+        >,
+      }).approve_pending_completion({ task_id: taskId, approved });
+      expect(JSON.parse(result.content[0].text)).toEqual({ success: false, error: error.message });
+      expect(auditLogRepo.listByTask(taskId)).toHaveLength(0);
+      expect(publish).not.toHaveBeenCalled();
+      if (approved)
+        expect(dispatch).toHaveBeenCalledWith(
+          taskId,
+          'human',
+          { approvalReason: null },
+          { expectedPendingCompletionGeneration: generation }
+        );
+      else
+        expect(transition).toHaveBeenCalledWith(taskId, 'in_progress', {
+          expectedPendingCompletionGeneration: generation,
+        });
+      dispatch.mockRestore();
+      transition.mockRestore();
+    }
+  );
 
   test('approve: Layer C — a post-dispatch throw after the status commit is captured, not propagated', async () => {
     const taskId = await createReviewTask();

@@ -1,3 +1,5 @@
+import { PendingCompletionSupersededError } from '../../../../src/lib/space/operations/pending-completion-guard';
+import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager';
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -39,7 +41,7 @@ interface Ctx {
 }
 
 function buildRuntime(
-  options: { prUrl?: string; onSpawn?: () => void; onSpaceLookup?: () => void } = {}
+  options: { prUrl?: string; onSpawn?: () => void; onSpaceLookup?: () => void | Promise<void> } = {}
 ): Ctx {
   const db = makeDb();
   const workflowRunRepo = new SpaceWorkflowRunRepository(db);
@@ -52,7 +54,7 @@ function buildRuntime(
   const spaceManager = options.onSpaceLookup
     ? ({
         getSpace: async (id: string) => {
-          options.onSpaceLookup?.();
+          await options.onSpaceLookup?.();
           return await realSpaceManager.getSpace(id);
         },
       } as unknown as SpaceManager)
@@ -145,6 +147,57 @@ describe('SpaceRuntime.dispatchPostApproval — end-to-end', () => {
       ctx.db.close();
     } catch {}
   });
+
+  test.each(['reject', 'resubmit'] as const)(
+    'approval loses when %s commits during awaited Space lookup',
+    async (action) => {
+      ctx.db.close();
+      let taskId = '';
+      let generation = 0;
+      let changed = false;
+      ctx = buildRuntime({
+        onSpaceLookup: async () => {
+          if (changed) return;
+          changed = true;
+          const competitor = new SpaceTaskManager(ctx.db, SPACE_ID);
+          if (action === 'reject')
+            await competitor.setTaskStatus(taskId, 'in_progress', {
+              expectedPendingCompletionGeneration: generation,
+            });
+          else
+            await competitor.submitTaskForReview(taskId, {
+              submittedByNodeId: null,
+              reason: 'new review',
+            });
+        },
+      });
+      const seeded = seedReviewTask(ctx.taskRepo);
+      const pending = await new SpaceTaskManager(ctx.db, SPACE_ID).submitTaskForReview(seeded.id, {
+        submittedByNodeId: null,
+        reason: 'old review',
+      });
+      taskId = pending.id;
+      generation = pending.pendingCompletionGeneration!;
+      await expect(
+        ctx.runtime.dispatchPostApproval(
+          taskId,
+          'human',
+          { approvalReason: 'stale' },
+          { expectedPendingCompletionGeneration: generation }
+        )
+      ).rejects.toBeInstanceOf(PendingCompletionSupersededError);
+      expect(ctx.taskRepo.getTask(taskId)?.status).toBe(
+        action === 'reject' ? 'in_progress' : 'review'
+      );
+      expect(ctx.taskRepo.getTask(taskId)?.pendingCompletionGeneration).toBe(
+        action === 'reject' ? generation : generation + 1
+      );
+      expect(ctx.emitted).toEqual([]);
+      expect(ctx.injected).toEqual([]);
+      expect(ctx.spawned).toEqual([]);
+      expect(ctx.cancelled).toEqual([]);
+    }
+  );
 
   test('forwards approvalReason from contextExtras to setTaskStatus (review → approved)', async () => {
     const task = seedReviewTask(ctx.taskRepo);

@@ -3556,12 +3556,13 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         });
       }
 
+      const guard = { expectedPendingCompletionGeneration: task.pendingCompletionGeneration ?? 0 };
       try {
         const updated = await createPendingCompletionOperation({
           getTask: (taskId) => taskRepo.getTask(taskId),
           dispatchApproval: (taskId, approvalReason) =>
-            runtime.dispatchPostApproval(taskId, 'human', { approvalReason }),
-          reopenTask: (taskId) => taskManager.setTaskStatus(taskId, 'in_progress'),
+            runtime.dispatchPostApproval(taskId, 'human', { approvalReason }, guard),
+          reopenTask: (taskId) => taskManager.setTaskStatus(taskId, 'in_progress', guard),
           updateTask: (taskId, fields) => taskManager.updateTask(taskId, fields),
           warn: (taskId, detail) =>
             log.warn(

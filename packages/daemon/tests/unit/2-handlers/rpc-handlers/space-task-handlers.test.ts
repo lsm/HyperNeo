@@ -1,3 +1,4 @@
+import { PendingCompletionSupersededError } from '../../../../src/lib/space/operations/pending-completion-guard';
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { MessageHub, Space, SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
 import type {
@@ -2252,9 +2253,15 @@ describe('space-task-handlers', () => {
         reason: 'looks good',
       });
 
-      expect(runtime.dispatchPostApproval).toHaveBeenCalledWith('space-1', 'task-1', 'human', {
-        approvalReason: 'looks good',
-      });
+      expect(runtime.dispatchPostApproval).toHaveBeenCalledWith(
+        'space-1',
+        'task-1',
+        'human',
+        {
+          approvalReason: 'looks good',
+        },
+        { expectedPendingCompletionGeneration: 0 }
+      );
       expect(result).toEqual(approvedTask);
       expect(internalEventBus.publish).toHaveBeenCalledWith('space.task.updated', {
         sessionId: 'global',
@@ -2344,7 +2351,9 @@ describe('space-task-handlers', () => {
         reason: 'needs revision',
       });
 
-      expect(taskManager.setTaskStatus).toHaveBeenCalledWith('task-1', 'in_progress');
+      expect(taskManager.setTaskStatus).toHaveBeenCalledWith('task-1', 'in_progress', {
+        expectedPendingCompletionGeneration: 0,
+      });
       expect(taskManager.updateTask).toHaveBeenCalledWith('task-1', {
         approvalReason: 'needs revision',
       });
@@ -2384,16 +2393,26 @@ describe('space-task-handlers', () => {
           task: finished,
         });
         if (approved) {
-          expect(dispatchPostApproval).toHaveBeenCalledWith('space-1', 'task-1', 'human', {
-            approvalReason: '  raw  ',
-          });
+          expect(dispatchPostApproval).toHaveBeenCalledWith(
+            'space-1',
+            'task-1',
+            'human',
+            {
+              approvalReason: '  raw  ',
+            },
+            { expectedPendingCompletionGeneration: 0 }
+          );
           expect(taskManager.updateTask).not.toHaveBeenCalled();
         } else {
           expect(dispatchPostApproval).not.toHaveBeenCalled();
           expect(taskManager.getTask).toHaveBeenCalledTimes(1);
-          expect(taskManager.updateTask).toHaveBeenCalledWith('task-1', {
-            approvalReason: '  raw  ',
-          });
+          expect(taskManager.updateTask).toHaveBeenCalledWith(
+            'task-1',
+            {
+              approvalReason: '  raw  ',
+            },
+            { expectedPendingCompletionGeneration: 0 }
+          );
         }
       }
     );
@@ -2411,6 +2430,46 @@ describe('space-task-handlers', () => {
       expect(taskManager.updateTask).not.toHaveBeenCalled();
       expect(internalEventBus.publish).not.toHaveBeenCalled();
     });
+
+    it.each([true, false])(
+      'superseded decision produces no success effects (approved=%s)',
+      async (approved) => {
+        const pending = {
+          ...mockTask,
+          status: 'review' as const,
+          pendingCheckpointType: 'task_completion' as const,
+          pendingCompletionGeneration: 7,
+        };
+        const error = new PendingCompletionSupersededError('task-1');
+        const dispatchPostApproval = mock(async () => {
+          throw error;
+        });
+        setup(mockSpace, pending, { dispatchPostApproval } as unknown as SpaceRuntimeService);
+        (taskManager.setTaskStatus as ReturnType<typeof mock>).mockRejectedValue(error);
+        await expect(
+          call('spaceTask.approvePendingCompletion', {
+            spaceId: 'space-1',
+            taskId: 'task-1',
+            approved,
+          })
+        ).rejects.toBe(error);
+        expect(taskManager.getTask).toHaveBeenCalledTimes(1);
+        expect(taskManager.updateTask).not.toHaveBeenCalled();
+        expect(internalEventBus.publish).not.toHaveBeenCalled();
+        if (approved)
+          expect(dispatchPostApproval).toHaveBeenCalledWith(
+            'space-1',
+            'task-1',
+            'human',
+            { approvalReason: null },
+            { expectedPendingCompletionGeneration: 7 }
+          );
+        else
+          expect(taskManager.setTaskStatus).toHaveBeenCalledWith('task-1', 'in_progress', {
+            expectedPendingCompletionGeneration: 7,
+          });
+      }
+    );
 
     it('requires a task_completion checkpoint', async () => {
       await expect(
