@@ -94,13 +94,18 @@ export class SpaceAgentTemplateRepository {
       return current !== null && current.version === expectedVersion ? this.getByKey(key) : null;
     }
 
-    const nextVersion = this.nextVersionFor(this.versionNamespaceForKey(key), key);
+    const namespace = this.versionNamespaceForKey(key);
+    const nextVersion = this.nextVersionFor(namespace, key);
     fields.push('updated_at = ?');
     fields.push('version = ?');
     values.push(Date.now());
     values.push(nextVersion);
 
-    const where = expectedVersion === undefined ? 'WHERE key = ?' : 'WHERE key = ? AND version = ?';
+    const where =
+      expectedVersion === undefined
+        ? 'WHERE space_id = ? AND key = ?'
+        : 'WHERE space_id = ? AND key = ? AND version = ?';
+    values.push(namespace);
     values.push(key);
     if (expectedVersion !== undefined) values.push(expectedVersion);
 
@@ -261,7 +266,15 @@ export class SpaceAgentTemplateRepository {
   private nextVersionFor(spaceId: string, key: string): number {
     const row = this.db
       .prepare(
-        `INSERT INTO space_agent_template_version_seq (space_id, key, next_version) VALUES (?, ?, 1)
+        `INSERT INTO space_agent_template_version_seq (space_id, key, next_version)
+					 VALUES (
+						 ?1,
+						 ?2,
+						 COALESCE(
+							 (SELECT MAX(next_version) FROM space_agent_template_version_seq WHERE key = ?2),
+							 0
+						 ) + 1
+					 )
 					 ON CONFLICT(space_id, key) DO UPDATE SET next_version = next_version + 1
 					 RETURNING next_version`
       )
