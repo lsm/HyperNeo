@@ -51,6 +51,7 @@ export async function dispatchPendingCompletion(
   updateTask: PendingCompletionDependencies['updateTask'],
   warn: PendingCompletionDependencies['warn']
 ): Promise<void> {
+  if (!decision.approved) return;
   try {
     await dispatchApproval(decision.taskId, decision.reason);
   } catch (error) {
@@ -67,8 +68,10 @@ export async function dispatchPendingCompletion(
 
 export async function readPendingCompletionResult(
   getTask: PendingCompletionDependencies['getTask'],
-  decision: PendingCompletionDecision
+  decision: PendingCompletionDecision,
+  rejection?: Awaited<ReturnType<typeof rejectPendingCompletion>>
 ): Promise<{ value: SpaceTask }> {
+  if (rejection && 'reason' in rejection) return { value: rejection.reason };
   const task = await getTask(decision.taskId);
   if (!task) throw new Error(`Task not found: ${decision.taskId}`);
   return { value: task };

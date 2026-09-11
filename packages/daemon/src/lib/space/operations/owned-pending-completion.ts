@@ -11,8 +11,12 @@ import {
   type SpaceMcpSessionPolicyContext,
 } from '../runtime/space-mcp-session-policy.ts';
 import {
-  createPendingCompletionOperation,
+  normalizePendingCompletion,
+  rejectPendingCompletion,
+  dispatchPendingCompletion,
+  readPendingCompletionResult,
   type PendingCompletionInput,
+  type PendingCompletionDependencies,
 } from './pending-completion.ts';
 
 const log = new Logger('OwnedPendingCompletion');
@@ -103,22 +107,20 @@ export async function loadCompletionTarget(
   return requireCompletionTarget(await getTask(input.taskId), input, actor);
 }
 
-async function applyOwnedCompletion(
+function bindOwnedCompletion(
   previous: SpaceTask,
-  input: PendingCompletionInput,
   getTaskManager: OwnedPendingCompletionDependencies['getTaskManager'],
   dispatchApproval: OwnedPendingCompletionDependencies['dispatchApproval'],
   warn: OwnedPendingCompletionDependencies['warn']
-): Promise<{ value: SpaceTask }> {
+): PendingCompletionDependencies {
   const manager = getTaskManager(previous.spaceId);
-  const task = await createPendingCompletionOperation({
+  return {
     getTask: (id) => manager.getTask(id),
     dispatchApproval: (id, reason) => dispatchApproval(previous.spaceId, id, 'human', reason),
     reopenTask: (id) => manager.setTaskStatus(id, 'in_progress'),
     updateTask: (id, fields) => manager.updateTask(id, fields),
     warn,
-  })(input);
-  return { value: task };
+  };
 }
 
 async function notifyOwnedCompletion(
@@ -157,10 +159,20 @@ export function createOwnedPendingCompletionOperation(
     .pipe(loadCompletionTarget, ['input', 'actor', 'getTask'], 'result:task')
     .pipe((task: SpaceTask) => task, 'task', 'previous')
     .pipe(
-      applyOwnedCompletion,
-      ['previous', 'input', 'getTaskManager', 'dispatchApproval', 'warn'],
-      'result:task'
+      bindOwnedCompletion,
+      ['previous', 'getTaskManager', 'dispatchApproval', 'warn'],
+      ['getTask', 'dispatchApproval', 'reopenTask', 'updateTask', 'warn']
     )
+    .pipe(normalizePendingCompletion, 'input', 'decision')
+    .pipe(rejectPendingCompletion, ['decision', 'reopenTask', 'updateTask'], 'rejection')
+    .pipe(dispatchPendingCompletion, [
+      'decision',
+      'dispatchApproval',
+      'getTask',
+      'updateTask',
+      'warn',
+    ])
+    .pipe(readPendingCompletionResult, ['getTask', 'decision', 'rejection'], 'result:task')
     .pipe(notifyOwnedCompletion, ['actor', 'previous', 'input', 'task', 'emitTaskUpdated', 'audit'])
     .endAsync('task') as (
     input: PendingCompletionInput,
