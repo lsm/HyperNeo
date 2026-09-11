@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { DirectTaskExecutionRepository } from '../../../../src/storage/repositories/direct-task-execution-repository';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
@@ -102,6 +105,36 @@ describe('SpaceWorkflowRunRepository', () => {
   });
 
   describe('createPinnedRun', () => {
+    it('a restart immediately after pinning can rehydrate the attached run', () => {
+      const task = new SpaceTaskRepository(db).createTask({
+        spaceId,
+        title: 'Task',
+        description: '',
+      });
+      const run = repo.createPinnedRun({
+        spaceId,
+        workflowId: WORKFLOW_ID,
+        title: 'Run',
+        rawWorkflow: rawWorkflow(),
+        parentTaskId: task.id,
+      });
+      const directory = mkdtempSync(join(tmpdir(), 'pinned-restart-'));
+      let restarted: Database | undefined;
+      try {
+        const file = join(directory, 'persisted.db');
+        db.prepare('VACUUM INTO ?').run(file);
+        restarted = new Database(file);
+        expect(new SpaceWorkflowRunRepository(restarted).getRehydratableRuns(spaceId)).toEqual([
+          expect.objectContaining({ id: run.id, status: 'in_progress' }),
+        ]);
+        expect(new SpaceTaskRepository(restarted).getTask(task.id)?.workflowRunId).toBe(run.id);
+        expect(new SpaceTaskRepository(restarted).listStandaloneBySpace(spaceId)).toHaveLength(0);
+      } finally {
+        restarted?.close();
+        rmSync(directory, { recursive: true, force: true });
+      }
+    });
+
     it('attaches the task atomically and prevents direct selection afterward', () => {
       const tasks = new SpaceTaskRepository(db);
       const direct = new DirectTaskExecutionRepository(db);

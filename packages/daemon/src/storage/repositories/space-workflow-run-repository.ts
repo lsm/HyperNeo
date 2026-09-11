@@ -100,6 +100,7 @@ export class SpaceWorkflowRunRepository {
           .run(run.id, Date.now(), params.parentTaskId, params.spaceId);
         if (attached.changes !== 1)
           throw new Error(`Task ${params.parentTaskId} is not available for workflow attachment`);
+        return this.transitionStatus(run.id, 'in_progress');
       }
       return run;
     })();

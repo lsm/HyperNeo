@@ -168,9 +168,19 @@ describe('SpaceRuntime — disabled workflow filtering', () => {
     createWorkflow('Enabled', ['default']);
     const task = taskRepo.createTask({ spaceId: SPACE_ID, title: 'Direct', description: '' });
     new DirectTaskExecutionRepository(db).select(task.id);
-    await buildRuntime().executeTick();
-    expect(taskRepo.getTask(task.id)?.workflowRunId).toBeUndefined();
-    expect(workflowRunRepo.listBySpace(SPACE_ID)).toHaveLength(0);
+    const batch = spyOn(DirectTaskExecutionRepository.prototype, 'listSelectedTaskIds');
+    const individual = spyOn(DirectTaskExecutionRepository.prototype, 'isSelected');
+    try {
+      await buildRuntime().executeTick();
+      expect(batch).toHaveBeenCalledTimes(1);
+      expect(batch).toHaveBeenCalledWith(SPACE_ID);
+      expect(individual).not.toHaveBeenCalled();
+      expect(taskRepo.getTask(task.id)?.workflowRunId).toBeUndefined();
+      expect(workflowRunRepo.listBySpace(SPACE_ID)).toHaveLength(0);
+    } finally {
+      batch.mockRestore();
+      individual.mockRestore();
+    }
   });
 
   test('direct selection during awaited start admission prevents run creation', async () => {

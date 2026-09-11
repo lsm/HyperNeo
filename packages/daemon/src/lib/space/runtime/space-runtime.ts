@@ -3910,7 +3910,10 @@ export class SpaceRuntime {
     );
 
     if (options.parentTaskId) this.config.reactiveDb?.notifyChange('space_tasks');
-    const run = this.config.workflowRunRepo.transitionStatus(pendingRun.id, 'in_progress');
+    const run =
+      pendingRun.status === 'in_progress'
+        ? pendingRun
+        : this.config.workflowRunRepo.transitionStatus(pendingRun.id, 'in_progress');
     await this.safeOnWorkflowRunCreated(spaceId, run);
 
     const meta: ExecutorMeta = { workflow, spaceId, workspacePath: space.workspacePath };
@@ -7994,14 +7997,13 @@ export class SpaceRuntime {
       let availableSlots = this.getAvailableTaskSlots(space);
       if (availableSlots <= 0) continue;
 
+      const directTaskIds = new Set(
+        new DirectTaskExecutionRepository(this.config.db).listSelectedTaskIds(space.id)
+      );
       const standaloneOpenTasks = this.sortTasksByPriority(
         this.config.taskRepo
           .listStandaloneBySpace(space.id, false)
-          .filter(
-            (task) =>
-              task.status === 'open' &&
-              !new DirectTaskExecutionRepository(this.config.db).isSelected(task.id)
-          )
+          .filter((task) => task.status === 'open' && !directTaskIds.has(task.id))
       );
 
       const taskManager = this.getOrCreateTaskManager(space.id);
