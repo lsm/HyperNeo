@@ -44,6 +44,10 @@ function rebuildVersionSeq(db: BunDatabase): void {
   db.exec(
     `ALTER TABLE space_agent_template_version_seq_m246_new RENAME TO space_agent_template_version_seq`
   );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_space_agent_template_version_seq_key
+       ON space_agent_template_version_seq(key, next_version)`
+  );
   if (tableHasColumn(db, 'space_agent_templates', 'space_id')) renumberSharedKeys(db);
 }
 

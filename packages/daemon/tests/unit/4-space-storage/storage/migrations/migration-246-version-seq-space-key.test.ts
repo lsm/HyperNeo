@@ -53,6 +53,22 @@ describe('migration 246: the template version counter gains a Space key', () => 
     db.close();
   });
 
+  test('indexes counter lookups by key so allocation does not scan', () => {
+    const db = migratedDb();
+    runMigration245(db);
+
+    const plan = db
+      .prepare(
+        `EXPLAIN QUERY PLAN SELECT MAX(next_version) FROM space_agent_template_version_seq WHERE key = ?`
+      )
+      .all('any') as Array<{ detail: string }>;
+
+    expect(
+      plan.some((step) => step.detail.includes('idx_space_agent_template_version_seq_key'))
+    ).toBe(true);
+    db.close();
+  });
+
   test('carries existing counters onto the sentinel Space', () => {
     const db = migratedDb();
     db.prepare(
