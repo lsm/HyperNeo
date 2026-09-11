@@ -11,7 +11,7 @@ export const publishTask = (superpipe({})('publish-task') as PipelineAPI)
   .pipe((readStatus: () => Promise<string | undefined>) => readStatus(), 'readStatus', 'status')
   .pipe(requireDraftTask, 'status', 'result:task')
   .pipe((publish: () => Promise<unknown>) => publish(), 'publish', 'task')
-  .end('task') as <T>(
+  .endAsync('task') as <T>(
   readStatus: () => Promise<string | undefined>,
   publish: () => Promise<T>
 ) => Promise<T | 'not_draft'>;
