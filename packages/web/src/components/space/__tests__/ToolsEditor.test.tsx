@@ -465,3 +465,29 @@ describe('scoped tool entries', () => {
     });
   });
 });
+
+describe('preset detection with scoped entries', () => {
+  it('detects a preset even when a scoped entry is present', () => {
+    expect(detectToolsPreset(['Read', 'Grep', 'Glob', 'Bash(ls:*)'])).toBe('Read Only');
+  });
+
+  it('still reports Custom when the known tools do not match a preset', () => {
+    expect(detectToolsPreset(['Read', 'Bash(ls:*)'])).toBe('Custom');
+  });
+
+  it('reports Custom for a list of only scoped entries', () => {
+    expect(detectToolsPreset(['Bash(ls:*)'])).toBe('Custom');
+  });
+
+  it('keeps the preset button active after applying it over a scoped entry', () => {
+    const { getByTestId } = render(
+      <ToolsEditor
+        tools={['Read', 'Grep', 'Glob', 'Bash(ls:*)']}
+        toolsOverridden={true}
+        onChange={vi.fn()}
+        manageScopedEntries
+      />
+    );
+    expect(getByTestId('tools-editor-preset-read-only').className).toContain('bg-accent/20');
+  });
+});

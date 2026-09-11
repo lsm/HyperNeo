@@ -24,8 +24,13 @@ export interface ToolsSelection {
 
 export function detectToolsPreset(toolList: string[] | null | undefined): string {
   if (toolList == null || toolList.length === 0) return 'Inherited';
+  const known = new Set<string>(KNOWN_TOOLS);
+  const knownOnly = toolList.filter((tool) => known.has(tool));
   for (const [preset, presetTools] of Object.entries(TOOL_PRESETS)) {
-    if (toolList.length === presetTools.length && presetTools.every((t) => toolList.includes(t))) {
+    if (
+      knownOnly.length === presetTools.length &&
+      presetTools.every((t) => knownOnly.includes(t))
+    ) {
       return preset;
     }
   }
