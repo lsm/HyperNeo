@@ -1,3 +1,9 @@
+import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { DirectTaskExecutionRepository } from '../../../../src/storage/repositories/direct-task-execution-repository';
+import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
@@ -100,6 +106,140 @@ describe('SpaceWorkflowRunRepository', () => {
   });
 
   describe('createPinnedRun', () => {
+    function createAttachedRun(
+      params: Parameters<SpaceWorkflowRunRepository['createPinnedRun']>[0]
+    ) {
+      return repo.createPinnedRun(params, undefined, (run) => {
+        new NodeExecutionRepository(db).create({
+          workflowRunId: run.id,
+          workflowNodeId: 'start',
+          agentName: 'worker',
+        });
+        return undefined;
+      });
+    }
+
+    it('a restart immediately after pinning can rehydrate the attached run', () => {
+      const task = new SpaceTaskRepository(db).createTask({
+        spaceId,
+        title: 'Task',
+        description: '',
+      });
+      const run = createAttachedRun({
+        spaceId,
+        workflowId: WORKFLOW_ID,
+        title: 'Run',
+        rawWorkflow: rawWorkflow(),
+        parentTaskId: task.id,
+      });
+      const directory = mkdtempSync(join(tmpdir(), 'pinned-restart-'));
+      let restarted: Database | undefined;
+      try {
+        const file = join(directory, 'persisted.db');
+        db.prepare('VACUUM INTO ?').run(file);
+        restarted = new Database(file);
+        expect(new SpaceWorkflowRunRepository(restarted).getRehydratableRuns(spaceId)).toEqual([
+          expect.objectContaining({ id: run.id, status: 'in_progress' }),
+        ]);
+        expect(new SpaceTaskRepository(restarted).getTask(task.id)?.workflowRunId).toBe(run.id);
+        expect(new NodeExecutionRepository(restarted).listByWorkflowRun(run.id)).toEqual([
+          expect.objectContaining({
+            workflowNodeId: 'start',
+            agentName: 'worker',
+            status: 'pending',
+          }),
+        ]);
+        expect(new SpaceTaskRepository(restarted).listStandaloneBySpace(spaceId)).toHaveLength(0);
+      } finally {
+        restarted?.close();
+        rmSync(directory, { recursive: true, force: true });
+      }
+    });
+
+    it('attaches the task atomically and prevents direct selection afterward', () => {
+      const tasks = new SpaceTaskRepository(db);
+      const direct = new DirectTaskExecutionRepository(db);
+      const task = tasks.createTask({ spaceId, title: 'Task', description: '' });
+      const params = {
+        spaceId,
+        workflowId: WORKFLOW_ID,
+        title: 'Run',
+        rawWorkflow: rawWorkflow(),
+        parentTaskId: task.id,
+      };
+      const run = createAttachedRun(params);
+      expect(tasks.getTask(task.id)?.workflowRunId).toBe(run.id);
+      expect(direct.select(task.id)).toBe(false);
+      expect(direct.claim(task.id, 'attempt', 'session')).toBeNull();
+      expect(() => createAttachedRun(params)).toThrow('not available');
+      expect(repo.listBySpace(spaceId)).toHaveLength(1);
+    });
+
+    it('direct selection wins without leaving a run or definition snapshot', () => {
+      const tasks = new SpaceTaskRepository(db);
+      const direct = new DirectTaskExecutionRepository(db);
+      const task = tasks.createTask({ spaceId, title: 'Task', description: '' });
+      direct.select(task.id);
+      const attempt = direct.claim(task.id, 'attempt', 'session');
+      const before = db
+        .prepare('SELECT COUNT(*) AS count FROM space_workflow_definition_versions')
+        .get();
+      expect(() =>
+        createAttachedRun({
+          spaceId,
+          workflowId: WORKFLOW_ID,
+          title: 'Run',
+          rawWorkflow: rawWorkflow(),
+          parentTaskId: task.id,
+        })
+      ).toThrow('not available');
+      expect(repo.listBySpace(spaceId)).toHaveLength(0);
+      expect(
+        db.prepare('SELECT COUNT(*) AS count FROM space_workflow_definition_versions').get()
+      ).toEqual(before);
+      expect(direct.getActive(task.id)).toEqual(attempt);
+      expect(tasks.getTask(task.id)?.workflowRunId).toBeUndefined();
+    });
+
+    it('attachment rejects ineligible task state and missing tasks atomically', () => {
+      const task = new SpaceTaskRepository(db).createTask({
+        spaceId,
+        title: 'Task',
+        description: '',
+        status: 'done',
+      });
+      for (const parentTaskId of [task.id, 'missing']) {
+        expect(() =>
+          createAttachedRun({
+            spaceId,
+            workflowId: WORKFLOW_ID,
+            title: 'Run',
+            rawWorkflow: rawWorkflow(),
+            parentTaskId,
+          })
+        ).toThrow('not available');
+      }
+      expect(repo.listBySpace(spaceId)).toHaveLength(0);
+    });
+
+    it('missing initial executions roll back ownership, run and snapshot', () => {
+      const tasks = new SpaceTaskRepository(db);
+      const task = tasks.createTask({ spaceId, title: 'Task', description: '' });
+      expect(() =>
+        repo.createPinnedRun({
+          spaceId,
+          workflowId: WORKFLOW_ID,
+          title: 'Run',
+          rawWorkflow: rawWorkflow(),
+          parentTaskId: task.id,
+        })
+      ).toThrow('requires initial executions');
+      expect(repo.listBySpace(spaceId)).toHaveLength(0);
+      expect(tasks.getTask(task.id)?.workflowRunId).toBeUndefined();
+      expect(db.prepare('SELECT COUNT(*) AS count FROM node_executions').get()).toEqual({
+        count: 0,
+      });
+    });
     it('atomically records and pins the raw workflow definition', () => {
       const workflow = rawWorkflow({ name: 'Pinned' });
       const expected = computeDefinitionVersion(workflow);

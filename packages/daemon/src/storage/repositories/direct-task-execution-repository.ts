@@ -23,6 +23,14 @@ export class DirectTaskExecutionRepository {
       .get(taskId);
   }
 
+  listSelectedTaskIds(spaceId: string): string[] {
+    const rows = this.db
+      .prepare(`SELECT s.task_id FROM direct_task_execution_selection s
+      JOIN space_tasks t ON t.id = s.task_id WHERE t.space_id = ?`)
+      .all(spaceId) as Array<{ task_id: string }>;
+    return rows.map((row) => row.task_id);
+  }
+
   select(taskId: string): boolean {
     this.db
       .prepare(`INSERT INTO direct_task_execution_selection(task_id)

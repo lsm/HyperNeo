@@ -1,3 +1,4 @@
+import { DirectTaskExecutionRepository } from '../../../storage/repositories/direct-task-execution-repository.ts';
 import { PendingCompletionSupersededError } from '../operations/pending-completion-guard.ts';
 import type {
   CreateNodeExecutionParams,
@@ -3896,18 +3897,50 @@ export class SpaceRuntime {
       throw new Error(`Space not found: ${spaceId}`);
     }
 
-    const pendingRun = this.config.workflowRunRepo.createPinnedRun(
-      {
-        spaceId,
-        workflowId,
-        title,
-        description,
-        rawWorkflow,
-      },
-      createAgentTemplateResolver(spaceId, this.config.templateRepo)
-    );
+    let pendingRun: SpaceWorkflowRun;
+    if (options.parentTaskId) this.config.reactiveDb?.beginTransaction();
+    try {
+      pendingRun = this.config.workflowRunRepo.createPinnedRun(
+        {
+          spaceId,
+          workflowId,
+          title,
+          description,
+          rawWorkflow,
+          parentTaskId: options.parentTaskId,
+        },
+        createAgentTemplateResolver(spaceId, this.config.templateRepo),
+        options.parentTaskId
+          ? (run) => {
+              const start = workflow.nodes.find((node) => node.id === workflow.startNodeId);
+              if (!start)
+                throw new Error(
+                  `Start node "${workflow.startNodeId}" not found in workflow "${workflowId}"`
+                );
+              for (const agent of resolveNodeAgents(start)) {
+                this.createNodeExecutionOrIgnore({
+                  workflowRunId: run.id,
+                  workflowNodeId: start.id,
+                  agentName: agent.name,
+                  agentId: this.slotAgentId(agent),
+                  status: 'pending',
+                });
+              }
+              return undefined;
+            }
+          : undefined
+      );
 
-    const run = this.config.workflowRunRepo.transitionStatus(pendingRun.id, 'in_progress');
+      if (options.parentTaskId) this.config.reactiveDb?.commitTransaction();
+    } catch (error) {
+      if (options.parentTaskId) this.config.reactiveDb?.abortTransaction();
+      throw error;
+    }
+    if (options.parentTaskId) this.config.reactiveDb?.notifyChange('space_tasks');
+    const run =
+      pendingRun.status === 'in_progress'
+        ? pendingRun
+        : this.config.workflowRunRepo.transitionStatus(pendingRun.id, 'in_progress');
     await this.safeOnWorkflowRunCreated(spaceId, run);
 
     const meta: ExecutorMeta = { workflow, spaceId, workspacePath: space.workspacePath };
@@ -3937,9 +3970,10 @@ export class SpaceRuntime {
             `Parent task ${options.parentTaskId} belongs to a different space (${parent.spaceId})`
           );
         }
-        canonicalTask = await this.updateTaskAndEmit(spaceId, parent.id, {
-          workflowRunId: run.id,
-        });
+        if (parent.workflowRunId !== run.id)
+          throw new Error(`Workflow attachment superseded for task ${parent.id}`);
+        canonicalTask = parent;
+        await this.safeOnTaskUpdated(spaceId, parent, { fromStatus: parent.status });
       } else {
         canonicalTask = await taskManager.createTask({
           title,
@@ -3954,7 +3988,7 @@ export class SpaceRuntime {
       await this.safeOnTaskUpdated(spaceId, canonicalTask);
 
       startAgents = resolveNodeAgents(startNode);
-      for (const agentEntry of startAgents) {
+      for (const agentEntry of options.parentTaskId ? [] : startAgents) {
         this.createNodeExecutionOrIgnore({
           workflowRunId: run.id,
           workflowNodeId: startNode.id,
@@ -7990,10 +8024,13 @@ export class SpaceRuntime {
       let availableSlots = this.getAvailableTaskSlots(space);
       if (availableSlots <= 0) continue;
 
+      const directTaskIds = new Set(
+        new DirectTaskExecutionRepository(this.config.db).listSelectedTaskIds(space.id)
+      );
       const standaloneOpenTasks = this.sortTasksByPriority(
         this.config.taskRepo
           .listStandaloneBySpace(space.id, false)
-          .filter((task) => task.status === 'open')
+          .filter((task) => task.status === 'open' && !directTaskIds.has(task.id))
       );
 
       const taskManager = this.getOrCreateTaskManager(space.id);
@@ -8017,16 +8054,11 @@ export class SpaceRuntime {
         }
 
         try {
-          const { run } = await this.startWorkflowRun(
-            space.id,
-            selected.id,
-            current.title,
-            current.description,
-            { parentTaskId: current.id }
-          );
+          await this.startWorkflowRun(space.id, selected.id, current.title, current.description, {
+            parentTaskId: current.id,
+          });
 
           await this.updateTaskAndEmit(space.id, current.id, {
-            workflowRunId: run.id,
             status: 'in_progress',
             startedAt: current.startedAt ?? Date.now(),
             completedAt: null,

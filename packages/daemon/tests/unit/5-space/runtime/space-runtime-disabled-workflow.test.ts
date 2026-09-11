@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { DirectTaskExecutionRepository } from '../../../../src/storage/repositories/direct-task-execution-repository.ts';
+import { afterEach, beforeEach, describe, expect, test, spyOn } from 'bun:test';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import type { SelectWorkflowWithLlm } from '../../../../src/lib/space/runtime/llm-workflow-selector.ts';
@@ -162,5 +163,80 @@ describe('SpaceRuntime — disabled workflow filtering', () => {
     expect(updated.workflowRunId).not.toBeNull();
     const run = workflowRunRepo.getRun(updated.workflowRunId!);
     expect(run!.workflowId).toBe(enabledWf.id);
+  });
+  test('scheduler leaves opted-in direct tasks unattached', async () => {
+    createWorkflow('Enabled', ['default']);
+    const task = taskRepo.createTask({ spaceId: SPACE_ID, title: 'Direct', description: '' });
+    new DirectTaskExecutionRepository(db).select(task.id);
+    const batch = spyOn(DirectTaskExecutionRepository.prototype, 'listSelectedTaskIds');
+    const individual = spyOn(DirectTaskExecutionRepository.prototype, 'isSelected');
+    try {
+      await buildRuntime().executeTick();
+      expect(batch).toHaveBeenCalledTimes(1);
+      expect(batch).toHaveBeenCalledWith(SPACE_ID);
+      expect(individual).not.toHaveBeenCalled();
+      expect(taskRepo.getTask(task.id)?.workflowRunId).toBeUndefined();
+      expect(workflowRunRepo.listBySpace(SPACE_ID)).toHaveLength(0);
+    } finally {
+      batch.mockRestore();
+      individual.mockRestore();
+    }
+  });
+
+  test('direct selection during awaited start admission prevents run creation', async () => {
+    const workflow = createWorkflow('Enabled', ['default']);
+    const task = taskRepo.createTask({ spaceId: SPACE_ID, title: 'Direct', description: '' });
+    const direct = new DirectTaskExecutionRepository(db);
+    const getSpace = spaceManager.getSpace.bind(spaceManager);
+    const lookup = spyOn(spaceManager, 'getSpace').mockImplementation(async (id) => {
+      const result = await getSpace(id);
+      direct.select(task.id);
+      direct.claim(task.id, 'attempt', 'session');
+      return result;
+    });
+    try {
+      await expect(
+        buildRuntime().startWorkflowRun(SPACE_ID, workflow.id, 'Run', '', { parentTaskId: task.id })
+      ).rejects.toThrow('not available');
+      expect(workflowRunRepo.listBySpace(SPACE_ID)).toHaveLength(0);
+      expect(db.prepare('SELECT COUNT(*) AS count FROM node_executions').get()).toEqual({
+        count: 0,
+      });
+      expect(direct.getActive(task.id)?.id).toBe('attempt');
+    } finally {
+      lookup.mockRestore();
+    }
+  });
+
+  test('workflow start commits ownership before its first outward callback', async () => {
+    const workflow = createWorkflow('Enabled', ['default']);
+    const task = taskRepo.createTask({ spaceId: SPACE_ID, title: 'Workflow', description: '' });
+    const direct = new DirectTaskExecutionRepository(db);
+    const ownershipObserved: unknown[] = [];
+    const runtime = new SpaceRuntime({
+      db,
+      spaceManager,
+      longHorizonAgentRepo,
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      onWorkflowRunCreated: async () => {
+        ownershipObserved.push([
+          taskRepo.getTask(task.id)?.workflowRunId,
+          direct.select(task.id),
+          direct.claim(task.id, 'attempt', 'session'),
+          nodeExecutionRepo
+            .listByWorkflowRun(taskRepo.getTask(task.id)!.workflowRunId!)
+            .map((execution) => execution.status),
+        ]);
+      },
+    });
+    const result = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run', '', {
+      parentTaskId: task.id,
+    });
+    expect(ownershipObserved).toEqual([[result.run.id, false, null, ['pending']]]);
+    expect(result.tasks[0].workflowRunId).toBe(result.run.id);
+    expect(workflowRunRepo.listBySpace(SPACE_ID)).toHaveLength(1);
   });
 });
