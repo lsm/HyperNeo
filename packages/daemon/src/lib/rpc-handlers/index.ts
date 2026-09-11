@@ -574,6 +574,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   const nodeExecutionRepo = new NodeExecutionRepository(deps.db.getDatabase(), deps.reactiveDb);
   deps.sessionManager.setDefaultOperationRegistryProvider(
     createSpaceOperationRegistryProvider(deps.db, deps.jobQueue, {
+      blockExecution: (spaceId, taskId, params) =>
+        spaceRuntimeService.stopWorkflowBackedTask(spaceId, taskId, params),
       getSession: (sessionId) => deps.db.getSession(sessionId),
       getTaskManager: spaceTaskManagerFactory,
       taskRepo: spaceTaskRepo,

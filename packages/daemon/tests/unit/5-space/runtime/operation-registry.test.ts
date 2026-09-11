@@ -1,3 +1,5 @@
+import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
+import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
 import type { CallContext } from '@hyperneo/shared';
 import type { Database as AppDatabase } from '../../../../src/storage/database';
@@ -43,13 +45,17 @@ beforeEach(() => {
 });
 afterEach(() => db.close());
 
-function provider() {
+function provider(extra = {}) {
   return createSpaceOperationRegistryProvider(database, jobQueue, {
     getSession: (id) => sessions.getSession(id),
     getTaskManager: (id) => new SpaceTaskManager(db, id),
     taskRepo: tasks,
     notifyStandalone: () => database.notifyChange('space_tasks'),
     emitTaskUpdated: emit,
+    blockExecution: async () => {
+      throw new Error('Unexpected workflow cleanup');
+    },
+    ...extra,
   });
 }
 function member(id: string, owner?: string) {
@@ -119,5 +125,122 @@ test.each([undefined, 'other-space'])(
     expect(JSON.parse(edited.content[0].text)).toMatchObject({ id: task.id, title: 'Allowed' });
     expect(database.notifyChange).toHaveBeenCalledTimes(1);
     expect(emit).not.toHaveBeenCalled();
+  }
+);
+
+function replaceDependencies(id: string, dependsOn: string[]) {
+  return { name: 'task.dependencies.set', input: { taskId: id, dependsOn } };
+}
+
+test('cached and future MCP handlers share dependency operations with RPC', async () => {
+  const caller = member('dependency-member', spaceId);
+  const dependency = tasks.createTask({ spaceId, title: 'Dependency', description: '' });
+  let registry = createDatabaseOperationCatalog(database, jobQueue);
+  const getRegistry = () => registry;
+  const mcp = createOperationMcpHandler(getRegistry, () => caller);
+  const request = replaceDependencies(taskId, [dependency.id, dependency.id]);
+  expect(JSON.parse((await mcp(request)).content[0].text)).toBeNull();
+  registry = provider()();
+  const rpc = createOperationRpcHandler(getRegistry, () => ({}));
+  const first = await mcp(request);
+  expect(first.isError).not.toBe(true);
+  expect(JSON.parse(first.content[0].text)).toMatchObject({
+    id: taskId,
+    dependsOn: [dependency.id, dependency.id],
+  });
+  expect(await rpc(replaceDependencies(taskId, []), context)).toMatchObject({ dependsOn: [] });
+  const later = createOperationMcpHandler(getRegistry, () => caller);
+  expect((await later(replaceDependencies(taskId, [dependency.id]))).isError).not.toBe(true);
+  expect(tasks.getTask(taskId)?.dependsOn).toEqual([dependency.id]);
+  expect(emit).toHaveBeenCalledTimes(3);
+});
+
+test.each([undefined, 'other-space'])(
+  'dependency operations enforce persisted MCP scope %s',
+  async (owner) => {
+    const caller = member('dependency-caller', owner);
+    const mcp = createOperationMcpHandler(provider(), () => caller);
+    const denied = await mcp(replaceDependencies(taskId, []));
+    expect(denied.isError).toBe(true);
+    expect(JSON.parse(denied.content[0].text)).toMatchObject({
+      code: 'execution_failed',
+      message: expect.stringContaining('owning Space'),
+    });
+    expect(tasks.getTask(taskId)?.dependsOn).toEqual([]);
+    const a = createStandaloneTask(db, { title: 'Standalone' }, undefined, () => {});
+    const b = createStandaloneTask(db, { title: 'Dependency' }, undefined, () => {});
+    expect(JSON.parse((await mcp(replaceDependencies(a.id, [b.id, b.id]))).content[0].text)).toBe(
+      'duplicate_dependency'
+    );
+    expect(JSON.parse((await mcp(replaceDependencies(a.id, [taskId]))).content[0].text)).toBe(
+      'dependency_not_found'
+    );
+    expect((await mcp(replaceDependencies(a.id, [b.id]))).isError).not.toBe(true);
+    expect(database.notifyChange).toHaveBeenCalledTimes(1);
+    expect(emit).not.toHaveBeenCalled();
+  }
+);
+
+test('dependency discovery remains lazy and malformed requests never mutate', async () => {
+  const rpc = createOperationRpcHandler(provider(), () => ({}));
+  const description = await rpc(
+    { name: 'operations.describe', input: { name: 'task.dependencies.set' } },
+    context
+  );
+  expect(description).toMatchObject({
+    found: true,
+    description: expect.stringContaining('task-owner rules'),
+  });
+  expect(getDatabase).not.toHaveBeenCalled();
+  await expect(
+    rpc(
+      { name: 'task.dependencies.set', input: { taskId, dependsOn: [], status: 'done' } },
+      context
+    )
+  ).rejects.toThrow();
+  expect(getDatabase).not.toHaveBeenCalled();
+  expect(emit).not.toHaveBeenCalled();
+});
+
+test.each(['rpc', 'mcp'] as const)(
+  'shared %s dependency calls await cleanup without duplicate events',
+  async (source) => {
+    const workflow = new SpaceWorkflowRepository(db).createWorkflow({ spaceId, name: 'Workflow' });
+    const run = new SpaceWorkflowRunRepository(db).createRun({
+      spaceId,
+      workflowId: workflow.id,
+      title: 'Run',
+    });
+    tasks.updateTask(taskId, { workflowRunId: run.id, status: 'in_progress' });
+    const dep = tasks.createTask({ spaceId, title: 'Unmet', description: '' });
+    const blockExecution = mock(
+      async (
+        owner: string,
+        id: string,
+        params: import('@hyperneo/shared').UpdateSpaceTaskParams
+      ) => {
+        const updated = tasks.updateTask(id, params)!;
+        await emit(owner, updated);
+        return updated;
+      }
+    );
+    const getRegistry = provider({ blockExecution });
+    const caller = member('active-member', spaceId);
+    const request = replaceDependencies(taskId, [dep.id]);
+    const result =
+      source === 'rpc'
+        ? await createOperationRpcHandler(getRegistry, () => ({}))(request, context)
+        : JSON.parse(
+            (await createOperationMcpHandler(getRegistry, () => caller)(request)).content[0].text
+          );
+    expect(result).toMatchObject({ id: taskId, status: 'blocked', dependsOn: [dep.id] });
+    expect(blockExecution).toHaveBeenCalledTimes(1);
+    expect(blockExecution).toHaveBeenCalledWith(spaceId, taskId, {
+      status: 'blocked',
+      blockReason: 'dependency_added',
+      result: 'Dependency added while task was in progress',
+      completedAt: null,
+    });
+    expect(emit).toHaveBeenCalledTimes(1);
   }
 );
