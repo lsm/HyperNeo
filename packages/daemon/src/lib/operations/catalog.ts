@@ -17,6 +17,7 @@ import {
 export interface TaskOperationDependencies {
   pendingCompletion?: OperationDefinition;
   submitForReview?: OperationDefinition;
+  cancel?: OperationDefinition;
   readTask: (taskId: string) => TaskCore | null;
   createTask: Parameters<typeof createCreateTaskOperation>[0];
   listTasks: Parameters<typeof createListTasksOperation>[0];
@@ -39,6 +40,7 @@ export function createDaemonOperationCatalog(
     createSetTaskDependenciesOperation(tasks.setDependencies),
     ...(tasks.pendingCompletion ? [tasks.pendingCompletion] : []),
     ...(tasks.submitForReview ? [tasks.submitForReview] : []),
+    ...(tasks.cancel ? [tasks.cancel] : []),
     ...createDiscoveryOperations(() => registry),
   ]);
   return registry;

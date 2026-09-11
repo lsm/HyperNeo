@@ -1,3 +1,4 @@
+import { createCancelTaskOperation } from './cancel-task.ts';
 import { createSubmitTaskForReviewOperation } from './submit-for-review.ts';
 import {
   createOwnedPendingCompletionOperation,
@@ -25,6 +26,7 @@ export function createSpaceOperationRegistryProvider(
   let registry: OperationRegistry | undefined;
   return () =>
     (registry ??= createDatabaseOperationCatalog(database, jobQueue, {
+      cancel: createCancelTaskOperation(() => database.getDatabase(), jobQueue, tasks),
       submitForReview: createSubmitTaskForReviewOperation(() => database.getDatabase(), jobQueue),
       pendingCompletion: pendingCompletion
         ? createOwnedPendingCompletionOperation(pendingCompletion)
