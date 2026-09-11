@@ -1,3 +1,5 @@
+import { matchesDirectPreparedSession } from './prepare-direct-session.ts';
+import { resolveTaskWorkspace } from './spawn-slot-resolution.ts';
 import type { Space } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../../storage/sqlite-compat.ts';
@@ -58,6 +60,15 @@ export function requireRunningDirectTaskQuery(
     evidence.task.taskAgentSessionId !== input.sessionId ||
     state.space?.id !== identity.spaceId ||
     state.space.status !== 'active' ||
+    state.space.paused ||
+    state.space.stopped ||
+    !evidence.session ||
+    !evidence.attempt ||
+    !matchesDirectPreparedSession(evidence.session, {
+      attempt: evidence.attempt,
+      task: evidence.task,
+      workspacePath: resolveTaskWorkspace(state.space, evidence.task),
+    }) ||
     state.stopRequested
   )
     return { reason: null };

@@ -36,7 +36,12 @@ beforeEach(() => {
   attempts = new DirectTaskExecutionRepository(db);
   taskId = tasks.createTask({ spaceId, title: 'Task', description: '' }).id;
   sessions.createSession(
-    { ...createTestSession(input.sessionId), type: 'worker', context: { spaceId, taskId } },
+    {
+      ...createTestSession(input.sessionId),
+      workspacePath: '/repo',
+      type: 'worker',
+      context: { spaceId, taskId },
+    },
     { enforceWorkspaceOwnership: false }
   );
   attempts.select(taskId);
@@ -165,4 +170,38 @@ test('pure running gate rejects a mismatched Space and returns explicit null rej
       space: { ...state.space!, id: 'other' },
     })
   ).toEqual({ reason: null });
+});
+
+test.each(['paused', 'stopped'] as const)(
+  'operational Space flag %s rejects an otherwise valid running query',
+  (flag) => {
+    makeRunning();
+    expect(admit(input)).not.toBeNull();
+    if (flag === 'paused') spaces.pauseSpace(spaceId);
+    else spaces.stopSpace(spaceId);
+    expect(spaces.getSpace(spaceId)?.status).toBe('active');
+    expect(admit(input)).toBeNull();
+  }
+);
+
+test.each(['workspace', 'coordinator'] as const)(
+  'persisted %s changes invalidate prepared-session admission',
+  (change) => {
+    makeRunning();
+    expect(admit(input)).not.toBeNull();
+    if (change === 'workspace')
+      sessions.updateSession(input.sessionId, { workspacePath: '/other' });
+    else
+      sessions.updateSession(input.sessionId, {
+        config: { ...sessions.getSession(input.sessionId)!.config, coordinatorMode: true },
+      });
+    expect(admit(input)).toBeNull();
+  }
+);
+
+test('matching explicit task workspace remains admissible', () => {
+  tasks.updateTask(taskId, { workspacePath: '/task-repo' });
+  sessions.updateSession(input.sessionId, { workspacePath: '/task-repo' });
+  makeRunning();
+  expect(admit(input)).not.toBeNull();
 });
