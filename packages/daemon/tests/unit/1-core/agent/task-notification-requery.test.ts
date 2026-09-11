@@ -382,6 +382,7 @@ describe('AgentSession task-notification requery (incident replay)', () => {
     } as unknown as Session;
 
     const db = {
+      getDatabase: mock(() => ({ prepare: mock(() => ({ get: mock(() => null) })) })),
       getSession: mock(() => session),
       updateSession: mock(() => {}),
       saveSDKMessage: mock(() => true),

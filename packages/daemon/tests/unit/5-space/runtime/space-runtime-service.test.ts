@@ -7,6 +7,7 @@ import {
   expect,
   type Mock,
   mock,
+  spyOn,
   test,
 } from 'bun:test';
 import { mkdirSync, rmSync } from 'node:fs';
@@ -44,6 +45,7 @@ import { SpaceWorkflowManager as WorkflowMgr } from '../../../../src/lib/space/m
 import type { SpaceRuntimeServiceConfig } from '../../../../src/lib/space/runtime/space-runtime-service.ts';
 import { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-runtime-service.ts';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
+import { DirectTaskExecutionRepository } from '../../../../src/storage/repositories/direct-task-execution-repository';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import type { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
@@ -262,7 +264,13 @@ describe('SpaceRuntimeService', () => {
     }
   });
 
+  let directProvenanceSpy: ReturnType<typeof spyOn>;
+  afterEach(() => directProvenanceSpy.mockRestore());
   beforeEach(() => {
+    directProvenanceSpy = spyOn(
+      DirectTaskExecutionRepository.prototype,
+      'getBySessionId'
+    ).mockReturnValue(null);
     spaceManager = createMockSpaceManager(mockSpace);
     service = new SpaceRuntimeService(buildConfig(spaceManager));
   });

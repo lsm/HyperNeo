@@ -79,13 +79,15 @@ test('stopped or mismatched provenance remains dormant without execution ownersh
 test('unrelated ordinary Space membership remains unchanged', () => {
   const session = { ...createTestSession('ordinary'), context: { spaceId } };
   const plain = resolveSpaceMcpSessionPolicy(session);
+  const resolveDirectWorker = mock(createDatabaseDirectTaskWorkerResolver(db));
   expect(
     resolveSpaceMcpSessionPolicy(session, {
-      resolveDirectWorker: createDatabaseDirectTaskWorkerResolver(db),
+      resolveDirectWorker,
       hasDirectWorkerProvenance: (id) => !!attempts.getBySessionId(id),
     })
   ).toEqual(plain);
   expect(plain.attachGenericSpaceTools).toBe(true);
+  expect(resolveDirectWorker).not.toHaveBeenCalled();
 });
 
 test.each(['reserved', 'running', 'stopped', 'mismatched'] as const)(
@@ -155,4 +157,29 @@ test('ordinary query startup still invokes its existing runner', async () => {
   } as unknown as AgentSession;
   await AgentSession.prototype.startStreamingQuery.call(target);
   expect(start).toHaveBeenCalledTimes(1);
+});
+
+test('coordinator setup rejects conflicting direct provenance before loading or rewriting its session', async () => {
+  const coordinatorId = `space:chat:${spaceId}`;
+  const coordinator = {
+    ...createTestSession(coordinatorId),
+    type: 'space_chat' as const,
+    context: { spaceId },
+  };
+  sessions.createSession(coordinator, { enforceWorkspaceOwnership: false });
+  const task = tasks.createTask({ spaceId, title: 'Conflict', description: '' });
+  attempts.select(task.id);
+  expect(attempts.claim(task.id, 'conflicting-attempt', coordinatorId)).not.toBeNull();
+  const getSessionAsync = mock(async () => null);
+  const service = Object.assign(Object.create(SpaceRuntimeService.prototype), {
+    config: { db, sessionManager: { getSessionAsync } },
+  }) as SpaceRuntimeService;
+  await service.setupSpaceAgentSession(new SpaceRepository(db).getSpace(spaceId)!, {
+    replayPendingMessages: true,
+  });
+  expect(getSessionAsync).not.toHaveBeenCalled();
+  expect(sessions.getSession(coordinatorId)).toMatchObject({
+    type: 'space_chat',
+    context: { spaceId },
+  });
 });

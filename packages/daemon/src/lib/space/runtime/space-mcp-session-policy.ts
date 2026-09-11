@@ -42,8 +42,10 @@ export function resolveSpaceMcpSessionPolicy(
 ): SpaceMcpSessionPolicy {
   const spaceId = session.context?.spaceId;
 
-  const directWorker = context.resolveDirectWorker?.(session.id);
-  if (directWorker || context.hasDirectWorkerProvenance?.(session.id)) {
+  const hasDirectProvenance = context.hasDirectWorkerProvenance?.(session.id);
+  const directWorker =
+    hasDirectProvenance === false ? null : context.resolveDirectWorker?.(session.id);
+  if (directWorker || hasDirectProvenance) {
     return {
       role: 'direct_task_worker',
       spaceId: directWorker?.spaceId,

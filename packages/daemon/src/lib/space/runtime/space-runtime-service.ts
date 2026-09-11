@@ -1732,6 +1732,7 @@ export class SpaceRuntimeService {
     if (!sessionManager) return;
 
     const spaceChatSessionId = `space:chat:${space.id}`;
+    if (new DirectTaskExecutionRepository(db).getBySessionId(spaceChatSessionId)) return;
     const session = await sessionManager.getSessionAsync(spaceChatSessionId);
     if (!session) {
       log.warn(`Space chat session not found for space ${space.id} (${spaceChatSessionId})`);
