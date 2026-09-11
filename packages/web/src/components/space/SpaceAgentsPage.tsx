@@ -16,6 +16,7 @@ import { ModelPoolEditor } from './ModelPoolEditor';
 import { type ToolsSelection, ToolsEditor } from './ToolsEditor';
 import { SettingSourcesEditor } from './SettingSourcesEditor';
 import { agentFormFrom, type AgentFormFields, blankAgentForm } from './agent-form-state';
+import { agentCreateRequest, takeAgentCreateRequest } from './agent-create-request';
 import { reminderLabel, toReminderCounts } from './agent-reminder-counts';
 import {
   decideToolsChange,
@@ -154,6 +155,14 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
     ? (agents.find((agent) => matchesSelectedHandle(agent, selectedHandle)) ?? null)
     : null;
   const agentSignature = agents.map((agent) => `${agent.id}:${agent.handle}`).join('|');
+  const pendingCreateRequest = agentCreateRequest.value;
+
+  useEffect(() => {
+    if (!pendingCreateRequest) return;
+    const templateKey = takeAgentCreateRequest(spaceId);
+    if (templateKey === null) return;
+    openCreateFromTemplate(templateKey);
+  }, [pendingCreateRequest, spaceId]);
 
   useEffect(() => {
     const link = selectedHandle ? `${spaceId}\u0000${selectedHandle}` : null;
@@ -199,12 +208,36 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
       null)
     : null;
 
+  function applyTemplateChoice(key: string) {
+    const nextBaseline = templateToolsList(
+      templateOptions().find((candidate) => candidate.key === key)
+    );
+    const rebased = rebaseTemplateTools(
+      formTools.tools,
+      nextBaseline,
+      toolsExplicit,
+      toolsAddedRef.current,
+      toolsRemovedRef.current
+    );
+    toolsBaselineRef.current = nextBaseline;
+    setFormTemplateKey(key);
+    setFormTools({
+      tools: rebased,
+      toolsOverridden: toolsExplicit || differsFromBaseline(rebased, nextBaseline),
+    });
+  }
+
   function openCreate() {
     formGenerationRef.current += 1;
     setFormError(null);
     setEditing(null);
     setCreating(true);
     applyForm(blankAgentForm());
+  }
+
+  function openCreateFromTemplate(templateKey: string) {
+    openCreate();
+    applyTemplateChoice(templateKey);
   }
 
   function openEdit(agent: SpaceAgent) {
@@ -402,26 +435,7 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
                       class="mt-1 w-full rounded border border-border bg-bg px-2 py-1 text-xs text-fg"
                       name="templateKey"
                       value={formTemplateKey}
-                      onInput={(event) => {
-                        const key = event.currentTarget.value;
-                        const nextBaseline = templateToolsList(
-                          templateOptions().find((candidate) => candidate.key === key)
-                        );
-                        const rebased = rebaseTemplateTools(
-                          formTools.tools,
-                          nextBaseline,
-                          toolsExplicit,
-                          toolsAddedRef.current,
-                          toolsRemovedRef.current
-                        );
-                        toolsBaselineRef.current = nextBaseline;
-                        setFormTemplateKey(key);
-                        setFormTools({
-                          tools: rebased,
-                          toolsOverridden:
-                            toolsExplicit || differsFromBaseline(rebased, nextBaseline),
-                        });
-                      }}
+                      onInput={(event) => applyTemplateChoice(event.currentTarget.value)}
                       data-testid="agent-template-select"
                     >
                       <option value="">Blank agent</option>

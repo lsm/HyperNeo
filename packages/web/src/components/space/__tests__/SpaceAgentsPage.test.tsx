@@ -64,6 +64,7 @@ vi.mock('../../../lib/connection-manager', () => ({
 }));
 
 import { createPoolFields, SpaceAgentsPage, usablePoolEntries } from '../SpaceAgentsPage';
+import { agentCreateRequest, requestAgentFromTemplate } from '../agent-create-request';
 
 function makeAgent(id: string, overrides: Partial<SpaceAgent> = {}): SpaceAgent {
   return {
@@ -91,6 +92,7 @@ function makeAgent(id: string, overrides: Partial<SpaceAgent> = {}): SpaceAgent 
 describe('SpaceAgentsPage', () => {
   beforeEach(() => {
     mockAgents.value = [];
+    agentCreateRequest.value = null;
     mockReminderCounts.value = {};
     mockLoading.value = false;
     mockError.value = null;
@@ -219,6 +221,19 @@ describe('SpaceAgentsPage', () => {
     mockError.value = 'boom';
     const { getByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
     expect(getByTestId('agents-load-error').textContent).toBe('boom');
+  });
+
+  it('opens the create form seeded from a requested template', async () => {
+    mockTemplates.value = [
+      { key: 'researcher.v1', displayName: 'Researcher', toolPermissions: { tools: ['Read'] } },
+    ];
+    const { getByTestId, queryByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+    expect(queryByTestId('agent-form')).toBeNull();
+
+    requestAgentFromTemplate('space-1', 'researcher.v1');
+    await waitFor(() => expect(getByTestId('agent-form')).toBeTruthy());
+
+    expect((getByTestId('agent-template-select') as HTMLSelectElement).value).toBe('researcher.v1');
   });
 
   it('lists agents by handle', () => {
