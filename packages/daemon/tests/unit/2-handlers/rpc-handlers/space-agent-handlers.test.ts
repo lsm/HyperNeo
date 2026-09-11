@@ -1404,7 +1404,7 @@ describe('Space Agent RPC Handlers', () => {
       expect(hubData.handlers.has('spaceAgent.list')).toBe(true);
     });
 
-    it('self-heals the coordinator into the unified list (C-3)', async () => {
+    it('does not create a coordinator merely by listing', async () => {
       const result = await call<{ agents: { handle: string; displayName: string }[] }>(
         hubData.handlers,
         'spaceAgent.list',
@@ -1412,12 +1412,12 @@ describe('Space Agent RPC Handlers', () => {
           spaceId: 'space-1',
         }
       );
-      expect(result.agents).toHaveLength(1);
-      expect(result.agents[0].handle).toBe('space-manager');
-      expect(longHorizonRepo.getById(coordinatorLongHorizonAgentId('space-1'))).not.toBeNull();
+      expect(result.agents).toHaveLength(0);
+      expect(longHorizonRepo.getById(coordinatorLongHorizonAgentId('space-1'))).toBeNull();
     });
 
-    it('returns unified agents for a space alongside the coordinator', async () => {
+    it('returns unified agents for a space alongside an already-ensured coordinator', async () => {
+      longHorizonRepo.ensureSpaceManager('space-1');
       await call(hubData.handlers, 'spaceAgent.create', {
         spaceId: 'space-1',
         name: 'Alpha',
@@ -1547,7 +1547,7 @@ describe('Space Agent RPC Handlers', () => {
     });
 
     it('rejects handle changes and deactivating statuses on the default agent row (C-2 lock)', async () => {
-      const coordinator = longHorizonRepo.ensureCoordinator('space-1');
+      const coordinator = longHorizonRepo.ensureSpaceManager('space-1');
 
       await expect(
         call(hubData.handlers, 'spaceAgent.update', {
@@ -1667,7 +1667,7 @@ describe('Space Agent RPC Handlers', () => {
     });
 
     it('rejects deleting the coordinator through the unified namespace', async () => {
-      const coordinator = longHorizonRepo.ensureCoordinator('space-1');
+      const coordinator = longHorizonRepo.ensureSpaceManager('space-1');
 
       await expect(
         call(hubData.handlers, 'spaceAgent.delete', { id: coordinator.id })
@@ -1847,7 +1847,7 @@ describe('Space Agent RPC Handlers', () => {
           handle: 'space-coordinator',
         }
       );
-      const coordinator = longHorizonRepo.ensureCoordinator('space-1');
+      const coordinator = longHorizonRepo.ensureSpaceManager('space-1');
       const subscription = longHorizonRepo.createSubscription({
         spaceId: 'space-1',
         agentId: coordinator.id,

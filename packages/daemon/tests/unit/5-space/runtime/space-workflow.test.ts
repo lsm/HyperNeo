@@ -1273,7 +1273,7 @@ describe('createSpaceAgentLookup — runtime-shaped resolution', () => {
       id: orphanedMirrorId,
       name: 'Orphaned Mirror',
     });
-    const coordinator = longHorizonAgentRepo.ensureCoordinator('space-1');
+    const coordinator = longHorizonAgentRepo.ensureSpaceManager('space-1');
     expect(lookup.getAgentById('space-1', coordinator.id)).toBeNull();
     seedSpace(db, 'space-3');
     const renamedDerivedId = coordinatorLongHorizonAgentId('space-3');

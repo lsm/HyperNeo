@@ -509,7 +509,7 @@ describe('SpaceActorRegistryAdapter', () => {
       slug: 'project',
       name: 'Project',
     });
-    longHorizonAgentRepo.ensureCoordinator(space.id);
+    longHorizonAgentRepo.ensureSpaceManager(space.id);
 
     const actors = registry.listActors(space.id);
 

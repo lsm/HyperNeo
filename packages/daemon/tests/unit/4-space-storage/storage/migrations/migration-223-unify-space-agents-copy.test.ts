@@ -420,7 +420,7 @@ describe('migration 223 — handle collisions', () => {
     const db = makeOverlayDb();
     insertSpace(db, 'space-a');
     const repo = new SpaceLongHorizonAgentRepository(db);
-    repo.ensureCoordinator('space-a');
+    repo.ensureSpaceManager('space-a');
     seedWorker(db, {
       id: 'w-coordinator',
       spaceId: 'space-a',

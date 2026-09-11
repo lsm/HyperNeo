@@ -13,6 +13,7 @@ import type {
   PaginatedSpaceTaskResult,
   RuntimeState,
   Space,
+  SpaceAgent,
   SpaceAgentTemplate,
   SpaceBlockReason,
   SpaceGoal,
@@ -2322,6 +2323,44 @@ class SpaceStore {
     );
   }
 
+  private toolsListFrom(params: {
+    tools?: string[] | null;
+    toolPermissions?: Record<string, unknown> | null;
+  }): string[] | null | undefined {
+    if (params.tools !== undefined) return params.tools;
+    if (params.toolPermissions !== undefined) {
+      const tools = params.toolPermissions?.tools;
+      return Array.isArray(tools) ? tools.filter((t): t is string => typeof t === 'string') : [];
+    }
+    return undefined;
+  }
+
+  private fromSpaceAgentV2(
+    agent: SpaceAgent,
+    templateKey: SpaceLongHorizonAgent['templateKey']
+  ): SpaceLongHorizonAgent {
+    return {
+      id: agent.id,
+      spaceId: agent.spaceId,
+      handle: agent.handle,
+      displayName: agent.displayName,
+      templateKey,
+      status: agent.status,
+      sessionId: agent.sessionId,
+      instructions: agent.instructions,
+      autonomyLevel: agent.autonomyLevel,
+      model: agent.model,
+      thinkingLevel: agent.thinkingLevel,
+      provider: agent.provider,
+      settingSources: agent.settingSources,
+      toolPermissions: agent.tools && agent.tools.length > 0 ? { tools: agent.tools } : {},
+      description: agent.description ?? undefined,
+      modelPool: agent.modelPool ?? undefined,
+      createdAt: agent.createdAt,
+      updatedAt: agent.updatedAt,
+    };
+  }
+
   private upsertAgent(agent: SpaceLongHorizonAgent, expectedSpaceId?: string): void {
     const activeSpaceId = this.spaceId.value;
     const agentSpaceId = agent.spaceId;
@@ -2341,12 +2380,27 @@ class SpaceStore {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
 
-    const { agent } = await hub.request<{ agent: SpaceLongHorizonAgent }>('spaceAgent.create', {
-      ...params,
+    const templateKey = params.templateKey ?? null;
+    const { agent } = await hub.request<{ agent: SpaceAgent }>('spaceAgentV2.create', {
+      id: params.id,
       spaceId,
+      handle: params.handle,
+      displayName: params.displayName,
+      templateKey,
+      description: params.description,
+      instructions: params.instructions,
+      status: params.status,
+      autonomyLevel: params.autonomyLevel,
+      model: params.model,
+      provider: params.provider,
+      modelPool: params.modelPool,
+      thinkingLevel: params.thinkingLevel,
+      settingSources: params.settingSources,
+      tools: this.toolsListFrom(params),
     });
-    this.upsertAgent(agent, spaceId);
-    return agent;
+    const mapped = this.fromSpaceAgentV2(agent, templateKey);
+    this.upsertAgent(mapped, spaceId);
+    return mapped;
   }
 
   async getAgentPromotionDraft(sessionId: string): Promise<SpaceAgentPromotionDraft> {
@@ -2395,13 +2449,28 @@ class SpaceStore {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
 
-    const { agent } = await hub.request<{ agent: SpaceLongHorizonAgent }>('spaceAgent.update', {
+    const existing = this.agents.value.find((a) => a.id === agentId);
+    const templateKey = existing?.templateKey ?? null;
+    const tools = this.toolsListFrom(params);
+    const { agent } = await hub.request<{ agent: SpaceAgent }>('spaceAgentV2.update', {
       id: agentId,
       spaceId,
-      ...params,
+      handle: params.handle,
+      displayName: params.displayName,
+      description: params.description,
+      instructions: params.instructions,
+      status: params.status,
+      autonomyLevel: params.autonomyLevel,
+      model: params.model,
+      provider: params.provider,
+      modelPool: params.modelPool,
+      thinkingLevel: params.thinkingLevel,
+      settingSources: params.settingSources,
+      ...(tools !== undefined ? { tools } : {}),
     });
-    this.upsertAgent(agent, spaceId);
-    return agent;
+    const mapped = this.fromSpaceAgentV2(agent, templateKey);
+    this.upsertAgent(mapped, spaceId);
+    return mapped;
   }
 
   async fetchTemplates(): Promise<void> {
@@ -2522,7 +2591,7 @@ class SpaceStore {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
 
-    await hub.request('spaceAgent.delete', { id: agentId, spaceId });
+    await hub.request('spaceAgentV2.delete', { id: agentId });
     this.agents.value = this.agents.value.filter((agent) => agent.id !== agentId);
   }
 

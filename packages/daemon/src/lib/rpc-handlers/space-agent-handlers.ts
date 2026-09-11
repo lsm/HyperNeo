@@ -824,7 +824,6 @@ export function registerUnifiedSpaceAgentMethods(
     if (!params.spaceId) throw new Error('spaceId is required');
     const space = await deps.spaceManager.getSpace(params.spaceId);
     if (!space) throw new Error(`Space not found: ${params.spaceId}`);
-    deps.repo.ensureCoordinator(params.spaceId);
     return { agents: deps.repo.listBySpaceId(params.spaceId) };
   });
 

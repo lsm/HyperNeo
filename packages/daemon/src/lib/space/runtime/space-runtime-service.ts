@@ -516,7 +516,7 @@ export class SpaceRuntimeService {
     } else if (resolution?.action === 'coordinator_fallback') {
       targetAgentId = resolution.coordinatorAgentId;
     } else if (resolution?.action === 'degraded' || resolution?.action === 'no_recipient') {
-      targetAgentId = this.config.longHorizonAgentRepo?.ensureCoordinator(goal.spaceId).id ?? null;
+      targetAgentId = this.config.longHorizonAgentRepo?.getCoordinator(goal.spaceId)?.id ?? null;
     }
     if (!targetAgentId) {
       log.warn(
@@ -1762,7 +1762,7 @@ export class SpaceRuntimeService {
       return;
     }
 
-    const coordinator = this.config.longHorizonAgentRepo?.ensureCoordinator(space.id) ?? null;
+    const coordinator = this.config.longHorizonAgentRepo?.getCoordinator(space.id) ?? null;
     const agents = this.listPromptRestampAgents(space.id);
     const workflows = spaceWorkflowManager.listWorkflows(space.id);
 

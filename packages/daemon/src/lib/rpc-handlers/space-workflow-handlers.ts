@@ -10,7 +10,6 @@ import type {
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { SpaceManager } from '../space/managers/space-manager.ts';
 import type { SpaceWorkflowManager } from '../space/managers/space-workflow-manager.ts';
-import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
 import {
   getBuiltInWorkflows,
   resolveBuiltInWorkflowTemplate,
@@ -241,7 +240,6 @@ export async function checkBuiltInWorkflowDriftOnStartup(
 export async function restampBuiltInWorkflowsOnStartup(
   workflowManager: SpaceWorkflowManager,
   spaceManager: SpaceManager,
-  longHorizonAgentRepo: SpaceLongHorizonAgentRepository,
   hasActiveRuns?: (workflowId: string) => boolean
 ): Promise<void> {
   try {
@@ -251,7 +249,6 @@ export async function restampBuiltInWorkflowsOnStartup(
     let totalRestamped = 0;
     for (const space of spaces) {
       try {
-        longHorizonAgentRepo.ensureCoordinator(space.id);
         const result = seedBuiltInWorkflows(space.id, workflowManager, hasActiveRuns);
         if (result.restamped.length > 0) {
           totalRestamped += result.restamped.length;

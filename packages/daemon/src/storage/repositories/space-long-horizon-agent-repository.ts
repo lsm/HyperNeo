@@ -99,7 +99,7 @@ export class SpaceLongHorizonAgentRepository {
     return row ? rowToAgent(row) : null;
   }
 
-  ensureCoordinator(spaceId: string): SpaceLongHorizonAgent {
+  ensureSpaceManager(spaceId: string): SpaceLongHorizonAgent {
     const existingByHandle = this.getCoordinator(spaceId);
     if (existingByHandle) {
       if (existingByHandle.handle === SPACE_MANAGER_HANDLE) return existingByHandle;

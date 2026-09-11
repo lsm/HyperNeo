@@ -1738,12 +1738,7 @@ describe('restampBuiltInWorkflowsOnStartup — worker templateKey binding', () =
     seedPresetAgentRows('space-retire', env.longHorizonAgentRepo);
     const rowIds = new Set(env.longHorizonAgentRepo.listBySpaceId('space-retire').map((a) => a.id));
 
-    await restampBuiltInWorkflowsOnStartup(
-      env.workflowManager,
-      env.spaceManager,
-      env.longHorizonAgentRepo,
-      () => false
-    );
+    await restampBuiltInWorkflowsOnStartup(env.workflowManager, env.spaceManager, () => false);
 
     const slots = env.workflowRepo
       .listWorkflows('space-retire')
@@ -1754,29 +1749,6 @@ describe('restampBuiltInWorkflowsOnStartup — worker templateKey binding', () =
       expect(slot.templateKey ?? '').toMatch(/^worker\./);
       expect(rowIds.has(slot.agentId)).toBe(false);
     }
-    env.db.close();
-  });
-
-  it('heals a renamed coordinator before restamping', async () => {
-    const env = makeRealEnv();
-    seedPresetAgentRows('space-retire', env.longHorizonAgentRepo);
-    const coordinator = env.longHorizonAgentRepo.ensureCoordinator('space-retire');
-    env.db
-      .prepare(
-        `UPDATE space_long_horizon_agents SET handle = 'renamed', display_name = 'Coder' WHERE id = ?`
-      )
-      .run(coordinator.id);
-    expect(env.longHorizonAgentRepo.getCoordinator('space-retire')).toBeNull();
-
-    await restampBuiltInWorkflowsOnStartup(
-      env.workflowManager,
-      env.spaceManager,
-      env.longHorizonAgentRepo,
-      () => false
-    );
-
-    expect(env.longHorizonAgentRepo.getCoordinator('space-retire')?.id).toBe(coordinator.id);
-    expect(env.longHorizonAgentRepo.getById(coordinator.id)?.handle).toBe('space-manager');
     env.db.close();
   });
 });

@@ -54,7 +54,6 @@ describe('Space long-horizon agent handlers', () => {
   beforeEach(() => {
     hubData = createMockMessageHub();
     repo = {
-      ensureCoordinator: mock(() => {}),
       listBySpaceId: mock(() => []),
       create: mock((params) => ({
         id: params.id ?? 'agent-new',

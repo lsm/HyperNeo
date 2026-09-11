@@ -2286,7 +2286,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
 
   test('update_agent rejects pausing or archiving the default agent (C-2 lock)', async () => {
     const handlers = makeHandlers(ctx);
-    const coordinator = ctx.longHorizonAgentRepo.ensureCoordinator(ctx.spaceId);
+    const coordinator = ctx.longHorizonAgentRepo.ensureSpaceManager(ctx.spaceId);
 
     const paused = JSON.parse(
       (await handlers.pause_agent({ agent_id: coordinator.id })).content[0].text
@@ -2305,7 +2305,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
 
   test('update_agent keeps default-agent instructions and model editable (C-2 lock)', async () => {
     const handlers = makeHandlers(ctx);
-    const coordinator = ctx.longHorizonAgentRepo.ensureCoordinator(ctx.spaceId);
+    const coordinator = ctx.longHorizonAgentRepo.ensureSpaceManager(ctx.spaceId);
 
     const updated = JSON.parse(
       (
@@ -2664,7 +2664,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
       mySessionId: 'worker-session',
       myAgentName: 'worker',
     });
-    const agent = ctx.longHorizonAgentRepo.ensureCoordinator(ctx.spaceId);
+    const agent = ctx.longHorizonAgentRepo.ensureSpaceManager(ctx.spaceId);
     const goal = ctx.goalService.createGoal({ spaceId: ctx.spaceId, title: 'Gated goal' });
 
     const assign = JSON.parse(
@@ -2684,7 +2684,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
 
   test('create_goal atomically assigns the coordinator as owner by default', async () => {
     const handlers = makeHandlers(ctx);
-    const coordinator = ctx.longHorizonAgentRepo.ensureCoordinator(ctx.spaceId);
+    const coordinator = ctx.longHorizonAgentRepo.ensureSpaceManager(ctx.spaceId);
 
     const created = JSON.parse(
       (await handlers.create_goal({ title: 'Owned goal', type: 'one_shot' })).content[0].text
@@ -2701,7 +2701,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
 
   test('create_goal honors an explicit owner_agent_id', async () => {
     const handlers = makeHandlers(ctx);
-    const agent = ctx.longHorizonAgentRepo.ensureCoordinator(ctx.spaceId);
+    const agent = ctx.longHorizonAgentRepo.ensureSpaceManager(ctx.spaceId);
 
     const created = JSON.parse(
       (

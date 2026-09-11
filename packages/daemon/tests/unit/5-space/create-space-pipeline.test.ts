@@ -6,7 +6,7 @@ import {
   type CreateSpaceDeps,
   createSpace,
   createSpaceRecord,
-  ensureCoordinator,
+  ensureSpaceManager,
   provisionChatSession,
   publishSpaceCreated,
   seedWorkflows,
@@ -48,7 +48,7 @@ function makeDeps(
       log.calls.push(`create:${input.name}`);
       return space;
     },
-    ensureCoordinator: (spaceId) => {
+    ensureSpaceManager: (spaceId) => {
       log.calls.push(`coordinator:${spaceId}`);
     },
     seedWorkflows: (spaceId) => {
@@ -154,14 +154,14 @@ describe('createSpace pipeline stages', () => {
     expect(result).toEqual({ ...ctx, space });
   });
 
-  test('ensureCoordinator delegates the created space id', () => {
-    const ensureCoordinatorDep = mock(() => undefined);
+  test('ensureSpaceManager delegates the created space id', () => {
+    const ensureSpaceManagerDep = mock(() => undefined);
     const ctx = makeCtx({
-      deps: makeDeps({ ensureCoordinator: ensureCoordinatorDep }).deps,
+      deps: makeDeps({ ensureSpaceManager: ensureSpaceManagerDep }).deps,
       space,
     });
-    expect(ensureCoordinator(ctx)).toBe(ctx);
-    expect(ensureCoordinatorDep).toHaveBeenCalledWith(space.id);
+    expect(ensureSpaceManager(ctx)).toBe(ctx);
+    expect(ensureSpaceManagerDep).toHaveBeenCalledWith(space.id);
   });
 
   describe('seedWorkflows', () => {
@@ -352,7 +352,7 @@ describe('createSpace pipeline', () => {
   test('fatal coordinator failure prevents nonfatal stages and publication', async () => {
     const failure = new Error('coordinator failed');
     const { deps, log } = makeDeps({
-      ensureCoordinator: () => {
+      ensureSpaceManager: () => {
         log.calls.push('coordinator-failed');
         throw failure;
       },
