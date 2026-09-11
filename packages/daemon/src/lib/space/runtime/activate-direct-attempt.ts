@@ -1,3 +1,5 @@
+import { readDirectKickoffIntent } from './direct-kickoff-intent.ts';
+import type { MailboxEntry } from '../../mailbox/entry.ts';
 import type { Session, Space, SpaceTask } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../../storage/sqlite-compat.ts';
@@ -31,6 +33,7 @@ export interface DirectAttemptActivationEvidence {
   session: Session | null;
   selected: boolean;
   stopRequested: boolean;
+  kickoff: MailboxEntry | null;
   dependencies: Array<SpaceTask | null>;
 }
 
@@ -53,6 +56,13 @@ export function requireDirectActivation(
     attempt?.id !== input.attemptId ||
     attempt.sessionId !== input.sessionId ||
     space?.status !== 'active' ||
+    space.paused ||
+    space.stopped ||
+    evidence.kickoff?.to.kind !== 'session' ||
+    evidence.kickoff.to.sessionId !== input.sessionId ||
+    evidence.kickoff.origin !== 'direct-task-kickoff' ||
+    !evidence.kickoff.messageUuid ||
+    evidence.kickoff.deliveryMode !== 'immediate' ||
     !session ||
     !matchesDirectPreparedSession(session, prepared.value) ||
     dependencies.length !== (task?.dependsOn?.length ?? 0) ||
@@ -88,6 +98,7 @@ function activateAtomically(
         session: new SessionRepository(db).getSession(input.sessionId),
         selected: !!task && attempts.isSelected(task.id),
         stopRequested: attempts.isStopRequested(input.attemptId, input.sessionId),
+        kickoff: readDirectKickoffIntent(db, input.attemptId),
         dependencies: (task?.dependsOn ?? []).map((id) => tasks.getTask(id)),
       });
       if ('reason' in admission) return admission.reason;
