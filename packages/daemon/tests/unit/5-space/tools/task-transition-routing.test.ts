@@ -207,22 +207,25 @@ describe('routeTaskUpdate action branches', () => {
     });
   });
 
-  test('a workflow-backed recovery transition recovers', () => {
-    expect(
-      routeTaskUpdate(
-        baseInput({
-          currentStatus: 'blocked',
-          requestedStatus: 'open',
-          hasWorkflowRun: true,
-          isRecoveryTransition: isWorkflowRecoveryTransition('blocked', 'open'),
-        })
-      )
-    ).toEqual({
-      action: 'recover_transition',
-      auditParamsShape: 'transition',
-      emitTaskUpdated: 'only_with_field_updates',
-    });
-  });
+  test.each(['blocked', 'done'] as const)(
+    'a workflow-backed %s to open transition recovers',
+    (status) => {
+      expect(
+        routeTaskUpdate(
+          baseInput({
+            currentStatus: status,
+            requestedStatus: 'open',
+            hasWorkflowRun: true,
+            isRecoveryTransition: isWorkflowRecoveryTransition(status, 'open'),
+          })
+        )
+      ).toEqual({
+        action: 'recover_transition',
+        auditParamsShape: 'transition',
+        emitTaskUpdated: 'only_with_field_updates',
+      });
+    }
+  );
 
   test('a recovery-shaped transition without a workflow run is a plain status set', () => {
     expect(

@@ -27,7 +27,7 @@ describe('task transition policy', () => {
     ['rate_limited', 'usage_limited', true],
     ['stopped', 'open', true],
     ['archived', 'open', false],
-    ['done', 'open', false],
+    ['done', 'open', true],
     ['draft', 'done', false],
   ] as [TaskLifecycleStatus, TaskLifecycleStatus, boolean][])(
     'preserves %s to %s = %s',
@@ -39,8 +39,8 @@ describe('task transition policy', () => {
   );
 
   test('preserves the diagnostic including allowed transitions in their original order', () => {
-    expect(() => assertValidTaskTransition('done', 'open')).toThrow(
-      "Invalid status transition from 'done' to 'open'. Allowed: in_progress, archived"
+    expect(() => assertValidTaskTransition('done', 'blocked')).toThrow(
+      "Invalid status transition from 'done' to 'blocked'. Allowed: open, in_progress, archived"
     );
     expect(() => assertValidTaskTransition('archived', 'open')).toThrow(
       "Invalid status transition from 'archived' to 'open'. Allowed: none"

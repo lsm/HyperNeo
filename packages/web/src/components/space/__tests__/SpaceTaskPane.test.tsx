@@ -1710,6 +1710,21 @@ describe('SpaceTaskPane — activity members actions', () => {
     expect(mockCancelWorkflowRun).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['open', 'Reopen workflow as Open'],
+    ['in_progress', 'Reopen workflow'],
+  ] as const)('distinguishes completed workflow recovery to %s', async (target, label) => {
+    mockTasks.value = [makeTask({ status: 'done', workflowRunId: 'run-1' })];
+    mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', status: 'done' })];
+    const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" />);
+    fireEvent.click(getByTestId('task-actions-menu-trigger'));
+    expect(getByText('Reopen workflow as Open')).toBeTruthy();
+    expect(getByText('Reopen workflow')).toBeTruthy();
+    fireEvent.click(getByText(label));
+    await waitFor(() => expect(mockRecoverWorkflowTask).toHaveBeenCalledWith('task-1', target));
+    expect(mockUpdateTask).not.toHaveBeenCalled();
+  });
+
   it('uses workflow recovery action and label for workflow-backed terminal tasks', async () => {
     mockTasks.value = [
       makeTask({

@@ -1,3 +1,4 @@
+import { publishTask } from '../../tasks/publication.ts';
 import {
   VALID_TASK_TRANSITIONS as VALID_SPACE_TASK_TRANSITIONS,
   isValidTaskTransition as isValidSpaceTaskTransition,
@@ -204,7 +205,7 @@ export class SpaceTaskManager {
     if (
       (task.status === 'blocked' && (newStatus === 'open' || newStatus === 'in_progress')) ||
       (task.status === 'cancelled' && (newStatus === 'open' || newStatus === 'in_progress')) ||
-      (task.status === 'done' && newStatus === 'in_progress') ||
+      (task.status === 'done' && (newStatus === 'open' || newStatus === 'in_progress')) ||
       (task.status === 'in_progress' && newStatus === 'open') ||
       (task.status === 'review' && newStatus === 'in_progress')
     ) {
@@ -320,7 +321,14 @@ export class SpaceTaskManager {
   }
 
   async publishTask(taskId: string): Promise<SpaceTask> {
-    return this.setTaskStatus(taskId, 'open');
+    const task = await publishTask(
+      async () => (await this.getTask(taskId))?.status,
+      async () => this.taskRepo.updateTask(taskId, { status: 'open' }, 'draft') ?? 'not_draft'
+    );
+    if (task === 'not_draft') {
+      throw new Error('Only draft tasks can be published');
+    }
+    return task;
   }
 
   async submitTaskForReview(
