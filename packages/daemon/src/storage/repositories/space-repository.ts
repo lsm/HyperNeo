@@ -252,10 +252,14 @@ export class SpaceRepository {
            )`
         )
       : null;
+    const deleteOwnedTemplates = this.tableExists('space_agent_templates')
+      ? this.db.prepare(`DELETE FROM space_agent_templates WHERE space_id = ?`)
+      : null;
     const deleteSpace = this.db.prepare(`DELETE FROM spaces WHERE id = ?`);
     const tx = this.db.transaction((spaceId: string) => {
       deleteSearchRows?.run(spaceId);
       deletePendingRows?.run(spaceId);
+      deleteOwnedTemplates?.run(spaceId);
       return deleteSpace.run(spaceId);
     });
     const result = tx(id);

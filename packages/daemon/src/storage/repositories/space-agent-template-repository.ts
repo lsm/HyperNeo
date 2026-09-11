@@ -54,12 +54,12 @@ export class SpaceAgentTemplateRepository {
       .get(spaceId, key) as Record<string, unknown> | undefined;
   }
 
-  private getOwned(spaceId: string, key: string): SpaceAgentTemplate | null {
+  getOwned(spaceId: string, key: string): SpaceAgentTemplate | null {
     const row = this.getOwnedRow(spaceId, key);
     return row ? rowToTemplate(row) : null;
   }
 
-  private getOwnedWithVersion(spaceId: string, key: string): SpaceAgentTemplateRecord | null {
+  getOwnedWithVersion(spaceId: string, key: string): SpaceAgentTemplateRecord | null {
     const row = this.getOwnedRow(spaceId, key);
     return row ? rowToTemplateRecord(row) : null;
   }

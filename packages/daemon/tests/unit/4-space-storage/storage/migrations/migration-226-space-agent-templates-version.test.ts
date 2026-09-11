@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { runMigrations } from '../../../../../src/storage/schema/migrations.ts';
 import { runMigration225 } from '../../../../../src/storage/schema/m225-space-agent-templates.ts';
+import { runMigration243 } from '../../../../../src/storage/schema/m243-space-agent-template-space-key';
 import { runMigration226 } from '../../../../../src/storage/schema/m226-space-agent-templates-version.ts';
 import { runMigration227 } from '../../../../../src/storage/schema/m227-space-agent-template-version-seq.ts';
 import { runMigration238 } from '../../../../../src/storage/schema/m238-space-agent-template-labels.ts';
@@ -34,6 +35,7 @@ describe('migration 226: space_agent_templates version column', () => {
     runMigration226(db);
     runMigration227(db);
     runMigration238(db);
+    runMigration243(db);
 
     const after = columnNames(db, 'space_agent_templates');
     expect(after).toContain('version');
@@ -45,7 +47,7 @@ describe('migration 226: space_agent_templates version column', () => {
     expect(existing?.version).toBe(1);
     expect(repo.getByKeyWithVersion('post.custom')?.version).toBe(1);
 
-    const updated = repo.casUpdate('pre.custom', { displayName: 'Updated' }, existing!.version);
+    const updated = repo.casUpdate('', 'pre.custom', { displayName: 'Updated' }, existing!.version);
     expect(updated).not.toBeNull();
     expect(repo.getByKeyWithVersion('pre.custom')?.version).toBe(2);
   });
@@ -56,9 +58,11 @@ describe('migration 226: space_agent_templates version column', () => {
     runMigration226(db);
     runMigration227(db);
     runMigration238(db);
+    runMigration243(db);
     runMigration226(db);
     runMigration227(db);
     runMigration238(db);
+    runMigration243(db);
 
     const repo = new SpaceAgentTemplateRepository(db);
     repo.create('', { key: 'idempotent.custom', handle: 'idempotent' });
@@ -80,7 +84,7 @@ describe('migration 226: space_agent_templates version column', () => {
 
     expect(created.key).toBe('registered.custom');
     expect(repo.getByKeyWithVersion('registered.custom')?.version).toBe(1);
-    expect(repo.casUpdate('registered.custom', { displayName: 'Updated' }, 1)).not.toBeNull();
+    expect(repo.casUpdate('', 'registered.custom', { displayName: 'Updated' }, 1)).not.toBeNull();
     db.close();
   });
 });

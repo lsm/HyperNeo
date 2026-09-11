@@ -1009,7 +1009,7 @@ describe('SpaceAgentTemplateManager', () => {
       await manager.create(SPACE, fullParams());
       const cleared: string[] = [];
       const withInstances = new SpaceAgentTemplateManager(repo, () => BUILT_INS, {
-        clearArchivedInstances: (key) => cleared.push(key),
+        clearArchivedInstances: (_spaceId, key) => cleared.push(key),
       });
 
       expect(withInstances.delete(SPACE, 'release-readiness.custom').ok).toBe(true);
@@ -1246,6 +1246,19 @@ describe('SpaceAgentTemplateManager', () => {
 
       expect(result.ok && result.value === null).toBe(true);
       expect(repo.getByKey('shared.key')?.displayName).not.toBe('Hijacked');
+    });
+
+    test('clearing archived instances does not cross into another Space', () => {
+      const cleared: Array<{ spaceId: string; key: string }> = [];
+      const scoped = new SpaceAgentTemplateManager(repo, undefined, {
+        clearArchivedInstances: (spaceId, key) => cleared.push({ spaceId, key }),
+      });
+      repo.create('space-a', { key: 'shared.key', handle: 'reviewer' });
+      repo.create('space-b', { key: 'shared.key', handle: 'reviewer' });
+
+      expect(scoped.delete('space-a', 'shared.key').ok).toBe(true);
+
+      expect(cleared).toEqual([{ spaceId: 'space-a', key: 'shared.key' }]);
     });
   });
 });

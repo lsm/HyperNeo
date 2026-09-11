@@ -59,7 +59,7 @@ export interface UpdateTemplateCtx {
 }
 
 export interface TemplateInstanceScan {
-  clearArchivedInstances?(key: string): void;
+  clearArchivedInstances?(spaceId: string, key: string): void;
 }
 
 export interface DeleteTemplateCtx {
@@ -273,7 +273,7 @@ async function createValidateModelPool(ctx: CreateTemplateCtx): Promise<CreateTe
 }
 
 function createCheckKeyAvailable(ctx: CreateTemplateCtx): CreateTemplateCtx {
-  if (ctx.repo.getByKey(ctx.params.key)) {
+  if (ctx.repo.getOwned(ctx.spaceId, ctx.params.key)) {
     return { ...ctx, error: `Template key already exists: ${ctx.params.key}` };
   }
   return ctx;
@@ -289,7 +289,7 @@ function createPersist(ctx: CreateTemplateCtx): CreateTemplateCtx {
 }
 
 function updateLoadExisting(ctx: UpdateTemplateCtx): UpdateTemplateCtx {
-  const existing = ctx.repo.getByKeyWithVersion(ctx.key);
+  const existing = ctx.repo.getOwnedWithVersion(ctx.spaceId, ctx.key);
   if (!existing) return { ...ctx, error: `Template not found: ${ctx.key}` };
   return { ...ctx, existing, version: ctx.expectedVersion ?? existing.version };
 }
@@ -363,7 +363,7 @@ function updatePersist(ctx: UpdateTemplateCtx): UpdateTemplateCtx {
 }
 
 function deleteLoadExisting(ctx: DeleteTemplateCtx): DeleteTemplateCtx {
-  const existing = ctx.repo.getByKeyWithVersion(ctx.key);
+  const existing = ctx.repo.getOwnedWithVersion(ctx.spaceId, ctx.key);
   if (!existing) return { ...ctx, error: `Template not found: ${ctx.key}` };
   return { ...ctx, existing, version: existing.version };
 }
@@ -382,10 +382,10 @@ function deleteCheckVersion(ctx: DeleteTemplateCtx): DeleteTemplateCtx {
 function deletePersist(ctx: DeleteTemplateCtx): DeleteTemplateCtx {
   const deleted = ctx.repo.delete(ctx.spaceId, ctx.key, ctx.expectedVersion);
   if (deleted) {
-    ctx.instanceScan?.clearArchivedInstances?.(ctx.key);
+    ctx.instanceScan?.clearArchivedInstances?.(ctx.spaceId, ctx.key);
     return { ...ctx, deleted: true };
   }
-  if (ctx.expectedVersion !== undefined && ctx.repo.getByKey(ctx.key)) {
+  if (ctx.expectedVersion !== undefined && ctx.repo.getOwned(ctx.spaceId, ctx.key)) {
     return { ...ctx, error: `Template "${ctx.key}" was modified concurrently; delete aborted.` };
   }
   return { ...ctx, error: `Template not found after delete: ${ctx.key}` };
@@ -461,7 +461,7 @@ export class SpaceAgentTemplateManager {
   ): Promise<SpaceAgentResult<SpaceAgentTemplateRecord>> {
     const ctx = await runCreateTemplate({ repo: this.repo, spaceId, params });
     if (ctx.error) return { ok: false, error: ctx.error };
-    return { ok: true, value: this.repo.getByKeyWithVersion(ctx.params.key)! };
+    return { ok: true, value: this.repo.getOwnedWithVersion(spaceId, ctx.params.key)! };
   }
 
   async update(
@@ -497,11 +497,11 @@ export class SpaceAgentTemplateManager {
     });
     if (ctx.error) return { ok: false, error: ctx.error };
     if (ctx.template === null) return { ok: true, value: null };
-    return { ok: true, value: this.repo.getByKeyWithVersion(key)! };
+    return { ok: true, value: this.repo.getOwnedWithVersion(spaceId, key)! };
   }
 
   delete(spaceId: string, key: string, expectedVersion?: number): SpaceAgentResult<void> {
-    if (!this.repo.getByKey(key) && this.builtIns().some((template) => template.key === key)) {
+    if (!this.repo.getOwned(spaceId, key) && this.builtIns().some((t) => t.key === key)) {
       return { ok: false, error: `Built-in template "${key}" cannot be deleted` };
     }
     const ctx = runDeleteTemplate({

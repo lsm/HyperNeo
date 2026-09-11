@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { runMigrations } from '../../../../../src/storage/schema/migrations.ts';
 import { runMigration225 } from '../../../../../src/storage/schema/m225-space-agent-templates.ts';
+import { runMigration243 } from '../../../../../src/storage/schema/m243-space-agent-template-space-key';
 import { runMigration226 } from '../../../../../src/storage/schema/m226-space-agent-templates-version.ts';
 import { runMigration227 } from '../../../../../src/storage/schema/m227-space-agent-template-version-seq.ts';
 import { runMigration238 } from '../../../../../src/storage/schema/m238-space-agent-template-labels.ts';
@@ -29,6 +30,7 @@ describe('migration 238: space_agent_templates labels column', () => {
     runMigration225(db);
     runMigration226(db);
     runMigration227(db);
+    runMigration243(db);
 
     expect(columnNames(db, 'space_agent_templates')).not.toContain('labels');
 
@@ -38,6 +40,8 @@ describe('migration 238: space_agent_templates labels column', () => {
     ).run('pre.custom', 'pre', 'Pre', 1000, 1000);
 
     runMigration238(db);
+
+    runMigration243(db);
 
     expect(columnNames(db, 'space_agent_templates')).toContain('labels');
 
@@ -55,7 +59,9 @@ describe('migration 238: space_agent_templates labels column', () => {
     runMigration226(db);
     runMigration227(db);
     runMigration238(db);
+    runMigration243(db);
     runMigration238(db);
+    runMigration243(db);
 
     const repo = new SpaceAgentTemplateRepository(db);
     repo.create('', { key: 'idempotent.custom', handle: 'idempotent' });
@@ -72,7 +78,7 @@ describe('migration 238: space_agent_templates labels column', () => {
     const created = repo.create('', { key: 'registered.custom', handle: 'registered' });
 
     expect(created.labels).toEqual([]);
-    const updated = repo.update('registered.custom', { labels: ['release'] });
+    const updated = repo.update('', 'registered.custom', { labels: ['release'] });
     expect(updated?.labels).toEqual(['release']);
     db.close();
   });
@@ -84,6 +90,7 @@ describe('migration 238: space_agent_templates labels column', () => {
     runMigration225(db);
     runMigration226(db);
     runMigration227(db);
+    runMigration243(db);
     db.prepare(
       `INSERT INTO space_long_horizon_agents (
          id, space_id, handle, display_name, template_key, status, session_id, instructions,
