@@ -1,10 +1,6 @@
-export const AUTONOMY_LABELS: Record<number, string> = {
-  1: 'Supervised',
-  2: 'Semi-auto',
-  3: 'Autonomous',
-  4: 'Full auto',
-  5: 'Unrestricted',
-};
+import { AUTONOMY_LABELS as SPACE_AUTONOMY_LABELS } from '../../lib/space-constants';
+
+export const AUTONOMY_LABELS: Record<number, string> = SPACE_AUTONOMY_LABELS;
 
 export function toolPermissionsToolsList(owner: {
   toolPermissions: Record<string, unknown>;

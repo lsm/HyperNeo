@@ -2,13 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { AUTONOMY_LABELS, toolPermissionsToolsList } from '../agent-page-labels';
 
 describe('AUTONOMY_LABELS', () => {
-  it('labels every autonomy level the agents page can render', () => {
+  it('uses the one Space-wide label set, with level 5 as full autonomy', () => {
     expect(AUTONOMY_LABELS).toEqual({
       1: 'Supervised',
-      2: 'Semi-auto',
-      3: 'Autonomous',
-      4: 'Full auto',
-      5: 'Unrestricted',
+      2: 'Mostly supervised',
+      3: 'Balanced',
+      4: 'Mostly autonomous',
+      5: 'Fully autonomous',
     });
   });
 });
