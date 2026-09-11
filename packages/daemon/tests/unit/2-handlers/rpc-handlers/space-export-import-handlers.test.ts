@@ -435,7 +435,7 @@ describe('Space Export/Import RPC Handlers', () => {
     });
 
     it('rejects when a workflow references the space coordinator', async () => {
-      const coordinator = longHorizonAgentRepo.ensureCoordinator(SPACE_ID);
+      const coordinator = longHorizonAgentRepo.ensureSpaceManager(SPACE_ID);
       workflowRepo.createWorkflow({
         spaceId: SPACE_ID,
         name: 'Pipe',
@@ -518,7 +518,7 @@ describe('Space Export/Import RPC Handlers', () => {
     });
 
     it('reserves the coordinator name for new imports', async () => {
-      const coordinator = longHorizonAgentRepo.ensureCoordinator(SPACE_ID);
+      const coordinator = longHorizonAgentRepo.ensureSpaceManager(SPACE_ID);
       const coordinatorName = longHorizonAgentRepo.getById(coordinator.id)!.displayName;
       const coordinatorBundle = makeBundle([{ name: coordinatorName }], []);
 

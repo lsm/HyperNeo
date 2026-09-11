@@ -469,7 +469,7 @@ describe('space-handlers', () => {
 
     it('returns seedWarnings when workflow seeding fails', async () => {
       const emptyRepo = {
-        ensureCoordinator: mock(() => null),
+        ensureSpaceManager: mock(() => null),
         create: mock(() => {
           throw new Error('insert failed');
         }),
@@ -496,7 +496,7 @@ describe('space-handlers', () => {
 
     it('space creation succeeds even when workflow seeding fails', async () => {
       const emptyRepo = {
-        ensureCoordinator: mock(() => null),
+        ensureSpaceManager: mock(() => null),
         create: mock(() => {
           throw new Error('insert failed');
         }),

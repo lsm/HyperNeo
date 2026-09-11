@@ -93,22 +93,15 @@ export class SpaceAgentRepository {
 
   listOwnedBySpaceId(spaceId: string): SpaceAgent[] {
     const rows = this.db
-      .prepare(
-        `SELECT * FROM ${AGENTS_TABLE}
-         WHERE space_id = ? AND (template_key IS NULL OR template_key != ?)
-         ORDER BY created_at ASC`
-      )
-      .all(spaceId, MIGRATED_WORKER_TEMPLATE_KEY) as Record<string, unknown>[];
+      .prepare(`SELECT * FROM ${AGENTS_TABLE} WHERE space_id = ? ORDER BY created_at ASC`)
+      .all(spaceId) as Record<string, unknown>[];
     return rows.map(rowToSpaceAgent);
   }
 
   getOwnedById(id: string): SpaceAgent | null {
-    const row = this.db
-      .prepare(
-        `SELECT * FROM ${AGENTS_TABLE}
-         WHERE id = ? AND (template_key IS NULL OR template_key != ?)`
-      )
-      .get(id, MIGRATED_WORKER_TEMPLATE_KEY) as Record<string, unknown> | undefined;
+    const row = this.db.prepare(`SELECT * FROM ${AGENTS_TABLE} WHERE id = ?`).get(id) as
+      | Record<string, unknown>
+      | undefined;
     return row ? rowToSpaceAgent(row) : null;
   }
 
@@ -127,9 +120,18 @@ export class SpaceAgentRepository {
     }));
   }
 
+  private isMigratedWorkerMirror(id: string): boolean {
+    const row = this.db.prepare(`SELECT template_key FROM ${AGENTS_TABLE} WHERE id = ?`).get(id) as
+      | { template_key?: string | null }
+      | undefined;
+    return row?.template_key === MIGRATED_WORKER_TEMPLATE_KEY;
+  }
+
   update(id: string, params: UpdateSpaceAgentParams): SpaceAgent | null {
     if (!this.getById(id)) return null;
-    this.requireNotMigratedWorkerMirror(id);
+    if (params.status === 'disabled' && this.isMigratedWorkerMirror(id)) {
+      throw new Error('Agent status "disabled" cannot be set on a migrated worker agent');
+    }
     if (params.sessionId !== undefined) this.requireSessionUnbound(params.sessionId ?? null, id);
 
     const fields: string[] = [];
@@ -171,7 +173,6 @@ export class SpaceAgentRepository {
   }
 
   delete(id: string): void {
-    this.requireNotMigratedWorkerMirror(id);
     this.db.prepare(`DELETE FROM ${AGENTS_TABLE} WHERE id = ?`).run(id);
   }
 
@@ -180,17 +181,6 @@ export class SpaceAgentRepository {
       .prepare(`SELECT tool_permissions_json FROM ${AGENTS_TABLE} WHERE id = ?`)
       .get(id) as { tool_permissions_json?: unknown } | undefined;
     return parseObject(row?.tool_permissions_json);
-  }
-
-  private requireNotMigratedWorkerMirror(id: string): void {
-    const row = this.db.prepare(`SELECT template_key FROM ${AGENTS_TABLE} WHERE id = ?`).get(id) as
-      | { template_key?: string | null }
-      | undefined;
-    if (row?.template_key === MIGRATED_WORKER_TEMPLATE_KEY) {
-      throw new Error(
-        `Agent ${id} is a migrated worker mirror and is not owned by SpaceAgentRepository`
-      );
-    }
   }
 
   private requireSessionUnbound(sessionId: string | null, agentId: string): void {

@@ -1,7 +1,6 @@
 import type { SpaceLongHorizonAgent } from '@hyperneo/shared';
 import { computeAgentTemplateHash } from '../../lib/space/agents/agent-template-hash.ts';
 import { retireRemovedPresetAgents } from '../../lib/space/agents/seed-agents.ts';
-import { MIGRATED_WORKER_TEMPLATE_KEY } from '../../lib/space/agents/worker-long-horizon-mapper.ts';
 import { SpaceLongHorizonAgentRepository } from '../repositories/space-long-horizon-agent-repository.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 
@@ -124,7 +123,7 @@ function isPristineWorker(
   agent: SpaceLongHorizonAgent,
   liveAgentIds: ReadonlySet<string>
 ): boolean {
-  if (agent.templateKey !== MIGRATED_WORKER_TEMPLATE_KEY) return false;
+  if (agent.templateKey !== 'migration.legacy_space_agent') return false;
   if (liveAgentIds.has(agent.id)) return false;
   const snapshot = M233_PRESET_SNAPSHOTS.find((entry) => entry.name === agent.displayName);
   if (!snapshot) return false;

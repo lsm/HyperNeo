@@ -28,6 +28,7 @@ import {
   resolveIsDefaultAgent,
 } from '../space/agents/default-agent-policy.ts';
 import { getLongHorizonAgentTemplates } from '../space/agents/long-horizon-agent-templates.ts';
+import { MIGRATED_WORKER_TEMPLATE_KEY } from '../space/agents/worker-long-horizon-mapper.ts';
 import {
   type OwnedAgentLookup,
   publishSpaceAgentV2Mirror,
@@ -35,7 +36,6 @@ import {
   publishUnifiedAgentDeleted,
   publishUnifiedAgentUpdated,
 } from '../space/agents/unified-agent-events.ts';
-import { MIGRATED_WORKER_TEMPLATE_KEY } from '../space/agents/worker-long-horizon-mapper.ts';
 import {
   validateAgentModel,
   validateAgentModelPool,
@@ -675,20 +675,6 @@ function updateAuthorizeStage(ctx: UpdateUnifiedAgentCtx): UpdateUnifiedAgentCtx
 async function updateApplyStage(ctx: UpdateUnifiedAgentCtx): Promise<UpdateUnifiedAgentCtx> {
   const { params, agentId, existing } = ctx;
   if (!existing) throw new Error(`Agent not found: ${agentId}`);
-  const resolvedTemplateKey = resolveUnifiedTemplateKey(params);
-  if (params.status === 'disabled' && existing.templateKey === MIGRATED_WORKER_TEMPLATE_KEY) {
-    throw new Error('Agent status "disabled" cannot be set on a migrated worker agent');
-  }
-  if (params.autonomyLevel !== undefined && existing.templateKey === MIGRATED_WORKER_TEMPLATE_KEY) {
-    throw new Error('autonomyLevel cannot be set on a migrated worker agent');
-  }
-  if (
-    existing.templateKey === MIGRATED_WORKER_TEMPLATE_KEY &&
-    resolvedTemplateKey !== undefined &&
-    resolvedTemplateKey !== MIGRATED_WORKER_TEMPLATE_KEY
-  ) {
-    throw new Error('Template key cannot be changed on a migrated worker agent');
-  }
   const displayName = params.displayName !== undefined ? params.displayName : params.name;
   const handle =
     params.handle === undefined
@@ -724,7 +710,6 @@ async function updateApplyStage(ctx: UpdateUnifiedAgentCtx): Promise<UpdateUnifi
       `Template key ${MIGRATED_WORKER_TEMPLATE_KEY} is reserved for migrated worker mirrors`
     );
   }
-
   const agent = ctx.repo.update(agentId, {
     handle,
     displayName,
@@ -845,7 +830,6 @@ export function registerUnifiedSpaceAgentMethods(
     if (!params.spaceId) throw new Error('spaceId is required');
     const space = await deps.spaceManager.getSpace(params.spaceId);
     if (!space) throw new Error(`Space not found: ${params.spaceId}`);
-    deps.repo.ensureCoordinator(params.spaceId);
     return { agents: deps.repo.listBySpaceId(params.spaceId) };
   });
 

@@ -29,8 +29,8 @@ describe('SpaceLongHorizonAgentRepository', () => {
   });
 
   test('ensures default Space Manager row once with stable session identity', () => {
-    const coordinator = repo.ensureCoordinator('space-1');
-    const again = repo.ensureCoordinator('space-1');
+    const coordinator = repo.ensureSpaceManager('space-1');
+    const again = repo.ensureSpaceManager('space-1');
 
     expect(coordinator).toEqual(again);
     expect(coordinator.id).toBe(coordinatorLongHorizonAgentId('space-1'));
@@ -67,7 +67,7 @@ describe('SpaceLongHorizonAgentRepository', () => {
       status: 'active',
     });
 
-    const coordinator = repo.ensureCoordinator('space-1');
+    const coordinator = repo.ensureSpaceManager('space-1');
 
     expect(coordinator.id).toBe(legacy.id);
     expect(coordinator.handle).toBe('space-manager');
@@ -83,7 +83,7 @@ describe('SpaceLongHorizonAgentRepository', () => {
       status: 'archived',
     });
 
-    const coordinator = repo.ensureCoordinator('space-1');
+    const coordinator = repo.ensureSpaceManager('space-1');
 
     expect(archived.status).toBe('archived');
     expect(coordinator.id).toBe(coordinatorLongHorizonAgentId('space-1'));
@@ -93,10 +93,10 @@ describe('SpaceLongHorizonAgentRepository', () => {
   });
 
   test('returns the archived deterministic Coordinator row without reviving it', () => {
-    const archived = repo.ensureCoordinator('space-1');
+    const archived = repo.ensureSpaceManager('space-1');
     repo.update(archived.id, { status: 'archived' });
 
-    const coordinator = repo.ensureCoordinator('space-1');
+    const coordinator = repo.ensureSpaceManager('space-1');
 
     expect(coordinator.id).toBe(coordinatorLongHorizonAgentId('space-1'));
     expect(coordinator.status).toBe('archived');
@@ -105,11 +105,11 @@ describe('SpaceLongHorizonAgentRepository', () => {
   });
 
   test('self-heals a pre-lock renamed handle on the deterministic Coordinator row', () => {
-    const created = repo.ensureCoordinator('space-1');
+    const created = repo.ensureSpaceManager('space-1');
     repo.update(created.id, { handle: 'renamed' });
     expect(repo.getCoordinator('space-1')).toBeNull();
 
-    const coordinator = repo.ensureCoordinator('space-1');
+    const coordinator = repo.ensureSpaceManager('space-1');
 
     expect(coordinator.id).toBe(coordinatorLongHorizonAgentId('space-1'));
     expect(coordinator.handle).toBe('space-manager');
@@ -118,10 +118,10 @@ describe('SpaceLongHorizonAgentRepository', () => {
   });
 
   test('self-heal restores the handle without reviving the status', () => {
-    const created = repo.ensureCoordinator('space-1');
+    const created = repo.ensureSpaceManager('space-1');
     repo.update(created.id, { handle: 'renamed', status: 'archived' });
 
-    const coordinator = repo.ensureCoordinator('space-1');
+    const coordinator = repo.ensureSpaceManager('space-1');
 
     expect(coordinator.id).toBe(coordinatorLongHorizonAgentId('space-1'));
     expect(coordinator.handle).toBe('space-manager');
@@ -136,21 +136,21 @@ describe('SpaceLongHorizonAgentRepository', () => {
 				max_concurrent_tasks, created_at, updated_at
 			) VALUES (?, ?, ?, ?, '', '', '', '[]', '[]', 'active', 0, 0, 1, 1, ?, ?)`
     ).run('space-2', 'space-2', '/tmp/space-2', 'Space 2', 1, 1);
-    const paused = repo.ensureCoordinator('space-2');
+    const paused = repo.ensureSpaceManager('space-2');
     repo.update(paused.id, { handle: 'renamed-2', status: 'paused' });
 
-    const healedPaused = repo.ensureCoordinator('space-2');
+    const healedPaused = repo.ensureSpaceManager('space-2');
 
     expect(healedPaused.handle).toBe('space-manager');
     expect(healedPaused.status).toBe('paused');
   });
 
   test('returns an unchanged-handle paused coordinator row as-is', () => {
-    const created = repo.ensureCoordinator('space-1');
+    const created = repo.ensureSpaceManager('space-1');
     repo.update(created.id, { status: 'paused' });
     expect(repo.getCoordinator('space-1')?.status).toBe('paused');
 
-    const healed = repo.ensureCoordinator('space-1');
+    const healed = repo.ensureSpaceManager('space-1');
 
     expect(healed.id).toBe(coordinatorLongHorizonAgentId('space-1'));
     expect(healed.handle).toBe('space-manager');
@@ -211,7 +211,7 @@ describe('SpaceLongHorizonAgentRepository', () => {
 				max_concurrent_tasks, created_at, updated_at
 			) VALUES (?, ?, ?, ?, '', '', '', '[]', '[]', 'active', 0, 0, 1, 1, ?, ?)`
     ).run('space-2', 'space-2', '/tmp/space-2', 'Space 2', 1, 1);
-    const agent = repo.ensureCoordinator('space-1');
+    const agent = repo.ensureSpaceManager('space-1');
     db.prepare(
       `INSERT INTO space_goals (
 				id, space_id, title, description, status, type, priority, labels, metrics,
@@ -249,7 +249,7 @@ describe('SpaceLongHorizonAgentRepository', () => {
   });
 
   test('persists managed goals, Forge scopes, reminders, and event subscriptions', () => {
-    const agent = repo.ensureCoordinator('space-1');
+    const agent = repo.ensureSpaceManager('space-1');
     db.prepare(
       `INSERT INTO space_goals (
 				id, space_id, title, description, status, type, priority, labels, metrics,
@@ -304,7 +304,7 @@ describe('SpaceLongHorizonAgentRepository', () => {
   });
 
   test('lists goal assignments by goal and deletes a single relationship', () => {
-    const agent = repo.ensureCoordinator('space-1');
+    const agent = repo.ensureSpaceManager('space-1');
     db.prepare(
       `INSERT INTO space_goals (
 				id, space_id, title, description, status, type, priority, labels, metrics,
@@ -330,7 +330,7 @@ describe('SpaceLongHorizonAgentRepository', () => {
   });
 
   test('resolves the primary goal owner with coordinator fallback', () => {
-    const coordinator = repo.ensureCoordinator('space-1');
+    const coordinator = repo.ensureSpaceManager('space-1');
     db.prepare(
       `INSERT INTO space_goals (
 				id, space_id, title, description, status, type, priority, labels, metrics,
@@ -352,7 +352,7 @@ describe('SpaceLongHorizonAgentRepository', () => {
   });
 
   test('resolves a degraded owner when the agent is paused', () => {
-    const agent = repo.ensureCoordinator('space-1');
+    const agent = repo.ensureSpaceManager('space-1');
     db.prepare(
       `INSERT INTO space_goals (
 				id, space_id, title, description, status, type, priority, labels, metrics,
@@ -371,7 +371,7 @@ describe('SpaceLongHorizonAgentRepository', () => {
   });
 
   test('assigning a new owner replaces the existing owner atomically', () => {
-    const coordinator = repo.ensureCoordinator('space-1');
+    const coordinator = repo.ensureSpaceManager('space-1');
     const newOwner = repo.create({
       spaceId: 'space-1',
       handle: 'new-owner',
@@ -398,7 +398,7 @@ describe('SpaceLongHorizonAgentRepository', () => {
   });
 
   test('upserts, lists active, and deletes event subscriptions by route', () => {
-    const agent = repo.ensureCoordinator('space-1');
+    const agent = repo.ensureSpaceManager('space-1');
 
     const created = repo.upsertSubscription({
       spaceId: 'space-1',
@@ -575,7 +575,7 @@ describe('SpaceLongHorizonAgentRepository', () => {
 
   test('listDueReminders pages past excluded ids so poison batches cannot starve later rows', () => {
     const now = 40_000_000;
-    const agent = repo.ensureCoordinator('space-1');
+    const agent = repo.ensureSpaceManager('space-1');
     const ids: string[] = [];
     for (let i = 0; i < 3; i++) {
       const r = repo.createReminder({
@@ -601,7 +601,7 @@ describe('SpaceLongHorizonAgentRepository', () => {
 
   test('advanceReminderAfterFire advances cron, fires one-shot, and honors the CAS', () => {
     const now = 20_000_000;
-    const agent = repo.ensureCoordinator('space-1');
+    const agent = repo.ensureSpaceManager('space-1');
 
     const cron = repo.createReminder({
       spaceId: 'space-1',
@@ -690,29 +690,6 @@ describe('SpaceLongHorizonAgentRepository', () => {
     ).toThrow(/reserved for migrated worker mirrors/);
   });
 
-  test('update rejects disabled status, autonomy ceilings, and rekeys on migrated worker mirrors', () => {
-    db.prepare(
-      `INSERT INTO space_long_horizon_agents
-         (id, space_id, handle, display_name, template_key, status, instructions,
-          tool_permissions_json, created_at, updated_at)
-       VALUES (?, 'space-1', 'mirror-guard', 'Migrated Worker', 'migration.legacy_space_agent', 'active', '', '{}', 1, 1)`
-    ).run('mirror-guard-id');
-
-    expect(() => repo.update('mirror-guard-id', { status: 'disabled' })).toThrow(
-      'Agent status "disabled" cannot be set on a migrated worker agent'
-    );
-    expect(() => repo.update('mirror-guard-id', { autonomyLevel: 3 })).toThrow(
-      'autonomyLevel cannot be set on a migrated worker agent'
-    );
-    expect(() => repo.update('mirror-guard-id', { templateKey: 'coordinator.default' })).toThrow(
-      'Template key cannot be changed on a migrated worker agent'
-    );
-
-    const edited = repo.update('mirror-guard-id', { displayName: 'Renamed Mirror' });
-    expect(edited?.displayName).toBe('Renamed Mirror');
-    expect(edited?.status).toBe('active');
-  });
-
   test('update permits the runtime session binding on migrated worker mirrors', () => {
     db.prepare(
       `INSERT INTO space_long_horizon_agents
@@ -727,8 +704,8 @@ describe('SpaceLongHorizonAgentRepository', () => {
     expect(repo.update('mirror-bind-id', { sessionId: null })?.sessionId).toBeNull();
   });
 
-  test('coordinator row stays repository-mutable — the C-2 lock guards update paths, not the repo (ensureCoordinator self-heal needs it)', () => {
-    const coordinator = repo.ensureCoordinator('space-1');
+  test('coordinator row stays repository-mutable — the C-2 lock guards update paths, not the repo (ensureSpaceManager self-heal needs it)', () => {
+    const coordinator = repo.ensureSpaceManager('space-1');
 
     const renamed = repo.update(coordinator.id, { displayName: 'Renamed Coordinator' });
     expect(renamed?.displayName).toBe('Renamed Coordinator');

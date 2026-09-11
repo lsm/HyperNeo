@@ -166,7 +166,7 @@ export function setupSpaceHandlers(
     return createSpace(
       {
         createSpaceRecord: (params) => spaceManager.createSpace(params),
-        ensureCoordinator: (spaceId) => longHorizonAgentRepo.ensureCoordinator(spaceId),
+        ensureSpaceManager: (spaceId) => longHorizonAgentRepo.ensureSpaceManager(spaceId),
         seedWorkflows: (spaceId) => seedBuiltInWorkflows(spaceId, spaceWorkflowManager),
         ...(sessionManager
           ? {

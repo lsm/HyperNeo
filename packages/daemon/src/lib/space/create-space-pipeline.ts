@@ -13,7 +13,7 @@ const VALID_AUTONOMY_LEVELS: SpaceAutonomyLevel[] = [1, 2, 3, 4, 5];
 
 export interface CreateSpaceDeps {
   createSpaceRecord(params: CreateSpaceParams): Promise<Space>;
-  ensureCoordinator(spaceId: string): unknown;
+  ensureSpaceManager(spaceId: string): unknown;
   seedWorkflows(spaceId: string): { errors: ReadonlyArray<{ name: string; error: string }> };
   chat?: {
     createSession(params: CreateSessionParams): Promise<string>;
@@ -89,8 +89,8 @@ export async function createSpaceRecord(ctx: CreateSpaceCtx): Promise<CreateSpac
   return { ...ctx, space: await ctx.deps.createSpaceRecord(ctx.params) };
 }
 
-export function ensureCoordinator(ctx: CreateSpaceCtx): CreateSpaceCtx {
-  ctx.deps.ensureCoordinator(requireSpace(ctx).id);
+export function ensureSpaceManager(ctx: CreateSpaceCtx): CreateSpaceCtx {
+  ctx.deps.ensureSpaceManager(requireSpace(ctx).id);
   return ctx;
 }
 
@@ -151,7 +151,7 @@ const runCreateSpace = (superpipe()('createSpace') as PipelineAPI)
   .input(['ctx'])
   .pipe(validateParams, 'ctx', 'result:ctx')
   .pipe(createSpaceRecord, 'ctx', 'ctx')
-  .pipe(ensureCoordinator, 'ctx', 'ctx')
+  .pipe(ensureSpaceManager, 'ctx', 'ctx')
   .pipe(seedWorkflows, 'ctx', 'ctx')
   .pipe(provisionChatSession, 'ctx', 'ctx')
   .pipe(publishSpaceCreated, 'ctx', 'ctx')

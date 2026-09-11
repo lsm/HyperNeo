@@ -200,9 +200,6 @@ function classifyUpdateCollision(error: unknown): { reason: SpaceAgentRejection 
   if (/UNIQUE constraint failed.*handle/i.test(message)) {
     return reject('invalid_identity', message);
   }
-  if (message.includes('migrated worker mirror')) {
-    return reject('invalid_request', message);
-  }
   return null;
 }
 

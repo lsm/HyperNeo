@@ -590,7 +590,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   void restampBuiltInWorkflowsOnStartup(
     spaceWorkflowManager,
     deps.spaceManager,
-    longHorizonAgentRepo,
     (workflowId) =>
       spaceWorkflowRunRepo
         .listByWorkflow(workflowId)

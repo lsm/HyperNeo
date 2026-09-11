@@ -18,6 +18,7 @@ import {
   validateSpaceAgentTools,
 } from '../agents/agent-validation.ts';
 import { MIGRATED_AGENT_TEMPLATE_KEY_PREFIX } from '../agents/agent-template-synthesis.ts';
+import { MIGRATED_WORKER_TEMPLATE_KEY } from '../agents/worker-long-horizon-mapper.ts';
 import {
   getLongHorizonAgentTemplate,
   getLongHorizonAgentTemplates,
@@ -25,7 +26,6 @@ import {
   isRelocationMarkerLabel,
   RETIRED_LONG_HORIZON_TEMPLATE_KEYS,
 } from '../agents/long-horizon-agent-templates.ts';
-import { MIGRATED_WORKER_TEMPLATE_KEY } from '../agents/worker-long-horizon-mapper.ts';
 import { validateSlug } from '../slug.ts';
 
 type BuiltInTemplateSource = () => SpaceAgentTemplate[];

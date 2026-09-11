@@ -14,8 +14,8 @@ import type {
 } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import { getLongHorizonAgentTemplate } from '../../lib/space/agents/long-horizon-agent-templates.ts';
-import { MIGRATED_WORKER_TEMPLATE_KEY } from '../../lib/space/agents/worker-long-horizon-mapper.ts';
 import { SPACE_MANAGER_HANDLE } from '../../lib/space/agent-handle.ts';
+import { MIGRATED_WORKER_TEMPLATE_KEY } from '../../lib/space/agents/worker-long-horizon-mapper.ts';
 import {
   decideGoalOwnerResolution,
   type GoalOwnerAgentState,
@@ -29,11 +29,8 @@ const DEFAULT_TOOL_PERMISSIONS: Record<string, never> = {};
 export class SpaceLongHorizonAgentRepository {
   constructor(private db: BunDatabase) {}
 
-  create(
-    params: CreateSpaceLongHorizonAgentParams,
-    options?: { allowReservedTemplateKey?: boolean }
-  ): SpaceLongHorizonAgent {
-    if (params.templateKey === MIGRATED_WORKER_TEMPLATE_KEY && !options?.allowReservedTemplateKey) {
+  create(params: CreateSpaceLongHorizonAgentParams): SpaceLongHorizonAgent {
+    if (params.templateKey === MIGRATED_WORKER_TEMPLATE_KEY) {
       throw new Error(
         `Template key ${MIGRATED_WORKER_TEMPLATE_KEY} is reserved for migrated worker mirrors`
       );
@@ -108,7 +105,7 @@ export class SpaceLongHorizonAgentRepository {
     return row ? rowToAgent(row) : null;
   }
 
-  ensureCoordinator(spaceId: string): SpaceLongHorizonAgent {
+  ensureSpaceManager(spaceId: string): SpaceLongHorizonAgent {
     const existingByHandle = this.getCoordinator(spaceId);
     if (existingByHandle) {
       if (existingByHandle.handle === SPACE_MANAGER_HANDLE) return existingByHandle;
@@ -183,17 +180,11 @@ export class SpaceLongHorizonAgentRepository {
   }
 
   update(id: string, params: UpdateSpaceLongHorizonAgentParams): SpaceLongHorizonAgent | null {
-    const existing = this.getById(id);
-    if (existing?.templateKey === MIGRATED_WORKER_TEMPLATE_KEY) {
-      if (params.status === 'disabled') {
-        throw new Error('Agent status "disabled" cannot be set on a migrated worker agent');
-      }
-      if (params.autonomyLevel !== undefined) {
-        throw new Error('autonomyLevel cannot be set on a migrated worker agent');
-      }
-      if (params.templateKey !== undefined && params.templateKey !== MIGRATED_WORKER_TEMPLATE_KEY) {
-        throw new Error('Template key cannot be changed on a migrated worker agent');
-      }
+    if (
+      params.status === 'disabled' &&
+      this.getById(id)?.templateKey === MIGRATED_WORKER_TEMPLATE_KEY
+    ) {
+      throw new Error('Agent status "disabled" cannot be set on a migrated worker agent');
     }
     const fields: string[] = [];
     const values: SQLiteValue[] = [];

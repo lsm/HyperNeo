@@ -2128,7 +2128,7 @@ describe('SpaceRuntimeService', () => {
     test('resolves the owner when goal outcome wakes are enabled', async () => {
       const longHorizonAgentRepo = {
         getPrimaryGoalOwner: mock(() => ({ action: 'degraded' })),
-        ensureCoordinator: mock(() => ({ id: 'coordinator-1' })),
+        getCoordinator: mock(() => ({ id: 'coordinator-1' })),
         getById: mock(() => null),
       } as unknown as SpaceLongHorizonAgentRepository;
       const goalService = {
@@ -2152,13 +2152,13 @@ describe('SpaceRuntimeService', () => {
         notification.goalId,
         notification.spaceId
       );
-      expect(longHorizonAgentRepo.ensureCoordinator).toHaveBeenCalledWith(notification.spaceId);
+      expect(longHorizonAgentRepo.getCoordinator).toHaveBeenCalledWith(notification.spaceId);
     });
 
     test('routes a no-recipient wake to the coordinator', async () => {
       const longHorizonAgentRepo = {
         getPrimaryGoalOwner: mock(() => ({ action: 'no_recipient' })),
-        ensureCoordinator: mock(() => ({ id: 'coordinator-1' })),
+        getCoordinator: mock(() => ({ id: 'coordinator-1' })),
         getById: mock(() => null),
       } as unknown as SpaceLongHorizonAgentRepository;
       const goalService = {
@@ -2177,7 +2177,7 @@ describe('SpaceRuntimeService', () => {
 
       await svc.deliverGoalOutcomeWake(notification);
 
-      expect(longHorizonAgentRepo.ensureCoordinator).toHaveBeenCalledWith(notification.spaceId);
+      expect(longHorizonAgentRepo.getCoordinator).toHaveBeenCalledWith(notification.spaceId);
     });
 
     test('routes a noncanonical handle-coordinator wake to the Space chat session', async () => {
@@ -2187,7 +2187,6 @@ describe('SpaceRuntimeService', () => {
       const mailbox = buildMailboxDeliveryDb([`space:chat:${mockSpace.id}`]);
       const longHorizonAgentRepo = {
         getPrimaryGoalOwner: mock(() => ({ action: 'no_recipient' })),
-        ensureCoordinator: mock(() => ({ id: 'coordinator-alt' })),
         getCoordinator: mock(() => ({ id: 'coordinator-alt' })),
         getById: mock(() =>
           buildLongHorizonAgent({ id: 'coordinator-alt', handle: 'coordinator' })
@@ -4142,10 +4141,11 @@ describe('ensureAgentSession() / isAgentTargetLifecycleEligible()', () => {
     expect(await svc.isAgentTargetLifecycleEligible(ENSURE_SPACE_ID, 'lha-live-co')).toBe(true);
   });
 
-  test('a space with no coordinator record bootstraps the coordinator session', async () => {
+  test('an already-ensured coordinator record bootstraps the coordinator session', async () => {
     const db = makeTestDb();
     seedEnsureSpace(db);
     const repo = new SpaceLongHorizonAgentRepository(db as never);
+    repo.ensureSpaceManager(ENSURE_SPACE_ID);
     const session = makeEnsureSession('active');
     let live: AgentSession | null = null;
     const sessionManager = {
