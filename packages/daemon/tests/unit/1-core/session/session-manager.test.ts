@@ -423,6 +423,7 @@ describe('SessionManager', () => {
         context: { spaceId: 's1', taskId: 't1' },
       };
       return {
+        setOperationRegistryProvider: mock(() => {}),
         getSessionData: mock(() => data),
         mergeRuntimeMcpServers: mock((additional: Record<string, McpServerConfig>) => {
           data.config = {
@@ -982,6 +983,7 @@ describe('SessionManager', () => {
         metadata: {},
       };
       const fakeAgentSession = {
+        setOperationRegistryProvider: mock(() => {}),
         getSessionData: mock(() => mockSession),
         cleanup: mock(async () => {}),
       } as unknown as import('../../../../src/lib/agent/agent-session').AgentSession;
@@ -1003,6 +1005,7 @@ describe('SessionManager', () => {
         metadata: {},
       };
       const fakeAgentSession = {
+        setOperationRegistryProvider: mock(() => {}),
         getSessionData: mock(() => mockSession),
         cleanup: mock(async () => {}),
       } as unknown as import('../../../../src/lib/agent/agent-session').AgentSession;
@@ -1025,6 +1028,7 @@ describe('SessionManager', () => {
         metadata: {},
       };
       const fakeAgentSession = {
+        setOperationRegistryProvider: mock(() => {}),
         getSessionData: mock(() => mockSession),
         cleanup: mock(async () => {}),
       } as unknown as import('../../../../src/lib/agent/agent-session').AgentSession;
@@ -1047,6 +1051,7 @@ describe('SessionManager', () => {
         metadata: {},
       };
       const fakeAgentSession = {
+        setOperationRegistryProvider: mock(() => {}),
         getSessionData: mock(() => mockSession),
         cleanup: mock(async () => {}),
         getTrackedAgentRootPidsSplit: mock(() => ({ live: [], exited: [] })),
@@ -1071,6 +1076,7 @@ describe('SessionManager', () => {
         metadata: {},
       };
       const fakeAgentSession = {
+        setOperationRegistryProvider: mock(() => {}),
         getSessionData: mock(() => mockSession),
         cleanup: mock(async () => {}),
         getTrackedAgentRootPidsSplit: mock(() => ({
@@ -1195,6 +1201,7 @@ describe('SessionManager', () => {
         acpSessionId: 'remote-session',
       } as Session;
       const cachedAgent = {
+        setOperationRegistryProvider: mock(() => {}),
         getSessionData: mock(() => cachedSession),
         cleanup: mock(async () => {}),
         getTrackedAgentRootPidsSplit: mock(() => ({ live: [], exited: [] })),
@@ -1226,6 +1233,7 @@ describe('SessionManager', () => {
         config: { provider: 'acp' },
       } as Session;
       const cachedAgent = {
+        setOperationRegistryProvider: mock(() => {}),
         getSessionData: mock(() => cachedSession),
         cleanup: mock(async () => {}),
         getTrackedAgentRootPidsSplit: mock(() => ({ live: [], exited: [] })),
@@ -1266,6 +1274,7 @@ describe('SessionManager', () => {
         acpSessionId: 'remote-session',
       } as Session;
       const cachedAgent = {
+        setOperationRegistryProvider: mock(() => {}),
         getSessionData: mock(() => cachedSession),
         cleanup: mock(async () => {}),
         getTrackedAgentRootPidsSplit: mock(() => ({ live: [], exited: [] })),
@@ -1299,6 +1308,7 @@ describe('SessionManager', () => {
         exited: [5001, 5002],
       }));
       const fakeAgentSession = {
+        setOperationRegistryProvider: mock(() => {}),
         getSessionData: mock(() => mockSession),
         cleanup: mock(async () => {
           getSplit.mockImplementation(() => ({
@@ -1346,6 +1356,7 @@ describe('SessionManager', () => {
         exited: [],
       }));
       const fakeAgentSession = {
+        setOperationRegistryProvider: mock(() => {}),
         getSessionData: mock(() => mockSession),
         cleanup: mock(async () => {
           getSplit.mockImplementation(() => ({
@@ -1387,6 +1398,7 @@ describe('SessionManager', () => {
       exited: [],
     }));
     const fakeAgentSession = {
+      setOperationRegistryProvider: mock(() => {}),
       getSessionData: mock(() => mockSession),
       cleanup: mock(async () => {
         getSplit.mockImplementation(() => ({
@@ -1432,6 +1444,7 @@ describe('SessionManager', () => {
       exited: [],
     }));
     const fakeAgentSession = {
+      setOperationRegistryProvider: mock(() => {}),
       getSessionData: mock(() => mockSession),
       cleanup: mock(async () => {
         getSplit.mockImplementation(() => ({
@@ -1469,6 +1482,7 @@ describe('SessionManager', () => {
       exited: [],
     }));
     const fakeAgentSession = {
+      setOperationRegistryProvider: mock(() => {}),
       getSessionData: mock(() => mockSession),
       cleanup: mock(async () => {
         getSplit.mockImplementation(() => ({
@@ -1514,6 +1528,7 @@ describe('SessionManager', () => {
       exited: [],
     }));
     const fakeAgentSession = {
+      setOperationRegistryProvider: mock(() => {}),
       getSessionData: mock(() => mockSession),
       cleanup: mock(async () => {
         getSplit.mockImplementation(() => ({
@@ -1554,6 +1569,7 @@ describe('SessionManager', () => {
       exited: [],
     }));
     const fakeAgentSession = {
+      setOperationRegistryProvider: mock(() => {}),
       getSessionData: mock(() => mockSession),
       cleanup: mock(async () => {
         getSplit.mockImplementation(() => ({
@@ -1600,6 +1616,7 @@ describe('SessionManager', () => {
       exited: [],
     }));
     const fakeAgentSession1 = {
+      setOperationRegistryProvider: mock(() => {}),
       getSessionData: mock(() => mockSession),
       cleanup: mock(async () => {}),
       getTrackedAgentRootPidsSplit: getSplit1,
@@ -1620,6 +1637,7 @@ describe('SessionManager', () => {
       exited: [],
     }));
     const fakeAgentSession2 = {
+      setOperationRegistryProvider: mock(() => {}),
       getSessionData: mock(() => ({ ...mockSession, id: 'session-reevict-2' })),
       cleanup: mock(async () => {}),
       getTrackedAgentRootPidsSplit: getSplit2,
@@ -1651,6 +1669,7 @@ describe('SessionManager', () => {
       exited: [],
     }));
     const fakeAgentSession = {
+      setOperationRegistryProvider: mock(() => {}),
       getSessionData: mock(() => mockSession),
       cleanup: mock(async () => {}),
       getTrackedAgentRootPidsSplit: getSplit,
@@ -2052,6 +2071,7 @@ describe('SessionManager', () => {
     it('waits for workflow provisioning before cleaning the worker', async () => {
       const sessionId = 'space:s1:task:t1:exec:cleanup';
       const worker = {
+        setOperationRegistryProvider: mock(() => {}),
         getSessionData: mock(() => ({
           id: sessionId,
           status: 'active',
@@ -2066,6 +2086,7 @@ describe('SessionManager', () => {
       const blockedSessionId = 'space:s1:task:t1:exec:blocked';
       const blockedWorker = {
         ...worker,
+        setOperationRegistryProvider: mock(() => {}),
         getSessionData: mock(() => ({
           id: blockedSessionId,
           status: 'active',
@@ -2361,6 +2382,7 @@ describe('SessionManager', () => {
     describe('MCP registry / skills change handlers', () => {
       function makeFakeSession(id: string) {
         return {
+          setOperationRegistryProvider: mock(() => {}),
           getSessionData: mock(() => ({ id })),
           reconcileEffectiveMcpServers: mock(() => {}),
           cleanup: mock(async () => {}),

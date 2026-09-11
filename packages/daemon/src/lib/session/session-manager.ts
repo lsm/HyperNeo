@@ -1,4 +1,5 @@
-import type { OperationRegistryProvider } from '../operations/registry.ts';
+import { createDatabaseOperationCatalog } from '../operations/database-catalog.ts';
+import type { OperationRegistry, OperationRegistryProvider } from '../operations/registry.ts';
 import type {
   ImageContent,
   MessageDeliveryMode,
@@ -80,6 +81,7 @@ export class SessionManager {
   private messagePersistence: MessagePersistence;
   private spaceRuntimeMcpProvider?: SpaceRuntimeMcpProvider;
   private operationRegistryProvider?: OperationRegistryProvider;
+  private defaultOperationRegistry?: OperationRegistry;
   private mailboxDeferredReplaySuppressor?: (sessionId: string) => void;
   private workflowMcpProvisioning = new Map<
     string,
@@ -162,7 +164,7 @@ export class SessionManager {
       {
         autoReplayPendingMessages: !this.needsSpaceRuntimeProvisioning(session),
         ...runtimeOptions,
-        operationRegistryProvider: () => this.operationRegistryProvider?.(),
+        operationRegistryProvider: () => this.getOperationRegistry(),
         hardReset: (agentSession, options) => this.hardResetAgentSession(agentSession, options),
       }
     );
@@ -468,9 +470,17 @@ export class SessionManager {
     return sessions;
   }
 
+  getOperationRegistry(): OperationRegistry {
+    return (
+      this.operationRegistryProvider?.() ??
+      (this.defaultOperationRegistry ??= createDatabaseOperationCatalog(this.db, this.jobQueue))
+    );
+  }
+
   setOperationRegistryProvider(provider: OperationRegistryProvider): void {
     this.operationRegistryProvider = provider;
-    for (const session of this.getCachedSessions()) session.setOperationRegistryProvider(provider);
+    for (const session of this.getCachedSessions())
+      session.setOperationRegistryProvider(() => this.getOperationRegistry());
   }
 
   setSpaceRuntimeMcpProvider(provider: SpaceRuntimeMcpProvider): void {
@@ -618,9 +628,7 @@ export class SessionManager {
   }
 
   registerSession(agentSession: AgentSession): void {
-    if (this.operationRegistryProvider) {
-      agentSession.setOperationRegistryProvider(this.operationRegistryProvider);
-    }
+    agentSession.setOperationRegistryProvider(() => this.getOperationRegistry());
     if (this.mailboxDeferredReplaySuppressor) {
       const suppressor = this.mailboxDeferredReplaySuppressor;
       agentSession.suppressDeferredReplay = (sessionId) => suppressor(sessionId);

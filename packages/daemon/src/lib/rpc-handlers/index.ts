@@ -1,9 +1,3 @@
-import { setStandaloneTaskDependencies } from '../../storage/tasks/set-task-dependencies.ts';
-import { transitionStandaloneTask } from '../../storage/tasks/transition-task.ts';
-import { createStandaloneTaskMetadataEditor } from '../operations/task-metadata-standalone.ts';
-import { listTaskCores } from '../../storage/tasks/list-tasks.ts';
-import { createStandaloneTask } from '../../storage/tasks/create-task.ts';
-import { readTaskCore } from '../../storage/tasks/task-reader.ts';
 import { setupOperationHandlers } from './operation-handlers.ts';
 import type { MessageHub } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
@@ -324,26 +318,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   let inactivityRunNowCancelled = false;
   let inactivityAborted = false;
   setupMessageHandlers(deps.messageHub, deps.sessionManager, deps.db);
-  setupOperationHandlers(deps.messageHub, deps.jobQueue, {
-    readTask: (taskId) => readTaskCore(deps.db.getDatabase(), taskId),
-    createTask: (input, creatorSessionId) =>
-      createStandaloneTask(deps.db.getDatabase(), input, creatorSessionId, () =>
-        deps.db.notifyChange('space_tasks')
-      ),
-    listTasks: (input) => listTaskCores(deps.db.getDatabase(), input),
-    editTask: (input, caller) =>
-      createStandaloneTaskMetadataEditor(deps.db.getDatabase(), () =>
-        deps.db.notifyChange('space_tasks')
-      )(input, caller),
-    transitionTask: (input) =>
-      transitionStandaloneTask(deps.db.getDatabase(), input, () =>
-        deps.db.notifyChange('space_tasks')
-      ),
-    setDependencies: (input) =>
-      setStandaloneTaskDependencies(deps.db.getDatabase(), input, () =>
-        deps.db.notifyChange('space_tasks')
-      ),
-  });
+  setupOperationHandlers(deps.messageHub, () => deps.sessionManager.getOperationRegistry());
   setupSystemHandlers(deps.messageHub, deps.sessionManager);
   setupAuthHandlers(
     deps.messageHub,

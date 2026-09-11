@@ -1,11 +1,5 @@
+import { createDatabaseOperationCatalog } from '../operations/database-catalog.ts';
 import type { OperationRegistry, OperationRegistryProvider } from '../operations/registry.ts';
-import { setStandaloneTaskDependencies } from '../../storage/tasks/set-task-dependencies.ts';
-import { transitionStandaloneTask } from '../../storage/tasks/transition-task.ts';
-import { createStandaloneTaskMetadataEditor } from '../operations/task-metadata-standalone.ts';
-import { listTaskCores } from '../../storage/tasks/list-tasks.ts';
-import { createStandaloneTask } from '../../storage/tasks/create-task.ts';
-import { readTaskCore } from '../../storage/tasks/task-reader.ts';
-import { createDaemonOperationCatalog } from '../operations/catalog.ts';
 import { createOperationMcpServer } from '../operations/mcp-server.ts';
 import type {
   AgentProcessingState,
@@ -263,26 +257,7 @@ export class AgentSession
     return (this.operationMcpServer ??= createOperationMcpServer(
       () =>
         this.operationRegistryProvider?.() ??
-        (this.defaultOperationRegistry ??= createDaemonOperationCatalog(this.db.getJobQueueRepo(), {
-          readTask: (taskId) => readTaskCore(this.db.getDatabase(), taskId),
-          createTask: (input, creatorSessionId) =>
-            createStandaloneTask(this.db.getDatabase(), input, creatorSessionId, () =>
-              this.db.notifyChange('space_tasks')
-            ),
-          listTasks: (input) => listTaskCores(this.db.getDatabase(), input),
-          editTask: (input, caller) =>
-            createStandaloneTaskMetadataEditor(this.db.getDatabase(), () =>
-              this.db.notifyChange('space_tasks')
-            )(input, caller),
-          transitionTask: (input) =>
-            transitionStandaloneTask(this.db.getDatabase(), input, () =>
-              this.db.notifyChange('space_tasks')
-            ),
-          setDependencies: (input) =>
-            setStandaloneTaskDependencies(this.db.getDatabase(), input, () =>
-              this.db.notifyChange('space_tasks')
-            ),
-        })),
+        (this.defaultOperationRegistry ??= createDatabaseOperationCatalog(this.db)),
       () => ({ sessionId: this.session.id })
     ));
   }
