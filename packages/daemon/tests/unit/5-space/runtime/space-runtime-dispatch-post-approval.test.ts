@@ -729,7 +729,7 @@ test.each(['rpc', 'mcp'] as const)(
       });
       expect(taskRepo.getTask(task.id)).toMatchObject({
         status: 'done',
-        workflowRunId: null,
+        workflowRunId: undefined,
         pendingCheckpointType: null,
       });
       expect(attempts.get(started.attempt.id)?.phase).toBe('stopped');
