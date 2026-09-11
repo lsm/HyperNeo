@@ -320,23 +320,24 @@ export function setupSpaceTaskHandlers(
     };
 
     const updateTaskWithRuntimeDependencyBlock = async (
-      currentTask: SpaceTask
+      currentTask: SpaceTask,
+      params: typeof updateParams = updateParams
     ): Promise<{ task: SpaceTask; handledByRuntime: boolean }> => {
       let dependencyCheckResult: SpaceTask | null = null;
       let runtimeForDependencyBlock: SpaceRuntimeService | null = null;
       let dependencyAddedToActiveWorkflow = false;
       if (
         spaceRuntimeService &&
-        updateParams.dependsOn !== undefined &&
+        params.dependsOn !== undefined &&
         currentTask.status === 'in_progress' &&
         currentTask.workflowRunId &&
-        !arraysEqual(currentTask.dependsOn ?? [], updateParams.dependsOn)
+        !arraysEqual(currentTask.dependsOn ?? [], params.dependsOn)
       ) {
         const {
           taskAgentSessionId: _taskAgentSessionId,
           workflowRunId: _workflowRunId,
           ...safeParams
-        } = updateParams;
+        } = params;
         dependencyCheckResult = await taskManager.updateTask(taskId, safeParams, {
           onCascadedTasks: emitCascadedTasks,
         });
@@ -349,7 +350,7 @@ export function setupSpaceTaskHandlers(
       if (dependencyAddedToActiveWorkflow && runtimeForDependencyBlock) {
         return {
           task: await runtimeForDependencyBlock.stopWorkflowBackedTask(spaceId, taskId, {
-            ...updateParams,
+            ...params,
             status: 'blocked',
             blockReason: 'dependency_added',
             result: 'Dependency added while task was in progress',
@@ -361,11 +362,11 @@ export function setupSpaceTaskHandlers(
 
       if (dependencyCheckResult) {
         const pointerParams: UpdateSpaceTaskParams = {};
-        if ('taskAgentSessionId' in updateParams) {
-          pointerParams.taskAgentSessionId = updateParams.taskAgentSessionId;
+        if ('taskAgentSessionId' in params) {
+          pointerParams.taskAgentSessionId = params.taskAgentSessionId;
         }
-        if ('workflowRunId' in updateParams) {
-          pointerParams.workflowRunId = updateParams.workflowRunId;
+        if ('workflowRunId' in params) {
+          pointerParams.workflowRunId = params.workflowRunId;
         }
         if (Object.keys(pointerParams).length > 0) {
           dependencyCheckResult = await taskManager.updateTask(taskId, pointerParams, {
@@ -377,7 +378,7 @@ export function setupSpaceTaskHandlers(
       return {
         task:
           dependencyCheckResult ??
-          (await taskManager.updateTask(taskId, updateParams, {
+          (await taskManager.updateTask(taskId, params, {
             onCascadedTasks: emitCascadedTasks,
           })),
         handledByRuntime: false,
@@ -429,9 +430,9 @@ export function setupSpaceTaskHandlers(
           if (Object.keys(otherFields).length > 0) {
             emitTaskUpdated = true;
             await ensureWorkflowOverridesStillUnlocked(otherFields);
-            task = await taskManager.updateTask(taskId, otherFields, {
-              onCascadedTasks: emitCascadedTasks,
-            });
+            const dependencyUpdate = await updateTaskWithRuntimeDependencyBlock(task, otherFields);
+            task = dependencyUpdate.task;
+            if (dependencyUpdate.handledByRuntime) emitTaskUpdated = false;
           }
         } else {
           const fromActivePaused =
@@ -565,9 +566,12 @@ export function setupSpaceTaskHandlers(
             } = updateParams;
             if (Object.keys(otherFields).length > 0) {
               await ensureWorkflowOverridesStillUnlocked(otherFields);
-              task = await taskManager.updateTask(taskId, otherFields, {
-                onCascadedTasks: emitCascadedTasks,
-              });
+              const dependencyUpdate = await updateTaskWithRuntimeDependencyBlock(
+                task,
+                otherFields
+              );
+              task = dependencyUpdate.task;
+              if (dependencyUpdate.handledByRuntime) emitTaskUpdated = false;
             }
           }
         }
