@@ -10,6 +10,7 @@ import { createSpaceAgentTemplatesTable } from '../../../src/storage/schema/spac
 import { runMigration226 } from '../../../src/storage/schema/m226-space-agent-templates-version';
 import { runMigration227 } from '../../../src/storage/schema/m227-space-agent-template-version-seq';
 import { runMigration238 } from '../../../src/storage/schema/m238-space-agent-template-labels';
+import { runMigration243 } from '../../../src/storage/schema/m243-space-agent-template-space-key';
 import { Database as BunDatabase } from '../../../src/storage/sqlite-compat';
 
 const MODEL_POOL: AgentModelPoolEntry[] = [
@@ -45,6 +46,7 @@ describe('SpaceAgentTemplateRepository', () => {
     runMigration226(db);
     runMigration227(db);
     runMigration238(db);
+    runMigration243(db);
     repo = new SpaceAgentTemplateRepository(db);
   });
 
@@ -275,6 +277,7 @@ describe('SpaceAgentTemplateRepository — Space-scoped methods', () => {
     runMigration226(db);
     runMigration227(db);
     runMigration238(db);
+    runMigration243(db);
     repo = new SpaceAgentTemplateRepository(db);
   });
 
