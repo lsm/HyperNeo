@@ -331,9 +331,10 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
         deps.db.notifyChange('space_tasks')
       ),
     listTasks: (input) => listTaskCores(deps.db.getDatabase(), input),
-    editTask: createStandaloneTaskMetadataEditor(deps.db.getDatabase(), () =>
-      deps.db.notifyChange('space_tasks')
-    ),
+    editTask: (input, caller) =>
+      createStandaloneTaskMetadataEditor(deps.db.getDatabase(), () =>
+        deps.db.notifyChange('space_tasks')
+      )(input, caller),
     transitionTask: (input) =>
       transitionStandaloneTask(deps.db.getDatabase(), input, () =>
         deps.db.notifyChange('space_tasks')

@@ -259,9 +259,10 @@ export class AgentSession
             this.db.notifyChange('space_tasks')
           ),
         listTasks: (input) => listTaskCores(this.db.getDatabase(), input),
-        editTask: createStandaloneTaskMetadataEditor(this.db.getDatabase(), () =>
-          this.db.notifyChange('space_tasks')
-        ),
+        editTask: (input, caller) =>
+          createStandaloneTaskMetadataEditor(this.db.getDatabase(), () =>
+            this.db.notifyChange('space_tasks')
+          )(input, caller),
         transitionTask: (input) =>
           transitionStandaloneTask(this.db.getDatabase(), input, () =>
             this.db.notifyChange('space_tasks')
