@@ -940,7 +940,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     agents: new SpaceAgentRepository(deps.db.getDatabase()),
     templates: spaceAgentTemplateRepo,
     spaceExists: async (spaceId) => (await deps.spaceManager.getSpace(spaceId)) !== null,
-    getSession: (sessionId) => deps.sessionManager.getSession(sessionId)?.session ?? null,
+    getSession: (sessionId) => deps.db.getSession(sessionId),
     internalEventBus: deps.internalEventBus,
     legacyAgents: longHorizonAgentRepo,
     removeAgentSubscriptions: (spaceId, agentId) =>

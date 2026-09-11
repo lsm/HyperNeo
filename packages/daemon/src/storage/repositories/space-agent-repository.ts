@@ -161,6 +161,7 @@ export class SpaceAgentRepository {
   }
 
   delete(id: string): void {
+    this.requireNotMigratedWorkerMirror(id);
     this.db.prepare(`DELETE FROM ${AGENTS_TABLE} WHERE id = ?`).run(id);
   }
 
