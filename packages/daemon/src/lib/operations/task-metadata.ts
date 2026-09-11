@@ -19,6 +19,7 @@ export interface TaskMetadataDependencies {
   admit: (owner: TaskMetadataOwner, caller: OperationCaller) => Awaitable<void>;
   editStandalone: (input: TaskMetadataInput) => Awaitable<TaskCore | null>;
   editSpace: (spaceId: string, input: TaskMetadataInput) => Awaitable<TaskCore | null>;
+  afterEdit?: (owner: TaskMetadataOwner, task: TaskCore) => Awaitable<void>;
 }
 
 export function selectTaskMetadata(input: TaskMetadataInput): TaskMetadataInput {
@@ -65,11 +66,13 @@ export function createTaskMetadataEditor(dependencies: TaskMetadataDependencies)
     .pipe(selectTaskMetadata, 'input', 'metadata')
     .pipe(resolveTaskMetadataOwner, ['resolveOwner', 'metadata'], 'result:editedTask')
     .pipe(admitTaskMetadataEdit, ['admit', 'editedTask', 'caller'])
+    .pipe((owner: TaskMetadataOwner) => owner, 'editedTask', 'owner')
     .pipe(
       persistTaskMetadata,
       ['editStandalone', 'editSpace', 'editedTask', 'metadata'],
       'result:editedTask'
     )
+    .pipe('?afterEdit', ['owner', 'editedTask'])
     .endAsync('editedTask') as (
     input: TaskMetadataInput,
     caller: OperationCaller
