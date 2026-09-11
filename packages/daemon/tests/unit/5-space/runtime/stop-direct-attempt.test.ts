@@ -9,6 +9,7 @@ import {
   createDirectAttemptStopper,
   directSessionIsDown,
   requireDirectStopTarget,
+  verifyDirectAttemptStop,
 } from '../../../../src/lib/space/runtime/stop-direct-attempt';
 
 let sql: Database;
@@ -209,3 +210,63 @@ test.each(['inactive', 'workflow', 'pointer'] as const)(
     expect(attempts.getActive(taskId)?.id).toBe('attempt');
   }
 );
+
+test('verification requires a durable fence and retains ownership after exact session cleanup', async () => {
+  attempts.activate('attempt', 'session');
+  cached = agent();
+  const expected = cached;
+  const manager = {
+    getCachedSession: () => cached,
+    isSessionLoading: () => loading,
+    unregisterSession: unregister,
+  };
+  const attempt = attempts.get('attempt')!;
+  expect(await verifyDirectAttemptStop(attempts, tasks, manager, attempt)).toHaveProperty('reason');
+  expect(interrupt).not.toHaveBeenCalled();
+  attempts.requestStop('attempt', 'session', 'cancelled');
+  const verified = await verifyDirectAttemptStop(attempts, tasks, manager, attempt);
+  expect(verified).toEqual({ value: { attempt: attempts.get('attempt'), session: expected } });
+  expect(cached).toBeNull();
+  expect(attempts.getActive(taskId)?.id).toBe('attempt');
+  expect(attempts.claim(taskId, 'next', 'next-session')).toBeNull();
+});
+
+test('verification rechecks persisted phase rather than trusting a stale reserved snapshot', async () => {
+  const reserved = attempts.get('attempt')!;
+  attempts.activate('attempt', 'session');
+  attempts.requestStop('attempt', 'session', 'cancelled');
+  const manager = {
+    getCachedSession: () => cached,
+    isSessionLoading: () => loading,
+    unregisterSession: unregister,
+  };
+  expect(await verifyDirectAttemptStop(attempts, tasks, manager, reserved)).toEqual({
+    reason: { stopped: false, reason: 'unverified' },
+  });
+  expect(attempts.getActive(taskId)?.phase).toBe('running');
+});
+
+test('release rechecks cache after verification yields to the next pipeline stage', async () => {
+  attempts.activate('attempt', 'session');
+  cached = agent();
+  const replacement = agent();
+  let reads = 0;
+  const stop = createDirectAttemptStopper({
+    attempts,
+    tasks,
+    sessionManager: {
+      getCachedSession: () => {
+        if (++reads === 2)
+          queueMicrotask(() => {
+            cached = replacement;
+          });
+        return cached;
+      },
+      isSessionLoading: () => loading,
+      unregisterSession: unregister,
+    },
+  });
+  expect(await stop(input)).toEqual({ stopped: false, reason: 'unverified' });
+  expect(cached).toBe(replacement);
+  expect(attempts.getActive(taskId)?.id).toBe('attempt');
+});
