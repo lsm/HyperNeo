@@ -90,6 +90,7 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
   const [formTemplateKey, setFormTemplateKey] = useState<string>('');
   const activeSpaceRef = useRef(spaceId);
   const formGenerationRef = useRef(0);
+  const appliedHandleRef = useRef<string | null>(null);
 
   function resetViewState() {
     formGenerationRef.current += 1;
@@ -134,8 +135,20 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
   const agentSignature = agents.map((agent) => `${agent.id}:${agent.handle}`).join('|');
 
   useEffect(() => {
-    if (!selectedHandle || !deepLinked) return;
+    if (!selectedHandle) {
+      appliedHandleRef.current = null;
+      return;
+    }
+    if (appliedHandleRef.current === selectedHandle) return;
+    if (!deepLinked) {
+      setSelectedId(null);
+      return;
+    }
+    appliedHandleRef.current = selectedHandle;
     setSelectedId(deepLinked.id);
+    closeForm();
+    setDeleting(null);
+    setDeleteError(null);
   }, [selectedHandle, agentSignature]);
   const selectedTemplateSources = formTemplateKey
     ? (templateOptions().find((template) => template.key === formTemplateKey)?.settingSources ??

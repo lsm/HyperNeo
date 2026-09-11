@@ -1062,6 +1062,79 @@ describe('SpaceAgentsPage', () => {
     ]);
   });
 
+  it('clears a stale selection when the new handle matches nothing', async () => {
+    mockAgents.value = [makeAgent('alpha'), makeAgent('beta')];
+    const { getByTestId, queryByTestId, rerender } = render(
+      <SpaceAgentsPage spaceId="space-1" selectedHandle="alpha" />
+    );
+    await waitFor(() => expect(getByTestId('agent-detail').textContent).toContain('alpha'));
+
+    rerender(<SpaceAgentsPage spaceId="space-1" selectedHandle="ghost" />);
+
+    await waitFor(() => expect(getByTestId('agent-deep-link-missing')).toBeTruthy());
+    expect(queryByTestId('agent-detail')).toBeNull();
+  });
+
+  it('keeps a manual selection when the agent list changes', async () => {
+    mockAgents.value = [makeAgent('alpha'), makeAgent('beta')];
+    const { getByTestId, rerender } = render(
+      <SpaceAgentsPage spaceId="space-1" selectedHandle="beta" />
+    );
+    await waitFor(() => expect(getByTestId('agent-detail').textContent).toContain('beta'));
+
+    fireEvent.click(getByTestId('agent-row-alpha'));
+    await waitFor(() => expect(getByTestId('agent-detail').textContent).toContain('alpha'));
+
+    mockAgents.value = [makeAgent('alpha'), makeAgent('beta'), makeAgent('gamma')];
+    rerender(<SpaceAgentsPage spaceId="space-1" selectedHandle="beta" />);
+
+    await waitFor(() => expect(getByTestId('agent-list')).toBeTruthy());
+    expect(getByTestId('agent-detail').textContent).toContain('alpha');
+  });
+
+  it('still follows a genuinely new handle after a manual selection', async () => {
+    mockAgents.value = [makeAgent('alpha'), makeAgent('beta')];
+    const { getByTestId, rerender } = render(
+      <SpaceAgentsPage spaceId="space-1" selectedHandle="alpha" />
+    );
+    await waitFor(() => expect(getByTestId('agent-detail').textContent).toContain('alpha'));
+
+    fireEvent.click(getByTestId('agent-row-beta'));
+    rerender(<SpaceAgentsPage spaceId="space-1" selectedHandle="alpha" />);
+    rerender(<SpaceAgentsPage spaceId="space-1" selectedHandle="beta" />);
+
+    await waitFor(() => expect(getByTestId('agent-detail').textContent).toContain('beta'));
+  });
+
+  it('closes an open edit form when following a changed handle', async () => {
+    mockAgents.value = [makeAgent('alpha'), makeAgent('beta')];
+    const { getByTestId, getByText, queryByTestId, rerender } = render(
+      <SpaceAgentsPage spaceId="space-1" selectedHandle="alpha" />
+    );
+    await waitFor(() => expect(getByTestId('agent-detail')).toBeTruthy());
+    fireEvent.click(getByText('Edit'));
+    expect(getByTestId('agent-form')).toBeTruthy();
+
+    rerender(<SpaceAgentsPage spaceId="space-1" selectedHandle="beta" />);
+
+    await waitFor(() => expect(queryByTestId('agent-form')).toBeNull());
+    expect(getByTestId('agent-detail').textContent).toContain('beta');
+  });
+
+  it('dismisses a delete confirmation when following a changed handle', async () => {
+    mockAgents.value = [makeAgent('alpha'), makeAgent('beta')];
+    const { getByTestId, queryByTestId, rerender } = render(
+      <SpaceAgentsPage spaceId="space-1" selectedHandle="alpha" />
+    );
+    await waitFor(() => expect(getByTestId('agent-detail')).toBeTruthy());
+    fireEvent.click(getByTestId('agent-delete-button'));
+    expect(getByTestId('confirm-delete-agent')).toBeTruthy();
+
+    rerender(<SpaceAgentsPage spaceId="space-1" selectedHandle="beta" />);
+
+    await waitFor(() => expect(queryByTestId('confirm-delete-agent')).toBeNull());
+  });
+
   it('clears a description on edit rather than dropping the field', async () => {
     mockAgents.value = [makeAgent('alpha', { description: 'old' })];
     const { getByTestId, getByText } = render(<SpaceAgentsPage spaceId="space-1" />);
