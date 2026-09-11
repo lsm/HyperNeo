@@ -441,8 +441,8 @@ describe('scoped tool entries', () => {
     expect(onChange).toHaveBeenCalledWith({ tools: ['Read'], toolsOverridden: true });
   });
 
-  it('shows no scoped section while tools are inherited', () => {
-    const { queryByTestId } = render(
+  it('lists no scoped chips while tools are inherited, but still offers the input', () => {
+    const { queryByTestId, getByTestId } = render(
       <ToolsEditor
         tools={['Bash(ls:*)']}
         toolsOverridden={false}
@@ -450,7 +450,8 @@ describe('scoped tool entries', () => {
         manageScopedEntries
       />
     );
-    expect(queryByTestId('tools-editor-scoped')).toBeNull();
+    expect(queryByTestId('tools-editor-scoped-Bash(ls:*)')).toBeNull();
+    expect(getByTestId('tools-editor-scoped-input')).toBeTruthy();
   });
 
   it('leaves consumers that do not opt in untouched', () => {

@@ -210,7 +210,7 @@ export function ToolsEditor({
         <div class="mt-3" data-testid="tools-editor-scoped">
           <p class="mb-1.5 text-xs text-fg-faint">Scoped entries</p>
           <div class="flex flex-wrap gap-1.5">
-            {scopedToolEntries(tools).map((entry) => (
+            {(toolsOverridden ? scopedToolEntries(tools) : []).map((entry) => (
               <span
                 key={entry}
                 data-testid={`tools-editor-scoped-${entry}`}
