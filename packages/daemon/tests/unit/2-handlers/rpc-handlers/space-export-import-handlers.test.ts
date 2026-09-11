@@ -699,6 +699,26 @@ describe('Space Export/Import RPC Handlers', () => {
       expect(workflow.nodes[0].agents![0].agentId).not.toBe('');
     });
 
+    it('fails a bundle with no exporting space when the destination row vanished', async () => {
+      const repo = new SpaceAgentTemplateRepository(db);
+      repo.createOwned(SPACE_ID, { key: 'team.auditor', handle: 'auditor' });
+      repo.createOwned(OTHER_SPACE_ID, { key: 'team.auditor', handle: 'auditor' });
+      const bundle = templateBundle();
+
+      const preview = await call<ImportPreviewResult>(handlers, 'spaceImport.preview', {
+        spaceId: SPACE_ID,
+        bundle,
+      });
+      expect(preview.validationErrors.some((e) => e.includes('unknown template'))).toBe(false);
+
+      repo.deleteOwned(SPACE_ID, 'team.auditor');
+
+      await expect(
+        call(handlers, 'spaceImport.execute', { spaceId: SPACE_ID, bundle })
+      ).rejects.toThrow(/not available to this space/);
+      expect(workflowRepo.listWorkflows(SPACE_ID).map((w) => w.name)).not.toContain('Copied Pipe');
+    });
+
     it('fails the import when the source template vanished after preview', async () => {
       const repo = new SpaceAgentTemplateRepository(db);
       repo.createOwned(OTHER_SPACE_ID, {
@@ -718,7 +738,7 @@ describe('Space Export/Import RPC Handlers', () => {
 
       await expect(
         call(handlers, 'spaceImport.execute', { spaceId: SPACE_ID, bundle })
-      ).rejects.toThrow(/no longer available in the exporting space/);
+      ).rejects.toThrow(/not available to this space/);
       expect(workflowRepo.listWorkflows(SPACE_ID).map((w) => w.name)).not.toContain('Copied Pipe');
     });
 
