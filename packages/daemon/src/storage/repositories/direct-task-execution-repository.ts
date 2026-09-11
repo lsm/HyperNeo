@@ -53,12 +53,6 @@ export class DirectTaskExecutionRepository {
       .get(id) as DirectTaskAttempt | null;
   }
 
-  getBySessionId(sessionId: string): DirectTaskAttempt | null {
-    return this.db
-      .prepare(`SELECT ${columns} FROM direct_task_execution_attempts WHERE session_id = ?`)
-      .get(sessionId) as DirectTaskAttempt | null;
-  }
-
   getActive(taskId: string): DirectTaskAttempt | null {
     return this.db
       .prepare(`SELECT ${columns} FROM direct_task_execution_attempts

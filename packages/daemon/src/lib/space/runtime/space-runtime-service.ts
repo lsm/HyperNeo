@@ -263,7 +263,7 @@ export class SpaceRuntimeService {
   private resolveMcpSessionPolicy(session: Session): SpaceMcpSessionPolicy {
     return resolveSpaceMcpSessionPolicy(session, {
       hasDirectWorkerProvenance: (id) =>
-        !!new DirectTaskExecutionRepository(this.config.db).getBySessionId(id),
+        new DirectTaskExecutionRepository(this.config.db).hasSessionProvenance(id),
       resolveDirectWorker: (id) => createDatabaseDirectTaskWorkerResolver(this.config.db)(id),
       nodeExecutionRepo: this.nodeExecutionRepo,
       taskRepo: this.config.taskRepo,
@@ -1732,7 +1732,7 @@ export class SpaceRuntimeService {
     if (!sessionManager) return;
 
     const spaceChatSessionId = `space:chat:${space.id}`;
-    if (new DirectTaskExecutionRepository(db).getBySessionId(spaceChatSessionId)) return;
+    if (new DirectTaskExecutionRepository(db).hasSessionProvenance(spaceChatSessionId)) return;
     const session = await sessionManager.getSessionAsync(spaceChatSessionId);
     if (!session) {
       log.warn(`Space chat session not found for space ${space.id} (${spaceChatSessionId})`);

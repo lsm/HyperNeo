@@ -775,7 +775,9 @@ export class AgentSession
         `Session ${this.session.id} is ${this.session.status}; refusing to start the query`
       );
     }
-    if (new DirectTaskExecutionRepository(this.db.getDatabase()).getBySessionId(this.session.id)) {
+    if (
+      new DirectTaskExecutionRepository(this.db.getDatabase()).hasSessionProvenance(this.session.id)
+    ) {
       throw new Error(
         `Direct task session ${this.session.id} requires executor activation admission`
       );

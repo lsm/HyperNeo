@@ -41,7 +41,7 @@ afterEach(() => db.close());
 function policy() {
   return resolveSpaceMcpSessionPolicy(sessions.getSession('direct')!, {
     resolveDirectWorker: createDatabaseDirectTaskWorkerResolver(db),
-    hasDirectWorkerProvenance: (id) => !!attempts.getBySessionId(id),
+    hasDirectWorkerProvenance: (id) => attempts.hasSessionProvenance(id),
   });
 }
 
@@ -83,52 +83,75 @@ test('unrelated ordinary Space membership remains unchanged', () => {
   expect(
     resolveSpaceMcpSessionPolicy(session, {
       resolveDirectWorker,
-      hasDirectWorkerProvenance: (id) => !!attempts.getBySessionId(id),
+      hasDirectWorkerProvenance: (id) => attempts.hasSessionProvenance(id),
     })
   ).toEqual(plain);
   expect(plain.attachGenericSpaceTools).toBe(true);
   expect(resolveDirectWorker).not.toHaveBeenCalled();
 });
 
-test.each(['reserved', 'running', 'stopped', 'mismatched'] as const)(
-  'member provisioning does not load or replay a %s direct session',
-  async (state) => {
-    if (state === 'running') attempts.activate('attempt', 'direct');
-    if (state === 'stopped') attempts.stop('attempt', 'direct', 'cancelled');
-    if (state === 'mismatched')
-      sessions.updateSession('direct', { context: { spaceId, taskId: 'other' } });
-    const provisionWorkflowSession = mock(async () => {});
-    const mcpSelfHeal = mock(async () => {});
-    const getSpace = mock(async () => null);
-    const getSessionAsync = mock(async () => null);
-    const provisioner = Object.assign(Object.create(SpaceRuntimeService.prototype), {
-      taskAgentManager: { provisionWorkflowSession, mcpSelfHeal },
-      config: {
-        db,
-        taskRepo: tasks,
-        spaceManager: { getSpace },
-        sessionManager: { getSessionAsync },
-      },
-    }) as SpaceRuntimeService;
-    await provisioner.attachSpaceToolsToMemberSession(sessions.getSession('direct')!, {
-      replayPendingMessages: true,
-    });
-    const agent = { getSessionData: () => sessions.getSession('direct')! } as AgentSession;
-    await provisioner.provisionWorkflowSession(agent, {
-      startQuery: true,
-      replayPendingMessages: true,
-    });
-    await provisioner.reattachWorkflowMcpServers(agent, ['node-agent']);
-    expect(provisionWorkflowSession).not.toHaveBeenCalled();
-    expect(mcpSelfHeal).not.toHaveBeenCalled();
-    expect(getSpace).not.toHaveBeenCalled();
-    expect(getSessionAsync).not.toHaveBeenCalled();
+test.each([
+  'reserved',
+  'running',
+  'stopped',
+  'mismatched',
+  'task_deleted',
+  'space_deleted',
+] as const)('member provisioning does not load or replay a %s direct session', async (state) => {
+  if (state === 'task_deleted') db.prepare('DELETE FROM space_tasks WHERE id = ?').run(taskId);
+  if (state === 'space_deleted') db.prepare('DELETE FROM spaces WHERE id = ?').run(spaceId);
+  if (state === 'task_deleted' || state === 'space_deleted') {
+    sessions.updateSession('direct', { context: {} });
+    expect(policy()).toMatchObject({ role: 'direct_task_worker', owner: 'none' });
   }
-);
+  if (state === 'running') attempts.activate('attempt', 'direct');
+  if (state === 'stopped') attempts.stop('attempt', 'direct', 'cancelled');
+  if (state === 'mismatched')
+    sessions.updateSession('direct', { context: { spaceId, taskId: 'other' } });
+  const provisionWorkflowSession = mock(async () => {});
+  const mcpSelfHeal = mock(async () => {});
+  const getSpace = mock(async () => null);
+  const getSessionAsync = mock(async () => null);
+  const provisioner = Object.assign(Object.create(SpaceRuntimeService.prototype), {
+    taskAgentManager: { provisionWorkflowSession, mcpSelfHeal },
+    config: {
+      db,
+      taskRepo: tasks,
+      spaceManager: { getSpace },
+      sessionManager: { getSessionAsync },
+    },
+  }) as SpaceRuntimeService;
+  await provisioner.attachSpaceToolsToMemberSession(sessions.getSession('direct')!, {
+    replayPendingMessages: true,
+  });
+  const agent = { getSessionData: () => sessions.getSession('direct')! } as AgentSession;
+  await provisioner.provisionWorkflowSession(agent, {
+    startQuery: true,
+    replayPendingMessages: true,
+  });
+  await provisioner.reattachWorkflowMcpServers(agent, ['node-agent']);
+  expect(provisionWorkflowSession).not.toHaveBeenCalled();
+  expect(mcpSelfHeal).not.toHaveBeenCalled();
+  expect(getSpace).not.toHaveBeenCalled();
+  expect(getSessionAsync).not.toHaveBeenCalled();
+});
 
-test.each(['reserved', 'running', 'stopped', 'mismatched'] as const)(
+test.each([
+  'reserved',
+  'running',
+  'stopped',
+  'mismatched',
+  'task_deleted',
+  'space_deleted',
+] as const)(
   'both provider startup paths reject %s direct provenance before SDK startup',
   async (state) => {
+    if (state === 'task_deleted') db.prepare('DELETE FROM space_tasks WHERE id = ?').run(taskId);
+    if (state === 'space_deleted') db.prepare('DELETE FROM spaces WHERE id = ?').run(spaceId);
+    if (state === 'task_deleted' || state === 'space_deleted') {
+      sessions.updateSession('direct', { context: {} });
+      expect(policy()).toMatchObject({ role: 'direct_task_worker', owner: 'none' });
+    }
     if (state === 'running') attempts.activate('attempt', 'direct');
     if (state === 'stopped') attempts.stop('attempt', 'direct', 'cancelled');
     if (state === 'mismatched') sessions.updateSession('direct', { context: {} });
@@ -170,6 +193,8 @@ test('coordinator setup rejects conflicting direct provenance before loading or 
   const task = tasks.createTask({ spaceId, title: 'Conflict', description: '' });
   attempts.select(task.id);
   expect(attempts.claim(task.id, 'conflicting-attempt', coordinatorId)).not.toBeNull();
+  db.prepare('DELETE FROM space_tasks WHERE id = ?').run(task.id);
+  expect(attempts.get('conflicting-attempt')).toBeNull();
   const getSessionAsync = mock(async () => null);
   const service = Object.assign(Object.create(SpaceRuntimeService.prototype), {
     config: { db, sessionManager: { getSessionAsync } },

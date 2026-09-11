@@ -269,8 +269,8 @@ describe('SpaceRuntimeService', () => {
   beforeEach(() => {
     directProvenanceSpy = spyOn(
       DirectTaskExecutionRepository.prototype,
-      'getBySessionId'
-    ).mockReturnValue(null);
+      'hasSessionProvenance'
+    ).mockReturnValue(false);
     spaceManager = createMockSpaceManager(mockSpace);
     service = new SpaceRuntimeService(buildConfig(spaceManager));
   });
