@@ -58,6 +58,14 @@ describe('session operation MCP attachment', () => {
     const task = JSON.parse(content.text);
     expect(task).toMatchObject({ title: 'Work', status: 'open' });
     expect(readTaskCore(db.getDatabase(), task.id)).toEqual(task);
+    const listed = await session
+      .getOperationMcpServer()
+      .tools[0].handler({ name: 'task.list' }, {});
+    expect(listed.isError).not.toBe(true);
+    const page = listed.content[0];
+    if (page.type !== 'text') throw new Error('Expected task page JSON');
+    expect(JSON.parse(page.text)).toEqual({ tasks: [task], nextCursor: null });
+
     expect(
       db
         .getDatabase()

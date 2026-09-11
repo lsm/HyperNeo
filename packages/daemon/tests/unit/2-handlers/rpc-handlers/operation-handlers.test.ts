@@ -1,3 +1,4 @@
+import { listTaskCores } from '../../../../src/storage/tasks/list-tasks';
 import { createStandaloneTask } from '../../../../src/storage/tasks/create-task';
 import type { TaskCore } from '@hyperneo/shared/types/task-core';
 import { Database } from '../../../../src/storage/sqlite-compat';
@@ -32,7 +33,8 @@ describe('operation.invoke RPC registration', () => {
       server,
       mailbox.jobQueue,
       (taskId) => readTaskCore(taskDb, taskId),
-      (input, creatorSessionId) => createStandaloneTask(taskDb, input, creatorSessionId, () => {})
+      (input, creatorSessionId) => createStandaloneTask(taskDb, input, creatorSessionId, () => {}),
+      (input) => listTaskCores(taskDb, input)
     );
     await Promise.all(transports.map((transport) => transport.initialize()));
   });
@@ -68,6 +70,7 @@ describe('operation.invoke RPC registration', () => {
       'message.send',
       'task.get',
       'task.create',
+      'task.list',
       'operations.list',
       'operations.describe',
     ]);
@@ -155,6 +158,77 @@ describe('operation.invoke RPC registration', () => {
         .get(task.id)
     ).toEqual({ space_id: null, task_number: null, created_by_session: null });
     expect(mailbox.rows()).toEqual([]);
+  });
+
+  test('lists standalone pages and explicit Space/status scopes through RPC', async () => {
+    const space = new SpaceRepository(taskDb).createSpace({
+      workspacePath: '/workspace/list',
+      slug: 'list',
+      name: 'List',
+    });
+    const owned = new SpaceTaskRepository(taskDb).createTask({
+      spaceId: space.id,
+      title: 'Owned',
+      description: '',
+    });
+    const created = await Promise.all(
+      ['A', 'B'].map((title) =>
+        client.request<TaskCore>('operation.invoke', { name: 'task.create', input: { title } })
+      )
+    );
+    const page = await client.request<{
+      tasks: TaskCore[];
+      nextCursor: { createdAt: number; id: string };
+    }>('operation.invoke', { name: 'task.list', input: { limit: 1 } });
+    expect(page.tasks).toHaveLength(1);
+    expect(page.nextCursor).toEqual({ createdAt: page.tasks[0].createdAt, id: page.tasks[0].id });
+    const last = await client.request<{ tasks: TaskCore[]; nextCursor: null }>('operation.invoke', {
+      name: 'task.list',
+      input: { limit: 1, before: page.nextCursor },
+    });
+    expect(last.nextCursor).toBeNull();
+    expect([...page.tasks, ...last.tasks].map((task) => task.id).sort()).toEqual(
+      created.map((task) => task.id).sort()
+    );
+    expect(
+      await client.request('operation.invoke', {
+        name: 'task.list',
+        input: { spaceId: space.id, status: 'open' },
+      })
+    ).toEqual({ tasks: [readTaskCore(taskDb, owned.id)], nextCursor: null });
+    taskDb.prepare("UPDATE space_tasks SET status = 'archived' WHERE id = ?").run(created[0].id);
+    expect(await client.request('operation.invoke', { name: 'task.list' })).toEqual({
+      tasks: [created[1]],
+      nextCursor: null,
+    });
+    expect(
+      await client.request('operation.invoke', {
+        name: 'task.list',
+        input: { status: 'archived' },
+      })
+    ).toMatchObject({ tasks: [{ id: created[0].id }], nextCursor: null });
+    expect(
+      await client.request('operation.invoke', {
+        name: 'operations.describe',
+        input: { name: 'task.list' },
+      })
+    ).toMatchObject({ found: true, inputSchema: { properties: { limit: { maximum: 100 } } } });
+    expect(mailbox.rows()).toEqual([]);
+  });
+
+  test.each([
+    { limit: 0 },
+    { limit: 101 },
+    { limit: 1.5 },
+    { status: 'invalid' },
+    { spaceId: '' },
+    { before: { id: 'task' } },
+    { before: { createdAt: 1, id: '' } },
+    { unexpected: true },
+  ])('rejects invalid task listing input: %j', async (input) => {
+    await expect(
+      client.request('operation.invoke', { name: 'task.list', input })
+    ).rejects.toThrow();
   });
 
   test.each([

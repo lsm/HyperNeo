@@ -1,3 +1,4 @@
+import { listTaskCores } from '../../storage/tasks/list-tasks.ts';
 import { createStandaloneTask } from '../../storage/tasks/create-task.ts';
 import { readTaskCore } from '../../storage/tasks/task-reader.ts';
 import { createDaemonOperationCatalog } from '../operations/catalog.ts';
@@ -254,7 +255,8 @@ export class AgentSession
         (input, creatorSessionId) =>
           createStandaloneTask(this.db.getDatabase(), input, creatorSessionId, () =>
             this.db.notifyChange('space_tasks')
-          )
+          ),
+        (input) => listTaskCores(this.db.getDatabase(), input)
       ),
       () => ({ sessionId: this.session.id })
     ));
