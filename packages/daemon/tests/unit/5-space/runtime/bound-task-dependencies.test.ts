@@ -4,6 +4,8 @@ import { Database } from '../../../../src/storage/sqlite-compat';
 import { createSpaceTables } from '../../helpers/space-test-db';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
+import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
+import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager';
 import {
   createBoundSpaceTaskDependencyEditor,
@@ -16,6 +18,7 @@ let spaceId: string;
 let tasks: SpaceTaskRepository;
 let target: SpaceTask;
 let dependency: SpaceTask;
+let workflowRunId: string;
 let emit: ReturnType<typeof mock>;
 let cleanup: ReturnType<typeof mock>;
 beforeEach(() => {
@@ -25,6 +28,16 @@ beforeEach(() => {
     name: 'Space',
     slug: 'space',
     workspacePath: '/repo',
+  }).id;
+  const workflow = new SpaceWorkflowRepository(db).createWorkflow({
+    spaceId,
+    name: 'Workflow',
+    nodes: [{ id: 'node', name: 'Node', agents: [] }],
+  });
+  workflowRunId = new SpaceWorkflowRunRepository(db).createRun({
+    spaceId,
+    workflowId: workflow.id,
+    title: 'Run',
   }).id;
   tasks = new SpaceTaskRepository(db);
   target = tasks.createTask({ spaceId, title: 'Task', description: 'Full task' });
@@ -77,7 +90,7 @@ test('retains full task fields, duplicate lists and scoped manager errors', asyn
 test.each([false, true])(
   'optional runtime determines truthful primary event ownership: %s',
   async (withRuntime) => {
-    tasks.updateTask(target.id, { status: 'in_progress', workflowRunId: 'run' });
+    tasks.updateTask(target.id, { status: 'in_progress', workflowRunId });
     const result = await editor(withRuntime)({ taskId: target.id, dependsOn: [dependency.id] });
     expect(result.status).toBe('blocked');
     expect(cleanup).toHaveBeenCalledTimes(withRuntime ? 1 : 0);
@@ -111,7 +124,7 @@ test('completion selection has no effects until invoked and preserves synchronou
 test.each(['reject', 'clear', 'replace'] as const)(
   'cascade %s preserves cleanup guards',
   async (mode) => {
-    tasks.updateTask(target.id, { status: 'in_progress', workflowRunId: 'run' });
+    tasks.updateTask(target.id, { status: 'in_progress', workflowRunId });
     const dependent = tasks.createTask({
       spaceId,
       title: 'Dependent',
