@@ -62,7 +62,7 @@ export function prepareSpaceTaskStatusUpdate(
     (task.status === 'cancelled' && (newStatus === 'open' || newStatus === 'in_progress')) ||
     (task.status === 'done' && (newStatus === 'open' || newStatus === 'in_progress')) ||
     (task.status === 'in_progress' && newStatus === 'open') ||
-    (task.status === 'review' && newStatus === 'in_progress')
+    (task.status === 'review' && (newStatus === 'open' || newStatus === 'in_progress'))
   ) {
     updates.result = null;
     updates.reportedSummary = null;

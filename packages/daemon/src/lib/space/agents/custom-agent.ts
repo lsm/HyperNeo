@@ -107,6 +107,7 @@ export function expandPrompt(
 }
 
 export interface TaskMessageContext {
+  reviewFeedback?: string | null;
   task: SpaceTask;
   workflowRun?: SpaceWorkflowRun | null;
   workflow?: SpaceWorkflow | null;
@@ -196,6 +197,7 @@ export function buildCustomAgentTaskMessage(
     agentSlotName,
     coreMemories,
     relevantMemories,
+    reviewFeedback,
   } = config;
 
   const sections: string[] = [];
@@ -205,6 +207,9 @@ export function buildCustomAgentTaskMessage(
   sections.push(`**Title:** ${task.title}`);
   sections.push(`**Description:** ${labelVerificationImplementerFacing(task.description)}`);
   if (task.priority) sections.push(`**Priority:** ${task.priority}`);
+  if (reviewFeedback != null) {
+    sections.push('', '## Requested Revisions', '', reviewFeedback);
+  }
 
   sections.push('');
   sections.push('## Runtime Location');
