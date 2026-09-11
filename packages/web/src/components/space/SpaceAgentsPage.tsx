@@ -13,6 +13,13 @@ import { spaceStore } from '../../lib/space-store';
 import { ModelPoolEditor } from './ModelPoolEditor';
 import { type ToolsSelection, ToolsEditor } from './ToolsEditor';
 import { SettingSourcesEditor } from './SettingSourcesEditor';
+import {
+  differsFromBaseline,
+  rebaseTemplateTools,
+  templateToolsList,
+  trackAddedTools,
+  trackRemovedTools,
+} from './template-tools';
 import { Button } from '../ui/Button';
 import { ConfirmModal } from '../ui/ConfirmModal';
 import { EmptyState } from '../ui/EmptyState';
@@ -88,6 +95,10 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
   const [formTools, setFormTools] = useState<ToolsSelection>({ tools: [], toolsOverridden: false });
   const [formSettingSources, setFormSettingSources] = useState<SettingSource[] | null>(null);
   const [formTemplateKey, setFormTemplateKey] = useState<string>('');
+  const [toolsExplicit, setToolsExplicit] = useState(false);
+  const toolsBaselineRef = useRef<string[]>([]);
+  const toolsRemovedRef = useRef<string[]>([]);
+  const toolsAddedRef = useRef<string[]>([]);
   const activeSpaceRef = useRef(spaceId);
   const formGenerationRef = useRef(0);
   const appliedLinkRef = useRef<string | null>(null);
@@ -114,6 +125,10 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
     setFormTools({ tools: [], toolsOverridden: false });
     setFormSettingSources(null);
     setFormTemplateKey('');
+    setToolsExplicit(false);
+    toolsBaselineRef.current = [];
+    toolsRemovedRef.current = [];
+    toolsAddedRef.current = [];
     appliedLinkRef.current = null;
     handledLinkRef.current = null;
     deleteGenerationRef.current += 1;
@@ -194,6 +209,10 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
     setFormTools({ tools: [], toolsOverridden: false });
     setFormSettingSources(null);
     setFormTemplateKey('');
+    setToolsExplicit(false);
+    toolsBaselineRef.current = [];
+    toolsRemovedRef.current = [];
+    toolsAddedRef.current = [];
   }
 
   function openEdit(agent: SpaceAgent) {
@@ -207,6 +226,10 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
     setFormTools({ tools: agent.tools ?? [], toolsOverridden: agent.tools !== null });
     setFormSettingSources(agent.settingSources ?? null);
     setFormTemplateKey('');
+    setToolsExplicit(agent.tools !== null);
+    toolsBaselineRef.current = [];
+    toolsRemovedRef.current = [];
+    toolsAddedRef.current = agent.tools ?? [];
   }
 
   function closeForm() {
@@ -386,7 +409,26 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
                       class="mt-1 w-full rounded border border-border bg-bg px-2 py-1 text-xs text-fg"
                       name="templateKey"
                       value={formTemplateKey}
-                      onInput={(event) => setFormTemplateKey(event.currentTarget.value)}
+                      onInput={(event) => {
+                        const key = event.currentTarget.value;
+                        const nextBaseline = templateToolsList(
+                          templateOptions().find((candidate) => candidate.key === key)
+                        );
+                        const rebased = rebaseTemplateTools(
+                          formTools.tools,
+                          nextBaseline,
+                          toolsExplicit,
+                          toolsAddedRef.current,
+                          toolsRemovedRef.current
+                        );
+                        toolsBaselineRef.current = nextBaseline;
+                        setFormTemplateKey(key);
+                        setFormTools({
+                          tools: rebased,
+                          toolsOverridden:
+                            toolsExplicit || differsFromBaseline(rebased, nextBaseline),
+                        });
+                      }}
                       data-testid="agent-template-select"
                     >
                       <option value="">Blank agent</option>
@@ -465,8 +507,54 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
                 <ToolsEditor
                   tools={formTools.tools}
                   toolsOverridden={formTools.toolsOverridden}
-                  onChange={setFormTools}
+                  onChange={(next, origin) => {
+                    if (origin === 'preset') {
+                      if (!next.toolsOverridden) {
+                        setToolsExplicit(false);
+                        toolsRemovedRef.current = [];
+                        toolsAddedRef.current = [];
+                        setFormTools({ tools: toolsBaselineRef.current, toolsOverridden: false });
+                        return;
+                      }
+                      setToolsExplicit(true);
+                      setFormTools(next);
+                      return;
+                    }
+                    if (toolsExplicit) {
+                      if (!differsFromBaseline(next.tools, toolsBaselineRef.current)) {
+                        setToolsExplicit(false);
+                        setFormTools({
+                          tools: toolsBaselineRef.current,
+                          toolsOverridden: false,
+                        });
+                        return;
+                      }
+                      setFormTools(next);
+                      return;
+                    }
+                    toolsRemovedRef.current = trackRemovedTools(
+                      toolsRemovedRef.current,
+                      toolsBaselineRef.current,
+                      next.tools
+                    );
+                    toolsAddedRef.current = trackAddedTools(
+                      toolsAddedRef.current,
+                      toolsBaselineRef.current,
+                      next.tools
+                    );
+                    if (
+                      toolsAddedRef.current.length === 0 &&
+                      toolsRemovedRef.current.length === 0 &&
+                      !differsFromBaseline(next.tools, toolsBaselineRef.current)
+                    ) {
+                      setToolsExplicit(false);
+                      setFormTools({ tools: toolsBaselineRef.current, toolsOverridden: false });
+                      return;
+                    }
+                    setFormTools(next);
+                  }}
                   manageScopedEntries
+                  preservedScopedEntries={toolsAddedRef.current}
                 />
               </div>
 
