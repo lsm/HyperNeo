@@ -30,6 +30,18 @@ describe('runScopedQuery — the scratch database is the security boundary', () 
     db.close();
   });
 
+  it('resolves tables through arbitrary parenthesis nesting', () => {
+    const db = makeDb();
+    const rows = run(db, 'SELECT * FROM (((tasks)))').rows;
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].room_id).toBe('room-1');
+    expect(
+      run(db, 'SELECT * FROM ((tasks JOIN goals ON goals.task_id = tasks.id))').rows
+    ).toHaveLength(1);
+    db.close();
+  });
+
   it('keeps unmatched rows on an outer join', () => {
     const db = makeDb();
     const rows = run(
@@ -47,6 +59,7 @@ describe('runScopedQuery — the scratch database is the security boundary', () 
     'SELECT * FROM tasks, auth_config',
     'SELECT * FROM (auth_config JOIN tasks ON 1 = 1)',
     'SELECT * FROM (auth_config)',
+    'SELECT * FROM ((auth_config))',
   ])('refuses to reach a table outside the scope: %s', (sql) => {
     const db = makeDb();
 

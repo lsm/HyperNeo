@@ -188,9 +188,11 @@ function recordTableRef(
 ): number | null {
   const start = skipWhitespace(sql, pos);
   if (sql[start] === '(') {
-    const inner = matchIdentifier(sql, skipWhitespace(sql, start + 1));
+    let probe = start;
+    while (sql[probe] === '(') probe = skipWhitespace(sql, probe + 1);
+    const inner = matchIdentifier(sql, probe);
     if (!inner || SUBQUERY_START_WORDS.has(inner.ident)) return null;
-    return recordTableRef(sql, start + 1, exclude, refs);
+    return recordTableRef(sql, probe, exclude, refs);
   }
   const first = matchIdentifier(sql, start);
   if (!first) return null;
