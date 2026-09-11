@@ -20,7 +20,7 @@ import {
 } from '../space/managers/space-task-manager.ts';
 import type { SpaceWorkflowManager } from '../space/managers/space-workflow-manager.ts';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
-import { mapPostApprovalDispatchWarning } from '../space/runtime/post-approval-router.ts';
+import { createPendingCompletionOperation } from '../space/operations/pending-completion.ts';
 import { createWorkflowTaskRecoveryExecutor } from '../space/runtime/task-recovery-executor.ts';
 import { recoverTaskExecution } from '../tasks/recover-task-execution.ts';
 import { parkTaskExecution } from '../tasks/park-task-execution.ts';
@@ -721,38 +721,26 @@ export function setupSpaceTaskHandlers(
       );
     }
 
-    let task: SpaceTask;
-    if (params.approved) {
-      if (!spaceRuntimeService) {
-        throw new Error(
-          'spaceRuntimeService is required to approve pending completion — post-approval routing is the sole approval path.'
-        );
-      }
-      try {
-        await spaceRuntimeService.dispatchPostApproval(params.spaceId, params.taskId, 'human', {
-          approvalReason: params.reason ?? null,
-        });
-      } catch (dispatchErr) {
-        const afterCommit = await taskManager.getTask(params.taskId);
-        if (afterCommit?.status !== 'approved') throw dispatchErr;
-        const detail = dispatchErr instanceof Error ? dispatchErr.message : String(dispatchErr);
+    if (params.approved && !spaceRuntimeService) {
+      throw new Error(
+        'spaceRuntimeService is required to approve pending completion — post-approval routing is the sole approval path.'
+      );
+    }
+    const task = await createPendingCompletionOperation({
+      getTask: (taskId) => taskManager.getTask(taskId),
+      dispatchApproval: (taskId, reason) =>
+        spaceRuntimeService!.dispatchPostApproval(params.spaceId, taskId, 'human', {
+          approvalReason: reason,
+        }),
+      reopenTask: (taskId) => taskManager.setTaskStatus(taskId, 'in_progress'),
+      updateTask: (taskId, fields) => taskManager.updateTask(taskId, fields),
+      warn: (taskId, detail) => {
         log.warn(
-          `approvePendingCompletion: post-approval dispatch failed for task ${params.taskId} ` +
+          `approvePendingCompletion: post-approval dispatch failed for task ${taskId} ` +
             `after status commit (${detail}); capturing as post-approval-blocked`
         );
-        await taskManager.updateTask(params.taskId, {
-          postApprovalBlockedReason: mapPostApprovalDispatchWarning(detail),
-        });
-      }
-      const refreshed = await taskManager.getTask(params.taskId);
-      if (!refreshed) throw new Error(`Task not found: ${params.taskId}`);
-      task = refreshed;
-    } else {
-      task = await taskManager.setTaskStatus(params.taskId, 'in_progress');
-      task = await taskManager.updateTask(params.taskId, {
-        approvalReason: params.reason ?? null,
-      });
-    }
+      },
+    })({ taskId: params.taskId, approved: params.approved, reason: params.reason });
 
     internalEventBus
       .publish('space.task.updated', {
