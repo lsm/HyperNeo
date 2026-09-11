@@ -177,8 +177,9 @@ describe('SpaceRuntime startWorkflowRun template snapshot pinning', () => {
 
     const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Freeze run');
 
-    const version = templateRepo.getByKeyWithVersion('worker.custom')!;
+    const version = templateRepo.getOwnedWithVersion(SPACE_ID, 'worker.custom')!;
     const updated = templateRepo.casUpdate(
+      SPACE_ID,
       'worker.custom',
       { instructions: 'Edited instructions.' },
       version.version
