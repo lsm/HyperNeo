@@ -879,7 +879,10 @@ describe('createSpaceAgentToolHandlers — create_agent_template', () => {
     expect(template.thinkingLevel).toBe('think16k');
     expect(template.settingSources).toEqual(['user', 'project']);
     expect(template.tools).toEqual(['Read', 'Bash']);
-    const stored = new SpaceAgentTemplateRepository(ctx.db).getByKey('reviewer.custom');
+    const stored = new SpaceAgentTemplateRepository(ctx.db).getOwned(
+      'space-tools-test',
+      'reviewer.custom'
+    );
     expect(stored?.instructions).toBe('You review code.');
   });
 
@@ -1102,11 +1105,15 @@ describe('createSpaceAgentToolHandlers — update_agent_template', () => {
     );
     expect(stale.success).toBe(false);
     expect(stale.error).toContain('modified concurrently');
-    expect(new SpaceAgentTemplateRepository(ctx.db).getByKey('reviewer.custom')?.displayName).toBe(
-      'Reviewer'
-    );
+    expect(
+      new SpaceAgentTemplateRepository(ctx.db).getOwned('space-tools-test', 'reviewer.custom')
+        ?.displayName
+    ).toBe('Reviewer');
 
-    const current = new SpaceAgentTemplateRepository(ctx.db).getByKeyWithVersion('reviewer.custom');
+    const current = new SpaceAgentTemplateRepository(ctx.db).getOwnedWithVersion(
+      'space-tools-test',
+      'reviewer.custom'
+    );
     expect(current?.version).toBe(1);
 
     const retried = parseResult(
@@ -1165,6 +1172,68 @@ describe('createSpaceAgentToolHandlers — update_agent_template', () => {
   });
 });
 
+describe('createSpaceAgentToolHandlers — cross-Space template isolation (#3980)', () => {
+  let ctx: TestCtx;
+  beforeEach(() => {
+    ctx = makeCtx();
+  });
+  afterEach(() => {
+    ctx.db.close();
+  });
+
+  function handlers() {
+    return makeHandlers(ctx, {
+      templateManager: new SpaceAgentTemplateManager(new SpaceAgentTemplateRepository(ctx.db)),
+      getSpaceAutonomyLevel: async () => 4,
+    });
+  }
+
+  function seedForeignTemplate(key: string): void {
+    new SpaceAgentTemplateRepository(ctx.db).createOwned('other-space', {
+      key,
+      handle: 'foreign',
+      displayName: 'Foreign',
+      instructions: 'Owned by another Space.',
+    });
+  }
+
+  test('an agent cannot delete a template another Space owns', async () => {
+    seedForeignTemplate('foreign.custom');
+
+    const result = parseResult(await handlers().delete_agent_template({ key: 'foreign.custom' }));
+
+    expect(result.success).toBe(false);
+    expect(
+      new SpaceAgentTemplateRepository(ctx.db).getOwned('other-space', 'foreign.custom')
+    ).not.toBeNull();
+  });
+
+  test('an agent cannot update a template another Space owns', async () => {
+    seedForeignTemplate('foreign.custom');
+
+    const result = parseResult(
+      await handlers().update_agent_template({ key: 'foreign.custom', display_name: 'Hijacked' })
+    );
+
+    expect(result.success).toBe(false);
+    expect(
+      new SpaceAgentTemplateRepository(ctx.db).getOwned('other-space', 'foreign.custom')
+        ?.displayName
+    ).not.toBe('Hijacked');
+  });
+
+  test('another Space template is absent from list_agent_templates', async () => {
+    seedForeignTemplate('foreign.custom');
+
+    const result = parseResult(await handlers().list_agent_templates());
+    const keys = (result.long_horizon_templates as Array<{ template_name: string }>).map(
+      (entry) => entry.template_name
+    );
+
+    expect(keys).not.toContain('foreign.custom');
+  });
+});
+
 describe('createSpaceAgentToolHandlers — delete_agent_template', () => {
   let ctx: TestCtx;
   beforeEach(() => {
@@ -1202,7 +1271,9 @@ describe('createSpaceAgentToolHandlers — delete_agent_template', () => {
     const result = parseResult(await handlers.delete_agent_template({ key: 'reviewer.custom' }));
 
     expect(result.success).toBe(true);
-    expect(new SpaceAgentTemplateRepository(ctx.db).getByKey('reviewer.custom')).toBeNull();
+    expect(
+      new SpaceAgentTemplateRepository(ctx.db).getOwned('space-tools-test', 'reviewer.custom')
+    ).toBeNull();
   });
 
   test('denies deletion below the destructive autonomy level', async () => {
@@ -1216,7 +1287,9 @@ describe('createSpaceAgentToolHandlers — delete_agent_template', () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain('not permitted');
-    expect(new SpaceAgentTemplateRepository(ctx.db).getByKey('reviewer.custom')).not.toBeNull();
+    expect(
+      new SpaceAgentTemplateRepository(ctx.db).getOwned('space-tools-test', 'reviewer.custom')
+    ).not.toBeNull();
   });
 
   test('create and list expose the current template version', async () => {
@@ -1269,7 +1342,9 @@ describe('createSpaceAgentToolHandlers — delete_agent_template', () => {
     const result = parseResult(await handlers.delete_agent_template({ key: 'reviewer.custom' }));
 
     expect(result.success).toBe(true);
-    expect(new SpaceAgentTemplateRepository(ctx.db).getByKey('reviewer.custom')).toBeNull();
+    expect(
+      new SpaceAgentTemplateRepository(ctx.db).getOwned('space-tools-test', 'reviewer.custom')
+    ).toBeNull();
   });
 
   test('deletes a template even when a pinned run still references it', async () => {
@@ -1305,7 +1380,9 @@ describe('createSpaceAgentToolHandlers — delete_agent_template', () => {
     const result = parseResult(await handlers.delete_agent_template({ key: 'reviewer.custom' }));
 
     expect(result.success).toBe(true);
-    expect(new SpaceAgentTemplateRepository(ctx.db).getByKey('reviewer.custom')).toBeNull();
+    expect(
+      new SpaceAgentTemplateRepository(ctx.db).getOwned('space-tools-test', 'reviewer.custom')
+    ).toBeNull();
   });
 
   test('rejects a stale CAS version and reports the current one', async () => {
@@ -1321,7 +1398,9 @@ describe('createSpaceAgentToolHandlers — delete_agent_template', () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain('current version 2');
-    expect(new SpaceAgentTemplateRepository(ctx.db).getByKey('reviewer.custom')).not.toBeNull();
+    expect(
+      new SpaceAgentTemplateRepository(ctx.db).getOwned('space-tools-test', 'reviewer.custom')
+    ).not.toBeNull();
   });
 
   test('deletes with the current CAS version', async () => {
@@ -1336,7 +1415,9 @@ describe('createSpaceAgentToolHandlers — delete_agent_template', () => {
     );
 
     expect(result.success).toBe(true);
-    expect(new SpaceAgentTemplateRepository(ctx.db).getByKey('reviewer.custom')).toBeNull();
+    expect(
+      new SpaceAgentTemplateRepository(ctx.db).getOwned('space-tools-test', 'reviewer.custom')
+    ).toBeNull();
   });
 
   test('reports unavailable template management without a templateManager', async () => {
@@ -2848,7 +2929,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
 
   test('list_agent_templates merges built-in and user templates with labels and builtin flag', async () => {
     const templateRepo = new SpaceAgentTemplateRepository(ctx.db);
-    templateRepo.create({
+    templateRepo.createOwned('space-tools-test', {
       key: 'user.release-notes',
       handle: 'release-notes',
       displayName: 'Release Notes',
@@ -2857,7 +2938,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
       suggestedAutonomyLevel: 2,
       labels: ['docs'],
     });
-    templateRepo.create({
+    templateRepo.createOwned('space-tools-test', {
       key: 'custom.coordinator',
       handle: 'coordinator',
       displayName: 'Custom Coord',
