@@ -45,17 +45,15 @@ beforeEach(() => {
     getTask: (id) => tasks.getTask(id),
     coordinatorLookup: { getCoordinator: () => coordinator },
     getTaskManager: mock((id) => new SpaceTaskManager(db, id)),
-    dispatchApproval: mock(async (owner, id, source, reason) => {
+    dispatchApproval: mock(async (owner, id, source, reason, guard) => {
       expect(owner).toBe(spaceId);
       expect(source).toBe('human');
-      order.push('dispatch');
-      tasks.updateTask(id, {
-        status: 'approved',
+      await new SpaceTaskManager(db, owner).setTaskStatus(id, 'approved', {
+        ...guard,
         approvalSource: source,
         approvalReason: reason,
-        approvedAt: 10,
-        pendingCheckpointType: null,
       });
+      order.push('dispatch');
     }),
     warn: mock(() => {}),
     emitTaskUpdated: mock(async () => {
@@ -124,7 +122,7 @@ test.each(['chat', 'legacy-chat', 'default-agent', 'legacy-task'] as const)(
       status: 'approved',
       approvalSource: 'human',
       approvalReason: '  raw  ',
-      approvedAt: 10,
+      approvedAt: expect.any(Number),
       pendingCheckpointType: null,
     });
     expect(order).toEqual(['dispatch', 'event', 'audit']);
@@ -275,3 +273,59 @@ test('rejection preserves reason and ignores best-effort event/audit failures', 
   expect(order).toEqual(['event', 'audit']);
   expect(dependencies.dispatchApproval).not.toHaveBeenCalled();
 });
+
+test('opposing owned decisions admit one generation and produce one successful notification', async () => {
+  const session = persist('space_task_agent');
+  let arrivals = 0;
+  let release!: () => void;
+  const barrier = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  dependencies.getTask = async (id) => {
+    const snapshot = tasks.getTask(id);
+    if (++arrivals === 2) release();
+    await barrier;
+    return snapshot;
+  };
+  const results = await Promise.all([
+    invoke(session.id, { taskId: task.id, approved: true }),
+    invoke(session.id, { taskId: task.id, approved: false }),
+  ]);
+  expect(results.filter((result) => result.kind === 'completed')).toHaveLength(1);
+  expect(results.find((result) => result.kind === 'failed')).toMatchObject({
+    code: 'execution_failed',
+    message: expect.stringContaining('superseded'),
+  });
+  expect(dependencies.emitTaskUpdated).toHaveBeenCalledTimes(1);
+  expect(dependencies.audit).toHaveBeenCalledTimes(1);
+  expect(dependencies.warn).not.toHaveBeenCalled();
+});
+
+test.each([true, false])(
+  'refreshed checkpoint supersedes owned decision before write (approved=%s)',
+  async (approved) => {
+    const session = persist('space_task_agent');
+    dependencies.getTaskManager = (owner) => {
+      tasks.updateTask(task.id, {
+        status: 'review',
+        pendingCheckpointType: 'task_completion',
+        pendingCompletionReason: 'new review',
+      });
+      return new SpaceTaskManager(db, owner);
+    };
+    const outcome = await invoke(session.id, { taskId: task.id, approved });
+    expect(outcome).toMatchObject({
+      kind: 'failed',
+      code: 'execution_failed',
+      message: expect.stringContaining('superseded'),
+    });
+    expect(tasks.getTask(task.id)).toMatchObject({
+      status: 'review',
+      pendingCompletionGeneration: 1,
+      pendingCompletionReason: 'new review',
+    });
+    expect(dependencies.emitTaskUpdated).not.toHaveBeenCalled();
+    expect(dependencies.audit).not.toHaveBeenCalled();
+    expect(dependencies.warn).not.toHaveBeenCalled();
+  }
+);

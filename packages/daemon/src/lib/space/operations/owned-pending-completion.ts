@@ -35,7 +35,8 @@ export interface OwnedPendingCompletionDependencies {
     spaceId: string,
     taskId: string,
     source: 'human',
-    reason: string | null
+    reason: string | null,
+    guard: { expectedPendingCompletionGeneration: number }
   ) => Promise<unknown>;
   warn: (taskId: string, detail: string) => void;
   emitTaskUpdated: (spaceId: string, task: SpaceTask) => Promise<void>;
@@ -114,10 +115,12 @@ function bindOwnedCompletion(
   warn: OwnedPendingCompletionDependencies['warn']
 ): PendingCompletionDependencies {
   const manager = getTaskManager(previous.spaceId);
+  const guard = { expectedPendingCompletionGeneration: previous.pendingCompletionGeneration ?? 0 };
   return {
     getTask: (id) => manager.getTask(id),
-    dispatchApproval: (id, reason) => dispatchApproval(previous.spaceId, id, 'human', reason),
-    reopenTask: (id) => manager.setTaskStatus(id, 'in_progress'),
+    dispatchApproval: (id, reason) =>
+      dispatchApproval(previous.spaceId, id, 'human', reason, guard),
+    reopenTask: (id) => manager.setTaskStatus(id, 'in_progress', guard),
     updateTask: (id, fields) => manager.updateTask(id, fields),
     warn,
   };
