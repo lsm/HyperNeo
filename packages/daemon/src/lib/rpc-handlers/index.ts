@@ -1,3 +1,4 @@
+import { editStandaloneTask } from '../../storage/tasks/edit-task.ts';
 import { listTaskCores } from '../../storage/tasks/list-tasks.ts';
 import { createStandaloneTask } from '../../storage/tasks/create-task.ts';
 import { readTaskCore } from '../../storage/tasks/task-reader.ts';
@@ -329,7 +330,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       createStandaloneTask(deps.db.getDatabase(), input, creatorSessionId, () =>
         deps.db.notifyChange('space_tasks')
       ),
-    (input) => listTaskCores(deps.db.getDatabase(), input)
+    (input) => listTaskCores(deps.db.getDatabase(), input),
+    (input) =>
+      editStandaloneTask(deps.db.getDatabase(), input, () => deps.db.notifyChange('space_tasks'))
   );
   setupSystemHandlers(deps.messageHub, deps.sessionManager);
   setupAuthHandlers(

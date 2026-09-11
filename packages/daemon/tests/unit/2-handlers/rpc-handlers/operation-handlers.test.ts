@@ -1,3 +1,4 @@
+import { editStandaloneTask } from '../../../../src/storage/tasks/edit-task';
 import { listTaskCores } from '../../../../src/storage/tasks/list-tasks';
 import { createStandaloneTask } from '../../../../src/storage/tasks/create-task';
 import type { TaskCore } from '@hyperneo/shared/types/task-core';
@@ -34,7 +35,8 @@ describe('operation.invoke RPC registration', () => {
       mailbox.jobQueue,
       (taskId) => readTaskCore(taskDb, taskId),
       (input, creatorSessionId) => createStandaloneTask(taskDb, input, creatorSessionId, () => {}),
-      (input) => listTaskCores(taskDb, input)
+      (input) => listTaskCores(taskDb, input),
+      (input) => editStandaloneTask(taskDb, input, () => {})
     );
     await Promise.all(transports.map((transport) => transport.initialize()));
   });
@@ -71,6 +73,7 @@ describe('operation.invoke RPC registration', () => {
       'task.get',
       'task.create',
       'task.list',
+      'task.update',
       'operations.list',
       'operations.describe',
     ]);
@@ -158,6 +161,71 @@ describe('operation.invoke RPC registration', () => {
         .get(task.id)
     ).toEqual({ space_id: null, task_number: null, created_by_session: null });
     expect(mailbox.rows()).toEqual([]);
+  });
+
+  test('updates standalone metadata and discovers the shared update schema', async () => {
+    const task = await client.request<TaskCore>('operation.invoke', {
+      name: 'task.create',
+      input: { title: 'Work', description: 'Details', labels: ['one'] },
+    });
+    const updated = await client.request<TaskCore>('operation.invoke', {
+      name: 'task.update',
+      input: { taskId: task.id, title: '  Renamed  ', labels: [] },
+    });
+    expect(updated).toEqual({
+      ...task,
+      title: 'Renamed',
+      labels: [],
+      updatedAt: expect.any(Number),
+    });
+    expect(
+      await client.request('operation.invoke', { name: 'task.get', input: { taskId: task.id } })
+    ).toEqual(updated);
+    const space = new SpaceRepository(taskDb).createSpace({
+      name: 'Test',
+      slug: 'update',
+      workspacePath: '/workspace/update',
+    });
+    const tasks = new SpaceTaskRepository(taskDb);
+    const owned = tasks.createTask({ spaceId: space.id, title: 'Owned', description: '' });
+    for (const taskId of [owned.id, 'absent']) {
+      expect(
+        await client.request('operation.invoke', {
+          name: 'task.update',
+          input: { taskId, title: 'Changed' },
+        })
+      ).toBeNull();
+    }
+    expect(tasks.getTask(owned.id)).toEqual(owned);
+    expect(
+      await client.request('operation.invoke', {
+        name: 'operations.describe',
+        input: { name: 'task.update' },
+      })
+    ).toMatchObject({
+      found: true,
+      inputSchema: { properties: { taskId: { type: 'string' }, title: { type: 'string' } } },
+    });
+    expect(mailbox.rows()).toEqual([]);
+  });
+
+  test.each([
+    {},
+    { title: ' ' },
+    { priority: 'invalid' },
+    { labels: [1] },
+    { status: 'done' },
+    { spaceId: 'space' },
+    { dependsOn: [] },
+  ])('rejects invalid metadata patches without changing the task: %j', async (patch) => {
+    const task = createStandaloneTask(taskDb, { title: 'Original' }, undefined, () => {});
+    await expect(
+      client.request('operation.invoke', {
+        name: 'task.update',
+        input: { taskId: task.id, ...patch },
+      })
+    ).rejects.toThrow();
+    expect(readTaskCore(taskDb, task.id)).toEqual(task);
   });
 
   test('lists standalone pages and explicit Space/status scopes through RPC', async () => {
