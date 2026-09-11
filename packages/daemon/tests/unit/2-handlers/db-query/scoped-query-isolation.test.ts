@@ -109,6 +109,10 @@ describe('runScopedQuery — the scratch database is the security boundary', () 
     expect(run(db, 'SELECT id FROM tasks WHERE created_at = 9007199254740993').rows).toEqual([
       { id: 't3' },
     ]);
+    expect(run(db, "SELECT created_at AS c FROM tasks WHERE id = 't3'").rows).toEqual([
+      { c: '9007199254740993' },
+    ]);
+    expect(run(db, "SELECT created_at AS c FROM tasks WHERE id = 't1'").rows).toEqual([{ c: 100 }]);
     db.close();
   });
 

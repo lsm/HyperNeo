@@ -133,6 +133,19 @@ function enableBigInts(stmt: unknown): void {
   s.setReadBigInts?.(true);
 }
 
+function normalizeBigInts(row: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(row)) {
+    if (typeof value !== 'bigint') {
+      out[key] = value;
+      continue;
+    }
+    const asNumber = Number(value);
+    out[key] = Number.isSafeInteger(asNumber) ? asNumber : value.toString();
+  }
+  return out;
+}
+
 function copySourceIndexes(
   source: Database,
   scratch: Database,
@@ -264,9 +277,9 @@ export function runScopedQuery(
       db.exec('COMMIT');
     }
 
-    const rows = scratch
-      .query(`SELECT * FROM (${strippedSql}) LIMIT ${effectiveLimit}`)
-      .all(...(params as [])) as Record<string, unknown>[];
+    const read = scratch.query(`SELECT * FROM (${strippedSql}) LIMIT ${effectiveLimit}`);
+    enableBigInts(read);
+    const rows = (read.all(...(params as [])) as Record<string, unknown>[]).map(normalizeBigInts);
 
     return { rows, rowCount: rows.length, truncated: rows.length >= effectiveLimit };
   } catch (err) {
