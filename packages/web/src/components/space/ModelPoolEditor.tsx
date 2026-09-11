@@ -44,6 +44,26 @@ export function ModelPoolEditor({
   const [draft, setDraft] = useState<NumericDraft | null>(null);
   const [models, setModels] = useState<ModelInfo[]>([]);
 
+  const modelChangePatch = (
+    entry: AgentModelPoolEntry,
+    model: string | undefined,
+    selection?: WorkflowModelSelection
+  ): Partial<AgentModelPoolEntry> => {
+    const provider = selection?.provider ?? undefined;
+    const resolved = models.find(
+      (candidate) => candidate.id === model && (!provider || candidate.provider === provider)
+    );
+    const supported = getThinkingOptionsForProvider(provider, resolved?.thinkingModes).map(
+      (option) => option.value
+    );
+    const keepsLevel = !entry.thinkingLevel || !resolved || supported.includes(entry.thinkingLevel);
+    return {
+      model: model ?? '',
+      provider,
+      ...(keepsLevel ? {} : { thinkingLevel: null }),
+    };
+  };
+
   const thinkingOptionsFor = (entry: AgentModelPoolEntry) => {
     const resolved = models.find(
       (candidate) =>
@@ -168,10 +188,7 @@ export function ModelPoolEditor({
                     value={entry.model || undefined}
                     provider={entry.provider || undefined}
                     onChange={(value, selection?: WorkflowModelSelection) =>
-                      updateEntry(index, {
-                        model: value ?? '',
-                        provider: selection?.provider ?? undefined,
-                      })
+                      updateEntry(index, modelChangePatch(entry, value, selection))
                     }
                     onModelsLoad={setModels}
                     testId="pool-entry-model-select"
