@@ -82,6 +82,26 @@ describe('session operation MCP attachment', () => {
       updatedAt: expect.any(Number),
     });
     expect(readTaskCore(db.getDatabase(), task.id)).toEqual(JSON.parse(edited.text));
+    const dependency = await session
+      .getOperationMcpServer()
+      .tools[0].handler({ name: 'task.create', input: { title: 'Prerequisite' } }, {});
+    const dependencyContent = dependency.content[0];
+    if (dependencyContent.type !== 'text') throw new Error('Expected dependency task JSON');
+    const prerequisite = JSON.parse(dependencyContent.text);
+    const linked = await session
+      .getOperationMcpServer()
+      .tools[0].handler(
+        { name: 'task.dependencies.set', input: { taskId: task.id, dependsOn: [prerequisite.id] } },
+        {}
+      );
+    expect(linked.isError).not.toBe(true);
+    const linkedContent = linked.content[0];
+    if (linkedContent.type !== 'text') throw new Error('Expected linked task JSON');
+    expect(JSON.parse(linkedContent.text)).toMatchObject({
+      id: task.id,
+      dependsOn: [prerequisite.id],
+    });
+    expect(readTaskCore(db.getDatabase(), task.id)?.dependsOn).toEqual([prerequisite.id]);
     const transitioned = await session
       .getOperationMcpServer()
       .tools[0].handler(

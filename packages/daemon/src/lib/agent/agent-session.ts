@@ -1,3 +1,4 @@
+import { setStandaloneTaskDependencies } from '../../storage/tasks/set-task-dependencies.ts';
 import { transitionStandaloneTask } from '../../storage/tasks/transition-task.ts';
 import { editStandaloneTask } from '../../storage/tasks/edit-task.ts';
 import { listTaskCores } from '../../storage/tasks/list-tasks.ts';
@@ -265,6 +266,10 @@ export class AgentSession
           ),
         (input) =>
           transitionStandaloneTask(this.db.getDatabase(), input, () =>
+            this.db.notifyChange('space_tasks')
+          ),
+        (input) =>
+          setStandaloneTaskDependencies(this.db.getDatabase(), input, () =>
             this.db.notifyChange('space_tasks')
           )
       ),
