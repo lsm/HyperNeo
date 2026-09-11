@@ -17,12 +17,12 @@ interface NumericDraft {
 
 export interface ModelPoolEditorProps {
   mode: ModelPoolEditorMode;
-  model: string;
-  provider: string;
+  model?: string;
+  provider?: string;
   modelPool: AgentModelPoolEntry[];
   error?: string;
-  onModeChange: (mode: ModelPoolEditorMode) => void;
-  onModelChange: (model: string, provider: string) => void;
+  onModeChange?: (mode: ModelPoolEditorMode) => void;
+  onModelChange?: (model: string, provider: string) => void;
   onModelPoolChange: (modelPool: AgentModelPoolEntry[]) => void;
 }
 
@@ -32,8 +32,8 @@ function newPoolEntry(): AgentModelPoolEntry {
 
 export function ModelPoolEditor({
   mode,
-  model,
-  provider,
+  model = '',
+  provider = '',
   modelPool,
   error,
   onModeChange,
@@ -68,48 +68,50 @@ export function ModelPoolEditor({
 
   return (
     <>
-      <div class="flex gap-1.5 mb-2">
-        <button
-          type="button"
-          data-testid="agent-model-mode-single"
-          onClick={() => {
-            setDraft(null);
-            onModeChange('single');
-          }}
-          class={`text-xs px-2.5 py-1 rounded border transition-colors ${
-            mode === 'single'
-              ? 'border-accent-hover bg-accent/20 text-accent-soft'
-              : 'border-line-strong text-fg-muted hover:border-line-strong hover:text-fg-soft'
-          }`}
-        >
-          Single model
-        </button>
-        <button
-          type="button"
-          data-testid="agent-model-mode-pool"
-          onClick={() => {
-            setDraft(null);
-            onModeChange('pool');
-            if (modelPool.length === 0) {
-              onModelPoolChange([newPoolEntry()]);
-            }
-          }}
-          class={`text-xs px-2.5 py-1 rounded border transition-colors ${
-            mode === 'pool'
-              ? 'border-accent-hover bg-accent/20 text-accent-soft'
-              : 'border-line-strong text-fg-muted hover:border-line-strong hover:text-fg-soft'
-          }`}
-        >
-          Model pool
-        </button>
-      </div>
+      {onModeChange && (
+        <div class="flex gap-1.5 mb-2">
+          <button
+            type="button"
+            data-testid="agent-model-mode-single"
+            onClick={() => {
+              setDraft(null);
+              onModeChange?.('single');
+            }}
+            class={`text-xs px-2.5 py-1 rounded border transition-colors ${
+              mode === 'single'
+                ? 'border-accent-hover bg-accent/20 text-accent-soft'
+                : 'border-line-strong text-fg-muted hover:border-line-strong hover:text-fg-soft'
+            }`}
+          >
+            Single model
+          </button>
+          <button
+            type="button"
+            data-testid="agent-model-mode-pool"
+            onClick={() => {
+              setDraft(null);
+              onModeChange?.('pool');
+              if (modelPool.length === 0) {
+                onModelPoolChange([newPoolEntry()]);
+              }
+            }}
+            class={`text-xs px-2.5 py-1 rounded border transition-colors ${
+              mode === 'pool'
+                ? 'border-accent-hover bg-accent/20 text-accent-soft'
+                : 'border-line-strong text-fg-muted hover:border-line-strong hover:text-fg-soft'
+            }`}
+          >
+            Model pool
+          </button>
+        </div>
+      )}
       {mode === 'single' ? (
         <>
           <WorkflowModelSelect
             value={model || undefined}
             provider={provider || undefined}
             onChange={(value, selection?: WorkflowModelSelection) => {
-              onModelChange(value ?? '', selection?.provider ?? '');
+              onModelChange?.(value ?? '', selection?.provider ?? '');
             }}
             testId="space-agent-model-select"
             className={`w-full bg-surface-raised border rounded-lg px-4 py-2.5 text-fg focus:outline-none focus:border-accent font-mono text-sm ${

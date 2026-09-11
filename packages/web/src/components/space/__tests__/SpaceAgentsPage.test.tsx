@@ -604,6 +604,84 @@ describe('SpaceAgentsPage', () => {
     expect((getByTestId('agent-autonomy-select') as HTMLSelectElement).value).toBe('');
   });
 
+  it('offers a model pool with no single-model mode toggle', async () => {
+    const { getByTestId, queryByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    expect(getByTestId('agent-model-pool-field')).toBeTruthy();
+    expect(queryByTestId('agent-model-mode-single')).toBeNull();
+    expect(queryByTestId('agent-model-mode-pool')).toBeNull();
+  });
+
+  it('seeds the pool from an agent that still has a single model', async () => {
+    mockAgents.value = [makeAgent('alpha', { model: 'claude-opus-5', provider: 'anthropic' })];
+    const { getByTestId, getByText } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('agent-row-alpha'));
+    fireEvent.click(getByText('Edit'));
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalled());
+    expect(mockUpdate.mock.calls[0][1].modelPool).toEqual([
+      { model: 'claude-opus-5', provider: 'anthropic', maxConcurrent: 1, weight: 100 },
+    ]);
+  });
+
+  it('prefers an existing pool over the single model field', async () => {
+    mockAgents.value = [
+      makeAgent('alpha', {
+        model: 'claude-opus-5',
+        modelPool: [{ model: 'claude-sonnet-5', maxConcurrent: 2, weight: 60 }],
+      }),
+    ];
+    const { getByTestId, getByText } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('agent-row-alpha'));
+    fireEvent.click(getByText('Edit'));
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalled());
+    expect(mockUpdate.mock.calls[0][1].modelPool).toEqual([
+      { model: 'claude-sonnet-5', maxConcurrent: 2, weight: 60 },
+    ]);
+  });
+
+  it('clears model and provider on save so the pool is authoritative', async () => {
+    mockAgents.value = [makeAgent('alpha', { model: 'claude-opus-5', provider: 'anthropic' })];
+    const { getByTestId, getByText } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('agent-row-alpha'));
+    fireEvent.click(getByText('Edit'));
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalled());
+    expect(mockUpdate.mock.calls[0][1].model).toBeNull();
+    expect(mockUpdate.mock.calls[0][1].provider).toBeNull();
+  });
+
+  it('sends a null pool when every entry is removed', async () => {
+    mockAgents.value = [makeAgent('alpha')];
+    const { getByTestId, getByText } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('agent-row-alpha'));
+    fireEvent.click(getByText('Edit'));
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalled());
+    expect(mockUpdate.mock.calls[0][1].modelPool).toBeNull();
+  });
+
+  it('omits the pool on create when none was configured', async () => {
+    const { getByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'Scribe' } });
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalled());
+    expect(mockCreate.mock.calls[0][0].modelPool).toBeUndefined();
+  });
+
   it('clears a description on edit rather than dropping the field', async () => {
     mockAgents.value = [makeAgent('alpha', { description: 'old' })];
     const { getByTestId, getByText } = render(<SpaceAgentsPage spaceId="space-1" />);
