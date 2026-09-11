@@ -9,7 +9,6 @@ export interface SpaceAgent {
   spaceId: string;
   handle: string;
   displayName: string;
-  templateKey: string | null;
   description: string | null;
   instructions: string;
   status: SpaceAgentStatus;
