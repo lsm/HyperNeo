@@ -11,6 +11,7 @@ import { navigateToSpaceSession } from '../../lib/router';
 import { spaceStore } from '../../lib/space-store';
 import { AUTONOMY_LABELS, toolPermissionsToolsList } from './agent-page-labels';
 import { TemplateEditor } from './TemplateEditor';
+import { groupTemplatesByLabel } from './template-grouping';
 import { TemplateCard } from './TemplateCard';
 import { extraToolsOf, withExtraTool, withoutExtraTool } from './template-extra-tools';
 import { toast } from '../../lib/toast';
@@ -641,30 +642,6 @@ function AgentCard({
       )}
     </div>
   );
-}
-
-interface AgentTemplateGroup {
-  key: 'workflow-worker' | 'long-horizon' | 'custom';
-  title: string;
-  templates: SpaceLongHorizonAgentTemplate[];
-}
-
-function groupTemplatesByLabel(templates: SpaceLongHorizonAgentTemplate[]): AgentTemplateGroup[] {
-  const workflowWorkers: SpaceLongHorizonAgentTemplate[] = [];
-  const longHorizon: SpaceLongHorizonAgentTemplate[] = [];
-  const custom: SpaceLongHorizonAgentTemplate[] = [];
-  for (const template of templates) {
-    const labels = template.labels ?? [];
-    if (labels.includes('workflow-worker')) workflowWorkers.push(template);
-    else if (labels.includes('long-horizon')) longHorizon.push(template);
-    else custom.push(template);
-  }
-  const groups: AgentTemplateGroup[] = [
-    { key: 'workflow-worker', title: 'Workflow workers', templates: workflowWorkers },
-    { key: 'long-horizon', title: 'Long-horizon', templates: longHorizon },
-    { key: 'custom', title: 'Custom', templates: custom },
-  ];
-  return groups.filter((group) => group.templates.length > 0);
 }
 
 export function SpaceLongHorizonAgents({
