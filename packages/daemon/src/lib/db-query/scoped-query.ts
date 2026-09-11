@@ -124,7 +124,21 @@ function readableColumns(db: Database, config: ScopeTableConfig): ScratchColumn[
     .map((c) => ({ name: c.name, type: c.type }));
 }
 
-function copySourceIndexes(source: Database, scratch: Database, tableName: string): void {
+function enableBigInts(stmt: unknown): void {
+  const s = stmt as {
+    safeIntegers?: (value: boolean) => void;
+    setReadBigInts?: (value: boolean) => void;
+  };
+  s.safeIntegers?.(true);
+  s.setReadBigInts?.(true);
+}
+
+function copySourceIndexes(
+  source: Database,
+  scratch: Database,
+  tableName: string,
+  fallbackColumn: string
+): void {
   const indexes = source
     .query(
       `SELECT sql FROM sqlite_master WHERE type = 'index' AND tbl_name = ? AND sql IS NOT NULL`
@@ -134,7 +148,17 @@ function copySourceIndexes(source: Database, scratch: Database, tableName: strin
     try {
       scratch.exec(index.sql);
     } catch {
-      continue;
+      const name = /CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?(\S+)/i.exec(
+        index.sql
+      )?.[1];
+      if (!name) continue;
+      try {
+        scratch.exec(
+          `CREATE INDEX ${name} ON ${quoteIdent(tableName)} (${quoteIdent(fallbackColumn)})`
+        );
+      } catch {
+        continue;
+      }
     }
   }
 }
@@ -156,10 +180,13 @@ function materializeScopedTable(
 
   let withRowid = true;
   let rows: Record<string, unknown>[];
-  const select = (cols: string) =>
-    source
-      .query(`SELECT ${cols} FROM ${table}${where} LIMIT ${MAX_MATERIALIZED_ROWS + 1}`)
-      .all(...(filter.params as [])) as Record<string, unknown>[];
+  const select = (cols: string) => {
+    const stmt = source.query(
+      `SELECT ${cols} FROM ${table}${where} LIMIT ${MAX_MATERIALIZED_ROWS + 1}`
+    );
+    enableBigInts(stmt);
+    return stmt.all(...(filter.params as [])) as Record<string, unknown>[];
+  };
   try {
     rows = select(`rowid AS _dbq_rowid, ${projection}`);
   } catch {
@@ -177,13 +204,14 @@ function materializeScopedTable(
     .map((c) => (c.type ? `${quoteIdent(c.name)} ${c.type}` : quoteIdent(c.name)))
     .join(', ');
   scratch.exec(`CREATE TABLE ${table} (${declaration})`);
-  copySourceIndexes(source, scratch, config.tableName);
+  copySourceIndexes(source, scratch, config.tableName, names[0]);
   if (rows.length === 0) return;
 
   const targets = withRowid ? ['rowid', ...names] : names;
   const insert = scratch.query(
     `INSERT INTO ${table} (${targets.map(quoteIdent).join(', ')}) VALUES (${targets.map(() => '?').join(', ')})`
   );
+  enableBigInts(insert);
   scratch.exec('BEGIN');
   try {
     for (const row of rows) {
