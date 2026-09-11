@@ -171,6 +171,81 @@ const TABLE_LIST_STOP_WORDS = new Set([
   'window',
 ]);
 
+function skipWhitespace(sql: string, pos: number): number {
+  let i = pos;
+  while (i < sql.length && /\s/.test(sql[i])) i++;
+  return i;
+}
+
+function recordTableRef(
+  sql: string,
+  pos: number,
+  exclude: Set<string>,
+  refs: string[]
+): number | null {
+  const first = matchIdentifier(sql, skipWhitespace(sql, pos));
+  if (!first) return null;
+
+  let name = first.ident;
+  let end = first.end;
+  let qualified = false;
+  const afterFirst = skipWhitespace(sql, first.end);
+  if (sql[afterFirst] === '.') {
+    const second = matchIdentifier(sql, skipWhitespace(sql, afterFirst + 1));
+    if (second) {
+      name = second.ident;
+      end = second.end;
+      qualified = true;
+    }
+  }
+
+  if ((qualified || !exclude.has(name)) && !refs.includes(name)) refs.push(name);
+  return end;
+}
+
+const CLAUSE_END_WORDS = new Set([
+  'where',
+  'group',
+  'order',
+  'limit',
+  'having',
+  'union',
+  'except',
+  'intersect',
+  'window',
+  'join',
+  'left',
+  'right',
+  'inner',
+  'outer',
+  'full',
+  'cross',
+  'natural',
+]);
+
+function skipJoinConstraint(sql: string, from: number): number | null {
+  let depth = 0;
+  let i = from;
+  while (i < sql.length) {
+    const ch = sql[i];
+    if (ch === '(') depth++;
+    else if (ch === ')') {
+      if (depth === 0) return null;
+      depth--;
+    } else if (depth === 0 && ch === ',') return i;
+    else if (depth === 0 && /[\p{L}_]/u.test(ch)) {
+      const word = matchIdentifier(sql, i);
+      if (word) {
+        if (CLAUSE_END_WORDS.has(word.ident)) return null;
+        i = word.end;
+        continue;
+      }
+    }
+    i++;
+  }
+  return null;
+}
+
 function consumeCommaTableList(
   sql: string,
   from: number,
@@ -179,38 +254,30 @@ function consumeCommaTableList(
 ): number {
   let pos = from;
   for (;;) {
-    let probe = pos;
-    while (probe < sql.length && /\s/.test(sql[probe])) probe++;
+    let probe = skipWhitespace(sql, pos);
     const alias = matchIdentifier(sql, probe);
     if (alias && alias.ident === 'as') {
-      probe = alias.end;
-      while (probe < sql.length && /\s/.test(sql[probe])) probe++;
-      const named = matchIdentifier(sql, probe);
+      const named = matchIdentifier(sql, skipWhitespace(sql, alias.end));
       if (named) {
         pos = named.end;
         continue;
       }
+    } else if (alias && (alias.ident === 'on' || alias.ident === 'using')) {
+      const comma = skipJoinConstraint(sql, alias.end);
+      if (comma === null) return pos;
+      const next = recordTableRef(sql, comma + 1, exclude, refs);
+      if (next === null) return pos;
+      pos = next;
+      continue;
     } else if (alias && !TABLE_LIST_STOP_WORDS.has(alias.ident)) {
       pos = alias.end;
       continue;
     }
-    while (probe < sql.length && /\s/.test(sql[probe])) probe++;
+    probe = skipWhitespace(sql, pos);
     if (sql[probe] !== ',') return pos;
-    probe++;
-    while (probe < sql.length && /\s/.test(sql[probe])) probe++;
-    const next = matchIdentifier(sql, probe);
-    if (!next) return pos;
-    let end = next.end;
-    let name = next.ident;
-    if (end < sql.length && sql[end] === '.') {
-      const qualified = matchIdentifier(sql, end + 1);
-      if (qualified) {
-        name = qualified.ident;
-        end = qualified.end;
-      }
-    }
-    if (!exclude.has(name) && !refs.includes(name)) refs.push(name);
-    pos = end;
+    const next = recordTableRef(sql, probe + 1, exclude, refs);
+    if (next === null) return pos;
+    pos = next;
   }
 }
 
@@ -232,26 +299,9 @@ function extractTableRefs(sql: string, exclude: Set<string>): string[] {
 
   while (i < len) {
     if (atKeyword(i, 'FROM') && (i === 0 || isWordBoundary(i - 1)) && isWordBoundary(i + 4)) {
-      let pos = i + 4;
-      while (pos < len && /\s/.test(sql[pos])) pos++;
-      const first = matchIdentifier(sql, pos);
-      if (first) {
-        pos = first.end;
-        if (pos < len && sql[pos] === '.') {
-          const second = matchIdentifier(sql, pos + 1);
-          if (second) {
-            const tableName = second.ident;
-            if (!exclude.has(tableName) && !refs.includes(tableName)) {
-              refs.push(tableName);
-            }
-            i = consumeCommaTableList(sql, second.end, exclude, refs);
-            continue;
-          }
-        }
-        if (!exclude.has(first.ident) && !refs.includes(first.ident)) {
-          refs.push(first.ident);
-        }
-        i = consumeCommaTableList(sql, first.end, exclude, refs);
+      const end = recordTableRef(sql, i + 4, exclude, refs);
+      if (end !== null) {
+        i = consumeCommaTableList(sql, end, exclude, refs);
         continue;
       }
     }
@@ -260,38 +310,18 @@ function extractTableRefs(sql: string, exclude: Set<string>): string[] {
     const prefixes = ['LEFT', 'RIGHT', 'INNER', 'OUTER', 'FULL', 'CROSS', 'NATURAL'];
     for (const prefix of prefixes) {
       if (atKeyword(i, prefix) && isWordBoundary(i + prefix.length)) {
-        let pos = i + prefix.length;
-        while (pos < len && /\s/.test(sql[pos])) pos++;
+        let pos = skipWhitespace(sql, i + prefix.length);
         if (
           (prefix === 'LEFT' || prefix === 'RIGHT' || prefix === 'FULL') &&
           atKeyword(pos, 'OUTER') &&
           isWordBoundary(pos + 5)
         ) {
-          pos += 5;
-          while (pos < len && /\s/.test(sql[pos])) pos++;
+          pos = skipWhitespace(sql, pos + 5);
         }
         if (atKeyword(pos, 'JOIN') && isWordBoundary(pos + 4)) {
-          let jpos = pos + 4;
-          while (jpos < len && /\s/.test(sql[jpos])) jpos++;
-          const first = matchIdentifier(sql, jpos);
-          if (first) {
-            jpos = first.end;
-            if (jpos < len && sql[jpos] === '.') {
-              const second = matchIdentifier(sql, jpos + 1);
-              if (second) {
-                const tableName = second.ident;
-                if (!exclude.has(tableName) && !refs.includes(tableName)) {
-                  refs.push(tableName);
-                }
-                i = second.end;
-                joinMatched = true;
-                break;
-              }
-            }
-            if (!exclude.has(first.ident) && !refs.includes(first.ident)) {
-              refs.push(first.ident);
-            }
-            i = first.end;
+          const end = recordTableRef(sql, pos + 4, exclude, refs);
+          if (end !== null) {
+            i = consumeCommaTableList(sql, end, exclude, refs);
             joinMatched = true;
             break;
           }
@@ -301,26 +331,9 @@ function extractTableRefs(sql: string, exclude: Set<string>): string[] {
     }
 
     if (!joinMatched && atKeyword(i, 'JOIN') && isWordBoundary(i + 4)) {
-      let jpos = i + 4;
-      while (jpos < len && /\s/.test(sql[jpos])) jpos++;
-      const first = matchIdentifier(sql, jpos);
-      if (first) {
-        jpos = first.end;
-        if (jpos < len && sql[jpos] === '.') {
-          const second = matchIdentifier(sql, jpos + 1);
-          if (second) {
-            const tableName = second.ident;
-            if (!exclude.has(tableName) && !refs.includes(tableName)) {
-              refs.push(tableName);
-            }
-            i = second.end;
-            continue;
-          }
-        }
-        if (!exclude.has(first.ident) && !refs.includes(first.ident)) {
-          refs.push(first.ident);
-        }
-        i = first.end;
+      const end = recordTableRef(sql, i + 4, exclude, refs);
+      if (end !== null) {
+        i = consumeCommaTableList(sql, end, exclude, refs);
         continue;
       }
     }
