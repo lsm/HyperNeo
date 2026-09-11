@@ -1,3 +1,4 @@
+import type { DirectStopVerificationResult } from '../space/runtime/stop-direct-attempt.ts';
 import { createDatabaseOperationCatalog } from '../operations/database-catalog.ts';
 import type { OperationRegistry, OperationRegistryProvider } from '../operations/registry.ts';
 import type {
@@ -76,6 +77,7 @@ export class SessionManager {
   private evictedExitedRootPids = new Map<number, number>();
 
   private sessionCache: SessionCache;
+  private directStopVerificationJobs = new Map<string, Promise<DirectStopVerificationResult>>();
   private sessionLifecycle: SessionLifecycle;
   private toolsConfigManager: ToolsConfigManager;
   private messagePersistence: MessagePersistence;
@@ -457,6 +459,23 @@ export class SessionManager {
 
   getSession(sessionId: string): AgentSession | null {
     return this.sessionCache.get(sessionId);
+  }
+
+  coalesceDirectStopVerification(
+    key: string,
+    verify: () => Promise<DirectStopVerificationResult>
+  ): Promise<DirectStopVerificationResult> {
+    const pending = this.directStopVerificationJobs.get(key);
+    if (pending) return pending;
+    const job = Promise.resolve().then(verify);
+    this.directStopVerificationJobs.set(key, job);
+    void job
+      .finally(() => {
+        if (this.directStopVerificationJobs.get(key) === job)
+          this.directStopVerificationJobs.delete(key);
+      })
+      .catch(() => {});
+    return job;
   }
 
   isSessionLoading(sessionId: string): boolean {
