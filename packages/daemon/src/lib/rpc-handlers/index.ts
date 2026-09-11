@@ -1,3 +1,4 @@
+import { createStandaloneTask } from '../../storage/tasks/create-task.ts';
 import { readTaskCore } from '../../storage/tasks/task-reader.ts';
 import { setupOperationHandlers } from './operation-handlers.ts';
 import type { MessageHub } from '@hyperneo/shared';
@@ -316,8 +317,14 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   let inactivityRunNowCancelled = false;
   let inactivityAborted = false;
   setupMessageHandlers(deps.messageHub, deps.sessionManager, deps.db);
-  setupOperationHandlers(deps.messageHub, deps.jobQueue, (taskId) =>
-    readTaskCore(deps.db.getDatabase(), taskId)
+  setupOperationHandlers(
+    deps.messageHub,
+    deps.jobQueue,
+    (taskId) => readTaskCore(deps.db.getDatabase(), taskId),
+    (input, creatorSessionId) =>
+      createStandaloneTask(deps.db.getDatabase(), input, creatorSessionId, () =>
+        deps.db.notifyChange('space_tasks')
+      )
   );
   setupSystemHandlers(deps.messageHub, deps.sessionManager);
   setupAuthHandlers(

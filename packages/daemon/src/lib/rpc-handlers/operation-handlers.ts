@@ -6,9 +6,10 @@ import { createOperationRpcHandler } from '../operations/rpc-adapter.ts';
 export function setupOperationHandlers(
   messageHub: MessageHub,
   jobQueue: JobQueueRepository,
-  readTask: Parameters<typeof createDaemonOperationCatalog>[1]
+  readTask: Parameters<typeof createDaemonOperationCatalog>[1],
+  createTask: Parameters<typeof createDaemonOperationCatalog>[2]
 ) {
-  const registry = createDaemonOperationCatalog(jobQueue, readTask);
+  const registry = createDaemonOperationCatalog(jobQueue, readTask, createTask);
   return messageHub.onRequest(
     'operation.invoke',
     createOperationRpcHandler(registry, () => ({}))

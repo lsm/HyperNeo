@@ -1,3 +1,4 @@
+import { createStandaloneTask } from '../../storage/tasks/create-task.ts';
 import { readTaskCore } from '../../storage/tasks/task-reader.ts';
 import { createDaemonOperationCatalog } from '../operations/catalog.ts';
 import { createOperationMcpServer } from '../operations/mcp-server.ts';
@@ -247,8 +248,13 @@ export class AgentSession
 
   getOperationMcpServer(): ReturnType<typeof createOperationMcpServer> {
     return (this.operationMcpServer ??= createOperationMcpServer(
-      createDaemonOperationCatalog(this.db.getJobQueueRepo(), (taskId) =>
-        readTaskCore(this.db.getDatabase(), taskId)
+      createDaemonOperationCatalog(
+        this.db.getJobQueueRepo(),
+        (taskId) => readTaskCore(this.db.getDatabase(), taskId),
+        (input, creatorSessionId) =>
+          createStandaloneTask(this.db.getDatabase(), input, creatorSessionId, () =>
+            this.db.notifyChange('space_tasks')
+          )
       ),
       () => ({ sessionId: this.session.id })
     ));

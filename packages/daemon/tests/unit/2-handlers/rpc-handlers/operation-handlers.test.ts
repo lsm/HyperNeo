@@ -1,3 +1,5 @@
+import { createStandaloneTask } from '../../../../src/storage/tasks/create-task';
+import type { TaskCore } from '@hyperneo/shared/types/task-core';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { createSpaceTables } from '../../helpers/space-test-db';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
@@ -26,8 +28,11 @@ describe('operation.invoke RPC registration', () => {
     transports = InProcessTransport.createPair();
     client.registerTransport(transports[0]);
     server.registerTransport(transports[1]);
-    unregister = setupOperationHandlers(server, mailbox.jobQueue, (taskId) =>
-      readTaskCore(taskDb, taskId)
+    unregister = setupOperationHandlers(
+      server,
+      mailbox.jobQueue,
+      (taskId) => readTaskCore(taskDb, taskId),
+      (input, creatorSessionId) => createStandaloneTask(taskDb, input, creatorSessionId, () => {})
     );
     await Promise.all(transports.map((transport) => transport.initialize()));
   });
@@ -62,6 +67,7 @@ describe('operation.invoke RPC registration', () => {
     expect(listed.map(({ name }) => name)).toEqual([
       'message.send',
       'task.get',
+      'task.create',
       'operations.list',
       'operations.describe',
     ]);
@@ -126,6 +132,41 @@ describe('operation.invoke RPC registration', () => {
       inputSchema: { properties: { taskId: { type: 'string' } } },
     });
     expect(mailbox.rows()).toEqual([]);
+  });
+
+  test('creates an independent task through RPC and ignores spoofed caller provenance', async () => {
+    const task = await client.request<TaskCore>('operation.invoke', {
+      name: 'task.create',
+      input: { title: '  Work  ', priority: 'high', labels: ['test'] },
+      caller: { source: 'mcp', sessionId: 'spoofed' },
+    });
+    expect(task).toMatchObject({
+      title: 'Work',
+      status: 'open',
+      priority: 'high',
+      labels: ['test'],
+    });
+    expect(
+      await client.request('operation.invoke', { name: 'task.get', input: { taskId: task.id } })
+    ).toEqual(task);
+    expect(
+      taskDb
+        .prepare('SELECT space_id, task_number, created_by_session FROM space_tasks WHERE id = ?')
+        .get(task.id)
+    ).toEqual({ space_id: null, task_number: null, created_by_session: null });
+    expect(mailbox.rows()).toEqual([]);
+  });
+
+  test.each([
+    { title: ' ' },
+    { title: 'Work', priority: 'invalid' },
+    { title: 'Work', spaceId: 'space' },
+    { title: 'Work', creatorSessionId: 'spoofed' },
+  ])('rejects invalid task creation before writing: %j', async (input) => {
+    await expect(
+      client.request('operation.invoke', { name: 'task.create', input })
+    ).rejects.toThrow();
+    expect(taskDb.prepare('SELECT id FROM space_tasks').all()).toEqual([]);
   });
 
   test('rejects invalid operation input without persisting', async () => {

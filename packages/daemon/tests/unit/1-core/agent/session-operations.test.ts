@@ -46,6 +46,26 @@ describe('session operation MCP attachment', () => {
     return session;
   }
 
+  test('ordinary chat sessions create independent tasks through the shared MCP operation', async () => {
+    db.createSession(createTestSession('creator'));
+    const session = await restore('creator');
+    const result = await session
+      .getOperationMcpServer()
+      .tools[0].handler({ name: 'task.create', input: { title: 'Work' } }, {});
+    expect(result.isError).not.toBe(true);
+    const content = result.content[0];
+    if (content.type !== 'text') throw new Error('Expected task JSON');
+    const task = JSON.parse(content.text);
+    expect(task).toMatchObject({ title: 'Work', status: 'open' });
+    expect(readTaskCore(db.getDatabase(), task.id)).toEqual(task);
+    expect(
+      db
+        .getDatabase()
+        .prepare('SELECT space_id, task_number, created_by_session FROM space_tasks WHERE id = ?')
+        .get(task.id)
+    ).toEqual({ space_id: null, task_number: null, created_by_session: 'creator' });
+  });
+
   test('ordinary chat sessions can discover and read existing tasks through MCP', async () => {
     db.createSession(createTestSession('reader'));
     const session = await restore('reader');

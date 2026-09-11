@@ -1,3 +1,4 @@
+import { createStandaloneTask } from '../../../../src/storage/tasks/create-task';
 import { readTaskCore } from '../../../../src/storage/tasks/task-reader';
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { InProcessTransport, MessageHub, type Session } from '@hyperneo/shared';
@@ -45,7 +46,13 @@ describe('shared operation delivery parity', () => {
     transports = InProcessTransport.createPair();
     client.registerTransport(transports[0]);
     server.registerTransport(transports[1]);
-    setupOperationHandlers(server, mailbox.jobQueue, (taskId) => readTaskCore(mailbox.db, taskId));
+    setupOperationHandlers(
+      server,
+      mailbox.jobQueue,
+      (taskId) => readTaskCore(mailbox.db, taskId),
+      (input, creatorSessionId) =>
+        createStandaloneTask(mailbox.db, input, creatorSessionId, () => {})
+    );
     await Promise.all(transports.map((transport) => transport.initialize()));
   });
 
@@ -77,8 +84,11 @@ describe('shared operation delivery parity', () => {
         });
       } else {
         const mcp = createOperationMcpServer(
-          createDaemonOperationCatalog(mailbox.jobQueue, (taskId) =>
-            readTaskCore(mailbox.db, taskId)
+          createDaemonOperationCatalog(
+            mailbox.jobQueue,
+            (taskId) => readTaskCore(mailbox.db, taskId),
+            (input, creatorSessionId) =>
+              createStandaloneTask(mailbox.db, input, creatorSessionId, () => {})
           ),
           () => ({
             sessionId: sender.id,
