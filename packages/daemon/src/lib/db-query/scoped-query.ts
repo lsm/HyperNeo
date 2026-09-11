@@ -61,6 +61,227 @@ function findTopLevelKeyword(sql: string, keyword: string): number {
   return -1;
 }
 
+function getCteColumnListRanges(sql: string): Array<[number, number]> {
+  const ranges: Array<[number, number]> = [];
+  const upper = sql.toUpperCase();
+  const len = sql.length;
+
+  if (!/^\s*WITH\b/i.test(sql)) return ranges;
+
+  let pos = sql.search(/\bWITH\b/i) + 4;
+
+  while (pos < len && /\s/.test(sql[pos])) pos++;
+
+  if (pos + 8 <= len && upper.slice(pos, pos + 9) === 'RECURSIVE') {
+    pos += 9;
+    while (pos < len && /\s/.test(sql[pos])) pos++;
+  }
+
+  while (pos < len) {
+    const nameStart = pos;
+    while (pos < len && /[\p{L}\p{N}_]/u.test(sql[pos])) pos++;
+    if (pos === nameStart) break;
+
+    while (pos < len && /\s/.test(sql[pos])) pos++;
+
+    let hasColumnList = false;
+    if (pos < len && sql[pos] === '(') {
+      const savedPos = pos;
+      let depth = 1;
+      pos++;
+      while (pos < len && depth > 0) {
+        if (sql[pos] === '(') depth++;
+        else if (sql[pos] === ')') depth--;
+        pos++;
+      }
+      while (pos < len && /\s/.test(sql[pos])) pos++;
+      if (pos + 1 < len && upper.slice(pos, pos + 2) === 'AS') {
+        hasColumnList = true;
+      } else {
+        pos = savedPos;
+      }
+    }
+
+    while (pos < len && /\s/.test(sql[pos])) pos++;
+
+    if (pos + 1 < len && upper.slice(pos, pos + 2) === 'AS') {
+      pos += 2;
+    } else {
+      break;
+    }
+
+    while (pos < len && /\s/.test(sql[pos])) pos++;
+
+    if (pos < len && sql[pos] === '(') {
+      const bodyStart = pos;
+      let depth = 1;
+      pos++;
+      while (pos < len && depth > 0) {
+        if (sql[pos] === "'") {
+          pos++;
+          while (pos < len) {
+            if (sql[pos] === "'" && pos + 1 < len && sql[pos + 1] === "'") {
+              pos += 2;
+            } else if (sql[pos] === "'") {
+              pos++;
+              break;
+            } else {
+              pos++;
+            }
+          }
+        } else if (sql[pos] === '(') {
+          depth++;
+          pos++;
+        } else if (sql[pos] === ')') {
+          depth--;
+          pos++;
+        } else {
+          pos++;
+        }
+      }
+      const bodyEnd = pos;
+
+      if (hasColumnList) {
+        ranges.push([bodyStart, bodyEnd]);
+      }
+    }
+
+    while (pos < len && /\s/.test(sql[pos])) pos++;
+
+    if (pos < len && sql[pos] === ',') {
+      pos++;
+      while (pos < len && /\s/.test(sql[pos])) pos++;
+    } else {
+      break;
+    }
+  }
+
+  return ranges;
+}
+
+function rewriteSelectToStar(sql: string, options?: { skipOutermost?: boolean }): string {
+  const cteRanges = getCteColumnListRanges(sql);
+
+  const { skipOutermost = false } = options ?? {};
+
+  const pairs: Array<{
+    selectStart: number;
+    fromStart: number;
+    hasDistinct: boolean;
+    depth: number;
+  }> = [];
+  const upper = sql.toUpperCase();
+  let depth = 0;
+  let inString = false;
+
+  function isInCteRange(pos: number): boolean {
+    return cteRanges.some(([start, end]) => pos >= start && pos < end);
+  }
+
+  for (let i = 0; i < sql.length; i++) {
+    const ch = sql[i];
+
+    if (inString) {
+      if (ch === "'" && i + 1 < sql.length && sql[i + 1] === "'") {
+        i++;
+        continue;
+      }
+      if (ch === "'") {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === "'") {
+      inString = true;
+      continue;
+    }
+    if (ch === '(') {
+      depth++;
+      continue;
+    }
+    if (ch === ')') {
+      depth--;
+      continue;
+    }
+
+    if (
+      upper.slice(i, i + 6) === 'SELECT' &&
+      (i === 0 || /\s/.test(sql[i - 1]) || sql[i - 1] === '(')
+    ) {
+      const afterChar = i + 6 < sql.length ? sql[i + 6] : ' ';
+      if (/\s/.test(afterChar) || afterChar === '(') {
+        const selectEnd = i + 6;
+        const targetDepth = depth;
+
+        const afterSelect = sql.slice(selectEnd).trimStart();
+        const hasDistinct = /^DISTINCT\b/i.test(afterSelect);
+
+        let fDepth = depth;
+        let fInString = false;
+        let fromStart = -1;
+        for (let j = selectEnd; j < sql.length; j++) {
+          const c = sql[j];
+          if (fInString) {
+            if (c === "'" && j + 1 < sql.length && sql[j + 1] === "'") {
+              j++;
+              continue;
+            }
+            if (c === "'") fInString = false;
+            continue;
+          }
+          if (c === "'") {
+            fInString = true;
+            continue;
+          }
+          if (c === '(') fDepth++;
+          if (c === ')') fDepth--;
+          if (fDepth !== targetDepth) continue;
+          if (
+            upper.slice(j, j + 4) === 'FROM' &&
+            (j === 0 || /\s/.test(sql[j - 1])) &&
+            (j + 4 >= sql.length || /\s/.test(sql[j + 4]))
+          ) {
+            fromStart = j;
+            break;
+          }
+        }
+        if (fromStart !== -1 && !isInCteRange(i)) {
+          pairs.push({ selectStart: i, fromStart, hasDistinct, depth: targetDepth });
+        }
+      }
+    }
+  }
+
+  const nonSubqueryPairs = pairs.filter((pair) => {
+    for (const other of pairs) {
+      if (other === pair) continue;
+      if (
+        other.depth < pair.depth &&
+        pair.selectStart > other.selectStart &&
+        pair.selectStart < other.fromStart
+      ) {
+        return false;
+      }
+    }
+    return true;
+  });
+
+  const activePairs = skipOutermost
+    ? nonSubqueryPairs.filter((p) => p.depth > 0)
+    : nonSubqueryPairs;
+  if (activePairs.length === 0) return sql;
+
+  let result = sql;
+  for (let p = activePairs.length - 1; p >= 0; p--) {
+    const { selectStart, fromStart, hasDistinct } = activePairs[p];
+    const replacement = hasDistinct ? 'SELECT DISTINCT * ' : 'SELECT * ';
+    result = `${result.slice(0, selectStart)}${replacement}${result.slice(fromStart)}`;
+  }
+
+  return result;
+}
+
 function stripLimit(sql: string): { sql: string; userLimit?: number } {
   const limitPos = findTopLevelKeyword(sql, 'LIMIT');
   if (limitPos === -1) return { sql };
@@ -72,33 +293,63 @@ function stripLimit(sql: string): { sql: string; userLimit?: number } {
   return { sql: sql.slice(0, limitPos).trimEnd(), userLimit };
 }
 
-const ALIAS_STOP_WORDS = new Set([
-  'join',
-  'left',
-  'right',
-  'inner',
-  'outer',
-  'cross',
-  'natural',
-  'on',
-  'using',
-  'where',
-  'group',
-  'order',
-  'limit',
-  'having',
-  'window',
-  'union',
-  'except',
-  'intersect',
-]);
+function isAggregateOrDistinctQuery(sql: string): boolean {
+  if (findTopLevelKeyword(sql, 'GROUP BY') !== -1) return true;
+
+  if (findTopLevelKeyword(sql, 'HAVING') !== -1) return true;
+
+  const selectPos = findTopLevelKeyword(sql, 'SELECT');
+  if (selectPos !== -1) {
+    const afterSelect = sql.slice(selectPos + 6).trimStart();
+    if (/^DISTINCT\b/i.test(afterSelect)) return true;
+  }
+
+  const fromPos = findTopLevelKeyword(sql, 'FROM');
+
+  if (selectPos !== -1 && fromPos !== -1) {
+    const columnList = sql.slice(selectPos + 6, fromPos);
+    if (/\(\s*SELECT\b/i.test(columnList)) return true;
+  }
+
+  if (selectPos === -1 || fromPos === -1 || fromPos <= selectPos) return false;
+
+  const aggColumnList = sql.slice(selectPos + 6, fromPos).toUpperCase();
+  const aggFunctions = ['COUNT(', 'SUM(', 'AVG(', 'MIN(', 'MAX(', 'GROUP_CONCAT(', 'TOTAL('];
+  return aggFunctions.some((fn) => aggColumnList.includes(fn));
+}
+
+function maskQuotedIdentifiers(sql: string): string {
+  return sql.replace(/\[[^\]]*\]|"[^"]*"|`[^`]*`/g, (match) => ' '.repeat(match.length));
+}
+
+const UNSUPPORTED_CONSTRUCTS: Array<[RegExp, string]> = [
+  [
+    /\?\d|[:@$][\p{L}_]/u,
+    'numbered or named parameters are not supported; use plain ? placeholders',
+  ],
+  [/\b(?:indexed\s+by|not\s+indexed)\b/i, 'index hints are not supported in scoped queries'],
+  [/\b(?:rowid|oid|_rowid_)\b/i, 'row identifier columns are not available in scoped queries'],
+];
+
+function assertRewritableSql(sql: string): void {
+  const masked = maskQuotedIdentifiers(maskCommentsAndStrings(sql));
+  for (const [pattern, reason] of UNSUPPORTED_CONSTRUCTS) {
+    if (pattern.test(masked)) throw new Error(`Query cannot be scoped: ${reason}`);
+  }
+}
+
+const ALIAS_STOP_WORDS = new Set(
+  'join left right inner outer cross natural on using where group order limit having window union except intersect'.split(
+    ' '
+  )
+);
 
 function hasFollowingAlias(masked: string, end: number): boolean {
   let i = end;
   while (i < masked.length && /\s/.test(masked[i])) i++;
   if (i >= masked.length) return false;
   if (masked[i] === "'" || masked[i] === '"' || masked[i] === '[' || masked[i] === '`') return true;
-  const word = /^[A-Za-z_][A-Za-z0-9_$]*/.exec(masked.slice(i));
+  const word = /^[\p{L}_][\p{L}\p{N}_$]*/u.exec(masked.slice(i));
   if (!word) return false;
   const lower = word[0].toLowerCase();
   if (lower === 'as') return true;
@@ -141,8 +392,8 @@ function applyTableScopeFilters(
   userParams: unknown[],
   tableConfigs: Map<string, ScopeTableConfig>,
   scopeValue: string
-): { sql: string; params: unknown[] } {
-  const masked = maskCommentsAndStrings(sql);
+): { sql: string; params: unknown[]; applied: boolean } {
+  const masked = maskQuotedIdentifiers(maskCommentsAndStrings(sql));
   let out = '';
   let cursor = 0;
   let paramCursor = 0;
@@ -167,7 +418,7 @@ function applyTableScopeFilters(
 
   out += sql.slice(cursor);
   params.push(...userParams.slice(paramCursor));
-  return { sql: out, params };
+  return { sql: out, params, applied: cursor > 0 };
 }
 
 function rewriteScopedQuery(
@@ -179,12 +430,38 @@ function rewriteScopedQuery(
   userLimit?: number
 ): { sql: string; params: unknown[]; cappedLimit: number } {
   const cappedLimit = Math.min(userLimit ?? DEFAULT_LIMIT, MAX_LIMIT);
-  const scoped = applyTableScopeFilters(sql, userParams, tableConfigs, scopeValue);
-  const { sql: strippedSql, userLimit: existingLimit } = stripLimit(scoped.sql);
+  const { sql: strippedSql, userLimit: existingLimit } = stripLimit(sql);
   const effectiveLimit = Math.min(cappedLimit, existingLimit ?? MAX_LIMIT);
+  const aggregate = isAggregateOrDistinctQuery(strippedSql);
+  const probe = applyTableScopeFilters(strippedSql, userParams, tableConfigs, scopeValue);
+
+  if (!probe.applied) {
+    return {
+      sql: `${strippedSql} LIMIT ${effectiveLimit}`,
+      params: userParams,
+      cappedLimit: effectiveLimit,
+    };
+  }
+
+  const scoped = aggregate
+    ? probe
+    : applyTableScopeFilters(
+        rewriteSelectToStar(strippedSql),
+        userParams,
+        tableConfigs,
+        scopeValue
+      );
+
+  if (aggregate) {
+    return {
+      sql: `${scoped.sql} LIMIT ${effectiveLimit}`,
+      params: scoped.params,
+      cappedLimit: effectiveLimit,
+    };
+  }
 
   return {
-    sql: `SELECT * FROM (${strippedSql}) AS _dbq LIMIT ${effectiveLimit}`,
+    sql: `SELECT * FROM (${scoped.sql}) AS _dbq LIMIT ${effectiveLimit}`,
     params: scoped.params,
     cappedLimit: effectiveLimit,
   };
@@ -206,7 +483,7 @@ function removeBlacklistedColumns(
   return rows.map((row) => {
     const filtered: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(row)) {
-      if (!blacklisted.has(key)) {
+      if (!blacklisted.has(key.replace(/:\d+$/, ''))) {
         filtered[key] = value;
       }
     }
@@ -226,6 +503,8 @@ export function runScopedQuery(
   if (!validation.valid) {
     throw new Error(validation.error ?? 'Invalid SQL');
   }
+
+  assertRewritableSql(sql);
 
   const configMap = new Map<string, ScopeTableConfig>();
   for (const tc of getScopeConfig(scopeType)) {
