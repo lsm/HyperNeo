@@ -1,3 +1,4 @@
+import { PendingCompletionSupersededError } from './pending-completion-guard.ts';
 import type { SpaceTask } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { mapPostApprovalDispatchWarning } from '../runtime/post-approval-router.ts';
@@ -53,6 +54,7 @@ export async function dispatchPendingCompletion(
   try {
     await dispatchApproval(decision.taskId, decision.reason);
   } catch (error) {
+    if (error instanceof PendingCompletionSupersededError) throw error;
     const afterCommit = await getTask(decision.taskId);
     if (!hasCommittedPendingApproval(afterCommit)) throw error;
     const detail = error instanceof Error ? error.message : String(error);

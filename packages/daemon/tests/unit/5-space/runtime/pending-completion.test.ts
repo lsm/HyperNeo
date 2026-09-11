@@ -1,3 +1,4 @@
+import { PendingCompletionSupersededError } from '../../../../src/lib/space/operations/pending-completion-guard';
 import { expect, mock, test } from 'bun:test';
 import type { SpaceTask } from '@hyperneo/shared';
 import {
@@ -189,4 +190,17 @@ test('failed rejection transition prevents reason write', async () => {
   await expect(resolve({ ...decision, approved: false })).rejects.toBe(error);
   expect(dependencies.updateTask).not.toHaveBeenCalled();
   expect(dependencies.getTask).not.toHaveBeenCalled();
+});
+
+test('superseded dispatch never becomes a committed warning', async () => {
+  const error = new PendingCompletionSupersededError('task');
+  const { resolve, dependencies } = setup({
+    dispatchApproval: async () => {
+      throw error;
+    },
+  });
+  await expect(resolve(decision)).rejects.toBe(error);
+  expect(dependencies.getTask).not.toHaveBeenCalled();
+  expect(dependencies.warn).not.toHaveBeenCalled();
+  expect(dependencies.updateTask).not.toHaveBeenCalled();
 });

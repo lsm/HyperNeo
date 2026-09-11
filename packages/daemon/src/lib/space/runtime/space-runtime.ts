@@ -1,3 +1,4 @@
+import { PendingCompletionSupersededError } from '../operations/pending-completion-guard.ts';
 import type {
   CreateNodeExecutionParams,
   NodeExecution,
@@ -2789,12 +2790,25 @@ export class SpaceRuntime {
     approvalSource: SpaceApprovalSource,
     contextExtras: Omit<PostApprovalRouteContext, 'approvalSource'> = {},
     options: {
+      expectedPendingCompletionGeneration?: number;
       requireAlreadyApproved?: boolean;
       expectedWorkflowRunId?: string | null;
       expectedApprovedAt?: number | null;
       requireSucceededRun?: boolean;
     } = {}
   ): Promise<PostApprovalRouteResult> {
+    const expectedGeneration = options.expectedPendingCompletionGeneration;
+    const guarded =
+      expectedGeneration === undefined ? undefined : this.config.taskRepo.getTask(taskId);
+    if (
+      expectedGeneration !== undefined &&
+      (!guarded ||
+        guarded.status !== 'review' ||
+        guarded.pendingCheckpointType !== 'task_completion' ||
+        (guarded.pendingCompletionGeneration ?? 0) !== expectedGeneration)
+    ) {
+      throw new PendingCompletionSupersededError(taskId);
+    }
     const router = this.getPostApprovalRouter();
     if (!router) {
       const reason = `PostApprovalRouter not wired yet (taskAgentManager missing); task=${taskId}`;
@@ -2802,7 +2816,7 @@ export class SpaceRuntime {
       return { mode: 'skipped', reason };
     }
 
-    const current = this.config.taskRepo.getTask(taskId);
+    const current = guarded ?? this.config.taskRepo.getTask(taskId);
     if (!current) {
       const reason = `task ${taskId} not found`;
       log.warn(`dispatchPostApproval: ${reason}`);
@@ -2877,6 +2891,9 @@ export class SpaceRuntime {
     if (current.status !== 'approved') {
       const taskManager = this.getOrCreateTaskManager(spaceId);
       approvedTask = await taskManager.setTaskStatus(taskId, 'approved', {
+        ...(expectedGeneration === undefined
+          ? {}
+          : { expectedPendingCompletionGeneration: expectedGeneration }),
         approvalSource,
         approvalReason: resolvedApprovalReason,
       });

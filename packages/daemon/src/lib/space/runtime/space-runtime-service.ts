@@ -1998,10 +1998,16 @@ export class SpaceRuntimeService {
     spaceId: string,
     taskId: string,
     approvalSource: 'human' | 'agent',
-    contextExtras?: { reviewerName?: string; approvalReason?: string | null }
+    contextExtras?: { reviewerName?: string; approvalReason?: string | null },
+    options?: { expectedPendingCompletionGeneration?: number }
   ): Promise<void> {
     log.info(`dispatchPostApproval: spaceId=${spaceId} taskId=${taskId} source=${approvalSource}`);
-    await this.runtime.dispatchPostApproval(taskId, approvalSource, contextExtras ?? {});
+    await this.runtime.dispatchPostApproval(
+      taskId,
+      approvalSource,
+      contextExtras ?? {},
+      ...(options ? ([options] as const) : ([] as const))
+    );
   }
 
   async retryPostApprovalDispatch(
