@@ -215,6 +215,7 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
     setFormModelPool([]);
     setFormTools({ tools: [], toolsOverridden: false });
     setFormSettingSources(null);
+    setFormThinkingLevel(null);
     setFormTemplateKey('');
     setToolsExplicit(false);
     toolsBaselineRef.current = [];
@@ -244,6 +245,7 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
     setCreating(false);
     setEditing(null);
     setFormError(null);
+    setFormThinkingLevel(null);
     setFormTemplateKey('');
   }
 
@@ -558,7 +560,7 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
                   <option value="">
                     {selectedTemplateThinking
                       ? `Template default (${THINKING_LEVEL_LABELS[selectedTemplateThinking]})`
-                      : 'Model default'}
+                      : 'App default'}
                   </option>
                   {getThinkingOptionsForProvider(undefined).map((option) => (
                     <option key={option.value} value={option.value}>

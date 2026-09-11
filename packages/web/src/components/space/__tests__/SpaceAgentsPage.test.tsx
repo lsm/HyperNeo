@@ -1795,6 +1795,32 @@ describe('SpaceAgentsPage', () => {
     expect(mockUpdate.mock.calls[0][1].thinkingLevel).toBeNull();
   });
 
+  it('does not carry a thinking level into the next create form', async () => {
+    mockAgents.value = [makeAgent('alpha', { thinkingLevel: 'think32k' })];
+    const { getByTestId, getByText } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('agent-row-alpha'));
+    fireEvent.click(getByText('Edit'));
+    expect((getByTestId('agent-thinking-select') as HTMLSelectElement).value).toBe('think32k');
+    fireEvent.click(getByText('Cancel'));
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    expect((getByTestId('agent-thinking-select') as HTMLSelectElement).value).toBe('');
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'Fresh' } });
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalled());
+    expect(mockCreate.mock.calls[0][0].thinkingLevel).toBeUndefined();
+  });
+
+  it('names the fallback as the app default, not a model default', async () => {
+    const { getByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    const select = getByTestId('agent-thinking-select') as HTMLSelectElement;
+    expect(select.options[0].textContent).toBe('App default');
+  });
+
   it('clears a description on edit rather than dropping the field', async () => {
     mockAgents.value = [makeAgent('alpha', { description: 'old' })];
     const { getByTestId, getByText } = render(<SpaceAgentsPage spaceId="space-1" />);
