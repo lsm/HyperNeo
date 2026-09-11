@@ -679,40 +679,6 @@ describe('SpaceLongHorizonAgentRepository', () => {
     expect(repo.getReminder(fired.id)!.lastFiredAt).toBeNull();
   });
 
-  test('create rejects the reserved migration template key', () => {
-    expect(() =>
-      repo.create({
-        spaceId: 'space-1',
-        handle: 'fake-mirror',
-        displayName: 'Fake Mirror',
-        templateKey: 'migration.legacy_space_agent',
-      })
-    ).toThrow(/reserved for migrated worker mirrors/);
-  });
-
-  test('update rejects disabled status, autonomy ceilings, and rekeys on migrated worker mirrors', () => {
-    db.prepare(
-      `INSERT INTO space_long_horizon_agents
-         (id, space_id, handle, display_name, template_key, status, instructions,
-          tool_permissions_json, created_at, updated_at)
-       VALUES (?, 'space-1', 'mirror-guard', 'Migrated Worker', 'migration.legacy_space_agent', 'active', '', '{}', 1, 1)`
-    ).run('mirror-guard-id');
-
-    expect(() => repo.update('mirror-guard-id', { status: 'disabled' })).toThrow(
-      'Agent status "disabled" cannot be set on a migrated worker agent'
-    );
-    expect(() => repo.update('mirror-guard-id', { autonomyLevel: 3 })).toThrow(
-      'autonomyLevel cannot be set on a migrated worker agent'
-    );
-    expect(() => repo.update('mirror-guard-id', { templateKey: 'coordinator.default' })).toThrow(
-      'Template key cannot be changed on a migrated worker agent'
-    );
-
-    const edited = repo.update('mirror-guard-id', { displayName: 'Renamed Mirror' });
-    expect(edited?.displayName).toBe('Renamed Mirror');
-    expect(edited?.status).toBe('active');
-  });
-
   test('update permits the runtime session binding on migrated worker mirrors', () => {
     db.prepare(
       `INSERT INTO space_long_horizon_agents

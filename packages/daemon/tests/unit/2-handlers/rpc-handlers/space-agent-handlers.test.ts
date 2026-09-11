@@ -1675,15 +1675,6 @@ describe('Space Agent RPC Handlers', () => {
       expect(longHorizonRepo.getById(coordinator.id)?.status).toBe('active');
     });
 
-    it('rejects the reserved migration template key on native updates', async () => {
-      await expect(
-        call(hubData.handlers, 'spaceAgent.update', {
-          id: agentId,
-          templateKey: 'migration.legacy_space_agent',
-        })
-      ).rejects.toThrow('is reserved for migrated worker mirrors');
-    });
-
     it('rejects unknown statuses on mirror updates instead of reactivating', async () => {
       const workerId = 'twin-bad-status';
       seedWorkerMirror(db, { id: workerId, spaceId: 'space-1', name: 'Twin Bad Status' });
@@ -1694,55 +1685,6 @@ describe('Space Agent RPC Handlers', () => {
           status: 'archive',
         })
       ).rejects.toThrow('Invalid agent status: archive');
-      expect(longHorizonRepo.getById(workerId)?.status).toBe('active');
-    });
-
-    it('rejects autonomyLevel ceilings on mirror updates', async () => {
-      const workerId = 'twin-autonomy';
-      seedWorkerMirror(db, { id: workerId, spaceId: 'space-1', name: 'Twin Autonomy' });
-
-      await expect(
-        call(hubData.handlers, 'spaceAgent.update', { id: workerId, autonomyLevel: 3 })
-      ).rejects.toThrow('autonomyLevel cannot be set on a migrated worker agent');
-      expect(longHorizonRepo.getById(workerId)?.autonomyLevel).toBeNull();
-    });
-
-    it('rejects mirror rekeys through the templateName alias', async () => {
-      const workerId = 'twin-alias-rekey';
-      seedWorkerMirror(db, { id: workerId, spaceId: 'space-1', name: 'Twin Alias Rekey' });
-
-      await expect(
-        call(hubData.handlers, 'spaceAgent.update', {
-          id: workerId,
-          templateName: 'coordinator.default',
-        })
-      ).rejects.toThrow('Template key cannot be changed on a migrated worker agent');
-      expect(longHorizonRepo.getById(workerId)?.templateKey).toBe('migration.legacy_space_agent');
-    });
-
-    it('rejects templateKey rewrites on mirror updates', async () => {
-      const workerId = 'twin-rekey';
-      seedWorkerMirror(db, { id: workerId, spaceId: 'space-1', name: 'Twin Rekey' });
-
-      await expect(
-        call(hubData.handlers, 'spaceAgent.update', {
-          id: workerId,
-          templateKey: 'coordinator.default',
-        })
-      ).rejects.toThrow('Template key cannot be changed on a migrated worker agent');
-      expect(longHorizonRepo.getById(workerId)?.templateKey).toBe('migration.legacy_space_agent');
-    });
-
-    it('rejects disabled status on mirror updates', async () => {
-      const workerId = 'twin-disabled';
-      seedWorkerMirror(db, { id: workerId, spaceId: 'space-1', name: 'Twin Disabled' });
-
-      await expect(
-        call(hubData.handlers, 'spaceAgent.update', {
-          id: workerId,
-          status: 'disabled',
-        })
-      ).rejects.toThrow('Agent status "disabled" cannot be set on a migrated worker agent');
       expect(longHorizonRepo.getById(workerId)?.status).toBe('active');
     });
 

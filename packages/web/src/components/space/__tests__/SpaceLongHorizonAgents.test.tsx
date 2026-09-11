@@ -1061,27 +1061,6 @@ describe('SpaceLongHorizonAgents', () => {
     expect(gutterNumbersFor(instructionsField)).toHaveLength(6);
   });
 
-  it('omits autonomyLevel when saving a migrated worker mirror', async () => {
-    mockAgents.value = [
-      makeLongHorizonAgent({
-        templateKey: 'migration.legacy_space_agent',
-        toolPermissions: { tools: ['Read', 'Write'] },
-      }),
-    ];
-    const { getByRole, container } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
-
-    fireEvent.click(getByRole('button', { name: 'Edit Research Long Horizon' }));
-    expect(chipInput(container, 'Read').checked).toBe(true);
-    expect(chipInput(container, 'Bash').checked).toBe(false);
-    fireEvent.click(chipLabel(container, 'Bash'));
-    fireEvent.click(getByRole('button', { name: 'Save changes' }));
-
-    await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
-    const params = mockUpdateAgent.mock.calls[0][1];
-    expect(params.autonomyLevel).toBeUndefined();
-    expect(params.tools).toEqual(['Read', 'Write', 'Bash']);
-  });
-
   it('sends autonomyLevel and preserves toolPermissions when tools are unchanged', async () => {
     mockAgents.value = [makeLongHorizonAgent({ toolPermissions: { mode: 'restricted' } })];
     const { getByRole } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
@@ -1286,24 +1265,6 @@ describe('SpaceLongHorizonAgents', () => {
     ]);
   });
 
-  it('sends modelPool for migrated worker mirrors', async () => {
-    const pool = [
-      { model: 'claude-haiku-4-5', provider: 'anthropic', maxConcurrent: 2, weight: 40 },
-    ];
-    mockAgents.value = [
-      makeLongHorizonAgent({ templateKey: 'migration.legacy_space_agent', modelPool: pool }),
-    ];
-    const { getByRole } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
-
-    fireEvent.click(getByRole('button', { name: 'Edit Research Long Horizon' }));
-    fireEvent.click(getByRole('button', { name: 'Save changes' }));
-
-    await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
-    const params = mockUpdateAgent.mock.calls[0][1];
-    expect(params.autonomyLevel).toBeUndefined();
-    expect(params.modelPool).toEqual(pool);
-  });
-
   it('persists the selected provider when changing the single model', async () => {
     mockAgents.value = [makeLongHorizonAgent({ model: 'claude-sonnet-4-6', provider: null })];
     const { getByRole, getByTestId } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
@@ -1423,20 +1384,6 @@ describe('SpaceLongHorizonAgents', () => {
     fireEvent.click(getByRole('button', { name: 'Create agent' }));
     await waitFor(() => expect(mockCreateAgent).toHaveBeenCalledTimes(1));
     expect(mockCreateAgent.mock.calls[0][0].settingSources).toEqual(['user', 'project']);
-  });
-
-  it('disables autonomy editing for migrated worker mirrors', () => {
-    mockAgents.value = [makeLongHorizonAgent({ templateKey: 'migration.legacy_space_agent' })];
-    const { getByRole, getByText } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
-
-    fireEvent.click(getByRole('button', { name: 'Edit Research Long Horizon' }));
-
-    for (const level of ['1', '2', '3', '4', '5']) {
-      expect(
-        (getByRole('button', { name: level, exact: true }) as HTMLButtonElement).disabled
-      ).toBe(true);
-    }
-    expect(getByText('Autonomy cannot be edited on a migrated worker agent.')).toBeTruthy();
   });
 
   it('derives a unique display name when a template name is already taken', () => {

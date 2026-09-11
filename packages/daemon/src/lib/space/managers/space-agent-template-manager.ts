@@ -25,7 +25,6 @@ import {
   isRelocationMarkerLabel,
   RETIRED_LONG_HORIZON_TEMPLATE_KEYS,
 } from '../agents/long-horizon-agent-templates.ts';
-import { MIGRATED_WORKER_TEMPLATE_KEY } from '../agents/worker-long-horizon-mapper.ts';
 import { validateSlug } from '../slug.ts';
 
 type BuiltInTemplateSource = () => SpaceAgentTemplate[];
@@ -105,9 +104,6 @@ export function getBuiltInSpaceAgentTemplates(): SpaceAgentTemplate[] {
 function validateTemplateKey(key: string): string | null {
   if (!key || key.trim() !== key) {
     return 'Template key cannot be empty or have leading/trailing whitespace';
-  }
-  if (key === MIGRATED_WORKER_TEMPLATE_KEY) {
-    return `Template key "${key}" is reserved`;
   }
   if ((RETIRED_LONG_HORIZON_TEMPLATE_KEYS as readonly string[]).includes(key)) {
     return `Template key "${key}" is retired and cannot be reused`;

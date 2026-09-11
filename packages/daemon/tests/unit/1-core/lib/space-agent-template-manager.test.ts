@@ -5,7 +5,6 @@ import type {
   SpaceAgentTemplate,
 } from '@hyperneo/shared';
 import { setModelsCache } from '../../../../src/lib/model-service';
-import { MIGRATED_WORKER_TEMPLATE_KEY } from '../../../../src/lib/space/agents/worker-long-horizon-mapper';
 import {
   runCreateTemplate,
   runDeleteTemplate,
@@ -399,16 +398,6 @@ describe('SpaceAgentTemplateManager', () => {
     test('allows a key that merely starts with the same letters', async () => {
       const result = await manager.createIn(OWNER, { key: 'migrated.agentry', handle: 'agentry' });
       expect(result.ok).toBe(true);
-    });
-
-    test('rejects the reserved migration template key', async () => {
-      const result = await manager.createIn(OWNER, {
-        ...fullParams(),
-        key: MIGRATED_WORKER_TEMPLATE_KEY,
-      });
-
-      expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.error).toContain('reserved');
     });
 
     test('rejects keys reserved for code built-in templates', async () => {

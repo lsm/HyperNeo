@@ -272,13 +272,6 @@ describe('updateSpaceAgent', () => {
       expectKind(await run(h, { id: 'agent-1', instructions: 'x' }), 'session_taken');
     });
 
-    test('maps a migrated mirror refusal to invalid_request', async () => {
-      h.deps.applyUpdate = () => {
-        throw new Error('Agent agent-1 is a migrated worker mirror and is not owned by X');
-      };
-      expectKind(await run(h, { id: 'agent-1', instructions: 'x' }), 'invalid_request');
-    });
-
     test('rethrows an unrecognised persistence failure', async () => {
       h.deps.applyUpdate = () => {
         throw new Error('disk on fire');

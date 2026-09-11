@@ -29,8 +29,6 @@ const THINKING_LEVEL_OPTIONS: Array<{ value: '' | ThinkingLevel; label: string }
   { value: 'think32k', label: 'Think 32k' },
 ];
 
-const MIGRATED_WORKER_TEMPLATE_KEY = 'migration.legacy_space_agent';
-
 const COORDINATOR_AGENT_HANDLES = new Set(['coordinator', 'space-manager']);
 
 function isCoordinator(agent: SpaceLongHorizonAgent): boolean {
@@ -58,10 +56,6 @@ function nextFreeHandle(base: string, existingHandles: Set<string>): string {
     if (!existingHandles.has(candidate)) return candidate;
   }
   return `${base}-${Date.now()}`;
-}
-
-function isMigratedWorkerMirror(agent: SpaceLongHorizonAgent): boolean {
-  return agent.templateKey === MIGRATED_WORKER_TEMPLATE_KEY;
 }
 
 function nextFreeDisplayName(base: string, existingNames: Set<string>): string {
@@ -142,9 +136,7 @@ async function agentSavePersistStage(ctx: AgentSaveCtx): Promise<AgentSaveCtx> {
     await spaceStore.updateAgent(ctx.agent.id, {
       displayName,
       instructions,
-      ...(isMigratedWorkerMirror(ctx.agent)
-        ? {}
-        : { autonomyLevel: form.autonomyLevel as 1 | 2 | 3 | 4 | 5 | null }),
+      autonomyLevel: form.autonomyLevel as 1 | 2 | 3 | 4 | 5 | null,
       model: effectiveModel || null,
       ...(effectiveProvider !== (ctx.agent.provider ?? null)
         ? { provider: effectiveProvider }
@@ -152,9 +144,7 @@ async function agentSavePersistStage(ctx: AgentSaveCtx): Promise<AgentSaveCtx> {
       thinkingLevel: (form.thinkingLevel || null) as ThinkingLevel | null,
       settingSources: form.settingSources,
       ...(toolsChanged
-        ? isMigratedWorkerMirror(ctx.agent)
-          ? { tools: parsedTools }
-          : { toolPermissions: { ...ctx.agent.toolPermissions, tools: parsedTools } }
+        ? { toolPermissions: { ...ctx.agent.toolPermissions, tools: parsedTools } }
         : {}),
       modelPool: activeModelPool,
     });
@@ -244,7 +234,6 @@ function AgentEditor({
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const migratedWorkerMirror = isEdit && agent ? isMigratedWorkerMirror(agent) : false;
   const [extraToolDraft, setExtraToolDraft] = useState('');
   const extraTools = extraToolsOf(toolsSelection.tools);
 
@@ -364,7 +353,6 @@ function AgentEditor({
                 <button
                   key={level}
                   type="button"
-                  disabled={migratedWorkerMirror}
                   onClick={() => setAutonomyLevel(autonomyLevel === level ? null : level)}
                   class={`flex-1 rounded-xl border py-2.5 text-sm font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warning/60 disabled:cursor-not-allowed disabled:opacity-50 ${
                     autonomyLevel === level
@@ -376,14 +364,8 @@ function AgentEditor({
                 </button>
               ))}
             </div>
-            {migratedWorkerMirror ? (
-              <p class="mt-1 text-xs text-fg-muted">
-                Autonomy cannot be edited on a migrated worker agent.
-              </p>
-            ) : (
-              autonomyLevel && (
-                <p class="mt-1 text-xs text-fg-muted">{AUTONOMY_LABELS[autonomyLevel]}</p>
-              )
+            {autonomyLevel && (
+              <p class="mt-1 text-xs text-fg-muted">{AUTONOMY_LABELS[autonomyLevel]}</p>
             )}
           </div>
           <div class="grid grid-cols-2 gap-3">

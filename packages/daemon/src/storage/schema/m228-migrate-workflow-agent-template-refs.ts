@@ -7,7 +7,6 @@ import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import { SpaceWorkflowRepository } from '../repositories/space-workflow-repository.ts';
 import { SpaceWorkflowDefinitionVersionRepository } from '../repositories/space-workflow-definition-version-repository.ts';
 import { computeDefinitionVersion } from '../../lib/space/workflows/definition-version.ts';
-import { MIGRATED_WORKER_TEMPLATE_KEY } from '../../lib/space/agents/worker-long-horizon-mapper.ts';
 import {
   migratedAgentTemplateKey,
   synthesizeAgentTemplate,
@@ -104,7 +103,7 @@ function orphanSlotSource(agentId: string, raw: Record<string, unknown>): Orphan
 }
 
 function isRunnableAgentRow(row: AgentRow): boolean {
-  if (row.template_key === MIGRATED_WORKER_TEMPLATE_KEY) return true;
+  if (row.template_key === 'migration.legacy_space_agent') return true;
   return row.status === 'active';
 }
 
