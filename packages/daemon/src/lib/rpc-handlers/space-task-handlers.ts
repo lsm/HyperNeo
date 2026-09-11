@@ -31,6 +31,10 @@ import {
   createBoundSpaceTaskMetadataEditor,
   isTaskMetadataOnlyUpdate,
 } from '../space/operations/bound-task-metadata.ts';
+import {
+  createBoundSpaceTaskDependencyEditor,
+  isTaskDependenciesOnlyUpdate,
+} from '../space/operations/task-dependencies.ts';
 import { arraysEqual } from '../utils/array-utils.ts';
 
 const log = new Logger('space-task-handlers');
@@ -589,7 +593,26 @@ export function setupSpaceTaskHandlers(
         throw new Error(`Task not found: ${taskId}`);
       }
       await ensureWorkflowOverridesStillUnlocked(updateParams);
-      if (isTaskMetadataOnlyUpdate(updateParams)) {
+      if (isTaskDependenciesOnlyUpdate(updateParams)) {
+        task = await createBoundSpaceTaskDependencyEditor(spaceId, {
+          getTaskManager: () => taskManager,
+          blockExecution: spaceRuntimeService
+            ? (ownerId, id, fields) =>
+                spaceRuntimeService.stopWorkflowBackedTask(ownerId, id, fields)
+            : undefined,
+          emitTaskUpdated: (_ownerId, updated) => {
+            const published = internalEventBus.publish('space.task.updated', {
+              sessionId: 'global',
+              spaceId,
+              taskId: updated.id,
+              task: updated,
+            });
+            if (updated.id !== taskId) return published.then(() => {});
+            void published.catch((err) => log.warn('Failed to emit space.task.updated:', err));
+          },
+        })({ taskId, dependsOn: updateParams.dependsOn! });
+        emitTaskUpdated = false;
+      } else if (isTaskMetadataOnlyUpdate(updateParams)) {
         task = await createBoundSpaceTaskMetadataEditor(spaceId, taskManager, {
           onCascadedTasks: emitCascadedTasks,
         })({ taskId, ...updateParams }, { source: 'rpc' });
