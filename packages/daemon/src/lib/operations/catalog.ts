@@ -1,3 +1,4 @@
+import { createCreateTaskOperation } from './task-create.ts';
 import type { TaskCore } from '@hyperneo/shared/types/task-core';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import { createGetTaskOperation } from './task-get.ts';
@@ -7,11 +8,13 @@ import { createOperationRegistry, type OperationRegistry } from './registry.ts';
 
 export function createDaemonOperationCatalog(
   jobQueue: JobQueueRepository,
-  readTask: (taskId: string) => TaskCore | null
+  readTask: (taskId: string) => TaskCore | null,
+  createTask: Parameters<typeof createCreateTaskOperation>[0]
 ): OperationRegistry {
   const registry: OperationRegistry = createOperationRegistry([
     createSendMessageOperation(jobQueue),
     createGetTaskOperation(readTask),
+    createCreateTaskOperation(createTask),
     ...createDiscoveryOperations(() => registry),
   ]);
   return registry;
