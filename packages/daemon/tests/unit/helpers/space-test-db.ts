@@ -257,6 +257,7 @@ export function createSpaceTables(db: BunDatabase): void {
 				CHECK(pending_checkpoint_type IN ('gate', 'task_completion')),
 			pending_completion_submitted_by_node_id TEXT DEFAULT NULL,
 			pending_completion_submitted_at INTEGER DEFAULT NULL,
+			pending_completion_generation INTEGER NOT NULL DEFAULT 0,
 			pending_completion_reason TEXT DEFAULT NULL,
 			post_approval_session_id TEXT DEFAULT NULL,
 			post_approval_started_at INTEGER DEFAULT NULL,

@@ -425,7 +425,8 @@ export class SpaceTaskRepository {
   updateTask(
     id: string,
     params: InternalUpdateSpaceTaskParams,
-    expectedStatus?: SpaceTaskStatus
+    expectedStatus?: SpaceTaskStatus,
+    expectedPendingCompletionGeneration?: number
   ): SpaceTask | null {
     if (this.hasTaskWithoutSpace(id)) return null;
     const fields: string[] = [];
@@ -618,16 +619,30 @@ export class SpaceTaskRepository {
       values.push(params.restrictions ? JSON.stringify(params.restrictions) : null);
     }
 
+    if (params.status === 'review' && params.pendingCheckpointType === 'task_completion') {
+      fields.push('pending_completion_generation = pending_completion_generation + 1');
+    }
+
     if (fields.length > 0) {
       fields.push('updated_at = ?');
       values.push(Date.now());
       values.push(id);
       if (expectedStatus !== undefined) values.push(expectedStatus);
+      const completionGuard =
+        expectedPendingCompletionGeneration === undefined
+          ? ''
+          : " AND status = 'review' AND pending_checkpoint_type = 'task_completion' AND pending_completion_generation = ?";
+      if (expectedPendingCompletionGeneration !== undefined)
+        values.push(expectedPendingCompletionGeneration);
       const stmt = this.db.prepare(
-        `UPDATE space_tasks SET ${fields.join(', ')} WHERE space_id IS NOT NULL AND id = ?${expectedStatus === undefined ? '' : ' AND status = ?'}`
+        `UPDATE space_tasks SET ${fields.join(', ')} WHERE space_id IS NOT NULL AND id = ?${expectedStatus === undefined ? '' : ' AND status = ?'}${completionGuard}`
       );
       const result = stmt.run(...values);
-      if (expectedStatus !== undefined && result.changes === 0) return null;
+      if (
+        (expectedStatus !== undefined || expectedPendingCompletionGeneration !== undefined) &&
+        result.changes === 0
+      )
+        return null;
       this.upsertTaskSearchRow(id);
       if (params.status === 'archived') {
         this.deleteTaskMessageRows(id);
@@ -976,6 +991,7 @@ export class SpaceTaskRepository {
         (row.pending_checkpoint_type as SpaceTask['pendingCheckpointType']) ?? null,
       pendingCompletionSubmittedByNodeId:
         (row.pending_completion_submitted_by_node_id as string | null) ?? null,
+      pendingCompletionGeneration: (row.pending_completion_generation as number | null) ?? 0,
       pendingCompletionSubmittedAt: (row.pending_completion_submitted_at as number | null) ?? null,
       pendingCompletionReason: (row.pending_completion_reason as string | null) ?? null,
       reportedStatus: (row.reported_status as SpaceTask['reportedStatus']) ?? null,
