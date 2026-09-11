@@ -1,5 +1,5 @@
-import type { AgentModelPoolEntry, ThinkingLevel } from '@hyperneo/shared';
-import { getThinkingOptionsForProvider } from '@hyperneo/shared';
+import type { AgentModelPoolEntry, ModelInfo, ThinkingLevel } from '@hyperneo/shared';
+import { THINKING_LEVEL_LABELS, getThinkingOptionsForProvider } from '@hyperneo/shared';
 import { useState } from 'preact/hooks';
 import {
   WorkflowModelSelect,
@@ -42,6 +42,22 @@ export function ModelPoolEditor({
   onModelPoolChange,
 }: ModelPoolEditorProps) {
   const [draft, setDraft] = useState<NumericDraft | null>(null);
+  const [models, setModels] = useState<ModelInfo[]>([]);
+
+  const thinkingOptionsFor = (entry: AgentModelPoolEntry) => {
+    const resolved = models.find(
+      (candidate) =>
+        candidate.id === entry.model && (!entry.provider || candidate.provider === entry.provider)
+    );
+    const options = getThinkingOptionsForProvider(entry.provider, resolved?.thinkingModes);
+    if (entry.thinkingLevel && !options.some((option) => option.value === entry.thinkingLevel)) {
+      return [
+        ...options,
+        { value: entry.thinkingLevel, label: THINKING_LEVEL_LABELS[entry.thinkingLevel] },
+      ];
+    }
+    return options;
+  };
 
   const updateEntry = (index: number, patch: Partial<AgentModelPoolEntry>) => {
     onModelPoolChange(
@@ -157,6 +173,7 @@ export function ModelPoolEditor({
                         provider: selection?.provider ?? undefined,
                       })
                     }
+                    onModelsLoad={setModels}
                     testId="pool-entry-model-select"
                     className="flex-1 min-w-0 bg-surface border border-line-strong rounded px-2.5 py-1.5 text-fg focus:outline-none focus:border-accent font-mono text-sm"
                   />
@@ -174,7 +191,7 @@ export function ModelPoolEditor({
                       class="bg-surface border border-line-strong rounded px-2 py-1 text-fg text-sm focus:outline-none focus:border-accent"
                     >
                       <option value="">Agent default</option>
-                      {getThinkingOptionsForProvider(entry.provider).map((option) => (
+                      {thinkingOptionsFor(entry).map((option) => (
                         <option key={option.value} value={option.value}>
                           {option.label}
                         </option>

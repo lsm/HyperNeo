@@ -5,10 +5,16 @@ import { render, fireEvent, cleanup } from '@testing-library/preact';
 import { useState } from 'preact/hooks';
 import type { AgentModelPoolEntry } from '@hyperneo/shared';
 
+const mockLoadedModels = [
+  { id: 'kimi-k3', provider: 'kimi', thinkingModes: 'granular' },
+  { id: 'kimi-k2', provider: 'kimi', thinkingModes: 'on' },
+];
+
 vi.mock('../visual-editor/WorkflowModelSelect', () => ({
   WorkflowModelSelect: ({
     value,
     onChange,
+    onModelsLoad,
     testId,
     className,
   }: {
@@ -17,12 +23,14 @@ vi.mock('../visual-editor/WorkflowModelSelect', () => ({
       value: string | undefined,
       selection?: { provider: string; modelId: string }
     ) => void;
+    onModelsLoad?: (models: unknown[]) => void;
     testId: string;
     className?: string;
   }) => (
     <select
       data-testid={testId}
       value={value ?? ''}
+      ref={() => onModelsLoad?.(mockLoadedModels)}
       onChange={(e) => {
         const value = (e.target as HTMLSelectElement).value || undefined;
         onChange(value, value ? { provider: 'anthropic', modelId: value } : undefined);
@@ -404,5 +412,54 @@ describe('ModelPoolEditor', () => {
     expect(onModelPoolChange).toHaveBeenCalledWith([
       { model: 'claude-opus-5', maxConcurrent: 1, weight: 100, thinkingLevel: null },
     ]);
+  });
+  it("uses the selected model's own thinking modes, not the provider default", () => {
+    const { getAllByTestId } = render(
+      <ModelPoolEditor
+        mode="pool"
+        modelPool={[{ model: 'kimi-k3', provider: 'kimi', maxConcurrent: 1, weight: 100 }]}
+        onModelPoolChange={vi.fn()}
+      />
+    );
+    const values = [
+      ...(getAllByTestId('pool-entry-thinking-select')[0] as HTMLSelectElement).options,
+    ].map((option) => option.value);
+    expect(values).toContain('think16k');
+    expect(values).toContain('think24k');
+  });
+
+  it('falls back to the provider default for a model with no granular modes', () => {
+    const { getAllByTestId } = render(
+      <ModelPoolEditor
+        mode="pool"
+        modelPool={[{ model: 'kimi-k2', provider: 'kimi', maxConcurrent: 1, weight: 100 }]}
+        onModelPoolChange={vi.fn()}
+      />
+    );
+    const values = [
+      ...(getAllByTestId('pool-entry-thinking-select')[0] as HTMLSelectElement).options,
+    ].map((option) => option.value);
+    expect(values).not.toContain('think16k');
+  });
+
+  it('retains a stored level the current model no longer offers', () => {
+    const { getAllByTestId } = render(
+      <ModelPoolEditor
+        mode="pool"
+        modelPool={[
+          {
+            model: 'kimi-k2',
+            provider: 'kimi',
+            maxConcurrent: 1,
+            weight: 100,
+            thinkingLevel: 'think24k',
+          },
+        ]}
+        onModelPoolChange={vi.fn()}
+      />
+    );
+    const select = getAllByTestId('pool-entry-thinking-select')[0] as HTMLSelectElement;
+    expect([...select.options].map((o) => o.value)).toContain('think24k');
+    expect(select.value).toBe('think24k');
   });
 });
