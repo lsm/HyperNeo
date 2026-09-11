@@ -2406,13 +2406,12 @@ describe('space-task-handlers', () => {
         } else {
           expect(dispatchPostApproval).not.toHaveBeenCalled();
           expect(taskManager.getTask).toHaveBeenCalledTimes(1);
-          expect(taskManager.updateTask).toHaveBeenCalledWith(
-            'task-1',
-            {
-              approvalReason: '  raw  ',
-            },
-            { expectedPendingCompletionGeneration: 0 }
-          );
+          expect(taskManager.setTaskStatus).toHaveBeenCalledWith('task-1', 'in_progress', {
+            expectedPendingCompletionGeneration: 0,
+          });
+          expect(taskManager.updateTask).toHaveBeenCalledWith('task-1', {
+            approvalReason: '  raw  ',
+          });
         }
       }
     );
