@@ -1,3 +1,4 @@
+import { runMigration248 } from './m248-direct-task-execution.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import { createEvolutionTables } from './evolution.ts';
 import { createLongHorizonAgentTables } from './long-horizon-agents.ts';
@@ -862,6 +863,7 @@ export function createTables(db: BunDatabase): void {
   createLongHorizonAgentTables(db);
   createSpaceAgentTemplatesTable(db);
   createWorkflowEventSubscriptionTables(db);
+  runMigration248(db);
   createSessionCounters(db);
   backfillSessionCounters(db);
 
