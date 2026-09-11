@@ -1,3 +1,4 @@
+import { runMigration247 } from './m247-pending-completion-generation.ts';
 import { runMigration245 } from './m245-reminder-space-index.ts';
 import { runMigration246 } from './m246-template-version-seq-space-key.ts';
 import { runMigration244 } from './m244-backfill-template-ownership.ts';
@@ -568,6 +569,8 @@ export function runMigrations(
   run(migrationMarkerKey(245), () => runMigration245(db));
 
   rewrite(migrationMarkerKey(246), () => runMigration246(db));
+
+  run(migrationMarkerKey(247), () => runMigration247(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }

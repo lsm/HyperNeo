@@ -610,6 +610,7 @@ export interface SpaceTask extends TaskCore {
   approvalReason: string | null;
   approvedAt: number | null;
   pendingCheckpointType: 'task_completion' | null;
+  pendingCompletionGeneration?: number;
   pendingCompletionSubmittedByNodeId?: string | null;
   pendingCompletionSubmittedAt?: number | null;
   pendingCompletionReason?: string | null;

@@ -1,3 +1,4 @@
+import { PendingCompletionSupersededError } from '../operations/pending-completion-guard.ts';
 import { publishTask } from '../../tasks/publication.ts';
 import {
   VALID_TASK_TRANSITIONS as VALID_SPACE_TASK_TRANSITIONS,
@@ -140,6 +141,7 @@ export class SpaceTaskManager {
       blockReason?: SpaceBlockReason;
       approvalSource?: SpaceApprovalSource;
       approvalReason?: string | null;
+      expectedPendingCompletionGeneration?: number;
       onCascadedTasks?: (cascaded: SpaceTask[]) => Promise<void>;
     }
   ): Promise<SpaceTask> {
@@ -148,6 +150,15 @@ export class SpaceTaskManager {
       throw new Error(`Task not found: ${taskId}`);
     }
 
+    const expectedGeneration = options?.expectedPendingCompletionGeneration;
+    if (
+      expectedGeneration !== undefined &&
+      (task.status !== 'review' ||
+        task.pendingCheckpointType !== 'task_completion' ||
+        (task.pendingCompletionGeneration ?? 0) !== expectedGeneration)
+    ) {
+      throw new PendingCompletionSupersededError(taskId);
+    }
     assertValidSpaceTaskTransition(task.status, newStatus);
 
     if (isRateOrUsageLimited(newStatus)) {
@@ -264,8 +275,9 @@ export class SpaceTaskManager {
     let updated: SpaceTask;
     try {
       updated = this.db.transaction(() => {
-        const result = this.taskRepo.updateTask(taskId, updates);
+        const result = this.taskRepo.updateTask(taskId, updates, undefined, expectedGeneration);
         if (!result) {
+          if (expectedGeneration !== undefined) throw new PendingCompletionSupersededError(taskId);
           throw new Error(`Failed to update task: ${taskId}`);
         }
         if (reopened) {
