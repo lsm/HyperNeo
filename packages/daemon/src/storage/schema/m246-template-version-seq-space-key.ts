@@ -44,6 +44,42 @@ function rebuildVersionSeq(db: BunDatabase): void {
   db.exec(
     `ALTER TABLE space_agent_template_version_seq_m246_new RENAME TO space_agent_template_version_seq`
   );
+  if (tableHasColumn(db, 'space_agent_templates', 'space_id')) renumberSharedKeys(db);
+}
+
+function renumberSharedKeys(db: BunDatabase): void {
+  const shared = db
+    .prepare(
+      `SELECT key FROM space_agent_templates GROUP BY key HAVING COUNT(*) > 1 ORDER BY key ASC`
+    )
+    .all() as Array<{ key: string }>;
+  if (shared.length === 0) return;
+
+  const owners = db.prepare(
+    `SELECT space_id, version FROM space_agent_templates WHERE key = ? ORDER BY space_id ASC`
+  );
+  const ceiling = db.prepare(
+    `SELECT COALESCE(MAX(next_version), 0) AS top FROM space_agent_template_version_seq WHERE key = ?`
+  );
+  const setVersion = db.prepare(
+    `UPDATE space_agent_templates SET version = ? WHERE space_id = ? AND key = ?`
+  );
+  const setCounter = db.prepare(
+    `INSERT INTO space_agent_template_version_seq (space_id, key, next_version) VALUES (?, ?, ?)
+     ON CONFLICT(space_id, key) DO UPDATE SET next_version = MAX(next_version, excluded.next_version)`
+  );
+
+  for (const { key } of shared) {
+    const rows = owners.all(key) as Array<{ space_id: string; version: number }>;
+    const top = (ceiling.get(key) as { top: number }).top;
+    let next = Math.max(top, ...rows.map((row) => row.version));
+    for (const row of rows.slice(1)) {
+      next += 1;
+      setVersion.run(next, row.space_id, key);
+      setCounter.run(row.space_id, key, next);
+    }
+    setCounter.run(rows[0].space_id, key, Math.max(rows[0].version, top));
+  }
 }
 
 function tableExists(db: BunDatabase, tableName: string): boolean {

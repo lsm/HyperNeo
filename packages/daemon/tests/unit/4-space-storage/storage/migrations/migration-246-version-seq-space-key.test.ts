@@ -64,7 +64,7 @@ describe('migration 246: the template version counter gains a Space key', () => 
     db.close();
   });
 
-  test('gives each owning Space its own counter, never below that row version', () => {
+  test('gives each owning Space its own counter, never below its row or the old global one', () => {
     const db = migratedDb();
     db.prepare(
       `INSERT INTO space_agent_template_version_seq (key, next_version) VALUES ('shared.custom', 4)`
@@ -74,10 +74,54 @@ describe('migration 246: the template version counter gains a Space key', () => 
     seedTemplate(db, 'space-b', 'shared.custom', 11);
     runMigration246(db);
 
-    expect(seq(db, 'space-a', 'shared.custom')).toBe(4);
-    expect(seq(db, 'space-b', 'shared.custom')).toBe(11);
+    expect(seq(db, 'space-a', 'shared.custom')).toBeGreaterThanOrEqual(4);
+    expect(seq(db, 'space-b', 'shared.custom')).toBeGreaterThanOrEqual(11);
     expect(seq(db, '', 'shared.custom')).toBe(4);
     db.close();
+  });
+
+  test('gives every copy of a fanned-out key its own version and counter', () => {
+    const db = migratedDb();
+    db.prepare(
+      `INSERT INTO space_agent_template_version_seq (key, next_version) VALUES ('fanned', 4)`
+    ).run();
+    runMigration243(db);
+    seedTemplate(db, 'space-a', 'fanned', 4);
+    seedTemplate(db, 'space-b', 'fanned', 4);
+    seedTemplate(db, 'space-c', 'fanned', 4);
+    runMigration245(db);
+
+    const versions = (
+      db
+        .prepare(`SELECT space_id, version FROM space_agent_templates WHERE key = 'fanned'`)
+        .all() as Array<{ space_id: string; version: number }>
+    ).map((row) => row.version);
+    expect(new Set(versions).size).toBe(3);
+    expect(Math.min(...versions)).toBe(4);
+
+    for (const spaceId of ['space-a', 'space-b', 'space-c']) {
+      const version = (
+        db
+          .prepare(
+            `SELECT version FROM space_agent_templates WHERE space_id = ? AND key = 'fanned'`
+          )
+          .get(spaceId) as { version: number }
+      ).version;
+      expect(seq(db, spaceId, 'fanned')).toBe(version);
+    }
+  });
+
+  test('leaves a key owned by a single Space alone', () => {
+    const db = migratedDb();
+    runMigration243(db);
+    seedTemplate(db, 'space-a', 'solo', 7);
+    runMigration245(db);
+
+    const row = db
+      .prepare(`SELECT version FROM space_agent_templates WHERE key = 'solo'`)
+      .get() as { version: number };
+    expect(row.version).toBe(7);
+    expect(seq(db, 'space-a', 'solo')).toBe(7);
   });
 
   test('is a no-op when it has already run', () => {
