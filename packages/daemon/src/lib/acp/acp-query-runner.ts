@@ -384,6 +384,9 @@ function systemPromptText(systemPrompt: Options['systemPrompt']): string[] {
   if (!systemPrompt) return [];
   if (typeof systemPrompt === 'string') return [systemPrompt];
   if (Array.isArray(systemPrompt)) return systemPrompt;
+  if (systemPrompt.type === 'custom') {
+    return systemPromptText(systemPrompt.prompt);
+  }
   return [systemPrompt.append].filter((text): text is string => !!text?.trim());
 }
 

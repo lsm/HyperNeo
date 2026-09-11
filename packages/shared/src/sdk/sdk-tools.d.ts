@@ -172,6 +172,10 @@ export type FileReadOutput =
         totalLines: number;
         truncatedByTokenCap?: boolean;
       };
+      artifactRead?: {
+        slug: string;
+        ver: string;
+      };
     }
   | {
       type: "image";
@@ -210,6 +214,12 @@ export type FileReadOutput =
         count: number;
         outputDir: string;
       };
+      firstPage?: number;
+      pages?: {
+        base64: string;
+        mediaType: "image/jpeg" | "image/png" | "image/gif" | "image/webp";
+        error?: string;
+      }[];
     }
   | {
       type: "file_unchanged";
@@ -246,29 +256,171 @@ export type ArtifactOutput =
   | {
       url: string;
       path: string;
+      artifact_id?: string;
       title?: string;
       version?: string;
       capabilities?: unknown;
       stored?: {
         contract: string;
+        preferredContract?: string;
         capabilities?: {
           [k: string]: unknown;
         };
+        carried?: boolean;
+        read?: string;
       };
       warnings?: string[];
+      publishesRemaining?: number;
+      publishesResetAt?: number;
       contract?: string;
       updated?: boolean;
+      audience?: string;
+      seq?: number;
+      unchanged?: true;
       liveSubscription?: string;
     }
   | {
       artifacts: {
         title: string;
         url: string;
+        favicon?: string;
         updatedAt?: string;
         rel?: "mine" | "shared";
       }[];
       truncated?: boolean;
       scope?: "shared" | "all";
+    }
+  | {
+      read: {
+        url: string;
+        bytes: number;
+        code: number;
+        codeText: string;
+        result: string;
+        durationMs: number;
+      };
+      artifactRead?: {
+        slug: string;
+        ver?: string;
+        seeded?: false;
+      };
+    }
+  | {
+      watch: {
+        url: string;
+        watching: boolean;
+        outcome: string;
+        reason?: string;
+        durable_skip_reason?: string;
+        task_id?: string;
+        since?: number;
+        token_expires_at?: number;
+        rail?: string;
+        trigger_id?: string;
+        durable_since?: string;
+        status?: number;
+        detail?: string;
+        note?: string;
+        events?: string[];
+      };
+    }
+  | {
+      unwatch: {
+        url: string;
+        was_watching: boolean;
+      };
+    }
+  | {
+      watches: (
+        | {
+            url: string;
+            task_id: string;
+            since: number;
+            explicit: boolean;
+            connected: boolean;
+            connecting?: boolean;
+            token_expires_at: number;
+            armed_via?: string;
+          }
+        | {
+            url: string;
+            rail: "durable_wake";
+            trigger_id: string;
+            since: string;
+            events?: string[];
+            restored?: boolean;
+          }
+        | {
+            url: string;
+            rail: "live_stopped";
+            since?: number;
+            explicit?: boolean;
+            armed_via?: string;
+            stop_kind: string;
+          }
+      )[];
+      filter_url?: string;
+      arms?: {
+        url: string;
+        rail?: string;
+        state: string;
+        reconnect?: boolean;
+        failures?: number;
+        max_failures?: number;
+        next_in_s?: number;
+        last_failure?: string;
+        reason?: string;
+        detail?: string;
+        server_message?: string;
+        at?: number;
+      }[];
+    }
+  | {
+      asset_upload: {
+        id: string;
+        url: string;
+        size_bytes: number;
+        content_type: string;
+        sha256?: string;
+        file_name: string;
+      };
+    }
+  | {
+      asset_list: {
+        url: string;
+        assets: {
+          id: string;
+          url: string;
+          content_type: string;
+          size_bytes: number;
+          sha256?: string;
+          created_at: string;
+        }[];
+        usage: {
+          files: number;
+          bytes: number;
+          max_files: number;
+          max_bytes: number;
+        };
+        next?: string;
+        cowritten?: true;
+      };
+    }
+  | {
+      asset_read: {
+        id: string;
+        path: string;
+        size_bytes: number;
+        content_type: string;
+        sha256: string;
+        cowritten?: true;
+      };
+    }
+  | {
+      asset_delete: {
+        id: string;
+        deleted: boolean;
+      };
     };
 export type ProjectsOutput =
   | {
@@ -331,6 +483,27 @@ export type ProjectsOutput =
       notice?: string;
       path: string;
       deleted: boolean;
+    }
+  | {
+      method: "project_memory_list";
+      notice?: string;
+      files: {
+        path: string;
+        size_bytes: number;
+        updated_at: string | null;
+        truncated: boolean;
+      }[];
+      truncated: boolean;
+    }
+  | {
+      method: "project_memory_read";
+      notice?: string;
+      path: string;
+      content?: string;
+      local_file?: string;
+      size_bytes: number;
+      updated_at: string | null;
+      truncated: boolean;
     };
 
 export interface AgentInput {
@@ -1081,7 +1254,14 @@ export interface ClaudeDesignInput {
   };
 }
 export interface ProjectsInput {
-  method: "project_info" | "project_read" | "project_search" | "project_write" | "project_delete";
+  method:
+    | "project_info"
+    | "project_read"
+    | "project_search"
+    | "project_write"
+    | "project_delete"
+    | "project_memory_list"
+    | "project_memory_read";
   path?: string;
   content?: string;
   local_path?: string;
@@ -1146,6 +1326,7 @@ export interface ScheduleWakeupInput {
   reason?: string;
   prompt?: string;
   stop?: boolean;
+  noop?: boolean;
 }
 export interface RemoteTriggerInput {
   action: "list" | "get" | "create" | "update" | "run" | "create_webhook_trigger" | "list_runs" | "get_run_log";
@@ -1230,16 +1411,36 @@ export interface ProposeGoalInput {
   ask_user?: boolean;
 }
 export interface ArtifactInput {
-  action?: "publish" | "list";
+  action?:
+    | "publish"
+    | "list"
+    | "read"
+    | "list_types"
+    | "watch"
+    | "unwatch"
+    | "status"
+    | "upload_asset"
+    | "list_assets"
+    | "read_asset"
+    | "delete_asset";
   file_path?: string;
   favicon?: string;
+  icon?: string;
   limit?: number;
   scope?: "mine" | "shared" | "all";
   title?: string;
   description?: string;
   label?: string;
   url?: string;
+  prompt?: string;
   force?: boolean;
+  out_dir?: string;
+  asset_id?: string;
+  after?: string;
+  capabilities?: {
+    [k: string]: unknown;
+  };
+  contract?: "latest" | string;
 }
 export interface PushNotificationInput {
   message: string;
@@ -1294,6 +1495,7 @@ export interface BashOutput {
         | "merged"
         | "commented"
         | "closed"
+        | "reopened"
         | "ready"
         | "draft"
         | "auto-merge-enabled"
@@ -1448,6 +1650,7 @@ export interface WebFetchOutput {
   artifactRead?: {
     slug: string;
     ver?: string;
+    seeded?: false;
   };
 }
 export interface WebSearchOutput {
@@ -1631,20 +1834,29 @@ export interface EnterPlanModeOutput {
 }
 export interface REPLOutput {
   code: string;
-  result: {
+  result?: {
     [k: string]: unknown;
   };
   stdout: string;
   stderr: string;
   error?: string;
+  asyncDispatched?: boolean;
   registeredTools?: string[];
   images?: {
     base64: string;
     mediaType: string;
   }[];
+  imagesOmitted?: number;
+  imagePagesFailed?: {
+    page: number;
+    file?: string;
+    error?: string;
+  }[];
+  imagePagesFailedOmitted?: number;
   documents?: {
     base64: string;
   }[];
+  documentsOmitted?: number;
 }
 export interface WorkflowOutput {
   status: "async_launched" | "remote_launched";
