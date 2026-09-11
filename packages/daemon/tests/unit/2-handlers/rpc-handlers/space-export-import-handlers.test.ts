@@ -2532,6 +2532,45 @@ describe('Space Export/Import RPC Handlers', () => {
       );
     });
 
+    it('mirrors an imported agent onto the v2 topic', async () => {
+      const bundle = makeBundle([{ name: 'NewAgent', role: 'coder' }], []);
+
+      await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+        spaceId: SPACE_ID,
+        bundle,
+      });
+
+      await Promise.resolve();
+      await Promise.resolve();
+
+      const mirrored = emittedEvents.filter((e) => e.name === 'spaceAgentV2.created');
+      expect(mirrored).toHaveLength(1);
+      expect((mirrored[0].data as { spaceId: string }).spaceId).toBe(SPACE_ID);
+      expect((mirrored[0].data as { agent: { displayName: string } }).agent.displayName).toBe(
+        'NewAgent'
+      );
+    });
+
+    it('mirrors a replaced agent onto the v2 updated topic', async () => {
+      seedAgent({ spaceId: SPACE_ID, name: 'Coder' });
+      const bundle = makeBundle([{ name: 'Coder', role: 'coder', model: 'claude-haiku-4-5' }], []);
+
+      await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+        spaceId: SPACE_ID,
+        bundle,
+        conflictResolution: { agents: { Coder: 'replace' } },
+      });
+
+      await Promise.resolve();
+      await Promise.resolve();
+
+      const mirrored = emittedEvents.filter((e) => e.name === 'spaceAgentV2.updated');
+      expect(mirrored).toHaveLength(1);
+      expect((mirrored[0].data as { agent: { displayName: string } }).agent.displayName).toBe(
+        'Coder'
+      );
+    });
+
     it('does not emit event for skipped agent', async () => {
       seedAgent({ spaceId: SPACE_ID, name: 'Coder' });
       const bundle = makeBundle([{ name: 'Coder', role: 'coder' }], []);
