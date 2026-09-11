@@ -11,7 +11,6 @@ import { navigateToSpaceSession } from '../../lib/router';
 import { spaceStore } from '../../lib/space-store';
 import { AUTONOMY_LABELS, toolPermissionsToolsList } from './agent-page-labels';
 import { SpaceTemplatesPanel } from './SpaceTemplatesPanel';
-import { TemplateDeleteDialog } from './TemplateDeleteDialog';
 import { extraToolsOf, withExtraTool, withoutExtraTool } from './template-extra-tools';
 import { toast } from '../../lib/toast';
 import { Button } from '../ui/Button';
@@ -668,11 +667,6 @@ export function SpaceLongHorizonAgents({
   );
   const [editingAgent, setEditingAgent] = useState<SpaceLongHorizonAgent | null>(null);
   const [showEditor, setShowEditor] = useState(false);
-  const [deletingTemplate, setDeletingTemplate] = useState<SpaceLongHorizonAgentTemplate | null>(
-    null
-  );
-  const [deletingTemplateBusy, setDeletingTemplateBusy] = useState(false);
-  const [deleteTemplateError, setDeleteTemplateError] = useState<string | null>(null);
   const [deletingAgent, setDeletingAgent] = useState<SpaceLongHorizonAgent | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -715,21 +709,6 @@ export function SpaceLongHorizonAgents({
       setDeleteError(err instanceof Error ? err.message : 'Failed to delete agent');
     } finally {
       setDeleting(false);
-    }
-  };
-
-  const handleTemplateDeleteConfirm = async () => {
-    if (!deletingTemplate) return;
-    setDeletingTemplateBusy(true);
-    setDeleteTemplateError(null);
-    try {
-      await spaceStore.deleteTemplate(deletingTemplate.key, deletingTemplate.version);
-      toast.success(`"${deletingTemplate.displayName}" deleted`);
-      setDeletingTemplate(null);
-    } catch (err) {
-      setDeleteTemplateError(err instanceof Error ? err.message : 'Failed to delete template');
-    } finally {
-      setDeletingTemplateBusy(false);
     }
   };
 
@@ -852,6 +831,7 @@ export function SpaceLongHorizonAgents({
         )}
 
         <SpaceTemplatesPanel
+          spaceId={spaceId}
           templates={templates}
           templateInstanceCounts={templateInstanceCounts}
           userTemplateKeys={userTemplateKeys}
@@ -859,10 +839,6 @@ export function SpaceLongHorizonAgents({
             setSelectedTemplate(template);
             setEditingAgent(null);
             setShowEditor(true);
-          }}
-          onDeleteTemplate={(template) => {
-            setDeletingTemplate(template);
-            setDeleteTemplateError(null);
           }}
         />
 
@@ -915,19 +891,6 @@ export function SpaceLongHorizonAgents({
           existingNames={existingNames}
           onSave={handleEditorSave}
           onCancel={handleEditorCancel}
-        />
-      )}
-
-      {deletingTemplate && (
-        <TemplateDeleteDialog
-          template={deletingTemplate}
-          busy={deletingTemplateBusy}
-          error={deleteTemplateError}
-          onConfirm={handleTemplateDeleteConfirm}
-          onClose={() => {
-            setDeletingTemplate(null);
-            setDeleteTemplateError(null);
-          }}
         />
       )}
 
