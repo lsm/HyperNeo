@@ -6,4 +6,6 @@ export function runMigration254(db: Database): void {
   }>;
   if (!columns.some((column) => column.name === 'verified_generation'))
     db.exec('ALTER TABLE direct_task_stop_requests ADD COLUMN verified_generation INTEGER');
+  if (!columns.some((column) => column.name === 'verification_token'))
+    db.exec('ALTER TABLE direct_task_stop_requests ADD COLUMN verification_token TEXT');
 }

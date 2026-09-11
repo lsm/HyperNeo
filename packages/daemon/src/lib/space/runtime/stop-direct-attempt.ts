@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { AgentSession } from '../../agent/agent-session.ts';
 import type { SessionManager } from '../../session/session-manager.ts';
 import type {
@@ -25,6 +26,8 @@ export interface DirectAttemptStopDependencies {
     | 'requestStop'
     | 'finishRequestedStop'
     | 'isStopRequested'
+    | 'beginStopVerification'
+    | 'getStopVerification'
     | 'recordStopVerification'
     | 'hasStopVerification'
     | 'clearStopVerification'
@@ -32,7 +35,7 @@ export interface DirectAttemptStopDependencies {
   tasks: Pick<SpaceTaskRepository, 'getTask'>;
   sessionManager: Pick<
     SessionManager,
-    'getCachedSession' | 'isSessionLoading' | 'unregisterSession'
+    'getCachedSession' | 'isSessionLoading' | 'unregisterSession' | 'coalesceDirectStopVerification'
   >;
 }
 
@@ -68,14 +71,19 @@ export function directSessionIsDown(session: AgentSession): boolean {
 export interface VerifiedDirectStop {
   attempt: DirectTaskAttempt;
   session: AgentSession | null;
+  token: string;
 }
 
-export async function verifyDirectAttemptStop(
+export type DirectStopVerificationResult =
+  | { value: VerifiedDirectStop }
+  | { reason: DirectAttemptStopResult };
+
+async function verifyDirectAttemptStopOwned(
   attempts: DirectAttemptStopDependencies['attempts'],
   tasks: DirectAttemptStopDependencies['tasks'],
   sessionManager: DirectAttemptStopDependencies['sessionManager'],
   attempt: DirectTaskAttempt
-): Promise<{ value: VerifiedDirectStop } | { reason: DirectAttemptStopResult }> {
+): Promise<DirectStopVerificationResult> {
   const current = attempts.get(attempt.id);
   if (
     !current ||
@@ -86,19 +94,25 @@ export async function verifyDirectAttemptStop(
   )
     return { reason: { stopped: false, reason: 'unavailable' } };
   attempt = current;
+  const recorded = attempts.getStopVerification(attempt.id, attempt.sessionId);
+  let token = recorded?.token ?? randomUUID();
   if (sessionManager.isSessionLoading(attempt.sessionId)) {
-    attempts.clearStopVerification(attempt.id, attempt.sessionId);
+    attempts.clearStopVerification(attempt.id, attempt.sessionId, token);
     return { reason: { stopped: false, reason: 'unverified' } };
   }
   const session = sessionManager.getCachedSession(attempt.sessionId);
   if (
     !session &&
     attempt.phase === 'running' &&
-    !attempts.hasStopVerification(attempt.id, attempt.sessionId, attempt.generation)
+    (recorded?.generation !== attempt.generation || !recorded.token)
   )
     return { reason: { stopped: false, reason: 'unverified' } };
+  if (session || attempt.phase === 'reserved') {
+    token = randomUUID();
+    if (!attempts.beginStopVerification(attempt.id, attempt.sessionId, attempt.generation, token))
+      return { reason: { stopped: false, reason: 'unavailable' } };
+  }
   if (session) {
-    attempts.clearStopVerification(attempt.id, attempt.sessionId);
     const identity = requireDirectTaskWorkerIdentity(attempt.sessionId, {
       session: session.getSessionData(),
       task: tasks.getTask(attempt.taskId),
@@ -114,7 +128,9 @@ export async function verifyDirectAttemptStop(
       }
       if (!directSessionIsDown(session))
         return { reason: { stopped: false, reason: 'unverified' } };
-      if (!attempts.recordStopVerification(attempt.id, attempt.sessionId, attempt.generation))
+      if (
+        !attempts.recordStopVerification(attempt.id, attempt.sessionId, attempt.generation, token)
+      )
         return { reason: { stopped: false, reason: 'unavailable' } };
       await sessionManager.unregisterSession(attempt.sessionId, session);
       if (
@@ -122,21 +138,39 @@ export async function verifyDirectAttemptStop(
         sessionManager.isSessionLoading(attempt.sessionId) ||
         sessionManager.getCachedSession(attempt.sessionId)
       ) {
-        attempts.clearStopVerification(attempt.id, attempt.sessionId);
+        attempts.clearStopVerification(attempt.id, attempt.sessionId, token);
         return { reason: { stopped: false, reason: 'unverified' } };
       }
     } catch {
-      attempts.clearStopVerification(attempt.id, attempt.sessionId);
+      attempts.clearStopVerification(attempt.id, attempt.sessionId, token);
       return { reason: { stopped: false, reason: 'unverified' } };
     }
   }
-  return { value: { attempt, session } };
+  if (
+    !session &&
+    attempt.phase === 'reserved' &&
+    !attempts.recordStopVerification(attempt.id, attempt.sessionId, attempt.generation, token)
+  )
+    return { reason: { stopped: false, reason: 'unavailable' } };
+  return { value: { attempt, session, token } };
+}
+
+export function verifyDirectAttemptStop(
+  attempts: DirectAttemptStopDependencies['attempts'],
+  tasks: DirectAttemptStopDependencies['tasks'],
+  sessionManager: DirectAttemptStopDependencies['sessionManager'],
+  attempt: DirectTaskAttempt
+): Promise<DirectStopVerificationResult> {
+  return sessionManager.coalesceDirectStopVerification(
+    JSON.stringify([attempt.id, attempt.sessionId, attempt.generation]),
+    () => verifyDirectAttemptStopOwned(attempts, tasks, sessionManager, attempt)
+  );
 }
 
 function finishVerifiedDirectStop(
   attempts: DirectAttemptStopDependencies['attempts'],
   sessionManager: DirectAttemptStopDependencies['sessionManager'],
-  { attempt, session }: VerifiedDirectStop
+  { attempt, session, token }: VerifiedDirectStop
 ): DirectAttemptStopResult {
   try {
     if (
@@ -144,14 +178,19 @@ function finishVerifiedDirectStop(
       sessionManager.getCachedSession(attempt.sessionId) ||
       (session && !directSessionIsDown(session))
     ) {
-      attempts.clearStopVerification(attempt.id, attempt.sessionId);
+      attempts.clearStopVerification(attempt.id, attempt.sessionId, token);
       return { stopped: false, reason: 'unverified' };
     }
   } catch {
-    attempts.clearStopVerification(attempt.id, attempt.sessionId);
+    attempts.clearStopVerification(attempt.id, attempt.sessionId, token);
     return { stopped: false, reason: 'unverified' };
   }
-  const stopped = attempts.finishRequestedStop(attempt.id, attempt.sessionId, attempt.generation);
+  const stopped = attempts.finishRequestedStop(
+    attempt.id,
+    attempt.sessionId,
+    attempt.generation,
+    token
+  );
   return stopped ? { stopped: true, attempt: stopped } : { stopped: false, reason: 'unavailable' };
 }
 

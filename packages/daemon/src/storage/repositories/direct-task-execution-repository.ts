@@ -97,14 +97,40 @@ export class DirectTaskExecutionRepository {
       .get(id, sessionId);
   }
 
-  recordStopVerification(id: string, sessionId: string, generation: number): boolean {
+  beginStopVerification(id: string, sessionId: string, generation: number, token: string): boolean {
+    return (
+      this.db
+        .prepare(`UPDATE direct_task_stop_requests SET verification_token = ?, verified_generation = NULL
+      WHERE attempt_id = ? AND session_id = ? AND EXISTS (
+        SELECT 1 FROM direct_task_execution_attempts WHERE id = ? AND session_id = ? AND generation = ? AND phase <> 'stopped')`)
+        .run(token, id, sessionId, id, sessionId, generation).changes === 1
+    );
+  }
+
+  getStopVerification(
+    id: string,
+    sessionId: string
+  ): { token: string | null; generation: number | null } | null {
+    return this.db
+      .prepare(
+        'SELECT verification_token AS token, verified_generation AS generation FROM direct_task_stop_requests WHERE attempt_id = ? AND session_id = ?'
+      )
+      .get(id, sessionId) as { token: string | null; generation: number | null } | null;
+  }
+
+  recordStopVerification(
+    id: string,
+    sessionId: string,
+    generation: number,
+    token: string
+  ): boolean {
     return (
       this.db
         .prepare(`UPDATE direct_task_stop_requests SET verified_generation = ?
       WHERE attempt_id = ? AND session_id = ? AND EXISTS (
         SELECT 1 FROM direct_task_execution_attempts WHERE id = ? AND session_id = ?
-          AND generation = ? AND phase <> 'stopped')`)
-        .run(generation, id, sessionId, id, sessionId, generation).changes === 1
+          AND generation = ? AND phase <> 'stopped') AND verification_token = ?`)
+        .run(generation, id, sessionId, id, sessionId, generation, token).changes === 1
     );
   }
 
@@ -115,22 +141,27 @@ export class DirectTaskExecutionRepository {
       .get(id, sessionId, generation);
   }
 
-  clearStopVerification(id: string, sessionId: string): void {
+  clearStopVerification(id: string, sessionId: string, token: string): void {
     this.db
       .prepare(
-        'UPDATE direct_task_stop_requests SET verified_generation = NULL WHERE attempt_id = ? AND session_id = ?'
+        'UPDATE direct_task_stop_requests SET verified_generation = NULL WHERE attempt_id = ? AND session_id = ? AND verification_token = ?'
       )
-      .run(id, sessionId);
+      .run(id, sessionId, token);
   }
 
-  finishRequestedStop(id: string, sessionId: string, generation: number): DirectTaskAttempt | null {
+  finishRequestedStop(
+    id: string,
+    sessionId: string,
+    generation: number,
+    token: string
+  ): DirectTaskAttempt | null {
     return this.db
       .prepare(`UPDATE direct_task_execution_attempts
       SET phase = 'stopped', outcome = (SELECT outcome FROM direct_task_stop_requests WHERE attempt_id = ?), updated_at = ?
       WHERE id = ? AND session_id = ? AND generation = ? AND phase <> 'stopped'
         AND EXISTS (SELECT 1 FROM direct_task_stop_requests
           WHERE attempt_id = ? AND session_id = ?
-            AND (direct_task_execution_attempts.phase = 'reserved' OR verified_generation = ?))
+            AND verified_generation = ? AND verification_token = ?)
       RETURNING ${columns}`)
       .get(
         id,
@@ -140,7 +171,8 @@ export class DirectTaskExecutionRepository {
         generation,
         id,
         sessionId,
-        generation
+        generation,
+        token
       ) as DirectTaskAttempt | null;
   }
 
