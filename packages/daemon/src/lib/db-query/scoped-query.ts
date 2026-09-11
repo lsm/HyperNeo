@@ -107,12 +107,36 @@ function buildTableScopeFilter(
   return { whereClause: '', params: [] };
 }
 
-function readableColumns(db: Database, config: ScopeTableConfig): string[] {
-  const info = db.query(`PRAGMA table_info(${quoteIdent(config.tableName)})`).all() as Array<{
+interface ScratchColumn {
+  name: string;
+  type: string;
+}
+
+function readableColumns(db: Database, config: ScopeTableConfig): ScratchColumn[] {
+  const info = db.query(`PRAGMA table_xinfo(${quoteIdent(config.tableName)})`).all() as Array<{
     name: string;
+    type: string;
+    hidden: number;
   }>;
   const blacklisted = new Set(config.blacklistedColumns);
-  return info.map((c) => c.name).filter((name) => !blacklisted.has(name));
+  return info
+    .filter((c) => c.hidden !== 1 && !blacklisted.has(c.name))
+    .map((c) => ({ name: c.name, type: c.type }));
+}
+
+function copySourceIndexes(source: Database, scratch: Database, tableName: string): void {
+  const indexes = source
+    .query(
+      `SELECT sql FROM sqlite_master WHERE type = 'index' AND tbl_name = ? AND sql IS NOT NULL`
+    )
+    .all(tableName) as Array<{ sql: string }>;
+  for (const index of indexes) {
+    try {
+      scratch.exec(index.sql);
+    } catch {
+      continue;
+    }
+  }
 }
 
 function materializeScopedTable(
@@ -126,12 +150,22 @@ function materializeScopedTable(
 
   const filter = buildTableScopeFilter(config, scopeValue);
   const where = filter.whereClause ? ` WHERE ${filter.whereClause}` : '';
-  const projection = columns.map(quoteIdent).join(', ');
-  const rows = source
-    .query(
-      `SELECT ${projection} FROM ${quoteIdent(config.tableName)}${where} LIMIT ${MAX_MATERIALIZED_ROWS + 1}`
-    )
-    .all(...(filter.params as [])) as Record<string, unknown>[];
+  const names = columns.map((c) => c.name);
+  const projection = names.map(quoteIdent).join(', ');
+  const table = quoteIdent(config.tableName);
+
+  let withRowid = true;
+  let rows: Record<string, unknown>[];
+  const select = (cols: string) =>
+    source
+      .query(`SELECT ${cols} FROM ${table}${where} LIMIT ${MAX_MATERIALIZED_ROWS + 1}`)
+      .all(...(filter.params as [])) as Record<string, unknown>[];
+  try {
+    rows = select(`rowid AS _dbq_rowid, ${projection}`);
+  } catch {
+    withRowid = false;
+    rows = select(projection);
+  }
 
   if (rows.length > MAX_MATERIALIZED_ROWS) {
     throw new Error(
@@ -139,17 +173,22 @@ function materializeScopedTable(
     );
   }
 
-  scratch.exec(`CREATE TABLE ${quoteIdent(config.tableName)} (${projection})`);
+  const declaration = columns
+    .map((c) => (c.type ? `${quoteIdent(c.name)} ${c.type}` : quoteIdent(c.name)))
+    .join(', ');
+  scratch.exec(`CREATE TABLE ${table} (${declaration})`);
+  copySourceIndexes(source, scratch, config.tableName);
   if (rows.length === 0) return;
 
-  const placeholders = columns.map(() => '?').join(', ');
+  const targets = withRowid ? ['rowid', ...names] : names;
   const insert = scratch.query(
-    `INSERT INTO ${quoteIdent(config.tableName)} VALUES (${placeholders})`
+    `INSERT INTO ${table} (${targets.map(quoteIdent).join(', ')}) VALUES (${targets.map(() => '?').join(', ')})`
   );
   scratch.exec('BEGIN');
   try {
     for (const row of rows) {
-      insert.run(...(columns.map((c) => row[c]) as []));
+      const values = names.map((c) => row[c]);
+      insert.run(...((withRowid ? [row._dbq_rowid, ...values] : values) as []));
     }
     scratch.exec('COMMIT');
   } catch (err) {
@@ -185,10 +224,16 @@ export function runScopedQuery(
   const effectiveLimit = Math.min(cappedLimit, existingLimit ?? MAX_LIMIT);
 
   const scratch = new Database(':memory:');
+  scratch.exec('PRAGMA case_sensitive_like = ON');
   try {
-    for (const tableRef of new Set(validation.tableRefs)) {
-      const config = configMap.get(tableRef);
-      if (config) materializeScopedTable(db, scratch, config, scopeValue);
+    db.exec('BEGIN DEFERRED');
+    try {
+      for (const tableRef of new Set(validation.tableRefs)) {
+        const config = configMap.get(tableRef);
+        if (config) materializeScopedTable(db, scratch, config, scopeValue);
+      }
+    } finally {
+      db.exec('COMMIT');
     }
 
     const rows = scratch
