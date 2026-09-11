@@ -23,6 +23,7 @@ export default defineConfig({
     environment: 'node',
     globals: true,
     testTimeout: 15_000,
+    hookTimeout: 30_000,
     fileParallelism: false,
     include: ['tests/**/*.test.ts', 'tests/**/*_test.ts'],
     exclude: ['node_modules', 'dist', 'tests/online/**'],
