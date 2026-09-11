@@ -625,7 +625,7 @@ describe('SpaceWorkflowRunRepository', () => {
       expect(
         repo.backfillDefinitionPins(
           () => wf,
-          () => null
+          () => () => null
         )
       ).toBe(1);
 
@@ -661,7 +661,7 @@ describe('SpaceWorkflowRunRepository', () => {
 
       expect(
         repo.migrateSnapshotlessPins(
-          (key) =>
+          () => (key) =>
             key === 'worker.custom'
               ? ({
                   key: 'worker.custom',
@@ -712,7 +712,7 @@ describe('SpaceWorkflowRunRepository', () => {
 
       expect(
         repo.migrateSnapshotlessPins(
-          () => null,
+          () => () => null,
           () => wf
         )
       ).toBe(0);
@@ -739,7 +739,7 @@ describe('SpaceWorkflowRunRepository', () => {
 
       expect(
         repo.migrateSnapshotlessPins(
-          () => null,
+          () => () => null,
           () => wf
         )
       ).toBe(1);
@@ -775,7 +775,7 @@ describe('SpaceWorkflowRunRepository', () => {
 
       expect(
         repo.migrateSnapshotlessPins(
-          () => null,
+          () => () => null,
           () => wf
         )
       ).toBe(1);
@@ -809,7 +809,7 @@ describe('SpaceWorkflowRunRepository', () => {
 
       expect(
         repo.migrateSnapshotlessPins(
-          () => null,
+          () => () => null,
           () => null
         )
       ).toBe(0);
@@ -842,7 +842,7 @@ describe('SpaceWorkflowRunRepository', () => {
       expect(repo.listSnapshotlessPinnedRuns().map((r) => r.id)).toContain(run.id);
       expect(
         repo.migrateSnapshotlessPins(
-          () => null,
+          () => () => null,
           () => wf
         )
       ).toBe(1);
@@ -872,7 +872,7 @@ describe('SpaceWorkflowRunRepository', () => {
 
       expect(
         repo.migrateSnapshotlessPins(
-          () => null,
+          () => () => null,
           () => wf
         )
       ).toBe(0);
@@ -888,6 +888,23 @@ describe('SpaceWorkflowRunRepository', () => {
 
       expect(ok).toBe(false);
       expect(repo.getRun(run.id)!.definitionVersion).toBe(firstPin);
+    });
+
+    it('backfillDefinitionPins resolves templates in the run Space, not the workflow Space', () => {
+      const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Legacy' });
+      seedTaskForRun(run.id, spaceId);
+      const wf = rawWorkflow({ spaceId: 'other-space' });
+      const asked: string[] = [];
+
+      repo.backfillDefinitionPins(
+        () => wf,
+        (resolverSpaceId) => {
+          asked.push(resolverSpaceId);
+          return () => null;
+        }
+      );
+
+      expect(asked).toEqual([spaceId]);
     });
 
     it('backfillDefinitionPins pins every unpinned run with an existing head', () => {

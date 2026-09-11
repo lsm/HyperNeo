@@ -4,13 +4,22 @@ import { getBuiltInSpaceAgentTemplates } from '../managers/space-agent-template-
 
 export type AgentTemplateResolver = (key: string) => SpaceAgentTemplate | null;
 
+export type AgentTemplateResolverFactory = (spaceId: string) => AgentTemplateResolver;
+
 export function createAgentTemplateResolver(
-  templateRepo?: Pick<SpaceAgentTemplateRepository, 'getByKey'>
+  spaceId: string,
+  templateRepo?: Pick<SpaceAgentTemplateRepository, 'getOwned'>
 ): AgentTemplateResolver {
   const builtIns = new Map(
     getBuiltInSpaceAgentTemplates().map((template) => [template.key, template])
   );
-  return (key) => builtIns.get(key) ?? templateRepo?.getByKey(key) ?? null;
+  return (key) => builtIns.get(key) ?? templateRepo?.getOwned(spaceId, key) ?? null;
+}
+
+export function createAgentTemplateResolverFactory(
+  templateRepo?: Pick<SpaceAgentTemplateRepository, 'getOwned'>
+): AgentTemplateResolverFactory {
+  return (spaceId) => createAgentTemplateResolver(spaceId, templateRepo);
 }
 
 export function toRunTemplateSnapshot(template: SpaceAgentTemplate): WorkflowTemplateSnapshot {

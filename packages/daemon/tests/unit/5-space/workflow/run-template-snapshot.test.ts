@@ -3,6 +3,7 @@ import type { SpaceAgentTemplate, SpaceWorkflow } from '@hyperneo/shared';
 import {
   buildRunTemplateSnapshots,
   createAgentTemplateResolver,
+  createAgentTemplateResolverFactory,
   runTemplateResolves,
   toRunTemplateSnapshot,
   workflowReferencesTemplates,
@@ -165,12 +166,15 @@ describe('withRunTemplateSnapshots', () => {
 });
 
 describe('createAgentTemplateResolver', () => {
+  const stored = {
+    getOwned: (spaceId: string, key: string) =>
+      spaceId === 'space-a' && key === 'worker.custom'
+        ? template({ instructions: 'stored copy' })
+        : null,
+  };
+
   test('prefers built-in templates over stored templates with the same key', () => {
-    const stored = {
-      getByKey: (key: string) =>
-        key === 'worker.custom' ? template({ instructions: 'stored copy' }) : null,
-    };
-    const resolve = createAgentTemplateResolver(stored);
+    const resolve = createAgentTemplateResolver('space-a', stored);
 
     const builtIn = resolve('worker.swe');
     expect(builtIn?.key).toBe('worker.swe');
@@ -182,11 +186,27 @@ describe('createAgentTemplateResolver', () => {
     expect(resolve('worker.nope')).toBeNull();
   });
 
+  test('does not resolve a stored template another Space owns', () => {
+    expect(createAgentTemplateResolver('space-b', stored)('worker.custom')).toBeNull();
+  });
+
   test('resolves built-ins when no template repository is provided', () => {
-    const resolve = createAgentTemplateResolver();
+    const resolve = createAgentTemplateResolver('space-a');
 
     expect(resolve('worker.swe')?.key).toBe('worker.swe');
     expect(resolve('worker.unheard-of')).toBeNull();
+  });
+});
+
+describe('createAgentTemplateResolverFactory', () => {
+  test('binds each resolver to the Space it is asked for', () => {
+    const resolveFor = createAgentTemplateResolverFactory({
+      getOwned: (spaceId: string, key: string) =>
+        key === 'worker.custom' ? template({ instructions: `stored in ${spaceId}` }) : null,
+    });
+
+    expect(resolveFor('space-a')('worker.custom')?.instructions).toBe('stored in space-a');
+    expect(resolveFor('space-b')('worker.custom')?.instructions).toBe('stored in space-b');
   });
 });
 

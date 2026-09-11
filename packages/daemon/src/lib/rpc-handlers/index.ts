@@ -88,7 +88,7 @@ import {
 import { SpaceAgentTemplateRepository } from '../../storage/repositories/space-agent-template-repository.ts';
 import { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository.ts';
 import { SpaceAgentTemplateManager } from '../space/managers/space-agent-template-manager.ts';
-import { createAgentTemplateResolver } from '../space/workflows/run-template-snapshot.ts';
+import { createAgentTemplateResolverFactory } from '../space/workflows/run-template-snapshot.ts';
 import {
   deliverSpaceAgentMessage,
   type SpaceAgentInjectionOutcome,
@@ -540,12 +540,12 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   const spaceWorkflowRepo = new SpaceWorkflowRepository(deps.db.getDatabase());
   spaceWorkflowRepo.backfillExistingDefinitionVersions();
   const spaceAgentTemplateRepo = new SpaceAgentTemplateRepository(deps.db.getDatabase());
-  const agentTemplateResolver = createAgentTemplateResolver(spaceAgentTemplateRepo);
+  const agentTemplateResolverFor = createAgentTemplateResolverFactory(spaceAgentTemplateRepo);
   spaceWorkflowRunRepo.backfillDefinitionPins(
     (id) => spaceWorkflowRepo.getWorkflow(id),
-    agentTemplateResolver
+    agentTemplateResolverFor
   );
-  spaceWorkflowRunRepo.migrateSnapshotlessPins(agentTemplateResolver, (id) =>
+  spaceWorkflowRunRepo.migrateSnapshotlessPins(agentTemplateResolverFor, (id) =>
     spaceWorkflowRepo.getWorkflow(id)
   );
   const agentLookup: SpaceAgentLookup = createSpaceAgentLookup(longHorizonAgentRepo);

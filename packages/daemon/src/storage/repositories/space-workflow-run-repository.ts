@@ -15,6 +15,7 @@ import {
 import {
   withRunTemplateSnapshots,
   type AgentTemplateResolver,
+  type AgentTemplateResolverFactory,
 } from '../../lib/space/workflows/run-template-snapshot.ts';
 import {
   buildPlanRunSnapshotMigration,
@@ -149,12 +150,13 @@ export class SpaceWorkflowRunRepository {
   listSnapshotlessPinnedRuns(): Array<{
     id: string;
     workflowId: string;
+    spaceId: string;
     payload: string;
     versionHash: string;
   }> {
     const rows = this.db
       .prepare(
-        `SELECT r.id, r.workflow_id, r.definition_version AS version_hash, v.payload
+        `SELECT r.id, r.workflow_id, r.space_id, r.definition_version AS version_hash, v.payload
          FROM space_workflow_runs r
          JOIN space_workflow_definition_versions v
            ON v.workflow_id = r.workflow_id AND v.version_hash = r.definition_version
@@ -178,30 +180,32 @@ export class SpaceWorkflowRunRepository {
       .all() as Array<{
       id: string;
       workflow_id: string;
+      space_id: string;
       payload: string;
       version_hash: string;
     }>;
     return rows.map((r) => ({
       id: r.id,
       workflowId: r.workflow_id,
+      spaceId: r.space_id,
       payload: r.payload,
       versionHash: r.version_hash,
     }));
   }
 
   migrateSnapshotlessPins(
-    resolveTemplate: AgentTemplateResolver,
+    resolveTemplateFor: AgentTemplateResolverFactory,
     loadWorkflow: (workflowId: string) => SpaceWorkflow | null
   ): number {
-    const plan = buildPlanRunSnapshotMigration({
-      verifyVersion: verifyDefinitionVersion,
-      loadWorkflow,
-      resolveTemplate,
-      computeVersion: computeDefinitionVersion,
-    });
     let count = 0;
     for (const run of this.listSnapshotlessPinnedRuns()) {
       try {
+        const plan = buildPlanRunSnapshotMigration({
+          verifyVersion: verifyDefinitionVersion,
+          loadWorkflow,
+          resolveTemplate: resolveTemplateFor(run.spaceId),
+          computeVersion: computeDefinitionVersion,
+        });
         const outcome = plan(run);
         if (isRunSnapshotMigrationSkip(outcome)) {
           log.warn(`migrateSnapshotlessPins: ${outcome.message}`);
@@ -241,13 +245,14 @@ export class SpaceWorkflowRunRepository {
 
   backfillDefinitionPins(
     loadWorkflow: (workflowId: string) => SpaceWorkflow | null,
-    resolveTemplate?: AgentTemplateResolver
+    resolveTemplateFor?: AgentTemplateResolverFactory
   ): number {
     let count = 0;
     for (const run of this.listPinnableRuns()) {
       try {
         const workflow = loadWorkflow(run.workflowId);
         if (!workflow) continue;
+        const resolveTemplate = resolveTemplateFor?.(run.spaceId);
         if (this.pinExistingRun(run.id, workflow, resolveTemplate)) count += 1;
       } catch (err) {
         log.warn(`backfillDefinitionPins: skipped run ${run.id} (non-fatal):`, err);
