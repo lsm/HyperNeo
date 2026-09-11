@@ -6,6 +6,7 @@ import type {
   UpdateSpaceAgentParams,
 } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
+import { MIGRATED_WORKER_TEMPLATE_KEY } from '../../lib/space/agents/worker-long-horizon-mapper.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import type { SQLiteValue } from '../types.ts';
 
@@ -119,8 +120,18 @@ export class SpaceAgentRepository {
     }));
   }
 
+  private isMigratedWorkerMirror(id: string): boolean {
+    const row = this.db.prepare(`SELECT template_key FROM ${AGENTS_TABLE} WHERE id = ?`).get(id) as
+      | { template_key?: string | null }
+      | undefined;
+    return row?.template_key === MIGRATED_WORKER_TEMPLATE_KEY;
+  }
+
   update(id: string, params: UpdateSpaceAgentParams): SpaceAgent | null {
     if (!this.getById(id)) return null;
+    if (params.status === 'disabled' && this.isMigratedWorkerMirror(id)) {
+      throw new Error('Agent status "disabled" cannot be set on a migrated worker agent');
+    }
     if (params.sessionId !== undefined) this.requireSessionUnbound(params.sessionId ?? null, id);
 
     const fields: string[] = [];

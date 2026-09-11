@@ -211,8 +211,14 @@ export function setupSpaceAgentV2Handlers(messageHub: MessageHub, deps: SpaceAge
   });
 
   messageHub.onRequest(method('update'), async (data) => {
-    const params = data as UpdateSpaceAgentInput;
-    requireString(params?.id, 'id');
+    const params = data as UpdateSpaceAgentInput & { spaceId?: string };
+    const id = requireString(params?.id, 'id');
+    if (params.spaceId) {
+      const existing = deps.agents.getById(id);
+      if (existing && existing.spaceId !== params.spaceId) {
+        throw new Error(`Agent ${id} does not belong to space ${params.spaceId}`);
+      }
+    }
     return { agent: await updateAgent(params) };
   });
 
@@ -227,10 +233,13 @@ export function setupSpaceAgentV2Handlers(messageHub: MessageHub, deps: SpaceAge
   });
 
   messageHub.onRequest(method('delete'), async (data) => {
-    const params = data as { id?: string };
+    const params = data as { id?: string; spaceId?: string };
     const id = requireString(params.id, 'id');
     const existing = deps.agents.getById(id);
     if (!existing) throw new Error(`Agent not found: ${id}`);
+    if (params.spaceId && existing.spaceId !== params.spaceId) {
+      throw new Error(`Agent ${id} does not belong to space ${params.spaceId}`);
+    }
     assertAgentDeletable(existing);
     deps.agents.delete(id);
     deps.removeAgentSubscriptions?.(existing.spaceId, id);

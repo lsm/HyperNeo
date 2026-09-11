@@ -623,6 +623,26 @@ describe('setupSpaceAgentV2Handlers', () => {
         'id is required'
       );
     });
+
+    test('rejects an update whose spaceId does not match the agent', async () => {
+      const created = agents.create({ spaceId: 'space-1', handle: 'a' });
+      await expect(
+        call(handlers, 'spaceAgentV2.update', {
+          id: created.id,
+          spaceId: 'space-2',
+          displayName: 'Renamed',
+        })
+      ).rejects.toThrow('does not belong to space space-2');
+      expect(agents.getById(created.id)?.displayName).toBe('a');
+    });
+
+    test('rejects setting status to disabled on a migrated worker mirror', async () => {
+      insertMirror(db, 'mirror-1', 'mirror', 'Legacy Worker');
+      await expect(
+        call(handlers, 'spaceAgentV2.update', { id: 'mirror-1', status: 'disabled' })
+      ).rejects.toThrow('cannot be set on a migrated worker agent');
+      expect(agents.getById('mirror-1')?.status).toBe('active');
+    });
   });
 
   describe('update validation through the pipeline', () => {
@@ -708,6 +728,14 @@ describe('setupSpaceAgentV2Handlers', () => {
       await expect(call(handlers, 'spaceAgentV2.delete', { id: 'ghost' })).rejects.toThrow(
         'Agent not found: ghost'
       );
+    });
+
+    test('rejects a delete whose spaceId does not match the agent', async () => {
+      const created = agents.create({ spaceId: 'space-1', handle: 'a' });
+      await expect(
+        call(handlers, 'spaceAgentV2.delete', { id: created.id, spaceId: 'space-2' })
+      ).rejects.toThrow('does not belong to space space-2');
+      expect(agents.getById(created.id)).not.toBeNull();
     });
 
     test('refuses to delete the Space Manager agent', async () => {

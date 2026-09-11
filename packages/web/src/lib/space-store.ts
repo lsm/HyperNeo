@@ -2591,7 +2591,7 @@ class SpaceStore {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
 
-    await hub.request('spaceAgentV2.delete', { id: agentId });
+    await hub.request('spaceAgentV2.delete', { id: agentId, spaceId });
     this.agents.value = this.agents.value.filter((agent) => agent.id !== agentId);
   }
 

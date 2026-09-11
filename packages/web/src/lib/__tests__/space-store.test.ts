@@ -2150,7 +2150,10 @@ describe('SpaceStore — CRUD methods', () => {
     spaceStore.agents.value = [makeLongHorizonAgent('a1')];
     await spaceStore.deleteAgent('a1');
 
-    expect(mockHub.request).toHaveBeenCalledWith('spaceAgentV2.delete', { id: 'a1' });
+    expect(mockHub.request).toHaveBeenCalledWith('spaceAgentV2.delete', {
+      id: 'a1',
+      spaceId: 'space-1',
+    });
     expect(spaceStore.agents.value.some((agent) => agent.id === 'a1')).toBe(false);
   });
 
