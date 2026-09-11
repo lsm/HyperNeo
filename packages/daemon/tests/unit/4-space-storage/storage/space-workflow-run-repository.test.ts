@@ -1,3 +1,5 @@
+import { DirectTaskExecutionRepository } from '../../../../src/storage/repositories/direct-task-execution-repository';
+import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
@@ -100,6 +102,72 @@ describe('SpaceWorkflowRunRepository', () => {
   });
 
   describe('createPinnedRun', () => {
+    it('attaches the task atomically and prevents direct selection afterward', () => {
+      const tasks = new SpaceTaskRepository(db);
+      const direct = new DirectTaskExecutionRepository(db);
+      const task = tasks.createTask({ spaceId, title: 'Task', description: '' });
+      const params = {
+        spaceId,
+        workflowId: WORKFLOW_ID,
+        title: 'Run',
+        rawWorkflow: rawWorkflow(),
+        parentTaskId: task.id,
+      };
+      const run = repo.createPinnedRun(params);
+      expect(tasks.getTask(task.id)?.workflowRunId).toBe(run.id);
+      expect(direct.select(task.id)).toBe(false);
+      expect(direct.claim(task.id, 'attempt', 'session')).toBeNull();
+      expect(() => repo.createPinnedRun(params)).toThrow('not available');
+      expect(repo.listBySpace(spaceId)).toHaveLength(1);
+    });
+
+    it('direct selection wins without leaving a run or definition snapshot', () => {
+      const tasks = new SpaceTaskRepository(db);
+      const direct = new DirectTaskExecutionRepository(db);
+      const task = tasks.createTask({ spaceId, title: 'Task', description: '' });
+      direct.select(task.id);
+      const attempt = direct.claim(task.id, 'attempt', 'session');
+      const before = db
+        .prepare('SELECT COUNT(*) AS count FROM space_workflow_definition_versions')
+        .get();
+      expect(() =>
+        repo.createPinnedRun({
+          spaceId,
+          workflowId: WORKFLOW_ID,
+          title: 'Run',
+          rawWorkflow: rawWorkflow(),
+          parentTaskId: task.id,
+        })
+      ).toThrow('not available');
+      expect(repo.listBySpace(spaceId)).toHaveLength(0);
+      expect(
+        db.prepare('SELECT COUNT(*) AS count FROM space_workflow_definition_versions').get()
+      ).toEqual(before);
+      expect(direct.getActive(task.id)).toEqual(attempt);
+      expect(tasks.getTask(task.id)?.workflowRunId).toBeUndefined();
+    });
+
+    it('attachment rejects ineligible task state and missing tasks atomically', () => {
+      const task = new SpaceTaskRepository(db).createTask({
+        spaceId,
+        title: 'Task',
+        description: '',
+        status: 'done',
+      });
+      for (const parentTaskId of [task.id, 'missing']) {
+        expect(() =>
+          repo.createPinnedRun({
+            spaceId,
+            workflowId: WORKFLOW_ID,
+            title: 'Run',
+            rawWorkflow: rawWorkflow(),
+            parentTaskId,
+          })
+        ).toThrow('not available');
+      }
+      expect(repo.listBySpace(spaceId)).toHaveLength(0);
+    });
+
     it('atomically records and pins the raw workflow definition', () => {
       const workflow = rawWorkflow({ name: 'Pinned' });
       const expected = computeDefinitionVersion(workflow);

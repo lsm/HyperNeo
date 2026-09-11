@@ -1,3 +1,4 @@
+import { DirectTaskExecutionRepository } from '../../../storage/repositories/direct-task-execution-repository.ts';
 import { PendingCompletionSupersededError } from '../operations/pending-completion-guard.ts';
 import type {
   CreateNodeExecutionParams,
@@ -3903,10 +3904,12 @@ export class SpaceRuntime {
         title,
         description,
         rawWorkflow,
+        parentTaskId: options.parentTaskId,
       },
       createAgentTemplateResolver(spaceId, this.config.templateRepo)
     );
 
+    if (options.parentTaskId) this.config.reactiveDb?.notifyChange('space_tasks');
     const run = this.config.workflowRunRepo.transitionStatus(pendingRun.id, 'in_progress');
     await this.safeOnWorkflowRunCreated(spaceId, run);
 
@@ -3937,9 +3940,10 @@ export class SpaceRuntime {
             `Parent task ${options.parentTaskId} belongs to a different space (${parent.spaceId})`
           );
         }
-        canonicalTask = await this.updateTaskAndEmit(spaceId, parent.id, {
-          workflowRunId: run.id,
-        });
+        if (parent.workflowRunId !== run.id)
+          throw new Error(`Workflow attachment superseded for task ${parent.id}`);
+        canonicalTask = parent;
+        await this.safeOnTaskUpdated(spaceId, parent, { fromStatus: parent.status });
       } else {
         canonicalTask = await taskManager.createTask({
           title,
@@ -7993,7 +7997,11 @@ export class SpaceRuntime {
       const standaloneOpenTasks = this.sortTasksByPriority(
         this.config.taskRepo
           .listStandaloneBySpace(space.id, false)
-          .filter((task) => task.status === 'open')
+          .filter(
+            (task) =>
+              task.status === 'open' &&
+              !new DirectTaskExecutionRepository(this.config.db).isSelected(task.id)
+          )
       );
 
       const taskManager = this.getOrCreateTaskManager(space.id);
@@ -8017,16 +8025,11 @@ export class SpaceRuntime {
         }
 
         try {
-          const { run } = await this.startWorkflowRun(
-            space.id,
-            selected.id,
-            current.title,
-            current.description,
-            { parentTaskId: current.id }
-          );
+          await this.startWorkflowRun(space.id, selected.id, current.title, current.description, {
+            parentTaskId: current.id,
+          });
 
           await this.updateTaskAndEmit(space.id, current.id, {
-            workflowRunId: run.id,
             status: 'in_progress',
             startedAt: current.startedAt ?? Date.now(),
             completedAt: null,

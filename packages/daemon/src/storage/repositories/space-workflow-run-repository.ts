@@ -66,7 +66,7 @@ export class SpaceWorkflowRunRepository {
   }
 
   createPinnedRun(
-    params: CreateWorkflowRunParams & { rawWorkflow: SpaceWorkflow },
+    params: CreateWorkflowRunParams & { rawWorkflow: SpaceWorkflow; parentTaskId?: string },
     resolveTemplate?: AgentTemplateResolver
   ): SpaceWorkflowRun {
     if (params.rawWorkflow.id !== params.workflowId) {
@@ -90,7 +90,18 @@ export class SpaceWorkflowRunRepository {
         source: 'run_create',
         createdAt: Date.now(),
       });
-      return this.insertRun(params, versionHash);
+      const run = this.insertRun(params, versionHash);
+      if (params.parentTaskId) {
+        const attached = this.db
+          .prepare(`UPDATE space_tasks SET workflow_run_id = ?, updated_at = ?
+          WHERE id = ? AND space_id = ? AND status = 'open' AND archived_at IS NULL
+            AND workflow_run_id IS NULL
+            AND NOT EXISTS (SELECT 1 FROM direct_task_execution_selection WHERE task_id = space_tasks.id)`)
+          .run(run.id, Date.now(), params.parentTaskId, params.spaceId);
+        if (attached.changes !== 1)
+          throw new Error(`Task ${params.parentTaskId} is not available for workflow attachment`);
+      }
+      return run;
     })();
   }
 

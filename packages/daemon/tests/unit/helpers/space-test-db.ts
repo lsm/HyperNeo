@@ -1,3 +1,4 @@
+import { runMigration248 } from '../../../src/storage/schema/m248-direct-task-execution';
 import { createEvolutionTables } from '../../../src/storage/schema/evolution';
 import { createLongHorizonAgentTables } from '../../../src/storage/schema/long-horizon-agents';
 import { createSessionCounters } from '../../../src/storage/schema/session-counters';
@@ -6,6 +7,7 @@ import type { Database as BunDatabase } from '../../../src/storage/sqlite-compat
 
 export function createSpaceTables(db: BunDatabase): void {
   db.exec('PRAGMA foreign_keys = ON');
+  runMigration248(db);
 
   db.exec(`
 		CREATE TABLE IF NOT EXISTS spaces (
