@@ -1,3 +1,4 @@
+import { transitionStandaloneTask } from '../../../../src/storage/tasks/transition-task';
 import { editStandaloneTask } from '../../../../src/storage/tasks/edit-task';
 import { listTaskCores } from '../../../../src/storage/tasks/list-tasks';
 import { createStandaloneTask } from '../../../../src/storage/tasks/create-task';
@@ -36,7 +37,8 @@ describe('operation.invoke RPC registration', () => {
       (taskId) => readTaskCore(taskDb, taskId),
       (input, creatorSessionId) => createStandaloneTask(taskDb, input, creatorSessionId, () => {}),
       (input) => listTaskCores(taskDb, input),
-      (input) => editStandaloneTask(taskDb, input, () => {})
+      (input) => editStandaloneTask(taskDb, input, () => {}),
+      (input) => transitionStandaloneTask(taskDb, input, () => {})
     );
     await Promise.all(transports.map((transport) => transport.initialize()));
   });
@@ -74,6 +76,7 @@ describe('operation.invoke RPC registration', () => {
       'task.create',
       'task.list',
       'task.update',
+      'task.transition',
       'operations.list',
       'operations.describe',
     ]);
@@ -225,6 +228,93 @@ describe('operation.invoke RPC registration', () => {
         input: { taskId: task.id, ...patch },
       })
     ).rejects.toThrow();
+    expect(readTaskCore(taskDb, task.id)).toEqual(task);
+  });
+
+  test('manages standalone lifecycle through RPC without changing Space tasks', async () => {
+    const task = createStandaloneTask(taskDb, { title: 'Work' }, undefined, () => {});
+    for (const status of [
+      'in_progress',
+      'blocked',
+      'done',
+      'in_progress',
+      'cancelled',
+      'open',
+      'archived',
+    ]) {
+      const result = await client.request<TaskCore>('operation.invoke', {
+        name: 'task.transition',
+        input: { taskId: task.id, status, ...(status === 'done' ? { result: 'Finished' } : {}) },
+      });
+      expect(result.status).toBe(status);
+      expect(readTaskCore(taskDb, task.id)).toEqual(result);
+      if (status === 'done') expect(result.result).toBe('Finished');
+      if (status === 'open')
+        expect(result).toMatchObject({ result: null, startedAt: null, completedAt: null });
+    }
+    expect(
+      await client.request('operation.invoke', {
+        name: 'task.transition',
+        input: { taskId: task.id, status: 'open' },
+      })
+    ).toBe('invalid_transition');
+    expect(await client.request('operation.invoke', { name: 'task.list' })).toEqual({
+      tasks: [],
+      nextCursor: null,
+    });
+    const space = new SpaceRepository(taskDb).createSpace({
+      name: 'Test',
+      slug: 'transition',
+      workspacePath: '/workspace/transition',
+    });
+    const tasks = new SpaceTaskRepository(taskDb);
+    const owned = tasks.createTask({ spaceId: space.id, title: 'Owned', description: '' });
+    for (const taskId of [owned.id, 'absent']) {
+      expect(
+        await client.request('operation.invoke', {
+          name: 'task.transition',
+          input: { taskId, status: 'done' },
+        })
+      ).toBeNull();
+    }
+    expect(tasks.getTask(owned.id)).toEqual(owned);
+    expect(
+      await client.request('operation.invoke', {
+        name: 'operations.describe',
+        input: { name: 'task.transition' },
+      })
+    ).toMatchObject({
+      found: true,
+      inputSchema: {
+        properties: {
+          status: { enum: ['open', 'in_progress', 'blocked', 'done', 'cancelled', 'archived'] },
+        },
+      },
+    });
+    expect(mailbox.rows()).toEqual([]);
+  });
+
+  test('returns lifecycle rejection codes and rejects invalid schemas before writing', async () => {
+    const task = createStandaloneTask(taskDb, { title: 'Work' }, undefined, () => {});
+    expect(
+      await client.request('operation.invoke', {
+        name: 'task.transition',
+        input: { taskId: task.id, status: 'blocked', result: 'No' },
+      })
+    ).toBe('result_requires_done');
+    for (const patch of [
+      { status: 'approved' },
+      { status: 'rate_limited' },
+      { status: 'done', result: 1 },
+      { status: 'done', title: 'Changed' },
+    ]) {
+      await expect(
+        client.request('operation.invoke', {
+          name: 'task.transition',
+          input: { taskId: task.id, ...patch },
+        })
+      ).rejects.toThrow();
+    }
     expect(readTaskCore(taskDb, task.id)).toEqual(task);
   });
 

@@ -1,3 +1,4 @@
+import { transitionStandaloneTask } from '../../storage/tasks/transition-task.ts';
 import { editStandaloneTask } from '../../storage/tasks/edit-task.ts';
 import { listTaskCores } from '../../storage/tasks/list-tasks.ts';
 import { createStandaloneTask } from '../../storage/tasks/create-task.ts';
@@ -332,7 +333,11 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       ),
     (input) => listTaskCores(deps.db.getDatabase(), input),
     (input) =>
-      editStandaloneTask(deps.db.getDatabase(), input, () => deps.db.notifyChange('space_tasks'))
+      editStandaloneTask(deps.db.getDatabase(), input, () => deps.db.notifyChange('space_tasks')),
+    (input) =>
+      transitionStandaloneTask(deps.db.getDatabase(), input, () =>
+        deps.db.notifyChange('space_tasks')
+      )
   );
   setupSystemHandlers(deps.messageHub, deps.sessionManager);
   setupAuthHandlers(
