@@ -31,7 +31,9 @@ export function TemplateDeleteDialog({
   return (
     <ConfirmModal
       isOpen
-      onClose={onClose}
+      onClose={() => {
+        if (!busy) onClose();
+      }}
       onConfirm={handleConfirm}
       title="Delete Template"
       message={`Delete template "${template.displayName}"? This cannot be undone. Runs that pinned a template snapshot keep their copy. Older in-flight runs cannot be repaired by editing a workflow — let them finish or restart them first. Saved workflows still naming this template must be re-pointed, or their future runs cannot start that agent.`}
