@@ -390,4 +390,17 @@ describe('SpaceAgentTemplateRepository — Space-scoped methods', () => {
 
     expect(repo.listOwned('space-a').map((t) => t.key)).toEqual(['middle', 'shadowed']);
   });
+  test('ties on created_at order by key the way SQLite does, not by locale', () => {
+    const at = 5_000;
+    for (const key of ['a.one', 'Z.one', '_.one']) {
+      db.prepare(
+        `INSERT INTO space_agent_templates
+           (space_id, key, handle, display_name, description, instructions,
+            suggested_autonomy_level, created_at, updated_at, version)
+         VALUES ('space-a', ?, 'h', 'H', '', '', 2, ?, ?, 1)`
+      ).run(key, at, at);
+    }
+
+    expect(repo.listOwned('space-a').map((t) => t.key)).toEqual(['Z.one', '_.one', 'a.one']);
+  });
 });

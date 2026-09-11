@@ -223,11 +223,14 @@ export class SpaceAgentTemplateRepository {
       const existing = byKey.get(key);
       if (!existing || row.space_id !== OWNERSHIP_MIGRATION_SENTINEL) byKey.set(key, row);
     }
-    return [...byKey.values()].sort(
-      (a, b) =>
-        (a.created_at as number) - (b.created_at as number) ||
-        (a.key as string).localeCompare(b.key as string)
-    );
+    return [...byKey.values()].sort((a, b) => {
+      const byCreatedAt = (a.created_at as number) - (b.created_at as number);
+      if (byCreatedAt !== 0) return byCreatedAt;
+      const left = a.key as string;
+      const right = b.key as string;
+      if (left === right) return 0;
+      return left < right ? -1 : 1;
+    });
   }
 
   private nextVersionFor(key: string): number {
