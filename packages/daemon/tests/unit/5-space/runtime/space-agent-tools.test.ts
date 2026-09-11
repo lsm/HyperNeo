@@ -10084,6 +10084,7 @@ describe('createSpaceAgentToolHandlers — update_task', () => {
           },
         } as unknown as TaskAgentManager,
       });
+      const block = spyOn(runtime, 'blockWorkflowBackedTask');
       const internalEventBus = {
         publish: async (event: string, payload: { taskId: string }) => {
           if (event === 'space.task.updated') emitted.push(payload.taskId);
@@ -10109,7 +10110,16 @@ describe('createSpaceAgentToolHandlers — update_task', () => {
       });
       expect(cancelled).toEqual(met ? [] : ['running-session']);
       expect(emitted).toEqual([task.id]);
-      if (!met) expect(ctx.taskRepo.getTask(task.id)?.completedAt).toBeNull();
+      if (!met) {
+        expect(ctx.taskRepo.getTask(task.id)?.completedAt).toBeNull();
+        expect(block).toHaveBeenCalledWith(ctx.spaceId, task.id, {
+          status: 'blocked',
+          blockReason: 'dependency_added',
+          result: 'Dependency added while task was in progress',
+          completedAt: null,
+        });
+      } else expect(block).not.toHaveBeenCalled();
+      block.mockRestore();
     }
   );
 
@@ -10178,6 +10188,23 @@ describe('createSpaceAgentToolHandlers — update_task', () => {
     expect(wrongSpace.success).toBe(false);
     expect(publish).not.toHaveBeenCalled();
     expect(auditLogRepo.listByTask(task.id)).toEqual([]);
+  });
+
+  test('mixed field validation rejects invalid dependencies before persisting metadata', async () => {
+    const task = await ctx.taskManager.createTask({ title: 'Original', description: '' });
+    const block = spyOn(ctx.runtime, 'blockWorkflowBackedTask');
+    const result = parseResult(
+      await makeHandlers(ctx).update_task({
+        task_id: task.id,
+        title: 'Must not persist',
+        depends_on: ['missing-dependency'],
+      })
+    );
+    expect(result.success).toBe(false);
+    expect(ctx.taskRepo.getTask(task.id)?.title).toBe('Original');
+    expect(ctx.taskRepo.getTask(task.id)?.dependsOn).toEqual([]);
+    expect(block).not.toHaveBeenCalled();
+    block.mockRestore();
   });
 
   test('updates title only', async () => {
