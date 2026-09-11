@@ -528,6 +528,8 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
                       );
                       if (!differsFromBaseline(next.tools, toolsBaselineRef.current)) {
                         setToolsExplicit(false);
+                        toolsRemovedRef.current = [];
+                        toolsAddedRef.current = [];
                         setFormTools({
                           tools: toolsBaselineRef.current,
                           toolsOverridden: false,
