@@ -1,3 +1,4 @@
+import { createSpaceOperationRegistryProvider } from '../space/operations/registry.ts';
 import { setupOperationHandlers } from './operation-handlers.ts';
 import type { MessageHub } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
@@ -571,6 +572,23 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     });
 
   const nodeExecutionRepo = new NodeExecutionRepository(deps.db.getDatabase(), deps.reactiveDb);
+  deps.sessionManager.setDefaultOperationRegistryProvider(
+    createSpaceOperationRegistryProvider(deps.db, deps.jobQueue, {
+      getSession: (sessionId) => deps.db.getSession(sessionId),
+      getTaskManager: spaceTaskManagerFactory,
+      taskRepo: spaceTaskRepo,
+      nodeExecutionRepo,
+      notifyStandalone: () => deps.db.notifyChange('space_tasks'),
+      emitTaskUpdated: async (spaceId, task) => {
+        await deps.internalEventBus.publish('space.task.updated', {
+          sessionId: 'global',
+          spaceId,
+          taskId: task.id,
+          task,
+        });
+      },
+    })
+  );
   const replyRoutingRegistry = new ReplyRoutingRegistry();
   const artifactProfile = new CodingArtifactProfile({
     db: deps.db.getDatabase(),
