@@ -890,6 +890,23 @@ describe('SpaceWorkflowRunRepository', () => {
       expect(repo.getRun(run.id)!.definitionVersion).toBe(firstPin);
     });
 
+    it('backfillDefinitionPins resolves templates in the run Space, not the workflow Space', () => {
+      const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Legacy' });
+      seedTaskForRun(run.id, spaceId);
+      const wf = rawWorkflow({ spaceId: 'other-space' });
+      const asked: string[] = [];
+
+      repo.backfillDefinitionPins(
+        () => wf,
+        (resolverSpaceId) => {
+          asked.push(resolverSpaceId);
+          return () => null;
+        }
+      );
+
+      expect(asked).toEqual([spaceId]);
+    });
+
     it('backfillDefinitionPins pins every unpinned run with an existing head', () => {
       const a = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'A' });
       const b = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'B' });

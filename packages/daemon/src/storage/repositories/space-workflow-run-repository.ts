@@ -252,7 +252,7 @@ export class SpaceWorkflowRunRepository {
       try {
         const workflow = loadWorkflow(run.workflowId);
         if (!workflow) continue;
-        const resolveTemplate = resolveTemplateFor?.(workflow.spaceId);
+        const resolveTemplate = resolveTemplateFor?.(run.spaceId);
         if (this.pinExistingRun(run.id, workflow, resolveTemplate)) count += 1;
       } catch (err) {
         log.warn(`backfillDefinitionPins: skipped run ${run.id} (non-fatal):`, err);
