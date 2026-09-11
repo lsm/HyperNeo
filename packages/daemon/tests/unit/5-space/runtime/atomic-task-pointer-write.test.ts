@@ -46,9 +46,20 @@ beforeEach(() => {
   target = tasks.createTask({ spaceId, title: 'Original', description: '' });
   dependency = tasks.createTask({ spaceId, title: 'Dependency', description: '' });
   notify = mock(() => {});
-  manager = new SpaceTaskManager(db, spaceId, {
-    notifyChange: notify,
-  } as unknown as ReactiveDatabase);
+  manager = new SpaceTaskManager(
+    db,
+    spaceId,
+    {
+      notifyChange: notify,
+      beginTransaction: mock(() => {}),
+      commitTransaction: mock(() => {}),
+      abortTransaction: mock(() => {}),
+    } as unknown as ReactiveDatabase,
+    undefined,
+    undefined,
+    undefined,
+    async (path) => path
+  );
 });
 afterEach(() => {
   other.close();
