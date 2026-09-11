@@ -119,6 +119,7 @@ export class SpaceAgentStore {
     const index = current.findIndex((a) => a.id === agent.id);
     if (index === -1) {
       this.agents.value = sortAgents([...current, agent]);
+      void this.refreshReminderCounts(this.generation);
       return;
     }
     const next = [...current];
