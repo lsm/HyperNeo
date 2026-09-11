@@ -6,7 +6,7 @@ import type {
 } from '@hyperneo/shared';
 import { MAX_IMAGE_BASE64_SIZE } from '../session/message-persistence.ts';
 import type { MailboxAddress } from './address.ts';
-import { createUlid, isUlid } from './ulid.ts';
+import { createUlid, decodeUlidTimestamp, isUlid } from './ulid.ts';
 
 export interface MailboxEntryPolicy {
   ttlMs: number;
@@ -43,6 +43,10 @@ export type MailboxEntry = {
   policy: MailboxEntryPolicy;
   deliveryMode: MailboxDeliveryMode;
 };
+
+export function mailboxEntryExpired(entry: MailboxEntry, now: number): boolean {
+  return now - decodeUlidTimestamp(entry.id) > entry.policy.ttlMs;
+}
 
 const MAILBOX_MESSAGE_PRIORITIES: readonly MailboxMessage['priority'][] = ['now', 'next', 'later'];
 const MAILBOX_CONTENT_REASON =

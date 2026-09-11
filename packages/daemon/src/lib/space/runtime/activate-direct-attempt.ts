@@ -1,5 +1,5 @@
 import { readDirectKickoffIntent } from './direct-kickoff-intent.ts';
-import type { MailboxEntry } from '../../mailbox/entry.ts';
+import { mailboxEntryExpired, type MailboxEntry } from '../../mailbox/entry.ts';
 import type { Session, Space, SpaceTask } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../../storage/sqlite-compat.ts';
@@ -39,7 +39,8 @@ export interface DirectAttemptActivationEvidence {
 
 export function requireDirectActivation(
   input: DirectAttemptActivationInput,
-  evidence: DirectAttemptActivationEvidence
+  evidence: DirectAttemptActivationEvidence,
+  now: number
 ):
   | { value: { attempt: DirectTaskAttempt; task: SpaceTask } }
   | { reason: DirectAttemptActivationResult } {
@@ -63,6 +64,7 @@ export function requireDirectActivation(
     evidence.kickoff.origin !== 'direct-task-kickoff' ||
     !evidence.kickoff.messageUuid ||
     evidence.kickoff.deliveryMode !== 'immediate' ||
+    mailboxEntryExpired(evidence.kickoff, now) ||
     !session ||
     !matchesDirectPreparedSession(session, prepared.value) ||
     dependencies.length !== (task?.dependsOn?.length ?? 0) ||
@@ -90,17 +92,21 @@ function activateAtomically(
       const tasks = new SpaceTaskRepository(db, reactiveDb);
       const attempt = attempts.get(input.attemptId);
       const task = attempt ? tasks.getTask(attempt.taskId) : null;
-      const admission = requireDirectActivation(input, {
-        attempt,
-        active: task ? attempts.getActive(task.id) : null,
-        task,
-        space: task ? new SpaceRepository(db).getSpace(task.spaceId) : null,
-        session: new SessionRepository(db).getSession(input.sessionId),
-        selected: !!task && attempts.isSelected(task.id),
-        stopRequested: attempts.isStopRequested(input.attemptId, input.sessionId),
-        kickoff: readDirectKickoffIntent(db, input.attemptId),
-        dependencies: (task?.dependsOn ?? []).map((id) => tasks.getTask(id)),
-      });
+      const admission = requireDirectActivation(
+        input,
+        {
+          attempt,
+          active: task ? attempts.getActive(task.id) : null,
+          task,
+          space: task ? new SpaceRepository(db).getSpace(task.spaceId) : null,
+          session: new SessionRepository(db).getSession(input.sessionId),
+          selected: !!task && attempts.isSelected(task.id),
+          stopRequested: attempts.isStopRequested(input.attemptId, input.sessionId),
+          kickoff: readDirectKickoffIntent(db, input.attemptId),
+          dependencies: (task?.dependsOn ?? []).map((id) => tasks.getTask(id)),
+        },
+        Date.now()
+      );
       if ('reason' in admission) return admission.reason;
       assertValidTaskTransition(admission.value.task.status, 'in_progress');
       const updated = tasks.updateTask(

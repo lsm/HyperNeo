@@ -1,8 +1,10 @@
+import { decodeUlidTimestamp } from '../../../../src/lib/mailbox/ulid';
+import { mailboxEntryExpired } from '../../../../src/lib/mailbox/entry';
 import {
   createDirectKickoffRecorder,
   readDirectKickoffIntent,
 } from '../../../../src/lib/space/runtime/direct-kickoff-intent';
-import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
+import { afterEach, beforeEach, expect, mock, spyOn, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import type { ReactiveDatabase } from '../../../../src/storage/reactive-database';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
@@ -138,17 +140,21 @@ test('pure admission rejects a competing workflow without changing lifecycle fie
   const task = tasks.getTask(taskId)!;
   const attempt = attempts.get('attempt')!;
   expect(
-    requireDirectActivation(input, {
-      task: { ...task, workflowRunId: 'competing-run' },
-      attempt,
-      active: attempt,
-      space: spaces.getSpace(spaceId),
-      session: sessions.getSession('worker'),
-      selected: true,
-      stopRequested: false,
-      kickoff: readDirectKickoffIntent(db, input.attemptId),
-      dependencies: [],
-    })
+    requireDirectActivation(
+      input,
+      {
+        task: { ...task, workflowRunId: 'competing-run' },
+        attempt,
+        active: attempt,
+        space: spaces.getSpace(spaceId),
+        session: sessions.getSession('worker'),
+        selected: true,
+        stopRequested: false,
+        kickoff: readDirectKickoffIntent(db, input.attemptId),
+        dependencies: [],
+      },
+      Date.now()
+    )
   ).toHaveProperty('reason');
   expect(tasks.getTask(taskId)?.status).toBe('open');
 });
@@ -276,3 +282,21 @@ test('a previous attempt intent cannot satisfy a successor activation', () => {
   expect(readDirectKickoffIntent(db, 'next')).toBeNull();
   expect(readDirectKickoffIntent(db, 'attempt')).toEqual(frozen);
 });
+
+test.each([-1, 0, 1])(
+  'kickoff TTL boundary offset %s matches mailbox delivery exactly',
+  (offset) => {
+    const entry = readDirectKickoffIntent(db, 'attempt')!;
+    const now = decodeUlidTimestamp(entry.id) + entry.policy.ttlMs + offset;
+    expect(mailboxEntryExpired(entry, now)).toBe(offset > 0);
+    const clock = spyOn(Date, 'now').mockReturnValue(now);
+    try {
+      expect(activate()).toHaveProperty('activated', offset <= 0);
+      expect(attempts.get('attempt')?.phase).toBe(offset <= 0 ? 'running' : 'reserved');
+      expect(tasks.getTask(taskId)?.status).toBe(offset <= 0 ? 'in_progress' : 'open');
+      expect(readDirectKickoffIntent(db, 'attempt')).toEqual(entry);
+    } finally {
+      clock.mockRestore();
+    }
+  }
+);
