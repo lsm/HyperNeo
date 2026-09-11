@@ -29,6 +29,8 @@ import {
 } from '../space/agents/default-agent-policy.ts';
 import { getLongHorizonAgentTemplates } from '../space/agents/long-horizon-agent-templates.ts';
 import {
+  type OwnedAgentLookup,
+  publishSpaceAgentV2Mirror,
   publishUnifiedAgentCreated,
   publishUnifiedAgentDeleted,
   publishUnifiedAgentUpdated,
@@ -62,6 +64,7 @@ interface UnifiedSpaceAgentMethodDeps {
   spaceManager: SpaceManager;
   repo: SpaceLongHorizonAgentRepository;
   templateManager?: SpaceAgentTemplateManager;
+  ownedAgents?: OwnedAgentLookup;
   runtimeService?: UnifiedSpaceAgentRuntimeService;
   internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
 }
@@ -535,6 +538,13 @@ function createPersistStage(ctx: CreateUnifiedAgentCtx): CreateUnifiedAgentCtx {
 
 async function createPublishStage(ctx: CreateUnifiedAgentCtx): Promise<CreateUnifiedAgentCtx> {
   await publishUnifiedAgentCreated(ctx.internalEventBus, ctx.agent!);
+  await publishSpaceAgentV2Mirror(
+    ctx.internalEventBus,
+    ctx.ownedAgents,
+    ctx.agent!.spaceId,
+    ctx.agent!.id,
+    'created'
+  );
   return ctx;
 }
 
@@ -603,6 +613,13 @@ function deleteApplyStage(ctx: DeleteUnifiedAgentCtx): DeleteUnifiedAgentCtx {
 
 async function deletePublishStage(ctx: DeleteUnifiedAgentCtx): Promise<DeleteUnifiedAgentCtx> {
   await publishUnifiedAgentDeleted(ctx.internalEventBus, ctx.spaceId, ctx.agentId);
+  await publishSpaceAgentV2Mirror(
+    ctx.internalEventBus,
+    ctx.ownedAgents,
+    ctx.spaceId,
+    ctx.agentId,
+    'deleted'
+  );
   return ctx;
 }
 
@@ -740,6 +757,13 @@ async function updateApplyStage(ctx: UpdateUnifiedAgentCtx): Promise<UpdateUnifi
 async function updatePublishStage(ctx: UpdateUnifiedAgentCtx): Promise<UpdateUnifiedAgentCtx> {
   if (ctx.unifiedAfter) {
     await publishUnifiedAgentUpdated(ctx.internalEventBus, ctx.unifiedAfter);
+    await publishSpaceAgentV2Mirror(
+      ctx.internalEventBus,
+      ctx.ownedAgents,
+      ctx.unifiedAfter.spaceId,
+      ctx.unifiedAfter.id,
+      'updated'
+    );
   }
   return ctx;
 }
@@ -1034,7 +1058,8 @@ export function setupSpaceAgentHandlers(
   db: Database,
   longHorizonAgentRepo: SpaceLongHorizonAgentRepository,
   runtimeService?: UnifiedSpaceAgentRuntimeService,
-  templateManager?: SpaceAgentTemplateManager
+  templateManager?: SpaceAgentTemplateManager,
+  ownedAgents?: OwnedAgentLookup
 ): void {
   const deps: UnifiedSpaceAgentMethodDeps = {
     spaceManager,
@@ -1042,6 +1067,7 @@ export function setupSpaceAgentHandlers(
     templateManager,
     runtimeService,
     internalEventBus,
+    ownedAgents,
   };
   const createUnifiedAgent = buildUnifiedAgentCreate(deps);
 

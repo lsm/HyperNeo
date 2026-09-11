@@ -345,6 +345,13 @@ describe('SpaceAgentRepository', () => {
       );
     });
 
+    test('getOwnedById hides a migrated worker mirror', () => {
+      makeMirror('mirror-owned');
+
+      expect(repo.getById('mirror-owned')).not.toBeNull();
+      expect(repo.getOwnedById('mirror-owned')).toBeNull();
+    });
+
     test('refuses to delete a migrated worker mirror', () => {
       makeMirror('mirror-del');
 

@@ -102,6 +102,16 @@ export class SpaceAgentRepository {
     return rows.map(rowToSpaceAgent);
   }
 
+  getOwnedById(id: string): SpaceAgent | null {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM ${AGENTS_TABLE}
+         WHERE id = ? AND (template_key IS NULL OR template_key != ?)`
+      )
+      .get(id, MIGRATED_WORKER_TEMPLATE_KEY) as Record<string, unknown> | undefined;
+    return row ? rowToSpaceAgent(row) : null;
+  }
+
   listIdentitiesBySpaceId(spaceId: string): SpaceAgentIdentity[] {
     const rows = this.db
       .prepare(
