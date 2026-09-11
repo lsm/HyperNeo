@@ -60,12 +60,27 @@ export function seedTemplateSubscriptions(
   }
 }
 
+export function isSchedulableReminder(reminder: {
+  triggerType: 'at' | 'cron';
+  cronExpression: string | null;
+  timezone: string;
+}): boolean {
+  if (reminder.triggerType !== 'cron') return false;
+  if (!reminder.cronExpression) return false;
+  try {
+    return getNextRunAt(reminder.cronExpression, reminder.timezone ?? 'UTC') !== null;
+  } catch {
+    return false;
+  }
+}
+
 export function seedTemplateReminders(
   deps: TemplateExtrasDeps,
   agent: SpaceAgent,
   template: SpaceAgentTemplate
 ): void {
   for (const reminder of template.reminderDefaults ?? []) {
+    if (!isSchedulableReminder(reminder)) continue;
     const timezone = reminder.timezone ?? 'UTC';
     deps.store.createReminder({
       spaceId: agent.spaceId,
@@ -75,10 +90,7 @@ export function seedTemplateReminders(
       triggerType: reminder.triggerType,
       cronExpression: reminder.cronExpression,
       timezone,
-      nextRunAt:
-        reminder.triggerType === 'cron' && reminder.cronExpression
-          ? getNextRunAt(reminder.cronExpression, timezone)
-          : null,
+      nextRunAt: getNextRunAt(reminder.cronExpression as string, timezone),
       status: 'active',
     });
   }

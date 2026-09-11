@@ -156,22 +156,75 @@ describe('template extras seeding', () => {
     expect(typeof reminder.nextRunAt).toBe('number');
   });
 
-  test('leaves nextRunAt null for a non-cron reminder', () => {
+  test('skips an "at" reminder, which templates cannot schedule', () => {
+    const { store, reminders } = makeStore();
+    buildTemplateExtrasSeeder({ store })(
+      agent,
+      template({
+        reminderDefaults: [
+          { title: 'One off', body: '', triggerType: 'at', cronExpression: null, timezone: 'UTC' },
+        ],
+      })
+    );
+    expect(reminders).toEqual([]);
+  });
+
+  test('skips a cron reminder with an unparseable expression', () => {
     const { store, reminders } = makeStore();
     buildTemplateExtrasSeeder({ store })(
       agent,
       template({
         reminderDefaults: [
           {
-            title: 'One off',
+            title: 'Broken',
             body: '',
-            triggerType: 'at',
-            cronExpression: null,
+            triggerType: 'cron',
+            cronExpression: 'not a cron',
             timezone: 'UTC',
           },
         ],
       })
     );
-    expect((reminders[0] as { nextRunAt: number | null }).nextRunAt).toBeNull();
+    expect(reminders).toEqual([]);
+  });
+
+  test('skips a cron reminder with an invalid timezone', () => {
+    const { store, reminders } = makeStore();
+    buildTemplateExtrasSeeder({ store })(
+      agent,
+      template({
+        reminderDefaults: [
+          {
+            title: 'Bad zone',
+            body: '',
+            triggerType: 'cron',
+            cronExpression: '0 9 * * *',
+            timezone: 'Not/AZone',
+          },
+        ],
+      })
+    );
+    expect(reminders).toEqual([]);
+  });
+
+  test('keeps a schedulable reminder alongside a skipped one', () => {
+    const { store, reminders } = makeStore();
+    buildTemplateExtrasSeeder({ store })(
+      agent,
+      template({
+        reminderDefaults: [
+          { title: 'One off', body: '', triggerType: 'at', cronExpression: null, timezone: 'UTC' },
+          {
+            title: 'Daily',
+            body: '',
+            triggerType: 'cron',
+            cronExpression: '0 9 * * *',
+            timezone: 'UTC',
+          },
+        ],
+      })
+    );
+    expect(reminders).toHaveLength(1);
+    expect((reminders[0] as { title: string }).title).toBe('Daily');
   });
 });
