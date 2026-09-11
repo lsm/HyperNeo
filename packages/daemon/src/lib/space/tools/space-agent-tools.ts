@@ -23,7 +23,6 @@ import type {
   SpaceGoalStatus,
   SpaceGoalType,
   SpaceAgentAutonomyLevel,
-  SpaceApprovalSource,
   SpaceLongHorizonAgent,
   SpaceLongHorizonAgentStatus,
   SpaceLongHorizonAgentTemplate,
@@ -95,7 +94,7 @@ import { recoverTaskExecution } from '../../tasks/recover-task-execution.ts';
 import { createWorkflowTaskRecoveryExecutor } from '../runtime/task-recovery-executor.ts';
 import type { SpaceRuntime } from '../runtime/space-runtime.ts';
 import type { TaskAgentManager } from '../runtime/task-agent-manager.ts';
-import { mapPostApprovalDispatchWarning } from '../runtime/post-approval-router.ts';
+import { createPendingCompletionOperation } from '../operations/pending-completion.ts';
 import {
   spaceAgentTemplateToNodeSource,
   type NodeAgentTemplateSource,
@@ -3558,32 +3557,17 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       }
 
       try {
-        let updated: SpaceTask;
-        if (args.approved) {
-          try {
-            await runtime.dispatchPostApproval(args.task_id, 'human' as SpaceApprovalSource, {
-              approvalReason: args.reason ?? null,
-            });
-          } catch (dispatchErr) {
-            const afterCommit = taskRepo.getTask(args.task_id);
-            if (afterCommit?.status !== 'approved') throw dispatchErr;
-            const detail = dispatchErr instanceof Error ? dispatchErr.message : String(dispatchErr);
+        const updated = await createPendingCompletionOperation({
+          getTask: (taskId) => taskRepo.getTask(taskId),
+          dispatchApproval: (taskId, approvalReason) =>
+            runtime.dispatchPostApproval(taskId, 'human', { approvalReason }),
+          reopenTask: (taskId) => taskManager.setTaskStatus(taskId, 'in_progress'),
+          updateTask: (taskId, fields) => taskManager.updateTask(taskId, fields),
+          warn: (taskId, detail) =>
             log.warn(
-              `approve_pending_completion: post-approval dispatch failed for task ${args.task_id} after status commit (${detail}); capturing as post-approval-blocked`
-            );
-            await taskManager.updateTask(args.task_id, {
-              postApprovalBlockedReason: mapPostApprovalDispatchWarning(detail),
-            });
-          }
-          const refreshed = taskRepo.getTask(args.task_id);
-          if (!refreshed) throw new Error(`Task not found: ${args.task_id}`);
-          updated = refreshed;
-        } else {
-          updated = await taskManager.setTaskStatus(args.task_id, 'in_progress');
-          updated = await taskManager.updateTask(args.task_id, {
-            approvalReason: args.reason ?? null,
-          });
-        }
+              `approve_pending_completion: post-approval dispatch failed for task ${taskId} after status commit (${detail}); capturing as post-approval-blocked`
+            ),
+        })({ taskId: args.task_id, approved: args.approved, reason: args.reason });
 
         emitTaskUpdated(updated);
         logAudit(
