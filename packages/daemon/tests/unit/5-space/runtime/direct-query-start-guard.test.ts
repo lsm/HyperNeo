@@ -1,4 +1,6 @@
-import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
+import { AgentSession } from '../../../../src/lib/agent/agent-session';
+import { AcpQueryRunner } from '../../../../src/lib/acp/acp-query-runner';
+import { afterEach, beforeEach, expect, mock, spyOn, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { createTables, runMigrations } from '../../../../src/storage/schema';
 import { DirectTaskExecutionRepository } from '../../../../src/storage/repositories/direct-task-execution-repository';
@@ -164,3 +166,28 @@ test('extending the same kickoff TTL cannot renew captured admission', () => {
     clock.mockRestore();
   }
 });
+
+test.each([undefined, 'acp'] as const)(
+  'AgentSession forwards the captured guard for %s',
+  async (provider) => {
+    activate();
+    materialize();
+    live = { ...live, config: { ...live.config, provider } };
+    const start = mock(async (_check?: () => void) => {});
+    const queryRunner = Object.assign(provider ? Object.create(AcpQueryRunner.prototype) : {}, {
+      start,
+    });
+    const target = {
+      session: live,
+      db: { getDatabase: () => db },
+      queryRunner,
+    } as unknown as AgentSession;
+    await AgentSession.prototype.startStreamingQuery.call(target);
+    expect(start).toHaveBeenCalledTimes(1);
+    const check = start.mock.calls[0][0];
+    expect(check).toBeTypeOf('function');
+    expect(check!).not.toThrow();
+    attempts.requestStop(input.attemptId, input.sessionId, 'cancelled');
+    expect(check!).toThrow('executor activation admission');
+  }
+);

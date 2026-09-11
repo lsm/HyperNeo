@@ -1,4 +1,4 @@
-import { DirectTaskExecutionRepository } from '../../storage/repositories/direct-task-execution-repository.ts';
+import { createDirectQueryStartGuard } from '../space/runtime/direct-query-start-guard.ts';
 import { createDatabaseOperationCatalog } from '../operations/database-catalog.ts';
 import type { OperationRegistry, OperationRegistryProvider } from '../operations/registry.ts';
 import { createOperationMcpServer } from '../operations/mcp-server.ts';
@@ -775,13 +775,7 @@ export class AgentSession
         `Session ${this.session.id} is ${this.session.status}; refusing to start the query`
       );
     }
-    if (
-      new DirectTaskExecutionRepository(this.db.getDatabase()).hasSessionProvenance(this.session.id)
-    ) {
-      throw new Error(
-        `Direct task session ${this.session.id} requires executor activation admission`
-      );
-    }
+    const startGuard = createDirectQueryStartGuard(this.db.getDatabase(), () => this.session);
     const wantsAcp = this.session.config.provider === 'acp';
     const hasAcpRunner = this.queryRunner instanceof AcpQueryRunner;
     if (wantsAcp !== hasAcpRunner) {
@@ -790,7 +784,8 @@ export class AgentSession
       ).invalidateAttemptTokens?.();
       this.queryRunner = wantsAcp ? new AcpQueryRunner(this) : new QueryRunner(this);
     }
-    await this.queryRunner.start();
+    if (startGuard) await this.queryRunner.start(startGuard);
+    else await this.queryRunner.start();
   }
 
   private armPersistedRateLimitCooldown(): void {
