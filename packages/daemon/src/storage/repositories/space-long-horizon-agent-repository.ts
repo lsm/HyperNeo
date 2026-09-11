@@ -15,6 +15,7 @@ import type {
 import { generateUUID } from '@hyperneo/shared';
 import { getLongHorizonAgentTemplate } from '../../lib/space/agents/long-horizon-agent-templates.ts';
 import { SPACE_MANAGER_HANDLE } from '../../lib/space/agent-handle.ts';
+import { MIGRATED_WORKER_TEMPLATE_KEY } from '../../lib/space/agents/worker-long-horizon-mapper.ts';
 import {
   decideGoalOwnerResolution,
   type GoalOwnerAgentState,
@@ -29,6 +30,11 @@ export class SpaceLongHorizonAgentRepository {
   constructor(private db: BunDatabase) {}
 
   create(params: CreateSpaceLongHorizonAgentParams): SpaceLongHorizonAgent {
+    if (params.templateKey === MIGRATED_WORKER_TEMPLATE_KEY) {
+      throw new Error(
+        `Template key ${MIGRATED_WORKER_TEMPLATE_KEY} is reserved for migrated worker mirrors`
+      );
+    }
     const id = params.id ?? generateUUID();
     const now = Date.now();
     const displayName = params.displayName ?? params.handle;

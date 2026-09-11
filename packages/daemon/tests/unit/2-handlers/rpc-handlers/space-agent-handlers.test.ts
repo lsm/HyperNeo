@@ -1675,6 +1675,15 @@ describe('Space Agent RPC Handlers', () => {
       expect(longHorizonRepo.getById(coordinator.id)?.status).toBe('active');
     });
 
+    it('rejects the reserved migration template key on native updates', async () => {
+      await expect(
+        call(hubData.handlers, 'spaceAgent.update', {
+          id: agentId,
+          templateKey: 'migration.legacy_space_agent',
+        })
+      ).rejects.toThrow('is reserved for migrated worker mirrors');
+    });
+
     it('rejects unknown statuses on mirror updates instead of reactivating', async () => {
       const workerId = 'twin-bad-status';
       seedWorkerMirror(db, { id: workerId, spaceId: 'space-1', name: 'Twin Bad Status' });

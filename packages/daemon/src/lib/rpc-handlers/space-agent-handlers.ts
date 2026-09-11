@@ -28,6 +28,7 @@ import {
   resolveIsDefaultAgent,
 } from '../space/agents/default-agent-policy.ts';
 import { getLongHorizonAgentTemplates } from '../space/agents/long-horizon-agent-templates.ts';
+import { MIGRATED_WORKER_TEMPLATE_KEY } from '../space/agents/worker-long-horizon-mapper.ts';
 import {
   type OwnedAgentLookup,
   publishSpaceAgentV2Mirror,
@@ -703,6 +704,11 @@ async function updateApplyStage(ctx: UpdateUnifiedAgentCtx): Promise<UpdateUnifi
   if (params.modelPool && params.modelPool.length > 0) {
     const poolError = await validateAgentModelPool(params.modelPool);
     if (poolError) throw new Error(poolError);
+  }
+  if (resolveUnifiedTemplateKey(params) === MIGRATED_WORKER_TEMPLATE_KEY) {
+    throw new Error(
+      `Template key ${MIGRATED_WORKER_TEMPLATE_KEY} is reserved for migrated worker mirrors`
+    );
   }
   const agent = ctx.repo.update(agentId, {
     handle,

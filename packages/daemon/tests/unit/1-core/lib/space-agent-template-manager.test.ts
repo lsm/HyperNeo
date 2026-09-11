@@ -11,6 +11,7 @@ import {
   runUpdateTemplate,
   SpaceAgentTemplateManager,
 } from '../../../../src/lib/space/managers/space-agent-template-manager';
+import { MIGRATED_WORKER_TEMPLATE_KEY } from '../../../../src/lib/space/agents/worker-long-horizon-mapper';
 import { SpaceAgentTemplateRepository } from '../../../../src/storage/repositories/space-agent-template-repository';
 import { runMigration226 } from '../../../../src/storage/schema/m226-space-agent-templates-version';
 import { runMigration227 } from '../../../../src/storage/schema/m227-space-agent-template-version-seq';
@@ -398,6 +399,16 @@ describe('SpaceAgentTemplateManager', () => {
     test('allows a key that merely starts with the same letters', async () => {
       const result = await manager.createIn(OWNER, { key: 'migrated.agentry', handle: 'agentry' });
       expect(result.ok).toBe(true);
+    });
+
+    test('rejects the reserved migration template key', async () => {
+      const result = await manager.createIn(OWNER, {
+        ...fullParams(),
+        key: MIGRATED_WORKER_TEMPLATE_KEY,
+      });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toContain('reserved');
     });
 
     test('rejects keys reserved for code built-in templates', async () => {

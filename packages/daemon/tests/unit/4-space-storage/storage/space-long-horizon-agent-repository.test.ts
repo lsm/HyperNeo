@@ -679,6 +679,17 @@ describe('SpaceLongHorizonAgentRepository', () => {
     expect(repo.getReminder(fired.id)!.lastFiredAt).toBeNull();
   });
 
+  test('create rejects the reserved migration template key', () => {
+    expect(() =>
+      repo.create({
+        spaceId: 'space-1',
+        handle: 'fake-mirror',
+        displayName: 'Fake Mirror',
+        templateKey: 'migration.legacy_space_agent',
+      })
+    ).toThrow(/reserved for migrated worker mirrors/);
+  });
+
   test('update permits the runtime session binding on migrated worker mirrors', () => {
     db.prepare(
       `INSERT INTO space_long_horizon_agents
