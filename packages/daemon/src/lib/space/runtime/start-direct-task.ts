@@ -20,11 +20,7 @@ import {
   type DirectSessionPreparationDependencies,
   type PreparedDirectSession,
 } from './prepare-direct-session.ts';
-import {
-  readDirectKickoffIntent,
-  recordDirectKickoffAtomically,
-  type DirectKickoffResult,
-} from './direct-kickoff-intent.ts';
+import { readDirectKickoffIntent } from './direct-kickoff-intent.ts';
 import {
   activateDirectAttemptAtomically,
   type DirectAttemptActivationResult,
@@ -165,15 +161,6 @@ function kickoffInput(db: Database, prepared: PreparedDirectSession) {
     },
   };
 }
-function requireRecorded(
-  result: DirectKickoffResult,
-  db: Database,
-  input: DirectTaskStartInput
-): { value: true } | { reason: DirectTaskStartResult } {
-  return result.recorded
-    ? { value: true }
-    : { reason: alreadyStarted(db, input) ?? { started: false, reason: result.reason } };
-}
 function startResult(
   result: DirectAttemptActivationResult,
   db: Database,
@@ -205,7 +192,6 @@ export function createDirectTaskStarter(dependencies: {
       attempts,
       tasks,
       getSpace: (id: string) => spaces.getSpace(id),
-      enqueueKickoff: true,
     })('start-direct-task') as PipelineAPI
   )
     .input('input')
@@ -220,13 +206,8 @@ export function createDirectTaskStarter(dependencies: {
     )
     .pipe(requireStartStage, ['preparation', 'db', 'input'], 'result:start')
     .pipe(kickoffInput, ['db', 'start'], 'kickoff')
-    .pipe(recordDirectKickoffAtomically, ['db', 'kickoff'], 'recorded')
-    .pipe(requireRecorded, ['recorded', 'db', 'input'], 'result:start')
-    .pipe(
-      activateDirectAttemptAtomically,
-      ['db', 'reactiveDb', 'kickoff', 'enqueueKickoff'],
-      'activation'
-    )
+    .pipe((kickoff: { message: unknown }) => kickoff.message, 'kickoff', 'message')
+    .pipe(activateDirectAttemptAtomically, ['db', 'reactiveDb', 'kickoff', 'message'], 'activation')
     .pipe(startResult, ['activation', 'db', 'input'], 'start')
     .endAsync('start') as (input: DirectTaskStartInput) => Promise<DirectTaskStartResult>;
 }

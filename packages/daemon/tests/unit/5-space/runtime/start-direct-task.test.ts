@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
+import { afterEach, beforeEach, expect, mock, spyOn, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { createTables, runMigrations } from '../../../../src/storage/schema';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
@@ -7,7 +7,10 @@ import { DirectTaskExecutionRepository } from '../../../../src/storage/repositor
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import { createDirectTaskStarter } from '../../../../src/lib/space/runtime/start-direct-task';
-import { readDirectKickoffIntent } from '../../../../src/lib/space/runtime/direct-kickoff-intent';
+import {
+  readDirectKickoffIntent,
+  recordDirectKickoffAtomically,
+} from '../../../../src/lib/space/runtime/direct-kickoff-intent';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session';
 
 let db: Database;
@@ -106,13 +109,13 @@ test('a failed load retains the same request identity for retry', async () => {
     attempt: { id: reserved.id, sessionId: reserved.sessionId, generation: reserved.generation },
   });
 });
-test('activation and dispatch roll back together, preserving the frozen prompt for retry', async () => {
+test('new kickoff, activation and dispatch roll back together for retry', async () => {
   db.exec(
     "CREATE TRIGGER reject_direct_mail BEFORE INSERT ON job_queue WHEN NEW.queue = 'mailbox' BEGIN SELECT RAISE(ABORT, 'reject dispatch'); END"
   );
   await expect(start({ taskId, requestKey })).rejects.toThrow('reject dispatch');
   const reserved = attempts.getActive(taskId)!;
-  const frozen = readDirectKickoffIntent(db, reserved.id)!;
+  expect(readDirectKickoffIntent(db, reserved.id)).toBeNull();
   expect(reserved.phase).toBe('reserved');
   expect(tasks.getTask(taskId)?.status).toBe('open');
   expect(tasks.getTask(taskId)?.taskAgentSessionId).toBeUndefined();
@@ -120,7 +123,9 @@ test('activation and dispatch roll back together, preserving the frozen prompt f
   tasks.updateTask(taskId, { description: 'Changed later' });
   db.exec('DROP TRIGGER reject_direct_mail');
   expect((await start({ taskId, requestKey })).started).toBe(true);
-  expect(readDirectKickoffIntent(db, reserved.id)).toEqual(frozen);
+  expect(readDirectKickoffIntent(db, reserved.id)?.message.message.content).toContain(
+    'Changed later'
+  );
   expect(mailCount()).toBe(1);
 });
 test('competing request keys cannot both claim or publish the draft', async () => {
@@ -207,4 +212,57 @@ test('delayed same-request preparation never cleans up the activated shared sess
   expect(unregisterSession).not.toHaveBeenCalled();
   expect(cleanup).not.toHaveBeenCalled();
   expect(mailCount()).toBe(1);
+});
+
+test.each(['dependency', 'paused'] as const)(
+  'ineligible %s start does not freeze an expiring kickoff',
+  async (cause) => {
+    const clock = spyOn(Date, 'now').mockReturnValue(Date.now());
+    try {
+      const dependency = tasks.createTask({ spaceId, title: 'Dependency', description: '' });
+      if (cause === 'dependency') tasks.updateTask(taskId, { dependsOn: [dependency.id] });
+      else
+        getSessionForControl.mockImplementationOnce(async (id: string) => {
+          new SpaceRepository(db).pauseSpace(spaceId);
+          return {
+            getSessionData: () => sessions.getSession(id)!,
+            isQueryActiveOrStarting: () => false,
+            cleanup: async () => {},
+          } as AgentSession;
+        });
+      expect((await start({ taskId, requestKey })).started).toBe(false);
+      const reserved = attempts.getActive(taskId)!;
+      expect(readDirectKickoffIntent(db, reserved.id)).toBeNull();
+      expect(mailCount()).toBe(0);
+      clock.mockReturnValue(Date.now() + 25 * 60 * 60 * 1000);
+      tasks.updateTask(dependency.id, { status: 'done' });
+      db.prepare('UPDATE spaces SET paused = 0 WHERE id = ?').run(spaceId);
+      expect((await start({ taskId, requestKey })).started).toBe(true);
+      expect(mailCount()).toBe(1);
+    } finally {
+      clock.mockRestore();
+    }
+  }
+);
+test('rejected activation retains a preexisting frozen intent without renewing it', async () => {
+  getSessionForControl.mockResolvedValueOnce(null);
+  await start({ taskId, requestKey });
+  const attempt = attempts.getActive(taskId)!;
+  const recorded = recordDirectKickoffAtomically(db, {
+    attemptId: attempt.id,
+    sessionId: attempt.sessionId,
+    message: {
+      type: 'user',
+      message: { content: 'Existing frozen prompt' },
+      parent_tool_use_id: null,
+    },
+  });
+  if (!recorded.recorded) throw new Error(recorded.reason);
+  const dependency = tasks.createTask({ spaceId, title: 'Dependency', description: '' });
+  tasks.updateTask(taskId, { dependsOn: [dependency.id] });
+  expect((await start({ taskId, requestKey })).started).toBe(false);
+  expect(readDirectKickoffIntent(db, attempt.id)).toEqual(recorded.entry);
+  tasks.updateTask(dependency.id, { status: 'done' });
+  expect((await start({ taskId, requestKey })).started).toBe(true);
+  expect(readDirectKickoffIntent(db, attempt.id)).toEqual(recorded.entry);
 });
