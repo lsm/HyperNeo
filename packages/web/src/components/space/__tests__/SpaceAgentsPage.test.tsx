@@ -1591,6 +1591,40 @@ describe('SpaceAgentsPage', () => {
     expect(mockCreate.mock.calls[0][0].tools).toEqual(['Grep']);
   });
 
+  it('keeps a scoped entry added after a preset through the next preset', async () => {
+    const { getByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'Rev' } });
+    fireEvent.click(getByTestId('tools-editor-preset-read-only'));
+    fireEvent.input(getByTestId('tools-editor-scoped-input'), { target: { value: 'Bash(ls:*)' } });
+    fireEvent.click(getByTestId('tools-editor-scoped-add'));
+    fireEvent.click(getByTestId('tools-editor-preset-custom'));
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalled());
+    expect(mockCreate.mock.calls[0][0].tools).toContain('Bash(ls:*)');
+  });
+
+  it('submits an empty removal override rather than letting the tool return', async () => {
+    mockTemplates.value = [{ key: 'a.v1', displayName: 'A', toolPermissions: { tools: ['Bash'] } }];
+    const { getByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'Rev' } });
+    fireEvent.input(getByTestId('agent-template-select'), { target: { value: 'a.v1' } });
+    fireEvent.input(getByTestId('tools-editor-scoped-input'), { target: { value: 'Bash(tmp:*)' } });
+    fireEvent.click(getByTestId('tools-editor-scoped-add'));
+    fireEvent.click(
+      getByTestId('tools-editor-chip-Bash').querySelector('input') as HTMLInputElement
+    );
+    fireEvent.click(getByTestId('tools-editor-scoped-remove-Bash(tmp:*)'));
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalled());
+    expect(mockCreate.mock.calls[0][0].tools).toEqual([]);
+  });
+
   it('still omits tools when a template is chosen but untouched', async () => {
     mockTemplates.value = [
       { key: 'reviewer.v1', displayName: 'Reviewer', toolPermissions: { tools: ['Read'] } },

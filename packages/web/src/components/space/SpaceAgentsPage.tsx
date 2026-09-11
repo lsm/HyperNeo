@@ -521,6 +521,11 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
                       return;
                     }
                     if (toolsExplicit) {
+                      toolsAddedRef.current = trackAddedTools(
+                        toolsAddedRef.current,
+                        toolsBaselineRef.current,
+                        next.tools
+                      );
                       if (!differsFromBaseline(next.tools, toolsBaselineRef.current)) {
                         setToolsExplicit(false);
                         setFormTools({
@@ -551,7 +556,7 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
                       setFormTools({ tools: toolsBaselineRef.current, toolsOverridden: false });
                       return;
                     }
-                    setFormTools(next);
+                    setFormTools({ tools: next.tools, toolsOverridden: true });
                   }}
                   manageScopedEntries
                   preservedScopedEntries={toolsAddedRef.current}
