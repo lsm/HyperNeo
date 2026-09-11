@@ -253,7 +253,7 @@ function materializeScopedTable(
 
   if (rows.length > MAX_MATERIALIZED_ROWS) {
     throw new Error(
-      `Table "${config.tableName}" holds more than ${MAX_MATERIALIZED_ROWS} rows in this scope; narrow the query`
+      `Table "${config.tableName}" holds more than ${MAX_MATERIALIZED_ROWS} rows in this scope, which exceeds what a scoped query can copy. This is a limit of the table, not of the query — narrowing the WHERE clause will not help.`
     );
   }
 
