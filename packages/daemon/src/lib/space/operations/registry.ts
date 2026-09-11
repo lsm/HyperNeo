@@ -1,4 +1,8 @@
 import {
+  createOwnedPendingCompletionOperation,
+  type OwnedPendingCompletionDependencies,
+} from './owned-pending-completion.ts';
+import {
   createSpaceTaskDependencyEditor,
   type SpaceTaskDependencyDependencies,
 } from './task-dependencies.ts';
@@ -14,11 +18,15 @@ import {
 export function createSpaceOperationRegistryProvider(
   database: Database,
   jobQueue: JobQueueRepository,
-  tasks: Omit<SpaceTaskMetadataDependencies & SpaceTaskDependencyDependencies, 'db'>
+  tasks: Omit<SpaceTaskMetadataDependencies & SpaceTaskDependencyDependencies, 'db'>,
+  pendingCompletion?: OwnedPendingCompletionDependencies
 ) {
   let registry: OperationRegistry | undefined;
   return () =>
     (registry ??= createDatabaseOperationCatalog(database, jobQueue, {
+      pendingCompletion: pendingCompletion
+        ? createOwnedPendingCompletionOperation(pendingCompletion)
+        : undefined,
       editTask: (input, caller) =>
         createSpaceTaskMetadataEditor({
           ...tasks,
