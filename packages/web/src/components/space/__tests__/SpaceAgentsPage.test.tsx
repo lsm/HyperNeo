@@ -1135,16 +1135,70 @@ describe('SpaceAgentsPage', () => {
     await waitFor(() => expect(queryByTestId('confirm-delete-agent')).toBeNull());
   });
 
-  it('follows the same handle again after switching spaces', async () => {
-    mockAgents.value = [makeAgent('reviewer')];
+  it('closes a form when a deep link is entered from the plain agents route', async () => {
+    mockAgents.value = [makeAgent('alpha'), makeAgent('beta')];
+    const { getByTestId, queryByTestId, rerender } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    expect(getByTestId('agent-form')).toBeTruthy();
+
+    rerender(<SpaceAgentsPage spaceId="space-1" selectedHandle="beta" />);
+
+    await waitFor(() => expect(queryByTestId('agent-form')).toBeNull());
+    expect(getByTestId('agent-detail').textContent).toContain('beta');
+  });
+
+  it('keeps a manual selection while the URL handle stays unmatched', async () => {
+    mockAgents.value = [makeAgent('alpha'), makeAgent('beta')];
     const { getByTestId, rerender } = render(
-      <SpaceAgentsPage spaceId="space-1" selectedHandle="reviewer" />
+      <SpaceAgentsPage spaceId="space-1" selectedHandle="ghost" />
+    );
+    await waitFor(() => expect(getByTestId('agent-deep-link-missing')).toBeTruthy());
+
+    fireEvent.click(getByTestId('agent-row-alpha'));
+    await waitFor(() => expect(getByTestId('agent-detail').textContent).toContain('alpha'));
+
+    rerender(<SpaceAgentsPage spaceId="space-1" selectedHandle="ghost" />);
+
+    await waitFor(() => expect(getByTestId('agent-list')).toBeTruthy());
+    expect(getByTestId('agent-detail').textContent).toContain('alpha');
+  });
+
+  it('ignores a delete that resolves after the dialog was dismissed by navigation', async () => {
+    mockAgents.value = [makeAgent('alpha'), makeAgent('beta')];
+    let rejectRemove: (err: Error) => void = () => {};
+    mockRemove.mockReturnValueOnce(
+      new Promise<void>((_resolve, reject) => {
+        rejectRemove = reject;
+      })
+    );
+    const { getByTestId, queryByTestId, rerender } = render(
+      <SpaceAgentsPage spaceId="space-1" selectedHandle="alpha" />
     );
     await waitFor(() => expect(getByTestId('agent-detail')).toBeTruthy());
 
+    fireEvent.click(getByTestId('agent-delete-button'));
+    fireEvent.click(getByTestId('confirm-delete-agent'));
+
+    rerender(<SpaceAgentsPage spaceId="space-1" selectedHandle="beta" />);
+    await waitFor(() => expect(queryByTestId('confirm-delete-agent')).toBeNull());
+
+    rejectRemove(new Error('delete failed'));
+    await tick();
+    expect(queryByTestId('confirm-delete-agent')).toBeNull();
+    expect(getByTestId('agent-detail').textContent).toContain('beta');
+  });
+
+  it('ignores an agent from the previous space while the store still holds it', async () => {
+    mockAgents.value = [makeAgent('a-reviewer', { handle: 'reviewer' })];
+    const { queryByTestId, rerender } = render(
+      <SpaceAgentsPage spaceId="space-1" selectedHandle="reviewer" />
+    );
+    await waitFor(() => expect(queryByTestId('agent-detail')).toBeTruthy());
+
     rerender(<SpaceAgentsPage spaceId="space-2" selectedHandle="reviewer" />);
-    await waitFor(() => expect(getByTestId('agent-detail')).toBeTruthy());
-    expect(getByTestId('agent-detail').textContent).toContain('reviewer');
+
+    await waitFor(() => expect(queryByTestId('agent-detail')).toBeNull());
   });
 
   it('follows a handle again after visiting an unmatched one', async () => {
