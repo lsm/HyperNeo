@@ -324,18 +324,6 @@ describe('SpaceAgentTemplateRepository — Space-scoped methods', () => {
     }
   });
 
-  test('a stale owned version cannot overwrite the sentinel row it falls back to', () => {
-    repo.createOwned(SENTINEL, { key: 'shared', handle: 'h' });
-    repo.createOwned('space-a', { key: 'shared', handle: 'h' });
-    const staleOwnedVersion = repo.getOwnedWithVersion('space-a', 'shared')!.version;
-    repo.deleteOwned('space-a', 'shared');
-
-    expect(repo.getOwned('space-a', 'shared')).not.toBeNull();
-    expect(
-      repo.casUpdateOwned('space-a', 'shared', { displayName: 'Hijacked' }, staleOwnedVersion)
-    ).toBeNull();
-  });
-
   test('two Spaces can hold the same key, each tracking its own row version', () => {
     const a = repo.createOwned('space-a', { key: 'shared', handle: 'h' });
     const b = repo.createOwned('space-b', { key: 'shared', handle: 'h' });
@@ -402,82 +390,25 @@ describe('SpaceAgentTemplateRepository — Space-scoped methods', () => {
     expect(repo.getOwned('space-b', 'k')?.handle).toBe('b');
   });
 
-  test('unmigrated rows at the sentinel stay visible to every Space', () => {
-    repo.createOwned(SENTINEL, { key: 'legacy', handle: 'old' });
+  test('a row left at the migration sentinel is invisible to every Space', () => {
+    repo.createOwned(SENTINEL, { key: 'legacy', handle: 'sentinel' });
 
-    expect(repo.getOwned('space-a', 'legacy')?.handle).toBe('old');
-    expect(repo.getOwned('space-b', 'legacy')?.handle).toBe('old');
-    expect(repo.listOwned('space-a').map((t) => t.key)).toContain('legacy');
-  });
-
-  test('an owned row wins over a sentinel row with the same key', () => {
-    repo.createOwned(SENTINEL, { key: 'k', handle: 'sentinel' });
-    repo.createOwned('space-a', { key: 'k', handle: 'owned' });
-
-    expect(repo.getOwned('space-a', 'k')?.handle).toBe('owned');
-    expect(repo.getOwned('space-b', 'k')?.handle).toBe('sentinel');
-  });
-
-  test('listOwned returns the Space own rows plus unmigrated ones', () => {
-    repo.createOwned('space-a', { key: 'mine', handle: 'a' });
-    repo.createOwned('space-b', { key: 'theirs', handle: 'b' });
-    repo.createOwned(SENTINEL, { key: 'legacy', handle: 'old' });
-
-    expect(
-      repo
-        .listOwned('space-a')
-        .map((t) => t.key)
-        .sort()
-    ).toEqual(['legacy', 'mine']);
-  });
-  test('an update from one Space never rewrites the shared sentinel row', () => {
-    repo.createOwned(SENTINEL, { key: 'k', handle: 'sentinel' });
-    repo.createOwned('space-a', { key: 'k', handle: 'owned' });
-
-    repo.casUpdateOwned('space-a', 'k', { displayName: 'Changed' });
-
-    expect(repo.getOwned('space-a', 'k')?.displayName).toBe('Changed');
-    expect(repo.getOwned('space-b', 'k')?.handle).toBe('sentinel');
-  });
-
-  test('deleting an owned row leaves the sentinel other Spaces still use', () => {
-    repo.createOwned(SENTINEL, { key: 'k', handle: 'sentinel' });
-    repo.createOwned('space-a', { key: 'k', handle: 'owned' });
-
-    expect(repo.deleteOwned('space-a', 'k')).toBe(true);
-
-    expect(repo.getOwned('space-a', 'k')?.handle).toBe('sentinel');
-    expect(repo.getOwned('space-b', 'k')?.handle).toBe('sentinel');
-  });
-
-  test('a versioned write refuses when the version belongs to the shadowed row', () => {
-    repo.createOwned(SENTINEL, { key: 'k', handle: 'sentinel' });
-    const owned = repo.createOwned('space-a', { key: 'k', handle: 'owned' });
-    const sentinelVersion = (owned.version ?? 1) + 99;
-
-    expect(repo.casUpdateOwned('space-a', 'k', { displayName: 'X' }, sentinelVersion)).toBeNull();
-    expect(repo.deleteOwned('space-a', 'k', sentinelVersion)).toBe(false);
-  });
-
-  test('listOwned reports one row per key when a sentinel is shadowed', () => {
-    repo.createOwned(SENTINEL, { key: 'k', handle: 'sentinel' });
-    repo.createOwned('space-a', { key: 'k', handle: 'owned' });
-
-    const listed = repo.listOwned('space-a').filter((t) => t.key === 'k');
-    expect(listed).toHaveLength(1);
-    expect(listed[0].handle).toBe('owned');
+    expect(repo.getOwned('space-a', 'legacy')).toBeNull();
+    expect(repo.listOwned('space-a').map((t) => t.key)).not.toContain('legacy');
+    expect(repo.casUpdateOwned('space-a', 'legacy', { displayName: 'X' })).toBeNull();
+    expect(repo.deleteOwned('space-a', 'legacy')).toBe(false);
+    expect(repo.getOwned(SENTINEL, 'legacy')).not.toBeNull();
   });
 
   test('writes and deletes are refused when the Space sees no row at all', () => {
     expect(repo.casUpdateOwned('space-a', 'missing', { displayName: 'X' })).toBeNull();
     expect(repo.deleteOwned('space-a', 'missing')).toBe(false);
   });
-  test('dedupe keeps creation order when an owned row replaces an older sentinel', () => {
-    repo.createOwned(SENTINEL, { key: 'shadowed', handle: 'sentinel' });
+  test('listOwned keeps creation order', () => {
+    repo.createOwned('space-a', { key: 'first', handle: 'one' });
     repo.createOwned('space-a', { key: 'middle', handle: 'mid' });
-    repo.createOwned('space-a', { key: 'shadowed', handle: 'owned' });
 
-    expect(repo.listOwned('space-a').map((t) => t.key)).toEqual(['middle', 'shadowed']);
+    expect(repo.listOwned('space-a').map((t) => t.key)).toEqual(['first', 'middle']);
   });
   test('ties on created_at order by key the way SQLite does, not by locale', () => {
     const at = 5_000;
