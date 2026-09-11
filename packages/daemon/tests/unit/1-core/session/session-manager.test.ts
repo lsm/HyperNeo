@@ -150,6 +150,18 @@ describe('SessionManager', () => {
     });
   });
 
+  it('keeps custom operation registries ahead of lazy daemon defaults', () => {
+    const configured = { entries: [], get: () => undefined };
+    const custom = { entries: [], get: () => undefined };
+    const provider = mock(() => configured);
+    sessionManager.setDefaultOperationRegistryProvider(provider);
+    expect(provider).not.toHaveBeenCalled();
+    expect(sessionManager.getOperationRegistry()).toBe(configured);
+    sessionManager.setOperationRegistryProvider(() => custom);
+    sessionManager.setDefaultOperationRegistryProvider(() => configured);
+    expect(sessionManager.getOperationRegistry()).toBe(custom);
+  });
+
   describe('start', () => {
     it('should register session.title_generation handler on jobProcessor', () => {
       expect(mockJobProcessor.register).not.toHaveBeenCalled();

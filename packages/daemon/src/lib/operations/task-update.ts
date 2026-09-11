@@ -14,7 +14,7 @@ export function createUpdateTaskOperation(
   return defineOperation({
     name: 'task.update',
     description:
-      'Edit standalone task metadata. Supply taskId and at least one of title, description, priority or labels. Omitted fields are preserved. Returns null for absent or Space-owned tasks. Does not change lifecycle or execution.',
+      'Edit available task metadata. Space-scoped MCP callers can edit tasks in their owning Space. Supply taskId and at least one of title, description, priority or labels. Omitted fields are preserved. Returns null for missing or unavailable targets. Does not change lifecycle or execution.',
     inputSchema: z
       .object({
         taskId: z.string().min(1),

@@ -81,6 +81,7 @@ export class SessionManager {
   private messagePersistence: MessagePersistence;
   private spaceRuntimeMcpProvider?: SpaceRuntimeMcpProvider;
   private operationRegistryProvider?: OperationRegistryProvider;
+  private defaultOperationRegistryProvider?: OperationRegistryProvider;
   private defaultOperationRegistry?: OperationRegistry;
   private mailboxDeferredReplaySuppressor?: (sessionId: string) => void;
   private workflowMcpProvisioning = new Map<
@@ -473,8 +474,13 @@ export class SessionManager {
   getOperationRegistry(): OperationRegistry {
     return (
       this.operationRegistryProvider?.() ??
+      this.defaultOperationRegistryProvider?.() ??
       (this.defaultOperationRegistry ??= createDatabaseOperationCatalog(this.db, this.jobQueue))
     );
+  }
+
+  setDefaultOperationRegistryProvider(provider: OperationRegistryProvider): void {
+    this.defaultOperationRegistryProvider = provider;
   }
 
   setOperationRegistryProvider(provider: OperationRegistryProvider): void {

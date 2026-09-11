@@ -97,6 +97,11 @@ describe('session operation MCP attachment', () => {
       });
       expect(lookup).toHaveBeenCalledTimes(2);
       lookup.mockRestore();
+      manager.setDefaultOperationRegistryProvider(() => catalog('configured'));
+      expect(await rpc({ name: 'configured' }, context)).toMatchObject({ source: 'rpc' });
+      expect((await cachedServer.tools[0].handler({ name: 'configured' }, {})).isError).not.toBe(
+        true
+      );
       db.createSession(createTestSession('initial-load'));
       const initialLoad = manager.getSessionAsync('initial-load');
       expect(manager.getCachedSession('initial-load')).toBeNull();
