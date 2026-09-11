@@ -52,22 +52,21 @@ describe('Space mutations with owner-independent task storage', () => {
     };
   }
 
-  test.each([
-    'update',
-    'archive',
-    'delete',
-  ] as const)('%s leaves standalone state and effects untouched', (operation) => {
-    const before = snapshot('standalone');
-    const result =
-      operation === 'update'
-        ? tasks.updateTask('standalone', { title: 'Changed', status: 'archived' })
-        : operation === 'archive'
-          ? tasks.archiveTask('standalone')
-          : tasks.deleteTask('standalone');
-    expect(result).toBe(operation === 'delete' ? false : null);
-    expect(snapshot('standalone')).toEqual(before);
-    expect(notifyChange).not.toHaveBeenCalled();
-  });
+  test.each(['update', 'archive', 'delete'] as const)(
+    '%s leaves standalone state and effects untouched',
+    (operation) => {
+      const before = snapshot('standalone');
+      const result =
+        operation === 'update'
+          ? tasks.updateTask('standalone', { title: 'Changed', status: 'archived' })
+          : operation === 'archive'
+            ? tasks.archiveTask('standalone')
+            : tasks.deleteTask('standalone');
+      expect(result).toBe(operation === 'delete' ? false : null);
+      expect(snapshot('standalone')).toEqual(before);
+      expect(notifyChange).not.toHaveBeenCalled();
+    }
+  );
 
   test('owned updates preserve indexing and terminal session archival', () => {
     expect(tasks.updateTask('owned', { title: 'Changed', status: 'archived' })).toMatchObject({
