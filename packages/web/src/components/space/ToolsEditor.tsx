@@ -73,11 +73,14 @@ export function toggleKnownTool(tools: string[], tool: string): ToolsSelection {
   return { tools: next, toolsOverridden: next.length > 0 };
 }
 
+export type ToolsChangeOrigin = 'preset' | 'edit';
+
 export interface ToolsEditorProps {
   tools: string[];
   toolsOverridden: boolean;
-  onChange: (next: ToolsSelection) => void;
+  onChange: (next: ToolsSelection, origin: ToolsChangeOrigin) => void;
   manageScopedEntries?: boolean;
+  preservedScopedEntries?: string[];
 }
 
 export function ToolsEditor({
@@ -85,6 +88,7 @@ export function ToolsEditor({
   toolsOverridden,
   onChange,
   manageScopedEntries = false,
+  preservedScopedEntries,
 }: ToolsEditorProps) {
   const activePreset = toolsOverridden ? detectToolsPreset(tools) : 'Inherited';
   const [scopedDraft, setScopedDraft] = useState('');
@@ -120,7 +124,7 @@ export function ToolsEditor({
     }
     setScopedDraft('');
     markScopedValidity('');
-    onChange(outcome);
+    onChange(outcome, 'edit');
   };
 
   return (
@@ -141,7 +145,15 @@ export function ToolsEditor({
                 key={preset}
                 type="button"
                 data-testid={`tools-editor-preset-${preset.toLowerCase().replace(/\s+/g, '-')}`}
-                onClick={() => onChange(applyToolsPreset(preset, manageScopedEntries ? tools : []))}
+                onClick={() =>
+                  onChange(
+                    applyToolsPreset(
+                      preset,
+                      manageScopedEntries ? (preservedScopedEntries ?? tools) : []
+                    ),
+                    'preset'
+                  )
+                }
                 class={`text-xs px-2.5 py-1 rounded border transition-colors ${
                   active
                     ? 'border-accent-hover bg-accent/20 text-accent-soft'
@@ -195,7 +207,7 @@ export function ToolsEditor({
                 checked={checked}
                 disabled={inherited}
                 onChange={() => {
-                  if (!inherited) onChange(toggleKnownTool(tools, tool));
+                  if (!inherited) onChange(toggleKnownTool(tools, tool), 'edit');
                 }}
                 class="sr-only"
               />
@@ -243,7 +255,7 @@ export function ToolsEditor({
                   type="button"
                   aria-label={`Remove ${entry}`}
                   data-testid={`tools-editor-scoped-remove-${entry}`}
-                  onClick={() => onChange(removeScopedTool(tools, entry))}
+                  onClick={() => onChange(removeScopedTool(tools, entry), 'edit')}
                   class="text-fg-muted hover:text-danger"
                 >
                   ×

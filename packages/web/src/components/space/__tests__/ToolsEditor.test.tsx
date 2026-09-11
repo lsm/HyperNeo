@@ -293,10 +293,13 @@ describe('ToolsEditor', () => {
     fireEvent.click(getByText('Read Only'));
 
     expect(onChange).toHaveBeenCalledTimes(1);
-    expect(onChange).toHaveBeenCalledWith({
-      tools: ['Read', 'Grep', 'Glob'],
-      toolsOverridden: true,
-    });
+    expect(onChange).toHaveBeenCalledWith(
+      {
+        tools: ['Read', 'Grep', 'Glob'],
+        toolsOverridden: true,
+      },
+      expect.any(String)
+    );
   });
 
   it('enters override mode from inherited when Custom is clicked', () => {
@@ -438,7 +441,10 @@ describe('scoped tool entries', () => {
     );
     expect(getByTestId('tools-editor-scoped-Bash(ls:*)')).toBeTruthy();
     fireEvent.click(getByTestId('tools-editor-scoped-remove-Bash(ls:*)'));
-    expect(onChange).toHaveBeenCalledWith({ tools: ['Read'], toolsOverridden: true });
+    expect(onChange).toHaveBeenCalledWith(
+      { tools: ['Read'], toolsOverridden: true },
+      expect.any(String)
+    );
   });
 
   it('lists no scoped chips while tools are inherited, but still offers the input', () => {
@@ -461,10 +467,13 @@ describe('scoped tool entries', () => {
     );
     expect(queryByTestId('tools-editor-scoped')).toBeNull();
     fireEvent.click(getByTestId('tools-editor-preset-read-only'));
-    expect(onChange).toHaveBeenCalledWith({
-      tools: ['Read', 'Grep', 'Glob'],
-      toolsOverridden: true,
-    });
+    expect(onChange).toHaveBeenCalledWith(
+      {
+        tools: ['Read', 'Grep', 'Glob'],
+        toolsOverridden: true,
+      },
+      expect.any(String)
+    );
   });
 });
 
@@ -538,10 +547,13 @@ describe('adding scoped tool entries', () => {
     const input = getByTestId('tools-editor-scoped-input') as HTMLInputElement;
     fireEvent.input(input, { target: { value: 'Bash(ls:*)' } });
     fireEvent.click(getByTestId('tools-editor-scoped-add'));
-    expect(onChange).toHaveBeenCalledWith({
-      tools: ['Read', 'Bash(ls:*)'],
-      toolsOverridden: true,
-    });
+    expect(onChange).toHaveBeenCalledWith(
+      {
+        tools: ['Read', 'Bash(ls:*)'],
+        toolsOverridden: true,
+      },
+      expect.any(String)
+    );
   });
 
   it('shows an error instead of emitting for an invalid entry', () => {
@@ -594,7 +606,10 @@ describe('scoped entries on an inherited profile', () => {
       target: { value: 'Bash(ls:*)' },
     });
     fireEvent.click(getByTestId('tools-editor-scoped-add'));
-    expect(onChange).toHaveBeenCalledWith({ tools: ['Bash(ls:*)'], toolsOverridden: true });
+    expect(onChange).toHaveBeenCalledWith(
+      { tools: ['Bash(ls:*)'], toolsOverridden: true },
+      expect.any(String)
+    );
   });
 
   it('commits a typed entry on blur so saving does not discard it', () => {
@@ -610,10 +625,13 @@ describe('scoped entries on an inherited profile', () => {
     const input = getByTestId('tools-editor-scoped-input');
     fireEvent.input(input, { target: { value: 'Bash(ls:*)' } });
     fireEvent.blur(input);
-    expect(onChange).toHaveBeenCalledWith({
-      tools: ['Read', 'Bash(ls:*)'],
-      toolsOverridden: true,
-    });
+    expect(onChange).toHaveBeenCalledWith(
+      {
+        tools: ['Read', 'Bash(ls:*)'],
+        toolsOverridden: true,
+      },
+      expect.any(String)
+    );
   });
 
   it('does not emit on blur when the draft is empty', () => {
@@ -657,10 +675,13 @@ describe('scoped draft submitted exactly once', () => {
     fireEvent.click(getByTestId('tools-editor-scoped-add'));
 
     expect(onChange).toHaveBeenCalledTimes(1);
-    expect(onChange).toHaveBeenCalledWith({
-      tools: ['Read', 'Bash(ls:*)'],
-      toolsOverridden: true,
-    });
+    expect(onChange).toHaveBeenCalledWith(
+      {
+        tools: ['Read', 'Bash(ls:*)'],
+        toolsOverridden: true,
+      },
+      expect.any(String)
+    );
     expect(queryByTestId('tools-editor-scoped-error')).toBeNull();
   });
 });
@@ -696,10 +717,13 @@ describe('invalid scoped draft blocks the enclosing form', () => {
     fireEvent.input(input, { target: { value: 'Bash(ls:*)' } });
     expect(input.checkValidity()).toBe(true);
     fireEvent.blur(input);
-    expect(onChange).toHaveBeenCalledWith({
-      tools: ['Read', 'Bash(ls:*)'],
-      toolsOverridden: true,
-    });
+    expect(onChange).toHaveBeenCalledWith(
+      {
+        tools: ['Read', 'Bash(ls:*)'],
+        toolsOverridden: true,
+      },
+      expect.any(String)
+    );
     expect(input.checkValidity()).toBe(true);
   });
 
