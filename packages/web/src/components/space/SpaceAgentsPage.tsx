@@ -1,11 +1,13 @@
 import type {
   AgentModelPoolEntry,
+  ThinkingLevel,
   SpaceAgent,
   SpaceAgentAutonomyLevel,
   SettingSource,
   SpaceAgentStatus,
   SpaceLongHorizonAgentTemplate,
 } from '@hyperneo/shared';
+import { getThinkingOptionsForProvider, THINKING_LEVEL_LABELS } from '@hyperneo/shared';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { connectionManager } from '../../lib/connection-manager';
 import { spaceAgentStore } from '../../lib/space-agent-store';
@@ -93,6 +95,7 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
   const [formModelPool, setFormModelPool] = useState<AgentModelPoolEntry[]>([]);
   const [formTools, setFormTools] = useState<ToolsSelection>({ tools: [], toolsOverridden: false });
   const [formSettingSources, setFormSettingSources] = useState<SettingSource[] | null>(null);
+  const [formThinkingLevel, setFormThinkingLevel] = useState<ThinkingLevel | null>(null);
   const [formTemplateKey, setFormTemplateKey] = useState<string>('');
   const [toolsExplicit, setToolsExplicit] = useState(false);
   const toolsBaselineRef = useRef<string[]>([]);
@@ -123,6 +126,7 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
     setFormModelPool([]);
     setFormTools({ tools: [], toolsOverridden: false });
     setFormSettingSources(null);
+    setFormThinkingLevel(null);
     setFormTemplateKey('');
     setToolsExplicit(false);
     toolsBaselineRef.current = [];
@@ -196,6 +200,10 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
     ? (templateOptions().find((template) => template.key === formTemplateKey)?.settingSources ??
       null)
     : null;
+  const selectedTemplateThinking = formTemplateKey
+    ? (templateOptions().find((template) => template.key === formTemplateKey)?.thinkingLevel ??
+      null)
+    : null;
 
   function openCreate() {
     formGenerationRef.current += 1;
@@ -224,6 +232,7 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
     setFormModelPool(poolFromAgent(agent));
     setFormTools({ tools: agent.tools ?? [], toolsOverridden: agent.tools !== null });
     setFormSettingSources(agent.settingSources ?? null);
+    setFormThinkingLevel(agent.thinkingLevel ?? null);
     setFormTemplateKey('');
     setToolsExplicit(agent.tools !== null);
     toolsBaselineRef.current = [];
@@ -275,6 +284,7 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
           provider: null,
           tools: formTools.toolsOverridden ? formTools.tools : null,
           settingSources: formSettingSources,
+          thinkingLevel: formThinkingLevel,
         });
         if (!isCurrentSubmission()) return;
       } else {
@@ -288,6 +298,7 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
           ...createPoolFields(formModelPool),
           tools: formTools.toolsOverridden ? formTools.tools : undefined,
           settingSources: formSettingSources ?? undefined,
+          thinkingLevel: formThinkingLevel ?? undefined,
           templateKey: field('templateKey') || undefined,
         });
         if (!isCurrentSubmission()) return;
@@ -529,6 +540,33 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
                   preservedScopedEntries={toolsAddedRef.current}
                 />
               </div>
+
+              <label class="block text-xs text-fg-soft" data-testid="agent-thinking-field">
+                Thinking level
+                {formThinkingLevel === null && <span class="ml-2 text-fg-muted">(default)</span>}
+                <select
+                  class="mt-1 w-full rounded border border-border bg-bg px-2 py-1 text-xs text-fg"
+                  name="thinkingLevel"
+                  value={formThinkingLevel ?? ''}
+                  onInput={(event) =>
+                    setFormThinkingLevel(
+                      (event.currentTarget.value || null) as ThinkingLevel | null
+                    )
+                  }
+                  data-testid="agent-thinking-select"
+                >
+                  <option value="">
+                    {selectedTemplateThinking
+                      ? `Template default (${THINKING_LEVEL_LABELS[selectedTemplateThinking]})`
+                      : 'Model default'}
+                  </option>
+                  {getThinkingOptionsForProvider(undefined).map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
 
               <div data-testid="agent-setting-sources-field">
                 <div class="mb-1 flex items-center justify-between">

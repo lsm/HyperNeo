@@ -30,6 +30,7 @@ const {
       key: string;
       displayName: string;
       settingSources?: string[] | null;
+      thinkingLevel?: string | null;
       toolPermissions?: Record<string, unknown>;
     }>,
   },
@@ -1730,6 +1731,68 @@ describe('SpaceAgentsPage', () => {
 
     await waitFor(() => expect(mockCreate).toHaveBeenCalled());
     expect(mockCreate.mock.calls[0][0].tools).toEqual(['Read', 'Grep', 'Glob']);
+  });
+
+  it('omits the thinking level on create while defaulted', async () => {
+    const { getByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    expect(getByTestId('agent-thinking-field')).toBeTruthy();
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'Scribe' } });
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalled());
+    expect(mockCreate.mock.calls[0][0].thinkingLevel).toBeUndefined();
+  });
+
+  it('sends an explicitly chosen thinking level', async () => {
+    const { getByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'Scribe' } });
+    fireEvent.input(getByTestId('agent-thinking-select'), { target: { value: 'think16k' } });
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalled());
+    expect(mockCreate.mock.calls[0][0].thinkingLevel).toBe('think16k');
+  });
+
+  it("labels the default option with the selected template's level", async () => {
+    mockTemplates.value = [{ key: 'deep.v1', displayName: 'Deep', thinkingLevel: 'think32k' }];
+    const { getByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    fireEvent.input(getByTestId('agent-template-select'), { target: { value: 'deep.v1' } });
+
+    const select = getByTestId('agent-thinking-select') as HTMLSelectElement;
+    expect(select.options[0].textContent).toContain('Template default');
+    expect(select.value).toBe('');
+  });
+
+  it('round-trips a stored thinking level on edit', async () => {
+    mockAgents.value = [makeAgent('alpha', { thinkingLevel: 'think8k' })];
+    const { getByTestId, getByText } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('agent-row-alpha'));
+    fireEvent.click(getByText('Edit'));
+    expect((getByTestId('agent-thinking-select') as HTMLSelectElement).value).toBe('think8k');
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalled());
+    expect(mockUpdate.mock.calls[0][1].thinkingLevel).toBe('think8k');
+  });
+
+  it('clears a thinking level back to the default', async () => {
+    mockAgents.value = [makeAgent('alpha', { thinkingLevel: 'think8k' })];
+    const { getByTestId, getByText } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('agent-row-alpha'));
+    fireEvent.click(getByText('Edit'));
+    fireEvent.input(getByTestId('agent-thinking-select'), { target: { value: '' } });
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalled());
+    expect(mockUpdate.mock.calls[0][1].thinkingLevel).toBeNull();
   });
 
   it('clears a description on edit rather than dropping the field', async () => {
