@@ -12,6 +12,7 @@ import {
   buildCustomAgentSystemPrompt,
   buildCustomAgentTaskMessage,
   type CustomAgentConfig,
+  type TaskMessageContext,
   createCustomAgentInit,
   expandPrompt,
   resolveAgentInit,
@@ -309,6 +310,36 @@ describe('resolveCustomAgentPrompt', () => {
 });
 
 describe('buildCustomAgentTaskMessage', () => {
+  it('builds the same task message without an agent record, session or workflow', () => {
+    const context: TaskMessageContext = {
+      task: makeTask(),
+      space: makeSpace({
+        backgroundContext: 'Shared project context',
+        instructions: 'Keep changes focused.',
+      }),
+      workspacePath: '/workspace/direct-task',
+      goal: makeGoal(),
+      previousTaskSummaries: ['Previous attempt: added validation'],
+    };
+    const message = buildCustomAgentTaskMessage(context);
+
+    expect(message).toBe(
+      buildCustomAgentTaskMessage({
+        ...context,
+        customAgent: makeAgent(),
+        sessionId: 'legacy-worker',
+        workflowRun: null,
+      })
+    );
+    expect(message).toContain('Implement feature X');
+    expect(message).toContain('- Worktree: /workspace/direct-task');
+    expect(message).toContain('Shared project context');
+    expect(message).toContain('Keep changes focused.');
+    expect(message).toContain('Improve onboarding');
+    expect(message).toContain('Previous attempt: added validation');
+    expect(message).not.toContain('## Your Role in This Workflow');
+  });
+
   it('includes factual task, runtime location, role, previous work, project context, and instructions', () => {
     const message = buildCustomAgentTaskMessage(
       makeConfig({
