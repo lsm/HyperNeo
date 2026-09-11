@@ -191,7 +191,13 @@ function finishVerifiedDirectStop(
     attempt.generation,
     token
   );
-  return stopped ? { stopped: true, attempt: stopped } : { stopped: false, reason: 'unavailable' };
+  if (stopped) return { stopped: true, attempt: stopped };
+  const completed = attempts.get(attempt.id);
+  return completed?.phase === 'stopped' &&
+    completed.sessionId === attempt.sessionId &&
+    completed.generation === attempt.generation
+    ? { stopped: true, attempt: completed }
+    : { stopped: false, reason: 'unavailable' };
 }
 
 export function createDirectAttemptStopper(dependencies: DirectAttemptStopDependencies) {

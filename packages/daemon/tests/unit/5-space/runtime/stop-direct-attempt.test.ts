@@ -526,7 +526,8 @@ test('separate stoppers and exported verification share ownership without blocki
   expect(cleanup).toHaveBeenCalledTimes(1);
   release();
   const [a, b, proof] = await Promise.all([first, second, verification]);
-  expect(a.stopped || b.stopped).toBe(true);
+  expect(a).toMatchObject({ stopped: true, attempt: { id: 'attempt', outcome: 'cancelled' } });
+  expect(b).toEqual(a);
   expect(proof).toHaveProperty('value.token');
   expect(interrupt).toHaveBeenCalledTimes(1);
   expect(unregister).toHaveBeenCalledTimes(1);
