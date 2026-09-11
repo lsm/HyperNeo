@@ -1110,7 +1110,10 @@ describe('createSpaceAgentToolHandlers — update_agent_template', () => {
         ?.displayName
     ).toBe('Reviewer');
 
-    const current = new SpaceAgentTemplateRepository(ctx.db).getByKeyWithVersion('reviewer.custom');
+    const current = new SpaceAgentTemplateRepository(ctx.db).getByKeyWithVersion(
+      'space-tools-test',
+      'reviewer.custom'
+    );
     expect(current?.version).toBe(1);
 
     const retried = parseResult(

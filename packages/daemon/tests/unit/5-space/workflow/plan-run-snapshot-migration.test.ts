@@ -62,7 +62,7 @@ function run(deps: Partial<Parameters<typeof buildPlanRunSnapshotMigration>[0]> 
   return buildPlanRunSnapshotMigration({
     verifyVersion: () => true,
     loadWorkflow: () => workflow('worker.custom'),
-    resolveTemplate: (key) => (key === 'worker.custom' ? template() : null),
+    resolveTemplateFor: () => (key) => (key === 'worker.custom' ? template() : null),
     computeVersion: () => ({ versionHash: 'vh-2', payload: 'migrated-payload' }),
     ...deps,
   });
@@ -113,7 +113,7 @@ describe('planRunSnapshotMigration', () => {
   });
 
   test('still plans when the template does not resolve, pinning an empty record', () => {
-    const outcome = run({ resolveTemplate: () => null })(candidate());
+    const outcome = run({ resolveTemplateFor: () => () => null })(candidate());
 
     expect(isRunSnapshotMigrationSkip(outcome)).toBe(false);
   });
