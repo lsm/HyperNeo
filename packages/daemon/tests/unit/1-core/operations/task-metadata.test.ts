@@ -189,3 +189,18 @@ describe('shared task metadata editor', () => {
     expect(deps.admit).toHaveBeenCalledWith(owners[0], { source: 'rpc' });
   });
 });
+
+test.each([task, null])('post-edit effects run only for a persisted task %j', async (result) => {
+  const afterEdit = mock(async () => {});
+  const edit = createTaskMetadataEditor({
+    ...dependencies(owners[1]),
+    editSpace: async () => result,
+    afterEdit,
+  });
+  expect(await edit(input, caller)).toBe(result);
+  if (result === null) expect(afterEdit).not.toHaveBeenCalled();
+  else {
+    expect(afterEdit).toHaveBeenCalledTimes(1);
+    expect(afterEdit).toHaveBeenCalledWith(owners[1], task);
+  }
+});
