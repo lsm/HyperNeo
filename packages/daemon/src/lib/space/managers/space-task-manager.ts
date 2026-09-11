@@ -1,3 +1,6 @@
+import superpipe, { type PipelineAPI } from 'superpipe';
+import { reopenDirectCompletion } from '../operations/reopen-pending-completion.ts';
+import type { PendingCompletionReopenResult } from '../operations/pending-completion.ts';
 import {
   prepareSpaceTaskStatusUpdate,
   prepareSpaceTaskReviewUpdate,
@@ -140,6 +143,31 @@ export class SpaceTaskManager {
 
   async listTasksByWorkflowRun(workflowRunId: string): Promise<SpaceTask[]> {
     return this.taskRepo.listByWorkflowRun(workflowRunId);
+  }
+
+  reopenPendingCompletion(
+    taskId: string,
+    reason: string | null,
+    guard: { expectedPendingCompletionGeneration: number }
+  ): Promise<PendingCompletionReopenResult> {
+    return (
+      superpipe({
+        db: this.db,
+        reactiveDb: this.reactiveDb,
+        reason,
+        expectedGeneration: guard.expectedPendingCompletionGeneration,
+        onTaskReopened: this.onTaskReopened,
+      })('reopen-pending-completion') as PipelineAPI
+    )
+      .input('taskId')
+      .pipe((id: string) => this.getTask(id), 'taskId', 'current')
+      .pipe(
+        reopenDirectCompletion,
+        ['db', 'reactiveDb', 'current', 'taskId', 'reason', 'expectedGeneration', 'onTaskReopened'],
+        'result:task'
+      )
+      .pipe((task: SpaceTask) => this.setTaskStatus(task.id, 'in_progress', guard), 'task', 'task')
+      .endAsync('task')(taskId) as Promise<PendingCompletionReopenResult>;
   }
 
   async setTaskStatus(

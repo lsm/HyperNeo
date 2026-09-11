@@ -1,3 +1,5 @@
+import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager';
+import { createPendingCompletionOperation } from '../../../../src/lib/space/operations/pending-completion';
 import { JobQueueProcessor } from '../../../../src/storage/job-queue-processor';
 import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
@@ -166,61 +168,98 @@ test('pruned job receipt is not silently recreated by duplicate request', () => 
   expect(jobs.getJob(job.id)).toBeNull();
   expect(count()).toBe(1);
 });
-test('review rejection job retains admitted feedback after checkpoint is consumed', async () => {
-  const initial = await start({ taskId, requestKey: 'initial' });
-  if (!initial.started) throw new Error(initial.reason);
-  let cached = {
-    getSessionData: () => sessions.getSession(initial.attempt.sessionId)!,
-    getProcessingState: () => ({ status: 'idle' }),
-    isInterruptInProgress: () => false,
-    getTrackedAgentRootPidsSplit: () => ({ live: [], exited: [] }),
-    handleInterrupt: async () => {},
-    cleanup: async () => {},
-  } as unknown as AgentSession | null;
-  const owner = Object.assign(Object.create(SessionManager.prototype), {
-    directStopVerificationJobs: new Map(),
-  }) as SessionManager;
-  const done = await createDirectTaskFinalizer({
-    db,
-    sessionManager: {
-      coalesceDirectStopVerification: owner.coalesceDirectStopVerification.bind(owner),
-      getCachedSession: () => cached,
-      isSessionLoading: () => false,
-      unregisterSession: async () => {
-        cached = null;
+test.each(['request', 'shared-rejection'] as const)(
+  'review rejection via %s retains frozen feedback',
+  async (route) => {
+    const initial = await start({ taskId, requestKey: 'initial' });
+    if (!initial.started) throw new Error(initial.reason);
+    let cached = {
+      getSessionData: () => sessions.getSession(initial.attempt.sessionId)!,
+      getProcessingState: () => ({ status: 'idle' }),
+      isInterruptInProgress: () => false,
+      getTrackedAgentRootPidsSplit: () => ({ live: [], exited: [] }),
+      handleInterrupt: async () => {},
+      cleanup: async () => {},
+    } as unknown as AgentSession | null;
+    const owner = Object.assign(Object.create(SessionManager.prototype), {
+      directStopVerificationJobs: new Map(),
+    }) as SessionManager;
+    const done = await createDirectTaskFinalizer({
+      db,
+      sessionManager: {
+        coalesceDirectStopVerification: owner.coalesceDirectStopVerification.bind(owner),
+        getCachedSession: () => cached,
+        isSessionLoading: () => false,
+        unregisterSession: async () => {
+          cached = null;
+        },
       },
-    },
-  })({
-    attemptId: initial.attempt.id,
-    sessionId: initial.attempt.sessionId,
-    generation: initial.attempt.generation,
-    status: 'review',
-  });
-  expect(done.finalized).toBe(true);
-  const ack = request({
-    taskId,
-    requestKey: 'rejected',
-    retryFrom: { attemptId: initial.attempt.id, generation: initial.attempt.generation },
-    reviewRejection: {
-      expectedPendingCompletionGeneration: tasks.getTask(taskId)!.pendingCompletionGeneration!,
-      reason: '  Fix edge case  ',
-    },
-  });
-  if (!ack.accepted || !ack.jobId) throw new Error('expected retry receipt');
-  expect(tasks.getTask(taskId)?.pendingCheckpointType).toBeNull();
-  tasks.updateTask(taskId, { approvalReason: 'Mutated note' });
-  const result = await createDirectStartJobHandler(
-    db,
-    start,
-    jobs,
-    control
-  )(jobs.getJob(ack.jobId)!);
-  expect(result).toMatchObject({ started: true });
-  const current = attempts.getActive(taskId)!;
-  expect(readDirectKickoffIntent(db, current.id)?.message.message.content).toContain(
-    '  Fix edge case  '
-  );
-});
+    })({
+      attemptId: initial.attempt.id,
+      sessionId: initial.attempt.sessionId,
+      generation: initial.attempt.generation,
+      status: 'review',
+    });
+    expect(done.finalized).toBe(true);
+    const generation = tasks.getTask(taskId)!.pendingCompletionGeneration!;
+    const ack =
+      route === 'request'
+        ? request({
+            taskId,
+            requestKey: 'rejected',
+            retryFrom: { attemptId: initial.attempt.id, generation: initial.attempt.generation },
+            reviewRejection: {
+              expectedPendingCompletionGeneration:
+                tasks.getTask(taskId)!.pendingCompletionGeneration!,
+              reason: '  Fix edge case  ',
+            },
+          })
+        : await (async () => {
+            const manager = new SpaceTaskManager(db, tasks.getTask(taskId)!.spaceId);
+            const update = mock(async () => {
+              throw new Error('atomic rejection must not write twice');
+            });
+            const rejected = await createPendingCompletionOperation({
+              getTask: (id) => manager.getTask(id),
+              reopenTask: (id, reason) =>
+                manager.reopenPendingCompletion(id, reason, {
+                  expectedPendingCompletionGeneration: generation,
+                }),
+              updateTask: update,
+              dispatchApproval: async () => {
+                throw new Error('not approval');
+              },
+              warn: () => {},
+            })({ taskId, approved: false, reason: '  Fix edge case  ' });
+            expect(rejected.status).toBe('open');
+            expect(rejected.approvalReason).toBe('  Fix edge case  ');
+            expect(update).not.toHaveBeenCalled();
+            const next = attempts.getActive(taskId)!;
+            const receipt = readDirectStartRequest(db, next.id)!;
+            await expect(
+              manager.reopenPendingCompletion(taskId, 'different', {
+                expectedPendingCompletionGeneration: generation,
+              })
+            ).rejects.toThrow('superseded');
+            expect(attempts.getActive(taskId)?.id).toBe(next.id);
+            return { accepted: true as const, jobId: receipt.jobId };
+          })();
+    if (!ack.accepted || !ack.jobId) throw new Error('expected retry receipt');
+    expect(tasks.getTask(taskId)?.pendingCheckpointType).toBeNull();
+    tasks.updateTask(taskId, { approvalReason: 'Mutated note' });
+    const result = await createDirectStartJobHandler(
+      db,
+      start,
+      jobs,
+      control
+    )(jobs.getJob(ack.jobId)!);
+    expect(result).toMatchObject({ started: true });
+    const current = attempts.getActive(taskId)!;
+    expect(readDirectKickoffIntent(db, current.id)?.message.message.content).toContain(
+      '  Fix edge case  '
+    );
+  }
+);
 
 async function waitForIdle(processor: JobQueueProcessor) {
   for (let i = 0; i < 100 && processor.snapshot().inFlightTotal > 0; i++)
