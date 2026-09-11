@@ -12,6 +12,19 @@ import type { SQLiteValue } from '../types.ts';
 export class SpaceRepository {
   constructor(private db: BunDatabase) {}
 
+  private columnExists(tableName: string, columnName: string): boolean {
+    try {
+      const rows = this.db
+        .prepare(`PRAGMA table_info(${JSON.stringify(tableName)})`)
+        .all() as Array<{
+        name: string;
+      }>;
+      return rows.some((row) => row.name === columnName);
+    } catch {
+      return false;
+    }
+  }
+
   private tableExists(tableName: string): boolean {
     try {
       const row = this.db.prepare(`SELECT name FROM sqlite_master WHERE name = ?`).get(tableName);
@@ -252,10 +265,18 @@ export class SpaceRepository {
            )`
         )
       : null;
+    const deleteOwnedTemplates = this.columnExists('space_agent_templates', 'space_id')
+      ? this.db.prepare(`DELETE FROM space_agent_templates WHERE space_id = ?`)
+      : null;
+    const deleteTemplateCounters = this.columnExists('space_agent_template_version_seq', 'space_id')
+      ? this.db.prepare(`DELETE FROM space_agent_template_version_seq WHERE space_id = ?`)
+      : null;
     const deleteSpace = this.db.prepare(`DELETE FROM spaces WHERE id = ?`);
     const tx = this.db.transaction((spaceId: string) => {
       deleteSearchRows?.run(spaceId);
       deletePendingRows?.run(spaceId);
+      deleteOwnedTemplates?.run(spaceId);
+      deleteTemplateCounters?.run(spaceId);
       return deleteSpace.run(spaceId);
     });
     const result = tx(id);

@@ -463,6 +463,59 @@ describe('SpaceRepository', () => {
       expect(repo.deleteSpace('nonexistent')).toBe(false);
     });
 
+    it('removes the templates and version counters the deleted space owned', () => {
+      db.exec(`
+        CREATE TABLE space_agent_templates (
+          space_id TEXT NOT NULL DEFAULT '',
+          key TEXT NOT NULL,
+          handle TEXT NOT NULL,
+          PRIMARY KEY (space_id, key)
+        );
+        CREATE TABLE space_agent_template_version_seq (
+          space_id TEXT NOT NULL DEFAULT '',
+          key TEXT NOT NULL,
+          next_version INTEGER NOT NULL DEFAULT 1,
+          PRIMARY KEY (space_id, key)
+        )
+      `);
+      const deleted = repo.createSpace({ workspacePath: '/workspace/a', slug: 'a', name: 'A' });
+      const kept = repo.createSpace({ workspacePath: '/workspace/b', slug: 'b', name: 'B' });
+      const seedTemplate = db.prepare(
+        `INSERT INTO space_agent_templates (space_id, key, handle) VALUES (?, 'shared', 'h')`
+      );
+      const seedCounter = db.prepare(
+        `INSERT INTO space_agent_template_version_seq (space_id, key, next_version) VALUES (?, 'shared', 3)`
+      );
+      for (const spaceId of [deleted.id, kept.id, '']) {
+        seedTemplate.run(spaceId);
+        seedCounter.run(spaceId);
+      }
+
+      repo.deleteSpace(deleted.id);
+
+      const owners = (
+        db.prepare(`SELECT space_id FROM space_agent_templates ORDER BY space_id`).all() as Array<{
+          space_id: string;
+        }>
+      ).map((row) => row.space_id);
+      expect(owners).toEqual(['', kept.id]);
+      const counters = (
+        db
+          .prepare(`SELECT space_id FROM space_agent_template_version_seq ORDER BY space_id`)
+          .all() as Array<{ space_id: string }>
+      ).map((row) => row.space_id);
+      expect(counters).toEqual(['', kept.id]);
+    });
+
+    it('leaves a pre-scoping template table alone', () => {
+      db.exec(`CREATE TABLE space_agent_templates (key TEXT PRIMARY KEY, handle TEXT NOT NULL)`);
+      db.prepare(`INSERT INTO space_agent_templates (key, handle) VALUES ('legacy', 'h')`).run();
+      const deleted = repo.createSpace({ workspacePath: '/workspace/a', slug: 'a', name: 'A' });
+
+      expect(repo.deleteSpace(deleted.id)).toBe(true);
+      expect(db.prepare(`SELECT COUNT(*) AS n FROM space_agent_templates`).get()).toEqual({ n: 1 });
+    });
+
     it('deletes task search rows before task rows cascade', () => {
       db.exec(`
 				CREATE TABLE message_search_content (id INTEGER PRIMARY KEY, kind TEXT, source_id TEXT, message_id TEXT, session_id TEXT, task_id TEXT, space_id TEXT, task_number INTEGER, message_type TEXT, title TEXT, body TEXT, timestamp INTEGER);
