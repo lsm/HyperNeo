@@ -10,6 +10,7 @@ import { createSpaceAgentTemplatesTable } from '../../../src/storage/schema/spac
 import { runMigration226 } from '../../../src/storage/schema/m226-space-agent-templates-version';
 import { runMigration227 } from '../../../src/storage/schema/m227-space-agent-template-version-seq';
 import { runMigration238 } from '../../../src/storage/schema/m238-space-agent-template-labels';
+import { runMigration243 } from '../../../src/storage/schema/m243-space-agent-template-space-key';
 import { Database as BunDatabase } from '../../../src/storage/sqlite-compat';
 
 const MODEL_POOL: AgentModelPoolEntry[] = [
@@ -262,5 +263,170 @@ describe('SpaceAgentTemplateRepository', () => {
     const result = repo.casUpdate('reuse.custom', { displayName: 'Stale' }, before.version);
     expect(result).toBeNull();
     expect(repo.getByKey('reuse.custom')?.displayName).not.toBe('Stale');
+  });
+});
+
+describe('SpaceAgentTemplateRepository — Space-scoped methods', () => {
+  let repo: SpaceAgentTemplateRepository;
+  let db: BunDatabase;
+
+  beforeEach(() => {
+    db = new BunDatabase(':memory:');
+    createSpaceAgentTemplatesTable(db);
+    runMigration226(db);
+    runMigration227(db);
+    runMigration238(db);
+    runMigration243(db);
+    repo = new SpaceAgentTemplateRepository(db);
+  });
+
+  test('createOwned records the Space and getOwned reads it back', () => {
+    repo.createOwned('space-a', { key: 'k', handle: 'h' });
+    expect(repo.getOwned('space-a', 'k')?.handle).toBe('h');
+  });
+
+  test('a Space cannot see, update or delete another Space own row', () => {
+    repo.createOwned('space-a', { key: 'k', handle: 'h' });
+
+    expect(repo.getOwned('space-b', 'k')).toBeNull();
+    expect(repo.casUpdateOwned('space-b', 'k', { displayName: 'X' })).toBeNull();
+    expect(repo.deleteOwned('space-b', 'k')).toBe(false);
+    expect(repo.getOwned('space-a', 'k')).not.toBeNull();
+  });
+
+  test('the owning Space can update and delete its own row', () => {
+    repo.createOwned('space-a', { key: 'k', handle: 'h' });
+
+    expect(repo.casUpdateOwned('space-a', 'k', { displayName: 'X' })?.displayName).toBe('X');
+    expect(repo.deleteOwned('space-a', 'k')).toBe(true);
+    expect(repo.getOwned('space-a', 'k')).toBeNull();
+  });
+
+  test('one key can exist in two Spaces independently', () => {
+    repo.createOwned('space-a', { key: 'k', handle: 'a' });
+    repo.createOwned('space-b', { key: 'k', handle: 'b' });
+
+    expect(repo.getOwned('space-a', 'k')?.handle).toBe('a');
+    expect(repo.getOwned('space-b', 'k')?.handle).toBe('b');
+    expect(repo.deleteOwned('space-a', 'k')).toBe(true);
+    expect(repo.getOwned('space-b', 'k')?.handle).toBe('b');
+  });
+
+  test('unmigrated rows at the sentinel stay visible to every Space', () => {
+    repo.create({ key: 'legacy', handle: 'old' });
+
+    expect(repo.getOwned('space-a', 'legacy')?.handle).toBe('old');
+    expect(repo.getOwned('space-b', 'legacy')?.handle).toBe('old');
+    expect(repo.listOwned('space-a').map((t) => t.key)).toContain('legacy');
+  });
+
+  test('an owned row wins over a sentinel row with the same key', () => {
+    repo.create({ key: 'k', handle: 'sentinel' });
+    repo.createOwned('space-a', { key: 'k', handle: 'owned' });
+
+    expect(repo.getOwned('space-a', 'k')?.handle).toBe('owned');
+    expect(repo.getOwned('space-b', 'k')?.handle).toBe('sentinel');
+  });
+
+  test('listOwned returns the Space own rows plus unmigrated ones', () => {
+    repo.createOwned('space-a', { key: 'mine', handle: 'a' });
+    repo.createOwned('space-b', { key: 'theirs', handle: 'b' });
+    repo.create({ key: 'legacy', handle: 'old' });
+
+    expect(
+      repo
+        .listOwned('space-a')
+        .map((t) => t.key)
+        .sort()
+    ).toEqual(['legacy', 'mine']);
+  });
+  test('an update from one Space never rewrites the shared sentinel row', () => {
+    repo.create({ key: 'k', handle: 'sentinel' });
+    repo.createOwned('space-a', { key: 'k', handle: 'owned' });
+
+    repo.casUpdateOwned('space-a', 'k', { displayName: 'Changed' });
+
+    expect(repo.getOwned('space-a', 'k')?.displayName).toBe('Changed');
+    expect(repo.getOwned('space-b', 'k')?.displayName).not.toBe('Changed');
+  });
+
+  test('deleting an owned row leaves the sentinel other Spaces still use', () => {
+    repo.create({ key: 'k', handle: 'sentinel' });
+    repo.createOwned('space-a', { key: 'k', handle: 'owned' });
+
+    expect(repo.deleteOwned('space-a', 'k')).toBe(true);
+
+    expect(repo.getOwned('space-a', 'k')?.handle).toBe('sentinel');
+    expect(repo.getOwned('space-b', 'k')?.handle).toBe('sentinel');
+  });
+
+  test('a versioned write refuses when the version belongs to the shadowed row', () => {
+    repo.create({ key: 'k', handle: 'sentinel' });
+    const owned = repo.createOwned('space-a', { key: 'k', handle: 'owned' });
+    const sentinelVersion = (owned.version ?? 1) + 99;
+
+    expect(repo.casUpdateOwned('space-a', 'k', { displayName: 'X' }, sentinelVersion)).toBeNull();
+    expect(repo.deleteOwned('space-a', 'k', sentinelVersion)).toBe(false);
+  });
+
+  test('listOwned reports one row per key when a sentinel is shadowed', () => {
+    repo.create({ key: 'k', handle: 'sentinel' });
+    repo.createOwned('space-a', { key: 'k', handle: 'owned' });
+
+    const listed = repo.listOwned('space-a').filter((t) => t.key === 'k');
+    expect(listed).toHaveLength(1);
+    expect(listed[0].handle).toBe('owned');
+  });
+
+  test('writes and deletes are refused when the Space sees no row at all', () => {
+    expect(repo.casUpdateOwned('space-a', 'missing', { displayName: 'X' })).toBeNull();
+    expect(repo.deleteOwned('space-a', 'missing')).toBe(false);
+  });
+  test('dedupe keeps creation order when an owned row replaces an older sentinel', () => {
+    repo.create({ key: 'shadowed', handle: 'sentinel' });
+    repo.createOwned('space-a', { key: 'middle', handle: 'mid' });
+    repo.createOwned('space-a', { key: 'shadowed', handle: 'owned' });
+
+    expect(repo.listOwned('space-a').map((t) => t.key)).toEqual(['middle', 'shadowed']);
+  });
+  test('ties on created_at order by key the way SQLite does, not by locale', () => {
+    const at = 5_000;
+    for (const key of ['a.one', 'Z.one', '_.one']) {
+      db.prepare(
+        `INSERT INTO space_agent_templates
+           (space_id, key, handle, display_name, description, instructions,
+            suggested_autonomy_level, created_at, updated_at, version)
+         VALUES ('space-a', ?, 'h', 'H', '', '', 2, ?, ?, 1)`
+      ).run(key, at, at);
+    }
+
+    expect(repo.listOwned('space-a').map((t) => t.key)).toEqual(['Z.one', '_.one', 'a.one']);
+  });
+  test('ordering matches SQLite for keys outside the basic plane', () => {
+    const at = 7_000;
+    for (const key of ['\u{10000}.one', '\ue000.one']) {
+      db.prepare(
+        `INSERT INTO space_agent_templates
+           (space_id, key, handle, display_name, description, instructions,
+            suggested_autonomy_level, created_at, updated_at, version)
+         VALUES ('space-a', ?, 'h', 'H', '', '', 2, ?, ?, 1)`
+      ).run(key, at, at);
+    }
+
+    const viaSql = (
+      db
+        .prepare(
+          `SELECT key FROM space_agent_templates WHERE space_id = 'space-a' AND created_at = ?
+            ORDER BY created_at ASC, key ASC`
+        )
+        .all(at) as Array<{ key: string }>
+    ).map((row) => row.key);
+
+    expect(
+      repo
+        .listOwned('space-a')
+        .filter((t) => t.key.endsWith('.one'))
+        .map((t) => t.key)
+    ).toEqual(viaSql);
   });
 });
