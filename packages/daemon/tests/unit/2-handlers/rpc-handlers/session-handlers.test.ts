@@ -148,24 +148,19 @@ describe('Session RPC Handlers — session.messages.byStatus', () => {
     expect(getUserMessagesByStatus).toHaveBeenCalledWith('session-1', 'enqueued', 20);
   });
 
-  it.each([
-    0,
-    -1,
-    1.5,
-    1001,
-    Number.NaN,
-    Number.POSITIVE_INFINITY,
-    '20',
-  ])('rejects invalid limit %p before accessing the session or database', async (limit) => {
-    const handler = messageHubData.handlers.get('session.messages.byStatus');
+  it.each([0, -1, 1.5, 1001, Number.NaN, Number.POSITIVE_INFINITY, '20'])(
+    'rejects invalid limit %p before accessing the session or database',
+    async (limit) => {
+      const handler = messageHubData.handlers.get('session.messages.byStatus');
 
-    await expect(
-      handler!({ sessionId: 'session-1', status: 'deferred', limit }, {})
-    ).rejects.toThrow('Invalid limit: must be an integer between 1 and 1000');
+      await expect(
+        handler!({ sessionId: 'session-1', status: 'deferred', limit }, {})
+      ).rejects.toThrow('Invalid limit: must be an integer between 1 and 1000');
 
-    expect(getSessionAsync).not.toHaveBeenCalled();
-    expect(getUserMessagesByStatus).not.toHaveBeenCalled();
-  });
+      expect(getSessionAsync).not.toHaveBeenCalled();
+      expect(getUserMessagesByStatus).not.toHaveBeenCalled();
+    }
+  );
 
   it('rejects an invalid status before accessing the session or database', async () => {
     const handler = messageHubData.handlers.get('session.messages.byStatus');

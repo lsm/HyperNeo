@@ -1244,88 +1244,84 @@ describe('SpaceRuntime', () => {
       expect(updated.taskAgentSessionId).toBe(`session:${tasks[0].id}`);
     });
 
-    test.each([
-      'in_progress',
-      'approved',
-      'rate_limited',
-      'usage_limited',
-    ] as const)('open workflow task does not spawn when a %s task occupies the only slot', async (occupyingStatus) => {
-      const occupyingTask = taskRepo.createTask({
-        spaceId: SPACE_ID,
-        title: `Occupying ${occupyingStatus}`,
-        description: '',
-        status: occupyingStatus,
-      });
-      expect(taskRepo.getTask(occupyingTask.id)?.status).toBe(occupyingStatus);
-      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
-        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
-      ]);
-      const tam = makeMockTaskAgentManager();
-      const rt = buildRuntimeWithMockTAM(tam);
-      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Slot-Gated Run');
-      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0]!;
+    test.each(['in_progress', 'approved', 'rate_limited', 'usage_limited'] as const)(
+      'open workflow task does not spawn when a %s task occupies the only slot',
+      async (occupyingStatus) => {
+        const occupyingTask = taskRepo.createTask({
+          spaceId: SPACE_ID,
+          title: `Occupying ${occupyingStatus}`,
+          description: '',
+          status: occupyingStatus,
+        });
+        expect(taskRepo.getTask(occupyingTask.id)?.status).toBe(occupyingStatus);
+        const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+          { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+        ]);
+        const tam = makeMockTaskAgentManager();
+        const rt = buildRuntimeWithMockTAM(tam);
+        const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Slot-Gated Run');
+        const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0]!;
 
-      await rt.executeTick();
+        await rt.executeTick();
 
-      expect(taskRepo.getTask(tasks[0].id)?.status).toBe('open');
-      expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('pending');
-      expect(nodeExecutionRepo.getById(execution.id)?.agentSessionId).toBeNull();
-      expect(tam._spawned).toHaveLength(0);
-    });
+        expect(taskRepo.getTask(tasks[0].id)?.status).toBe('open');
+        expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('pending');
+        expect(nodeExecutionRepo.getById(execution.id)?.agentSessionId).toBeNull();
+        expect(tam._spawned).toHaveLength(0);
+      }
+    );
 
-    test.each([
-      'rate_limited',
-      'usage_limited',
-    ] as const)('%s workflow task does not spawn its pending execution', async (status) => {
-      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
-        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
-      ]);
-      const tam = makeMockTaskAgentManager();
-      const rt = buildRuntimeWithMockTAM(tam);
-      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Limited Run');
-      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0]!;
-      taskRepo.updateTask(tasks[0].id, {
-        status,
-        restrictions: {
-          type: status === 'rate_limited' ? 'rate_limit' : 'usage_limit',
-          limit: 'future-reset',
-          resetAt: Date.now() + 60_000,
-          sessionRole: 'worker',
-        },
-      });
+    test.each(['rate_limited', 'usage_limited'] as const)(
+      '%s workflow task does not spawn its pending execution',
+      async (status) => {
+        const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+          { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+        ]);
+        const tam = makeMockTaskAgentManager();
+        const rt = buildRuntimeWithMockTAM(tam);
+        const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Limited Run');
+        const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0]!;
+        taskRepo.updateTask(tasks[0].id, {
+          status,
+          restrictions: {
+            type: status === 'rate_limited' ? 'rate_limit' : 'usage_limit',
+            limit: 'future-reset',
+            resetAt: Date.now() + 60_000,
+            sessionRole: 'worker',
+          },
+        });
 
-      await rt.executeTick();
+        await rt.executeTick();
 
-      expect(taskRepo.getTask(tasks[0].id)?.status).toBe(status);
-      expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('pending');
-      expect(nodeExecutionRepo.getById(execution.id)?.agentSessionId).toBeNull();
-      expect(tam._spawned).toHaveLength(0);
-    });
+        expect(taskRepo.getTask(tasks[0].id)?.status).toBe(status);
+        expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('pending');
+        expect(nodeExecutionRepo.getById(execution.id)?.agentSessionId).toBeNull();
+        expect(tam._spawned).toHaveLength(0);
+      }
+    );
 
-    test.each([
-      'done',
-      'cancelled',
-      'archived',
-      'stopped',
-    ] as const)('%s workflow task does not spawn its pending execution', async (status) => {
-      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
-        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
-      ]);
-      const tam = makeMockTaskAgentManager();
-      const rt = buildRuntimeWithMockTAM(tam);
-      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Terminal Run');
-      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0]!;
-      taskRepo.updateTask(tasks[0].id, {
-        status,
-        completedAt: status === 'done' || status === 'cancelled' ? Date.now() : null,
-      });
+    test.each(['done', 'cancelled', 'archived', 'stopped'] as const)(
+      '%s workflow task does not spawn its pending execution',
+      async (status) => {
+        const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+          { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+        ]);
+        const tam = makeMockTaskAgentManager();
+        const rt = buildRuntimeWithMockTAM(tam);
+        const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Terminal Run');
+        const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0]!;
+        taskRepo.updateTask(tasks[0].id, {
+          status,
+          completedAt: status === 'done' || status === 'cancelled' ? Date.now() : null,
+        });
 
-      await rt.executeTick();
+        await rt.executeTick();
 
-      expect(taskRepo.getTask(tasks[0].id)?.status).toBe(status);
-      expect(nodeExecutionRepo.getById(execution.id)?.agentSessionId).toBeNull();
-      expect(tam._spawned).toHaveLength(0);
-    });
+        expect(taskRepo.getTask(tasks[0].id)?.status).toBe(status);
+        expect(nodeExecutionRepo.getById(execution.id)?.agentSessionId).toBeNull();
+        expect(tam._spawned).toHaveLength(0);
+      }
+    );
 
     test('paused space does not spawn a pending workflow execution', async () => {
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [

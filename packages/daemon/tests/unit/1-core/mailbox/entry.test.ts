@@ -309,19 +309,16 @@ describe('toMailboxMessage', () => {
   });
 
   describe('never-throw law', () => {
-    test.each([
-      42,
-      ['user'],
-      null,
-      undefined,
-      'user',
-    ])('returns a one-line reason for %p instead of throwing', (garbage) => {
-      const message = garbage as unknown as MailboxMessage;
-      expect(() => toMailboxMessage(message)).not.toThrow();
-      const result = toMailboxMessage(message);
-      expect(result).toEqual({ reason: expect.any(String) });
-      if ('reason' in result) expect(result.reason.includes('\n')).toBe(false);
-    });
+    test.each([42, ['user'], null, undefined, 'user'])(
+      'returns a one-line reason for %p instead of throwing',
+      (garbage) => {
+        const message = garbage as unknown as MailboxMessage;
+        expect(() => toMailboxMessage(message)).not.toThrow();
+        const result = toMailboxMessage(message);
+        expect(result).toEqual({ reason: expect.any(String) });
+        if ('reason' in result) expect(result.reason.includes('\n')).toBe(false);
+      }
+    );
   });
 });
 
@@ -1006,18 +1003,14 @@ describe('parseMailboxEntry', () => {
       expect(parseMailboxEntry(payload)).toBeNull();
     });
 
-    test.each([
-      'id',
-      'to',
-      'origin',
-      'message',
-      'status',
-      'policy',
-    ])('returns null when %s is missing', (key) => {
-      const payload = { ...sessionPayload };
-      delete payload[key];
-      expect(parseMailboxEntry(payload)).toBeNull();
-    });
+    test.each(['id', 'to', 'origin', 'message', 'status', 'policy'])(
+      'returns null when %s is missing',
+      (key) => {
+        const payload = { ...sessionPayload };
+        delete payload[key];
+        expect(parseMailboxEntry(payload)).toBeNull();
+      }
+    );
   });
 
   describe('never-throw law', () => {
@@ -1083,16 +1076,19 @@ describe('mailbox entry optional field round-trip law', () => {
     ['immediate with seed', 'immediate', 'seed-message-1'],
     ['defer with seed', 'defer', 'seed-message-2'],
     ['defaulted with seed', undefined, 'seed-message-3'],
-  ])('an %s entry survives JSON serialization into parseMailboxEntry unchanged', (_label, mode, messageUuid) => {
-    const entry = createMailboxEntry({
-      to,
-      message,
-      origin: 'test',
-      ...(mode !== undefined ? { deliveryMode: mode } : {}),
-      ...(messageUuid !== undefined ? { messageUuid } : {}),
-    });
-    expect(entry.deliveryMode).toBe(mode ?? 'immediate');
-    expect(entry.messageUuid).toBe(messageUuid);
-    expect(parseMailboxEntry(JSON.parse(JSON.stringify(entry)))).toEqual(entry);
-  });
+  ])(
+    'an %s entry survives JSON serialization into parseMailboxEntry unchanged',
+    (_label, mode, messageUuid) => {
+      const entry = createMailboxEntry({
+        to,
+        message,
+        origin: 'test',
+        ...(mode !== undefined ? { deliveryMode: mode } : {}),
+        ...(messageUuid !== undefined ? { messageUuid } : {}),
+      });
+      expect(entry.deliveryMode).toBe(mode ?? 'immediate');
+      expect(entry.messageUuid).toBe(messageUuid);
+      expect(parseMailboxEntry(JSON.parse(JSON.stringify(entry)))).toEqual(entry);
+    }
+  );
 });

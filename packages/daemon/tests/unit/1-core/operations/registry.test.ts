@@ -65,16 +65,12 @@ describe('operation registry', () => {
     expect(() => createOperationRegistry([example(), example()])).toThrow('Duplicate operation');
   });
 
-  test.each([
-    '',
-    ' message.send',
-    'message..send',
-    '.send',
-    'message.send.',
-    'message/send',
-  ])('rejects malformed name %j', (name) => {
-    expect(() => createOperationRegistry([example(name)])).toThrow('Invalid operation name');
-  });
+  test.each(['', ' message.send', 'message..send', '.send', 'message.send.', 'message/send'])(
+    'rejects malformed name %j',
+    (name) => {
+      expect(() => createOperationRegistry([example(name)])).toThrow('Invalid operation name');
+    }
+  );
 
   test('preserves typed execution results and caller identity', async () => {
     const caller: OperationCaller = { source: 'mcp', sessionId: 'sender' };

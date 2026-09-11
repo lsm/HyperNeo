@@ -1119,23 +1119,21 @@ describe('normalizeGitHubStatus', () => {
     expect(event.externalUrl).toBe('https://jenkins.example.com/job/widgets/42');
   });
 
-  test.each([
-    'pending',
-    'success',
-    'failure',
-    'error',
-  ] as const)('surfaces every commit-status state (%s) — including pending', (state) => {
-    const normalized = normalizeGitHubStatus({
-      repo: STATUS_REPO,
-      status: statusPayload({ state }),
-      prNumber: 7,
-      source: 'webhook',
-      deliveryId: 'delivery-1',
-      rawPayload: statusPayload({ state }),
-    })!;
-    const event = toExternalEvent('space-1', normalized);
-    expect(event.topic).toBe(`github/acme/widgets/pull_request/7.status_${state}`);
-  });
+  test.each(['pending', 'success', 'failure', 'error'] as const)(
+    'surfaces every commit-status state (%s) — including pending',
+    (state) => {
+      const normalized = normalizeGitHubStatus({
+        repo: STATUS_REPO,
+        status: statusPayload({ state }),
+        prNumber: 7,
+        source: 'webhook',
+        deliveryId: 'delivery-1',
+        rawPayload: statusPayload({ state }),
+      })!;
+      const event = toExternalEvent('space-1', normalized);
+      expect(event.topic).toBe(`github/acme/widgets/pull_request/7.status_${state}`);
+    }
+  );
 
   test('scopes the dedupe/external identity by PR (one SHA → many PRs)', () => {
     const base = {

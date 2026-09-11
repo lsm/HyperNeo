@@ -69,41 +69,38 @@ describe('session operation MCP attachment', () => {
     expect(JSON.parse(listed.text)).toContainEqual(expect.objectContaining({ name: 'task.get' }));
   });
 
-  test.each([
-    undefined,
-    'lobby',
-    'worker',
-    'space_chat',
-    'space_task_agent',
-  ] as const)('exposes canonical send for restored session type %s', async (type) => {
-    const source: Session = { ...createTestSession('sender'), type };
-    db.createSession(source);
-    const session = await restore(source.id);
-    const operationServer = session.getOperationMcpServer();
-    expect(session.optionsBuilder.getEffectiveMcpServers()).toHaveProperty(
-      'hyperneo-operations',
-      operationServer
-    );
-    const result = await operationServer.tools[0].handler(
-      {
-        name: 'message.send',
-        input: {
-          sessionId: 'destination',
-          message: { type: 'user', message: { content: 'hello' }, parent_tool_use_id: null },
+  test.each([undefined, 'lobby', 'worker', 'space_chat', 'space_task_agent'] as const)(
+    'exposes canonical send for restored session type %s',
+    async (type) => {
+      const source: Session = { ...createTestSession('sender'), type };
+      db.createSession(source);
+      const session = await restore(source.id);
+      const operationServer = session.getOperationMcpServer();
+      expect(session.optionsBuilder.getEffectiveMcpServers()).toHaveProperty(
+        'hyperneo-operations',
+        operationServer
+      );
+      const result = await operationServer.tools[0].handler(
+        {
+          name: 'message.send',
+          input: {
+            sessionId: 'destination',
+            message: { type: 'user', message: { content: 'hello' }, parent_tool_use_id: null },
+          },
         },
-      },
-      {}
-    );
-    expect(result.isError).not.toBe(true);
-    expect(JSON.stringify(result.content)).toContain('accepted');
-    const jobs = db.getJobQueueRepo().listJobs({ queue: 'mailbox' });
-    expect(jobs).toHaveLength(1);
-    expect(jobs[0].payload).toMatchObject({
-      to: { kind: 'session', sessionId: 'destination' },
-      origin: 'session:sender',
-    });
-    expect(db.getSession(source.id)?.config.mcpServers).toBeUndefined();
-  });
+        {}
+      );
+      expect(result.isError).not.toBe(true);
+      expect(JSON.stringify(result.content)).toContain('accepted');
+      const jobs = db.getJobQueueRepo().listJobs({ queue: 'mailbox' });
+      expect(jobs).toHaveLength(1);
+      expect(jobs[0].payload).toMatchObject({
+        to: { kind: 'session', sessionId: 'destination' },
+        origin: 'session:sender',
+      });
+      expect(db.getSession(source.id)?.config.mcpServers).toBeUndefined();
+    }
+  );
 
   test('preserves name collisions and proxies operations for ACP sessions', async () => {
     const source = createTestSession('acp-sender');

@@ -69,22 +69,19 @@ describe('classifySessionLoadError', () => {
 });
 
 describe('isHardUnavailable', () => {
-  it.each([
-    'not-found',
-    'unauthorized',
-    'archived',
-    'terminated',
-  ] as const)('%s is hard-unavailable', (kind) => {
-    expect(isHardUnavailable(kind)).toBe(true);
-  });
+  it.each(['not-found', 'unauthorized', 'archived', 'terminated'] as const)(
+    '%s is hard-unavailable',
+    (kind) => {
+      expect(isHardUnavailable(kind)).toBe(true);
+    }
+  );
 
-  it.each([
-    'disconnected',
-    'timeout',
-    'unknown',
-  ] as const)('%s is transient (NOT hard-unavailable)', (kind) => {
-    expect(isHardUnavailable(kind)).toBe(false);
-  });
+  it.each(['disconnected', 'timeout', 'unknown'] as const)(
+    '%s is transient (NOT hard-unavailable)',
+    (kind) => {
+      expect(isHardUnavailable(kind)).toBe(false);
+    }
+  );
 
   it('null/undefined is not hard-unavailable', () => {
     expect(isHardUnavailable(null)).toBe(false);

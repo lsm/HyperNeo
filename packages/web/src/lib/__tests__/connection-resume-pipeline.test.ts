@@ -130,19 +130,18 @@ describe('runConnectionResume', () => {
     expect(settled).toBe(true);
   });
 
-  it.each([
-    'checkHealth',
-    'refreshApp',
-    'refreshGlobal',
-  ] as const)('propagates %s rejection to the owner', async (method) => {
-    const { effects, calls } = fixture();
-    const failure = new Error(method);
-    effects[method] = async () => {
-      throw failure;
-    };
-    await expect(runConnectionResume(effects)).rejects.toBe(failure);
-    if (method === 'checkHealth') expect(calls).toEqual([]);
-  });
+  it.each(['checkHealth', 'refreshApp', 'refreshGlobal'] as const)(
+    'propagates %s rejection to the owner',
+    async (method) => {
+      const { effects, calls } = fixture();
+      const failure = new Error(method);
+      effects[method] = async () => {
+        throw failure;
+      };
+      await expect(runConnectionResume(effects)).rejects.toBe(failure);
+      if (method === 'checkHealth') expect(calls).toEqual([]);
+    }
+  );
 
   it('continues when a channel dependency resolves after handling its own failure', async () => {
     const { effects, calls } = fixture();

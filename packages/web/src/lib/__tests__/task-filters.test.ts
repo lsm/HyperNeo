@@ -34,16 +34,12 @@ describe('isActionRequired', () => {
     expect(isActionRequired(makeTask('usage_limited'))).toBe(true);
   });
 
-  it.each([
-    'open',
-    'in_progress',
-    'approved',
-    'done',
-    'cancelled',
-    'archived',
-  ] as const)('returns false for %s status', (status) => {
-    expect(isActionRequired(makeTask(status))).toBe(false);
-  });
+  it.each(['open', 'in_progress', 'approved', 'done', 'cancelled', 'archived'] as const)(
+    'returns false for %s status',
+    (status) => {
+      expect(isActionRequired(makeTask(status))).toBe(false);
+    }
+  );
 
   it('only returns true for review, blocked, rate_limited, usage_limited across the full status set', () => {
     const matching = ALL_STATUSES.filter((s) => isActionRequired(makeTask(s)));
@@ -56,24 +52,19 @@ describe('isActionRequired', () => {
 });
 
 describe('isActiveTask', () => {
-  it.each([
-    'open',
-    'in_progress',
-    'approved',
-    'stopped',
-  ] as const)('returns true for %s status', (status) => {
-    expect(isActiveTask(makeTask(status))).toBe(true);
-  });
+  it.each(['open', 'in_progress', 'approved', 'stopped'] as const)(
+    'returns true for %s status',
+    (status) => {
+      expect(isActiveTask(makeTask(status))).toBe(true);
+    }
+  );
 
-  it.each([
-    'review',
-    'blocked',
-    'done',
-    'cancelled',
-    'archived',
-  ] as const)('returns false for %s status', (status) => {
-    expect(isActiveTask(makeTask(status))).toBe(false);
-  });
+  it.each(['review', 'blocked', 'done', 'cancelled', 'archived'] as const)(
+    'returns false for %s status',
+    (status) => {
+      expect(isActiveTask(makeTask(status))).toBe(false);
+    }
+  );
 
   it('classifies the full status set deterministically', () => {
     const matching = ALL_STATUSES.filter((s) => isActiveTask(makeTask(s)));

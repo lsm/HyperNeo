@@ -43,24 +43,20 @@ describe('mailbox admission stages', () => {
     });
   });
 
-  test.each([
-    'chat',
-    'space_inject',
-    'space_agent',
-    'long_term_agent',
-    'recovery',
-    'future',
-  ])('delivery projection maps %s and preserves rowid presence', (origin) => {
-    const source = { ...entry, origin };
-    const expected = {
-      origin: origin === 'future' ? 'space_inject' : origin,
-      parentToolUseId: null,
-      admittedAt: 1469922850259,
-    };
-    expect(projectAdmissionDelivery(source, undefined)).toEqual(expected);
-    expect(projectAdmissionDelivery(source, 0)).toEqual({ ...expected, admissionRowid: 0 });
-    expect(projectAdmissionDelivery(source, 42)).toEqual({ ...expected, admissionRowid: 42 });
-  });
+  test.each(['chat', 'space_inject', 'space_agent', 'long_term_agent', 'recovery', 'future'])(
+    'delivery projection maps %s and preserves rowid presence',
+    (origin) => {
+      const source = { ...entry, origin };
+      const expected = {
+        origin: origin === 'future' ? 'space_inject' : origin,
+        parentToolUseId: null,
+        admittedAt: 1469922850259,
+      };
+      expect(projectAdmissionDelivery(source, undefined)).toEqual(expected);
+      expect(projectAdmissionDelivery(source, 0)).toEqual({ ...expected, admissionRowid: 0 });
+      expect(projectAdmissionDelivery(source, 42)).toEqual({ ...expected, admissionRowid: 42 });
+    }
+  );
 
   test('assembly includes hold and provenance only when required', () => {
     const message = projectAdmissionMessage(entry, false);
@@ -90,38 +86,41 @@ describe('planMailboxAdmission', () => {
     ['space_agent', 'human', false],
     ['future', 'human', false],
     ['future', 'system', true],
-  ] as const)('%s with %s input preserves provenance in both modes', (origin, inputKind, synthetic) => {
-    for (const deliveryMode of ['immediate', 'defer'] as const) {
-      const source = {
-        ...entry,
-        origin,
-        deliveryMode,
-        message: { ...entry.message, inputKind },
-      };
-      const before = structuredClone(source);
-      const plan = planMailboxAdmission(source, 42);
-      const prompt: Omit<PersistPromptArgs, 'db' | 'sdkMessageRepo' | 'jobQueue'> = plan;
-      expect(prompt).toEqual({
-        sessionId: 'session-1',
-        message: {
-          ...source.message,
-          uuid,
-          session_id: 'session-1',
-          ...(synthetic ? { isSynthetic: true } : {}),
-        },
-        ...(synthetic ? { origin: 'system' } : {}),
-        ...(deliveryMode === 'defer' ? { hold: 'manual', materializeOnly: true } : {}),
-        delivery: {
-          origin: origin === 'future' ? 'space_inject' : origin,
-          parentToolUseId: null,
-          admittedAt: 1469922850259,
-          admissionRowid: 42,
-        },
-      });
-      expect(planMailboxAdmission(source, 42)).toEqual(plan);
-      expect(source).toEqual(before);
+  ] as const)(
+    '%s with %s input preserves provenance in both modes',
+    (origin, inputKind, synthetic) => {
+      for (const deliveryMode of ['immediate', 'defer'] as const) {
+        const source = {
+          ...entry,
+          origin,
+          deliveryMode,
+          message: { ...entry.message, inputKind },
+        };
+        const before = structuredClone(source);
+        const plan = planMailboxAdmission(source, 42);
+        const prompt: Omit<PersistPromptArgs, 'db' | 'sdkMessageRepo' | 'jobQueue'> = plan;
+        expect(prompt).toEqual({
+          sessionId: 'session-1',
+          message: {
+            ...source.message,
+            uuid,
+            session_id: 'session-1',
+            ...(synthetic ? { isSynthetic: true } : {}),
+          },
+          ...(synthetic ? { origin: 'system' } : {}),
+          ...(deliveryMode === 'defer' ? { hold: 'manual', materializeOnly: true } : {}),
+          delivery: {
+            origin: origin === 'future' ? 'space_inject' : origin,
+            parentToolUseId: null,
+            admittedAt: 1469922850259,
+            admissionRowid: 42,
+          },
+        });
+        expect(planMailboxAdmission(source, 42)).toEqual(plan);
+        expect(source).toEqual(before);
+      }
     }
-  });
+  );
 
   test('explicit UUID and omitted rowid survive the complete pipeline', () => {
     const plan = planMailboxAdmission({ ...entry, messageUuid: 'explicit-id' });

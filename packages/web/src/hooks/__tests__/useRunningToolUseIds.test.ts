@@ -57,13 +57,12 @@ describe('useRunningToolUseIds', () => {
     expect([...extractRunningToolUseIds(messages)]).toEqual(['tool-1']);
   });
 
-  it.each([
-    'pending',
-    'running',
-    'paused',
-  ] as const)('keeps the tool_use_id while status is %s', (status) => {
-    expect([...extractRunningToolUseIds(messagesWithTaskStatus(status))]).toEqual(['tool-1']);
-  });
+  it.each(['pending', 'running', 'paused'] as const)(
+    'keeps the tool_use_id while status is %s',
+    (status) => {
+      expect([...extractRunningToolUseIds(messagesWithTaskStatus(status))]).toEqual(['tool-1']);
+    }
+  );
 
   it('returns every in-flight tool_use_id without the SessionInfoPanel display limit', () => {
     const messages = Array.from({ length: 5 }, (_, index) => ({
@@ -83,21 +82,19 @@ describe('useRunningToolUseIds', () => {
     ]);
   });
 
-  it.each([
-    'completed',
-    'failed',
-    'stopped',
-  ] as const)('drops the tool_use_id after terminal task_notification %s', (status) => {
-    expect(extractRunningToolUseIds(messagesWithNotification(status)).size).toBe(0);
-  });
+  it.each(['completed', 'failed', 'stopped'] as const)(
+    'drops the tool_use_id after terminal task_notification %s',
+    (status) => {
+      expect(extractRunningToolUseIds(messagesWithNotification(status)).size).toBe(0);
+    }
+  );
 
-  it.each([
-    'completed',
-    'failed',
-    'killed',
-  ] as const)('drops the tool_use_id after terminal task_updated status %s', (status) => {
-    expect(extractRunningToolUseIds(messagesWithTaskStatus(status)).size).toBe(0);
-  });
+  it.each(['completed', 'failed', 'killed'] as const)(
+    'drops the tool_use_id after terminal task_updated status %s',
+    (status) => {
+      expect(extractRunningToolUseIds(messagesWithTaskStatus(status)).size).toBe(0);
+    }
+  );
 
   it('joins task_updated to task_started by task_id when task_updated has no tool_use_id', () => {
     const messages = [

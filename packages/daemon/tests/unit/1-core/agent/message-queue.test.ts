@@ -2501,7 +2501,7 @@ describe('MessageQueue', () => {
 
       releaseInterrupt({ still_queued: [] });
       await run;
-      expect(first).resolves.toBeDefined();
+      await expect(first).resolves.toBeDefined();
       q.stop();
     });
 

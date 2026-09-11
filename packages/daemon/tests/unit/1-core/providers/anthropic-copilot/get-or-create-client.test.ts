@@ -34,7 +34,10 @@ vi.mock('@github/copilot-sdk', () => {
     }
   }
 
-  return { CopilotClient: MockCopilotClient };
+  return {
+    CopilotClient: MockCopilotClient,
+    RuntimeConnection: { forStdio: (opts: { path: string }) => ({ kind: 'stdio', ...opts }) },
+  };
 });
 
 import { AnthropicToCopilotBridgeProvider } from '../../../../../src/lib/providers/anthropic-copilot/index';

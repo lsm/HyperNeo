@@ -226,17 +226,20 @@ describe('ContextPanel', () => {
     ['tasks', mockNavigateToSpaceTasks, ['space-2', 'active']],
     ['sessions', mockNavigateToSpaceSessions, ['space-2']],
     ['configure', mockNavigateToSpaceConfigure, ['space-2', 'agents']],
-  ] as const)('preserves the %s view mode when switching spaces', (viewMode, expectedNavigate, args) => {
-    mockCurrentSpaceViewModeSignal.value = viewMode;
-    mockCurrentSpaceIdSignal.value = null;
-    render(<ContextPanel />);
+  ] as const)(
+    'preserves the %s view mode when switching spaces',
+    (viewMode, expectedNavigate, args) => {
+      mockCurrentSpaceViewModeSignal.value = viewMode;
+      mockCurrentSpaceIdSignal.value = null;
+      render(<ContextPanel />);
 
-    fireEvent.click(screen.getByText('Beta'));
+      fireEvent.click(screen.getByText('Beta'));
 
-    expect(expectedNavigate).toHaveBeenCalledWith(...args);
-    expect(mockNavigateToSpaceAgent).not.toHaveBeenCalled();
-    expect(mockContextPanelOpenSignal.value).toBe(false);
-  });
+      expect(expectedNavigate).toHaveBeenCalledWith(...args);
+      expect(mockNavigateToSpaceAgent).not.toHaveBeenCalled();
+      expect(mockContextPanelOpenSignal.value).toBe(false);
+    }
+  );
 
   it('preserves the current task filter when switching spaces from tasks', () => {
     mockCurrentSpaceViewModeSignal.value = 'tasks';

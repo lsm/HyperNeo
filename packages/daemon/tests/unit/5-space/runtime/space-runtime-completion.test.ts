@@ -719,46 +719,45 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
       expect(blockedAfter?.status).not.toBe('done');
     });
 
-    test.each([
-      'review',
-      'approved',
-      'cancelled',
-    ] as const)('resolved %s task keeps its status without post-approval dispatch', async (status) => {
-      const mockTam = new MockTaskAgentManager(nodeExecutionRepo);
-      const rt = makeRuntimeWithTam({
-        taskAgentManager: mockTam as unknown as TaskAgentManager,
-      });
-      const workflow = workflowManager.createWorkflow({
-        spaceId: SPACE_ID,
-        name: `Resolved ${status} ${Date.now()}`,
-        description: '',
-        nodes: [
-          {
-            id: `resolved-${status}-end`,
-            name: 'End',
-            agents: [{ agentId: AGENT_A, name: 'End' }],
-            postApproval: { targetAgent: 'End', instructions: 'continue' },
-          },
-        ],
-        startNodeId: `resolved-${status}-end`,
-        endNodeId: `resolved-${status}-end`,
-        tags: [],
-        completionAutonomyLevel: 3,
-      });
-      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-      taskRepo.updateTask(tasks[0].id, {
-        status,
-        reportedStatus: status === 'cancelled' ? 'cancelled' : 'done',
-        completedAt: status === 'cancelled' ? Date.now() : null,
-      });
-      seedNodeExec(db, run.id, `resolved-${status}-end`, 'End', 'idle');
+    test.each(['review', 'approved', 'cancelled'] as const)(
+      'resolved %s task keeps its status without post-approval dispatch',
+      async (status) => {
+        const mockTam = new MockTaskAgentManager(nodeExecutionRepo);
+        const rt = makeRuntimeWithTam({
+          taskAgentManager: mockTam as unknown as TaskAgentManager,
+        });
+        const workflow = workflowManager.createWorkflow({
+          spaceId: SPACE_ID,
+          name: `Resolved ${status} ${Date.now()}`,
+          description: '',
+          nodes: [
+            {
+              id: `resolved-${status}-end`,
+              name: 'End',
+              agents: [{ agentId: AGENT_A, name: 'End' }],
+              postApproval: { targetAgent: 'End', instructions: 'continue' },
+            },
+          ],
+          startNodeId: `resolved-${status}-end`,
+          endNodeId: `resolved-${status}-end`,
+          tags: [],
+          completionAutonomyLevel: 3,
+        });
+        const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+        taskRepo.updateTask(tasks[0].id, {
+          status,
+          reportedStatus: status === 'cancelled' ? 'cancelled' : 'done',
+          completedAt: status === 'cancelled' ? Date.now() : null,
+        });
+        seedNodeExec(db, run.id, `resolved-${status}-end`, 'End', 'idle');
 
-      await rt.executeTick();
+        await rt.executeTick();
 
-      expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
-      expect(taskRepo.getTask(tasks[0].id)?.status).toBe(status);
-      expect(mockTam.spawnedPostApprovalSessions).toHaveLength(0);
-    });
+        expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
+        expect(taskRepo.getTask(tasks[0].id)?.status).toBe(status);
+        expect(mockTam.spawnedPostApprovalSessions).toHaveLength(0);
+      }
+    );
 
     test('blocked → in_progress → done lifecycle via resume', async () => {
       const rt = makeRuntimeWithTam();

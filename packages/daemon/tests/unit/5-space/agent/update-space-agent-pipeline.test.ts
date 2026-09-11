@@ -365,20 +365,20 @@ describe('updateSpaceAgent', () => {
       );
     });
 
-    test.each([
-      ['paused'],
-      ['disabled'],
-    ])('rechecks the display name when moving archived -> %s', async (status) => {
-      h = makeHarness(makeAgent({ status: 'archived', displayName: 'Shared' }));
-      h.displayNames = ['Shared'];
-      h.displayNameIds = ['agent-other'];
+    test.each([['paused'], ['disabled']])(
+      'rechecks the display name when moving archived -> %s',
+      async (status) => {
+        h = makeHarness(makeAgent({ status: 'archived', displayName: 'Shared' }));
+        h.displayNames = ['Shared'];
+        h.displayNameIds = ['agent-other'];
 
-      expectKind(
-        await run(h, { id: 'agent-1', status: status as never }),
-        'invalid_identity',
-        'already used'
-      );
-    });
+        expectKind(
+          await run(h, { id: 'agent-1', status: status as never }),
+          'invalid_identity',
+          'already used'
+        );
+      }
+    );
 
     test('does not recheck when an archived agent stays archived', async () => {
       h = makeHarness(makeAgent({ status: 'archived', displayName: 'Shared' }));

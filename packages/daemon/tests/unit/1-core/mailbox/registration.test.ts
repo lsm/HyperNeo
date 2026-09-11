@@ -116,40 +116,40 @@ describe('registerMailboxJobs', () => {
     });
   });
 
-  test.each([
-    'dead',
-    'expired',
-  ] as const)('%s messages use failure persistence and publication', async (kind) => {
-    registerMailboxJobs(deps);
-    const publish = spyOn(deps.internalEventBus, 'publish');
-    const entry = createMailboxEntry({
-      to: { kind: 'session', sessionId: 'session' },
-      origin: 'chat',
-      messageUuid: 'message',
-      message: {
-        type: 'user',
-        message: { role: 'user', content: 'hello' },
-        parent_tool_use_id: null,
-      },
-    });
-    entry.id = createUlid(Date.now() - entry.policy.ttlMs - 1000);
-    enqueueMailboxEntry(mailbox.jobQueue, entry);
-    const [job] = mailbox.jobQueue.listJobs({ queue: MAILBOX_LANE });
-    if (kind === 'dead') calls[0][2]!.onDead!(job);
-    else expect(await expiration[0][1](job)).toMatchObject({ expired: 1 });
-    expect(deps.db.saveUserMessage).toHaveBeenCalledWith(
-      'session',
-      expect.objectContaining({ uuid: 'message', session_id: 'session' }),
-      'failed',
-      undefined
-    );
-    expect(publish).toHaveBeenCalledWith('messages.statusChanged', {
-      sessionId: 'session',
-      messageIds: ['failed-row'],
-      status: 'failed',
-    });
-    expect(deps.sessionManager!.getCachedSession).toHaveBeenCalledWith('session');
-  });
+  test.each(['dead', 'expired'] as const)(
+    '%s messages use failure persistence and publication',
+    async (kind) => {
+      registerMailboxJobs(deps);
+      const publish = spyOn(deps.internalEventBus, 'publish');
+      const entry = createMailboxEntry({
+        to: { kind: 'session', sessionId: 'session' },
+        origin: 'chat',
+        messageUuid: 'message',
+        message: {
+          type: 'user',
+          message: { role: 'user', content: 'hello' },
+          parent_tool_use_id: null,
+        },
+      });
+      entry.id = createUlid(Date.now() - entry.policy.ttlMs - 1000);
+      enqueueMailboxEntry(mailbox.jobQueue, entry);
+      const [job] = mailbox.jobQueue.listJobs({ queue: MAILBOX_LANE });
+      if (kind === 'dead') calls[0][2]!.onDead!(job);
+      else expect(await expiration[0][1](job)).toMatchObject({ expired: 1 });
+      expect(deps.db.saveUserMessage).toHaveBeenCalledWith(
+        'session',
+        expect.objectContaining({ uuid: 'message', session_id: 'session' }),
+        'failed',
+        undefined
+      );
+      expect(publish).toHaveBeenCalledWith('messages.statusChanged', {
+        sessionId: 'session',
+        messageIds: ['failed-row'],
+        status: 'failed',
+      });
+      expect(deps.sessionManager!.getCachedSession).toHaveBeenCalledWith('session');
+    }
+  );
 
   test('status callbacks tolerate rejected publications with no session manager', async () => {
     deps.sessionManager = null;

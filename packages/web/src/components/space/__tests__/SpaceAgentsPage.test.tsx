@@ -326,17 +326,17 @@ describe('SpaceAgentsPage', () => {
     expect(mockUpdate).not.toHaveBeenCalled();
   });
 
-  it.each([
-    'space-manager',
-    'coordinator',
-  ])('does not offer deletion for the protected %s agent', (handle) => {
-    mockAgents.value = [makeAgent(handle)];
-    const { getByTestId, queryByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+  it.each(['space-manager', 'coordinator'])(
+    'does not offer deletion for the protected %s agent',
+    (handle) => {
+      mockAgents.value = [makeAgent(handle)];
+      const { getByTestId, queryByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
 
-    fireEvent.click(getByTestId(`agent-row-${handle}`));
-    expect(getByTestId('agent-detail')).toBeTruthy();
-    expect(queryByTestId('agent-delete-button')).toBeNull();
-  });
+      fireEvent.click(getByTestId(`agent-row-${handle}`));
+      expect(getByTestId('agent-detail')).toBeTruthy();
+      expect(queryByTestId('agent-delete-button')).toBeNull();
+    }
+  );
 
   it('ignores a create that resolves after the space changed', async () => {
     let resolveCreate: (agent: SpaceAgent) => void = () => {};

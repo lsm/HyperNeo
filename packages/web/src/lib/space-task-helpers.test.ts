@@ -59,9 +59,12 @@ describe('buildMarkDonePayload', () => {
     'rate_limited',
     'usage_limited',
     'archived',
-  ] as SpaceTaskStatus[])('returns a bare status update (no post-approval keys) for %s', (status) => {
-    expect(buildMarkDonePayload(makeTask({ status }))).toEqual({ status: 'done' });
-  });
+  ] as SpaceTaskStatus[])(
+    'returns a bare status update (no post-approval keys) for %s',
+    (status) => {
+      expect(buildMarkDonePayload(makeTask({ status }))).toEqual({ status: 'done' });
+    }
+  );
 });
 
 describe('getTaskWorkspaceLabel', () => {

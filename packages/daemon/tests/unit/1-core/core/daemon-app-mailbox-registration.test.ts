@@ -213,19 +213,26 @@ describe('Daemon app mailbox registration', () => {
       ['workflow bare', 'space:s:task:t:exec:e', 'active', false, false, false],
       ['workflow ready', 'space:s:task:t:exec:e', 'active', true, true, true],
       ['workflow archived', 'space:s:task:t:exec:e', 'archived', true, true, false],
-    ] as const)('%s preserves mailbox/shared eligibility', async (_label, sessionId, status, tools, mailboxAccepts, sharedAccepts) => {
-      const session = lookupSession(status, tools);
-      const indexed = spyOn(app!.taskAgentManager, 'getSubSession').mockReturnValue(
-        source === 'indexed' ? session : undefined
-      );
-      const cached = spyOn(app!.sessionManager, 'getCachedSession').mockReturnValue(session);
-      const asyncLookup = spyOn(app!.sessionManager, 'getSessionAsync').mockResolvedValue(session);
-      expect(await deliveryDeps.getSession(sessionId)).toBe(mailboxAccepts ? session : null);
-      expect(await sharedLookup()(sessionId)).toBe(sharedAccepts ? session : null);
-      expect(indexed.mock.calls).toEqual([[sessionId], [sessionId]]);
-      expect(cached.mock.calls).toEqual(source === 'indexed' ? [[sessionId], [sessionId]] : []);
-      expect(asyncLookup.mock.calls).toEqual(source === 'async' ? [[sessionId], [sessionId]] : []);
-    });
+    ] as const)(
+      '%s preserves mailbox/shared eligibility',
+      async (_label, sessionId, status, tools, mailboxAccepts, sharedAccepts) => {
+        const session = lookupSession(status, tools);
+        const indexed = spyOn(app!.taskAgentManager, 'getSubSession').mockReturnValue(
+          source === 'indexed' ? session : undefined
+        );
+        const cached = spyOn(app!.sessionManager, 'getCachedSession').mockReturnValue(session);
+        const asyncLookup = spyOn(app!.sessionManager, 'getSessionAsync').mockResolvedValue(
+          session
+        );
+        expect(await deliveryDeps.getSession(sessionId)).toBe(mailboxAccepts ? session : null);
+        expect(await sharedLookup()(sessionId)).toBe(sharedAccepts ? session : null);
+        expect(indexed.mock.calls).toEqual([[sessionId], [sessionId]]);
+        expect(cached.mock.calls).toEqual(source === 'indexed' ? [[sessionId], [sessionId]] : []);
+        expect(asyncLookup.mock.calls).toEqual(
+          source === 'async' ? [[sessionId], [sessionId]] : []
+        );
+      }
+    );
   });
 
   test('both lookups fall back when the indexed session is not the cached instance', async () => {

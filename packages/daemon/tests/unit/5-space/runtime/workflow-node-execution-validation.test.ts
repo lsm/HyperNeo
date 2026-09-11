@@ -312,19 +312,19 @@ describe('formatMissingTemplateReference', () => {
     expect(message).toContain('start a new run');
   });
 
-  test.each([
-    true,
-    false,
-  ])('never suggests recreating the template (hasSnapshot=%s)', (hasSnapshot) => {
-    const message = formatMissingTemplateReference({
-      runId: 'run-321',
-      nodeLabel: 'Preview',
-      workflowName: 'Release Flow',
-      agentName: 'reviewer',
-      templateKey: 'ghost.preview',
-      hasSnapshot,
-    });
+  test.each([true, false])(
+    'never suggests recreating the template (hasSnapshot=%s)',
+    (hasSnapshot) => {
+      const message = formatMissingTemplateReference({
+        runId: 'run-321',
+        nodeLabel: 'Preview',
+        workflowName: 'Release Flow',
+        agentName: 'reviewer',
+        templateKey: 'ghost.preview',
+        hasSnapshot,
+      });
 
-    expect(message).not.toContain('Recreate a template');
-  });
+      expect(message).not.toContain('Recreate a template');
+    }
+  );
 });

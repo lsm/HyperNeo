@@ -1,23 +1,31 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'bun:test';
 
-describe('@github/copilot-sdk bundled CLI layout', () => {
-  it('ships the nested ./sdk export and CLI entry the SDK client resolves at construction', () => {
-    const sdkRequire = createRequire(import.meta.resolve('@github/copilot-sdk'));
-    const searchPaths = sdkRequire.resolve.paths('@github/copilot') ?? [];
-    const metaDir = searchPaths
-      .map((base) => join(base, '@github', 'copilot'))
-      .find((dir) => existsSync(join(dir, 'package.json')));
-
-    expect(metaDir).toBeDefined();
-
-    const meta = JSON.parse(readFileSync(join(metaDir as string, 'package.json'), 'utf-8')) as {
-      exports?: Record<string, unknown>;
+describe('@github/copilot-sdk bundled runtime layout', () => {
+  it('ships the platform runtime packages the SDK client spawns by default', () => {
+    const entryUrl = import.meta.resolve('@github/copilot-sdk');
+    const sdkRoot = dirname(dirname(fileURLToPath(entryUrl)));
+    const meta = JSON.parse(readFileSync(join(sdkRoot, 'package.json'), 'utf-8')) as {
+      name?: string;
+      optionalDependencies?: Record<string, string>;
     };
-    expect(meta.exports?.['./sdk']).toBeDefined();
-    expect(existsSync(join(metaDir as string, 'sdk', 'index.js'))).toBe(true);
-    expect(existsSync(join(metaDir as string, 'index.js'))).toBe(true);
+    expect(meta.name).toBe('@github/copilot-sdk');
+
+    const expectedPlatforms = [
+      'darwin-arm64',
+      'darwin-x64',
+      'linux-arm64',
+      'linux-x64',
+      'linuxmusl-arm64',
+      'linuxmusl-x64',
+      'win32-arm64',
+      'win32-x64',
+    ];
+    for (const platform of expectedPlatforms) {
+      expect(meta.optionalDependencies?.[`@github/copilot-sdk-${platform}`]).toBeDefined();
+    }
+    expect(existsSync(join(sdkRoot, 'dist', 'client.js'))).toBe(true);
   });
 });
