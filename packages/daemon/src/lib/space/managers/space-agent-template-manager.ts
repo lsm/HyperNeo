@@ -62,6 +62,7 @@ export interface TemplateInstanceScan {
 
 export interface DeleteTemplateCtx {
   repo: SpaceAgentTemplateRepository;
+  spaceId: string;
   key: string;
   expectedVersion?: number;
   instanceScan?: TemplateInstanceScan;
@@ -372,7 +373,7 @@ function deleteCheckVersion(ctx: DeleteTemplateCtx): DeleteTemplateCtx {
 }
 
 function deletePersist(ctx: DeleteTemplateCtx): DeleteTemplateCtx {
-  const deleted = ctx.repo.delete(ctx.key, ctx.expectedVersion);
+  const deleted = ctx.repo.delete(ctx.spaceId, ctx.key, ctx.expectedVersion);
   if (deleted) {
     ctx.instanceScan?.clearArchivedInstances?.(ctx.key);
     return { ...ctx, deleted: true };
@@ -482,12 +483,13 @@ export class SpaceAgentTemplateManager {
     return { ok: true, value: this.repo.getByKeyWithVersion(key)! };
   }
 
-  delete(key: string, expectedVersion?: number): SpaceAgentResult<void> {
+  delete(spaceId: string, key: string, expectedVersion?: number): SpaceAgentResult<void> {
     if (!this.repo.getByKey(key) && this.builtIns().some((template) => template.key === key)) {
       return { ok: false, error: `Built-in template "${key}" cannot be deleted` };
     }
     const ctx = runDeleteTemplate({
       repo: this.repo,
+      spaceId,
       key,
       expectedVersion,
       instanceScan: this.instanceScan,

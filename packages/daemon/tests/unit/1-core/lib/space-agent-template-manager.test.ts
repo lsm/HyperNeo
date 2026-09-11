@@ -17,6 +17,7 @@ import { runMigration226 } from '../../../../src/storage/schema/m226-space-agent
 import { runMigration227 } from '../../../../src/storage/schema/m227-space-agent-template-version-seq';
 import { runMigration238 } from '../../../../src/storage/schema/m238-space-agent-template-labels';
 import { createSpaceAgentTemplatesTable } from '../../../../src/storage/schema/space-agent-templates';
+import { runMigration243 } from '../../../../src/storage/schema/m243-space-agent-template-space-key';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 
 const BUILT_INS: SpaceAgentTemplate[] = [
@@ -74,6 +75,7 @@ describe('SpaceAgentTemplateManager', () => {
   let db: BunDatabase;
   let repo: SpaceAgentTemplateRepository;
   let manager: SpaceAgentTemplateManager;
+  const SPACE = '';
 
   beforeEach(() => {
     db = new BunDatabase(':memory:');
@@ -81,6 +83,7 @@ describe('SpaceAgentTemplateManager', () => {
     runMigration226(db);
     runMigration227(db);
     runMigration238(db);
+    runMigration243(db);
     repo = new SpaceAgentTemplateRepository(db);
     manager = new SpaceAgentTemplateManager(repo, () => BUILT_INS);
     setModelsCache(new Map());
@@ -919,21 +922,21 @@ describe('SpaceAgentTemplateManager', () => {
     test('deletes a custom template', async () => {
       await manager.create(fullParams());
 
-      const result = manager.delete('release-readiness.custom');
+      const result = manager.delete(SPACE, 'release-readiness.custom');
 
       expect(result.ok).toBe(true);
       expect(manager.getByKey('release-readiness.custom')).toBeNull();
     });
 
     test('returns an error for an unknown key', () => {
-      const result = manager.delete('missing.custom');
+      const result = manager.delete(SPACE, 'missing.custom');
 
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toContain('not found');
     });
 
     test('cannot delete a built-in', () => {
-      const result = manager.delete('builtin.default');
+      const result = manager.delete(SPACE, 'builtin.default');
 
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toContain('cannot be deleted');
@@ -942,7 +945,7 @@ describe('SpaceAgentTemplateManager', () => {
     test('deletes with the matching CAS version', async () => {
       await manager.create(fullParams());
 
-      const result = manager.delete('release-readiness.custom', 1);
+      const result = manager.delete(SPACE, 'release-readiness.custom', 1);
 
       expect(result.ok).toBe(true);
       expect(manager.getByKey('release-readiness.custom')).toBeNull();
@@ -952,7 +955,7 @@ describe('SpaceAgentTemplateManager', () => {
       await manager.create(fullParams());
       await manager.update('release-readiness.custom', { displayName: 'Updated' });
 
-      const result = manager.delete('release-readiness.custom', 1);
+      const result = manager.delete(SPACE, 'release-readiness.custom', 1);
 
       expect(result.ok).toBe(false);
       if (!result.ok) {
@@ -965,7 +968,7 @@ describe('SpaceAgentTemplateManager', () => {
     test('deletes a template that workflow slots still reference', async () => {
       await manager.create(fullParams());
 
-      const result = manager.delete('release-readiness.custom');
+      const result = manager.delete(SPACE, 'release-readiness.custom');
 
       expect(result.ok).toBe(true);
       expect(repo.getByKey('release-readiness.custom')).toBeNull();
@@ -977,7 +980,7 @@ describe('SpaceAgentTemplateManager', () => {
         clearArchivedInstances: () => {},
       });
 
-      const result = withInstances.delete('release-readiness.custom');
+      const result = withInstances.delete(SPACE, 'release-readiness.custom');
 
       expect(result.ok).toBe(true);
       expect(repo.getByKey('release-readiness.custom')).toBeNull();
@@ -990,7 +993,7 @@ describe('SpaceAgentTemplateManager', () => {
         clearArchivedInstances: (key) => cleared.push(key),
       });
 
-      expect(withInstances.delete('release-readiness.custom').ok).toBe(true);
+      expect(withInstances.delete(SPACE, 'release-readiness.custom').ok).toBe(true);
       expect(cleared).toEqual(['release-readiness.custom']);
     });
   });
@@ -1087,7 +1090,7 @@ describe('SpaceAgentTemplateManager', () => {
 
   describe('delete pipeline', () => {
     test('halts before delete for an unknown key', () => {
-      const ctx = runDeleteTemplate({ repo, key: 'missing.custom' });
+      const ctx = runDeleteTemplate({ repo, spaceId: SPACE, key: 'missing.custom' });
 
       expect(ctx.error).toContain('not found');
       expect(ctx.deleted).toBeUndefined();
@@ -1096,7 +1099,7 @@ describe('SpaceAgentTemplateManager', () => {
     test('deletes the existing template', async () => {
       await manager.create(fullParams());
 
-      const ctx = runDeleteTemplate({ repo, key: 'release-readiness.custom' });
+      const ctx = runDeleteTemplate({ repo, spaceId: SPACE, key: 'release-readiness.custom' });
 
       expect(ctx.error).toBeUndefined();
       expect(ctx.deleted).toBe(true);
@@ -1109,6 +1112,7 @@ describe('SpaceAgentTemplateManager', () => {
 
       const ctx = runDeleteTemplate({
         repo,
+        spaceId: SPACE,
         key: 'release-readiness.custom',
         expectedVersion: 1,
       });
@@ -1121,7 +1125,7 @@ describe('SpaceAgentTemplateManager', () => {
     test('deletes through the pipeline regardless of workflow usage', async () => {
       await manager.create(fullParams());
 
-      const ctx = runDeleteTemplate({ repo, key: 'release-readiness.custom' });
+      const ctx = runDeleteTemplate({ repo, spaceId: SPACE, key: 'release-readiness.custom' });
 
       expect(ctx.error).toBeUndefined();
       expect(ctx.deleted).toBe(true);
@@ -1172,6 +1176,48 @@ describe('SpaceAgentTemplateManager', () => {
 
     test('returns null for an unknown key', () => {
       expect(manager.getByKey('missing.custom')).toBeNull();
+    });
+  });
+  describe('cross-Space isolation', () => {
+    function seedOwned(spaceId: string, key: string): void {
+      db.prepare(
+        `INSERT INTO space_agent_templates
+           (space_id, key, handle, display_name, description, instructions,
+            suggested_autonomy_level, created_at, updated_at, version)
+         VALUES (?, ?, 'reviewer', 'Reviewer', '', '', 2, 1, 1, 1)`
+      ).run(spaceId, key);
+    }
+
+    function ownersOf(key: string): string[] {
+      return (
+        db
+          .prepare(`SELECT space_id FROM space_agent_templates WHERE key = ? ORDER BY space_id`)
+          .all(key) as Array<{ space_id: string }>
+      ).map((row) => row.space_id);
+    }
+
+    test('a Space cannot delete a template owned by another Space', () => {
+      seedOwned('space-a', 'shared.key');
+
+      const result = manager.delete('space-b', 'shared.key');
+
+      expect(result.ok).toBe(false);
+      expect(ownersOf('shared.key')).toEqual(['space-a']);
+    });
+
+    test('the owning Space can still delete its own template', () => {
+      seedOwned('space-a', 'shared.key');
+
+      expect(manager.delete('space-a', 'shared.key').ok).toBe(true);
+      expect(ownersOf('shared.key')).toEqual([]);
+    });
+
+    test('one key can exist in two Spaces and a delete touches only its own row', () => {
+      seedOwned('space-a', 'shared.key');
+      seedOwned('space-b', 'shared.key');
+
+      expect(manager.delete('space-a', 'shared.key').ok).toBe(true);
+      expect(ownersOf('shared.key')).toEqual(['space-b']);
     });
   });
 });

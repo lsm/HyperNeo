@@ -10,7 +10,10 @@ import { createSpaceAgentTemplatesTable } from '../../../src/storage/schema/spac
 import { runMigration226 } from '../../../src/storage/schema/m226-space-agent-templates-version';
 import { runMigration227 } from '../../../src/storage/schema/m227-space-agent-template-version-seq';
 import { runMigration238 } from '../../../src/storage/schema/m238-space-agent-template-labels';
+import { runMigration243 } from '../../../src/storage/schema/m243-space-agent-template-space-key';
 import { Database as BunDatabase } from '../../../src/storage/sqlite-compat';
+
+const SPACE = '';
 
 const MODEL_POOL: AgentModelPoolEntry[] = [
   { model: 'claude-opus-5', provider: 'anthropic', maxConcurrent: 2, weight: 3 },
@@ -45,6 +48,7 @@ describe('SpaceAgentTemplateRepository', () => {
     runMigration226(db);
     runMigration227(db);
     runMigration238(db);
+    runMigration243(db);
     repo = new SpaceAgentTemplateRepository(db);
   });
 
@@ -240,10 +244,10 @@ describe('SpaceAgentTemplateRepository', () => {
   test('delete removes the row and frees the key for reuse', () => {
     repo.create({ key: 'gone.custom', handle: 'gone' });
 
-    expect(repo.delete('missing.custom')).toBe(false);
-    expect(repo.delete('gone.custom')).toBe(true);
+    expect(repo.delete(SPACE, 'missing.custom')).toBe(false);
+    expect(repo.delete(SPACE, 'gone.custom')).toBe(true);
     expect(repo.getByKey('gone.custom')).toBeNull();
-    expect(repo.delete('gone.custom')).toBe(false);
+    expect(repo.delete(SPACE, 'gone.custom')).toBe(false);
 
     const recreated = repo.create({ key: 'gone.custom', handle: 'back' });
     expect(recreated.handle).toBe('back');
@@ -254,7 +258,7 @@ describe('SpaceAgentTemplateRepository', () => {
     repo.create({ key: 'reuse.custom', handle: 'reuse' });
     const before = repo.getByKeyWithVersion('reuse.custom')!;
 
-    repo.delete('reuse.custom');
+    repo.delete(SPACE, 'reuse.custom');
     repo.create({ key: 'reuse.custom', handle: 'reincarnated' });
     const after = repo.getByKeyWithVersion('reuse.custom')!;
 

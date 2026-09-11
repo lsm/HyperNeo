@@ -488,7 +488,7 @@ describe('Space Agent RPC Handlers', () => {
       const result = await call<{ success: boolean }>(
         hubData.handlers,
         'spaceAgent.deleteTemplate',
-        { key: 'delete.custom' }
+        { spaceId: 'space-1', key: 'delete.custom' }
       );
 
       expect(result.success).toBe(true);
@@ -501,14 +501,17 @@ describe('Space Agent RPC Handlers', () => {
     });
 
     it('throws when key is missing', async () => {
-      await expect(call(hubData.handlers, 'spaceAgent.deleteTemplate', {})).rejects.toThrow(
-        'key is required'
-      );
+      await expect(
+        call(hubData.handlers, 'spaceAgent.deleteTemplate', { spaceId: 'space-1' })
+      ).rejects.toThrow('key is required');
     });
 
     it('throws for an unknown key', async () => {
       await expect(
-        call(hubData.handlers, 'spaceAgent.deleteTemplate', { key: 'missing.custom' })
+        call(hubData.handlers, 'spaceAgent.deleteTemplate', {
+          spaceId: 'space-1',
+          key: 'missing.custom',
+        })
       ).rejects.toThrow('Template not found: missing.custom');
     });
 
@@ -557,7 +560,7 @@ describe('Space Agent RPC Handlers', () => {
       const result = await call<{ success: boolean }>(
         hubData.handlers,
         'spaceAgent.deleteTemplate',
-        { key: 'guard.custom' }
+        { spaceId: 'space-1', key: 'guard.custom' }
       );
 
       expect(result.success).toBe(true);
@@ -577,6 +580,7 @@ describe('Space Agent RPC Handlers', () => {
 
       await expect(
         call(hubData.handlers, 'spaceAgent.deleteTemplate', {
+          spaceId: 'space-1',
           key: 'guard.custom',
           expectedVersion: 99,
         })
@@ -585,7 +589,7 @@ describe('Space Agent RPC Handlers', () => {
       const current = await call<{ success: boolean }>(
         hubData.handlers,
         'spaceAgent.deleteTemplate',
-        { key: 'guard.custom', expectedVersion: 1 }
+        { spaceId: 'space-1', key: 'guard.custom', expectedVersion: 1 }
       );
       expect(current.success).toBe(true);
     });
@@ -606,7 +610,7 @@ describe('Space Agent RPC Handlers', () => {
       const result = await call<{ success: boolean }>(
         hubData.handlers,
         'spaceAgent.deleteTemplate',
-        { key: 'guard.custom' }
+        { spaceId: 'space-1', key: 'guard.custom' }
       );
 
       expect(result.success).toBe(true);
@@ -640,7 +644,7 @@ describe('Space Agent RPC Handlers', () => {
       const result = await call<{ success: boolean }>(
         hubData.handlers,
         'spaceAgent.deleteTemplate',
-        { key: 'guard.custom' }
+        { spaceId: 'space-1', key: 'guard.custom' }
       );
       expect(result.success).toBe(true);
       expect(longHorizonRepo.getById(archived.id)?.templateKey).toBeNull();
@@ -658,6 +662,7 @@ describe('Space Agent RPC Handlers', () => {
 
       await expect(
         call(hubData.handlers, 'spaceAgent.deleteTemplate', {
+          spaceId: 'space-1',
           key: 'cas.custom',
           expectedVersion: 1,
         })
@@ -666,7 +671,7 @@ describe('Space Agent RPC Handlers', () => {
       const result = await call<{ success: boolean }>(
         hubData.handlers,
         'spaceAgent.deleteTemplate',
-        { key: 'cas.custom', expectedVersion: 2 }
+        { spaceId: 'space-1', key: 'cas.custom', expectedVersion: 2 }
       );
       expect(result.success).toBe(true);
     });

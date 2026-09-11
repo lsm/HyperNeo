@@ -2099,7 +2099,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     }): Promise<ToolResult> {
       try {
         await requireSessionWriteAutonomy('delete_agent_template');
-        const result = requireTemplateManager().delete(args.key, args.expected_version);
+        const result = requireTemplateManager().delete(spaceId, args.key, args.expected_version);
         if (!result.ok) return jsonResult({ success: false, error: result.error });
         logAudit('delete_agent_template', { key: args.key, version: args.expected_version });
         return jsonResult({ success: true, deleted: args.key });
