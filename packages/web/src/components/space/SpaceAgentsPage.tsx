@@ -523,7 +523,7 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
                     if (toolsExplicit) {
                       toolsAddedRef.current = trackAddedTools(
                         toolsAddedRef.current,
-                        toolsBaselineRef.current,
+                        [],
                         next.tools
                       );
                       if (!differsFromBaseline(next.tools, toolsBaselineRef.current)) {
@@ -536,7 +536,7 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
                         });
                         return;
                       }
-                      setFormTools(next);
+                      setFormTools({ tools: next.tools, toolsOverridden: true });
                       return;
                     }
                     toolsRemovedRef.current = trackRemovedTools(

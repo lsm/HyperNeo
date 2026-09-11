@@ -1657,6 +1657,50 @@ describe('SpaceAgentsPage', () => {
     expect(mockCreate.mock.calls[0][0].tools).toBeUndefined();
   });
 
+  it('submits an emptied explicit preset as an override', async () => {
+    mockTemplates.value = [{ key: 'a.v1', displayName: 'A', toolPermissions: { tools: ['Bash'] } }];
+    const { getByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'Rev' } });
+    fireEvent.input(getByTestId('agent-template-select'), { target: { value: 'a.v1' } });
+    fireEvent.click(getByTestId('tools-editor-preset-read-only'));
+    for (const tool of ['Read', 'Grep', 'Glob']) {
+      fireEvent.click(
+        getByTestId(`tools-editor-chip-${tool}`).querySelector('input') as HTMLInputElement
+      );
+    }
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalled());
+    expect(mockCreate.mock.calls[0][0].tools).toEqual([]);
+  });
+
+  it('keeps a re-added baseline scope through a later preset', async () => {
+    mockTemplates.value = [
+      {
+        key: 'a.v1',
+        displayName: 'A',
+        toolPermissions: { tools: ['Read', 'Bash(gh pr view:*)'] },
+      },
+    ];
+    const { getByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'Rev' } });
+    fireEvent.input(getByTestId('agent-template-select'), { target: { value: 'a.v1' } });
+    fireEvent.click(getByTestId('tools-editor-preset-read-only'));
+    fireEvent.input(getByTestId('tools-editor-scoped-input'), {
+      target: { value: 'Bash(gh pr view:*)' },
+    });
+    fireEvent.click(getByTestId('tools-editor-scoped-add'));
+    fireEvent.click(getByTestId('tools-editor-preset-custom'));
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalled());
+    expect(mockCreate.mock.calls[0][0].tools).toContain('Bash(gh pr view:*)');
+  });
+
   it('still omits tools when a template is chosen but untouched', async () => {
     mockTemplates.value = [
       { key: 'reviewer.v1', displayName: 'Reviewer', toolPermissions: { tools: ['Read'] } },
