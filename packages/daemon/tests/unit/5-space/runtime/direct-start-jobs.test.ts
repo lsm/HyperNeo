@@ -103,6 +103,7 @@ test('ack atomically publishes, reserves and freezes job before loading any sess
   expect(readDirectStartRequest(db, reserved.id)).toEqual({
     input: { taskId, requestKey: inputKey },
     jobId: job.id,
+    lifecycleGeneration: tasks.getLifecycleGeneration(taskId),
   });
   expect(request({ taskId, requestKey: inputKey })).toEqual({ accepted: true, jobId: job.id });
   expect(count()).toBe(1);
@@ -266,7 +267,7 @@ test('stale claim cannot defer a replacement job claim', async () => {
   expect(jobs.getJob(job.id)).toEqual(replacement);
 });
 
-test.each(['cancelled', 'archived', 'done'] as const)(
+test.each(['cancelled', 'archived', 'done', 'blocked'] as const)(
   'terminal %s settles queued start after verified reservation release',
   async (status) => {
     const job = acceptedJob();
@@ -307,3 +308,37 @@ test('cancellation during loading retains fenced ownership until verification th
   expect(await handler(next)).toMatchObject({ reason: 'superseded' });
   expect(attempts.getActive(taskId)?.id).toBe(replacement.id);
 });
+
+test.each(['between-jobs', 'during-load'] as const)(
+  'lifecycle ABA %s cannot activate old frozen request',
+  async (window) => {
+    const queued = acceptedJob();
+    if (window === 'between-jobs') {
+      load.mockResolvedValueOnce(null);
+      const [first] = jobs.dequeue(DIRECT_TASK_START, 1);
+      expect(await createDirectStartJobHandler(db, start, jobs, control)(first)).toMatchObject({
+        parked: 'direct_start_not_ready',
+      });
+      tasks.updateTask(taskId, { status: 'cancelled' });
+      tasks.updateTask(taskId, { status: 'open' });
+      jobs.reschedulePending(queued.id, Date.now() - 1);
+    } else
+      load.mockImplementationOnce(async (id: string) => {
+        tasks.updateTask(taskId, { status: 'in_progress' });
+        tasks.updateTask(taskId, { status: 'open' });
+        return {
+          getSessionData: () => sessions.getSession(id)!,
+          isQueryActiveOrStarting: () => false,
+        } as AgentSession;
+      });
+    const [job] = jobs.dequeue(DIRECT_TASK_START, 1);
+    const previous = attempts.getActive(taskId)!;
+    expect(await createDirectStartJobHandler(db, start, jobs, control)(job)).toMatchObject({
+      reason: 'superseded',
+    });
+    expect(attempts.getActive(taskId)).toBeNull();
+    expect(attempts.get(previous.id)?.phase).toBe('stopped');
+    expect(readDirectKickoffIntent(db, previous.id)).toBeNull();
+    expect(tasks.getTask(taskId)?.status).toBe('open');
+  }
+);

@@ -1,5 +1,5 @@
 import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
-import { enqueueDirectStartRequest } from './direct-start-request.ts';
+import { enqueueDirectStartRequest, readDirectStartRequest } from './direct-start-request.ts';
 import { SessionRepository } from '../../../storage/repositories/session-repository.ts';
 import { requireDirectTaskWorkerIdentity } from './direct-task-worker-identity.ts';
 import { requireRunningDirectTaskQuery } from './direct-task-query-admission.ts';
@@ -89,6 +89,13 @@ export function claimDirectStart(
       )
         return unavailable;
       const active = attempts.getActive(task.id);
+      const admitted = readDirectStartRequest(db, attemptId);
+      if (
+        admitted &&
+        tasks.getLifecycleGeneration(task.id) !==
+          admitted.lifecycleGeneration + (active?.phase === 'running' ? 1 : 0)
+      )
+        return unavailable;
       if (
         active &&
         (active.id !== attemptId ||
@@ -204,7 +211,14 @@ export function claimDirectStart(
       }
       const attempt = attempts.claim(task.id, attemptId, sessionId);
       if (!attempt) throw new Error('Direct start lost its atomic claim');
-      if (startJobs) enqueueDirectStartRequest(db, startJobs, attempt.id, input);
+      if (startJobs)
+        enqueueDirectStartRequest(
+          db,
+          startJobs,
+          attempt.id,
+          input,
+          tasks.getLifecycleGeneration(task.id)!
+        );
       if (reopenedTaskId) onTaskReopened?.(reopenedTaskId);
       return { value: attempt };
     }, 'immediate')();

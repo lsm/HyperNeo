@@ -1,3 +1,4 @@
+import { isTerminalTaskStatus } from '../managers/task-status-preparation.ts';
 import { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
 import {
@@ -83,7 +84,10 @@ export function createDirectStartJobHandler(
       task.workflowRunId ||
       task.archivedAt != null ||
       space.status !== 'active' ||
-      ['done', 'cancelled', 'archived'].includes(task.status);
+      isTerminalTaskStatus(task.status) ||
+      task.status === 'archived' ||
+      tasks.getLifecycleGeneration(task.id) !==
+        request.lifecycleGeneration + (current.phase === 'running' ? 1 : 0);
     const retiring = !!db
       .prepare(
         "SELECT 1 FROM direct_task_stop_requests WHERE attempt_id = ? AND session_id = ? AND outcome = 'start_superseded'"

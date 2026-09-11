@@ -7,16 +7,23 @@ export const DIRECT_TASK_START = 'direct_task_start';
 export function readDirectStartRequest(db: Database, attemptId: string) {
   const row = db
     .prepare(
-      'SELECT request_json AS input, job_id AS jobId FROM direct_task_start_requests WHERE attempt_id = ?'
+      'SELECT request_json AS input, job_id AS jobId, lifecycle_generation AS lifecycleGeneration FROM direct_task_start_requests WHERE attempt_id = ?'
     )
-    .get(attemptId) as { input: string; jobId: string } | null;
-  return row ? { input: JSON.parse(row.input) as DirectTaskStartInput, jobId: row.jobId } : null;
+    .get(attemptId) as { input: string; jobId: string; lifecycleGeneration: number } | null;
+  return row
+    ? {
+        input: JSON.parse(row.input) as DirectTaskStartInput,
+        jobId: row.jobId,
+        lifecycleGeneration: row.lifecycleGeneration,
+      }
+    : null;
 }
 export function enqueueDirectStartRequest(
   db: Database,
   jobs: JobQueueRepository,
   attemptId: string,
-  input: DirectTaskStartInput
+  input: DirectTaskStartInput,
+  lifecycleGeneration: number
 ): void {
   const normalized = {
     ...input,
@@ -38,6 +45,6 @@ export function enqueueDirectStartRequest(
   }
   const job = jobs.enqueue({ queue: DIRECT_TASK_START, payload: { attemptId } });
   db.prepare(
-    'INSERT INTO direct_task_start_requests(attempt_id,request_json,job_id) VALUES(?,?,?)'
-  ).run(attemptId, frozen, job.id);
+    'INSERT INTO direct_task_start_requests(attempt_id,request_json,job_id,lifecycle_generation) VALUES(?,?,?,?)'
+  ).run(attemptId, frozen, job.id, lifecycleGeneration);
 }
