@@ -1,5 +1,11 @@
-import { readDirectKickoffIntent } from './direct-kickoff-intent.ts';
-import { mailboxEntryExpired, type MailboxEntry } from '../../mailbox/entry.ts';
+import { enqueueFrozenKickoff } from './reconcile-direct-kickoff.ts';
+import { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
+import { readDirectKickoffIntent, recordDirectKickoffAtomically } from './direct-kickoff-intent.ts';
+import {
+  mailboxEntryExpired,
+  type MailboxEntry,
+  type MailboxMessage,
+} from '../../mailbox/entry.ts';
 import type { Session, Space, SpaceTask } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../../storage/sqlite-compat.ts';
@@ -80,11 +86,13 @@ export function requireDirectActivation(
   return { value: { attempt, task: prepared.value.task } };
 }
 
-function activateAtomically(
+export function activateDirectAttemptAtomically(
   db: Database,
   reactiveDb: ReactiveDatabase | undefined,
-  input: DirectAttemptActivationInput
+  input: DirectAttemptActivationInput,
+  kickoffMessage?: MailboxMessage
 ): DirectAttemptActivationResult {
+  const rejected = { activated: false as const, reason: 'unavailable' as const };
   reactiveDb?.beginTransaction();
   try {
     const result = db.transaction((): DirectAttemptActivationResult => {
@@ -92,6 +100,11 @@ function activateAtomically(
       const tasks = new SpaceTaskRepository(db, reactiveDb);
       const attempt = attempts.get(input.attemptId);
       const task = attempt ? tasks.getTask(attempt.taskId) : null;
+      if (
+        kickoffMessage &&
+        !recordDirectKickoffAtomically(db, { ...input, message: kickoffMessage }).recorded
+      )
+        throw rejected;
       const admission = requireDirectActivation(
         input,
         {
@@ -107,7 +120,10 @@ function activateAtomically(
         },
         Date.now()
       );
-      if ('reason' in admission) return admission.reason;
+      if ('reason' in admission) {
+        if (kickoffMessage) throw rejected;
+        return admission.reason;
+      }
       assertValidTaskTransition(admission.value.task.status, 'in_progress');
       const updated = tasks.updateTask(
         admission.value.task.id,
@@ -120,12 +136,23 @@ function activateAtomically(
       const activated = attempts.activate(input.attemptId, input.sessionId);
       if (!updated || !activated)
         throw new Error('Direct activation lost its transaction admission');
+      if (kickoffMessage)
+        enqueueFrozenKickoff(
+          db,
+          new JobQueueRepository(db),
+          {
+            ...input,
+            generation: activated.generation,
+          },
+          readDirectKickoffIntent(db, activated.id)!
+        );
       return { activated: true, attempt: activated, task: updated };
     }, 'immediate')();
     reactiveDb?.commitTransaction();
     return result;
   } catch (error) {
     reactiveDb?.abortTransaction();
+    if (error === rejected) return rejected;
     throw error;
   }
 }
@@ -140,6 +167,6 @@ export function createDirectAttemptActivator(dependencies: {
     ) as PipelineAPI
   )
     .input('input')
-    .pipe(activateAtomically, ['db', 'reactiveDb', 'input'], 'result')
+    .pipe(activateDirectAttemptAtomically, ['db', 'reactiveDb', 'input'], 'result')
     .end('result') as (input: DirectAttemptActivationInput) => DirectAttemptActivationResult;
 }

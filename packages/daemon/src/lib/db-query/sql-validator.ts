@@ -181,9 +181,11 @@ function recordTableRef(
   sql: string,
   pos: number,
   exclude: Set<string>,
-  refs: string[]
+  refs: string[],
+  spans?: TableRefSpan[]
 ): number | null {
-  const first = matchIdentifier(sql, skipWhitespace(sql, pos));
+  const start = skipWhitespace(sql, pos);
+  const first = matchIdentifier(sql, start);
   if (!first) return null;
 
   let name = first.ident;
@@ -199,7 +201,10 @@ function recordTableRef(
     }
   }
 
-  if ((qualified || !exclude.has(name)) && !refs.includes(name)) refs.push(name);
+  if (qualified || !exclude.has(name)) {
+    if (!refs.includes(name)) refs.push(name);
+    spans?.push({ name, start, end });
+  }
   return end;
 }
 
@@ -268,7 +273,8 @@ function consumeCommaTableList(
   sql: string,
   from: number,
   exclude: Set<string>,
-  refs: string[]
+  refs: string[],
+  spans?: TableRefSpan[]
 ): number {
   let pos = from;
   for (;;) {
@@ -294,7 +300,7 @@ function consumeCommaTableList(
     } else if (alias && (alias.ident === 'on' || alias.ident === 'using')) {
       const comma = skipJoinConstraint(sql, alias.end);
       if (comma === null) return pos;
-      const next = recordTableRef(sql, comma + 1, exclude, refs);
+      const next = recordTableRef(sql, comma + 1, exclude, refs, spans);
       if (next === null) return pos;
       pos = next;
       continue;
@@ -304,13 +310,71 @@ function consumeCommaTableList(
     }
     probe = skipWhitespace(sql, pos);
     if (sql[probe] !== ',') return pos;
-    const next = recordTableRef(sql, probe + 1, exclude, refs);
+    const next = recordTableRef(sql, probe + 1, exclude, refs, spans);
     if (next === null) return pos;
     pos = next;
   }
 }
 
-function extractTableRefs(sql: string, exclude: Set<string>): string[] {
+export interface TableRefSpan {
+  name: string;
+  start: number;
+  end: number;
+}
+
+function maskCommentsAndStrings(sql: string): string {
+  const out = sql.split('');
+  const len = sql.length;
+  let i = 0;
+
+  while (i < len) {
+    if (sql[i] === "'") {
+      i++;
+      while (i < len) {
+        if (sql[i] === "'" && sql[i + 1] === "'") {
+          out[i] = ' ';
+          out[i + 1] = ' ';
+          i += 2;
+        } else if (sql[i] === "'") {
+          i++;
+          break;
+        } else {
+          out[i] = ' ';
+          i++;
+        }
+      }
+    } else if (sql[i] === '-' && sql[i + 1] === '-') {
+      while (i < len && sql[i] !== '\n') {
+        out[i] = ' ';
+        i++;
+      }
+    } else if (sql[i] === '/' && sql[i + 1] === '*') {
+      while (i < len && !(sql[i] === '*' && sql[i + 1] === '/')) {
+        out[i] = ' ';
+        i++;
+      }
+      if (i < len) {
+        out[i] = ' ';
+        out[i + 1] = ' ';
+        i += 2;
+      }
+    } else {
+      i++;
+    }
+  }
+
+  return out.join('');
+}
+
+export function extractTableRefSpans(sql: string): TableRefSpan[] {
+  const positional = maskCommentsAndStrings(sql);
+  const { cteNames } = extractCtes(normalizeWhitespace(positional));
+  const spans: TableRefSpan[] = [];
+  extractTableRefs(positional, cteNames, spans);
+  return spans;
+}
+
+function extractTableRefs(sql: string, exclude: Set<string>, spans?: TableRefSpan[]): string[] {
   const refs: string[] = [];
 
   function atKeyword(pos: number, keyword: string): boolean {
@@ -328,9 +392,9 @@ function extractTableRefs(sql: string, exclude: Set<string>): string[] {
 
   while (i < len) {
     if (atKeyword(i, 'FROM') && (i === 0 || isWordBoundary(i - 1)) && isWordBoundary(i + 4)) {
-      const end = recordTableRef(sql, i + 4, exclude, refs);
+      const end = recordTableRef(sql, i + 4, exclude, refs, spans);
       if (end !== null) {
-        i = consumeCommaTableList(sql, end, exclude, refs);
+        i = consumeCommaTableList(sql, end, exclude, refs, spans);
         continue;
       }
     }
@@ -348,9 +412,9 @@ function extractTableRefs(sql: string, exclude: Set<string>): string[] {
           pos = skipWhitespace(sql, pos + 5);
         }
         if (atKeyword(pos, 'JOIN') && isWordBoundary(pos + 4)) {
-          const end = recordTableRef(sql, pos + 4, exclude, refs);
+          const end = recordTableRef(sql, pos + 4, exclude, refs, spans);
           if (end !== null) {
-            i = consumeCommaTableList(sql, end, exclude, refs);
+            i = consumeCommaTableList(sql, end, exclude, refs, spans);
             joinMatched = true;
             break;
           }
@@ -360,9 +424,9 @@ function extractTableRefs(sql: string, exclude: Set<string>): string[] {
     }
 
     if (!joinMatched && atKeyword(i, 'JOIN') && isWordBoundary(i + 4)) {
-      const end = recordTableRef(sql, i + 4, exclude, refs);
+      const end = recordTableRef(sql, i + 4, exclude, refs, spans);
       if (end !== null) {
-        i = consumeCommaTableList(sql, end, exclude, refs);
+        i = consumeCommaTableList(sql, end, exclude, refs, spans);
         continue;
       }
     }

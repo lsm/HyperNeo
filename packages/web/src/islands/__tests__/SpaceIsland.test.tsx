@@ -231,18 +231,13 @@ vi.mock('../../components/space/SpaceSessionsPage', () => ({
   ),
 }));
 
-vi.mock('../../components/space/SpaceLongHorizonAgents', () => ({
-  SpaceLongHorizonAgents: (props: {
-    spaceId: string;
-    navigationSpaceId?: string;
-    selectedHandle?: string | null;
-  }) => {
+vi.mock('../../components/space/SpaceAgentsView', () => ({
+  SpaceAgentsView: (props: { spaceId: string; selectedHandle?: string | null }) => {
     const spaceAgent = mockAgents.value.find((agent) => agent.handle === props.selectedHandle);
     return (
       <div
-        data-testid="space-long-horizon-agents"
+        data-testid="space-agents-view-body"
         data-space-id={props.spaceId}
-        data-navigation-space-id={props.navigationSpaceId ?? ''}
         data-selected-handle={props.selectedHandle ?? ''}
         data-space-agent={spaceAgent?.handle ?? ''}
       />
@@ -361,7 +356,7 @@ beforeAll(async () => {
     import('../../components/space/SpaceTaskPane'),
     import('../../components/space/SpaceTasks'),
     import('../../components/space/SpaceSessionsPage'),
-    import('../../components/space/SpaceLongHorizonAgents'),
+    import('../../components/space/SpaceAgentsView'),
   ]);
 });
 
@@ -1144,9 +1139,8 @@ describe('SpaceIsland — agents view', () => {
 
     const { findByTestId } = render(<SpaceIsland spaceId="space-1" viewMode="agents" />);
 
-    const agentsPage = await findByTestId('space-long-horizon-agents');
+    const agentsPage = await findByTestId('space-agents-view-body');
     expect(agentsPage.getAttribute('data-space-id')).toBe('space-1');
-    expect(agentsPage.getAttribute('data-navigation-space-id')).toBe('space-1');
     expect(agentsPage.getAttribute('data-selected-handle')).toBe('reviewer');
     expect(agentsPage.getAttribute('data-space-agent')).toBe('reviewer');
   });
@@ -1156,9 +1150,8 @@ describe('SpaceIsland — agents view', () => {
       <SpaceIsland spaceId="space-1" routeSpaceId="space-slug" viewMode="agents" />
     );
 
-    const agentsPage = await findByTestId('space-long-horizon-agents');
+    const agentsPage = await findByTestId('space-agents-view-body');
     expect(agentsPage.getAttribute('data-space-id')).toBe('space-1');
-    expect(agentsPage.getAttribute('data-navigation-space-id')).toBe('space-slug');
   });
 });
 
