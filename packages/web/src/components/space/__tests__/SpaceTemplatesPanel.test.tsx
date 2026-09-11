@@ -26,7 +26,6 @@ function renderPanel(overrides: Partial<Parameters<typeof SpaceTemplatesPanel>[0
   const props = {
     spaceId: 'space-1',
     templates: [makeTemplate('researcher.v1')],
-    templateInstanceCounts: new Map<string, number>(),
     userTemplateKeys: new Set<string>(),
     onUseTemplate: vi.fn(),
     ...overrides,
