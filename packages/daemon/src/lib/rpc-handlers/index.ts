@@ -665,7 +665,10 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.db.getDatabase()
   );
 
+  const spaceAgentRepo = new SpaceAgentRepository(deps.db.getDatabase());
+
   const spaceRuntimeService: SpaceRuntimeService = new SpaceRuntimeService({
+    ownedAgents: spaceAgentRepo,
     db: deps.db.getDatabase(),
     dbPath: deps.db.getDatabasePath(),
     spaceManager: deps.spaceManager,
@@ -933,8 +936,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     spaceRuntimeService.recoverStalledWorkflowRunsAfterSpaceResume(spaceId);
     void spaceRuntimeService.recoverPendingOutcomeNotificationsForSpace(spaceId);
   });
-
-  const spaceAgentRepo = new SpaceAgentRepository(deps.db.getDatabase());
 
   setupSpaceAgentHandlers(
     deps.messageHub,
