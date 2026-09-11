@@ -10,7 +10,8 @@ export function setupOperationHandlers(
   createTask: Parameters<typeof createDaemonOperationCatalog>[2],
   listTasks: Parameters<typeof createDaemonOperationCatalog>[3],
   editTask: Parameters<typeof createDaemonOperationCatalog>[4],
-  transitionTask: Parameters<typeof createDaemonOperationCatalog>[5]
+  transitionTask: Parameters<typeof createDaemonOperationCatalog>[5],
+  setDependencies: Parameters<typeof createDaemonOperationCatalog>[6]
 ) {
   const registry = createDaemonOperationCatalog(
     jobQueue,
@@ -18,7 +19,8 @@ export function setupOperationHandlers(
     createTask,
     listTasks,
     editTask,
-    transitionTask
+    transitionTask,
+    setDependencies
   );
   return messageHub.onRequest(
     'operation.invoke',

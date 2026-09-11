@@ -1,3 +1,4 @@
+import { setStandaloneTaskDependencies } from '../../../../src/storage/tasks/set-task-dependencies';
 import { transitionStandaloneTask } from '../../../../src/storage/tasks/transition-task';
 import { editStandaloneTask } from '../../../../src/storage/tasks/edit-task';
 import { listTaskCores } from '../../../../src/storage/tasks/list-tasks';
@@ -57,7 +58,8 @@ describe('shared operation delivery parity', () => {
         createStandaloneTask(mailbox.db, input, creatorSessionId, () => {}),
       (input) => listTaskCores(mailbox.db, input),
       (input) => editStandaloneTask(mailbox.db, input, () => {}),
-      (input) => transitionStandaloneTask(mailbox.db, input, () => {})
+      (input) => transitionStandaloneTask(mailbox.db, input, () => {}),
+      (input) => setStandaloneTaskDependencies(mailbox.db, input, () => {})
     );
     await Promise.all(transports.map((transport) => transport.initialize()));
   });
@@ -97,7 +99,8 @@ describe('shared operation delivery parity', () => {
               createStandaloneTask(mailbox.db, input, creatorSessionId, () => {}),
             (input) => listTaskCores(mailbox.db, input),
             (input) => editStandaloneTask(mailbox.db, input, () => {}),
-            (input) => transitionStandaloneTask(mailbox.db, input, () => {})
+            (input) => transitionStandaloneTask(mailbox.db, input, () => {}),
+            (input) => setStandaloneTaskDependencies(mailbox.db, input, () => {})
           ),
           () => ({
             sessionId: sender.id,
