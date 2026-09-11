@@ -980,7 +980,8 @@ class SpaceStore {
   ): Promise<void> {
     try {
       const result = await hub.request<{ templates: SpaceAgentTemplate[] }>(
-        'spaceAgent.listTemplates'
+        'spaceAgent.listTemplates',
+        { spaceId }
       );
       if (this.spaceId.value !== spaceId) return;
       this.applyTemplateLibrary(result?.templates ?? []);
@@ -2404,19 +2405,25 @@ class SpaceStore {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
 
+    const spaceId = this.spaceId.value;
+    if (!spaceId) throw new Error('No space selected');
+
     try {
-      await this.refreshTemplateLibrary(hub);
+      await this.refreshTemplateLibrary(hub, spaceId);
     } catch (err) {
       logger.error('Failed to fetch templates:', err);
     }
   }
 
   private async refreshTemplateLibrary(
-    hub: Awaited<ReturnType<typeof connectionManager.getHub>>
+    hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
+    spaceId: string
   ): Promise<void> {
     const result = await hub.request<{ templates: SpaceAgentTemplate[] }>(
-      'spaceAgent.listTemplates'
+      'spaceAgent.listTemplates',
+      { spaceId }
     );
+    if (this.spaceId.value !== spaceId) return;
     this.applyTemplateLibrary(result?.templates ?? []);
   }
 
@@ -2430,10 +2437,12 @@ class SpaceStore {
   async createTemplate(params: CreateSpaceAgentTemplateParams): Promise<SpaceAgentTemplate> {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
+    const spaceId = this.spaceId.value;
+    if (!spaceId) throw new Error('No space selected');
 
     const { template } = await hub.request<{ template: SpaceAgentTemplate }>(
       'spaceAgent.createTemplate',
-      params
+      { spaceId, ...params }
     );
     this.upsertAgentTemplate(template);
     return template;
@@ -2445,10 +2454,12 @@ class SpaceStore {
   ): Promise<SpaceAgentTemplate> {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
+    const spaceId = this.spaceId.value;
+    if (!spaceId) throw new Error('No space selected');
 
     const { template } = await hub.request<{ template: SpaceAgentTemplate | null }>(
       'spaceAgent.updateTemplate',
-      { key, ...params }
+      { spaceId, key, ...params }
     );
     if (!template) throw new Error(`Template ${key} was modified concurrently`);
     this.upsertAgentTemplate(template);
@@ -2458,17 +2469,19 @@ class SpaceStore {
   async deleteTemplate(key: string, expectedVersion?: number): Promise<void> {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
+    const spaceId = this.spaceId.value;
+    if (!spaceId) throw new Error('No space selected');
 
     await hub.request(
       'spaceAgent.deleteTemplate',
-      expectedVersion === undefined ? { key } : { key, expectedVersion }
+      expectedVersion === undefined ? { spaceId, key } : { spaceId, key, expectedVersion }
     );
     this.agentTemplates.value = this.agentTemplates.value.filter((t) => t.key !== key);
     this.userTemplateKeys.value = new Set(
       [...this.userTemplateKeys.value].filter((existing) => existing !== key)
     );
     try {
-      await this.refreshTemplateLibrary(hub);
+      await this.refreshTemplateLibrary(hub, spaceId);
     } catch (err) {
       logger.error('Failed to refresh template library after delete:', err);
     }

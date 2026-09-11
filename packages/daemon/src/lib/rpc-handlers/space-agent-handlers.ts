@@ -797,33 +797,44 @@ export function registerUnifiedSpaceAgentMethods(
     };
   });
 
+  const requireTemplateSpace = async (spaceId: string | undefined): Promise<string> => {
+    if (!spaceId) throw new Error('spaceId is required');
+    const space = await deps.spaceManager.getSpace(spaceId);
+    if (!space) throw new Error(`Space not found: ${spaceId}`);
+    return spaceId;
+  };
+
   if (templateManager) {
-    messageHub.onRequest(method('listTemplates'), async () => {
-      return { templates: templateManager.list() };
+    messageHub.onRequest(method('listTemplates'), async (data) => {
+      const spaceId = await requireTemplateSpace((data as { spaceId?: string }).spaceId);
+      return { templates: templateManager.listIn(spaceId) };
     });
 
     messageHub.onRequest(method('createTemplate'), async (data) => {
-      const params = data as CreateSpaceAgentTemplateParams;
+      const params = data as { spaceId?: string } & CreateSpaceAgentTemplateParams;
+      const spaceId = await requireTemplateSpace(params.spaceId);
       if (!params.key) throw new Error('key is required');
       if (!params.handle) throw new Error('handle is required');
-      const result = await templateManager.create(params);
+      const result = await templateManager.createIn(spaceId, params);
       if (!result.ok) throw new Error(result.error);
       return { template: result.value };
     });
 
     messageHub.onRequest(method('updateTemplate'), async (data) => {
-      const params = data as { key: string } & UpdateSpaceAgentTemplateParams;
+      const params = data as { spaceId?: string; key: string } & UpdateSpaceAgentTemplateParams;
+      const spaceId = await requireTemplateSpace(params.spaceId);
       if (!params.key) throw new Error('key is required');
-      const { key, ...updates } = params;
-      const result = await templateManager.update(key, updates);
+      const { key, spaceId: _spaceId, ...updates } = params;
+      const result = await templateManager.updateIn(spaceId, key, updates);
       if (!result.ok) throw new Error(result.error);
       return { template: result.value };
     });
 
     messageHub.onRequest(method('deleteTemplate'), async (data) => {
-      const params = data as { key: string; expectedVersion?: number };
+      const params = data as { spaceId?: string; key: string; expectedVersion?: number };
+      const spaceId = await requireTemplateSpace(params.spaceId);
       if (!params.key) throw new Error('key is required');
-      const result = templateManager.delete(params.key, params.expectedVersion);
+      const result = templateManager.deleteIn(spaceId, params.key, params.expectedVersion);
       if (!result.ok) throw new Error(result.error);
       return { success: true };
     });
