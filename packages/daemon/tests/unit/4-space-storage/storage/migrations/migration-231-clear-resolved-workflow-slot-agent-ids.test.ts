@@ -516,7 +516,7 @@ describe('migration 231 — clear slot.agentId where templateKey resolves', () =
       .get() as { agent_id: string | null };
     expect(execution.agent_id).toBe('agent-pin');
     expect(
-      new SpaceAgentTemplateRepository(db).getByKey('migrated.agent.agent-pin')
+      new SpaceAgentTemplateRepository(db).getByKey('', 'migrated.agent.agent-pin')
     ).not.toBeNull();
     db.close();
   });
@@ -569,7 +569,9 @@ describe('migration 231 — clear slot.agentId where templateKey resolves', () =
       templateKey: 'migrated.agent.agent-x',
       name: 'writer',
     });
-    expect(new SpaceAgentTemplateRepository(db).getByKey('migrated.agent.agent-x')).not.toBeNull();
+    expect(
+      new SpaceAgentTemplateRepository(db).getByKey('', 'migrated.agent.agent-x')
+    ).not.toBeNull();
     db.close();
   });
 
@@ -721,7 +723,7 @@ describe('migration 231 — clear slot.agentId where templateKey resolves', () =
       .get() as { agent_id: string | null };
     expect(execution.agent_id).toBe('agent-foreign');
     expect(
-      new SpaceAgentTemplateRepository(db).getByKey('migrated.agent.agent-foreign')
+      new SpaceAgentTemplateRepository(db).getByKey('', 'migrated.agent.agent-foreign')
     ).toBeNull();
     db.close();
   });
@@ -829,7 +831,9 @@ describe('migration 231 — clear slot.agentId where templateKey resolves', () =
       )
       .get() as { count: number };
     expect(versions.count).toBe(1);
-    expect(new SpaceAgentTemplateRepository(db).getByKey('migrated.agent.agent-pin')).toBeNull();
+    expect(
+      new SpaceAgentTemplateRepository(db).getByKey('', 'migrated.agent.agent-pin')
+    ).toBeNull();
     db.close();
   });
 });

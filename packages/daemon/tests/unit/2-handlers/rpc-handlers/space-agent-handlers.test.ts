@@ -335,7 +335,7 @@ describe('Space Agent RPC Handlers', () => {
 
   describe('spaceAgent.listTemplates', () => {
     it('registers the handler', () => {
-      expect(hubData.handlers.has('spaceAgent.listTemplates', { spaceId: 'space-1' })).toBe(true);
+      expect(hubData.handlers.has('spaceAgent.listTemplates')).toBe(true);
     });
 
     it('returns built-in templates in the unified template shape', async () => {
@@ -346,7 +346,7 @@ describe('Space Agent RPC Handlers', () => {
           model: string | null;
           createdAt: number;
         }>;
-      }>(hubData.handlers, 'spaceAgent.listTemplates', {});
+      }>(hubData.handlers, 'spaceAgent.listTemplates', { spaceId: 'space-1' });
 
       expect(Array.isArray(result.templates)).toBe(true);
       expect(result.templates.map((template) => template.key)).toContain('worker.swe');
@@ -368,7 +368,7 @@ describe('Space Agent RPC Handlers', () => {
       const result = await call<{ templates: Array<{ key: string }> }>(
         hubData.handlers,
         'spaceAgent.listTemplates',
-        {}
+        { spaceId: 'space-1' }
       );
 
       const keys = result.templates.map((template) => template.key);
@@ -518,7 +518,7 @@ describe('Space Agent RPC Handlers', () => {
       const list = await call<{ templates: Array<{ key: string }> }>(
         hubData.handlers,
         'spaceAgent.listTemplates',
-        {}
+        { spaceId: 'space-1' }
       );
       expect(list.templates.map((template) => template.key)).not.toContain('delete.custom');
     });
@@ -591,7 +591,7 @@ describe('Space Agent RPC Handlers', () => {
       const list = await call<{ templates: Array<{ key: string }> }>(
         hubData.handlers,
         'spaceAgent.listTemplates',
-        {}
+        { spaceId: 'space-1' }
       );
       expect(list.templates.map((template) => template.key)).not.toContain('guard.custom');
       expect(runRepo.getRun(run.id)?.definitionVersion).toBe(run.definitionVersion);

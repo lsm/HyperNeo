@@ -60,6 +60,8 @@ describe('migration 238: space_agent_templates labels column', () => {
     runMigration238(db);
     runMigration238(db);
 
+    runMigration243(db);
+
     const repo = new SpaceAgentTemplateRepository(db);
     repo.create('', { key: 'idempotent.custom', handle: 'idempotent' });
 

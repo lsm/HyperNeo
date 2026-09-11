@@ -625,7 +625,7 @@ describe('SpaceWorkflowRunRepository', () => {
       expect(
         repo.backfillDefinitionPins(
           () => wf,
-          () => null
+          () => () => null
         )
       ).toBe(1);
 
@@ -661,7 +661,7 @@ describe('SpaceWorkflowRunRepository', () => {
 
       expect(
         repo.migrateSnapshotlessPins(
-          (key) =>
+          () => (key) =>
             key === 'worker.custom'
               ? ({
                   key: 'worker.custom',
@@ -712,7 +712,7 @@ describe('SpaceWorkflowRunRepository', () => {
 
       expect(
         repo.migrateSnapshotlessPins(
-          () => null,
+          () => () => null,
           () => wf
         )
       ).toBe(0);
@@ -739,7 +739,7 @@ describe('SpaceWorkflowRunRepository', () => {
 
       expect(
         repo.migrateSnapshotlessPins(
-          () => null,
+          () => () => null,
           () => wf
         )
       ).toBe(1);
@@ -775,7 +775,7 @@ describe('SpaceWorkflowRunRepository', () => {
 
       expect(
         repo.migrateSnapshotlessPins(
-          () => null,
+          () => () => null,
           () => wf
         )
       ).toBe(1);
@@ -809,7 +809,7 @@ describe('SpaceWorkflowRunRepository', () => {
 
       expect(
         repo.migrateSnapshotlessPins(
-          () => null,
+          () => () => null,
           () => null
         )
       ).toBe(0);
@@ -842,7 +842,7 @@ describe('SpaceWorkflowRunRepository', () => {
       expect(repo.listSnapshotlessPinnedRuns().map((r) => r.id)).toContain(run.id);
       expect(
         repo.migrateSnapshotlessPins(
-          () => null,
+          () => () => null,
           () => wf
         )
       ).toBe(1);
@@ -872,7 +872,7 @@ describe('SpaceWorkflowRunRepository', () => {
 
       expect(
         repo.migrateSnapshotlessPins(
-          () => null,
+          () => () => null,
           () => wf
         )
       ).toBe(0);

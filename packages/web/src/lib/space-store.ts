@@ -2424,6 +2424,7 @@ class SpaceStore {
       'spaceAgent.listTemplates',
       { spaceId }
     );
+    if (this.spaceId.value !== spaceId) return;
     this.applyTemplateLibrary(result?.templates ?? []);
   }
 

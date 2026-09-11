@@ -1031,7 +1031,7 @@ describe('SpaceAgentTemplateManager', () => {
 
       expect(ctx.error).toContain('key');
       expect(ctx.template).toBeUndefined();
-      expect(repo.getByKey('')).toBeNull();
+      expect(repo.getByKey(SPACE, '')).toBeNull();
     });
 
     test('halts before persist on a duplicate key', async () => {
