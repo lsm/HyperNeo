@@ -198,7 +198,7 @@ describe('SpaceAgentStore', () => {
 
       await store.selectSpace('space-1');
 
-      expect(store.reminderCounts.value).toEqual({ a: 2 });
+      await vi.waitFor(() => expect(store.reminderCounts.value).toEqual({ a: 2 }));
     });
 
     it('keeps the agent list when the count request fails', async () => {
@@ -209,7 +209,8 @@ describe('SpaceAgentStore', () => {
 
       expect(store.agents.value.map((agent) => agent.id)).toEqual(['a']);
       expect(store.error.value).toBeNull();
-      expect(store.reminderCounts.value).toEqual({});
+      expect(store.loading.value).toBe(false);
+      await vi.waitFor(() => expect(store.reminderCounts.value).toEqual({}));
     });
 
     it('refetches counts when a created agent arrives, so seeded reminders show', async () => {
@@ -243,6 +244,53 @@ describe('SpaceAgentStore', () => {
       expect(
         requests.filter((entry) => entry.method === 'spaceAgentV2.listReminderCounts').length
       ).toBe(before);
+    });
+
+    it('does not hold the loading flag for the count request', async () => {
+      listResult = [makeAgent('a')];
+      let releaseCounts = (): void => {};
+      const blocked = new Promise<void>((resolve) => {
+        releaseCounts = () => resolve();
+      });
+      const original = hub.request;
+      hub.request = vi.fn(async (method: string, params: unknown) => {
+        if (method === 'spaceAgentV2.listReminderCounts') {
+          await blocked;
+        }
+        return original(method, params);
+      }) as typeof hub.request;
+
+      await store.selectSpace('space-1');
+
+      expect(store.loading.value).toBe(false);
+      expect(store.agents.value.map((agent) => agent.id)).toEqual(['a']);
+      releaseCounts();
+    });
+
+    it('runs the queued refresh against the newest generation', async () => {
+      let releaseFirst = (): void => {};
+      const blocked = new Promise<void>((resolve) => {
+        releaseFirst = () => resolve();
+      });
+      let blockNext = true;
+      const original = hub.request;
+      hub.request = vi.fn(async (method: string, params: unknown) => {
+        if (method === 'spaceAgentV2.listReminderCounts' && blockNext) {
+          blockNext = false;
+          await blocked;
+        }
+        return original(method, params);
+      }) as typeof hub.request;
+
+      await store.selectSpace('space-1');
+      listResult = [makeAgent('b')];
+      reminderCountsResult = { b: 7 };
+      await store.selectSpace('space-2');
+      expect(store.reminderCounts.value).toEqual({});
+
+      releaseFirst();
+
+      await vi.waitFor(() => expect(store.reminderCounts.value).toEqual({ b: 7 }));
     });
 
     it('coalesces a burst of created agents into two count requests', async () => {

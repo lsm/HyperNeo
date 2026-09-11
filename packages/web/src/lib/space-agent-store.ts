@@ -21,7 +21,7 @@ export class SpaceAgentStore {
   private cleanups: Array<() => void> = [];
   private subscribedSpaceId: string | null = null;
   private countsRefreshing = false;
-  private countsQueued = false;
+  private countsQueuedGeneration: number | null = null;
   private generation = 0;
 
   private hub() {
@@ -51,7 +51,7 @@ export class SpaceAgentStore {
       });
       if (!this.isCurrent(generation)) return;
       this.agents.value = sortAgents(agents);
-      await this.refreshReminderCounts(generation);
+      void this.refreshReminderCounts(generation);
     } catch (err) {
       if (!this.isCurrent(generation)) return;
       this.error.value = err instanceof Error ? err.message : 'Failed to load agents';
@@ -62,15 +62,17 @@ export class SpaceAgentStore {
 
   private async refreshReminderCounts(generation: number): Promise<void> {
     if (this.countsRefreshing) {
-      this.countsQueued = true;
+      this.countsQueuedGeneration = generation;
       return;
     }
     this.countsRefreshing = true;
     try {
-      do {
-        this.countsQueued = false;
-        await this.fetchReminderCounts(generation);
-      } while (this.countsQueued);
+      let pending: number | null = generation;
+      while (pending !== null) {
+        this.countsQueuedGeneration = null;
+        await this.fetchReminderCounts(pending);
+        pending = this.countsQueuedGeneration;
+      }
     } finally {
       this.countsRefreshing = false;
     }
