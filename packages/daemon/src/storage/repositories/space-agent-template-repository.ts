@@ -169,13 +169,17 @@ export class SpaceAgentTemplateRepository {
     return this.getByKey(key);
   }
 
-  delete(key: string, expectedVersion?: number): boolean {
+  delete(spaceId: string, key: string, expectedVersion?: number): boolean {
     const result =
       expectedVersion === undefined
-        ? this.db.prepare(`DELETE FROM space_agent_templates WHERE key = ?`).run(key)
+        ? this.db
+            .prepare(`DELETE FROM space_agent_templates WHERE space_id = ? AND key = ?`)
+            .run(spaceId, key)
         : this.db
-            .prepare(`DELETE FROM space_agent_templates WHERE key = ? AND version = ?`)
-            .run(key, expectedVersion);
+            .prepare(
+              `DELETE FROM space_agent_templates WHERE space_id = ? AND key = ? AND version = ?`
+            )
+            .run(spaceId, key, expectedVersion);
     return result.changes > 0;
   }
 

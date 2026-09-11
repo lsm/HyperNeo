@@ -3300,7 +3300,10 @@ describe('SpaceStore — template CRUD methods', () => {
     templateListResult = [makeAgentTemplate({ key: 'first', createdAt: 0 })];
     await spaceStore.deleteTemplate('scribe');
 
-    expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.deleteTemplate', { key: 'scribe' });
+    expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.deleteTemplate', {
+      key: 'scribe',
+      spaceId: 'space-1',
+    });
     expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.listTemplates');
     expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual(['first']);
   });
@@ -3315,6 +3318,7 @@ describe('SpaceStore — template CRUD methods', () => {
 
     expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.deleteTemplate', {
       key: 'scribe',
+      spaceId: 'space-1',
       expectedVersion: 7,
     });
   });

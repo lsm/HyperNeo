@@ -830,9 +830,12 @@ export function registerUnifiedSpaceAgentMethods(
     });
 
     messageHub.onRequest(method('deleteTemplate'), async (data) => {
-      const params = data as { key: string; expectedVersion?: number };
+      const params = data as { key: string; spaceId: string; expectedVersion?: number };
+      if (!params.spaceId) throw new Error('spaceId is required');
+      const space = await deps.spaceManager.getSpace(params.spaceId);
+      if (!space) throw new Error(`Space not found: ${params.spaceId}`);
       if (!params.key) throw new Error('key is required');
-      const result = templateManager.delete(params.key, params.expectedVersion);
+      const result = templateManager.delete(params.spaceId, params.key, params.expectedVersion);
       if (!result.ok) throw new Error(result.error);
       return { success: true };
     });

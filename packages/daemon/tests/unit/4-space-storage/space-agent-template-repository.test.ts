@@ -250,10 +250,10 @@ describe('SpaceAgentTemplateRepository', () => {
   test('delete removes the row and frees the key for reuse', () => {
     repo.create(SPACE, { key: 'gone.custom', handle: 'gone' });
 
-    expect(repo.delete('missing.custom')).toBe(false);
-    expect(repo.delete('gone.custom')).toBe(true);
+    expect(repo.delete(SPACE, 'missing.custom')).toBe(false);
+    expect(repo.delete(SPACE, 'gone.custom')).toBe(true);
     expect(repo.getByKey('gone.custom')).toBeNull();
-    expect(repo.delete('gone.custom')).toBe(false);
+    expect(repo.delete(SPACE, 'gone.custom')).toBe(false);
 
     const recreated = repo.create(SPACE, { key: 'gone.custom', handle: 'back' });
     expect(recreated.handle).toBe('back');
@@ -264,7 +264,7 @@ describe('SpaceAgentTemplateRepository', () => {
     repo.create(SPACE, { key: 'reuse.custom', handle: 'reuse' });
     const before = repo.getByKeyWithVersion('reuse.custom')!;
 
-    repo.delete('reuse.custom');
+    repo.delete(SPACE, 'reuse.custom');
     repo.create(SPACE, { key: 'reuse.custom', handle: 'reincarnated' });
     const after = repo.getByKeyWithVersion('reuse.custom')!;
 

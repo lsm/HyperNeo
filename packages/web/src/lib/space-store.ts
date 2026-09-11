@@ -2465,9 +2465,11 @@ class SpaceStore {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
 
+    const spaceId = this.spaceId.value;
+    if (!spaceId) throw new Error('No space selected');
     await hub.request(
       'spaceAgent.deleteTemplate',
-      expectedVersion === undefined ? { key } : { key, expectedVersion }
+      expectedVersion === undefined ? { key, spaceId } : { key, spaceId, expectedVersion }
     );
     this.agentTemplates.value = this.agentTemplates.value.filter((t) => t.key !== key);
     this.userTemplateKeys.value = new Set(
