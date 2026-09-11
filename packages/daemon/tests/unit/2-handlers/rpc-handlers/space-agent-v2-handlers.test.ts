@@ -57,6 +57,8 @@ function insertMirror(db: Database, id: string, handle: string, displayName: str
   );
 }
 
+const SPACE_ID = 'space-1';
+
 describe('setupSpaceAgentV2Handlers', () => {
   let db: Database;
   let agents: SpaceAgentRepository;
@@ -267,7 +269,7 @@ describe('setupSpaceAgentV2Handlers', () => {
     });
 
     test('copies configuration from a template', async () => {
-      templates.create({
+      templates.createOwned(SPACE_ID, {
         key: 'researcher.v1',
         handle: 'researcher',
         displayName: 'Researcher',
@@ -288,7 +290,7 @@ describe('setupSpaceAgentV2Handlers', () => {
     });
 
     test('seeds template extras for the created agent', async () => {
-      templates.create({
+      templates.createOwned(SPACE_ID, {
         key: 'researcher.v1',
         handle: 'researcher',
         displayName: 'Researcher',
@@ -314,7 +316,7 @@ describe('setupSpaceAgentV2Handlers', () => {
     });
 
     test('leaves the created row disconnected from its template', async () => {
-      templates.create({
+      templates.createOwned(SPACE_ID, {
         key: 'researcher.v1',
         handle: 'researcher',
         displayName: 'Researcher',
@@ -334,7 +336,7 @@ describe('setupSpaceAgentV2Handlers', () => {
     });
 
     test('a later template edit does not touch the created agent', async () => {
-      templates.create({
+      templates.createOwned(SPACE_ID, {
         key: 'researcher.v1',
         handle: 'researcher',
         displayName: 'Researcher',
@@ -346,7 +348,7 @@ describe('setupSpaceAgentV2Handlers', () => {
         templateKey: 'researcher.v1',
       });
 
-      templates.update('researcher.v1', { instructions: 'Rewritten.' });
+      templates.casUpdateOwned(SPACE_ID, 'researcher.v1', { instructions: 'Rewritten.' });
 
       expect(agents.getById(agent.id)?.instructions).toBe('Original.');
     });

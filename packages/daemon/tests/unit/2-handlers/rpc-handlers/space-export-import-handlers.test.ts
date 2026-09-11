@@ -852,7 +852,7 @@ describe('Space Export/Import RPC Handlers', () => {
     });
 
     it('imports stored-template slots whose key exists in the target template library', async () => {
-      new SpaceAgentTemplateRepository(db).create({
+      new SpaceAgentTemplateRepository(db).createOwned(SPACE_ID, {
         key: 'team.reviewer',
         handle: 'reviewer',
         displayName: 'Reviewer',
@@ -897,7 +897,7 @@ describe('Space Export/Import RPC Handlers', () => {
     });
 
     it('normalizes the legacy worker.coder templateKey to worker.swe on import', async () => {
-      new SpaceAgentTemplateRepository(db).create({
+      new SpaceAgentTemplateRepository(db).createOwned(SPACE_ID, {
         key: 'worker.swe.migrated',
         handle: 'legacy-swe',
         displayName: 'Legacy SWE',
@@ -1163,7 +1163,7 @@ describe('Space Export/Import RPC Handlers', () => {
     });
 
     it('flags ambiguous worker.swe references using the actual relocated key', async () => {
-      new SpaceAgentTemplateRepository(db).create({
+      new SpaceAgentTemplateRepository(db).createOwned(SPACE_ID, {
         key: 'worker.swe.migrated-2',
         handle: 'legacy-swe',
         displayName: 'Legacy SWE',
@@ -1238,7 +1238,7 @@ describe('Space Export/Import RPC Handlers', () => {
     });
 
     it('does not flag worker.swe when an unrelated template merely holds the migrated key', async () => {
-      new SpaceAgentTemplateRepository(db).create({
+      new SpaceAgentTemplateRepository(db).createOwned(SPACE_ID, {
         key: 'worker.swe.migrated',
         handle: 'unrelated',
         displayName: 'Unrelated',
@@ -1313,7 +1313,7 @@ describe('Space Export/Import RPC Handlers', () => {
     });
 
     it('prefers the agent fallback over an unverifiable colliding stored template', async () => {
-      new SpaceAgentTemplateRepository(db).create({
+      new SpaceAgentTemplateRepository(db).createOwned(SPACE_ID, {
         key: 'migrated.agent.agent-uuid-1',
         handle: 'impostor',
         displayName: 'Impostor',

@@ -41,7 +41,7 @@ const DEFAULT_IGNORABLE =
 
 export interface CreateTemplateCtx {
   repo: SpaceAgentTemplateRepository;
-  spaceId?: string;
+  spaceId: string;
   params: CreateSpaceAgentTemplateParams;
   error?: string;
   template?: SpaceAgentTemplate;
@@ -49,7 +49,7 @@ export interface CreateTemplateCtx {
 
 export interface UpdateTemplateCtx {
   repo: SpaceAgentTemplateRepository;
-  spaceId?: string;
+  spaceId: string;
   key: string;
   params: UpdateSpaceAgentTemplateParams;
   expectedVersion?: number;
@@ -60,12 +60,12 @@ export interface UpdateTemplateCtx {
 }
 
 export interface TemplateInstanceScan {
-  clearArchivedInstances?(key: string, spaceId?: string): void;
+  clearArchivedInstances?(key: string, spaceId: string): void;
 }
 
 export interface DeleteTemplateCtx {
   repo: SpaceAgentTemplateRepository;
-  spaceId?: string;
+  spaceId: string;
   key: string;
   expectedVersion?: number;
   instanceScan?: TemplateInstanceScan;
@@ -100,24 +100,6 @@ export function getBuiltInSpaceAgentTemplates(): SpaceAgentTemplate[] {
       updatedAt: 0,
     };
   });
-}
-
-function readTemplate(
-  repo: SpaceAgentTemplateRepository,
-  spaceId: string | undefined,
-  key: string
-): SpaceAgentTemplate | null {
-  return spaceId === undefined ? repo.getByKey(key) : repo.getOwned(spaceId, key);
-}
-
-function readTemplateWithVersion(
-  repo: SpaceAgentTemplateRepository,
-  spaceId: string | undefined,
-  key: string
-): SpaceAgentTemplateRecord | null {
-  return spaceId === undefined
-    ? repo.getByKeyWithVersion(key)
-    : repo.getOwnedWithVersion(spaceId, key);
 }
 
 function validateTemplateKey(key: string): string | null {
@@ -298,7 +280,7 @@ async function createValidateModelPool(ctx: CreateTemplateCtx): Promise<CreateTe
 }
 
 function createCheckKeyAvailable(ctx: CreateTemplateCtx): CreateTemplateCtx {
-  if (readTemplate(ctx.repo, ctx.spaceId, ctx.params.key)) {
+  if (ctx.repo.getOwned(ctx.spaceId, ctx.params.key)) {
     return { ...ctx, error: `Template key already exists: ${ctx.params.key}` };
   }
   return ctx;
@@ -308,10 +290,7 @@ function createPersist(ctx: CreateTemplateCtx): CreateTemplateCtx {
   try {
     return {
       ...ctx,
-      template:
-        ctx.spaceId === undefined
-          ? ctx.repo.create(ctx.params)
-          : ctx.repo.createOwned(ctx.spaceId, ctx.params),
+      template: ctx.repo.createOwned(ctx.spaceId, ctx.params),
     };
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
@@ -320,7 +299,7 @@ function createPersist(ctx: CreateTemplateCtx): CreateTemplateCtx {
 }
 
 function updateLoadExisting(ctx: UpdateTemplateCtx): UpdateTemplateCtx {
-  const existing = readTemplateWithVersion(ctx.repo, ctx.spaceId, ctx.key);
+  const existing = ctx.repo.getOwnedWithVersion(ctx.spaceId, ctx.key);
   if (!existing) return { ...ctx, error: `Template not found: ${ctx.key}` };
   return { ...ctx, existing, version: ctx.expectedVersion ?? existing.version };
 }
@@ -381,15 +360,12 @@ async function updateValidateModelPool(ctx: UpdateTemplateCtx): Promise<UpdateTe
 
 function updatePersist(ctx: UpdateTemplateCtx): UpdateTemplateCtx {
   if (ctx.version === undefined) return { ...ctx, error: `Template version missing: ${ctx.key}` };
-  const template =
-    ctx.spaceId === undefined
-      ? ctx.repo.casUpdate(ctx.key, ctx.params, ctx.expectedVersion ?? ctx.version)
-      : ctx.repo.casUpdateOwned(
-          ctx.spaceId,
-          ctx.key,
-          ctx.params,
-          ctx.expectedVersion ?? ctx.version
-        );
+  const template = ctx.repo.casUpdateOwned(
+    ctx.spaceId,
+    ctx.key,
+    ctx.params,
+    ctx.expectedVersion ?? ctx.version
+  );
   if (!template) {
     return { ...ctx, template: null };
   }
@@ -397,7 +373,7 @@ function updatePersist(ctx: UpdateTemplateCtx): UpdateTemplateCtx {
 }
 
 function deleteLoadExisting(ctx: DeleteTemplateCtx): DeleteTemplateCtx {
-  const existing = readTemplateWithVersion(ctx.repo, ctx.spaceId, ctx.key);
+  const existing = ctx.repo.getOwnedWithVersion(ctx.spaceId, ctx.key);
   if (!existing) return { ...ctx, error: `Template not found: ${ctx.key}` };
   return { ...ctx, existing, version: existing.version };
 }
@@ -414,15 +390,12 @@ function deleteCheckVersion(ctx: DeleteTemplateCtx): DeleteTemplateCtx {
 }
 
 function deletePersist(ctx: DeleteTemplateCtx): DeleteTemplateCtx {
-  const deleted =
-    ctx.spaceId === undefined
-      ? ctx.repo.delete(ctx.key, ctx.expectedVersion)
-      : ctx.repo.deleteOwned(ctx.spaceId, ctx.key, ctx.expectedVersion);
+  const deleted = ctx.repo.deleteOwned(ctx.spaceId, ctx.key, ctx.expectedVersion);
   if (deleted) {
     ctx.instanceScan?.clearArchivedInstances?.(ctx.key, ctx.spaceId);
     return { ...ctx, deleted: true };
   }
-  if (ctx.expectedVersion !== undefined && readTemplate(ctx.repo, ctx.spaceId, ctx.key)) {
+  if (ctx.expectedVersion !== undefined && ctx.repo.getOwned(ctx.spaceId, ctx.key)) {
     return { ...ctx, error: `Template "${ctx.key}" was modified concurrently; delete aborted.` };
   }
   return { ...ctx, error: `Template not found after delete: ${ctx.key}` };
@@ -491,73 +464,6 @@ export class SpaceAgentTemplateManager {
     private builtIns: BuiltInTemplateSource = getBuiltInSpaceAgentTemplates,
     private instanceScan?: TemplateInstanceScan
   ) {}
-
-  async create(
-    params: CreateSpaceAgentTemplateParams
-  ): Promise<SpaceAgentResult<SpaceAgentTemplateRecord>> {
-    const ctx = await runCreateTemplate({ repo: this.repo, params });
-    if (ctx.error) return { ok: false, error: ctx.error };
-    return { ok: true, value: this.repo.getByKeyWithVersion(ctx.params.key)! };
-  }
-
-  async update(
-    key: string,
-    params: UpdateSpaceAgentTemplateParams
-  ): Promise<SpaceAgentResult<SpaceAgentTemplate | null>> {
-    const { expectedVersion, ...updates } = params;
-    const ctx = await runUpdateTemplate({
-      repo: this.repo,
-      key,
-      params: updates,
-      expectedVersion,
-    });
-    if (ctx.error) return { ok: false, error: ctx.error };
-    if (ctx.template === null) return { ok: true, value: null };
-    return { ok: true, value: ctx.template! };
-  }
-
-  async casUpdate(
-    key: string,
-    params: UpdateSpaceAgentTemplateParams,
-    expectedVersion?: number
-  ): Promise<SpaceAgentResult<SpaceAgentTemplateRecord | null>> {
-    const ctx = await runUpdateTemplate({ repo: this.repo, key, params, expectedVersion });
-    if (ctx.error) return { ok: false, error: ctx.error };
-    if (ctx.template === null) return { ok: true, value: null };
-    return { ok: true, value: this.repo.getByKeyWithVersion(key)! };
-  }
-
-  delete(key: string, expectedVersion?: number): SpaceAgentResult<void> {
-    if (!this.repo.getByKey(key) && this.builtIns().some((template) => template.key === key)) {
-      return { ok: false, error: `Built-in template "${key}" cannot be deleted` };
-    }
-    const ctx = runDeleteTemplate({
-      repo: this.repo,
-      key,
-      expectedVersion,
-      instanceScan: this.instanceScan,
-    });
-    if (ctx.error) return { ok: false, error: ctx.error };
-    return { ok: true, value: undefined };
-  }
-
-  list(): SpaceAgentTemplate[] {
-    const byKey = new Map<string, SpaceAgentTemplate>();
-    for (const template of this.builtIns()) {
-      if (isReservedAgentHandle(template.handle)) continue;
-      byKey.set(template.key, template);
-    }
-    for (const template of this.repo.list()) {
-      if (!byKey.has(template.key)) byKey.set(template.key, template);
-    }
-    return [...byKey.values()].sort(compareByCreatedAtAndKey);
-  }
-
-  getByKey(key: string): SpaceAgentTemplate | null {
-    return (
-      this.builtIns().find((template) => template.key === key) ?? this.repo.getByKey(key) ?? null
-    );
-  }
 
   async createIn(
     spaceId: string,
@@ -639,9 +545,4 @@ export class SpaceAgentTemplateManager {
       null
     );
   }
-}
-
-function compareByCreatedAtAndKey(a: SpaceAgentTemplate, b: SpaceAgentTemplate): number {
-  if (a.createdAt !== b.createdAt) return a.createdAt - b.createdAt;
-  return a.key.localeCompare(b.key);
 }

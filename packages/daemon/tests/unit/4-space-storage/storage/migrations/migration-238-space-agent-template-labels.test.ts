@@ -46,10 +46,14 @@ describe('migration 238: space_agent_templates labels column', () => {
     runMigration243(db);
     runMigration246(db);
     const repo = new SpaceAgentTemplateRepository(db);
-    expect(repo.getByKey('pre.custom')?.labels).toEqual([]);
-    const created = repo.create({ key: 'post.custom', handle: 'post', labels: ['quality'] });
+    expect(repo.getOwned('', 'pre.custom')?.labels).toEqual([]);
+    const created = repo.createOwned('', {
+      key: 'post.custom',
+      handle: 'post',
+      labels: ['quality'],
+    });
     expect(created.labels).toEqual(['quality']);
-    expect(repo.getByKey('post.custom')?.labels).toEqual(['quality']);
+    expect(repo.getOwned('', 'post.custom')?.labels).toEqual(['quality']);
     db.close();
   });
 
@@ -64,9 +68,9 @@ describe('migration 238: space_agent_templates labels column', () => {
     runMigration243(db);
     runMigration246(db);
     const repo = new SpaceAgentTemplateRepository(db);
-    repo.create({ key: 'idempotent.custom', handle: 'idempotent' });
+    repo.createOwned('', { key: 'idempotent.custom', handle: 'idempotent' });
 
-    expect(repo.getByKey('idempotent.custom')?.labels).toEqual([]);
+    expect(repo.getOwned('', 'idempotent.custom')?.labels).toEqual([]);
     db.close();
   });
 
@@ -77,10 +81,10 @@ describe('migration 238: space_agent_templates labels column', () => {
     runMigration243(db);
     runMigration246(db);
     const repo = new SpaceAgentTemplateRepository(db);
-    const created = repo.create({ key: 'registered.custom', handle: 'registered' });
+    const created = repo.createOwned('', { key: 'registered.custom', handle: 'registered' });
 
     expect(created.labels).toEqual([]);
-    const updated = repo.update('registered.custom', { labels: ['release'] });
+    const updated = repo.casUpdateOwned('', 'registered.custom', { labels: ['release'] });
     expect(updated?.labels).toEqual(['release']);
     db.close();
   });
@@ -131,10 +135,12 @@ describe('migration 238: space_agent_templates labels column', () => {
 
     runMigrations(db, () => {});
 
-    runMigration243(db);
-    runMigration246(db);
+    const owner = db
+      .prepare(`SELECT space_id FROM space_agent_templates WHERE key = ?`)
+      .get('migrated.agent.agent-upgrade') as { space_id: string } | undefined;
+    expect(owner).toBeDefined();
     const repo = new SpaceAgentTemplateRepository(db);
-    const template = repo.getByKey('migrated.agent.agent-upgrade');
+    const template = repo.getOwned(owner!.space_id, 'migrated.agent.agent-upgrade');
     expect(template?.labels).toEqual([]);
     db.close();
   });

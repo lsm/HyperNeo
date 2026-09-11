@@ -1279,7 +1279,7 @@ describe('createSpaceAgentToolHandlers — delete_agent_template', () => {
 
   test('denies deletion below the destructive autonomy level', async () => {
     const handlers = makeTemplateHandlers(3);
-    await new SpaceAgentTemplateRepository(ctx.db).create({
+    await new SpaceAgentTemplateRepository(ctx.db).createOwned(ctx.spaceId, {
       key: 'reviewer.custom',
       handle: 'reviewer',
     });
@@ -1388,7 +1388,8 @@ describe('createSpaceAgentToolHandlers — delete_agent_template', () => {
 
   test('rejects a stale CAS version and reports the current one', async () => {
     const handlers = await createTemplate('reviewer.custom');
-    await new SpaceAgentTemplateManager(new SpaceAgentTemplateRepository(ctx.db)).update(
+    await new SpaceAgentTemplateManager(new SpaceAgentTemplateRepository(ctx.db)).updateIn(
+      ctx.spaceId,
       'reviewer.custom',
       { displayName: 'Updated' }
     );
@@ -1406,7 +1407,8 @@ describe('createSpaceAgentToolHandlers — delete_agent_template', () => {
 
   test('deletes with the current CAS version', async () => {
     const handlers = await createTemplate('reviewer.custom');
-    await new SpaceAgentTemplateManager(new SpaceAgentTemplateRepository(ctx.db)).update(
+    await new SpaceAgentTemplateManager(new SpaceAgentTemplateRepository(ctx.db)).updateIn(
+      ctx.spaceId,
       'reviewer.custom',
       { displayName: 'Updated' }
     );
@@ -2976,7 +2978,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
   });
 
   test('list_agent_templates falls back to built-in templates without database access', async () => {
-    new SpaceAgentTemplateRepository(ctx.db).create({
+    new SpaceAgentTemplateRepository(ctx.db).createOwned(ctx.spaceId, {
       key: 'user.release-notes',
       handle: 'release-notes',
       displayName: 'Release Notes',

@@ -205,7 +205,7 @@ describe('SpaceWorkflowManager', () => {
       runMigration243(db);
       runMigration246(db);
       const templateRepo = new SpaceAgentTemplateRepository(db);
-      templateRepo.create({
+      templateRepo.createOwned('space-1', {
         key: 'migrated.agent.agent-1',
         handle: 'coder',
         displayName: 'Coder',

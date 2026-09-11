@@ -218,7 +218,7 @@ describe('ChannelRouter', () => {
     });
 
     test('throws an actionable error naming the key and workflow when a slot templateKey resolves to nothing', async () => {
-      new SpaceAgentTemplateRepository(db).create({
+      new SpaceAgentTemplateRepository(db).createOwned('', {
         key: 'ghost.preview',
         handle: 'ghost',
         instructions: 'Preview the release.',
