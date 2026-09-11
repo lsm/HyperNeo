@@ -89,6 +89,18 @@ describe('validateSql — comma-separated table lists', () => {
     ]);
   });
 
+  test('continues the list past a quoted alias', () => {
+    for (const sql of [
+      "SELECT * FROM space_tasks AS 't', space_goals",
+      "SELECT * FROM space_tasks 't', space_goals",
+      'SELECT * FROM space_tasks AS [t], space_goals',
+      'SELECT * FROM space_tasks [t], space_goals',
+      "SELECT * FROM space_tasks JOIN space_workflows AS 'w' ON 1 = 1, space_goals",
+    ]) {
+      expect(refs(sql)).toContain('space_goals');
+    }
+  });
+
   test('ignores a comma inside a string literal', () => {
     expect(refs("SELECT * FROM space_tasks WHERE title = 'a, auth_config'")).toEqual([
       'space_tasks',
@@ -118,6 +130,10 @@ describe('runScopedQuery — comma joins cannot reach excluded tables', () => {
     'SELECT * FROM space_tasks JOIN space_workflows ON 1 = 1, auth_config',
     'WITH auth_config AS (SELECT * FROM space_tasks WHERE 0) SELECT * FROM space_tasks, main.auth_config',
     'WITH auth_config AS (SELECT * FROM space_tasks WHERE 0) SELECT * FROM space_tasks JOIN main.auth_config ON 1 = 1',
+    "SELECT * FROM space_tasks AS 't', auth_config",
+    "SELECT * FROM space_tasks 't', auth_config",
+    'SELECT * FROM space_tasks AS [t], auth_config',
+    'SELECT * FROM space_tasks [t], auth_config',
   ])('rejects %s', (sql) => {
     const db = seeded();
     expect(() => runScopedQuery(db, 'space', 'space-a', { sql })).toThrow(/not accessible/);

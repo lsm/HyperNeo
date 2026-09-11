@@ -246,6 +246,24 @@ function skipJoinConstraint(sql: string, from: number): number | null {
   return null;
 }
 
+function skipQuotedAlias(sql: string, pos: number): number | null {
+  const open = sql[pos];
+  const close = open === '[' ? ']' : open;
+  if (open !== "'" && open !== '[' && open !== '"' && open !== '`') return null;
+  let i = pos + 1;
+  while (i < sql.length) {
+    if (sql[i] === close) {
+      if (close === "'" && sql[i + 1] === "'") {
+        i += 2;
+        continue;
+      }
+      return i + 1;
+    }
+    i++;
+  }
+  return sql.length;
+}
+
 function consumeCommaTableList(
   sql: string,
   from: number,
@@ -255,9 +273,20 @@ function consumeCommaTableList(
   let pos = from;
   for (;;) {
     let probe = skipWhitespace(sql, pos);
+    const quoted = skipQuotedAlias(sql, probe);
+    if (quoted !== null) {
+      pos = quoted;
+      continue;
+    }
     const alias = matchIdentifier(sql, probe);
     if (alias && alias.ident === 'as') {
-      const named = matchIdentifier(sql, skipWhitespace(sql, alias.end));
+      const afterAs = skipWhitespace(sql, alias.end);
+      const quotedNamed = skipQuotedAlias(sql, afterAs);
+      if (quotedNamed !== null) {
+        pos = quotedNamed;
+        continue;
+      }
+      const named = matchIdentifier(sql, afterAs);
       if (named) {
         pos = named.end;
         continue;
