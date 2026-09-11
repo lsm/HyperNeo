@@ -16,6 +16,7 @@ import { SpaceAgentTemplateRepository } from '../../../../src/storage/repositori
 import { runMigration226 } from '../../../../src/storage/schema/m226-space-agent-templates-version';
 import { runMigration227 } from '../../../../src/storage/schema/m227-space-agent-template-version-seq';
 import { runMigration238 } from '../../../../src/storage/schema/m238-space-agent-template-labels';
+import { runMigration243 } from '../../../../src/storage/schema/m243-space-agent-template-space-key';
 import { createSpaceAgentTemplatesTable } from '../../../../src/storage/schema/space-agent-templates';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 
@@ -1192,5 +1193,104 @@ describe('SpaceAgentTemplateManager', () => {
     test('returns null for an unknown key', () => {
       expect(manager.getByKey('missing.custom')).toBeNull();
     });
+  });
+});
+
+describe('SpaceAgentTemplateManager — Space-scoped methods', () => {
+  let repo: SpaceAgentTemplateRepository;
+  let manager: SpaceAgentTemplateManager;
+  let db: BunDatabase;
+
+  beforeEach(() => {
+    db = new BunDatabase(':memory:');
+    createSpaceAgentTemplatesTable(db);
+    runMigration226(db);
+    runMigration227(db);
+    runMigration238(db);
+    runMigration243(db);
+    repo = new SpaceAgentTemplateRepository(db);
+    manager = new SpaceAgentTemplateManager(repo, () => BUILT_INS);
+  });
+
+  test('createIn records the Space and getIn reads it back', async () => {
+    const created = await manager.createIn('space-a', { key: 'k.custom', handle: 'k' });
+    expect(created.ok).toBe(true);
+    expect(manager.getIn('space-a', 'k.custom')?.handle).toBe('k');
+  });
+
+  test('another Space cannot see, update or delete it', async () => {
+    await manager.createIn('space-a', { key: 'k.custom', handle: 'k' });
+
+    expect(manager.getIn('space-b', 'k.custom')).toBeNull();
+    expect(manager.listIn('space-b').map((t) => t.key)).not.toContain('k.custom');
+    const update = await manager.updateIn('space-b', 'k.custom', { displayName: 'X' });
+    expect(update.ok).toBe(false);
+    expect(manager.deleteIn('space-b', 'k.custom').ok).toBe(false);
+    expect(manager.getIn('space-a', 'k.custom')).not.toBeNull();
+  });
+
+  test('the owning Space can update and delete its own', async () => {
+    await manager.createIn('space-a', { key: 'k.custom', handle: 'k' });
+
+    const update = await manager.updateIn('space-a', 'k.custom', { displayName: 'X' });
+    expect(update.ok && update.value?.displayName).toBe('X');
+    expect(manager.deleteIn('space-a', 'k.custom').ok).toBe(true);
+    expect(manager.getIn('space-a', 'k.custom')).toBeNull();
+  });
+
+  test('listIn merges built-ins with only that Space own templates', async () => {
+    await manager.createIn('space-a', { key: 'mine.custom', handle: 'mine' });
+    await manager.createIn('space-b', { key: 'theirs.custom', handle: 'theirs' });
+
+    const keys = manager.listIn('space-a').map((t) => t.key);
+    expect(keys).toContain('mine.custom');
+    expect(keys).not.toContain('theirs.custom');
+    expect(keys).toContain(BUILT_INS[0].key);
+  });
+
+  test('built-ins still cannot be deleted from any Space', () => {
+    expect(manager.deleteIn('space-a', BUILT_INS[0].key).ok).toBe(false);
+  });
+
+  test('the archived-instance scan is told which Space deleted', async () => {
+    const cleared: Array<{ spaceId: string; key: string }> = [];
+    const scoped = new SpaceAgentTemplateManager(repo, () => BUILT_INS, {
+      clearArchivedInstances: (key, spaceId) => cleared.push({ spaceId: spaceId ?? 'none', key }),
+    });
+    await scoped.createIn('space-a', { key: 'k.custom', handle: 'k' });
+
+    expect(scoped.deleteIn('space-a', 'k.custom').ok).toBe(true);
+    expect(cleared).toEqual([{ spaceId: 'space-a', key: 'k.custom' }]);
+  });
+  test('listIn keeps the order the repository produced', async () => {
+    const at = 4_000;
+    for (const key of ['Z.one', '_.one', 'a.one']) {
+      db.prepare(
+        `INSERT INTO space_agent_templates
+           (space_id, key, handle, display_name, description, instructions,
+            suggested_autonomy_level, created_at, updated_at, version)
+         VALUES ('space-a', ?, 'h', 'H', '', '', 2, ?, ?, 1)`
+      ).run(key, at, at);
+    }
+
+    const listed = manager
+      .listIn('space-a')
+      .filter((t) => t.key.endsWith('.one'))
+      .map((t) => t.key);
+    expect(listed).toEqual(repo.listOwned('space-a').map((t) => t.key));
+  });
+
+  test('casUpdateIn returns the record its own write produced', async () => {
+    await manager.createIn('space-a', { key: 'k.custom', handle: 'k' });
+    const current = repo.getOwnedWithVersion('space-a', 'k.custom')!;
+
+    const result = await manager.casUpdateIn(
+      'space-a',
+      'k.custom',
+      { displayName: 'Mine' },
+      current.version
+    );
+
+    expect(result.ok && result.value?.displayName).toBe('Mine');
   });
 });
