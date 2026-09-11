@@ -16,7 +16,7 @@ export const VALID_TASK_TRANSITIONS: Record<TaskLifecycleStatus, TaskLifecycleSt
   ],
   review: ['done', 'approved', 'in_progress', 'cancelled', 'archived', 'stopped'],
   approved: ['done', 'in_progress', 'archived', 'cancelled'],
-  done: ['in_progress', 'archived'],
+  done: ['open', 'in_progress', 'archived'],
   blocked: ['open', 'in_progress', 'review', 'done', 'cancelled', 'archived', 'stopped'],
   cancelled: ['open', 'in_progress', 'done', 'archived'],
   rate_limited: [

@@ -204,7 +204,7 @@ export class SpaceTaskManager {
     if (
       (task.status === 'blocked' && (newStatus === 'open' || newStatus === 'in_progress')) ||
       (task.status === 'cancelled' && (newStatus === 'open' || newStatus === 'in_progress')) ||
-      (task.status === 'done' && newStatus === 'in_progress') ||
+      (task.status === 'done' && (newStatus === 'open' || newStatus === 'in_progress')) ||
       (task.status === 'in_progress' && newStatus === 'open') ||
       (task.status === 'review' && newStatus === 'in_progress')
     ) {

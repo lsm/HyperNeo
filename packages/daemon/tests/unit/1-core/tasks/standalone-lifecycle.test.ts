@@ -162,7 +162,7 @@ describe('standalone lifecycle gate decision tables', () => {
     ['done', 'in_progress', true],
     ['archived', 'open', false],
     ['open', 'open', false],
-    ['done', 'open', false],
+    ['done', 'open', true],
     ['review', 'approved', true],
   ] as const)('checks transition %s to %s', (from, to, allowed) => {
     const input = { status: to as StandaloneTaskStatus };

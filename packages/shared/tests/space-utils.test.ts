@@ -346,6 +346,7 @@ describe('isWorkflowRecoveryTransition', () => {
     expect(isWorkflowRecoveryTransition('blocked', 'open')).toBe(true);
     expect(isWorkflowRecoveryTransition('cancelled', 'in_progress')).toBe(true);
     expect(isWorkflowRecoveryTransition('done', 'in_progress')).toBe(true);
+    expect(isWorkflowRecoveryTransition('done', 'open')).toBe(true);
   });
 
   test('stopped → in_progress is a recovery transition (parked run resume)', () => {

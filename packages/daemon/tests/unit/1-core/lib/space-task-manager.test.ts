@@ -58,8 +58,8 @@ describe('SpaceTaskManager', () => {
       expect(isValidSpaceTaskTransition('in_progress', 'open')).toBe(true);
     });
 
-    it('rejects invalid transitions', () => {
-      expect(isValidSpaceTaskTransition('done', 'open')).toBe(false);
+    it('allows completed work to return to open', () => {
+      expect(isValidSpaceTaskTransition('done', 'open')).toBe(true);
     });
   });
 
@@ -114,24 +114,36 @@ describe('SpaceTaskManager', () => {
       expect(updated.status).toBe('in_progress');
     });
 
-    it('clears the post-approval routing pointer when a completed task is reopened', async () => {
-      const task = await manager.createTask({ title: 'T', description: '' });
-      await manager.setTaskStatus(task.id, 'in_progress');
-      await manager.setTaskStatus(task.id, 'approved');
-      await manager.setTaskStatus(task.id, 'done');
-      await manager.updateTask(task.id, {
-        postApprovalSessionId: 'worker-1',
-        postApprovalStartedAt: 1234,
-        postApprovalBlockedReason: 'deferred',
-      });
+    it.each(['open', 'in_progress'] as const)(
+      'clears completion and approval state when reopening to %s',
+      async (status) => {
+        const task = await manager.createTask({ title: 'T', description: '' });
+        await manager.setTaskStatus(task.id, 'in_progress');
+        await manager.setTaskStatus(task.id, 'approved', {
+          approvalSource: 'human',
+          approvalReason: 'Accepted',
+        });
+        await manager.setTaskStatus(task.id, 'done', { result: 'Finished' });
+        await manager.updateTask(task.id, {
+          postApprovalSessionId: 'worker-1',
+          postApprovalStartedAt: 1234,
+          postApprovalBlockedReason: 'deferred',
+        });
 
-      const reopened = await manager.setTaskStatus(task.id, 'in_progress');
+        const reopened = await manager.setTaskStatus(task.id, status);
 
-      expect(reopened.status).toBe('in_progress');
-      expect(reopened.postApprovalSessionId).toBeNull();
-      expect(reopened.postApprovalStartedAt).toBeNull();
-      expect(reopened.postApprovalBlockedReason).toBeNull();
-    });
+        expect(reopened.status).toBe(status);
+        expect(reopened.completedAt).toBeNull();
+        expect(reopened.result).toBeNull();
+        expect(reopened.approvedAt).toBeNull();
+        expect(reopened.approvalSource).toBeNull();
+        expect(reopened.approvalReason).toBeNull();
+        if (status === 'open') expect(reopened.startedAt).toBeNull();
+        expect(reopened.postApprovalSessionId).toBeNull();
+        expect(reopened.postApprovalStartedAt).toBeNull();
+        expect(reopened.postApprovalBlockedReason).toBeNull();
+      }
+    );
 
     it('clears stale outcome fields when a stopped task is reopened', async () => {
       const task = await manager.createTask({ title: 'T', description: '' });

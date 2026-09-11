@@ -107,7 +107,7 @@ export function isWorkflowRecoveryTransition(
   to: SpaceTaskStatus
 ): to is 'open' | 'in_progress' {
   return (
-    (from === 'done' && to === 'in_progress') ||
+    (from === 'done' && (to === 'open' || to === 'in_progress')) ||
     (from === 'blocked' && (to === 'open' || to === 'in_progress')) ||
     (from === 'cancelled' && (to === 'open' || to === 'in_progress')) ||
     (from === 'stopped' && to === 'in_progress') ||

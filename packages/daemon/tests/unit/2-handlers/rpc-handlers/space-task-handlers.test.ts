@@ -662,16 +662,20 @@ describe('space-task-handlers', () => {
   });
 
   describe('spaceTask.reactivate via spaceTask.update', () => {
-    it('routes workflow-backed Resume through workflow recovery instead of task-only status update', async () => {
+    it.each([
+      ['cancelled', 'in_progress'],
+      ['done', 'in_progress'],
+      ['done', 'open'],
+    ] as const)('routes workflow tasks from %s to %s through recovery', async (from, status) => {
       const workflowTask = {
         ...mockTask,
-        status: 'cancelled' as const,
+        status: from,
         workflowRunId: 'run-1',
         completedAt: NOW - 1_000,
       };
       const recoveredTask = {
         ...workflowTask,
-        status: 'in_progress' as const,
+        status,
         completedAt: null,
       };
       const runtime = {
@@ -682,15 +686,11 @@ describe('space-task-handlers', () => {
       const result = await call('spaceTask.update', {
         spaceId: 'space-1',
         taskId: 'task-1',
-        status: 'in_progress',
+        status,
       });
 
       expect(result).toEqual(recoveredTask);
-      expect(runtime.recoverWorkflowBackedTask).toHaveBeenCalledWith(
-        'space-1',
-        'task-1',
-        'in_progress'
-      );
+      expect(runtime.recoverWorkflowBackedTask).toHaveBeenCalledWith('space-1', 'task-1', status);
       expect(taskManager.setTaskStatus).not.toHaveBeenCalled();
     });
 
