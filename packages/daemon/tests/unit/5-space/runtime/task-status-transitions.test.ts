@@ -277,7 +277,7 @@ describe('VALID_SPACE_TASK_TRANSITIONS — matrix gap closures (task #849)', () 
       ],
       review: ['done', 'approved', 'in_progress', 'cancelled', 'archived', 'stopped'],
       approved: ['done', 'in_progress', 'archived', 'cancelled'],
-      done: ['in_progress', 'archived'],
+      done: ['open', 'in_progress', 'archived'],
       blocked: ['open', 'in_progress', 'review', 'done', 'cancelled', 'archived', 'stopped'],
       cancelled: ['open', 'in_progress', 'done', 'archived'],
       rate_limited: [
