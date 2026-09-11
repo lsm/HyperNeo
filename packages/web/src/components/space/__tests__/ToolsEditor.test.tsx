@@ -664,3 +664,54 @@ describe('scoped draft submitted exactly once', () => {
     expect(queryByTestId('tools-editor-scoped-error')).toBeNull();
   });
 });
+
+describe('invalid scoped draft blocks the enclosing form', () => {
+  it('marks the input invalid so a parent submit cannot proceed', () => {
+    const { getByTestId } = render(
+      <ToolsEditor tools={['Read']} toolsOverridden={true} onChange={vi.fn()} manageScopedEntries />
+    );
+    const input = getByTestId('tools-editor-scoped-input') as HTMLInputElement;
+    fireEvent.input(input, { target: { value: 'rm -rf /' } });
+    fireEvent.blur(input);
+
+    expect(input.checkValidity()).toBe(false);
+    expect(input.validationMessage).toContain('Not a valid tool entry');
+  });
+
+  it('clears the block once the entry is corrected', () => {
+    const onChange = vi.fn();
+    const { getByTestId } = render(
+      <ToolsEditor
+        tools={['Read']}
+        toolsOverridden={true}
+        onChange={onChange}
+        manageScopedEntries
+      />
+    );
+    const input = getByTestId('tools-editor-scoped-input') as HTMLInputElement;
+    fireEvent.input(input, { target: { value: 'nope' } });
+    fireEvent.blur(input);
+    expect(input.checkValidity()).toBe(false);
+
+    fireEvent.input(input, { target: { value: 'Bash(ls:*)' } });
+    expect(input.checkValidity()).toBe(true);
+    fireEvent.blur(input);
+    expect(onChange).toHaveBeenCalledWith({
+      tools: ['Read', 'Bash(ls:*)'],
+      toolsOverridden: true,
+    });
+    expect(input.checkValidity()).toBe(true);
+  });
+
+  it('leaves an emptied draft valid', () => {
+    const { getByTestId } = render(
+      <ToolsEditor tools={['Read']} toolsOverridden={true} onChange={vi.fn()} manageScopedEntries />
+    );
+    const input = getByTestId('tools-editor-scoped-input') as HTMLInputElement;
+    fireEvent.input(input, { target: { value: 'nope' } });
+    fireEvent.blur(input);
+    fireEvent.input(input, { target: { value: '' } });
+    fireEvent.blur(input);
+    expect(input.checkValidity()).toBe(true);
+  });
+});

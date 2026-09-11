@@ -1,5 +1,5 @@
 import { DENIABLE_TOOLS, isKnownToolEntry, KNOWN_TOOLS } from '@hyperneo/shared';
-import { useState } from 'preact/hooks';
+import { useRef, useState } from 'preact/hooks';
 
 type ToolName = (typeof KNOWN_TOOLS)[number];
 
@@ -89,16 +89,25 @@ export function ToolsEditor({
   const activePreset = toolsOverridden ? detectToolsPreset(tools) : 'Inherited';
   const [scopedDraft, setScopedDraft] = useState('');
   const [scopedError, setScopedError] = useState<string | null>(null);
+  const scopedInputRef = useRef<HTMLInputElement | null>(null);
+
+  const markScopedValidity = (message: string) => {
+    setScopedError(message === '' ? null : message);
+    scopedInputRef.current?.setCustomValidity(message);
+  };
 
   const submitScopedDraft = () => {
-    if (scopedDraft.trim() === '') return;
+    if (scopedDraft.trim() === '') {
+      markScopedValidity('');
+      return;
+    }
     const outcome = addScopedTool(tools, scopedDraft);
     if ('error' in outcome) {
-      setScopedError(outcome.error);
+      markScopedValidity(outcome.error);
       return;
     }
     setScopedDraft('');
-    setScopedError(null);
+    markScopedValidity('');
     onChange(outcome);
   };
 
@@ -236,9 +245,10 @@ export function ToolsEditor({
               value={scopedDraft}
               data-testid="tools-editor-scoped-input"
               placeholder="Add scoped tool entry, e.g. Bash(gh pr view:*)"
+              ref={scopedInputRef}
               onInput={(event) => {
                 setScopedDraft(event.currentTarget.value);
-                setScopedError(null);
+                markScopedValidity('');
               }}
               onKeyDown={(event) => {
                 if (event.key !== 'Enter') return;
