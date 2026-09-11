@@ -91,7 +91,7 @@ export function decideDirectKickoffDispatch(
   return { value: entry };
 }
 
-function enqueueFrozenKickoff(
+export function enqueueFrozenKickoff(
   db: Database,
   jobs: JobQueueRepository,
   input: DirectTaskQueryAdmissionInput,

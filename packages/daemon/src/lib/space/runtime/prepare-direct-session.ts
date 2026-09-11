@@ -77,7 +77,7 @@ function matchesDirectSessionIdentity(session: Session, candidate: DirectPrepara
   );
 }
 
-function readPreparation(
+export function readPreparation(
   attempts: DirectSessionPreparationDependencies['attempts'],
   tasks: DirectSessionPreparationDependencies['tasks'],
   getSpace: DirectSessionPreparationDependencies['getSpace'],
@@ -95,7 +95,7 @@ function readPreparation(
   );
 }
 
-async function prepareDormantSession(
+export async function prepareDormantSession(
   attempts: DirectSessionPreparationDependencies['attempts'],
   tasks: DirectSessionPreparationDependencies['tasks'],
   getSpace: DirectSessionPreparationDependencies['getSpace'],
@@ -136,7 +136,14 @@ async function prepareDormantSession(
     current.value.attempt.generation === candidate.attempt.generation &&
     matchesDirectPreparedSession(session.getSessionData(), current.value);
   if (!valid || session.isQueryActiveOrStarting()) {
+    const active = attempts.getActive(candidate.task.id);
+    const becameRunning =
+      active?.phase === 'running' &&
+      active.id === candidate.attempt.id &&
+      active.sessionId === id &&
+      active.generation === candidate.attempt.generation;
     if (
+      !becameRunning &&
       session !== cached &&
       matchesDirectSessionIdentity(session.getSessionData(), candidate) &&
       !session.isQueryActiveOrStarting()
