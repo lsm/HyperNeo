@@ -449,6 +449,14 @@ jobs:
           path: test-results/daemon/junit-${{ matrix.shard }}.xml
           retention-days: 7
 
+      - name: Upload daemon test log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: daemon-unit-log-${{ matrix.shard }}
+          path: test-results/daemon/output-${{ matrix.shard }}.log
+          retention-days: 7
+
   # ============================================
   # WEB TESTS
   # Run on: PR to dev (web paths), push to dev, workflow_dispatch
