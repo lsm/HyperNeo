@@ -2025,7 +2025,7 @@ describe('SpaceStore — CRUD methods', () => {
       status: undefined,
       autonomyLevel: undefined,
       model: undefined,
-      provider: undefined,
+      provider: null,
       modelPool: null,
       thinkingLevel: undefined,
       settingSources: undefined,
@@ -2051,6 +2051,16 @@ describe('SpaceStore — CRUD methods', () => {
     expect(mockHub.request).toHaveBeenCalledWith(
       'spaceAgentV2.create',
       expect.objectContaining({ tools: [], modelPool: null })
+    );
+  });
+
+  it('createAgent sends an explicit null provider rather than falling back to the template', async () => {
+    await spaceStore.selectSpace('space-1');
+    await spaceStore.createAgent({ displayName: 'Coder', templateKey: 'coder.default' });
+
+    expect(mockHub.request).toHaveBeenCalledWith(
+      'spaceAgentV2.create',
+      expect.objectContaining({ provider: null })
     );
   });
 

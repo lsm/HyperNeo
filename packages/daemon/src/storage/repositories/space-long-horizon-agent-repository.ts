@@ -180,6 +180,12 @@ export class SpaceLongHorizonAgentRepository {
   }
 
   update(id: string, params: UpdateSpaceLongHorizonAgentParams): SpaceLongHorizonAgent | null {
+    if (
+      params.status === 'disabled' &&
+      this.getById(id)?.templateKey === MIGRATED_WORKER_TEMPLATE_KEY
+    ) {
+      throw new Error('Agent status "disabled" cannot be set on a migrated worker agent');
+    }
     const fields: string[] = [];
     const values: SQLiteValue[] = [];
 

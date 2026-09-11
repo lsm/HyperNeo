@@ -1684,6 +1684,16 @@ describe('Space Agent RPC Handlers', () => {
       ).rejects.toThrow('is reserved for migrated worker mirrors');
     });
 
+    it('rejects disabling a migrated worker mirror on the legacy update route', async () => {
+      const workerId = 'twin-legacy-disable';
+      seedWorkerMirror(db, { id: workerId, spaceId: 'space-1', name: 'Twin Legacy Disable' });
+
+      await expect(
+        call(hubData.handlers, 'spaceAgent.update', { id: workerId, status: 'disabled' })
+      ).rejects.toThrow('cannot be set on a migrated worker agent');
+      expect(longHorizonRepo.getById(workerId)?.status).toBe('active');
+    });
+
     it('rejects unknown statuses on mirror updates instead of reactivating', async () => {
       const workerId = 'twin-bad-status';
       seedWorkerMirror(db, { id: workerId, spaceId: 'space-1', name: 'Twin Bad Status' });

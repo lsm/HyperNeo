@@ -2392,7 +2392,7 @@ class SpaceStore {
       status: params.status,
       autonomyLevel: params.autonomyLevel,
       model: params.model,
-      provider: params.provider,
+      provider: params.provider ?? null,
       modelPool: params.modelPool ?? null,
       thinkingLevel: params.thinkingLevel,
       settingSources: params.settingSources,
