@@ -1,0 +1,142 @@
+import type { SpaceAgent } from '@hyperneo/shared';
+import { describe, expect, it } from 'vitest';
+import {
+  decideDeepLink,
+  deepLinkKey,
+  type DeepLinkInput,
+  type DeepLinkState,
+  matchesSelectedHandle,
+  findLinkTarget,
+} from '../deep-link-selection';
+
+const agent = (id: string, handle: string, spaceId = 'space-1') =>
+  ({ id, handle, spaceId }) as SpaceAgent;
+
+const state = (overrides: Partial<DeepLinkState> = {}): DeepLinkState => ({
+  appliedLink: null,
+  appliedAgentId: null,
+  handledLink: null,
+  selectedId: null,
+  ...overrides,
+});
+
+const input = (overrides: Partial<DeepLinkInput> = {}): DeepLinkInput => ({
+  spaceId: 'space-1',
+  selectedHandle: 'alpha',
+  agents: [agent('a1', 'alpha')],
+  state: state(),
+  ...overrides,
+});
+
+const KEY = deepLinkKey('space-1', 'alpha') as string;
+
+describe('matchesSelectedHandle', () => {
+  it('matches an exact handle', () => {
+    expect(matchesSelectedHandle(agent('a1', 'alpha'), 'alpha')).toBe(true);
+  });
+
+  it('treats coordinator as an alias for the space manager', () => {
+    expect(matchesSelectedHandle(agent('m', 'space-manager'), 'coordinator')).toBe(true);
+  });
+
+  it('does not alias an unrelated handle', () => {
+    expect(matchesSelectedHandle(agent('a1', 'alpha'), 'coordinator')).toBe(false);
+  });
+});
+
+describe('findLinkTarget', () => {
+  it('ignores an agent belonging to another space', () => {
+    expect(findLinkTarget(input({ agents: [agent('a1', 'alpha', 'space-9')] }))).toBeNull();
+  });
+
+  it('returns null when no handle is selected', () => {
+    expect(findLinkTarget(input({ selectedHandle: null }))).toBeNull();
+  });
+});
+
+describe('decideDeepLink', () => {
+  it('forgets everything when there is no handle', () => {
+    expect(decideDeepLink(input({ selectedHandle: null }))).toEqual({ kind: 'forget' });
+  });
+
+  it('applies a fresh match', () => {
+    expect(decideDeepLink(input())).toEqual({ kind: 'apply', link: KEY, agentId: 'a1' });
+  });
+
+  it('stays idle once the same agent is applied', () => {
+    const decision = decideDeepLink(
+      input({ state: state({ appliedLink: KEY, appliedAgentId: 'a1', handledLink: KEY }) })
+    );
+    expect(decision).toEqual({ kind: 'idle' });
+  });
+
+  it('reapplies when the link resolves to a different agent', () => {
+    const decision = decideDeepLink(
+      input({
+        agents: [agent('a2', 'alpha')],
+        state: state({ appliedLink: KEY, appliedAgentId: 'a1', handledLink: KEY }),
+      })
+    );
+    expect(decision).toEqual({ kind: 'apply', link: KEY, agentId: 'a2' });
+  });
+
+  it('clears once when the handle matches nothing', () => {
+    expect(decideDeepLink(input({ agents: [] }))).toEqual({
+      kind: 'clear',
+      link: KEY,
+      clearSelection: false,
+    });
+  });
+
+  it('clears the selection when the applied agent disappears', () => {
+    const decision = decideDeepLink(
+      input({
+        agents: [],
+        state: state({
+          appliedLink: KEY,
+          appliedAgentId: 'a1',
+          handledLink: KEY,
+          selectedId: 'a1',
+        }),
+      })
+    );
+    expect(decision).toEqual({ kind: 'clear', link: KEY, clearSelection: true });
+  });
+
+  it('keeps an unrelated manual selection when the applied agent disappears', () => {
+    const decision = decideDeepLink(
+      input({
+        agents: [agent('other', 'other')],
+        state: state({
+          appliedLink: KEY,
+          appliedAgentId: 'a1',
+          handledLink: KEY,
+          selectedId: 'other',
+        }),
+      })
+    );
+    expect(decision).toEqual({ kind: 'clear', link: KEY, clearSelection: false });
+  });
+
+  it('stays idle on later list changes while still unmatched', () => {
+    const decision = decideDeepLink(
+      input({ agents: [agent('z', 'zeta')], state: state({ handledLink: KEY }) })
+    );
+    expect(decision).toEqual({ kind: 'idle' });
+  });
+
+  it('treats a different space as a different link', () => {
+    const decision = decideDeepLink(
+      input({
+        spaceId: 'space-2',
+        agents: [agent('b1', 'alpha', 'space-2')],
+        state: state({ appliedLink: KEY, appliedAgentId: 'a1', handledLink: KEY }),
+      })
+    );
+    expect(decision).toEqual({
+      kind: 'apply',
+      link: deepLinkKey('space-2', 'alpha') as string,
+      agentId: 'b1',
+    });
+  });
+});
