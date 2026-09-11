@@ -163,3 +163,34 @@ test('pure admission rejects missing, active and wrong-generation identities', (
     )
   ).toBe(false);
 });
+
+test.each(['', '   ', null])(
+  'blank task workspace %s uses shared Space fallback',
+  async (workspacePath) => {
+    tasks.updateTask(task.id, { workspacePath });
+    expect(await preparer()('attempt')).toHaveProperty('session');
+    expect(records.get('direct-session')?.workspacePath).toBe('/repo');
+  }
+);
+
+test.each(['archived', 'ended'] as const)(
+  'non-active persisted session %s is rejected on retry and after load',
+  async (status) => {
+    await preparer()('attempt');
+    const row = records.get('direct-session')!;
+    records.set(row.id, { ...row, status });
+    load.mockClear();
+    expect(await preparer()('attempt')).toBe('direct_session_conflict');
+    expect(load).not.toHaveBeenCalled();
+    records.set(row.id, row);
+    cached = null;
+    load.mockImplementation(async () => {
+      records.set(row.id, { ...row, status });
+      cached = makeAgent(records.get(row.id)!);
+      return cached;
+    });
+    expect(await preparer()('attempt')).toBe('direct_attempt_unavailable');
+    expect(cleanup).toHaveBeenCalledTimes(1);
+    expect(records.get(row.id)?.status).toBe(status);
+  }
+);

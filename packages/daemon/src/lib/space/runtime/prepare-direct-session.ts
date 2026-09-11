@@ -1,5 +1,6 @@
 import type { Session, Space, SpaceTask } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import { resolveTaskWorkspace } from './spawn-slot-resolution.ts';
 import { AgentSession } from '../../agent/agent-session.ts';
 import type { SessionManager } from '../../session/session-manager.ts';
 import type { Database } from '../../../storage/database.ts';
@@ -49,7 +50,7 @@ export function requireReservedDirectTask(
     !task.archivedAt &&
     !task.workflowRunId &&
     space?.id === task.spaceId
-    ? { value: { attempt, task, workspacePath: task.workspacePath ?? space.workspacePath } }
+    ? { value: { attempt, task, workspacePath: resolveTaskWorkspace(space, task) } }
     : { reason: 'direct_attempt_unavailable' };
 }
 
@@ -57,6 +58,10 @@ export function matchesDirectPreparedSession(
   session: Session,
   candidate: DirectPreparation
 ): boolean {
+  return session.status === 'active' && matchesDirectSessionIdentity(session, candidate);
+}
+
+function matchesDirectSessionIdentity(session: Session, candidate: DirectPreparation): boolean {
   return (
     session.id === candidate.attempt.sessionId &&
     session.type === 'worker' &&
@@ -125,7 +130,7 @@ async function prepareDormantSession(
   if (!valid || session.isQueryActiveOrStarting()) {
     if (
       session !== cached &&
-      matchesDirectPreparedSession(session.getSessionData(), candidate) &&
+      matchesDirectSessionIdentity(session.getSessionData(), candidate) &&
       !session.isQueryActiveOrStarting()
     ) {
       await sessionManager.unregisterSession(id, session);
