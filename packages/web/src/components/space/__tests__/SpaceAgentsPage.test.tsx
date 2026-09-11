@@ -1692,6 +1692,35 @@ describe('SpaceAgentsPage', () => {
     expect(mockCreate.mock.calls[0][0].tools).toEqual(['Grep']);
   });
 
+  it('keeps the template tools when one scoped entry is added on top', async () => {
+    mockTemplates.value = [
+      {
+        key: 'reviewer.v1',
+        displayName: 'Reviewer',
+        toolPermissions: { tools: ['Read', 'Task', 'Bash(gh pr view:*)', 'Bash(jq:*)'] },
+      },
+    ];
+    const { getByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'Rev' } });
+    fireEvent.input(getByTestId('agent-template-select'), { target: { value: 'reviewer.v1' } });
+    fireEvent.input(getByTestId('tools-editor-scoped-input'), {
+      target: { value: 'Bash(rg:*)' },
+    });
+    fireEvent.click(getByTestId('tools-editor-scoped-add'));
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalled());
+    expect(mockCreate.mock.calls[0][0].tools).toEqual([
+      'Read',
+      'Task',
+      'Bash(gh pr view:*)',
+      'Bash(jq:*)',
+      'Bash(rg:*)',
+    ]);
+  });
+
   it('keeps a scoped entry added after a preset through the next preset', async () => {
     const { getByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
 
