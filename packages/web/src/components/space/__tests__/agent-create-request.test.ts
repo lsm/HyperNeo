@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   agentCreateRequest,
+  decideAgentCreateRequest,
   requestAgentFromTemplate,
   takeAgentCreateRequest,
 } from '../agent-create-request';
@@ -8,6 +9,27 @@ import {
 describe('agent create request', () => {
   beforeEach(() => {
     agentCreateRequest.value = null;
+  });
+
+  describe('decideAgentCreateRequest', () => {
+    it('takes a request raised for this Space', () => {
+      expect(
+        decideAgentCreateRequest({ spaceId: 'space-1', templateKey: 'researcher.v1' }, 'space-1')
+      ).toEqual({ kind: 'take', templateKey: 'researcher.v1' });
+    });
+
+    it('skips when nothing was raised', () => {
+      expect(decideAgentCreateRequest(null, 'space-1')).toEqual({
+        kind: 'skip',
+        reason: 'no-request',
+      });
+    });
+
+    it('skips a request raised for another Space', () => {
+      expect(
+        decideAgentCreateRequest({ spaceId: 'space-2', templateKey: 'researcher.v1' }, 'space-1')
+      ).toEqual({ kind: 'skip', reason: 'other-space' });
+    });
   });
 
   it('hands the template key to the Space it was raised for', () => {

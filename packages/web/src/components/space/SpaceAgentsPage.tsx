@@ -33,6 +33,13 @@ export interface SpaceAgentsPageProps {
   selectedHandle?: string | null;
 }
 
+interface TemplateChoiceBase {
+  tools: string[];
+  explicit: boolean;
+  added: string[];
+  removed: string[];
+}
+
 const PROTECTED_HANDLES = new Set(['space-manager', 'coordinator']);
 const EDITABLE_STATUSES: SpaceAgentStatus[] = ['active', 'paused', 'disabled'];
 const UNSET_AUTONOMY = 'none';
@@ -208,36 +215,52 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
       null)
     : null;
 
-  function applyTemplateChoice(key: string) {
+  function applyTemplateChoice(key: string, base?: TemplateChoiceBase) {
+    const from = base ?? {
+      tools: formTools.tools,
+      explicit: toolsExplicit,
+      added: toolsAddedRef.current,
+      removed: toolsRemovedRef.current,
+    };
     const nextBaseline = templateToolsList(
       templateOptions().find((candidate) => candidate.key === key)
     );
     const rebased = rebaseTemplateTools(
-      formTools.tools,
+      from.tools,
       nextBaseline,
-      toolsExplicit,
-      toolsAddedRef.current,
-      toolsRemovedRef.current
+      from.explicit,
+      from.added,
+      from.removed
     );
     toolsBaselineRef.current = nextBaseline;
+    toolsAddedRef.current = from.added;
+    toolsRemovedRef.current = from.removed;
     setFormTemplateKey(key);
     setFormTools({
       tools: rebased,
-      toolsOverridden: toolsExplicit || differsFromBaseline(rebased, nextBaseline),
+      toolsOverridden: from.explicit || differsFromBaseline(rebased, nextBaseline),
     });
+    setToolsExplicit(from.explicit);
   }
 
   function openCreate() {
     formGenerationRef.current += 1;
     setFormError(null);
+    setSaving(false);
     setEditing(null);
     setCreating(true);
     applyForm(blankAgentForm());
   }
 
   function openCreateFromTemplate(templateKey: string) {
+    const blank = blankAgentForm();
     openCreate();
-    applyTemplateChoice(templateKey);
+    applyTemplateChoice(templateKey, {
+      tools: blank.tools.tools,
+      explicit: blank.toolsExplicit,
+      added: [],
+      removed: [],
+    });
   }
 
   function openEdit(agent: SpaceAgent) {
