@@ -2026,12 +2026,32 @@ describe('SpaceStore — CRUD methods', () => {
       autonomyLevel: undefined,
       model: undefined,
       provider: undefined,
-      modelPool: undefined,
+      modelPool: null,
       thinkingLevel: undefined,
       settingSources: undefined,
-      tools: undefined,
+      tools: [],
     });
     expect(spaceStore.agents.value.some((agent) => agent.id === 'new-agent')).toBe(true);
+  });
+
+  it('createAgent translates the promotion-style name/customPrompt aliases onto V2', async () => {
+    await spaceStore.selectSpace('space-1');
+    await spaceStore.createAgent({ name: 'Coder', customPrompt: 'Be helpful.' });
+
+    expect(mockHub.request).toHaveBeenCalledWith(
+      'spaceAgentV2.create',
+      expect.objectContaining({ displayName: 'Coder', instructions: 'Be helpful.' })
+    );
+  });
+
+  it('createAgent sends an explicit empty tools/modelPool rather than falling back to the template', async () => {
+    await spaceStore.selectSpace('space-1');
+    await spaceStore.createAgent({ displayName: 'Coder', templateKey: 'coder.default' });
+
+    expect(mockHub.request).toHaveBeenCalledWith(
+      'spaceAgentV2.create',
+      expect.objectContaining({ tools: [], modelPool: null })
+    );
   });
 
   it('getAgentPromotionDraft calls spaceAgent.getPromotionDraft RPC', async () => {
@@ -2080,6 +2100,16 @@ describe('SpaceStore — CRUD methods', () => {
       settingSources: undefined,
     });
     expect(spaceStore.agents.value.some((agent) => agent.id === 'a1')).toBe(true);
+  });
+
+  it('updateAgent translates the promotion-style name/customPrompt aliases onto V2', async () => {
+    await spaceStore.selectSpace('space-1');
+    await spaceStore.updateAgent('a1', { name: 'Renamed', customPrompt: 'New prompt' });
+
+    expect(mockHub.request).toHaveBeenCalledWith(
+      'spaceAgentV2.update',
+      expect.objectContaining({ displayName: 'Renamed', instructions: 'New prompt' })
+    );
   });
 
   it('previewWorkflowTemplateSync calls spaceWorkflow.previewTemplateSync RPC and returns the preview', async () => {

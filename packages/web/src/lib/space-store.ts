@@ -2385,18 +2385,21 @@ class SpaceStore {
       id: params.id,
       spaceId,
       handle: params.handle,
-      displayName: params.displayName,
+      displayName: params.displayName ?? params.name,
       templateKey,
       description: params.description,
-      instructions: params.instructions,
+      instructions: params.instructions ?? params.customPrompt ?? undefined,
       status: params.status,
       autonomyLevel: params.autonomyLevel,
       model: params.model,
       provider: params.provider,
-      modelPool: params.modelPool,
+      // The caller already resolved template defaults into its own form state
+      // before calling create, so an omitted tools/modelPool here means the
+      // user explicitly cleared it -- never "inherit from templateKey".
+      modelPool: params.modelPool ?? null,
       thinkingLevel: params.thinkingLevel,
       settingSources: params.settingSources,
-      tools: this.toolsListFrom(params),
+      tools: this.toolsListFrom(params) ?? [],
     });
     const mapped = this.fromSpaceAgentV2(agent, templateKey);
     this.upsertAgent(mapped, spaceId);
@@ -2456,9 +2459,9 @@ class SpaceStore {
       id: agentId,
       spaceId,
       handle: params.handle,
-      displayName: params.displayName,
+      displayName: params.displayName ?? params.name,
       description: params.description,
-      instructions: params.instructions,
+      instructions: params.instructions ?? params.customPrompt ?? undefined,
       status: params.status,
       autonomyLevel: params.autonomyLevel,
       model: params.model,
