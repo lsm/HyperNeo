@@ -65,6 +65,23 @@ describe('session operation MCP attachment', () => {
     const page = listed.content[0];
     if (page.type !== 'text') throw new Error('Expected task page JSON');
     expect(JSON.parse(page.text)).toEqual({ tasks: [task], nextCursor: null });
+    const updated = await session.getOperationMcpServer().tools[0].handler(
+      {
+        name: 'task.update',
+        input: { taskId: task.id, description: 'Next steps', priority: 'high' },
+      },
+      {}
+    );
+    expect(updated.isError).not.toBe(true);
+    const edited = updated.content[0];
+    if (edited.type !== 'text') throw new Error('Expected updated task JSON');
+    expect(JSON.parse(edited.text)).toEqual({
+      ...task,
+      description: 'Next steps',
+      priority: 'high',
+      updatedAt: expect.any(Number),
+    });
+    expect(readTaskCore(db.getDatabase(), task.id)).toEqual(JSON.parse(edited.text));
 
     expect(
       db

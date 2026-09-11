@@ -8,9 +8,16 @@ export function setupOperationHandlers(
   jobQueue: JobQueueRepository,
   readTask: Parameters<typeof createDaemonOperationCatalog>[1],
   createTask: Parameters<typeof createDaemonOperationCatalog>[2],
-  listTasks: Parameters<typeof createDaemonOperationCatalog>[3]
+  listTasks: Parameters<typeof createDaemonOperationCatalog>[3],
+  editTask: Parameters<typeof createDaemonOperationCatalog>[4]
 ) {
-  const registry = createDaemonOperationCatalog(jobQueue, readTask, createTask, listTasks);
+  const registry = createDaemonOperationCatalog(
+    jobQueue,
+    readTask,
+    createTask,
+    listTasks,
+    editTask
+  );
   return messageHub.onRequest(
     'operation.invoke',
     createOperationRpcHandler(registry, () => ({}))
