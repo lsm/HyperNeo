@@ -985,6 +985,83 @@ describe('SessionManager', () => {
   });
 
   describe('registerSession / unregisterSession', () => {
+    it('control loading a Space worker with queued input does not provision or replay', async () => {
+      const row = AgentSession.createSessionFromInit(
+        {
+          sessionId: 'direct:prepared',
+          workspacePath: '/test',
+          type: 'worker',
+          context: { spaceId: 'space', taskId: 'task' },
+        },
+        'test-model'
+      );
+      (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue(row);
+      (mockDb.getUserMessages as ReturnType<typeof mock>).mockReturnValue([
+        { id: 'queued', text: 'pending work', sendStatus: 'pending' },
+      ]);
+      const provision = mock(async () => {});
+      sessionManager.setSpaceRuntimeMcpProvider({
+        reattachMemberSpaceTools: provision,
+        provisionWorkflowSession: provision,
+      });
+      const replay = spyOn(
+        AgentSession.prototype,
+        'replayPendingMessagesForImmediateMode'
+      ).mockResolvedValue(false);
+      const start = spyOn(AgentSession.prototype, 'startStreamingQuery').mockResolvedValue(
+        undefined
+      );
+      try {
+        const loaded = await sessionManager.getSessionForControl(row.id);
+        await Promise.resolve();
+        expect(loaded).toBeInstanceOf(AgentSession);
+        expect(provision).not.toHaveBeenCalled();
+        expect(replay).not.toHaveBeenCalled();
+        expect(start).not.toHaveBeenCalled();
+        await loaded!.cleanup();
+        await sessionManager.unregisterSession(row.id, loaded!);
+      } finally {
+        replay.mockRestore();
+        start.mockRestore();
+      }
+    });
+
+    it('expected-object removal preserves a replacement registered while root preservation awaits', async () => {
+      const make = () =>
+        ({
+          getSessionData: () => ({ id: 'direct:prepared' }),
+          setOperationRegistryProvider: mock(() => {}),
+        }) as unknown as AgentSession;
+      const original = make();
+      const replacement = make();
+      let release!: () => void;
+      let entered!: () => void;
+      const started = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const pending = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const preserve = spyOn(
+        sessionManager as unknown as { preserveRootPids: (session: AgentSession) => Promise<void> },
+        'preserveRootPids'
+      ).mockImplementation(async () => {
+        entered();
+        await pending;
+      });
+      try {
+        sessionManager.registerSession(original);
+        const removal = sessionManager.unregisterSession('direct:prepared', original);
+        await started;
+        sessionManager.registerSession(replacement);
+        release();
+        await removal;
+        expect(sessionManager.getCachedSession('direct:prepared')).toBe(replacement);
+      } finally {
+        preserve.mockRestore();
+      }
+    });
+
     it('registerSession makes session retrievable via getSessionAsync', async () => {
       const mockSession: Session = {
         id: 'room:1:task:2:abc',

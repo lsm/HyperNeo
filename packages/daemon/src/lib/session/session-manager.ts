@@ -670,11 +670,13 @@ export class SessionManager {
     return { live, exited };
   }
 
-  async unregisterSession(sessionId: string): Promise<void> {
+  async unregisterSession(sessionId: string, expected?: AgentSession): Promise<void> {
     const agentSession = this.sessionCache.has(sessionId) ? this.sessionCache.get(sessionId) : null;
+    if (expected && agentSession !== expected) return;
     if (agentSession) {
       await this.preserveRootPids(agentSession);
     }
+    if (expected && this.getCachedSession(sessionId) !== expected) return;
     this.sessionCache.remove(sessionId);
   }
 
