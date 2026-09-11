@@ -67,7 +67,8 @@ export class SpaceWorkflowRunRepository {
 
   createPinnedRun(
     params: CreateWorkflowRunParams & { rawWorkflow: SpaceWorkflow; parentTaskId?: string },
-    resolveTemplate?: AgentTemplateResolver
+    resolveTemplate?: AgentTemplateResolver,
+    initializeAttachedRun?: (run: SpaceWorkflowRun) => undefined
   ): SpaceWorkflowRun {
     if (params.rawWorkflow.id !== params.workflowId) {
       throw new Error('Pinned workflow id does not match the run workflow id');
@@ -100,6 +101,13 @@ export class SpaceWorkflowRunRepository {
           .run(run.id, Date.now(), params.parentTaskId, params.spaceId);
         if (attached.changes !== 1)
           throw new Error(`Task ${params.parentTaskId} is not available for workflow attachment`);
+        initializeAttachedRun?.(run);
+        if (
+          !this.db
+            .prepare('SELECT 1 FROM node_executions WHERE workflow_run_id = ? LIMIT 1')
+            .get(run.id)
+        )
+          throw new Error(`Attached run ${run.id} requires initial executions`);
         return this.transitionStatus(run.id, 'in_progress');
       }
       return run;

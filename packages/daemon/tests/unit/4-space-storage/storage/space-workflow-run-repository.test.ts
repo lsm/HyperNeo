@@ -1,3 +1,4 @@
+import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -105,13 +106,26 @@ describe('SpaceWorkflowRunRepository', () => {
   });
 
   describe('createPinnedRun', () => {
+    function createAttachedRun(
+      params: Parameters<SpaceWorkflowRunRepository['createPinnedRun']>[0]
+    ) {
+      return repo.createPinnedRun(params, undefined, (run) => {
+        new NodeExecutionRepository(db).create({
+          workflowRunId: run.id,
+          workflowNodeId: 'start',
+          agentName: 'worker',
+        });
+        return undefined;
+      });
+    }
+
     it('a restart immediately after pinning can rehydrate the attached run', () => {
       const task = new SpaceTaskRepository(db).createTask({
         spaceId,
         title: 'Task',
         description: '',
       });
-      const run = repo.createPinnedRun({
+      const run = createAttachedRun({
         spaceId,
         workflowId: WORKFLOW_ID,
         title: 'Run',
@@ -128,6 +142,13 @@ describe('SpaceWorkflowRunRepository', () => {
           expect.objectContaining({ id: run.id, status: 'in_progress' }),
         ]);
         expect(new SpaceTaskRepository(restarted).getTask(task.id)?.workflowRunId).toBe(run.id);
+        expect(new NodeExecutionRepository(restarted).listByWorkflowRun(run.id)).toEqual([
+          expect.objectContaining({
+            workflowNodeId: 'start',
+            agentName: 'worker',
+            status: 'pending',
+          }),
+        ]);
         expect(new SpaceTaskRepository(restarted).listStandaloneBySpace(spaceId)).toHaveLength(0);
       } finally {
         restarted?.close();
@@ -146,11 +167,11 @@ describe('SpaceWorkflowRunRepository', () => {
         rawWorkflow: rawWorkflow(),
         parentTaskId: task.id,
       };
-      const run = repo.createPinnedRun(params);
+      const run = createAttachedRun(params);
       expect(tasks.getTask(task.id)?.workflowRunId).toBe(run.id);
       expect(direct.select(task.id)).toBe(false);
       expect(direct.claim(task.id, 'attempt', 'session')).toBeNull();
-      expect(() => repo.createPinnedRun(params)).toThrow('not available');
+      expect(() => createAttachedRun(params)).toThrow('not available');
       expect(repo.listBySpace(spaceId)).toHaveLength(1);
     });
 
@@ -164,7 +185,7 @@ describe('SpaceWorkflowRunRepository', () => {
         .prepare('SELECT COUNT(*) AS count FROM space_workflow_definition_versions')
         .get();
       expect(() =>
-        repo.createPinnedRun({
+        createAttachedRun({
           spaceId,
           workflowId: WORKFLOW_ID,
           title: 'Run',
@@ -189,7 +210,7 @@ describe('SpaceWorkflowRunRepository', () => {
       });
       for (const parentTaskId of [task.id, 'missing']) {
         expect(() =>
-          repo.createPinnedRun({
+          createAttachedRun({
             spaceId,
             workflowId: WORKFLOW_ID,
             title: 'Run',
@@ -201,6 +222,24 @@ describe('SpaceWorkflowRunRepository', () => {
       expect(repo.listBySpace(spaceId)).toHaveLength(0);
     });
 
+    it('missing initial executions roll back ownership, run and snapshot', () => {
+      const tasks = new SpaceTaskRepository(db);
+      const task = tasks.createTask({ spaceId, title: 'Task', description: '' });
+      expect(() =>
+        repo.createPinnedRun({
+          spaceId,
+          workflowId: WORKFLOW_ID,
+          title: 'Run',
+          rawWorkflow: rawWorkflow(),
+          parentTaskId: task.id,
+        })
+      ).toThrow('requires initial executions');
+      expect(repo.listBySpace(spaceId)).toHaveLength(0);
+      expect(tasks.getTask(task.id)?.workflowRunId).toBeUndefined();
+      expect(db.prepare('SELECT COUNT(*) AS count FROM node_executions').get()).toEqual({
+        count: 0,
+      });
+    });
     it('atomically records and pins the raw workflow definition', () => {
       const workflow = rawWorkflow({ name: 'Pinned' });
       const expected = computeDefinitionVersion(workflow);
