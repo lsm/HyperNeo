@@ -11,6 +11,7 @@ import { getThinkingOptionsForProvider, THINKING_LEVEL_LABELS } from '@hyperneo/
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { connectionManager } from '../../lib/connection-manager';
 import { spaceAgentStore } from '../../lib/space-agent-store';
+import { navigateToSpaceSession } from '../../lib/router';
 import { spaceStore } from '../../lib/space-store';
 import { ModelPoolEditor } from './ModelPoolEditor';
 import { type ToolsSelection, ToolsEditor } from './ToolsEditor';
@@ -30,6 +31,7 @@ import { EmptyState } from '../ui/EmptyState';
 
 export interface SpaceAgentsPageProps {
   spaceId: string;
+  navigationSpaceId?: string;
   selectedHandle?: string | null;
 }
 
@@ -41,6 +43,11 @@ interface TemplateChoiceBase {
 }
 
 const PROTECTED_HANDLES = new Set(['space-manager', 'coordinator']);
+
+export function sessionIdFor(agent: SpaceAgent, spaceId: string): string | null {
+  if (agent.sessionId) return agent.sessionId;
+  return PROTECTED_HANDLES.has(agent.handle) ? `space:chat:${spaceId}` : null;
+}
 const EDITABLE_STATUSES: SpaceAgentStatus[] = ['active', 'paused', 'disabled'];
 const UNSET_AUTONOMY = 'none';
 const AUTONOMY_LEVELS = [1, 2, 3, 4, 5] as const;
@@ -74,7 +81,11 @@ function templateOptions(): TemplateOption[] {
   return spaceStore.agentTemplates.value;
 }
 
-export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProps) {
+export function SpaceAgentsPage({
+  spaceId,
+  navigationSpaceId,
+  selectedHandle,
+}: SpaceAgentsPageProps) {
   const agents = spaceAgentStore.agents.value.filter((agent) => agent.status !== 'archived');
   const reminderCounts = toReminderCounts(spaceAgentStore.reminderCounts.value);
   const loading = spaceAgentStore.loading.value;
@@ -650,6 +661,21 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
                 {selected.instructions || 'No instructions.'}
               </p>
               <div class="flex gap-2">
+                {sessionIdFor(selected, spaceId) && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    data-testid="agent-open-session-button"
+                    onClick={() =>
+                      navigateToSpaceSession(
+                        navigationSpaceId ?? spaceId,
+                        sessionIdFor(selected, spaceId) as string
+                      )
+                    }
+                  >
+                    Open session
+                  </Button>
+                )}
                 <Button size="sm" variant="ghost" onClick={() => openEdit(selected)}>
                   Edit
                 </Button>
