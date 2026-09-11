@@ -1,3 +1,4 @@
+import type { JobQueueProcessor } from '../../../storage/job-queue-processor.ts';
 import { isTerminalTaskStatus } from '../managers/task-status-preparation.ts';
 import { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
@@ -14,6 +15,7 @@ import type {
 } from '../../../storage/repositories/job-queue-repository.ts';
 import { DirectTaskExecutionRepository } from '../../../storage/repositories/direct-task-execution-repository.ts';
 import {
+  createDirectTaskStarter,
   claimDirectStart,
   directTaskStartIdentity,
   type DirectTaskStartInput,
@@ -112,4 +114,22 @@ export function createDirectStartJobHandler(
       };
     return { started: false, reason: 'superseded_claim' };
   };
+}
+
+export function registerDirectStartJobs(
+  deps: Parameters<typeof createDirectTaskStarter>[0] & {
+    sessionManager: DirectAttemptStopDependencies['sessionManager'];
+    jobQueue: JobQueueRepository;
+    jobProcessor: Pick<JobQueueProcessor, 'register'>;
+  }
+): void {
+  deps.jobProcessor.register(
+    DIRECT_TASK_START,
+    createDirectStartJobHandler(
+      deps.db,
+      createDirectTaskStarter(deps),
+      deps.jobQueue,
+      deps.sessionManager
+    )
+  );
 }

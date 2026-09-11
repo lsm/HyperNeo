@@ -1,3 +1,4 @@
+import { registerDirectStartJobs } from '../space/runtime/direct-start-jobs.ts';
 import { registerDirectOutcomeJobs } from '../space/runtime/direct-outcome-jobs.ts';
 import { McpAuditLogRepository } from '../../storage/repositories/mcp-audit-log-repository.ts';
 import { createSpaceOperationRegistryProvider } from '../space/operations/registry.ts';
@@ -532,6 +533,17 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     agentLookup,
     spaceAgentTemplateRepo
   );
+
+  registerDirectStartJobs({
+    db: deps.db.getDatabase(),
+    reactiveDb: deps.reactiveDb,
+    sessionDb: deps.db,
+    sessionManager: deps.sessionManager,
+    defaultModel: deps.config.defaultModel,
+    jobQueue: deps.jobQueue,
+    jobProcessor: deps.jobProcessor,
+    onTaskReopened: (taskId) => spaceGoalService.supersedeOutcomeNotificationsForTask(taskId),
+  });
 
   registerDirectOutcomeJobs({
     db: deps.db.getDatabase(),

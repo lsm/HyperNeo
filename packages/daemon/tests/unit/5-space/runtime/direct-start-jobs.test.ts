@@ -12,6 +12,7 @@ import {
 } from '../../../../src/storage/repositories/job-queue-repository';
 import { createDirectTaskStarter } from '../../../../src/lib/space/runtime/start-direct-task';
 import {
+  registerDirectStartJobs,
   createDirectStartRequester,
   createDirectStartJobHandler,
 } from '../../../../src/lib/space/runtime/direct-start-jobs';
@@ -342,3 +343,40 @@ test.each(['between-jobs', 'during-load'] as const)(
     expect(tasks.getTask(taskId)?.status).toBe('open');
   }
 );
+
+test('configured worker resumes the durable request without eager loading or ordinary task pickup', async () => {
+  const ordinary = tasks.createTask({
+    spaceId: tasks.getTask(taskId)!.spaceId,
+    title: 'Ordinary task',
+    description: 'Workflow default',
+    status: 'open',
+  });
+  const job = acceptedJob();
+  const register = mock();
+  registerDirectStartJobs({
+    db,
+    defaultModel: 'configured-model',
+    sessionDb: {
+      getSession: (id) => sessions.getSession(id),
+      createSession: (session) =>
+        sessions.createSession(session, { enforceWorkspaceOwnership: false }),
+    },
+    sessionManager: { ...control, getSessionForControl: load },
+    jobQueue: jobs,
+    jobProcessor: { register },
+  });
+  expect(register).toHaveBeenCalledTimes(1);
+  expect(register).toHaveBeenCalledWith(DIRECT_TASK_START, expect.any(Function));
+  expect(load).not.toHaveBeenCalled();
+  expect(attempts.getActive(taskId)?.phase).toBe('reserved');
+  const handler = register.mock.calls[0][1] as ReturnType<typeof createDirectStartJobHandler>;
+  expect(await handler(job)).toMatchObject({ started: true });
+  const active = attempts.getActive(taskId)!;
+  expect(active.phase).toBe('running');
+  expect(sessions.getSession(active.sessionId)?.config.model).toBe('configured-model');
+  expect(await handler(job)).toMatchObject({ started: true, attempt: { id: active.id } });
+  expect(load).toHaveBeenCalledTimes(1);
+  expect(count()).toBe(1);
+  expect(attempts.getActive(ordinary.id)).toBeNull();
+  expect(tasks.getTask(ordinary.id)?.status).toBe('open');
+});
