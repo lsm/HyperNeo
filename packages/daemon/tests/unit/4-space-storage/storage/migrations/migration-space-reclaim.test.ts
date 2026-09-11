@@ -142,7 +142,7 @@ describe('migration space reclaim', () => {
       { migrationKey: 'migration_211' },
       { migrationKey: 'migration_212' },
       { migrationKey: 'migration_243' },
-      { migrationKey: 'migration_245' },
+      { migrationKey: 'migration_246' },
     ]);
     const afterRewrite = db
       .prepare(`

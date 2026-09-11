@@ -55,7 +55,7 @@ describe('migration 246: the template version counter gains a Space key', () => 
 
   test('indexes counter lookups by key so allocation does not scan', () => {
     const db = migratedDb();
-    runMigration245(db);
+    runMigration246(db);
 
     const plan = db
       .prepare(
@@ -105,7 +105,7 @@ describe('migration 246: the template version counter gains a Space key', () => 
     seedTemplate(db, 'space-a', 'fanned', 4);
     seedTemplate(db, 'space-b', 'fanned', 4);
     seedTemplate(db, 'space-c', 'fanned', 4);
-    runMigration245(db);
+    runMigration246(db);
 
     const versions = (
       db
@@ -131,7 +131,7 @@ describe('migration 246: the template version counter gains a Space key', () => 
     const db = migratedDb();
     runMigration243(db);
     seedTemplate(db, 'space-a', 'solo', 7);
-    runMigration245(db);
+    runMigration246(db);
 
     const row = db
       .prepare(`SELECT version FROM space_agent_templates WHERE key = 'solo'`)
