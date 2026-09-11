@@ -54,7 +54,7 @@ vi.mock('../../../lib/connection-manager', () => ({
   connectionManager: { onceConnected: mockOnceConnected },
 }));
 
-import { SpaceAgentsPage } from '../SpaceAgentsPage';
+import { createPoolFields, SpaceAgentsPage, usablePoolEntries } from '../SpaceAgentsPage';
 
 function makeAgent(id: string, overrides: Partial<SpaceAgent> = {}): SpaceAgent {
   return {
@@ -1014,6 +1014,54 @@ describe('SpaceAgentsPage', () => {
     expect(queryByTestId('agent-deep-link-missing')).toBeNull();
   });
 
+  it('leaves the template model alone when creating without a pool', async () => {
+    mockTemplates.value = [{ key: 'modelled.v1', displayName: 'Modelled' }];
+    const { getByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'Plain' } });
+    fireEvent.input(getByTestId('agent-template-select'), { target: { value: 'modelled.v1' } });
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalled());
+    expect(mockCreate.mock.calls[0][0].model).toBeUndefined();
+    expect(mockCreate.mock.calls[0][0].provider).toBeUndefined();
+  });
+
+  it('drops a pool row left on no override before submitting', async () => {
+    const { getByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'Empty' } });
+    fireEvent.click(getByTestId('pool-add-model-button'));
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalled());
+    expect(mockCreate.mock.calls[0][0].modelPool).toBeUndefined();
+    expect(mockCreate.mock.calls[0][0].model).toBeUndefined();
+  });
+
+  it('drops an emptied pool row on edit rather than sending a blank model', async () => {
+    mockAgents.value = [
+      makeAgent('alpha', {
+        modelPool: [
+          { model: 'claude-opus-5', maxConcurrent: 1, weight: 100 },
+          { model: '', maxConcurrent: 1, weight: 100 },
+        ],
+      }),
+    ];
+    const { getByTestId, getByText } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('agent-row-alpha'));
+    fireEvent.click(getByText('Edit'));
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalled());
+    expect(mockUpdate.mock.calls[0][1].modelPool).toEqual([
+      { model: 'claude-opus-5', maxConcurrent: 1, weight: 100 },
+    ]);
+  });
+
   it('clears a description on edit rather than dropping the field', async () => {
     mockAgents.value = [makeAgent('alpha', { description: 'old' })];
     const { getByTestId, getByText } = render(<SpaceAgentsPage spaceId="space-1" />);
@@ -1052,5 +1100,31 @@ describe('SpaceAgentsPage', () => {
     fireEvent.click(getByTestId('confirm-delete-agent'));
 
     await waitFor(() => expect(getByText('nope')).toBeTruthy());
+  });
+});
+
+describe('model pool submission payload', () => {
+  const entry = (model: string) => ({ model, maxConcurrent: 1, weight: 100 });
+
+  it('drops entries left without a model', () => {
+    expect(usablePoolEntries([entry('opus'), entry(''), entry('  ')])).toEqual([entry('opus')]);
+  });
+
+  it('sends nothing extra when no usable entry remains', () => {
+    expect(createPoolFields([entry('')])).toEqual({});
+  });
+
+  it('clears the inherited single model when a pool is submitted', () => {
+    expect(createPoolFields([entry('opus')])).toEqual({
+      modelPool: [entry('opus')],
+      model: null,
+      provider: null,
+    });
+  });
+
+  it('does not touch model or provider when the pool is empty', () => {
+    const fields = createPoolFields([]);
+    expect('model' in fields).toBe(false);
+    expect('provider' in fields).toBe(false);
   });
 });

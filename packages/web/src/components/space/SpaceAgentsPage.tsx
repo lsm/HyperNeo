@@ -47,6 +47,20 @@ function matchesSelectedHandle(agent: SpaceAgent, handle: string): boolean {
   return handle === 'coordinator' && PROTECTED_HANDLES.has(agent.handle);
 }
 
+export function usablePoolEntries(entries: AgentModelPoolEntry[]): AgentModelPoolEntry[] {
+  return entries.filter((entry) => entry.model.trim() !== '');
+}
+
+export function createPoolFields(entries: AgentModelPoolEntry[]): {
+  modelPool?: AgentModelPoolEntry[];
+  model?: null;
+  provider?: null;
+} {
+  const pool = usablePoolEntries(entries);
+  if (pool.length === 0) return {};
+  return { modelPool: pool, model: null, provider: null };
+}
+
 function statusOptions(handle: string): SpaceAgentStatus[] {
   return PROTECTED_HANDLES.has(handle) ? ['active'] : EDITABLE_STATUSES;
 }
@@ -181,6 +195,8 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
     const isCurrentSubmission = () =>
       activeSpaceRef.current === submittedFor && formGenerationRef.current === submittedGeneration;
 
+    const submittedPool = usablePoolEntries(formModelPool);
+
     setSaving(true);
     setFormError(null);
     try {
@@ -191,7 +207,7 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
           description: field('description') || null,
           status: formStatus,
           autonomyLevel,
-          modelPool: formModelPool.length > 0 ? formModelPool : null,
+          modelPool: submittedPool.length > 0 ? submittedPool : null,
           model: null,
           provider: null,
           tools: formTools.toolsOverridden ? formTools.tools : null,
@@ -206,7 +222,7 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
           instructions: field('instructions') || undefined,
           description: field('description') || undefined,
           autonomyLevel: autonomyChoice === '' ? undefined : autonomyLevel,
-          modelPool: formModelPool.length > 0 ? formModelPool : undefined,
+          ...createPoolFields(formModelPool),
           tools: formTools.toolsOverridden ? formTools.tools : undefined,
           settingSources: formSettingSources ?? undefined,
           templateKey: field('templateKey') || undefined,
