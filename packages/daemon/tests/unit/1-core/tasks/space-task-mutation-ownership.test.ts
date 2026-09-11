@@ -17,7 +17,8 @@ describe('Space mutations with owner-independent task storage', () => {
       priority TEXT DEFAULT 'normal', labels TEXT DEFAULT '[]', depends_on TEXT DEFAULT '[]',
       created_at INTEGER DEFAULT 1, updated_at INTEGER DEFAULT 1,
       started_at INTEGER, completed_at INTEGER, archived_at INTEGER,
-      terminal_generation INTEGER DEFAULT 0, task_agent_session_id TEXT
+      terminal_generation INTEGER DEFAULT 0, task_agent_session_id TEXT,
+      active_session TEXT, restrictions TEXT
     );
     CREATE TABLE sessions (
       id TEXT PRIMARY KEY, status TEXT DEFAULT 'active', type TEXT DEFAULT 'worker',
