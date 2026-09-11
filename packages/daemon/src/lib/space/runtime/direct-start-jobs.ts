@@ -1,3 +1,9 @@
+import { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
+import { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
+import {
+  createDirectAttemptStopper,
+  type DirectAttemptStopDependencies,
+} from './stop-direct-attempt.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../../storage/sqlite-compat.ts';
 import type { ReactiveDatabase } from '../../../storage/reactive-database.ts';
@@ -44,14 +50,17 @@ export function createDirectStartRequester(deps: {
 export function createDirectStartJobHandler(
   db: Database,
   start: (input: DirectTaskStartInput) => Promise<DirectTaskStartResult>,
-  jobs: Pick<JobQueueRepository, 'requeue'>
+  jobs: Pick<JobQueueRepository, 'requeue'>,
+  sessionManager: DirectAttemptStopDependencies['sessionManager']
 ) {
+  const attempts = new DirectTaskExecutionRepository(db);
+  const tasks = new SpaceTaskRepository(db);
+  const stop = createDirectAttemptStopper({ attempts, tasks, sessionManager });
   return async (job: Job) => {
     const attemptId = job.payload.attemptId;
     if (job.queue !== DIRECT_TASK_START || typeof attemptId !== 'string')
       return { started: false, reason: 'unlinked_job' };
     const request = readDirectStartRequest(db, attemptId);
-    const attempts = new DirectTaskExecutionRepository(db);
     const attempt = attempts.get(attemptId);
     if (
       !request ||
@@ -63,15 +72,40 @@ export function createDirectStartJobHandler(
     )
       return { started: false, reason: 'superseded' };
     const result = await start(request.input);
-    if (!result.started) {
-      const current = attempts.getActive(attempt.taskId);
-      if (current?.id !== attempt.id || attempts.isStopRequested(attempt.id, attempt.sessionId))
+    if (result.started) return result;
+    const current = attempts.getActive(attempt.taskId);
+    if (current?.id !== attempt.id) return { started: false, reason: 'superseded' };
+    const task = tasks.getTask(attempt.taskId);
+    const space = task ? new SpaceRepository(db).getSpace(task.spaceId) : null;
+    const terminal =
+      !task ||
+      !space ||
+      task.workflowRunId ||
+      task.archivedAt != null ||
+      space.status !== 'active' ||
+      ['done', 'cancelled', 'archived'].includes(task.status);
+    const retiring = !!db
+      .prepare(
+        "SELECT 1 FROM direct_task_stop_requests WHERE attempt_id = ? AND session_id = ? AND outcome = 'start_superseded'"
+      )
+      .get(attempt.id, attempt.sessionId);
+    if (terminal || retiring) {
+      if (current.phase !== 'reserved') return { started: false, reason: 'superseded' };
+      const stopped = await stop({
+        attemptId: current.id,
+        sessionId: current.sessionId,
+        outcome: 'start_superseded',
+      });
+      if (stopped.stopped || attempts.getActive(attempt.taskId)?.id !== attempt.id)
         return { started: false, reason: 'superseded' };
-      if (!job.claimToken) throw new Error(`Direct start remains unavailable: ${result.reason}`);
-      if (jobs.requeue(job.id, Date.now() + 30_000, job.claimToken))
-        return { ...result, parked: 'direct_start_not_ready' };
-      return { started: false, reason: 'superseded_claim' };
-    }
-    return result;
+    } else if (attempts.isStopRequested(attempt.id, attempt.sessionId))
+      return { started: false, reason: 'superseded' };
+    if (!job.claimToken) throw new Error(`Direct start remains unavailable: ${result.reason}`);
+    if (jobs.requeue(job.id, Date.now() + 30_000, job.claimToken))
+      return {
+        ...result,
+        parked: terminal || retiring ? 'direct_start_cleanup_unverified' : 'direct_start_not_ready',
+      };
+    return { started: false, reason: 'superseded_claim' };
   };
 }
