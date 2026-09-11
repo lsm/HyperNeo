@@ -50,17 +50,15 @@ describe('shared operation delivery parity', () => {
     transports = InProcessTransport.createPair();
     client.registerTransport(transports[0]);
     server.registerTransport(transports[1]);
-    setupOperationHandlers(
-      server,
-      mailbox.jobQueue,
-      (taskId) => readTaskCore(mailbox.db, taskId),
-      (input, creatorSessionId) =>
+    setupOperationHandlers(server, mailbox.jobQueue, {
+      readTask: (taskId) => readTaskCore(mailbox.db, taskId),
+      createTask: (input, creatorSessionId) =>
         createStandaloneTask(mailbox.db, input, creatorSessionId, () => {}),
-      (input) => listTaskCores(mailbox.db, input),
-      (input) => editStandaloneTask(mailbox.db, input, () => {}),
-      (input) => transitionStandaloneTask(mailbox.db, input, () => {}),
-      (input) => setStandaloneTaskDependencies(mailbox.db, input, () => {})
-    );
+      listTasks: (input) => listTaskCores(mailbox.db, input),
+      editTask: (input) => editStandaloneTask(mailbox.db, input, () => {}),
+      transitionTask: (input) => transitionStandaloneTask(mailbox.db, input, () => {}),
+      setDependencies: (input) => setStandaloneTaskDependencies(mailbox.db, input, () => {}),
+    });
     await Promise.all(transports.map((transport) => transport.initialize()));
   });
 
@@ -92,16 +90,15 @@ describe('shared operation delivery parity', () => {
         });
       } else {
         const mcp = createOperationMcpServer(
-          createDaemonOperationCatalog(
-            mailbox.jobQueue,
-            (taskId) => readTaskCore(mailbox.db, taskId),
-            (input, creatorSessionId) =>
+          createDaemonOperationCatalog(mailbox.jobQueue, {
+            readTask: (taskId) => readTaskCore(mailbox.db, taskId),
+            createTask: (input, creatorSessionId) =>
               createStandaloneTask(mailbox.db, input, creatorSessionId, () => {}),
-            (input) => listTaskCores(mailbox.db, input),
-            (input) => editStandaloneTask(mailbox.db, input, () => {}),
-            (input) => transitionStandaloneTask(mailbox.db, input, () => {}),
-            (input) => setStandaloneTaskDependencies(mailbox.db, input, () => {})
-          ),
+            listTasks: (input) => listTaskCores(mailbox.db, input),
+            editTask: (input) => editStandaloneTask(mailbox.db, input, () => {}),
+            transitionTask: (input) => transitionStandaloneTask(mailbox.db, input, () => {}),
+            setDependencies: (input) => setStandaloneTaskDependencies(mailbox.db, input, () => {}),
+          }),
           () => ({
             sessionId: sender.id,
           })

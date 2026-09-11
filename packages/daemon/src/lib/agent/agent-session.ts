@@ -252,27 +252,26 @@ export class AgentSession
 
   getOperationMcpServer(): ReturnType<typeof createOperationMcpServer> {
     return (this.operationMcpServer ??= createOperationMcpServer(
-      createDaemonOperationCatalog(
-        this.db.getJobQueueRepo(),
-        (taskId) => readTaskCore(this.db.getDatabase(), taskId),
-        (input, creatorSessionId) =>
+      createDaemonOperationCatalog(this.db.getJobQueueRepo(), {
+        readTask: (taskId) => readTaskCore(this.db.getDatabase(), taskId),
+        createTask: (input, creatorSessionId) =>
           createStandaloneTask(this.db.getDatabase(), input, creatorSessionId, () =>
             this.db.notifyChange('space_tasks')
           ),
-        (input) => listTaskCores(this.db.getDatabase(), input),
-        (input) =>
+        listTasks: (input) => listTaskCores(this.db.getDatabase(), input),
+        editTask: (input) =>
           editStandaloneTask(this.db.getDatabase(), input, () =>
             this.db.notifyChange('space_tasks')
           ),
-        (input) =>
+        transitionTask: (input) =>
           transitionStandaloneTask(this.db.getDatabase(), input, () =>
             this.db.notifyChange('space_tasks')
           ),
-        (input) =>
+        setDependencies: (input) =>
           setStandaloneTaskDependencies(this.db.getDatabase(), input, () =>
             this.db.notifyChange('space_tasks')
-          )
-      ),
+          ),
+      }),
       () => ({ sessionId: this.session.id })
     ));
   }
