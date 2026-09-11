@@ -11,6 +11,7 @@ import {
 } from '../../../storage/repositories/direct-task-execution-repository.ts';
 import { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
+import { prepareSpaceTaskStatusUpdate } from '../managers/task-status-preparation.ts';
 import { assertValidTaskTransition } from '../../tasks/transitions.ts';
 import { buildCustomAgentTaskMessage } from '../agents/custom-agent.ts';
 import { resolveTaskWorkspace } from './spawn-slot-resolution.ts';
@@ -29,6 +30,7 @@ import {
 export interface DirectTaskStartInput {
   taskId: string;
   requestKey: string;
+  retryFrom?: { attemptId: string; generation: number };
 }
 export type DirectTaskStartResult =
   | { started: true; attempt: DirectTaskAttempt }
@@ -37,7 +39,8 @@ export type DirectTaskStartResult =
 function claimDirectStart(
   db: Database,
   reactiveDb: ReactiveDatabase | undefined,
-  input: DirectTaskStartInput
+  input: DirectTaskStartInput,
+  onTaskReopened?: (taskId: string) => void
 ): { value: DirectTaskAttempt } | { reason: DirectTaskStartResult } {
   const unavailable = { reason: { started: false as const, reason: 'direct_start_unavailable' } };
   if (!input.requestKey.trim()) return unavailable;
@@ -51,7 +54,7 @@ function claimDirectStart(
     const result = db.transaction(() => {
       const attempts = new DirectTaskExecutionRepository(db);
       const tasks = new SpaceTaskRepository(db, reactiveDb);
-      const task = tasks.getTask(input.taskId);
+      let task = tasks.getTask(input.taskId);
       const space = task ? new SpaceRepository(db).getSpace(task.spaceId) : null;
       if (
         !task ||
@@ -70,6 +73,57 @@ function claimDirectStart(
           attempts.isStopRequested(active.id, sessionId))
       )
         return unavailable;
+      let reopenedTaskId: string | null = null;
+      if (input.retryFrom && attempts.get(attemptId)?.phase === 'stopped') return unavailable;
+      if (input.retryFrom) {
+        const previous = attempts.get(input.retryFrom.attemptId);
+        if (
+          !previous ||
+          previous.taskId !== task.id ||
+          previous.phase !== 'stopped' ||
+          previous.generation !== input.retryFrom.generation ||
+          previous.id === attemptId ||
+          (active && active.generation !== previous.generation + 1)
+        )
+          return unavailable;
+        if (!active) {
+          const row = db
+            .prepare(
+              'SELECT finalization_json AS payload, finalization_state AS state FROM direct_task_stop_requests WHERE attempt_id = ? AND session_id = ?'
+            )
+            .get(previous.id, previous.sessionId) as {
+            payload: string | null;
+            state: string | null;
+          } | null;
+          const finalization = row?.payload
+            ? (JSON.parse(row.payload) as {
+                status: string;
+                lifecycleGeneration: number;
+                generation: number;
+              })
+            : null;
+          if (
+            row?.state !== 'completed' ||
+            !finalization ||
+            finalization.generation !== previous.generation ||
+            finalization.status !== task.status ||
+            !['blocked', 'cancelled', 'stopped'].includes(task.status) ||
+            tasks.getLifecycleGeneration(task.id) !== finalization.lifecycleGeneration + 1 ||
+            task.taskAgentSessionId !== previous.sessionId
+          )
+            return unavailable;
+          assertValidTaskTransition(task.status, 'open');
+          const { updates, reopened } = prepareSpaceTaskStatusUpdate(
+            task,
+            'open',
+            undefined,
+            Date.now()
+          );
+          task = tasks.updateTask(task.id, { ...updates, taskAgentSessionId: null }, task.status);
+          if (!task) throw new Error('Direct retry lost its atomic reopen');
+          if (reopened) reopenedTaskId = task.id;
+        }
+      }
       if (active?.phase === 'running') {
         const evidence = {
           session: new SessionRepository(db).getSession(sessionId),
@@ -111,6 +165,7 @@ function claimDirectStart(
       }
       const attempt = attempts.claim(task.id, attemptId, sessionId);
       if (!attempt) throw new Error('Direct start lost its atomic claim');
+      if (reopenedTaskId) onTaskReopened?.(reopenedTaskId);
       return { value: attempt };
     }, 'immediate')();
     reactiveDb?.commitTransaction();
@@ -177,6 +232,7 @@ export function createDirectTaskStarter(dependencies: {
   sessionDb: DirectSessionPreparationDependencies['db'];
   sessionManager: DirectSessionPreparationDependencies['sessionManager'];
   defaultModel: string;
+  onTaskReopened?: (taskId: string) => void;
 }) {
   const { db, reactiveDb, sessionDb, sessionManager, defaultModel } = dependencies;
   const attempts = new DirectTaskExecutionRepository(db);
@@ -189,13 +245,14 @@ export function createDirectTaskStarter(dependencies: {
       sessionDb,
       sessionManager,
       defaultModel,
+      onTaskReopened: dependencies.onTaskReopened,
       attempts,
       tasks,
       getSpace: (id: string) => spaces.getSpace(id),
     })('start-direct-task') as PipelineAPI
   )
     .input('input')
-    .pipe(claimDirectStart, ['db', 'reactiveDb', 'input'], 'result:start')
+    .pipe(claimDirectStart, ['db', 'reactiveDb', 'input', 'onTaskReopened'], 'result:start')
     .pipe((attempt: DirectTaskAttempt) => attempt.id, 'start', 'attemptId')
     .pipe(readPreparation, ['attempts', 'tasks', 'getSpace', 'attemptId'], 'preparation')
     .pipe(requireStartStage, ['preparation', 'db', 'input'], 'result:start')

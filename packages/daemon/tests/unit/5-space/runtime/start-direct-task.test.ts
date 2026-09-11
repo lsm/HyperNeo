@@ -11,6 +11,8 @@ import {
   readDirectKickoffIntent,
   recordDirectKickoffAtomically,
 } from '../../../../src/lib/space/runtime/direct-kickoff-intent';
+import { createDirectTaskFinalizer } from '../../../../src/lib/space/runtime/finalize-direct-attempt';
+import { SessionManager } from '../../../../src/lib/session/session-manager';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session';
 
 let db: Database;
@@ -21,6 +23,7 @@ let taskId: string;
 let spaceId: string;
 let getSessionForControl: ReturnType<typeof mock>;
 let start: ReturnType<typeof createDirectTaskStarter>;
+let onTaskReopened: ReturnType<typeof mock>;
 let unregisterSession: ReturnType<typeof mock>;
 const requestKey = 'request-one';
 beforeEach(() => {
@@ -50,7 +53,9 @@ beforeEach(() => {
       }) as AgentSession
   );
   unregisterSession = mock(async () => {});
+  onTaskReopened = mock(() => {});
   start = createDirectTaskStarter({
+    onTaskReopened,
     db,
     defaultModel: 'claude-sonnet-4-6',
     sessionDb: {
@@ -265,4 +270,127 @@ test('rejected activation retains a preexisting frozen intent without renewing i
   tasks.updateTask(dependency.id, { status: 'done' });
   expect((await start({ taskId, requestKey })).started).toBe(true);
   expect(readDirectKickoffIntent(db, attempt.id)).toEqual(recorded.entry);
+});
+
+async function finalizedAttempt(status: 'blocked' | 'cancelled' | 'stopped') {
+  const started = await start({ taskId, requestKey });
+  if (!started.started) throw new Error(started.reason);
+  let cached = {
+    getSessionData: () => sessions.getSession(started.attempt.sessionId)!,
+    getProcessingState: () => ({ status: 'idle' }),
+    isInterruptInProgress: () => false,
+    getTrackedAgentRootPidsSplit: () => ({ live: [], exited: [] }),
+    handleInterrupt: async () => {},
+    cleanup: async () => {},
+  } as unknown as AgentSession | null;
+  const owner = Object.assign(Object.create(SessionManager.prototype), {
+    directStopVerificationJobs: new Map(),
+  }) as SessionManager;
+  const result = await createDirectTaskFinalizer({
+    db,
+    sessionManager: {
+      coalesceDirectStopVerification: owner.coalesceDirectStopVerification.bind(owner),
+      getCachedSession: () => cached,
+      isSessionLoading: () => false,
+      unregisterSession: async () => {
+        cached = null;
+      },
+    },
+  })({
+    attemptId: started.attempt.id,
+    sessionId: started.attempt.sessionId,
+    generation: started.attempt.generation,
+    status,
+    options: { blockReason: 'test' },
+  });
+  expect(result.finalized).toBe(true);
+  return { attemptId: started.attempt.id, generation: started.attempt.generation };
+}
+test.each(['blocked', 'cancelled', 'stopped'] as const)(
+  'retries verified %s with a fresh owner and idempotent request',
+  async (status) => {
+    const retryFrom = await finalizedAttempt(status);
+    const request = { taskId, requestKey: 'retry-one', retryFrom };
+    const result = await start(request);
+    expect(result).toMatchObject({
+      started: true,
+      attempt: { generation: retryFrom.generation + 1 },
+    });
+    if (!result.started) throw new Error(result.reason);
+    expect(result.attempt.id).not.toBe(retryFrom.attemptId);
+    expect(tasks.getTask(taskId)).toMatchObject({
+      status: 'in_progress',
+      taskAgentSessionId: result.attempt.sessionId,
+    });
+    expect(tasks.getTask(taskId)?.blockReason).toBeNull();
+    expect(await start(request)).toEqual(result);
+    expect((await start({ ...request, requestKey: 'competing' })).started).toBe(false);
+    expect(mailCount()).toBe(2);
+    expect(onTaskReopened).toHaveBeenCalledTimes(status === 'stopped' ? 0 : 1);
+  }
+);
+test.each(['generation', 'pointer', 'lifecycle', 'marker'] as const)(
+  'rejects stale retry %s without reopening',
+  async (change) => {
+    const retryFrom = await finalizedAttempt('blocked');
+    if (change === 'generation') retryFrom.generation++;
+    if (change === 'pointer') tasks.updateTask(taskId, { taskAgentSessionId: null });
+    if (change === 'lifecycle') {
+      tasks.updateTask(taskId, { status: 'open' });
+      tasks.updateTask(taskId, { status: 'blocked' });
+    }
+    if (change === 'marker')
+      db.prepare("UPDATE direct_task_stop_requests SET finalization_state = 'superseded'").run();
+    expect((await start({ taskId, requestKey: 'retry-one', retryFrom })).started).toBe(false);
+    expect(tasks.getTask(taskId)?.status).toBe('blocked');
+    expect(attempts.getActive(taskId)).toBeNull();
+    expect(mailCount()).toBe(1);
+  }
+);
+test('retry claim failure rolls back reopening and previous pointer cleanup', async () => {
+  const retryFrom = await finalizedAttempt('cancelled');
+  const previous = tasks.getTask(taskId);
+  db.exec(
+    "CREATE TRIGGER reject_retry BEFORE INSERT ON direct_task_execution_attempts BEGIN SELECT RAISE(ABORT, 'reject retry'); END"
+  );
+  await expect(start({ taskId, requestKey: 'retry-one', retryFrom })).rejects.toThrow(
+    'reject retry'
+  );
+  expect(tasks.getTask(taskId)).toEqual(previous);
+  expect(attempts.getActive(taskId)).toBeNull();
+});
+test('stopped earlier request cannot reopen a later finalized attempt', async () => {
+  const retryFrom = await finalizedAttempt('blocked');
+  expect((await start({ taskId, requestKey, retryFrom })).started).toBe(false);
+  expect(tasks.getTask(taskId)?.status).toBe('blocked');
+  expect(attempts.getActive(taskId)).toBeNull();
+});
+
+test('retry resumes its reserved owner after failed loading without another reopen', async () => {
+  const retryFrom = await finalizedAttempt('stopped');
+  const request = { taskId, requestKey: 'retry-one', retryFrom };
+  getSessionForControl.mockResolvedValueOnce(null);
+  expect((await start(request)).started).toBe(false);
+  const reserved = attempts.getActive(taskId)!;
+  expect(reserved.phase).toBe('reserved');
+  expect(tasks.getTask(taskId)?.status).toBe('open');
+  expect(await start(request)).toMatchObject({
+    started: true,
+    attempt: { id: reserved.id, generation: reserved.generation },
+  });
+  expect(mailCount()).toBe(2);
+});
+
+test('reopen bookkeeping failure rolls back the new owner and task changes', async () => {
+  const retryFrom = await finalizedAttempt('blocked');
+  const previous = tasks.getTask(taskId);
+  onTaskReopened.mockImplementation(() => {
+    throw new Error('bookkeeping failed');
+  });
+  await expect(start({ taskId, requestKey: 'retry-one', retryFrom })).rejects.toThrow(
+    'bookkeeping failed'
+  );
+  expect(tasks.getTask(taskId)).toEqual(previous);
+  expect(attempts.getActive(taskId)).toBeNull();
+  expect(mailCount()).toBe(1);
 });
