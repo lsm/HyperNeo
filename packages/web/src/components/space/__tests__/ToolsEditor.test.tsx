@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   applyToolsPreset,
   detectToolsPreset,
+  removeScopedTool,
+  scopedToolEntries,
   ToolsEditor,
   type ToolsPresetName,
   type ToolsSelection,
@@ -376,5 +378,116 @@ describe('ToolsEditor', () => {
       }
       expectDomMatchesLegacy(container, legacy);
     }
+  });
+});
+
+describe('scoped tool entries', () => {
+  it('separates scoped entries from known tools', () => {
+    expect(scopedToolEntries(['Read', 'Bash(gh pr view:*)', 'Grep'])).toEqual([
+      'Bash(gh pr view:*)',
+    ]);
+  });
+
+  it('keeps scoped entries when a preset is applied', () => {
+    const next = applyToolsPreset('Read Only', ['Read', 'Bash(ls:*)']);
+    expect(next.tools).toEqual(['Read', 'Grep', 'Glob', 'Bash(ls:*)']);
+    expect(next.toolsOverridden).toBe(true);
+  });
+
+  it('keeps scoped entries when switching to Custom', () => {
+    const next = applyToolsPreset('Custom', ['Bash(ls:*)']);
+    expect(next.tools).toContain('Bash(ls:*)');
+  });
+
+  it('drops scoped entries when returning to inherited', () => {
+    expect(applyToolsPreset('Inherit defaults', ['Bash(ls:*)'])).toEqual({
+      tools: [],
+      toolsOverridden: false,
+    });
+  });
+
+  it('does not accumulate duplicates across repeated presets', () => {
+    const once = applyToolsPreset('Read Only', ['Read', 'Bash(ls:*)']);
+    const twice = applyToolsPreset('Read Only', once.tools);
+    expect(twice.tools.filter((tool) => tool === 'Bash(ls:*)')).toHaveLength(1);
+  });
+
+  it('removes a single scoped entry', () => {
+    const next = removeScopedTool(['Read', 'Bash(ls:*)', 'Bash(gh:*)'], 'Bash(ls:*)');
+    expect(next.tools).toEqual(['Read', 'Bash(gh:*)']);
+    expect(next.toolsOverridden).toBe(true);
+  });
+
+  it('falls back to inherited when the last entry is removed', () => {
+    expect(removeScopedTool(['Bash(ls:*)'], 'Bash(ls:*)')).toEqual({
+      tools: [],
+      toolsOverridden: false,
+    });
+  });
+
+  it('renders scoped entries and removes one on click', () => {
+    const onChange = vi.fn();
+    const { getByTestId } = render(
+      <ToolsEditor
+        tools={['Read', 'Bash(ls:*)']}
+        toolsOverridden={true}
+        onChange={onChange}
+        manageScopedEntries
+      />
+    );
+    expect(getByTestId('tools-editor-scoped-Bash(ls:*)')).toBeTruthy();
+    fireEvent.click(getByTestId('tools-editor-scoped-remove-Bash(ls:*)'));
+    expect(onChange).toHaveBeenCalledWith({ tools: ['Read'], toolsOverridden: true });
+  });
+
+  it('shows no scoped section while tools are inherited', () => {
+    const { queryByTestId } = render(
+      <ToolsEditor
+        tools={['Bash(ls:*)']}
+        toolsOverridden={false}
+        onChange={vi.fn()}
+        manageScopedEntries
+      />
+    );
+    expect(queryByTestId('tools-editor-scoped')).toBeNull();
+  });
+
+  it('leaves consumers that do not opt in untouched', () => {
+    const onChange = vi.fn();
+    const { queryByTestId, getByTestId } = render(
+      <ToolsEditor tools={['Read', 'Bash(ls:*)']} toolsOverridden={true} onChange={onChange} />
+    );
+    expect(queryByTestId('tools-editor-scoped')).toBeNull();
+    fireEvent.click(getByTestId('tools-editor-preset-read-only'));
+    expect(onChange).toHaveBeenCalledWith({
+      tools: ['Read', 'Grep', 'Glob'],
+      toolsOverridden: true,
+    });
+  });
+});
+
+describe('preset detection with scoped entries', () => {
+  it('detects a preset even when a scoped entry is present', () => {
+    expect(detectToolsPreset(['Read', 'Grep', 'Glob', 'Bash(ls:*)'])).toBe('Read Only');
+  });
+
+  it('still reports Custom when the known tools do not match a preset', () => {
+    expect(detectToolsPreset(['Read', 'Bash(ls:*)'])).toBe('Custom');
+  });
+
+  it('reports Custom for a list of only scoped entries', () => {
+    expect(detectToolsPreset(['Bash(ls:*)'])).toBe('Custom');
+  });
+
+  it('keeps the preset button active after applying it over a scoped entry', () => {
+    const { getByTestId } = render(
+      <ToolsEditor
+        tools={['Read', 'Grep', 'Glob', 'Bash(ls:*)']}
+        toolsOverridden={true}
+        onChange={vi.fn()}
+        manageScopedEntries
+      />
+    );
+    expect(getByTestId('tools-editor-preset-read-only').className).toContain('bg-accent/20');
   });
 });
