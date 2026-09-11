@@ -682,6 +682,115 @@ describe('SpaceAgentsPage', () => {
     expect(mockCreate.mock.calls[0][0].modelPool).toBeUndefined();
   });
 
+  it('omits tools on create when defaults are inherited', async () => {
+    const { getByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    expect(getByTestId('agent-tools-field')).toBeTruthy();
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'Scribe' } });
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalled());
+    expect(mockCreate.mock.calls[0][0].tools).toBeUndefined();
+  });
+
+  it('sends the chosen tools when a preset overrides the defaults', async () => {
+    const { getByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'Reader' } });
+    fireEvent.click(getByTestId('tools-editor-preset-read-only'));
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalled());
+    expect(mockCreate.mock.calls[0][0].tools).toEqual(['Read', 'Grep', 'Glob']);
+  });
+
+  it('shows an agent as inheriting tools when it stores null', async () => {
+    mockAgents.value = [makeAgent('alpha', { tools: null })];
+    const { getByTestId, getByText } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('agent-row-alpha'));
+    fireEvent.click(getByText('Edit'));
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalled());
+    expect(mockUpdate.mock.calls[0][1].tools).toBeNull();
+  });
+
+  it('round-trips a stored tool override on edit', async () => {
+    mockAgents.value = [makeAgent('alpha', { tools: ['Read', 'Grep', 'Glob'] })];
+    const { getByTestId, getByText } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('agent-row-alpha'));
+    fireEvent.click(getByText('Edit'));
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalled());
+    expect(mockUpdate.mock.calls[0][1].tools).toEqual(['Read', 'Grep', 'Glob']);
+  });
+
+  it('clears a tool override back to inherited', async () => {
+    mockAgents.value = [makeAgent('alpha', { tools: ['Read'] })];
+    const { getByTestId, getByText } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('agent-row-alpha'));
+    fireEvent.click(getByText('Edit'));
+    fireEvent.click(getByTestId('tools-editor-preset-inherit-defaults'));
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalled());
+    expect(mockUpdate.mock.calls[0][1].tools).toBeNull();
+  });
+
+  it('keeps scoped Bash entries when a preset is applied', async () => {
+    mockAgents.value = [makeAgent('alpha', { tools: ['Read', 'Bash(gh pr view:*)'] })];
+    const { getByTestId, getByText } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('agent-row-alpha'));
+    fireEvent.click(getByText('Edit'));
+    fireEvent.click(getByTestId('tools-editor-preset-read-only'));
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalled());
+    expect(mockUpdate.mock.calls[0][1].tools).toEqual([
+      'Read',
+      'Grep',
+      'Glob',
+      'Bash(gh pr view:*)',
+    ]);
+  });
+
+  it('drops scoped entries when the override is cleared to inherited', async () => {
+    mockAgents.value = [makeAgent('alpha', { tools: ['Read', 'Bash(gh pr view:*)'] })];
+    const { getByTestId, getByText } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('agent-row-alpha'));
+    fireEvent.click(getByText('Edit'));
+    fireEvent.click(getByTestId('tools-editor-preset-inherit-defaults'));
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalled());
+    expect(mockUpdate.mock.calls[0][1].tools).toBeNull();
+  });
+
+  it('does not accumulate duplicates when presets are switched repeatedly', async () => {
+    mockAgents.value = [makeAgent('alpha', { tools: ['Read', 'Bash(ls:*)'] })];
+    const { getByTestId, getByText } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('agent-row-alpha'));
+    fireEvent.click(getByText('Edit'));
+    fireEvent.click(getByTestId('tools-editor-preset-read-only'));
+    fireEvent.click(getByTestId('tools-editor-preset-custom'));
+    fireEvent.click(getByTestId('tools-editor-preset-read-only'));
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalled());
+    const sent = mockUpdate.mock.calls[0][1].tools as string[];
+    expect(sent.filter((tool) => tool === 'Bash(ls:*)')).toHaveLength(1);
+    expect(new Set(sent).size).toBe(sent.length);
+  });
+
   it('clears a description on edit rather than dropping the field', async () => {
     mockAgents.value = [makeAgent('alpha', { description: 'old' })];
     const { getByTestId, getByText } = render(<SpaceAgentsPage spaceId="space-1" />);

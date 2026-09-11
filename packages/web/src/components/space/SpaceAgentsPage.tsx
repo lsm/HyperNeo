@@ -9,6 +9,8 @@ import { connectionManager } from '../../lib/connection-manager';
 import { spaceAgentStore } from '../../lib/space-agent-store';
 import { spaceStore } from '../../lib/space-store';
 import { ModelPoolEditor } from './ModelPoolEditor';
+import { type ToolsSelection, ToolsEditor } from './ToolsEditor';
+import { KNOWN_TOOLS } from '@hyperneo/shared';
 import { Button } from '../ui/Button';
 import { ConfirmModal } from '../ui/ConfirmModal';
 import { EmptyState } from '../ui/EmptyState';
@@ -40,6 +42,12 @@ function poolFromAgent(agent: SpaceAgent): AgentModelPoolEntry[] {
   ];
 }
 
+const KNOWN_TOOL_SET = new Set<string>(KNOWN_TOOLS);
+
+function scopedToolEntries(tools: string[]): string[] {
+  return tools.filter((tool) => !KNOWN_TOOL_SET.has(tool));
+}
+
 function statusOptions(handle: string): SpaceAgentStatus[] {
   return PROTECTED_HANDLES.has(handle) ? ['active'] : EDITABLE_STATUSES;
 }
@@ -64,6 +72,7 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
   const [formStatus, setFormStatus] = useState<SpaceAgentStatus>('active');
   const [formAutonomy, setFormAutonomy] = useState<string>('');
   const [formModelPool, setFormModelPool] = useState<AgentModelPoolEntry[]>([]);
+  const [formTools, setFormTools] = useState<ToolsSelection>({ tools: [], toolsOverridden: false });
   const activeSpaceRef = useRef(spaceId);
   const formGenerationRef = useRef(0);
 
@@ -80,6 +89,7 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
     setFormStatus('active');
     setFormAutonomy('');
     setFormModelPool([]);
+    setFormTools({ tools: [], toolsOverridden: false });
   }
 
   useEffect(() => {
@@ -110,6 +120,7 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
     setFormStatus('active');
     setFormAutonomy('');
     setFormModelPool([]);
+    setFormTools({ tools: [], toolsOverridden: false });
   }
 
   function openEdit(agent: SpaceAgent) {
@@ -120,6 +131,7 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
     setFormStatus(agent.status);
     setFormAutonomy(agent.autonomyLevel ? String(agent.autonomyLevel) : '');
     setFormModelPool(poolFromAgent(agent));
+    setFormTools({ tools: agent.tools ?? [], toolsOverridden: agent.tools !== null });
   }
 
   function closeForm() {
@@ -161,6 +173,7 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
           modelPool: formModelPool.length > 0 ? formModelPool : null,
           model: null,
           provider: null,
+          tools: formTools.toolsOverridden ? formTools.tools : null,
         });
         if (!isCurrentSubmission()) return;
       } else {
@@ -172,6 +185,7 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
           description: field('description') || undefined,
           autonomyLevel: autonomyChoice === '' ? undefined : autonomyLevel,
           modelPool: formModelPool.length > 0 ? formModelPool : undefined,
+          tools: formTools.toolsOverridden ? formTools.tools : undefined,
           templateKey: field('templateKey') || undefined,
         });
         if (!isCurrentSubmission()) return;
@@ -353,6 +367,23 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
                     onModelPoolChange={setFormModelPool}
                   />
                 </div>
+              </div>
+
+              <div data-testid="agent-tools-field">
+                <ToolsEditor
+                  tools={formTools.tools}
+                  toolsOverridden={formTools.toolsOverridden}
+                  onChange={(next) => {
+                    if (!next.toolsOverridden) {
+                      setFormTools(next);
+                      return;
+                    }
+                    const scoped = scopedToolEntries(formTools.tools).filter(
+                      (tool) => !next.tools.includes(tool)
+                    );
+                    setFormTools({ ...next, tools: [...next.tools, ...scoped] });
+                  }}
+                />
               </div>
 
               <label class="block text-xs text-fg-soft">
