@@ -71,6 +71,7 @@ export interface ImportExecuteResult {
   agents: ImportedItem[];
   workflows: ImportedItem[];
   warnings: string[];
+  copiedTemplateKeys?: string[];
   deferredUnifiedUpdates?: Array<{ spaceId: string; agentId: string }>;
 }
 
@@ -546,7 +547,10 @@ export function buildWorkflowCreateParams(
   return { params, nodeNameToId, warnings };
 }
 
-function referencedStoredTemplateKeys(workflows: ExportedSpaceWorkflow[]): string[] {
+function referencedStoredTemplateKeys(
+  workflows: ExportedSpaceWorkflow[],
+  resolveAgentId: (agentRef: string) => string | null
+): string[] {
   const keys = new Set<string>();
   for (const workflow of workflows) {
     for (const node of workflow.nodes) {
@@ -555,6 +559,8 @@ function referencedStoredTemplateKeys(workflows: ExportedSpaceWorkflow[]): strin
         if (!raw) continue;
         const key = normalizeLegacyWorkerTemplateKey(raw);
         if (getLongHorizonAgentTemplate(key)) continue;
+        const agentRef = slot.agentRef?.trim() ?? '';
+        if (agentRef && resolveAgentId(agentRef)) continue;
         keys.add(key);
       }
     }
@@ -699,10 +705,12 @@ export function setupSpaceExportImportHandlers(
   const copyReferencedTemplates = (
     destinationSpaceId: string,
     sourceSpaceId: string | undefined,
-    workflows: ExportedSpaceWorkflow[]
-  ): void => {
-    if (!sourceSpaceId || sourceSpaceId === destinationSpaceId) return;
-    for (const key of referencedStoredTemplateKeys(workflows)) {
+    workflows: ExportedSpaceWorkflow[],
+    resolveAgentId: (agentRef: string) => string | null
+  ): string[] => {
+    const copied: string[] = [];
+    if (!sourceSpaceId || sourceSpaceId === destinationSpaceId) return copied;
+    for (const key of referencedStoredTemplateKeys(workflows, resolveAgentId)) {
       if (ownsTemplate(destinationSpaceId, key)) continue;
       const source = templateRepo.getOwned(sourceSpaceId, key);
       if (!source) continue;
@@ -719,9 +727,11 @@ export function setupSpaceExportImportHandlers(
         thinkingLevel: source.thinkingLevel,
         settingSources: source.settingSources,
         tools: source.tools,
-        labels: source.labels,
+        labels: source.labels.filter((label) => !isRelocationMarkerLabel(label)),
       });
+      copied.push(source.key);
     }
+    return copied;
   };
 
   messageHub.onRequest('spaceExport.workflows', async (data) => {
@@ -974,6 +984,7 @@ export function setupSpaceExportImportHandlers(
     const bundle = validation.value;
     const resolution = params.conflictResolution ?? {};
 
+    let copiedTemplateKeys: string[] = [];
     const providerClearedAgentIds: string[] = [];
     const deferredUnifiedUpdates: Array<{ spaceId: string; agentId: string }> = [];
     const executeImport = db.transaction(
@@ -1182,7 +1193,11 @@ export function setupSpaceExportImportHandlers(
 
         const workflowResults: ImportedItem[] = [];
 
-        copyReferencedTemplates(
+        const resolveImportedAgentId = (agentRef: string): string | null =>
+          importedAgentNameToId.get(nameKey(agentRef)) ??
+          existingAgentNameToId.get(nameKey(agentRef)) ??
+          null;
+        copiedTemplateKeys = copyReferencedTemplates(
           spaceId,
           bundle.exportedFrom,
           bundle.workflows.filter((exportedWorkflow) => {
@@ -1193,7 +1208,8 @@ export function setupSpaceExportImportHandlers(
             if (strategy === 'skip') return false;
             if (strategy === 'replace') return replacedIdByName.has(exportedWorkflow.name);
             return true;
-          })
+          }),
+          resolveImportedAgentId
         );
 
         for (const exportedWorkflow of bundle.workflows) {
@@ -1369,6 +1385,6 @@ export function setupSpaceExportImportHandlers(
       }
     }
 
-    return importResult;
+    return copiedTemplateKeys.length > 0 ? { ...importResult, copiedTemplateKeys } : importResult;
   });
 }

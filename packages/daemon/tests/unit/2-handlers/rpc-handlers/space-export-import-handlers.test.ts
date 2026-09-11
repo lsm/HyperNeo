@@ -655,6 +655,76 @@ describe('Space Export/Import RPC Handlers', () => {
       };
     }
 
+    it('does not copy a template for a slot that resolves through its agent reference', async () => {
+      const repo = new SpaceAgentTemplateRepository(db);
+      repo.createOwned(OTHER_SPACE_ID, {
+        key: 'team.auditor',
+        handle: 'auditor',
+        displayName: 'Auditor',
+      });
+      const bundle = {
+        version: 6,
+        type: 'bundle',
+        name: 'Test Bundle',
+        exportedAt: 1000,
+        exportedFrom: OTHER_SPACE_ID,
+        agents: [{ version: 1, type: 'agent', name: 'Auditor Agent' }],
+        workflows: [
+          {
+            version: 6,
+            type: 'workflow',
+            name: 'Fallback Pipe',
+            nodes: [
+              {
+                agents: [
+                  { templateKey: 'team.auditor', agentRef: 'Auditor Agent', name: 'auditor' },
+                ],
+                name: 'Audit',
+              },
+            ],
+            startNode: 'Audit',
+            tags: [],
+          },
+        ],
+      };
+
+      const result = await call<{
+        workflows: Array<{ id: string }>;
+        copiedTemplateKeys?: string[];
+      }>(handlers, 'spaceImport.execute', { spaceId: SPACE_ID, bundle });
+
+      expect(result.copiedTemplateKeys ?? []).toEqual([]);
+      expect(repo.getOwned(SPACE_ID, 'team.auditor')).toBeNull();
+      const workflow = workflowRepo.getWorkflow(result.workflows[0].id)!;
+      expect(workflow.nodes[0].agents![0].agentId).not.toBe('');
+    });
+
+    it('strips relocation markers from a copied template so reimport stays repeatable', async () => {
+      const repo = new SpaceAgentTemplateRepository(db);
+      repo.createOwned(OTHER_SPACE_ID, {
+        key: 'team.auditor',
+        handle: 'auditor',
+        displayName: 'Auditor',
+        labels: ['relocated-from:worker.swe', 'keep-me'],
+      });
+      const bundle = templateBundle(OTHER_SPACE_ID);
+
+      const result = await call<{ copiedTemplateKeys?: string[] }>(
+        handlers,
+        'spaceImport.execute',
+        { spaceId: SPACE_ID, bundle }
+      );
+
+      expect(result.copiedTemplateKeys).toEqual(['team.auditor']);
+      expect(repo.getOwned(SPACE_ID, 'team.auditor')?.labels).toEqual(['keep-me']);
+
+      const preview = await call<ImportPreviewResult>(handlers, 'spaceImport.preview', {
+        spaceId: SPACE_ID,
+        bundle,
+      });
+      expect(preview.validationErrors.some((e) => e.includes('ambiguous'))).toBe(false);
+    });
+
     it('does not copy a template referenced only by a skipped workflow', async () => {
       const repo = new SpaceAgentTemplateRepository(db);
       repo.createOwned(OTHER_SPACE_ID, {
