@@ -275,6 +275,23 @@ describe('SpaceAgentsPage', () => {
     );
   });
 
+  it('discards an open create draft when a template request replaces it', async () => {
+    mockTemplates.value = [{ key: 'researcher.v1', displayName: 'Researcher' }];
+    const { getByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'Stale Draft' } });
+
+    requestAgentFromTemplate('space-1', 'researcher.v1');
+    await waitFor(() =>
+      expect((getByTestId('agent-template-select') as HTMLSelectElement).value).toBe(
+        'researcher.v1'
+      )
+    );
+
+    expect((getByTestId('agent-name-input') as HTMLInputElement).value).toBe('');
+  });
+
   it('lists agents by handle', () => {
     mockAgents.value = [makeAgent('alpha'), makeAgent('beta')];
     const { getByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);

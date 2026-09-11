@@ -426,7 +426,7 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
           {(creating || editing) && (
             <form
               class="space-y-3"
-              key={editing?.id ?? 'new'}
+              key={`${editing?.id ?? 'new'}-${formGenerationRef.current}`}
               onSubmit={submitForm}
               data-testid="agent-form"
             >
