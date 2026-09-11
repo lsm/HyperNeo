@@ -6,4 +6,8 @@ export function runMigration256(db: Database): void {
   }>;
   if (!columns.some((column) => column.name === 'finalization_json'))
     db.exec('ALTER TABLE direct_task_stop_requests ADD COLUMN finalization_json TEXT');
+  if (!columns.some((column) => column.name === 'finalization_state'))
+    db.exec(
+      "ALTER TABLE direct_task_stop_requests ADD COLUMN finalization_state TEXT CHECK(finalization_state IN ('completed', 'superseded'))"
+    );
 }

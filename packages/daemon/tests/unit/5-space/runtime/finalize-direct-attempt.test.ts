@@ -162,8 +162,11 @@ for (const change of ['status', 'pointer', 'token'] as const) {
       if (change === 'pointer') tasks.updateTask(taskId, { taskAgentSessionId: 'other' });
       if (change === 'token') attempts.beginStopVerification('attempt', 'worker', 1, 'new-owner');
     };
-    expect(await finalize()(input)).toEqual({ finalized: false, reason: 'unavailable' });
-    expect(attempts.getActive(taskId)?.phase).toBe('running');
+    expect(await finalize()(input)).toEqual({
+      finalized: false,
+      reason: change === 'token' ? 'unavailable' : 'superseded',
+    });
+    expect(attempts.get('attempt')?.phase).toBe(change === 'token' ? 'running' : 'stopped');
     expect(tasks.getTask(taskId)?.status).toBe(change === 'status' ? 'review' : 'in_progress');
     expect(terminal).not.toHaveBeenCalled();
   });
@@ -289,10 +292,10 @@ for (const cycle of ['status', 'session'] as const) {
       }
       db.prepare('UPDATE space_tasks SET updated_at = ? WHERE id = ?').run(timestamp, taskId);
     };
-    expect(await finalize()(input)).toEqual({ finalized: false, reason: 'unavailable' });
-    expect(await finalize()(input)).toEqual({ finalized: false, reason: 'unavailable' });
+    expect(await finalize()(input)).toEqual({ finalized: false, reason: 'superseded' });
+    expect(await finalize()(input)).toEqual({ finalized: false, reason: 'superseded' });
     expect(tasks.getTask(taskId)?.status).toBe('in_progress');
-    expect(attempts.getActive(taskId)?.phase).toBe('running');
+    expect(attempts.getActive(taskId)).toBeNull();
     expect(terminal).not.toHaveBeenCalled();
   });
 }
@@ -303,4 +306,42 @@ test('completed idempotence rejects a later lifecycle cycle back to the same sta
   tasks.updateTask(taskId, { status: 'blocked' });
   expect(await finalize()(input)).toEqual({ finalized: false, reason: 'unavailable' });
   expect(terminal).toHaveBeenCalledTimes(1);
+});
+
+test('another stopper plus matching task status cannot impersonate atomic finalization', async () => {
+  const unregister = manager.unregisterSession;
+  manager.unregisterSession = async (...args) => {
+    await unregister(...args);
+    const proof = attempts.getStopVerification('attempt', 'worker')!;
+    attempts.finishRequestedStop('attempt', 'worker', 1, proof.token!);
+    tasks.updateTask(taskId, { status: 'blocked', result: 'Independent result' });
+  };
+  expect(await finalize()(input)).toEqual({ finalized: false, reason: 'unavailable' });
+  expect(await finalize()(input)).toEqual({ finalized: false, reason: 'unavailable' });
+  expect(tasks.getTask(taskId)?.result).toBe('Independent result');
+  expect(terminal).not.toHaveBeenCalled();
+});
+
+test('superseded release retries after transaction failure without touching replacement ownership', async () => {
+  db.exec(`CREATE TRIGGER reject_superseded BEFORE UPDATE OF finalization_state ON direct_task_stop_requests
+    WHEN NEW.finalization_state = 'superseded' BEGIN SELECT RAISE(ABORT, 'retry finalization'); END;`);
+  const unregister = manager.unregisterSession;
+  manager.unregisterSession = async (...args) => {
+    await unregister(...args);
+    tasks.updateTask(taskId, { status: 'open', taskAgentSessionId: 'replacement' });
+  };
+  await expect(finalize()(input)).rejects.toThrow('retry finalization');
+  expect(attempts.getActive(taskId)?.phase).toBe('running');
+  expect(attempts.hasStopVerification('attempt', 'worker', 1)).toBe(true);
+  expect(cached).toBeNull();
+  db.exec('DROP TRIGGER reject_superseded');
+  expect(await finalize()(input)).toEqual({ finalized: false, reason: 'superseded' });
+  expect(tasks.getTask(taskId)).toMatchObject({
+    status: 'open',
+    taskAgentSessionId: 'replacement',
+  });
+  expect(attempts.claim(taskId, 'next', 'replacement')?.generation).toBe(2);
+  expect(await finalize()(input)).toEqual({ finalized: false, reason: 'superseded' });
+  expect(attempts.getActive(taskId)?.id).toBe('next');
+  expect(cleanup).toHaveBeenCalledTimes(1);
 });

@@ -37,7 +37,7 @@ interface FrozenFinalization extends DirectFinalizationInput {
 }
 export type DirectFinalizationResult =
   | { finalized: true; attempt: DirectTaskAttempt; task: SpaceTask }
-  | { finalized: false; reason: 'unavailable' | 'unverified' };
+  | { finalized: false; reason: 'unavailable' | 'unverified' | 'superseded' };
 interface Dependencies {
   db: Database;
   reactiveDb?: ReactiveDatabase;
@@ -63,13 +63,21 @@ function matchesTarget(
   );
 }
 
-function readRequest(db: Database, input: DirectFinalizationInput): FrozenFinalization | null {
+function readRequest(
+  db: Database,
+  input: DirectFinalizationInput
+): (FrozenFinalization & { state: string | null }) | null {
   const row = db
     .prepare(
-      'SELECT finalization_json AS payload FROM direct_task_stop_requests WHERE attempt_id = ? AND session_id = ?'
+      'SELECT finalization_json AS payload, finalization_state AS state FROM direct_task_stop_requests WHERE attempt_id = ? AND session_id = ?'
     )
-    .get(input.attemptId, input.sessionId) as { payload: string | null } | null;
-  return row?.payload ? (JSON.parse(row.payload) as FrozenFinalization) : null;
+    .get(input.attemptId, input.sessionId) as {
+    payload: string | null;
+    state: string | null;
+  } | null;
+  return row?.payload
+    ? { ...(JSON.parse(row.payload) as FrozenFinalization), state: row.state }
+    : null;
 }
 
 function requestFinalization(db: Database, input: DirectFinalizationInput) {
@@ -81,28 +89,44 @@ function requestFinalization(db: Database, input: DirectFinalizationInput) {
     const unavailable = {
       reason: { finalized: false, reason: 'unavailable' } as DirectFinalizationResult,
     };
-    if (!matchesTarget(input, attempt, task) || !attempt || !task) return unavailable;
-    const lifecycleGeneration = tasks.getLifecycleGeneration(task.id)!;
+    if (
+      !attempt ||
+      attempt.sessionId !== input.sessionId ||
+      attempt.generation !== input.generation
+    )
+      return unavailable;
     const frozen = readRequest(db, input);
     if (frozen) {
-      const { fromStatus, lifecycleGeneration: frozenGeneration, ...savedInput } = frozen;
+      const {
+        fromStatus: _fromStatus,
+        lifecycleGeneration: frozenGeneration,
+        state,
+        ...savedInput
+      } = frozen;
+      if (!isDeepStrictEqual(JSON.parse(JSON.stringify(input)), savedInput)) return unavailable;
+      if (state === 'superseded')
+        return { reason: { finalized: false, reason: 'superseded' } as DirectFinalizationResult };
       if (
-        !isDeepStrictEqual(JSON.parse(JSON.stringify(input)), savedInput) ||
-        lifecycleGeneration !== frozenGeneration + (attempt.phase === 'stopped' ? 1 : 0)
+        state === 'completed' &&
+        attempt.phase === 'stopped' &&
+        matchesTarget(input, attempt, task) &&
+        task?.status === frozen.status &&
+        tasks.getLifecycleGeneration(task.id) === frozenGeneration + 1
       )
-        return unavailable;
-      if (attempt.phase === 'stopped' && task.status === frozen.status)
         return { reason: { finalized: true, attempt, task } as DirectFinalizationResult };
-      if (attempt.phase !== 'running' || task.status !== fromStatus) return unavailable;
+      if (attempt.phase !== 'running' || state !== null) return unavailable;
       return { value: attempt };
     }
     if (
+      !matchesTarget(input, attempt, task) ||
+      !task ||
       attempt.phase !== 'running' ||
       attempts.isStopRequested(attempt.id, attempt.sessionId) ||
       !['review', 'blocked', 'cancelled', 'stopped'].includes(input.status) ||
       !isValidTaskTransition(task.status, input.status)
     )
       return unavailable;
+    const lifecycleGeneration = tasks.getLifecycleGeneration(task.id)!;
     attempts.requestStop(attempt.id, attempt.sessionId, input.status);
     db.prepare(
       'UPDATE direct_task_stop_requests SET finalization_json = ? WHERE attempt_id = ? AND session_id = ?'
@@ -147,19 +171,26 @@ function commitFinalization(
       const task = current ? tasks.getTask(current.taskId) : null;
       const request = readRequest(db, input);
       if (
-        !matchesTarget(input, current, task) ||
         !current ||
-        !task ||
+        current.sessionId !== input.sessionId ||
+        current.generation !== input.generation ||
         !request ||
         request.generation !== current.generation ||
-        request.status !== input.status ||
-        tasks.getLifecycleGeneration(task.id) !==
-          request.lifecycleGeneration + (current.phase === 'stopped' ? 1 : 0)
+        request.status !== input.status
       )
         return { finalized: false, reason: 'unavailable' };
-      if (current.phase === 'stopped' && task.status === request.status)
+      if (request.state === 'superseded') return { finalized: false, reason: 'superseded' };
+      const matchesTask = matchesTarget(input, current, task) && !!task;
+      if (
+        request.state === 'completed' &&
+        current.phase === 'stopped' &&
+        matchesTask &&
+        task &&
+        task.status === request.status &&
+        tasks.getLifecycleGeneration(task.id) === request.lifecycleGeneration + 1
+      )
         return { finalized: true, attempt: current, task };
-      if (current.phase !== 'running' || task.status !== request.fromStatus)
+      if (current.phase !== 'running' || request.state !== null)
         return { finalized: false, reason: 'unavailable' };
       const stopped = attempts.finishRequestedStop(
         current.id,
@@ -168,6 +199,18 @@ function commitFinalization(
         token
       );
       if (!stopped) return { finalized: false, reason: 'unavailable' };
+      const mark = db.prepare(
+        'UPDATE direct_task_stop_requests SET finalization_state = ? WHERE attempt_id = ? AND session_id = ?'
+      );
+      if (
+        !matchesTask ||
+        !task ||
+        task.status !== request.fromStatus ||
+        tasks.getLifecycleGeneration(task.id) !== request.lifecycleGeneration
+      ) {
+        mark.run('superseded', current.id, current.sessionId);
+        return { finalized: false, reason: 'superseded' };
+      }
       const { updates, reopened } = prepareSpaceTaskStatusUpdate(
         task,
         request.status,
@@ -190,6 +233,7 @@ function commitFinalization(
       if (!updated) throw new Error('Direct finalization lost its transaction admission');
       if (reopened) onTaskReopened?.(task.id);
       if (isTerminalTaskStatus(request.status)) onTerminalTransition?.(task.id, task.status);
+      mark.run('completed', current.id, current.sessionId);
       return { finalized: true, attempt: stopped, task: updated };
     }, 'immediate')();
     reactiveDb?.commitTransaction();
