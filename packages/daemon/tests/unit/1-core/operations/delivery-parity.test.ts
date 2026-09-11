@@ -1,3 +1,4 @@
+import { listTaskCores } from '../../../../src/storage/tasks/list-tasks';
 import { createStandaloneTask } from '../../../../src/storage/tasks/create-task';
 import { readTaskCore } from '../../../../src/storage/tasks/task-reader';
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
@@ -51,7 +52,8 @@ describe('shared operation delivery parity', () => {
       mailbox.jobQueue,
       (taskId) => readTaskCore(mailbox.db, taskId),
       (input, creatorSessionId) =>
-        createStandaloneTask(mailbox.db, input, creatorSessionId, () => {})
+        createStandaloneTask(mailbox.db, input, creatorSessionId, () => {}),
+      (input) => listTaskCores(mailbox.db, input)
     );
     await Promise.all(transports.map((transport) => transport.initialize()));
   });
@@ -88,7 +90,8 @@ describe('shared operation delivery parity', () => {
             mailbox.jobQueue,
             (taskId) => readTaskCore(mailbox.db, taskId),
             (input, creatorSessionId) =>
-              createStandaloneTask(mailbox.db, input, creatorSessionId, () => {})
+              createStandaloneTask(mailbox.db, input, creatorSessionId, () => {}),
+            (input) => listTaskCores(mailbox.db, input)
           ),
           () => ({
             sessionId: sender.id,
