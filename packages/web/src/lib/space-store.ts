@@ -2393,9 +2393,6 @@ class SpaceStore {
       autonomyLevel: params.autonomyLevel,
       model: params.model,
       provider: params.provider,
-      // The caller already resolved template defaults into its own form state
-      // before calling create, so an omitted tools/modelPool here means the
-      // user explicitly cleared it -- never "inherit from templateKey".
       modelPool: params.modelPool ?? null,
       thinkingLevel: params.thinkingLevel,
       settingSources: params.settingSources,
