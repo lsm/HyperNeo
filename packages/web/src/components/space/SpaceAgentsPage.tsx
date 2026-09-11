@@ -94,7 +94,6 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
   const handledLinkRef = useRef<string | null>(null);
   const lastLinkRef = useRef<string | null>(null);
   const sawFirstLinkRef = useRef(false);
-  const pendingNavigationRef = useRef(false);
   const deleteGenerationRef = useRef(0);
   const selectedIdRef = useRef<string | null>(null);
   selectedIdRef.current = selectedId;
@@ -149,7 +148,15 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
     const previousLink = lastLinkRef.current;
     lastLinkRef.current = link;
     if (!sawFirstLinkRef.current) sawFirstLinkRef.current = true;
-    else if (previousLink !== link) pendingNavigationRef.current = true;
+    else if (previousLink !== link) {
+      formGenerationRef.current += 1;
+      deleteGenerationRef.current += 1;
+      closeForm();
+      setSaving(false);
+      setDeleting(null);
+      setDeleteBusy(false);
+      setDeleteError(null);
+    }
 
     if (!link) {
       appliedLinkRef.current = null;
@@ -170,16 +177,6 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
     appliedLinkRef.current = link;
     handledLinkRef.current = link;
     setSelectedId(matched.id);
-
-    if (!pendingNavigationRef.current) return;
-    pendingNavigationRef.current = false;
-    formGenerationRef.current += 1;
-    deleteGenerationRef.current += 1;
-    closeForm();
-    setSaving(false);
-    setDeleting(null);
-    setDeleteBusy(false);
-    setDeleteError(null);
   }, [spaceId, selectedHandle, agentSignature]);
   const selectedTemplateSources = formTemplateKey
     ? (templateOptions().find((template) => template.key === formTemplateKey)?.settingSources ??

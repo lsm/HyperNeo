@@ -1189,6 +1189,56 @@ describe('SpaceAgentsPage', () => {
     expect(getByTestId('agent-detail').textContent).toContain('beta');
   });
 
+  it('ignores a create that resolves after navigating to an unmatched handle', async () => {
+    mockAgents.value = [makeAgent('alpha')];
+    let resolveCreate: (agent: SpaceAgent) => void = () => {};
+    mockCreate.mockReturnValueOnce(
+      new Promise<SpaceAgent>((resolve) => {
+        resolveCreate = resolve;
+      })
+    );
+    const { getByTestId, queryByTestId, rerender } = render(
+      <SpaceAgentsPage spaceId="space-1" selectedHandle="alpha" />
+    );
+    await waitFor(() => expect(getByTestId('agent-detail')).toBeTruthy());
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'Late' } });
+    fireEvent.submit(getByTestId('agent-form'));
+
+    rerender(<SpaceAgentsPage spaceId="space-1" selectedHandle="ghost" />);
+    await waitFor(() => expect(getByTestId('agent-deep-link-missing')).toBeTruthy());
+
+    resolveCreate(makeAgent('late'));
+    await tick();
+    expect(queryByTestId('agent-detail')).toBeNull();
+    expect(getByTestId('agent-deep-link-missing')).toBeTruthy();
+  });
+
+  it('ignores a delete that resolves after navigating to an unmatched handle', async () => {
+    mockAgents.value = [makeAgent('alpha'), makeAgent('beta')];
+    let rejectRemove: (err: Error) => void = () => {};
+    mockRemove.mockReturnValueOnce(
+      new Promise<void>((_resolve, reject) => {
+        rejectRemove = reject;
+      })
+    );
+    const { getByTestId, queryByTestId, rerender } = render(
+      <SpaceAgentsPage spaceId="space-1" selectedHandle="alpha" />
+    );
+    await waitFor(() => expect(getByTestId('agent-detail')).toBeTruthy());
+
+    fireEvent.click(getByTestId('agent-delete-button'));
+    fireEvent.click(getByTestId('confirm-delete-agent'));
+
+    rerender(<SpaceAgentsPage spaceId="space-1" selectedHandle="ghost" />);
+    await waitFor(() => expect(getByTestId('agent-deep-link-missing')).toBeTruthy());
+
+    rejectRemove(new Error('delete failed'));
+    await tick();
+    expect(queryByTestId('confirm-delete-agent')).toBeNull();
+  });
+
   it('ignores an agent from the previous space while the store still holds it', async () => {
     mockAgents.value = [makeAgent('a-reviewer', { handle: 'reviewer' })];
     const { queryByTestId, rerender } = render(
