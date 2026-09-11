@@ -28,6 +28,11 @@ import { Logger } from '../../logger.ts';
 import type { EvolutionScopeService } from '../evolution-scope-service.ts';
 import { arraysEqual } from '../../utils/array-utils.ts';
 
+export type TaskExecutionPointers = Pick<
+  UpdateSpaceTaskParams,
+  'workflowRunId' | 'taskAgentSessionId'
+>;
+
 export type WorkspacePathResolver = (rawPath: string) => Promise<string>;
 
 const log = new Logger('space-task-manager');
@@ -439,49 +444,81 @@ export class SpaceTaskManager {
     return this.taskRepo.deleteTask(taskId);
   }
 
+  private validateTaskFieldGuards(task: SpaceTask, params: UpdateSpaceTaskParams): void {
+    if (params.status !== undefined && params.status !== task.status) {
+      throw new Error('Use setTaskStatus to change task status — it enforces valid transitions');
+    }
+
+    const targetWorkspacePath = params.workspacePath;
+    if (targetWorkspacePath !== undefined && targetWorkspacePath !== task.workspacePath) {
+      if (this.hasActiveTaskSession(task)) {
+        throw new Error(
+          `Cannot change task workspace path: task ${task.id} has an active or started agent session`
+        );
+      }
+      const worktree = this.worktreeRepo.getByTaskId(this.spaceId, task.id);
+      if (worktree) {
+        throw new Error(
+          `Cannot change task workspace path: task ${task.id} already has a worktree at ${worktree.path}`
+        );
+      }
+    }
+  }
+
   async updateTask(
     taskId: string,
     params: UpdateSpaceTaskParams,
     options?: {
+      prepareExecutionPointers?: (
+        current: Readonly<SpaceTask>,
+        requested: Readonly<TaskExecutionPointers>
+      ) => TaskExecutionPointers;
       onCascadedTasks?: (cascaded: SpaceTask[]) => Promise<void>;
     }
   ): Promise<SpaceTask> {
     const resolvedParams = await this.resolveWorkspacePathParam(params);
 
-    const task = await this.getTask(taskId);
+    let task = await this.getTask(taskId);
     if (!task) {
       throw new Error(`Task not found: ${taskId}`);
     }
 
-    if (resolvedParams.status !== undefined && resolvedParams.status !== task.status) {
-      throw new Error('Use setTaskStatus to change task status — it enforces valid transitions');
-    }
-
-    const targetWorkspacePath = resolvedParams.workspacePath;
-    if (targetWorkspacePath !== undefined && targetWorkspacePath !== task.workspacePath) {
-      if (this.hasActiveTaskSession(task)) {
-        throw new Error(
-          `Cannot change task workspace path: task ${taskId} has an active or started agent session`
-        );
-      }
-      const worktree = this.worktreeRepo.getByTaskId(this.spaceId, taskId);
-      if (worktree) {
-        throw new Error(
-          `Cannot change task workspace path: task ${taskId} already has a worktree at ${worktree.path}`
-        );
-      }
-    }
+    this.validateTaskFieldGuards(task, resolvedParams);
 
     if (resolvedParams.dependsOn !== undefined) {
       await this.validateDependencyIds(resolvedParams.dependsOn, taskId);
     }
 
+    const { status: _status, ...repoParams } = resolvedParams;
+    let updated: SpaceTask | null;
+    const prepare = options?.prepareExecutionPointers;
+    if (prepare) {
+      const quietRepo = new SpaceTaskRepository(this.db);
+      const written = this.db.transaction(() => {
+        const current = quietRepo.getTask(taskId);
+        if (!current || current.spaceId !== this.spaceId)
+          throw new Error(`Task not found: ${taskId}`);
+        this.validateTaskFieldGuards(current, resolvedParams);
+        const { workflowRunId, taskAgentSessionId, ...fields } = repoParams;
+        const pointers = prepare(current, { workflowRunId, taskAgentSessionId });
+        const result = quietRepo.updateTask(taskId, {
+          ...fields,
+          workflowRunId: pointers.workflowRunId,
+          taskAgentSessionId: pointers.taskAgentSessionId,
+        });
+        if (!result) throw new Error(`Failed to update task: ${taskId}`);
+        return { previous: current, updated: result };
+      }, 'immediate')();
+      task = written.previous;
+      updated = written.updated;
+      this.reactiveDb?.notifyChange('space_tasks');
+    } else {
+      updated = this.taskRepo.updateTask(taskId, repoParams);
+    }
     const depsChanged =
       resolvedParams.dependsOn !== undefined &&
       !arraysEqual(task.dependsOn ?? [], resolvedParams.dependsOn);
 
-    const { status: _status, ...repoParams } = resolvedParams;
-    const updated = this.taskRepo.updateTask(taskId, repoParams);
     if (!updated) {
       throw new Error(`Failed to update task: ${taskId}`);
     }
