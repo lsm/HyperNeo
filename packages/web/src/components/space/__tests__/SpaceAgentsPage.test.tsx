@@ -26,7 +26,12 @@ const {
   mockRemove: vi.fn().mockResolvedValue(undefined),
   mockTeardown: vi.fn(),
   mockTemplates: {
-    value: [] as Array<{ key: string; displayName: string; settingSources?: string[] | null }>,
+    value: [] as Array<{
+      key: string;
+      displayName: string;
+      settingSources?: string[] | null;
+      toolPermissions?: Record<string, unknown>;
+    }>,
   },
   mockFetchTemplates: vi.fn().mockResolvedValue(undefined),
   mockOnceConnected: vi.fn(),
@@ -1329,6 +1334,402 @@ describe('SpaceAgentsPage', () => {
     resolveRemove();
     await tick();
     expect(getByTestId('agent-detail').textContent).toContain('beta');
+  });
+
+  it('augments the template tools instead of replacing them', async () => {
+    mockTemplates.value = [
+      {
+        key: 'reviewer.v1',
+        displayName: 'Reviewer',
+        toolPermissions: { tools: ['Read', 'Bash(gh pr view:*)'] },
+      },
+    ];
+    const { getByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'Rev' } });
+    fireEvent.input(getByTestId('agent-template-select'), { target: { value: 'reviewer.v1' } });
+    fireEvent.input(getByTestId('tools-editor-scoped-input'), {
+      target: { value: 'Bash(ls:*)' },
+    });
+    fireEvent.click(getByTestId('tools-editor-scoped-add'));
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalled());
+    expect(mockCreate.mock.calls[0][0].tools).toEqual(['Read', 'Bash(gh pr view:*)', 'Bash(ls:*)']);
+  });
+
+  it('keeps the template baseline after resetting tools to inherited', async () => {
+    mockTemplates.value = [
+      {
+        key: 'reviewer.v1',
+        displayName: 'Reviewer',
+        toolPermissions: { tools: ['Read', 'Bash(gh pr view:*)'] },
+      },
+    ];
+    const { getByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'Rev' } });
+    fireEvent.input(getByTestId('agent-template-select'), { target: { value: 'reviewer.v1' } });
+    fireEvent.click(getByTestId('tools-editor-preset-read-only'));
+    fireEvent.click(getByTestId('tools-editor-preset-inherit-defaults'));
+    fireEvent.input(getByTestId('tools-editor-scoped-input'), {
+      target: { value: 'Bash(ls:*)' },
+    });
+    fireEvent.click(getByTestId('tools-editor-scoped-add'));
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalled());
+    expect(mockCreate.mock.calls[0][0].tools).toEqual(['Read', 'Bash(gh pr view:*)', 'Bash(ls:*)']);
+  });
+
+  it('resets to an empty baseline when editing an agent with no template', async () => {
+    mockAgents.value = [makeAgent('alpha', { tools: ['Read', 'Grep'] })];
+    const { getByTestId, getByText } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('agent-row-alpha'));
+    fireEvent.click(getByText('Edit'));
+    fireEvent.click(getByTestId('tools-editor-preset-inherit-defaults'));
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalled());
+    expect(mockUpdate.mock.calls[0][1].tools).toBeNull();
+  });
+
+  it('rebases onto the new template when the selection changes', async () => {
+    mockTemplates.value = [
+      { key: 'a.v1', displayName: 'A', toolPermissions: { tools: ['Read', 'Bash(a:*)'] } },
+      { key: 'b.v1', displayName: 'B', toolPermissions: { tools: ['Grep', 'Bash(b:*)'] } },
+    ];
+    const { getByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'Rev' } });
+    fireEvent.input(getByTestId('agent-template-select'), { target: { value: 'a.v1' } });
+    fireEvent.input(getByTestId('tools-editor-scoped-input'), {
+      target: { value: 'Bash(mine:*)' },
+    });
+    fireEvent.click(getByTestId('tools-editor-scoped-add'));
+    fireEvent.input(getByTestId('agent-template-select'), { target: { value: 'b.v1' } });
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalled());
+    expect(mockCreate.mock.calls[0][0].tools).toEqual(['Grep', 'Bash(b:*)', 'Bash(mine:*)']);
+    expect(mockCreate.mock.calls[0][0].templateKey).toBe('b.v1');
+  });
+
+  it('does not add template tools on top of an explicit preset', async () => {
+    mockTemplates.value = [
+      { key: 'qa.v1', displayName: 'QA', toolPermissions: { tools: ['Bash'] } },
+    ];
+    const { getByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'Restricted' } });
+    fireEvent.click(getByTestId('tools-editor-preset-read-only'));
+    fireEvent.input(getByTestId('agent-template-select'), { target: { value: 'qa.v1' } });
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalled());
+    expect(mockCreate.mock.calls[0][0].tools).toEqual(['Read', 'Grep', 'Glob']);
+  });
+
+  it('forgets removals after inheriting defaults', async () => {
+    mockTemplates.value = [
+      { key: 'a.v1', displayName: 'A', toolPermissions: { tools: ['Read', 'Bash'] } },
+      { key: 'b.v1', displayName: 'B', toolPermissions: { tools: ['Bash', 'Grep'] } },
+    ];
+    const { getByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'Rev' } });
+    fireEvent.input(getByTestId('agent-template-select'), { target: { value: 'a.v1' } });
+    fireEvent.input(getByTestId('tools-editor-scoped-input'), { target: { value: 'Bash(tmp:*)' } });
+    fireEvent.click(getByTestId('tools-editor-scoped-add'));
+    fireEvent.click(
+      getByTestId('tools-editor-chip-Bash').querySelector('input') as HTMLInputElement
+    );
+    fireEvent.click(getByTestId('tools-editor-preset-inherit-defaults'));
+    fireEvent.input(getByTestId('agent-template-select'), { target: { value: 'b.v1' } });
+    fireEvent.input(getByTestId('tools-editor-scoped-input'), {
+      target: { value: 'Bash(mine:*)' },
+    });
+    fireEvent.click(getByTestId('tools-editor-scoped-add'));
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalled());
+    expect(mockCreate.mock.calls[0][0].tools).toContain('Bash');
+  });
+
+  it('submits a removal-only override rather than letting the baseline return', async () => {
+    mockTemplates.value = [
+      { key: 'a.v1', displayName: 'A', toolPermissions: { tools: ['Read', 'Bash'] } },
+      { key: 'b.v1', displayName: 'B', toolPermissions: { tools: ['Bash', 'Grep'] } },
+    ];
+    const { getByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'Rev' } });
+    fireEvent.input(getByTestId('agent-template-select'), { target: { value: 'a.v1' } });
+    fireEvent.input(getByTestId('tools-editor-scoped-input'), { target: { value: 'Bash(tmp:*)' } });
+    fireEvent.click(getByTestId('tools-editor-scoped-add'));
+    fireEvent.click(
+      getByTestId('tools-editor-chip-Bash').querySelector('input') as HTMLInputElement
+    );
+    fireEvent.click(getByTestId('tools-editor-scoped-remove-Bash(tmp:*)'));
+    fireEvent.input(getByTestId('agent-template-select'), { target: { value: 'b.v1' } });
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalled());
+    expect(mockCreate.mock.calls[0][0].tools).toEqual(['Grep']);
+  });
+
+  it('drops template scoped entries when an explicit preset is chosen', async () => {
+    mockTemplates.value = [
+      {
+        key: 'reviewer.v1',
+        displayName: 'Reviewer',
+        toolPermissions: { tools: ['Read', 'Bash(gh pr view:*)', 'Bash(jq:*)'] },
+      },
+    ];
+    const { getByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'Rev' } });
+    fireEvent.input(getByTestId('agent-template-select'), { target: { value: 'reviewer.v1' } });
+    fireEvent.click(getByTestId('tools-editor-preset-read-only'));
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalled());
+    expect(mockCreate.mock.calls[0][0].tools).toEqual(['Read', 'Grep', 'Glob']);
+  });
+
+  it('keeps a user-added scoped entry through an explicit preset', async () => {
+    mockTemplates.value = [
+      { key: 'reviewer.v1', displayName: 'Reviewer', toolPermissions: { tools: ['Read'] } },
+    ];
+    const { getByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'Rev' } });
+    fireEvent.input(getByTestId('agent-template-select'), { target: { value: 'reviewer.v1' } });
+    fireEvent.input(getByTestId('tools-editor-scoped-input'), { target: { value: 'Bash(ls:*)' } });
+    fireEvent.click(getByTestId('tools-editor-scoped-add'));
+    fireEvent.click(getByTestId('tools-editor-preset-read-only'));
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalled());
+    expect(mockCreate.mock.calls[0][0].tools).toEqual(['Read', 'Grep', 'Glob', 'Bash(ls:*)']);
+  });
+
+  it('returns to inherited when an edit restores the template baseline', async () => {
+    mockTemplates.value = [
+      { key: 'reviewer.v1', displayName: 'Reviewer', toolPermissions: { tools: ['Read'] } },
+    ];
+    const { getByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'Rev' } });
+    fireEvent.input(getByTestId('agent-template-select'), { target: { value: 'reviewer.v1' } });
+    fireEvent.input(getByTestId('tools-editor-scoped-input'), { target: { value: 'Bash(ls:*)' } });
+    fireEvent.click(getByTestId('tools-editor-scoped-add'));
+    fireEvent.click(getByTestId('tools-editor-scoped-remove-Bash(ls:*)'));
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalled());
+    expect(mockCreate.mock.calls[0][0].tools).toBeUndefined();
+  });
+
+  it('adopts a new template after a preset is edited back to the baseline', async () => {
+    mockTemplates.value = [
+      { key: 'bash.v1', displayName: 'Bash', toolPermissions: { tools: ['Bash'] } },
+      { key: 'ro.v1', displayName: 'ReadOnly', toolPermissions: { tools: ['Read'] } },
+    ];
+    const { getByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'Rev' } });
+    fireEvent.input(getByTestId('agent-template-select'), { target: { value: 'bash.v1' } });
+    fireEvent.click(getByTestId('tools-editor-preset-read-only'));
+    fireEvent.click(
+      getByTestId('tools-editor-chip-Bash').querySelector('input') as HTMLInputElement
+    );
+    for (const tool of ['Read', 'Grep', 'Glob']) {
+      fireEvent.click(
+        getByTestId(`tools-editor-chip-${tool}`).querySelector('input') as HTMLInputElement
+      );
+    }
+    fireEvent.input(getByTestId('agent-template-select'), { target: { value: 'ro.v1' } });
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalled());
+    expect(mockCreate.mock.calls[0][0].tools).toBeUndefined();
+  });
+
+  it('keeps a removal tombstone when an edit empties the list', async () => {
+    mockTemplates.value = [
+      { key: 'a.v1', displayName: 'A', toolPermissions: { tools: ['Bash'] } },
+      { key: 'b.v1', displayName: 'B', toolPermissions: { tools: ['Bash', 'Grep'] } },
+    ];
+    const { getByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'Rev' } });
+    fireEvent.input(getByTestId('agent-template-select'), { target: { value: 'a.v1' } });
+    fireEvent.input(getByTestId('tools-editor-scoped-input'), { target: { value: 'Bash(tmp:*)' } });
+    fireEvent.click(getByTestId('tools-editor-scoped-add'));
+    fireEvent.click(
+      getByTestId('tools-editor-chip-Bash').querySelector('input') as HTMLInputElement
+    );
+    fireEvent.input(getByTestId('agent-template-select'), { target: { value: '' } });
+    fireEvent.click(getByTestId('tools-editor-scoped-remove-Bash(tmp:*)'));
+    fireEvent.input(getByTestId('agent-template-select'), { target: { value: 'b.v1' } });
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalled());
+    expect(mockCreate.mock.calls[0][0].tools).toEqual(['Grep']);
+  });
+
+  it('keeps a scoped entry added after a preset through the next preset', async () => {
+    const { getByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'Rev' } });
+    fireEvent.click(getByTestId('tools-editor-preset-read-only'));
+    fireEvent.input(getByTestId('tools-editor-scoped-input'), { target: { value: 'Bash(ls:*)' } });
+    fireEvent.click(getByTestId('tools-editor-scoped-add'));
+    fireEvent.click(getByTestId('tools-editor-preset-custom'));
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalled());
+    expect(mockCreate.mock.calls[0][0].tools).toContain('Bash(ls:*)');
+  });
+
+  it('submits an empty removal override rather than letting the tool return', async () => {
+    mockTemplates.value = [{ key: 'a.v1', displayName: 'A', toolPermissions: { tools: ['Bash'] } }];
+    const { getByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'Rev' } });
+    fireEvent.input(getByTestId('agent-template-select'), { target: { value: 'a.v1' } });
+    fireEvent.input(getByTestId('tools-editor-scoped-input'), { target: { value: 'Bash(tmp:*)' } });
+    fireEvent.click(getByTestId('tools-editor-scoped-add'));
+    fireEvent.click(
+      getByTestId('tools-editor-chip-Bash').querySelector('input') as HTMLInputElement
+    );
+    fireEvent.click(getByTestId('tools-editor-scoped-remove-Bash(tmp:*)'));
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalled());
+    expect(mockCreate.mock.calls[0][0].tools).toEqual([]);
+  });
+
+  it('drops tombstones when an explicit preset is edited back to the baseline', async () => {
+    mockTemplates.value = [
+      { key: 'a.v1', displayName: 'A', toolPermissions: { tools: ['Bash'] } },
+      { key: 'b.v1', displayName: 'B', toolPermissions: { tools: ['Bash', 'Grep'] } },
+    ];
+    const { getByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'Rev' } });
+    fireEvent.input(getByTestId('agent-template-select'), { target: { value: 'a.v1' } });
+    fireEvent.input(getByTestId('tools-editor-scoped-input'), { target: { value: 'Bash(tmp:*)' } });
+    fireEvent.click(getByTestId('tools-editor-scoped-add'));
+    fireEvent.click(
+      getByTestId('tools-editor-chip-Bash').querySelector('input') as HTMLInputElement
+    );
+    fireEvent.click(getByTestId('tools-editor-preset-read-only'));
+    fireEvent.click(
+      getByTestId('tools-editor-chip-Bash').querySelector('input') as HTMLInputElement
+    );
+    for (const tool of ['Read', 'Grep', 'Glob']) {
+      fireEvent.click(
+        getByTestId(`tools-editor-chip-${tool}`).querySelector('input') as HTMLInputElement
+      );
+    }
+    fireEvent.click(getByTestId('tools-editor-scoped-remove-Bash(tmp:*)'));
+    fireEvent.input(getByTestId('agent-template-select'), { target: { value: 'b.v1' } });
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalled());
+    expect(mockCreate.mock.calls[0][0].tools).toBeUndefined();
+  });
+
+  it('submits an emptied explicit preset as an override', async () => {
+    mockTemplates.value = [{ key: 'a.v1', displayName: 'A', toolPermissions: { tools: ['Bash'] } }];
+    const { getByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'Rev' } });
+    fireEvent.input(getByTestId('agent-template-select'), { target: { value: 'a.v1' } });
+    fireEvent.click(getByTestId('tools-editor-preset-read-only'));
+    for (const tool of ['Read', 'Grep', 'Glob']) {
+      fireEvent.click(
+        getByTestId(`tools-editor-chip-${tool}`).querySelector('input') as HTMLInputElement
+      );
+    }
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalled());
+    expect(mockCreate.mock.calls[0][0].tools).toEqual([]);
+  });
+
+  it('keeps a re-added baseline scope through a later preset', async () => {
+    mockTemplates.value = [
+      {
+        key: 'a.v1',
+        displayName: 'A',
+        toolPermissions: { tools: ['Read', 'Bash(gh pr view:*)'] },
+      },
+    ];
+    const { getByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'Rev' } });
+    fireEvent.input(getByTestId('agent-template-select'), { target: { value: 'a.v1' } });
+    fireEvent.click(getByTestId('tools-editor-preset-read-only'));
+    fireEvent.input(getByTestId('tools-editor-scoped-input'), {
+      target: { value: 'Bash(gh pr view:*)' },
+    });
+    fireEvent.click(getByTestId('tools-editor-scoped-add'));
+    fireEvent.click(getByTestId('tools-editor-preset-custom'));
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalled());
+    expect(mockCreate.mock.calls[0][0].tools).toContain('Bash(gh pr view:*)');
+  });
+
+  it('still omits tools when a template is chosen but untouched', async () => {
+    mockTemplates.value = [
+      { key: 'reviewer.v1', displayName: 'Reviewer', toolPermissions: { tools: ['Read'] } },
+    ];
+    const { getByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'Rev' } });
+    fireEvent.input(getByTestId('agent-template-select'), { target: { value: 'reviewer.v1' } });
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalled());
+    expect(mockCreate.mock.calls[0][0].tools).toBeUndefined();
+  });
+
+  it('does not reseed tools once the user has overridden them', async () => {
+    mockTemplates.value = [
+      { key: 'reviewer.v1', displayName: 'Reviewer', toolPermissions: { tools: ['Read'] } },
+    ];
+    const { getByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'Rev' } });
+    fireEvent.click(getByTestId('tools-editor-preset-read-only'));
+    fireEvent.input(getByTestId('agent-template-select'), { target: { value: 'reviewer.v1' } });
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalled());
+    expect(mockCreate.mock.calls[0][0].tools).toEqual(['Read', 'Grep', 'Glob']);
   });
 
   it('clears a description on edit rather than dropping the field', async () => {
