@@ -3,6 +3,7 @@ import { expect, mock, test } from 'bun:test';
 import type { SpaceTask } from '@hyperneo/shared';
 import {
   createPendingCompletionOperation,
+  dispatchPendingCompletion,
   hasCommittedPendingApproval,
   normalizePendingCompletion,
   readPendingCompletionResult,
@@ -203,4 +204,21 @@ test('superseded dispatch never becomes a committed warning', async () => {
   expect(dependencies.getTask).not.toHaveBeenCalled();
   expect(dependencies.warn).not.toHaveBeenCalled();
   expect(dependencies.updateTask).not.toHaveBeenCalled();
+});
+
+test('direct composition skips approval effects and retains rejected result without reread', async () => {
+  const { dependencies } = setup();
+  const rejected = { ...decision, approved: false };
+  await dispatchPendingCompletion(
+    rejected,
+    dependencies.dispatchApproval,
+    dependencies.getTask,
+    dependencies.updateTask,
+    dependencies.warn
+  );
+  expect(dependencies.dispatchApproval).not.toHaveBeenCalled();
+  expect(
+    await readPendingCompletionResult(dependencies.getTask, rejected, { reason: reopened })
+  ).toEqual({ value: reopened });
+  expect(dependencies.getTask).not.toHaveBeenCalled();
 });
