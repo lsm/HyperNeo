@@ -14,7 +14,7 @@ import { PendingCompletionSupersededError } from '../../../../src/lib/space/oper
 import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager';
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
-import { runMigrations } from '../../../../src/storage/schema/index.ts';
+import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
@@ -32,6 +32,7 @@ function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
   runMigrations(db, () => {});
+  createTables(db);
   db.prepare(
     `INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions,
      allowed_models, session_ids, slug, status, created_at, updated_at)
