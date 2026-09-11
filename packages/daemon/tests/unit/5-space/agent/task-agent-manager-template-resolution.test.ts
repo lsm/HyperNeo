@@ -180,7 +180,7 @@ function makeTemplateResolutionHarness(
       getById: (id: string) => registryAgents.find((agent) => agent.id === id) ?? null,
     },
     templateRepo: {
-      getByKey: (key: string) => {
+      getByKey: (_spaceId: string, key: string) => {
         templateRepoCalls.push(key);
         return stored.get(key) ?? null;
       },

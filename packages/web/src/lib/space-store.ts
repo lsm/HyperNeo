@@ -2445,11 +2445,12 @@ class SpaceStore {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
 
+    const spaceId = this.requireTemplateSpaceId();
     const { template } = await hub.request<{ template: SpaceAgentTemplate }>(
       'spaceAgent.createTemplate',
-      { ...params, spaceId: this.requireTemplateSpaceId() }
+      { ...params, spaceId }
     );
-    this.upsertAgentTemplate(template);
+    if (this.spaceId.value === spaceId) this.upsertAgentTemplate(template);
     return template;
   }
 
@@ -2460,12 +2461,13 @@ class SpaceStore {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
 
+    const spaceId = this.requireTemplateSpaceId();
     const { template } = await hub.request<{ template: SpaceAgentTemplate | null }>(
       'spaceAgent.updateTemplate',
-      { key, ...params, spaceId: this.requireTemplateSpaceId() }
+      { key, ...params, spaceId }
     );
     if (!template) throw new Error(`Template ${key} was modified concurrently`);
-    this.upsertAgentTemplate(template);
+    if (this.spaceId.value === spaceId) this.upsertAgentTemplate(template);
     return template;
   }
 
