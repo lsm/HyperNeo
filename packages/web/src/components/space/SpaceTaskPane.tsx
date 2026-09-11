@@ -104,7 +104,7 @@ function getTaskActionLabel(
     return label;
   }
   if (label.toLowerCase().includes('reopen')) {
-    return 'Reopen workflow';
+    return target === 'open' ? 'Reopen workflow as Open' : 'Reopen workflow';
   }
   return target === 'in_progress' ? 'Resume workflow' : 'Reopen workflow';
 }
