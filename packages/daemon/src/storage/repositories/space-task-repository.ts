@@ -422,7 +422,11 @@ export class SpaceTaskRepository {
     return row?.count ?? 0;
   }
 
-  updateTask(id: string, params: InternalUpdateSpaceTaskParams): SpaceTask | null {
+  updateTask(
+    id: string,
+    params: InternalUpdateSpaceTaskParams,
+    expectedStatus?: SpaceTaskStatus
+  ): SpaceTask | null {
     if (this.hasTaskWithoutSpace(id)) return null;
     const fields: string[] = [];
     const values: SQLiteValue[] = [];
@@ -618,10 +622,11 @@ export class SpaceTaskRepository {
       fields.push('updated_at = ?');
       values.push(Date.now());
       values.push(id);
+      if (expectedStatus !== undefined) values.push(expectedStatus);
       const stmt = this.db.prepare(
-        `UPDATE space_tasks SET ${fields.join(', ')} WHERE space_id IS NOT NULL AND id = ?`
+        `UPDATE space_tasks SET ${fields.join(', ')} WHERE space_id IS NOT NULL AND id = ?${expectedStatus === undefined ? '' : ' AND status = ?'}`
       );
-      stmt.run(...values);
+      if (stmt.run(...values).changes === 0) return null;
       this.upsertTaskSearchRow(id);
       if (params.status === 'archived') {
         this.deleteTaskMessageRows(id);

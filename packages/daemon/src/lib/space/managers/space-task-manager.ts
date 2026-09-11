@@ -323,7 +323,7 @@ export class SpaceTaskManager {
   async publishTask(taskId: string): Promise<SpaceTask> {
     const task = await publishTask(
       async () => (await this.getTask(taskId))?.status,
-      () => this.setTaskStatus(taskId, 'open')
+      async () => this.taskRepo.updateTask(taskId, { status: 'open' }, 'draft') ?? 'not_draft'
     );
     if (task === 'not_draft') {
       throw new Error('Only draft tasks can be published');

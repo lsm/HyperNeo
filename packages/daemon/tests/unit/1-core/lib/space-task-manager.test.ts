@@ -1,5 +1,5 @@
 import { Database } from '../../../../src/storage/sqlite-compat';
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import {
   isValidSpaceTaskTransition,
   SpaceTaskManager,
@@ -111,6 +111,24 @@ describe('SpaceTaskManager', () => {
     it('publishes a draft task', async () => {
       const task = await manager.createTask({ title: 'Draft', description: '', status: 'draft' });
       expect((await manager.publishTask(task.id)).status).toBe('open');
+    });
+
+    it('rejects publication when the draft completes after admission reads it', async () => {
+      const task = await manager.createTask({ title: 'Draft', description: '', status: 'draft' });
+      const read = manager.getTask.bind(manager);
+      const spy = spyOn(manager, 'getTask').mockImplementationOnce(async (id) => {
+        const snapshot = await read(id);
+        db.prepare("UPDATE space_tasks SET status = 'done', result = 'Finished' WHERE id = ?").run(
+          id
+        );
+        return snapshot;
+      });
+      try {
+        await expect(manager.publishTask(task.id)).rejects.toThrow('Only draft');
+        expect(await read(task.id)).toMatchObject({ status: 'done', result: 'Finished' });
+      } finally {
+        spy.mockRestore();
+      }
     });
 
     it.each(['open', 'done', 'cancelled'] as const)(
