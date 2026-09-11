@@ -10,6 +10,7 @@ import { spaceAgentStore } from '../../lib/space-agent-store';
 import { spaceStore } from '../../lib/space-store';
 import { ModelPoolEditor } from './ModelPoolEditor';
 import { type ToolsSelection, ToolsEditor } from './ToolsEditor';
+import { KNOWN_TOOLS } from '@hyperneo/shared';
 import { Button } from '../ui/Button';
 import { ConfirmModal } from '../ui/ConfirmModal';
 import { EmptyState } from '../ui/EmptyState';
@@ -39,6 +40,12 @@ function poolFromAgent(agent: SpaceAgent): AgentModelPoolEntry[] {
       weight: 100,
     },
   ];
+}
+
+const KNOWN_TOOL_SET = new Set<string>(KNOWN_TOOLS);
+
+function scopedToolEntries(tools: string[]): string[] {
+  return tools.filter((tool) => !KNOWN_TOOL_SET.has(tool));
 }
 
 function statusOptions(handle: string): SpaceAgentStatus[] {
@@ -366,7 +373,16 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
                 <ToolsEditor
                   tools={formTools.tools}
                   toolsOverridden={formTools.toolsOverridden}
-                  onChange={setFormTools}
+                  onChange={(next) => {
+                    if (!next.toolsOverridden) {
+                      setFormTools(next);
+                      return;
+                    }
+                    const scoped = scopedToolEntries(formTools.tools).filter(
+                      (tool) => !next.tools.includes(tool)
+                    );
+                    setFormTools({ ...next, tools: [...next.tools, ...scoped] });
+                  }}
                 />
               </div>
 
