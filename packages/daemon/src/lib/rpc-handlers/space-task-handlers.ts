@@ -402,11 +402,13 @@ export function setupSpaceTaskHandlers(
               `Cannot recover workflow-backed task ${taskId}: SpaceRuntimeService is unavailable.`
             );
           }
-          task = await spaceRuntimeService.recoverWorkflowBackedTask(
-            spaceId,
+          const recovered = await recoverTaskExecution(
+            createWorkflowTaskRecoveryExecutor(spaceId, spaceRuntimeService),
             taskId,
             updateParams.status
           );
+          if (typeof recovered === 'string') throw new Error(recovered);
+          task = recovered;
           emitTaskUpdated = false;
 
           const {
