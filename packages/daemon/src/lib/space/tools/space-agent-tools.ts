@@ -84,6 +84,7 @@ import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types
 import type { ActorResolver } from '../../../../../messaging/src/contracts.ts';
 import { stopTaskExecution } from '../../tasks/stop-task-execution.ts';
 import { createWorkflowTaskStoppingExecutor } from '../runtime/task-stopping-executor.ts';
+import { updateTaskFields } from './update-task-fields.ts';
 import { parkTaskExecution } from '../../tasks/park-task-execution.ts';
 import { createWorkflowTaskParkingExecutor } from '../runtime/task-parking-executor.ts';
 import { recoverTaskExecution } from '../../tasks/recover-task-execution.ts';
@@ -2757,12 +2758,28 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         if (args.priority !== undefined) fieldParams.priority = args.priority;
         if (args.depends_on !== undefined) fieldParams.dependsOn = args.depends_on;
         const hasFieldUpdates = Object.keys(fieldParams).length > 0;
-        const applyFieldUpdates = async (): Promise<SpaceTask> =>
-          taskManager.updateTask(args.task_id, fieldParams, {
-            onCascadedTasks: async (cascadedTasks) => {
-              for (const cascadedTask of cascadedTasks) emitTaskUpdated(cascadedTask);
-            },
-          });
+        let fieldUpdateHandledByRuntime = false;
+        const applyFieldUpdates = async (): Promise<SpaceTask> => {
+          const result = await updateTaskFields(
+            taskRepo.getTask(args.task_id),
+            () =>
+              taskManager.updateTask(args.task_id, fieldParams, {
+                onCascadedTasks: async (cascadedTasks) => {
+                  for (const cascadedTask of cascadedTasks) emitTaskUpdated(cascadedTask);
+                },
+              }),
+            (taskId) =>
+              runtime.blockWorkflowBackedTask(spaceId, taskId, {
+                ...fieldParams,
+                status: 'blocked',
+                blockReason: 'dependency_added',
+                result: 'Dependency added while task was in progress',
+                completedAt: null,
+              })
+          );
+          fieldUpdateHandledByRuntime = result.handledByRuntime;
+          return result.task;
+        };
         const transitionAuditParams = {
           title: args.title,
           description: args.description,
@@ -2813,7 +2830,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             }
             const updated = hasFieldUpdates ? await applyFieldUpdates() : parked;
             logAudit('update_task', transitionAuditParams, args.task_id);
-            if (hasFieldUpdates) emitTaskUpdated(updated);
+            if (hasFieldUpdates && !fieldUpdateHandledByRuntime) emitTaskUpdated(updated);
             return jsonResult({ success: true, task: updated });
           }
           case 'recover_transition': {
@@ -2825,7 +2842,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             if (typeof recovered === 'string') throw new Error(recovered);
             const updated = hasFieldUpdates ? await applyFieldUpdates() : recovered;
             logAudit('update_task', transitionAuditParams, args.task_id);
-            if (hasFieldUpdates) emitTaskUpdated(updated);
+            if (hasFieldUpdates && !fieldUpdateHandledByRuntime) emitTaskUpdated(updated);
             return jsonResult({ success: true, task: updated });
           }
           case 'stop_for_status': {
@@ -2852,7 +2869,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
               updated = await applyFieldUpdates();
             }
             logAudit('update_task', transitionAuditParams, args.task_id);
-            emitTaskUpdated(updated);
+            if (!fieldUpdateHandledByRuntime) emitTaskUpdated(updated);
             return jsonResult({ success: true, task: updated });
           }
           case 'fields_only': {
@@ -2867,7 +2884,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
               },
               args.task_id
             );
-            emitTaskUpdated(updated);
+            if (!fieldUpdateHandledByRuntime) emitTaskUpdated(updated);
             return jsonResult({ success: true, task: updated });
           }
         }
