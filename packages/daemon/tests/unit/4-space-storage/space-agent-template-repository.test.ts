@@ -341,4 +341,46 @@ describe('SpaceAgentTemplateRepository — Space-scoped methods', () => {
         .sort()
     ).toEqual(['legacy', 'mine']);
   });
+  test('an update from one Space never rewrites the shared sentinel row', () => {
+    repo.create({ key: 'k', handle: 'sentinel' });
+    repo.createOwned('space-a', { key: 'k', handle: 'owned' });
+
+    repo.casUpdateOwned('space-a', 'k', { displayName: 'Changed' });
+
+    expect(repo.getOwned('space-a', 'k')?.displayName).toBe('Changed');
+    expect(repo.getOwned('space-b', 'k')?.displayName).not.toBe('Changed');
+  });
+
+  test('deleting an owned row leaves the sentinel other Spaces still use', () => {
+    repo.create({ key: 'k', handle: 'sentinel' });
+    repo.createOwned('space-a', { key: 'k', handle: 'owned' });
+
+    expect(repo.deleteOwned('space-a', 'k')).toBe(true);
+
+    expect(repo.getOwned('space-a', 'k')?.handle).toBe('sentinel');
+    expect(repo.getOwned('space-b', 'k')?.handle).toBe('sentinel');
+  });
+
+  test('a versioned write refuses when the version belongs to the shadowed row', () => {
+    repo.create({ key: 'k', handle: 'sentinel' });
+    const owned = repo.createOwned('space-a', { key: 'k', handle: 'owned' });
+    const sentinelVersion = (owned.version ?? 1) + 99;
+
+    expect(repo.casUpdateOwned('space-a', 'k', { displayName: 'X' }, sentinelVersion)).toBeNull();
+    expect(repo.deleteOwned('space-a', 'k', sentinelVersion)).toBe(false);
+  });
+
+  test('listOwned reports one row per key when a sentinel is shadowed', () => {
+    repo.create({ key: 'k', handle: 'sentinel' });
+    repo.createOwned('space-a', { key: 'k', handle: 'owned' });
+
+    const listed = repo.listOwned('space-a').filter((t) => t.key === 'k');
+    expect(listed).toHaveLength(1);
+    expect(listed[0].handle).toBe('owned');
+  });
+
+  test('writes and deletes are refused when the Space sees no row at all', () => {
+    expect(repo.casUpdateOwned('space-a', 'missing', { displayName: 'X' })).toBeNull();
+    expect(repo.deleteOwned('space-a', 'missing')).toBe(false);
+  });
 });

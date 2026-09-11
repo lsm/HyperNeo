@@ -158,14 +158,15 @@ export class SpaceAgentTemplateRepository {
         ? this.getOwned(spaceId, key)
         : null;
     }
+    const owner = this.effectiveOwner(spaceId, key);
+    if (owner === null) return null;
     fields.push('updated_at = ?');
     fields.push('version = ?');
     values.push(Date.now());
     values.push(this.nextVersionFor(key));
-    values.push(spaceId);
-    values.push(OWNERSHIP_MIGRATION_SENTINEL);
+    values.push(owner);
     values.push(key);
-    let where = `WHERE space_id IN (?, ?) AND key = ?`;
+    let where = `WHERE space_id = ? AND key = ?`;
     if (expectedVersion !== undefined) {
       where += ' AND version = ?';
       values.push(expectedVersion);
@@ -178,13 +179,26 @@ export class SpaceAgentTemplateRepository {
   }
 
   deleteOwned(spaceId: string, key: string, expectedVersion?: number): boolean {
-    const params: SQLiteValue[] = [spaceId, OWNERSHIP_MIGRATION_SENTINEL, key];
-    let sql = `DELETE FROM space_agent_templates WHERE space_id IN (?, ?) AND key = ?`;
+    const owner = this.effectiveOwner(spaceId, key);
+    if (owner === null) return false;
+    const params: SQLiteValue[] = [owner, key];
+    let sql = `DELETE FROM space_agent_templates WHERE space_id = ? AND key = ?`;
     if (expectedVersion !== undefined) {
       sql += ' AND version = ?';
       params.push(expectedVersion);
     }
     return this.db.prepare(sql).run(...params).changes > 0;
+  }
+
+  private effectiveOwner(spaceId: string, key: string): string | null {
+    const row = this.db
+      .prepare(
+        `SELECT space_id FROM space_agent_templates
+          WHERE space_id IN (?, ?) AND key = ?
+          ORDER BY space_id DESC LIMIT 1`
+      )
+      .get(spaceId, OWNERSHIP_MIGRATION_SENTINEL, key) as { space_id: string } | undefined;
+    return row ? row.space_id : null;
   }
 
   private ownedRow(spaceId: string, key: string): Record<string, unknown> | undefined {
@@ -196,11 +210,20 @@ export class SpaceAgentTemplateRepository {
   }
 
   private ownedRows(spaceId: string): Record<string, unknown>[] {
-    return this.db
+    const rows = this.db
       .prepare(
-        `SELECT * FROM space_agent_templates WHERE space_id IN (?, ?) ORDER BY created_at ASC, key ASC`
+        `SELECT * FROM space_agent_templates
+          WHERE space_id IN (?, ?)
+          ORDER BY created_at ASC, key ASC`
       )
       .all(spaceId, OWNERSHIP_MIGRATION_SENTINEL) as Record<string, unknown>[];
+    const byKey = new Map<string, Record<string, unknown>>();
+    for (const row of rows) {
+      const key = row.key as string;
+      const existing = byKey.get(key);
+      if (!existing || row.space_id !== OWNERSHIP_MIGRATION_SENTINEL) byKey.set(key, row);
+    }
+    return [...byKey.values()];
   }
 
   private nextVersionFor(key: string): number {
