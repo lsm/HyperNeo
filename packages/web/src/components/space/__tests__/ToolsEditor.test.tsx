@@ -715,3 +715,52 @@ describe('invalid scoped draft blocks the enclosing form', () => {
     expect(input.checkValidity()).toBe(true);
   });
 });
+
+describe('stale draft validity', () => {
+  function DuplicateHost() {
+    const [selection, setSelection] = useState<ToolsSelection>({
+      tools: ['Read', 'Bash(ls:*)'],
+      toolsOverridden: true,
+    });
+    return (
+      <ToolsEditor
+        tools={selection.tools}
+        toolsOverridden={selection.toolsOverridden}
+        onChange={setSelection}
+        manageScopedEntries
+      />
+    );
+  }
+
+  it('clears a duplicate error once the matching entry is removed', () => {
+    const { getByTestId } = render(<DuplicateHost />);
+    const input = getByTestId('tools-editor-scoped-input') as HTMLInputElement;
+
+    fireEvent.input(input, { target: { value: 'Bash(ls:*)' } });
+    fireEvent.blur(input);
+    expect(input.checkValidity()).toBe(false);
+    expect(input.validationMessage).toContain('Already on this profile');
+
+    fireEvent.click(getByTestId('tools-editor-scoped-remove-Bash(ls:*)'));
+
+    expect(input.checkValidity()).toBe(true);
+    expect(queryByTestIdIn(getByTestId('tools-editor'), 'tools-editor-scoped-error')).toBeNull();
+  });
+
+  it('keeps a genuinely invalid draft blocked when the list changes', () => {
+    const { getByTestId } = render(<DuplicateHost />);
+    const input = getByTestId('tools-editor-scoped-input') as HTMLInputElement;
+
+    fireEvent.input(input, { target: { value: 'rm -rf /' } });
+    fireEvent.blur(input);
+    expect(input.checkValidity()).toBe(false);
+
+    fireEvent.click(getByTestId('tools-editor-scoped-remove-Bash(ls:*)'));
+
+    expect(input.checkValidity()).toBe(false);
+  });
+});
+
+function queryByTestIdIn(root: HTMLElement, testId: string): HTMLElement | null {
+  return root.querySelector(`[data-testid="${testId}"]`);
+}

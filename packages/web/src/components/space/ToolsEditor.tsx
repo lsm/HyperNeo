@@ -1,5 +1,5 @@
 import { DENIABLE_TOOLS, isKnownToolEntry, KNOWN_TOOLS } from '@hyperneo/shared';
-import { useRef, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 
 type ToolName = (typeof KNOWN_TOOLS)[number];
 
@@ -95,6 +95,18 @@ export function ToolsEditor({
     setScopedError(message === '' ? null : message);
     scopedInputRef.current?.setCustomValidity(message);
   };
+
+  const toolsKey = tools.join('|');
+
+  useEffect(() => {
+    if (!scopedError) return;
+    if (scopedDraft.trim() === '') {
+      markScopedValidity('');
+      return;
+    }
+    const outcome = addScopedTool(tools, scopedDraft);
+    if (!('error' in outcome)) markScopedValidity('');
+  }, [toolsKey, scopedDraft, scopedError]);
 
   const submitScopedDraft = () => {
     if (scopedDraft.trim() === '') {
