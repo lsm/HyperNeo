@@ -90,7 +90,11 @@ export function applyModelPoolToSlot(input: {
     return { deferred: true };
   }
   return {
-    slot: { ...input.slot, model: entry.model },
+    slot: {
+      ...input.slot,
+      model: entry.model,
+      thinkingLevel: input.slot.thinkingLevel ?? entry.thinkingLevel ?? undefined,
+    },
     model: entry.model,
     provider: entry.provider,
   };

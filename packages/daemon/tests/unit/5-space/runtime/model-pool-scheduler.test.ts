@@ -245,3 +245,50 @@ describe('reservation lifecycle', () => {
     expect(assignments.has(modelPoolReservationKey(first.id))).toBe(false);
   });
 });
+
+describe('applyModelPoolToSlot thinking level', () => {
+  test('applies the winning entry thinking level to the slot', () => {
+    const result = apply({
+      agent: makeAgent([
+        { model: 'sonnet', maxConcurrent: 2, weight: 100, thinkingLevel: 'think16k' },
+      ]),
+    });
+    expect('deferred' in result).toBe(false);
+    if (!('deferred' in result)) {
+      expect(result.slot.model).toBe('sonnet');
+      expect(result.slot.thinkingLevel).toBe('think16k');
+    }
+  });
+
+  test('leaves the slot thinking level undefined when the entry has none', () => {
+    const result = apply();
+    if (!('deferred' in result)) expect(result.slot.thinkingLevel).toBeUndefined();
+  });
+
+  test('does not override a thinking level the workflow slot already sets', () => {
+    const result = apply({
+      slot: { ...slot, thinkingLevel: 'think32k' },
+      agent: makeAgent([
+        { model: 'sonnet', maxConcurrent: 2, weight: 100, thinkingLevel: 'think8k' },
+      ]),
+    });
+    if (!('deferred' in result)) expect(result.slot.thinkingLevel).toBe('think32k');
+  });
+
+  test('treats a null entry thinking level as unset', () => {
+    const result = apply({
+      agent: makeAgent([{ model: 'sonnet', maxConcurrent: 2, weight: 100, thinkingLevel: null }]),
+    });
+    if (!('deferred' in result)) expect(result.slot.thinkingLevel).toBeUndefined();
+  });
+
+  test('does not touch the slot when the pool is short-circuited by an explicit model', () => {
+    const result = apply({
+      slot: { ...slot, model: 'opus' },
+      agent: makeAgent([
+        { model: 'sonnet', maxConcurrent: 2, weight: 100, thinkingLevel: 'think16k' },
+      ]),
+    });
+    if (!('deferred' in result)) expect(result.slot.thinkingLevel).toBeUndefined();
+  });
+});
