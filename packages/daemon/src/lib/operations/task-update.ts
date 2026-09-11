@@ -1,11 +1,15 @@
 import type { TaskCore } from '@hyperneo/shared/types/task-core';
 import { z } from 'zod';
-import type { EditStandaloneTaskInput } from '../../storage/tasks/edit-task.ts';
+import type { OperationCaller } from './registry.ts';
+import type { TaskMetadataInput } from './task-metadata.ts';
 import { defineOperation } from './registry.ts';
 import { TaskCoreSchema } from './task-get.ts';
 
 export function createUpdateTaskOperation(
-  editTask: (input: EditStandaloneTaskInput) => TaskCore | null | Promise<TaskCore | null>
+  editTask: (
+    input: TaskMetadataInput,
+    caller: OperationCaller
+  ) => TaskCore | null | Promise<TaskCore | null>
 ) {
   return defineOperation({
     name: 'task.update',
@@ -28,6 +32,6 @@ export function createUpdateTaskOperation(
         'Task update requires at least one editable field'
       ),
     resultSchema: TaskCoreSchema.nullable(),
-    execute: async (input) => editTask(input),
+    execute: async (input, caller) => editTask(input, caller),
   });
 }
