@@ -64,6 +64,7 @@ vi.mock('../../../lib/connection-manager', () => ({
 }));
 
 import { createPoolFields, SpaceAgentsPage, usablePoolEntries } from '../SpaceAgentsPage';
+import { agentCreateRequest, requestAgentFromTemplate } from '../agent-create-request';
 
 function makeAgent(id: string, overrides: Partial<SpaceAgent> = {}): SpaceAgent {
   return {
@@ -91,6 +92,7 @@ function makeAgent(id: string, overrides: Partial<SpaceAgent> = {}): SpaceAgent 
 describe('SpaceAgentsPage', () => {
   beforeEach(() => {
     mockAgents.value = [];
+    agentCreateRequest.value = null;
     mockReminderCounts.value = {};
     mockLoading.value = false;
     mockError.value = null;
@@ -219,6 +221,75 @@ describe('SpaceAgentsPage', () => {
     mockError.value = 'boom';
     const { getByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
     expect(getByTestId('agents-load-error').textContent).toBe('boom');
+  });
+
+  it('opens the create form seeded from a requested template', async () => {
+    mockTemplates.value = [
+      { key: 'researcher.v1', displayName: 'Researcher', toolPermissions: { tools: ['Read'] } },
+    ];
+    const { getByTestId, queryByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+    expect(queryByTestId('agent-form')).toBeNull();
+
+    requestAgentFromTemplate('space-1', 'researcher.v1');
+    await waitFor(() => expect(getByTestId('agent-form')).toBeTruthy());
+
+    expect((getByTestId('agent-template-select') as HTMLSelectElement).value).toBe('researcher.v1');
+  });
+
+  it('drops explicit tools from a prior edit when a template request arrives', async () => {
+    mockTemplates.value = [
+      { key: 'researcher.v1', displayName: 'Researcher', toolPermissions: { tools: ['Read'] } },
+    ];
+    mockAgents.value = [makeAgent('alpha', { tools: ['Bash', 'Write'] })];
+    const { getByTestId, getByText } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('agent-row-alpha'));
+    fireEvent.click(getByText('Edit'));
+    requestAgentFromTemplate('space-1', 'researcher.v1');
+    await waitFor(() =>
+      expect((getByTestId('agent-template-select') as HTMLSelectElement).value).toBe(
+        'researcher.v1'
+      )
+    );
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'Fresh' } });
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalled());
+    expect(mockCreate.mock.calls[0][0].tools ?? []).not.toContain('Bash');
+  });
+
+  it('re-enables the form when a template request replaces a pending save', async () => {
+    mockTemplates.value = [{ key: 'researcher.v1', displayName: 'Researcher' }];
+    mockCreate.mockReturnValue(new Promise(() => {}));
+    const { getByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'Stuck' } });
+    fireEvent.submit(getByTestId('agent-form'));
+    await waitFor(() => expect(mockCreate).toHaveBeenCalled());
+
+    requestAgentFromTemplate('space-1', 'researcher.v1');
+
+    await waitFor(() =>
+      expect((getByTestId('agent-save-button') as HTMLButtonElement).disabled).toBe(false)
+    );
+  });
+
+  it('discards an open create draft when a template request replaces it', async () => {
+    mockTemplates.value = [{ key: 'researcher.v1', displayName: 'Researcher' }];
+    const { getByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'Stale Draft' } });
+
+    requestAgentFromTemplate('space-1', 'researcher.v1');
+    await waitFor(() =>
+      expect((getByTestId('agent-template-select') as HTMLSelectElement).value).toBe(
+        'researcher.v1'
+      )
+    );
+
+    expect((getByTestId('agent-name-input') as HTMLInputElement).value).toBe('');
   });
 
   it('lists agents by handle', () => {
