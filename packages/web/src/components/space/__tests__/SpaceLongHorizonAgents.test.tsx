@@ -41,6 +41,7 @@ vi.mock('../../../lib/space-store', () => ({
   get spaceStore() {
     return {
       agents: mockAgents,
+      spaceId: { value: 'space-1' },
       agentTemplates: mockTemplates,
       userTemplateKeys: mockUserTemplateKeys,
       configDataLoaded: mockConfigDataLoaded,
@@ -62,6 +63,7 @@ vi.mock('../../../lib/router', () => ({
 vi.mock('../../../lib/toast', () => ({
   toast: {
     success: vi.fn(),
+    error: vi.fn(),
   },
 }));
 

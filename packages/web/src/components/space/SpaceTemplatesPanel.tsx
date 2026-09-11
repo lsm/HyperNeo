@@ -1,27 +1,40 @@
 import type { SpaceLongHorizonAgentTemplate } from '@hyperneo/shared';
-import { useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import { groupTemplatesByLabel } from './template-grouping';
 import { TemplateCard } from './TemplateCard';
+import { TemplateDeleteDialog } from './TemplateDeleteDialog';
 import { TemplateEditor } from './TemplateEditor';
+import {
+  abandonIdleTemplateDelete,
+  closeTemplateDelete,
+  openTemplateDelete,
+  runTemplateDelete,
+  templateDeleteRequest,
+} from './template-delete-request';
 
 export function SpaceTemplatesPanel({
+  spaceId,
   templates,
   templateInstanceCounts,
   userTemplateKeys,
   onUseTemplate,
-  onDeleteTemplate,
 }: {
+  spaceId: string;
   templates: SpaceLongHorizonAgentTemplate[];
   templateInstanceCounts: Map<string, number>;
   userTemplateKeys: ReadonlySet<string>;
   onUseTemplate: (template: SpaceLongHorizonAgentTemplate) => void;
-  onDeleteTemplate: (template: SpaceLongHorizonAgentTemplate) => void;
 }) {
   const [showTemplateEditor, setShowTemplateEditor] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<SpaceLongHorizonAgentTemplate | null>(
     null
   );
   const templateGroups = groupTemplatesByLabel(templates);
+  const pendingDelete = templateDeleteRequest.value;
+
+  useEffect(() => {
+    return () => abandonIdleTemplateDelete(spaceId);
+  }, [spaceId]);
 
   return (
     <>
@@ -64,7 +77,7 @@ export function SpaceTemplatesPanel({
                       setEditingTemplate(t);
                       setShowTemplateEditor(true);
                     }}
-                    onDelete={() => onDeleteTemplate(t)}
+                    onDelete={() => openTemplateDelete(spaceId, t)}
                   />
                 ))}
               </div>
@@ -84,6 +97,16 @@ export function SpaceTemplatesPanel({
             setShowTemplateEditor(false);
             setEditingTemplate(null);
           }}
+        />
+      )}
+
+      {pendingDelete && pendingDelete.spaceId === spaceId && (
+        <TemplateDeleteDialog
+          template={pendingDelete.template}
+          busy={pendingDelete.busy}
+          error={pendingDelete.error}
+          onConfirm={runTemplateDelete}
+          onClose={closeTemplateDelete}
         />
       )}
     </>

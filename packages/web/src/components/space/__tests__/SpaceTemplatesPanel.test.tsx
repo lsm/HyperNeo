@@ -1,6 +1,6 @@
 import type { SpaceLongHorizonAgentTemplate } from '@hyperneo/shared';
 import { fireEvent, render } from '@testing-library/preact';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../TemplateEditor', () => ({
   TemplateEditor: ({ template }: { template: SpaceLongHorizonAgentTemplate | null }) => (
@@ -9,6 +9,7 @@ vi.mock('../TemplateEditor', () => ({
 }));
 
 import { SpaceTemplatesPanel } from '../SpaceTemplatesPanel';
+import { openTemplateDelete, templateDeleteRequest } from '../template-delete-request';
 
 function makeTemplate(key: string, labels?: string[]): SpaceLongHorizonAgentTemplate {
   return {
@@ -23,17 +24,50 @@ function makeTemplate(key: string, labels?: string[]): SpaceLongHorizonAgentTemp
 
 function renderPanel(overrides: Partial<Parameters<typeof SpaceTemplatesPanel>[0]> = {}) {
   const props = {
+    spaceId: 'space-1',
     templates: [makeTemplate('researcher.v1')],
     templateInstanceCounts: new Map<string, number>(),
     userTemplateKeys: new Set<string>(),
     onUseTemplate: vi.fn(),
-    onDeleteTemplate: vi.fn(),
     ...overrides,
   };
   return { props, ...render(<SpaceTemplatesPanel {...props} />) };
 }
 
 describe('SpaceTemplatesPanel', () => {
+  beforeEach(() => {
+    templateDeleteRequest.value = null;
+  });
+
+  it('shows a delete request raised in this Space', () => {
+    openTemplateDelete('space-1', makeTemplate('researcher.v1'));
+
+    const { getByTestId } = renderPanel();
+
+    expect(getByTestId('confirm-delete-template')).toBeTruthy();
+  });
+
+  it('ignores a delete request belonging to another Space', () => {
+    openTemplateDelete('space-2', makeTemplate('researcher.v1'));
+
+    const { queryByTestId } = renderPanel();
+
+    expect(queryByTestId('confirm-delete-template')).toBeNull();
+  });
+
+  it('raises the delete request for the clicked template', () => {
+    const { getByLabelText } = renderPanel({
+      userTemplateKeys: new Set(['researcher.v1']),
+    });
+
+    fireEvent.click(getByLabelText('Delete template researcher.v1'));
+
+    expect(templateDeleteRequest.value).toMatchObject({
+      spaceId: 'space-1',
+      template: expect.objectContaining({ key: 'researcher.v1' }),
+    });
+  });
+
   it('counts the templates it was given', () => {
     const { getByTestId } = renderPanel({
       templates: [makeTemplate('a'), makeTemplate('b')],
