@@ -1,4 +1,4 @@
-import type { MessageHub, SpaceAgent } from '@hyperneo/shared';
+import type { MessageHub, SpaceAgent, SpaceAgentTemplate } from '@hyperneo/shared';
 import type { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
 import type { SpaceAgentTemplateRepository } from '../../storage/repositories/space-agent-template-repository.ts';
@@ -46,6 +46,7 @@ export interface SpaceAgentV2Deps {
     agentId: string
   ): { success: boolean; error?: string };
   clearSessionProvider?(spaceId: string, agentId: string): Promise<void>;
+  seedTemplateExtras?(agent: SpaceAgent, template: SpaceAgentTemplate): void;
 }
 
 const COORDINATOR_HANDLES = new Set([SPACE_MANAGER_HANDLE, 'coordinator']);
@@ -128,6 +129,7 @@ export function buildAgentCreate(
         .map((agent) => agent.displayName),
     createAgent: (params) => deps.agents.create(params),
     publishCreated: (agent) => publishAgentEvent(deps, 'spaceAgentV2.created', agent),
+    seedTemplateExtras: deps.seedTemplateExtras,
     validateTools: validateSpaceAgentTools,
     validateModel: (model, provider) => validateAgentModel(model, provider),
     validateModelPool: validateAgentModelPool,

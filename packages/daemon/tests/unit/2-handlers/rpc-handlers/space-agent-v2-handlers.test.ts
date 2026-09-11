@@ -62,6 +62,7 @@ describe('setupSpaceAgentV2Handlers', () => {
   let removedSubscriptions: Array<{ spaceId: string; agentId: string }>;
   let refreshedSubscriptions: Array<{ spaceId: string; agentId: string }>;
   let clearedProviders: Array<{ spaceId: string; agentId: string }>;
+  let seededExtras: Array<{ agentId: string; templateKey: string }>;
   let refreshResult: { success: boolean; error?: string };
   let templates: SpaceAgentTemplateRepository;
   let handlers: Map<string, RequestHandler>;
@@ -86,6 +87,7 @@ describe('setupSpaceAgentV2Handlers', () => {
     removedSubscriptions = [];
     refreshedSubscriptions = [];
     clearedProviders = [];
+    seededExtras = [];
     refreshResult = { success: true };
     templates = new SpaceAgentTemplateRepository(db);
     sessions = new Map([
@@ -105,6 +107,9 @@ describe('setupSpaceAgentV2Handlers', () => {
       },
       clearSessionProvider: async (spaceId, agentId) => {
         clearedProviders.push({ spaceId, agentId });
+      },
+      seedTemplateExtras: (agent, template) => {
+        seededExtras.push({ agentId: agent.id, templateKey: template.key });
       },
       templates,
       spaceExists: async (id) => id === 'space-1',
@@ -168,6 +173,32 @@ describe('setupSpaceAgentV2Handlers', () => {
       expect(agent.instructions).toBe('Research carefully.');
       expect(agent.autonomyLevel).toBe(3);
       expect(agent.tools).toEqual(['Read', 'Grep']);
+    });
+
+    test('seeds template extras for the created agent', async () => {
+      templates.create({
+        key: 'researcher.v1',
+        handle: 'researcher',
+        displayName: 'Researcher',
+        instructions: 'Research carefully.',
+        suggestedAutonomyLevel: 2,
+      });
+
+      const { agent } = await call<{ agent: SpaceAgent }>(handlers, 'spaceAgentV2.create', {
+        spaceId: 'space-1',
+        templateKey: 'researcher.v1',
+      });
+
+      expect(seededExtras).toEqual([{ agentId: agent.id, templateKey: 'researcher.v1' }]);
+    });
+
+    test('seeds nothing when no template was chosen', async () => {
+      await call<{ agent: SpaceAgent }>(handlers, 'spaceAgentV2.create', {
+        spaceId: 'space-1',
+        displayName: 'Blank',
+      });
+
+      expect(seededExtras).toEqual([]);
     });
 
     test('leaves the created row disconnected from its template', async () => {

@@ -74,6 +74,7 @@ import { ChannelCycleRepository } from '../../storage/repositories/channel-cycle
 import { SessionRepository } from '../../storage/repositories/session-repository.ts';
 import { setupSpaceAgentHandlers } from './space-agent-handlers.ts';
 import { setupSpaceAgentV2Handlers } from './space-agent-v2-handlers.ts';
+import { buildTemplateExtrasSeeder } from '../space/agents/template-extras-seeding.ts';
 import { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository.ts';
 import {
   SpaceLongHorizonAgentRepository,
@@ -942,6 +943,17 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     getSession: (sessionId) => deps.sessionManager.getSession(sessionId)?.session ?? null,
     internalEventBus: deps.internalEventBus,
     legacyAgents: longHorizonAgentRepo,
+    removeAgentSubscriptions: (spaceId, agentId) =>
+      spaceRuntimeService.removeLongHorizonAgentSubscriptions(spaceId, agentId),
+    refreshAgentSubscriptions: (spaceId, agentId) =>
+      spaceRuntimeService.refreshLongHorizonAgentSubscriptions(spaceId, agentId),
+    clearSessionProvider: (spaceId, agentId) =>
+      spaceRuntimeService.clearLongTermAgentSessionProvider(spaceId, agentId),
+    seedTemplateExtras: buildTemplateExtrasSeeder({
+      store: longHorizonAgentRepo,
+      refreshSubscription: (spaceId, subscriptionId) =>
+        spaceRuntimeService.refreshLongHorizonSubscription(spaceId, subscriptionId),
+    }),
   });
 
   setupSessionHandlers(
