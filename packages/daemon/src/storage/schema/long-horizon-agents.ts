@@ -98,6 +98,10 @@ export function createLongHorizonAgentTables(db: BunDatabase): void {
     `CREATE INDEX IF NOT EXISTS idx_space_lh_agent_reminders_agent ` +
       `ON space_long_horizon_agent_reminders(agent_id, status)`
   );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_space_lh_agent_reminders_space_active ` +
+      `ON space_long_horizon_agent_reminders(space_id, agent_id) WHERE status = 'active'`
+  );
   db.exec(`
 		CREATE TABLE IF NOT EXISTS space_long_horizon_agent_event_subscriptions (
 			id TEXT PRIMARY KEY,
