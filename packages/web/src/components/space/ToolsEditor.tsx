@@ -91,6 +91,7 @@ export function ToolsEditor({
   const [scopedError, setScopedError] = useState<string | null>(null);
 
   const submitScopedDraft = () => {
+    if (scopedDraft.trim() === '') return;
     const outcome = addScopedTool(tools, scopedDraft);
     if ('error' in outcome) {
       setScopedError(outcome.error);
@@ -244,15 +245,13 @@ export function ToolsEditor({
                 event.preventDefault();
                 submitScopedDraft();
               }}
-              onBlur={() => {
-                if (scopedDraft.trim() === '') return;
-                submitScopedDraft();
-              }}
+              onBlur={submitScopedDraft}
               class="w-full rounded border border-line-strong bg-surface px-2 py-1 font-mono text-xs text-fg placeholder:text-fg-faint focus:border-accent focus:outline-none"
             />
             <button
               type="button"
               data-testid="tools-editor-scoped-add"
+              onMouseDown={(event) => event.preventDefault()}
               onClick={submitScopedDraft}
               class="flex-shrink-0 rounded border border-line-strong px-2.5 py-1 text-xs text-fg-soft hover:text-fg"
             >

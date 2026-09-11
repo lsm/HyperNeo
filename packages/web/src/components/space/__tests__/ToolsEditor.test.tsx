@@ -630,3 +630,37 @@ describe('scoped entries on an inherited profile', () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 });
+
+describe('scoped draft submitted exactly once', () => {
+  it('keeps focus on the input so Add does not fire blur first', () => {
+    const { getByTestId } = render(
+      <ToolsEditor tools={['Read']} toolsOverridden={true} onChange={vi.fn()} manageScopedEntries />
+    );
+    const add = getByTestId('tools-editor-scoped-add');
+    const prevented = !fireEvent.mouseDown(add);
+    expect(prevented).toBe(true);
+  });
+
+  it('adds once and shows no error when blur and click both arrive', () => {
+    const onChange = vi.fn();
+    const { getByTestId, queryByTestId } = render(
+      <ToolsEditor
+        tools={['Read']}
+        toolsOverridden={true}
+        onChange={onChange}
+        manageScopedEntries
+      />
+    );
+    const input = getByTestId('tools-editor-scoped-input');
+    fireEvent.input(input, { target: { value: 'Bash(ls:*)' } });
+    fireEvent.blur(input);
+    fireEvent.click(getByTestId('tools-editor-scoped-add'));
+
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith({
+      tools: ['Read', 'Bash(ls:*)'],
+      toolsOverridden: true,
+    });
+    expect(queryByTestId('tools-editor-scoped-error')).toBeNull();
+  });
+});
