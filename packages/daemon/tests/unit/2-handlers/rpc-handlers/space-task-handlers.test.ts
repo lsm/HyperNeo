@@ -1232,6 +1232,88 @@ describe('space-task-handlers', () => {
       expect((result as SpaceTask).status).toBe('blocked');
     });
 
+    it.each([
+      ['open', false],
+      ['open', true],
+      ['blocked', false],
+      ['blocked', true],
+    ] as const)('cleans combined %s recovery dependencies when met=%s', async (from, met) => {
+      const initial = makeTask({ status: from, workflowRunId: 'run-1', dependsOn: [] });
+      const active = {
+        ...initial,
+        status: 'in_progress' as const,
+        taskAgentSessionId: 'live-session',
+      };
+      const updated = {
+        ...active,
+        dependsOn: ['dependency'],
+        status: met ? ('in_progress' as const) : ('blocked' as const),
+        blockReason: met ? null : ('dependency_added' as const),
+      };
+      const cascaded = { ...updated, id: 'dependent', blockReason: 'dependency_failed' as const };
+      const effects: string[] = [];
+      const runtime = {
+        recoverWorkflowBackedTask: mock(async () => {
+          effects.push('start');
+          return active;
+        }),
+        stopWorkflowBackedTask: mock(async () => {
+          effects.push('cleanup');
+          return { ...updated, taskAgentSessionId: null, completedAt: null };
+        }),
+      } as unknown as SpaceRuntimeService;
+      setup(mockSpace, initial, runtime);
+      (taskManager.setTaskStatus as ReturnType<typeof mock>).mockImplementation(async () => {
+        effects.push('start');
+        return active;
+      });
+      (taskManager.updateTask as ReturnType<typeof mock>).mockImplementation(
+        async (_id, params, options) => {
+          if (params.dependsOn) {
+            expect(params).toEqual({ dependsOn: ['dependency'] });
+            effects.push('fields');
+            if (!met) await options.onCascadedTasks([cascaded]);
+            return updated;
+          }
+          effects.push('pointers');
+          return { ...updated, ...params };
+        }
+      );
+      const result = await call('spaceTask.update', {
+        spaceId: 'space-1',
+        taskId: initial.id,
+        status: 'in_progress',
+        dependsOn: ['dependency'],
+        taskAgentSessionId: null,
+        workflowRunId: null,
+      });
+      expect(effects).toEqual(
+        met ? ['start', 'fields', 'pointers'] : ['start', 'fields', 'cleanup']
+      );
+      expect(result).toMatchObject({
+        status: met ? 'in_progress' : 'blocked',
+        taskAgentSessionId: null,
+      });
+      if (met) {
+        expect(runtime.stopWorkflowBackedTask).not.toHaveBeenCalled();
+      } else {
+        expect(runtime.stopWorkflowBackedTask).toHaveBeenCalledWith('space-1', initial.id, {
+          dependsOn: ['dependency'],
+          taskAgentSessionId: null,
+          workflowRunId: null,
+          status: 'blocked',
+          blockReason: 'dependency_added',
+          result: 'Dependency added while task was in progress',
+          completedAt: null,
+        });
+      }
+      expect(internalEventBus.publish).toHaveBeenCalledTimes(1);
+      expect(internalEventBus.publish).toHaveBeenCalledWith(
+        'space.task.updated',
+        expect.objectContaining({ taskId: met ? initial.id : cascaded.id })
+      );
+    });
+
     it('does not pre-check overwrite runtime pointers before dependency block cleanup', async () => {
       const activeTask = {
         ...mockTask,
