@@ -422,6 +422,13 @@ export class SpaceTaskRepository {
     return row?.count ?? 0;
   }
 
+  getLifecycleGeneration(id: string): number | null {
+    const row = this.db
+      .prepare('SELECT lifecycle_generation AS generation FROM space_tasks WHERE id = ?')
+      .get(id) as { generation: number } | null;
+    return row?.generation ?? null;
+  }
+
   updateTask(
     id: string,
     params: InternalUpdateSpaceTaskParams,
