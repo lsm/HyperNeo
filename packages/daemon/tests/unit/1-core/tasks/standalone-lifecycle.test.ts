@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { TaskCore } from '@hyperneo/shared/types/task-core';
 import {
-  planStandaloneTaskTransition,
+  planStandaloneTaskTransition as decide,
   STANDALONE_TASK_STATUSES,
   type StandaloneTaskStatus,
 } from '../../../../src/lib/tasks/standalone-lifecycle';
@@ -22,6 +22,12 @@ const task: TaskCore = {
   completedAt: null,
   archivedAt: null,
 };
+
+function planStandaloneTaskTransition(...args: Parameters<typeof decide>) {
+  const result = decide(...args);
+  if (typeof result === 'string') throw new Error(result);
+  return result;
+}
 
 describe('standalone lifecycle decisions', () => {
   test('starts, blocks and completes manual work without mutating the source task', () => {
@@ -100,7 +106,8 @@ describe('standalone lifecycle decisions', () => {
         const plan = () =>
           planStandaloneTaskTransition({ ...task, status: from }, { status: to }, 10);
         if (isValidTaskTransition(from, to)) expect(plan().status).toBe(to);
-        else expect(plan).toThrow('Invalid status transition');
+        else
+          expect(decide({ ...task, status: from }, { status: to }, 10)).toBe('invalid_transition');
       }
     }
   });
@@ -108,19 +115,15 @@ describe('standalone lifecycle decisions', () => {
   test.each(['draft', 'review', 'approved', 'rate_limited', 'usage_limited', 'stopped'] as const)(
     'rejects runtime or workflow state %s',
     (status) => {
-      expect(() =>
-        planStandaloneTaskTransition({ ...task, status }, { status: 'open' }, 10)
-      ).toThrow('manual lifecycle states');
-      expect(() =>
-        planStandaloneTaskTransition(task, { status: status as StandaloneTaskStatus }, 10)
-      ).toThrow('manual lifecycle states');
+      expect(decide({ ...task, status }, { status: 'open' }, 10)).toBe('unsupported_status');
+      expect(decide(task, { status: status as StandaloneTaskStatus }, 10)).toBe(
+        'unsupported_status'
+      );
     }
   );
 
   test('accepts an empty completion result but rejects result edits on other transitions', () => {
     expect(planStandaloneTaskTransition(task, { status: 'done', result: '' }, 10).result).toBe('');
-    expect(() =>
-      planStandaloneTaskTransition(task, { status: 'blocked', result: 'No' }, 10)
-    ).toThrow('only be supplied when completing');
+    expect(decide(task, { status: 'blocked', result: 'No' }, 10)).toBe('result_requires_done');
   });
 });

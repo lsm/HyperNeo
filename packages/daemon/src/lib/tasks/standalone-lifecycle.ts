@@ -1,5 +1,6 @@
 import type { TaskCore, TaskLifecycleStatus } from '@hyperneo/shared/types/task-core';
-import { assertValidTaskTransition } from './transitions.ts';
+import superpipe, { type PipelineAPI } from 'superpipe';
+import { isValidTaskTransition } from './transitions.ts';
 
 export const STANDALONE_TASK_STATUSES = [
   'open',
@@ -22,21 +23,33 @@ export type StandaloneTaskLifecyclePatch = Pick<
   'status' | 'startedAt' | 'completedAt' | 'archivedAt' | 'result' | 'updatedAt'
 >;
 
-export function planStandaloneTaskTransition(
+type Rejection = 'unsupported_status' | 'invalid_transition' | 'result_requires_done';
+type Gate = { value: StandaloneTaskTransitionInput } | { reason: Rejection };
+
+function requireManualStates(task: TaskCore, input: StandaloneTaskTransitionInput): Gate {
+  return STANDALONE_TASK_STATUSES.some((status) => status === task.status) &&
+    STANDALONE_TASK_STATUSES.includes(input.status)
+    ? { value: input }
+    : { reason: 'unsupported_status' };
+}
+
+function requireValidTransition(task: TaskCore, input: StandaloneTaskTransitionInput): Gate {
+  return isValidTaskTransition(task.status, input.status)
+    ? { value: input }
+    : { reason: 'invalid_transition' };
+}
+
+function requireCompletionResult(input: StandaloneTaskTransitionInput): Gate {
+  return input.result === undefined || input.status === 'done'
+    ? { value: input }
+    : { reason: 'result_requires_done' };
+}
+
+function buildLifecyclePatch(
   task: TaskCore,
   input: StandaloneTaskTransitionInput,
   now: number
 ): StandaloneTaskLifecyclePatch {
-  if (
-    !STANDALONE_TASK_STATUSES.some((status) => status === task.status) ||
-    !STANDALONE_TASK_STATUSES.includes(input.status)
-  ) {
-    throw new Error('Standalone task transitions require manual lifecycle states');
-  }
-  assertValidTaskTransition(task.status, input.status);
-  if (input.result !== undefined && input.status !== 'done') {
-    throw new Error('Task results may only be supplied when completing a task');
-  }
   const reopening =
     (task.status === 'done' || task.status === 'cancelled') &&
     (input.status === 'open' || input.status === 'in_progress');
@@ -59,3 +72,17 @@ export function planStandaloneTaskTransition(
     updatedAt: now,
   };
 }
+
+export const planStandaloneTaskTransition = (
+  superpipe({})('plan-standalone-task-transition') as PipelineAPI
+)
+  .input(['task', 'input', 'now'])
+  .pipe(requireManualStates, ['task', 'input'], 'result:patch')
+  .pipe(requireValidTransition, ['task', 'input'], 'result:patch')
+  .pipe(requireCompletionResult, 'input', 'result:patch')
+  .pipe(buildLifecyclePatch, ['task', 'input', 'now'], 'patch')
+  .end('patch') as (
+  task: TaskCore,
+  input: StandaloneTaskTransitionInput,
+  now: number
+) => StandaloneTaskLifecyclePatch | Rejection;
