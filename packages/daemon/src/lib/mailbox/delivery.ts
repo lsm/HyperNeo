@@ -6,7 +6,7 @@ import { activatePrompts, ensurePrompt, retryPrompt } from '../agent/message-del
 import { planMailboxAdmission } from './admission-plan.ts';
 import { parseMailboxEntry } from './entry.ts';
 import { type MailboxSettlement, settleMailboxEntry } from './settlement.ts';
-import { decodeUlidTimestamp } from './ulid.ts';
+import { mailboxEntryExpired } from './entry.ts';
 
 export type MailboxDeliveryOutcome = MailboxSettlement | { kind: 'failed'; reason: string };
 
@@ -48,7 +48,7 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
       );
     }
     const target = entry.to.sessionId;
-    if (Date.now() - decodeUlidTimestamp(entry.id) > entry.policy.ttlMs) {
+    if (mailboxEntryExpired(entry, Date.now())) {
       throw new DeadLetterImmediatelyError('mailbox: entry expired (ttl)');
     }
     if (deps.isSessionArchived(target)) {
@@ -63,7 +63,7 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
     if (deps.isSessionArchived(target)) {
       throw new DeadLetterImmediatelyError('mailbox: target session archived');
     }
-    if (Date.now() - decodeUlidTimestamp(entry.id) > entry.policy.ttlMs) {
+    if (mailboxEntryExpired(entry, Date.now())) {
       throw new DeadLetterImmediatelyError('mailbox: entry expired (ttl)');
     }
     const admissionRowid = readAdmissionRowid(deps.db, job.id);

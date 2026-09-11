@@ -1,4 +1,10 @@
-import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
+import { decodeUlidTimestamp } from '../../../../src/lib/mailbox/ulid';
+import { mailboxEntryExpired } from '../../../../src/lib/mailbox/entry';
+import {
+  createDirectKickoffRecorder,
+  readDirectKickoffIntent,
+} from '../../../../src/lib/space/runtime/direct-kickoff-intent';
+import { afterEach, beforeEach, expect, mock, spyOn, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import type { ReactiveDatabase } from '../../../../src/storage/reactive-database';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
@@ -36,6 +42,10 @@ beforeEach(() => {
   taskId = tasks.createTask({ spaceId, title: 'Task', description: '' }).id;
   attempts.select(taskId);
   attempts.claim(taskId, 'attempt', 'worker');
+  createDirectKickoffRecorder(db)({
+    ...input,
+    message: { type: 'user', message: { content: 'Frozen kickoff' }, parent_tool_use_id: null },
+  });
   sessions.createSession(
     {
       ...createTestSession('worker'),
@@ -130,16 +140,21 @@ test('pure admission rejects a competing workflow without changing lifecycle fie
   const task = tasks.getTask(taskId)!;
   const attempt = attempts.get('attempt')!;
   expect(
-    requireDirectActivation(input, {
-      task: { ...task, workflowRunId: 'competing-run' },
-      attempt,
-      active: attempt,
-      space: spaces.getSpace(spaceId),
-      session: sessions.getSession('worker'),
-      selected: true,
-      stopRequested: false,
-      dependencies: [],
-    })
+    requireDirectActivation(
+      input,
+      {
+        task: { ...task, workflowRunId: 'competing-run' },
+        attempt,
+        active: attempt,
+        space: spaces.getSpace(spaceId),
+        session: sessions.getSession('worker'),
+        selected: true,
+        stopRequested: false,
+        kickoff: readDirectKickoffIntent(db, input.attemptId),
+        dependencies: [],
+      },
+      Date.now()
+    )
   ).toHaveProperty('reason');
   expect(tasks.getTask(taskId)?.status).toBe('open');
 });
@@ -212,3 +227,76 @@ test('deleted selection cascades its claim and activation cannot reconstruct eit
   expect(tasks.getTask(taskId)?.status).toBe('open');
   expect(tasks.getTask(taskId)?.taskAgentSessionId).toBeFalsy();
 });
+
+test.each(['pause', 'stop'] as const)(
+  'persisted Space %s prevents activation and reopening preserves frozen intent',
+  (action) => {
+    const frozen = readDirectKickoffIntent(db, 'attempt');
+    if (action === 'pause') spaces.pauseSpace(spaceId);
+    else spaces.stopSpace(spaceId);
+    expect(spaces.getSpace(spaceId)?.status).toBe('active');
+    expect(activate()).toEqual({ activated: false, reason: 'unavailable' });
+    expect(tasks.getTask(taskId)?.status).toBe('open');
+    expect(attempts.get('attempt')?.phase).toBe('reserved');
+    spaces.startSpace(spaceId);
+    expect(activate()).toHaveProperty('activated', true);
+    expect(readDirectKickoffIntent(db, 'attempt')).toEqual(frozen);
+  }
+);
+
+test.each(['missing', 'foreign-session', 'missing-uuid', 'wrong-origin', 'deferred'] as const)(
+  'activation rejects %s intent without creating content or partially binding task',
+  (state) => {
+    if (state === 'missing')
+      db.prepare('DELETE FROM direct_task_kickoff_intents WHERE attempt_id = ?').run('attempt');
+    else {
+      const entry = readDirectKickoffIntent(db, 'attempt')!;
+      if (state === 'foreign-session') entry.to = { kind: 'session', sessionId: 'other-worker' };
+      if (state === 'missing-uuid') delete entry.messageUuid;
+      if (state === 'wrong-origin') entry.origin = 'chat';
+      if (state === 'deferred') entry.deliveryMode = 'defer';
+      db.prepare('UPDATE direct_task_kickoff_intents SET entry = ? WHERE attempt_id = ?').run(
+        JSON.stringify(entry),
+        'attempt'
+      );
+    }
+    const before = readDirectKickoffIntent(db, 'attempt');
+    expect(activate()).toEqual({ activated: false, reason: 'unavailable' });
+    expect(tasks.getTask(taskId)?.status).toBe('open');
+    expect(tasks.getTask(taskId)?.taskAgentSessionId).toBeFalsy();
+    expect(attempts.get('attempt')?.phase).toBe('reserved');
+    expect(readDirectKickoffIntent(db, 'attempt')).toEqual(before);
+  }
+);
+
+test('a previous attempt intent cannot satisfy a successor activation', () => {
+  const frozen = readDirectKickoffIntent(db, 'attempt');
+  attempts.stop('attempt', 'worker', 'cancelled');
+  attempts.claim(taskId, 'next', 'next-worker');
+  const row = sessions.getSession('worker')!;
+  sessions.createSession({ ...row, id: 'next-worker' }, { enforceWorkspaceOwnership: false });
+  expect(
+    createDirectAttemptActivator({ db })({ attemptId: 'next', sessionId: 'next-worker' })
+  ).toHaveProperty('activated', false);
+  expect(attempts.get('next')?.phase).toBe('reserved');
+  expect(readDirectKickoffIntent(db, 'next')).toBeNull();
+  expect(readDirectKickoffIntent(db, 'attempt')).toEqual(frozen);
+});
+
+test.each([-1, 0, 1])(
+  'kickoff TTL boundary offset %s matches mailbox delivery exactly',
+  (offset) => {
+    const entry = readDirectKickoffIntent(db, 'attempt')!;
+    const now = decodeUlidTimestamp(entry.id) + entry.policy.ttlMs + offset;
+    expect(mailboxEntryExpired(entry, now)).toBe(offset > 0);
+    const clock = spyOn(Date, 'now').mockReturnValue(now);
+    try {
+      expect(activate()).toHaveProperty('activated', offset <= 0);
+      expect(attempts.get('attempt')?.phase).toBe(offset <= 0 ? 'running' : 'reserved');
+      expect(tasks.getTask(taskId)?.status).toBe(offset <= 0 ? 'in_progress' : 'open');
+      expect(readDirectKickoffIntent(db, 'attempt')).toEqual(entry);
+    } finally {
+      clock.mockRestore();
+    }
+  }
+);
