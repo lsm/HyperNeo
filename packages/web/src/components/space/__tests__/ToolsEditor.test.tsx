@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render } from '@testing-library/preact';
 import { useState } from 'preact/hooks';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  addScopedTool,
   applyToolsPreset,
   detectToolsPreset,
   removeScopedTool,
@@ -440,8 +441,8 @@ describe('scoped tool entries', () => {
     expect(onChange).toHaveBeenCalledWith({ tools: ['Read'], toolsOverridden: true });
   });
 
-  it('shows no scoped section while tools are inherited', () => {
-    const { queryByTestId } = render(
+  it('lists no scoped chips while tools are inherited, but still offers the input', () => {
+    const { queryByTestId, getByTestId } = render(
       <ToolsEditor
         tools={['Bash(ls:*)']}
         toolsOverridden={false}
@@ -449,7 +450,8 @@ describe('scoped tool entries', () => {
         manageScopedEntries
       />
     );
-    expect(queryByTestId('tools-editor-scoped')).toBeNull();
+    expect(queryByTestId('tools-editor-scoped-Bash(ls:*)')).toBeNull();
+    expect(getByTestId('tools-editor-scoped-input')).toBeTruthy();
   });
 
   it('leaves consumers that do not opt in untouched', () => {
@@ -491,3 +493,274 @@ describe('preset detection with scoped entries', () => {
     expect(getByTestId('tools-editor-preset-read-only').className).toContain('bg-accent/20');
   });
 });
+
+describe('adding scoped tool entries', () => {
+  it('accepts a valid scoped Bash entry', () => {
+    expect(addScopedTool(['Read'], 'Bash(gh pr view:*)')).toEqual({
+      tools: ['Read', 'Bash(gh pr view:*)'],
+      toolsOverridden: true,
+    });
+  });
+
+  it('trims surrounding whitespace', () => {
+    expect(addScopedTool([], '  Bash(ls:*)  ')).toEqual({
+      tools: ['Bash(ls:*)'],
+      toolsOverridden: true,
+    });
+  });
+
+  it('rejects an empty entry', () => {
+    expect(addScopedTool([], '   ')).toEqual({ error: 'Enter a tool entry' });
+  });
+
+  it('rejects something that is not a tool entry', () => {
+    expect(addScopedTool([], 'rm -rf /')).toEqual({
+      error: 'Not a valid tool entry: rm -rf /',
+    });
+  });
+
+  it('rejects a duplicate', () => {
+    expect(addScopedTool(['Bash(ls:*)'], 'Bash(ls:*)')).toEqual({
+      error: 'Already on this profile: Bash(ls:*)',
+    });
+  });
+
+  it('adds an entry through the input and clears the draft', () => {
+    const onChange = vi.fn();
+    const { getByTestId } = render(
+      <ToolsEditor
+        tools={['Read']}
+        toolsOverridden={true}
+        onChange={onChange}
+        manageScopedEntries
+      />
+    );
+    const input = getByTestId('tools-editor-scoped-input') as HTMLInputElement;
+    fireEvent.input(input, { target: { value: 'Bash(ls:*)' } });
+    fireEvent.click(getByTestId('tools-editor-scoped-add'));
+    expect(onChange).toHaveBeenCalledWith({
+      tools: ['Read', 'Bash(ls:*)'],
+      toolsOverridden: true,
+    });
+  });
+
+  it('shows an error instead of emitting for an invalid entry', () => {
+    const onChange = vi.fn();
+    const { getByTestId } = render(
+      <ToolsEditor
+        tools={['Read']}
+        toolsOverridden={true}
+        onChange={onChange}
+        manageScopedEntries
+      />
+    );
+    fireEvent.input(getByTestId('tools-editor-scoped-input'), { target: { value: 'nope' } });
+    fireEvent.click(getByTestId('tools-editor-scoped-add'));
+    expect(onChange).not.toHaveBeenCalled();
+    expect(getByTestId('tools-editor-scoped-error').textContent).toContain(
+      'Not a valid tool entry'
+    );
+  });
+
+  it('offers the input even when no scoped entry exists yet', () => {
+    const { getByTestId } = render(
+      <ToolsEditor tools={['Read']} toolsOverridden={true} onChange={vi.fn()} manageScopedEntries />
+    );
+    expect(getByTestId('tools-editor-scoped-input')).toBeTruthy();
+  });
+
+  it('stays hidden for consumers that do not opt in', () => {
+    const { queryByTestId } = render(
+      <ToolsEditor tools={['Read']} toolsOverridden={true} onChange={vi.fn()} />
+    );
+    expect(queryByTestId('tools-editor-scoped-input')).toBeNull();
+  });
+});
+
+describe('scoped entries on an inherited profile', () => {
+  it('offers the add control while tools are inherited', () => {
+    const { getByTestId } = render(
+      <ToolsEditor tools={[]} toolsOverridden={false} onChange={vi.fn()} manageScopedEntries />
+    );
+    expect(getByTestId('tools-editor-scoped-input')).toBeTruthy();
+  });
+
+  it('turns an inherited profile into an override when the first entry is added', () => {
+    const onChange = vi.fn();
+    const { getByTestId } = render(
+      <ToolsEditor tools={[]} toolsOverridden={false} onChange={onChange} manageScopedEntries />
+    );
+    fireEvent.input(getByTestId('tools-editor-scoped-input'), {
+      target: { value: 'Bash(ls:*)' },
+    });
+    fireEvent.click(getByTestId('tools-editor-scoped-add'));
+    expect(onChange).toHaveBeenCalledWith({ tools: ['Bash(ls:*)'], toolsOverridden: true });
+  });
+
+  it('commits a typed entry on blur so saving does not discard it', () => {
+    const onChange = vi.fn();
+    const { getByTestId } = render(
+      <ToolsEditor
+        tools={['Read']}
+        toolsOverridden={true}
+        onChange={onChange}
+        manageScopedEntries
+      />
+    );
+    const input = getByTestId('tools-editor-scoped-input');
+    fireEvent.input(input, { target: { value: 'Bash(ls:*)' } });
+    fireEvent.blur(input);
+    expect(onChange).toHaveBeenCalledWith({
+      tools: ['Read', 'Bash(ls:*)'],
+      toolsOverridden: true,
+    });
+  });
+
+  it('does not emit on blur when the draft is empty', () => {
+    const onChange = vi.fn();
+    const { getByTestId } = render(
+      <ToolsEditor
+        tools={['Read']}
+        toolsOverridden={true}
+        onChange={onChange}
+        manageScopedEntries
+      />
+    );
+    fireEvent.blur(getByTestId('tools-editor-scoped-input'));
+    expect(onChange).not.toHaveBeenCalled();
+  });
+});
+
+describe('scoped draft submitted exactly once', () => {
+  it('keeps focus on the input so Add does not fire blur first', () => {
+    const { getByTestId } = render(
+      <ToolsEditor tools={['Read']} toolsOverridden={true} onChange={vi.fn()} manageScopedEntries />
+    );
+    const add = getByTestId('tools-editor-scoped-add');
+    const prevented = !fireEvent.mouseDown(add);
+    expect(prevented).toBe(true);
+  });
+
+  it('adds once and shows no error when blur and click both arrive', () => {
+    const onChange = vi.fn();
+    const { getByTestId, queryByTestId } = render(
+      <ToolsEditor
+        tools={['Read']}
+        toolsOverridden={true}
+        onChange={onChange}
+        manageScopedEntries
+      />
+    );
+    const input = getByTestId('tools-editor-scoped-input');
+    fireEvent.input(input, { target: { value: 'Bash(ls:*)' } });
+    fireEvent.blur(input);
+    fireEvent.click(getByTestId('tools-editor-scoped-add'));
+
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith({
+      tools: ['Read', 'Bash(ls:*)'],
+      toolsOverridden: true,
+    });
+    expect(queryByTestId('tools-editor-scoped-error')).toBeNull();
+  });
+});
+
+describe('invalid scoped draft blocks the enclosing form', () => {
+  it('marks the input invalid so a parent submit cannot proceed', () => {
+    const { getByTestId } = render(
+      <ToolsEditor tools={['Read']} toolsOverridden={true} onChange={vi.fn()} manageScopedEntries />
+    );
+    const input = getByTestId('tools-editor-scoped-input') as HTMLInputElement;
+    fireEvent.input(input, { target: { value: 'rm -rf /' } });
+    fireEvent.blur(input);
+
+    expect(input.checkValidity()).toBe(false);
+    expect(input.validationMessage).toContain('Not a valid tool entry');
+  });
+
+  it('clears the block once the entry is corrected', () => {
+    const onChange = vi.fn();
+    const { getByTestId } = render(
+      <ToolsEditor
+        tools={['Read']}
+        toolsOverridden={true}
+        onChange={onChange}
+        manageScopedEntries
+      />
+    );
+    const input = getByTestId('tools-editor-scoped-input') as HTMLInputElement;
+    fireEvent.input(input, { target: { value: 'nope' } });
+    fireEvent.blur(input);
+    expect(input.checkValidity()).toBe(false);
+
+    fireEvent.input(input, { target: { value: 'Bash(ls:*)' } });
+    expect(input.checkValidity()).toBe(true);
+    fireEvent.blur(input);
+    expect(onChange).toHaveBeenCalledWith({
+      tools: ['Read', 'Bash(ls:*)'],
+      toolsOverridden: true,
+    });
+    expect(input.checkValidity()).toBe(true);
+  });
+
+  it('leaves an emptied draft valid', () => {
+    const { getByTestId } = render(
+      <ToolsEditor tools={['Read']} toolsOverridden={true} onChange={vi.fn()} manageScopedEntries />
+    );
+    const input = getByTestId('tools-editor-scoped-input') as HTMLInputElement;
+    fireEvent.input(input, { target: { value: 'nope' } });
+    fireEvent.blur(input);
+    fireEvent.input(input, { target: { value: '' } });
+    fireEvent.blur(input);
+    expect(input.checkValidity()).toBe(true);
+  });
+});
+
+describe('stale draft validity', () => {
+  function DuplicateHost() {
+    const [selection, setSelection] = useState<ToolsSelection>({
+      tools: ['Read', 'Bash(ls:*)'],
+      toolsOverridden: true,
+    });
+    return (
+      <ToolsEditor
+        tools={selection.tools}
+        toolsOverridden={selection.toolsOverridden}
+        onChange={setSelection}
+        manageScopedEntries
+      />
+    );
+  }
+
+  it('clears a duplicate error once the matching entry is removed', () => {
+    const { getByTestId } = render(<DuplicateHost />);
+    const input = getByTestId('tools-editor-scoped-input') as HTMLInputElement;
+
+    fireEvent.input(input, { target: { value: 'Bash(ls:*)' } });
+    fireEvent.blur(input);
+    expect(input.checkValidity()).toBe(false);
+    expect(input.validationMessage).toContain('Already on this profile');
+
+    fireEvent.click(getByTestId('tools-editor-scoped-remove-Bash(ls:*)'));
+
+    expect(input.checkValidity()).toBe(true);
+    expect(queryByTestIdIn(getByTestId('tools-editor'), 'tools-editor-scoped-error')).toBeNull();
+  });
+
+  it('keeps a genuinely invalid draft blocked when the list changes', () => {
+    const { getByTestId } = render(<DuplicateHost />);
+    const input = getByTestId('tools-editor-scoped-input') as HTMLInputElement;
+
+    fireEvent.input(input, { target: { value: 'rm -rf /' } });
+    fireEvent.blur(input);
+    expect(input.checkValidity()).toBe(false);
+
+    fireEvent.click(getByTestId('tools-editor-scoped-remove-Bash(ls:*)'));
+
+    expect(input.checkValidity()).toBe(false);
+  });
+});
+
+function queryByTestIdIn(root: HTMLElement, testId: string): HTMLElement | null {
+  return root.querySelector(`[data-testid="${testId}"]`);
+}

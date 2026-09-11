@@ -1,4 +1,5 @@
-import { DENIABLE_TOOLS, KNOWN_TOOLS } from '@hyperneo/shared';
+import { DENIABLE_TOOLS, isKnownToolEntry, KNOWN_TOOLS } from '@hyperneo/shared';
+import { useEffect, useRef, useState } from 'preact/hooks';
 
 type ToolName = (typeof KNOWN_TOOLS)[number];
 
@@ -54,6 +55,14 @@ export function applyToolsPreset(preset: ToolsPresetName, keep: string[] = []): 
   return { tools: next, toolsOverridden: true };
 }
 
+export function addScopedTool(tools: string[], entry: string): ToolsSelection | { error: string } {
+  const trimmed = entry.trim();
+  if (!trimmed) return { error: 'Enter a tool entry' };
+  if (!isKnownToolEntry(trimmed)) return { error: `Not a valid tool entry: ${trimmed}` };
+  if (tools.includes(trimmed)) return { error: `Already on this profile: ${trimmed}` };
+  return { tools: [...tools, trimmed], toolsOverridden: true };
+}
+
 export function removeScopedTool(tools: string[], entry: string): ToolsSelection {
   const next = tools.filter((tool) => tool !== entry);
   return { tools: next, toolsOverridden: next.length > 0 };
@@ -78,6 +87,41 @@ export function ToolsEditor({
   manageScopedEntries = false,
 }: ToolsEditorProps) {
   const activePreset = toolsOverridden ? detectToolsPreset(tools) : 'Inherited';
+  const [scopedDraft, setScopedDraft] = useState('');
+  const [scopedError, setScopedError] = useState<string | null>(null);
+  const scopedInputRef = useRef<HTMLInputElement | null>(null);
+
+  const markScopedValidity = (message: string) => {
+    setScopedError(message === '' ? null : message);
+    scopedInputRef.current?.setCustomValidity(message);
+  };
+
+  const toolsKey = tools.join('|');
+
+  useEffect(() => {
+    if (!scopedError) return;
+    if (scopedDraft.trim() === '') {
+      markScopedValidity('');
+      return;
+    }
+    const outcome = addScopedTool(tools, scopedDraft);
+    if (!('error' in outcome)) markScopedValidity('');
+  }, [toolsKey, scopedDraft, scopedError]);
+
+  const submitScopedDraft = () => {
+    if (scopedDraft.trim() === '') {
+      markScopedValidity('');
+      return;
+    }
+    const outcome = addScopedTool(tools, scopedDraft);
+    if ('error' in outcome) {
+      markScopedValidity(outcome.error);
+      return;
+    }
+    setScopedDraft('');
+    markScopedValidity('');
+    onChange(outcome);
+  };
 
   return (
     <div data-testid="tools-editor">
@@ -184,11 +228,11 @@ export function ToolsEditor({
         })}
       </div>
 
-      {manageScopedEntries && toolsOverridden && scopedToolEntries(tools).length > 0 && (
+      {manageScopedEntries && (
         <div class="mt-3" data-testid="tools-editor-scoped">
           <p class="mb-1.5 text-xs text-fg-faint">Scoped entries</p>
           <div class="flex flex-wrap gap-1.5">
-            {scopedToolEntries(tools).map((entry) => (
+            {(toolsOverridden ? scopedToolEntries(tools) : []).map((entry) => (
               <span
                 key={entry}
                 data-testid={`tools-editor-scoped-${entry}`}
@@ -207,6 +251,40 @@ export function ToolsEditor({
               </span>
             ))}
           </div>
+          <div class="mt-2 flex items-center gap-2">
+            <input
+              type="text"
+              value={scopedDraft}
+              data-testid="tools-editor-scoped-input"
+              placeholder="Add scoped tool entry, e.g. Bash(gh pr view:*)"
+              ref={scopedInputRef}
+              onInput={(event) => {
+                setScopedDraft(event.currentTarget.value);
+                markScopedValidity('');
+              }}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter') return;
+                event.preventDefault();
+                submitScopedDraft();
+              }}
+              onBlur={submitScopedDraft}
+              class="w-full rounded border border-line-strong bg-surface px-2 py-1 font-mono text-xs text-fg placeholder:text-fg-faint focus:border-accent focus:outline-none"
+            />
+            <button
+              type="button"
+              data-testid="tools-editor-scoped-add"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={submitScopedDraft}
+              class="flex-shrink-0 rounded border border-line-strong px-2.5 py-1 text-xs text-fg-soft hover:text-fg"
+            >
+              Add
+            </button>
+          </div>
+          {scopedError && (
+            <p class="mt-1 text-xs text-danger" data-testid="tools-editor-scoped-error">
+              {scopedError}
+            </p>
+          )}
         </div>
       )}
     </div>
