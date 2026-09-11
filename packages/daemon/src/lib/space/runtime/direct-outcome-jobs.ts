@@ -54,7 +54,7 @@ function frozenInput(
   return input;
 }
 
-function enqueueOutcome(
+export function enqueueDirectOutcome(
   db: Database,
   jobQueue: JobQueueRepository,
   input: DirectFinalizationInput
@@ -85,7 +85,7 @@ function enqueueOutcome(
 export function createDirectOutcomeRequester(db: Database, jobQueue: JobQueueRepository) {
   return (superpipe({ db, jobQueue })('request-direct-task-outcome') as PipelineAPI)
     .input('input')
-    .pipe(enqueueOutcome, ['db', 'jobQueue', 'input'], 'result')
+    .pipe(enqueueDirectOutcome, ['db', 'jobQueue', 'input'], 'result')
     .end('result') as (input: DirectFinalizationInput) => DirectOutcomeAcknowledgement;
 }
 
@@ -170,6 +170,6 @@ export function registerDirectOutcomeJobs(
     .all() as Array<{ attemptId: string; sessionId: string }>;
   for (const target of pending) {
     const input = frozenInput(deps.db, target);
-    if (input) enqueueOutcome(deps.db, deps.jobQueue, input);
+    if (input) enqueueDirectOutcome(deps.db, deps.jobQueue, input);
   }
 }

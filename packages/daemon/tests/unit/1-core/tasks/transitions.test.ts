@@ -1,3 +1,4 @@
+import { assertQueuedTaskRetryTransition } from '../../../../src/lib/tasks/transitions';
 import { describe, expect, test } from 'bun:test';
 import {
   VALID_TASK_TRANSITIONS,
@@ -46,4 +47,10 @@ describe('task transition policy', () => {
       "Invalid status transition from 'archived' to 'open'. Allowed: none"
     );
   });
+});
+
+test('review can queue a guarded task retry without enabling generic review-to-open writes', () => {
+  expect(isValidTaskTransition('review', 'open')).toBe(false);
+  expect(() => assertQueuedTaskRetryTransition('review')).not.toThrow();
+  expect(() => assertQueuedTaskRetryTransition('archived')).toThrow();
 });
