@@ -46,11 +46,11 @@ beforeEach(() => {
   }).id;
   tasks = new SpaceTaskRepository(db);
   taskId = tasks.createTask({ spaceId, title: 'Task', description: '' }).id;
-  tasks.updateTask(taskId, { status: 'in_progress', taskAgentSessionId: 'worker' });
   attempts = new DirectTaskExecutionRepository(db);
   attempts.select(taskId);
   attempts.claim(taskId, 'attempt', 'worker');
-  attempts.activate('attempt', 'worker');
+  expect(attempts.activate('attempt', 'worker')?.phase).toBe('running');
+  tasks.updateTask(taskId, { status: 'in_progress', taskAgentSessionId: 'worker' });
   interrupt = mock(async () => {});
   cleanup = mock(async () => {});
   terminal = mock(() => {});
@@ -256,4 +256,51 @@ test('review checkpoint generation rolls back with attempt release and increment
     task: { pendingCompletionGeneration: 1 },
   });
   expect(cleanup).toHaveBeenCalledTimes(1);
+});
+
+test('blocked to review runs reopened bookkeeping inside the atomic finalization', async () => {
+  tasks.updateTask(taskId, { status: 'blocked' });
+  const onTaskReopened = mock(() => {
+    expect(tasks.getTask(taskId)?.status).toBe('review');
+    expect(attempts.get('attempt')?.phase).toBe('stopped');
+    throw new Error('reopened bookkeeping failed');
+  });
+  const review: DirectFinalizationInput = { ...input, status: 'review' };
+  await expect(finalize({ onTaskReopened })(review)).rejects.toThrow('reopened bookkeeping failed');
+  expect(tasks.getTask(taskId)?.status).toBe('blocked');
+  expect(attempts.getActive(taskId)?.phase).toBe('running');
+  onTaskReopened.mockImplementation(() => {});
+  expect(await finalize({ onTaskReopened })(review)).toHaveProperty('finalized', true);
+  expect(onTaskReopened).toHaveBeenLastCalledWith(taskId);
+});
+
+for (const cycle of ['status', 'session'] as const) {
+  test(`rejects same-clock ${cycle} ABA before finalization and on retry`, async () => {
+    const unregister = manager.unregisterSession;
+    manager.unregisterSession = async (...args) => {
+      await unregister(...args);
+      const timestamp = tasks.getTask(taskId)!.updatedAt;
+      if (cycle === 'status') {
+        db.prepare("UPDATE space_tasks SET status = 'open' WHERE id = ?").run(taskId);
+        db.prepare("UPDATE space_tasks SET status = 'in_progress' WHERE id = ?").run(taskId);
+      } else {
+        tasks.updateTask(taskId, { taskAgentSessionId: 'replacement' });
+        tasks.updateTask(taskId, { taskAgentSessionId: 'worker' });
+      }
+      db.prepare('UPDATE space_tasks SET updated_at = ? WHERE id = ?').run(timestamp, taskId);
+    };
+    expect(await finalize()(input)).toEqual({ finalized: false, reason: 'unavailable' });
+    expect(await finalize()(input)).toEqual({ finalized: false, reason: 'unavailable' });
+    expect(tasks.getTask(taskId)?.status).toBe('in_progress');
+    expect(attempts.getActive(taskId)?.phase).toBe('running');
+    expect(terminal).not.toHaveBeenCalled();
+  });
+}
+
+test('completed idempotence rejects a later lifecycle cycle back to the same status', async () => {
+  expect(await finalize()(input)).toHaveProperty('finalized', true);
+  tasks.updateTask(taskId, { status: 'open' });
+  tasks.updateTask(taskId, { status: 'blocked' });
+  expect(await finalize()(input)).toEqual({ finalized: false, reason: 'unavailable' });
+  expect(terminal).toHaveBeenCalledTimes(1);
 });
