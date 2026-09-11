@@ -53,6 +53,7 @@ describe('scope-config', () => {
       const names = tableNames(config);
       expect(names).toEqual([
         'space_long_horizon_agents',
+        'space_agent_templates',
         'space_workflows',
         'space_workflow_nodes',
         'space_workflow_runs',
