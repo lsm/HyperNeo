@@ -143,12 +143,14 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
     setFormModelPool(poolFromAgent(agent));
     setFormTools({ tools: agent.tools ?? [], toolsOverridden: agent.tools !== null });
     setFormSettingSources(agent.settingSources ?? null);
+    setFormTemplateKey('');
   }
 
   function closeForm() {
     setCreating(false);
     setEditing(null);
     setFormError(null);
+    setFormTemplateKey('');
   }
 
   async function submitForm(event: Event) {

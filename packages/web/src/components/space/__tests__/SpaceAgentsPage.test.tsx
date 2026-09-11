@@ -914,6 +914,47 @@ describe('SpaceAgentsPage', () => {
     expect(mockCreate.mock.calls[0][0].templateKey).toBe('scoped.v1');
   });
 
+  it('drops a cancelled template selection before editing an agent', async () => {
+    mockTemplates.value = [
+      { key: 'scoped.v1', displayName: 'Scoped', settingSources: ['project'] },
+    ];
+    mockAgents.value = [makeAgent('alpha', { settingSources: null })];
+    const { getByTestId, getByText } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    fireEvent.input(getByTestId('agent-template-select'), { target: { value: 'scoped.v1' } });
+    fireEvent.click(getByText('Cancel'));
+
+    fireEvent.click(getByTestId('agent-row-alpha'));
+    fireEvent.click(getByText('Edit'));
+
+    const field = getByTestId('agent-setting-sources-field');
+    const boxes = [...field.querySelectorAll('input[type="checkbox"]')] as HTMLInputElement[];
+    expect(boxes.filter((box) => box.checked)).toHaveLength(3);
+  });
+
+  it('does not save an override derived from a cancelled template', async () => {
+    mockTemplates.value = [
+      { key: 'scoped.v1', displayName: 'Scoped', settingSources: ['project'] },
+    ];
+    mockAgents.value = [makeAgent('alpha', { settingSources: null })];
+    const { getByTestId, getByText } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    fireEvent.input(getByTestId('agent-template-select'), { target: { value: 'scoped.v1' } });
+    fireEvent.click(getByText('Cancel'));
+
+    fireEvent.click(getByTestId('agent-row-alpha'));
+    fireEvent.click(getByText('Edit'));
+    const field = getByTestId('agent-setting-sources-field');
+    const boxes = [...field.querySelectorAll('input[type="checkbox"]')] as HTMLInputElement[];
+    fireEvent.click(boxes[0]);
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalled());
+    expect(mockUpdate.mock.calls[0][1].settingSources).toEqual(['project', 'local']);
+  });
+
   it('clears a description on edit rather than dropping the field', async () => {
     mockAgents.value = [makeAgent('alpha', { description: 'old' })];
     const { getByTestId, getByText } = render(<SpaceAgentsPage spaceId="space-1" />);
