@@ -651,11 +651,16 @@ type AgentTemplateListEntry = {
   version: number | null;
 };
 
-function resolveAgentTemplateLibrary(db: BunDatabase | undefined): AgentTemplateLibrary {
+function resolveAgentTemplateLibrary(
+  db: BunDatabase | undefined,
+  spaceId: string
+): AgentTemplateLibrary {
   return db
     ? {
         source: 'merged-library',
-        templates: new SpaceAgentTemplateManager(new SpaceAgentTemplateRepository(db)).list(),
+        templates: new SpaceAgentTemplateManager(new SpaceAgentTemplateRepository(db)).listIn(
+          spaceId
+        ),
       }
     : { source: 'builtin-fallback', templates: getBuiltInSpaceAgentTemplates() };
 }
@@ -668,11 +673,14 @@ function dropReservedFallbackHandles(library: AgentTemplateLibrary): AgentTempla
   };
 }
 
-function resolveTemplateVersions(db: BunDatabase | undefined): Map<string, number> {
+function resolveTemplateVersions(
+  db: BunDatabase | undefined,
+  spaceId: string
+): Map<string, number> {
   if (!db) return new Map();
   return new Map(
     new SpaceAgentTemplateRepository(db)
-      .listWithVersions()
+      .listOwnedWithVersions(spaceId)
       .map((template) => [template.key, template.version])
   );
 }
@@ -695,22 +703,23 @@ function projectAgentTemplateEntries(
 }
 
 const runListAgentTemplates = (superpipe()('list-agent-templates') as PipelineAPI)
-  .input(['db'])
-  .pipe(resolveAgentTemplateLibrary, 'db', 'library')
-  .pipe(resolveTemplateVersions, 'db', 'versions')
+  .input(['db', 'spaceId'])
+  .pipe(resolveAgentTemplateLibrary, ['db', 'spaceId'], 'library')
+  .pipe(resolveTemplateVersions, ['db', 'spaceId'], 'versions')
   .pipe(dropReservedFallbackHandles, 'library', 'filteredLibrary')
   .pipe(projectAgentTemplateEntries, ['filteredLibrary', 'versions'], 'entries')
-  .end('entries') as (db: BunDatabase | undefined) => AgentTemplateListEntry[];
+  .end('entries') as (db: BunDatabase | undefined, spaceId: string) => AgentTemplateListEntry[];
 
 function resolveExactAgentTemplate(
   db: BunDatabase | undefined,
-  templateName: string
+  templateName: string,
+  spaceId: string
 ): NodeAgentTemplateSource | null {
   const builtIn = getLongHorizonAgentTemplates().find(
     (candidate) => candidate.key === templateName
   ) as NodeAgentTemplateSource | undefined;
   if (builtIn) return builtIn;
-  const stored = db ? new SpaceAgentTemplateRepository(db).getByKey(templateName) : null;
+  const stored = db ? new SpaceAgentTemplateRepository(db).getOwned(spaceId, templateName) : null;
   return stored ? spaceAgentTemplateToNodeSource(stored) : null;
 }
 
@@ -726,12 +735,13 @@ function fallbackBuiltinAgentTemplate(
 }
 
 const runResolveAgentTemplateSource = (superpipe()('resolve-agent-template-source') as PipelineAPI)
-  .input(['templateName', 'db'])
-  .pipe(resolveExactAgentTemplate, ['db', 'templateName'], 'exact')
+  .input(['templateName', 'db', 'spaceId'])
+  .pipe(resolveExactAgentTemplate, ['db', 'templateName', 'spaceId'], 'exact')
   .pipe(fallbackBuiltinAgentTemplate, ['templateName', 'exact'], 'template')
   .end('template') as (
   templateName: string,
-  db: BunDatabase | undefined
+  db: BunDatabase | undefined,
+  spaceId: string
 ) => NodeAgentTemplateSource | null;
 
 export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
@@ -1906,7 +1916,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         return jsonResult({ success: false, error: 'template_name is required' });
       }
 
-      const lhTemplate = runResolveAgentTemplateSource(templateName, config.db);
+      const lhTemplate = runResolveAgentTemplateSource(templateName, config.db, spaceId);
       if (lhTemplate) {
         if (isReservedAgentHandle(lhTemplate.handle)) {
           return jsonResult({
@@ -2030,7 +2040,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             handle,
           };
         }
-        const result = await requireTemplateManager().create(params);
+        const result = await requireTemplateManager().createIn(spaceId, params);
         if (!result.ok) return jsonResult({ success: false, error: result.error });
         logAudit('create_agent_template', { key: args.key, from_agent_id: args.from_agent_id });
         return jsonResult({ success: true, template: result.value });
@@ -2061,7 +2071,8 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             error: `Template "${args.key}" is built-in and cannot be updated; built-ins live in the code registry (packages/daemon/src/lib/space/agents/long-horizon-agent-templates.ts)`,
           });
         }
-        const result = await requireTemplateManager().casUpdate(
+        const result = await requireTemplateManager().casUpdateIn(
+          spaceId,
           args.key,
           templateOverridesFromArgs(args),
           args.expected_version
@@ -2089,7 +2100,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     },
 
     async list_agent_templates(): Promise<ToolResult> {
-      const entries = runListAgentTemplates(config.db);
+      const entries = runListAgentTemplates(config.db, spaceId);
       return jsonResult({ success: true, long_horizon_templates: entries });
     },
 
@@ -2099,7 +2110,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     }): Promise<ToolResult> {
       try {
         await requireSessionWriteAutonomy('delete_agent_template');
-        const result = requireTemplateManager().delete(args.key, args.expected_version);
+        const result = requireTemplateManager().deleteIn(spaceId, args.key, args.expected_version);
         if (!result.ok) return jsonResult({ success: false, error: result.error });
         logAudit('delete_agent_template', { key: args.key, version: args.expected_version });
         return jsonResult({ success: true, deleted: args.key });
