@@ -40,8 +40,8 @@ function buildTaskListQuery(input: ListTasksInput): TaskListQuery {
     where.push("status != 'archived'");
   }
   if (input.before) {
-    where.push('(created_at < ? OR (created_at = ? AND id < ?))');
-    values.push(input.before.createdAt, input.before.createdAt, input.before.id);
+    where.push('(created_at, id) < (?, ?)');
+    values.push(input.before.createdAt, input.before.id);
   }
   values.push(limit + 1);
   return {
