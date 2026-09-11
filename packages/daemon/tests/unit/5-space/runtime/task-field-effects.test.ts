@@ -103,7 +103,7 @@ test.each(['unmet', 'met', 'no-runtime'] as const)(
     expect(writes[0]).toEqual({
       title: 'Edited',
       dependsOn: [dependency.id, dependency.id],
-      ...(mode === 'no-runtime' ? { workflowRunId: replacementRunId } : {}),
+      workflowRunId: replacementRunId,
     });
     expect(writes).toHaveLength(mode === 'met' ? 2 : 1);
     expect(outcome.task.workflowRunId).toBe(mode === 'unmet' ? runId : replacementRunId);
@@ -185,4 +185,41 @@ test('pure completion selection defers pointer write and reports caller event ow
     handledByRuntime: false,
   });
   expect(update).toHaveBeenCalledWith(target.id, deferred);
+});
+
+test('task starting during validation preserves its actual run and session for cleanup', async () => {
+  const get = manager.getTask.bind(manager);
+  let started = false;
+  manager.getTask = async (id) => {
+    const task = await get(id);
+    if (id === dependency.id && !started) {
+      started = true;
+      tasks.updateTask(target.id, {
+        status: 'in_progress',
+        workflowRunId: runId,
+        taskAgentSessionId: 'newly-started',
+      });
+    }
+    return task;
+  };
+  let atCleanup: SpaceTask | null = null;
+  cleanup.mockImplementation(
+    async (_space: string, taskId: string, fields: UpdateSpaceTaskParams) => {
+      atCleanup = tasks.getTask(taskId);
+      return tasks.updateTask(taskId, fields);
+    }
+  );
+  const outcome = await updater()(spaceId, target.id, {
+    title: 'Edited',
+    dependsOn: [dependency.id],
+    workflowRunId: replacementRunId,
+    taskAgentSessionId: null,
+  });
+  expect(atCleanup).toMatchObject({
+    workflowRunId: runId,
+    taskAgentSessionId: 'newly-started',
+    status: 'blocked',
+  });
+  expect(outcome.handledByRuntime).toBe(true);
+  expect(cleanup).toHaveBeenCalledTimes(1);
 });

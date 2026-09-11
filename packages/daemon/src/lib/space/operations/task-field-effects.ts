@@ -68,16 +68,26 @@ export async function persistSpaceTaskFields(
   fields: UpdateSpaceTaskParams
 ): Promise<SpaceTaskFieldState> {
   const manager = getTaskManager(spaceId);
-  const previous = await manager.getTask(taskId);
-  const write = selectSpaceTaskFieldWrite(previous, fields, !!blockExecution);
-  await manager.updateTask(taskId, write.fields, {
+  let previous: SpaceTask | null = null;
+  let deferred: UpdateSpaceTaskParams = {};
+  await manager.updateTask(taskId, fields, {
+    prepareExecutionPointers: (current) => {
+      previous = { ...current };
+      const write = selectSpaceTaskFieldWrite(previous, fields, !!blockExecution);
+      deferred = write.deferred;
+      const prepared: UpdateSpaceTaskParams = write.fields;
+      return {
+        workflowRunId: prepared.workflowRunId,
+        taskAgentSessionId: prepared.taskAgentSessionId,
+      };
+    },
     onCascadedTasks: async (tasks) => {
       for (const task of tasks) await publishSpaceTaskFieldUpdate(emit, spaceId, task);
     },
   });
   const task = await manager.getTask(taskId);
   if (!task) throw new Error(`Task not found: ${taskId}`);
-  return { previous, task, deferred: write.deferred };
+  return { previous, task, deferred };
 }
 
 export async function blockSpaceTaskForDependency(
