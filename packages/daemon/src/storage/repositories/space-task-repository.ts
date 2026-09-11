@@ -18,6 +18,10 @@ export class SpaceTaskRepository {
     private reactiveDb?: ReactiveDatabase
   ) {}
 
+  private hasTaskWithoutSpace(id: string): boolean {
+    return !!this.db.prepare('SELECT 1 FROM space_tasks WHERE id = ? AND space_id IS NULL').get(id);
+  }
+
   private hasMessageSearchIndex(): boolean {
     try {
       const row = this.db
@@ -419,6 +423,7 @@ export class SpaceTaskRepository {
   }
 
   updateTask(id: string, params: InternalUpdateSpaceTaskParams): SpaceTask | null {
+    if (this.hasTaskWithoutSpace(id)) return null;
     const fields: string[] = [];
     const values: SQLiteValue[] = [];
 
@@ -613,7 +618,9 @@ export class SpaceTaskRepository {
       fields.push('updated_at = ?');
       values.push(Date.now());
       values.push(id);
-      const stmt = this.db.prepare(`UPDATE space_tasks SET ${fields.join(', ')} WHERE id = ?`);
+      const stmt = this.db.prepare(
+        `UPDATE space_tasks SET ${fields.join(', ')} WHERE space_id IS NOT NULL AND id = ?`
+      );
       stmt.run(...values);
       this.upsertTaskSearchRow(id);
       if (params.status === 'archived') {
@@ -817,11 +824,12 @@ export class SpaceTaskRepository {
   }
 
   archiveTask(id: string): SpaceTask | null {
+    if (this.hasTaskWithoutSpace(id)) return null;
     const now = Date.now();
     const stmt = this.db.prepare(
       `UPDATE space_tasks SET status = 'archived', archived_at = ?, updated_at = ?,
         terminal_generation = terminal_generation + CASE WHEN status = 'archived' THEN 0 ELSE 1 END
-       WHERE id = ?`
+       WHERE space_id IS NOT NULL AND id = ?`
     );
     stmt.run(now, now, id);
     this.upsertTaskSearchRow(id);
@@ -832,7 +840,8 @@ export class SpaceTaskRepository {
   }
 
   deleteTask(id: string): boolean {
-    const stmt = this.db.prepare(`DELETE FROM space_tasks WHERE id = ?`);
+    if (this.hasTaskWithoutSpace(id)) return false;
+    const stmt = this.db.prepare(`DELETE FROM space_tasks WHERE space_id IS NOT NULL AND id = ?`);
     const result = stmt.run(id);
     if (result.changes > 0) {
       this.deleteTaskMessageSearchRows(id);
