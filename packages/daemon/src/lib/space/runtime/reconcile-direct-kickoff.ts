@@ -137,7 +137,7 @@ export function createDirectKickoffReconciler(db: Database) {
     )
     .pipe(requireKickoffEntry, ['db', 'input'], 'result:dispatch')
     .pipe(inspectDispatch, ['db', 'jobs', 'messages', 'input', 'dispatch'], 'dispatchState')
-    .pipe(Date.now, [], 'now')
+    .pipe(Date.now, undefined, 'now')
     .pipe(decideDirectKickoffDispatch, ['dispatch', 'dispatchState', 'now'], 'result:dispatch')
     .pipe(enqueueFrozenKickoff, ['db', 'jobs', 'input', 'dispatch'], 'dispatch')
     .end('dispatch') as (input: DirectTaskQueryAdmissionInput) => Outcome | null;
