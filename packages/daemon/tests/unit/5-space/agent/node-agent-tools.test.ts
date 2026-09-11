@@ -2965,32 +2965,36 @@ describe('node-agent-tools \u2014 publish_task', () => {
     expect(data.error).toContain('not available');
   });
 
-  test('returns error when callback fails', async () => {
-    const openTask = ctx.taskRepo.createTask({
-      spaceId: ctx.spaceId,
-      title: 'Open task',
-      description: 'Not draft',
-      status: 'open',
-    });
+  test.each(['open', 'done'] as const)(
+    'rejects publishing a %s task through the callback',
+    async (status) => {
+      const openTask = ctx.taskRepo.createTask({
+        spaceId: ctx.spaceId,
+        title: 'Open task',
+        description: 'Not draft',
+        status,
+      });
 
-    const onPublishTask = async (args: { task_id: string }) => {
-      try {
-        const updated = await ctx.taskManager.publishTask(args.task_id);
-        return jsonResult({ success: true, task: updated });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        return jsonResult({ success: false, error: message });
-      }
-    };
+      const onPublishTask = async (args: { task_id: string }) => {
+        try {
+          const updated = await ctx.taskManager.publishTask(args.task_id);
+          return jsonResult({ success: true, task: updated });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          return jsonResult({ success: false, error: message });
+        }
+      };
 
-    const config = makeConfig(ctx, { onPublishTask });
-    const handlers = createNodeAgentToolHandlers(config);
-    const result = await handlers.publish_task({ task_id: openTask.id });
-    const data = JSON.parse(result.content[0].text);
+      const config = makeConfig(ctx, { onPublishTask });
+      const handlers = createNodeAgentToolHandlers(config);
+      const result = await handlers.publish_task({ task_id: openTask.id });
+      const data = JSON.parse(result.content[0].text);
 
-    expect(data.success).toBe(false);
-    expect(data.error).toContain("'open'");
-  });
+      expect(data.success).toBe(false);
+      expect(data.error).toContain('Only draft tasks can be published');
+      expect(ctx.taskRepo.getTask(openTask.id)).toEqual(openTask);
+    }
+  );
   test('callback emits space.task.updated event after publishing', async () => {
     const draftTask = ctx.taskRepo.createTask({
       spaceId: ctx.spaceId,
