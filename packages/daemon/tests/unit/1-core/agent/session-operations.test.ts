@@ -75,7 +75,15 @@ describe('session operation MCP attachment', () => {
       const existing = await restore('existing');
       const cachedServer = existing.getOperationMcpServer();
       manager.registerSession(existing);
+      db.createSession(createTestSession('initial-load'));
+      const initialLoad = manager.getSessionAsync('initial-load');
+      expect(manager.getCachedSession('initial-load')).toBeNull();
       manager.setOperationRegistryProvider(() => catalog('first'));
+      const initiallyLoaded = (await initialLoad)!;
+      expect(
+        (await initiallyLoaded.getOperationMcpServer().tools[0].handler({ name: 'first' }, {}))
+          .isError
+      ).not.toBe(true);
       expect(existing.getOperationMcpServer()).toBe(cachedServer);
       expect(await cachedServer.tools[0].handler({ name: 'first' }, {})).toMatchObject({
         content: [{ text: JSON.stringify({ sessionId: 'existing', source: 'mcp' }) }],
@@ -93,8 +101,19 @@ describe('session operation MCP attachment', () => {
           (await session.getOperationMcpServer().tools[0].handler({ name: 'first' }, {})).isError
         ).not.toBe(true);
       }
+      db.createSession(createTestSession('replacement-load'));
+      const replacementLoad = manager.getSessionAsync('replacement-load');
+      expect(manager.getCachedSession('replacement-load')).toBeNull();
       manager.setOperationRegistryProvider(() => catalog('second'));
-      for (const session of [existing, resumed, created, workflow]) {
+      const replacedWhileLoading = (await replacementLoad)!;
+      for (const session of [
+        existing,
+        resumed,
+        created,
+        workflow,
+        initiallyLoaded,
+        replacedWhileLoading,
+      ]) {
         const handler = session.getOperationMcpServer().tools[0].handler;
         expect((await handler({ name: 'second' }, {})).isError).not.toBe(true);
         expect((await handler({ name: 'first' }, {})).isError).toBe(true);

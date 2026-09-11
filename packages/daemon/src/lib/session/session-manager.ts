@@ -162,7 +162,7 @@ export class SessionManager {
       {
         autoReplayPendingMessages: !this.needsSpaceRuntimeProvisioning(session),
         ...runtimeOptions,
-        operationRegistryProvider: this.operationRegistryProvider,
+        operationRegistryProvider: () => this.operationRegistryProvider?.(),
         hardReset: (agentSession, options) => this.hardResetAgentSession(agentSession, options),
       }
     );
