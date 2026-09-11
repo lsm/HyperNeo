@@ -1653,13 +1653,13 @@ describe('space-task-handlers', () => {
         stopWorkflowBackedTask: mock(async () => activeTask),
       } as unknown as SpaceRuntimeService;
       setup(mockSpace, activeTask, runtime);
-      let current = activeTask;
+      let current: SpaceTask = activeTask;
       (taskManager.updateTask as ReturnType<typeof mock>).mockImplementation(
         async (
           _id: string,
           fields: Partial<SpaceTask>,
           options: Parameters<SpaceTaskManager['updateTask']>[2]
-        ) => persistMockFields(activeTask, fields, options)
+        ) => (current = persistMockFields(current, fields, options))
       );
 
       const result = await call('spaceTask.update', {
