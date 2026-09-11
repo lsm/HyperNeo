@@ -82,6 +82,30 @@ describe('session operation MCP attachment', () => {
       updatedAt: expect.any(Number),
     });
     expect(readTaskCore(db.getDatabase(), task.id)).toEqual(JSON.parse(edited.text));
+    const transitioned = await session
+      .getOperationMcpServer()
+      .tools[0].handler(
+        { name: 'task.transition', input: { taskId: task.id, status: 'done', result: 'Finished' } },
+        {}
+      );
+    expect(transitioned.isError).not.toBe(true);
+    const completed = transitioned.content[0];
+    if (completed.type !== 'text') throw new Error('Expected completed task JSON');
+    expect(JSON.parse(completed.text)).toMatchObject({
+      id: task.id,
+      status: 'done',
+      result: 'Finished',
+    });
+    expect(readTaskCore(db.getDatabase(), task.id)).toEqual(JSON.parse(completed.text));
+    const rejected = await session
+      .getOperationMcpServer()
+      .tools[0].handler(
+        { name: 'task.transition', input: { taskId: task.id, status: 'open' } },
+        {}
+      );
+    const rejection = rejected.content[0];
+    if (rejection.type !== 'text') throw new Error('Expected transition rejection JSON');
+    expect(JSON.parse(rejection.text)).toBe('invalid_transition');
 
     expect(
       db

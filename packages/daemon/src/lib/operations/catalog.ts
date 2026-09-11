@@ -1,3 +1,4 @@
+import { createTransitionTaskOperation } from './task-transition.ts';
 import { createUpdateTaskOperation } from './task-update.ts';
 import { createListTasksOperation } from './task-list.ts';
 import { createCreateTaskOperation } from './task-create.ts';
@@ -13,7 +14,8 @@ export function createDaemonOperationCatalog(
   readTask: (taskId: string) => TaskCore | null,
   createTask: Parameters<typeof createCreateTaskOperation>[0],
   listTasks: Parameters<typeof createListTasksOperation>[0],
-  editTask: Parameters<typeof createUpdateTaskOperation>[0]
+  editTask: Parameters<typeof createUpdateTaskOperation>[0],
+  transitionTask: Parameters<typeof createTransitionTaskOperation>[0]
 ): OperationRegistry {
   const registry: OperationRegistry = createOperationRegistry([
     createSendMessageOperation(jobQueue),
@@ -21,6 +23,7 @@ export function createDaemonOperationCatalog(
     createCreateTaskOperation(createTask),
     createListTasksOperation(listTasks),
     createUpdateTaskOperation(editTask),
+    createTransitionTaskOperation(transitionTask),
     ...createDiscoveryOperations(() => registry),
   ]);
   return registry;
