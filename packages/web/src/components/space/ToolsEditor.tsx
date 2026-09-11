@@ -63,9 +63,15 @@ export interface ToolsEditorProps {
   tools: string[];
   toolsOverridden: boolean;
   onChange: (next: ToolsSelection) => void;
+  manageScopedEntries?: boolean;
 }
 
-export function ToolsEditor({ tools, toolsOverridden, onChange }: ToolsEditorProps) {
+export function ToolsEditor({
+  tools,
+  toolsOverridden,
+  onChange,
+  manageScopedEntries = false,
+}: ToolsEditorProps) {
   const activePreset = toolsOverridden ? detectToolsPreset(tools) : 'Inherited';
 
   return (
@@ -86,7 +92,7 @@ export function ToolsEditor({ tools, toolsOverridden, onChange }: ToolsEditorPro
                 key={preset}
                 type="button"
                 data-testid={`tools-editor-preset-${preset.toLowerCase().replace(/\s+/g, '-')}`}
-                onClick={() => onChange(applyToolsPreset(preset, tools))}
+                onClick={() => onChange(applyToolsPreset(preset, manageScopedEntries ? tools : []))}
                 class={`text-xs px-2.5 py-1 rounded border transition-colors ${
                   active
                     ? 'border-accent-hover bg-accent/20 text-accent-soft'
@@ -173,7 +179,7 @@ export function ToolsEditor({ tools, toolsOverridden, onChange }: ToolsEditorPro
         })}
       </div>
 
-      {toolsOverridden && scopedToolEntries(tools).length > 0 && (
+      {manageScopedEntries && toolsOverridden && scopedToolEntries(tools).length > 0 && (
         <div class="mt-3" data-testid="tools-editor-scoped">
           <p class="mb-1.5 text-xs text-fg-faint">Scoped entries</p>
           <div class="flex flex-wrap gap-1.5">

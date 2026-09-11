@@ -405,6 +405,7 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
                   tools={formTools.tools}
                   toolsOverridden={formTools.toolsOverridden}
                   onChange={setFormTools}
+                  manageScopedEntries
                 />
               </div>
 

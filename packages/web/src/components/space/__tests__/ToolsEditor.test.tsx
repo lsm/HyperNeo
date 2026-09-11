@@ -428,7 +428,12 @@ describe('scoped tool entries', () => {
   it('renders scoped entries and removes one on click', () => {
     const onChange = vi.fn();
     const { getByTestId } = render(
-      <ToolsEditor tools={['Read', 'Bash(ls:*)']} toolsOverridden={true} onChange={onChange} />
+      <ToolsEditor
+        tools={['Read', 'Bash(ls:*)']}
+        toolsOverridden={true}
+        onChange={onChange}
+        manageScopedEntries
+      />
     );
     expect(getByTestId('tools-editor-scoped-Bash(ls:*)')).toBeTruthy();
     fireEvent.click(getByTestId('tools-editor-scoped-remove-Bash(ls:*)'));
@@ -437,8 +442,26 @@ describe('scoped tool entries', () => {
 
   it('shows no scoped section while tools are inherited', () => {
     const { queryByTestId } = render(
-      <ToolsEditor tools={['Bash(ls:*)']} toolsOverridden={false} onChange={vi.fn()} />
+      <ToolsEditor
+        tools={['Bash(ls:*)']}
+        toolsOverridden={false}
+        onChange={vi.fn()}
+        manageScopedEntries
+      />
     );
     expect(queryByTestId('tools-editor-scoped')).toBeNull();
+  });
+
+  it('leaves consumers that do not opt in untouched', () => {
+    const onChange = vi.fn();
+    const { queryByTestId, getByTestId } = render(
+      <ToolsEditor tools={['Read', 'Bash(ls:*)']} toolsOverridden={true} onChange={onChange} />
+    );
+    expect(queryByTestId('tools-editor-scoped')).toBeNull();
+    fireEvent.click(getByTestId('tools-editor-preset-read-only'));
+    expect(onChange).toHaveBeenCalledWith({
+      tools: ['Read', 'Grep', 'Glob'],
+      toolsOverridden: true,
+    });
   });
 });
