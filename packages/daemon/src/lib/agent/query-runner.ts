@@ -296,7 +296,7 @@ interface RetryTeardownState {
 
 interface RetryTeardownOptions {
   nextAttempt: number;
-  recoveryState: { rateLimitCooldownScheduled: boolean };
+  recoveryState: { rateLimitCooldownScheduled: boolean; startGuard?: () => void };
   resetStartupState?: boolean;
   idleFirst?: boolean;
   routeGuard?: {
@@ -424,7 +424,7 @@ export class QueryRunner {
     return true;
   }
 
-  async start(): Promise<void> {
+  async start(startGuard?: () => void): Promise<void> {
     const { messageQueue, logger } = this.ctx;
 
     if (messageQueue.isRunning()) {
@@ -463,7 +463,10 @@ export class QueryRunner {
 
     this.ctx.firstMessageReceived = false;
 
-    const queryPromise = this.runQuery(currentGeneration);
+    const queryPromise = this.runQuery(currentGeneration, 0, {
+      rateLimitCooldownScheduled: false,
+      startGuard,
+    });
     let queryLive = true;
     queryPromise.then(
       () => {
@@ -633,7 +636,9 @@ export class QueryRunner {
   private async runQuery(
     queryGeneration: number,
     retryAttempt = 0,
-    recoveryState = { rateLimitCooldownScheduled: false }
+    recoveryState: { rateLimitCooldownScheduled: boolean; startGuard?: () => void } = {
+      rateLimitCooldownScheduled: false,
+    }
   ): Promise<void> {
     const { session, messageQueue, stateManager, errorManager, logger, optionsBuilder } = this.ctx;
 
@@ -901,6 +906,7 @@ export class QueryRunner {
 
       const originalSpawn = queryOptions.spawnClaudeCodeProcess;
       queryOptions.spawnClaudeCodeProcess = (opts: SpawnOptions): SpawnedProcess => {
+        recoveryState.startGuard?.();
         const proc = (
           originalSpawn ? originalSpawn(opts) : defaultSpawn(opts)
         ) as TrackedAgentProcess;
@@ -950,8 +956,9 @@ export class QueryRunner {
         throw gateAbort;
       }
 
+      recoveryState.startGuard?.();
       const queryObject = query({
-        prompt: this.createMessageGeneratorWrapper(queryGeneration),
+        prompt: this.createMessageGeneratorWrapper(queryGeneration, recoveryState.startGuard),
         options: queryOptions,
       });
       this.ctx.queryObject = queryObject;
@@ -2127,7 +2134,7 @@ export class QueryRunner {
     );
   }
 
-  async *createMessageGeneratorWrapper(queryGeneration: number) {
+  async *createMessageGeneratorWrapper(queryGeneration: number, startGuard?: () => void) {
     const { session, messageQueue, stateManager, logger } = this.ctx;
 
     for await (const { message, onSent } of messageQueue.messageGenerator(session.id, {
@@ -2191,6 +2198,7 @@ export class QueryRunner {
           `internal=${isInternal})`
       );
 
+      startGuard?.();
       yield message;
       onSent();
     }

@@ -376,6 +376,26 @@ describe('QueryRunner startup gate', () => {
     });
   });
 
+  it('rechecks the captured owner after waiting for an SDK startup slot', async () => {
+    process.env.HYPERNEO_SDK_STARTUP_MAX_CONCURRENT = '1';
+    const [first, second] = ['first', 'direct'].map((id) => createRunner(id));
+    let allowed = true;
+    first.runner.start();
+    await waitFor(() => spawned.length === 1);
+    second.runner.start(() => {
+      if (!allowed) throw Object.assign(new Error('Direct owner stopped'), { name: 'AbortError' });
+    });
+    await waitFor(() => getSdkStartupGate().getStats().queued === 1);
+    allowed = false;
+    deliverFirstMessage(spawned[0]);
+    await completeQuery(spawned[0], waitFor);
+    await first.ctx.queryPromise;
+    await second.ctx.queryPromise;
+    expect(spawned).toHaveLength(1);
+    expect(getSdkStartupGate().getStats().active).toBe(0);
+    expect(handleErrorSpy).not.toHaveBeenCalled();
+  });
+
   it('drains to zero after every session finishes normally', async () => {
     process.env.HYPERNEO_SDK_STARTUP_MAX_CONCURRENT = '2';
     const runners = ['s1', 's2', 's3'].map((id) => createRunner(id));

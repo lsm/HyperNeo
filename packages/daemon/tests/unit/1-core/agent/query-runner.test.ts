@@ -1282,6 +1282,29 @@ describe('QueryRunner', () => {
   });
 
   describe('createMessageGeneratorWrapper', () => {
+    it('rechecks ownership after processing setup before yielding a prompt', async () => {
+      let allowed = true;
+      const onSent = mock(() => {});
+      async function* messages() {
+        yield { message: { uuid: 'direct', message: { content: 'task' } }, onSent };
+      }
+      setProcessingSpy.mockImplementation(async () => {
+        allowed = false;
+      });
+      runner = createRunner({
+        messageQueue: {
+          ...mockMessageQueue,
+          messageGenerator: mock(() => messages()),
+        } as unknown as MessageQueue,
+      });
+      const feed = runner.createMessageGeneratorWrapper(0, () => {
+        if (!allowed)
+          throw Object.assign(new Error('Stopped direct owner'), { name: 'AbortError' });
+      });
+      await expect(feed.next()).rejects.toThrow('Stopped direct owner');
+      expect(onSent).not.toHaveBeenCalled();
+    });
+
     it('should yield messages from queue and call onSent', async () => {
       const sentCount = { value: 0 };
 
@@ -2112,6 +2135,26 @@ describe('QueryRunner', () => {
       const userMessage = handleErrorSpy.mock.calls[0][3] as string;
       expect(userMessage).not.toContain('HYPERNEO_SDK_STARTUP_TIMEOUT_MS');
       expect(userMessage).not.toContain('attempt(s)');
+    });
+
+    it('retains the captured guard when retrying a missing resume message', async () => {
+      mockSession.sdkSessionId = 'sdk-session-id';
+      mockSession.sdkOriginPath = mockSession.workspacePath;
+      buildSpy
+        .mockRejectedValueOnce(
+          new Error('No message found with message.uuid of: missing-message-uuid')
+        )
+        .mockResolvedValueOnce({ model: 'claude-sonnet-4-20250514', canUseTool: undefined });
+      const check = mock(() => {
+        throw Object.assign(new Error('Stopped direct owner'), { name: 'AbortError' });
+      });
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      runner.start(check);
+      await ctx.queryPromise;
+      expect(buildSpy).toHaveBeenCalledTimes(2);
+      expect(check).toHaveBeenCalledTimes(1);
+      expect(handleErrorSpy).not.toHaveBeenCalled();
     });
 
     it('should preserve SDK state and retry without one-shot resumeSessionAt when its message is missing', async () => {

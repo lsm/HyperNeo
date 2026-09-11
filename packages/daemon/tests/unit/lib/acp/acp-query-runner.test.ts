@@ -605,6 +605,21 @@ describe('AcpQueryRunner', () => {
     );
   });
 
+  test('rechecks direct ownership after processing setup before ACP prompt handoff', async () => {
+    const { runner, ctx, mockClient, onSent } = createRunnerFixture();
+    let allowed = true;
+    ctx.stateManager.setProcessing = mock(async () => {
+      allowed = false;
+    });
+    await runner.start(() => {
+      if (!allowed) throw Object.assign(new Error('Stopped direct owner'), { name: 'AbortError' });
+    });
+    await ctx.queryPromise;
+    expect(mockClient.sendPrompt).not.toHaveBeenCalled();
+    expect(onSent).not.toHaveBeenCalled();
+    expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+  });
+
   test('runs ACP lifecycle with proxied Space MCP servers', async () => {
     const handler = mock(async () => ({ content: [{ type: 'text', text: 'ok' }] }));
     const { runner, ctx, mockClient } = createRunnerFixture({
@@ -3250,6 +3265,26 @@ describe('AcpQueryRunner', () => {
       }
     }, 5000);
 
+    test('retains direct ownership guard across an ACP startup retry', async () => {
+      const firstClient = createMockClient();
+      let allowed = true;
+      firstClient.sendPrompt = mock(async function* () {
+        allowed = false;
+        throw new Error('ACP agent process exited');
+      });
+      const { ctx } = createRunnerFixture({ client: firstClient });
+      const createClient = mock(() => firstClient as unknown as AcpClient);
+      const runner = new AcpQueryRunner(ctx, createClient);
+      await runner.start(() => {
+        if (!allowed)
+          throw Object.assign(new Error('Stopped direct owner'), { name: 'AbortError' });
+      });
+      await ctx.queryPromise;
+      expect(firstClient.sendPrompt).toHaveBeenCalledTimes(1);
+      expect(createClient).toHaveBeenCalledTimes(1);
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+    });
+
     test('retries when the agent process exits pre-first-message and the stream drains empty', async () => {
       const firstClient = createMockClient();
       let releasePrompt: (() => void) | undefined;
@@ -4214,6 +4249,36 @@ describe('AcpQueryRunner', () => {
     expect(hasToolResult).toBe(true);
     expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
   }, 1000);
+
+  test('rechecks captured direct ownership after asynchronous provider options', async () => {
+    let buildStarted!: () => void;
+    let releaseBuild!: () => void;
+    const started = new Promise<void>((resolve) => {
+      buildStarted = resolve;
+    });
+    const blocked = new Promise<void>((resolve) => {
+      releaseBuild = resolve;
+    });
+    const { runner, ctx, constructorOptions, mockClient } = createRunnerFixture({
+      queryOptions: { cwd: '/tmp/acp-session', mcpServers: {} },
+    });
+    ctx.optionsBuilder.build = mock(async () => {
+      buildStarted();
+      await blocked;
+      return { cwd: '/tmp/acp-session', mcpServers: {} };
+    });
+    let allowed = true;
+    await runner.start(() => {
+      if (!allowed) throw Object.assign(new Error('Direct owner stopped'), { name: 'AbortError' });
+    });
+    await started;
+    allowed = false;
+    releaseBuild();
+    await ctx.queryPromise;
+    expect(constructorOptions).toHaveLength(0);
+    expect(mockClient.sendPrompt).not.toHaveBeenCalled();
+    expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+  });
 
   test('aborts stale ACP startup after cleanup begins', async () => {
     let markBuildStarted: () => void;

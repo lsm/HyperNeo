@@ -442,7 +442,7 @@ export class AcpQueryRunner {
     private readonly createAcpClient: AcpClientFactory = (options) => new AcpClient(options)
   ) {}
 
-  async start(): Promise<void> {
+  async start(startGuard?: () => void): Promise<void> {
     const { messageQueue, logger } = this.ctx;
 
     if (messageQueue.isRunning()) {
@@ -462,7 +462,10 @@ export class AcpQueryRunner {
 
     const currentGeneration = this.ctx.incrementQueryGeneration();
     this.ctx.firstMessageReceived = false;
-    this.ctx.queryPromise = this.runQuery(currentGeneration);
+    this.ctx.queryPromise = this.runQuery(currentGeneration, false, {
+      rateLimitCooldownScheduled: false,
+      startGuard,
+    });
   }
 
   invalidateAttemptTokens(): void {
@@ -472,7 +475,9 @@ export class AcpQueryRunner {
   private async runQuery(
     queryGeneration: number,
     isRetry = false,
-    recoveryState = { rateLimitCooldownScheduled: false }
+    recoveryState: { rateLimitCooldownScheduled: boolean; startGuard?: () => void } = {
+      rateLimitCooldownScheduled: false,
+    }
   ): Promise<void> {
     const { session, messageQueue, stateManager, errorManager, logger, optionsBuilder } = this.ctx;
     const abortController = new AbortController();
@@ -493,6 +498,7 @@ export class AcpQueryRunner {
       }
     };
     const assertActiveAcpStartup = () => {
+      recoveryState.startGuard?.();
       if (
         this.ctx.isCleaningUp() ||
         this.ctx.getQueryGeneration() !== queryGeneration ||
@@ -959,6 +965,7 @@ export class AcpQueryRunner {
           break;
         }
 
+        assertActiveAcpStartup();
         const promptContent = prependInstructionsToNextPrompt
           ? [...instructionBlocks, ...toAcpPromptContent(message)]
           : toAcpPromptContent(message);
@@ -1210,7 +1217,9 @@ export class AcpQueryRunner {
     createdAcpSessionDuringRun = false,
     receivedAcpMessageDuringRun = false,
     closeProxyBridge: () => Promise<void> = async () => {},
-    recoveryState = { rateLimitCooldownScheduled: false }
+    recoveryState: { rateLimitCooldownScheduled: boolean; startGuard?: () => void } = {
+      rateLimitCooldownScheduled: false,
+    }
   ): Promise<void> {
     const { session, messageQueue, stateManager, errorManager, logger } = this.ctx;
     logger.error('ACP query error:', error);
