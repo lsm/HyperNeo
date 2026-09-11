@@ -931,6 +931,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     void spaceRuntimeService.recoverPendingOutcomeNotificationsForSpace(spaceId);
   });
 
+  const spaceAgentRepo = new SpaceAgentRepository(deps.db.getDatabase());
+
   setupSpaceAgentHandlers(
     deps.messageHub,
     deps.internalEventBus,
@@ -942,11 +944,12 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       spaceAgentTemplateRepo,
       undefined,
       templateInstanceScanFromRepo(longHorizonAgentRepo)
-    )
+    ),
+    spaceAgentRepo
   );
 
   setupSpaceAgentV2Handlers(deps.messageHub, {
-    agents: new SpaceAgentRepository(deps.db.getDatabase()),
+    agents: spaceAgentRepo,
     templates: spaceAgentTemplateRepo,
     spaceExists: async (spaceId) => (await deps.spaceManager.getSpace(spaceId)) !== null,
     getSession: (sessionId) => deps.db.getSession(sessionId),

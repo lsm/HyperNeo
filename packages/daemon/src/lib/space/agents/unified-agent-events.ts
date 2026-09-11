@@ -1,4 +1,4 @@
-import type { SpaceLongHorizonAgent } from '@hyperneo/shared';
+import type { SpaceAgent, SpaceLongHorizonAgent } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
 import { Logger } from '../../logger.ts';
 
@@ -51,5 +51,35 @@ export async function publishUnifiedAgentDeleted(
     .publish('spaceAgent.deleted', { sessionId, spaceId, agentId })
     .catch((err) => {
       log.warn('Failed to emit spaceAgent.deleted:', err);
+    });
+}
+
+export interface OwnedAgentLookup {
+  getOwnedById(id: string): SpaceAgent | null;
+}
+
+export async function publishSpaceAgentV2Mirror(
+  internalEventBus: UnifiedAgentEventBus,
+  ownedAgents: OwnedAgentLookup | undefined,
+  spaceId: string,
+  agentId: string,
+  kind: 'created' | 'updated' | 'deleted'
+): Promise<void> {
+  if (!internalEventBus || !ownedAgents) return;
+  const sessionId = `space:${spaceId}`;
+  if (kind === 'deleted') {
+    await internalEventBus
+      .publish('spaceAgentV2.deleted', { sessionId, spaceId, agentId })
+      .catch((err) => {
+        log.warn('Failed to mirror spaceAgentV2.deleted:', err);
+      });
+    return;
+  }
+  const agent = ownedAgents.getOwnedById(agentId);
+  if (!agent) return;
+  await internalEventBus
+    .publish(`spaceAgentV2.${kind}`, { sessionId, spaceId, agent })
+    .catch((err) => {
+      log.warn(`Failed to mirror spaceAgentV2.${kind}:`, err);
     });
 }
