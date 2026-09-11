@@ -197,7 +197,7 @@ describe('operation.invoke RPC registration', () => {
       })
     ).toEqual({ tasks: [readTaskCore(taskDb, owned.id)], nextCursor: null });
     taskDb.prepare("UPDATE space_tasks SET status = 'archived' WHERE id = ?").run(created[0].id);
-    expect(await client.request('operation.invoke', { name: 'task.list', input: {} })).toEqual({
+    expect(await client.request('operation.invoke', { name: 'task.list' })).toEqual({
       tasks: [created[1]],
       nextCursor: null,
     });

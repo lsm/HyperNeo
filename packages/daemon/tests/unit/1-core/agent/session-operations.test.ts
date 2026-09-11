@@ -60,7 +60,7 @@ describe('session operation MCP attachment', () => {
     expect(readTaskCore(db.getDatabase(), task.id)).toEqual(task);
     const listed = await session
       .getOperationMcpServer()
-      .tools[0].handler({ name: 'task.list', input: {} }, {});
+      .tools[0].handler({ name: 'task.list' }, {});
     expect(listed.isError).not.toBe(true);
     const page = listed.content[0];
     if (page.type !== 'text') throw new Error('Expected task page JSON');

@@ -19,7 +19,8 @@ export function createListTasksOperation(
         limit: z.number().int().min(1).max(100).optional(),
         before: cursorSchema.optional(),
       })
-      .strict(),
+      .strict()
+      .default({}),
     resultSchema: z.object({ tasks: z.array(TaskCoreSchema), nextCursor: cursorSchema.nullable() }),
     execute: async (input) => listTasks(input),
   });
