@@ -9941,6 +9941,88 @@ describe('createSpaceAgentToolHandlers — update_task', () => {
     ctx.db.close();
   });
 
+  test.each([false, true])(
+    'dependency updates stop workflow only when unmet (met=%s)',
+    async (met) => {
+      const wf = buildSingleStepWorkflow(
+        ctx.spaceId,
+        ctx.workflowManager,
+        ctx.agentId,
+        'Dependencies'
+      );
+      const run = ctx.workflowRunRepo.createRun({
+        spaceId: ctx.spaceId,
+        workflowId: wf.id,
+        title: 'Active run',
+      });
+      ctx.workflowRunRepo.updateStatusUnchecked(run.id, 'in_progress');
+      const task = ctx.taskRepo.createTask({
+        spaceId: ctx.spaceId,
+        title: 'Active task',
+        description: '',
+        status: 'in_progress',
+        workflowRunId: run.id,
+      });
+      const dependency = ctx.taskRepo.createTask({
+        spaceId: ctx.spaceId,
+        title: 'Dependency',
+        description: '',
+        status: met ? 'done' : 'open',
+      });
+      const execution = ctx.nodeExecutionRepo.createOrIgnore({
+        workflowRunId: run.id,
+        workflowNodeId: wf.startNodeId,
+        agentName: 'coder',
+        agentSessionId: 'running-session',
+        status: 'in_progress',
+      });
+      const emitted: string[] = [];
+      const cancelled: string[] = [];
+      const runtime = new SpaceRuntime({
+        db: ctx.db,
+        spaceManager: ctx.spaceManager,
+        spaceWorkflowManager: ctx.workflowManager,
+        workflowRunRepo: ctx.workflowRunRepo,
+        taskRepo: ctx.taskRepo,
+        nodeExecutionRepo: ctx.nodeExecutionRepo,
+        onTaskUpdated: ({ task: updated }) => {
+          emitted.push(updated.id);
+        },
+        taskAgentManager: {
+          cancelBySessionId: (sessionId: string) => {
+            cancelled.push(sessionId);
+          },
+        } as unknown as TaskAgentManager,
+      });
+      const internalEventBus = {
+        publish: async (event: string, payload: { taskId: string }) => {
+          if (event === 'space.task.updated') emitted.push(payload.taskId);
+        },
+      } as unknown as NonNullable<Parameters<typeof makeHandlers>[1]>['internalEventBus'];
+      const result = parseResult(
+        await makeHandlers(ctx, { runtime, internalEventBus }).update_task({
+          task_id: task.id,
+          title: 'Edited task',
+          depends_on: [dependency.id],
+        })
+      );
+      expect(result.success).toBe(true);
+      expect(result.task).toMatchObject({
+        title: 'Edited task',
+        dependsOn: [dependency.id],
+        status: met ? 'in_progress' : 'blocked',
+      });
+      expect(ctx.workflowRunRepo.getRun(run.id)?.status).toBe(met ? 'in_progress' : 'blocked');
+      expect(ctx.nodeExecutionRepo.getById(execution.id)).toMatchObject({
+        status: met ? 'in_progress' : 'cancelled',
+        agentSessionId: met ? 'running-session' : null,
+      });
+      expect(cancelled).toEqual(met ? [] : ['running-session']);
+      expect(emitted).toEqual([task.id]);
+      if (!met) expect(ctx.taskRepo.getTask(task.id)?.completedAt).toBeNull();
+    }
+  );
+
   test('updates title only', async () => {
     const created = await ctx.taskManager.createTask({
       title: 'Original title',
