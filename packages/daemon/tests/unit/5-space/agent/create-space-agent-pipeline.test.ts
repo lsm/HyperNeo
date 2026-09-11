@@ -72,7 +72,7 @@ function makeHarness(): Harness {
     seedTemplateExtras: (agent, template) => {
       harness.seeded.push({ agentId: agent.id, templateKey: template.key });
     },
-    getTemplate: (key) => harness.templates.get(key) ?? null,
+    getTemplate: (_spaceId, key) => harness.templates.get(key) ?? null,
     listHandles: () => harness.handles,
     createAgent: (params) => {
       harness.created.push(params);

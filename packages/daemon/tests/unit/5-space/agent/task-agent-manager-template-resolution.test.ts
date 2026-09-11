@@ -142,7 +142,7 @@ interface TemplateResolutionHarness {
   templateRepoCalls: string[];
   pinnedLookupCalls: string[];
   internals: {
-    resolveNodeTemplateSource: (key: string) => NodeAgentTemplateSource | null;
+    resolveNodeTemplateSource: (spaceId: string, key: string) => NodeAgentTemplateSource | null;
     resolveSlotSpawnConfig: (
       spaceId: string,
       slot: WorkflowNodeAgent,
@@ -180,8 +180,8 @@ function makeTemplateResolutionHarness(
       getById: (id: string) => registryAgents.find((agent) => agent.id === id) ?? null,
     },
     templateRepo: {
-      getByKey: (key: string) => {
-        templateRepoCalls.push(key);
+      getOwned: (spaceId: string, key: string) => {
+        templateRepoCalls.push(`${spaceId}:${key}`);
         return stored.get(key) ?? null;
       },
     },
@@ -195,13 +195,33 @@ function makeTemplateResolutionHarness(
   };
 }
 
+function makeTemplateResolutionHarnessScopedToOwner(params: {
+  storedTemplates: SpaceAgentTemplate[];
+  owner: string;
+}): TemplateResolutionHarness {
+  const harness = makeTemplateResolutionHarness({ storedTemplates: [] });
+  const owned = new Map(params.storedTemplates.map((template) => [template.key, template]));
+  const calls = harness.templateRepoCalls;
+  (
+    harness.tam as unknown as {
+      config: { templateRepo: { getOwned: (spaceId: string, key: string) => unknown } };
+    }
+  ).config.templateRepo = {
+    getOwned: (spaceId: string, key: string) => {
+      calls.push(`${spaceId}:${key}`);
+      return spaceId === params.owner ? (owned.get(key) ?? null) : null;
+    },
+  };
+  return harness;
+}
+
 describe('resolveNodeTemplateSource ordering (ATC-1 pin)', () => {
   test('resolves a code built-in worker template without consulting the template repo', () => {
     const h = makeTemplateResolutionHarness({
       storedTemplates: [makeStoredTemplate({ key: 'worker.swe' })],
     });
 
-    const source = h.internals.resolveNodeTemplateSource('worker.swe');
+    const source = h.internals.resolveNodeTemplateSource('space-1', 'worker.swe');
 
     expect(source?.key).toBe('worker.swe');
     expect(source?.handle).toBe('swe');
@@ -214,21 +234,21 @@ describe('resolveNodeTemplateSource ordering (ATC-1 pin)', () => {
       storedTemplates: [makeStoredTemplate({ key: 'coordinator.default' })],
     });
 
-    const source = h.internals.resolveNodeTemplateSource('coordinator.default');
+    const source = h.internals.resolveNodeTemplateSource('space-1', 'coordinator.default');
 
     expect(source?.key).toBe('coordinator.default');
     expect(source?.handle).toBe('space-manager');
     expect(h.templateRepoCalls).toEqual([]);
   });
 
-  test('falls back to templateRepo.getByKey for a stored template and maps it to a node source', () => {
+  test('falls back to templateRepo.getOwned for a stored template and maps it to a node source', () => {
     const h = makeTemplateResolutionHarness({
       storedTemplates: [makeStoredTemplate()],
     });
 
-    const source = h.internals.resolveNodeTemplateSource('custom.stored');
+    const source = h.internals.resolveNodeTemplateSource('space-1', 'custom.stored');
 
-    expect(h.templateRepoCalls).toEqual(['custom.stored']);
+    expect(h.templateRepoCalls).toEqual(['space-1:custom.stored']);
     expect(source?.key).toBe('custom.stored');
     expect(source?.instructions).toBe('Stored template instructions');
     expect(source?.model).toBe('stored-model');
@@ -245,7 +265,7 @@ describe('resolveNodeTemplateSource ordering (ATC-1 pin)', () => {
       storedTemplates: [makeStoredTemplate({ key: 'worker.swe' })],
     });
 
-    const source = h.internals.resolveNodeTemplateSource('worker.swe');
+    const source = h.internals.resolveNodeTemplateSource('space-1', 'worker.swe');
 
     expect(source?.instructions).toBe(PRESET_CODER_PROMPT);
     expect(source?.instructions).not.toBe('Stored template instructions');
@@ -255,8 +275,8 @@ describe('resolveNodeTemplateSource ordering (ATC-1 pin)', () => {
   test('returns null for an unknown key after one repo lookup', () => {
     const h = makeTemplateResolutionHarness();
 
-    expect(h.internals.resolveNodeTemplateSource('missing.template')).toBeNull();
-    expect(h.templateRepoCalls).toEqual(['missing.template']);
+    expect(h.internals.resolveNodeTemplateSource('space-1', 'missing.template')).toBeNull();
+    expect(h.templateRepoCalls).toEqual(['space-1:missing.template']);
   });
 });
 
@@ -581,6 +601,22 @@ describe('resolveSlotSpawnConfig pinned snapshot consumption (ATC-8)', () => {
     expect(h.templateRepoCalls).toEqual([]);
   });
 
+  test('a direct spawn cannot resolve a template another Space owns', () => {
+    const h = makeTemplateResolutionHarnessScopedToOwner({
+      storedTemplates: [makeStoredTemplate()],
+      owner: 'space-owner',
+    });
+
+    const config = h.internals.resolveSlotSpawnConfig(SPACE_ID, {
+      agentId: '',
+      templateKey: 'custom.stored',
+      name: 'stored',
+    });
+
+    expect(config).toBeNull();
+    expect(h.templateRepoCalls).toEqual([`${SPACE_ID}:custom.stored`]);
+  });
+
   test('a direct spawn without a run resolves live (send-to-agent path)', () => {
     const h = makeTemplateResolutionHarness({
       storedTemplates: [makeStoredTemplate()],
@@ -593,7 +629,7 @@ describe('resolveSlotSpawnConfig pinned snapshot consumption (ATC-8)', () => {
     });
 
     expect(config?.agent.instructions).toBe('Stored template instructions');
-    expect(h.templateRepoCalls).toEqual(['custom.stored']);
+    expect(h.templateRepoCalls).toEqual([`${SPACE_ID}:custom.stored`]);
   });
 });
 

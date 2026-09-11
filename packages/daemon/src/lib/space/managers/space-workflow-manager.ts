@@ -638,7 +638,7 @@ export class SpaceWorkflowManager {
           entry.agentId = '';
           continue;
         }
-        if (this.templateRepo?.getByKey(key)) continue;
+        if (this.templateRepo?.getOwned(spaceId, key)) continue;
         if (this.agentLookup && entry.agentId?.trim()) {
           if (this.agentLookup.getAgentById(spaceId, entry.agentId)) continue;
         }
