@@ -11,6 +11,7 @@ import { navigateToSpaceSession } from '../../lib/router';
 import { spaceStore } from '../../lib/space-store';
 import { AUTONOMY_LABELS, toolPermissionsToolsList } from './agent-page-labels';
 import { TemplateEditor } from './TemplateEditor';
+import { TemplateDeleteDialog } from './TemplateDeleteDialog';
 import { groupTemplatesByLabel } from './template-grouping';
 import { TemplateCard } from './TemplateCard';
 import { extraToolsOf, withExtraTool, withoutExtraTool } from './template-extra-tools';
@@ -980,20 +981,15 @@ export function SpaceLongHorizonAgents({
       )}
 
       {deletingTemplate && (
-        <ConfirmModal
-          isOpen
+        <TemplateDeleteDialog
+          template={deletingTemplate}
+          busy={deletingTemplateBusy}
+          error={deleteTemplateError}
+          onConfirm={handleTemplateDeleteConfirm}
           onClose={() => {
             setDeletingTemplate(null);
             setDeleteTemplateError(null);
           }}
-          onConfirm={handleTemplateDeleteConfirm}
-          title="Delete Template"
-          message={`Delete template "${deletingTemplate.displayName}"? This cannot be undone. Runs that pinned a template snapshot keep their copy. Older in-flight runs cannot be repaired by editing a workflow — let them finish or restart them first. Saved workflows still naming this template must be re-pointed, or their future runs cannot start that agent.`}
-          confirmText="Delete"
-          confirmButtonVariant="danger"
-          isLoading={deletingTemplateBusy}
-          error={deleteTemplateError}
-          confirmTestId="confirm-delete-template"
         />
       )}
 
