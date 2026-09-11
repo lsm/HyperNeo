@@ -357,6 +357,7 @@ describe('Space Agent RPC Handlers', () => {
 
     it('merges custom templates with built-ins', async () => {
       await call(hubData.handlers, 'spaceAgent.createTemplate', {
+        spaceId: 'space-1',
         key: 'review.custom',
         handle: 'review',
         displayName: 'Review',
@@ -380,6 +381,7 @@ describe('Space Agent RPC Handlers', () => {
       const result = await call<{
         template: { key: string; handle: string; displayName: string };
       }>(hubData.handlers, 'spaceAgent.createTemplate', {
+        spaceId: 'space-1',
         key: 'release.custom',
         handle: 'release',
         displayName: 'Release',
@@ -392,24 +394,35 @@ describe('Space Agent RPC Handlers', () => {
 
     it('throws when key is missing', async () => {
       await expect(
-        call(hubData.handlers, 'spaceAgent.createTemplate', { handle: 'release' })
+        call(hubData.handlers, 'spaceAgent.createTemplate', {
+          spaceId: 'space-1',
+          handle: 'release',
+        })
       ).rejects.toThrow('key is required');
     });
 
     it('throws when handle is missing', async () => {
       await expect(
-        call(hubData.handlers, 'spaceAgent.createTemplate', { key: 'release.custom' })
+        call(hubData.handlers, 'spaceAgent.createTemplate', {
+          spaceId: 'space-1',
+          key: 'release.custom',
+        })
       ).rejects.toThrow('handle is required');
     });
 
     it('surfaces manager validation errors for a duplicate key', async () => {
       await call(hubData.handlers, 'spaceAgent.createTemplate', {
+        spaceId: 'space-1',
         key: 'dup.custom',
         handle: 'dup',
       });
 
       await expect(
-        call(hubData.handlers, 'spaceAgent.createTemplate', { key: 'dup.custom', handle: 'dup' })
+        call(hubData.handlers, 'spaceAgent.createTemplate', {
+          spaceId: 'space-1',
+          key: 'dup.custom',
+          handle: 'dup',
+        })
       ).rejects.toThrow('already exists');
     });
   });
@@ -417,6 +430,7 @@ describe('Space Agent RPC Handlers', () => {
   describe('spaceAgent.updateTemplate', () => {
     it('updates a custom template and returns it', async () => {
       await call(hubData.handlers, 'spaceAgent.createTemplate', {
+        spaceId: 'space-1',
         key: 'update.custom',
         handle: 'update',
         displayName: 'Before',
@@ -425,7 +439,7 @@ describe('Space Agent RPC Handlers', () => {
       const result = await call<{ template: { displayName: string } | null }>(
         hubData.handlers,
         'spaceAgent.updateTemplate',
-        { key: 'update.custom', displayName: 'After' }
+        { spaceId: 'space-1', key: 'update.custom', displayName: 'After' }
       );
 
       expect(result.template?.displayName).toBe('After');
@@ -433,13 +447,17 @@ describe('Space Agent RPC Handlers', () => {
 
     it('throws when key is missing', async () => {
       await expect(
-        call(hubData.handlers, 'spaceAgent.updateTemplate', { displayName: 'X' })
+        call(hubData.handlers, 'spaceAgent.updateTemplate', {
+          spaceId: 'space-1',
+          displayName: 'X',
+        })
       ).rejects.toThrow('key is required');
     });
 
     it('throws for an unknown key', async () => {
       await expect(
         call(hubData.handlers, 'spaceAgent.updateTemplate', {
+          spaceId: 'space-1',
           key: 'missing.custom',
           displayName: 'X',
         })
@@ -448,6 +466,7 @@ describe('Space Agent RPC Handlers', () => {
 
     it('returns a null template when the client expected version is stale', async () => {
       await call(hubData.handlers, 'spaceAgent.createTemplate', {
+        spaceId: 'space-1',
         key: 'cas.custom',
         handle: 'cas',
         displayName: 'One',
@@ -455,13 +474,13 @@ describe('Space Agent RPC Handlers', () => {
       const second = await call<{ template: { version?: number } | null }>(
         hubData.handlers,
         'spaceAgent.updateTemplate',
-        { key: 'cas.custom', displayName: 'Two' }
+        { spaceId: 'space-1', key: 'cas.custom', displayName: 'Two' }
       );
 
       const stale = await call<{ template: { displayName: string } | null }>(
         hubData.handlers,
         'spaceAgent.updateTemplate',
-        { key: 'cas.custom', displayName: 'Stale', expectedVersion: 1 }
+        { spaceId: 'space-1', key: 'cas.custom', displayName: 'Stale', expectedVersion: 1 }
       );
       expect(stale.template).toBeNull();
 
@@ -469,6 +488,7 @@ describe('Space Agent RPC Handlers', () => {
         hubData.handlers,
         'spaceAgent.updateTemplate',
         {
+          spaceId: 'space-1',
           key: 'cas.custom',
           displayName: 'Three',
           expectedVersion: second.template?.version,
@@ -481,6 +501,7 @@ describe('Space Agent RPC Handlers', () => {
   describe('spaceAgent.deleteTemplate', () => {
     it('deletes a custom template', async () => {
       await call(hubData.handlers, 'spaceAgent.createTemplate', {
+        spaceId: 'space-1',
         key: 'delete.custom',
         handle: 'delete',
       });
@@ -514,6 +535,7 @@ describe('Space Agent RPC Handlers', () => {
 
     it('deletes a template that a workflow slot and a live pinned run both reference', async () => {
       await call(hubData.handlers, 'spaceAgent.createTemplate', {
+        spaceId: 'space-1',
         key: 'guard.custom',
         handle: 'guard',
       });
@@ -571,6 +593,7 @@ describe('Space Agent RPC Handlers', () => {
     });
     it('rejects a delete whose expected version is stale', async () => {
       await call(hubData.handlers, 'spaceAgent.createTemplate', {
+        spaceId: 'space-1',
         key: 'guard.custom',
         handle: 'guard',
       });
@@ -592,6 +615,7 @@ describe('Space Agent RPC Handlers', () => {
 
     it('deletes a template that live agent instances were created from', async () => {
       await call(hubData.handlers, 'spaceAgent.createTemplate', {
+        spaceId: 'space-1',
         key: 'guard.custom',
         handle: 'guard',
       });
@@ -616,6 +640,7 @@ describe('Space Agent RPC Handlers', () => {
 
     it('clears the template key on archived instances when the template is deleted', async () => {
       await call(hubData.handlers, 'spaceAgent.createTemplate', {
+        spaceId: 'space-1',
         key: 'guard.custom',
         handle: 'guard',
       });
@@ -648,10 +673,12 @@ describe('Space Agent RPC Handlers', () => {
 
     it('rejects a stale expected version on delete', async () => {
       await call(hubData.handlers, 'spaceAgent.createTemplate', {
+        spaceId: 'space-1',
         key: 'cas.custom',
         handle: 'cas',
       });
       await call(hubData.handlers, 'spaceAgent.updateTemplate', {
+        spaceId: 'space-1',
         key: 'cas.custom',
         displayName: 'Two',
       });

@@ -3125,7 +3125,9 @@ describe('SpaceStore — refreshAgents preserves cache on failure', () => {
 describe('SpaceStore — template CRUD methods', () => {
   beforeEach(async () => {
     await resetStore();
+    await spaceStore.selectSpace('space-1');
     spaceStore.agentTemplates.value = [];
+    mockHub.request.mockClear();
   });
   afterEach(() => vi.clearAllMocks());
 
@@ -3220,6 +3222,7 @@ describe('SpaceStore — template CRUD methods', () => {
       key: 'scribe',
       handle: 'scribe-agent',
       displayName: 'Scribe',
+      spaceId: 'space-1',
     });
     expect(template.key).toBe('scribe');
     expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual(['scribe']);
@@ -3267,6 +3270,7 @@ describe('SpaceStore — template CRUD methods', () => {
     expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.updateTemplate', {
       key: 'scribe',
       displayName: 'Scribe II',
+      spaceId: 'space-1',
     });
     expect(template.displayName).toBe('Scribe II');
     expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual(['first', 'scribe']);

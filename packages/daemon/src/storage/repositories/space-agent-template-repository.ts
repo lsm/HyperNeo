@@ -15,18 +15,19 @@ export type SpaceAgentTemplateRecord = SpaceAgentTemplate & { version: number };
 export class SpaceAgentTemplateRepository {
   constructor(private db: BunDatabase) {}
 
-  create(params: CreateSpaceAgentTemplateParams): SpaceAgentTemplate {
+  create(spaceId: string, params: CreateSpaceAgentTemplateParams): SpaceAgentTemplate {
     const now = Date.now();
     const version = this.nextVersionFor(params.key);
     this.db
       .prepare(
         `INSERT INTO space_agent_templates (
-						key, handle, display_name, description, instructions, suggested_autonomy_level,
+						space_id, key, handle, display_name, description, instructions, suggested_autonomy_level,
 						model, provider, model_pool, thinking_level, setting_sources, tools, labels,
 						created_at, updated_at, version
-					) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+					) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
+        spaceId,
         params.key,
         params.handle,
         params.displayName ?? params.handle,
@@ -75,11 +76,16 @@ export class SpaceAgentTemplateRepository {
     return rows.map(rowToTemplateRecord);
   }
 
-  update(key: string, params: UpdateSpaceAgentTemplateParams): SpaceAgentTemplate | null {
-    return this.casUpdate(key, params, undefined);
+  update(
+    spaceId: string,
+    key: string,
+    params: UpdateSpaceAgentTemplateParams
+  ): SpaceAgentTemplate | null {
+    return this.casUpdate(spaceId, key, params, undefined);
   }
 
   casUpdate(
+    spaceId: string,
     key: string,
     params: UpdateSpaceAgentTemplateParams,
     expectedVersion?: number
@@ -148,7 +154,11 @@ export class SpaceAgentTemplateRepository {
     values.push(Date.now());
     values.push(nextVersion);
 
-    const where = expectedVersion === undefined ? 'WHERE key = ?' : 'WHERE key = ? AND version = ?';
+    const where =
+      expectedVersion === undefined
+        ? 'WHERE space_id = ? AND key = ?'
+        : 'WHERE space_id = ? AND key = ? AND version = ?';
+    values.push(spaceId);
     values.push(key);
     if (expectedVersion !== undefined) values.push(expectedVersion);
 

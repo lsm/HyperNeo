@@ -2420,6 +2420,12 @@ class SpaceStore {
     this.applyTemplateLibrary(result?.templates ?? []);
   }
 
+  private requireTemplateSpaceId(): string {
+    const spaceId = this.spaceId.value;
+    if (!spaceId) throw new Error('No space selected');
+    return spaceId;
+  }
+
   private applyTemplateLibrary(templates: SpaceAgentTemplate[]): void {
     this.agentTemplates.value = templates.map(toPaneAgentTemplate);
     this.userTemplateKeys.value = new Set(
@@ -2433,7 +2439,7 @@ class SpaceStore {
 
     const { template } = await hub.request<{ template: SpaceAgentTemplate }>(
       'spaceAgent.createTemplate',
-      params
+      { ...params, spaceId: this.requireTemplateSpaceId() }
     );
     this.upsertAgentTemplate(template);
     return template;
@@ -2448,7 +2454,7 @@ class SpaceStore {
 
     const { template } = await hub.request<{ template: SpaceAgentTemplate | null }>(
       'spaceAgent.updateTemplate',
-      { key, ...params }
+      { key, ...params, spaceId: this.requireTemplateSpaceId() }
     );
     if (!template) throw new Error(`Template ${key} was modified concurrently`);
     this.upsertAgentTemplate(template);

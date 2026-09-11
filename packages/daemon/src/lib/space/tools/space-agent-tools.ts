@@ -2030,7 +2030,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             handle,
           };
         }
-        const result = await requireTemplateManager().create(params);
+        const result = await requireTemplateManager().create(spaceId, params);
         if (!result.ok) return jsonResult({ success: false, error: result.error });
         logAudit('create_agent_template', { key: args.key, from_agent_id: args.from_agent_id });
         return jsonResult({ success: true, template: result.value });
@@ -2062,6 +2062,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           });
         }
         const result = await requireTemplateManager().casUpdate(
+          spaceId,
           args.key,
           templateOverridesFromArgs(args),
           args.expected_version

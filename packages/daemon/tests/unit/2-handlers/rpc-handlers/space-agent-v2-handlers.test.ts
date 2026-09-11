@@ -155,7 +155,7 @@ describe('setupSpaceAgentV2Handlers', () => {
     });
 
     test('copies configuration from a template', async () => {
-      templates.create({
+      templates.create('space-1', {
         key: 'researcher.v1',
         handle: 'researcher',
         displayName: 'Researcher',
@@ -176,7 +176,7 @@ describe('setupSpaceAgentV2Handlers', () => {
     });
 
     test('seeds template extras for the created agent', async () => {
-      templates.create({
+      templates.create('space-1', {
         key: 'researcher.v1',
         handle: 'researcher',
         displayName: 'Researcher',
@@ -202,7 +202,7 @@ describe('setupSpaceAgentV2Handlers', () => {
     });
 
     test('leaves the created row disconnected from its template', async () => {
-      templates.create({
+      templates.create('space-1', {
         key: 'researcher.v1',
         handle: 'researcher',
         displayName: 'Researcher',
@@ -222,7 +222,7 @@ describe('setupSpaceAgentV2Handlers', () => {
     });
 
     test('a later template edit does not touch the created agent', async () => {
-      templates.create({
+      templates.create('space-1', {
         key: 'researcher.v1',
         handle: 'researcher',
         displayName: 'Researcher',
@@ -234,7 +234,7 @@ describe('setupSpaceAgentV2Handlers', () => {
         templateKey: 'researcher.v1',
       });
 
-      templates.update('researcher.v1', { instructions: 'Rewritten.' });
+      templates.update('space-1', 'researcher.v1', { instructions: 'Rewritten.' });
 
       expect(agents.getById(agent.id)?.instructions).toBe('Original.');
     });

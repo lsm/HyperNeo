@@ -17,6 +17,7 @@ import { runMigration226 } from '../../../../src/storage/schema/m226-space-agent
 import { runMigration227 } from '../../../../src/storage/schema/m227-space-agent-template-version-seq';
 import { runMigration238 } from '../../../../src/storage/schema/m238-space-agent-template-labels';
 import { createSpaceAgentTemplatesTable } from '../../../../src/storage/schema/space-agent-templates';
+import { runMigration243 } from '../../../../src/storage/schema/m243-space-agent-template-space-key';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 
 const BUILT_INS: SpaceAgentTemplate[] = [
@@ -74,6 +75,7 @@ describe('SpaceAgentTemplateManager', () => {
   let db: BunDatabase;
   let repo: SpaceAgentTemplateRepository;
   let manager: SpaceAgentTemplateManager;
+  const SPACE = 'space-1';
 
   beforeEach(() => {
     db = new BunDatabase(':memory:');
@@ -81,6 +83,7 @@ describe('SpaceAgentTemplateManager', () => {
     runMigration226(db);
     runMigration227(db);
     runMigration238(db);
+    runMigration243(db);
     repo = new SpaceAgentTemplateRepository(db);
     manager = new SpaceAgentTemplateManager(repo, () => BUILT_INS);
     setModelsCache(new Map());
@@ -92,7 +95,7 @@ describe('SpaceAgentTemplateManager', () => {
     });
 
     test('merges custom templates with built-ins by key', () => {
-      const created = repo.create(fullParams());
+      const created = repo.create(SPACE, fullParams());
 
       const templates = manager.list();
       expect(templates.some((template) => template.key === 'release-readiness.custom')).toBe(true);
@@ -103,7 +106,7 @@ describe('SpaceAgentTemplateManager', () => {
     });
 
     test('a stored row with a built-in key never shadows the built-in', () => {
-      repo.create({
+      repo.create(SPACE, {
         key: 'builtin.default',
         handle: 'builtin-override',
         displayName: 'Override',
@@ -115,8 +118,8 @@ describe('SpaceAgentTemplateManager', () => {
     });
 
     test('orders by createdAt then key', () => {
-      repo.create({ key: 'b.custom', handle: 'b' });
-      repo.create({ key: 'a.custom', handle: 'a' });
+      repo.create(SPACE, { key: 'b.custom', handle: 'b' });
+      repo.create(SPACE, { key: 'a.custom', handle: 'a' });
       db.prepare(`UPDATE space_agent_templates SET created_at = ? WHERE key IN (?, ?)`).run(
         1000,
         'a.custom',
@@ -134,7 +137,7 @@ describe('SpaceAgentTemplateManager', () => {
         ...BUILT_INS,
         { ...BUILT_INS[0], key: 'coordinator.default', handle: 'coordinator' },
       ]);
-      repo.create({
+      repo.create(SPACE, {
         key: 'custom.coordinator',
         handle: 'coordinator',
         displayName: 'Custom Coord',
@@ -150,7 +153,7 @@ describe('SpaceAgentTemplateManager', () => {
 
   describe('create', () => {
     test('creates a valid custom template', async () => {
-      const result = await manager.create(fullParams());
+      const result = await manager.create(SPACE, fullParams());
 
       expect(result.ok).toBe(true);
       if (!result.ok) throw new Error('expected ok');
@@ -160,43 +163,43 @@ describe('SpaceAgentTemplateManager', () => {
     });
 
     test('rejects a duplicate key', async () => {
-      await manager.create(fullParams());
-      const result = await manager.create(fullParams());
+      await manager.create(SPACE, fullParams());
+      const result = await manager.create(SPACE, fullParams());
 
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toContain('already exists');
     });
 
     test('rejects an empty key', async () => {
-      const result = await manager.create({ ...fullParams(), key: '' });
+      const result = await manager.create(SPACE, { ...fullParams(), key: '' });
 
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toContain('key');
     });
 
     test('rejects a key with leading whitespace', async () => {
-      const result = await manager.create({ ...fullParams(), key: ' bad' });
+      const result = await manager.create(SPACE, { ...fullParams(), key: ' bad' });
 
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toContain('key');
     });
 
     test('rejects reusing a retired built-in key (ATC-3)', async () => {
-      const result = await manager.create({ ...fullParams(), key: 'marketing.default' });
+      const result = await manager.create(SPACE, { ...fullParams(), key: 'marketing.default' });
 
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toContain('retired');
     });
 
     test('rejects an invalid handle', async () => {
-      const result = await manager.create({ ...fullParams(), handle: 'Bad Handle!' });
+      const result = await manager.create(SPACE, { ...fullParams(), handle: 'Bad Handle!' });
 
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toContain('handle');
     });
 
     test('rejects an invalid autonomy level', async () => {
-      const result = await manager.create({
+      const result = await manager.create(SPACE, {
         ...fullParams(),
         suggestedAutonomyLevel: 6 as 1 | 2 | 3 | 4 | 5,
       });
@@ -206,7 +209,7 @@ describe('SpaceAgentTemplateManager', () => {
     });
 
     test('rejects unknown tools', async () => {
-      const result = await manager.create({ ...fullParams(), tools: ['FakeTool'] });
+      const result = await manager.create(SPACE, { ...fullParams(), tools: ['FakeTool'] });
 
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toContain('FakeTool');
@@ -217,34 +220,34 @@ describe('SpaceAgentTemplateManager', () => {
         new Map([['global', [makeModelInfo('claude-sonnet-4-6', 'sonnet', 'anthropic')]]])
       );
 
-      const result = await manager.create({ ...fullParams(), model: 'unknown-model' });
+      const result = await manager.create(SPACE, { ...fullParams(), model: 'unknown-model' });
 
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toMatch(/Unrecognized model/);
     });
 
     test('skips model validation when the cache is empty', async () => {
-      const result = await manager.create({ ...fullParams(), model: 'future-model' });
+      const result = await manager.create(SPACE, { ...fullParams(), model: 'future-model' });
 
       expect(result.ok).toBe(true);
     });
 
     test('rejects a blank display name', async () => {
-      const result = await manager.create({ ...fullParams(), displayName: '' });
+      const result = await manager.create(SPACE, { ...fullParams(), displayName: '' });
 
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toContain('display name');
     });
 
     test('rejects a display name with only whitespace', async () => {
-      const result = await manager.create({ ...fullParams(), displayName: '   ' });
+      const result = await manager.create(SPACE, { ...fullParams(), displayName: '   ' });
 
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toContain('display name');
     });
 
     test('creates a template with trimmed and deduplicated labels', async () => {
-      const result = await manager.create({
+      const result = await manager.create(SPACE, {
         ...fullParams(),
         labels: [' release ', 'quality', 'release'],
       });
@@ -255,7 +258,7 @@ describe('SpaceAgentTemplateManager', () => {
     });
 
     test('defaults labels to an empty array', async () => {
-      const result = await manager.create(fullParams());
+      const result = await manager.create(SPACE, fullParams());
 
       expect(result.ok).toBe(true);
       if (!result.ok) throw new Error('expected ok');
@@ -263,14 +266,14 @@ describe('SpaceAgentTemplateManager', () => {
     });
 
     test('rejects a blank label', async () => {
-      const result = await manager.create({ ...fullParams(), labels: ['quality', '   '] });
+      const result = await manager.create(SPACE, { ...fullParams(), labels: ['quality', '   '] });
 
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toContain('blank');
     });
 
     test('rejects labels with non-printable characters', async () => {
-      const result = await manager.create({ ...fullParams(), labels: ['bad\u0007label'] });
+      const result = await manager.create(SPACE, { ...fullParams(), labels: ['bad\u0007label'] });
 
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toContain('printable');
@@ -288,14 +291,14 @@ describe('SpaceAgentTemplateManager', () => {
         'variation\uFE0Fselector',
         'hangul\u3164filler',
       ]) {
-        const result = await manager.create({ ...fullParams(), labels: [label] });
+        const result = await manager.create(SPACE, { ...fullParams(), labels: [label] });
         expect(result.ok, label).toBe(false);
         if (!result.ok) expect(result.error).toContain('printable');
       }
     });
 
     test('rejects a non-array labels payload', async () => {
-      const result = await manager.create({
+      const result = await manager.create(SPACE, {
         ...fullParams(),
         labels: 'ops' as unknown as string[],
       });
@@ -305,7 +308,7 @@ describe('SpaceAgentTemplateManager', () => {
     });
 
     test('deduplicates canonically equivalent labels via NFC', async () => {
-      const result = await manager.create({
+      const result = await manager.create(SPACE, {
         ...fullParams(),
         labels: ['caf\u00E9', 'cafe\u0301'],
       });
@@ -316,7 +319,7 @@ describe('SpaceAgentTemplateManager', () => {
     });
 
     test('rejects labels longer than 64 characters', async () => {
-      const result = await manager.create({
+      const result = await manager.create(SPACE, {
         ...fullParams(),
         labels: ['x'.repeat(65)],
       });
@@ -328,7 +331,7 @@ describe('SpaceAgentTemplateManager', () => {
     test('rejects oversized label arrays before iterating', async () => {
       const labels = Array.from({ length: 20_000 }, (_, i) => `label-${i}`);
 
-      const result = await manager.create({ ...fullParams(), labels });
+      const result = await manager.create(SPACE, { ...fullParams(), labels });
 
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toContain('limited to 64 entries');
@@ -337,14 +340,14 @@ describe('SpaceAgentTemplateManager', () => {
     test('rejects duplicate-heavy label arrays before iterating', async () => {
       const labels = Array.from({ length: 100_000 }, () => 'duplicate');
 
-      const result = await manager.create({ ...fullParams(), labels });
+      const result = await manager.create(SPACE, { ...fullParams(), labels });
 
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toContain('limited to 64 entries');
     });
 
     test('rejects more than eight labels after dedupe', async () => {
-      const result = await manager.create({
+      const result = await manager.create(SPACE, {
         ...fullParams(),
         labels: ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'a'],
       });
@@ -354,7 +357,7 @@ describe('SpaceAgentTemplateManager', () => {
     });
 
     test('accepts up to eight labels', async () => {
-      const result = await manager.create({
+      const result = await manager.create(SPACE, {
         ...fullParams(),
         labels: ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'a'],
       });
@@ -363,7 +366,7 @@ describe('SpaceAgentTemplateManager', () => {
     });
 
     test('rejects non-string labels', async () => {
-      const result = await manager.create({
+      const result = await manager.create(SPACE, {
         ...fullParams(),
         labels: [1] as unknown as string[],
       });
@@ -373,7 +376,7 @@ describe('SpaceAgentTemplateManager', () => {
     });
 
     test('rejects the reserved migration template key', async () => {
-      const result = await manager.create({
+      const result = await manager.create(SPACE, {
         ...fullParams(),
         key: MIGRATED_WORKER_TEMPLATE_KEY,
       });
@@ -384,7 +387,7 @@ describe('SpaceAgentTemplateManager', () => {
 
     test('rejects keys reserved for code built-in templates', async () => {
       for (const key of ['worker.swe', 'worker.coder', 'worker.reviewer', 'coordinator.default']) {
-        const result = await manager.create({ ...fullParams(), key });
+        const result = await manager.create(SPACE, { ...fullParams(), key });
         expect(result.ok, key).toBe(false);
         if (!result.ok) expect(result.error).toContain('reserved for a built-in agent template');
       }
@@ -395,7 +398,7 @@ describe('SpaceAgentTemplateManager', () => {
         new Map([['global', [makeModelInfo('claude-opus-5', 'claude-opus-5', 'anthropic')]]])
       );
 
-      const result = await manager.create({ ...fullParams(), model: '' });
+      const result = await manager.create(SPACE, { ...fullParams(), model: '' });
 
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toMatch(/model/i);
@@ -406,7 +409,7 @@ describe('SpaceAgentTemplateManager', () => {
         new Map([['global', [makeModelInfo('claude-opus-5', 'claude-opus-5', 'anthropic')]]])
       );
 
-      const result = await manager.create({ ...fullParams(), provider: '' });
+      const result = await manager.create(SPACE, { ...fullParams(), provider: '' });
 
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toMatch(/provider/i);
@@ -417,7 +420,7 @@ describe('SpaceAgentTemplateManager', () => {
         new Map([['global', [makeModelInfo('claude-opus-5', 'claude-opus-5', 'anthropic')]]])
       );
 
-      const result = await manager.create({
+      const result = await manager.create(SPACE, {
         ...fullParams(),
         model: undefined,
         provider: undefined,
@@ -429,7 +432,7 @@ describe('SpaceAgentTemplateManager', () => {
     });
 
     test('rejects a model-pool entry missing a model', async () => {
-      const result = await manager.create({
+      const result = await manager.create(SPACE, {
         ...fullParams(),
         model: undefined,
         provider: undefined,
@@ -443,7 +446,7 @@ describe('SpaceAgentTemplateManager', () => {
     test('rejects a model pool entry with an incompatible provider', async () => {
       setModelsCache(new Map([['global', [makeModelInfo('glm-4-flash', 'glm-4-flash', 'glm')]]]));
 
-      const result = await manager.create({
+      const result = await manager.create(SPACE, {
         ...fullParams(),
         model: undefined,
         provider: undefined,
@@ -457,7 +460,7 @@ describe('SpaceAgentTemplateManager', () => {
     test('accepts a model pool entry with a compatible provider', async () => {
       setModelsCache(new Map([['global', [makeModelInfo('glm-4-flash', 'glm-4-flash', 'glm')]]]));
 
-      const result = await manager.create({
+      const result = await manager.create(SPACE, {
         ...fullParams(),
         model: undefined,
         provider: undefined,
@@ -468,7 +471,7 @@ describe('SpaceAgentTemplateManager', () => {
     });
 
     test('allows an empty model pool', async () => {
-      const result = await manager.create({ ...fullParams(), modelPool: [] });
+      const result = await manager.create(SPACE, { ...fullParams(), modelPool: [] });
 
       expect(result.ok).toBe(true);
       if (!result.ok) throw new Error('expected ok');
@@ -478,7 +481,7 @@ describe('SpaceAgentTemplateManager', () => {
 
   describe('update', () => {
     test('strips spoofed relocation marker labels from create input', async () => {
-      const result = await manager.create({
+      const result = await manager.create(SPACE, {
         ...fullParams(),
         labels: ['relocated-from:worker.swe', ' relocated-from:worker.swe', 'quality'],
       });
@@ -489,13 +492,13 @@ describe('SpaceAgentTemplateManager', () => {
     });
 
     test('round-trips eight user labels plus the sticky marker without limit failures', async () => {
-      await manager.create(fullParams());
+      await manager.create(SPACE, fullParams());
       const eight = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
       db.prepare(
         `UPDATE space_agent_templates SET labels = ? WHERE key = 'release-readiness.custom'`
       ).run(JSON.stringify([...eight, 'relocated-from:worker.swe']));
 
-      const roundTrip = await manager.update('release-readiness.custom', {
+      const roundTrip = await manager.update(SPACE, 'release-readiness.custom', {
         labels: [...eight, 'relocated-from:worker.swe'],
       });
 
@@ -505,12 +508,12 @@ describe('SpaceAgentTemplateManager', () => {
     });
 
     test('preserves relocation marker labels through label edits', async () => {
-      await manager.create(fullParams());
+      await manager.create(SPACE, fullParams());
       db.prepare(
         `UPDATE space_agent_templates SET labels = ? WHERE key = 'release-readiness.custom'`
       ).run(JSON.stringify(['relocated-from:worker.swe', 'quality']));
 
-      const cleared = await manager.update('release-readiness.custom', {
+      const cleared = await manager.update(SPACE, 'release-readiness.custom', {
         labels: ['infra'],
       });
 
@@ -520,9 +523,9 @@ describe('SpaceAgentTemplateManager', () => {
     });
 
     test('updates a custom template', async () => {
-      await manager.create(fullParams());
+      await manager.create(SPACE, fullParams());
 
-      const result = await manager.update('release-readiness.custom', {
+      const result = await manager.update(SPACE, 'release-readiness.custom', {
         displayName: 'Updated',
         instructions: 'New instructions.',
       });
@@ -534,9 +537,9 @@ describe('SpaceAgentTemplateManager', () => {
     });
 
     test('updates labels with trimming and dedupe', async () => {
-      await manager.create({ ...fullParams(), labels: ['quality'] });
+      await manager.create(SPACE, { ...fullParams(), labels: ['quality'] });
 
-      const result = await manager.update('release-readiness.custom', {
+      const result = await manager.update(SPACE, 'release-readiness.custom', {
         labels: [' infra ', 'infra', 'release'],
       });
 
@@ -546,9 +549,9 @@ describe('SpaceAgentTemplateManager', () => {
     });
 
     test('leaves labels untouched when omitted on update', async () => {
-      await manager.create({ ...fullParams(), labels: ['quality'] });
+      await manager.create(SPACE, { ...fullParams(), labels: ['quality'] });
 
-      const result = await manager.update('release-readiness.custom', {
+      const result = await manager.update(SPACE, 'release-readiness.custom', {
         displayName: 'Renamed',
       });
 
@@ -558,60 +561,66 @@ describe('SpaceAgentTemplateManager', () => {
     });
 
     test('clears labels with an explicit empty array or null', async () => {
-      await manager.create({ ...fullParams(), labels: ['quality'] });
+      await manager.create(SPACE, { ...fullParams(), labels: ['quality'] });
 
-      const emptied = await manager.update('release-readiness.custom', { labels: [] });
+      const emptied = await manager.update(SPACE, 'release-readiness.custom', { labels: [] });
       expect(emptied.ok).toBe(true);
       if (!emptied.ok) throw new Error('expected ok');
       expect(emptied.value?.labels).toEqual([]);
 
-      const refilled = await manager.update('release-readiness.custom', { labels: ['ops'] });
+      const refilled = await manager.update(SPACE, 'release-readiness.custom', { labels: ['ops'] });
       expect(refilled.ok).toBe(true);
 
-      const nulled = await manager.update('release-readiness.custom', { labels: null });
+      const nulled = await manager.update(SPACE, 'release-readiness.custom', { labels: null });
       expect(nulled.ok).toBe(true);
       if (!nulled.ok) throw new Error('expected ok');
       expect(nulled.value?.labels).toEqual([]);
     });
 
     test('rejects a blank label on update', async () => {
-      await manager.create(fullParams());
+      await manager.create(SPACE, fullParams());
 
-      const result = await manager.update('release-readiness.custom', { labels: [''] });
+      const result = await manager.update(SPACE, 'release-readiness.custom', { labels: [''] });
 
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toContain('blank');
     });
 
     test('returns an error for an unknown key', async () => {
-      const result = await manager.update('missing.custom', { displayName: 'X' });
+      const result = await manager.update(SPACE, 'missing.custom', { displayName: 'X' });
 
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toContain('not found');
     });
 
     test('rejects an invalid handle on update', async () => {
-      await manager.create(fullParams());
+      await manager.create(SPACE, fullParams());
 
-      const result = await manager.update('release-readiness.custom', { handle: 'bad handle' });
+      const result = await manager.update(SPACE, 'release-readiness.custom', {
+        handle: 'bad handle',
+      });
 
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toContain('handle');
     });
 
     test('rejects unknown tools on update', async () => {
-      await manager.create(fullParams());
+      await manager.create(SPACE, fullParams());
 
-      const result = await manager.update('release-readiness.custom', { tools: ['FakeTool'] });
+      const result = await manager.update(SPACE, 'release-readiness.custom', {
+        tools: ['FakeTool'],
+      });
 
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toContain('FakeTool');
     });
 
     test('rejects a blank display name on update', async () => {
-      await manager.create(fullParams());
+      await manager.create(SPACE, fullParams());
 
-      const result = await manager.update('release-readiness.custom', { displayName: '   ' });
+      const result = await manager.update(SPACE, 'release-readiness.custom', {
+        displayName: '   ',
+      });
 
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toContain('display name');
@@ -621,9 +630,9 @@ describe('SpaceAgentTemplateManager', () => {
       setModelsCache(
         new Map([['global', [makeModelInfo('claude-opus-5', 'claude-opus-5', 'anthropic')]]])
       );
-      await manager.create(fullParams());
+      await manager.create(SPACE, fullParams());
 
-      const result = await manager.update('release-readiness.custom', { model: '' });
+      const result = await manager.update(SPACE, 'release-readiness.custom', { model: '' });
 
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toMatch(/model/i);
@@ -633,9 +642,9 @@ describe('SpaceAgentTemplateManager', () => {
       setModelsCache(
         new Map([['global', [makeModelInfo('claude-opus-5', 'claude-opus-5', 'anthropic')]]])
       );
-      await manager.create(fullParams());
+      await manager.create(SPACE, fullParams());
 
-      const result = await manager.update('release-readiness.custom', { provider: '' });
+      const result = await manager.update(SPACE, 'release-readiness.custom', { provider: '' });
 
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toMatch(/provider/i);
@@ -646,14 +655,16 @@ describe('SpaceAgentTemplateManager', () => {
         new Map([['global', [makeModelInfo('claude-sonnet-4-6', 'sonnet', 'anthropic')]]])
       );
 
-      await manager.create({
+      await manager.create(SPACE, {
         ...fullParams(),
         model: 'sonnet',
         provider: 'anthropic',
         modelPool: undefined,
       });
 
-      const result = await manager.update('release-readiness.custom', { model: 'unknown-model' });
+      const result = await manager.update(SPACE, 'release-readiness.custom', {
+        model: 'unknown-model',
+      });
 
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toMatch(/anthropic/);
@@ -672,14 +683,14 @@ describe('SpaceAgentTemplateManager', () => {
         ])
       );
 
-      await manager.create({
+      await manager.create(SPACE, {
         ...fullParams(),
         model: 'sonnet',
         provider: 'anthropic',
         modelPool: undefined,
       });
 
-      const result = await manager.update('release-readiness.custom', {
+      const result = await manager.update(SPACE, 'release-readiness.custom', {
         model: 'glm-4-flash',
         provider: null,
       });
@@ -692,14 +703,16 @@ describe('SpaceAgentTemplateManager', () => {
     test('rejects a provider-only update that is incompatible with the existing model', async () => {
       setModelsCache(new Map([['global', [makeModelInfo('glm-4-flash', 'glm-4-flash', 'glm')]]]));
 
-      await manager.create({
+      await manager.create(SPACE, {
         ...fullParams(),
         model: 'glm-4-flash',
         provider: 'glm',
         modelPool: undefined,
       });
 
-      const result = await manager.update('release-readiness.custom', { provider: 'anthropic' });
+      const result = await manager.update(SPACE, 'release-readiness.custom', {
+        provider: 'anthropic',
+      });
 
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toMatch(/anthropic/);
@@ -718,22 +731,24 @@ describe('SpaceAgentTemplateManager', () => {
         ])
       );
 
-      await manager.create({
+      await manager.create(SPACE, {
         ...fullParams(),
         model: 'shared-model',
         provider: 'glm',
         modelPool: undefined,
       });
 
-      const result = await manager.update('release-readiness.custom', { provider: 'anthropic' });
+      const result = await manager.update(SPACE, 'release-readiness.custom', {
+        provider: 'anthropic',
+      });
 
       expect(result.ok).toBe(true);
     });
 
     test('allows an empty model pool to clear the stored pool', async () => {
-      await manager.create(fullParams());
+      await manager.create(SPACE, fullParams());
 
-      const result = await manager.update('release-readiness.custom', { modelPool: [] });
+      const result = await manager.update(SPACE, 'release-readiness.custom', { modelPool: [] });
 
       expect(result.ok).toBe(true);
       if (!result.ok) throw new Error('expected ok');
@@ -753,14 +768,14 @@ describe('SpaceAgentTemplateManager', () => {
         ])
       );
 
-      await manager.create({
+      await manager.create(SPACE, {
         ...fullParams(),
         model: 'sonnet',
         provider: 'anthropic',
         modelPool: undefined,
       });
 
-      const result = await manager.update('release-readiness.custom', {
+      const result = await manager.update(SPACE, 'release-readiness.custom', {
         modelPool: [{ model: 'glm-4-flash', provider: 'anthropic', maxConcurrent: 1, weight: 1 }],
       });
 
@@ -781,14 +796,14 @@ describe('SpaceAgentTemplateManager', () => {
         ])
       );
 
-      await manager.create({
+      await manager.create(SPACE, {
         ...fullParams(),
         model: 'sonnet',
         provider: 'anthropic',
         modelPool: undefined,
       });
 
-      const result = await manager.update('release-readiness.custom', {
+      const result = await manager.update(SPACE, 'release-readiness.custom', {
         modelPool: [{ model: 'glm-4-flash', provider: 'glm', maxConcurrent: 1, weight: 1 }],
       });
 
@@ -809,7 +824,7 @@ describe('SpaceAgentTemplateManager', () => {
         ])
       );
 
-      await manager.create({
+      await manager.create(SPACE, {
         ...fullParams(),
         model: 'shared-model',
         provider: 'glm',
@@ -817,8 +832,8 @@ describe('SpaceAgentTemplateManager', () => {
       });
 
       const [modelResult, providerResult] = await Promise.all([
-        manager.update('release-readiness.custom', { model: 'glm-4-flash' }),
-        manager.update('release-readiness.custom', { provider: 'anthropic' }),
+        manager.update(SPACE, 'release-readiness.custom', { model: 'glm-4-flash' }),
+        manager.update(SPACE, 'release-readiness.custom', { provider: 'anthropic' }),
       ]);
 
       expect(modelResult.ok).toBe(true);
@@ -835,9 +850,10 @@ describe('SpaceAgentTemplateManager', () => {
 
   describe('casUpdate', () => {
     test('updates against a matching expected version and returns the new version', async () => {
-      await manager.create(fullParams());
+      await manager.create(SPACE, fullParams());
 
       const result = await manager.casUpdate(
+        SPACE,
         'release-readiness.custom',
         { displayName: 'Updated' },
         1
@@ -850,9 +866,10 @@ describe('SpaceAgentTemplateManager', () => {
     });
 
     test('returns a null value on a stale expected version without persisting', async () => {
-      await manager.create(fullParams());
+      await manager.create(SPACE, fullParams());
 
       const result = await manager.casUpdate(
+        SPACE,
         'release-readiness.custom',
         { displayName: 'Stale' },
         999
@@ -865,9 +882,9 @@ describe('SpaceAgentTemplateManager', () => {
     });
 
     test('omitting expectedVersion validates against the current version', async () => {
-      await manager.create(fullParams());
+      await manager.create(SPACE, fullParams());
 
-      const result = await manager.casUpdate('release-readiness.custom', {
+      const result = await manager.casUpdate(SPACE, 'release-readiness.custom', {
         displayName: 'Fresh',
       });
 
@@ -878,16 +895,16 @@ describe('SpaceAgentTemplateManager', () => {
     });
 
     test('returns an error for an unknown key', async () => {
-      const result = await manager.casUpdate('missing.custom', { displayName: 'X' }, 1);
+      const result = await manager.casUpdate(SPACE, 'missing.custom', { displayName: 'X' }, 1);
 
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toContain('not found');
     });
 
     test('probes the current version with no fields and a matching expected version', async () => {
-      await manager.create(fullParams());
+      await manager.create(SPACE, fullParams());
 
-      const result = await manager.casUpdate('release-readiness.custom', {}, 1);
+      const result = await manager.casUpdate(SPACE, 'release-readiness.custom', {}, 1);
 
       expect(result.ok).toBe(true);
       if (!result.ok) throw new Error('expected ok');
@@ -896,9 +913,9 @@ describe('SpaceAgentTemplateManager', () => {
     });
 
     test('rejects a stale expected version on a no-field update', async () => {
-      await manager.create(fullParams());
+      await manager.create(SPACE, fullParams());
 
-      const result = await manager.casUpdate('release-readiness.custom', {}, 999);
+      const result = await manager.casUpdate(SPACE, 'release-readiness.custom', {}, 999);
 
       expect(result.ok).toBe(true);
       if (!result.ok) throw new Error('expected ok');
@@ -906,9 +923,14 @@ describe('SpaceAgentTemplateManager', () => {
     });
 
     test('validates fields exactly like update', async () => {
-      await manager.create(fullParams());
+      await manager.create(SPACE, fullParams());
 
-      const result = await manager.casUpdate('release-readiness.custom', { displayName: '   ' }, 1);
+      const result = await manager.casUpdate(
+        SPACE,
+        'release-readiness.custom',
+        { displayName: '   ' },
+        1
+      );
 
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toContain('display name');
@@ -917,7 +939,7 @@ describe('SpaceAgentTemplateManager', () => {
 
   describe('delete', () => {
     test('deletes a custom template', async () => {
-      await manager.create(fullParams());
+      await manager.create(SPACE, fullParams());
 
       const result = manager.delete('release-readiness.custom');
 
@@ -940,7 +962,7 @@ describe('SpaceAgentTemplateManager', () => {
     });
 
     test('deletes with the matching CAS version', async () => {
-      await manager.create(fullParams());
+      await manager.create(SPACE, fullParams());
 
       const result = manager.delete('release-readiness.custom', 1);
 
@@ -949,8 +971,8 @@ describe('SpaceAgentTemplateManager', () => {
     });
 
     test('rejects a stale CAS version and reports the current one', async () => {
-      await manager.create(fullParams());
-      await manager.update('release-readiness.custom', { displayName: 'Updated' });
+      await manager.create(SPACE, fullParams());
+      await manager.update(SPACE, 'release-readiness.custom', { displayName: 'Updated' });
 
       const result = manager.delete('release-readiness.custom', 1);
 
@@ -963,7 +985,7 @@ describe('SpaceAgentTemplateManager', () => {
     });
 
     test('deletes a template that workflow slots still reference', async () => {
-      await manager.create(fullParams());
+      await manager.create(SPACE, fullParams());
 
       const result = manager.delete('release-readiness.custom');
 
@@ -972,7 +994,7 @@ describe('SpaceAgentTemplateManager', () => {
     });
 
     test('deletes a template that agents were created from', async () => {
-      await manager.create(fullParams());
+      await manager.create(SPACE, fullParams());
       const withInstances = new SpaceAgentTemplateManager(repo, () => BUILT_INS, {
         clearArchivedInstances: () => {},
       });
@@ -984,7 +1006,7 @@ describe('SpaceAgentTemplateManager', () => {
     });
 
     test('clears the template key on archived instances after deleting', async () => {
-      await manager.create(fullParams());
+      await manager.create(SPACE, fullParams());
       const cleared: string[] = [];
       const withInstances = new SpaceAgentTemplateManager(repo, () => BUILT_INS, {
         clearArchivedInstances: (key) => cleared.push(key),
@@ -997,7 +1019,11 @@ describe('SpaceAgentTemplateManager', () => {
 
   describe('create pipeline', () => {
     test('halts before persist on an invalid key', async () => {
-      const ctx = await runCreateTemplate({ repo, params: { ...fullParams(), key: '' } });
+      const ctx = await runCreateTemplate({
+        repo,
+        spaceId: SPACE,
+        params: { ...fullParams(), key: '' },
+      });
 
       expect(ctx.error).toContain('key');
       expect(ctx.template).toBeUndefined();
@@ -1005,9 +1031,9 @@ describe('SpaceAgentTemplateManager', () => {
     });
 
     test('halts before persist on a duplicate key', async () => {
-      await runCreateTemplate({ repo, params: fullParams() });
+      await runCreateTemplate({ repo, spaceId: SPACE, params: fullParams() });
 
-      const ctx = await runCreateTemplate({ repo, params: fullParams() });
+      const ctx = await runCreateTemplate({ repo, spaceId: SPACE, params: fullParams() });
 
       expect(ctx.error).toContain('already exists');
       expect(ctx.template).toBeUndefined();
@@ -1018,6 +1044,7 @@ describe('SpaceAgentTemplateManager', () => {
 
       const ctx = await runCreateTemplate({
         repo,
+        spaceId: SPACE,
         params: {
           ...fullParams(),
           model: undefined,
@@ -1036,6 +1063,7 @@ describe('SpaceAgentTemplateManager', () => {
     test('halts before persist for an unknown key', async () => {
       const ctx = await runUpdateTemplate({
         repo,
+        spaceId: SPACE,
         key: 'missing.custom',
         params: { displayName: 'X' },
       });
@@ -1048,10 +1076,11 @@ describe('SpaceAgentTemplateManager', () => {
       setModelsCache(
         new Map([['global', [makeModelInfo('claude-opus-5', 'claude-opus-5', 'anthropic')]]])
       );
-      await manager.create(fullParams());
+      await manager.create(SPACE, fullParams());
 
       const ctx = await runUpdateTemplate({
         repo,
+        spaceId: SPACE,
         key: 'release-readiness.custom',
         params: { model: 'unknown-model' },
       });
@@ -1061,16 +1090,18 @@ describe('SpaceAgentTemplateManager', () => {
     });
 
     test('detects a superseded write without persisting a stale combination', async () => {
-      await runCreateTemplate({ repo, params: fullParams() });
+      await runCreateTemplate({ repo, spaceId: SPACE, params: fullParams() });
 
       const [first, second] = await Promise.all([
         runUpdateTemplate({
           repo,
+          spaceId: SPACE,
           key: 'release-readiness.custom',
           params: { displayName: 'First' },
         }),
         runUpdateTemplate({
           repo,
+          spaceId: SPACE,
           key: 'release-readiness.custom',
           params: { displayName: 'Second' },
         }),
@@ -1094,7 +1125,7 @@ describe('SpaceAgentTemplateManager', () => {
     });
 
     test('deletes the existing template', async () => {
-      await manager.create(fullParams());
+      await manager.create(SPACE, fullParams());
 
       const ctx = runDeleteTemplate({ repo, key: 'release-readiness.custom' });
 
@@ -1104,8 +1135,8 @@ describe('SpaceAgentTemplateManager', () => {
     });
 
     test('halts before delete on a stale expected version', async () => {
-      await manager.create(fullParams());
-      await manager.update('release-readiness.custom', { displayName: 'Updated' });
+      await manager.create(SPACE, fullParams());
+      await manager.update(SPACE, 'release-readiness.custom', { displayName: 'Updated' });
 
       const ctx = runDeleteTemplate({
         repo,
@@ -1119,7 +1150,7 @@ describe('SpaceAgentTemplateManager', () => {
     });
 
     test('deletes through the pipeline regardless of workflow usage', async () => {
-      await manager.create(fullParams());
+      await manager.create(SPACE, fullParams());
 
       const ctx = runDeleteTemplate({ repo, key: 'release-readiness.custom' });
 
@@ -1136,14 +1167,14 @@ describe('SpaceAgentTemplateManager', () => {
     });
 
     test('returns a custom template by key', async () => {
-      await manager.create(fullParams());
+      await manager.create(SPACE, fullParams());
 
       const template = manager.getByKey('release-readiness.custom');
       expect(template?.displayName).toBe('Release Readiness');
     });
 
     test('a stored row with a built-in key never shadows the built-in', async () => {
-      repo.create({
+      repo.create(SPACE, {
         key: 'builtin.default',
         handle: 'builtin-override',
         displayName: 'Override',

@@ -40,6 +40,7 @@ const DEFAULT_IGNORABLE =
 
 export interface CreateTemplateCtx {
   repo: SpaceAgentTemplateRepository;
+  spaceId: string;
   params: CreateSpaceAgentTemplateParams;
   error?: string;
   template?: SpaceAgentTemplate;
@@ -47,6 +48,7 @@ export interface CreateTemplateCtx {
 
 export interface UpdateTemplateCtx {
   repo: SpaceAgentTemplateRepository;
+  spaceId: string;
   key: string;
   params: UpdateSpaceAgentTemplateParams;
   expectedVersion?: number;
@@ -278,7 +280,7 @@ function createCheckKeyAvailable(ctx: CreateTemplateCtx): CreateTemplateCtx {
 
 function createPersist(ctx: CreateTemplateCtx): CreateTemplateCtx {
   try {
-    return { ...ctx, template: ctx.repo.create(ctx.params) };
+    return { ...ctx, template: ctx.repo.create(ctx.spaceId, ctx.params) };
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     return { ...ctx, error: `Failed to create template: ${detail}` };
@@ -347,7 +349,12 @@ async function updateValidateModelPool(ctx: UpdateTemplateCtx): Promise<UpdateTe
 
 function updatePersist(ctx: UpdateTemplateCtx): UpdateTemplateCtx {
   if (ctx.version === undefined) return { ...ctx, error: `Template version missing: ${ctx.key}` };
-  const template = ctx.repo.casUpdate(ctx.key, ctx.params, ctx.expectedVersion ?? ctx.version);
+  const template = ctx.repo.casUpdate(
+    ctx.spaceId,
+    ctx.key,
+    ctx.params,
+    ctx.expectedVersion ?? ctx.version
+  );
   if (!template) {
     return { ...ctx, template: null };
   }
@@ -448,20 +455,23 @@ export class SpaceAgentTemplateManager {
   ) {}
 
   async create(
+    spaceId: string,
     params: CreateSpaceAgentTemplateParams
   ): Promise<SpaceAgentResult<SpaceAgentTemplateRecord>> {
-    const ctx = await runCreateTemplate({ repo: this.repo, params });
+    const ctx = await runCreateTemplate({ repo: this.repo, spaceId, params });
     if (ctx.error) return { ok: false, error: ctx.error };
     return { ok: true, value: this.repo.getByKeyWithVersion(ctx.params.key)! };
   }
 
   async update(
+    spaceId: string,
     key: string,
     params: UpdateSpaceAgentTemplateParams
   ): Promise<SpaceAgentResult<SpaceAgentTemplate | null>> {
     const { expectedVersion, ...updates } = params;
     const ctx = await runUpdateTemplate({
       repo: this.repo,
+      spaceId,
       key,
       params: updates,
       expectedVersion,
@@ -472,11 +482,18 @@ export class SpaceAgentTemplateManager {
   }
 
   async casUpdate(
+    spaceId: string,
     key: string,
     params: UpdateSpaceAgentTemplateParams,
     expectedVersion?: number
   ): Promise<SpaceAgentResult<SpaceAgentTemplateRecord | null>> {
-    const ctx = await runUpdateTemplate({ repo: this.repo, key, params, expectedVersion });
+    const ctx = await runUpdateTemplate({
+      repo: this.repo,
+      spaceId,
+      key,
+      params,
+      expectedVersion,
+    });
     if (ctx.error) return { ok: false, error: ctx.error };
     if (ctx.template === null) return { ok: true, value: null };
     return { ok: true, value: this.repo.getByKeyWithVersion(key)! };

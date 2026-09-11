@@ -797,25 +797,34 @@ export function registerUnifiedSpaceAgentMethods(
     };
   });
 
+  const requireTemplateSpace = async (spaceId: string): Promise<string> => {
+    if (!spaceId) throw new Error('spaceId is required');
+    const space = await deps.spaceManager.getSpace(spaceId);
+    if (!space) throw new Error(`Space not found: ${spaceId}`);
+    return spaceId;
+  };
+
   if (templateManager) {
     messageHub.onRequest(method('listTemplates'), async () => {
       return { templates: templateManager.list() };
     });
 
     messageHub.onRequest(method('createTemplate'), async (data) => {
-      const params = data as CreateSpaceAgentTemplateParams;
+      const params = data as CreateSpaceAgentTemplateParams & { spaceId: string };
+      const spaceId = await requireTemplateSpace(params.spaceId);
       if (!params.key) throw new Error('key is required');
       if (!params.handle) throw new Error('handle is required');
-      const result = await templateManager.create(params);
+      const result = await templateManager.create(spaceId, params);
       if (!result.ok) throw new Error(result.error);
       return { template: result.value };
     });
 
     messageHub.onRequest(method('updateTemplate'), async (data) => {
-      const params = data as { key: string } & UpdateSpaceAgentTemplateParams;
+      const params = data as { key: string; spaceId: string } & UpdateSpaceAgentTemplateParams;
+      const spaceId = await requireTemplateSpace(params.spaceId);
       if (!params.key) throw new Error('key is required');
-      const { key, ...updates } = params;
-      const result = await templateManager.update(key, updates);
+      const { key, spaceId: _spaceId, ...updates } = params;
+      const result = await templateManager.update(spaceId, key, updates);
       if (!result.ok) throw new Error(result.error);
       return { template: result.value };
     });

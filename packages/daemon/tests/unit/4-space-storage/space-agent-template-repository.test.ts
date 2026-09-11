@@ -10,7 +10,10 @@ import { createSpaceAgentTemplatesTable } from '../../../src/storage/schema/spac
 import { runMigration226 } from '../../../src/storage/schema/m226-space-agent-templates-version';
 import { runMigration227 } from '../../../src/storage/schema/m227-space-agent-template-version-seq';
 import { runMigration238 } from '../../../src/storage/schema/m238-space-agent-template-labels';
+import { runMigration243 } from '../../../src/storage/schema/m243-space-agent-template-space-key';
 import { Database as BunDatabase } from '../../../src/storage/sqlite-compat';
+
+const SPACE = 'space-1';
 
 const MODEL_POOL: AgentModelPoolEntry[] = [
   { model: 'claude-opus-5', provider: 'anthropic', maxConcurrent: 2, weight: 3 },
@@ -45,11 +48,12 @@ describe('SpaceAgentTemplateRepository', () => {
     runMigration226(db);
     runMigration227(db);
     runMigration238(db);
+    runMigration243(db);
     repo = new SpaceAgentTemplateRepository(db);
   });
 
   test('create persists the full column set and getByKey round-trips it', () => {
-    const created = repo.create(fullParams());
+    const created = repo.create(SPACE, fullParams());
 
     expect(created).toEqual({
       key: 'release-readiness.custom',
@@ -73,7 +77,7 @@ describe('SpaceAgentTemplateRepository', () => {
   });
 
   test('create applies defaults for omitted optional fields', () => {
-    const created = repo.create({ key: 'notes.custom', handle: 'notes' });
+    const created = repo.create(SPACE, { key: 'notes.custom', handle: 'notes' });
 
     expect(created.displayName).toBe('notes');
     expect(created.description).toBe('');
@@ -89,7 +93,7 @@ describe('SpaceAgentTemplateRepository', () => {
   });
 
   test('create normalizes empty modelPool and tools to null but preserves empty settingSources', () => {
-    const created = repo.create({
+    const created = repo.create(SPACE, {
       key: 'empty.custom',
       handle: 'empty',
       modelPool: [],
@@ -103,21 +107,23 @@ describe('SpaceAgentTemplateRepository', () => {
   });
 
   test('duplicate key violates the primary key constraint', () => {
-    repo.create({ key: 'dup.custom', handle: 'dup' });
-    expect(() => repo.create({ key: 'dup.custom', handle: 'other' })).toThrow(/UNIQUE constraint/i);
+    repo.create(SPACE, { key: 'dup.custom', handle: 'dup' });
+    expect(() => repo.create(SPACE, { key: 'dup.custom', handle: 'other' })).toThrow(
+      /UNIQUE constraint/i
+    );
     expect(repo.list()).toHaveLength(1);
   });
 
   test('suggested autonomy outside 1-5 violates the CHECK constraint', () => {
     expect(() =>
-      repo.create({
+      repo.create(SPACE, {
         key: 'low.custom',
         handle: 'low',
         suggestedAutonomyLevel: 0 as unknown as SpaceAgentAutonomyLevel,
       })
     ).toThrow(/CHECK constraint/i);
     expect(() =>
-      repo.create({
+      repo.create(SPACE, {
         key: 'high.custom',
         handle: 'high',
         suggestedAutonomyLevel: 6 as unknown as SpaceAgentAutonomyLevel,
@@ -131,9 +137,9 @@ describe('SpaceAgentTemplateRepository', () => {
   });
 
   test('list orders by created_at and breaks ties on key', () => {
-    repo.create({ key: 'b.custom', handle: 'b' });
-    repo.create({ key: 'a.custom', handle: 'a' });
-    repo.create({ key: 'c.custom', handle: 'c' });
+    repo.create(SPACE, { key: 'b.custom', handle: 'b' });
+    repo.create(SPACE, { key: 'a.custom', handle: 'a' });
+    repo.create(SPACE, { key: 'c.custom', handle: 'c' });
     db.prepare(`UPDATE space_agent_templates SET created_at = ?`).run(1000);
 
     expect(repo.list().map((t) => t.key)).toEqual(['a.custom', 'b.custom', 'c.custom']);
@@ -146,9 +152,9 @@ describe('SpaceAgentTemplateRepository', () => {
   });
 
   test('update changes only the provided fields and bumps updated_at', () => {
-    const created = repo.create(fullParams());
+    const created = repo.create(SPACE, fullParams());
 
-    const updated = repo.update('release-readiness.custom', {
+    const updated = repo.update(SPACE, 'release-readiness.custom', {
       handle: 'release-readiness-v2',
       instructions: 'New instructions.',
       suggestedAutonomyLevel: 4,
@@ -166,9 +172,9 @@ describe('SpaceAgentTemplateRepository', () => {
   });
 
   test('update replaces and clears JSON columns', () => {
-    repo.create(fullParams());
+    repo.create(SPACE, fullParams());
 
-    const updated = repo.update('release-readiness.custom', {
+    const updated = repo.update(SPACE, 'release-readiness.custom', {
       modelPool: [{ model: 'claude-haiku-4-5', maxConcurrent: 1, weight: 1 }],
       settingSources: ['local'],
       tools: ['Bash'],
@@ -179,7 +185,7 @@ describe('SpaceAgentTemplateRepository', () => {
     expect(updated!.settingSources).toEqual(['local']);
     expect(updated!.tools).toEqual(['Bash']);
 
-    const cleared = repo.update('release-readiness.custom', {
+    const cleared = repo.update(SPACE, 'release-readiness.custom', {
       modelPool: null,
       settingSources: null,
       tools: null,
@@ -190,9 +196,9 @@ describe('SpaceAgentTemplateRepository', () => {
   });
 
   test('update keeps the null-versus-empty contract per JSON column', () => {
-    repo.create(fullParams());
+    repo.create(SPACE, fullParams());
 
-    const emptied = repo.update('release-readiness.custom', {
+    const emptied = repo.update(SPACE, 'release-readiness.custom', {
       settingSources: [],
       modelPool: [],
       tools: [],
@@ -203,63 +209,67 @@ describe('SpaceAgentTemplateRepository', () => {
     expect(emptied!.tools).toBeNull();
     expect(emptied!.labels).toEqual([]);
 
-    const inherited = repo.update('release-readiness.custom', { settingSources: null });
+    const inherited = repo.update(SPACE, 'release-readiness.custom', { settingSources: null });
     expect(inherited!.settingSources).toBeNull();
   });
 
   test('update replaces and clears labels and leaves them untouched when omitted', () => {
-    repo.create(fullParams());
+    repo.create(SPACE, fullParams());
 
-    const replaced = repo.update('release-readiness.custom', { labels: ['infra'] });
+    const replaced = repo.update(SPACE, 'release-readiness.custom', { labels: ['infra'] });
     expect(replaced!.labels).toEqual(['infra']);
 
-    const untouched = repo.update('release-readiness.custom', { handle: 'release-readiness-v2' });
+    const untouched = repo.update(SPACE, 'release-readiness.custom', {
+      handle: 'release-readiness-v2',
+    });
     expect(untouched!.labels).toEqual(['infra']);
 
-    const cleared = repo.update('release-readiness.custom', { labels: null });
+    const cleared = repo.update(SPACE, 'release-readiness.custom', { labels: null });
     expect(cleared!.labels).toEqual([]);
   });
 
   test('update with no fields returns the current row unchanged', () => {
-    const created = repo.create(fullParams());
-    expect(repo.update('release-readiness.custom', {})).toEqual(created);
+    const created = repo.create(SPACE, fullParams());
+    expect(repo.update(SPACE, 'release-readiness.custom', {})).toEqual(created);
   });
 
   test('casUpdate with no fields honors the expected version', () => {
-    repo.create(fullParams());
+    repo.create(SPACE, fullParams());
 
-    expect(repo.casUpdate('release-readiness.custom', {}, 999)).toBeNull();
-    expect(repo.casUpdate('release-readiness.custom', {}, 1)?.key).toBe('release-readiness.custom');
-    expect(repo.casUpdate('release-readiness.custom', {})).not.toBeNull();
+    expect(repo.casUpdate(SPACE, 'release-readiness.custom', {}, 999)).toBeNull();
+    expect(repo.casUpdate(SPACE, 'release-readiness.custom', {}, 1)?.key).toBe(
+      'release-readiness.custom'
+    );
+    expect(repo.casUpdate(SPACE, 'release-readiness.custom', {})).not.toBeNull();
   });
 
   test('update on an unknown key returns null', () => {
-    expect(repo.update('missing.custom', { handle: 'x' })).toBeNull();
+    expect(repo.update(SPACE, 'missing.custom', { handle: 'x' })).toBeNull();
   });
 
   test('delete removes the row and frees the key for reuse', () => {
-    repo.create({ key: 'gone.custom', handle: 'gone' });
+    repo.create(SPACE, { key: 'gone.custom', handle: 'gone' });
 
     expect(repo.delete('missing.custom')).toBe(false);
     expect(repo.delete('gone.custom')).toBe(true);
     expect(repo.getByKey('gone.custom')).toBeNull();
     expect(repo.delete('gone.custom')).toBe(false);
 
-    const recreated = repo.create({ key: 'gone.custom', handle: 'back' });
+    const recreated = repo.create(SPACE, { key: 'gone.custom', handle: 'back' });
     expect(recreated.handle).toBe('back');
     expect(repo.list()).toHaveLength(1);
   });
 
   test('prevents a stale CAS update after delete and recreate', () => {
-    repo.create({ key: 'reuse.custom', handle: 'reuse' });
+    repo.create(SPACE, { key: 'reuse.custom', handle: 'reuse' });
     const before = repo.getByKeyWithVersion('reuse.custom')!;
 
     repo.delete('reuse.custom');
-    repo.create({ key: 'reuse.custom', handle: 'reincarnated' });
+    repo.create(SPACE, { key: 'reuse.custom', handle: 'reincarnated' });
     const after = repo.getByKeyWithVersion('reuse.custom')!;
 
     expect(after.version).not.toBe(before.version);
-    const result = repo.casUpdate('reuse.custom', { displayName: 'Stale' }, before.version);
+    const result = repo.casUpdate(SPACE, 'reuse.custom', { displayName: 'Stale' }, before.version);
     expect(result).toBeNull();
     expect(repo.getByKey('reuse.custom')?.displayName).not.toBe('Stale');
   });

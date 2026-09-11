@@ -1207,7 +1207,7 @@ describe('createSpaceAgentToolHandlers — delete_agent_template', () => {
 
   test('denies deletion below the destructive autonomy level', async () => {
     const handlers = makeTemplateHandlers(3);
-    await new SpaceAgentTemplateRepository(ctx.db).create({
+    await new SpaceAgentTemplateRepository(ctx.db).create('space-tools-test', {
       key: 'reviewer.custom',
       handle: 'reviewer',
     });
@@ -1311,6 +1311,7 @@ describe('createSpaceAgentToolHandlers — delete_agent_template', () => {
   test('rejects a stale CAS version and reports the current one', async () => {
     const handlers = await createTemplate('reviewer.custom');
     await new SpaceAgentTemplateManager(new SpaceAgentTemplateRepository(ctx.db)).update(
+      'space-tools-test',
       'reviewer.custom',
       { displayName: 'Updated' }
     );
@@ -1327,6 +1328,7 @@ describe('createSpaceAgentToolHandlers — delete_agent_template', () => {
   test('deletes with the current CAS version', async () => {
     const handlers = await createTemplate('reviewer.custom');
     await new SpaceAgentTemplateManager(new SpaceAgentTemplateRepository(ctx.db)).update(
+      'space-tools-test',
       'reviewer.custom',
       { displayName: 'Updated' }
     );
@@ -2848,7 +2850,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
 
   test('list_agent_templates merges built-in and user templates with labels and builtin flag', async () => {
     const templateRepo = new SpaceAgentTemplateRepository(ctx.db);
-    templateRepo.create({
+    templateRepo.create('space-tools-test', {
       key: 'user.release-notes',
       handle: 'release-notes',
       displayName: 'Release Notes',
@@ -2857,7 +2859,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
       suggestedAutonomyLevel: 2,
       labels: ['docs'],
     });
-    templateRepo.create({
+    templateRepo.create('space-tools-test', {
       key: 'custom.coordinator',
       handle: 'coordinator',
       displayName: 'Custom Coord',
@@ -2894,7 +2896,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
   });
 
   test('list_agent_templates falls back to built-in templates without database access', async () => {
-    new SpaceAgentTemplateRepository(ctx.db).create({
+    new SpaceAgentTemplateRepository(ctx.db).create('space-tools-test', {
       key: 'user.release-notes',
       handle: 'release-notes',
       displayName: 'Release Notes',
