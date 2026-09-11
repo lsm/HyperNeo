@@ -74,6 +74,15 @@ describe('extractTableRefSpans', () => {
     ]);
   });
 
+  test("stops at the table factor's own closing parenthesis", () => {
+    const names = (sql: string) => extractTableRefSpans(sql).map((span) => span.name);
+
+    expect(names('SELECT (SELECT id FROM (a)), abs(1)')).toEqual(['a']);
+    expect(names('SELECT * FROM (a, b), c')).toEqual(['a', 'b', 'c']);
+    expect(names('SELECT * FROM (a), b')).toEqual(['a', 'b']);
+    expect(validateSql('SELECT (SELECT id FROM (a)), abs(1)').tableRefs).toEqual(['a']);
+  });
+
   test('skips CTE names the way the reference list does', () => {
     const sql = 'WITH active AS (SELECT * FROM space_tasks) SELECT * FROM active';
     expect(extractTableRefSpans(sql).map((span) => span.name)).toEqual(['space_tasks']);

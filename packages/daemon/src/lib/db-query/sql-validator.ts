@@ -177,6 +177,8 @@ function skipWhitespace(sql: string, pos: number): number {
   return i;
 }
 
+const SUBQUERY_START_WORDS = new Set(['select', 'with', 'values']);
+
 function recordTableRef(
   sql: string,
   pos: number,
@@ -185,6 +187,13 @@ function recordTableRef(
   spans?: TableRefSpan[]
 ): number | null {
   const start = skipWhitespace(sql, pos);
+  if (sql[start] === '(') {
+    let probe = start;
+    while (sql[probe] === '(') probe = skipWhitespace(sql, probe + 1);
+    const inner = matchIdentifier(sql, probe);
+    if (!inner || SUBQUERY_START_WORDS.has(inner.ident)) return null;
+    return recordTableRef(sql, probe, exclude, refs, spans);
+  }
   const first = matchIdentifier(sql, start);
   if (!first) return null;
 
@@ -269,13 +278,28 @@ function skipQuotedAlias(sql: string, pos: number): number | null {
   return sql.length;
 }
 
+function countTableFactorParens(sql: string, pos: number): number {
+  let probe = skipWhitespace(sql, pos);
+  let depth = 0;
+  while (sql[probe] === '(') {
+    depth++;
+    probe = skipWhitespace(sql, probe + 1);
+  }
+  if (depth === 0) return 0;
+  const inner = matchIdentifier(sql, probe);
+  if (!inner || SUBQUERY_START_WORDS.has(inner.ident)) return 0;
+  return depth;
+}
+
 function consumeCommaTableList(
   sql: string,
   from: number,
   exclude: Set<string>,
   refs: string[],
-  spans?: TableRefSpan[]
+  spans?: TableRefSpan[],
+  openParens = 0
 ): number {
+  let remaining = openParens;
   let pos = from;
   for (;;) {
     let probe = skipWhitespace(sql, pos);
@@ -309,7 +333,13 @@ function consumeCommaTableList(
       continue;
     }
     probe = skipWhitespace(sql, pos);
+    let closed = 0;
+    while (remaining - closed > 0 && sql[probe] === ')') {
+      closed++;
+      probe = skipWhitespace(sql, probe + 1);
+    }
     if (sql[probe] !== ',') return pos;
+    remaining -= closed;
     const next = recordTableRef(sql, probe + 1, exclude, refs, spans);
     if (next === null) return pos;
     pos = next;
@@ -322,7 +352,7 @@ export interface TableRefSpan {
   end: number;
 }
 
-function maskCommentsAndStrings(sql: string): string {
+export function maskCommentsAndStrings(sql: string): string {
   const out = sql.split('');
   const len = sql.length;
   let i = 0;
@@ -394,7 +424,14 @@ function extractTableRefs(sql: string, exclude: Set<string>, spans?: TableRefSpa
     if (atKeyword(i, 'FROM') && (i === 0 || isWordBoundary(i - 1)) && isWordBoundary(i + 4)) {
       const end = recordTableRef(sql, i + 4, exclude, refs, spans);
       if (end !== null) {
-        i = consumeCommaTableList(sql, end, exclude, refs, spans);
+        i = consumeCommaTableList(
+          sql,
+          end,
+          exclude,
+          refs,
+          spans,
+          countTableFactorParens(sql, i + 4)
+        );
         continue;
       }
     }
@@ -414,7 +451,14 @@ function extractTableRefs(sql: string, exclude: Set<string>, spans?: TableRefSpa
         if (atKeyword(pos, 'JOIN') && isWordBoundary(pos + 4)) {
           const end = recordTableRef(sql, pos + 4, exclude, refs, spans);
           if (end !== null) {
-            i = consumeCommaTableList(sql, end, exclude, refs, spans);
+            i = consumeCommaTableList(
+              sql,
+              end,
+              exclude,
+              refs,
+              spans,
+              countTableFactorParens(sql, pos + 4)
+            );
             joinMatched = true;
             break;
           }
@@ -426,7 +470,14 @@ function extractTableRefs(sql: string, exclude: Set<string>, spans?: TableRefSpa
     if (!joinMatched && atKeyword(i, 'JOIN') && isWordBoundary(i + 4)) {
       const end = recordTableRef(sql, i + 4, exclude, refs, spans);
       if (end !== null) {
-        i = consumeCommaTableList(sql, end, exclude, refs, spans);
+        i = consumeCommaTableList(
+          sql,
+          end,
+          exclude,
+          refs,
+          spans,
+          countTableFactorParens(sql, i + 4)
+        );
         continue;
       }
     }
