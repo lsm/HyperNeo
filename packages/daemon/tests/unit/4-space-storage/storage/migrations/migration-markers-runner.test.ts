@@ -19,6 +19,16 @@ function createBaselineSchemaSentinels(db: BunDatabase): void {
     CREATE TABLE spaces (id TEXT PRIMARY KEY);
     CREATE TABLE space_tasks (
       id TEXT PRIMARY KEY,
+      space_id TEXT NOT NULL,
+      task_number INTEGER NOT NULL,
+      workflow_run_id TEXT,
+      preferred_workflow_id TEXT,
+      goal_id TEXT,
+      evolution_scope_id TEXT,
+      workspace_path TEXT,
+      post_approval_session_id TEXT,
+      created_at INTEGER NOT NULL DEFAULT 0,
+      updated_at INTEGER NOT NULL DEFAULT 0,
       status TEXT NOT NULL DEFAULT 'open',
       task_agent_session_id TEXT
     );
