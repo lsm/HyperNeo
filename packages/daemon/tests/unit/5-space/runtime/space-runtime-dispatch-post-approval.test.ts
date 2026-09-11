@@ -1,3 +1,15 @@
+import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
+import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
+import { DirectTaskExecutionRepository } from '../../../../src/storage/repositories/direct-task-execution-repository';
+import { createDirectTaskStarter } from '../../../../src/lib/space/runtime/start-direct-task';
+import { createDirectOutcomeHandler } from '../../../../src/lib/space/runtime/direct-outcome-jobs';
+import { createSpaceOperationRegistryProvider } from '../../../../src/lib/space/operations/registry';
+import { createOperationRpcHandler } from '../../../../src/lib/operations/rpc-adapter';
+import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-adapter';
+import { SessionManager } from '../../../../src/lib/session/session-manager';
+import type { AgentSession } from '../../../../src/lib/agent/agent-session';
+import type { Database as AppDatabase } from '../../../../src/storage/database';
+import type { CallContext, SpaceLongHorizonAgent } from '@hyperneo/shared';
 import { PendingCompletionSupersededError } from '../../../../src/lib/space/operations/pending-completion-guard';
 import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager';
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
@@ -574,3 +586,161 @@ describe('SpaceRuntime.retryPostApprovalDispatch — canonical serialized retry'
     expect(reactive.taskRepo.getTask(task.id)?.status).toBe('approved');
   });
 });
+
+test.each(['rpc', 'mcp'] as const)(
+  'direct task completes through shared %s approval without a workflow',
+  async (source) => {
+    const context = buildRuntime();
+    const { db, taskRepo, runtime } = context;
+    try {
+      const sessions = new SessionRepository(db);
+      const jobs = new JobQueueRepository(db);
+      const attempts = new DirectTaskExecutionRepository(db);
+      const task = taskRepo.createTask({ spaceId: SPACE_ID, title: 'Direct', description: '' });
+      let cached: AgentSession | null = null;
+      const starter = createDirectTaskStarter({
+        db,
+        defaultModel: 'claude-sonnet-4-6',
+        sessionDb: {
+          getSession: (id) => sessions.getSession(id),
+          createSession: (session) =>
+            sessions.createSession(session, { enforceWorkspaceOwnership: false }),
+        },
+        sessionManager: {
+          getCachedSession: () => cached ?? undefined,
+          getSessionForControl: async (id) => {
+            cached = {
+              getSessionData: () => sessions.getSession(id)!,
+              isQueryActiveOrStarting: () => false,
+              getProcessingState: () => ({ status: 'idle' }),
+              isInterruptInProgress: () => false,
+              getTrackedAgentRootPidsSplit: () => ({ live: [], exited: [] }),
+              handleInterrupt: async () => {},
+              cleanup: async () => {},
+            } as unknown as AgentSession;
+            return cached;
+          },
+          unregisterSession: async () => {
+            cached = null;
+          },
+        },
+      });
+      const started = await starter({ taskId: task.id, requestKey: 'first' });
+      if (!started.started) throw new Error(started.reason);
+      const coordinatorId = `space:chat:${SPACE_ID}`;
+      sessions.createSession(
+        {
+          ...sessions.getSession(started.attempt.sessionId)!,
+          id: coordinatorId,
+          type: 'space_chat',
+          context: { spaceId: SPACE_ID },
+        },
+        { enforceWorkspaceOwnership: false }
+      );
+      const manager = new SpaceTaskManager(db, SPACE_ID);
+      const getTaskManager = () => manager;
+      const emitTaskUpdated = async (_spaceId: string, updated: SpaceTask) => {
+        context.emitted.push({ spaceId: SPACE_ID, task: updated });
+      };
+      const provider = createSpaceOperationRegistryProvider(
+        { getDatabase: () => db, notifyChange: () => {} } as unknown as AppDatabase,
+        jobs,
+        {
+          getSession: (id) => sessions.getSession(id),
+          getTaskManager,
+          taskRepo,
+          notifyStandalone: () => {},
+          emitTaskUpdated,
+          blockExecution: async () => {
+            throw new Error('unexpected workflow stop');
+          },
+        },
+        {
+          getSession: (id) => sessions.getSession(id),
+          getTask: (id) => taskRepo.getTask(id),
+          getTaskManager,
+          coordinatorLookup: {
+            getCoordinator: () => ({ id: 'coordinator' }) as SpaceLongHorizonAgent,
+          },
+          dispatchApproval: (_spaceId, id, approvalSource, reason, guard) =>
+            runtime.dispatchPostApproval(id, approvalSource, { approvalReason: reason }, guard),
+          warn: () => {
+            throw new Error('unexpected approval failure');
+          },
+          emitTaskUpdated,
+          audit: () => {},
+        }
+      );
+      const worker = createOperationMcpHandler(provider, () => ({
+        sessionId: started.attempt.sessionId,
+      }));
+      const submitted = JSON.parse(
+        (
+          await worker({
+            name: 'task.submitForReview',
+            input: { taskId: task.id, reason: 'Ready' },
+          })
+        ).content[0].text
+      ) as { accepted: boolean; jobId: string };
+      expect(submitted.accepted).toBe(true);
+      expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
+      const owner = Object.assign(Object.create(SessionManager.prototype), {
+        directStopVerificationJobs: new Map(),
+      }) as SessionManager;
+      const finalized = await createDirectOutcomeHandler({
+        db,
+        jobQueue: jobs,
+        sessionManager: {
+          coalesceDirectStopVerification: owner.coalesceDirectStopVerification.bind(owner),
+          getCachedSession: () => cached,
+          isSessionLoading: () => false,
+          unregisterSession: async () => {
+            cached = null;
+          },
+        },
+      })(jobs.getJob(submitted.jobId)!);
+      expect(finalized).toMatchObject({ finalized: true });
+      expect(taskRepo.getTask(task.id)).toMatchObject({
+        status: 'review',
+        pendingCheckpointType: 'task_completion',
+        pendingCompletionSubmittedByNodeId: null,
+        pendingCompletionReason: 'Ready',
+      });
+      expect(attempts.getActive(task.id)).toBeNull();
+      const invocation = {
+        name: 'task.resolvePendingCompletion',
+        input: { taskId: task.id, approved: true, reason: 'Accepted' },
+      };
+      const approved =
+        source === 'rpc'
+          ? await createOperationRpcHandler(provider, () => ({}))(invocation, {} as CallContext)
+          : JSON.parse(
+              (
+                await createOperationMcpHandler(provider, () => ({ sessionId: coordinatorId }))(
+                  invocation
+                )
+              ).content[0].text
+            );
+      expect(approved).toMatchObject({
+        status: 'done',
+        approvalSource: 'human',
+        approvalReason: 'Accepted',
+      });
+      expect(taskRepo.getTask(task.id)).toMatchObject({
+        status: 'done',
+        workflowRunId: null,
+        pendingCheckpointType: null,
+      });
+      expect(attempts.get(started.attempt.id)?.phase).toBe('stopped');
+      expect(context.spawned).toEqual([]);
+      expect(context.injected).toEqual([]);
+      expect(
+        context.emitted.some(
+          ({ task: updated }) => updated.id === task.id && updated.status === 'done'
+        )
+      ).toBe(true);
+    } finally {
+      db.close();
+    }
+  }
+);
