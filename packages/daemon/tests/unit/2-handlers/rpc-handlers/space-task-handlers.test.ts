@@ -1220,10 +1220,17 @@ describe('space-task-handlers', () => {
         status: 'blocked' as const,
         blockReason: 'dependency_added' as const,
       };
-      (taskManager.updateTask as ReturnType<typeof mock>).mockImplementation(async () => {
-        (taskManager.getTask as ReturnType<typeof mock>).mockResolvedValue(persisted);
-        return persisted;
-      });
+      (taskManager.updateTask as ReturnType<typeof mock>).mockImplementation(
+        async (
+          _id: string,
+          _fields: unknown,
+          options: Parameters<SpaceTaskManager['updateTask']>[2]
+        ) => {
+          options?.prepareExecutionPointers?.(activeTask, {});
+          (taskManager.getTask as ReturnType<typeof mock>).mockResolvedValue(persisted);
+          return persisted;
+        }
+      );
 
       const result = await call('spaceTask.update', {
         spaceId: 'space-1',
@@ -1265,11 +1272,12 @@ describe('space-task-handlers', () => {
           async (
             _id: string,
             fields: Partial<SpaceTask>,
-            options: { onCascadedTasks: (tasks: SpaceTask[]) => Promise<void> }
+            options: NonNullable<Parameters<SpaceTaskManager['updateTask']>[2]>
           ) => {
+            options.prepareExecutionPointers?.(current, {});
             current = { ...current, ...fields, status: 'blocked', blockReason: 'dependency_added' };
             const persisted = current;
-            await options.onCascadedTasks([makeTask({ id: 'dependent', status: 'blocked' })]);
+            await options.onCascadedTasks?.([makeTask({ id: 'dependent', status: 'blocked' })]);
             return persisted;
           }
         );
@@ -1530,10 +1538,17 @@ describe('space-task-handlers', () => {
         status: 'blocked' as const,
         blockReason: 'dependency_added' as const,
       };
-      (taskManager.updateTask as ReturnType<typeof mock>).mockImplementation(async () => {
-        (taskManager.getTask as ReturnType<typeof mock>).mockResolvedValue(persisted);
-        return persisted;
-      });
+      (taskManager.updateTask as ReturnType<typeof mock>).mockImplementation(
+        async (
+          _id: string,
+          _fields: unknown,
+          options: Parameters<SpaceTaskManager['updateTask']>[2]
+        ) => {
+          options?.prepareExecutionPointers?.(activeTask, {});
+          (taskManager.getTask as ReturnType<typeof mock>).mockResolvedValue(persisted);
+          return persisted;
+        }
+      );
 
       await call('spaceTask.update', {
         spaceId: 'space-1',
@@ -1561,10 +1576,17 @@ describe('space-task-handlers', () => {
         dependsOn: ['dep-done'],
         status: 'in_progress' as const,
       };
-      (taskManager.updateTask as ReturnType<typeof mock>).mockImplementation(async () => {
-        (taskManager.getTask as ReturnType<typeof mock>).mockResolvedValue(persisted);
-        return persisted;
-      });
+      (taskManager.updateTask as ReturnType<typeof mock>).mockImplementation(
+        async (
+          _id: string,
+          _fields: unknown,
+          options: Parameters<SpaceTaskManager['updateTask']>[2]
+        ) => {
+          options?.prepareExecutionPointers?.(activeTask, {});
+          (taskManager.getTask as ReturnType<typeof mock>).mockResolvedValue(persisted);
+          return persisted;
+        }
+      );
 
       await call('spaceTask.update', {
         spaceId: 'space-1',
