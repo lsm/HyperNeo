@@ -48,3 +48,10 @@ export function createOperationRegistry(
     get: (name) => byName.get(name),
   };
 }
+
+export type OperationRegistryProvider = () => OperationRegistry;
+export type OperationRegistrySource = OperationRegistry | OperationRegistryProvider;
+
+export function resolveOperationRegistry(source: OperationRegistrySource): OperationRegistry {
+  return typeof source === 'function' ? source() : source;
+}

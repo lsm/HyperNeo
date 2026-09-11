@@ -1,3 +1,4 @@
+import type { OperationRegistry, OperationRegistryProvider } from '../operations/registry.ts';
 import { setStandaloneTaskDependencies } from '../../storage/tasks/set-task-dependencies.ts';
 import { transitionStandaloneTask } from '../../storage/tasks/transition-task.ts';
 import { createStandaloneTaskMetadataEditor } from '../operations/task-metadata-standalone.ts';
@@ -117,6 +118,7 @@ export interface AgentSessionInit {
 }
 
 export interface AgentSessionRuntimeOptions {
+  operationRegistryProvider?: () => OperationRegistry | undefined;
   autoReplayPendingMessages?: boolean;
 
   hardReset?: (
@@ -250,28 +252,37 @@ export class AgentSession
   readonly askUserQuestionHandler: AskUserQuestionHandler;
   private operationMcpServer?: ReturnType<typeof createOperationMcpServer>;
 
+  private operationRegistryProvider?: () => OperationRegistry | undefined;
+  private defaultOperationRegistry?: OperationRegistry;
+
+  setOperationRegistryProvider(provider: OperationRegistryProvider): void {
+    this.operationRegistryProvider = provider;
+  }
+
   getOperationMcpServer(): ReturnType<typeof createOperationMcpServer> {
     return (this.operationMcpServer ??= createOperationMcpServer(
-      createDaemonOperationCatalog(this.db.getJobQueueRepo(), {
-        readTask: (taskId) => readTaskCore(this.db.getDatabase(), taskId),
-        createTask: (input, creatorSessionId) =>
-          createStandaloneTask(this.db.getDatabase(), input, creatorSessionId, () =>
-            this.db.notifyChange('space_tasks')
-          ),
-        listTasks: (input) => listTaskCores(this.db.getDatabase(), input),
-        editTask: (input, caller) =>
-          createStandaloneTaskMetadataEditor(this.db.getDatabase(), () =>
-            this.db.notifyChange('space_tasks')
-          )(input, caller),
-        transitionTask: (input) =>
-          transitionStandaloneTask(this.db.getDatabase(), input, () =>
-            this.db.notifyChange('space_tasks')
-          ),
-        setDependencies: (input) =>
-          setStandaloneTaskDependencies(this.db.getDatabase(), input, () =>
-            this.db.notifyChange('space_tasks')
-          ),
-      }),
+      () =>
+        this.operationRegistryProvider?.() ??
+        (this.defaultOperationRegistry ??= createDaemonOperationCatalog(this.db.getJobQueueRepo(), {
+          readTask: (taskId) => readTaskCore(this.db.getDatabase(), taskId),
+          createTask: (input, creatorSessionId) =>
+            createStandaloneTask(this.db.getDatabase(), input, creatorSessionId, () =>
+              this.db.notifyChange('space_tasks')
+            ),
+          listTasks: (input) => listTaskCores(this.db.getDatabase(), input),
+          editTask: (input, caller) =>
+            createStandaloneTaskMetadataEditor(this.db.getDatabase(), () =>
+              this.db.notifyChange('space_tasks')
+            )(input, caller),
+          transitionTask: (input) =>
+            transitionStandaloneTask(this.db.getDatabase(), input, () =>
+              this.db.notifyChange('space_tasks')
+            ),
+          setDependencies: (input) =>
+            setStandaloneTaskDependencies(this.db.getDatabase(), input, () =>
+              this.db.notifyChange('space_tasks')
+            ),
+        })),
       () => ({ sessionId: this.session.id })
     ));
   }
@@ -403,6 +414,7 @@ export class AgentSession
     public toolGuards?: DeclarativeToolGuard[],
     private readonly runtimeOptions: AgentSessionRuntimeOptions = {}
   ) {
+    this.operationRegistryProvider = runtimeOptions.operationRegistryProvider;
     this.errorManager = new ErrorManager(this.messageHub, this.internalEventBus);
     this.logger = new Logger(`AgentSession ${session.id}`);
 
