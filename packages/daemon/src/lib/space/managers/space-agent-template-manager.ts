@@ -60,7 +60,7 @@ export interface UpdateTemplateCtx {
 }
 
 export interface TemplateInstanceScan {
-  clearArchivedInstances?(key: string): void;
+  clearArchivedInstances?(key: string, spaceId?: string): void;
 }
 
 export interface DeleteTemplateCtx {
@@ -419,7 +419,7 @@ function deletePersist(ctx: DeleteTemplateCtx): DeleteTemplateCtx {
       ? ctx.repo.delete(ctx.key, ctx.expectedVersion)
       : ctx.repo.deleteOwned(ctx.spaceId, ctx.key, ctx.expectedVersion);
   if (deleted) {
-    ctx.instanceScan?.clearArchivedInstances?.(ctx.key);
+    ctx.instanceScan?.clearArchivedInstances?.(ctx.key, ctx.spaceId);
     return { ...ctx, deleted: true };
   }
   if (ctx.expectedVersion !== undefined && readTemplate(ctx.repo, ctx.spaceId, ctx.key)) {
@@ -599,8 +599,8 @@ export class SpaceAgentTemplateManager {
       expectedVersion,
     });
     if (ctx.error) return { ok: false, error: ctx.error };
-    if (ctx.template === null) return { ok: true, value: null };
-    return { ok: true, value: this.repo.getOwnedWithVersion(spaceId, key)! };
+    if (!ctx.template) return { ok: true, value: null };
+    return { ok: true, value: ctx.template as SpaceAgentTemplateRecord };
   }
 
   deleteIn(spaceId: string, key: string, expectedVersion?: number): SpaceAgentResult<void> {
@@ -627,10 +627,9 @@ export class SpaceAgentTemplateManager {
       if (isReservedAgentHandle(template.handle)) continue;
       byKey.set(template.key, template);
     }
-    for (const template of this.repo.listOwned(spaceId)) {
-      if (!byKey.has(template.key)) byKey.set(template.key, template);
-    }
-    return [...byKey.values()].sort(compareByCreatedAtAndKey);
+    const builtIns = [...byKey.values()];
+    const owned = this.repo.listOwned(spaceId).filter((template) => !byKey.has(template.key));
+    return [...builtIns, ...owned];
   }
 
   getIn(spaceId: string, key: string): SpaceAgentTemplate | null {

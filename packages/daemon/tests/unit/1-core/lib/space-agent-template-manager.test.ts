@@ -1255,11 +1255,42 @@ describe('SpaceAgentTemplateManager — Space-scoped methods', () => {
   test('the archived-instance scan is told which Space deleted', async () => {
     const cleared: Array<{ spaceId: string; key: string }> = [];
     const scoped = new SpaceAgentTemplateManager(repo, () => BUILT_INS, {
-      clearArchivedInstances: (key) => cleared.push({ spaceId: 'unset', key }),
+      clearArchivedInstances: (key, spaceId) => cleared.push({ spaceId: spaceId ?? 'none', key }),
     });
     await scoped.createIn('space-a', { key: 'k.custom', handle: 'k' });
 
     expect(scoped.deleteIn('space-a', 'k.custom').ok).toBe(true);
-    expect(cleared.map((c) => c.key)).toEqual(['k.custom']);
+    expect(cleared).toEqual([{ spaceId: 'space-a', key: 'k.custom' }]);
+  });
+  test('listIn keeps the order the repository produced', async () => {
+    const at = 4_000;
+    for (const key of ['Z.one', '_.one', 'a.one']) {
+      db.prepare(
+        `INSERT INTO space_agent_templates
+           (space_id, key, handle, display_name, description, instructions,
+            suggested_autonomy_level, created_at, updated_at, version)
+         VALUES ('space-a', ?, 'h', 'H', '', '', 2, ?, ?, 1)`
+      ).run(key, at, at);
+    }
+
+    const listed = manager
+      .listIn('space-a')
+      .filter((t) => t.key.endsWith('.one'))
+      .map((t) => t.key);
+    expect(listed).toEqual(repo.listOwned('space-a').map((t) => t.key));
+  });
+
+  test('casUpdateIn returns the record its own write produced', async () => {
+    await manager.createIn('space-a', { key: 'k.custom', handle: 'k' });
+    const current = repo.getOwnedWithVersion('space-a', 'k.custom')!;
+
+    const result = await manager.casUpdateIn(
+      'space-a',
+      'k.custom',
+      { displayName: 'Mine' },
+      current.version
+    );
+
+    expect(result.ok && result.value?.displayName).toBe('Mine');
   });
 });

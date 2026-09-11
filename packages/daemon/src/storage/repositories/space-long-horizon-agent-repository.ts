@@ -155,13 +155,21 @@ export class SpaceLongHorizonAgentRepository {
     return rows.map(rowToAgent);
   }
 
-  clearTemplateKeyForArchivedAgents(templateKey: string): number {
-    const result = this.db
-      .prepare(
-        `UPDATE space_long_horizon_agents SET template_key = NULL, updated_at = ?
-         WHERE template_key = ? AND status = 'archived'`
-      )
-      .run(Date.now(), templateKey);
+  clearTemplateKeyForArchivedAgents(templateKey: string, spaceId?: string): number {
+    const result =
+      spaceId === undefined
+        ? this.db
+            .prepare(
+              `UPDATE space_long_horizon_agents SET template_key = NULL, updated_at = ?
+               WHERE template_key = ? AND status = 'archived'`
+            )
+            .run(Date.now(), templateKey)
+        : this.db
+            .prepare(
+              `UPDATE space_long_horizon_agents SET template_key = NULL, updated_at = ?
+               WHERE space_id = ? AND template_key = ? AND status = 'archived'`
+            )
+            .run(Date.now(), spaceId, templateKey);
     return Number(result.changes ?? 0);
   }
 
@@ -790,11 +798,11 @@ function parseObject(value: unknown): Record<string, unknown> {
 export function templateInstanceScanFromRepo(repo: {
   clearTemplateKeyForArchivedAgents: SpaceLongHorizonAgentRepository['clearTemplateKeyForArchivedAgents'];
 }): {
-  clearArchivedInstances(key: string): void;
+  clearArchivedInstances(key: string, spaceId?: string): void;
 } {
   return {
-    clearArchivedInstances: (key) => {
-      repo.clearTemplateKeyForArchivedAgents(key);
+    clearArchivedInstances: (key, spaceId) => {
+      repo.clearTemplateKeyForArchivedAgents(key, spaceId);
     },
   };
 }
