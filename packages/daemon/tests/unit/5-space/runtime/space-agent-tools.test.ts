@@ -2359,6 +2359,54 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     });
   });
 
+  test('mirrors MCP agent create and update onto v2 topics', async () => {
+    const publish = mock(async () => {});
+    const handlers = makeHandlers(ctx, {
+      internalEventBus: {
+        publish,
+      } as unknown as Parameters<typeof createSpaceAgentToolHandlers>[0]['internalEventBus'],
+      mySessionId: 'mcp-session',
+      ownedAgents: {
+        getOwnedById: (id: string) =>
+          ({ id, spaceId: ctx.spaceId, handle: 'notifier' }) as unknown as ReturnType<
+            NonNullable<
+              Parameters<typeof createSpaceAgentToolHandlers>[0]['ownedAgents']
+            >['getOwnedById']
+          >,
+      },
+    });
+
+    const created = JSON.parse((await handlers.create_agent({ name: 'Notifier' })).content[0].text);
+    expect(created.success).toBe(true);
+    expect(publish).toHaveBeenCalledWith('spaceAgentV2.created', {
+      sessionId: `space:${ctx.spaceId}`,
+      spaceId: ctx.spaceId,
+      agent: expect.objectContaining({ id: created.agent.id }),
+    });
+
+    await handlers.update_agent({ agent_id: created.agent.id, name: 'Renamed' });
+    expect(publish).toHaveBeenCalledWith('spaceAgentV2.updated', {
+      sessionId: `space:${ctx.spaceId}`,
+      spaceId: ctx.spaceId,
+      agent: expect.objectContaining({ id: created.agent.id }),
+    });
+  });
+
+  test('publishes no v2 mirror when no lookup is configured', async () => {
+    const publish = mock(async () => {});
+    const handlers = makeHandlers(ctx, {
+      internalEventBus: {
+        publish,
+      } as unknown as Parameters<typeof createSpaceAgentToolHandlers>[0]['internalEventBus'],
+      mySessionId: 'mcp-session',
+    });
+
+    await handlers.create_agent({ name: 'Quiet' });
+    const topics = publish.mock.calls.map((call) => call[0]);
+    expect(topics).toContain('spaceAgent.created');
+    expect(topics).not.toContain('spaceAgentV2.created');
+  });
+
   test('manages agent assignments, reminders, and event subscriptions', async () => {
     const handlers = makeHandlers(ctx);
     const agent = JSON.parse(

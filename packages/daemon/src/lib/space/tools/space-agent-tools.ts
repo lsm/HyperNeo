@@ -52,6 +52,8 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-ev
 import { Logger } from '../../logger.ts';
 import type { SessionManager } from '../../session/session-manager.ts';
 import {
+  type OwnedAgentLookup,
+  publishSpaceAgentV2Mirror,
   publishUnifiedAgentCreated,
   publishUnifiedAgentUpdated,
 } from '../agents/unified-agent-events.ts';
@@ -596,6 +598,7 @@ export interface SpaceAgentToolsConfig {
   getRuntimeSession?: (sessionId: string) => AgentSession | undefined;
   taskAgentManager?: TaskAgentManager;
   internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
+  ownedAgents?: OwnedAgentLookup;
   activateNode?: (runId: string, nodeId: string) => Promise<void>;
   ensureTargetSession?: (target: SessionTarget) => Promise<EnsureSessionOutcome>;
   getSpaceAutonomyLevel?: (spaceId: string) => Promise<number>;
@@ -1435,10 +1438,24 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 
   function emitLongHorizonAgentCreated(agent: SpaceLongHorizonAgent): void {
     void publishUnifiedAgentCreated(internalEventBus, agent, mySessionId ?? 'space-agent-tools');
+    void publishSpaceAgentV2Mirror(
+      internalEventBus,
+      config.ownedAgents,
+      agent.spaceId,
+      agent.id,
+      'created'
+    );
   }
 
   function emitLongHorizonAgentUpdated(agent: SpaceLongHorizonAgent): void {
     void publishUnifiedAgentUpdated(internalEventBus, agent, mySessionId ?? 'space-agent-tools');
+    void publishSpaceAgentV2Mirror(
+      internalEventBus,
+      config.ownedAgents,
+      agent.spaceId,
+      agent.id,
+      'updated'
+    );
   }
 
   function emitGoalOwnerChanged(goalId: string): void {

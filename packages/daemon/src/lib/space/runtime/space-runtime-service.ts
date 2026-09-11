@@ -1,3 +1,4 @@
+import type { OwnedAgentLookup } from '../agents/unified-agent-events.ts';
 import type {
   McpServerConfig,
   Session,
@@ -133,6 +134,7 @@ export interface SpaceRuntimeServiceConfig {
   dbPath?: string;
   spaceManager: SpaceManager;
   longHorizonAgentRepo?: SpaceLongHorizonAgentRepository;
+  ownedAgents?: OwnedAgentLookup;
   templateRepo?: SpaceAgentTemplateRepository;
   spaceWorkflowManager: SpaceWorkflowManager;
   workflowRunRepo: SpaceWorkflowRunRepository;
@@ -984,6 +986,7 @@ export class SpaceRuntimeService {
       spaceId: space.id,
       db: this.config.db,
       longHorizonAgentRepo: this.config.longHorizonAgentRepo,
+      ownedAgents: this.config.ownedAgents,
       runtime: this.runtime,
       workflowManager: this.config.spaceWorkflowManager,
       spaceManager: this.config.spaceManager,
@@ -1544,6 +1547,7 @@ export class SpaceRuntimeService {
       spaceId: space.id,
       db: this.config.db,
       longHorizonAgentRepo: this.config.longHorizonAgentRepo,
+      ownedAgents: this.config.ownedAgents,
       runtime: this.runtime,
       workflowManager: this.config.spaceWorkflowManager,
       spaceManager: this.config.spaceManager,
@@ -1733,6 +1737,7 @@ export class SpaceRuntimeService {
       spaceId: space.id,
       db: this.config.db,
       longHorizonAgentRepo: this.config.longHorizonAgentRepo,
+      ownedAgents: this.config.ownedAgents,
       runtime: this.runtime,
       workflowManager: spaceWorkflowManager,
       spaceManager: this.config.spaceManager,
