@@ -456,6 +456,8 @@ const SPACE_SCOPE_TABLES: ScopeTableConfig[] = [
 ];
 
 const EXCLUDED_TABLE_NAMES: string[] = [
+  'direct_task_execution_selection',
+  'direct_task_execution_attempts',
   'auth_config',
   'global_tools_config',
   'global_settings',
