@@ -60,6 +60,9 @@ describe('setupSpaceAgentV2Handlers', () => {
   let agents: SpaceAgentRepository;
   let legacyAgents: SpaceLongHorizonAgentRepository;
   let removedSubscriptions: Array<{ spaceId: string; agentId: string }>;
+  let refreshedSubscriptions: Array<{ spaceId: string; agentId: string }>;
+  let clearedProviders: Array<{ spaceId: string; agentId: string }>;
+  let refreshResult: { success: boolean; error?: string };
   let templates: SpaceAgentTemplateRepository;
   let handlers: Map<string, RequestHandler>;
   let deps: SpaceAgentV2Deps;
@@ -81,6 +84,9 @@ describe('setupSpaceAgentV2Handlers', () => {
     agents = new SpaceAgentRepository(db);
     legacyAgents = new SpaceLongHorizonAgentRepository(db);
     removedSubscriptions = [];
+    refreshedSubscriptions = [];
+    clearedProviders = [];
+    refreshResult = { success: true };
     templates = new SpaceAgentTemplateRepository(db);
     sessions = new Map([
       ['session-1', { type: 'space_chat', context: { spaceId: 'space-1' } }],
@@ -92,6 +98,13 @@ describe('setupSpaceAgentV2Handlers', () => {
       legacyAgents,
       removeAgentSubscriptions: (spaceId, agentId) => {
         removedSubscriptions.push({ spaceId, agentId });
+      },
+      refreshAgentSubscriptions: (spaceId, agentId) => {
+        refreshedSubscriptions.push({ spaceId, agentId });
+        return refreshResult;
+      },
+      clearSessionProvider: async (spaceId, agentId) => {
+        clearedProviders.push({ spaceId, agentId });
       },
       templates,
       spaceExists: async (id) => id === 'space-1',
@@ -417,6 +430,32 @@ describe('setupSpaceAgentV2Handlers', () => {
   });
 
   describe('update', () => {
+    test('refreshes runtime subscriptions after a successful update', async () => {
+      const created = agents.create({ spaceId: 'space-1', handle: 'a' });
+      await handlers.get('spaceAgentV2.update')!({ id: created.id, status: 'disabled' });
+      expect(refreshedSubscriptions).toEqual([{ spaceId: 'space-1', agentId: created.id }]);
+    });
+
+    test('fails the update when the subscription refresh fails', async () => {
+      const created = agents.create({ spaceId: 'space-1', handle: 'a' });
+      refreshResult = { success: false, error: 'trie rebuild failed' };
+      await expect(
+        handlers.get('spaceAgentV2.update')!({ id: created.id, status: 'disabled' })
+      ).rejects.toThrow('trie rebuild failed');
+    });
+
+    test('clears the live session provider when provider is set to null', async () => {
+      const created = agents.create({ spaceId: 'space-1', handle: 'a', provider: 'anthropic' });
+      await handlers.get('spaceAgentV2.update')!({ id: created.id, provider: null });
+      expect(clearedProviders).toEqual([{ spaceId: 'space-1', agentId: created.id }]);
+    });
+
+    test('does not clear the provider on unrelated updates', async () => {
+      const created = agents.create({ spaceId: 'space-1', handle: 'a', provider: 'anthropic' });
+      await handlers.get('spaceAgentV2.update')!({ id: created.id, instructions: 'hi' });
+      expect(clearedProviders).toEqual([]);
+    });
+
     test('applies only the supplied fields', async () => {
       const created = agents.create({
         spaceId: 'space-1',

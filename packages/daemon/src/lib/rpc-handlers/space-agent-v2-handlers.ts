@@ -41,6 +41,11 @@ export interface SpaceAgentV2Deps {
   internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
   legacyAgents?: Pick<SpaceLongHorizonAgentRepository, 'getById'>;
   removeAgentSubscriptions?(spaceId: string, agentId: string): void;
+  refreshAgentSubscriptions?(
+    spaceId: string,
+    agentId: string
+  ): { success: boolean; error?: string };
+  clearSessionProvider?(spaceId: string, agentId: string): Promise<void>;
 }
 
 const COORDINATOR_HANDLES = new Set([SPACE_MANAGER_HANDLE, 'coordinator']);
@@ -159,8 +164,23 @@ export function buildAgentUpdate(
   return async (input) => {
     const outcome = await run(input);
     if (isCreateSpaceAgentRejection(outcome)) throw new Error(outcome.message);
+    await applyUpdateRuntimeEffects(deps, outcome, input);
     return outcome;
   };
+}
+
+export async function applyUpdateRuntimeEffects(
+  deps: SpaceAgentV2Deps,
+  agent: SpaceAgent,
+  input: UpdateSpaceAgentInput
+): Promise<void> {
+  if (input.provider === null) {
+    await deps.clearSessionProvider?.(agent.spaceId, agent.id);
+  }
+  const refresh = deps.refreshAgentSubscriptions?.(agent.spaceId, agent.id);
+  if (refresh && !refresh.success) {
+    throw new Error(refresh.error ?? 'Failed to refresh subscriptions');
+  }
 }
 
 export function setupSpaceAgentV2Handlers(messageHub: MessageHub, deps: SpaceAgentV2Deps): void {
