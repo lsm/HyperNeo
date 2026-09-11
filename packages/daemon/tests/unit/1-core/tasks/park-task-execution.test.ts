@@ -1,6 +1,7 @@
 import { describe, expect, mock, test } from 'bun:test';
 import type { TaskCore } from '@hyperneo/shared/types/task-core';
 import {
+  executeTaskParking,
   parkTaskExecution,
   requireParkingExecutor,
 } from '../../../../src/lib/tasks/park-task-execution.ts';
@@ -22,6 +23,14 @@ const task: TaskCore = {
 };
 
 describe('task execution parking', () => {
+  test.each([task, null])('wraps executor result %j in an explicit result arm', async (result) => {
+    const park = mock(async () => result);
+    expect(await executeTaskParking({ park }, task.id)).toEqual(
+      result === null ? { reason: null } : { value: result }
+    );
+    expect(park).toHaveBeenCalledWith(task.id);
+  });
+
   test('requires an explicit parking executor', () => {
     const executor = { park: async () => task };
     expect(requireParkingExecutor(executor)).toEqual({ value: executor });
