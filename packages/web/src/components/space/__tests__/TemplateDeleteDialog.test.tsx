@@ -17,14 +17,22 @@ vi.mock('../../../lib/toast', () => ({
 
 import { TemplateDeleteDialog } from '../TemplateDeleteDialog';
 
-const template = {
-  key: 'researcher.v1',
-  displayName: 'Researcher',
-  version: 3,
-} as unknown as SpaceLongHorizonAgentTemplate;
+let keySeq = 0;
+
+function makeTemplate(overrides: { key?: string } = {}): SpaceLongHorizonAgentTemplate {
+  keySeq += 1;
+  return {
+    key: overrides.key ?? `researcher.v${keySeq}`,
+    displayName: 'Researcher',
+    version: 3,
+  } as unknown as SpaceLongHorizonAgentTemplate;
+}
 
 describe('TemplateDeleteDialog', () => {
+  let template: SpaceLongHorizonAgentTemplate;
+
   beforeEach(() => {
+    template = makeTemplate();
     mockDeleteTemplate.mockReset().mockResolvedValue(undefined);
     mockSuccess.mockReset();
   });
@@ -36,7 +44,7 @@ describe('TemplateDeleteDialog', () => {
     fireEvent.click(getByTestId('confirm-delete-template'));
 
     await waitFor(() => expect(onClose).toHaveBeenCalled());
-    expect(mockDeleteTemplate).toHaveBeenCalledWith('researcher.v1', 3);
+    expect(mockDeleteTemplate).toHaveBeenCalledWith(template.key, 3);
   });
 
   it('ignores Escape while the delete is in flight', async () => {
@@ -66,6 +74,50 @@ describe('TemplateDeleteDialog', () => {
     fireEvent.keyDown(document, { key: 'Escape' });
 
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it('keeps the pending lock when the dialog is unmounted and remounted', async () => {
+    let release = (): void => {};
+    mockDeleteTemplate.mockReturnValue(
+      new Promise<void>((resolve) => {
+        release = () => resolve();
+      })
+    );
+    const onClose = vi.fn();
+    const first = render(<TemplateDeleteDialog template={template} onClose={onClose} />);
+
+    fireEvent.click(first.getByTestId('confirm-delete-template'));
+    await waitFor(() => expect(mockDeleteTemplate).toHaveBeenCalledTimes(1));
+    first.unmount();
+
+    const second = render(<TemplateDeleteDialog template={template} onClose={onClose} />);
+    fireEvent.click(second.getByTestId('confirm-delete-template'));
+
+    expect(mockDeleteTemplate).toHaveBeenCalledTimes(1);
+
+    release();
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+  });
+
+  it('does not lock a different template while one delete is pending', async () => {
+    let release = (): void => {};
+    mockDeleteTemplate.mockReturnValue(
+      new Promise<void>((resolve) => {
+        release = () => resolve();
+      })
+    );
+    const other = makeTemplate({ key: 'other.v1' });
+    const first = render(<TemplateDeleteDialog template={template} onClose={vi.fn()} />);
+
+    fireEvent.click(first.getByTestId('confirm-delete-template'));
+    await waitFor(() => expect(mockDeleteTemplate).toHaveBeenCalledTimes(1));
+    first.unmount();
+
+    const second = render(<TemplateDeleteDialog template={other} onClose={vi.fn()} />);
+    fireEvent.click(second.getByTestId('confirm-delete-template'));
+
+    expect(mockDeleteTemplate).toHaveBeenCalledTimes(2);
+    release();
   });
 
   it('keeps the dialog open and shows the failure message', async () => {
