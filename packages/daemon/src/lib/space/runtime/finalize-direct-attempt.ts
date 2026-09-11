@@ -38,7 +38,7 @@ interface FrozenFinalization extends DirectFinalizationInput {
 export type DirectFinalizationResult =
   | { finalized: true; attempt: DirectTaskAttempt; task: SpaceTask }
   | { finalized: false; reason: 'unavailable' | 'unverified' | 'superseded' };
-interface Dependencies {
+export interface DirectTaskFinalizerDependencies {
   db: Database;
   reactiveDb?: ReactiveDatabase;
   sessionManager: DirectAttemptStopDependencies['sessionManager'];
@@ -63,9 +63,9 @@ function matchesTarget(
   );
 }
 
-function readRequest(
+export function readDirectFinalizationRequest(
   db: Database,
-  input: DirectFinalizationInput
+  input: Pick<DirectFinalizationInput, 'attemptId' | 'sessionId'>
 ): (FrozenFinalization & { state: string | null }) | null {
   const row = db
     .prepare(
@@ -80,7 +80,7 @@ function readRequest(
     : null;
 }
 
-function requestFinalization(db: Database, input: DirectFinalizationInput) {
+export function requestDirectTaskFinalization(db: Database, input: DirectFinalizationInput) {
   return db.transaction(() => {
     const attempts = new DirectTaskExecutionRepository(db);
     const attempt = attempts.get(input.attemptId);
@@ -95,7 +95,7 @@ function requestFinalization(db: Database, input: DirectFinalizationInput) {
       attempt.generation !== input.generation
     )
       return unavailable;
-    const frozen = readRequest(db, input);
+    const frozen = readDirectFinalizationRequest(db, input);
     if (frozen) {
       const {
         fromStatus: _fromStatus,
@@ -139,12 +139,12 @@ function requestFinalization(db: Database, input: DirectFinalizationInput) {
   }, 'immediate')();
 }
 
-function commitFinalization(
+export function commitDirectTaskFinalization(
   db: Database,
   reactiveDb: ReactiveDatabase | undefined,
-  sessionManager: Dependencies['sessionManager'],
-  onTerminalTransition: Dependencies['onTerminalTransition'],
-  onTaskReopened: Dependencies['onTaskReopened'],
+  sessionManager: DirectTaskFinalizerDependencies['sessionManager'],
+  onTerminalTransition: DirectTaskFinalizerDependencies['onTerminalTransition'],
+  onTaskReopened: DirectTaskFinalizerDependencies['onTaskReopened'],
   input: DirectFinalizationInput,
   verified: VerifiedDirectStop
 ): DirectFinalizationResult {
@@ -169,7 +169,7 @@ function commitFinalization(
       const current = attempts.get(attempt.id);
       const tasks = new SpaceTaskRepository(db, reactiveDb);
       const task = current ? tasks.getTask(current.taskId) : null;
-      const request = readRequest(db, input);
+      const request = readDirectFinalizationRequest(db, input);
       if (
         !current ||
         current.sessionId !== input.sessionId ||
@@ -244,7 +244,22 @@ function commitFinalization(
   }
 }
 
-export function createDirectTaskFinalizer(dependencies: Dependencies) {
+export function requireDirectFinalizationVerification(
+  verification: Awaited<ReturnType<typeof verifyDirectAttemptStop>>
+) {
+  return 'value' in verification
+    ? verification
+    : {
+        reason: {
+          finalized: false as const,
+          reason: verification.reason.stopped
+            ? ('unavailable' as const)
+            : verification.reason.reason,
+        },
+      };
+}
+
+export function createDirectTaskFinalizer(dependencies: DirectTaskFinalizerDependencies) {
   return (
     superpipe({
       ...dependencies,
@@ -254,28 +269,16 @@ export function createDirectTaskFinalizer(dependencies: Dependencies) {
     })('finalize-direct-task-attempt') as PipelineAPI
   )
     .input('input')
-    .pipe(requestFinalization, ['db', 'input'], 'result:outcome')
+    .pipe(requestDirectTaskFinalization, ['db', 'input'], 'result:outcome')
     .pipe((attempt: DirectTaskAttempt) => attempt, 'outcome', 'attempt')
     .pipe(
       verifyDirectAttemptStop,
       ['attempts', 'tasks', 'sessionManager', 'attempt'],
       'verification'
     )
+    .pipe(requireDirectFinalizationVerification, 'verification', 'result:outcome')
     .pipe(
-      (verification: Awaited<ReturnType<typeof verifyDirectAttemptStop>>) =>
-        'value' in verification
-          ? verification
-          : {
-              reason: {
-                finalized: false,
-                reason: verification.reason.stopped ? 'unavailable' : verification.reason.reason,
-              },
-            },
-      'verification',
-      'result:outcome'
-    )
-    .pipe(
-      commitFinalization,
+      commitDirectTaskFinalization,
       [
         'db',
         'reactiveDb',

@@ -1,3 +1,4 @@
+import { registerDirectOutcomeJobs } from '../space/runtime/direct-outcome-jobs.ts';
 import { McpAuditLogRepository } from '../../storage/repositories/mcp-audit-log-repository.ts';
 import { createSpaceOperationRegistryProvider } from '../space/operations/registry.ts';
 import { setupOperationHandlers } from './operation-handlers.ts';
@@ -531,6 +532,27 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     agentLookup,
     spaceAgentTemplateRepo
   );
+
+  registerDirectOutcomeJobs({
+    db: deps.db.getDatabase(),
+    reactiveDb: deps.reactiveDb,
+    sessionManager: deps.sessionManager,
+    jobQueue: deps.jobQueue,
+    jobProcessor: deps.jobProcessor,
+    onTaskUpdated: (task) => {
+      void deps.internalEventBus
+        .publish('space.task.updated', {
+          sessionId: 'global',
+          spaceId: task.spaceId,
+          taskId: task.id,
+          task,
+        })
+        .catch((error) => log.warn('Failed to emit direct outcome task update:', error));
+    },
+    onTaskReopened: (taskId) => spaceGoalService.supersedeOutcomeNotificationsForTask(taskId),
+    onTerminalTransition: (taskId, fromStatus) =>
+      spaceGoalService.handleTaskTerminal(taskId, { fromStatus, deferPostCommitEffects: true }),
+  });
 
   const spaceTaskManagerFactory: SpaceTaskManagerFactory = (spaceId: string) => {
     return new SpaceTaskManager(
