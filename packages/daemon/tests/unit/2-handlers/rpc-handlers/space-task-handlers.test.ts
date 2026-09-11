@@ -2350,6 +2350,68 @@ describe('space-task-handlers', () => {
       });
     });
 
+    it.each([true, false])(
+      'preserves raw reason and one full-task event (approved=%s)',
+      async (approved) => {
+        const reviewTask = {
+          ...mockTask,
+          status: 'review' as const,
+          pendingCheckpointType: 'task_completion' as const,
+        };
+        const finished = {
+          ...reviewTask,
+          status: approved ? ('approved' as const) : ('in_progress' as const),
+          approvalReason: '  raw  ',
+        };
+        const dispatchPostApproval = mock(async () => {});
+        setup(mockSpace, reviewTask, { dispatchPostApproval } as unknown as SpaceRuntimeService);
+        (taskManager.getTask as ReturnType<typeof mock>)
+          .mockResolvedValueOnce(reviewTask)
+          .mockResolvedValue(finished);
+        (taskManager.updateTask as ReturnType<typeof mock>).mockResolvedValue(finished);
+        const result = await call('spaceTask.approvePendingCompletion', {
+          spaceId: 'space-1',
+          taskId: 'task-1',
+          approved,
+          reason: '  raw  ',
+        });
+        expect(result).toBe(finished);
+        expect(internalEventBus.publish).toHaveBeenCalledTimes(1);
+        expect(internalEventBus.publish).toHaveBeenCalledWith('space.task.updated', {
+          sessionId: 'global',
+          spaceId: 'space-1',
+          taskId: 'task-1',
+          task: finished,
+        });
+        if (approved) {
+          expect(dispatchPostApproval).toHaveBeenCalledWith('space-1', 'task-1', 'human', {
+            approvalReason: '  raw  ',
+          });
+          expect(taskManager.updateTask).not.toHaveBeenCalled();
+        } else {
+          expect(dispatchPostApproval).not.toHaveBeenCalled();
+          expect(taskManager.getTask).toHaveBeenCalledTimes(1);
+          expect(taskManager.updateTask).toHaveBeenCalledWith('task-1', {
+            approvalReason: '  raw  ',
+          });
+        }
+      }
+    );
+
+    it('preserves unavailable runtime error and does not publish', async () => {
+      setup(mockSpace, { ...mockTask, status: 'review', pendingCheckpointType: 'task_completion' });
+      await expect(
+        call('spaceTask.approvePendingCompletion', {
+          spaceId: 'space-1',
+          taskId: 'task-1',
+          approved: true,
+        })
+      ).rejects.toThrow('spaceRuntimeService is required to approve pending completion');
+      expect(taskManager.setTaskStatus).not.toHaveBeenCalled();
+      expect(taskManager.updateTask).not.toHaveBeenCalled();
+      expect(internalEventBus.publish).not.toHaveBeenCalled();
+    });
+
     it('requires a task_completion checkpoint', async () => {
       await expect(
         call('spaceTask.approvePendingCompletion', {
