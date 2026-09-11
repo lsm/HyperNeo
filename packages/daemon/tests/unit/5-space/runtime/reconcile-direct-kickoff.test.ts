@@ -190,3 +190,10 @@ test('conflicting stored entry payload is not treated as the frozen kickoff', ()
   expect(reconcile(input)).toEqual({ kind: 'blocked', reason: 'conflict' });
   expect(job()?.payload.message).not.toEqual(entry.message);
 });
+
+test('missing frozen intent returns its explicit blocked outcome without writes', () => {
+  db.prepare('DELETE FROM direct_task_kickoff_intents WHERE attempt_id = ?').run(input.attemptId);
+  expect(reconcile(input)).toEqual({ kind: 'blocked', reason: 'invalid_intent' });
+  expect(job()).toBeNull();
+  expect(receiptCount()).toBe(0);
+});

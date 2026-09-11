@@ -128,12 +128,12 @@ export function createDirectKickoffReconciler(db: Database) {
       ['sessionId', 'getSession', 'getTask', 'getActiveAttempt'],
       'evidence'
     )
-    .pipe(requireDirectTaskWorkerIdentity, ['sessionId', 'evidence'], 'result:identity')
-    .pipe(loadDirectTaskQueryState, ['identity', 'getSpace', 'isStopRequested'], 'queryState')
+    .pipe(requireDirectTaskWorkerIdentity, ['sessionId', 'evidence'], 'result:dispatch')
+    .pipe(loadDirectTaskQueryState, ['dispatch', 'getSpace', 'isStopRequested'], 'queryState')
     .pipe(
       requireRunningDirectTaskQuery,
-      ['input', 'identity', 'evidence', 'queryState'],
-      'result:identity'
+      ['input', 'dispatch', 'evidence', 'queryState'],
+      'result:dispatch'
     )
     .pipe(requireKickoffEntry, ['db', 'input'], 'result:dispatch')
     .pipe(inspectDispatch, ['db', 'jobs', 'messages', 'input', 'dispatch'], 'dispatchState')
