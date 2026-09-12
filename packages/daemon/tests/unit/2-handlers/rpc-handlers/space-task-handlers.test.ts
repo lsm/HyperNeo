@@ -2249,7 +2249,7 @@ describe('space-task-handlers', () => {
       ).rejects.toThrow('Invalid status transition');
     });
 
-    it('rejects bare in_progress→review transitions and points at spaceTask.submitForReview', async () => {
+    it('rejects bare in_progress→review transitions and points at task.submitForReview', async () => {
       const inProgressTask = { ...mockTask, status: 'in_progress' as const };
       setup(mockSpace, inProgressTask);
 
@@ -2259,7 +2259,7 @@ describe('space-task-handlers', () => {
           taskId: 'task-1',
           status: 'review',
         })
-      ).rejects.toThrow(/spaceTask\.submitForReview/);
+      ).rejects.toThrow(/task\.submitForReview/);
       expect(taskManager.setTaskStatus).not.toHaveBeenCalled();
       expect(taskManager.updateTask).not.toHaveBeenCalled();
     });
