@@ -1155,9 +1155,10 @@ async function seedSpace(ws: WebSocket): Promise<{ spaceId: string; taskIds: str
     result: 'Glass classes extracted; dark output unchanged.',
   });
   await rpcCall(ws, 'spaceTask.update', { spaceId, taskId: t3, status: 'in_progress' });
-  await rpcCall(ws, 'operation.invoke', {
-    name: 'task.submitForReview',
-    input: { taskId: t4, reason: 'Ratchet at 358, wired into root check.' },
+  await rpcCall(ws, 'spaceTask.submitForReview', {
+    spaceId,
+    taskId: t4,
+    reason: 'Ratchet at 358, wired into root check.',
   });
   await rpcCall(ws, 'spaceTask.approvePendingCompletion', {
     spaceId,
@@ -1165,9 +1166,10 @@ async function seedSpace(ws: WebSocket): Promise<{ spaceId: string; taskIds: str
     approved: true,
     reason: 'Solid tooling.',
   });
-  await rpcCall(ws, 'operation.invoke', {
-    name: 'task.submitForReview',
-    input: { taskId: t5, reason: 'Modules deleted; all consumers inlined. Ready for review.' },
+  await rpcCall(ws, 'spaceTask.submitForReview', {
+    spaceId,
+    taskId: t5,
+    reason: 'Modules deleted; all consumers inlined. Ready for review.',
   });
   await rpcCall(ws, 'spaceTask.update', { spaceId, taskId: t6, status: 'in_progress' });
   await rpcCall(ws, 'spaceTask.update', { spaceId, taskId: t6, status: 'stopped' });

@@ -395,7 +395,7 @@ export function setupSpaceTaskHandlers(
           if (updateParams.status === 'review') {
             throw new Error(
               `spaceTask.update cannot transition a task into 'review' directly. ` +
-                `Use operation.invoke with task.submitForReview (or the agent submit_for_approval tool) ` +
+                `Use spaceTask.submitForReview (or the agent submit_for_approval tool) ` +
                 `so the pending-completion fields get stamped and the approval banner renders.`
             );
           }
