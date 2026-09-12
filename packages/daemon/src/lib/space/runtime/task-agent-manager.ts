@@ -5392,6 +5392,7 @@ export class TaskAgentManager {
         getSpaceAutonomyLevel: async (spaceId) =>
           (await this.config.spaceManager.getSpace(spaceId))?.autonomyLevel ?? 1,
       },
+      operationRegistry: () => this.config.sessionManager.getOperationRegistry(),
     }) as unknown as McpServerConfig;
     this.flagManagedDispatcherServers.add(server);
     return server;

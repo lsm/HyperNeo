@@ -952,9 +952,11 @@ export class SpaceRuntimeService {
     buildConfig: () => SpaceActionsServerConfig
   ): void {
     if (!isSpaceActionsDispatcherEnabled()) return;
-    mcpServers['space-actions'] = createSpaceActionsMcpServer(
-      buildConfig()
-    ) as unknown as McpServerConfig;
+    const sessionManager = this.config.sessionManager;
+    mcpServers['space-actions'] = createSpaceActionsMcpServer({
+      ...buildConfig(),
+      operationRegistry: sessionManager ? () => sessionManager.getOperationRegistry() : undefined,
+    }) as unknown as McpServerConfig;
   }
 
   buildUniversalReadDispatcherServer(): SpaceActionsMcpServer {
