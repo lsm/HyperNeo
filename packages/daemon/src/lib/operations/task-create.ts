@@ -1,7 +1,7 @@
 import type { TaskCore } from '@hyperneo/shared/types/task-core';
 import { z } from 'zod';
 import type { CreateStandaloneTaskInput } from '../../storage/tasks/create-task.ts';
-import { defineOperation } from './registry.ts';
+import { defineOperation, type OperationDefinition } from './registry.ts';
 import { TaskCoreSchema } from './task-get.ts';
 
 export const StandaloneCreateTaskInputSchema = z
@@ -21,6 +21,17 @@ export interface CreateTaskOperationOptions<Input> {
   description?: string;
 }
 
+export function createCreateTaskOperation<Input>(
+  createTask: (input: Input, creatorSessionId: string | undefined) => TaskCore | Promise<TaskCore>,
+  options: { inputSchema: z.ZodType<Input>; description?: string }
+): OperationDefinition;
+export function createCreateTaskOperation(
+  createTask: (
+    input: CreateStandaloneTaskInput,
+    creatorSessionId: string | undefined
+  ) => TaskCore | Promise<TaskCore>,
+  options?: { description?: string }
+): OperationDefinition;
 export function createCreateTaskOperation<Input = CreateStandaloneTaskInput>(
   createTask: (input: Input, creatorSessionId: string | undefined) => TaskCore | Promise<TaskCore>,
   options: CreateTaskOperationOptions<Input> = {}

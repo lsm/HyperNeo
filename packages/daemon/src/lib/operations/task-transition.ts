@@ -4,7 +4,7 @@ import type {
   TransitionStandaloneTaskInput,
 } from '../../storage/tasks/transition-task.ts';
 import { STANDALONE_TASK_STATUSES } from '../tasks/standalone-lifecycle.ts';
-import { defineOperation } from './registry.ts';
+import { defineOperation, type OperationDefinition } from './registry.ts';
 import { TaskCoreSchema } from './task-get.ts';
 
 type TransitionResult = ReturnType<typeof transitionStandaloneTask>;
@@ -25,6 +25,16 @@ export interface TransitionTaskOperationOptions<Input> {
   description?: string;
 }
 
+export function createTransitionTaskOperation<Input>(
+  transitionTask: (input: Input) => TransitionResult | Promise<TransitionResult>,
+  options: { inputSchema: z.ZodType<Input>; description?: string }
+): OperationDefinition;
+export function createTransitionTaskOperation(
+  transitionTask: (
+    input: TransitionStandaloneTaskInput
+  ) => TransitionResult | Promise<TransitionResult>,
+  options?: { description?: string }
+): OperationDefinition;
 export function createTransitionTaskOperation<Input = TransitionStandaloneTaskInput>(
   transitionTask: (input: Input) => TransitionResult | Promise<TransitionResult>,
   options: TransitionTaskOperationOptions<Input> = {}
