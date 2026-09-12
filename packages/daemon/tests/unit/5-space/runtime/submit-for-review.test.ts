@@ -296,6 +296,9 @@ test('configured shared catalog discovers lazily and both transports persist the
     taskRepo: tasks,
     notifyStandalone: () => {},
     emitTaskUpdated: async () => {},
+    emitTaskCreated: async () => {},
+    getSpace: (id: string) => new SpaceRepository(db).getSpace(id),
+    validateDefaultTaskWorkspace: async () => null,
     blockExecution: async () => {
       throw new Error('unexpected workflow cleanup');
     },

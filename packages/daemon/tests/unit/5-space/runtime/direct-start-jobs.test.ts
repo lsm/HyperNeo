@@ -662,6 +662,9 @@ test('configured start capability is lazy and requires bound lifecycle callbacks
     taskRepo: tasks,
     notifyStandalone: () => {},
     emitTaskUpdated: async () => {},
+    emitTaskCreated: async () => {},
+    getSpace: (id: string) => new SpaceRepository(db).getSpace(id),
+    validateDefaultTaskWorkspace: async () => null,
     blockExecution: async () => {
       throw new Error('unexpected workflow');
     },
