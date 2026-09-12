@@ -160,9 +160,8 @@ describe('shared task metadata editor', () => {
     const pending = edit(input, caller);
     await admissionStarted;
     expect(deps.editSpace).not.toHaveBeenCalled();
-    const rejected = expect(pending).rejects.toBe(failure);
     deny(failure);
-    await rejected;
+    await expect(pending).rejects.toBe(failure);
     expect(deps.editSpace).not.toHaveBeenCalled();
     expect(deps.editStandalone).not.toHaveBeenCalled();
   });
