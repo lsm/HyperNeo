@@ -220,7 +220,8 @@ test('a workflow attached after the decision cannot be smuggled through the atom
       tasks.updateTask(id, { workflowRunId: run.id });
       return snapshot;
     },
-    setTaskStatus: (id, status, options) => new SpaceTaskManager(db, spaceId).setTaskStatus(id, status, options),
+    setTaskStatus: (id, status, options) =>
+      new SpaceTaskManager(db, spaceId).setTaskStatus(id, status, options),
   };
   const result = await invoke({ taskId: task.id, status: 'archived' }, rpc, {
     getTaskManager: () => racingManager,
