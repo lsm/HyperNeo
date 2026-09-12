@@ -1367,6 +1367,14 @@ export class QueryRunner {
         return;
       }
 
+      if (routeDecision.route.action === 'expected_recovery_noop') {
+        logger.info(
+          'SDK process exit during rate-limit recovery: attributing the CLI process exit ' +
+            'to the in-flight recovery restart; no error report.'
+        );
+        return;
+      }
+
       if (isStartupTimeout && session.sdkSessionId) {
         logger.error(
           `Startup timeout with sdkSessionId (${session.sdkSessionId}). ` +
