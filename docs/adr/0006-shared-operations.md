@@ -159,13 +159,18 @@ Rules that follow:
   load the persisted task, session, and active attempt and compare against the
   principal.
 - Operations read principal facts from `OperationCaller` and never branch on
-  `source` to substitute for a missing fact. Five operations today carry a
-  `caller.source === 'mcp'` branch because the principal is still too thin:
-  `task.cancel`, `task.resolvePendingCompletion`, `task.update`, and
+  `source` to substitute for a missing fact. Six operations today branch on
+  `caller.source`. Five substitute the branch for a missing Space-membership
+  or worker-binding fact on the principal — `task.cancel`,
+  `task.resolvePendingCompletion`, `task.update`, and
   `task.dependencies.set` re-derive Space membership from the session row,
-  and `task.submitForReview` uses the branch to confirm the calling session
-  is the attempt's own bound worker. That is transitional debt: as the MCP
-  pipeline resolves those facts, the branches collapse to reading them.
+  and `task.submitForReview` confirms the calling session is the attempt's
+  own bound worker — and those five are transitional debt: as the MCP
+  pipeline resolves those facts, the branches collapse to reading them. The
+  sixth, `message.send`, rejects MCP callers claiming human input
+  provenance; that is a policy check, not a missing-fact workaround, and it
+  moves into the MCP pre-invocation pipeline rather than onto a principal
+  field.
 - Today's adapters take a `resolveCaller` callback. That callback is the
   degenerate one-stage form of the pre-invocation pipeline, and the seam where
   the pipeline slots in. Extending caller policy means replacing the callback
@@ -329,7 +334,7 @@ parity.
 | Registry, invoker, both adapters, discovery, instance-owned catalogs | Implemented and tested (`tests/unit/1-core/operations/`, `2-handlers/rpc-handlers/operation-handlers.test.ts`, `5-space/runtime/{submit-for-review,cancel-task,direct-outcome-jobs,direct-start-jobs,operation-registry}.test.ts`) |
 | Shared metadata, dependencies, review submission, approval/rejection, direct cancellation | Implemented; supported ownership types vary per binding — read the description |
 | `task.start` / verified retry | Pending in PR #4391 (#4382) |
-| Caller policy | `source` is the only differentiation. Neither adapter authenticates or authorizes: the RPC adapter resolves `{}`, the MCP adapter resolves the owning session id. Cross-Space and role checks exist only inside five operations' admission stages |
+| Caller policy | `source` is the only differentiation. Neither adapter authenticates or authorizes: the RPC adapter resolves `{}`, the MCP adapter resolves the owning session id. Six operations branch on caller source: five substitute the branch for a missing Space-membership or worker-binding fact and are migration targets; the sixth, `message.send`, rejects MCP callers claiming human provenance and keeps that as a policy check |
 | Pre-invocation pipelines | **Not built.** The `resolveCaller` callbacks are the seam |
 | Web UI | **Zero callers** of `operation.invoke`. The UI still uses legacy RPC handlers; the human arrow in the diagram is a capability, not a fact |
 | `call_action` → operations | **No action delegates to an operation yet**; actions still wrap typed handlers |
@@ -399,9 +404,13 @@ unrelated recovery infrastructure.
   adapter's `resolveCaller` callback with it.
 - Build the RPC pre-invocation pipeline as its one-stage anonymous form now, so
   the seam exists before user identity does.
-- First shared policy stage (`requireSameSpace`), composed by the MCP pipeline;
-  migrate the five existing `caller.source === 'mcp'` branches onto principal
-  fields.
+- First shared policy stage (`requireSameSpace`), composed by the MCP
+  pipeline; migrate the five `caller.source === 'mcp'` branches that
+  substitute for a missing Space-membership or worker-binding fact onto
+  principal fields. `message.send`'s sixth branch is a provenance policy
+  check, not a missing-fact substitution; move it into the MCP
+  pre-invocation pipeline as a policy stage instead of onto a principal
+  field.
 - Split legacy `*_unavailable` reasons into unavailable/denied families as each
   operation is touched; define the pre-invocation reason family with the first
   pipeline.
