@@ -107,6 +107,6 @@ describe('task.transition schema options', () => {
     expect(await invokeOperation(registry, 'task.transition', input, caller)).toMatchObject({
       kind: 'completed',
     });
-    expect(transitionTask).toHaveBeenCalledWith(input);
+    expect(transitionTask).toHaveBeenCalledWith(input, caller);
   });
 });

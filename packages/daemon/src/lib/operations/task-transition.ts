@@ -1,10 +1,10 @@
 import { z } from 'zod';
 import type {
-  transitionStandaloneTask,
   TransitionStandaloneTaskInput,
+  transitionStandaloneTask,
 } from '../../storage/tasks/transition-task.ts';
 import { STANDALONE_TASK_STATUSES } from '../tasks/standalone-lifecycle.ts';
-import { defineOperation, type OperationDefinition } from './registry.ts';
+import { defineOperation, type OperationCaller, type OperationDefinition } from './registry.ts';
 import { TaskCoreSchema } from './task-get.ts';
 
 type TransitionResult = ReturnType<typeof transitionStandaloneTask>;
@@ -26,17 +26,24 @@ export interface TransitionTaskOperationOptions<Input> {
 }
 
 export function createTransitionTaskOperation<Input>(
-  transitionTask: (input: Input) => TransitionResult | Promise<TransitionResult>,
+  transitionTask: (
+    input: Input,
+    caller: OperationCaller
+  ) => TransitionResult | Promise<TransitionResult>,
   options: { inputSchema: z.ZodType<Input>; description?: string }
 ): OperationDefinition;
 export function createTransitionTaskOperation(
   transitionTask: (
-    input: TransitionStandaloneTaskInput
+    input: TransitionStandaloneTaskInput,
+    caller: OperationCaller
   ) => TransitionResult | Promise<TransitionResult>,
   options?: { description?: string }
 ): OperationDefinition;
 export function createTransitionTaskOperation<Input = TransitionStandaloneTaskInput>(
-  transitionTask: (input: Input) => TransitionResult | Promise<TransitionResult>,
+  transitionTask: (
+    input: Input,
+    caller: OperationCaller
+  ) => TransitionResult | Promise<TransitionResult>,
   options: TransitionTaskOperationOptions<Input> = {}
 ) {
   return defineOperation({
@@ -48,6 +55,6 @@ export function createTransitionTaskOperation<Input = TransitionStandaloneTaskIn
       TaskCoreSchema.nullable(),
       z.enum(['unsupported_status', 'invalid_transition', 'result_requires_done']),
     ]),
-    execute: async (input) => transitionTask(input),
+    execute: async (input, caller) => transitionTask(input, caller),
   });
 }
