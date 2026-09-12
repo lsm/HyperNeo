@@ -4,7 +4,7 @@ import type {
   SpaceGoalOwnerResolution,
   SpaceGoalStatus,
 } from '@hyperneo/shared';
-import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
+import type { SpaceAgentGoalScopeRepository } from '../../storage/repositories/space-agent-goal-scope-repository.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { decideGoalOwnershipMutationAdmission } from '../space/goals/goal-ownership-gates.ts';
 import type { PublicSpaceGoalUpdateParams, SpaceGoalService } from '../space/goals/goal-service.ts';
@@ -14,7 +14,7 @@ export interface SpaceGoalHandlerDeps {
   goalService: SpaceGoalService;
   spaceManager: SpaceManager;
   longHorizonAgentRepo: Pick<
-    SpaceLongHorizonAgentRepository,
+    SpaceAgentGoalScopeRepository,
     'getPrimaryGoalOwner' | 'assignGoal' | 'deleteGoalAssignmentByRelationship'
   >;
   internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
