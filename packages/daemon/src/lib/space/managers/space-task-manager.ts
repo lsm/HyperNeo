@@ -18,7 +18,12 @@ import {
 export { VALID_SPACE_TASK_TRANSITIONS, isValidSpaceTaskTransition, assertValidSpaceTaskTransition };
 
 class StaleGuardCasMiss extends Error {}
-export class StaleTaskGuardError extends Error {}
+export class StaleTaskGuardError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'StaleTaskGuardError';
+  }
+}
 
 import { buildTaskDependencyGraph, hasTaskDependencyCycle } from '../../tasks/dependency-graph.ts';
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
