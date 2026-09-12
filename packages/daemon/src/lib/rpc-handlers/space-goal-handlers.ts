@@ -4,7 +4,7 @@ import type {
   SpaceGoalOwnerResolution,
   SpaceGoalStatus,
 } from '@hyperneo/shared';
-import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
+import type { SpaceAgentGoalScopeRepository } from '../../storage/repositories/space-agent-goal-scope-repository.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { decideGoalOwnershipMutationAdmission } from '../space/goals/goal-ownership-gates.ts';
 import type { PublicSpaceGoalUpdateParams, SpaceGoalService } from '../space/goals/goal-service.ts';
@@ -13,15 +13,15 @@ import type { SpaceManager } from '../space/managers/space-manager.ts';
 export interface SpaceGoalHandlerDeps {
   goalService: SpaceGoalService;
   spaceManager: SpaceManager;
-  longHorizonAgentRepo: Pick<
-    SpaceLongHorizonAgentRepository,
+  goalScopeRepo: Pick<
+    SpaceAgentGoalScopeRepository,
     'getPrimaryGoalOwner' | 'assignGoal' | 'deleteGoalAssignmentByRelationship'
   >;
   internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
 }
 
 export function setupSpaceGoalHandlers(messageHub: MessageHub, deps: SpaceGoalHandlerDeps): void {
-  const { goalService, spaceManager, longHorizonAgentRepo, internalEventBus } = deps;
+  const { goalService, spaceManager, goalScopeRepo, internalEventBus } = deps;
 
   function publishOwnerChanged(sessionId: string, spaceId: string, goalId: string): void {
     internalEventBus
@@ -30,7 +30,7 @@ export function setupSpaceGoalHandlers(messageHub: MessageHub, deps: SpaceGoalHa
   }
 
   function resolveOwner(goalId: string, spaceId: string): SpaceGoalOwnerResolution {
-    return longHorizonAgentRepo.getPrimaryGoalOwner(goalId, spaceId) as SpaceGoalOwnerResolution;
+    return goalScopeRepo.getPrimaryGoalOwner(goalId, spaceId) as SpaceGoalOwnerResolution;
   }
 
   function assertOwnerMutationAuthorized(context: CallContext): void {
@@ -156,7 +156,7 @@ export function setupSpaceGoalHandlers(messageHub: MessageHub, deps: SpaceGoalHa
     await requireSpace(params.spaceId);
     requireGoalInSpace(params.goalId, params.spaceId);
     assertOwnerMutationAuthorized(context);
-    longHorizonAgentRepo.assignGoal(params.agentId, params.goalId);
+    goalScopeRepo.assignGoal(params.agentId, params.goalId);
     publishOwnerChanged(context.sessionId, params.spaceId, params.goalId);
     return { owner: resolveOwner(params.goalId, params.spaceId) };
   });
@@ -168,7 +168,7 @@ export function setupSpaceGoalHandlers(messageHub: MessageHub, deps: SpaceGoalHa
     assertOwnerMutationAuthorized(context);
     const resolution = resolveOwner(params.goalId, params.spaceId);
     if (resolution.action === 'resolved' || resolution.action === 'degraded') {
-      longHorizonAgentRepo.deleteGoalAssignmentByRelationship(
+      goalScopeRepo.deleteGoalAssignmentByRelationship(
         resolution.owner.agentId,
         params.goalId,
         'owner'

@@ -87,6 +87,7 @@ import {
   templateInstanceScanFromRepo,
 } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
 import { SpaceAgentTemplateRepository } from '../../storage/repositories/space-agent-template-repository.ts';
+import { SpaceAgentGoalScopeRepository } from '../../storage/repositories/space-agent-goal-scope-repository.ts';
 import { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository.ts';
 import { SpaceAgentReminderRepository } from '../../storage/repositories/space-agent-reminder-repository.ts';
 import { SpaceAgentSubscriptionRepository } from '../../storage/repositories/space-agent-subscription-repository.ts';
@@ -755,6 +756,10 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   );
 
   const spaceAgentRepo = new SpaceAgentRepository(deps.db.getDatabase());
+  const spaceAgentGoalScopeRepo = new SpaceAgentGoalScopeRepository(
+    deps.db.getDatabase(),
+    spaceAgentRepo
+  );
   const spaceAgentReminderRepo = new SpaceAgentReminderRepository(
     deps.db.getDatabase(),
     spaceAgentRepo
@@ -1116,7 +1121,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   setupSpaceGoalHandlers(deps.messageHub, {
     goalService: spaceGoalService,
     spaceManager: deps.spaceManager,
-    longHorizonAgentRepo,
+    goalScopeRepo: spaceAgentGoalScopeRepo,
     internalEventBus: deps.internalEventBus,
   });
 
