@@ -4,7 +4,7 @@
 **Dead-surface cleanup completed:** 2026-09-09 — the audit's dead surface was removed (§7); counts below reflect the post-cleanup surface.
 **v1 space-agent CRUD/list/promotion removed:** 2026-09-12 — `spaceAgent.create/update/delete/list/getPromotionDraft/promoteSession` retired once the agents page fully moved to `spaceAgentV2.*` (#4371, #4388, #4392); counts below reflect that removal.
 
-**`spaceAgentTemplate.*` prefix added:** 2026-09-11 — the five template routes gained a dedicated prefix and handler file alongside the existing `spaceAgent.*` ones; both are live until web call sites move and the old rows are retired.
+**`spaceAgentTemplate.*` prefix added:** 2026-09-11 — the five template routes gained a dedicated prefix and handler file alongside the existing `spaceAgent.*` ones; both are live until web call sites move and the old rows are retired. This also corrects the Space-agents section heading, which #4392 left at 49 after removing six `spaceAgent.*` rows; the true count is now 48.
 
 Sources of truth (all paths relative to repo root):
 
@@ -26,9 +26,9 @@ Sources of truth (all paths relative to repo root):
 | LiveQuery named queries | **16** | 16 | 0 |
 | LiveQuery protocol events | 3 | 3 | 0 |
 
-Method families by prefix: `spaceAgent` 12 · `session` 16 (plus `session.messages` 5, `session.model` 2, `session.thinking` 2, `session.coordinator`/`session.mcp`/`session.sandbox` 1 each) · `space.github` 15 · `spaceGoal` 11 · `spaceWorkflow` 11 · `spaceAgentV2` 5 · `space` 10 (plus `space.workspace` 4, `space.externalEvents` 2, `space.mcp` 2, `space.task` 2) · `spaceWorkflowRun` 10 · `providers` 8 · `spaceTask` 8 · `taskSchedule` 6 · `agentMemory`/`auth`/`customEndpoints`/`mcp.registry`/`message`/`skill` 5 each · `evolution.scope` 4 · `rewind` 4 · three families at 3 (`git`, `question`, `workspace`) · `evolution.episode`/`evolution.evidence`/`evolution.lesson`/`evolution.metricSnapshot`/`evolution.taskProposal`/`externalEvents.extensions`/`liveQuery`/`mcp.enablement`/`reference`/`spaceExport`/`spaceImport`/`state`/`voice` 2 each · singles: `client.interrupt`, `dialog.pickFolder`, `evolution.review.get`, `evolution.rollup.apply`, `globalTools.getConfig`, `mcp.imports.refresh`, `models.list`, `nodeExecution.list`, `settings.global.update`, `state.global.snapshot`, `system.health`, `tools.save`, `usage.calculate`.
+Method families by prefix: `spaceAgent` 12 · `session` 16 (plus `session.messages` 5, `session.model` 2, `session.thinking` 2, `session.coordinator`/`session.mcp`/`session.sandbox` 1 each) · `space.github` 15 · `spaceGoal` 11 · `spaceWorkflow` 11 · `spaceAgentV2` 5 · `spaceAgentTemplate` 5 · `space` 10 (plus `space.workspace` 4, `space.externalEvents` 2, `space.mcp` 2, `space.task` 2) · `spaceWorkflowRun` 10 · `providers` 8 · `spaceTask` 8 · `taskSchedule` 6 · `agentMemory`/`auth`/`customEndpoints`/`mcp.registry`/`message`/`skill` 5 each · `evolution.scope` 4 · `rewind` 4 · three families at 3 (`git`, `question`, `workspace`) · `evolution.episode`/`evolution.evidence`/`evolution.lesson`/`evolution.metricSnapshot`/`evolution.taskProposal`/`externalEvents.extensions`/`liveQuery`/`mcp.enablement`/`reference`/`spaceExport`/`spaceImport`/`state`/`voice` 2 each · singles: `client.interrupt`, `dialog.pickFolder`, `evolution.review.get`, `evolution.rollup.apply`, `globalTools.getConfig`, `mcp.imports.refresh`, `models.list`, `nodeExecution.list`, `settings.global.update`, `state.global.snapshot`, `system.health`, `tools.save`, `usage.calculate`.
 
-Notable dead-surface findings: the audit's dead surface (97 unconsumed methods, 11 emitted-but-unsubscribed events, 1 never-emitted subscription) was fully removed across the slice series (#3885–#3942, #3890, #3933; §7). Two unconsumed methods remain on today's surface: `spaceAgentV2.get` (added after the audit by #3937) and `spaceAgent.listBuiltInTemplates` (its consumer moved to `spaceWorkflow.listBuiltInTemplates` during the audit window; web tests now assert it is not called).
+Notable dead-surface findings: the audit's dead surface (97 unconsumed methods, 11 emitted-but-unsubscribed events, 1 never-emitted subscription) was fully removed across the slice series (#3885–#3942, #3890, #3933; §7). Seven unconsumed methods remain on today's surface: `spaceAgentV2.get` (added after the audit by #3937), `spaceAgent.listBuiltInTemplates` (its consumer moved to `spaceWorkflow.listBuiltInTemplates` during the audit window; web tests now assert it is not called), and the five `spaceAgentTemplate.*` routes (registered ahead of their web callers, which move off `spaceAgent.*` in a later slice).
 
 ## 2. Wire protocol
 
@@ -377,7 +377,7 @@ All rows are **kind: request** (client `REQ` → server `RSP`). For requests tha
 | taskSchedule.pause | packages/daemon/src/lib/rpc-handlers/task-schedule-handlers.ts:99 | inline `{ scheduleId: string, spaceId: string }` | inline `{ schedule: TaskSchedule }` | `scheduleId`/`spaceId` required; schedule must exist in space **and be status `active`** (else throws, schedule-service.ts:261) | space-store.ts |
 | taskSchedule.resume | packages/daemon/src/lib/rpc-handlers/task-schedule-handlers.ts:106 | inline `{ scheduleId: string, spaceId: string }` | inline `{ schedule: TaskSchedule }` | `scheduleId`/`spaceId` required; schedule must exist in space **and be status `paused`** (else throws, schedule-service.ts:261); a paused `at` schedule whose `runAt` is already past resumes **straight to `completed`** with no next run (:257-291) | space-store.ts |
 
-### Space agents, workflows, runs & import/export (49)
+### Space agents, workflows, runs & import/export (48)
 
 | method | handler | request | response | gates | web consumers |
 |---|---|---|---|---|---|
@@ -506,12 +506,14 @@ All rows are **kind: request** (client `REQ` → server `RSP`). For requests tha
 
 **Cleared 2026-09-09.** The 2026-09-07 audit (issue #3824) found 97 unconsumed methods among 319 registrations; all were removed across the dead-surface slice series — `config.*` (24, #3885), `settings.*` (7, #3887), `evolution.*` dead 11 (#3889), dead client events + `workflowRunArtifacts.byRun` (#3890), `state.*` pull fallbacks (4, #3894), `mcp.*`/`skill.*`/`globalTools` (8, #3897), `space.*` (5, #3899), `spaceWorkflowRun.*` (5, #3900), `session`/`sdk`/`commands` (11, #3901), `test.*` + dev-only `nodeExecution.create/update` (5, #3933), and remaining singles + `file.*`/`providers.*`/`daemonConfig.*` families (16, #3942). The consumed `spaceAgent.reapplyTemplate` was later removed with the template re-apply feature (#3934).
 
-**Remaining unconsumed surface (2):**
+**Remaining unconsumed surface (7):**
 
 - `spaceAgentV2.get` (`space-agent-v2-handlers.ts:160`) — added by #3937 *after* the audit and never picked up by the web, which reads agents via `spaceAgentV2.list`.
 - `spaceAgent.listBuiltInTemplates` (`space-agent-handlers.ts:778`) — the web's built-in-template listing moved to `spaceWorkflow.listBuiltInTemplates` during the audit window; `space-store.test.ts` now asserts `spaceAgent.listBuiltInTemplates` is **not** called. Registers only when templateManager is present.
 
-Both are the only registrations on today's surface with no production web call site.
+- `spaceAgentTemplate.list` / `.listBuiltIn` / `.create` / `.update` / `.delete` (`space-agent-template-handlers.ts`) — the template routes' dedicated prefix, registered alongside the existing `spaceAgent.*` ones. **Transitional**: web call sites move to this prefix in a later slice, after which the `spaceAgent.*` template rows retire and this entry clears. All but `listBuiltIn` register only when templateManager is present.
+
+These are the only registrations on today's surface with no production web call site.
 
 Nuances — methods consumed **indirectly** (not visible to a literal-string scan; not counted as dead):
 
