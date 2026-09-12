@@ -18,7 +18,7 @@ const log = new Logger('SpaceTaskMetadata');
 export interface SpaceTaskMetadataDependencies extends SpaceMcpSessionPolicyContext {
   db: Database;
   getSession: (sessionId: string) => Session | null;
-  getTaskManager: (spaceId: string) => Pick<SpaceTaskManager, 'updateTask'>;
+  getTaskManager: (spaceId: string) => Pick<SpaceTaskManager, 'updateTask' | 'submitTaskForReview'>;
   notifyStandalone: () => void;
   emitTaskUpdated: (spaceId: string, task: SpaceTask) => Promise<void>;
 }

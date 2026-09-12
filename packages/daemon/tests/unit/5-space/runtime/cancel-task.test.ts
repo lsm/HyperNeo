@@ -119,7 +119,10 @@ test.each(['missing', 'different', 'wrong-context', 'ended'] as const)(
   }
 );
 test('a frozen review request cannot be replaced with cancellation', async () => {
-  const review = createSubmitTaskForReviewOperation(() => db, jobs);
+  const review = createSubmitTaskForReviewOperation(() => db, jobs, {
+    getTaskManager: () => new SpaceTaskManager(db, ''),
+    emitTaskUpdated: async () => {},
+  });
   expect(await review.execute({ taskId }, { source: 'rpc' })).toMatchObject({ accepted: true });
   expect(await operation.execute({ taskId }, { source: 'rpc' })).toMatchObject({ accepted: false });
   expect(readDirectFinalizationRequest(db, { attemptId, sessionId })?.status).toBe('review');

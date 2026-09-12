@@ -6,7 +6,13 @@ import { SpaceTaskRepository } from '../../../storage/repositories/space-task-re
 import { SessionRepository } from '../../../storage/repositories/session-repository.ts';
 import { DirectTaskExecutionRepository } from '../../../storage/repositories/direct-task-execution-repository.ts';
 import { defineOperation, type OperationCaller } from '../../operations/registry.ts';
+import type { SpaceMcpSessionPolicyContext } from '../runtime/space-mcp-session-policy.ts';
 import { requireDirectTaskWorkerIdentity } from '../runtime/direct-task-worker-identity.ts';
+import {
+  resolveMetadataSessionSpace,
+  type SpaceTaskMetadataDependencies,
+} from './task-metadata.ts';
+import { Logger } from '../../logger.ts';
 import {
   readDirectFinalizationRequest,
   type DirectFinalizationInput,
@@ -16,10 +22,65 @@ import {
   type DirectOutcomeAcknowledgement,
 } from '../runtime/direct-outcome-jobs.ts';
 
+const log = new Logger('SubmitForReview');
 const inputSchema = z
   .object({ taskId: z.string().min(1), reason: z.string().nullable().optional() })
   .strict();
 type Input = z.infer<typeof inputSchema>;
+type SubmitForReviewTaskDependencies = Pick<
+  SpaceTaskMetadataDependencies,
+  'getTaskManager' | 'emitTaskUpdated'
+> &
+  SpaceMcpSessionPolicyContext;
+
+const WORKFLOW_SUBMISSION_REJECTIONS: [substring: string, reason: string][] = [
+  ['Task not found:', 'review_submission_unavailable'],
+  ["Cannot re-submit task in 'review'", 'review_submission_invalid_transition'],
+  ['Invalid status transition from', 'review_submission_invalid_transition'],
+  [
+    'cannot be submitted for review while its direct start is queued',
+    'review_submission_invalid_transition',
+  ],
+];
+
+function resolveWorkflowSubmissionRejection(error: unknown): string | undefined {
+  const message = error instanceof Error ? error.message : '';
+  return WORKFLOW_SUBMISSION_REJECTIONS.find(([substring]) => message.includes(substring))?.[1];
+}
+
+async function admitWorkflowSubmission(
+  db: Database,
+  input: Input,
+  caller: OperationCaller,
+  tasks: SubmitForReviewTaskDependencies
+): Promise<{ value: true } | { reason: DirectOutcomeAcknowledgement }> {
+  const task = new SpaceTaskRepository(db).getTask(input.taskId);
+  if (!task?.spaceId || task.archivedAt || !task.workflowRunId) return { value: true };
+  if (caller.source === 'mcp') {
+    const session = caller.sessionId
+      ? new SessionRepository(db).getSession(caller.sessionId)
+      : null;
+    if (
+      session?.status !== 'active' ||
+      resolveMetadataSessionSpace(session, tasks) !== task.spaceId
+    )
+      return { reason: { accepted: false, reason: 'review_submission_denied' } };
+  }
+  try {
+    const updated = await tasks.getTaskManager(task.spaceId).submitTaskForReview(task.id, {
+      submittedByNodeId: null,
+      reason: input.reason ?? null,
+    });
+    await tasks.emitTaskUpdated(task.spaceId, updated).catch((error: unknown) => {
+      log.warn('Failed to emit space.task.updated:', error);
+    });
+    return { reason: { accepted: true, jobId: null } };
+  } catch (error) {
+    const reason = resolveWorkflowSubmissionRejection(error);
+    if (!reason) throw error;
+    return { reason: { accepted: false, reason } };
+  }
+}
 
 function admitSubmission(
   db: Database,
@@ -77,18 +138,25 @@ function admitSubmission(
 
 export function createSubmitTaskForReviewOperation(
   getDatabase: () => Database,
-  jobQueue: JobQueueRepository
+  jobQueue: JobQueueRepository,
+  tasks: SubmitForReviewTaskDependencies
 ) {
-  const submit = (superpipe({ getDatabase, jobQueue })('submit-task-for-review') as PipelineAPI)
+  const submit = (
+    superpipe({ getDatabase, jobQueue, tasks })('submit-task-for-review') as PipelineAPI
+  )
     .input(['input', 'caller'])
     .pipe(getDatabase, undefined, 'db')
+    .pipe(admitWorkflowSubmission, ['db', 'input', 'caller', 'tasks'], 'result:outcome')
     .pipe(admitSubmission, ['db', 'input', 'caller'], 'result:outcome')
     .pipe(enqueueDirectOutcome, ['db', 'jobQueue', 'outcome'], 'outcome')
-    .end('outcome') as (input: Input, caller: OperationCaller) => DirectOutcomeAcknowledgement;
+    .endAsync('outcome') as (
+    input: Input,
+    caller: OperationCaller
+  ) => Promise<DirectOutcomeAcknowledgement>;
   return defineOperation({
     name: 'task.submitForReview',
     description:
-      'Persist a direct task completion-review request and return its durable job acknowledgement. RPC/internal callers and the task’s own persisted direct-worker MCP session use the same operation. Rejects direct_review_submission_unavailable when the task or its direct-execution state does not support this binding (workflow-owned, archived, or no active direct attempt — retry after state changes), and direct_review_submission_denied when the calling MCP session is not the attempt’s own persisted worker (do not retry). Acceptance does not mean shutdown or review finalization has completed.',
+      'Persist a completion-review request for a direct or workflow-owned task and return its acknowledgement. RPC/internal callers and admitted MCP sessions on either ownership mode use the same operation. Direct tasks return a durable job acknowledgement; rejects direct_review_submission_unavailable when the task or its direct-execution state does not support this binding (workflow-owned, archived, or no active direct attempt — retry after state changes), and direct_review_submission_denied when the calling MCP session is not the attempt’s own persisted worker (do not retry). Workflow-owned tasks complete synchronously with jobId: null; rejects review_submission_denied when the calling MCP session is not active in the owning Space (do not retry), review_submission_unavailable when the task disappeared before the manager could apply the transition (retry after state changes), and review_submission_invalid_transition when the task’s current status or checkpoint state does not allow review submission (retry after state changes). Any other manager failure (an infrastructure fault, not a domain rejection) throws through as execution_failed rather than being reported as accepted: false. Acceptance does not mean shutdown or review finalization has completed.',
     inputSchema,
     resultSchema: z.union([
       z.object({ accepted: z.literal(true), jobId: z.string().nullable() }),

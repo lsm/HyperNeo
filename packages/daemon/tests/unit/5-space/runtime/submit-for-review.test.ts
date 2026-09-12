@@ -13,6 +13,8 @@ import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
 import { DirectTaskExecutionRepository } from '../../../../src/storage/repositories/direct-task-execution-repository';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
+import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
+import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import { createDirectTaskStarter } from '../../../../src/lib/space/runtime/start-direct-task';
 import { createSubmitTaskForReviewOperation } from '../../../../src/lib/space/operations/submit-for-review';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry';
@@ -30,6 +32,7 @@ let taskId: string;
 let sessionId: string;
 let attemptId: string;
 let operation: ReturnType<typeof createSubmitTaskForReviewOperation>;
+let emitTaskUpdated: ReturnType<typeof mock>;
 beforeEach(async () => {
   db = new Database(':memory:');
   runMigrations(db, () => {});
@@ -65,7 +68,11 @@ beforeEach(async () => {
   if (!started.started) throw new Error(started.reason);
   sessionId = started.attempt.sessionId;
   attemptId = started.attempt.id;
-  operation = createSubmitTaskForReviewOperation(() => db, jobs);
+  emitTaskUpdated = mock(async () => {});
+  operation = createSubmitTaskForReviewOperation(() => db, jobs, {
+    getTaskManager: (id) => new SpaceTaskManager(db, id),
+    emitTaskUpdated,
+  });
 });
 afterEach(() => db.close());
 function outcomeCount() {
@@ -195,6 +202,89 @@ test('completed frozen submission acknowledges again without granting execution 
     await operation.execute({ taskId, reason: 'Changed' }, { source: 'mcp', sessionId })
   ).toMatchObject({ accepted: false });
   expect(outcomeCount()).toBe(1);
+});
+
+function markTaskWorkflowOwned() {
+  const spaceId = tasks.getTask(taskId)!.spaceId!;
+  const workflow = new SpaceWorkflowRepository(db).createWorkflow({ spaceId, name: 'Workflow' });
+  const run = new SpaceWorkflowRunRepository(db).createRun({
+    spaceId,
+    workflowId: workflow.id,
+    title: 'Run',
+  });
+  tasks.updateTask(taskId, { workflowRunId: run.id });
+  return run.id;
+}
+
+test('workflow-owned task via RPC caller completes synchronously with the reason persisted', async () => {
+  const runId = markTaskWorkflowOwned();
+  expect(await operation.execute({ taskId, reason: 'Ready' }, { source: 'rpc' })).toEqual({
+    accepted: true,
+    jobId: null,
+  });
+  expect(tasks.getTask(taskId)).toMatchObject({
+    status: 'review',
+    workflowRunId: runId,
+    pendingCompletionReason: 'Ready',
+  });
+  expect(emitTaskUpdated).toHaveBeenCalledTimes(1);
+  expect(outcomeCount()).toBe(0);
+});
+
+test('workflow-owned task via MCP caller in the owning Space is admitted', async () => {
+  markTaskWorkflowOwned();
+  const worker = sessions.getSession(sessionId)!;
+  sessions.createSession(
+    {
+      ...worker,
+      id: 'caller-in-space',
+      type: 'general',
+      context: { spaceId: worker.context!.spaceId },
+    },
+    { enforceWorkspaceOwnership: false }
+  );
+  expect(
+    await operation.execute({ taskId }, { source: 'mcp', sessionId: 'caller-in-space' })
+  ).toEqual({ accepted: true, jobId: null });
+});
+
+test('workflow-owned task via MCP caller outside the Space is denied', async () => {
+  markTaskWorkflowOwned();
+  const worker = sessions.getSession(sessionId)!;
+  sessions.createSession(
+    { ...worker, id: 'caller-outside-space', type: 'general', context: { spaceId: 'other-space' } },
+    { enforceWorkspaceOwnership: false }
+  );
+  expect(
+    await operation.execute({ taskId }, { source: 'mcp', sessionId: 'caller-outside-space' })
+  ).toMatchObject({ accepted: false, reason: 'review_submission_denied' });
+  expect(tasks.getTask(taskId)?.status).not.toBe('review');
+  expect(emitTaskUpdated).not.toHaveBeenCalled();
+});
+
+test('workflow-owned task with an invalid transition is rejected without throwing', async () => {
+  markTaskWorkflowOwned();
+  tasks.updateTask(taskId, { status: 'done' });
+  expect(await operation.execute({ taskId }, { source: 'rpc' })).toEqual({
+    accepted: false,
+    reason: 'review_submission_invalid_transition',
+  });
+  expect(emitTaskUpdated).not.toHaveBeenCalled();
+});
+
+test('a non-domain manager throw propagates instead of becoming a domain rejection', async () => {
+  markTaskWorkflowOwned();
+  const broken = createSubmitTaskForReviewOperation(() => db, jobs, {
+    getTaskManager: () =>
+      ({
+        submitTaskForReview: async () => {
+          throw new Error('boom');
+        },
+      }) as Pick<SpaceTaskManager, 'updateTask' | 'submitTaskForReview'>,
+    emitTaskUpdated,
+  });
+  await expect(broken.execute({ taskId }, { source: 'rpc' })).rejects.toThrow('boom');
+  expect(emitTaskUpdated).not.toHaveBeenCalled();
 });
 
 test('configured shared catalog discovers lazily and both transports persist the same request', async () => {
