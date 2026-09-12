@@ -103,6 +103,7 @@ import { SESSION_WRITE_AUTONOMY_LEVEL } from '../tools/tool-admission-gates.ts';
 import { jsonResult } from '../tools/tool-result.ts';
 import type { OperationRegistrySource } from '../../operations/registry.ts';
 import { canTransition as canTransitionRunStatus } from '../runtime/workflow-run-status-machine.ts';
+import { type CreateStandaloneTaskParams, mapCreateTaskParams } from './create-task-params.ts';
 import { createOperationActionHandler } from './operation-action.ts';
 import { type ActionDefinition, defineAction } from './registry.ts';
 
@@ -797,7 +798,14 @@ export function createSpaceRegistryEntries(
         'title, description, priority?, workflow_id?/workflow_handle?, depends_on? (task ids), draft?, workspace?',
       auditRedactKeys: ['description'],
       paramsSchema: CreateStandaloneTaskSchema,
-      handler: (args) => handlers.create_standalone_task(args),
+      handler: operations
+        ? createOperationActionHandler(
+            operations,
+            { sessionId: config.mySessionId },
+            'task.create',
+            (params) => mapCreateTaskParams(params as CreateStandaloneTaskParams, config)
+          )
+        : (args) => handlers.create_standalone_task(args),
     }),
     defineAction({
       name: 'get_task_detail',
