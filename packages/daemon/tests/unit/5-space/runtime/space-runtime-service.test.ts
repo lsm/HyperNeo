@@ -2116,6 +2116,8 @@ describe('SpaceRuntimeService', () => {
       const svc = new SpaceRuntimeService({
         ...buildConfig(createMockSpaceManager(mockSpace)),
         longHorizonAgentRepo,
+        goalScopeRepo:
+          longHorizonAgentRepo as unknown as SpaceRuntimeServiceConfig['goalScopeRepo'],
         goalService,
         outcomeNotificationRepo,
       });
@@ -2142,6 +2144,8 @@ describe('SpaceRuntimeService', () => {
         ...buildConfig(createMockSpaceManager(mockSpace)),
         enableGoalOutcomeWake: true,
         longHorizonAgentRepo,
+        goalScopeRepo:
+          longHorizonAgentRepo as unknown as SpaceRuntimeServiceConfig['goalScopeRepo'],
         goalService,
         outcomeNotificationRepo,
       });
@@ -2171,6 +2175,8 @@ describe('SpaceRuntimeService', () => {
         ...buildConfig(createMockSpaceManager(mockSpace)),
         enableGoalOutcomeWake: true,
         longHorizonAgentRepo,
+        goalScopeRepo:
+          longHorizonAgentRepo as unknown as SpaceRuntimeServiceConfig['goalScopeRepo'],
         goalService,
         outcomeNotificationRepo,
       });
@@ -2215,6 +2221,8 @@ describe('SpaceRuntimeService', () => {
           listWorkflows: mock(() => []),
         } as unknown as SpaceWorkflowManager,
         longHorizonAgentRepo,
+        goalScopeRepo:
+          longHorizonAgentRepo as unknown as SpaceRuntimeServiceConfig['goalScopeRepo'],
         goalService,
         outcomeNotificationRepo,
       });
@@ -2297,6 +2305,8 @@ describe('SpaceRuntimeService', () => {
         db: mailbox.db,
         reactiveDb: mailbox.reactiveDb,
         longHorizonAgentRepo,
+        goalScopeRepo:
+          longHorizonAgentRepo as unknown as SpaceRuntimeServiceConfig['goalScopeRepo'],
         goalService,
         outcomeNotificationRepo,
       });
@@ -2354,6 +2364,8 @@ describe('SpaceRuntimeService', () => {
         db: mailbox.db,
         reactiveDb: mailbox.reactiveDb,
         longHorizonAgentRepo,
+        goalScopeRepo:
+          longHorizonAgentRepo as unknown as SpaceRuntimeServiceConfig['goalScopeRepo'],
         goalService,
         outcomeNotificationRepo,
       });

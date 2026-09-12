@@ -478,7 +478,7 @@ export class SpaceRuntimeService {
     if (!space || space.status !== 'active' || space.paused || space.stopped) return false;
     const goal = this.config.goalService?.getGoal(notification.goalId);
     if (!goal || goal.spaceId !== notification.spaceId) return false;
-    const resolution = this.config.longHorizonAgentRepo?.getPrimaryGoalOwner(goal.id, goal.spaceId);
+    const resolution = this.config.goalScopeRepo?.getPrimaryGoalOwner(goal.id, goal.spaceId);
     let authorizedId: string | null = null;
     if (resolution?.action === 'resolved') {
       authorizedId = resolution.owner.agentId;
@@ -513,7 +513,7 @@ export class SpaceRuntimeService {
     }
     const goal = this.config.goalService?.getGoal(notification.goalId);
     if (!goal || goal.spaceId !== notification.spaceId) return false;
-    const resolution = this.config.longHorizonAgentRepo?.getPrimaryGoalOwner(goal.id, goal.spaceId);
+    const resolution = this.config.goalScopeRepo?.getPrimaryGoalOwner(goal.id, goal.spaceId);
     let targetAgentId: string | null = null;
     if (resolution?.action === 'resolved') {
       targetAgentId = resolution.owner.agentId;
