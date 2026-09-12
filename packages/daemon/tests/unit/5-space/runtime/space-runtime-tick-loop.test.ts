@@ -1,3 +1,7 @@
+import { createDirectTaskStarter } from '../../../../src/lib/space/runtime/start-direct-task';
+import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
+import { DirectTaskExecutionRepository } from '../../../../src/storage/repositories/direct-task-execution-repository';
+import type { AgentSession } from '../../../../src/lib/agent/agent-session';
 import { availableTaskSlots } from '../../../../src/lib/space/runtime/task-capacity.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { NodeExecution, SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
@@ -23,7 +27,7 @@ import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
 import { ToolContinuationRecoveryRepository } from '../../../../src/storage/repositories/tool-continuation-recovery-repository.ts';
-import { runMigrations } from '../../../../src/storage/schema/index.ts';
+import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { seedUnifiedAgentMirror } from '../../helpers/seed-unified-agent';
 
@@ -356,6 +360,95 @@ describe('SpaceRuntime — tick loop correctness', () => {
   }
 
   describe('processRunTick shell characterization', () => {
+    test('workflow spawn reserves its slot before an awaited direct start can activate', async () => {
+      db.exec('DROP TABLE sdk_message_replacements; DROP TABLE sdk_messages');
+      createTables(db);
+      const sessions = new SessionRepository(db);
+      const attempts = new DirectTaskExecutionRepository(db);
+      const directTask = taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Direct competitor',
+        description: '',
+      });
+      const start = createDirectTaskStarter({
+        db,
+        defaultModel: 'claude-sonnet-4-6',
+        sessionDb: {
+          getSession: (id) => sessions.getSession(id),
+          createSession: (session) =>
+            sessions.createSession(session, { enforceWorkspaceOwnership: false }),
+        },
+        sessionManager: {
+          getCachedSession: () => undefined,
+          getSessionForControl: async (id) =>
+            ({
+              getSessionData: () => sessions.getSession(id)!,
+              isQueryActiveOrStarting: () => false,
+            }) as AgentSession,
+          unregisterSession: async () => {},
+        },
+      });
+      let spawnCount = 0;
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+        spawnWorkflowNodeAgentForExecution: async (value, _space, _workflow, _run, node) => {
+          spawnCount++;
+          expect(taskRepo.getTask((value as SpaceTask).id)?.status).toBe('in_progress');
+          const competing = await start({
+            taskId: directTask.id,
+            requestKey: 'during-workflow-spawn',
+          });
+          expect(competing.started).toBe(false);
+          const execution = node as NodeExecution;
+          nodeExecutionRepo.update(execution.id, {
+            status: 'in_progress',
+            agentSessionId: 'workflow-worker',
+            startedAt: Date.now(),
+          });
+          return 'workflow-worker';
+        },
+      });
+      const rt = new SpaceRuntime(buildConfig(tam));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Workflow');
+      await processRunTick(rt, run.id);
+      expect(spawnCount).toBe(1);
+      expect(attempts.getActive(directTask.id)?.phase).toBe('reserved');
+      expect(
+        taskRepo.listBySpace(SPACE_ID).filter((task) => task.status === 'in_progress')
+      ).toHaveLength(1);
+    });
+
+    test.each(['unchanged', 'superseded'] as const)(
+      'unstarted workflow spawn releases only its own %s reservation',
+      async (mode) => {
+        const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+          spawnWorkflowNodeAgentForExecution: async (value) => {
+            const task = value as SpaceTask;
+            expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
+            if (mode === 'superseded') taskRepo.updateTask(task.id, { status: 'cancelled' });
+            await Promise.resolve();
+            throw new TransientSpawnError('capacity test deferral');
+          },
+        });
+        const rt = new SpaceRuntime(buildConfig(tam));
+        const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+          { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+        ]);
+        const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Workflow');
+        await processRunTick(rt, run.id);
+        expect(taskRepo.getTask(tasks[0].id)?.status).toBe(
+          mode === 'unchanged' ? 'open' : 'cancelled'
+        );
+        expect(
+          nodeExecutionRepo
+            .listByWorkflowRun(run.id)
+            .every((execution) => execution.status !== 'in_progress')
+        ).toBe(true);
+      }
+    );
+
     test('missing and finished runs stop before spawn work', async () => {
       let spawnCount = 0;
       const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
