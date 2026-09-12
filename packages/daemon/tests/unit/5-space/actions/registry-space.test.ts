@@ -413,7 +413,7 @@ describe('createSpaceRegistryEntries — composition', () => {
       const resolve = entries.find((entry) => entry.name === 'cancel_task')?.autonomyRequirement;
       expect(typeof resolve).toBe('function');
       if (typeof resolve === 'function') {
-        expect(await resolve({ task_id: workflowTask.id })).toBe(1);
+        expect(await resolve({ task_id: workflowTask.id })).toBe(SESSION_WRITE_AUTONOMY_LEVEL);
         expect(await resolve({ task_id: activeWorkflowTask.id })).toBe(
           SESSION_WRITE_AUTONOMY_LEVEL
         );

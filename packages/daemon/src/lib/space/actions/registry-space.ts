@@ -102,6 +102,7 @@ import {
 import { SESSION_WRITE_AUTONOMY_LEVEL } from '../tools/tool-admission-gates.ts';
 import { jsonResult } from '../tools/tool-result.ts';
 import type { OperationRegistrySource } from '../../operations/registry.ts';
+import { canTransition as canTransitionRunStatus } from '../runtime/workflow-run-status-machine.ts';
 import { createOperationActionHandler } from './operation-action.ts';
 import { type ActionDefinition, defineAction } from './registry.ts';
 
@@ -175,8 +176,11 @@ export function createSpaceRegistryEntries(
   const cancelTaskAutonomy = async (params: { task_id: string }) => {
     const task = taskInSpace(params.task_id);
     if (task?.pendingCheckpointType === 'task_completion') return HUMAN_ONLY_AUTONOMY_LEVEL;
-    if (task?.workflowRunId && routeCancelsActiveWorkflowRun(task.status)) {
-      return DESTRUCTIVE_ACTION_AUTONOMY_LEVEL;
+    if (task?.workflowRunId) {
+      const run = config.workflowRunRepo.getRun(task.workflowRunId);
+      if (run && canTransitionRunStatus(run.status, 'cancelled')) {
+        return DESTRUCTIVE_ACTION_AUTONOMY_LEVEL;
+      }
     }
     if (task?.taskAgentSessionId && !task.workflowRunId) {
       return DESTRUCTIVE_ACTION_AUTONOMY_LEVEL;
