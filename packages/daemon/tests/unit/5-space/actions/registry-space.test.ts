@@ -352,7 +352,7 @@ describe('createSpaceRegistryEntries — composition', () => {
     }
   });
 
-  test('cancel_task requires human-only clearance only for a pending completion checkpoint', async () => {
+  test('cancel_task requires destructive clearance for an active workflow run and human-only for a pending completion checkpoint', async () => {
     const ctx = makeCtx();
     try {
       const workflow = ctx.workflowManager.createWorkflow({
@@ -372,6 +372,13 @@ describe('createSpaceRegistryEntries — composition', () => {
         description: '',
         workflowRunId: run.id,
       });
+      const activeWorkflowTask = ctx.taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Active workflow task',
+        description: '',
+        workflowRunId: run.id,
+      });
+      ctx.taskRepo.updateTask(activeWorkflowTask.id, { status: 'in_progress' });
       const checkpointTask = ctx.taskRepo.createTask({
         spaceId: SPACE_ID,
         title: 'Checkpoint task',
@@ -398,6 +405,9 @@ describe('createSpaceRegistryEntries — composition', () => {
       expect(typeof resolve).toBe('function');
       if (typeof resolve === 'function') {
         expect(await resolve({ task_id: workflowTask.id })).toBe(1);
+        expect(await resolve({ task_id: activeWorkflowTask.id })).toBe(
+          SESSION_WRITE_AUTONOMY_LEVEL
+        );
         expect(await resolve({ task_id: checkpointTask.id })).toBe(5);
         expect(await resolve({ task_id: foreignTask.id })).toBe(1);
       }

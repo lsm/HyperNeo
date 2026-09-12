@@ -175,6 +175,9 @@ export function createSpaceRegistryEntries(
   const cancelTaskAutonomy = async (params: { task_id: string }) => {
     const task = taskInSpace(params.task_id);
     if (task?.pendingCheckpointType === 'task_completion') return HUMAN_ONLY_AUTONOMY_LEVEL;
+    if (task?.workflowRunId && routeCancelsActiveWorkflowRun(task.status)) {
+      return DESTRUCTIVE_ACTION_AUTONOMY_LEVEL;
+    }
     return 1;
   };
 
@@ -806,7 +809,8 @@ export function createSpaceRegistryEntries(
       safetyClass: 'mutate',
       description:
         'Cancel exactly one task through the shared task.cancel operation: no cascade to ' +
-        'dependents and no workflow-run cancellation; returns { accepted: true, jobId } (jobId ' +
+        'dependent tasks, but cancelling a workflow-owned task with an active run also ' +
+        'cancels that run and stops its agents. Returns { accepted: true, jobId } (jobId ' +
         'null when the cancellation completed synchronously, a job id when a direct-execution ' +
         'worker will finalize it) or { accepted: false, reason }.',
       paramsDoc: 'task_id',
