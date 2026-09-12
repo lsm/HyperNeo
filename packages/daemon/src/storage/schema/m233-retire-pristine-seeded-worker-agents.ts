@@ -215,6 +215,19 @@ function referencedAgentIds(db: BunDatabase): Set<string> {
   return referenced;
 }
 
+function linkedStateProbe(db: BunDatabase): (agentId: string) => boolean {
+  const sources: Array<[string, string]> = [
+    ['space_long_horizon_agent_goals', 'agent_id'],
+    ['space_long_horizon_agent_forge_scopes', 'agent_id'],
+    ['space_long_horizon_agent_reminders', 'agent_id'],
+    ['space_long_horizon_agent_event_subscriptions', 'agent_id'],
+  ];
+  const statements = sources
+    .filter(([table]) => tableExists(db, table))
+    .map(([table, column]) => db.prepare(`SELECT 1 FROM ${table} WHERE ${column} = ? LIMIT 1`));
+  return (agentId: string): boolean => statements.some((statement) => !!statement.get(agentId));
+}
+
 export function runMigration233(db: BunDatabase): void {
   if (!tableExists(db, 'space_long_horizon_agents') || !tableExists(db, 'space_workflow_nodes')) {
     return;
@@ -222,10 +235,12 @@ export function runMigration233(db: BunDatabase): void {
   const liveAgentIds = agentsWithLiveState(db);
   const referenced = referencedAgentIds(db);
   const agentRepo = new SpaceLongHorizonAgentRepository(db);
+  const hasLinkedState = linkedStateProbe(db);
   const spaces = db.prepare(`SELECT id FROM spaces`).all() as Array<{ id: string }>;
   for (const space of spaces) {
     retireRemovedPresetAgents(space.id, {
       agentRepo,
+      hasLinkedState,
       referencedAgentIds: referenced,
       isPristineRetiredRow: (agent) => isPristineWorker(agent, liveAgentIds),
     });

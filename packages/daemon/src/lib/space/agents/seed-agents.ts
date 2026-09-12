@@ -121,15 +121,8 @@ const PRESET_AGENTS: PresetDefinition[] = [
 export type PresetAgentTemplate = PresetDefinition;
 
 export interface RetireRemovedPresetAgentsDeps {
-  agentRepo: Pick<
-    SpaceLongHorizonAgentRepository,
-    | 'listBySpaceId'
-    | 'delete'
-    | 'listGoals'
-    | 'listForgeScopes'
-    | 'listReminders'
-    | 'listSubscriptions'
-  >;
+  agentRepo: Pick<SpaceLongHorizonAgentRepository, 'listBySpaceId' | 'delete'>;
+  hasLinkedState: (agentId: string) => boolean;
   referencedAgentIds: ReadonlySet<string>;
   isPristineRetiredRow: (agent: SpaceLongHorizonAgent) => boolean;
 }
@@ -142,14 +135,7 @@ export function retireRemovedPresetAgents(
   for (const agent of deps.agentRepo.listBySpaceId(spaceId)) {
     if (!deps.isPristineRetiredRow(agent)) continue;
     if (deps.referencedAgentIds.has(agent.id)) continue;
-    if (
-      deps.agentRepo.listGoals(agent.id).length > 0 ||
-      deps.agentRepo.listForgeScopes(agent.id).length > 0 ||
-      deps.agentRepo.listReminders(agent.id).length > 0 ||
-      deps.agentRepo.listSubscriptions(agent.id).length > 0
-    ) {
-      continue;
-    }
+    if (deps.hasLinkedState(agent.id)) continue;
     try {
       deps.agentRepo.delete(agent.id);
       retired.push(agent.displayName);
