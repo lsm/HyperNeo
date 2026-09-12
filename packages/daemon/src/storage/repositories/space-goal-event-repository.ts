@@ -1,5 +1,5 @@
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
-import { generateUUID } from '@hyperneo/shared';
+import { createUlid } from '../../lib/mailbox/ulid.ts';
 import type {
   CreateSpaceGoalEventParams,
   SpaceGoalEvent,
@@ -21,7 +21,7 @@ export class SpaceGoalEventRepository {
   ) {}
 
   create(params: CreateSpaceGoalEventParams): SpaceGoalEvent {
-    const id = generateUUID();
+    const id = createUlid();
     const createdAt = params.createdAt ?? Date.now();
     this.db
       .prepare(
