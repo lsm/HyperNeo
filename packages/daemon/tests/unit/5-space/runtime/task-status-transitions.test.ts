@@ -239,6 +239,58 @@ describe('SpaceTaskManager.setTaskStatus — approval-path transitions', () => {
   });
 });
 
+describe('SpaceTaskManager.setTaskStatus — expectedStatus guard', () => {
+  let db: BunDatabase;
+  let taskRepo: SpaceTaskRepository;
+  let taskManager: SpaceTaskManager;
+
+  beforeEach(() => {
+    db = makeDb();
+    taskRepo = new SpaceTaskRepository(db);
+    taskManager = new SpaceTaskManager(db, SPACE_ID);
+  });
+  afterEach(() => {
+    db.close();
+  });
+
+  test('matching expectedStatus writes normally', async () => {
+    const task = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'T',
+      description: '',
+      status: 'in_progress',
+    });
+    const updated = await taskManager.setTaskStatus(task.id, 'review', {
+      expectedStatus: 'in_progress',
+    });
+    expect(updated.status).toBe('review');
+  });
+
+  test('mismatched expectedStatus throws and leaves the row untouched', async () => {
+    const task = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'T',
+      description: '',
+      status: 'in_progress',
+    });
+    await expect(
+      taskManager.setTaskStatus(task.id, 'review', { expectedStatus: 'open' })
+    ).rejects.toThrow(`Task ${task.id} is no longer 'open' (now 'in_progress')`);
+    expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
+  });
+
+  test('omitted expectedStatus behaves exactly as before', async () => {
+    const task = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'T',
+      description: '',
+      status: 'in_progress',
+    });
+    const updated = await taskManager.setTaskStatus(task.id, 'review');
+    expect(updated.status).toBe('review');
+  });
+});
+
 describe('VALID_SPACE_TASK_TRANSITIONS — matrix gap closures (task #849)', () => {
   test('G1: open can go to archived', () => {
     expect(VALID_SPACE_TASK_TRANSITIONS.open).toContain('archived');

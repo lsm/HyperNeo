@@ -180,6 +180,7 @@ export class SpaceTaskManager {
       blockReason?: SpaceBlockReason;
       approvalSource?: SpaceApprovalSource;
       approvalReason?: string | null;
+      expectedStatus?: SpaceTaskStatus;
       expectedPendingCompletionGeneration?: number;
       onCascadedTasks?: (cascaded: SpaceTask[]) => Promise<void>;
     }
@@ -187,6 +188,13 @@ export class SpaceTaskManager {
     const task = await this.getTask(taskId);
     if (!task) {
       throw new Error(`Task not found: ${taskId}`);
+    }
+
+    const expectedStatus = options?.expectedStatus;
+    const staleStatusError = () =>
+      new Error(`Task ${taskId} is no longer '${expectedStatus}' (now '${task.status}')`);
+    if (expectedStatus !== undefined && task.status !== expectedStatus) {
+      throw staleStatusError();
     }
 
     const expectedGeneration = options?.expectedPendingCompletionGeneration;
@@ -217,9 +225,15 @@ export class SpaceTaskManager {
     let updated: SpaceTask;
     try {
       updated = this.db.transaction(() => {
-        const result = this.taskRepo.updateTask(taskId, updates, undefined, expectedGeneration);
+        const result = this.taskRepo.updateTask(
+          taskId,
+          updates,
+          expectedStatus,
+          expectedGeneration
+        );
         if (!result) {
           if (expectedGeneration !== undefined) throw new PendingCompletionSupersededError(taskId);
+          if (expectedStatus !== undefined) throw staleStatusError();
           throw new Error(`Failed to update task: ${taskId}`);
         }
         if (reopened) {
