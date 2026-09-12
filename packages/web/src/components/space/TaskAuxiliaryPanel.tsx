@@ -150,6 +150,8 @@ export function TaskAuxiliaryPanel({
         await spaceStore.publishTask(task.id);
       } else if (newStatus === 'review') {
         await spaceStore.submitForReview(task.id);
+      } else if (newStatus === 'cancelled') {
+        await spaceStore.cancelTask(task.id);
       } else {
         await spaceStore.updateTask(task.id, { status: newStatus });
       }
@@ -211,7 +213,9 @@ export function TaskAuxiliaryPanel({
     </div>
   );
 
-  const transitionActions = getTransitionActions(task.status);
+  const transitionActions = getTransitionActions(task.status).filter(
+    ({ target }) => !(task.status === 'review' && target === 'cancelled')
+  );
   const taskMenuItems: DropdownMenuItem[] = transitionActions.map(({ target, label }) => ({
     label,
     onClick: () => handleStatusTransition(target),

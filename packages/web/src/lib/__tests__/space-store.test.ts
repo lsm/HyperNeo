@@ -2428,6 +2428,47 @@ describe('SpaceStore — submitForReview', () => {
   });
 });
 
+describe('SpaceStore — cancelTask', () => {
+  beforeEach(resetStore);
+  afterEach(() => vi.clearAllMocks());
+
+  it('sends operation.invoke with task.cancel and the task id, returning the acknowledgement', async () => {
+    await spaceStore.selectSpace('space-1');
+    mockHub.request.mockResolvedValueOnce({ accepted: true, jobId: 'job-1' });
+
+    const result = await spaceStore.cancelTask('task-1');
+
+    expect(mockHub.request).toHaveBeenCalledWith('operation.invoke', {
+      name: 'task.cancel',
+      input: { taskId: 'task-1' },
+    });
+    expect(result).toEqual({ accepted: true, jobId: 'job-1' });
+  });
+
+  it('throws a mapped message when cancellation is rejected', async () => {
+    await spaceStore.selectSpace('space-1');
+    mockHub.request.mockResolvedValueOnce({
+      accepted: false,
+      reason: 'cancellation_invalid_transition',
+    });
+
+    await expect(spaceStore.cancelTask('task-1')).rejects.toThrow(
+      'This task cannot be cancelled from its current state.'
+    );
+  });
+
+  it('throws when not connected', async () => {
+    await spaceStore.selectSpace('space-1');
+    vi.mocked(connectionManager.getHubIfConnected).mockReturnValueOnce(null);
+
+    await expect(spaceStore.cancelTask('task-1')).rejects.toThrow('Not connected');
+  });
+
+  it('throws when no space selected', async () => {
+    await expect(spaceStore.cancelTask('task-1')).rejects.toThrow('No space selected');
+  });
+});
+
 describe('SpaceStore — runtimeState', () => {
   beforeEach(resetStore);
   afterEach(() => vi.clearAllMocks());
