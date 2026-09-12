@@ -153,15 +153,6 @@ describe('computeMcpSkillRuntimeState', () => {
     expect(state.label).toMatch(/this session/);
   });
 
-  it('returns "server-off" with room source when room override disables', () => {
-    const skill = makeMcpSkill();
-    const entries = [makeEntry({ enabled: false, source: 'room' })];
-    const state = computeMcpSkillRuntimeState(skill, entries, true);
-    expect(state.status).toBe('server-off');
-    expect(state.overrideSource).toBe('room');
-    expect(state.label).toContain('room');
-  });
-
   it('returns "server-off" with space source when space override disables', () => {
     const skill = makeMcpSkill();
     const entries = [makeEntry({ enabled: false, source: 'space' })];

@@ -4,6 +4,7 @@ import type {
   CreateAppMcpServerRequest,
   McpEffectiveEnablementSource,
   McpEnablementOverride,
+  McpEnablementScopeType,
   SessionMcpListRequest,
   SessionMcpListResponse,
   SessionMcpServerEntry,
@@ -116,6 +117,15 @@ export function registerAppMcpHandlers(messageHub: MessageHub, ctx: AppMcpHandle
   });
 }
 
+const MCP_ENABLEMENT_SCOPE_TYPES = new Set<McpEnablementScopeType>(['space', 'session']);
+
+function assertScopeType(value: unknown): asserts value is McpEnablementScopeType {
+  if (!value) throw new Error('scopeType is required');
+  if (!MCP_ENABLEMENT_SCOPE_TYPES.has(value as McpEnablementScopeType)) {
+    throw new Error(`Unsupported scopeType: ${String(value)}`);
+  }
+}
+
 export function setupAppMcpHandlers(
   messageHub: MessageHub,
   internalEventBus: InternalEventBus<DaemonInternalEventMap>,
@@ -123,7 +133,7 @@ export function setupAppMcpHandlers(
 ): void {
   messageHub.onRequest('mcp.enablement.setOverride', (data) => {
     const { scopeType, scopeId, serverId, enabled } = data as McpEnablementSetOverrideRequest;
-    if (!scopeType) throw new Error('scopeType is required');
+    assertScopeType(scopeType);
     if (!scopeId) throw new Error('scopeId is required');
     if (!serverId) throw new Error('serverId is required');
     if (typeof enabled !== 'boolean') throw new Error('enabled must be a boolean');
@@ -144,7 +154,7 @@ export function setupAppMcpHandlers(
 
   messageHub.onRequest('mcp.enablement.clearOverride', (data) => {
     const { scopeType, scopeId, serverId } = data as McpEnablementClearOverrideRequest;
-    if (!scopeType) throw new Error('scopeType is required');
+    assertScopeType(scopeType);
     if (!scopeId) throw new Error('scopeId is required');
     if (!serverId) throw new Error('serverId is required');
 
@@ -171,17 +181,10 @@ export function setupAppMcpHandlers(
     const overrides = db.mcpEnablement.listForScopes(chain);
 
     const sessionOverrides = new Map<string, McpEnablementOverride>();
-    const roomOverrides = new Map<string, McpEnablementOverride>();
     const spaceOverrides = new Map<string, McpEnablementOverride>();
     for (const ov of overrides) {
       if (ov.scopeType === 'session' && ov.scopeId === sessionId) {
         sessionOverrides.set(ov.serverId, ov);
-      } else if (
-        ov.scopeType === 'room' &&
-        session.context?.roomId &&
-        ov.scopeId === session.context.roomId
-      ) {
-        roomOverrides.set(ov.serverId, ov);
       } else if (
         ov.scopeType === 'space' &&
         session.context?.spaceId &&
@@ -199,15 +202,6 @@ export function setupAppMcpHandlers(
           enabled: sessionOv.enabled,
           source: 'session' as McpEffectiveEnablementSource,
           override: sessionOv,
-        };
-      }
-      const roomOv = roomOverrides.get(server.id);
-      if (roomOv) {
-        return {
-          server,
-          enabled: roomOv.enabled,
-          source: 'room' as McpEffectiveEnablementSource,
-          override: roomOv,
         };
       }
       const spaceOv = spaceOverrides.get(server.id);

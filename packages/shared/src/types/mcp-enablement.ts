@@ -1,4 +1,4 @@
-export type McpEnablementScopeType = 'space' | 'room' | 'session';
+export type McpEnablementScopeType = 'space' | 'session';
 
 export interface McpEnablementOverride {
   scopeType: McpEnablementScopeType;
@@ -28,7 +28,7 @@ export interface McpEnablementClearOverrideResponse {
   deleted: boolean;
 }
 
-export type McpEffectiveEnablementSource = 'session' | 'room' | 'space' | 'registry';
+export type McpEffectiveEnablementSource = 'session' | 'space' | 'registry';
 
 export interface SessionMcpServerEntry {
   server: import('./app-mcp-server.ts').AppMcpServer;

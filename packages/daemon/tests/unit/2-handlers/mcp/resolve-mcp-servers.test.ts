@@ -19,7 +19,7 @@ function server(id: string, enabled: boolean, partial: Partial<AppMcpServer> = {
 }
 
 function override(
-  scopeType: 'space' | 'room' | 'session',
+  scopeType: 'space' | 'session',
   scopeId: string,
   serverId: string,
   enabled: boolean
@@ -28,12 +28,11 @@ function override(
 }
 
 const SESSION_ID = 'sess-1';
-const ROOM_ID = 'room-1';
 const SPACE_ID = 'space-1';
 
 const session = {
   id: SESSION_ID,
-  context: { spaceId: SPACE_ID, roomId: ROOM_ID },
+  context: { spaceId: SPACE_ID },
 };
 
 describe('resolveMcpServers', () => {
@@ -75,48 +74,20 @@ describe('resolveMcpServers', () => {
     });
   });
 
-  describe('room override precedence (room > space)', () => {
-    test('room enable wins over space disable', () => {
+  describe('session override precedence (session > space)', () => {
+    test('session enable wins over space disable', () => {
       const registry = [server('a', false)];
       const overrides = [
         override('space', SPACE_ID, 'a', false),
-        override('room', ROOM_ID, 'a', true),
-      ];
-      expect(resolveMcpServers(session, registry, overrides).map((r) => r.id)).toEqual(['a']);
-    });
-
-    test('room disable wins over space enable', () => {
-      const registry = [server('a', false)];
-      const overrides = [
-        override('space', SPACE_ID, 'a', true),
-        override('room', ROOM_ID, 'a', false),
-      ];
-      expect(resolveMcpServers(session, registry, overrides)).toEqual([]);
-    });
-
-    test('ignores room overrides for a different room', () => {
-      const registry = [server('a', true)];
-      const overrides = [override('room', 'other-room', 'a', false)];
-      expect(resolveMcpServers(session, registry, overrides).map((r) => r.id)).toEqual(['a']);
-    });
-  });
-
-  describe('session override precedence (session > room > space)', () => {
-    test('session enable wins over room + space disable', () => {
-      const registry = [server('a', false)];
-      const overrides = [
-        override('space', SPACE_ID, 'a', false),
-        override('room', ROOM_ID, 'a', false),
         override('session', SESSION_ID, 'a', true),
       ];
       expect(resolveMcpServers(session, registry, overrides).map((r) => r.id)).toEqual(['a']);
     });
 
-    test('session disable wins over room + space enable', () => {
+    test('session disable wins over space enable', () => {
       const registry = [server('a', true)];
       const overrides = [
         override('space', SPACE_ID, 'a', true),
-        override('room', ROOM_ID, 'a', true),
         override('session', SESSION_ID, 'a', false),
       ];
       expect(resolveMcpServers(session, registry, overrides)).toEqual([]);
@@ -135,31 +106,25 @@ describe('resolveMcpServers', () => {
         server('reg-on', true),
         server('reg-off', false),
         server('space-off', true),
-        server('room-on', false),
         server('session-on', false),
         server('session-off', true),
       ];
       const overrides = [
         override('space', SPACE_ID, 'space-off', false),
-        override('room', ROOM_ID, 'room-on', true),
         override('session', SESSION_ID, 'session-on', true),
         override('session', SESSION_ID, 'session-off', false),
         override('space', 'other-space', 'reg-on', false),
-        override('room', 'other-room', 'reg-on', false),
         override('session', 'other-session', 'reg-on', false),
       ];
       const ids = resolveMcpServers(session, registry, overrides).map((r) => r.id);
-      expect(ids).toEqual(['reg-on', 'room-on', 'session-on']);
+      expect(ids).toEqual(['reg-on', 'session-on']);
     });
   });
 
   describe('context-less sessions', () => {
-    test('falls back entirely to registry defaults when no space/room', () => {
+    test('falls back entirely to registry defaults when no space', () => {
       const registry = [server('a', true), server('b', false)];
-      const overrides = [
-        override('space', SPACE_ID, 'a', false),
-        override('room', ROOM_ID, 'b', true),
-      ];
+      const overrides = [override('space', SPACE_ID, 'a', false)];
       const result = resolveMcpServers({ id: 'global' }, registry, overrides);
       expect(result.map((r) => r.id)).toEqual(['a']);
     });
@@ -177,7 +142,6 @@ describe('resolveMcpServers', () => {
       const chain = scopeChainForSession(session);
       expect(chain).toEqual([
         { scopeType: 'session', scopeId: SESSION_ID },
-        { scopeType: 'room', scopeId: ROOM_ID },
         { scopeType: 'space', scopeId: SPACE_ID },
       ]);
     });
@@ -187,12 +151,7 @@ describe('resolveMcpServers', () => {
       expect(chain).toEqual([{ scopeType: 'session', scopeId: 'global' }]);
     });
 
-    test('keeps session-only and space-only cases distinct', () => {
-      const roomOnly = scopeChainForSession({ id: 's', context: { roomId: 'r' } });
-      expect(roomOnly).toEqual([
-        { scopeType: 'session', scopeId: 's' },
-        { scopeType: 'room', scopeId: 'r' },
-      ]);
+    test('includes the space scope when the session has one', () => {
       const spaceOnly = scopeChainForSession({ id: 's', context: { spaceId: 'sp' } });
       expect(spaceOnly).toEqual([
         { scopeType: 'session', scopeId: 's' },
