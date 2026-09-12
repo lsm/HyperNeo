@@ -65,7 +65,7 @@ describe('task.create schema options', () => {
     expect(await invokeOperation(registry, 'task.create', input, caller)).toMatchObject({
       kind: 'completed',
     });
-    expect(createTask).toHaveBeenCalledWith(input, 'session-1');
+    expect(createTask).toHaveBeenCalledWith(input, 'session-1', caller);
   });
 });
 

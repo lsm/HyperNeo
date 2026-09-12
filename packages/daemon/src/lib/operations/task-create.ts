@@ -1,7 +1,7 @@
 import type { TaskCore } from '@hyperneo/shared/types/task-core';
 import { z } from 'zod';
 import type { CreateStandaloneTaskInput } from '../../storage/tasks/create-task.ts';
-import { defineOperation, type OperationDefinition } from './registry.ts';
+import { defineOperation, type OperationCaller, type OperationDefinition } from './registry.ts';
 import { TaskCoreSchema } from './task-get.ts';
 
 export const StandaloneCreateTaskInputSchema = z
@@ -21,19 +21,22 @@ export interface CreateTaskOperationOptions<Input> {
   description?: string;
 }
 
+type CreateTaskFn<Input> = (
+  input: Input,
+  creatorSessionId: string | undefined,
+  caller: OperationCaller
+) => TaskCore | Promise<TaskCore>;
+
 export function createCreateTaskOperation<Input>(
-  createTask: (input: Input, creatorSessionId: string | undefined) => TaskCore | Promise<TaskCore>,
+  createTask: CreateTaskFn<Input>,
   options: { inputSchema: z.ZodType<Input>; description?: string }
 ): OperationDefinition;
 export function createCreateTaskOperation(
-  createTask: (
-    input: CreateStandaloneTaskInput,
-    creatorSessionId: string | undefined
-  ) => TaskCore | Promise<TaskCore>,
+  createTask: CreateTaskFn<CreateStandaloneTaskInput>,
   options?: { description?: string }
 ): OperationDefinition;
 export function createCreateTaskOperation<Input = CreateStandaloneTaskInput>(
-  createTask: (input: Input, creatorSessionId: string | undefined) => TaskCore | Promise<TaskCore>,
+  createTask: CreateTaskFn<Input>,
   options: CreateTaskOperationOptions<Input> = {}
 ) {
   return defineOperation({
@@ -42,6 +45,6 @@ export function createCreateTaskOperation<Input = CreateStandaloneTaskInput>(
     inputSchema:
       options.inputSchema ?? (StandaloneCreateTaskInputSchema as unknown as z.ZodType<Input>),
     resultSchema: TaskCoreSchema,
-    execute: async (input, caller) => createTask(input, caller.sessionId),
+    execute: async (input, caller) => createTask(input, caller.sessionId, caller),
   });
 }
