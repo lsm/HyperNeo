@@ -187,6 +187,28 @@ test('completes normally when requiresPostApprovalOwner is absent', async () => 
   const result = await operation.execute({ taskId, result: 'Shipped it.' }, { source: 'rpc' });
   expect(result).toMatchObject({ accepted: true, task: { id: taskId, status: 'done' } });
 });
+test('a post-approval owner reassigned between admission and the manager write is rejected', async () => {
+  const routedSessionId = worker('post-approval-owner');
+  const stolenBySessionId = worker('other-worker');
+  tasks.updateTask(taskId, { postApprovalSessionId: routedSessionId });
+  const racyOperation = createCompleteTaskOperation(() => db, {
+    getTaskManager: (id) => {
+      const manager = new SpaceTaskManager(db, id);
+      return {
+        setTaskStatus: (taskIdArg, status, options) => {
+          tasks.updateTask(taskId, { postApprovalSessionId: stolenBySessionId });
+          return manager.setTaskStatus(taskIdArg, status, options);
+        },
+      };
+    },
+    emitTaskUpdated: emit,
+  });
+  await expect(
+    racyOperation.execute({ taskId }, { source: 'mcp', sessionId: routedSessionId })
+  ).rejects.toThrow();
+  expect(tasks.getTask(taskId)?.status).toBe('approved');
+  expect(tasks.getTask(taskId)?.postApprovalSessionId).toBe(stolenBySessionId);
+});
 
 test('catalog discovery reports task.complete when wired through the complete slot', async () => {
   const getDatabase = mock(() => db);
