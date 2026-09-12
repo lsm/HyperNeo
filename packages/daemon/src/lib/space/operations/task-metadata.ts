@@ -47,29 +47,35 @@ export function resolveMetadataSessionSpace(
   );
 }
 
+export function resolveSpaceTaskOwner(db: Database, taskId: string): TaskMetadataOwner | null {
+  const row = db.prepare('SELECT space_id FROM space_tasks WHERE id = ?').get(taskId) as {
+    space_id: string | null;
+  } | null;
+  return !row
+    ? null
+    : row.space_id === null
+      ? { kind: 'standalone' }
+      : { kind: 'space', spaceId: row.space_id };
+}
+
+export function admitSpaceTaskCaller(
+  owner: TaskMetadataOwner,
+  caller: OperationCaller,
+  deps: Pick<SpaceTaskMetadataDependencies, 'getSession'> & SpaceMcpSessionPolicyContext
+): { value: true } | { reason: string } {
+  const session =
+    owner.kind === 'space' && caller.source === 'mcp' && caller.sessionId
+      ? deps.getSession(caller.sessionId)
+      : null;
+  return requireMetadataCallerScope(owner, caller, resolveMetadataSessionSpace(session, deps));
+}
+
 export function createSpaceTaskMetadataEditor(dependencies: SpaceTaskMetadataDependencies) {
-  const { db, getSession, getTaskManager, notifyStandalone, emitTaskUpdated } = dependencies;
+  const { db, getTaskManager, notifyStandalone, emitTaskUpdated } = dependencies;
   return createTaskMetadataEditor({
-    resolveOwner: (taskId) => {
-      const row = db.prepare('SELECT space_id FROM space_tasks WHERE id = ?').get(taskId) as {
-        space_id: string | null;
-      } | null;
-      return !row
-        ? null
-        : row.space_id === null
-          ? { kind: 'standalone' }
-          : { kind: 'space', spaceId: row.space_id };
-    },
+    resolveOwner: (taskId) => resolveSpaceTaskOwner(db, taskId),
     admit: (owner, caller) => {
-      const session =
-        owner.kind === 'space' && caller.source === 'mcp' && caller.sessionId
-          ? getSession(caller.sessionId)
-          : null;
-      const scope = requireMetadataCallerScope(
-        owner,
-        caller,
-        resolveMetadataSessionSpace(session, dependencies)
-      );
+      const scope = admitSpaceTaskCaller(owner, caller, dependencies);
       if ('reason' in scope) throw new Error(scope.reason);
     },
     editStandalone: (input) => editStandaloneTask(db, input, notifyStandalone),
