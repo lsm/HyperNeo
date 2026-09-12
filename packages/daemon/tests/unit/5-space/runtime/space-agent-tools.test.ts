@@ -50,6 +50,8 @@ import { SpaceAgentTemplateRepository } from '../../../../src/storage/repositori
 import { SpaceGoalEventRepository } from '../../../../src/storage/repositories/space-goal-event-repository.ts';
 import { SpaceGoalOutcomeNotificationRepository } from '../../../../src/storage/repositories/space-goal-outcome-notification-repository.ts';
 import { SpaceGoalRepository } from '../../../../src/storage/repositories/space-goal-repository.ts';
+import { SpaceAgentGoalScopeRepository } from '../../../../src/storage/repositories/space-agent-goal-scope-repository.ts';
+import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
@@ -190,6 +192,7 @@ interface TestCtx {
   nodeExecutionRepo: NodeExecutionRepository;
   spaceManager: SpaceManager;
   longHorizonAgentRepo: SpaceLongHorizonAgentRepository;
+  goalScopeRepo: SpaceAgentGoalScopeRepository;
   goalService: SpaceGoalService;
   goalRepo: SpaceGoalRepository;
   scheduleService: ScheduleService;
@@ -216,6 +219,7 @@ function makeCtx(): TestCtx {
   const taskRepo = new SpaceTaskRepository(db);
   const spaceManager = new SpaceManager(db);
   const longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(db);
+  const goalScopeRepo = new SpaceAgentGoalScopeRepository(db, new SpaceAgentRepository(db));
 
   const runtime = new SpaceRuntime({
     db,
@@ -308,6 +312,7 @@ function makeCtx(): TestCtx {
     nodeExecutionRepo,
     spaceManager,
     longHorizonAgentRepo,
+    goalScopeRepo,
     goalService,
     goalRepo,
     scheduleService,
@@ -332,6 +337,7 @@ function makeHandlers(
     nodeExecutionRepo: ctx.nodeExecutionRepo,
     spaceManager: ctx.spaceManager,
     longHorizonAgentRepo: ctx.longHorizonAgentRepo,
+    goalScopeRepo: ctx.goalScopeRepo,
     goalService: ctx.goalService,
     goalRepo: ctx.goalRepo,
     scheduleService: ctx.scheduleService,
