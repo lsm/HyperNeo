@@ -4,6 +4,7 @@ import {
   createOperationRegistry,
   defineOperation,
 } from '../../../../src/lib/operations/registry.ts';
+import { createCancelTaskOperation } from '../../../../src/lib/space/operations/cancel-task.ts';
 import { createActionRegistry } from '../../../../src/lib/space/actions/registry.ts';
 import { createSpaceRegistryEntries } from '../../../../src/lib/space/actions/registry-space.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
@@ -26,6 +27,7 @@ import { SpaceAgentRepository } from '../../../../src/storage/repositories/space
 import { SpaceAgentReminderRepository } from '../../../../src/storage/repositories/space-agent-reminder-repository.ts';
 import { SpaceAgentSubscriptionRepository } from '../../../../src/storage/repositories/space-agent-subscription-repository.ts';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
+import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
@@ -483,6 +485,43 @@ describe('createSpaceRegistryEntries — composition', () => {
         success: false,
         error: 'task.cancel is unavailable: no operation registry',
       });
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('cancel_task cancels a plain open task through the shared task.cancel operation', async () => {
+    const ctx = makeCtx({ mySessionId: 'space-chat-1' });
+    try {
+      const now = new Date().toISOString();
+      ctx.db
+        .prepare(
+          `INSERT INTO sessions (id, title, created_at, last_active_at, status, config, metadata, type, session_context)
+           VALUES ('space-chat-1', 'Space Chat', ?, ?, 'active', '{}', '{}', 'space_chat', ?)`
+        )
+        .run(now, now, JSON.stringify({ spaceId: SPACE_ID }));
+      const plainTask = ctx.taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Plain task',
+        description: '',
+      });
+      const operations = createOperationRegistry([
+        createCancelTaskOperation(() => ctx.db, new JobQueueRepository(ctx.db), {
+          getTaskManager: (spaceId) => new SpaceTaskManager(ctx.db, spaceId),
+          emitTaskUpdated: async () => {},
+        }),
+      ]);
+      const entry = createSpaceRegistryEntries(ctx.config, operations).find(
+        (candidate) => candidate.name === 'cancel_task'
+      );
+      if (!entry) throw new Error('cancel_task entry missing');
+      const result = (await entry.handler({ task_id: plainTask.id })) as {
+        content: Array<{ text: string }>;
+        isError?: boolean;
+      };
+      expect(result.isError).toBeUndefined();
+      expect(JSON.parse(result.content[0].text)).toEqual({ accepted: true, jobId: null });
+      expect(ctx.taskRepo.getTask(plainTask.id)?.status).toBe('cancelled');
     } finally {
       ctx.db.close();
     }
