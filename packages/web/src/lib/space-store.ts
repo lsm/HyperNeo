@@ -982,7 +982,7 @@ class SpaceStore {
   ): Promise<void> {
     try {
       const result = await hub.request<{ templates: SpaceAgentTemplate[] }>(
-        'spaceAgent.listTemplates',
+        'spaceAgentTemplate.list',
         { spaceId }
       );
       if (this.spaceId.value !== spaceId) return;
@@ -2454,7 +2454,7 @@ class SpaceStore {
     spaceId: string
   ): Promise<void> {
     const result = await hub.request<{ templates: SpaceAgentTemplate[] }>(
-      'spaceAgent.listTemplates',
+      'spaceAgentTemplate.list',
       { spaceId }
     );
     if (this.spaceId.value !== spaceId) return;
@@ -2485,7 +2485,7 @@ class SpaceStore {
     if (!spaceId) throw new Error('No space selected');
 
     const { template } = await hub.request<{ template: SpaceAgentTemplate }>(
-      'spaceAgent.createTemplate',
+      'spaceAgentTemplate.create',
       { spaceId, ...params }
     );
     if (this.spaceId.value === spaceId) this.upsertAgentTemplate(template);
@@ -2502,7 +2502,7 @@ class SpaceStore {
     if (!spaceId) throw new Error('No space selected');
 
     const { template } = await hub.request<{ template: SpaceAgentTemplate | null }>(
-      'spaceAgent.updateTemplate',
+      'spaceAgentTemplate.update',
       { spaceId, key, ...params }
     );
     if (!template) throw new Error(`Template ${key} was modified concurrently`);
@@ -2517,7 +2517,7 @@ class SpaceStore {
     if (!spaceId) throw new Error('No space selected');
 
     await hub.request(
-      'spaceAgent.deleteTemplate',
+      'spaceAgentTemplate.delete',
       expectedVersion === undefined ? { spaceId, key } : { spaceId, key, expectedVersion }
     );
     if (this.spaceId.value !== spaceId) return;
