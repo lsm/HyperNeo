@@ -1,4 +1,9 @@
 import { describe, expect, test } from 'bun:test';
+import { z } from 'zod';
+import {
+  createOperationRegistry,
+  defineOperation,
+} from '../../../../src/lib/operations/registry.ts';
 import { createActionRegistry } from '../../../../src/lib/space/actions/registry.ts';
 import { createSpaceRegistryEntries } from '../../../../src/lib/space/actions/registry-space.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
@@ -190,6 +195,7 @@ describe('createSpaceRegistryEntries — composition', () => {
           Object.keys(SPACE_AGENT_LIFECYCLE_TOOL_SCHEMAS).length
       );
       for (const entry of entries) {
+        if (entry.name === 'cancel_task') continue;
         const expected =
           SPACE_AGENT_TOOL_SCHEMAS[entry.name as SpaceAgentToolName] ??
           SPACE_AGENT_LIFECYCLE_TOOL_SCHEMAS[entry.name as SpaceAgentLifecycleToolName];
@@ -346,7 +352,7 @@ describe('createSpaceRegistryEntries — composition', () => {
     }
   });
 
-  test('cancel_task requires workflow-run clearance only for workflow-backed tasks with the flag', async () => {
+  test('cancel_task requires human-only clearance only for a pending completion checkpoint', async () => {
     const ctx = makeCtx();
     try {
       const workflow = ctx.workflowManager.createWorkflow({
@@ -365,11 +371,6 @@ describe('createSpaceRegistryEntries — composition', () => {
         title: 'Workflow task',
         description: '',
         workflowRunId: run.id,
-      });
-      const standaloneTask = ctx.taskRepo.createTask({
-        spaceId: SPACE_ID,
-        title: 'Standalone task',
-        description: '',
       });
       const checkpointTask = ctx.taskRepo.createTask({
         spaceId: SPACE_ID,
@@ -396,15 +397,72 @@ describe('createSpaceRegistryEntries — composition', () => {
       const resolve = entries.find((entry) => entry.name === 'cancel_task')?.autonomyRequirement;
       expect(typeof resolve).toBe('function');
       if (typeof resolve === 'function') {
-        expect(await resolve({ task_id: workflowTask.id, cancel_workflow_run: true })).toBe(
-          SESSION_WRITE_AUTONOMY_LEVEL
-        );
-        expect(await resolve({ task_id: standaloneTask.id, cancel_workflow_run: true })).toBe(1);
-        expect(await resolve({ task_id: checkpointTask.id })).toBe(5);
-        expect(await resolve({ task_id: foreignTask.id, cancel_workflow_run: true })).toBe(1);
         expect(await resolve({ task_id: workflowTask.id })).toBe(1);
-        expect(await resolve({ task_id: workflowTask.id, cancel_workflow_run: false })).toBe(1);
+        expect(await resolve({ task_id: checkpointTask.id })).toBe(5);
+        expect(await resolve({ task_id: foreignTask.id })).toBe(1);
       }
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('cancel_task rejects cancel_workflow_run and dispatches task.cancel through an operations registry', async () => {
+    const ctx = makeCtx();
+    try {
+      const cancelExecuteCalls: Array<{ input: { taskId: string }; caller: unknown }> = [];
+      const operations = createOperationRegistry([
+        defineOperation({
+          name: 'task.cancel',
+          description: 'Cancel exactly one task',
+          inputSchema: z.object({ taskId: z.string() }),
+          resultSchema: z.union([
+            z.object({ accepted: z.literal(true), jobId: z.string().nullable() }),
+            z.object({ accepted: z.literal(false), reason: z.string() }),
+          ]),
+          execute: async (input, caller) => {
+            cancelExecuteCalls.push({ input, caller });
+            return { accepted: true as const, jobId: null };
+          },
+        }),
+      ]);
+      const entryWithOperations = createSpaceRegistryEntries(ctx.config, operations).find(
+        (entry) => entry.name === 'cancel_task'
+      );
+      if (!entryWithOperations) throw new Error('cancel_task entry missing');
+      expect(() => entryWithOperations.paramsSchema.parse({ task_id: 't-1' })).not.toThrow();
+      expect(() =>
+        entryWithOperations.paramsSchema.parse({ task_id: 't-1', cancel_workflow_run: true })
+      ).toThrow();
+      const result = (await entryWithOperations.handler({ task_id: 't-1' })) as {
+        content: Array<{ text: string }>;
+        isError?: boolean;
+      };
+      expect(result.isError).toBeUndefined();
+      expect(JSON.parse(result.content[0].text)).toEqual({ accepted: true, jobId: null });
+      expect(cancelExecuteCalls).toEqual([
+        { input: { taskId: 't-1' }, caller: { source: 'mcp', sessionId: ctx.config.mySessionId } },
+      ]);
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('cancel_task returns the unavailable error result without an operations registry', async () => {
+    const ctx = makeCtx();
+    try {
+      const entry = createSpaceRegistryEntries(ctx.config).find(
+        (candidate) => candidate.name === 'cancel_task'
+      );
+      if (!entry) throw new Error('cancel_task entry missing');
+      const result = (await entry.handler({ task_id: 't-1' })) as {
+        content: Array<{ text: string }>;
+        isError?: boolean;
+      };
+      expect(result.isError).toBe(true);
+      expect(JSON.parse(result.content[0].text)).toEqual({
+        success: false,
+        error: 'task.cancel is unavailable: no operation registry',
+      });
     } finally {
       ctx.db.close();
     }
@@ -649,11 +707,6 @@ describe('createSpaceRegistryEntries — handler wiring', () => {
         title: 'Open',
         description: 'Standalone open task',
       });
-      const cancelTarget = ctx.taskRepo.createTask({
-        spaceId: SPACE_ID,
-        title: 'Cancel me',
-        description: '',
-      });
       const retryTarget = ctx.taskRepo.createTask({
         spaceId: SPACE_ID,
         title: 'Not retryable',
@@ -686,7 +739,6 @@ describe('createSpaceRegistryEntries — handler wiring', () => {
           success: true,
         },
         { name: 'retry_task', params: { task_id: retryTarget.id }, success: false },
-        { name: 'cancel_task', params: { task_id: cancelTarget.id }, success: true },
         {
           name: 'reassign_task',
           params: { task_id: reassignTarget.id, custom_agent_id: 'agent-coder-1' },
