@@ -4,7 +4,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { Logger } from '../../logger.ts';
 import type { OperationCaller } from '../../operations/registry.ts';
 import { createTransitionTaskOperation } from '../../operations/task-transition.ts';
-import type { SpaceTaskManager } from '../managers/space-task-manager.ts';
+import { type SpaceTaskManager, StaleTaskGuardError } from '../managers/space-task-manager.ts';
 import { decideSpaceTaskTransition } from './transition-decision.ts';
 import {
   admitCaller,
@@ -73,7 +73,7 @@ export async function writeStatus(decided: DecidedTask, input: In, deps: Deps): 
     await emitUpdated(spaceId, updated, deps);
     return updated;
   } catch (error) {
-    if (error instanceof Error && error.message.includes('is no longer')) {
+    if (error instanceof StaleTaskGuardError) {
       return 'invalid_transition';
     }
     throw error;

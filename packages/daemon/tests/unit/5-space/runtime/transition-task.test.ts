@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry';
-import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager';
+import {
+  SpaceTaskManager,
+  StaleTaskGuardError,
+} from '../../../../src/lib/space/managers/space-task-manager';
 import {
   createSpaceTransitionTaskOperation,
   type SpaceTransitionTaskDependencies,
@@ -202,7 +205,7 @@ test('a stale-status guard failure surfaces as invalid_transition', async () => 
   const staleManager: Pick<SpaceTaskManager, 'getTask' | 'setTaskStatus'> = {
     getTask: async (id) => tasks.getTask(id),
     setTaskStatus: async () => {
-      throw new Error(`Task ${task.id} is no longer 'open'`);
+      throw new StaleTaskGuardError(`Task ${task.id} is no longer 'open'`);
     },
   };
   const result = await invoke({ taskId: task.id, status: 'in_progress' }, rpc, {
@@ -211,23 +214,46 @@ test('a stale-status guard failure surfaces as invalid_transition', async () => 
   expect(result).toEqual({ kind: 'completed', value: 'invalid_transition' });
 });
 
-test('a workflow attached after the decision cannot be smuggled through the atomic write', async () => {
+test('an unrelated failure that merely mentions "is no longer" is not misclassified', async () => {
+  const task = tasks.createTask({ spaceId, title: 'T', description: '' });
+  const brokenManager: Pick<SpaceTaskManager, 'getTask' | 'setTaskStatus'> = {
+    getTask: async (id) => tasks.getTask(id),
+    setTaskStatus: async () => {
+      throw new Error(`Session worker-1 is no longer alive`);
+    },
+  };
+  const result = await invoke({ taskId: task.id, status: 'in_progress' }, rpc, {
+    getTaskManager: () => brokenManager,
+  });
+  expect(result).toMatchObject({
+    kind: 'failed',
+    code: 'execution_failed',
+    message: expect.stringContaining('is no longer alive'),
+  });
+});
+
+test('writeStatus threads expectedWorkflowRunId from the loaded task into setTaskStatus', async () => {
   const task = tasks.createTask({ spaceId, title: 'T', description: '' });
   const run = createWorkflowRun();
-  const racingManager: Pick<SpaceTaskManager, 'getTask' | 'setTaskStatus'> = {
-    getTask: async (id) => {
-      const snapshot = await tasks.getTask(id);
-      tasks.updateTask(id, { workflowRunId: run.id });
-      return snapshot;
-    },
-    setTaskStatus: (id, status, options) =>
-      new SpaceTaskManager(db, spaceId).setTaskStatus(id, status, options),
+  tasks.updateTask(task.id, { workflowRunId: run.id });
+  const setTaskStatus = mock(async () => {
+    throw new StaleTaskGuardError(
+      `Task ${task.id} is no longer attached to workflow run '${run.id}' (now 'null')`
+    );
+  });
+  const staleManager: Pick<SpaceTaskManager, 'getTask' | 'setTaskStatus'> = {
+    getTask: async (id) => tasks.getTask(id),
+    setTaskStatus,
   };
   const result = await invoke({ taskId: task.id, status: 'archived' }, rpc, {
-    getTaskManager: () => racingManager,
+    getTaskManager: () => staleManager,
   });
   expect(result).toEqual({ kind: 'completed', value: 'invalid_transition' });
-  expect(tasks.getTask(task.id)?.status).toBe('open');
+  expect(setTaskStatus).toHaveBeenCalledWith(
+    task.id,
+    'archived',
+    expect.objectContaining({ expectedStatus: 'open', expectedWorkflowRunId: run.id })
+  );
 });
 
 test('a rejecting emitTaskUpdated still returns the updated task', async () => {
