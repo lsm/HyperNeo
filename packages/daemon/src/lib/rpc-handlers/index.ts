@@ -1141,8 +1141,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.internalEventBus,
     spaceWorkflowManager,
     deps.sessionManager,
-    spaceRuntimeService,
-    { longHorizonAgentRepo }
+    spaceRuntimeService
   );
 
   deps.messageHub.onRequest('space.externalEvents.queueHealth', async () => {
