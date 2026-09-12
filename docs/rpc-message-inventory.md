@@ -13,7 +13,7 @@
 Sources of truth (all paths relative to repo root):
 
 - Protocol: `packages/shared/src/message-hub/protocol.ts`, `types.ts`, `message-hub.ts`
-- Handlers: `packages/daemon/src/lib/rpc-handlers/` (33 of 36 files carry registrations — only `activity-preview.ts`, `provider-mutation-lock.ts`, and `voice-credential-lock.ts` have none; `index.ts` itself registers 4), `packages/daemon/src/lib/state-projection-service.ts`, `packages/daemon/src/lib/external-events/github/github-event-extension.ts`
+- Handlers: `packages/daemon/src/lib/rpc-handlers/` (36 of 39 files carry registrations — only `activity-preview.ts`, `provider-mutation-lock.ts`, and `voice-credential-lock.ts` have none; `index.ts` itself registers 4), `packages/daemon/src/lib/state-projection-service.ts`, `packages/daemon/src/lib/external-events/github/github-event-extension.ts`
 - Event emission: `messageHub.event(...)` call sites in `packages/daemon/src/` plus the internal-bus→client bridge `packages/daemon/src/lib/client-event-bridge.ts`
 - LiveQuery: `packages/daemon/src/lib/rpc-handlers/live-query-handlers.ts`
 - Client call sites: `hub.request(...)` / `callIfConnected(...)` across `packages/web/src/` (re-scanned 2026-09-10 against the post-cleanup surface, production code only: 222 distinct literal method strings plus the constant-indirected and dynamic sites listed in §7)
