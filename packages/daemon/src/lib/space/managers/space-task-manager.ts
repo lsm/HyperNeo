@@ -234,8 +234,8 @@ export class SpaceTaskManager {
           expectedGeneration
         );
         if (!result) {
-          if (expectedGeneration !== undefined) throw new PendingCompletionSupersededError(taskId);
           if (expectedStatus !== undefined) throw new StaleStatusCasMiss();
+          if (expectedGeneration !== undefined) throw new PendingCompletionSupersededError(taskId);
           throw new Error(`Failed to update task: ${taskId}`);
         }
         if (reopened) {
