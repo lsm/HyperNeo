@@ -48,6 +48,14 @@ function resolveWorkflowSubmissionRejection(error: unknown): string | undefined 
   return WORKFLOW_SUBMISSION_REJECTIONS.find(([substring]) => message.includes(substring))?.[1];
 }
 
+function reviewBackedByFrozenDirectRequest(db: Database, taskId: string, sessionId: string) {
+  const row = db
+    .prepare('SELECT id FROM direct_task_execution_attempts WHERE task_id = ? AND session_id = ?')
+    .get(taskId, sessionId) as { id: string } | null;
+  if (!row) return false;
+  return readDirectFinalizationRequest(db, { attemptId: row.id, sessionId })?.status === 'review';
+}
+
 async function admitManagedSubmission(
   db: Database,
   input: Input,
@@ -57,7 +65,9 @@ async function admitManagedSubmission(
   const task = new SpaceTaskRepository(db).getTask(input.taskId);
   const hasActiveDirectAttempt =
     task?.taskAgentSessionId &&
-    (task.status === 'review' || !!new DirectTaskExecutionRepository(db).getActive(task.id));
+    (!!new DirectTaskExecutionRepository(db).getActive(task.id) ||
+      (task.status === 'review' &&
+        reviewBackedByFrozenDirectRequest(db, task.id, task.taskAgentSessionId)));
   if (!task?.spaceId || hasActiveDirectAttempt) return { value: true };
   if (task.archivedAt)
     return { reason: { accepted: false, reason: 'review_submission_unavailable' } };

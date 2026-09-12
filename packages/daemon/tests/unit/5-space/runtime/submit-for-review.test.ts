@@ -339,6 +339,17 @@ test('a manually reopened task with a stopped direct attempt submits through the
   expect(outcomeCount()).toBe(0);
 });
 
+test('an immediate retry after that reopened submission stays on the manager path', async () => {
+  db.prepare("UPDATE direct_task_execution_attempts SET phase='stopped' WHERE id=?").run(attemptId);
+  await operation.execute({ taskId, reason: 'Ready again' }, { source: 'rpc' });
+  expect(tasks.getTask(taskId)?.status).toBe('review');
+  expect(await operation.execute({ taskId, reason: 'Ready again' }, { source: 'rpc' })).toEqual({
+    accepted: true,
+    jobId: null,
+  });
+  expect(outcomeCount()).toBe(0);
+});
+
 test('a plain task racing a concurrent direct claim is rejected instead of writing through the manager', async () => {
   const plainId = createPlainTask('open');
   attempts.select(plainId);
