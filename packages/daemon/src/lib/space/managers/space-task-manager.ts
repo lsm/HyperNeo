@@ -250,10 +250,13 @@ export class SpaceTaskManager {
           expectedWorkflowRunId
         );
         if (!result) {
-          if (expectedStatus !== undefined || expectedWorkflowRunId !== undefined)
-            throw new StaleStatusCasMiss();
-          if (expectedGeneration !== undefined) throw new PendingCompletionSupersededError(taskId);
-          throw new Error(`Failed to update task: ${taskId}`);
+          if (
+            expectedStatus === undefined &&
+            expectedWorkflowRunId === undefined &&
+            expectedGeneration === undefined
+          )
+            throw new Error(`Failed to update task: ${taskId}`);
+          throw new StaleStatusCasMiss();
         }
         if (reopened) {
           this.onTaskReopened?.(taskId);
@@ -268,16 +271,27 @@ export class SpaceTaskManager {
       this.reactiveDb?.abortTransaction();
       if (err instanceof StaleStatusCasMiss) {
         const current = await this.getTask(taskId);
-        const statusMismatch = expectedStatus !== undefined && current?.status !== expectedStatus;
+        if (!current) {
+          throw new Error(`Task not found: ${taskId}`);
+        }
+        const generationMismatch =
+          expectedGeneration !== undefined &&
+          (current.status !== 'review' ||
+            current.pendingCheckpointType !== 'task_completion' ||
+            (current.pendingCompletionGeneration ?? 0) !== expectedGeneration);
+        if (generationMismatch) {
+          throw new PendingCompletionSupersededError(taskId);
+        }
+        const statusMismatch = expectedStatus !== undefined && current.status !== expectedStatus;
         const workflowRunMismatch =
           expectedWorkflowRunId !== undefined &&
-          (current?.workflowRunId ?? null) !== expectedWorkflowRunId;
+          (current.workflowRunId ?? null) !== expectedWorkflowRunId;
         if (workflowRunMismatch && !statusMismatch) {
           throw new StaleTaskGuardError(
-            `Task ${taskId} is no longer attached to workflow run '${expectedWorkflowRunId}' (now '${current?.workflowRunId ?? task.workflowRunId ?? null}')`
+            `Task ${taskId} is no longer attached to workflow run '${expectedWorkflowRunId}' (now '${current.workflowRunId ?? null}')`
           );
         }
-        throw staleStatusError(current?.status ?? task.status);
+        throw staleStatusError(current.status);
       }
       throw err;
     }

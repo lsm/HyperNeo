@@ -5,6 +5,7 @@ import {
   SpaceTaskManager,
   VALID_SPACE_TASK_TRANSITIONS,
 } from '../../../../src/lib/space/managers/space-task-manager.ts';
+import { PendingCompletionSupersededError } from '../../../../src/lib/space/operations/pending-completion-guard.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
@@ -350,6 +351,86 @@ describe('SpaceTaskManager.setTaskStatus — expectedStatus guard', () => {
       spy.mockRestore();
     }
     expect(taskRepo.getTask(task.id)?.status).toBe('open');
+  });
+
+  test('a completion-generation race is preserved when the other guards still match', async () => {
+    const task = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'T',
+      description: '',
+      status: 'review',
+    });
+    const withCheckpoint = taskRepo.updateTask(task.id, {
+      pendingCheckpointType: 'task_completion',
+      pendingCompletionSubmittedByNodeId: 'end-node',
+      pendingCompletionSubmittedAt: Date.now(),
+    });
+    const baseline = withCheckpoint?.pendingCompletionGeneration ?? 0;
+    const realGetTask = SpaceTaskRepository.prototype.getTask;
+    let calls = 0;
+    const spy = spyOn(SpaceTaskRepository.prototype, 'getTask').mockImplementation(function (
+      this: SpaceTaskRepository,
+      id: string
+    ) {
+      calls += 1;
+      const row = realGetTask.call(this, id);
+      if (calls === 1 && row) {
+        taskRepo.updateTask(id, { status: 'review', pendingCheckpointType: 'task_completion' });
+      }
+      return row;
+    });
+    try {
+      await expect(
+        taskManager.setTaskStatus(task.id, 'approved', {
+          expectedStatus: 'review',
+          expectedWorkflowRunId: null,
+          expectedPendingCompletionGeneration: baseline,
+        })
+      ).rejects.toBeInstanceOf(PendingCompletionSupersededError);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(taskRepo.getTask(task.id)?.status).toBe('review');
+  });
+
+  test('a task deleted between the guarded write and the re-read reports not found', async () => {
+    const task = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'T',
+      description: '',
+      status: 'open',
+    });
+    const workflow = new SpaceWorkflowRepository(db).createWorkflow({
+      spaceId: SPACE_ID,
+      name: 'W',
+    });
+    const run = new SpaceWorkflowRunRepository(db).createRun({
+      spaceId: SPACE_ID,
+      workflowId: workflow.id,
+      title: 'R',
+    });
+    taskRepo.updateTask(task.id, { workflowRunId: run.id });
+    const realGetTask = SpaceTaskRepository.prototype.getTask;
+    let calls = 0;
+    const spy = spyOn(SpaceTaskRepository.prototype, 'getTask').mockImplementation(function (
+      this: SpaceTaskRepository,
+      id: string
+    ) {
+      calls += 1;
+      const row = realGetTask.call(this, id);
+      if (calls === 1 && row) db.prepare('DELETE FROM space_tasks WHERE id = ?').run(id);
+      return row;
+    });
+    try {
+      await expect(
+        taskManager.setTaskStatus(task.id, 'archived', {
+          expectedStatus: 'open',
+          expectedWorkflowRunId: run.id,
+        })
+      ).rejects.toThrow(`Task not found: ${task.id}`);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 
