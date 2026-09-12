@@ -34,7 +34,7 @@ export async function getDefaultAgentId(page: Page, spaceId: string): Promise<st
   return page.evaluate(async (sid) => {
     const hub = window.__messageHub || window.appState?.messageHub;
     if (!hub?.request) throw new Error('Hub not available');
-    const res = (await hub.request('spaceAgent.list', { spaceId: sid })) as {
+    const res = (await hub.request('spaceAgentV2.list', { spaceId: sid })) as {
       agents: Array<{ id: string; handle: string; displayName: string }>;
     };
     const pickable = res.agents.filter(

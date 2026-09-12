@@ -298,19 +298,6 @@ function makeMockHub() {
         );
       if (method === 'spaceTask.update') return makeTask('t1', 'in_progress');
       if (method === 'spaceTask.recoverWorkflow') return makeTask('t1', 'in_progress');
-      if (method === 'spaceAgent.getPromotionDraft') {
-        return {
-          draft: {
-            sourceSessionId: params?.sessionId,
-            sourceSessionTitle: 'Session title',
-            name: 'Promoted Agent',
-            customPrompt: 'Generated profile',
-            profile: {},
-          },
-        };
-      }
-      if (method === 'spaceAgent.promoteSession')
-        return { agent: makeLongHorizonAgent('promoted-agent') };
       if (method === 'spaceAgentV2.update') return { agent: makeLongHorizonAgent('a1') };
       if (method === 'spaceAgentV2.create') {
         return {
@@ -2034,16 +2021,6 @@ describe('SpaceStore — CRUD methods', () => {
     expect(spaceStore.agents.value.some((agent) => agent.id === 'new-agent')).toBe(true);
   });
 
-  it('createAgent translates the promotion-style name/customPrompt aliases onto V2', async () => {
-    await spaceStore.selectSpace('space-1');
-    await spaceStore.createAgent({ name: 'Coder', customPrompt: 'Be helpful.' });
-
-    expect(mockHub.request).toHaveBeenCalledWith(
-      'spaceAgentV2.create',
-      expect.objectContaining({ displayName: 'Coder', instructions: 'Be helpful.' })
-    );
-  });
-
   it('createAgent sends an explicit empty tools/modelPool rather than falling back to the template', async () => {
     await spaceStore.selectSpace('space-1');
     await spaceStore.createAgent({ displayName: 'Coder', templateKey: 'coder.default' });
@@ -2062,32 +2039,6 @@ describe('SpaceStore — CRUD methods', () => {
       'spaceAgentV2.create',
       expect.objectContaining({ provider: null })
     );
-  });
-
-  it('getAgentPromotionDraft calls spaceAgent.getPromotionDraft RPC', async () => {
-    await spaceStore.selectSpace('space-1');
-    const draft = await spaceStore.getAgentPromotionDraft('session-1');
-
-    expect(draft.name).toBe('Promoted Agent');
-    expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.getPromotionDraft', {
-      spaceId: 'space-1',
-      sessionId: 'session-1',
-    });
-  });
-
-  it('promoteSessionToAgent calls spaceAgent.promoteSession RPC', async () => {
-    await spaceStore.selectSpace('space-1');
-    await spaceStore.promoteSessionToAgent('session-1', {
-      name: 'Promoted Agent',
-      customPrompt: 'Reviewed profile',
-    });
-
-    expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.promoteSession', {
-      spaceId: 'space-1',
-      sessionId: 'session-1',
-      name: 'Promoted Agent',
-      customPrompt: 'Reviewed profile',
-    });
   });
 
   it('updateAgent calls spaceAgentV2.update RPC and upserts returned agent', async () => {
@@ -2110,16 +2061,6 @@ describe('SpaceStore — CRUD methods', () => {
       settingSources: undefined,
     });
     expect(spaceStore.agents.value.some((agent) => agent.id === 'a1')).toBe(true);
-  });
-
-  it('updateAgent translates the promotion-style name/customPrompt aliases onto V2', async () => {
-    await spaceStore.selectSpace('space-1');
-    await spaceStore.updateAgent('a1', { name: 'Renamed', customPrompt: 'New prompt' });
-
-    expect(mockHub.request).toHaveBeenCalledWith(
-      'spaceAgentV2.update',
-      expect.objectContaining({ displayName: 'Renamed', instructions: 'New prompt' })
-    );
   });
 
   it('previewWorkflowTemplateSync calls spaceWorkflow.previewTemplateSync RPC and returns the preview', async () => {
@@ -2267,7 +2208,7 @@ describe('SpaceStore — CRUD methods', () => {
     );
     await expect(spaceStore.archiveSpace()).rejects.toThrow('No space selected');
     await expect(spaceStore.deleteSpace()).rejects.toThrow('No space selected');
-    await expect(spaceStore.createAgent({ name: 'A' })).rejects.toThrow('No space selected');
+    await expect(spaceStore.createAgent({ displayName: 'A' })).rejects.toThrow('No space selected');
     await expect(spaceStore.createWorkflow({ name: 'W' })).rejects.toThrow('No space selected');
   });
 

@@ -34,15 +34,15 @@ async function createTestSpace(page: Page): Promise<string> {
     async ({ sid, roleA, roleB, agentAName, agentBName }) => {
       const hub = window.__messageHub || window.appState?.messageHub;
       if (!hub?.request) throw new Error('MessageHub not available');
-      await hub.request('spaceAgent.create', {
+      await hub.request('spaceAgentV2.create', {
         spaceId: sid,
-        name: agentAName,
+        displayName: agentAName,
         role: roleA,
         description: '',
       });
-      await hub.request('spaceAgent.create', {
+      await hub.request('spaceAgentV2.create', {
         spaceId: sid,
-        name: agentBName,
+        displayName: agentBName,
         role: roleB,
         description: '',
       });

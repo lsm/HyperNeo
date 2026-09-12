@@ -1023,7 +1023,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.messageHub,
     deps.internalEventBus,
     deps.spaceManager,
-    deps.db,
     longHorizonAgentRepo,
     spaceRuntimeService,
     new SpaceAgentTemplateManager(
