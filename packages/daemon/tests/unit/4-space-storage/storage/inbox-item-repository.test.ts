@@ -308,15 +308,6 @@ describe('InboxItemRepository', () => {
       expect(updated?.status).toBe('dismissed');
     });
 
-    it('should set routedToRoomId and routedAt when routing', () => {
-      const item = repository.createItem(createInboxItemParams());
-      const updated = repository.updateItemStatus(item.id, 'routed', 'room-123');
-
-      expect(updated?.status).toBe('routed');
-      expect(updated?.routedToRoomId).toBe('room-123');
-      expect(updated?.routedAt).toBeGreaterThan(0);
-    });
-
     it('should update updatedAt timestamp', async () => {
       const item = repository.createItem(createInboxItemParams());
       const originalUpdatedAt = item.updatedAt;
@@ -339,17 +330,6 @@ describe('InboxItemRepository', () => {
       const updated = repository.dismissItem(item.id);
 
       expect(updated?.status).toBe('dismissed');
-    });
-  });
-
-  describe('routeItem', () => {
-    it('should set status to routed with room ID', () => {
-      const item = repository.createItem(createInboxItemParams());
-      const updated = repository.routeItem(item.id, 'room-456');
-
-      expect(updated?.status).toBe('routed');
-      expect(updated?.routedToRoomId).toBe('room-456');
-      expect(updated?.routedAt).toBeGreaterThan(0);
     });
   });
 

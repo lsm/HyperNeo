@@ -58,10 +58,6 @@ export class InboxManager {
     return this.db.getInboxItem(id);
   }
 
-  routeItem(id: string, roomId: string): InboxItem | null {
-    return this.db.routeInboxItem(id, roomId);
-  }
-
   dismissItem(id: string): InboxItem | null {
     return this.db.dismissInboxItem(id);
   }

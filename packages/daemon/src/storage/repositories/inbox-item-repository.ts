@@ -113,30 +113,15 @@ export class InboxItemRepository {
     return this.listItems({ status: 'pending', limit });
   }
 
-  updateItemStatus(id: string, status: InboxItemStatus, routedToRoomId?: string): InboxItem | null {
-    const fields: string[] = ['status = ?', 'updated_at = ?'];
-    const values: SQLiteValue[] = [status, Date.now()];
-
-    if (routedToRoomId !== undefined) {
-      fields.push('routed_to_room_id = ?');
-      values.push(routedToRoomId);
-      fields.push('routed_at = ?');
-      values.push(Date.now());
-    }
-
-    values.push(id);
-    const stmt = this.db.prepare(`UPDATE inbox_items SET ${fields.join(', ')} WHERE id = ?`);
-    stmt.run(...values);
+  updateItemStatus(id: string, status: InboxItemStatus): InboxItem | null {
+    const stmt = this.db.prepare(`UPDATE inbox_items SET status = ?, updated_at = ? WHERE id = ?`);
+    stmt.run(status, Date.now(), id);
 
     return this.getItem(id);
   }
 
   dismissItem(id: string): InboxItem | null {
     return this.updateItemStatus(id, 'dismissed');
-  }
-
-  routeItem(id: string, roomId: string): InboxItem | null {
-    return this.updateItemStatus(id, 'routed', roomId);
   }
 
   blockItem(id: string): InboxItem | null {

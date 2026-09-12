@@ -28,9 +28,6 @@ function makeDb(): Database {
   const sqlite = new SqliteDatabase(':memory:');
   return {
     getDatabase: () => sqlite,
-    listGitHubMappingsForRepository: mock(() => []),
-    listGitHubMappings: mock(() => []),
-    getGitHubMappingByRoomId: mock(() => null),
     countInboxItemsByStatus: mock(() => 0),
     listPendingInboxItems: mock(() => []),
     getInboxItem: mock(() => null),
