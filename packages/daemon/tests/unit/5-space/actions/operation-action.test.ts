@@ -5,7 +5,11 @@ import {
   runDispatchAction,
   type DispatchActionDeps,
 } from '../../../../src/lib/space/actions/dispatcher-pipeline.ts';
-import { createOperationActionHandler } from '../../../../src/lib/space/actions/operation-action.ts';
+import {
+  createOperationActionHandler,
+  invokeMappedOperation,
+  mapActionParams,
+} from '../../../../src/lib/space/actions/operation-action.ts';
 import { createActionRegistry, defineAction } from '../../../../src/lib/space/actions/registry.ts';
 import {
   createOperationRegistry,
@@ -33,6 +37,52 @@ function exampleRegistry(
     ]),
   };
 }
+
+describe('mapActionParams (gate)', () => {
+  test('a plain mapped value continues with { mappedParams }', async () => {
+    const result = await mapActionParams({ text: 'hi' }, (params) => ({
+      text: (params as { text: string }).text,
+    }));
+    expect(result).toEqual({ value: { mappedParams: { text: 'hi' } } });
+  });
+
+  test('a { reject } mapped value halts with a formatted ToolResult reason', async () => {
+    const result = await mapActionParams({}, () => ({ reject: 'nope' }));
+    expect(result).toMatchObject({
+      reason: { isError: true },
+    });
+    const reason = (result as { reason: { content: Array<{ text: string }> } }).reason;
+    expect(JSON.parse(reason.content[0].text)).toEqual({ success: false, error: 'nope' });
+  });
+
+  test('awaits an async mapParams before deciding', async () => {
+    const result = await mapActionParams({}, async () => ({ text: 'async' }));
+    expect(result).toEqual({ value: { mappedParams: { text: 'async' } } });
+  });
+});
+
+describe('invokeMappedOperation (gate)', () => {
+  test('a completed outcome becomes jsonResult(value)', async () => {
+    const { registry } = exampleRegistry();
+    const result = await invokeMappedOperation(
+      { mappedParams: { text: 'hi' } },
+      registry,
+      'example',
+      { source: 'mcp' }
+    );
+    expect(JSON.parse(extractText(result))).toEqual({ echoed: 'hi' });
+    expect(result.isError).toBeUndefined();
+  });
+
+  test('a failed outcome becomes an isError ToolResult with the code and message', async () => {
+    const { registry } = exampleRegistry();
+    const result = await invokeMappedOperation({ mappedParams: {} }, registry, 'missing', {
+      source: 'mcp',
+    });
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(extractText(result))).toMatchObject({ code: 'unknown_operation' });
+  });
+});
 
 describe('createOperationActionHandler', () => {
   test('maps a completed outcome to jsonResult of the operation value', async () => {

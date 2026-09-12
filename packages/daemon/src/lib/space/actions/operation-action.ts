@@ -2,7 +2,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { invokeOperation } from '../../operations/invoke.ts';
 import { resolveOperationRegistry } from '../../operations/registry.ts';
 import type { OperationCaller, OperationRegistrySource } from '../../operations/registry.ts';
-import { jsonResult } from '../tools/tool-result.ts';
+import { jsonResult, type ToolResult } from '../tools/tool-result.ts';
 
 export type OperationActionRejection = { reject: string };
 
@@ -15,26 +15,28 @@ export function isOperationActionRejection(value: unknown): value is OperationAc
   );
 }
 
-async function mapActionParams(
+export type MappedActionParams = { mappedParams: unknown };
+
+export async function mapActionParams(
   params: unknown,
   mapParams: (params: unknown) => unknown | Promise<unknown>
-): Promise<{ value: unknown } | { reason: unknown }> {
+): Promise<{ value: MappedActionParams } | { reason: ToolResult }> {
   const mapped = await mapParams(params);
   return isOperationActionRejection(mapped)
     ? { reason: { ...jsonResult({ success: false, error: mapped.reject }), isError: true } }
-    : { value: mapped };
+    : { value: { mappedParams: mapped } };
 }
 
-async function invokeMappedOperation(
-  mapped: unknown,
+export async function invokeMappedOperation(
+  mapped: MappedActionParams,
   registry: OperationRegistrySource,
   operationName: string,
   caller: OperationCaller
-): Promise<unknown> {
+): Promise<ToolResult> {
   const outcome = await invokeOperation(
     resolveOperationRegistry(registry),
     operationName,
-    mapped,
+    mapped.mappedParams,
     caller
   );
   return outcome.kind === 'completed'
