@@ -1,5 +1,5 @@
 import { createStartTaskOperation, type DirectStartOperationDependencies } from './start-task.ts';
-import { createCancelTaskOperation } from './cancel-task.ts';
+import { createCancelTaskOperation, type CancelPolicyContext } from './cancel-task.ts';
 import { createSubmitTaskForReviewOperation } from './submit-for-review.ts';
 import { createSpaceCreateTaskOperation, type SpaceCreateTaskDependencies } from './create-task.ts';
 import {
@@ -25,7 +25,8 @@ export function createSpaceOperationRegistryProvider(
   tasks: Omit<
     SpaceTaskMetadataDependencies & SpaceTaskDependencyDependencies & SpaceCreateTaskDependencies,
     'db'
-  >,
+  > &
+    CancelPolicyContext,
   pendingCompletion?: OwnedPendingCompletionDependencies,
   directStart?: DirectStartOperationDependencies
 ) {

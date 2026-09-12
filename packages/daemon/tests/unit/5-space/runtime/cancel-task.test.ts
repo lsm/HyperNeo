@@ -404,3 +404,112 @@ test('an unrelated stop failure is not swallowed as a domain rejection and surfa
   const outcome = await invokeOperation(registry, 'task.cancel', { taskId }, { source: 'rpc' });
   expect(outcome).toMatchObject({ kind: 'failed', code: 'execution_failed' });
 });
+
+test('a plain in_progress task is cancelled directly through the task manager, without a stop call', async () => {
+  const spaceId = tasks.getTask(taskId)!.spaceId!;
+  const plainTaskId = tasks.createTask({
+    spaceId,
+    title: 'Plain',
+    description: '',
+    status: 'in_progress',
+  }).id;
+  const emitTaskUpdated = mock(async () => {});
+  const stopForStatus = mockStopForStatus();
+  const plainOp = createCancelTaskOperation(() => db, jobs, {
+    getTaskManager: (id) => new SpaceTaskManager(db, id),
+    emitTaskUpdated,
+    stopForStatus,
+  });
+  expect(await plainOp.execute({ taskId: plainTaskId }, { source: 'rpc' })).toEqual({
+    accepted: true,
+    jobId: null,
+  });
+  expect(tasks.getTask(plainTaskId)?.status).toBe('cancelled');
+  expect(emitTaskUpdated).toHaveBeenCalledTimes(1);
+  expect(stopForStatus).not.toHaveBeenCalled();
+});
+
+test('a plain open task can be cancelled', async () => {
+  const spaceId = tasks.getTask(taskId)!.spaceId!;
+  const plainTaskId = tasks.createTask({ spaceId, title: 'Plain', description: '' }).id;
+  const plainOp = createCancelTaskOperation(() => db, jobs, {
+    getTaskManager: (id) => new SpaceTaskManager(db, id),
+    emitTaskUpdated: async () => {},
+  });
+  expect(await plainOp.execute({ taskId: plainTaskId }, { source: 'rpc' })).toEqual({
+    accepted: true,
+    jobId: null,
+  });
+  expect(tasks.getTask(plainTaskId)?.status).toBe('cancelled');
+});
+
+test('a plain task with a reserved direct attempt is unavailable, not written through the manager', async () => {
+  const spaceId = tasks.getTask(taskId)!.spaceId!;
+  const plainTaskId = tasks.createTask({ spaceId, title: 'Plain', description: '' }).id;
+  attempts.select(plainTaskId);
+  expect(attempts.claim(plainTaskId, 'direct-reserved', 'reserved-session')).not.toBeNull();
+  const plainOp = createCancelTaskOperation(() => db, jobs, {
+    getTaskManager: (id) => new SpaceTaskManager(db, id),
+    emitTaskUpdated: async () => {},
+  });
+  expect(await plainOp.execute({ taskId: plainTaskId }, { source: 'rpc' })).toMatchObject({
+    accepted: false,
+    reason: 'cancellation_unavailable',
+  });
+  expect(tasks.getTask(plainTaskId)?.status).toBe('open');
+});
+
+test('a plain done task returns cancellation_unavailable', async () => {
+  const spaceId = tasks.getTask(taskId)!.spaceId!;
+  const plainTaskId = tasks.createTask({
+    spaceId,
+    title: 'Plain',
+    description: '',
+    status: 'done',
+  }).id;
+  const plainOp = createCancelTaskOperation(() => db, jobs, {
+    getTaskManager: (id) => new SpaceTaskManager(db, id),
+    emitTaskUpdated: async () => {},
+  });
+  expect(await plainOp.execute({ taskId: plainTaskId }, { source: 'rpc' })).toMatchObject({
+    accepted: false,
+    reason: 'cancellation_unavailable',
+  });
+});
+
+test('an MCP session in another Space cannot cancel a plain task', async () => {
+  const spaceId = tasks.getTask(taskId)!.spaceId!;
+  const plainTaskId = tasks.createTask({ spaceId, title: 'Plain', description: '' }).id;
+  const worker = sessions.getSession(sessionId)!;
+  sessions.createSession(
+    { ...worker, id: 'coordinator', type: 'space_chat', context: { spaceId: 'other-space' } },
+    { enforceWorkspaceOwnership: false }
+  );
+  const getTaskManager = mock((id: string) => new SpaceTaskManager(db, id));
+  const plainOp = createCancelTaskOperation(() => db, jobs, {
+    getTaskManager,
+    emitTaskUpdated: async () => {},
+  });
+  expect(
+    await plainOp.execute({ taskId: plainTaskId }, { source: 'mcp', sessionId: 'coordinator' })
+  ).toMatchObject({ accepted: false, reason: 'cancellation_denied' });
+  expect(getTaskManager).not.toHaveBeenCalled();
+  expect(tasks.getTask(plainTaskId)?.status).toBe('open');
+});
+
+test('a plain-task transition rejection surfaces cancellation_invalid_transition', async () => {
+  const spaceId = tasks.getTask(taskId)!.spaceId!;
+  const plainTaskId = tasks.createTask({ spaceId, title: 'Plain', description: '' }).id;
+  const plainOp = createCancelTaskOperation(() => db, jobs, {
+    getTaskManager: () => ({
+      setTaskStatus: async () => {
+        throw new Error("Invalid status transition from 'open' to 'cancelled'. Allowed: none");
+      },
+    }),
+    emitTaskUpdated: async () => {},
+  });
+  expect(await plainOp.execute({ taskId: plainTaskId }, { source: 'rpc' })).toMatchObject({
+    accepted: false,
+    reason: 'cancellation_invalid_transition',
+  });
+});
