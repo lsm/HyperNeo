@@ -1,4 +1,5 @@
 import { createDirectTaskStarter } from '../../../../src/lib/space/runtime/start-direct-task';
+import { decideReportableTerminal } from '../../../../src/lib/space/goals/reportable-terminal-gates.ts';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
 import { DirectTaskExecutionRepository } from '../../../../src/storage/repositories/direct-task-execution-repository';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session';
@@ -593,6 +594,63 @@ describe('SpaceRuntime — tick loop correctness', () => {
         ).toBe(true);
       }
     );
+
+    test('first worker terminal completion during a sibling spawn keeps the task start reportable', async () => {
+      let spawnCount = 0;
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+        spawnWorkflowNodeAgentForExecution: async (value, _space, _workflow, _run, node) => {
+          spawnCount++;
+          const task = value as SpaceTask;
+          const execution = node as NodeExecution;
+          nodeExecutionRepo.update(execution.id, {
+            status: 'in_progress',
+            agentSessionId: `worker:${execution.id}`,
+            startedAt: Date.now(),
+          });
+          if (spawnCount === 2) {
+            taskRepo.updateTask(task.id, { status: 'done', result: 'first worker finished' });
+          }
+          await Promise.resolve();
+          return `worker:${execution.id}`;
+        },
+      });
+      const rt = new SpaceRuntime(buildConfig(tam));
+      const workflow = workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: 'Terminal sibling race',
+        description: '',
+        nodes: [
+          {
+            id: STEP_A,
+            name: 'Parallel',
+            agents: [
+              { agentId: AGENT_PLANNER, name: 'Planner' },
+              { agentId: AGENT_CODER, name: 'Coder' },
+            ],
+          },
+          { id: STEP_B, name: 'Done', agentId: AGENT_CODER },
+        ],
+        transitions: [{ from: STEP_A, to: STEP_B, condition: { type: 'always' }, order: 0 }],
+        startNodeId: STEP_A,
+        endNodeId: STEP_B,
+        rules: [],
+        tags: [],
+      });
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      await processRunTick(rt, run.id);
+      const task = taskRepo.getTask(tasks[0].id)!;
+      expect(spawnCount).toBe(2);
+      expect(task.status).toBe('done');
+      expect(task.startedAt).toBeTypeOf('number');
+      expect(
+        decideReportableTerminal({
+          fromStatus: 'in_progress',
+          toStatus: task.status,
+          hasStartGeneration: task.startedAt !== null,
+          hasPriorTerminalGeneration: false,
+        }).action
+      ).toBe('notify');
+    });
 
     test('missing and finished runs stop before spawn work', async () => {
       let spawnCount = 0;
