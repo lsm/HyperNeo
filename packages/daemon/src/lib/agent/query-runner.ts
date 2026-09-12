@@ -1298,8 +1298,6 @@ export class QueryRunner {
         resolveDrain = () => {};
       }
     } catch (error) {
-      logger.error('Streaming query error:', error);
-
       this.ctx.attemptTokens.invalidate(attemptToken);
 
       releaseStartupPermit('query_error');
@@ -1360,18 +1358,20 @@ export class QueryRunner {
       const routeDecision = decideQueryRetry({ errorSignal: retrySignal, env: retryEnv });
       const queueRunningAtEntry = messageQueue.isRunning();
 
-      if (
-        routeDecision.route.action === 'superseded_noop' ||
-        routeDecision.route.action === 'cleanup_noop'
-      ) {
-        return;
-      }
-
       if (routeDecision.route.action === 'expected_recovery_noop') {
         logger.info(
           'SDK process exit during rate-limit recovery: attributing the CLI process exit ' +
             'to the in-flight recovery restart; no error report.'
         );
+        return;
+      }
+
+      logger.error('Streaming query error:', error);
+
+      if (
+        routeDecision.route.action === 'superseded_noop' ||
+        routeDecision.route.action === 'cleanup_noop'
+      ) {
         return;
       }
 

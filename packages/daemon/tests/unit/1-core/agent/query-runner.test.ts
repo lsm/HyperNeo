@@ -3278,6 +3278,10 @@ describe('QueryRunner', () => {
 
       expect(outcome).toBe('resolved');
       expect(mockLogger.info).toHaveBeenCalledWith(expect.stringContaining('rate-limit recovery'));
+      expect(mockLogger.error).not.toHaveBeenCalledWith(
+        'Streaming query error:',
+        expect.anything()
+      );
       expect(handleErrorSpy).not.toHaveBeenCalled();
       expect(beginTerminalIdleSpy).not.toHaveBeenCalled();
       expect(setIdleSpy).not.toHaveBeenCalled();
@@ -3290,6 +3294,7 @@ describe('QueryRunner', () => {
       const { outcome } = await runTerminalFailure('Claude Code process exited with code 1');
 
       expect(outcome).toBe('resolved');
+      expect(mockLogger.error).toHaveBeenCalledWith('Streaming query error:', expect.anything());
       expect(handleErrorSpy).toHaveBeenCalledTimes(1);
       expect(handleErrorSpy.mock.calls[0][2]).toBe(ErrorCategory.SYSTEM);
       expect(mockLogger.info).not.toHaveBeenCalledWith(
