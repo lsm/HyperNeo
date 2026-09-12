@@ -260,10 +260,16 @@ test('reserved attempts reject without freezing an outcome', async () => {
   expect(attempts.isStopRequested(attemptId, sessionId)).toBe(false);
 });
 
-function mockBlockExecution() {
+function mockStopForStatus() {
   return mock((_spaceId: string, taskId: string, params: UpdateSpaceTaskParams) =>
     Promise.resolve(tasks.updateTask(taskId, { status: params.status }))
   );
+}
+
+function unusedBlockExecution() {
+  return mock(async () => {
+    throw new Error('blockExecution must not be used for workflow-owned cancellation');
+  });
 }
 
 function createWorkflowRunId(spaceId: string) {
@@ -276,7 +282,7 @@ function createWorkflowRunId(spaceId: string) {
 }
 
 test.each(['rpc', 'internal'] as const)(
-  '%s caller cancels a workflow-owned task through the stop dependency without cascading',
+  '%s caller cancels a workflow-owned task through stopForStatus without cascading or using blockExecution',
   async (source) => {
     const spaceId = tasks.getTask(taskId)!.spaceId!;
     tasks.updateTask(taskId, { workflowRunId: createWorkflowRunId(spaceId) });
@@ -286,14 +292,17 @@ test.each(['rpc', 'internal'] as const)(
       description: '',
       dependsOn: [taskId],
     });
-    const blockExecution = mockBlockExecution();
-    const workflowOp = createCancelTaskOperation(() => db, jobs, { blockExecution });
+    const stopForStatus = mockStopForStatus();
+    const blockExecution = unusedBlockExecution();
+    const deps = { stopForStatus, blockExecution };
+    const workflowOp = createCancelTaskOperation(() => db, jobs, deps);
     expect(await workflowOp.execute({ taskId }, { source })).toEqual({
       accepted: true,
       jobId: null,
     });
-    expect(blockExecution).toHaveBeenCalledWith(spaceId, taskId, { status: 'cancelled' });
-    expect(blockExecution).toHaveBeenCalledTimes(1);
+    expect(stopForStatus).toHaveBeenCalledWith(spaceId, taskId, { status: 'cancelled' });
+    expect(stopForStatus).toHaveBeenCalledTimes(1);
+    expect(blockExecution).not.toHaveBeenCalled();
     expect(tasks.getTask(taskId)?.status).toBe('cancelled');
     expect(tasks.getTask(dependent.id)?.status).toBe('open');
     expect(outcomeCount()).toBe(0);
@@ -308,12 +317,12 @@ test('MCP caller in the owning Space is admitted for a workflow-owned task', asy
     { ...worker, id: 'coordinator', type: 'space_chat', context: { spaceId } },
     { enforceWorkspaceOwnership: false }
   );
-  const blockExecution = mockBlockExecution();
-  const workflowOp = createCancelTaskOperation(() => db, jobs, { blockExecution });
+  const stopForStatus = mockStopForStatus();
+  const workflowOp = createCancelTaskOperation(() => db, jobs, { stopForStatus });
   expect(await workflowOp.execute({ taskId }, { source: 'mcp', sessionId: 'coordinator' })).toEqual(
     { accepted: true, jobId: null }
   );
-  expect(blockExecution).toHaveBeenCalledTimes(1);
+  expect(stopForStatus).toHaveBeenCalledTimes(1);
 });
 
 test('MCP caller outside the owning Space is denied for a workflow-owned task', async () => {
@@ -324,22 +333,32 @@ test('MCP caller outside the owning Space is denied for a workflow-owned task', 
     { ...worker, id: 'coordinator', type: 'space_chat', context: { spaceId: 'other-space' } },
     { enforceWorkspaceOwnership: false }
   );
-  const blockExecution = mockBlockExecution();
-  const workflowOp = createCancelTaskOperation(() => db, jobs, { blockExecution });
+  const stopForStatus = mockStopForStatus();
+  const workflowOp = createCancelTaskOperation(() => db, jobs, { stopForStatus });
   expect(
     await workflowOp.execute({ taskId }, { source: 'mcp', sessionId: 'coordinator' })
   ).toMatchObject({ accepted: false, reason: 'cancellation_denied' });
-  expect(blockExecution).not.toHaveBeenCalled();
+  expect(stopForStatus).not.toHaveBeenCalled();
 });
 
 test('an already-cancelled workflow-owned task returns unavailable', async () => {
   const spaceId = tasks.getTask(taskId)!.spaceId!;
   tasks.updateTask(taskId, { workflowRunId: createWorkflowRunId(spaceId), status: 'cancelled' });
-  const blockExecution = mockBlockExecution();
-  const workflowOp = createCancelTaskOperation(() => db, jobs, { blockExecution });
+  const stopForStatus = mockStopForStatus();
+  const workflowOp = createCancelTaskOperation(() => db, jobs, { stopForStatus });
   expect(await workflowOp.execute({ taskId }, { source: 'rpc' })).toMatchObject({
     accepted: false,
     reason: 'cancellation_unavailable',
   });
-  expect(blockExecution).not.toHaveBeenCalled();
+  expect(stopForStatus).not.toHaveBeenCalled();
+});
+
+test('workflow-owned cancellation is unavailable when the stop binding is not configured', async () => {
+  const spaceId = tasks.getTask(taskId)!.spaceId!;
+  tasks.updateTask(taskId, { workflowRunId: createWorkflowRunId(spaceId) });
+  const workflowOp = createCancelTaskOperation(() => db, jobs, {});
+  expect(await workflowOp.execute({ taskId }, { source: 'rpc' })).toMatchObject({
+    accepted: false,
+    reason: 'cancellation_unavailable',
+  });
 });
