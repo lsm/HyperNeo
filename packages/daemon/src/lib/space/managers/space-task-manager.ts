@@ -17,6 +17,8 @@ import {
 
 export { VALID_SPACE_TASK_TRANSITIONS, isValidSpaceTaskTransition, assertValidSpaceTaskTransition };
 
+class StaleStatusCasMiss extends Error {}
+
 import { buildTaskDependencyGraph, hasTaskDependencyCycle } from '../../tasks/dependency-graph.ts';
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
 import type {
@@ -191,10 +193,10 @@ export class SpaceTaskManager {
     }
 
     const expectedStatus = options?.expectedStatus;
-    const staleStatusError = () =>
-      new Error(`Task ${taskId} is no longer '${expectedStatus}' (now '${task.status}')`);
+    const staleStatusError = (currentStatus: SpaceTaskStatus) =>
+      new Error(`Task ${taskId} is no longer '${expectedStatus}' (now '${currentStatus}')`);
     if (expectedStatus !== undefined && task.status !== expectedStatus) {
-      throw staleStatusError();
+      throw staleStatusError(task.status);
     }
 
     const expectedGeneration = options?.expectedPendingCompletionGeneration;
@@ -233,7 +235,7 @@ export class SpaceTaskManager {
         );
         if (!result) {
           if (expectedGeneration !== undefined) throw new PendingCompletionSupersededError(taskId);
-          if (expectedStatus !== undefined) throw staleStatusError();
+          if (expectedStatus !== undefined) throw new StaleStatusCasMiss();
           throw new Error(`Failed to update task: ${taskId}`);
         }
         if (reopened) {
@@ -247,6 +249,10 @@ export class SpaceTaskManager {
       this.reactiveDb?.commitTransaction();
     } catch (err) {
       this.reactiveDb?.abortTransaction();
+      if (err instanceof StaleStatusCasMiss) {
+        const current = await this.getTask(taskId);
+        throw staleStatusError(current?.status ?? task.status);
+      }
       throw err;
     }
 
