@@ -6,6 +6,7 @@ import {
 } from '../../../../src/lib/rpc-handlers/space-agent-v2-handlers';
 import { MIGRATED_WORKER_TEMPLATE_KEY } from '../../../../src/lib/space/agents/worker-long-horizon-mapper';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
+import { SpaceAgentReminderRepository } from '../../../../src/storage/repositories/space-agent-reminder-repository';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { SpaceAgentTemplateRepository } from '../../../../src/storage/repositories/space-agent-template-repository';
 import { runMigration226 } from '../../../../src/storage/schema/m226-space-agent-templates-version';
@@ -63,6 +64,7 @@ describe('setupSpaceAgentV2Handlers', () => {
   let db: Database;
   let agents: SpaceAgentRepository;
   let legacyAgents: SpaceLongHorizonAgentRepository;
+  let reminderRepo: SpaceAgentReminderRepository;
   let removedSubscriptions: Array<{ spaceId: string; agentId: string }>;
   let refreshedSubscriptions: Array<{ spaceId: string; agentId: string }>;
   let clearedProviders: Array<{ spaceId: string; agentId: string }>;
@@ -90,6 +92,7 @@ describe('setupSpaceAgentV2Handlers', () => {
 
     agents = new SpaceAgentRepository(db);
     legacyAgents = new SpaceLongHorizonAgentRepository(db);
+    reminderRepo = new SpaceAgentReminderRepository(db, new SpaceAgentRepository(db));
     removedSubscriptions = [];
     refreshedSubscriptions = [];
     clearedProviders = [];
@@ -118,7 +121,7 @@ describe('setupSpaceAgentV2Handlers', () => {
         seededExtras.push({ agentId: agent.id, templateKey: template.key });
       },
       templates,
-      reminders: legacyAgents,
+      reminders: reminderRepo,
       spaceExists: async (id) => id === 'space-1',
       getSession: (id) => sessions.get(id) ?? null,
       internalEventBus: {

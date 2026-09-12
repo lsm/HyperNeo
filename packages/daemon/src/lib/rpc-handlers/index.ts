@@ -1083,7 +1083,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     getSession: (sessionId) => deps.db.getSession(sessionId),
     internalEventBus: deps.internalEventBus,
     legacyAgents: longHorizonAgentRepo,
-    reminders: longHorizonAgentRepo,
+    reminders: spaceAgentReminderRepo,
     removeAgentSubscriptions: (spaceId, agentId) =>
       spaceRuntimeService.removeLongHorizonAgentSubscriptions(spaceId, agentId),
     refreshAgentSubscriptions: (spaceId, agentId) =>

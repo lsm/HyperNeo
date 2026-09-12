@@ -1,5 +1,6 @@
 import type { MessageHub, SpaceAgent, SpaceAgentTemplate } from '@hyperneo/shared';
 import type { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository.ts';
+import type { SpaceAgentReminderRepository } from '../../storage/repositories/space-agent-reminder-repository.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
 import type { SpaceAgentTemplateRepository } from '../../storage/repositories/space-agent-template-repository.ts';
 import { SPACE_MANAGER_HANDLE } from '../space/agent-handle.ts';
@@ -40,7 +41,7 @@ export interface SpaceAgentV2Deps {
   getSession(sessionId: string): SessionLookup | null;
   internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
   legacyAgents?: Pick<SpaceLongHorizonAgentRepository, 'getById'>;
-  reminders: Pick<SpaceLongHorizonAgentRepository, 'countActiveRemindersByAgent'>;
+  reminders: Pick<SpaceAgentReminderRepository, 'countActiveRemindersByAgent'>;
   removeAgentSubscriptions?(spaceId: string, agentId: string): void;
   refreshAgentSubscriptions?(
     spaceId: string,
