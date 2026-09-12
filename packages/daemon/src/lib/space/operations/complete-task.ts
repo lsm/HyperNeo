@@ -19,11 +19,12 @@ type CompletionResult = { accepted: true; task: SpaceTask } | { accepted: false;
 
 const reject = (reason: string) => ({ reason: { accepted: false as const, reason } });
 
-function admitCompletion(
+async function admitCompletion(
   db: Database,
   input: Input,
-  caller: OperationCaller
-): { value: SpaceTask } | { reason: CompletionResult } {
+  caller: OperationCaller,
+  deps: CompleteTaskDependencies
+): Promise<{ value: SpaceTask } | { reason: CompletionResult }> {
   const task = new SpaceTaskRepository(db).getTask(input.taskId);
   if (!task?.spaceId || task.archivedAt || task.status !== 'approved')
     return reject('task_completion_unavailable');
@@ -40,12 +41,20 @@ function admitCompletion(
     )
       return reject('task_completion_denied');
   }
+  if (task.postApprovalSessionId && caller.sessionId !== task.postApprovalSessionId)
+    return reject('task_completion_denied');
+  if (!task.postApprovalSessionId && (await deps.requiresPostApprovalOwner?.(task, caller)))
+    return reject('task_completion_unavailable');
   return { value: task };
 }
 
 export interface CompleteTaskDependencies {
   getTaskManager: (spaceId: string) => Pick<SpaceTaskManager, 'setTaskStatus'>;
   emitTaskUpdated: (spaceId: string, task: SpaceTask) => Promise<void>;
+  requiresPostApprovalOwner?: (
+    task: SpaceTask,
+    caller: OperationCaller
+  ) => boolean | Promise<boolean>;
 }
 
 async function completeApprovedTask(
@@ -71,13 +80,13 @@ export function createCompleteTaskOperation(
   const complete = (superpipe({ getDatabase, deps: dependencies })('complete-task') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(getDatabase, undefined, 'db')
-    .pipe(admitCompletion, ['db', 'input', 'caller'], 'result:outcome')
+    .pipe(admitCompletion, ['db', 'input', 'caller', 'deps'], 'result:outcome')
     .pipe(completeApprovedTask, ['outcome', 'input', 'deps'], 'outcome')
     .endAsync('outcome') as (input: Input, caller: OperationCaller) => Promise<CompletionResult>;
   return defineOperation({
     name: 'task.complete',
     description:
-      'Synchronously transition a Space task from `approved` to `done`, with an optional result, and return the updated task. RPC and internal callers are admitted directly; an MCP caller must be the task’s own worker session (session.context.taskId/spaceId match). Rejects task_completion_unavailable when the task is missing, not Space-owned, archived, or not currently `approved` (retry after state changes), and task_completion_denied when the calling MCP session is not that worker session (do not retry). A task whose status changes between admission and the manager call throws through as execution_failed rather than being reported as task_completion_unavailable. This binding does not yet enforce post-approval session ownership (`task.postApprovalSessionId` / `requiresPostApprovalOwner`); it also does not apply workflow completion gates (the coder-owned-merge PR gate) or the legacy `goal_update` field. Callers wanting the `mark_complete` tool’s artifact-summary result fallback must pass `result` themselves.',
+      'Synchronously transition a Space task from `approved` to `done`, with an optional result, and return the updated task. RPC and internal callers are admitted directly; an MCP caller must be the task’s own worker session (session.context.taskId/spaceId match). Once a post-approval session is routed onto the task (`task.postApprovalSessionId`), only that session may complete it — any other caller, including RPC/internal callers without a matching session id, is denied; before routing, a caller-supplied `requiresPostApprovalOwner` dependency can block completion until routing happens. Rejects task_completion_unavailable when the task is missing, not Space-owned, archived, not currently `approved`, or awaiting a still-unrouted required post-approval session (retry after state changes), and task_completion_denied when the calling MCP session is not that worker session or the caller is not the routed post-approval session (do not retry). A task whose status changes between admission and the manager call throws through as execution_failed rather than being reported as task_completion_unavailable. This binding does not yet apply workflow completion gates (the coder-owned-merge PR gate) or the legacy `goal_update` field. Callers wanting the `mark_complete` tool’s artifact-summary result fallback must pass `result` themselves.',
     inputSchema,
     resultSchema: z.union([
       z.object({ accepted: z.literal(true), task: TaskCoreSchema }),
