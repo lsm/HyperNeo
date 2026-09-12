@@ -549,6 +549,52 @@ describe('TaskAgentManager.isSessionOnPostApprovalRoute', () => {
   });
 });
 
+describe('TaskAgentManager.hasDispatchedPostApprovalRoute', () => {
+  let db: BunDatabase;
+  let tam: TaskAgentManager;
+
+  beforeEach(() => {
+    db = makeDb();
+    tam = makeManager(db);
+  });
+
+  it('returns false when the task is missing', () => {
+    expect(tam.hasDispatchedPostApprovalRoute('missing-task', 'any-session')).toBe(false);
+  });
+
+  it('returns false when the caller session is already on the dispatchable route', () => {
+    insertTask(db, { status: 'approved' });
+    insertWorkerSession(db, { sessionId: 'route-worker' });
+    expect(tam.hasDispatchedPostApprovalRoute(TASK_ID, 'route-worker')).toBe(false);
+  });
+
+  it('returns true when the caller session is not on the dispatchable route', () => {
+    insertTask(db, { status: 'approved' });
+    insertWorkerSession(db, { sessionId: 'other-worker', agentName: 'observer' });
+    expect(tam.hasDispatchedPostApprovalRoute(TASK_ID, 'other-worker')).toBe(true);
+  });
+
+  it('returns false when the workflow declares no dispatchable post-approval route', () => {
+    const workflow = {
+      id: 'wf-no-route',
+      nodes: [{ id: 'node-only', agents: [{ name: 'coder' }] }],
+    };
+    const noRouteTam = new TaskAgentManager({
+      db: { getDatabase: () => db },
+      taskRepo: new SpaceTaskRepository(db),
+      sessionManager: { registerSession: () => {} },
+      internalEventBus: new InternalEventBus<DaemonInternalEventMap>(),
+      spaceManager: { getSpace: async () => ({ id: SPACE_ID, workspacePath: '/tmp/ws' }) },
+      workflowRunRepo: { getRun: () => ({ id: RUN_ID, workflowId: workflow.id }) },
+      spaceWorkflowManager: { getWorkflow: () => workflow, getWorkflowForRun: () => workflow },
+      nodeExecutionRepo: { listByWorkflowRun: () => [], listByNode: () => [], update: () => null },
+    } as unknown as TaskAgentManagerConfig);
+    insertTask(db, { status: 'approved' });
+    insertWorkerSession(db, { sessionId: 'route-worker' });
+    expect(noRouteTam.hasDispatchedPostApprovalRoute(TASK_ID, 'route-worker')).toBe(false);
+  });
+});
+
 describe('TaskAgentManager.isSessionOnPostApprovalRoute — provenance binding', () => {
   let db: BunDatabase;
   let tam: TaskAgentManager;

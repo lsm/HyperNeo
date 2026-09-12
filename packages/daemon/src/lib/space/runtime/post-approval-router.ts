@@ -18,6 +18,7 @@ import {
   isTransientSpawnError,
 } from './workflow-node-execution-validation.ts';
 import { POST_APPROVAL_TASK_AGENT_TARGET } from '../workflows/post-approval-validator.ts';
+import { builtInWorkflowRequiresPrMerge } from '../workflows/built-in-workflows.ts';
 
 const log = new Logger('post-approval-router');
 
@@ -109,6 +110,14 @@ export function collectDispatchablePostApprovalRoutes(
 ): PostApprovalRoute[] {
   return collectPostApprovalRoutes(workflow).filter(
     (route) => route.targetAgent && route.targetAgent !== POST_APPROVAL_TASK_AGENT_TARGET
+  );
+}
+
+export function isCoderOwnedMergeWorkflow(workflow: SpaceWorkflow | null): boolean {
+  const dispatchedPostApprovalRoute = collectDispatchablePostApprovalRoutes(workflow)[0];
+  return (
+    dispatchedPostApprovalRoute?.requirePrMerge === true ||
+    builtInWorkflowRequiresPrMerge(workflow?.templateName)
   );
 }
 
