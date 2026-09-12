@@ -113,7 +113,7 @@ test.each(['missing', 'different', 'wrong-context', 'ended'] as const)(
           sessionId: kind === 'missing' ? undefined : kind === 'different' ? 'another' : sessionId,
         }
       )
-    ).toMatchObject({ accepted: false });
+    ).toMatchObject({ accepted: false, reason: 'direct_cancellation_denied' });
     expect(outcomeCount()).toBe(0);
     expect(attempts.isStopRequested(attemptId, sessionId)).toBe(false);
   }
@@ -266,7 +266,10 @@ test('workflow-backed tasks keep their existing cancellation route', async () =>
     title: 'Run',
   });
   tasks.updateTask(taskId, { workflowRunId: run.id });
-  expect(await operation.execute({ taskId }, { source: 'rpc' })).toMatchObject({ accepted: false });
+  expect(await operation.execute({ taskId }, { source: 'rpc' })).toMatchObject({
+    accepted: false,
+    reason: 'direct_cancellation_unavailable',
+  });
   expect(tasks.getTask(taskId)?.workflowRunId).toBe(run.id);
   expect(outcomeCount()).toBe(0);
 });

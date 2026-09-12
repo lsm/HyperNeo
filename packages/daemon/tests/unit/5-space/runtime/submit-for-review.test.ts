@@ -117,7 +117,7 @@ test.each(['missing', 'different', 'wrong-context', 'wrong-type', 'ended'] as co
           sessionId: kind === 'missing' ? undefined : kind === 'different' ? 'another' : sessionId,
         }
       )
-    ).toMatchObject({ accepted: false });
+    ).toMatchObject({ accepted: false, reason: 'direct_review_submission_denied' });
     expect(outcomeCount()).toBe(0);
     expect(attempts.isStopRequested(attemptId, sessionId)).toBe(false);
   }
@@ -140,6 +140,7 @@ test('a replacement task pointer cannot be submitted by the earlier worker', asy
 test('missing task rejects and schema does not accept caller-owned execution identity', async () => {
   expect(await operation.execute({ taskId: 'missing' }, { source: 'rpc' })).toMatchObject({
     accepted: false,
+    reason: 'direct_review_submission_unavailable',
   });
   expect(operation.inputSchema.safeParse({ taskId, attemptId, sessionId }).success).toBe(false);
   expect(outcomeCount()).toBe(0);
