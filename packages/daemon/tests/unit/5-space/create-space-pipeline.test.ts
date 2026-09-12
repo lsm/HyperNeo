@@ -6,7 +6,6 @@ import {
   type CreateSpaceDeps,
   createSpace,
   createSpaceRecord,
-  ensureSpaceManager,
   provisionChatSession,
   publishSpaceCreated,
   seedWorkflows,
@@ -47,9 +46,6 @@ function makeDeps(
     createSpaceRecord: async (input) => {
       log.calls.push(`create:${input.name}`);
       return space;
-    },
-    ensureSpaceManager: (spaceId) => {
-      log.calls.push(`coordinator:${spaceId}`);
     },
     seedWorkflows: (spaceId) => {
       log.calls.push(`seed:${spaceId}`);
@@ -152,16 +148,6 @@ describe('createSpace pipeline stages', () => {
     const result = await createSpaceRecord(ctx);
     expect(createSpaceRecordDep).toHaveBeenCalledWith(params);
     expect(result).toEqual({ ...ctx, space });
-  });
-
-  test('ensureSpaceManager delegates the created space id', () => {
-    const ensureSpaceManagerDep = mock(() => undefined);
-    const ctx = makeCtx({
-      deps: makeDeps({ ensureSpaceManager: ensureSpaceManagerDep }).deps,
-      space,
-    });
-    expect(ensureSpaceManager(ctx)).toBe(ctx);
-    expect(ensureSpaceManagerDep).toHaveBeenCalledWith(space.id);
   });
 
   describe('seedWorkflows', () => {
@@ -320,7 +306,6 @@ describe('createSpace pipeline', () => {
     expect(await createSpace(deps, params)).toBe(space);
     expect(log.calls).toEqual([
       'create:Test Space',
-      'coordinator:space-1',
       'seed:space-1',
       'session:space:chat:space-1',
       'add:space-1:space:chat:space-1',
@@ -347,18 +332,6 @@ describe('createSpace pipeline', () => {
     });
     await expect(createSpace(deps, params)).rejects.toBe(failure);
     expect(log.calls).toEqual(['create-failed']);
-  });
-
-  test('fatal coordinator failure prevents nonfatal stages and publication', async () => {
-    const failure = new Error('coordinator failed');
-    const { deps, log } = makeDeps({
-      ensureSpaceManager: () => {
-        log.calls.push('coordinator-failed');
-        throw failure;
-      },
-    });
-    await expect(createSpace(deps, params)).rejects.toBe(failure);
-    expect(log.calls).toEqual(['create:Test Space', 'coordinator-failed']);
   });
 
   test('accumulates seed warnings and still publishes', async () => {

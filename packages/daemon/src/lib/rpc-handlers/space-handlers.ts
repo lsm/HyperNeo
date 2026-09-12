@@ -22,7 +22,6 @@ import type { SpaceTaskRepository } from '../../storage/repositories/space-task-
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository.ts';
 import type { SessionManager } from '../session-manager.ts';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
-import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
 import { createSpace } from '../space/create-space-pipeline.ts';
 import { seedBuiltInWorkflows } from '../space/workflows/built-in-workflows.ts';
 import { Logger } from '../logger.ts';
@@ -142,10 +141,6 @@ function toSummaryTask(task: SpaceTask): SummarySpaceTask {
   };
 }
 
-type SetupSpaceHandlersOptions = {
-  longHorizonAgentRepo: SpaceLongHorizonAgentRepository;
-};
-
 export function setupSpaceHandlers(
   messageHub: MessageHub,
   spaceManager: SpaceManager,
@@ -154,19 +149,12 @@ export function setupSpaceHandlers(
   internalEventBus: InternalEventBus<DaemonInternalEventMap>,
   spaceWorkflowManager: SpaceWorkflowManager,
   sessionManager?: SessionManager,
-  spaceRuntimeService?: SpaceRuntimeService,
-  options?: SetupSpaceHandlersOptions
+  spaceRuntimeService?: SpaceRuntimeService
 ): void {
-  const longHorizonAgentRepo = options?.longHorizonAgentRepo;
   messageHub.onRequest('space.create', async (data) => {
-    if (!longHorizonAgentRepo) {
-      throw new Error('longHorizonAgentRepo is required to create a space');
-    }
-
     return createSpace(
       {
         createSpaceRecord: (params) => spaceManager.createSpace(params),
-        ensureSpaceManager: (spaceId) => longHorizonAgentRepo.ensureSpaceManager(spaceId),
         seedWorkflows: (spaceId) => seedBuiltInWorkflows(spaceId, spaceWorkflowManager),
         ...(sessionManager
           ? {
