@@ -212,7 +212,7 @@ function markTaskWorkflowOwned() {
     workflowId: workflow.id,
     title: 'Run',
   });
-  tasks.updateTask(taskId, { workflowRunId: run.id });
+  tasks.updateTask(taskId, { workflowRunId: run.id, taskAgentSessionId: null });
   return run.id;
 }
 
@@ -269,6 +269,62 @@ test('workflow-owned task with an invalid transition is rejected without throwin
     accepted: false,
     reason: 'review_submission_invalid_transition',
   });
+  expect(emitTaskUpdated).not.toHaveBeenCalled();
+});
+
+function createPlainTask(status: 'open' | 'in_progress') {
+  const spaceId = tasks.getTask(taskId)!.spaceId!;
+  return tasks.createTask({ spaceId, title: 'Plain', description: '', status }).id;
+}
+
+test('rpc caller submits a plain in_progress Space task through the manager path', async () => {
+  const plainId = createPlainTask('in_progress');
+  expect(await operation.execute({ taskId: plainId, reason: 'Ready' }, { source: 'rpc' })).toEqual({
+    accepted: true,
+    jobId: null,
+  });
+  expect(tasks.getTask(plainId)?.status).toBe('review');
+  expect(emitTaskUpdated).toHaveBeenCalledTimes(1);
+});
+
+test('rpc caller submits a plain open Space task through the manager path', async () => {
+  const plainId = createPlainTask('open');
+  expect(await operation.execute({ taskId: plainId }, { source: 'rpc' })).toEqual({
+    accepted: true,
+    jobId: null,
+  });
+  expect(tasks.getTask(plainId)?.status).toBe('review');
+});
+
+test('archived plain Space task is rejected as unavailable', async () => {
+  const plainId = createPlainTask('in_progress');
+  tasks.updateTask(plainId, { archivedAt: Date.now() });
+  expect(await operation.execute({ taskId: plainId }, { source: 'rpc' })).toEqual({
+    accepted: false,
+    reason: 'review_submission_unavailable',
+  });
+  expect(emitTaskUpdated).not.toHaveBeenCalled();
+});
+
+test('MCP caller outside the Space is denied on a plain Space task without writing', async () => {
+  const plainId = createPlainTask('in_progress');
+  const worker = sessions.getSession(sessionId)!;
+  sessions.createSession(
+    {
+      ...worker,
+      id: 'plain-caller-outside-space',
+      type: 'lobby',
+      context: { spaceId: 'other-space' },
+    },
+    { enforceWorkspaceOwnership: false }
+  );
+  expect(
+    await operation.execute(
+      { taskId: plainId },
+      { source: 'mcp', sessionId: 'plain-caller-outside-space' }
+    )
+  ).toMatchObject({ accepted: false, reason: 'review_submission_denied' });
+  expect(tasks.getTask(plainId)?.status).toBe('in_progress');
   expect(emitTaskUpdated).not.toHaveBeenCalled();
 });
 
