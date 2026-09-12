@@ -1076,7 +1076,11 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     clearSessionProvider: (spaceId, agentId) =>
       spaceRuntimeService.clearLongTermAgentSessionProvider(spaceId, agentId),
     seedTemplateExtras: buildTemplateExtrasSeeder({
-      store: longHorizonAgentRepo,
+      store: {
+        upsertSubscription: (params) => spaceAgentSubscriptionRepo.upsertSubscription(params),
+        deleteSubscription: (id) => spaceAgentSubscriptionRepo.deleteSubscription(id),
+        createReminder: (params) => spaceAgentReminderRepo.createReminder(params),
+      },
       refreshSubscription: (spaceId, subscriptionId) =>
         spaceRuntimeService.refreshLongHorizonSubscription(spaceId, subscriptionId),
     }),
