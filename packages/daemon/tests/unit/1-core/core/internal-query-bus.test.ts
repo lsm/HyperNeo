@@ -4,15 +4,16 @@ import {
   DuplicateQueryHandlerError,
   InternalQueryBus,
   MissingQueryHandlerError,
-  type RoomTasksListQuery,
-  type RoomTasksListResult,
   type SpaceWorkflowRunGetQuery,
   type SpaceWorkflowRunGetResult,
 } from '../../../../src/lib/internal-query-bus';
 
 interface TestQueryMap {
   'space.workflowRun.get': { input: SpaceWorkflowRunGetQuery; output: SpaceWorkflowRunGetResult };
-  'room.tasks.list': { input: RoomTasksListQuery; output: RoomTasksListResult };
+  'task.list': {
+    input: { scopeId: string; includeArchived?: boolean };
+    output: { tasks: Array<Record<string, unknown>> };
+  };
   'app.health': { input: { component?: string }; output: { status: string } };
 }
 
@@ -39,16 +40,16 @@ describe('InternalQueryBus', () => {
     });
 
     it('should include the query name in the duplicate error', () => {
-      bus.register('room.tasks.list', async () => ({ tasks: [] }));
+      bus.register('task.list', async () => ({ tasks: [] }));
 
       try {
-        bus.register('room.tasks.list', async () => ({ tasks: [] }));
+        bus.register('task.list', async () => ({ tasks: [] }));
         expect.unreachable('should have thrown');
       } catch (e) {
         expect(e).toBeInstanceOf(DuplicateQueryHandlerError);
         const dup = e as DuplicateQueryHandlerError;
-        expect(dup.queryName).toBe('room.tasks.list');
-        expect(dup.message).toContain('room.tasks.list');
+        expect(dup.queryName).toBe('task.list');
+        expect(dup.message).toContain('task.list');
       }
     });
   });
@@ -64,16 +65,16 @@ describe('InternalQueryBus', () => {
     });
 
     it('should pass the query payload to the handler', async () => {
-      const payloads: Array<RoomTasksListQuery> = [];
-      bus.register('room.tasks.list', async (q) => {
+      const payloads: Array<{ scopeId: string; includeArchived?: boolean }> = [];
+      bus.register('task.list', async (q) => {
         payloads.push(q);
         return { tasks: [] };
       });
 
-      await bus.execute('room.tasks.list', { roomId: 'r1', includeArchived: true });
+      await bus.execute('task.list', { scopeId: 'r1', includeArchived: true });
 
       expect(payloads).toHaveLength(1);
-      expect(payloads[0].roomId).toBe('r1');
+      expect(payloads[0].scopeId).toBe('r1');
       expect(payloads[0].includeArchived).toBe(true);
     });
 
@@ -105,12 +106,12 @@ describe('InternalQueryBus', () => {
     });
 
     it('should include the query name in the missing-handler failure', async () => {
-      const result = await bus.execute('room.tasks.list', { roomId: 'r1' });
+      const result = await bus.execute('task.list', { scopeId: 'r1' });
       expect(result.ok).toBe(false);
 
       const missing = result.error as MissingQueryHandlerError;
-      expect(missing.queryName).toBe('room.tasks.list');
-      expect(missing.message).toContain('room.tasks.list');
+      expect(missing.queryName).toBe('task.list');
+      expect(missing.message).toContain('task.list');
     });
 
     it('should not throw when the handler throws (structured failure instead)', async () => {
@@ -188,12 +189,12 @@ describe('InternalQueryBus', () => {
   describe('clear', () => {
     it('should remove all handlers', () => {
       bus.register('space.workflowRun.get', async () => ({ run: null }));
-      bus.register('room.tasks.list', async () => ({ tasks: [] }));
+      bus.register('task.list', async () => ({ tasks: [] }));
 
       bus.clear();
 
       expect(bus.hasHandler('space.workflowRun.get')).toBe(false);
-      expect(bus.hasHandler('room.tasks.list')).toBe(false);
+      expect(bus.hasHandler('task.list')).toBe(false);
       expect(bus.getHandlerCount()).toBe(0);
     });
   });
@@ -203,7 +204,7 @@ describe('InternalQueryBus', () => {
       expect(bus.getHandlerCount()).toBe(0);
       bus.register('space.workflowRun.get', async () => ({ run: null }));
       expect(bus.getHandlerCount()).toBe(1);
-      bus.register('room.tasks.list', async () => ({ tasks: [] }));
+      bus.register('task.list', async () => ({ tasks: [] }));
       expect(bus.getHandlerCount()).toBe(2);
     });
 
@@ -211,7 +212,7 @@ describe('InternalQueryBus', () => {
       expect(bus.hasHandler('space.workflowRun.get')).toBe(false);
       bus.register('space.workflowRun.get', async () => ({ run: null }));
       expect(bus.hasHandler('space.workflowRun.get')).toBe(true);
-      expect(bus.hasHandler('room.tasks.list')).toBe(false);
+      expect(bus.hasHandler('task.list')).toBe(false);
     });
   });
 
