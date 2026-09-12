@@ -33,10 +33,9 @@ async function createBlockedTaskFixture(
         workspacePath: wsPath,
       })) as { id: string };
 
-      const task = (await hub.request('spaceTask.create', {
-        spaceId: space.id,
-        title: 'Banner geometry probe',
-        description: '',
+      const task = (await hub.request('operation.invoke', {
+        name: 'task.create',
+        input: { spaceId: space.id, title: 'Banner geometry probe', description: '' },
       })) as { id: string };
 
       await hub.request('spaceTask.update', {

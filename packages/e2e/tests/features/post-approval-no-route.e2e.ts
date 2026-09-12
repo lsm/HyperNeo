@@ -22,10 +22,9 @@ async function createStandaloneTaskInApproved(
         workspacePath: wsPath,
       })) as { id: string };
 
-      const task = (await hub.request('spaceTask.create', {
-        spaceId: space.id,
-        title: 'Standalone task with no workflow',
-        description: '',
+      const task = (await hub.request('operation.invoke', {
+        name: 'task.create',
+        input: { spaceId: space.id, title: 'Standalone task with no workflow', description: '' },
       })) as { id: string };
 
       await hub.request('spaceTask.update', {

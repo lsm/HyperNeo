@@ -47,11 +47,9 @@ async function startWorkflowRun(
   workflowId: string,
   title: string
 ): Promise<{ runId: string; taskId: string; executionId: string }> {
-  const created = (await daemon.messageHub.request('spaceTask.create', {
-    spaceId,
-    title,
-    description: '',
-    preferredWorkflowId: workflowId,
+  const created = (await daemon.messageHub.request('operation.invoke', {
+    name: 'task.create',
+    input: { spaceId, title, description: '', preferredWorkflowId: workflowId },
   })) as { id: string };
 
   const deadline = Date.now() + RUN_DISPATCH_TIMEOUT;

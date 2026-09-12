@@ -38,12 +38,15 @@ async function createSpaceWithCanvasRun(
       const preferred = enabled.find((w) => (w.tags ?? []).includes('default')) ?? enabled[0];
       if (!preferred) throw new Error('No enabled workflow found for space');
 
-      const taskRes = (await hub.request('spaceTask.create', {
-        spaceId,
-        title: 'E2E: Canvas mode verification',
-        description: 'Verify canvas toggle and workflow node rendering.',
-        preferredWorkflowId: preferred.id,
-      })) as { id: string; workflowRunId?: string | null };
+      const taskRes = (await hub.request('operation.invoke', {
+        name: 'task.create',
+        input: {
+          spaceId,
+          title: 'E2E: Canvas mode verification',
+          description: 'Verify canvas toggle and workflow node rendering.',
+          preferredWorkflowId: preferred.id,
+        },
+      })) as { id: string };
 
       const dispatchDeadline = Date.now() + 30_000;
       let runId: string | null = null;

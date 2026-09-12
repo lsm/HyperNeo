@@ -30,12 +30,15 @@ async function createSpaceWithRun(
       const preferred = enabled.find((w) => (w.tags ?? []).includes('default')) ?? enabled[0];
       if (!preferred) throw new Error('No enabled workflow found for space');
 
-      const taskRes = (await hub.request('spaceTask.create', {
-        spaceId: spaceRes.id,
-        title: 'E2E: Task-first runtime flow',
-        description: 'Validate task thread lifecycle for workflow-backed tasks.',
-        preferredWorkflowId: preferred.id,
-      })) as { id: string; workflowRunId?: string | null };
+      const taskRes = (await hub.request('operation.invoke', {
+        name: 'task.create',
+        input: {
+          spaceId: spaceRes.id,
+          title: 'E2E: Task-first runtime flow',
+          description: 'Validate task thread lifecycle for workflow-backed tasks.',
+          preferredWorkflowId: preferred.id,
+        },
+      })) as { id: string };
 
       const dispatchDeadline = Date.now() + 30_000;
       let runId: string | null = null;
