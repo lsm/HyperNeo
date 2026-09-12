@@ -43,6 +43,7 @@ import type { McpAuditLogRepository } from '../../../storage/repositories/mcp-au
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
 import { SpaceAgentTemplateRepository } from '../../../storage/repositories/space-agent-template-repository.ts';
 import type { SpaceAgentGoalScopeRepository } from '../../../storage/repositories/space-agent-goal-scope-repository.ts';
+import type { SpaceAgentSubscriptionRepository } from '../../../storage/repositories/space-agent-subscription-repository.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
@@ -598,6 +599,7 @@ export interface SpaceAgentToolsConfig {
   db?: BunDatabase;
   longHorizonAgentRepo?: SpaceLongHorizonAgentRepository;
   goalScopeRepo?: SpaceAgentGoalScopeRepository;
+  subscriptionRepo?: SpaceAgentSubscriptionRepository;
   runtime: SpaceRuntime;
   workflowManager: SpaceWorkflowManager;
   spaceManager?: Pick<
@@ -1398,6 +1400,11 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     return config.goalScopeRepo;
   }
 
+  function requireSubscriptionRepo(): SpaceAgentSubscriptionRepository {
+    if (!config.subscriptionRepo) throw new Error('Long-horizon agent management not available');
+    return config.subscriptionRepo;
+  }
+
   function requireTemplateManager() {
     if (!config.templateManager) throw new Error('Agent template management not available');
     return config.templateManager;
@@ -1525,7 +1532,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     seeded: Array<{ source: string; topic: string }>;
     skipped: SkippedTemplateSubscription[];
   } {
-    const repo = requireLongHorizonAgentRepo();
+    const repo = requireSubscriptionRepo();
     const seeded: Array<{ source: string; topic: string }> = [];
     const skipped: SkippedTemplateSubscription[] = [];
     for (const sub of subscriptions) {
@@ -1538,7 +1545,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         });
         continue;
       }
-      let stored: ReturnType<SpaceLongHorizonAgentRepository['upsertSubscription']> | undefined;
+      let stored: ReturnType<SpaceAgentSubscriptionRepository['upsertSubscription']> | undefined;
       try {
         stored = repo.upsertSubscription({
           spaceId,
@@ -2364,7 +2371,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         if (!validation.valid) {
           return jsonResult({ success: false, error: validation.reason ?? 'invalid pattern' });
         }
-        const repo = requireLongHorizonAgentRepo();
+        const repo = requireSubscriptionRepo();
         const subscription = repo.upsertSubscription({
           spaceId,
           agentId: args.agent_id,
@@ -2393,7 +2400,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       try {
         const agent = getLongHorizonAgentInSpace(args.agent_id);
         if (!agent) return jsonResult({ success: true });
-        const repo = requireLongHorizonAgentRepo();
+        const repo = requireSubscriptionRepo();
         const source = sourceFromTopicPattern(args.topic_pattern);
         const subscription = repo.getSubscriptionByRoute(
           spaceId,
@@ -2415,7 +2422,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       try {
         const agent = getLongHorizonAgentInSpace(args.agent_id);
         if (!agent) return jsonResult({ success: true, subscriptions: [] });
-        const subscriptions = requireLongHorizonAgentRepo().listSubscriptions(args.agent_id);
+        const subscriptions = requireSubscriptionRepo().listSubscriptions(args.agent_id);
         return jsonResult({ success: true, subscriptions });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);

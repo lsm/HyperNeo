@@ -778,6 +778,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     spaceManager: deps.spaceManager,
     longHorizonAgentRepo,
     goalScopeRepo: spaceAgentGoalScopeRepo,
+    subscriptionRepo: spaceAgentSubscriptionRepo,
     spaceWorkflowManager,
     workflowRunRepo: spaceWorkflowRunRepo,
     taskRepo: spaceTaskRepo,
