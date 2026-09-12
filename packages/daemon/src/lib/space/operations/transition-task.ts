@@ -65,6 +65,7 @@ export async function writeStatus(decided: DecidedTask, input: In, deps: Deps): 
       result: input.result,
       approvalSource,
       expectedStatus: task.status,
+      expectedWorkflowRunId: task.workflowRunId ?? null,
       onCascadedTasks: async (cascaded) => {
         for (const cascadedTask of cascaded) await emitUpdated(spaceId, cascadedTask, deps);
       },

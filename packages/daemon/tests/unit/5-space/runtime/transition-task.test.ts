@@ -211,6 +211,24 @@ test('a stale-status guard failure surfaces as invalid_transition', async () => 
   expect(result).toEqual({ kind: 'completed', value: 'invalid_transition' });
 });
 
+test('a workflow attached after the decision cannot be smuggled through the atomic write', async () => {
+  const task = tasks.createTask({ spaceId, title: 'T', description: '' });
+  const run = createWorkflowRun();
+  const racingManager: Pick<SpaceTaskManager, 'getTask' | 'setTaskStatus'> = {
+    getTask: async (id) => {
+      const snapshot = await tasks.getTask(id);
+      tasks.updateTask(id, { workflowRunId: run.id });
+      return snapshot;
+    },
+    setTaskStatus: (id, status, options) => new SpaceTaskManager(db, spaceId).setTaskStatus(id, status, options),
+  };
+  const result = await invoke({ taskId: task.id, status: 'archived' }, rpc, {
+    getTaskManager: () => racingManager,
+  });
+  expect(result).toEqual({ kind: 'completed', value: 'invalid_transition' });
+  expect(tasks.getTask(task.id)?.status).toBe('open');
+});
+
 test('a rejecting emitTaskUpdated still returns the updated task', async () => {
   const task = tasks.createTask({ spaceId, title: 'T', description: '' });
   emitTaskUpdated.mockImplementation(async () => {
