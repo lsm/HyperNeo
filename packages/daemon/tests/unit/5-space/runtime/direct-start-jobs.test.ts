@@ -630,7 +630,7 @@ test.each(['blocked', 'cancelled', 'stopped'] as const)(
       generation: initial.attempt.generation,
     });
     expect(await operation.execute(input, { source: 'rpc' })).toEqual(accepted);
-    expect(reopened).toHaveBeenCalledTimes(1);
+    expect(reopened).toHaveBeenCalledTimes(status === 'stopped' ? 0 : 1);
   }
 );
 
@@ -665,4 +665,40 @@ test('configured start capability is lazy and requires bound lifecycle callbacks
     )
   ).toMatchObject({ accepted: true });
   expect(load).not.toHaveBeenCalled();
+});
+
+test.each(['in_progress', 'approved', 'rate_limited', 'usage_limited'] as const)(
+  'direct activation shares capacity with %s tasks and resumes when a slot opens',
+  async (status) => {
+    const spaceId = tasks.getTask(taskId)!.spaceId;
+    new SpaceRepository(db).updateSpace(spaceId, { maxConcurrentTasks: 1 });
+    const occupying = tasks.createTask({ spaceId, title: 'Occupying', description: '', status });
+    acceptedJob();
+    const [job] = jobs.dequeue(DIRECT_TASK_START, 1);
+    const attempt = attempts.getActive(taskId)!;
+    expect(await createDirectStartJobHandler(db, start, jobs, control)(job)).toMatchObject({
+      started: false,
+      parked: 'direct_start_not_ready',
+    });
+    expect(attempts.get(attempt.id)?.phase).toBe('reserved');
+    expect(tasks.getTask(taskId)?.status).toBe('open');
+    tasks.updateTask(occupying.id, { status: 'done' });
+    expect(await createDirectStartJobHandler(db, start, jobs, control)(job)).toMatchObject({
+      started: true,
+    });
+  }
+);
+
+test('two concurrent direct starts cannot activate beyond one available Space slot', async () => {
+  const spaceId = tasks.getTask(taskId)!.spaceId;
+  new SpaceRepository(db).updateSpace(spaceId, { maxConcurrentTasks: 1 });
+  const second = tasks.createTask({ spaceId, title: 'Second', description: '' });
+  const results = await Promise.all([
+    start({ taskId, requestKey: 'race-a' }),
+    start({ taskId: second.id, requestKey: 'race-b' }),
+  ]);
+  expect(results.filter((result) => result.started)).toHaveLength(1);
+  expect(tasks.listBySpace(spaceId).filter((task) => task.status === 'in_progress')).toHaveLength(
+    1
+  );
 });

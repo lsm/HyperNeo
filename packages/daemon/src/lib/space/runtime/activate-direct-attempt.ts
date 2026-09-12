@@ -1,3 +1,4 @@
+import { availableTaskSlots } from './task-capacity.ts';
 import { readDirectStartRequest } from './direct-start-request.ts';
 import { enqueueFrozenKickoff } from './reconcile-direct-kickoff.ts';
 import { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
@@ -101,6 +102,9 @@ export function activateDirectAttemptAtomically(
       const tasks = new SpaceTaskRepository(db, reactiveDb);
       const attempt = attempts.get(input.attemptId);
       const task = attempt ? tasks.getTask(attempt.taskId) : null;
+      const space = task ? new SpaceRepository(db).getSpace(task.spaceId) : null;
+      if (availableTaskSlots(space, space ? tasks.listBySpace(space.id, false) : []) <= 0)
+        return rejected;
       const admitted = readDirectStartRequest(db, input.attemptId);
       if (
         admitted &&
@@ -118,7 +122,7 @@ export function activateDirectAttemptAtomically(
           attempt,
           active: task ? attempts.getActive(task.id) : null,
           task,
-          space: task ? new SpaceRepository(db).getSpace(task.spaceId) : null,
+          space,
           session: new SessionRepository(db).getSession(input.sessionId),
           selected: !!task && attempts.isSelected(task.id),
           stopRequested: attempts.isStopRequested(input.attemptId, input.sessionId),

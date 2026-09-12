@@ -1,3 +1,4 @@
+import { availableTaskSlots } from './task-capacity.ts';
 import { DirectTaskExecutionRepository } from '../../../storage/repositories/direct-task-execution-repository.ts';
 import { PendingCompletionSupersededError } from '../operations/pending-completion-guard.ts';
 import type {
@@ -18,8 +19,6 @@ import {
   isChannelCyclic,
   isRateOrUsageLimited,
   isWorkflowRunSucceeded,
-  MAX_SPACE_CONCURRENT_TASKS,
-  MIN_SPACE_CONCURRENT_TASKS,
   resolveNodeAgents,
 } from '@hyperneo/shared';
 import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
@@ -7970,34 +7969,11 @@ export class SpaceRuntime {
     }
   }
 
-  private normalizeConcurrentTaskLimit(limit: number | undefined): number {
-    if (limit === undefined || !Number.isFinite(limit)) return MIN_SPACE_CONCURRENT_TASKS;
-    return Math.min(
-      MAX_SPACE_CONCURRENT_TASKS,
-      Math.max(MIN_SPACE_CONCURRENT_TASKS, Math.trunc(limit))
-    );
-  }
-
-  private getConcurrentTaskLimit(space: Space): number {
-    return this.normalizeConcurrentTaskLimit(
-      space.maxConcurrentTasks ?? space.config?.maxConcurrentTasks
-    );
-  }
-
-  private getRunningTaskCount(spaceId: string): number {
-    return this.config.taskRepo
-      .listBySpace(spaceId, false)
-      .filter(
-        (task) =>
-          task.status === 'in_progress' ||
-          task.status === 'approved' ||
-          isRateOrUsageLimited(task.status)
-      ).length;
-  }
-
   private getAvailableTaskSlots(space: Space | null): number {
-    if (!space) return 0;
-    return Math.max(0, this.getConcurrentTaskLimit(space) - this.getRunningTaskCount(space.id));
+    return availableTaskSlots(
+      space,
+      space ? this.config.taskRepo.listBySpace(space.id, false) : []
+    );
   }
 
   private sortTasksByPriority(tasks: SpaceTask[]): SpaceTask[] {
