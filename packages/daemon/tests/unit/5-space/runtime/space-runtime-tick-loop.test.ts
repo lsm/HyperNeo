@@ -1,3 +1,4 @@
+import { availableTaskSlots } from '../../../../src/lib/space/runtime/task-capacity.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { NodeExecution, SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
 import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';
@@ -1199,10 +1200,9 @@ describe('SpaceRuntime — tick loop correctness', () => {
       const recovered = taskRepo.getTask(task.id)!;
       expect(recovered.status).toBe('in_progress');
       expect(recovered.startedAt).not.toBeNull();
+      const space = await spaceManager.getSpace(SPACE_ID);
       expect(
-        (
-          freshRt as unknown as { getRunningTaskCount: (spaceId: string) => number }
-        ).getRunningTaskCount(SPACE_ID)
+        availableTaskSlots(space, []) - availableTaskSlots(space, taskRepo.listBySpace(SPACE_ID))
       ).toBe(1);
       expect(freshRt.executorCount).toBe(1);
     });
