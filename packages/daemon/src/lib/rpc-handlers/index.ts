@@ -75,7 +75,6 @@ import {
 } from '../job-queue-constants.ts';
 import { ChannelCycleRepository } from '../../storage/repositories/channel-cycle-repository.ts';
 import { SessionRepository } from '../../storage/repositories/session-repository.ts';
-import { setupSpaceAgentHandlers } from './space-agent-handlers.ts';
 import { setupSpaceAgentReminderHandlers } from './space-agent-reminder-handlers.ts';
 import { setupSpaceAgentSubscriptionHandlers } from './space-agent-subscription-handlers.ts';
 import { setupSpaceAgentTemplateHandlers } from './space-agent-template-handlers.ts';
@@ -1064,16 +1063,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     spaceAgentTemplateRepo,
     undefined,
     templateInstanceScanFromRepo(longHorizonAgentRepo)
-  );
-
-  setupSpaceAgentHandlers(
-    deps.messageHub,
-    deps.internalEventBus,
-    deps.spaceManager,
-    longHorizonAgentRepo,
-    spaceRuntimeService,
-    spaceAgentTemplateManager,
-    spaceAgentRepo
   );
 
   setupSpaceAgentTemplateHandlers(deps.messageHub, {
