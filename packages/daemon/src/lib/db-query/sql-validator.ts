@@ -183,8 +183,7 @@ function recordTableRef(
   sql: string,
   pos: number,
   exclude: Set<string>,
-  refs: string[],
-  spans?: TableRefSpan[]
+  refs: string[]
 ): number | null {
   const start = skipWhitespace(sql, pos);
   if (sql[start] === '(') {
@@ -192,7 +191,7 @@ function recordTableRef(
     while (sql[probe] === '(') probe = skipWhitespace(sql, probe + 1);
     const inner = matchIdentifier(sql, probe);
     if (!inner || SUBQUERY_START_WORDS.has(inner.ident)) return null;
-    return recordTableRef(sql, probe, exclude, refs, spans);
+    return recordTableRef(sql, probe, exclude, refs);
   }
   const first = matchIdentifier(sql, start);
   if (!first) return null;
@@ -212,7 +211,6 @@ function recordTableRef(
 
   if (qualified || !exclude.has(name)) {
     if (!refs.includes(name)) refs.push(name);
-    spans?.push({ name, start, end });
   }
   return end;
 }
@@ -296,7 +294,6 @@ function consumeCommaTableList(
   from: number,
   exclude: Set<string>,
   refs: string[],
-  spans?: TableRefSpan[],
   openParens = 0
 ): number {
   let remaining = openParens;
@@ -324,7 +321,7 @@ function consumeCommaTableList(
     } else if (alias && (alias.ident === 'on' || alias.ident === 'using')) {
       const comma = skipJoinConstraint(sql, alias.end);
       if (comma === null) return pos;
-      const next = recordTableRef(sql, comma + 1, exclude, refs, spans);
+      const next = recordTableRef(sql, comma + 1, exclude, refs);
       if (next === null) return pos;
       pos = next;
       continue;
@@ -340,16 +337,10 @@ function consumeCommaTableList(
     }
     if (sql[probe] !== ',') return pos;
     remaining -= closed;
-    const next = recordTableRef(sql, probe + 1, exclude, refs, spans);
+    const next = recordTableRef(sql, probe + 1, exclude, refs);
     if (next === null) return pos;
     pos = next;
   }
-}
-
-export interface TableRefSpan {
-  name: string;
-  start: number;
-  end: number;
 }
 
 export function maskCommentsAndStrings(sql: string): string {
@@ -396,15 +387,7 @@ export function maskCommentsAndStrings(sql: string): string {
   return out.join('');
 }
 
-export function extractTableRefSpans(sql: string): TableRefSpan[] {
-  const positional = maskCommentsAndStrings(sql);
-  const { cteNames } = extractCtes(normalizeWhitespace(positional));
-  const spans: TableRefSpan[] = [];
-  extractTableRefs(positional, cteNames, spans);
-  return spans;
-}
-
-function extractTableRefs(sql: string, exclude: Set<string>, spans?: TableRefSpan[]): string[] {
+function extractTableRefs(sql: string, exclude: Set<string>): string[] {
   const refs: string[] = [];
 
   function atKeyword(pos: number, keyword: string): boolean {
@@ -422,16 +405,9 @@ function extractTableRefs(sql: string, exclude: Set<string>, spans?: TableRefSpa
 
   while (i < len) {
     if (atKeyword(i, 'FROM') && (i === 0 || isWordBoundary(i - 1)) && isWordBoundary(i + 4)) {
-      const end = recordTableRef(sql, i + 4, exclude, refs, spans);
+      const end = recordTableRef(sql, i + 4, exclude, refs);
       if (end !== null) {
-        i = consumeCommaTableList(
-          sql,
-          end,
-          exclude,
-          refs,
-          spans,
-          countTableFactorParens(sql, i + 4)
-        );
+        i = consumeCommaTableList(sql, end, exclude, refs, countTableFactorParens(sql, i + 4));
         continue;
       }
     }
@@ -449,14 +425,13 @@ function extractTableRefs(sql: string, exclude: Set<string>, spans?: TableRefSpa
           pos = skipWhitespace(sql, pos + 5);
         }
         if (atKeyword(pos, 'JOIN') && isWordBoundary(pos + 4)) {
-          const end = recordTableRef(sql, pos + 4, exclude, refs, spans);
+          const end = recordTableRef(sql, pos + 4, exclude, refs);
           if (end !== null) {
             i = consumeCommaTableList(
               sql,
               end,
               exclude,
               refs,
-              spans,
               countTableFactorParens(sql, pos + 4)
             );
             joinMatched = true;
@@ -468,16 +443,9 @@ function extractTableRefs(sql: string, exclude: Set<string>, spans?: TableRefSpa
     }
 
     if (!joinMatched && atKeyword(i, 'JOIN') && isWordBoundary(i + 4)) {
-      const end = recordTableRef(sql, i + 4, exclude, refs, spans);
+      const end = recordTableRef(sql, i + 4, exclude, refs);
       if (end !== null) {
-        i = consumeCommaTableList(
-          sql,
-          end,
-          exclude,
-          refs,
-          spans,
-          countTableFactorParens(sql, i + 4)
-        );
+        i = consumeCommaTableList(sql, end, exclude, refs, countTableFactorParens(sql, i + 4));
         continue;
       }
     }
