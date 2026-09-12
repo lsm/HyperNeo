@@ -434,7 +434,8 @@ export class SpaceTaskRepository {
     params: InternalUpdateSpaceTaskParams,
     expectedStatus?: SpaceTaskStatus,
     expectedPendingCompletionGeneration?: number,
-    expectedPostApprovalSessionId?: string | null
+    expectedPostApprovalSessionId?: string | null,
+    expectedWorkflowRunId?: string | null
   ): SpaceTask | null {
     if (this.hasTaskWithoutSpace(id)) return null;
     const fields: string[] = [];
@@ -648,14 +649,18 @@ export class SpaceTaskRepository {
           : ' AND ((? IS NULL AND post_approval_session_id IS NULL) OR post_approval_session_id = ?)';
       if (expectedPostApprovalSessionId !== undefined)
         values.push(expectedPostApprovalSessionId, expectedPostApprovalSessionId);
+      const workflowRunGuard =
+        expectedWorkflowRunId === undefined ? '' : ' AND workflow_run_id IS ?';
+      if (expectedWorkflowRunId !== undefined) values.push(expectedWorkflowRunId);
       const stmt = this.db.prepare(
-        `UPDATE space_tasks SET ${fields.join(', ')} WHERE space_id IS NOT NULL AND id = ?${expectedStatus === undefined ? '' : ' AND status = ?'}${completionGuard}${postApprovalGuard}`
+        `UPDATE space_tasks SET ${fields.join(', ')} WHERE space_id IS NOT NULL AND id = ?${expectedStatus === undefined ? '' : ' AND status = ?'}${completionGuard}${postApprovalGuard}${workflowRunGuard}`
       );
       const result = stmt.run(...values);
       if (
         (expectedStatus !== undefined ||
           expectedPendingCompletionGeneration !== undefined ||
-          expectedPostApprovalSessionId !== undefined) &&
+          expectedPostApprovalSessionId !== undefined ||
+          expectedWorkflowRunId !== undefined) &&
         result.changes === 0
       )
         return null;

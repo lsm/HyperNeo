@@ -1,13 +1,16 @@
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import type { SpaceTaskStatus } from '@hyperneo/shared';
-import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
-import { runMigrations } from '../../../../src/storage/schema/index.ts';
-import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import {
+  isValidSpaceTaskTransition,
   SpaceTaskManager,
   VALID_SPACE_TASK_TRANSITIONS,
-  isValidSpaceTaskTransition,
 } from '../../../../src/lib/space/managers/space-task-manager.ts';
+import { PendingCompletionSupersededError } from '../../../../src/lib/space/operations/pending-completion-guard.ts';
+import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
+import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
+import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
+import { runMigrations } from '../../../../src/storage/schema/index.ts';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 
 const SPACE_ID = 'space-trans-test';
 
@@ -288,6 +291,180 @@ describe('SpaceTaskManager.setTaskStatus — expectedStatus guard', () => {
     });
     const updated = await taskManager.setTaskStatus(task.id, 'review');
     expect(updated.status).toBe('review');
+  });
+
+  test('mismatched expectedWorkflowRunId is attributed to the workflow run, not the status', async () => {
+    const task = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'T',
+      description: '',
+      status: 'open',
+    });
+    await expect(
+      taskManager.setTaskStatus(task.id, 'archived', {
+        expectedStatus: 'open',
+        expectedWorkflowRunId: 'run-that-is-not-attached',
+      })
+    ).rejects.toThrow(
+      `Task ${task.id} is no longer attached to workflow run 'run-that-is-not-attached' (now 'null')`
+    );
+    expect(taskRepo.getTask(task.id)?.status).toBe('open');
+  });
+
+  test('a workflow attached after the pre-check still fails the atomic guard', async () => {
+    const task = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'T',
+      description: '',
+      status: 'open',
+    });
+    const workflow = new SpaceWorkflowRepository(db).createWorkflow({
+      spaceId: SPACE_ID,
+      name: 'W',
+    });
+    const run = new SpaceWorkflowRunRepository(db).createRun({
+      spaceId: SPACE_ID,
+      workflowId: workflow.id,
+      title: 'R',
+    });
+    const realGetTask = SpaceTaskRepository.prototype.getTask;
+    let calls = 0;
+    const spy = spyOn(SpaceTaskRepository.prototype, 'getTask').mockImplementation(function (
+      this: SpaceTaskRepository,
+      id: string
+    ) {
+      calls += 1;
+      const row = realGetTask.call(this, id);
+      if (calls === 1 && row) taskRepo.updateTask(id, { workflowRunId: run.id });
+      return row;
+    });
+    try {
+      await expect(
+        taskManager.setTaskStatus(task.id, 'archived', {
+          expectedStatus: 'open',
+          expectedWorkflowRunId: null,
+        })
+      ).rejects.toThrow(
+        `Task ${task.id} is no longer attached to workflow run 'null' (now '${run.id}')`
+      );
+    } finally {
+      spy.mockRestore();
+    }
+    expect(taskRepo.getTask(task.id)?.status).toBe('open');
+  });
+
+  test('a completion-generation race is preserved when the other guards still match', async () => {
+    const task = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'T',
+      description: '',
+      status: 'review',
+    });
+    const withCheckpoint = taskRepo.updateTask(task.id, {
+      pendingCheckpointType: 'task_completion',
+      pendingCompletionSubmittedByNodeId: 'end-node',
+      pendingCompletionSubmittedAt: Date.now(),
+    });
+    const baseline = withCheckpoint?.pendingCompletionGeneration ?? 0;
+    const realGetTask = SpaceTaskRepository.prototype.getTask;
+    let calls = 0;
+    const spy = spyOn(SpaceTaskRepository.prototype, 'getTask').mockImplementation(function (
+      this: SpaceTaskRepository,
+      id: string
+    ) {
+      calls += 1;
+      const row = realGetTask.call(this, id);
+      if (calls === 1 && row) {
+        taskRepo.updateTask(id, { status: 'review', pendingCheckpointType: 'task_completion' });
+      }
+      return row;
+    });
+    try {
+      await expect(
+        taskManager.setTaskStatus(task.id, 'approved', {
+          expectedStatus: 'review',
+          expectedWorkflowRunId: null,
+          expectedPendingCompletionGeneration: baseline,
+        })
+      ).rejects.toBeInstanceOf(PendingCompletionSupersededError);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(taskRepo.getTask(task.id)?.status).toBe('review');
+  });
+
+  test('a task deleted between the guarded write and the re-read reports not found', async () => {
+    const task = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'T',
+      description: '',
+      status: 'open',
+    });
+    const workflow = new SpaceWorkflowRepository(db).createWorkflow({
+      spaceId: SPACE_ID,
+      name: 'W',
+    });
+    const run = new SpaceWorkflowRunRepository(db).createRun({
+      spaceId: SPACE_ID,
+      workflowId: workflow.id,
+      title: 'R',
+    });
+    taskRepo.updateTask(task.id, { workflowRunId: run.id });
+    const realGetTask = SpaceTaskRepository.prototype.getTask;
+    let calls = 0;
+    const spy = spyOn(SpaceTaskRepository.prototype, 'getTask').mockImplementation(function (
+      this: SpaceTaskRepository,
+      id: string
+    ) {
+      calls += 1;
+      const row = realGetTask.call(this, id);
+      if (calls === 1 && row) db.prepare('DELETE FROM space_tasks WHERE id = ?').run(id);
+      return row;
+    });
+    try {
+      await expect(
+        taskManager.setTaskStatus(task.id, 'archived', {
+          expectedStatus: 'open',
+          expectedWorkflowRunId: run.id,
+        })
+      ).rejects.toThrow(`Task not found: ${task.id}`);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test('a post-approval session race is preserved when the other guards still match', async () => {
+    const task = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'T',
+      description: '',
+      status: 'in_progress',
+    });
+    taskRepo.updateTask(task.id, { postApprovalSessionId: 'session-a' });
+    const realGetTask = SpaceTaskRepository.prototype.getTask;
+    let calls = 0;
+    const spy = spyOn(SpaceTaskRepository.prototype, 'getTask').mockImplementation(function (
+      this: SpaceTaskRepository,
+      id: string
+    ) {
+      calls += 1;
+      const row = realGetTask.call(this, id);
+      if (calls === 1 && row) taskRepo.updateTask(id, { postApprovalSessionId: 'session-b' });
+      return row;
+    });
+    try {
+      await expect(
+        taskManager.setTaskStatus(task.id, 'done', {
+          expectedStatus: 'in_progress',
+          expectedWorkflowRunId: null,
+          expectedPostApprovalSessionId: 'session-a',
+        })
+      ).rejects.toThrow(
+        `Task ${task.id} is no longer awaiting post-approval session 'session-a' (now 'session-b')`
+      );
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 
