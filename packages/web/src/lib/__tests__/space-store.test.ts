@@ -456,6 +456,7 @@ describe('SpaceStore — space selection', () => {
     const calledMethods = mockHub.request.mock.calls.map((c: unknown[]) => c[0]);
     expect(calledMethods).not.toContain('spaceAgentV2.list');
     expect(calledMethods).not.toContain('spaceAgentTemplate.listBuiltIn');
+    expect(calledMethods).not.toContain('spaceAgent.listBuiltInTemplates');
     expect(calledMethods).not.toContain('spaceAgentTemplate.list');
     expect(calledMethods).not.toContain('spaceWorkflow.list');
     expect(calledMethods).not.toContain('spaceWorkflow.listBuiltInTemplates');
@@ -490,6 +491,7 @@ describe('SpaceStore — space selection', () => {
 
     const calledMethods = mockHub.request.mock.calls.map((c: unknown[]) => c[0]);
     expect(calledMethods).not.toContain('spaceAgentTemplate.listBuiltIn');
+    expect(calledMethods).not.toContain('spaceAgent.listBuiltInTemplates');
     expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual(['worker.swe', 'scribe']);
     expect(spaceStore.agentTemplates.value[1].displayName).toBe('Scribe');
     expect(spaceStore.agentTemplates.value[1].labels).toEqual([]);

@@ -520,7 +520,7 @@ All rows are **kind: request** (client `REQ` → server `RSP`). For requests tha
 **Remaining unconsumed surface (14):**
 
 - `spaceAgentV2.get` (`space-agent-v2-handlers.ts:160`) — added by #3937 *after* the audit and never picked up by the web, which reads agents via `spaceAgentV2.list`.
-- `spaceAgent.listBuiltInTemplates` (`space-agent-handlers.ts:778`) — the web's built-in-template listing moved to `spaceWorkflow.listBuiltInTemplates` during the audit window; `space-store.test.ts` now asserts `spaceAgent.listBuiltInTemplates` is **not** called. Registers only when templateManager is present.
+- `spaceAgent.listBuiltInTemplates` (`space-agent-handlers.ts:778`) — the web's built-in-template listing moved to `spaceWorkflow.listBuiltInTemplates` during the audit window; `space-store.test.ts` asserts both this route and its `spaceAgentTemplate.listBuiltIn` successor are **not** called. Registers only when templateManager is present.
 
 - `spaceAgent.listTemplates` / `.createTemplate` / `.updateTemplate` / `.deleteTemplate` (`space-agent-handlers.ts`) — the v1 template routes, unconsumed since `space-store.ts` moved to `spaceAgentTemplate.*`. **Transitional**: they retire in the v1 deletion slice, after which this entry clears.
 - `spaceAgentTemplate.listBuiltIn` (`space-agent-template-handlers.ts:32`) — registered for parity with its `spaceAgent.*` predecessor, but web reads built-ins through `spaceWorkflow.listBuiltInTemplates`. Its four siblings (`list`/`create`/`update`/`delete`) are consumed by `space-store.ts`. All but `listBuiltIn` register only when templateManager is present.
