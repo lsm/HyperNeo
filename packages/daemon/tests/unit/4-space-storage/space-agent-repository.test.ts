@@ -108,6 +108,13 @@ describe('SpaceAgentRepository', () => {
     });
   });
 
+  function touch(id: string, updatedAt: number): void {
+    db.prepare(`UPDATE space_long_horizon_agents SET updated_at = ? WHERE id = ?`).run(
+      updatedAt,
+      id
+    );
+  }
+
   describe('reads', () => {
     test('getById returns null for an unknown id', () => {
       expect(repo.getById('nope')).toBeNull();
@@ -157,6 +164,56 @@ describe('SpaceAgentRepository', () => {
 
       repo.update(legacy.id, { status: 'archived' });
       expect(repo.getSpaceManager('space-1')?.id).toBe(legacyRepo.getCoordinator('space-1')?.id);
+    });
+
+    test('getSpaceManagerRecord finds an archived manager that getSpaceManager skips', () => {
+      const manager = repo.create({ spaceId: 'space-1', handle: SPACE_MANAGER_HANDLE });
+      repo.update(manager.id, { status: 'archived' });
+
+      expect(repo.getSpaceManager('space-1')).toBeNull();
+      expect(repo.getSpaceManagerRecord('space-1')?.id).toBe(manager.id);
+    });
+
+    test('getSpaceManagerRecord prefers a live manager over a more recent archived one', () => {
+      const live = repo.create({ spaceId: 'space-1', handle: SPACE_MANAGER_HANDLE });
+      const archived = repo.create({ spaceId: 'space-1', handle: 'coordinator' });
+      repo.update(archived.id, { status: 'archived' });
+      touch(live.id, 1_000);
+      touch(archived.id, 9_000);
+
+      expect(repo.getSpaceManagerRecord('space-1')?.id).toBe(live.id);
+    });
+
+    test('getSpaceManagerRecord returns the most recently updated of two live managers', () => {
+      const older = repo.create({ spaceId: 'space-1', handle: SPACE_MANAGER_HANDLE });
+      const newer = repo.create({ spaceId: 'space-1', handle: 'coordinator' });
+      touch(older.id, 1_000);
+      touch(newer.id, 9_000);
+
+      expect(repo.getSpaceManagerRecord('space-1')?.id).toBe(newer.id);
+    });
+
+    test('getSpaceManagerRecord matches the long-horizon repository it replaces', () => {
+      const legacyRepo = new SpaceLongHorizonAgentRepository(db);
+      expect(repo.getSpaceManagerRecord('space-1')?.id ?? null).toBe(
+        legacyRepo.getCoordinatorRecord('space-1')?.id ?? null
+      );
+
+      const legacy = repo.create({ spaceId: 'space-1', handle: 'coordinator' });
+      expect(repo.getSpaceManagerRecord('space-1')?.id).toBe(
+        legacyRepo.getCoordinatorRecord('space-1')?.id
+      );
+
+      repo.update(legacy.id, { status: 'archived' });
+      expect(repo.getSpaceManagerRecord('space-1')?.id).toBe(
+        legacyRepo.getCoordinatorRecord('space-1')?.id
+      );
+
+      const canonical = repo.create({ spaceId: 'space-1', handle: SPACE_MANAGER_HANDLE });
+      expect(repo.getSpaceManagerRecord('space-1')?.id).toBe(
+        legacyRepo.getCoordinatorRecord('space-1')?.id
+      );
+      expect(repo.getSpaceManagerRecord('space-1')?.id).toBe(canonical.id);
     });
 
     test('getBySessionId resolves the agent bound to a session', () => {
