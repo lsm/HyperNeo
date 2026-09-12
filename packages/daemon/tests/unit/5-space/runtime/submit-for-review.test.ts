@@ -212,7 +212,7 @@ function markTaskWorkflowOwned() {
     workflowId: workflow.id,
     title: 'Run',
   });
-  tasks.updateTask(taskId, { workflowRunId: run.id });
+  tasks.updateTask(taskId, { workflowRunId: run.id, taskAgentSessionId: null });
   return run.id;
 }
 
@@ -270,6 +270,94 @@ test('workflow-owned task with an invalid transition is rejected without throwin
     reason: 'review_submission_invalid_transition',
   });
   expect(emitTaskUpdated).not.toHaveBeenCalled();
+});
+
+function createPlainTask(status: 'open' | 'in_progress') {
+  const spaceId = tasks.getTask(taskId)!.spaceId!;
+  return tasks.createTask({ spaceId, title: 'Plain', description: '', status }).id;
+}
+
+test('rpc caller submits a plain in_progress Space task through the manager path', async () => {
+  const plainId = createPlainTask('in_progress');
+  expect(await operation.execute({ taskId: plainId, reason: 'Ready' }, { source: 'rpc' })).toEqual({
+    accepted: true,
+    jobId: null,
+  });
+  expect(tasks.getTask(plainId)?.status).toBe('review');
+  expect(emitTaskUpdated).toHaveBeenCalledTimes(1);
+});
+
+test('rpc caller submits a plain open Space task through the manager path', async () => {
+  const plainId = createPlainTask('open');
+  expect(await operation.execute({ taskId: plainId }, { source: 'rpc' })).toEqual({
+    accepted: true,
+    jobId: null,
+  });
+  expect(tasks.getTask(plainId)?.status).toBe('review');
+});
+
+test('archived plain Space task is rejected as unavailable', async () => {
+  const plainId = createPlainTask('in_progress');
+  tasks.updateTask(plainId, { archivedAt: Date.now() });
+  expect(await operation.execute({ taskId: plainId }, { source: 'rpc' })).toEqual({
+    accepted: false,
+    reason: 'review_submission_unavailable',
+  });
+  expect(emitTaskUpdated).not.toHaveBeenCalled();
+});
+
+test('MCP caller outside the Space is denied on a plain Space task without writing', async () => {
+  const plainId = createPlainTask('in_progress');
+  const worker = sessions.getSession(sessionId)!;
+  sessions.createSession(
+    {
+      ...worker,
+      id: 'plain-caller-outside-space',
+      type: 'lobby',
+      context: { spaceId: 'other-space' },
+    },
+    { enforceWorkspaceOwnership: false }
+  );
+  expect(
+    await operation.execute(
+      { taskId: plainId },
+      { source: 'mcp', sessionId: 'plain-caller-outside-space' }
+    )
+  ).toMatchObject({ accepted: false, reason: 'review_submission_denied' });
+  expect(tasks.getTask(plainId)?.status).toBe('in_progress');
+  expect(emitTaskUpdated).not.toHaveBeenCalled();
+});
+
+test('a manually reopened task with a stopped direct attempt submits through the manager path', async () => {
+  db.prepare("UPDATE direct_task_execution_attempts SET phase='stopped' WHERE id=?").run(attemptId);
+  expect(await operation.execute({ taskId, reason: 'Ready again' }, { source: 'rpc' })).toEqual({
+    accepted: true,
+    jobId: null,
+  });
+  expect(tasks.getTask(taskId)?.status).toBe('review');
+  expect(emitTaskUpdated).toHaveBeenCalledTimes(1);
+  expect(outcomeCount()).toBe(0);
+});
+
+test('an immediate retry after that reopened submission stays on the manager path', async () => {
+  db.prepare("UPDATE direct_task_execution_attempts SET phase='stopped' WHERE id=?").run(attemptId);
+  await operation.execute({ taskId, reason: 'Ready again' }, { source: 'rpc' });
+  expect(tasks.getTask(taskId)?.status).toBe('review');
+  expect(await operation.execute({ taskId, reason: 'Ready again' }, { source: 'rpc' })).toEqual({
+    accepted: true,
+    jobId: null,
+  });
+  expect(outcomeCount()).toBe(0);
+});
+
+test('a plain task racing a concurrent direct claim is rejected instead of writing through the manager', async () => {
+  const plainId = createPlainTask('open');
+  attempts.select(plainId);
+  expect(attempts.claim(plainId, 'direct-reserved', 'reserved-session')).not.toBeNull();
+  expect(
+    await operation.execute({ taskId: plainId, reason: 'too soon' }, { source: 'rpc' })
+  ).toMatchObject({ accepted: false, reason: 'review_submission_unavailable' });
+  expect(tasks.getTask(plainId)?.status).toBe('open');
 });
 
 test('a non-domain manager throw propagates instead of becoming a domain rejection', async () => {

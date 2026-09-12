@@ -48,14 +48,29 @@ function resolveWorkflowSubmissionRejection(error: unknown): string | undefined 
   return WORKFLOW_SUBMISSION_REJECTIONS.find(([substring]) => message.includes(substring))?.[1];
 }
 
-async function admitWorkflowSubmission(
+function reviewBackedByFrozenDirectRequest(db: Database, taskId: string, sessionId: string) {
+  const row = db
+    .prepare('SELECT id FROM direct_task_execution_attempts WHERE task_id = ? AND session_id = ?')
+    .get(taskId, sessionId) as { id: string } | null;
+  if (!row) return false;
+  return readDirectFinalizationRequest(db, { attemptId: row.id, sessionId })?.status === 'review';
+}
+
+async function admitManagedSubmission(
   db: Database,
   input: Input,
   caller: OperationCaller,
   tasks: SubmitForReviewTaskDependencies
 ): Promise<{ value: true } | { reason: DirectOutcomeAcknowledgement }> {
   const task = new SpaceTaskRepository(db).getTask(input.taskId);
-  if (!task?.spaceId || task.archivedAt || !task.workflowRunId) return { value: true };
+  const hasActiveDirectAttempt =
+    task?.taskAgentSessionId &&
+    (!!new DirectTaskExecutionRepository(db).getActive(task.id) ||
+      (task.status === 'review' &&
+        reviewBackedByFrozenDirectRequest(db, task.id, task.taskAgentSessionId)));
+  if (!task?.spaceId || hasActiveDirectAttempt) return { value: true };
+  if (task.archivedAt)
+    return { reason: { accepted: false, reason: 'review_submission_unavailable' } };
   if (caller.source === 'mcp') {
     const session = caller.sessionId
       ? new SessionRepository(db).getSession(caller.sessionId)
@@ -66,6 +81,8 @@ async function admitWorkflowSubmission(
     )
       return { reason: { accepted: false, reason: 'review_submission_denied' } };
   }
+  if (!task.workflowRunId && new DirectTaskExecutionRepository(db).getActive(task.id))
+    return { reason: { accepted: false, reason: 'review_submission_unavailable' } };
   try {
     const updated = await tasks.getTaskManager(task.spaceId).submitTaskForReview(task.id, {
       submittedByNodeId: null,
@@ -146,7 +163,7 @@ export function createSubmitTaskForReviewOperation(
   )
     .input(['input', 'caller'])
     .pipe(getDatabase, undefined, 'db')
-    .pipe(admitWorkflowSubmission, ['db', 'input', 'caller', 'tasks'], 'result:outcome')
+    .pipe(admitManagedSubmission, ['db', 'input', 'caller', 'tasks'], 'result:outcome')
     .pipe(admitSubmission, ['db', 'input', 'caller'], 'result:outcome')
     .pipe(enqueueDirectOutcome, ['db', 'jobQueue', 'outcome'], 'outcome')
     .endAsync('outcome') as (
@@ -156,7 +173,7 @@ export function createSubmitTaskForReviewOperation(
   return defineOperation({
     name: 'task.submitForReview',
     description:
-      'Persist a completion-review request for a direct or workflow-owned task and return its acknowledgement. RPC/internal callers and admitted MCP sessions on either ownership mode use the same operation. Direct tasks return a durable job acknowledgement; rejects direct_review_submission_unavailable when the task or its direct-execution state does not support this binding (workflow-owned, archived, or no active direct attempt — retry after state changes), and direct_review_submission_denied when the calling MCP session is not the attempt’s own persisted worker (do not retry). Workflow-owned tasks complete synchronously with jobId: null; rejects review_submission_denied when the calling MCP session is not active in the owning Space (do not retry), review_submission_unavailable when the task disappeared before the manager could apply the transition (retry after state changes), and review_submission_invalid_transition when the task’s current status or checkpoint state does not allow review submission (retry after state changes). Any other manager failure (an infrastructure fault, not a domain rejection) throws through as execution_failed rather than being reported as accepted: false. Acceptance does not mean shutdown or review finalization has completed.',
+      'Persist a completion-review request for a direct-execution or Space-owned task and return its acknowledgement. RPC/internal callers and admitted MCP sessions on either ownership mode use the same operation. Direct-execution tasks (a persisted taskAgentSessionId) return a durable job acknowledgement; rejects direct_review_submission_unavailable when the task or its direct-execution state does not support this binding (no active direct attempt — retry after state changes), and direct_review_submission_denied when the calling MCP session is not the attempt’s own persisted worker (do not retry). Every other Space-owned task — workflow-owned or plain (manually tracked) — is admitted through the same manager-backed binding and completes synchronously with jobId: null; rejects review_submission_unavailable when the task is missing or archived (retry after state changes), review_submission_denied when the calling MCP session is not active in the owning Space (do not retry), and review_submission_invalid_transition when the task’s current status or checkpoint state does not allow review submission (retry after state changes). Any other manager failure (an infrastructure fault, not a domain rejection) throws through as execution_failed rather than being reported as accepted: false. Acceptance does not mean shutdown or review finalization has completed.',
     inputSchema,
     resultSchema: z.union([
       z.object({ accepted: z.literal(true), jobId: z.string().nullable() }),
