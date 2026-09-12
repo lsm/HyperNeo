@@ -32,7 +32,11 @@ export function createSpaceOperationRegistryProvider(
         ? createStartTaskOperation(() => database.getDatabase(), jobQueue, tasks, directStart)
         : undefined,
       cancel: createCancelTaskOperation(() => database.getDatabase(), jobQueue, tasks),
-      submitForReview: createSubmitTaskForReviewOperation(() => database.getDatabase(), jobQueue),
+      submitForReview: createSubmitTaskForReviewOperation(
+        () => database.getDatabase(),
+        jobQueue,
+        tasks
+      ),
       pendingCompletion: pendingCompletion
         ? createOwnedPendingCompletionOperation(pendingCompletion)
         : undefined,
