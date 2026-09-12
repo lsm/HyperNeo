@@ -1852,7 +1852,7 @@ export class TaskAgentManager {
     }
   }
 
-  hasDispatchedPostApprovalRoute(taskId: string): boolean {
+  workflowDeclaresPostApprovalRoute(taskId: string): boolean {
     const task = this.config.taskRepo.getTask(taskId);
     if (!task) return false;
     const run = task.workflowRunId ? this.config.workflowRunRepo.getRun(task.workflowRunId) : null;

@@ -11,22 +11,24 @@ function bindings(overrides: Partial<Parameters<typeof createCompletionGateBindi
     isCoderOwnedMergeWorkflow: () => false,
     resolvePrUrl: () => '',
     getPrState: async () => 'MERGED',
-    hasDispatchedPostApprovalRoute: () => false,
+    workflowDeclaresPostApprovalRoute: () => false,
     ...overrides,
   });
 }
 
 test('requiresPostApprovalOwner delegates to the runtime query regardless of caller', () => {
-  const hasDispatchedPostApprovalRoute = mock(() => true);
-  const { requiresPostApprovalOwner } = bindings({ hasDispatchedPostApprovalRoute });
+  const workflowDeclaresPostApprovalRoute = mock(() => true);
+  const { requiresPostApprovalOwner } = bindings({ workflowDeclaresPostApprovalRoute });
   expect(requiresPostApprovalOwner!(task, { source: 'rpc' })).toBe(true);
   expect(requiresPostApprovalOwner!(task, { source: 'internal' })).toBe(true);
   expect(requiresPostApprovalOwner!(task, { source: 'mcp', sessionId: 'session-1' })).toBe(true);
-  expect(hasDispatchedPostApprovalRoute).toHaveBeenCalledWith('task-1');
+  expect(workflowDeclaresPostApprovalRoute).toHaveBeenCalledWith('task-1');
 });
 
 test('requiresPostApprovalOwner returns false when the runtime query says so', () => {
-  const { requiresPostApprovalOwner } = bindings({ hasDispatchedPostApprovalRoute: () => false });
+  const { requiresPostApprovalOwner } = bindings({
+    workflowDeclaresPostApprovalRoute: () => false,
+  });
   expect(requiresPostApprovalOwner!(task, { source: 'mcp', sessionId: 'session-1' })).toBe(false);
 });
 

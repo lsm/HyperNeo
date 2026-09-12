@@ -7,7 +7,7 @@ export function createCompletionGateBindings(deps: {
   isCoderOwnedMergeWorkflow: (workflow: SpaceWorkflow | null) => boolean;
   resolvePrUrl: (task: SpaceTask) => string;
   getPrState: (prUrl: string) => Promise<string>;
-  hasDispatchedPostApprovalRoute: (taskId: string) => boolean;
+  workflowDeclaresPostApprovalRoute: (taskId: string) => boolean;
 }): Pick<CompleteTaskDependencies, 'requiresPostApprovalOwner' | 'completionGate'> {
   const prMergedGate = createPrMergedGate({
     requirePrUrl: true,
@@ -15,7 +15,7 @@ export function createCompletionGateBindings(deps: {
     getPrState: deps.getPrState,
   });
   return {
-    requiresPostApprovalOwner: (task: SpaceTask) => deps.hasDispatchedPostApprovalRoute(task.id),
+    requiresPostApprovalOwner: (task: SpaceTask) => deps.workflowDeclaresPostApprovalRoute(task.id),
     completionGate: async (task: SpaceTask) =>
       deps.isCoderOwnedMergeWorkflow(deps.resolveWorkflowForTask(task))
         ? prMergedGate(task)

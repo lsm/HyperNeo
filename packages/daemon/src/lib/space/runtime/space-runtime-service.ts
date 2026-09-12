@@ -284,8 +284,8 @@ export class SpaceRuntimeService {
     this.runtime.setTaskAgentManager(manager);
   }
 
-  hasDispatchedPostApprovalRoute(taskId: string): boolean {
-    return this.taskAgentManager?.hasDispatchedPostApprovalRoute(taskId) ?? false;
+  workflowDeclaresPostApprovalRoute(taskId: string): boolean {
+    return this.taskAgentManager?.workflowDeclaresPostApprovalRoute(taskId) ?? false;
   }
 
   longTermAgentDeliveryCallbacks():

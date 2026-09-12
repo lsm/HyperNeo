@@ -710,8 +710,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
           const state = (outcome.data as { state?: unknown } | null)?.state;
           return typeof state === 'string' ? state : 'UNKNOWN';
         },
-        hasDispatchedPostApprovalRoute: (taskId) =>
-          spaceRuntimeService.hasDispatchedPostApprovalRoute(taskId),
+        workflowDeclaresPostApprovalRoute: (taskId) =>
+          spaceRuntimeService.workflowDeclaresPostApprovalRoute(taskId),
       }),
     },
     pendingCompletion,
