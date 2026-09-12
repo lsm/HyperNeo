@@ -106,7 +106,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.4.0
+          bun-version: 1.4.2
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -189,7 +189,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.4.0
+          bun-version: 1.4.2
 
       - name: Setup Deno
         uses: denoland/setup-deno@v2
@@ -332,7 +332,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.4.0
+          bun-version: 1.4.2
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -419,7 +419,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.4.0
+          bun-version: 1.4.2
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -478,7 +478,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.4.0
+          bun-version: 1.4.2
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -533,7 +533,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.4.0
+          bun-version: 1.4.2
 
       - name: Download daemon unit junit
         continue-on-error: true
@@ -588,7 +588,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.4.0
+          bun-version: 1.4.2
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -701,7 +701,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.4.0
+          bun-version: 1.4.2
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
