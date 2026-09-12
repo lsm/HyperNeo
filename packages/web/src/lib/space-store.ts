@@ -240,6 +240,26 @@ export type DirectTaskStartResult =
   | { accepted: true; jobId: string | null }
   | { accepted: false; reason: string };
 
+export type ReviewSubmissionResult =
+  | { accepted: true; jobId: string | null }
+  | { accepted: false; reason: string };
+
+export function formatReviewSubmissionRejection(reason: string): string {
+  if (reason === 'review_submission_invalid_transition') {
+    return 'This task cannot be submitted for review from its current state.';
+  }
+  if (
+    reason === 'review_submission_unavailable' ||
+    reason === 'direct_review_submission_unavailable'
+  ) {
+    return 'This task is not available for review submission right now. Try again after it changes.';
+  }
+  if (reason === 'review_submission_denied' || reason === 'direct_review_submission_denied') {
+    return 'You are not allowed to submit this task for review.';
+  }
+  return `Review submission rejected: ${reason}`;
+}
+
 export interface CreateTaskOperationParams {
   title: string;
   description?: string;
@@ -2128,19 +2148,21 @@ class SpaceStore {
     });
   }
 
-  async submitForReview(taskId: string, reason?: string | null): Promise<SpaceTask> {
+  async submitForReview(taskId: string, reason?: string | null): Promise<ReviewSubmissionResult> {
     const spaceId = this.spaceId.value;
     if (!spaceId) throw new Error('No space selected');
 
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
 
-    const task = await hub.request<SpaceTask>('spaceTask.submitForReview', {
+    const result = await invokeOperation<ReviewSubmissionResult>(hub, 'task.submitForReview', {
       taskId,
-      spaceId,
       reason: reason ?? null,
     });
-    return task;
+    if (!result.accepted) {
+      throw new Error(formatReviewSubmissionRejection(result.reason));
+    }
+    return result;
   }
 
   async approvePendingCompletion(

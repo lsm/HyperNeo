@@ -381,7 +381,10 @@ function makeMockHub() {
         if ((params as { name?: string } | undefined)?.name === 'task.create') {
           return makeTask('new-task');
         }
-        return { accepted: true, jobId: null as string | null };
+        return {
+          accepted: true as const,
+          jobId: null as string | null,
+        } as { accepted: true; jobId: string | null } | { accepted: false; reason: string };
       }
       return {};
     }),
@@ -2358,6 +2361,70 @@ describe('SpaceStore — runTaskDirectly', () => {
 
   it('throws when no space selected', async () => {
     await expect(spaceStore.runTaskDirectly('task-1')).rejects.toThrow('No space selected');
+  });
+});
+
+describe('SpaceStore — submitForReview', () => {
+  beforeEach(resetStore);
+  afterEach(() => vi.clearAllMocks());
+
+  it('sends operation.invoke with task.submitForReview and no spaceId, returning the acknowledgement', async () => {
+    await spaceStore.selectSpace('space-1');
+    mockHub.request.mockResolvedValueOnce({ accepted: true, jobId: 'job-1' });
+
+    const result = await spaceStore.submitForReview('task-1', 'please verify');
+
+    expect(mockHub.request).toHaveBeenCalledWith('operation.invoke', {
+      name: 'task.submitForReview',
+      input: { taskId: 'task-1', reason: 'please verify' },
+    });
+    expect(result).toEqual({ accepted: true, jobId: 'job-1' });
+  });
+
+  it('defaults reason to null when omitted', async () => {
+    await spaceStore.selectSpace('space-1');
+    mockHub.request.mockResolvedValueOnce({ accepted: true, jobId: null });
+
+    await spaceStore.submitForReview('task-1');
+
+    expect(mockHub.request).toHaveBeenCalledWith('operation.invoke', {
+      name: 'task.submitForReview',
+      input: { taskId: 'task-1', reason: null },
+    });
+  });
+
+  it.each([
+    [
+      'review_submission_invalid_transition',
+      'This task cannot be submitted for review from its current state.',
+    ],
+    [
+      'review_submission_unavailable',
+      'This task is not available for review submission right now. Try again after it changes.',
+    ],
+    [
+      'direct_review_submission_unavailable',
+      'This task is not available for review submission right now. Try again after it changes.',
+    ],
+    ['review_submission_denied', 'You are not allowed to submit this task for review.'],
+    ['direct_review_submission_denied', 'You are not allowed to submit this task for review.'],
+    ['something_else', 'Review submission rejected: something_else'],
+  ])('maps %s to a readable rejection message', async (reason, message) => {
+    await spaceStore.selectSpace('space-1');
+    mockHub.request.mockResolvedValueOnce({ accepted: false, reason });
+
+    await expect(spaceStore.submitForReview('task-1')).rejects.toThrow(message);
+  });
+
+  it('throws when not connected', async () => {
+    await spaceStore.selectSpace('space-1');
+    vi.mocked(connectionManager.getHubIfConnected).mockReturnValueOnce(null);
+
+    await expect(spaceStore.submitForReview('task-1')).rejects.toThrow('Not connected');
+  });
+
+  it('throws when no space selected', async () => {
+    await expect(spaceStore.submitForReview('task-1')).rejects.toThrow('No space selected');
   });
 });
 
