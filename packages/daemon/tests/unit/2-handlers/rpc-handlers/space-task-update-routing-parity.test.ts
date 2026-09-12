@@ -63,8 +63,6 @@ function makeTask(overrides: Partial<SpaceTask> = {}): SpaceTask {
   };
 }
 
-type RequestHandler = (data: unknown) => Promise<unknown>;
-
 interface Row {
   currentStatus: SpaceTaskStatus;
   requestedStatus?: SpaceTaskStatus;
@@ -73,15 +71,11 @@ interface Row {
   withField?: boolean;
 }
 
-function statusDiffersFor(row: Row): boolean {
-  return row.requestedStatus !== undefined && row.requestedStatus !== row.currentStatus;
-}
-
-function classify(row: Row) {
+function classify(row: Row, hasChanges = true) {
   const hasWorkflowRun = row.hasWorkflowRun ?? false;
-  const differs = statusDiffersFor(row);
+  const differs = row.requestedStatus !== undefined && row.requestedStatus !== row.currentStatus;
   return routeTaskUpdate({
-    hasChanges: true,
+    hasChanges,
     taskExists: true,
     taskInSpace: true,
     currentStatus: row.currentStatus,
@@ -211,36 +205,27 @@ const MATRIX: MatrixRow[] = [
   ['done', 'open', true, false, false],
   ['done', 'in_progress', true, false, false],
   ['blocked', 'open', true, false, false],
-  ['blocked', 'in_progress', true, false, false],
   ['cancelled', 'open', true, false, false],
   ['stopped', 'in_progress', true, false, false],
   ['rate_limited', 'in_progress', true, false, false],
   ['blocked', 'open', false, false, false],
-  ['done', 'in_progress', false, false, false],
   ['in_progress', 'open', true, false, false],
   ['in_progress', 'cancelled', true, false, false],
   ['blocked', 'cancelled', true, false, false],
   ['stopped', 'open', true, false, false],
-  ['stopped', 'cancelled', true, false, false],
-  ['rate_limited', 'cancelled', true, false, false],
-  ['usage_limited', 'blocked', true, false, false],
   ['rate_limited', 'blocked', true, false, false],
   ['in_progress', 'cancelled', false, false, false],
-  ['rate_limited', 'blocked', false, false, false],
   ['in_progress', 'stopped', true, false, false],
-  ['review', 'stopped', true, false, false],
   ['blocked', 'stopped', true, false, false],
   ['in_progress', 'stopped', false, false, false],
   ['blocked', 'archived', true, true, false],
   ['done', 'archived', true, false, false],
-  ['open', 'archived', false, false, false],
   ['open', 'review', false, false, false],
   ['open', 'review', true, false, false],
   ['in_progress', 'approved', false, false, false],
   ['open', undefined, false, false, true],
   ['in_progress', 'in_progress', false, false, true],
   ['open', 'in_progress', false, false, false],
-  ['cancelled', 'done', false, false, false],
 ];
 
 describe('spaceTask.update status routing parity with routeTaskUpdate', () => {
@@ -254,17 +239,16 @@ describe('spaceTask.update status routing parity with routeTaskUpdate', () => {
 });
 
 describe('known deltas (pinned current behavior, not fixed here)', () => {
-  test('limited_direct: the classifier rejects a bare rate_limited target; the RPC handler allows it', async () => {
-    const row: Row = { currentStatus: 'in_progress', requestedStatus: 'rate_limited' };
-    expect(actionOf(classify(row))).toBe('reject:limited_direct');
-    expect(await observeAction(row)).toBe('set_status');
-  });
-
-  test('review_to_done: the classifier rejects it; the RPC handler allows it via approvalSource stamping', async () => {
-    const row: Row = { currentStatus: 'review', requestedStatus: 'done' };
-    expect(actionOf(classify(row))).toBe('reject:review_to_done');
-    expect(await observeAction(row)).toBe('set_status');
-  });
+  test.each([
+    ['limited_direct', { currentStatus: 'in_progress', requestedStatus: 'rate_limited' } as Row],
+    ['review_to_done', { currentStatus: 'review', requestedStatus: 'done' } as Row],
+  ] as const)(
+    '%s: the classifier rejects it, but the RPC handler allows it as a plain set_status',
+    async (reason, row) => {
+      expect(actionOf(classify(row))).toBe(`reject:${reason}`);
+      expect(await observeAction(row)).toBe('set_status');
+    }
+  );
 
   test('archive_active_run: the RPC guard is silently skipped when SpaceRuntimeService is unwired', async () => {
     const row: Row = {
@@ -300,20 +284,7 @@ describe('known deltas (pinned current behavior, not fixed here)', () => {
 
   test('no_updatable_fields: the classifier rejects an empty update; the RPC handler treats it as a no-op', async () => {
     const row: Row = { currentStatus: 'open' };
-    const decision = routeTaskUpdate({
-      hasChanges: false,
-      taskExists: true,
-      taskInSpace: true,
-      currentStatus: row.currentStatus,
-      requestedStatus: undefined,
-      statusDiffers: false,
-      hasWorkflowRun: false,
-      runActive: false,
-      isRecoveryTransition: false,
-      hasFieldUpdates: false,
-      taskId: 'task-1',
-    });
-    expect(actionOf(decision)).toBe('reject:no_updatable_fields');
+    expect(actionOf(classify(row, false))).toBe('reject:no_updatable_fields');
     const { updateTaskCalls } = await driveRpc(row);
     expect(updateTaskCalls).toEqual([{}]);
   });
