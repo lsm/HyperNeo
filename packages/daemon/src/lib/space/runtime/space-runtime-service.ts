@@ -25,6 +25,7 @@ import { SpaceAgentTemplateRepository } from '../../../storage/repositories/spac
 import type { SpaceGoalOutcomeNotificationRepository } from '../../../storage/repositories/space-goal-outcome-notification-repository.ts';
 import type { SpaceAgentGoalScopeRepository } from '../../../storage/repositories/space-agent-goal-scope-repository.ts';
 import type { SpaceAgentReminderRepository } from '../../../storage/repositories/space-agent-reminder-repository.ts';
+import type { SpaceAgentRepository } from '../../../storage/repositories/space-agent-repository.ts';
 import type { SpaceAgentSubscriptionRepository } from '../../../storage/repositories/space-agent-subscription-repository.ts';
 import { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository.ts';
 import {
@@ -143,6 +144,7 @@ export interface SpaceRuntimeServiceConfig {
   goalScopeRepo?: SpaceAgentGoalScopeRepository;
   subscriptionRepo?: SpaceAgentSubscriptionRepository;
   reminderRepo?: SpaceAgentReminderRepository;
+  agentRepo?: Pick<SpaceAgentRepository, 'getSpaceManager'>;
   ownedAgents?: OwnedAgentLookup;
   templateRepo?: SpaceAgentTemplateRepository;
   spaceWorkflowManager: SpaceWorkflowManager;
@@ -487,7 +489,7 @@ export class SpaceRuntimeService {
     } else if (resolution?.action === 'coordinator_fallback') {
       authorizedId = resolution.coordinatorAgentId;
     } else if (resolution?.action === 'degraded' || resolution?.action === 'no_recipient') {
-      authorizedId = this.config.longHorizonAgentRepo?.getCoordinator(goal.spaceId)?.id ?? null;
+      authorizedId = this.config.agentRepo?.getSpaceManager(goal.spaceId)?.id ?? null;
     }
     return authorizedId != null && agentIdFromActorId(actor.actorId) === authorizedId;
   }
@@ -522,7 +524,7 @@ export class SpaceRuntimeService {
     } else if (resolution?.action === 'coordinator_fallback') {
       targetAgentId = resolution.coordinatorAgentId;
     } else if (resolution?.action === 'degraded' || resolution?.action === 'no_recipient') {
-      targetAgentId = this.config.longHorizonAgentRepo?.getCoordinator(goal.spaceId)?.id ?? null;
+      targetAgentId = this.config.agentRepo?.getSpaceManager(goal.spaceId)?.id ?? null;
     }
     if (!targetAgentId) {
       log.warn(
@@ -838,7 +840,7 @@ export class SpaceRuntimeService {
     spaceId: string
   ): Array<{ id: string; name: string; description?: string }> {
     const unified = this.config.longHorizonAgentRepo?.listBySpaceId(spaceId) ?? [];
-    const coordinatorAgentId = this.config.longHorizonAgentRepo?.getCoordinator(spaceId)?.id;
+    const coordinatorAgentId = this.config.agentRepo?.getSpaceManager(spaceId)?.id;
     return unified
       .filter((agent) => agent.id !== coordinatorAgentId)
       .map((agent) => ({
@@ -1776,7 +1778,7 @@ export class SpaceRuntimeService {
       return;
     }
 
-    const coordinator = this.config.longHorizonAgentRepo?.getCoordinator(space.id) ?? null;
+    const coordinator = this.config.agentRepo?.getSpaceManager(space.id) ?? null;
     const agents = this.listPromptRestampAgents(space.id);
     const workflows = spaceWorkflowManager.listWorkflows(space.id);
 
