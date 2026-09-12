@@ -77,7 +77,7 @@ export function createCompleteTaskOperation(
   return defineOperation({
     name: 'task.complete',
     description:
-      'Synchronously transition a Space task from `approved` to `done`, with an optional result, and return the updated task. RPC and internal callers are admitted directly; an MCP caller must be the task’s own worker session (session.context.taskId/spaceId match). Rejects task_completion_unavailable when the task is missing, not Space-owned, archived, or not currently `approved` (retry after state changes), and task_completion_denied when the calling MCP session is not that worker session (do not retry).',
+      'Synchronously transition a Space task from `approved` to `done`, with an optional result, and return the updated task. RPC and internal callers are admitted directly; an MCP caller must be the task’s own worker session (session.context.taskId/spaceId match). Rejects task_completion_unavailable when the task is missing, not Space-owned, archived, or not currently `approved` (retry after state changes), and task_completion_denied when the calling MCP session is not that worker session (do not retry). This binding does not yet enforce post-approval session ownership (`task.postApprovalSessionId` / `requiresPostApprovalOwner`); it also does not apply workflow completion gates (the coder-owned-merge PR gate) or the legacy `goal_update` field. Callers wanting the `mark_complete` tool’s artifact-summary result fallback must pass `result` themselves.',
     inputSchema,
     resultSchema: z.union([
       z.object({ accepted: z.literal(true), task: TaskCoreSchema }),
