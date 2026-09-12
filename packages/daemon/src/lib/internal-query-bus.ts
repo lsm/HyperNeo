@@ -117,16 +117,6 @@ export interface SpaceWorkflowRunGetResult {
   run: Record<string, unknown> | null;
 }
 
-export interface RoomTasksListQuery {
-  roomId: string;
-  includeArchived?: boolean;
-}
-
-export interface RoomTasksListResult {
-  tasks: Array<Record<string, unknown>>;
-}
-
 export interface DaemonQueryMap {
   'space.workflowRun.get': { input: SpaceWorkflowRunGetQuery; output: SpaceWorkflowRunGetResult };
-  'room.tasks.list': { input: RoomTasksListQuery; output: RoomTasksListResult };
 }

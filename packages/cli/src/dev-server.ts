@@ -172,7 +172,6 @@ export async function startDevServer(config: Config) {
     throw error;
   }
 
-  log.info('Room orchestration is handled by RoomAgentService');
 
   daemonContext.server.stop();
 

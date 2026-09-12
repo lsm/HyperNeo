@@ -115,7 +115,6 @@ export async function startProdServer(config: Config) {
 
   daemonContext.server.stop();
 
-  log.info('Room orchestration is handled by RoomAgentService');
 
   const { createWebSocketHandlers } = await import('@hyperneo/daemon/routes/setup-websocket');
   const wsHandlers = createWebSocketHandlers(daemonContext.transport, daemonContext.sessionManager);
