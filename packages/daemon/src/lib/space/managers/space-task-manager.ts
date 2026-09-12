@@ -17,7 +17,7 @@ import {
 
 export { VALID_SPACE_TASK_TRANSITIONS, isValidSpaceTaskTransition, assertValidSpaceTaskTransition };
 
-class StaleStatusCasMiss extends Error {}
+class StaleGuardCasMiss extends Error {}
 export class StaleTaskGuardError extends Error {}
 
 import { buildTaskDependencyGraph, hasTaskDependencyCycle } from '../../tasks/dependency-graph.ts';
@@ -257,7 +257,7 @@ export class SpaceTaskManager {
             options?.expectedPostApprovalSessionId === undefined
           )
             throw new Error(`Failed to update task: ${taskId}`);
-          throw new StaleStatusCasMiss();
+          throw new StaleGuardCasMiss();
         }
         if (reopened) {
           this.onTaskReopened?.(taskId);
@@ -270,7 +270,7 @@ export class SpaceTaskManager {
       this.reactiveDb?.commitTransaction();
     } catch (err) {
       this.reactiveDb?.abortTransaction();
-      if (err instanceof StaleStatusCasMiss) {
+      if (err instanceof StaleGuardCasMiss) {
         const current = await this.getTask(taskId);
         if (!current) {
           throw new Error(`Task not found: ${taskId}`);
