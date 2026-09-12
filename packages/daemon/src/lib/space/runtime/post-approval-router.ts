@@ -114,9 +114,8 @@ export function collectDispatchablePostApprovalRoutes(
 }
 
 export function isCoderOwnedMergeWorkflow(workflow: SpaceWorkflow | null): boolean {
-  const dispatchedPostApprovalRoute = collectDispatchablePostApprovalRoutes(workflow)[0];
   return (
-    dispatchedPostApprovalRoute?.requirePrMerge === true ||
+    collectDispatchablePostApprovalRoutes(workflow)[0]?.requirePrMerge === true ||
     builtInWorkflowRequiresPrMerge(workflow?.templateName)
   );
 }
