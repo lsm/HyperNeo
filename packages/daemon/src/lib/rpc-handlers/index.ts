@@ -76,6 +76,7 @@ import {
 import { ChannelCycleRepository } from '../../storage/repositories/channel-cycle-repository.ts';
 import { SessionRepository } from '../../storage/repositories/session-repository.ts';
 import { setupSpaceAgentHandlers } from './space-agent-handlers.ts';
+import { setupSpaceAgentReminderHandlers } from './space-agent-reminder-handlers.ts';
 import { setupSpaceAgentSubscriptionHandlers } from './space-agent-subscription-handlers.ts';
 import { setupSpaceAgentTemplateHandlers } from './space-agent-template-handlers.ts';
 import { setupSpaceAgentV2Handlers } from './space-agent-v2-handlers.ts';
@@ -87,6 +88,7 @@ import {
 } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
 import { SpaceAgentTemplateRepository } from '../../storage/repositories/space-agent-template-repository.ts';
 import { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository.ts';
+import { SpaceAgentReminderRepository } from '../../storage/repositories/space-agent-reminder-repository.ts';
 import { SpaceAgentSubscriptionRepository } from '../../storage/repositories/space-agent-subscription-repository.ts';
 import { SpaceAgentTemplateManager } from '../space/managers/space-agent-template-manager.ts';
 import { createAgentTemplateResolverFactory } from '../space/workflows/run-template-snapshot.ts';
@@ -749,6 +751,10 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   );
 
   const spaceAgentRepo = new SpaceAgentRepository(deps.db.getDatabase());
+  const spaceAgentReminderRepo = new SpaceAgentReminderRepository(
+    deps.db.getDatabase(),
+    spaceAgentRepo
+  );
   const spaceAgentSubscriptionRepo = new SpaceAgentSubscriptionRepository(
     deps.db.getDatabase(),
     spaceAgentRepo
@@ -1052,6 +1058,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     agents: spaceAgentRepo,
     runtimeService: spaceRuntimeService,
   });
+
+  setupSpaceAgentReminderHandlers(deps.messageHub, { reminders: spaceAgentReminderRepo });
 
   setupSpaceAgentV2Handlers(deps.messageHub, {
     agents: spaceAgentRepo,
