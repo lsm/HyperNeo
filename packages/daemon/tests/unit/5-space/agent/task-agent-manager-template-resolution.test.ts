@@ -654,6 +654,8 @@ function makeSpawnPayloadHarness(
   options: {
     definitionVersion?: string | null;
     pinnedWorkflow?: SpaceWorkflow | null;
+    storedTemplates?: SpaceAgentTemplate[];
+    space?: Partial<Space>;
   } = {}
 ): SpawnPayloadHarness {
   const defaultPinnedWorkflow =
@@ -662,6 +664,7 @@ function makeSpawnPayloadHarness(
       : withRunTemplateSnapshots(workflow, createAgentTemplateResolver('space-1'));
   const execution = makeExecution(agentName);
   const dbRow: NodeExecution = { ...execution };
+  const storedTemplates = new Map((options.storedTemplates ?? []).map((t) => [t.key, t]));
   let capturedInit: AgentSessionInit | undefined;
   let capturedMemberInfo: CapturedMemberInfo | undefined;
   let capturedKickoff: string | undefined;
@@ -700,6 +703,7 @@ function makeSpawnPayloadHarness(
       getWorkflowForRun: () => defaultPinnedWorkflow,
     },
     longHorizonAgentRepo: { getById: () => null },
+    templateRepo: { getByKey: (key: string) => storedTemplates.get(key) ?? null },
   } as unknown as TaskAgentManagerConfig);
 
   const internal = tam as unknown as {
@@ -732,7 +736,11 @@ function makeSpawnPayloadHarness(
   internal.buildNodeAgentMcpServersForSession = () => ({});
 
   const task = makeTask();
-  const space = { id: SPACE_ID, workspacePath: '/tmp/ws' } as unknown as Space;
+  const space = {
+    id: SPACE_ID,
+    workspacePath: '/tmp/ws',
+    ...options.space,
+  } as unknown as Space;
   const workflowRun = {
     id: RUN_ID,
     workflowId: 'wf-3832',
@@ -886,6 +894,76 @@ describe('worker-template spawn payload (ATC-1 pin, feeds slice 7 lock semantics
     expect(init?.model).toBe('moonshot-custom');
     expect(init?.provider).toBe('kimi');
     expect(init?.thinkingLevel).toBe('think8k');
+  });
+
+  test('a stored template supplies its complete worker configuration to spawn', async () => {
+    const h = makeSpawnPayloadHarness(
+      makeWorkflow(makeTemplateWorkflowNode({ templateKey: 'custom.stored' })),
+      'coder',
+      { storedTemplates: [makeStoredTemplate()] }
+    );
+
+    await h.spawn();
+
+    const init = h.capturedInit();
+    expect(init?.model).toBe('stored-model');
+    expect(init?.provider).toBe('openrouter');
+    expect(init?.thinkingLevel).toBe('think8k');
+    expect(init?.settingSources).toEqual(['project']);
+    expect(init?.disallowedTools).toEqual(['Bash', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
+  });
+
+  test('space setting sources are inherited only when the stored template leaves them unset', async () => {
+    const inherited = makeSpawnPayloadHarness(
+      makeWorkflow(makeTemplateWorkflowNode({ templateKey: 'custom.stored' })),
+      'coder',
+      {
+        storedTemplates: [makeStoredTemplate({ settingSources: null })],
+        space: { settingSources: ['user', 'local'] },
+      }
+    );
+    const owned = makeSpawnPayloadHarness(
+      makeWorkflow(makeTemplateWorkflowNode({ templateKey: 'custom.stored' })),
+      'coder',
+      {
+        storedTemplates: [makeStoredTemplate({ settingSources: ['project'] })],
+        space: { settingSources: ['user', 'local'] },
+      }
+    );
+
+    await inherited.spawn();
+    await owned.spawn();
+
+    expect(inherited.capturedInit()?.settingSources).toEqual(['user', 'local']);
+    expect(owned.capturedInit()?.settingSources).toEqual(['project']);
+  });
+
+  test('spawn uses a model-pool entry but bypasses the pool for a fixed template model', async () => {
+    const pool = [{ model: 'pool-model', provider: 'copilot', maxConcurrent: 1, weight: 1 }];
+    const pooled = makeSpawnPayloadHarness(
+      makeWorkflow(makeTemplateWorkflowNode({ templateKey: 'custom.stored' })),
+      'coder',
+      {
+        storedTemplates: [makeStoredTemplate({ model: null, provider: null, modelPool: pool })],
+      }
+    );
+    const fixed = makeSpawnPayloadHarness(
+      makeWorkflow(makeTemplateWorkflowNode({ templateKey: 'custom.stored' })),
+      'coder',
+      {
+        storedTemplates: [
+          makeStoredTemplate({ model: 'fixed-model', provider: 'openrouter', modelPool: pool }),
+        ],
+      }
+    );
+
+    await pooled.spawn();
+    await fixed.spawn();
+
+    expect(pooled.capturedInit()?.model).toBe('pool-model');
+    expect(pooled.capturedInit()?.provider).toBe('copilot');
+    expect(fixed.capturedInit()?.model).toBe('fixed-model');
+    expect(fixed.capturedInit()?.provider).toBe('openrouter');
   });
 });
 
