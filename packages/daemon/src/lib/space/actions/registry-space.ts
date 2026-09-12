@@ -173,6 +173,15 @@ export function createSpaceRegistryEntries(
     return 1;
   };
 
+  const runHasLiveSessions = (workflowRunId: string): boolean => {
+    const hasLiveExecution = config.nodeExecutionRepo
+      .listByWorkflowRun(workflowRunId)
+      .some((execution) => !!execution.agentSessionId && execution.status !== 'cancelled');
+    if (hasLiveExecution) return true;
+    const runTaskIds = config.taskRepo.listByWorkflowRun(workflowRunId).map((t) => t.id);
+    return (config.taskAgentManager?.getLiveSubSessionIdsForTasks(runTaskIds).length ?? 0) > 0;
+  };
+
   const cancelTaskAutonomy = async (params: { task_id: string }) => {
     const task = taskInSpace(params.task_id);
     if (task?.pendingCheckpointType === 'task_completion') return HUMAN_ONLY_AUTONOMY_LEVEL;
@@ -181,7 +190,11 @@ export function createSpaceRegistryEntries(
       if (run && canTransitionRunStatus(run.status, 'cancelled')) {
         return DESTRUCTIVE_ACTION_AUTONOMY_LEVEL;
       }
-      if (task.taskAgentSessionId || task.postApprovalSessionId) {
+      if (
+        task.taskAgentSessionId ||
+        task.postApprovalSessionId ||
+        runHasLiveSessions(task.workflowRunId)
+      ) {
         return DESTRUCTIVE_ACTION_AUTONOMY_LEVEL;
       }
     }

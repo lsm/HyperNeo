@@ -445,6 +445,46 @@ describe('createSpaceRegistryEntries — composition', () => {
     }
   });
 
+  test('cancel_task requires destructive clearance for a terminal run with a live session on a sibling task', async () => {
+    const ctx = makeCtx();
+    try {
+      const workflow = ctx.workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: 'Sibling target',
+        nodes: [{ name: 'Work', agents: [{ agentId: 'agent-coder-1', name: 'Coder' }] }],
+        tags: [],
+      });
+      const doneRun = ctx.workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Done run with a live sibling',
+      });
+      ctx.workflowRunRepo.updateRun(doneRun.id, { status: 'done' });
+      const sessionlessTask = ctx.taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Sessionless task',
+        description: '',
+        workflowRunId: doneRun.id,
+      });
+      new NodeExecutionRepository(ctx.db).create({
+        workflowRunId: doneRun.id,
+        workflowNodeId: 'node-1',
+        agentName: 'Coder',
+        agentSessionId: 'sibling-live-session',
+        status: 'in_progress',
+      });
+
+      const entries = createSpaceRegistryEntries(ctx.config);
+      const resolve = entries.find((entry) => entry.name === 'cancel_task')?.autonomyRequirement;
+      expect(typeof resolve).toBe('function');
+      if (typeof resolve === 'function') {
+        expect(await resolve({ task_id: sessionlessTask.id })).toBe(SESSION_WRITE_AUTONOMY_LEVEL);
+      }
+    } finally {
+      ctx.db.close();
+    }
+  });
+
   test('cancel_task rejects cancel_workflow_run and dispatches task.cancel through an operations registry', async () => {
     const ctx = makeCtx();
     try {
