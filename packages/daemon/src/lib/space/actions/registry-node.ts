@@ -281,6 +281,7 @@ export function createNodeRegistryEntries(
                     (params) => ({
                       taskId: config.taskId,
                       reason: (params as { reason?: string | null }).reason ?? null,
+                      submittedByNodeId: config.workflowNodeId,
                     })
                   ) as unknown as (args: SubmitForApprovalInput) => Promise<ToolResult>)
                 : onSubmitForApproval,

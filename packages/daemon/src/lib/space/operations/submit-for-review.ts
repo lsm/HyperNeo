@@ -24,7 +24,11 @@ import {
 
 const log = new Logger('SubmitForReview');
 const inputSchema = z
-  .object({ taskId: z.string().min(1), reason: z.string().nullable().optional() })
+  .object({
+    taskId: z.string().min(1),
+    reason: z.string().nullable().optional(),
+    submittedByNodeId: z.string().nullable().optional(),
+  })
   .strict();
 type Input = z.infer<typeof inputSchema>;
 type SubmitForReviewTaskDependencies = Pick<
@@ -85,7 +89,7 @@ async function admitManagedSubmission(
     return { reason: { accepted: false, reason: 'review_submission_unavailable' } };
   try {
     const updated = await tasks.getTaskManager(task.spaceId).submitTaskForReview(task.id, {
-      submittedByNodeId: null,
+      submittedByNodeId: input.submittedByNodeId ?? null,
       reason: input.reason ?? null,
     });
     await tasks.emitTaskUpdated(task.spaceId, updated).catch((error: unknown) => {

@@ -231,6 +231,20 @@ test('workflow-owned task via RPC caller completes synchronously with the reason
   expect(outcomeCount()).toBe(0);
 });
 
+test('workflow-owned task via RPC caller persists the submitting node id', async () => {
+  markTaskWorkflowOwned();
+  expect(
+    await operation.execute(
+      { taskId, reason: 'Ready', submittedByNodeId: 'node-1' },
+      { source: 'rpc' }
+    )
+  ).toEqual({ accepted: true, jobId: null });
+  expect(tasks.getTask(taskId)).toMatchObject({
+    status: 'review',
+    pendingCompletionSubmittedByNodeId: 'node-1',
+  });
+});
+
 test('workflow-owned task via MCP caller in the owning Space is admitted', async () => {
   markTaskWorkflowOwned();
   const worker = sessions.getSession(sessionId)!;
