@@ -1,3 +1,4 @@
+import { hasSpaceAuthority } from '../runtime/space-mcp-session-policy.ts';
 import {
   isRateOrUsageLimited,
   isWorkflowRecoveryTransition,
@@ -1300,8 +1301,7 @@ export function createSpaceRegistryEntries(
     : [...workflowEntries, ...taskEntries, ...partCEntries];
   if (config.goalService) entries.push(...goalEntries);
   if (config.evolutionScopeService && config.evolutionEpisodeService) entries.push(...forgeEntries);
-  if (config.callerRole === 'long_term_agent' || config.isDefaultAgent === true)
-    entries.push(reviewGoalOutcomeEntry);
+  if (hasSpaceAuthority(config.callerRole)) entries.push(reviewGoalOutcomeEntry);
   return config.taskAgentManager
     ? entries
     : entries.filter((entry) => entry.name !== 'send_message_to_task');

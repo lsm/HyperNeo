@@ -14,6 +14,10 @@ export type SpaceMcpSessionRole =
   | 'legacy_task_agent'
   | 'outside_space';
 
+export function hasSpaceAuthority(role: SpaceMcpSessionRole | undefined): boolean {
+  return role === 'long_term_agent' || role === 'coordinator';
+}
+
 export interface SpaceMcpSessionPolicyContext {
   readonly hasDirectWorkerProvenance?: (sessionId: string) => boolean;
   readonly resolveDirectWorker?: (sessionId: string) => DirectTaskWorkerIdentity | null;

@@ -1,10 +1,9 @@
-import type { Session, SpaceTask } from '@hyperneo/shared';
+import type { Session, SpaceLongHorizonAgent, SpaceTask } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { Logger } from '../../logger.ts';
 import { defineOperation, type OperationCaller } from '../../operations/registry.ts';
 import { TaskCoreSchema } from '../../operations/task-get.ts';
-import { resolveIsDefaultAgent, type DefaultAgentLookup } from '../agents/default-agent-policy.ts';
 import type { SpaceTaskManager } from '../managers/space-task-manager.ts';
 import {
   resolveSpaceMcpSessionPolicy,
@@ -20,13 +19,17 @@ import {
 } from './pending-completion.ts';
 
 const log = new Logger('OwnedPendingCompletion');
+
+export interface SpaceCoordinatorLookup {
+  getCoordinator(spaceId: string): SpaceLongHorizonAgent | null;
+}
 type Gate<T> = { value: T } | { reason: Error };
 type CompletionActor = { source: OperationCaller['source']; session?: Session; spaceId?: string };
 
 export interface OwnedPendingCompletionDependencies {
   getSession: (sessionId: string) => Session | null;
   getTask: (taskId: string) => SpaceTask | null | Promise<SpaceTask | null>;
-  coordinatorLookup: DefaultAgentLookup;
+  coordinatorLookup: SpaceCoordinatorLookup;
   policyContext?: SpaceMcpSessionPolicyContext;
   getTaskManager: (
     spaceId: string
@@ -46,14 +49,14 @@ export interface OwnedPendingCompletionDependencies {
 export function resolveCompletionActor(
   caller: OperationCaller,
   getSession: OwnedPendingCompletionDependencies['getSession'],
-  coordinatorLookup: DefaultAgentLookup,
+  coordinatorLookup: SpaceCoordinatorLookup,
   policyContext: SpaceMcpSessionPolicyContext
 ): Gate<CompletionActor> {
   if (caller.source !== 'mcp') return { value: { source: caller.source } };
   const session = caller.sessionId ? getSession(caller.sessionId) : null;
   const denied = {
     reason: new Error(
-      'Pending completion decisions require the owning Space coordinator or task-agent session'
+      'Pending completion decisions require a Space agent session in the owning space or a task-agent session'
     ),
   };
   if (!session) return denied;
@@ -65,13 +68,8 @@ export function resolveCompletionActor(
   const canonicalChat = session.type === 'space_chat' && session.id === `space:chat:${spaceId}`;
   const allowed =
     policy.role === 'legacy_task_agent' ||
-    (canonicalChat && coordinatorLookup.getCoordinator(spaceId) !== null) ||
-    (policy.role === 'long_term_agent' &&
-      resolveIsDefaultAgent(
-        spaceId,
-        session.metadata.promptProvenance?.agentId,
-        coordinatorLookup
-      ));
+    policy.role === 'long_term_agent' ||
+    (canonicalChat && coordinatorLookup.getCoordinator(spaceId) !== null);
   return allowed ? { value: { source: 'mcp', session, spaceId } } : denied;
 }
 
@@ -189,7 +187,7 @@ export function createOwnedPendingCompletionOperation(
   return defineOperation({
     name: 'task.resolvePendingCompletion',
     description:
-      'Approve or reject a Space task awaiting completion review. MCP requires the owning Space coordinator/default agent or legacy task-agent session. Both transports use human approval semantics. Standalone tasks are unsupported. Approval may return postApprovalBlockedReason when post-approval work could not dispatch.',
+      'Approve or reject a Space task awaiting completion review. MCP requires a Space agent session in the owning space or a legacy task-agent session. Both transports use human approval semantics. Standalone tasks are unsupported. Approval may return postApprovalBlockedReason when post-approval work could not dispatch.',
     inputSchema: z
       .object({
         taskId: z.string().min(1),

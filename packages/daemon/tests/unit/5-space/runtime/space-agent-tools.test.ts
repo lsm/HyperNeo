@@ -2027,7 +2027,7 @@ describe('createSpaceAgentToolHandlers — session management tools', () => {
     seedSession('other-member-coordinator', ctx.spaceId, { status: 'idle' });
     const handlers = makeHandlers(ctx, {
       myAgentName: 'space-agent',
-      isDefaultAgent: true,
+      callerRole: 'long_term_agent',
       mySessionId: 'caller-session',
       getSpaceAutonomyLevel: async () => 3,
       getRuntimeSession: () => ({ startQueryAndEnqueue: async () => {} }) as never,
@@ -2303,26 +2303,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     expect(clearLongTermAgentSessionProvider).not.toHaveBeenCalled();
   });
 
-  test('update_agent rejects pausing or archiving the default agent (C-2 lock)', async () => {
-    const handlers = makeHandlers(ctx);
-    const coordinator = ctx.longHorizonAgentRepo.ensureSpaceManager(ctx.spaceId);
-
-    const paused = JSON.parse(
-      (await handlers.pause_agent({ agent_id: coordinator.id })).content[0].text
-    );
-    expect(paused.success).toBe(false);
-    expect(paused.error).toContain('cannot be paused, archived, or disabled');
-
-    const archived = JSON.parse(
-      (await handlers.archive_agent({ agent_id: coordinator.id })).content[0].text
-    );
-    expect(archived.success).toBe(false);
-    expect(archived.error).toContain('cannot be paused, archived, or disabled');
-
-    expect(ctx.longHorizonAgentRepo.getById(coordinator.id)?.status).toBe('active');
-  });
-
-  test('update_agent keeps default-agent instructions and model editable (C-2 lock)', async () => {
+  test('update_agent edits a space-manager-handle agent like any other', async () => {
     const handlers = makeHandlers(ctx);
     const coordinator = ctx.longHorizonAgentRepo.ensureSpaceManager(ctx.spaceId);
 
@@ -2691,14 +2672,14 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
         .text
     );
     expect(assign.success).toBe(false);
-    expect(assign.error).toContain('coordinator or explicit human');
+    expect(assign.error).toContain('a Space agent session or explicit human');
 
     const unassign = JSON.parse(
       (await handlers.unassign_agent_from_goal({ agent_id: agent.id, goal_id: goal.id })).content[0]
         .text
     );
     expect(unassign.success).toBe(false);
-    expect(unassign.error).toContain('coordinator or explicit human');
+    expect(unassign.error).toContain('a Space agent session or explicit human');
   });
 
   test('create_goal atomically assigns the coordinator as owner by default', async () => {
@@ -7071,7 +7052,7 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
         }
       );
       const result = await makeHandlers(ctx, {
-        isDefaultAgent: true,
+        callerRole: 'long_term_agent',
         auditLogRepo,
         internalEventBus:
           bus as unknown as import('../../../../src/lib/internal-event-bus').InternalEventBus<
@@ -7113,7 +7094,7 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
     );
 
     const result = await makeHandlers(ctx, {
-      isDefaultAgent: true,
+      callerRole: 'long_term_agent',
     }).approve_pending_completion({ task_id: taskId, approved: true, reason: 'ship it' });
     dispatchSpy.mockRestore();
 
@@ -7138,7 +7119,7 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
       const auditLogRepo = new McpAuditLogRepository(ctx.db);
       const publish = mock(async () => {});
       const result = await makeHandlers(ctx, {
-        isDefaultAgent: true,
+        callerRole: 'long_term_agent',
         auditLogRepo,
         internalEventBus: { publish } as unknown as NonNullable<
           Parameters<typeof createSpaceAgentToolHandlers>[0]['internalEventBus']
@@ -7174,7 +7155,7 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
     );
 
     const result = await makeHandlers(ctx, {
-      isDefaultAgent: true,
+      callerRole: 'long_term_agent',
     }).approve_pending_completion({ task_id: taskId, approved: true });
     dispatchSpy.mockRestore();
 
@@ -7194,7 +7175,7 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
     });
 
     const result = await makeHandlers(ctx, {
-      isDefaultAgent: true,
+      callerRole: 'long_term_agent',
     }).approve_pending_completion({ task_id: taskId, approved: true });
     dispatchSpy.mockRestore();
 
@@ -7213,7 +7194,7 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
     });
 
     const result = await makeHandlers(ctx, {
-      isDefaultAgent: true,
+      callerRole: 'long_term_agent',
     }).approve_pending_completion({ task_id: taskId, approved: false, reason: 'needs rework' });
     dispatchSpy.mockRestore();
 
@@ -7230,7 +7211,7 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
     const dispatchSpy = spyOn(ctx.runtime, 'dispatchPostApproval');
 
     const result = await makeHandlers(ctx, {
-      isDefaultAgent: true,
+      callerRole: 'long_term_agent',
     }).approve_pending_completion({ task_id: taskId, approved: false });
     dispatchSpy.mockRestore();
 
@@ -7250,7 +7231,7 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
 
     const dispatchSpy = spyOn(ctx.runtime, 'dispatchPostApproval');
     const result = await makeHandlers(ctx, {
-      isDefaultAgent: true,
+      callerRole: 'long_term_agent',
     }).approve_pending_completion({ task_id: task.id, approved: true });
     dispatchSpy.mockRestore();
 
@@ -7273,7 +7254,7 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
 
     const dispatchSpy = spyOn(ctx.runtime, 'dispatchPostApproval');
     const result = await makeHandlers(ctx, {
-      isDefaultAgent: true,
+      callerRole: 'long_term_agent',
     }).approve_pending_completion({ task_id: task.id, approved: true });
     dispatchSpy.mockRestore();
 
@@ -7337,7 +7318,7 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
     const dispatchSpy = spyOn(ctx.runtime, 'dispatchPostApproval');
 
     const result = await makeHandlers(ctx, {
-      isDefaultAgent: true,
+      callerRole: 'long_term_agent',
       spaceId: 'other-space',
     }).approve_pending_completion({ task_id: taskId, approved: true });
     dispatchSpy.mockRestore();
@@ -7620,7 +7601,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
     const handlers = makeHandlersWith(tam, {
       activateNode: async () => {},
       myAgentName: 'space-agent',
-      isDefaultAgent: true,
+      callerRole: 'long_term_agent',
     });
 
     await handlers.send_message_to_task({

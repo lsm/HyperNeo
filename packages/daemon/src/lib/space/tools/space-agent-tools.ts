@@ -106,12 +106,11 @@ import {
   spaceAgentTemplateToNodeSource,
   type NodeAgentTemplateSource,
 } from '../runtime/spawn-slot-resolution.ts';
-import type { SpaceMcpSessionRole } from '../runtime/space-mcp-session-policy.ts';
-import { decideGoalOwnershipMutationAdmission } from '../goals/goal-ownership-gates.ts';
 import {
-  decideDefaultAgentUpdateAdmission,
-  resolveIsDefaultAgent,
-} from '../agents/default-agent-policy.ts';
+  hasSpaceAuthority,
+  type SpaceMcpSessionRole,
+} from '../runtime/space-mcp-session-policy.ts';
+import { decideGoalOwnershipMutationAdmission } from '../goals/goal-ownership-gates.ts';
 import type { ToolResult } from './tool-result.ts';
 import { jsonResult } from './tool-result.ts';
 import { instrumentTypedTelemetryAtMcpBoundary } from './mcp-typed-telemetry-boundary.ts';
@@ -625,7 +624,6 @@ export interface SpaceAgentToolsConfig {
   myAgentName?: string;
   myAgentNameAliases?: string[];
   myAgentId?: string;
-  isDefaultAgent?: boolean;
   mySessionId?: string;
   callerRole?: SpaceMcpSessionRole;
 
@@ -828,13 +826,13 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     messageResolver,
     longTermAgentDelivery,
   } = config;
-  const isDefaultAgent = config.isDefaultAgent === true;
+  const callerHasSpaceAuthority = hasSpaceAuthority(callerRole);
 
   const outboundSenderName = myAgentName ?? (mySessionId ? 'space-member' : 'space-agent');
   const outboundSenderLevel =
     outboundSenderName === 'task-agent'
       ? 'task-agent'
-      : isDefaultAgent
+      : callerHasSpaceAuthority
         ? 'space-agent'
         : 'session-agent';
   const outboundSenderDisplayName = outboundSenderName;
@@ -1422,12 +1420,12 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       requireLongHorizonAgentInSpace(explicitOwnerAgentId);
       const isSelf = typeof myAgentId === 'string' && myAgentId === explicitOwnerAgentId;
       const admission = decideGoalOwnershipMutationAdmission({
-        isDefaultAgent,
+        hasSpaceAuthority: callerHasSpaceAuthority,
         hasSession: typeof mySessionId === 'string',
       });
       if (!isSelf && admission.action === 'deny') {
         throw new Error(
-          'Specifying an owner other than yourself requires coordinator or explicit human authorization.'
+          'Specifying an owner other than yourself requires a Space agent session or explicit human authorization.'
         );
       }
       return explicitOwnerAgentId;
@@ -2161,18 +2159,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       try {
         const existingAgent = requireLongHorizonAgentInSpace(args.agent_id);
         if (!existingAgent) throw new Error(`Long-horizon agent not found: ${args.agent_id}`);
-        const lockDecision = decideDefaultAgentUpdateAdmission({
-          isDefaultAgent: resolveIsDefaultAgent(
-            spaceId,
-            args.agent_id,
-            config.longHorizonAgentRepo
-          ),
-          handleChanged: false,
-          nextStatus: args.status,
-        });
-        if (lockDecision.action === 'reject') {
-          return jsonResult({ success: false, error: lockDecision.message });
-        }
         if (args.name !== undefined && args.name.trim() === '') {
           return jsonResult({ success: false, error: 'Agent name cannot be empty' });
         }
@@ -2238,7 +2224,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     async assign_agent_to_goal(args: { agent_id: string; goal_id: string }): Promise<ToolResult> {
       try {
         const admission = decideGoalOwnershipMutationAdmission({
-          isDefaultAgent,
+          hasSpaceAuthority: callerHasSpaceAuthority,
           hasSession: typeof mySessionId === 'string',
         });
         if (admission.action === 'deny') {
@@ -2262,7 +2248,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     }): Promise<ToolResult> {
       try {
         const admission = decideGoalOwnershipMutationAdmission({
-          isDefaultAgent,
+          hasSpaceAuthority: callerHasSpaceAuthority,
           hasSession: typeof mySessionId === 'string',
         });
         if (admission.action === 'deny') {
@@ -3552,7 +3538,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       approved: boolean;
       reason?: string | null;
     }): Promise<ToolResult> {
-      if (!isDefaultAgent && callerRole !== 'legacy_task_agent') {
+      if (!callerHasSpaceAuthority && callerRole !== 'legacy_task_agent') {
         return jsonResult({
           success: false,
           error:
@@ -5195,7 +5181,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
     );
   }
 
-  if (config.callerRole === 'long_term_agent' || config.isDefaultAgent === true) {
+  if (hasSpaceAuthority(config.callerRole)) {
     tools.push(
       tool(
         'review_goal_outcome',

@@ -170,7 +170,7 @@ describe('spaceGoal owner handlers', () => {
         { spaceId: SPACE_ID, goalId: GOAL_ID, agentId: 'agent-1' },
         makeContext('space:agent:space-1:agent-1')
       )
-    ).rejects.toThrow(/coordinator or explicit human authorization/);
+    ).rejects.toThrow(/a Space agent session or explicit human authorization/);
     expect(repo.assignGoal).not.toHaveBeenCalled();
   });
 
@@ -182,7 +182,7 @@ describe('spaceGoal owner handlers', () => {
         { spaceId: SPACE_ID, goalId: GOAL_ID },
         makeContext('space:chat:space-1')
       )
-    ).rejects.toThrow(/coordinator or explicit human authorization/);
+    ).rejects.toThrow(/a Space agent session or explicit human authorization/);
     expect(repo.deleteGoalAssignmentByRelationship).not.toHaveBeenCalled();
   });
 

@@ -144,29 +144,29 @@ test.each(['rpc', 'internal'] as const)(
   }
 );
 
-test.each([
-  'missing',
-  'ordinary',
-  'member',
-  'nondefault',
-  'noncanonical-chat',
-  'missing-coordinator',
-] as const)('denies %s before mutation', async (kind) => {
-  let session: Session | undefined;
-  if (kind === 'ordinary') session = persist('worker', 'ordinary', null);
-  if (kind === 'member') session = persist('worker');
-  if (kind === 'nondefault')
-    session = persist('worker', longTermAgentSessionId(spaceId, 'other'), spaceId, 'other');
-  if (kind === 'noncanonical-chat') session = persist('space_chat', 'not-canonical');
-  if (kind === 'missing-coordinator') {
-    session = persist('space_chat', `space:chat:${spaceId}`);
-    dependencies.coordinatorLookup = { getCoordinator: () => null };
+test.each(['missing', 'ordinary', 'member', 'noncanonical-chat', 'missing-coordinator'] as const)(
+  'denies %s before mutation',
+  async (kind) => {
+    let session: Session | undefined;
+    if (kind === 'ordinary') session = persist('worker', 'ordinary', null);
+    if (kind === 'member') session = persist('worker');
+    if (kind === 'noncanonical-chat') session = persist('space_chat', 'not-canonical');
+    if (kind === 'missing-coordinator') {
+      session = persist('space_chat', `space:chat:${spaceId}`);
+      dependencies.coordinatorLookup = { getCoordinator: () => null };
+    }
+    const outcome = await invoke(session?.id ?? 'missing');
+    expect(outcome.kind).toBe('failed');
+    expect(dependencies.getTaskManager).not.toHaveBeenCalled();
+    expect(order).toEqual([]);
+    expect(tasks.getTask(task.id)?.status).toBe('review');
   }
-  const outcome = await invoke(session?.id ?? 'missing');
-  expect(outcome.kind).toBe('failed');
-  expect(dependencies.getTaskManager).not.toHaveBeenCalled();
-  expect(order).toEqual([]);
-  expect(tasks.getTask(task.id)?.status).toBe('review');
+);
+
+test('admits a Space agent that is not the space manager', async () => {
+  const session = persist('worker', longTermAgentSessionId(spaceId, 'other'), spaceId, 'other');
+  expect((await invoke(session.id)).kind).toBe('completed');
+  expect(tasks.getTask(task.id)?.status).toBe('approved');
 });
 
 test('denies workflow worker even with default-agent provenance', async () => {

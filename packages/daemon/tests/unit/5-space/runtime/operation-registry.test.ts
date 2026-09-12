@@ -392,7 +392,9 @@ test('discovered pending completion rejects an ordinary Space member before effe
   expect(result.isError).toBe(true);
   expect(JSON.parse(result.content[0].text)).toMatchObject({
     code: 'execution_failed',
-    message: expect.stringContaining('coordinator or task-agent'),
+    message: expect.stringContaining(
+      'Space agent session in the owning space or a task-agent session'
+    ),
   });
   expect(tasks.getTask(taskId)).toEqual(previous);
   expect(deps.dispatchApproval).not.toHaveBeenCalled();
