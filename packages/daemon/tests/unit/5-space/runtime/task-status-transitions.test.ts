@@ -432,6 +432,40 @@ describe('SpaceTaskManager.setTaskStatus — expectedStatus guard', () => {
       spy.mockRestore();
     }
   });
+
+  test('a post-approval session race is preserved when the other guards still match', async () => {
+    const task = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'T',
+      description: '',
+      status: 'in_progress',
+    });
+    taskRepo.updateTask(task.id, { postApprovalSessionId: 'session-a' });
+    const realGetTask = SpaceTaskRepository.prototype.getTask;
+    let calls = 0;
+    const spy = spyOn(SpaceTaskRepository.prototype, 'getTask').mockImplementation(function (
+      this: SpaceTaskRepository,
+      id: string
+    ) {
+      calls += 1;
+      const row = realGetTask.call(this, id);
+      if (calls === 1 && row) taskRepo.updateTask(id, { postApprovalSessionId: 'session-b' });
+      return row;
+    });
+    try {
+      await expect(
+        taskManager.setTaskStatus(task.id, 'done', {
+          expectedStatus: 'in_progress',
+          expectedWorkflowRunId: null,
+          expectedPostApprovalSessionId: 'session-a',
+        })
+      ).rejects.toThrow(
+        `Task ${task.id} is no longer awaiting post-approval session 'session-a' (now 'session-b')`
+      );
+    } finally {
+      spy.mockRestore();
+    }
+  });
 });
 
 describe('VALID_SPACE_TASK_TRANSITIONS — matrix gap closures (task #849)', () => {

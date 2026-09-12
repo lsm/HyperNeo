@@ -253,7 +253,8 @@ export class SpaceTaskManager {
           if (
             expectedStatus === undefined &&
             expectedWorkflowRunId === undefined &&
-            expectedGeneration === undefined
+            expectedGeneration === undefined &&
+            options?.expectedPostApprovalSessionId === undefined
           )
             throw new Error(`Failed to update task: ${taskId}`);
           throw new StaleStatusCasMiss();
@@ -282,16 +283,29 @@ export class SpaceTaskManager {
         if (generationMismatch) {
           throw new PendingCompletionSupersededError(taskId);
         }
-        const statusMismatch = expectedStatus !== undefined && current.status !== expectedStatus;
-        const workflowRunMismatch =
+        if (expectedStatus !== undefined && current.status !== expectedStatus) {
+          throw staleStatusError(current.status);
+        }
+        if (
           expectedWorkflowRunId !== undefined &&
-          (current.workflowRunId ?? null) !== expectedWorkflowRunId;
-        if (workflowRunMismatch && !statusMismatch) {
+          (current.workflowRunId ?? null) !== expectedWorkflowRunId
+        ) {
           throw new StaleTaskGuardError(
             `Task ${taskId} is no longer attached to workflow run '${expectedWorkflowRunId}' (now '${current.workflowRunId ?? null}')`
           );
         }
-        throw staleStatusError(current.status);
+        const expectedPostApprovalSessionId = options?.expectedPostApprovalSessionId;
+        if (
+          expectedPostApprovalSessionId !== undefined &&
+          (current.postApprovalSessionId ?? null) !== expectedPostApprovalSessionId
+        ) {
+          throw new StaleTaskGuardError(
+            `Task ${taskId} is no longer awaiting post-approval session '${expectedPostApprovalSessionId}' (now '${current.postApprovalSessionId ?? null}')`
+          );
+        }
+        throw new StaleTaskGuardError(
+          `Task ${taskId} lost a guarded update race (now '${current.status}')`
+        );
       }
       throw err;
     }
