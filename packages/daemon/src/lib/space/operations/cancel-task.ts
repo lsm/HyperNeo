@@ -26,17 +26,20 @@ function admitCancellation(
   caller: OperationCaller,
   policy: SpaceMcpSessionPolicyContext
 ): { value: DirectFinalizationInput } | { reason: DirectOutcomeAcknowledgement } {
-  const denied = {
+  const unavailable = {
     reason: { accepted: false as const, reason: 'direct_cancellation_unavailable' },
+  };
+  const denied = {
+    reason: { accepted: false as const, reason: 'direct_cancellation_denied' },
   };
   const task = new SpaceTaskRepository(db).getTask(input.taskId);
   if (!task?.spaceId || task.workflowRunId || !task.taskAgentSessionId || task.archivedAt)
-    return denied;
+    return unavailable;
   const row = db
     .prepare('SELECT id FROM direct_task_execution_attempts WHERE task_id = ? AND session_id = ?')
     .get(task.id, task.taskAgentSessionId) as { id: string } | null;
   const attempt = row ? new DirectTaskExecutionRepository(db).get(row.id) : null;
-  if (!attempt) return denied;
+  if (!attempt) return unavailable;
   const target: DirectFinalizationInput = {
     attemptId: attempt.id,
     sessionId: attempt.sessionId,
@@ -77,7 +80,7 @@ export function createCancelTaskOperation(
   return defineOperation({
     name: 'task.cancel',
     description:
-      'Persist cancellation of one running direct task and return its durable job acknowledgement. RPC/internal callers and active persisted MCP sessions in the owning Space use the same operation. Workflow tasks and dependent-task cascades are not supported by this binding. Acceptance does not mean shutdown has completed.',
+      'Persist cancellation of one running direct task and return its durable job acknowledgement. RPC/internal callers and active persisted MCP sessions in the owning Space use the same operation. Rejects direct_cancellation_unavailable when the task or its direct-execution state does not support this binding (workflow-owned, archived, or no active direct attempt — retry after state changes), and direct_cancellation_denied when the calling MCP session is not active in the owning Space (do not retry). Acceptance does not mean shutdown has completed.',
     inputSchema,
     resultSchema: z.union([
       z.object({ accepted: z.literal(true), jobId: z.string().nullable() }),

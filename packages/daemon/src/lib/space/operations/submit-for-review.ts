@@ -26,17 +26,21 @@ function admitSubmission(
   input: Input,
   caller: OperationCaller
 ): { value: DirectFinalizationInput } | { reason: DirectOutcomeAcknowledgement } {
-  const denied = {
+  const unavailable = {
     reason: { accepted: false as const, reason: 'direct_review_submission_unavailable' },
   };
+  const denied = {
+    reason: { accepted: false as const, reason: 'direct_review_submission_denied' },
+  };
   const task = new SpaceTaskRepository(db).getTask(input.taskId);
-  if (!task || task.workflowRunId || !task.taskAgentSessionId || task.archivedAt) return denied;
+  if (!task || task.workflowRunId || !task.taskAgentSessionId || task.archivedAt)
+    return unavailable;
   const attempts = new DirectTaskExecutionRepository(db);
   const row = db
     .prepare('SELECT id FROM direct_task_execution_attempts WHERE task_id = ? AND session_id = ?')
     .get(task.id, task.taskAgentSessionId) as { id: string } | null;
   const attempt = row ? attempts.get(row.id) : null;
-  if (!attempt) return denied;
+  if (!attempt) return unavailable;
   const target: DirectFinalizationInput = {
     attemptId: attempt.id,
     sessionId: attempt.sessionId,
@@ -84,7 +88,7 @@ export function createSubmitTaskForReviewOperation(
   return defineOperation({
     name: 'task.submitForReview',
     description:
-      'Persist a direct task completion-review request and return its durable job acknowledgement. RPC/internal callers and the task’s own persisted direct-worker MCP session use the same operation. Workflow tasks are not supported by this binding. Acceptance does not mean shutdown or review finalization has completed.',
+      'Persist a direct task completion-review request and return its durable job acknowledgement. RPC/internal callers and the task’s own persisted direct-worker MCP session use the same operation. Rejects direct_review_submission_unavailable when the task or its direct-execution state does not support this binding (workflow-owned, archived, or no active direct attempt — retry after state changes), and direct_review_submission_denied when the calling MCP session is not the attempt’s own persisted worker (do not retry). Acceptance does not mean shutdown or review finalization has completed.',
     inputSchema,
     resultSchema: z.union([
       z.object({ accepted: z.literal(true), jobId: z.string().nullable() }),

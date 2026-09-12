@@ -34,9 +34,10 @@ function admitStart(
   caller: OperationCaller,
   policy: SpaceMcpSessionPolicyContext
 ): { value: DirectTaskStartInput } | { reason: DirectStartAcknowledgement } {
-  const denied = { reason: { accepted: false as const, reason: 'direct_start_unavailable' } };
+  const unavailable = { reason: { accepted: false as const, reason: 'direct_start_unavailable' } };
+  const denied = { reason: { accepted: false as const, reason: 'direct_start_denied' } };
   const task = new SpaceTaskRepository(db).getTask(input.taskId);
-  if (!task?.spaceId || task.workflowRunId || task.archivedAt) return denied;
+  if (!task?.spaceId || task.workflowRunId || task.archivedAt) return unavailable;
   if (caller.source === 'mcp') {
     const session = caller.sessionId
       ? new SessionRepository(db).getSession(caller.sessionId)
@@ -48,16 +49,16 @@ function admitStart(
       return denied;
   }
   const existing = readDirectStartRequest(db, directTaskStartIdentity(input).attemptId);
-  if (existing) return existing.input.reviewRejection ? denied : { value: existing.input };
+  if (existing) return existing.input.reviewRejection ? unavailable : { value: existing.input };
   if (!['blocked', 'cancelled', 'stopped'].includes(task.status)) return { value: input };
-  if (!task.taskAgentSessionId) return denied;
+  if (!task.taskAgentSessionId) return unavailable;
   const row = db
     .prepare('SELECT id FROM direct_task_execution_attempts WHERE task_id = ? AND session_id = ?')
     .get(task.id, task.taskAgentSessionId) as { id: string } | null;
   const attempt = row ? new DirectTaskExecutionRepository(db).get(row.id) : null;
   return attempt?.phase === 'stopped'
     ? { value: { ...input, retryFrom: { attemptId: attempt.id, generation: attempt.generation } } }
-    : denied;
+    : unavailable;
 }
 export function createStartTaskOperation(
   getDatabase: () => Database,
@@ -79,7 +80,7 @@ export function createStartTaskOperation(
   return defineOperation({
     name: 'task.start',
     description:
-      'Persist a direct task start or verified terminal-task retry and return its durable job acknowledgement. Use a stable requestKey for retries of the same request and a new key for a new execution. Active persisted MCP sessions must belong to the owning Space. Workflow tasks and review rejection are unsupported; acceptance does not mean execution has started.',
+      'Persist a direct task start or verified terminal-task retry and return its durable job acknowledgement. Use a stable requestKey for retries of the same request and a new key for a new execution. Rejects direct_start_unavailable when the task or its direct-execution state does not support this binding (workflow-owned, archived, review-rejected, or no verified stopped attempt to retry — retry after state changes), and direct_start_denied when the calling MCP session is not active in the owning Space (do not retry). Acceptance does not mean execution has started.',
     inputSchema,
     resultSchema: z.union([
       z.object({ accepted: z.literal(true), jobId: z.string().nullable() }),

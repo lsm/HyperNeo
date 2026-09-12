@@ -1,4 +1,6 @@
 import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager';
+import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
+import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import { createPendingCompletionOperation } from '../../../../src/lib/space/operations/pending-completion';
 import { createSpaceOperationRegistryProvider } from '../../../../src/lib/space/operations/registry';
 import type { Database as AppDatabase } from '../../../../src/storage/database';
@@ -579,11 +581,28 @@ test.each(['missing', 'foreign', 'ended'] as const)(
         { taskId, requestKey: 'denied' },
         { source: 'mcp', sessionId: 'caller' }
       )
-    ).toMatchObject({ accepted: false });
+    ).toMatchObject({ accepted: false, reason: 'direct_start_denied' });
     expect(attempts.getActive(taskId)).toBeNull();
     expect(count()).toBe(0);
   }
 );
+
+test('shared start rejects a workflow-owned task without claiming', async () => {
+  const spaceId = tasks.getTask(taskId)!.spaceId;
+  const workflow = new SpaceWorkflowRepository(db).createWorkflow({ spaceId, name: 'Workflow' });
+  const run = new SpaceWorkflowRunRepository(db).createRun({
+    spaceId,
+    workflowId: workflow.id,
+    title: 'Run',
+  });
+  tasks.updateTask(taskId, { workflowRunId: run.id });
+  const operation = createStartTaskOperation(() => db, jobs, {}, { onTaskReopened: () => {} });
+  expect(
+    await operation.execute({ taskId, requestKey: 'workflow' }, { source: 'rpc' })
+  ).toMatchObject({ accepted: false, reason: 'direct_start_unavailable' });
+  expect(attempts.getActive(taskId)).toBeNull();
+  expect(count()).toBe(0);
+});
 
 test.each(['blocked', 'cancelled', 'stopped'] as const)(
   'shared start derives verified %s retry identity and replays its receipt',
