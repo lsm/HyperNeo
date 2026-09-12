@@ -2,6 +2,10 @@ import { RESERVED_SPACE_AGENT_HANDLES } from './slug.ts';
 
 export const SPACE_MANAGER_HANDLE = 'space-manager';
 const SPACE_MANAGER_HANDLE_ALIASES = ['coordinator'];
+export const SPACE_MANAGER_HANDLE_LOOKUP_ORDER = [
+  SPACE_MANAGER_HANDLE,
+  ...SPACE_MANAGER_HANDLE_ALIASES,
+];
 
 export function canonicalizeSpaceManagerHandle(handle: string): string {
   return SPACE_MANAGER_HANDLE_ALIASES.includes(handle) ? SPACE_MANAGER_HANDLE : handle;
