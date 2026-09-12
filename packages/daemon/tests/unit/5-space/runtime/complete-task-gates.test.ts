@@ -16,26 +16,13 @@ function bindings(overrides: Partial<Parameters<typeof createCompletionGateBindi
   });
 }
 
-test('requiresPostApprovalOwner is false for non-mcp callers regardless of dispatch state', () => {
+test('requiresPostApprovalOwner delegates to the runtime query regardless of caller', () => {
   const hasDispatchedPostApprovalRoute = mock(() => true);
   const { requiresPostApprovalOwner } = bindings({ hasDispatchedPostApprovalRoute });
-  expect(requiresPostApprovalOwner!(task, { source: 'rpc' })).toBe(false);
-  expect(requiresPostApprovalOwner!(task, { source: 'internal' })).toBe(false);
-  expect(hasDispatchedPostApprovalRoute).not.toHaveBeenCalled();
-});
-
-test('requiresPostApprovalOwner is false for an mcp caller with no sessionId', () => {
-  const hasDispatchedPostApprovalRoute = mock(() => true);
-  const { requiresPostApprovalOwner } = bindings({ hasDispatchedPostApprovalRoute });
-  expect(requiresPostApprovalOwner!(task, { source: 'mcp' })).toBe(false);
-  expect(hasDispatchedPostApprovalRoute).not.toHaveBeenCalled();
-});
-
-test('requiresPostApprovalOwner delegates to the runtime query for an mcp caller with a sessionId', () => {
-  const hasDispatchedPostApprovalRoute = mock(() => true);
-  const { requiresPostApprovalOwner } = bindings({ hasDispatchedPostApprovalRoute });
+  expect(requiresPostApprovalOwner!(task, { source: 'rpc' })).toBe(true);
+  expect(requiresPostApprovalOwner!(task, { source: 'internal' })).toBe(true);
   expect(requiresPostApprovalOwner!(task, { source: 'mcp', sessionId: 'session-1' })).toBe(true);
-  expect(hasDispatchedPostApprovalRoute).toHaveBeenCalledWith('task-1', 'session-1');
+  expect(hasDispatchedPostApprovalRoute).toHaveBeenCalledWith('task-1');
 });
 
 test('requiresPostApprovalOwner returns false when the runtime query says so', () => {

@@ -138,7 +138,6 @@ import {
 import {
   collectDispatchablePostApprovalRoutes,
   isCoderOwnedMergeWorkflow as resolveIsCoderOwnedMergeWorkflow,
-  selectFirstDispatchablePostApprovalRoute,
 } from './post-approval-router.ts';
 import {
   deliverAgentMessageToTarget,
@@ -1853,22 +1852,14 @@ export class TaskAgentManager {
     }
   }
 
-  hasDispatchedPostApprovalRoute(taskId: string, sessionId: string): boolean {
+  hasDispatchedPostApprovalRoute(taskId: string): boolean {
     const task = this.config.taskRepo.getTask(taskId);
     if (!task) return false;
     const run = task.workflowRunId ? this.config.workflowRunRepo.getRun(task.workflowRunId) : null;
     const workflow = run?.workflowId
       ? (this.config.spaceWorkflowManager.getWorkflowForRun(run) ?? null)
       : null;
-    const selected = selectFirstDispatchablePostApprovalRoute(workflow);
-    if (!selected) return false;
-    return !this.isSessionOnPostApprovalRoute({
-      sessionId,
-      taskId,
-      routeNodeId: selected.nodeId,
-      routeAgentName: selected.agentName,
-      workflowRunId: task.workflowRunId ?? null,
-    });
+    return collectDispatchablePostApprovalRoutes(workflow).length > 0;
   }
 
   private readPostApprovalWorkerIdentity(

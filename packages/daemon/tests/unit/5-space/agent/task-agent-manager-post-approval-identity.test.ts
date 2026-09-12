@@ -559,19 +559,18 @@ describe('TaskAgentManager.hasDispatchedPostApprovalRoute', () => {
   });
 
   it('returns false when the task is missing', () => {
-    expect(tam.hasDispatchedPostApprovalRoute('missing-task', 'any-session')).toBe(false);
+    expect(tam.hasDispatchedPostApprovalRoute('missing-task')).toBe(false);
   });
 
-  it('returns false when the caller session is already on the dispatchable route', () => {
+  it('returns true whenever the workflow declares a dispatchable post-approval route', () => {
     insertTask(db, { status: 'approved' });
-    insertWorkerSession(db, { sessionId: 'route-worker' });
-    expect(tam.hasDispatchedPostApprovalRoute(TASK_ID, 'route-worker')).toBe(false);
+    expect(tam.hasDispatchedPostApprovalRoute(TASK_ID)).toBe(true);
   });
 
-  it('returns true when the caller session is not on the dispatchable route', () => {
+  it('stays true even when a worker session already occupies the route agent slot, since the pointer is not yet recorded', () => {
     insertTask(db, { status: 'approved' });
-    insertWorkerSession(db, { sessionId: 'other-worker', agentName: 'observer' });
-    expect(tam.hasDispatchedPostApprovalRoute(TASK_ID, 'other-worker')).toBe(true);
+    insertWorkerSession(db, { sessionId: 'reused-coder' });
+    expect(tam.hasDispatchedPostApprovalRoute(TASK_ID)).toBe(true);
   });
 
   it('returns false when the workflow declares no dispatchable post-approval route', () => {
@@ -590,8 +589,7 @@ describe('TaskAgentManager.hasDispatchedPostApprovalRoute', () => {
       nodeExecutionRepo: { listByWorkflowRun: () => [], listByNode: () => [], update: () => null },
     } as unknown as TaskAgentManagerConfig);
     insertTask(db, { status: 'approved' });
-    insertWorkerSession(db, { sessionId: 'route-worker' });
-    expect(noRouteTam.hasDispatchedPostApprovalRoute(TASK_ID, 'route-worker')).toBe(false);
+    expect(noRouteTam.hasDispatchedPostApprovalRoute(TASK_ID)).toBe(false);
   });
 });
 

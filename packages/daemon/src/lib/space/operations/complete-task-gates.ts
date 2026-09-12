@@ -1,5 +1,4 @@
 import type { SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
-import type { OperationCaller } from '../../operations/registry.ts';
 import { createPrMergedGate } from '../tools/end-node-handlers.ts';
 import type { CompleteTaskDependencies } from './complete-task.ts';
 
@@ -8,7 +7,7 @@ export function createCompletionGateBindings(deps: {
   isCoderOwnedMergeWorkflow: (workflow: SpaceWorkflow | null) => boolean;
   resolvePrUrl: (task: SpaceTask) => string;
   getPrState: (prUrl: string) => Promise<string>;
-  hasDispatchedPostApprovalRoute: (taskId: string, sessionId: string) => boolean;
+  hasDispatchedPostApprovalRoute: (taskId: string) => boolean;
 }): Pick<CompleteTaskDependencies, 'requiresPostApprovalOwner' | 'completionGate'> {
   const prMergedGate = createPrMergedGate({
     requirePrUrl: true,
@@ -16,10 +15,7 @@ export function createCompletionGateBindings(deps: {
     getPrState: deps.getPrState,
   });
   return {
-    requiresPostApprovalOwner: (task: SpaceTask, caller: OperationCaller) =>
-      caller.source === 'mcp' &&
-      !!caller.sessionId &&
-      deps.hasDispatchedPostApprovalRoute(task.id, caller.sessionId),
+    requiresPostApprovalOwner: (task: SpaceTask) => deps.hasDispatchedPostApprovalRoute(task.id),
     completionGate: async (task: SpaceTask) =>
       deps.isCoderOwnedMergeWorkflow(deps.resolveWorkflowForTask(task))
         ? prMergedGate(task)
