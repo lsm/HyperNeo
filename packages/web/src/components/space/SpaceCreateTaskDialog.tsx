@@ -4,16 +4,16 @@ import { Button } from '../ui/Button';
 import { spaceStore } from '../../lib/space-store';
 import { toast } from '../../lib/toast';
 import type {
-  SpaceTask,
   SpaceTaskPriority,
   SpaceWorkspace,
+  TaskCore,
   TaskScheduleTriggerType,
 } from '@hyperneo/shared';
 
 interface SpaceCreateTaskDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  onCreated?: (task: SpaceTask) => void;
+  onCreated?: (task: TaskCore) => void;
 }
 
 const PRIORITY_OPTIONS: { value: SpaceTaskPriority; label: string }[] = [

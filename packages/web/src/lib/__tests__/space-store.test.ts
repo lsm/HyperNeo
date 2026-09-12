@@ -291,7 +291,6 @@ function makeMockHub() {
           },
         ];
       }
-      if (method === 'spaceTask.create') return makeTask('new-task');
       if (method === 'spaceTask.get')
         return (
           taskDetailResult ?? { ...makeTask(params?.taskId as string), description: 'full text' }
@@ -378,7 +377,12 @@ function makeMockHub() {
           { ...makeSpace('s1'), tasks: [] },
           { ...makeSpace('s2'), tasks: [] },
         ];
-      if (method === 'operation.invoke') return { accepted: true, jobId: null as string | null };
+      if (method === 'operation.invoke') {
+        if ((params as { name?: string } | undefined)?.name === 'task.create') {
+          return makeTask('new-task');
+        }
+        return { accepted: true, jobId: null as string | null };
+      }
       return {};
     }),
   };
@@ -1728,14 +1732,17 @@ describe('SpaceStore — CRUD methods', () => {
     expect(spaceStore.spaceId.value).toBeNull();
   });
 
-  it('createTask calls spaceTask.create RPC and returns SpaceTask', async () => {
+  it('createTask calls task.create via operation.invoke and returns core task data', async () => {
     await spaceStore.selectSpace('space-1');
     const task = await spaceStore.createTask({ title: 'New Task', description: 'desc' });
 
-    expect(mockHub.request).toHaveBeenCalledWith('spaceTask.create', {
-      spaceId: 'space-1',
-      title: 'New Task',
-      description: 'desc',
+    expect(mockHub.request).toHaveBeenCalledWith('operation.invoke', {
+      name: 'task.create',
+      input: {
+        spaceId: 'space-1',
+        title: 'New Task',
+        description: 'desc',
+      },
     });
     expect(task.id).toBe('new-task');
   });
