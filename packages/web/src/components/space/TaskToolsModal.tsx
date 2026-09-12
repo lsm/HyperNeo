@@ -19,10 +19,6 @@ const RUNTIME_MCP_LABELS: Record<string, { title: string; description: string }>
     title: 'Node agent',
     description: 'Workflow node tools: peers, channels, gates',
   },
-  'room-tools': {
-    title: 'Room tools',
-    description: 'Room-scoped coordination between co-located agents',
-  },
 };
 
 interface TaskToolsModalProps {
