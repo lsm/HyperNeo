@@ -181,6 +181,9 @@ export function createSpaceRegistryEntries(
       if (run && canTransitionRunStatus(run.status, 'cancelled')) {
         return DESTRUCTIVE_ACTION_AUTONOMY_LEVEL;
       }
+      if (task.taskAgentSessionId || task.postApprovalSessionId) {
+        return DESTRUCTIVE_ACTION_AUTONOMY_LEVEL;
+      }
     }
     if (task?.taskAgentSessionId && !task.workflowRunId) {
       return DESTRUCTIVE_ACTION_AUTONOMY_LEVEL;

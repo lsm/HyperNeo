@@ -411,6 +411,22 @@ describe('createSpaceRegistryEntries — composition', () => {
         status: 'in_progress',
         taskAgentSessionId: 'direct-worker-session',
       });
+      const doneRun = ctx.workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Done run',
+      });
+      ctx.workflowRunRepo.updateRun(doneRun.id, { status: 'done' });
+      const postApprovalTask = ctx.taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Post-approval task',
+        description: '',
+        workflowRunId: doneRun.id,
+      });
+      ctx.taskRepo.updateTask(postApprovalTask.id, {
+        status: 'approved',
+        postApprovalSessionId: 'post-approval-worker-session',
+      });
       const entries = createSpaceRegistryEntries(ctx.config);
       const resolve = entries.find((entry) => entry.name === 'cancel_task')?.autonomyRequirement;
       expect(typeof resolve).toBe('function');
@@ -422,6 +438,7 @@ describe('createSpaceRegistryEntries — composition', () => {
         expect(await resolve({ task_id: checkpointTask.id })).toBe(5);
         expect(await resolve({ task_id: foreignTask.id })).toBe(1);
         expect(await resolve({ task_id: directTask.id })).toBe(SESSION_WRITE_AUTONOMY_LEVEL);
+        expect(await resolve({ task_id: postApprovalTask.id })).toBe(SESSION_WRITE_AUTONOMY_LEVEL);
       }
     } finally {
       ctx.db.close();
