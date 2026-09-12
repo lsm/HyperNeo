@@ -3913,6 +3913,25 @@ export class SpaceRuntime {
         createAgentTemplateResolver(spaceId, this.config.templateRepo),
         options.parentTaskId
           ? (run) => {
+              const parent = this.config.taskRepo.getTask(options.parentTaskId!);
+              if (
+                !parent ||
+                this.getAvailableTaskSlots(new SpaceRepository(this.config.db).getSpace(spaceId)) <=
+                  0
+              )
+                throw new Error(`No task capacity available for workflow attachment`);
+              if (
+                !this.config.taskRepo.updateTask(
+                  parent.id,
+                  {
+                    status: 'in_progress',
+                    startedAt: parent.startedAt ?? Date.now(),
+                    completedAt: null,
+                  },
+                  'open'
+                )
+              )
+                throw new Error(`Task ${parent.id} is not available for workflow attachment`);
               const start = workflow.nodes.find((node) => node.id === workflow.startNodeId);
               if (!start)
                 throw new Error(
@@ -6614,9 +6633,7 @@ export class SpaceRuntime {
     }
     if (
       reservation.generation !== null &&
-      (spawned || !releaseSafe) &&
-      !blockedByCrash &&
-      !permanentSpawnFailureReason
+      (spawned || (!releaseSafe && !blockedByCrash && !permanentSpawnFailureReason))
     ) {
       const started = this.config.db.transaction(() => {
         const current = this.config.taskRepo.getTask(canonicalTask.id);
@@ -8118,11 +8135,9 @@ export class SpaceRuntime {
             parentTaskId: current.id,
           });
 
-          await this.updateTaskAndEmit(space.id, current.id, {
-            status: 'in_progress',
-            startedAt: current.startedAt ?? Date.now(),
-            completedAt: null,
-          });
+          const attached = this.config.taskRepo.getTask(current.id);
+          if (attached)
+            await this.safeOnTaskUpdated(space.id, attached, { fromStatus: current.status });
           availableSlots--;
         } catch (err) {
           log.warn(
