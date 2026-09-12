@@ -87,6 +87,68 @@ describe('createOperationActionHandler', () => {
     }
   );
 
+  test('awaits an async mapParams before invoking', async () => {
+    const { registry, execute } = exampleRegistry();
+    const handler = createOperationActionHandler(
+      registry,
+      { sessionId: 'sess-1' },
+      'example',
+      async (params) => ({ text: (params as { raw: string }).raw })
+    );
+    await handler({ raw: 'mapped-async' });
+    expect(execute).toHaveBeenCalledWith(
+      { text: 'mapped-async' },
+      { source: 'mcp', sessionId: 'sess-1' }
+    );
+  });
+
+  test.each([
+    { label: 'sync', mapParams: () => ({ reject: 'not allowed' }) },
+    { label: 'async', mapParams: async () => ({ reject: 'not allowed' }) },
+  ])(
+    'short-circuits on a $label mapParams rejection without invoking the operation',
+    async ({ mapParams }) => {
+      const { registry, execute } = exampleRegistry();
+      const handler = createOperationActionHandler(registry, {}, 'example', mapParams);
+      const result = (await handler({ text: 'hi' })) as {
+        content: Array<{ text: string }>;
+        isError?: boolean;
+      };
+      expect(result.isError).toBe(true);
+      expect(JSON.parse(extractText(result))).toEqual({
+        success: false,
+        error: 'not allowed',
+      });
+      expect(execute).not.toHaveBeenCalled();
+    }
+  );
+
+  test('passes through a mapped value that merely contains a reject key alongside others', async () => {
+    const execute = mock(async (input: { text: string; reject: string }) => ({
+      echoed: `${input.text}:${input.reject}`,
+    }));
+    const registry = createOperationRegistry([
+      defineOperation({
+        name: 'example',
+        description: 'Example operation',
+        inputSchema: z.object({ text: z.string(), reject: z.string() }),
+        resultSchema: z.object({ echoed: z.string() }),
+        execute,
+      }),
+    ]);
+    const handler = createOperationActionHandler(registry, {}, 'example', () => ({
+      text: 'hi',
+      reject: 'not-a-rejection',
+    }));
+    const result = (await handler({})) as { content: Array<{ text: string }>; isError?: boolean };
+    expect(result.isError).toBeUndefined();
+    expect(execute).toHaveBeenCalledWith(
+      { text: 'hi', reject: 'not-a-rejection' },
+      { source: 'mcp' }
+    );
+    expect(JSON.parse(extractText(result))).toEqual({ echoed: 'hi:not-a-rejection' });
+  });
+
   test('maps execution_failed and invalid_result failures the same way', async () => {
     const throwing = exampleRegistry(
       mock(async () => {
