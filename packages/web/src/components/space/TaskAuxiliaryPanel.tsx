@@ -213,7 +213,9 @@ export function TaskAuxiliaryPanel({
     </div>
   );
 
-  const transitionActions = getTransitionActions(task.status);
+  const transitionActions = getTransitionActions(task.status).filter(
+    ({ target }) => !(task.status === 'review' && target === 'cancelled')
+  );
   const taskMenuItems: DropdownMenuItem[] = transitionActions.map(({ target, label }) => ({
     label,
     onClick: () => handleStatusTransition(target),

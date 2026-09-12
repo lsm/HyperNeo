@@ -359,6 +359,18 @@ describe('TaskAuxiliaryPanel', () => {
     expect(mockUpdateTask).not.toHaveBeenCalledWith('task-1', { status: 'cancelled' });
   });
 
+  it('hides Cancel for a task awaiting review, since task.cancel rejects a frozen review request', async () => {
+    mockTasks.value = [makeTask({ status: 'review' })];
+    const { getByLabelText, queryByText } = render(
+      <TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" onClose={() => {}} />
+    );
+
+    fireEvent.click(getByLabelText('Task Actions'));
+
+    expect(queryByText('Cancel')).toBeNull();
+    expect(mockCancelTask).not.toHaveBeenCalled();
+  });
+
   it('exposes the actions menu in the right-panel header too', async () => {
     const { getByLabelText, getByText } = render(
       <TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" />
