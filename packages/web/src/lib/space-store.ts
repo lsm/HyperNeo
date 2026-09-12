@@ -2622,7 +2622,7 @@ class SpaceStore {
     if (!hub) throw new Error('Not connected');
     const { subscriptions } = await hub.request<{
       subscriptions: SpaceLongHorizonAgentEventSubscription[];
-    }>('spaceAgent.listSubscriptions', { agentId, spaceId });
+    }>('spaceAgentSubscription.list', { agentId, spaceId });
     return subscriptions ?? [];
   }
 
@@ -2635,7 +2635,7 @@ class SpaceStore {
     if (!hub) throw new Error('Not connected');
     const { subscription } = await hub.request<{
       subscription: SpaceLongHorizonAgentEventSubscription;
-    }>('spaceAgent.createSubscription', { spaceId, ...params });
+    }>('spaceAgentSubscription.create', { spaceId, ...params });
     return subscription;
   }
 
@@ -2649,7 +2649,7 @@ class SpaceStore {
     if (!hub) throw new Error('Not connected');
     const { subscription } = await hub.request<{
       subscription: SpaceLongHorizonAgentEventSubscription;
-    }>('spaceAgent.updateSubscription', { subscriptionId, spaceId, ...params });
+    }>('spaceAgentSubscription.update', { subscriptionId, spaceId, ...params });
     return subscription;
   }
 
@@ -2658,7 +2658,7 @@ class SpaceStore {
     if (!spaceId) throw new Error('No space selected');
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
-    await hub.request('spaceAgent.deleteSubscription', { subscriptionId, spaceId });
+    await hub.request('spaceAgentSubscription.delete', { subscriptionId, spaceId });
   }
 
   async createWorkflow(params: Omit<CreateSpaceWorkflowParams, 'spaceId'>): Promise<SpaceWorkflow> {
