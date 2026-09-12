@@ -6536,6 +6536,7 @@ export class SpaceRuntime {
     const startGeneration = this.config.taskRepo.getLifecycleGeneration(canonicalTask.id);
     for (const execution of pendingExecutions) {
       if (tam.isExecutionSpawning(execution.id)) continue;
+      let firstSpawn = false;
       try {
         const sessionId = await tam.spawnWorkflowNodeAgentForExecution(
           canonicalTask,
@@ -6545,17 +6546,8 @@ export class SpaceRuntime {
           execution,
           { kickoff: true }
         );
-        const firstSpawn = !spawned;
+        firstSpawn = !spawned;
         spawned = true;
-        if (firstSpawn) {
-          await this.stampTaskStartAfterFirstSpawn(
-            runId,
-            space.id,
-            canonicalTask.id,
-            originalTask,
-            startGeneration
-          );
-        }
         this.tryRequeuePendingDeliveries(this.pausedSpaceIds, runId);
         const restartNotice = this.consumeAgentRestartNotice(runId, execution);
         if (restartNotice) {
@@ -6610,6 +6602,15 @@ export class SpaceRuntime {
         }
         log.warn(
           `SpaceRuntime: transient spawn failure for workflow node execution ${execution.id}: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+      if (firstSpawn) {
+        await this.stampTaskStartAfterFirstSpawn(
+          runId,
+          space.id,
+          canonicalTask.id,
+          originalTask,
+          startGeneration
         );
       }
     }

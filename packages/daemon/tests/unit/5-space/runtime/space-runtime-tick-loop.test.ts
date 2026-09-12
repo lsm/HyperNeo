@@ -652,6 +652,48 @@ describe('SpaceRuntime — tick loop correctness', () => {
       ).toBe('notify');
     });
 
+    test('first-spawn stamp failure does not cancel the spawned worker or reset its execution', async () => {
+      class StampFailureTaskRepo extends SpaceTaskRepository {
+        updateTask(
+          ...args: Parameters<SpaceTaskRepository['updateTask']>
+        ): ReturnType<SpaceTaskRepository['updateTask']> {
+          const [id, params, expectedStatus, expectedPendingCompletionGeneration] = args;
+          if (expectedStatus === 'in_progress' && params.status === undefined) {
+            throw new Error('stamp transaction failed');
+          }
+          return super.updateTask(id, params, expectedStatus, expectedPendingCompletionGeneration);
+        }
+      }
+      let cancelCount = 0;
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+        cancelBySessionId: () => {
+          cancelCount++;
+        },
+        spawnWorkflowNodeAgentForExecution: async (_value, _space, _workflow, _run, node) => {
+          const execution = node as NodeExecution;
+          nodeExecutionRepo.update(execution.id, {
+            status: 'in_progress',
+            agentSessionId: 'worker:stamp-race',
+            startedAt: Date.now(),
+          });
+          return 'worker:stamp-race';
+        },
+      });
+      const rt = new SpaceRuntime(buildConfig(tam, { taskRepo: new StampFailureTaskRepo(db) }));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      await processRunTick(rt, run.id).catch(() => {});
+      const task = taskRepo.getTask(tasks[0].id)!;
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0]!;
+      expect(cancelCount).toBe(0);
+      expect(execution.status).toBe('in_progress');
+      expect(execution.agentSessionId).toBe('worker:stamp-race');
+      expect(task.status).toBe('in_progress');
+      expect(workflowRunRepo.getRun(run.id)?.status).not.toBe('blocked');
+    });
+
     test('missing and finished runs stop before spawn work', async () => {
       let spawnCount = 0;
       const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
