@@ -1,13 +1,15 @@
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import type { SpaceTaskStatus } from '@hyperneo/shared';
-import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
-import { runMigrations } from '../../../../src/storage/schema/index.ts';
-import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import {
+  isValidSpaceTaskTransition,
   SpaceTaskManager,
   VALID_SPACE_TASK_TRANSITIONS,
-  isValidSpaceTaskTransition,
 } from '../../../../src/lib/space/managers/space-task-manager.ts';
+import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
+import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
+import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
+import { runMigrations } from '../../../../src/storage/schema/index.ts';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 
 const SPACE_ID = 'space-trans-test';
 
@@ -288,6 +290,66 @@ describe('SpaceTaskManager.setTaskStatus — expectedStatus guard', () => {
     });
     const updated = await taskManager.setTaskStatus(task.id, 'review');
     expect(updated.status).toBe('review');
+  });
+
+  test('mismatched expectedWorkflowRunId is attributed to the workflow run, not the status', async () => {
+    const task = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'T',
+      description: '',
+      status: 'open',
+    });
+    await expect(
+      taskManager.setTaskStatus(task.id, 'archived', {
+        expectedStatus: 'open',
+        expectedWorkflowRunId: 'run-that-is-not-attached',
+      })
+    ).rejects.toThrow(
+      `Task ${task.id} is no longer attached to workflow run 'run-that-is-not-attached' (now 'null')`
+    );
+    expect(taskRepo.getTask(task.id)?.status).toBe('open');
+  });
+
+  test('a workflow attached after the pre-check still fails the atomic guard', async () => {
+    const task = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'T',
+      description: '',
+      status: 'open',
+    });
+    const workflow = new SpaceWorkflowRepository(db).createWorkflow({
+      spaceId: SPACE_ID,
+      name: 'W',
+    });
+    const run = new SpaceWorkflowRunRepository(db).createRun({
+      spaceId: SPACE_ID,
+      workflowId: workflow.id,
+      title: 'R',
+    });
+    const realGetTask = SpaceTaskRepository.prototype.getTask;
+    let calls = 0;
+    const spy = spyOn(SpaceTaskRepository.prototype, 'getTask').mockImplementation(function (
+      this: SpaceTaskRepository,
+      id: string
+    ) {
+      calls += 1;
+      const row = realGetTask.call(this, id);
+      if (calls === 1 && row) taskRepo.updateTask(id, { workflowRunId: run.id });
+      return row;
+    });
+    try {
+      await expect(
+        taskManager.setTaskStatus(task.id, 'archived', {
+          expectedStatus: 'open',
+          expectedWorkflowRunId: null,
+        })
+      ).rejects.toThrow(
+        `Task ${task.id} is no longer attached to workflow run 'null' (now '${run.id}')`
+      );
+    } finally {
+      spy.mockRestore();
+    }
+    expect(taskRepo.getTask(task.id)?.status).toBe('open');
   });
 });
 

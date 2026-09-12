@@ -18,6 +18,7 @@ import {
 export { VALID_SPACE_TASK_TRANSITIONS, isValidSpaceTaskTransition, assertValidSpaceTaskTransition };
 
 class StaleStatusCasMiss extends Error {}
+export class StaleTaskGuardError extends Error {}
 
 import { buildTaskDependencyGraph, hasTaskDependencyCycle } from '../../tasks/dependency-graph.ts';
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
@@ -183,6 +184,7 @@ export class SpaceTaskManager {
       approvalSource?: SpaceApprovalSource;
       approvalReason?: string | null;
       expectedStatus?: SpaceTaskStatus;
+      expectedWorkflowRunId?: string | null;
       expectedPendingCompletionGeneration?: number;
       expectedPostApprovalSessionId?: string | null;
       onCascadedTasks?: (cascaded: SpaceTask[]) => Promise<void>;
@@ -194,10 +196,21 @@ export class SpaceTaskManager {
     }
 
     const expectedStatus = options?.expectedStatus;
+    const expectedWorkflowRunId = options?.expectedWorkflowRunId;
     const staleStatusError = (currentStatus: SpaceTaskStatus) =>
-      new Error(`Task ${taskId} is no longer '${expectedStatus}' (now '${currentStatus}')`);
+      new StaleTaskGuardError(
+        `Task ${taskId} is no longer '${expectedStatus}' (now '${currentStatus}')`
+      );
     if (expectedStatus !== undefined && task.status !== expectedStatus) {
       throw staleStatusError(task.status);
+    }
+    if (
+      expectedWorkflowRunId !== undefined &&
+      (task.workflowRunId ?? null) !== expectedWorkflowRunId
+    ) {
+      throw new StaleTaskGuardError(
+        `Task ${taskId} is no longer attached to workflow run '${expectedWorkflowRunId}' (now '${task.workflowRunId ?? null}')`
+      );
     }
 
     const expectedGeneration = options?.expectedPendingCompletionGeneration;
@@ -233,10 +246,12 @@ export class SpaceTaskManager {
           updates,
           expectedStatus,
           expectedGeneration,
-          options?.expectedPostApprovalSessionId
+          options?.expectedPostApprovalSessionId,
+          expectedWorkflowRunId
         );
         if (!result) {
-          if (expectedStatus !== undefined) throw new StaleStatusCasMiss();
+          if (expectedStatus !== undefined || expectedWorkflowRunId !== undefined)
+            throw new StaleStatusCasMiss();
           if (expectedGeneration !== undefined) throw new PendingCompletionSupersededError(taskId);
           throw new Error(`Failed to update task: ${taskId}`);
         }
@@ -253,6 +268,15 @@ export class SpaceTaskManager {
       this.reactiveDb?.abortTransaction();
       if (err instanceof StaleStatusCasMiss) {
         const current = await this.getTask(taskId);
+        const statusMismatch = expectedStatus !== undefined && current?.status !== expectedStatus;
+        const workflowRunMismatch =
+          expectedWorkflowRunId !== undefined &&
+          (current?.workflowRunId ?? null) !== expectedWorkflowRunId;
+        if (workflowRunMismatch && !statusMismatch) {
+          throw new StaleTaskGuardError(
+            `Task ${taskId} is no longer attached to workflow run '${expectedWorkflowRunId}' (now '${current?.workflowRunId ?? task.workflowRunId ?? null}')`
+          );
+        }
         throw staleStatusError(current?.status ?? task.status);
       }
       throw err;
