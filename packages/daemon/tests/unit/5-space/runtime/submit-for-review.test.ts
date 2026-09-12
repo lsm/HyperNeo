@@ -328,6 +328,27 @@ test('MCP caller outside the Space is denied on a plain Space task without writi
   expect(emitTaskUpdated).not.toHaveBeenCalled();
 });
 
+test('a manually reopened task with a stopped direct attempt submits through the manager path', async () => {
+  db.prepare("UPDATE direct_task_execution_attempts SET phase='stopped' WHERE id=?").run(attemptId);
+  expect(await operation.execute({ taskId, reason: 'Ready again' }, { source: 'rpc' })).toEqual({
+    accepted: true,
+    jobId: null,
+  });
+  expect(tasks.getTask(taskId)?.status).toBe('review');
+  expect(emitTaskUpdated).toHaveBeenCalledTimes(1);
+  expect(outcomeCount()).toBe(0);
+});
+
+test('a plain task racing a concurrent direct claim is rejected instead of writing through the manager', async () => {
+  const plainId = createPlainTask('open');
+  attempts.select(plainId);
+  expect(attempts.claim(plainId, 'direct-reserved', 'reserved-session')).not.toBeNull();
+  expect(
+    await operation.execute({ taskId: plainId, reason: 'too soon' }, { source: 'rpc' })
+  ).toMatchObject({ accepted: false, reason: 'review_submission_unavailable' });
+  expect(tasks.getTask(plainId)?.status).toBe('open');
+});
+
 test('a non-domain manager throw propagates instead of becoming a domain rejection', async () => {
   markTaskWorkflowOwned();
   const broken = createSubmitTaskForReviewOperation(() => db, jobs, {

@@ -55,7 +55,10 @@ async function admitManagedSubmission(
   tasks: SubmitForReviewTaskDependencies
 ): Promise<{ value: true } | { reason: DirectOutcomeAcknowledgement }> {
   const task = new SpaceTaskRepository(db).getTask(input.taskId);
-  if (!task?.spaceId || task.taskAgentSessionId) return { value: true };
+  const hasActiveDirectAttempt =
+    task?.taskAgentSessionId &&
+    (task.status === 'review' || !!new DirectTaskExecutionRepository(db).getActive(task.id));
+  if (!task?.spaceId || hasActiveDirectAttempt) return { value: true };
   if (task.archivedAt)
     return { reason: { accepted: false, reason: 'review_submission_unavailable' } };
   if (caller.source === 'mcp') {
@@ -68,6 +71,8 @@ async function admitManagedSubmission(
     )
       return { reason: { accepted: false, reason: 'review_submission_denied' } };
   }
+  if (!task.workflowRunId && new DirectTaskExecutionRepository(db).getActive(task.id))
+    return { reason: { accepted: false, reason: 'review_submission_unavailable' } };
   try {
     const updated = await tasks.getTaskManager(task.spaceId).submitTaskForReview(task.id, {
       submittedByNodeId: null,
