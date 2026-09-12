@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import type { SpaceTaskStatus } from '@hyperneo/shared';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry';
 import {
@@ -7,7 +8,9 @@ import {
 } from '../../../../src/lib/space/managers/space-task-manager';
 import {
   createSpaceTransitionTaskOperation,
+  decide,
   type SpaceTransitionTaskDependencies,
+  writeStatus,
 } from '../../../../src/lib/space/operations/transition-task';
 import { DirectTaskExecutionRepository } from '../../../../src/storage/repositories/direct-task-execution-repository';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
@@ -265,5 +268,88 @@ test('a rejecting emitTaskUpdated still returns the updated task', async () => {
   expect(result).toMatchObject({
     kind: 'completed',
     value: { id: task.id, status: 'in_progress' },
+  });
+});
+
+function createOwned(status: SpaceTaskStatus, workflowRunId?: string) {
+  const created = tasks.createTask({ spaceId, title: 'T', description: '' });
+  if (status === 'open' && workflowRunId === undefined) return { spaceId, task: created };
+  const updated = tasks.updateTask(created.id, { status, workflowRunId });
+  return { spaceId, task: updated ?? created };
+}
+
+describe('decide', () => {
+  test.each([
+    ['open to in_progress writes without approval', 'open', 'in_progress', undefined],
+    ['review to done via rpc stamps human approval', 'review', 'done', 'human'],
+  ] as const)('%s', (_name, currentStatus, requestedStatus, approvalSource) => {
+    const owned = createOwned(currentStatus);
+    const result = decide(owned, { taskId: owned.task.id, status: requestedStatus }, rpc, deps());
+    expect(result).toEqual({ value: { ...owned, approvalSource } });
+  });
+
+  test.each([
+    ['requesting review directly is unsupported', 'open', 'review', 'unsupported_status'],
+    ['requesting the current status is invalid', 'open', 'open', 'invalid_transition'],
+  ] as const)('%s', (_name, currentStatus, requestedStatus, rejection) => {
+    const owned = createOwned(currentStatus);
+    const result = decide(owned, { taskId: owned.task.id, status: requestedStatus }, rpc, deps());
+    expect(result).toEqual({ reason: rejection });
+  });
+
+  test('a runtime action throws with the executor name', () => {
+    const owned = createOwned('in_progress', createWorkflowRun().id);
+    expect(() => decide(owned, { taskId: owned.task.id, status: 'open' }, rpc, deps())).toThrow(
+      'Space runtime executor unavailable: stop_for_status'
+    );
+  });
+});
+
+describe('writeStatus', () => {
+  test('writes the status and emits once', async () => {
+    const owned = createOwned('open');
+    const decided = { ...owned, approvalSource: undefined };
+    const result = await writeStatus(
+      decided,
+      { taskId: owned.task.id, status: 'in_progress' },
+      deps()
+    );
+    expect(result).toMatchObject({ id: owned.task.id, status: 'in_progress' });
+    expect(emitTaskUpdated).toHaveBeenCalledTimes(1);
+  });
+
+  test('a stale-guard error maps to invalid_transition', async () => {
+    const owned = createOwned('open');
+    const decided = { ...owned, approvalSource: undefined };
+    const staleManager: Pick<SpaceTaskManager, 'getTask' | 'setTaskStatus'> = {
+      getTask: async (id) => tasks.getTask(id),
+      setTaskStatus: async () => {
+        throw new StaleTaskGuardError('stale');
+      },
+    };
+    const result = await writeStatus(
+      decided,
+      { taskId: owned.task.id, status: 'in_progress' },
+      deps({ getTaskManager: () => staleManager })
+    );
+    expect(result).toBe('invalid_transition');
+  });
+
+  test('an unrelated error rethrows', async () => {
+    const owned = createOwned('open');
+    const decided = { ...owned, approvalSource: undefined };
+    const brokenManager: Pick<SpaceTaskManager, 'getTask' | 'setTaskStatus'> = {
+      getTask: async (id) => tasks.getTask(id),
+      setTaskStatus: async () => {
+        throw new Error('boom');
+      },
+    };
+    await expect(
+      writeStatus(
+        decided,
+        { taskId: owned.task.id, status: 'in_progress' },
+        deps({ getTaskManager: () => brokenManager })
+      )
+    ).rejects.toThrow('boom');
   });
 });
