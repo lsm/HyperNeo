@@ -104,6 +104,7 @@ let mockNodeExecutionsByNodeId: ReturnType<typeof signal<Map<string, unknown[]>>
 const mockWorkspaces = signal<unknown[]>([]);
 
 const mockUpdateTask = vi.fn().mockResolvedValue(undefined);
+const mockRunTaskDirectly = vi.fn().mockResolvedValue({ accepted: true, jobId: 'job-1' });
 const mockCancelWorkflowRun = vi.fn().mockResolvedValue(undefined);
 const mockRecoverWorkflowTask = vi.fn().mockResolvedValue(undefined);
 const mockSubmitForReview = vi.fn().mockResolvedValue(undefined);
@@ -131,6 +132,7 @@ vi.mock('../../../lib/space-store', () => ({
       nodeExecutionsByNodeId: mockNodeExecutionsByNodeId,
       workspaces: mockWorkspaces,
       updateTask: mockUpdateTask,
+      runTaskDirectly: mockRunTaskDirectly,
       cancelWorkflowRun: mockCancelWorkflowRun,
       recoverWorkflowTask: mockRecoverWorkflowTask,
       submitForReview: mockSubmitForReview,
@@ -1493,6 +1495,61 @@ describe('SpaceTaskPane — canvas toggle', () => {
       expect(queryByTestId('edit-task-modal-content')).toBeNull();
     });
   });
+
+  describe('run task directly', () => {
+    it('shows Run in dropdown for an open, workflow-free, agent-free task', () => {
+      mockTasks.value = [makeTask({ status: 'open' })];
+      const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" />);
+      fireEvent.click(getByTestId('task-actions-menu-trigger'));
+      expect(getByText('Run')).toBeTruthy();
+    });
+
+    it('hides Run when the task has a workflowRunId', () => {
+      mockTasks.value = [makeTask({ status: 'open', workflowRunId: 'run-1' })];
+      const { getByTestId, queryByText } = render(<SpaceTaskPane taskId="task-1" />);
+      fireEvent.click(getByTestId('task-actions-menu-trigger'));
+      expect(queryByText('Run')).toBeNull();
+    });
+
+    it('hides Run when the task has a taskAgentSessionId', () => {
+      mockTasks.value = [makeTask({ status: 'open', taskAgentSessionId: 'session-1' })];
+      const { getByTestId, queryByText } = render(<SpaceTaskPane taskId="task-1" />);
+      fireEvent.click(getByTestId('task-actions-menu-trigger'));
+      expect(queryByText('Run')).toBeNull();
+    });
+
+    it('hides Run when the task status is not open', () => {
+      mockTasks.value = [makeTask({ status: 'in_progress' })];
+      const { getByTestId, queryByText } = render(<SpaceTaskPane taskId="task-1" />);
+      fireEvent.click(getByTestId('task-actions-menu-trigger'));
+      expect(queryByText('Run')).toBeNull();
+    });
+
+    it('calls spaceStore.runTaskDirectly with the task id when clicked', async () => {
+      mockTasks.value = [makeTask({ status: 'open' })];
+      const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" />);
+      fireEvent.click(getByTestId('task-actions-menu-trigger'));
+      fireEvent.click(getByText('Run'));
+
+      await waitFor(() => {
+        expect(mockRunTaskDirectly).toHaveBeenCalledWith('task-1');
+      });
+    });
+
+    it('shows the rejection reason when the operation is declined', async () => {
+      mockTasks.value = [makeTask({ status: 'open' })];
+      mockRunTaskDirectly.mockResolvedValueOnce({
+        accepted: false,
+        reason: 'direct_start_unavailable',
+      });
+      const { getByTestId, getByText, findByText } = render(<SpaceTaskPane taskId="task-1" />);
+      fireEvent.click(getByTestId('task-actions-menu-trigger'));
+      fireEvent.click(getByText('Run'));
+
+      expect(await findByText('This task cannot be run directly right now.')).toBeTruthy();
+    });
+  });
+
   it('canvas node click matches by node ID + slot, not by label — regression for Review node bug', () => {
     mockTasks.value = [
       makeTask({

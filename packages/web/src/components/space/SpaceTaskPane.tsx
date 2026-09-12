@@ -154,6 +154,13 @@ function formatTaskThreadError(err: unknown): string {
   return message || 'Failed to update task thread';
 }
 
+function formatDirectStartRejection(reason: string): string {
+  if (reason === 'direct_start_unavailable') {
+    return 'This task cannot be run directly right now.';
+  }
+  return reason;
+}
+
 function formatEditTaskError(err: unknown): string {
   const message = err instanceof Error ? err.message : String(err);
   return message || 'Failed to update task';
@@ -1015,6 +1022,21 @@ export function SpaceTaskPane({
     }
   };
 
+  const handleRunTaskDirectly = async () => {
+    try {
+      setStatusTransitioning(true);
+      setThreadSendError(null);
+      const result = await spaceStore.runTaskDirectly(task.id);
+      if (!result.accepted) {
+        setThreadSendError(formatDirectStartRejection(result.reason));
+      }
+    } catch (err) {
+      setThreadSendError(formatTaskThreadError(err));
+    } finally {
+      setStatusTransitioning(false);
+    }
+  };
+
   const handleSubmitForReviewConfirm = async (reason: string | null) => {
     try {
       setStatusTransitioning(true);
@@ -1159,9 +1181,21 @@ export function SpaceTaskPane({
       }))
     );
   }
-  if (filteredTransitionActions.length > 0) {
+  const canRunDirectly =
+    task.status === 'open' && !task.workflowRunId && !task.taskAgentSessionId && !task.archivedAt;
+  if (canRunDirectly || filteredTransitionActions.length > 0) {
     if (taskActionItems.length > 0) {
       taskActionItems.push({ type: 'divider' as const });
+    }
+    if (canRunDirectly) {
+      taskActionItems.push({
+        label: 'Run',
+        title: 'Start an agent on this task without a workflow',
+        disabled: statusTransitioning,
+        onClick: () => {
+          handleRunTaskDirectly();
+        },
+      });
     }
     taskActionItems.push(
       ...filteredTransitionActions.map(({ target, label }) => ({

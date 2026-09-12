@@ -44,9 +44,10 @@ import type {
   UpdateSpaceWorkflowParams,
   WorkflowRunArtifact,
 } from '@hyperneo/shared';
-import { isUUID, Logger } from '@hyperneo/shared';
+import { generateUUID, isUUID, Logger } from '@hyperneo/shared';
 import { computed, signal } from '@preact/signals';
 import { connectionManager } from './connection-manager';
+import { invokeOperation } from './operations';
 import { currentSpaceCanonicalIdSignal, currentSpaceIdSignal } from './signals';
 
 const logger = new Logger('hyperneo:web:spacestore');
@@ -234,6 +235,10 @@ function toPaneAgentTemplate(template: SpaceAgentTemplate): SpaceLongHorizonAgen
     version: template.version,
   };
 }
+
+export type DirectTaskStartResult =
+  | { accepted: true; jobId: string | null }
+  | { accepted: false; reason: string };
 
 class SpaceStore {
   readonly spaces = signal<Space[]>([]);
@@ -2097,6 +2102,19 @@ class SpaceStore {
     return hub.request<SpaceTask>('spaceTask.publish', {
       taskId,
       spaceId,
+    });
+  }
+
+  async runTaskDirectly(taskId: string): Promise<DirectTaskStartResult> {
+    const spaceId = this.spaceId.value;
+    if (!spaceId) throw new Error('No space selected');
+
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) throw new Error('Not connected');
+
+    return invokeOperation<DirectTaskStartResult>(hub, 'task.start', {
+      taskId,
+      requestKey: generateUUID(),
     });
   }
 
