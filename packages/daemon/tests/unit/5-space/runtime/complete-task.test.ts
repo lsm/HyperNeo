@@ -123,23 +123,16 @@ test.each([
 test('registry discovery reports task.complete', async () => {
   const getDatabase = mock(() => db);
   const database = { getDatabase, notifyChange: () => {} } as unknown as AppDatabase;
-  const provider = createSpaceOperationRegistryProvider(
-    database,
-    {} as JobQueueRepository,
-    {
-      getSession: (id) => sessions.getSession(id),
-      getTaskManager: (id) => new SpaceTaskManager(db, id),
-      taskRepo: tasks,
-      notifyStandalone: () => {},
-      emitTaskUpdated: emit,
-      blockExecution: async () => {
-        throw new Error('unexpected workflow cleanup');
-      },
+  const provider = createSpaceOperationRegistryProvider(database, {} as JobQueueRepository, {
+    getSession: (id) => sessions.getSession(id),
+    getTaskManager: (id) => new SpaceTaskManager(db, id),
+    taskRepo: tasks,
+    notifyStandalone: () => {},
+    emitTaskUpdated: emit,
+    blockExecution: async () => {
+      throw new Error('unexpected workflow cleanup');
     },
-    undefined,
-    undefined,
-    { getTaskManager: (id) => new SpaceTaskManager(db, id), emitTaskUpdated: emit }
-  );
+  });
   const rpc = createOperationRpcHandler(provider, () => ({}));
   const describe = { name: 'operations.describe', input: { name: 'task.complete' } };
   expect(await rpc(describe, {} as CallContext)).toMatchObject({

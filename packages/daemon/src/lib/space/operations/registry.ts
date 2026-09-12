@@ -22,10 +22,12 @@ import {
 export function createSpaceOperationRegistryProvider(
   database: Database,
   jobQueue: JobQueueRepository,
-  tasks: Omit<SpaceTaskMetadataDependencies & SpaceTaskDependencyDependencies, 'db'>,
+  tasks: Omit<
+    SpaceTaskMetadataDependencies & SpaceTaskDependencyDependencies & CompleteTaskDependencies,
+    'db'
+  >,
   pendingCompletion?: OwnedPendingCompletionDependencies,
-  directStart?: DirectStartOperationDependencies,
-  completeTask?: CompleteTaskDependencies
+  directStart?: DirectStartOperationDependencies
 ) {
   let registry: OperationRegistry | undefined;
   return () =>
@@ -34,9 +36,7 @@ export function createSpaceOperationRegistryProvider(
         ? createStartTaskOperation(() => database.getDatabase(), jobQueue, tasks, directStart)
         : undefined,
       cancel: createCancelTaskOperation(() => database.getDatabase(), jobQueue, tasks),
-      complete: completeTask
-        ? createCompleteTaskOperation(() => database.getDatabase(), completeTask)
-        : undefined,
+      complete: createCompleteTaskOperation(() => database.getDatabase(), tasks),
       submitForReview: createSubmitTaskForReviewOperation(
         () => database.getDatabase(),
         jobQueue,
