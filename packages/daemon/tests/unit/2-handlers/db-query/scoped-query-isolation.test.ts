@@ -5,18 +5,18 @@ import { runScopedQuery } from '../../../../src/lib/db-query/scoped-query.ts';
 function makeDb(): Database {
   const db = new Database(':memory:');
   db.exec(`
-    CREATE TABLE space_tasks (id TEXT PRIMARY KEY, space_id TEXT, title TEXT, labels TEXT, created_at INTEGER,
+    CREATE TABLE space_tasks (id TEXT PRIMARY KEY, space_id TEXT, title TEXT, created_at INTEGER,
       norm TEXT GENERATED ALWAYS AS (COALESCE(title, '')) VIRTUAL);
     CREATE INDEX idx_space_tasks_space ON space_tasks(space_id);
-    CREATE INDEX idx_space_tasks_hidden ON space_tasks (json_extract(labels, '$.x'));
     CREATE TABLE space_goals (id TEXT, space_id TEXT, title TEXT, task_id TEXT);
     CREATE TABLE space_workflows (id TEXT, space_id TEXT, name TEXT, config TEXT);
+    CREATE INDEX idx_space_workflows_hidden ON space_workflows (json_extract(config, '$.x'));
     CREATE TABLE auth_config (id TEXT, secret TEXT);
-    INSERT INTO space_tasks (id, space_id, title, labels, created_at) VALUES
-      ('t0', 'space-2', 'Theirs', '{"s":"SECRET2"}', 50),
-      ('t1', 'space-1', 'Mine', '{"s":"SECRET1"}', 100),
-      ('t2', 'space-1', 'Abc', '{"s":"SECRET3"}', 200),
-      ('t3', 'space-1', 'Big', '{"s":"SECRET4"}', 9007199254740993);
+    INSERT INTO space_tasks (id, space_id, title, created_at) VALUES
+      ('t0', 'space-2', 'Theirs', 50),
+      ('t1', 'space-1', 'Mine', 100),
+      ('t2', 'space-1', 'Abc', 200),
+      ('t3', 'space-1', 'Big', 9007199254740993);
     INSERT INTO space_goals VALUES ('g1', 'space-1', 'G1', 't1');
     INSERT INTO space_workflows VALUES ('w1', 'space-1', 'W1', '{"secret":"CONFIG"}');
     INSERT INTO auth_config VALUES ('a', 'CREDS');
@@ -49,8 +49,10 @@ describe('runScopedQuery — the scratch database is the security boundary', () 
     expect(rows).toHaveLength(3);
     expect(rows.every((r) => r.space_id === 'space-1')).toBe(true);
     expect(
-      run(db, 'SELECT * FROM ((space_tasks JOIN space_goals ON space_goals.task_id = space_tasks.id))')
-        .rows
+      run(
+        db,
+        'SELECT * FROM ((space_tasks JOIN space_goals ON space_goals.task_id = space_tasks.id))'
+      ).rows
     ).toHaveLength(1);
     db.close();
   });
@@ -160,7 +162,7 @@ describe('runScopedQuery — the scratch database is the security boundary', () 
     const db = makeDb();
 
     expect(() =>
-      run(db, 'SELECT id FROM space_tasks INDEXED BY idx_space_tasks_hidden')
+      run(db, 'SELECT id FROM space_workflows INDEXED BY idx_space_workflows_hidden')
     ).not.toThrow();
     db.close();
   });
