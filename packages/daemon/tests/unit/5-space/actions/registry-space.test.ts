@@ -445,6 +445,48 @@ describe('createSpaceRegistryEntries — composition', () => {
     }
   });
 
+  test('cancel_task requires human-only clearance when a sibling task in the run is awaiting completion approval', async () => {
+    const ctx = makeCtx();
+    try {
+      const workflow = ctx.workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: 'Sibling checkpoint',
+        nodes: [{ name: 'Work', agents: [{ agentId: 'agent-coder-1', name: 'Coder' }] }],
+        tags: [],
+      });
+      const run = ctx.workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Run with a pending checkpoint',
+      });
+      const plainTask = ctx.taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Plain task',
+        description: '',
+        workflowRunId: run.id,
+      });
+      const checkpointSibling = ctx.taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Sibling awaiting approval',
+        description: '',
+        workflowRunId: run.id,
+      });
+      ctx.taskRepo.updateTask(checkpointSibling.id, {
+        status: 'review',
+        pendingCheckpointType: 'task_completion',
+      });
+
+      const entries = createSpaceRegistryEntries(ctx.config);
+      const resolve = entries.find((entry) => entry.name === 'cancel_task')?.autonomyRequirement;
+      expect(typeof resolve).toBe('function');
+      if (typeof resolve === 'function') {
+        expect(await resolve({ task_id: plainTask.id })).toBe(5);
+      }
+    } finally {
+      ctx.db.close();
+    }
+  });
+
   test('cancel_task requires destructive clearance for a terminal run with a live session on a sibling task', async () => {
     const ctx = makeCtx();
     try {

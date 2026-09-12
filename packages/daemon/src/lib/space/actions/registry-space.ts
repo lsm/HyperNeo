@@ -188,6 +188,13 @@ export function createSpaceRegistryEntries(
     if (task?.workflowRunId) {
       const run = config.workflowRunRepo.getRun(task.workflowRunId);
       if (run && canTransitionRunStatus(run.status, 'cancelled')) {
+        if (
+          config.taskRepo
+            .listByWorkflowRun(task.workflowRunId)
+            .some((sibling) => sibling.pendingCheckpointType === 'task_completion')
+        ) {
+          return HUMAN_ONLY_AUTONOMY_LEVEL;
+        }
         return DESTRUCTIVE_ACTION_AUTONOMY_LEVEL;
       }
       if (
