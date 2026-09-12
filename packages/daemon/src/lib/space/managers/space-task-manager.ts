@@ -17,6 +17,8 @@ import {
 
 export { VALID_SPACE_TASK_TRANSITIONS, isValidSpaceTaskTransition, assertValidSpaceTaskTransition };
 
+class StaleStatusCasMiss extends Error {}
+
 import { buildTaskDependencyGraph, hasTaskDependencyCycle } from '../../tasks/dependency-graph.ts';
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
 import type {
@@ -180,6 +182,7 @@ export class SpaceTaskManager {
       blockReason?: SpaceBlockReason;
       approvalSource?: SpaceApprovalSource;
       approvalReason?: string | null;
+      expectedStatus?: SpaceTaskStatus;
       expectedPendingCompletionGeneration?: number;
       onCascadedTasks?: (cascaded: SpaceTask[]) => Promise<void>;
     }
@@ -187,6 +190,13 @@ export class SpaceTaskManager {
     const task = await this.getTask(taskId);
     if (!task) {
       throw new Error(`Task not found: ${taskId}`);
+    }
+
+    const expectedStatus = options?.expectedStatus;
+    const staleStatusError = (currentStatus: SpaceTaskStatus) =>
+      new Error(`Task ${taskId} is no longer '${expectedStatus}' (now '${currentStatus}')`);
+    if (expectedStatus !== undefined && task.status !== expectedStatus) {
+      throw staleStatusError(task.status);
     }
 
     const expectedGeneration = options?.expectedPendingCompletionGeneration;
@@ -217,8 +227,14 @@ export class SpaceTaskManager {
     let updated: SpaceTask;
     try {
       updated = this.db.transaction(() => {
-        const result = this.taskRepo.updateTask(taskId, updates, undefined, expectedGeneration);
+        const result = this.taskRepo.updateTask(
+          taskId,
+          updates,
+          expectedStatus,
+          expectedGeneration
+        );
         if (!result) {
+          if (expectedStatus !== undefined) throw new StaleStatusCasMiss();
           if (expectedGeneration !== undefined) throw new PendingCompletionSupersededError(taskId);
           throw new Error(`Failed to update task: ${taskId}`);
         }
@@ -233,6 +249,10 @@ export class SpaceTaskManager {
       this.reactiveDb?.commitTransaction();
     } catch (err) {
       this.reactiveDb?.abortTransaction();
+      if (err instanceof StaleStatusCasMiss) {
+        const current = await this.getTask(taskId);
+        throw staleStatusError(current?.status ?? task.status);
+      }
       throw err;
     }
 
