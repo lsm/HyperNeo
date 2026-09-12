@@ -17,8 +17,9 @@ implementation: MessageHub RPC handlers for the UI, typed MCP tools for agents
 (`space-agent-tools.ts` and its role variants), and internal callers inside the
 Space runtime. A status transition, a review submission, or a cancellation could
 validate differently, write differently, and emit different events depending on
-which door it entered. Agent-only names such as `agentActions` described
-functionality humans also used.
+which door it entered. The agent-facing tool names described functionality
+that RPC handlers exposed to humans under separate names, with no shared
+vocabulary between the two surfaces.
 
 ADR 0005 addressed the *agent-facing* half of the problem: one `call_action`
 choke point on the `space-actions` server owning safety classes, autonomy
@@ -158,11 +159,13 @@ Rules that follow:
   load the persisted task, session, and active attempt and compare against the
   principal.
 - Operations read principal facts from `OperationCaller` and never branch on
-  `source` to substitute for a missing fact. Three operations today carry a
-  `caller.source === 'mcp'` branch that re-derives Space membership from the
-  session row because the principal is still too thin. That is transitional
-  debt: as the MCP pipeline resolves those facts, the branches collapse to
-  reading them.
+  `source` to substitute for a missing fact. Five operations today carry a
+  `caller.source === 'mcp'` branch because the principal is still too thin:
+  `task.cancel`, `task.resolvePendingCompletion`, `task.update`, and
+  `task.dependencies.set` re-derive Space membership from the session row,
+  and `task.submitForReview` uses the branch to confirm the calling session
+  is the attempt's own bound worker. That is transitional debt: as the MCP
+  pipeline resolves those facts, the branches collapse to reading them.
 - Today's adapters take a `resolveCaller` callback. That callback is the
   degenerate one-stage form of the pre-invocation pipeline, and the seam where
   the pipeline slots in. Extending caller policy means replacing the callback
@@ -187,12 +190,17 @@ Operations are the **domain layer**; the pre-invocation pipelines and the ADR
   `call_action` entry is a named tool. No action delegates yet (see Current
   state); migrating them is ordinary wire work under this ADR.
 - The generic `invoke` tool on the `hyperneo-operations` server is attached to
-  every agent session. Until the MCP pre-invocation pipeline resolves Space
-  membership and role, it carries only operations whose admission is execution
-  ownership — a worker submitting its own outcome, a session editing a task it
-  is bound to. Operations that need Space policy to be safe reach agents
-  through `call_action` for now. Once the MCP pipeline composes the shared
-  policy stages, that restriction lifts by construction.
+  every agent session and today carries the full wired catalog, unfiltered by
+  admission kind: `task.cancel`, `task.resolvePendingCompletion`,
+  `task.update`, and `task.dependencies.set` are reachable alongside the
+  execution-ownership operations, each enforcing Space membership and role
+  inside its own admission stage (the transitional debt decision 3
+  describes) rather than through a caller-scoped invoke surface. The
+  intended rule — new operations reach the generic invoke tool only when
+  their admission is execution ownership, with Space-policy operations
+  routed through `call_action` instead — governs additions until the MCP
+  pre-invocation pipeline resolves Space membership and role and the
+  restriction holds by construction rather than by convention.
 - MessageHub RPC reaches operations through `operation.invoke`. ADR 0005's ban
   on RPC loopback stands: the dispatcher is not reachable over RPC, and RPC
   callers get the human policy from the RPC pipeline, not the agent policy.
@@ -321,7 +329,7 @@ parity.
 | Registry, invoker, both adapters, discovery, instance-owned catalogs | Implemented and tested (`tests/unit/1-core/operations/`, `2-handlers/rpc-handlers/operation-handlers.test.ts`, `5-space/runtime/{submit-for-review,cancel-task,direct-outcome-jobs,direct-start-jobs,operation-registry}.test.ts`) |
 | Shared metadata, dependencies, review submission, approval/rejection, direct cancellation | Implemented; supported ownership types vary per binding — read the description |
 | `task.start` / verified retry | Pending in PR #4391 (#4382) |
-| Caller policy | `source` is the only differentiation. Neither adapter authenticates or authorizes: the RPC adapter resolves `{}`, the MCP adapter resolves the owning session id. Cross-Space and role checks exist only inside three operations' admission stages |
+| Caller policy | `source` is the only differentiation. Neither adapter authenticates or authorizes: the RPC adapter resolves `{}`, the MCP adapter resolves the owning session id. Cross-Space and role checks exist only inside five operations' admission stages |
 | Pre-invocation pipelines | **Not built.** The `resolveCaller` callbacks are the seam |
 | Web UI | **Zero callers** of `operation.invoke`. The UI still uses legacy RPC handlers; the human arrow in the diagram is a capability, not a fact |
 | `call_action` → operations | **No action delegates to an operation yet**; actions still wrap typed handlers |
@@ -392,7 +400,7 @@ unrelated recovery infrastructure.
 - Build the RPC pre-invocation pipeline as its one-stage anonymous form now, so
   the seam exists before user identity does.
 - First shared policy stage (`requireSameSpace`), composed by the MCP pipeline;
-  migrate the three existing `caller.source === 'mcp'` branches onto principal
+  migrate the five existing `caller.source === 'mcp'` branches onto principal
   fields.
 - Split legacy `*_unavailable` reasons into unavailable/denied families as each
   operation is touched; define the pre-invocation reason family with the first
