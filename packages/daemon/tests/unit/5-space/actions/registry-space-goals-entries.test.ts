@@ -17,8 +17,6 @@ import { JobQueueRepository } from '../../../../src/storage/repositories/job-que
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import { SpaceGoalEventRepository } from '../../../../src/storage/repositories/space-goal-event-repository.ts';
 import { SpaceGoalRepository } from '../../../../src/storage/repositories/space-goal-repository.ts';
-import { SpaceAgentGoalScopeRepository } from '../../../../src/storage/repositories/space-agent-goal-scope-repository.ts';
-import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
@@ -63,8 +61,7 @@ function makeCtx(overrides: Partial<SpaceAgentToolsConfig> = {}): GoalsCtx {
     workflowRunRepo,
     taskRepo,
     nodeExecutionRepo,
-    goalScopeRepo: new SpaceAgentGoalScopeRepository(db, new SpaceAgentRepository(db)),
-    agentRepo: new SpaceAgentRepository(db),
+    longHorizonAgentRepo,
   });
   const goalService = new SpaceGoalService({
     goalRepo: new SpaceGoalRepository(db),
