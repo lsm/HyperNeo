@@ -3542,8 +3542,16 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         return jsonResult({
           success: false,
           error:
-            'approve_pending_completion is only available to the coordinator and task-agent sessions. Worker node agents must use approve_task to self-close.',
+            'approve_pending_completion is only available to Space agent sessions (coordinator or long-term agent) and legacy task-agent sessions. Worker node agents must use approve_task to self-close.',
         });
+      }
+      if (callerHasSpaceAuthority) {
+        try {
+          await requireSessionWriteAutonomy('approve_pending_completion');
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          return jsonResult({ success: false, error: message });
+        }
       }
 
       const task = taskRepo.getTask(args.task_id);
@@ -4794,7 +4802,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
     ),
     tool(
       'approve_pending_completion',
-      "Approve or reject a task paused at a submit_for_approval checkpoint (the human-approval path). This is the coordinator's programmatic equivalent of the UI 'Approve' banner: approved transitions review → approved and fires the post-approval router; rejected resumes an existing active worker in in_progress, or queues a fresh direct worker with the task open until execution is ready. Coordinator/task-agent sessions only — worker node agents use approve_task to self-close.",
+      "Approve or reject a task paused at a submit_for_approval checkpoint (the human-approval path). This is a Space agent session's programmatic equivalent of the UI 'Approve' banner: approved transitions review → approved and fires the post-approval router; rejected resumes an existing active worker in in_progress, or queues a fresh direct worker with the task open until execution is ready. Space agent (coordinator or long-term agent) and legacy task-agent sessions only — worker node agents use approve_task to self-close.",
       ApprovePendingCompletionSchema.shape,
       (args) => handlers.approve_pending_completion(args)
     ),

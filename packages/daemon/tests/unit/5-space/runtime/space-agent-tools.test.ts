@@ -1,4 +1,3 @@
-import { PendingCompletionSupersededError } from '../../../../src/lib/space/operations/pending-completion-guard';
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import { execSync } from 'node:child_process';
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
@@ -19,10 +18,11 @@ import { getLongHorizonAgentTemplate } from '../../../../src/lib/space/agents/lo
 import { EvolutionEpisodeService } from '../../../../src/lib/space/evolution-episode-service.ts';
 import { EvolutionScopeService } from '../../../../src/lib/space/evolution-scope-service.ts';
 import { SpaceGoalService } from '../../../../src/lib/space/goals/goal-service.ts';
-import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { SpaceAgentTemplateManager } from '../../../../src/lib/space/managers/space-agent-template-manager.ts';
+import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
+import { PendingCompletionSupersededError } from '../../../../src/lib/space/operations/pending-completion-guard';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import { ScheduleService } from '../../../../src/lib/space/schedule/schedule-service.ts';
@@ -45,15 +45,15 @@ import { EvolutionRepository } from '../../../../src/storage/repositories/evolut
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import { McpAuditLogRepository } from '../../../../src/storage/repositories/mcp-audit-log-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
+import { SpaceAgentGoalScopeRepository } from '../../../../src/storage/repositories/space-agent-goal-scope-repository.ts';
 import { SpaceAgentInactivityConfigRepository } from '../../../../src/storage/repositories/space-agent-inactivity-repository.ts';
+import { SpaceAgentReminderRepository } from '../../../../src/storage/repositories/space-agent-reminder-repository';
+import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
+import { SpaceAgentSubscriptionRepository } from '../../../../src/storage/repositories/space-agent-subscription-repository.ts';
 import { SpaceAgentTemplateRepository } from '../../../../src/storage/repositories/space-agent-template-repository.ts';
 import { SpaceGoalEventRepository } from '../../../../src/storage/repositories/space-goal-event-repository.ts';
 import { SpaceGoalOutcomeNotificationRepository } from '../../../../src/storage/repositories/space-goal-outcome-notification-repository.ts';
 import { SpaceGoalRepository } from '../../../../src/storage/repositories/space-goal-repository.ts';
-import { SpaceAgentGoalScopeRepository } from '../../../../src/storage/repositories/space-agent-goal-scope-repository.ts';
-import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
-import { SpaceAgentReminderRepository } from '../../../../src/storage/repositories/space-agent-reminder-repository';
-import { SpaceAgentSubscriptionRepository } from '../../../../src/storage/repositories/space-agent-subscription-repository.ts';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
@@ -7053,6 +7053,7 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
       );
       const result = await makeHandlers(ctx, {
         callerRole: 'long_term_agent',
+        getSpaceAutonomyLevel: async () => 5,
         auditLogRepo,
         internalEventBus:
           bus as unknown as import('../../../../src/lib/internal-event-bus').InternalEventBus<
@@ -7095,6 +7096,7 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
 
     const result = await makeHandlers(ctx, {
       callerRole: 'long_term_agent',
+      getSpaceAutonomyLevel: async () => 5,
     }).approve_pending_completion({ task_id: taskId, approved: true, reason: 'ship it' });
     dispatchSpy.mockRestore();
 
@@ -7120,6 +7122,7 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
       const publish = mock(async () => {});
       const result = await makeHandlers(ctx, {
         callerRole: 'long_term_agent',
+        getSpaceAutonomyLevel: async () => 5,
         auditLogRepo,
         internalEventBus: { publish } as unknown as NonNullable<
           Parameters<typeof createSpaceAgentToolHandlers>[0]['internalEventBus']
@@ -7156,6 +7159,7 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
 
     const result = await makeHandlers(ctx, {
       callerRole: 'long_term_agent',
+      getSpaceAutonomyLevel: async () => 5,
     }).approve_pending_completion({ task_id: taskId, approved: true });
     dispatchSpy.mockRestore();
 
@@ -7176,6 +7180,7 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
 
     const result = await makeHandlers(ctx, {
       callerRole: 'long_term_agent',
+      getSpaceAutonomyLevel: async () => 5,
     }).approve_pending_completion({ task_id: taskId, approved: true });
     dispatchSpy.mockRestore();
 
@@ -7195,6 +7200,7 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
 
     const result = await makeHandlers(ctx, {
       callerRole: 'long_term_agent',
+      getSpaceAutonomyLevel: async () => 5,
     }).approve_pending_completion({ task_id: taskId, approved: false, reason: 'needs rework' });
     dispatchSpy.mockRestore();
 
@@ -7212,6 +7218,7 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
 
     const result = await makeHandlers(ctx, {
       callerRole: 'long_term_agent',
+      getSpaceAutonomyLevel: async () => 5,
     }).approve_pending_completion({ task_id: taskId, approved: false });
     dispatchSpy.mockRestore();
 
@@ -7232,6 +7239,7 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
     const dispatchSpy = spyOn(ctx.runtime, 'dispatchPostApproval');
     const result = await makeHandlers(ctx, {
       callerRole: 'long_term_agent',
+      getSpaceAutonomyLevel: async () => 5,
     }).approve_pending_completion({ task_id: task.id, approved: true });
     dispatchSpy.mockRestore();
 
@@ -7255,6 +7263,7 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
     const dispatchSpy = spyOn(ctx.runtime, 'dispatchPostApproval');
     const result = await makeHandlers(ctx, {
       callerRole: 'long_term_agent',
+      getSpaceAutonomyLevel: async () => 5,
     }).approve_pending_completion({ task_id: task.id, approved: true });
     dispatchSpy.mockRestore();
 
@@ -7319,6 +7328,7 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
 
     const result = await makeHandlers(ctx, {
       callerRole: 'long_term_agent',
+      getSpaceAutonomyLevel: async () => 5,
       spaceId: 'other-space',
     }).approve_pending_completion({ task_id: taskId, approved: true });
     dispatchSpy.mockRestore();
@@ -7326,6 +7336,77 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.success).toBe(false);
     expect(parsed.error).toContain('does not belong');
+  });
+
+  test('long-term agent below the required autonomy level is denied by the raw tool', async () => {
+    const taskId = await createReviewTask();
+    const dispatchSpy = spyOn(ctx.runtime, 'dispatchPostApproval');
+
+    const result = await makeHandlers(ctx, {
+      callerRole: 'long_term_agent',
+      getSpaceAutonomyLevel: async () => 4,
+    }).approve_pending_completion({ task_id: taskId, approved: true });
+    dispatchSpy.mockRestore();
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('space autonomy level 4 < required level 5');
+    expect(dispatchSpy).not.toHaveBeenCalled();
+    expect(ctx.taskRepo.getTask(taskId)?.status).toBe('review');
+  });
+
+  test('long-term agent at the required autonomy level is admitted by the raw tool', async () => {
+    const taskId = await createReviewTask();
+    const dispatchSpy = spyOn(ctx.runtime, 'dispatchPostApproval').mockImplementation(
+      async (id: string) => {
+        ctx.taskRepo.updateTask(id, { status: 'approved', approvalSource: 'human' });
+      }
+    );
+
+    const result = await makeHandlers(ctx, {
+      callerRole: 'long_term_agent',
+      getSpaceAutonomyLevel: async () => 5,
+    }).approve_pending_completion({ task_id: taskId, approved: true });
+    dispatchSpy.mockRestore();
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.success).toBe(true);
+    expect(parsed.task.status).toBe('approved');
+  });
+
+  test('coordinator below the required autonomy level is denied by the raw tool', async () => {
+    const taskId = await createReviewTask();
+    const dispatchSpy = spyOn(ctx.runtime, 'dispatchPostApproval');
+
+    const result = await makeHandlers(ctx, {
+      callerRole: 'coordinator',
+      getSpaceAutonomyLevel: async () => 4,
+    }).approve_pending_completion({ task_id: taskId, approved: true });
+    dispatchSpy.mockRestore();
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('space autonomy level 4 < required level 5');
+    expect(dispatchSpy).not.toHaveBeenCalled();
+  });
+
+  test('legacy task-agent caller bypasses the autonomy gate entirely', async () => {
+    const taskId = await createReviewTask();
+    const dispatchSpy = spyOn(ctx.runtime, 'dispatchPostApproval').mockImplementation(
+      async (id: string) => {
+        ctx.taskRepo.updateTask(id, { status: 'approved', approvalSource: 'human' });
+      }
+    );
+
+    const result = await makeHandlers(ctx, {
+      callerRole: 'legacy_task_agent',
+      getSpaceAutonomyLevel: async () => 1,
+    }).approve_pending_completion({ task_id: taskId, approved: true });
+    dispatchSpy.mockRestore();
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.success).toBe(true);
+    expect(parsed.task.status).toBe('approved');
   });
 });
 

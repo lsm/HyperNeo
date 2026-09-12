@@ -623,7 +623,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     getTask: (id) => spaceTaskRepo.getTask(id),
     getTaskManager: spaceTaskManagerFactory,
     coordinatorLookup: longHorizonAgentRepo,
-    policyContext: { taskRepo: spaceTaskRepo, nodeExecutionRepo },
+    policyContext: { taskRepo: spaceTaskRepo, nodeExecutionRepo, longHorizonAgentRepo },
     dispatchApproval: (spaceId, taskId, source, approvalReason, guard) =>
       spaceRuntimeService.dispatchPostApproval(spaceId, taskId, source, { approvalReason }, guard),
     warn: (taskId, detail) =>

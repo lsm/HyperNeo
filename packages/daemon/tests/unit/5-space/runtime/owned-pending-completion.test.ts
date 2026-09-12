@@ -1,22 +1,22 @@
 import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
 import type { NodeExecution, Session, SpaceLongHorizonAgent, SpaceTask } from '@hyperneo/shared';
-import { Database } from '../../../../src/storage/sqlite-compat';
-import { createSpaceTables } from '../../helpers/space-test-db';
-import { createTestSession } from '../../../helpers/database';
-import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
-import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
-import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
-import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager';
-import { createOperationRegistry } from '../../../../src/lib/operations/registry';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
+import { createOperationRegistry } from '../../../../src/lib/operations/registry';
 import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session';
+import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager';
 import {
   createOwnedPendingCompletionOperation,
-  resolveCompletionActor,
-  requireCompletionTarget,
   loadCompletionTarget,
   type OwnedPendingCompletionDependencies,
+  requireCompletionTarget,
+  resolveCompletionActor,
 } from '../../../../src/lib/space/operations/owned-pending-completion';
+import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
+import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
+import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
+import { Database } from '../../../../src/storage/sqlite-compat';
+import { createTestSession } from '../../../helpers/database';
+import { createSpaceTables } from '../../helpers/space-test-db';
 
 let db: Database;
 let spaceId: string;
@@ -165,6 +165,32 @@ test.each(['missing', 'ordinary', 'member', 'noncanonical-chat', 'missing-coordi
 
 test('admits a Space agent that is not the space manager', async () => {
   const session = persist('worker', longTermAgentSessionId(spaceId, 'other'), spaceId, 'other');
+  expect((await invoke(session.id)).kind).toBe('completed');
+  expect(tasks.getTask(task.id)?.status).toBe('approved');
+});
+
+test('denies a long-term agent session whose backing agent is no longer active', async () => {
+  const session = persist('worker', longTermAgentSessionId(spaceId, 'agent-1'), spaceId, 'agent-1');
+  dependencies.policyContext = {
+    longHorizonAgentRepo: {
+      getById: () =>
+        ({ id: 'agent-1', spaceId, status: 'paused' }) as unknown as SpaceLongHorizonAgent,
+    },
+  };
+  const outcome = await invoke(session.id);
+  expect(outcome.kind).toBe('failed');
+  expect(dependencies.getTaskManager).not.toHaveBeenCalled();
+  expect(tasks.getTask(task.id)?.status).toBe('review');
+});
+
+test('admits a long-term agent session whose backing agent is still active', async () => {
+  const session = persist('worker', longTermAgentSessionId(spaceId, 'agent-1'), spaceId, 'agent-1');
+  dependencies.policyContext = {
+    longHorizonAgentRepo: {
+      getById: () =>
+        ({ id: 'agent-1', spaceId, status: 'active' }) as unknown as SpaceLongHorizonAgent,
+    },
+  };
   expect((await invoke(session.id)).kind).toBe('completed');
   expect(tasks.getTask(task.id)?.status).toBe('approved');
 });

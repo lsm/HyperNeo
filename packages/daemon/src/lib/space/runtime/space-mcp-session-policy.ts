@@ -1,8 +1,9 @@
-import type { DirectTaskWorkerIdentity } from './direct-task-worker-identity.ts';
 import type { Session } from '@hyperneo/shared';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
+import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import { longTermAgentSessionId } from '../long-term-agent-session.ts';
+import type { DirectTaskWorkerIdentity } from './direct-task-worker-identity.ts';
 
 export type SpaceMcpSessionRole =
   | 'coordinator'
@@ -23,6 +24,7 @@ export interface SpaceMcpSessionPolicyContext {
   readonly resolveDirectWorker?: (sessionId: string) => DirectTaskWorkerIdentity | null;
   readonly nodeExecutionRepo?: Pick<NodeExecutionRepository, 'getByAgentSessionId' | 'getById'>;
   readonly taskRepo?: Pick<SpaceTaskRepository, 'getTask'>;
+  readonly longHorizonAgentRepo?: Pick<SpaceLongHorizonAgentRepository, 'getById'>;
 }
 
 export interface SpaceMcpSessionPolicy {
@@ -118,7 +120,7 @@ export function resolveSpaceMcpSessionPolicy(
     };
   }
 
-  if (isLongTermAgentSession(session, spaceId)) {
+  if (isLongTermAgentSession(session, spaceId, context.longHorizonAgentRepo)) {
     return {
       role: 'long_term_agent',
       spaceId,
@@ -164,10 +166,17 @@ function parseExecutionIdFromSubSessionId(sessionId: string): string | null {
   return executionId || null;
 }
 
-function isLongTermAgentSession(session: Session, spaceId: string): boolean {
+function isLongTermAgentSession(
+  session: Session,
+  spaceId: string,
+  longHorizonAgentRepo?: SpaceMcpSessionPolicyContext['longHorizonAgentRepo']
+): boolean {
   const agentId = session.metadata.promptProvenance?.agentId;
   if (!agentId) return false;
-  return session.id === longTermAgentSessionId(spaceId, agentId);
+  if (session.id !== longTermAgentSessionId(spaceId, agentId)) return false;
+  if (!longHorizonAgentRepo) return true;
+  const agent = longHorizonAgentRepo.getById(agentId);
+  return agent !== null && agent.spaceId === spaceId && agent.status === 'active';
 }
 
 export function missingMcpServers(
