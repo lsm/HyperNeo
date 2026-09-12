@@ -1,3 +1,4 @@
+import { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
 import { availableTaskSlots } from './task-capacity.ts';
 import { DirectTaskExecutionRepository } from '../../../storage/repositories/direct-task-execution-repository.ts';
 import { PendingCompletionSupersededError } from '../operations/pending-completion-guard.ts';
@@ -279,6 +280,7 @@ export interface AdmitSpawnExecutionOutcome {
 }
 
 export interface SpawnPendingExecutionsOutcome {
+  spawned?: boolean;
   blockedByCrash: boolean;
   permanentSpawnFailureReason: string | null;
 }
@@ -6496,6 +6498,21 @@ export class SpaceRuntime {
     blockedByCrash: boolean
   ): Promise<SpawnPendingExecutionsOutcome> {
     let permanentSpawnFailureReason: string | null = null;
+    const originalTask = canonicalTask;
+    const reservation = { generation: null as number | null };
+    let spawned = false;
+    if (
+      canonicalTask.status === 'open' &&
+      pendingExecutions.some((execution) => !tam.isExecutionSpawning(execution.id))
+    ) {
+      const reserved = await this.ensureCanonicalTaskInProgress(
+        space.id,
+        canonicalTask,
+        reservation
+      );
+      if (!reserved) return { blockedByCrash, permanentSpawnFailureReason, spawned: false };
+      canonicalTask = reserved;
+    }
     for (const execution of pendingExecutions) {
       if (tam.isExecutionSpawning(execution.id)) continue;
       try {
@@ -6507,6 +6524,7 @@ export class SpaceRuntime {
           execution,
           { kickoff: true }
         );
+        spawned = true;
         this.tryRequeuePendingDeliveries(this.pausedSpaceIds, runId);
         const restartNotice = this.consumeAgentRestartNotice(runId, execution);
         if (restartNotice) {
@@ -6563,7 +6581,36 @@ export class SpaceRuntime {
         );
       }
     }
-    return { blockedByCrash, permanentSpawnFailureReason };
+    if (reservation.generation !== null && !spawned) {
+      const released = this.config.db.transaction(() => {
+        const current = this.config.taskRepo.getTask(canonicalTask.id);
+        const executions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
+        if (
+          current?.status !== 'in_progress' ||
+          current.workflowRunId !== runId ||
+          this.config.taskRepo.getLifecycleGeneration(current.id) !== reservation.generation ||
+          executions.some(
+            (execution) =>
+              execution.agentSessionId ||
+              execution.status === 'in_progress' ||
+              tam.isExecutionSpawning(execution.id)
+          )
+        )
+          return null;
+        return this.config.taskRepo.updateTask(
+          current.id,
+          {
+            status: originalTask.status,
+            startedAt: originalTask.startedAt,
+            completedAt: originalTask.completedAt,
+            pendingCheckpointType: originalTask.pendingCheckpointType,
+          },
+          'in_progress'
+        );
+      }, 'immediate')();
+      if (released) await this.safeOnTaskUpdated(space.id, released, { fromStatus: 'in_progress' });
+    }
+    return { blockedByCrash, permanentSpawnFailureReason, spawned };
   }
 
   private async blockRunForSpawnFailure(
@@ -6595,7 +6642,8 @@ export class SpaceRuntime {
 
   private async ensureCanonicalTaskInProgress(
     spaceId: string,
-    canonicalTask: SpaceTask
+    canonicalTask: SpaceTask,
+    reservation?: { generation: number | null }
   ): Promise<SpaceTask | null> {
     if (canonicalTask.status !== 'open' && canonicalTask.status !== 'blocked') return canonicalTask;
     this.config.reactiveDb?.beginTransaction();
@@ -6603,12 +6651,20 @@ export class SpaceRuntime {
     let promoted = false;
     try {
       updated = this.config.db.transaction(() => {
+        if (
+          reservation &&
+          (this.config.taskRepo.getTask(canonicalTask.id)?.workflowRunId !==
+            canonicalTask.workflowRunId ||
+            this.getAvailableTaskSlots(new SpaceRepository(this.config.db).getSpace(spaceId)) <= 0)
+        )
+          return null;
         const outcome = this.config.taskRepo.casStatus(
           canonicalTask.id,
           canonicalTask.status,
           'in_progress'
         );
-        if (outcome === 'superseded') return this.config.taskRepo.getTask(canonicalTask.id);
+        if (outcome === 'superseded')
+          return reservation ? null : this.config.taskRepo.getTask(canonicalTask.id);
         promoted = true;
         const result = this.config.taskRepo.updateTask(canonicalTask.id, {
           startedAt: canonicalTask.startedAt ?? Date.now(),
@@ -6633,8 +6689,10 @@ export class SpaceRuntime {
         if (canonicalTask.status === 'blocked') {
           this.config.goalService?.supersedeOutcomeNotificationsForTask(canonicalTask.id);
         }
+        if (reservation)
+          reservation.generation = this.config.taskRepo.getLifecycleGeneration(canonicalTask.id);
         return result;
-      })();
+      }, 'immediate')();
       this.config.reactiveDb?.commitTransaction();
     } catch (err) {
       this.config.reactiveDb?.abortTransaction();
