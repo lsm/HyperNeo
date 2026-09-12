@@ -1,7 +1,7 @@
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import { createSubmitTaskForReviewOperation } from '../../../../src/lib/space/operations/submit-for-review';
-import type { CallContext } from '@hyperneo/shared';
+import type { CallContext, UpdateSpaceTaskParams } from '@hyperneo/shared';
 import type { Database as AppDatabase } from '../../../../src/storage/database';
 import { createSpaceOperationRegistryProvider } from '../../../../src/lib/space/operations/registry';
 import { createDatabaseOperationCatalog } from '../../../../src/lib/operations/database-catalog';
@@ -19,6 +19,7 @@ import { JobQueueRepository } from '../../../../src/storage/repositories/job-que
 import { createDirectTaskStarter } from '../../../../src/lib/space/runtime/start-direct-task';
 import { createCancelTaskOperation } from '../../../../src/lib/space/operations/cancel-task';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry';
+import { invokeOperation } from '../../../../src/lib/operations/invoke';
 import { readDirectFinalizationRequest } from '../../../../src/lib/space/runtime/finalize-direct-attempt';
 import { SessionManager } from '../../../../src/lib/session/session-manager';
 import { createDirectOutcomeHandler } from '../../../../src/lib/space/runtime/direct-outcome-jobs';
@@ -260,19 +261,143 @@ test('reserved attempts reject without freezing an outcome', async () => {
   expect(attempts.isStopRequested(attemptId, sessionId)).toBe(false);
 });
 
-test('workflow-backed tasks keep their existing cancellation route', async () => {
-  const spaceId = tasks.getTask(taskId)!.spaceId!;
+function mockStopForStatus() {
+  return mock((_spaceId: string, taskId: string, params: UpdateSpaceTaskParams) =>
+    Promise.resolve(tasks.updateTask(taskId, { status: params.status }))
+  );
+}
+
+function unusedBlockExecution() {
+  return mock(async () => {
+    throw new Error('blockExecution must not be used for workflow-owned cancellation');
+  });
+}
+
+function createWorkflowRunId(spaceId: string) {
   const workflow = new SpaceWorkflowRepository(db).createWorkflow({ spaceId, name: 'Workflow' });
-  const run = new SpaceWorkflowRunRepository(db).createRun({
+  return new SpaceWorkflowRunRepository(db).createRun({
     spaceId,
     workflowId: workflow.id,
     title: 'Run',
-  });
-  tasks.updateTask(taskId, { workflowRunId: run.id });
-  expect(await operation.execute({ taskId }, { source: 'rpc' })).toMatchObject({
+  }).id;
+}
+
+test.each(['rpc', 'internal'] as const)(
+  '%s caller cancels a workflow-owned task through stopForStatus without cascading or using blockExecution',
+  async (source) => {
+    const spaceId = tasks.getTask(taskId)!.spaceId!;
+    tasks.updateTask(taskId, { workflowRunId: createWorkflowRunId(spaceId) });
+    const dependent = tasks.createTask({
+      spaceId,
+      title: 'Dependent',
+      description: '',
+      dependsOn: [taskId],
+    });
+    const stopForStatus = mockStopForStatus();
+    const blockExecution = unusedBlockExecution();
+    const deps = { stopForStatus, blockExecution };
+    const workflowOp = createCancelTaskOperation(() => db, jobs, deps);
+    expect(await workflowOp.execute({ taskId }, { source })).toEqual({
+      accepted: true,
+      jobId: null,
+    });
+    expect(stopForStatus).toHaveBeenCalledWith(spaceId, taskId, { status: 'cancelled' });
+    expect(stopForStatus).toHaveBeenCalledTimes(1);
+    expect(blockExecution).not.toHaveBeenCalled();
+    expect(tasks.getTask(taskId)?.status).toBe('cancelled');
+    expect(tasks.getTask(dependent.id)?.status).toBe('open');
+    expect(outcomeCount()).toBe(0);
+  }
+);
+
+test('MCP caller in the owning Space is admitted for a workflow-owned task', async () => {
+  const worker = sessions.getSession(sessionId)!;
+  const spaceId = worker.context!.spaceId!;
+  tasks.updateTask(taskId, { workflowRunId: createWorkflowRunId(spaceId) });
+  sessions.createSession(
+    { ...worker, id: 'coordinator', type: 'space_chat', context: { spaceId } },
+    { enforceWorkspaceOwnership: false }
+  );
+  const stopForStatus = mockStopForStatus();
+  const workflowOp = createCancelTaskOperation(() => db, jobs, { stopForStatus });
+  expect(await workflowOp.execute({ taskId }, { source: 'mcp', sessionId: 'coordinator' })).toEqual(
+    { accepted: true, jobId: null }
+  );
+  expect(stopForStatus).toHaveBeenCalledTimes(1);
+});
+
+test('MCP caller outside the owning Space is denied for a workflow-owned task', async () => {
+  const worker = sessions.getSession(sessionId)!;
+  const spaceId = worker.context!.spaceId!;
+  tasks.updateTask(taskId, { workflowRunId: createWorkflowRunId(spaceId) });
+  sessions.createSession(
+    { ...worker, id: 'coordinator', type: 'space_chat', context: { spaceId: 'other-space' } },
+    { enforceWorkspaceOwnership: false }
+  );
+  const stopForStatus = mockStopForStatus();
+  const workflowOp = createCancelTaskOperation(() => db, jobs, { stopForStatus });
+  expect(
+    await workflowOp.execute({ taskId }, { source: 'mcp', sessionId: 'coordinator' })
+  ).toMatchObject({ accepted: false, reason: 'cancellation_denied' });
+  expect(stopForStatus).not.toHaveBeenCalled();
+});
+
+test('an already-cancelled workflow-owned task returns unavailable', async () => {
+  const spaceId = tasks.getTask(taskId)!.spaceId!;
+  tasks.updateTask(taskId, { workflowRunId: createWorkflowRunId(spaceId), status: 'cancelled' });
+  const stopForStatus = mockStopForStatus();
+  const workflowOp = createCancelTaskOperation(() => db, jobs, { stopForStatus });
+  expect(await workflowOp.execute({ taskId }, { source: 'rpc' })).toMatchObject({
     accepted: false,
-    reason: 'direct_cancellation_unavailable',
+    reason: 'cancellation_unavailable',
   });
-  expect(tasks.getTask(taskId)?.workflowRunId).toBe(run.id);
-  expect(outcomeCount()).toBe(0);
+  expect(stopForStatus).not.toHaveBeenCalled();
+});
+
+test('workflow-owned cancellation is unavailable when the stop binding is not configured', async () => {
+  const spaceId = tasks.getTask(taskId)!.spaceId!;
+  tasks.updateTask(taskId, { workflowRunId: createWorkflowRunId(spaceId) });
+  const workflowOp = createCancelTaskOperation(() => db, jobs, {});
+  expect(await workflowOp.execute({ taskId }, { source: 'rpc' })).toMatchObject({
+    accepted: false,
+    reason: 'cancellation_unavailable',
+  });
+});
+
+test('an archived workflow-owned task returns cancellation_unavailable, not direct_cancellation_unavailable', async () => {
+  const spaceId = tasks.getTask(taskId)!.spaceId!;
+  tasks.updateTask(taskId, { workflowRunId: createWorkflowRunId(spaceId) });
+  tasks.archiveTask(taskId);
+  const stopForStatus = mockStopForStatus();
+  const workflowOp = createCancelTaskOperation(() => db, jobs, { stopForStatus });
+  expect(await workflowOp.execute({ taskId }, { source: 'rpc' })).toMatchObject({
+    accepted: false,
+    reason: 'cancellation_unavailable',
+  });
+  expect(stopForStatus).not.toHaveBeenCalled();
+});
+
+test('a stop rejection naming an invalid transition surfaces cancellation_invalid_transition', async () => {
+  const spaceId = tasks.getTask(taskId)!.spaceId!;
+  tasks.updateTask(taskId, { workflowRunId: createWorkflowRunId(spaceId) });
+  const stopForStatus = mock(async () => {
+    throw new Error("Invalid status transition from 'in_progress' to 'cancelled'. Allowed: none");
+  });
+  const workflowOp = createCancelTaskOperation(() => db, jobs, { stopForStatus });
+  expect(await workflowOp.execute({ taskId }, { source: 'rpc' })).toMatchObject({
+    accepted: false,
+    reason: 'cancellation_invalid_transition',
+  });
+});
+
+test('an unrelated stop failure is not swallowed as a domain rejection and surfaces as execution_failed', async () => {
+  const spaceId = tasks.getTask(taskId)!.spaceId!;
+  tasks.updateTask(taskId, { workflowRunId: createWorkflowRunId(spaceId) });
+  const stopForStatus = mock(async () => {
+    throw new Error('ECONNRESET');
+  });
+  const workflowOp = createCancelTaskOperation(() => db, jobs, { stopForStatus });
+  const registry = createOperationRegistry([workflowOp]);
+  const outcome = await invokeOperation(registry, 'task.cancel', { taskId }, { source: 'rpc' });
+  expect(outcome).toMatchObject({ kind: 'failed', code: 'execution_failed' });
 });

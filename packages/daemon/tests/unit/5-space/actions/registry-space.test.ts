@@ -17,6 +17,8 @@ import type { SpaceAgentToolsConfig } from '../../../../src/lib/space/tools/spac
 import { SESSION_WRITE_AUTONOMY_LEVEL } from '../../../../src/lib/space/tools/tool-admission-gates.ts';
 import type { McpAuditLogRepository } from '../../../../src/storage/repositories/mcp-audit-log-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
+import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
+import { SpaceAgentSubscriptionRepository } from '../../../../src/storage/repositories/space-agent-subscription-repository.ts';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
@@ -83,6 +85,7 @@ function makeCtx(overrides: Partial<SpaceAgentToolsConfig> = {}): RegistryCtx {
   const taskRepo = new SpaceTaskRepository(db);
   const spaceManager = new SpaceManager(db);
   const longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(db);
+  const subscriptionRepo = new SpaceAgentSubscriptionRepository(db, new SpaceAgentRepository(db));
   const runtime = new SpaceRuntime({
     db,
     spaceManager,
@@ -103,6 +106,7 @@ function makeCtx(overrides: Partial<SpaceAgentToolsConfig> = {}): RegistryCtx {
     taskManager: new SpaceTaskManager(db, SPACE_ID),
     taskAgentManager: stubTaskAgentManager,
     longHorizonAgentRepo,
+    subscriptionRepo,
     ...overrides,
   };
   return { db, config, workflowManager, workflowRunRepo, taskRepo };

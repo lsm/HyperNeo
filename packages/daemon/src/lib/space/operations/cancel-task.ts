@@ -1,5 +1,6 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
+import type { SpaceTask } from '@hyperneo/shared';
 import type { Database } from '../../../storage/sqlite-compat.ts';
 import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
 import { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
@@ -8,6 +9,7 @@ import { DirectTaskExecutionRepository } from '../../../storage/repositories/dir
 import { defineOperation, type OperationCaller } from '../../operations/registry.ts';
 import type { SpaceMcpSessionPolicyContext } from '../runtime/space-mcp-session-policy.ts';
 import { resolveMetadataSessionSpace } from './task-metadata.ts';
+import type { SpaceTaskDependencyDependencies } from './task-dependencies.ts';
 import {
   readDirectFinalizationRequest,
   type DirectFinalizationInput,
@@ -16,9 +18,56 @@ import {
   enqueueDirectOutcome,
   type DirectOutcomeAcknowledgement,
 } from '../runtime/direct-outcome-jobs.ts';
+import { stopTaskExecution, type TaskStoppingExecutor } from '../../tasks/stop-task-execution.ts';
 
 const inputSchema = z.object({ taskId: z.string().min(1) }).strict();
 type Input = z.infer<typeof inputSchema>;
+type CancelPolicyContext = SpaceMcpSessionPolicyContext &
+  Pick<SpaceTaskDependencyDependencies, 'stopForStatus'>;
+
+const WORKFLOW_CANCELLATION_REJECTIONS: [substring: string, reason: string][] = [
+  ['Invalid status transition from', 'cancellation_invalid_transition'],
+];
+
+function resolveWorkflowCancellationRejection(error: unknown): string | undefined {
+  const message = error instanceof Error ? error.message : '';
+  return WORKFLOW_CANCELLATION_REJECTIONS.find(([substring]) => message.includes(substring))?.[1];
+}
+
+async function admitWorkflowCancellation(
+  db: Database,
+  input: Input,
+  caller: OperationCaller,
+  policy: CancelPolicyContext
+): Promise<{ value: undefined } | { reason: DirectOutcomeAcknowledgement }> {
+  const task = new SpaceTaskRepository(db).getTask(input.taskId);
+  if (!task?.spaceId || !task.workflowRunId) return { value: undefined };
+  if (task.archivedAt || task.status === 'cancelled' || task.status === 'done')
+    return { reason: { accepted: false, reason: 'cancellation_unavailable' } };
+  if (caller.source === 'mcp') {
+    const session = caller.sessionId
+      ? new SessionRepository(db).getSession(caller.sessionId)
+      : null;
+    if (
+      session?.status !== 'active' ||
+      resolveMetadataSessionSpace(session, policy) !== task.spaceId
+    )
+      return { reason: { accepted: false, reason: 'cancellation_denied' } };
+  }
+  const stopForStatus = policy.stopForStatus;
+  if (!stopForStatus) return { reason: { accepted: false, reason: 'cancellation_unavailable' } };
+  const executor: TaskStoppingExecutor<SpaceTask> = {
+    stopForStatus: (taskId, targetStatus) =>
+      stopForStatus(task.spaceId, taskId, { status: targetStatus }),
+  };
+  try {
+    await stopTaskExecution(executor, task.id, 'cancelled');
+    return { reason: { accepted: true, jobId: null } };
+  } catch (error) {
+    if (!resolveWorkflowCancellationRejection(error)) throw error;
+    return { reason: { accepted: false, reason: 'cancellation_invalid_transition' } };
+  }
+}
 
 function admitCancellation(
   db: Database,
@@ -69,18 +118,22 @@ function admitCancellation(
 export function createCancelTaskOperation(
   getDatabase: () => Database,
   jobQueue: JobQueueRepository,
-  policy: SpaceMcpSessionPolicyContext
+  policy: CancelPolicyContext
 ) {
   const cancel = (superpipe({ getDatabase, jobQueue, policy })('cancel-direct-task') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(getDatabase, undefined, 'db')
+    .pipe(admitWorkflowCancellation, ['db', 'input', 'caller', 'policy'], 'result:outcome')
     .pipe(admitCancellation, ['db', 'input', 'caller', 'policy'], 'result:outcome')
     .pipe(enqueueDirectOutcome, ['db', 'jobQueue', 'outcome'], 'outcome')
-    .end('outcome') as (input: Input, caller: OperationCaller) => DirectOutcomeAcknowledgement;
+    .endAsync('outcome') as (
+    input: Input,
+    caller: OperationCaller
+  ) => Promise<DirectOutcomeAcknowledgement>;
   return defineOperation({
     name: 'task.cancel',
     description:
-      'Persist cancellation of one running direct task and return its durable job acknowledgement. RPC/internal callers and active persisted MCP sessions in the owning Space use the same operation. Rejects direct_cancellation_unavailable when the task or its direct-execution state does not support this binding (workflow-owned, archived, or no active direct attempt — retry after state changes), and direct_cancellation_denied when the calling MCP session is not active in the owning Space (do not retry). Acceptance does not mean shutdown has completed.',
+      'Persist cancellation of one running task, direct-execution or workflow-owned, and return its acknowledgement. RPC/internal callers and active persisted MCP sessions in the owning Space use the same operation. Never cascades to dependent tasks: it cancels exactly the named task. The direct-execution binding returns a durable job acknowledgement ({ accepted: true, jobId }) that a worker later fulfills; the workflow binding runs the same stopWorkflowBackedTaskForStatus stop path as spaceTask.update — validating the transition, setting status, and tearing down the task-owning workflow agents — and completes synchronously with jobId: null. Rejects direct_cancellation_unavailable/direct_cancellation_denied for the direct binding, and cancellation_unavailable/cancellation_denied for the workflow binding, on the same unsupported-state-vs-out-of-scope-caller split (unavailable: retry after state changes, including when the stop binding is not configured; denied: do not retry); an invalid-transition rejection from the workflow stop itself returns cancellation_invalid_transition; any other stop failure (an infrastructure fault, not a domain rejection) throws through as execution_failed. Acceptance does not mean shutdown has completed.',
     inputSchema,
     resultSchema: z.union([
       z.object({ accepted: z.literal(true), jobId: z.string().nullable() }),

@@ -378,6 +378,7 @@ function makeMockHub() {
           { ...makeSpace('s1'), tasks: [] },
           { ...makeSpace('s2'), tasks: [] },
         ];
+      if (method === 'operation.invoke') return { accepted: true, jobId: null as string | null };
       return {};
     }),
   };
@@ -2274,6 +2275,55 @@ describe('SpaceStore — CRUD methods', () => {
   it('startSpace throws when no space selected', async () => {
     await spaceStore.clearSpace();
     await expect(spaceStore.startSpace()).rejects.toThrow('No space selected');
+  });
+});
+
+describe('SpaceStore — runTaskDirectly', () => {
+  beforeEach(resetStore);
+  afterEach(() => vi.clearAllMocks());
+
+  it('sends operation.invoke with task.start, the task id, and a non-empty requestKey', async () => {
+    await spaceStore.selectSpace('space-1');
+    mockHub.request.mockResolvedValueOnce({ accepted: true, jobId: 'job-1' });
+
+    const result = await spaceStore.runTaskDirectly('task-1');
+
+    expect(mockHub.request).toHaveBeenCalledWith('operation.invoke', {
+      name: 'task.start',
+      input: expect.objectContaining({ taskId: 'task-1' }),
+    });
+    const invokeCalls = mockHub.request.mock.calls.filter(
+      ([method]) => method === 'operation.invoke'
+    );
+    const params = invokeCalls[0][1] as { input: { requestKey: string } };
+    expect(params.input.requestKey.length).toBeGreaterThan(0);
+    expect(result).toEqual({ accepted: true, jobId: 'job-1' });
+  });
+
+  it('generates a different requestKey for each call', async () => {
+    await spaceStore.selectSpace('space-1');
+    mockHub.request.mockResolvedValue({ accepted: true, jobId: null });
+
+    await spaceStore.runTaskDirectly('task-1');
+    await spaceStore.runTaskDirectly('task-1');
+
+    const invokeCalls = mockHub.request.mock.calls.filter(
+      ([method]) => method === 'operation.invoke'
+    );
+    const firstKey = (invokeCalls[0][1] as { input: { requestKey: string } }).input.requestKey;
+    const secondKey = (invokeCalls[1][1] as { input: { requestKey: string } }).input.requestKey;
+    expect(firstKey).not.toBe(secondKey);
+  });
+
+  it('throws when not connected', async () => {
+    await spaceStore.selectSpace('space-1');
+    vi.mocked(connectionManager.getHubIfConnected).mockReturnValueOnce(null);
+
+    await expect(spaceStore.runTaskDirectly('task-1')).rejects.toThrow('Not connected');
+  });
+
+  it('throws when no space selected', async () => {
+    await expect(spaceStore.runTaskDirectly('task-1')).rejects.toThrow('No space selected');
   });
 });
 

@@ -38,6 +38,11 @@ export interface SpaceTaskDependencyDependencies extends SpaceMcpSessionPolicyCo
     taskId: string,
     params: UpdateSpaceTaskParams
   ) => Promise<SpaceTask | null>;
+  stopForStatus?: (
+    spaceId: string,
+    taskId: string,
+    params: UpdateSpaceTaskParams
+  ) => Promise<SpaceTask | null>;
 }
 
 export async function persistSpaceDependencies(

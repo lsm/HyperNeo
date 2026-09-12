@@ -656,6 +656,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     {
       blockExecution: (spaceId, taskId, params) =>
         spaceRuntimeService.stopWorkflowBackedTask(spaceId, taskId, params),
+      stopForStatus: (spaceId, taskId, params) =>
+        spaceRuntimeService.stopWorkflowBackedTaskForStatus(spaceId, taskId, params),
       getSession: (sessionId) => deps.db.getSession(sessionId),
       getTaskManager: spaceTaskManagerFactory,
       taskRepo: spaceTaskRepo,
@@ -776,6 +778,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     spaceManager: deps.spaceManager,
     longHorizonAgentRepo,
     goalScopeRepo: spaceAgentGoalScopeRepo,
+    subscriptionRepo: spaceAgentSubscriptionRepo,
     spaceWorkflowManager,
     workflowRunRepo: spaceWorkflowRunRepo,
     taskRepo: spaceTaskRepo,
