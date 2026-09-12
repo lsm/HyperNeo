@@ -165,18 +165,6 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
     roomId: string;
     state: RuntimeState;
   };
-  'room.message': {
-    sessionId: string;
-    roomId: string;
-    message: {
-      id: string;
-      role: string;
-      content: string;
-      timestamp: number;
-    };
-    sender?: string;
-  };
-
   'worker.started': {
     sessionId: string;
     roomId: string;
@@ -247,13 +235,6 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
     sessionId: string;
     eventId: string;
     securityResult: import('@hyperneo/shared').SecurityCheckResult;
-  };
-  'github.eventRouted': {
-    sessionId: string;
-    eventId: string;
-    roomId: string;
-    confidence: 'high' | 'medium' | 'low';
-    reason: string;
   };
   'github.inboxItemAdded': {
     sessionId: string;

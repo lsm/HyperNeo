@@ -12,7 +12,6 @@ import type {
   FilterResult,
   SecurityCheckResult,
   InboxItem,
-  RoomGitHubMapping,
 } from './types.ts';
 import { GitHubPollingService, createPollingService } from './polling-service.ts';
 import {
@@ -22,7 +21,6 @@ import {
 } from './event-filter.ts';
 import { FilterConfigManager, createFilterConfigManager } from './filter-config-manager.ts';
 import { SecurityAgent, createSecurityAgent } from './security-agent.ts';
-import { RouterAgent, createRouterAgent, type RoomCandidate } from './router-agent.ts';
 import { InboxManager } from './inbox-manager.ts';
 import { createWebhookHandler } from './webhook-handler.ts';
 import { Logger } from '../logger.ts';
@@ -54,7 +52,6 @@ export class GitHubService {
   private eventFilter: GitHubEventFilter;
   private filterConfigManager: FilterConfigManager;
   private securityAgent: SecurityAgent;
-  private routerAgent: RouterAgent;
   private inboxManager: InboxManager;
   private webhookHandler?: (req: Request) => Promise<Response>;
   private jobQueue?: JobQueueRepository;
@@ -82,11 +79,6 @@ export class GitHubService {
     this.eventFilter = createEventFilter(this.filterConfigManager.getGlobalFilter(), filterOptions);
 
     this.securityAgent = createSecurityAgent({
-      apiKey: this.apiKey,
-      apiKeyType: this.apiKeyType,
-    });
-
-    this.routerAgent = createRouterAgent({
       apiKey: this.apiKey,
       apiKeyType: this.apiKeyType,
     });
@@ -278,43 +270,25 @@ export class GitHubService {
         };
       }
 
-      const candidates = this.findCandidates(event);
-      log.debug('Found candidate rooms', {
+      const routingResult: RoutingResult = {
+        decision: 'inbox',
+        confidence: 'high',
+        reason: 'GitHub events are delivered to the inbox',
+        securityCheck: securityResult,
+      };
+
+      const item = this.addToInbox(event, securityResult, routingResult.reason);
+      log.info('Event added to inbox', {
         eventId: event.id,
-        candidateCount: candidates.length,
+        inboxItemId: item.id,
+        reason: routingResult.reason,
       });
 
-      const routingResult = await this.routeEvent(event, candidates, securityResult);
-
-      if (routingResult.decision === 'route' && routingResult.roomId) {
-        this.deliverToRoom(event, routingResult.roomId);
-        log.info('Event routed to room', {
-          eventId: event.id,
-          roomId: routingResult.roomId,
-          confidence: routingResult.confidence,
-        });
-
-        this.emitEvent('github.eventRouted', {
-          sessionId: 'global',
-          eventId: event.id,
-          roomId: routingResult.roomId,
-          confidence: routingResult.confidence,
-          reason: routingResult.reason,
-        });
-      } else if (routingResult.decision === 'inbox') {
-        const item = this.addToInbox(event, securityResult, routingResult.reason);
-        log.info('Event added to inbox', {
-          eventId: event.id,
-          inboxItemId: item.id,
-          reason: routingResult.reason,
-        });
-
-        this.emitEvent('github.inboxItemAdded', {
-          sessionId: 'global',
-          item,
-          reason: routingResult.reason,
-        });
-      }
+      this.emitEvent('github.inboxItemAdded', {
+        sessionId: 'global',
+        item,
+        reason: routingResult.reason,
+      });
 
       return routingResult;
     } catch (error) {
@@ -362,114 +336,8 @@ export class GitHubService {
     });
   }
 
-  private findCandidates(event: GitHubEvent): RoomCandidate[] {
-    const mappings = this.db.listGitHubMappingsForRepository(
-      event.repository.owner,
-      event.repository.repo
-    );
-
-    const candidates: RoomCandidate[] = [];
-
-    for (const mapping of mappings) {
-      if (this.mappingMatchesEvent(mapping, event)) {
-        candidates.push({
-          roomId: mapping.roomId,
-          roomName: mapping.roomId,
-          repositories: mapping.repositories.map((r) => `${r.owner}/${r.repo}`),
-          priority: mapping.priority,
-        });
-      }
-    }
-
-    candidates.sort((a, b) => b.priority - a.priority);
-
-    return candidates;
-  }
-
-  private mappingMatchesEvent(mapping: RoomGitHubMapping, event: GitHubEvent): boolean {
-    for (const repoMapping of mapping.repositories) {
-      if (
-        repoMapping.owner !== event.repository.owner ||
-        repoMapping.repo !== event.repository.repo
-      ) {
-        continue;
-      }
-
-      if (repoMapping.issueNumbers && repoMapping.issueNumbers.length > 0) {
-        if (!event.issue || !repoMapping.issueNumbers.includes(event.issue.number)) {
-          continue;
-        }
-      }
-
-      if (repoMapping.labels && repoMapping.labels.length > 0) {
-        const eventLabels = event.issue?.labels ?? [];
-        if (!repoMapping.labels.some((label) => eventLabels.includes(label))) {
-          continue;
-        }
-      }
-
-      return true;
-    }
-
-    return false;
-  }
-
-  private async routeEvent(
-    event: GitHubEvent,
-    candidates: RoomCandidate[],
-    securityResult: SecurityCheckResult
-  ): Promise<RoutingResult> {
-    return this.routerAgent.route(event, candidates, securityResult);
-  }
-
-  private deliverToRoom(event: GitHubEvent, roomId: string): void {
-    this.emitEvent('room.message', {
-      sessionId: `room:${roomId}`,
-      roomId,
-      message: {
-        id: event.id,
-        role: 'github_event',
-        content: this.formatEventContent(event),
-        timestamp: Date.now(),
-      },
-      sender: event.sender.login,
-    });
-
-    log.debug('Event delivered to room', {
-      eventId: event.id,
-      roomId,
-    });
-  }
-
   private addToInbox(event: GitHubEvent, security: SecurityCheckResult, reason: string): InboxItem {
     return this.inboxManager.addToInbox(event, security, reason);
-  }
-
-  private formatEventContent(event: GitHubEvent): string {
-    const parts: string[] = [];
-
-    parts.push(`**${event.eventType.replace('_', ' ')} ${event.action}**`);
-    parts.push(`Repository: ${event.repository.fullName}`);
-
-    if (event.issue) {
-      parts.push(`Issue #${event.issue.number}: ${event.issue.title}`);
-    }
-
-    if (event.comment) {
-      parts.push(
-        `Comment: ${event.comment.body.substring(0, 200)}${event.comment.body.length > 200 ? '...' : ''}`
-      );
-    } else if (event.issue?.body) {
-      parts.push(
-        `Body: ${event.issue.body.substring(0, 200)}${event.issue.body.length > 200 ? '...' : ''}`
-      );
-    }
-
-    if (event.issue?.labels.length) {
-      parts.push(`Labels: ${event.issue.labels.join(', ')}`);
-    }
-
-    return parts.join('\n');
   }
 
   private emitEvent<K extends keyof DaemonInternalEventMap & string>(

@@ -11,7 +11,6 @@ import { reviewerAgent } from '../../../../src/lib/agent/coordinator/reviewer.ts
 import { testerAgent } from '../../../../src/lib/agent/coordinator/tester.ts';
 import { vcsAgent } from '../../../../src/lib/agent/coordinator/vcs.ts';
 import { verifierAgent } from '../../../../src/lib/agent/coordinator/verifier.ts';
-import { ROUTER_AGENT_SYSTEM_PROMPT } from '../../../../src/lib/github/prompts/router-prompt.ts';
 import { SECURITY_AGENT_SYSTEM_PROMPT } from '../../../../src/lib/github/prompts/security-prompt.ts';
 import { buildTitleGenerationPrompt } from '../../../../src/lib/session/session-lifecycle.ts';
 import { NON_DELEGATING_GENERAL_AGENT } from '../../../../src/lib/space/agents/custom-agent.ts';
@@ -95,7 +94,6 @@ const GOLDEN: Record<string, string> = {
   QA_SYSTEM_CONTRACT: '60ea7a78cff979f2bcd8269108da1c47e67d411d170ca071407c81b270f41d51',
   REVIEWER_SYSTEM_CONTRACT: '5a6c8e8dce816c23fa409341b6a166eb9e0d6f8efa14f36d4ef8df41105c3671',
   COORDINATOR_PROMPT: '28f30cf29ed5764a703a90029dc468c5e905dc8eb057abf1779e3e5ce9e25487',
-  GITHUB_ROUTER_SYSTEM_PROMPT: '39f3b5c43689366029c130b0aa0d1a83c185ef527671cae1d858ed6213e322a6',
   GITHUB_SECURITY_SYSTEM_PROMPT: '486aff88bf9a9c66ac69abe074270c5c538a1433c81dc126228f97de5f65c9bd',
   SUBAGENT_CODER_PROMPT: '5f01cfb2266c6f8a2d154da7aea4162e2297236545bcad2248447a974d6a1dac',
   SUBAGENT_DEBUGGER_PROMPT: '844cd806780d789b9d24466d7157be365e87a55064fa1108681ec7510b12aed1',
@@ -168,7 +166,6 @@ const VALUES: Record<string, string> = {
   POST_APPROVAL_COMPLETION_INSTRUCTIONS,
   PROMPT_TOO_LONG_CONTINUE_NAG: buildPromptTooLongContinueNag(),
   TITLE_GENERATION_PROMPT: buildTitleGenerationPrompt('').slice(0, -1),
-  GITHUB_ROUTER_SYSTEM_PROMPT: ROUTER_AGENT_SYSTEM_PROMPT,
   GITHUB_SECURITY_SYSTEM_PROMPT: SECURITY_AGENT_SYSTEM_PROMPT,
 };
 
