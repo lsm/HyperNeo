@@ -178,6 +178,9 @@ export function createSpaceRegistryEntries(
     if (task?.workflowRunId && routeCancelsActiveWorkflowRun(task.status)) {
       return DESTRUCTIVE_ACTION_AUTONOMY_LEVEL;
     }
+    if (task?.taskAgentSessionId && !task.workflowRunId) {
+      return DESTRUCTIVE_ACTION_AUTONOMY_LEVEL;
+    }
     return 1;
   };
 

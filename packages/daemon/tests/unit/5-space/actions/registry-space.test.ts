@@ -400,6 +400,15 @@ describe('createSpaceRegistryEntries — composition', () => {
         title: 'Foreign task',
         description: '',
       });
+      const directTask = ctx.taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Direct task',
+        description: '',
+      });
+      ctx.taskRepo.updateTask(directTask.id, {
+        status: 'in_progress',
+        taskAgentSessionId: 'direct-worker-session',
+      });
       const entries = createSpaceRegistryEntries(ctx.config);
       const resolve = entries.find((entry) => entry.name === 'cancel_task')?.autonomyRequirement;
       expect(typeof resolve).toBe('function');
@@ -410,6 +419,7 @@ describe('createSpaceRegistryEntries — composition', () => {
         );
         expect(await resolve({ task_id: checkpointTask.id })).toBe(5);
         expect(await resolve({ task_id: foreignTask.id })).toBe(1);
+        expect(await resolve({ task_id: directTask.id })).toBe(SESSION_WRITE_AUTONOMY_LEVEL);
       }
     } finally {
       ctx.db.close();
