@@ -4,7 +4,7 @@
 **Dead-surface cleanup completed:** 2026-09-09 — the audit's dead surface was removed (§7); counts below reflect the post-cleanup surface.
 **v1 space-agent CRUD/list/promotion removed:** 2026-09-12 — `spaceAgent.create/update/delete/list/getPromotionDraft/promoteSession` retired once the agents page fully moved to `spaceAgentV2.*` (#4371, #4388, #4392); counts below reflect that removal.
 
-**`spaceAgentTemplate.*` prefix added:** 2026-09-11, web call sites moved and the v1 routes deleted 2026-09-12 — the five template routes gained a dedicated prefix and handler file alongside the existing `spaceAgent.*` ones; `space-store.ts` now calls `list`/`create`/`update`/`delete` on the new prefix, and the superseded `spaceAgent.*` rows have been removed. This also corrects the Space-agents section heading, which #4392 left at 49 after removing six `spaceAgent.*` rows; the true count is now 48.
+**`spaceAgentTemplate.*` prefix added:** 2026-09-11, web call sites moved and the v1 routes deleted 2026-09-12 — the five template routes gained a dedicated prefix and handler file alongside the existing `spaceAgent.*` ones; `space-store.ts` now calls `list`/`create`/`update`/`delete` on the new prefix, and the superseded `spaceAgent.*` rows have been removed. This also corrects the Space-agents section heading: #4392 left it at 49 after removing six `spaceAgent.*` rows, it was never decremented again, and the v1 deletion removed twelve more — the true count is now 43.
 
 **`spaceAgentSubscription.*` prefix added:** 2026-09-11, web call sites moved and the v1 routes deleted 2026-09-12 — the four subscription routes gained a dedicated prefix and handler file backed by the new `SpaceAgentSubscriptionRepository`; `space-store.ts` now calls `list`/`create`/`update`/`delete` on the new prefix, and the superseded `spaceAgent.*` rows have been removed.
 
@@ -24,7 +24,7 @@ Sources of truth (all paths relative to repo root):
 
 | Surface | Count | Consumed by web | Dead |
 |---|---|---|---|
-| RPC methods (REQ→RSP) | **220** static registration sites (**205** in the default configuration — the 15 `space.github.*` handlers register only while the GitHub external-event extension is globally enabled and unregister on disable, `app.ts:791` / `extension-manager.ts:111`) | 206 (204 literal + 2 constant-indirect) | 2 (`spaceAgentV2.get`, added after the audit by #3937; `spaceAgentTemplate.listBuiltIn`, registered for parity with its retired `spaceAgent.*` predecessor while web reads built-ins through `spaceWorkflow.listBuiltInTemplates`; §7) |
+| RPC methods (REQ→RSP) | **220** static registration sites (**205** in the default configuration — the 15 `space.github.*` handlers register only while the GitHub external-event extension is globally enabled and unregister on disable, `app.ts:791` / `extension-manager.ts:111`) | 218 (216 literal + 2 constant-indirect) | 2 (`spaceAgentV2.get`, added after the audit by #3937; `spaceAgentTemplate.listBuiltIn`, registered for parity with its retired `spaceAgent.*` predecessor while web reads built-ins through `spaceWorkflow.listBuiltInTemplates`; §7) |
 | Protocol-level methods (`channel.join`/`channel.leave`) | 2 | 2 (`joinRoom`/`leaveRoom`) | 0 |
 | Event names emitted to clients | **34** statically named | 34 (30 literal + 4 constant/dynamic-indirect) | 0 |
 | LiveQuery named queries | **16** | 16 | 0 |
@@ -381,7 +381,7 @@ All rows are **kind: request** (client `REQ` → server `RSP`). For requests tha
 | taskSchedule.pause | packages/daemon/src/lib/rpc-handlers/task-schedule-handlers.ts:99 | inline `{ scheduleId: string, spaceId: string }` | inline `{ schedule: TaskSchedule }` | `scheduleId`/`spaceId` required; schedule must exist in space **and be status `active`** (else throws, schedule-service.ts:261) | space-store.ts |
 | taskSchedule.resume | packages/daemon/src/lib/rpc-handlers/task-schedule-handlers.ts:106 | inline `{ scheduleId: string, spaceId: string }` | inline `{ schedule: TaskSchedule }` | `scheduleId`/`spaceId` required; schedule must exist in space **and be status `paused`** (else throws, schedule-service.ts:261); a paused `at` schedule whose `runAt` is already past resumes **straight to `completed`** with no next run (:257-291) | space-store.ts |
 
-### Space agents, workflows, runs & import/export (55)
+### Space agents, workflows, runs & import/export (43)
 
 | method | handler | request | response | gates | web consumers |
 |---|---|---|---|---|---|
@@ -505,7 +505,7 @@ All rows are **kind: request** (client `REQ` → server `RSP`). For requests tha
 
 **Cleared 2026-09-09.** The 2026-09-07 audit (issue #3824) found 97 unconsumed methods among 319 registrations; all were removed across the dead-surface slice series — `config.*` (24, #3885), `settings.*` (7, #3887), `evolution.*` dead 11 (#3889), dead client events + `workflowRunArtifacts.byRun` (#3890), `state.*` pull fallbacks (4, #3894), `mcp.*`/`skill.*`/`globalTools` (8, #3897), `space.*` (5, #3899), `spaceWorkflowRun.*` (5, #3900), `session`/`sdk`/`commands` (11, #3901), `test.*` + dev-only `nodeExecution.create/update` (5, #3933), and remaining singles + `file.*`/`providers.*`/`daemonConfig.*` families (16, #3942). The consumed `spaceAgent.reapplyTemplate` was later removed with the template re-apply feature (#3934).
 
-**Remaining unconsumed surface (14):**
+**Remaining unconsumed surface (2):**
 
 - `spaceAgentV2.get` (`space-agent-v2-handlers.ts:160`) — added by #3937 *after* the audit and never picked up by the web, which reads agents via `spaceAgentV2.list`.
 
