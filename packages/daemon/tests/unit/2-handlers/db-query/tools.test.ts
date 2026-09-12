@@ -1269,12 +1269,12 @@ describe('db-query tools', () => {
     });
 
     it('excludes blacklisted columns from output', async () => {
-      seedSpaceTasks(db);
+      seedSpaceWorkflows(db);
       const handlers = createDbQueryToolHandlers(
         { dbPath: ':memory:', scopeType: 'space', scopeValue: 'space-1' },
         db
       );
-      const result = await handlers.db_describe_table({ table_name: 'space_tasks' });
+      const result = await handlers.db_describe_table({ table_name: 'space_workflows' });
       const parsed = parseResult(result);
 
       expect(parsed.isError).toBeFalsy();
