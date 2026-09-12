@@ -9,6 +9,10 @@ import { AgentMessageRouter } from '../../../../src/lib/space/runtime/agent-mess
 import { ChannelResolver } from '../../../../src/lib/space/runtime/channel-resolver.ts';
 import type { WorkflowHookEngine } from '../../../../src/lib/space/runtime/workflow-hook-engine.ts';
 import type { SpaceMcpSessionRole } from '../../../../src/lib/space/runtime/space-mcp-session-policy.ts';
+import {
+  createOperationRegistry,
+  defineOperation,
+} from '../../../../src/lib/operations/registry.ts';
 import type { NodeAgentToolsConfig } from '../../../../src/lib/space/tools/node-agent-tools.ts';
 import { NODE_AGENT_TOOL_SCHEMAS } from '../../../../src/lib/space/tools/node-agent-tool-schemas.ts';
 import {
@@ -167,7 +171,7 @@ function keepCallbacks(ctx: TestCtx, keys: string[]): Partial<NodeAgentToolsConf
 
 function makeStubEngine(executeCalls: string[]): WorkflowHookEngine {
   return {
-    executeAction: async (methodName: string) => {
+    executeAction: async (methodName: string, args?: Record<string, unknown>) => {
       executeCalls.push(methodName);
       return {
         decision: 'allow',
@@ -175,6 +179,7 @@ function makeStubEngine(executeCalls: string[]): WorkflowHookEngine {
         executionLog: [],
         userState: {},
         followUpRequests: [],
+        finalParams: args ?? {},
       };
     },
     persistStateUpdate: () => true,
@@ -827,6 +832,131 @@ describe('createNodeRegistryEntries — end-node callbacks', () => {
       expect(executeCalls).toEqual(['submit_for_approval', 'mark_complete']);
       expect(ctx.calls.get('submit_for_approval')).toBe(1);
       expect(ctx.calls.get('mark_complete')).toBe(1);
+    } finally {
+      ctx.db.close();
+    }
+  });
+});
+
+function makeSubmitForReviewOperation(
+  execute: (
+    input: { taskId: string; reason: string | null },
+    caller: { source: string; sessionId?: string }
+  ) => Promise<{ accepted: true; jobId: string | null } | { accepted: false; reason: string }>
+) {
+  return createOperationRegistry([
+    defineOperation({
+      name: 'task.submitForReview',
+      description: 'Submit a task for review',
+      inputSchema: z.object({ taskId: z.string(), reason: z.string().nullable().optional() }),
+      resultSchema: z.union([
+        z.object({ accepted: z.literal(true), jobId: z.string().nullable() }),
+        z.object({ accepted: z.literal(false), reason: z.string() }),
+      ]),
+      execute: execute as never,
+    }),
+  ]);
+}
+
+describe('submit_for_approval — operation-backed', () => {
+  test('invokes task.submitForReview with taskId and forwarded reason, returning its result', async () => {
+    const ctx = makeCtx();
+    try {
+      const calls: Array<{ input: unknown; caller: unknown }> = [];
+      const operations = makeSubmitForReviewOperation(async (input, caller) => {
+        calls.push({ input, caller });
+        return { accepted: true, jobId: null };
+      });
+      const config = makeBareConfig(ctx, keepCallbacks(ctx, ['onSubmitForApproval']));
+      const entry = createNodeRegistryEntries(config, operations).find(
+        (candidate) => candidate.name === 'submit_for_approval'
+      );
+      if (!entry) throw new Error('submit_for_approval entry missing');
+      const result = (await entry.handler({ reason: 'looks done' })) as {
+        content: Array<{ text: string }>;
+        isError?: boolean;
+      };
+      expect(result.isError).toBeUndefined();
+      expect(JSON.parse(result.content[0].text)).toEqual({ accepted: true, jobId: null });
+      await entry.handler({});
+      expect(calls).toEqual([
+        {
+          input: { taskId: config.taskId, reason: 'looks done' },
+          caller: { source: 'mcp', sessionId: config.mySessionId },
+        },
+        {
+          input: { taskId: config.taskId, reason: null },
+          caller: { source: 'mcp', sessionId: config.mySessionId },
+        },
+      ]);
+      expect(ctx.calls.get('submit_for_approval')).toBeUndefined();
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('the hook wrapper still runs around the operation-backed handler', async () => {
+    const ctx = makeCtx();
+    try {
+      const executeCalls: string[] = [];
+      const operations = makeSubmitForReviewOperation(async () => ({
+        accepted: true,
+        jobId: null,
+      }));
+      const entry = createNodeRegistryEntries(
+        makeBareConfig(ctx, {
+          hookEngine: makeStubEngine(executeCalls),
+          ...keepCallbacks(ctx, ['onSubmitForApproval']),
+        }),
+        operations
+      ).find((candidate) => candidate.name === 'submit_for_approval');
+      if (!entry) throw new Error('submit_for_approval entry missing');
+      const result = (await entry.handler({})) as { content: Array<{ text: string }> };
+      expect(JSON.parse(result.content[0].text)).toEqual({ accepted: true, jobId: null });
+      expect(executeCalls).toEqual(['submit_for_approval']);
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('without an operations registry, the typed onSubmitForApproval handler runs unchanged', async () => {
+    const ctx = makeCtx();
+    try {
+      const entry = createNodeRegistryEntries(
+        makeBareConfig(ctx, keepCallbacks(ctx, ['onSubmitForApproval']))
+      ).find((candidate) => candidate.name === 'submit_for_approval');
+      if (!entry) throw new Error('submit_for_approval entry missing');
+      const result = (await entry.handler({})) as { content: Array<{ text: string }> };
+      expect(JSON.parse(result.content[0].text)).toEqual({
+        success: true,
+        key: 'submit_for_approval',
+      });
+      expect(ctx.calls.get('submit_for_approval')).toBe(1);
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('operation failures surface as isError with { code, message }', async () => {
+    const ctx = makeCtx();
+    try {
+      const operations = makeSubmitForReviewOperation(async () => {
+        throw new Error('review_submission_unavailable');
+      });
+      const entry = createNodeRegistryEntries(
+        makeBareConfig(ctx, keepCallbacks(ctx, ['onSubmitForApproval'])),
+        operations
+      ).find((candidate) => candidate.name === 'submit_for_approval');
+      if (!entry) throw new Error('submit_for_approval entry missing');
+      const result = (await entry.handler({})) as {
+        content: Array<{ text: string }>;
+        isError?: boolean;
+      };
+      expect(result.isError).toBe(true);
+      expect(JSON.parse(result.content[0].text)).toEqual({
+        code: 'execution_failed',
+        message: 'review_submission_unavailable',
+      });
     } finally {
       ctx.db.close();
     }

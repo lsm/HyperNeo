@@ -191,7 +191,9 @@ export function createSpaceActionsMcpServer(config: SpaceActionsServerConfig) {
   const spaceEntries = spaceConfig
     ? createSpaceRegistryEntries(spaceConfig, config.operationRegistry)
     : [];
-  const nodeEntries = config.nodeConfig ? createNodeRegistryEntries(config.nodeConfig) : [];
+  const nodeEntries = config.nodeConfig
+    ? createNodeRegistryEntries(config.nodeConfig, config.operationRegistry)
+    : [];
   const isRoleAdmittedEntry = (entry: ActionDefinition) =>
     spaceConfig?.isDefaultAgent === true || !COORDINATOR_ONLY_ACTIONS.has(entry.name);
   const isNotDeniedEntry = (entry: ActionDefinition) => !config.deniedActionNames?.has(entry.name);
