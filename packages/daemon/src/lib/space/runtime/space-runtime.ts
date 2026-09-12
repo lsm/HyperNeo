@@ -6501,6 +6501,7 @@ export class SpaceRuntime {
     const originalTask = canonicalTask;
     const reservation = { generation: null as number | null };
     let spawned = false;
+    let releaseSafe = true;
     if (
       canonicalTask.status === 'open' &&
       pendingExecutions.some((execution) => !tam.isExecutionSpawning(execution.id))
@@ -6551,6 +6552,7 @@ export class SpaceRuntime {
           );
           continue;
         }
+        releaseSafe = false;
         const stale = this.config.nodeExecutionRepo.getById(execution.id) ?? execution;
         const classification = classifySpawnFailure({
           isPermanent: isPermanentSpawnError(err),
@@ -6581,7 +6583,7 @@ export class SpaceRuntime {
         );
       }
     }
-    if (reservation.generation !== null && !spawned) {
+    if (reservation.generation !== null && !spawned && releaseSafe) {
       const released = this.config.db.transaction(() => {
         const current = this.config.taskRepo.getTask(canonicalTask.id);
         const executions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
@@ -6609,6 +6611,28 @@ export class SpaceRuntime {
         );
       }, 'immediate')();
       if (released) await this.safeOnTaskUpdated(space.id, released, { fromStatus: 'in_progress' });
+    }
+    if (
+      reservation.generation !== null &&
+      (spawned || !releaseSafe) &&
+      !blockedByCrash &&
+      !permanentSpawnFailureReason
+    ) {
+      const started = this.config.db.transaction(() => {
+        const current = this.config.taskRepo.getTask(canonicalTask.id);
+        if (current?.status !== 'in_progress' || current.workflowRunId !== runId) return null;
+        return this.config.taskRepo.updateTask(
+          current.id,
+          {
+            startedAt: current.startedAt ?? Date.now(),
+            completedAt: null,
+            pendingCheckpointType: null,
+          },
+          'in_progress'
+        );
+      }, 'immediate')();
+      if (started)
+        await this.safeOnTaskUpdated(space.id, started, { fromStatus: originalTask.status });
     }
     return { blockedByCrash, permanentSpawnFailureReason, spawned };
   }
@@ -6666,6 +6690,10 @@ export class SpaceRuntime {
         if (outcome === 'superseded')
           return reservation ? null : this.config.taskRepo.getTask(canonicalTask.id);
         promoted = true;
+        if (reservation) {
+          reservation.generation = this.config.taskRepo.getLifecycleGeneration(canonicalTask.id);
+          return this.config.taskRepo.getTask(canonicalTask.id);
+        }
         const result = this.config.taskRepo.updateTask(canonicalTask.id, {
           startedAt: canonicalTask.startedAt ?? Date.now(),
           completedAt: null,
@@ -6689,8 +6717,6 @@ export class SpaceRuntime {
         if (canonicalTask.status === 'blocked') {
           this.config.goalService?.supersedeOutcomeNotificationsForTask(canonicalTask.id);
         }
-        if (reservation)
-          reservation.generation = this.config.taskRepo.getLifecycleGeneration(canonicalTask.id);
         return result;
       }, 'immediate')();
       this.config.reactiveDb?.commitTransaction();
@@ -6698,7 +6724,7 @@ export class SpaceRuntime {
       this.config.reactiveDb?.abortTransaction();
       throw err;
     }
-    if (promoted && updated) {
+    if (promoted && updated && !reservation) {
       await this.safeOnTaskUpdated(spaceId, updated, { fromStatus: canonicalTask.status });
     }
     return updated;
