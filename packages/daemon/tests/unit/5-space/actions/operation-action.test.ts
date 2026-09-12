@@ -1,0 +1,140 @@
+/// <reference types="bun" />
+import { describe, expect, mock, test } from 'bun:test';
+import { z } from 'zod';
+import {
+  runDispatchAction,
+  type DispatchActionDeps,
+} from '../../../../src/lib/space/actions/dispatcher-pipeline.ts';
+import { createOperationActionHandler } from '../../../../src/lib/space/actions/operation-action.ts';
+import { createActionRegistry, defineAction } from '../../../../src/lib/space/actions/registry.ts';
+import {
+  createOperationRegistry,
+  defineOperation,
+} from '../../../../src/lib/operations/registry.ts';
+import type { OperationRegistry } from '../../../../src/lib/operations/registry.ts';
+
+function extractText(result: { content: Array<{ text: string }> }): string {
+  return result.content[0].text;
+}
+
+function exampleRegistry(
+  execute = mock(async (input: { text: string }) => ({ echoed: input.text }))
+) {
+  return {
+    execute,
+    registry: createOperationRegistry([
+      defineOperation({
+        name: 'example',
+        description: 'Example operation',
+        inputSchema: z.object({ text: z.string() }),
+        resultSchema: z.object({ echoed: z.string() }),
+        execute,
+      }),
+    ]),
+  };
+}
+
+describe('createOperationActionHandler', () => {
+  test('maps a completed outcome to jsonResult of the operation value', async () => {
+    const { registry } = exampleRegistry();
+    const handler = createOperationActionHandler(registry, { sessionId: 'sess-1' }, 'example');
+    const result = (await handler({ text: 'hi' })) as { content: Array<{ text: string }> };
+    expect(JSON.parse(extractText(result))).toEqual({ echoed: 'hi' });
+    expect(result.isError).toBeUndefined();
+  });
+
+  test('applies mapParams before invoking and passes source: mcp plus sessionId', async () => {
+    const { registry, execute } = exampleRegistry();
+    const handler = createOperationActionHandler(
+      registry,
+      { sessionId: 'sess-1' },
+      'example',
+      (params) => ({ text: (params as { raw: string }).raw })
+    );
+    await handler({ raw: 'mapped' });
+    expect(execute).toHaveBeenCalledWith(
+      { text: 'mapped' },
+      { source: 'mcp', sessionId: 'sess-1' }
+    );
+  });
+
+  test('resolves a registry provider function per call', async () => {
+    const first = exampleRegistry();
+    const second = exampleRegistry(mock(async () => ({ echoed: 'second' })));
+    const registries = [first.registry, second.registry];
+    const provider = mock<() => OperationRegistry>(() => registries.shift() as OperationRegistry);
+    const handler = createOperationActionHandler(provider, {}, 'example');
+    await handler({ text: 'a' });
+    const secondResult = (await handler({ text: 'b' })) as { content: Array<{ text: string }> };
+    expect(provider).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(extractText(secondResult))).toEqual({ echoed: 'second' });
+  });
+
+  test.each([
+    { code: 'unknown_operation', name: 'missing', params: {} },
+    { code: 'invalid_input', name: 'example', params: { text: 42 } },
+  ])(
+    'maps $code failures to jsonResult({ code, message }) with isError',
+    async ({ code, name, params }) => {
+      const { registry } = exampleRegistry();
+      const handler = createOperationActionHandler(registry, {}, name);
+      const result = (await handler(params)) as {
+        content: Array<{ text: string }>;
+        isError?: boolean;
+      };
+      expect(result.isError).toBe(true);
+      expect(JSON.parse(extractText(result)).code).toBe(code);
+    }
+  );
+
+  test('maps execution_failed and invalid_result failures the same way', async () => {
+    const throwing = exampleRegistry(
+      mock(async () => {
+        throw new Error('boom');
+      })
+    );
+    const throwingHandler = createOperationActionHandler(throwing.registry, {}, 'example');
+    const throwingResult = (await throwingHandler({ text: 'x' })) as {
+      content: Array<{ text: string }>;
+      isError?: boolean;
+    };
+    expect(throwingResult.isError).toBe(true);
+    expect(JSON.parse(extractText(throwingResult))).toEqual({
+      code: 'execution_failed',
+      message: 'boom',
+    });
+
+    const badResult = exampleRegistry(mock(async () => ({ echoed: 42 })));
+    const badResultHandler = createOperationActionHandler(badResult.registry, {}, 'example');
+    const invalidResult = (await badResultHandler({ text: 'x' })) as {
+      isError?: boolean;
+      content: Array<{ text: string }>;
+    };
+    expect(invalidResult.isError).toBe(true);
+    expect(JSON.parse(extractText(invalidResult)).code).toBe('invalid_result');
+  });
+});
+
+describe('operation-backed action dispatch', () => {
+  test('dispatches through the same pipeline as call_action', async () => {
+    const { registry } = exampleRegistry();
+    const operationAction = defineAction({
+      name: 'operation_example',
+      family: 'tasks',
+      safetyClass: 'read',
+      description: 'Operation-backed example action',
+      paramsDoc: '{ text: string }',
+      paramsSchema: z.object({ text: z.string() }),
+      handler: createOperationActionHandler(registry, { sessionId: 'sess-1' }, 'example'),
+    });
+    const deps: DispatchActionDeps = { registry: createActionRegistry([operationAction]) };
+    const outcome = await runDispatchAction(deps, {
+      actionName: 'operation_example',
+      params: { text: 'hi' },
+      role: 'coordinator',
+      spaceId: 'space-1',
+    });
+    if (outcome.action !== 'dispatched') throw new Error('Expected dispatched outcome');
+    expect(JSON.parse(extractText(outcome.result))).toEqual({ echoed: 'hi' });
+  });
+});

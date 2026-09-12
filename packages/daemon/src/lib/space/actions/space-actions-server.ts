@@ -1,5 +1,6 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
+import type { OperationRegistrySource } from '../../operations/registry.ts';
 import type { SpaceMcpSessionRole } from '../runtime/space-mcp-session-policy.ts';
 import type { NodeAgentToolsConfig } from '../tools/node-agent-tools.ts';
 import type { SpaceAgentToolsConfig } from '../tools/space-agent-tools.ts';
@@ -164,6 +165,7 @@ export interface SpaceActionsServerConfig {
   readonly spaceConfig?: SpaceAgentToolsConfig;
   readonly nodeConfig?: NodeAgentToolsConfig;
   readonly dispatchDeps?: Partial<Omit<DispatchActionDeps, 'registry'>>;
+  readonly operationRegistry?: OperationRegistrySource;
 }
 
 export function createSpaceActionsMcpServer(config: SpaceActionsServerConfig) {
