@@ -78,6 +78,8 @@ async function admitManagedCancellation(
   }
   const getTaskManager = policy.getTaskManager;
   if (!getTaskManager) return { reason: { accepted: false, reason: 'cancellation_unavailable' } };
+  if (new DirectTaskExecutionRepository(db).getActive(task.id))
+    return { reason: { accepted: false, reason: 'cancellation_unavailable' } };
   try {
     const updated = await getTaskManager(task.spaceId).setTaskStatus(task.id, 'cancelled', {
       onCascadedTasks: async (cascaded) => {

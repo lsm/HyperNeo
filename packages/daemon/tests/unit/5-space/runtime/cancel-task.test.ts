@@ -443,6 +443,22 @@ test('a plain open task can be cancelled', async () => {
   expect(tasks.getTask(plainTaskId)?.status).toBe('cancelled');
 });
 
+test('a plain task with a reserved direct attempt is unavailable, not written through the manager', async () => {
+  const spaceId = tasks.getTask(taskId)!.spaceId!;
+  const plainTaskId = tasks.createTask({ spaceId, title: 'Plain', description: '' }).id;
+  attempts.select(plainTaskId);
+  expect(attempts.claim(plainTaskId, 'direct-reserved', 'reserved-session')).not.toBeNull();
+  const plainOp = createCancelTaskOperation(() => db, jobs, {
+    getTaskManager: (id) => new SpaceTaskManager(db, id),
+    emitTaskUpdated: async () => {},
+  });
+  expect(await plainOp.execute({ taskId: plainTaskId }, { source: 'rpc' })).toMatchObject({
+    accepted: false,
+    reason: 'cancellation_unavailable',
+  });
+  expect(tasks.getTask(plainTaskId)?.status).toBe('open');
+});
+
 test('a plain done task returns cancellation_unavailable', async () => {
   const spaceId = tasks.getTask(taskId)!.spaceId!;
   const plainTaskId = tasks.createTask({
