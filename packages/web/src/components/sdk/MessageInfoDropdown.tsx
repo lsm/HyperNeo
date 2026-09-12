@@ -2,19 +2,6 @@ import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 
 type SystemInitMessage = Extract<SDKMessage, { type: 'system'; subtype: 'init' }>;
 
-const ROOM_AGENT_TOOLS = [
-  'room_complete_goal',
-  'room_create_task',
-  'room_spawn_worker',
-  'room_wait_for_review',
-  'room_escalate',
-  'room_update_goal_progress',
-  'room_list_goals',
-  'room_list_jobs',
-  'room_list_tasks',
-  'room_update_prompts',
-];
-
 interface Props {
   sessionInfo: SystemInitMessage;
 }
@@ -22,8 +9,7 @@ interface Props {
 export function MessageInfoDropdown({ sessionInfo }: Props) {
   const simplifiedModel = sessionInfo.model.replace('claude-', '').replace('anthropic.', '');
 
-  const isRoomSession = sessionInfo.session_id?.startsWith('room:');
-  const displayTools = isRoomSession ? ROOM_AGENT_TOOLS : (sessionInfo.tools ?? []);
+  const displayTools = sessionInfo.tools ?? [];
 
   return (
     <div class="w-80 max-h-[60vh] overflow-y-scroll bg-sky-50 dark:bg-sky-900/70 rounded-lg border border-info/40 p-3 space-y-3 shadow-2xl backdrop-blur-sm">
