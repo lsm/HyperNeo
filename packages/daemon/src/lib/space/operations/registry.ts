@@ -1,6 +1,5 @@
 import { createStartTaskOperation, type DirectStartOperationDependencies } from './start-task.ts';
 import { createCancelTaskOperation } from './cancel-task.ts';
-import { createCompleteTaskOperation, type CompleteTaskDependencies } from './complete-task.ts';
 import { createSubmitTaskForReviewOperation } from './submit-for-review.ts';
 import {
   createOwnedPendingCompletionOperation,
@@ -22,10 +21,7 @@ import {
 export function createSpaceOperationRegistryProvider(
   database: Database,
   jobQueue: JobQueueRepository,
-  tasks: Omit<
-    SpaceTaskMetadataDependencies & SpaceTaskDependencyDependencies & CompleteTaskDependencies,
-    'db'
-  >,
+  tasks: Omit<SpaceTaskMetadataDependencies & SpaceTaskDependencyDependencies, 'db'>,
   pendingCompletion?: OwnedPendingCompletionDependencies,
   directStart?: DirectStartOperationDependencies
 ) {
@@ -36,7 +32,6 @@ export function createSpaceOperationRegistryProvider(
         ? createStartTaskOperation(() => database.getDatabase(), jobQueue, tasks, directStart)
         : undefined,
       cancel: createCancelTaskOperation(() => database.getDatabase(), jobQueue, tasks),
-      complete: createCompleteTaskOperation(() => database.getDatabase(), tasks),
       submitForReview: createSubmitTaskForReviewOperation(
         () => database.getDatabase(),
         jobQueue,

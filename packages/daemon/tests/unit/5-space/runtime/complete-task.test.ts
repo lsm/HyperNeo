@@ -8,7 +8,7 @@ import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
 import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager';
 import { createCompleteTaskOperation } from '../../../../src/lib/space/operations/complete-task';
-import { createSpaceOperationRegistryProvider } from '../../../../src/lib/space/operations/registry';
+import { createDatabaseOperationCatalog } from '../../../../src/lib/operations/database-catalog';
 import { createOperationRpcHandler } from '../../../../src/lib/operations/rpc-adapter';
 import { createSpaceTables } from '../../helpers/space-test-db';
 import { createTestSession } from '../../../helpers/database';
@@ -69,13 +69,27 @@ test.each(['rpc', 'internal'] as const)(
     );
   }
 );
+test('a rejecting emitTaskUpdated does not fail an already-committed completion', async () => {
+  const failingOperation = createCompleteTaskOperation(() => db, {
+    getTaskManager: (id) => new SpaceTaskManager(db, id),
+    emitTaskUpdated: mock(async () => {
+      throw new Error('subscriber unavailable');
+    }),
+  });
+  const result = await failingOperation.execute(
+    { taskId, result: 'Shipped it.' },
+    { source: 'rpc' }
+  );
+  expect(result).toMatchObject({ accepted: true, task: { id: taskId, status: 'done' } });
+  expect(tasks.getTask(taskId)?.status).toBe('done');
+});
 test("the task's own worker MCP session can complete it", async () => {
   const sessionId = worker('owner-session');
   const result = await operation.execute({ taskId }, { source: 'mcp', sessionId });
   expect(result).toMatchObject({ accepted: true });
   expect(tasks.getTask(taskId)?.status).toBe('done');
 });
-test.each(['no-session', 'unbound', 'foreign-task', 'foreign-space'] as const)(
+test.each(['no-session', 'unbound', 'foreign-task', 'foreign-space', 'ended'] as const)(
   'a foreign MCP caller is denied (%s)',
   async (kind) => {
     const sessionId =
@@ -85,7 +99,11 @@ test.each(['no-session', 'unbound', 'foreign-task', 'foreign-space'] as const)(
           ? 'unbound-session'
           : kind === 'foreign-task'
             ? worker('foreign', 'other-task', spaceId)
-            : worker('foreign', taskId, 'other-space');
+            : kind === 'foreign-space'
+              ? worker('foreign', taskId, 'other-space')
+              : worker('ended-owner');
+    if (kind === 'ended')
+      db.prepare("UPDATE sessions SET status='ended' WHERE id=?").run(sessionId);
     expect(await operation.execute({ taskId }, { source: 'mcp', sessionId })).toEqual({
       accepted: false,
       reason: 'task_completion_denied',
@@ -120,20 +138,16 @@ test.each([
   });
 });
 
-test('registry discovery reports task.complete', async () => {
+test('catalog discovery reports task.complete when wired through the complete slot', async () => {
   const getDatabase = mock(() => db);
   const database = { getDatabase, notifyChange: () => {} } as unknown as AppDatabase;
-  const provider = createSpaceOperationRegistryProvider(database, {} as JobQueueRepository, {
-    getSession: (id) => sessions.getSession(id),
-    getTaskManager: (id) => new SpaceTaskManager(db, id),
-    taskRepo: tasks,
-    notifyStandalone: () => {},
-    emitTaskUpdated: emit,
-    blockExecution: async () => {
-      throw new Error('unexpected workflow cleanup');
-    },
+  const registry = createDatabaseOperationCatalog(database, {} as JobQueueRepository, {
+    complete: createCompleteTaskOperation(() => db, {
+      getTaskManager: (id) => new SpaceTaskManager(db, id),
+      emitTaskUpdated: emit,
+    }),
   });
-  const rpc = createOperationRpcHandler(provider, () => ({}));
+  const rpc = createOperationRpcHandler(registry, () => ({}));
   const describe = { name: 'operations.describe', input: { name: 'task.complete' } };
   expect(await rpc(describe, {} as CallContext)).toMatchObject({
     found: true,
