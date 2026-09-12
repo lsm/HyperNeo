@@ -119,11 +119,15 @@ function createTestDb(): Database {
 	`);
   db.exec(`
 		CREATE TABLE IF NOT EXISTS workflow_run_artifacts (
+			id TEXT PRIMARY KEY NOT NULL,
 			run_id TEXT NOT NULL,
-			artifact_id TEXT NOT NULL,
+			node_id TEXT NOT NULL,
+			artifact_type TEXT NOT NULL,
+			artifact_key TEXT NOT NULL DEFAULT '',
 			data TEXT NOT NULL DEFAULT '{}',
+			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
-			PRIMARY KEY (run_id, artifact_id),
+			UNIQUE(run_id, node_id, artifact_type, artifact_key),
 			FOREIGN KEY (run_id) REFERENCES space_workflow_runs(id)
 		)
 	`);
@@ -194,10 +198,10 @@ function seedSpaceWorkflowRuns(db: Database) {
 function seedRunArtifacts(db: Database) {
   seedSpaceWorkflowRuns(db);
   db.exec(
-    "INSERT INTO workflow_run_artifacts (run_id, artifact_id, data, updated_at) VALUES ('run-1', 'art-1', '{\"approved\":true}', 1000)"
+    "INSERT INTO workflow_run_artifacts (id, run_id, node_id, artifact_type, artifact_key, data, created_at, updated_at) VALUES ('art-1', 'run-1', 'node-1', 'review', '', '{\"approved\":true}', 1000, 1000)"
   );
   db.exec(
-    "INSERT INTO workflow_run_artifacts (run_id, artifact_id, data, updated_at) VALUES ('run-2', 'art-1', '{\"approved\":false}', 2000)"
+    "INSERT INTO workflow_run_artifacts (id, run_id, node_id, artifact_type, artifact_key, data, created_at, updated_at) VALUES ('art-2', 'run-2', 'node-1', 'review', '', '{\"approved\":false}', 2000, 2000)"
   );
 }
 
@@ -359,7 +363,6 @@ describe('db-query tools', () => {
 
       it('prevents cross-scope joins', async () => {
         seedSpaceTasks(db);
-        seedSpaces(db);
         const handlers = createDbQueryToolHandlers(
           { dbPath: ':memory:', scopeType: 'space', scopeValue: 'space-1' },
           db
@@ -682,7 +685,7 @@ describe('db-query tools', () => {
         for (const row of parsed.rows) {
           expect(row).not.toHaveProperty('config');
           expect(row).toHaveProperty('id');
-          expect(row).toHaveProperty('name');
+          expect(row).toHaveProperty('title');
         }
       });
 
@@ -821,7 +824,7 @@ describe('db-query tools', () => {
         const parsed = parseResult(result);
 
         expect(parsed.isError).toBeFalsy();
-        expect(parsed.rows).toHaveLength(3);
+        expect(parsed.rows).toHaveLength(2);
       });
     });
 
@@ -1535,7 +1538,7 @@ describe('db-query tools', () => {
       );
       const result = await handlers.db_query({
         sql: 'SELECT space_tasks.id AS task_id, space_workflow_runs.id AS run_id FROM space_tasks JOIN space_workflow_runs ON space_tasks.space_id = space_workflow_runs.space_id WHERE space_workflow_runs.status = ?',
-        params: ['active'],
+        params: ['in_progress'],
       });
       const parsed = parseResult(result);
 
@@ -1643,8 +1646,8 @@ describe('db-query tools', () => {
         db
       );
       const result = await handlers.db_query({
-        sql: 'SELECT run_id FROM workflow_run_artifacts WHERE artifact_id = ? AND updated_at >= ?',
-        params: ['art-1', 1000],
+        sql: 'SELECT run_id FROM workflow_run_artifacts WHERE artifact_type = ? AND updated_at >= ?',
+        params: ['review', 1000],
       });
       const parsed = parseResult(result);
 
