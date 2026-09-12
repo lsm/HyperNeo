@@ -1113,7 +1113,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   setupSpaceGoalHandlers(deps.messageHub, {
     goalService: spaceGoalService,
     spaceManager: deps.spaceManager,
-    longHorizonAgentRepo: spaceAgentGoalScopeRepo,
+    goalScopeRepo: spaceAgentGoalScopeRepo,
     internalEventBus: deps.internalEventBus,
   });
 

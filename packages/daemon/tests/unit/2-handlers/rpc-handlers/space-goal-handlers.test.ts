@@ -69,7 +69,7 @@ function makeHarness(repo: ReturnType<typeof makeRepoMock>) {
   setupSpaceGoalHandlers(hub, {
     goalService,
     spaceManager,
-    longHorizonAgentRepo: repo,
+    goalScopeRepo: repo,
   });
   return { handlers };
 }
@@ -213,7 +213,7 @@ describe('spaceGoal owner handlers', () => {
       spaceManager: {
         getSpace: mock(async () => ({ id: SPACE_ID })),
       } as unknown as SpaceManager,
-      longHorizonAgentRepo: makeRepoMock({ action: 'no_recipient' }),
+      goalScopeRepo: makeRepoMock({ action: 'no_recipient' }),
       internalEventBus: eventBus,
     });
     await handlers.get('spaceGoal.assignOwner')!(
@@ -275,7 +275,7 @@ describe('spaceGoal owner handlers', () => {
     setupSpaceGoalHandlers(hub, {
       goalService,
       spaceManager: { getSpace: mock(async () => ({ id: SPACE_ID })) } as unknown as SpaceManager,
-      longHorizonAgentRepo: makeRepoMock({ action: 'no_recipient' }),
+      goalScopeRepo: makeRepoMock({ action: 'no_recipient' }),
     });
     await expect(
       handlers.get('spaceGoal.getOwner')!({ spaceId: SPACE_ID, goalId: GOAL_ID }, makeContext())
@@ -291,7 +291,7 @@ describe('spaceGoal workspacePath resolution', () => {
       spaceManager: {
         getSpace: mock(async () => ({ id: SPACE_ID, status: 'active' })),
       } as unknown as SpaceManager,
-      longHorizonAgentRepo: makeRepoMock({ action: 'no_recipient' }),
+      goalScopeRepo: makeRepoMock({ action: 'no_recipient' }),
     });
     return { handlers };
   }

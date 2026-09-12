@@ -13,7 +13,7 @@ import type { SpaceManager } from '../space/managers/space-manager.ts';
 export interface SpaceGoalHandlerDeps {
   goalService: SpaceGoalService;
   spaceManager: SpaceManager;
-  longHorizonAgentRepo: Pick<
+  goalScopeRepo: Pick<
     SpaceAgentGoalScopeRepository,
     'getPrimaryGoalOwner' | 'assignGoal' | 'deleteGoalAssignmentByRelationship'
   >;
@@ -21,7 +21,7 @@ export interface SpaceGoalHandlerDeps {
 }
 
 export function setupSpaceGoalHandlers(messageHub: MessageHub, deps: SpaceGoalHandlerDeps): void {
-  const { goalService, spaceManager, longHorizonAgentRepo, internalEventBus } = deps;
+  const { goalService, spaceManager, goalScopeRepo, internalEventBus } = deps;
 
   function publishOwnerChanged(sessionId: string, spaceId: string, goalId: string): void {
     internalEventBus
@@ -30,7 +30,7 @@ export function setupSpaceGoalHandlers(messageHub: MessageHub, deps: SpaceGoalHa
   }
 
   function resolveOwner(goalId: string, spaceId: string): SpaceGoalOwnerResolution {
-    return longHorizonAgentRepo.getPrimaryGoalOwner(goalId, spaceId) as SpaceGoalOwnerResolution;
+    return goalScopeRepo.getPrimaryGoalOwner(goalId, spaceId) as SpaceGoalOwnerResolution;
   }
 
   function assertOwnerMutationAuthorized(context: CallContext): void {
@@ -156,7 +156,7 @@ export function setupSpaceGoalHandlers(messageHub: MessageHub, deps: SpaceGoalHa
     await requireSpace(params.spaceId);
     requireGoalInSpace(params.goalId, params.spaceId);
     assertOwnerMutationAuthorized(context);
-    longHorizonAgentRepo.assignGoal(params.agentId, params.goalId);
+    goalScopeRepo.assignGoal(params.agentId, params.goalId);
     publishOwnerChanged(context.sessionId, params.spaceId, params.goalId);
     return { owner: resolveOwner(params.goalId, params.spaceId) };
   });
@@ -168,7 +168,7 @@ export function setupSpaceGoalHandlers(messageHub: MessageHub, deps: SpaceGoalHa
     assertOwnerMutationAuthorized(context);
     const resolution = resolveOwner(params.goalId, params.spaceId);
     if (resolution.action === 'resolved' || resolution.action === 'degraded') {
-      longHorizonAgentRepo.deleteGoalAssignmentByRelationship(
+      goalScopeRepo.deleteGoalAssignmentByRelationship(
         resolution.owner.agentId,
         params.goalId,
         'owner'
