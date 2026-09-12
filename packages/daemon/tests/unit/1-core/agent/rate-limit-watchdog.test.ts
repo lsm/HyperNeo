@@ -1450,6 +1450,39 @@ describe('RateLimitWatchdog', () => {
       );
       watchdog.cancel();
     });
+
+    it('an escalated park over an unparseable limit still triggers LLM refinement', async () => {
+      const resetAt = Date.now() + 2 * 60 * 60 * 1000;
+      const classify = mock(async () => ({
+        resetAtMs: resetAt,
+        kind: 'usage_limit' as const,
+        notALimit: false,
+      }));
+      const { deps, notifyPause } = createMockDeps({ chain: [] });
+      deps.classifyUnknownLimit = classify;
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 5 });
+      for (let i = 0; i < 3; i++) {
+        await watchdog.scheduleRetry(nearResetMessage(), { uuid: 'm1', content: 'x' });
+        expect(watchdog.retryNow()).toBe(true);
+        await flush();
+      }
+      await watchdog.scheduleRetry('firewall throttled, no timestamps in body', {
+        uuid: 'm1',
+        content: 'x',
+      });
+      expect(lastPause(notifyPause).reason).toBe('escalated-park');
+      await flush();
+      await flush();
+
+      expect(classify).toHaveBeenCalledTimes(1);
+      const calls = (stateManager.setRateLimitCooldown as ReturnType<typeof mock>).mock.calls;
+      expect(calls[calls.length - 1][0].retryAt).toBe(resetAt + RESET_BUFFER_MS);
+      expect(lastPause(notifyPause)).toMatchObject({
+        kind: 'usage_limit',
+        resetAt: resetAt + RESET_BUFFER_MS,
+      });
+      watchdog.cancel();
+    });
   });
 
   describe('cancel / retryNow / reset / destroy', () => {

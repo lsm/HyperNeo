@@ -363,7 +363,8 @@ export class RateLimitWatchdog {
 
     if (
       armed &&
-      trip.decision.reason === 'backoff-ladder' &&
+      (trip.decision.reason === 'backoff-ladder' ||
+        (trip.decision.reason === 'escalated-park' && trip.decision.reset === null)) &&
       this.deps.classifyUnknownLimit &&
       entryGeneration === this.generation
     ) {
