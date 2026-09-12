@@ -305,8 +305,8 @@ function makeMockHub() {
         };
       }
       if (method === 'spaceAgentV2.delete') return { id: params?.id };
-      if (method === 'spaceAgent.listSubscriptions') return { subscriptions: [] };
-      if (method === 'spaceAgent.createSubscription') {
+      if (method === 'spaceAgentSubscription.list') return { subscriptions: [] };
+      if (method === 'spaceAgentSubscription.create') {
         return {
           subscription: {
             id: 'sub-1',
@@ -321,7 +321,7 @@ function makeMockHub() {
           },
         };
       }
-      if (method === 'spaceAgent.updateSubscription') {
+      if (method === 'spaceAgentSubscription.update') {
         return {
           subscription: {
             id: params?.subscriptionId,
@@ -2177,23 +2177,23 @@ describe('SpaceStore — CRUD methods', () => {
     await spaceStore.updateAgentSubscription('sub-1', { status: 'paused' });
     await spaceStore.deleteAgentSubscription('sub-1');
 
-    expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.listSubscriptions', {
+    expect(mockHub.request).toHaveBeenCalledWith('spaceAgentSubscription.list', {
       agentId: 'lh-1',
       spaceId: 'space-1',
     });
-    expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.createSubscription', {
+    expect(mockHub.request).toHaveBeenCalledWith('spaceAgentSubscription.create', {
       agentId: 'lh-1',
       source: 'github',
       topic: 'github/*/*/pull_request/*',
       filter: { label: 'PRs' },
       spaceId: 'space-1',
     });
-    expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.updateSubscription', {
+    expect(mockHub.request).toHaveBeenCalledWith('spaceAgentSubscription.update', {
       subscriptionId: 'sub-1',
       spaceId: 'space-1',
       status: 'paused',
     });
-    expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.deleteSubscription', {
+    expect(mockHub.request).toHaveBeenCalledWith('spaceAgentSubscription.delete', {
       subscriptionId: 'sub-1',
       spaceId: 'space-1',
     });
