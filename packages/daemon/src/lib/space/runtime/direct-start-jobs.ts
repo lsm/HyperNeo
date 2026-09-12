@@ -26,7 +26,7 @@ import { DIRECT_TASK_START, readDirectStartRequest } from './direct-start-reques
 export type DirectStartAcknowledgement =
   | { accepted: true; jobId: string | null }
   | { accepted: false; reason: string };
-function acknowledge(
+export function acknowledgeDirectStart(
   db: Database,
   claim: ReturnType<typeof claimDirectStart>
 ): DirectStartAcknowledgement {
@@ -47,7 +47,7 @@ export function createDirectStartRequester(deps: {
   return (superpipe({ ...deps })('request-direct-task-start') as PipelineAPI)
     .input('input')
     .pipe(claimDirectStart, ['db', 'reactiveDb', 'input', 'onTaskReopened', 'jobQueue'], 'claim')
-    .pipe(acknowledge, ['db', 'claim'], 'result')
+    .pipe(acknowledgeDirectStart, ['db', 'claim'], 'result')
     .end('result') as (input: DirectTaskStartInput) => DirectStartAcknowledgement;
 }
 export function createDirectStartJobHandler(

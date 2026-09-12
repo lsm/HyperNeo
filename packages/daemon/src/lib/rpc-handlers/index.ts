@@ -669,7 +669,11 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
         });
       },
     },
-    pendingCompletion
+    pendingCompletion,
+    {
+      reactiveDb: deps.reactiveDb,
+      onTaskReopened: (taskId) => spaceGoalService.supersedeOutcomeNotificationsForTask(taskId),
+    }
   );
   const replyRoutingRegistry = new ReplyRoutingRegistry();
   const artifactProfile = new CodingArtifactProfile({
