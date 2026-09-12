@@ -76,11 +76,9 @@ export function computeMcpSkillRuntimeState(
     const where =
       entry.source === 'session'
         ? 'this session'
-        : entry.source === 'room'
-          ? 'room'
-          : entry.source === 'space'
-            ? 'space'
-            : 'registry';
+        : entry.source === 'space'
+          ? 'space'
+          : 'registry';
     return {
       status: 'server-off',
       appMcpServerId,
@@ -165,7 +163,6 @@ export function getSkillSourceBadge(skill: AppSkill): SourceBadgeStyle {
 
 const MCP_SOURCE_LABELS: Record<McpEffectiveEnablementSource, SourceBadgeStyle> = {
   session: { label: 'Session override', className: 'text-info/80 bg-sky-400/10' },
-  room: { label: 'Inherited from room', className: 'text-cat-purple/80 bg-cat-purple/10' },
   space: { label: 'Inherited from space', className: 'text-fuchsia-400/80 bg-fuchsia-400/10' },
   registry: { label: 'Registry default', className: 'text-fg-muted/80 bg-fg-muted/10' },
 };

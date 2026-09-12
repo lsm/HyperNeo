@@ -171,17 +171,10 @@ export function setupAppMcpHandlers(
     const overrides = db.mcpEnablement.listForScopes(chain);
 
     const sessionOverrides = new Map<string, McpEnablementOverride>();
-    const roomOverrides = new Map<string, McpEnablementOverride>();
     const spaceOverrides = new Map<string, McpEnablementOverride>();
     for (const ov of overrides) {
       if (ov.scopeType === 'session' && ov.scopeId === sessionId) {
         sessionOverrides.set(ov.serverId, ov);
-      } else if (
-        ov.scopeType === 'room' &&
-        session.context?.roomId &&
-        ov.scopeId === session.context.roomId
-      ) {
-        roomOverrides.set(ov.serverId, ov);
       } else if (
         ov.scopeType === 'space' &&
         session.context?.spaceId &&
@@ -199,15 +192,6 @@ export function setupAppMcpHandlers(
           enabled: sessionOv.enabled,
           source: 'session' as McpEffectiveEnablementSource,
           override: sessionOv,
-        };
-      }
-      const roomOv = roomOverrides.get(server.id);
-      if (roomOv) {
-        return {
-          server,
-          enabled: roomOv.enabled,
-          source: 'room' as McpEffectiveEnablementSource,
-          override: roomOv,
         };
       }
       const spaceOv = spaceOverrides.get(server.id);
