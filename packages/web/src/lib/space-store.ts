@@ -28,7 +28,6 @@ import type {
   SpaceTaskActivityMember,
   SpaceTaskPriority,
   SpaceTaskStatus,
-  SpaceAgentPromotionDraft,
   SpaceWorkflow,
   SpaceWorkflowRun,
   SpaceWorkflowSummary,
@@ -160,13 +159,10 @@ export interface SpaceExternalEventDeliveryLogRecord {
 
 export interface CreateSpaceAgentParams {
   id?: string;
-  name?: string;
   handle?: string;
   displayName?: string;
   templateKey?: string | null;
-  templateName?: string | null;
   instructions?: string;
-  customPrompt?: string | null;
   autonomyLevel?: SpaceLongHorizonAgent['autonomyLevel'];
   model?: string | null;
   thinkingLevel?: SpaceLongHorizonAgent['thinkingLevel'];
@@ -182,13 +178,10 @@ export interface CreateSpaceAgentParams {
 }
 
 export interface UpdateSpaceAgentParams {
-  name?: string;
   handle?: string;
   displayName?: string;
   templateKey?: string | null;
-  templateName?: string | null;
   instructions?: string;
-  customPrompt?: string | null;
   autonomyLevel?: SpaceLongHorizonAgent['autonomyLevel'];
   model?: string | null;
   thinkingLevel?: SpaceLongHorizonAgent['thinkingLevel'];
@@ -2390,10 +2383,10 @@ class SpaceStore {
       id: params.id,
       spaceId,
       handle: params.handle,
-      displayName: params.displayName ?? params.name,
+      displayName: params.displayName,
       templateKey,
       description: params.description,
-      instructions: params.instructions ?? params.customPrompt ?? undefined,
+      instructions: params.instructions,
       status: params.status,
       autonomyLevel: params.autonomyLevel,
       model: params.model,
@@ -2406,42 +2399,6 @@ class SpaceStore {
     const mapped = this.fromSpaceAgentV2(agent, templateKey);
     this.upsertAgent(mapped, spaceId);
     return mapped;
-  }
-
-  async getAgentPromotionDraft(sessionId: string): Promise<SpaceAgentPromotionDraft> {
-    const spaceId = this.spaceId.value;
-    if (!spaceId) throw new Error('No space selected');
-
-    const hub = connectionManager.getHubIfConnected();
-    if (!hub) throw new Error('Not connected');
-
-    const { draft } = await hub.request<{ draft: SpaceAgentPromotionDraft }>(
-      'spaceAgent.getPromotionDraft',
-      { spaceId, sessionId }
-    );
-    return draft;
-  }
-
-  async promoteSessionToAgent(
-    sessionId: string,
-    params: CreateSpaceAgentParams
-  ): Promise<SpaceLongHorizonAgent> {
-    const spaceId = this.spaceId.value;
-    if (!spaceId) throw new Error('No space selected');
-
-    const hub = connectionManager.getHubIfConnected();
-    if (!hub) throw new Error('Not connected');
-
-    const { agent } = await hub.request<{ agent: SpaceLongHorizonAgent }>(
-      'spaceAgent.promoteSession',
-      {
-        ...params,
-        spaceId,
-        sessionId,
-      }
-    );
-    this.upsertAgent(agent, spaceId);
-    return agent;
   }
 
   async updateAgent(
@@ -2461,9 +2418,9 @@ class SpaceStore {
       id: agentId,
       spaceId,
       handle: params.handle,
-      displayName: params.displayName ?? params.name,
+      displayName: params.displayName,
       description: params.description,
-      instructions: params.instructions ?? params.customPrompt ?? undefined,
+      instructions: params.instructions,
       status: params.status,
       autonomyLevel: params.autonomyLevel,
       model: params.model,
