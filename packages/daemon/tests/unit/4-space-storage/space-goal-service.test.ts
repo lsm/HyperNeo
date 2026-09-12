@@ -831,8 +831,8 @@ describe('SpaceGoalService', () => {
     service.updateGoal(goal.id, { checkInCronExpression: '0 * * * *' });
 
     const events = service.listGoalEvents(goal.id);
-    const last = events[0];
-    expect(last?.eventType).toBe('updated');
+    const last = events.find((event) => event.eventType === 'updated');
+    expect(last).toBeDefined();
     expect(last?.diff?.nextCheckInAt).toBeDefined();
   });
 
@@ -989,11 +989,28 @@ describe('SpaceGoalService', () => {
     service.updateGoal(goal.id, { checkInCronExpression: '0 * * * *' });
 
     const events = service.listGoalEvents(goal.id);
-    const last = events[0];
-    expect(last?.eventType).toBe('updated');
+    const last = events.find((event) => event.eventType === 'updated');
+    expect(last).toBeDefined();
     expect(last?.diff?.checkInCronExpression).toBeDefined();
     expect((last?.diff?.checkInCronExpression as { previous: string }).previous).toBe('0 9 * * 1');
     expect((last?.diff?.checkInCronExpression as { current: string }).current).toBe('0 * * * *');
+  });
+
+  it('lists same-millisecond goal events in insertion order', () => {
+    const frozen = spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
+    try {
+      const goal = service.createGoal({ spaceId, title: 'Same millisecond' });
+      service.pauseGoal(goal.id);
+      service.updateGoal(goal.id, { summary: 'edited within the millisecond' });
+
+      expect(service.listGoalEvents(goal.id).map((event) => event.eventType)).toEqual([
+        'updated',
+        'status_changed',
+        'created',
+      ]);
+    } finally {
+      frozen.mockRestore();
+    }
   });
 
   it('increments the goal revision monotonically on each mutation', () => {
