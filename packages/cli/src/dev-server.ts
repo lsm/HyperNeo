@@ -172,7 +172,6 @@ export async function startDevServer(config: Config) {
     throw error;
   }
 
-
   daemonContext.server.stop();
 
   log.info('📦 Starting Vite dev server...');

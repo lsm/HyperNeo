@@ -96,7 +96,6 @@ export async function startProdServer(config: Config) {
 
   daemonContext.server.stop();
 
-
   const distPath = resolve(import.meta.dir, '../../web/dist');
   log.info(`📦 Serving static files from: ${distPath}`);
 

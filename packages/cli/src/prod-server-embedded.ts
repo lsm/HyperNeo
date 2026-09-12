@@ -115,7 +115,6 @@ export async function startProdServer(config: Config) {
 
   daemonContext.server.stop();
 
-
   const { createWebSocketHandlers } = await import('@hyperneo/daemon/routes/setup-websocket');
   const wsHandlers = createWebSocketHandlers(daemonContext.transport, daemonContext.sessionManager);
 
