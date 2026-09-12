@@ -74,11 +74,7 @@ export function computeMcpSkillRuntimeState(
 
   if (!entry.enabled) {
     const where =
-      entry.source === 'session'
-        ? 'this session'
-        : entry.source === 'space'
-          ? 'space'
-          : 'registry';
+      entry.source === 'session' ? 'this session' : entry.source === 'space' ? 'space' : 'registry';
     return {
       status: 'server-off',
       appMcpServerId,

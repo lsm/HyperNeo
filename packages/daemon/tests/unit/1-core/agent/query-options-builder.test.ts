@@ -3375,7 +3375,7 @@ describe('QueryOptionsBuilder', () => {
 
       function buildContext(
         overrides: {
-          scopeType: 'session' | 'room' | 'space';
+          scopeType: 'session' | 'space';
           scopeId: string;
           serverId: string;
           enabled: boolean;
@@ -3467,17 +3467,17 @@ describe('QueryOptionsBuilder', () => {
         expect(options.mcpServers?.['test-search-server']).toBeUndefined();
       });
 
-      it('honours the session > room > space > registry precedence chain', async () => {
-        mockSession.context = { roomId: 'room-1', spaceId: 'space-1' };
-        const ctxRoomDisables = buildContext([
-          { scopeType: 'room', scopeId: 'room-1', serverId: 'mcp-server-uuid', enabled: false },
+      it('honours the session > space > registry precedence chain', async () => {
+        mockSession.context = { spaceId: 'space-1' };
+        const ctxSpaceDisables = buildContext([
+          { scopeType: 'space', scopeId: 'space-1', serverId: 'mcp-server-uuid', enabled: false },
         ]);
-        const builder1 = new QueryOptionsBuilder(ctxRoomDisables);
+        const builder1 = new QueryOptionsBuilder(ctxSpaceDisables);
         const options1 = await builder1.build();
         expect(options1.mcpServers?.['test-search']).toBeUndefined();
 
         const ctxSessionReenables = buildContext([
-          { scopeType: 'room', scopeId: 'room-1', serverId: 'mcp-server-uuid', enabled: false },
+          { scopeType: 'space', scopeId: 'space-1', serverId: 'mcp-server-uuid', enabled: false },
           {
             scopeType: 'session',
             scopeId: mockSession.id,
@@ -3531,7 +3531,7 @@ describe('QueryOptionsBuilder', () => {
         skills = [],
       }: {
         overrides?: Array<{
-          scopeType: 'session' | 'room' | 'space';
+          scopeType: 'session' | 'space';
           scopeId: string;
           serverId: string;
           enabled: boolean;

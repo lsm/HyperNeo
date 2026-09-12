@@ -4,6 +4,7 @@ import type {
   CreateAppMcpServerRequest,
   McpEffectiveEnablementSource,
   McpEnablementOverride,
+  McpEnablementScopeType,
   SessionMcpListRequest,
   SessionMcpListResponse,
   SessionMcpServerEntry,
@@ -116,6 +117,15 @@ export function registerAppMcpHandlers(messageHub: MessageHub, ctx: AppMcpHandle
   });
 }
 
+const MCP_ENABLEMENT_SCOPE_TYPES = new Set<McpEnablementScopeType>(['space', 'session']);
+
+function assertScopeType(value: unknown): asserts value is McpEnablementScopeType {
+  if (!value) throw new Error('scopeType is required');
+  if (!MCP_ENABLEMENT_SCOPE_TYPES.has(value as McpEnablementScopeType)) {
+    throw new Error(`Unsupported scopeType: ${String(value)}`);
+  }
+}
+
 export function setupAppMcpHandlers(
   messageHub: MessageHub,
   internalEventBus: InternalEventBus<DaemonInternalEventMap>,
@@ -123,7 +133,7 @@ export function setupAppMcpHandlers(
 ): void {
   messageHub.onRequest('mcp.enablement.setOverride', (data) => {
     const { scopeType, scopeId, serverId, enabled } = data as McpEnablementSetOverrideRequest;
-    if (!scopeType) throw new Error('scopeType is required');
+    assertScopeType(scopeType);
     if (!scopeId) throw new Error('scopeId is required');
     if (!serverId) throw new Error('serverId is required');
     if (typeof enabled !== 'boolean') throw new Error('enabled must be a boolean');
@@ -144,7 +154,7 @@ export function setupAppMcpHandlers(
 
   messageHub.onRequest('mcp.enablement.clearOverride', (data) => {
     const { scopeType, scopeId, serverId } = data as McpEnablementClearOverrideRequest;
-    if (!scopeType) throw new Error('scopeType is required');
+    assertScopeType(scopeType);
     if (!scopeId) throw new Error('scopeId is required');
     if (!serverId) throw new Error('serverId is required');
 
