@@ -1,7 +1,7 @@
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import { createSubmitTaskForReviewOperation } from '../../../../src/lib/space/operations/submit-for-review';
-import type { CallContext } from '@hyperneo/shared';
+import type { CallContext, UpdateSpaceTaskParams } from '@hyperneo/shared';
 import type { Database as AppDatabase } from '../../../../src/storage/database';
 import { createSpaceOperationRegistryProvider } from '../../../../src/lib/space/operations/registry';
 import { createDatabaseOperationCatalog } from '../../../../src/lib/operations/database-catalog';
@@ -260,19 +260,86 @@ test('reserved attempts reject without freezing an outcome', async () => {
   expect(attempts.isStopRequested(attemptId, sessionId)).toBe(false);
 });
 
-test('workflow-backed tasks keep their existing cancellation route', async () => {
-  const spaceId = tasks.getTask(taskId)!.spaceId!;
+function mockBlockExecution() {
+  return mock((_spaceId: string, taskId: string, params: UpdateSpaceTaskParams) =>
+    Promise.resolve(tasks.updateTask(taskId, { status: params.status }))
+  );
+}
+
+function createWorkflowRunId(spaceId: string) {
   const workflow = new SpaceWorkflowRepository(db).createWorkflow({ spaceId, name: 'Workflow' });
-  const run = new SpaceWorkflowRunRepository(db).createRun({
+  return new SpaceWorkflowRunRepository(db).createRun({
     spaceId,
     workflowId: workflow.id,
     title: 'Run',
-  });
-  tasks.updateTask(taskId, { workflowRunId: run.id });
-  expect(await operation.execute({ taskId }, { source: 'rpc' })).toMatchObject({
+  }).id;
+}
+
+test.each(['rpc', 'internal'] as const)(
+  '%s caller cancels a workflow-owned task through the stop dependency without cascading',
+  async (source) => {
+    const spaceId = tasks.getTask(taskId)!.spaceId!;
+    tasks.updateTask(taskId, { workflowRunId: createWorkflowRunId(spaceId) });
+    const dependent = tasks.createTask({
+      spaceId,
+      title: 'Dependent',
+      description: '',
+      dependsOn: [taskId],
+    });
+    const blockExecution = mockBlockExecution();
+    const workflowOp = createCancelTaskOperation(() => db, jobs, { blockExecution });
+    expect(await workflowOp.execute({ taskId }, { source })).toEqual({
+      accepted: true,
+      jobId: null,
+    });
+    expect(blockExecution).toHaveBeenCalledWith(spaceId, taskId, { status: 'cancelled' });
+    expect(blockExecution).toHaveBeenCalledTimes(1);
+    expect(tasks.getTask(taskId)?.status).toBe('cancelled');
+    expect(tasks.getTask(dependent.id)?.status).toBe('open');
+    expect(outcomeCount()).toBe(0);
+  }
+);
+
+test('MCP caller in the owning Space is admitted for a workflow-owned task', async () => {
+  const worker = sessions.getSession(sessionId)!;
+  const spaceId = worker.context!.spaceId!;
+  tasks.updateTask(taskId, { workflowRunId: createWorkflowRunId(spaceId) });
+  sessions.createSession(
+    { ...worker, id: 'coordinator', type: 'space_chat', context: { spaceId } },
+    { enforceWorkspaceOwnership: false }
+  );
+  const blockExecution = mockBlockExecution();
+  const workflowOp = createCancelTaskOperation(() => db, jobs, { blockExecution });
+  expect(await workflowOp.execute({ taskId }, { source: 'mcp', sessionId: 'coordinator' })).toEqual(
+    { accepted: true, jobId: null }
+  );
+  expect(blockExecution).toHaveBeenCalledTimes(1);
+});
+
+test('MCP caller outside the owning Space is denied for a workflow-owned task', async () => {
+  const worker = sessions.getSession(sessionId)!;
+  const spaceId = worker.context!.spaceId!;
+  tasks.updateTask(taskId, { workflowRunId: createWorkflowRunId(spaceId) });
+  sessions.createSession(
+    { ...worker, id: 'coordinator', type: 'space_chat', context: { spaceId: 'other-space' } },
+    { enforceWorkspaceOwnership: false }
+  );
+  const blockExecution = mockBlockExecution();
+  const workflowOp = createCancelTaskOperation(() => db, jobs, { blockExecution });
+  expect(
+    await workflowOp.execute({ taskId }, { source: 'mcp', sessionId: 'coordinator' })
+  ).toMatchObject({ accepted: false, reason: 'cancellation_denied' });
+  expect(blockExecution).not.toHaveBeenCalled();
+});
+
+test('an already-cancelled workflow-owned task returns unavailable', async () => {
+  const spaceId = tasks.getTask(taskId)!.spaceId!;
+  tasks.updateTask(taskId, { workflowRunId: createWorkflowRunId(spaceId), status: 'cancelled' });
+  const blockExecution = mockBlockExecution();
+  const workflowOp = createCancelTaskOperation(() => db, jobs, { blockExecution });
+  expect(await workflowOp.execute({ taskId }, { source: 'rpc' })).toMatchObject({
     accepted: false,
-    reason: 'direct_cancellation_unavailable',
+    reason: 'cancellation_unavailable',
   });
-  expect(tasks.getTask(taskId)?.workflowRunId).toBe(run.id);
-  expect(outcomeCount()).toBe(0);
+  expect(blockExecution).not.toHaveBeenCalled();
 });

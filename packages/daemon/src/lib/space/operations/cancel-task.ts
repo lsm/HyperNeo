@@ -1,5 +1,6 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
+import type { SpaceTask, UpdateSpaceTaskParams } from '@hyperneo/shared';
 import type { Database } from '../../../storage/sqlite-compat.ts';
 import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
 import { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
@@ -16,9 +17,49 @@ import {
   enqueueDirectOutcome,
   type DirectOutcomeAcknowledgement,
 } from '../runtime/direct-outcome-jobs.ts';
+import { stopTaskExecution, type TaskStoppingExecutor } from '../../tasks/stop-task-execution.ts';
 
 const inputSchema = z.object({ taskId: z.string().min(1) }).strict();
 type Input = z.infer<typeof inputSchema>;
+type BlockExecution = (
+  spaceId: string,
+  taskId: string,
+  params: UpdateSpaceTaskParams
+) => Promise<SpaceTask | null>;
+type CancelPolicyContext = SpaceMcpSessionPolicyContext & { blockExecution?: BlockExecution };
+
+async function admitWorkflowCancellation(
+  db: Database,
+  input: Input,
+  caller: OperationCaller,
+  policy: CancelPolicyContext
+): Promise<{ value: undefined } | { reason: DirectOutcomeAcknowledgement }> {
+  const task = new SpaceTaskRepository(db).getTask(input.taskId);
+  if (!task?.spaceId || !task.workflowRunId || task.archivedAt) return { value: undefined };
+  if (task.status === 'cancelled' || task.status === 'done' || task.status === 'archived')
+    return { reason: { accepted: false, reason: 'cancellation_unavailable' } };
+  if (caller.source === 'mcp') {
+    const session = caller.sessionId
+      ? new SessionRepository(db).getSession(caller.sessionId)
+      : null;
+    if (
+      session?.status !== 'active' ||
+      resolveMetadataSessionSpace(session, policy) !== task.spaceId
+    )
+      return { reason: { accepted: false, reason: 'cancellation_denied' } };
+  }
+  const blockExecution = policy.blockExecution;
+  const executor: TaskStoppingExecutor<SpaceTask> | undefined = blockExecution
+    ? {
+        stopForStatus: (taskId, targetStatus) =>
+          blockExecution(task.spaceId, taskId, { status: targetStatus }),
+      }
+    : undefined;
+  const stopped = await stopTaskExecution(executor, task.id, 'cancelled');
+  return typeof stopped === 'string' || stopped === null
+    ? { reason: { accepted: false, reason: 'cancellation_invalid_transition' } }
+    : { reason: { accepted: true, jobId: null } };
+}
 
 function admitCancellation(
   db: Database,
@@ -69,18 +110,22 @@ function admitCancellation(
 export function createCancelTaskOperation(
   getDatabase: () => Database,
   jobQueue: JobQueueRepository,
-  policy: SpaceMcpSessionPolicyContext
+  policy: CancelPolicyContext
 ) {
   const cancel = (superpipe({ getDatabase, jobQueue, policy })('cancel-direct-task') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(getDatabase, undefined, 'db')
+    .pipe(admitWorkflowCancellation, ['db', 'input', 'caller', 'policy'], 'result:outcome')
     .pipe(admitCancellation, ['db', 'input', 'caller', 'policy'], 'result:outcome')
     .pipe(enqueueDirectOutcome, ['db', 'jobQueue', 'outcome'], 'outcome')
-    .end('outcome') as (input: Input, caller: OperationCaller) => DirectOutcomeAcknowledgement;
+    .endAsync('outcome') as (
+    input: Input,
+    caller: OperationCaller
+  ) => Promise<DirectOutcomeAcknowledgement>;
   return defineOperation({
     name: 'task.cancel',
     description:
-      'Persist cancellation of one running direct task and return its durable job acknowledgement. RPC/internal callers and active persisted MCP sessions in the owning Space use the same operation. Rejects direct_cancellation_unavailable when the task or its direct-execution state does not support this binding (workflow-owned, archived, or no active direct attempt — retry after state changes), and direct_cancellation_denied when the calling MCP session is not active in the owning Space (do not retry). Acceptance does not mean shutdown has completed.',
+      'Persist cancellation of one running task, direct-execution or workflow-owned, and return its acknowledgement. RPC/internal callers and active persisted MCP sessions in the owning Space use the same operation. Never cascades to dependent tasks: it cancels exactly the named task. The direct-execution binding returns a durable job acknowledgement ({ accepted: true, jobId }) that a worker later fulfills; the workflow binding runs the same stop path as spaceTask.update and completes synchronously with jobId: null. Rejects direct_cancellation_unavailable/direct_cancellation_denied for the direct binding, and cancellation_unavailable/cancellation_denied for the workflow binding, on the same unsupported-state-vs-out-of-scope-caller split (unavailable: retry after state changes; denied: do not retry); a domain rejection from the workflow stop itself (invalid transition, missing run) returns cancellation_invalid_transition. Acceptance does not mean shutdown has completed.',
     inputSchema,
     resultSchema: z.union([
       z.object({ accepted: z.literal(true), jobId: z.string().nullable() }),
