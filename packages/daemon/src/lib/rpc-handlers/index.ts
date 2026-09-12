@@ -775,6 +775,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     dbPath: deps.db.getDatabasePath(),
     spaceManager: deps.spaceManager,
     longHorizonAgentRepo,
+    goalScopeRepo: spaceAgentGoalScopeRepo,
     spaceWorkflowManager,
     workflowRunRepo: spaceWorkflowRunRepo,
     taskRepo: spaceTaskRepo,

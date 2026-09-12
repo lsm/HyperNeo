@@ -42,6 +42,7 @@ import { z } from 'zod';
 import type { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository.ts';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
 import { SpaceAgentTemplateRepository } from '../../../storage/repositories/space-agent-template-repository.ts';
+import type { SpaceAgentGoalScopeRepository } from '../../../storage/repositories/space-agent-goal-scope-repository.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
@@ -596,6 +597,7 @@ export interface SpaceAgentToolsConfig {
   spaceId: string;
   db?: BunDatabase;
   longHorizonAgentRepo?: SpaceLongHorizonAgentRepository;
+  goalScopeRepo?: SpaceAgentGoalScopeRepository;
   runtime: SpaceRuntime;
   workflowManager: SpaceWorkflowManager;
   spaceManager?: Pick<
@@ -1389,6 +1391,11 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     if (!config.longHorizonAgentRepo)
       throw new Error('Long-horizon agent management not available');
     return config.longHorizonAgentRepo;
+  }
+
+  function requireGoalScopeRepo(): SpaceAgentGoalScopeRepository {
+    if (!config.goalScopeRepo) throw new Error('Long-horizon agent management not available');
+    return config.goalScopeRepo;
   }
 
   function requireTemplateManager() {
@@ -2225,7 +2232,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         }
         requireLongHorizonAgentInSpace(args.agent_id);
         requireGoalInSpace(args.goal_id);
-        requireLongHorizonAgentRepo().assignGoal(args.agent_id, args.goal_id);
+        requireGoalScopeRepo().assignGoal(args.agent_id, args.goal_id);
         emitGoalOwnerChanged(args.goal_id);
         logAudit('assign_agent_to_goal', args);
         return jsonResult({ success: true });
@@ -2249,7 +2256,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         }
         requireLongHorizonAgentInSpace(args.agent_id);
         requireGoalInSpace(args.goal_id);
-        requireLongHorizonAgentRepo().deleteGoalAssignmentByRelationship(
+        requireGoalScopeRepo().deleteGoalAssignmentByRelationship(
           args.agent_id,
           args.goal_id,
           'owner'
@@ -2270,7 +2277,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       try {
         requireLongHorizonAgentInSpace(args.agent_id);
         requireEvolutionScopeInSpace(args.scope_id);
-        requireLongHorizonAgentRepo().assignForgeScope(args.agent_id, args.scope_id);
+        requireGoalScopeRepo().assignForgeScope(args.agent_id, args.scope_id);
         logAudit('assign_agent_to_forge_scope', args);
         return jsonResult({ success: true });
       } catch (err) {
@@ -2286,7 +2293,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       try {
         requireLongHorizonAgentInSpace(args.agent_id);
         requireEvolutionScopeInSpace(args.scope_id);
-        requireLongHorizonAgentRepo().deleteForgeScopeAssignment(args.agent_id, args.scope_id);
+        requireGoalScopeRepo().deleteForgeScopeAssignment(args.agent_id, args.scope_id);
         logAudit('unassign_agent_from_forge_scope', args);
         return jsonResult({ success: true });
       } catch (err) {

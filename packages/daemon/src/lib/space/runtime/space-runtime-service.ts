@@ -23,6 +23,7 @@ import { NodeExecutionRepository } from '../../../storage/repositories/node-exec
 import type { SessionRepository } from '../../../storage/repositories/session-repository.ts';
 import { SpaceAgentTemplateRepository } from '../../../storage/repositories/space-agent-template-repository.ts';
 import type { SpaceGoalOutcomeNotificationRepository } from '../../../storage/repositories/space-goal-outcome-notification-repository.ts';
+import type { SpaceAgentGoalScopeRepository } from '../../../storage/repositories/space-agent-goal-scope-repository.ts';
 import { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository.ts';
 import {
   coordinatorSessionId,
@@ -137,6 +138,7 @@ export interface SpaceRuntimeServiceConfig {
   dbPath?: string;
   spaceManager: SpaceManager;
   longHorizonAgentRepo?: SpaceLongHorizonAgentRepository;
+  goalScopeRepo?: SpaceAgentGoalScopeRepository;
   ownedAgents?: OwnedAgentLookup;
   templateRepo?: SpaceAgentTemplateRepository;
   spaceWorkflowManager: SpaceWorkflowManager;
@@ -992,6 +994,7 @@ export class SpaceRuntimeService {
       spaceId: space.id,
       db: this.config.db,
       longHorizonAgentRepo: this.config.longHorizonAgentRepo,
+      goalScopeRepo: this.config.goalScopeRepo,
       ownedAgents: this.config.ownedAgents,
       runtime: this.runtime,
       workflowManager: this.config.spaceWorkflowManager,
@@ -1576,6 +1579,7 @@ export class SpaceRuntimeService {
       spaceId: space.id,
       db: this.config.db,
       longHorizonAgentRepo: this.config.longHorizonAgentRepo,
+      goalScopeRepo: this.config.goalScopeRepo,
       ownedAgents: this.config.ownedAgents,
       runtime: this.runtime,
       workflowManager: this.config.spaceWorkflowManager,
@@ -1771,6 +1775,7 @@ export class SpaceRuntimeService {
       spaceId: space.id,
       db: this.config.db,
       longHorizonAgentRepo: this.config.longHorizonAgentRepo,
+      goalScopeRepo: this.config.goalScopeRepo,
       ownedAgents: this.config.ownedAgents,
       runtime: this.runtime,
       workflowManager: spaceWorkflowManager,
