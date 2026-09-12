@@ -1,4 +1,10 @@
 import { describe, expect, test } from 'bun:test';
+import { z } from 'zod';
+import {
+  createOperationRegistry,
+  defineOperation,
+} from '../../../../src/lib/operations/registry.ts';
+import { createCancelTaskOperation } from '../../../../src/lib/space/operations/cancel-task.ts';
 import { createActionRegistry } from '../../../../src/lib/space/actions/registry.ts';
 import { createSpaceRegistryEntries } from '../../../../src/lib/space/actions/registry-space.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
@@ -21,6 +27,7 @@ import { SpaceAgentRepository } from '../../../../src/storage/repositories/space
 import { SpaceAgentReminderRepository } from '../../../../src/storage/repositories/space-agent-reminder-repository.ts';
 import { SpaceAgentSubscriptionRepository } from '../../../../src/storage/repositories/space-agent-subscription-repository.ts';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
+import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
@@ -190,6 +197,7 @@ describe('createSpaceRegistryEntries — composition', () => {
           Object.keys(SPACE_AGENT_LIFECYCLE_TOOL_SCHEMAS).length
       );
       for (const entry of entries) {
+        if (entry.name === 'cancel_task') continue;
         const expected =
           SPACE_AGENT_TOOL_SCHEMAS[entry.name as SpaceAgentToolName] ??
           SPACE_AGENT_LIFECYCLE_TOOL_SCHEMAS[entry.name as SpaceAgentLifecycleToolName];
@@ -346,7 +354,7 @@ describe('createSpaceRegistryEntries — composition', () => {
     }
   });
 
-  test('cancel_task requires workflow-run clearance only for workflow-backed tasks with the flag', async () => {
+  test('cancel_task requires destructive clearance for an active workflow run and human-only for a pending completion checkpoint', async () => {
     const ctx = makeCtx();
     try {
       const workflow = ctx.workflowManager.createWorkflow({
@@ -366,11 +374,13 @@ describe('createSpaceRegistryEntries — composition', () => {
         description: '',
         workflowRunId: run.id,
       });
-      const standaloneTask = ctx.taskRepo.createTask({
+      const activeWorkflowTask = ctx.taskRepo.createTask({
         spaceId: SPACE_ID,
-        title: 'Standalone task',
+        title: 'Active workflow task',
         description: '',
+        workflowRunId: run.id,
       });
+      ctx.taskRepo.updateTask(activeWorkflowTask.id, { status: 'in_progress' });
       const checkpointTask = ctx.taskRepo.createTask({
         spaceId: SPACE_ID,
         title: 'Checkpoint task',
@@ -392,19 +402,225 @@ describe('createSpaceRegistryEntries — composition', () => {
         title: 'Foreign task',
         description: '',
       });
+      const directTask = ctx.taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Direct task',
+        description: '',
+      });
+      ctx.taskRepo.updateTask(directTask.id, {
+        status: 'in_progress',
+        taskAgentSessionId: 'direct-worker-session',
+      });
+      const doneRun = ctx.workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Done run',
+      });
+      ctx.workflowRunRepo.updateRun(doneRun.id, { status: 'done' });
+      const postApprovalTask = ctx.taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Post-approval task',
+        description: '',
+        workflowRunId: doneRun.id,
+      });
+      ctx.taskRepo.updateTask(postApprovalTask.id, {
+        status: 'approved',
+        postApprovalSessionId: 'post-approval-worker-session',
+      });
       const entries = createSpaceRegistryEntries(ctx.config);
       const resolve = entries.find((entry) => entry.name === 'cancel_task')?.autonomyRequirement;
       expect(typeof resolve).toBe('function');
       if (typeof resolve === 'function') {
-        expect(await resolve({ task_id: workflowTask.id, cancel_workflow_run: true })).toBe(
+        expect(await resolve({ task_id: workflowTask.id })).toBe(SESSION_WRITE_AUTONOMY_LEVEL);
+        expect(await resolve({ task_id: activeWorkflowTask.id })).toBe(
           SESSION_WRITE_AUTONOMY_LEVEL
         );
-        expect(await resolve({ task_id: standaloneTask.id, cancel_workflow_run: true })).toBe(1);
         expect(await resolve({ task_id: checkpointTask.id })).toBe(5);
-        expect(await resolve({ task_id: foreignTask.id, cancel_workflow_run: true })).toBe(1);
-        expect(await resolve({ task_id: workflowTask.id })).toBe(1);
-        expect(await resolve({ task_id: workflowTask.id, cancel_workflow_run: false })).toBe(1);
+        expect(await resolve({ task_id: foreignTask.id })).toBe(1);
+        expect(await resolve({ task_id: directTask.id })).toBe(SESSION_WRITE_AUTONOMY_LEVEL);
+        expect(await resolve({ task_id: postApprovalTask.id })).toBe(SESSION_WRITE_AUTONOMY_LEVEL);
       }
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('cancel_task requires human-only clearance when a sibling task in the run is awaiting completion approval', async () => {
+    const ctx = makeCtx();
+    try {
+      const workflow = ctx.workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: 'Sibling checkpoint',
+        nodes: [{ name: 'Work', agents: [{ agentId: 'agent-coder-1', name: 'Coder' }] }],
+        tags: [],
+      });
+      const run = ctx.workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Run with a pending checkpoint',
+      });
+      const plainTask = ctx.taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Plain task',
+        description: '',
+        workflowRunId: run.id,
+      });
+      const checkpointSibling = ctx.taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Sibling awaiting approval',
+        description: '',
+        workflowRunId: run.id,
+      });
+      ctx.taskRepo.updateTask(checkpointSibling.id, {
+        status: 'review',
+        pendingCheckpointType: 'task_completion',
+      });
+
+      const entries = createSpaceRegistryEntries(ctx.config);
+      const resolve = entries.find((entry) => entry.name === 'cancel_task')?.autonomyRequirement;
+      expect(typeof resolve).toBe('function');
+      if (typeof resolve === 'function') {
+        expect(await resolve({ task_id: plainTask.id })).toBe(5);
+      }
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('cancel_task requires destructive clearance for a terminal run with a live session on a sibling task', async () => {
+    const ctx = makeCtx();
+    try {
+      const workflow = ctx.workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: 'Sibling target',
+        nodes: [{ name: 'Work', agents: [{ agentId: 'agent-coder-1', name: 'Coder' }] }],
+        tags: [],
+      });
+      const doneRun = ctx.workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Done run with a live sibling',
+      });
+      ctx.workflowRunRepo.updateRun(doneRun.id, { status: 'done' });
+      const sessionlessTask = ctx.taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Sessionless task',
+        description: '',
+        workflowRunId: doneRun.id,
+      });
+      new NodeExecutionRepository(ctx.db).create({
+        workflowRunId: doneRun.id,
+        workflowNodeId: 'node-1',
+        agentName: 'Coder',
+        agentSessionId: 'sibling-live-session',
+        status: 'in_progress',
+      });
+
+      const entries = createSpaceRegistryEntries(ctx.config);
+      const resolve = entries.find((entry) => entry.name === 'cancel_task')?.autonomyRequirement;
+      expect(typeof resolve).toBe('function');
+      if (typeof resolve === 'function') {
+        expect(await resolve({ task_id: sessionlessTask.id })).toBe(SESSION_WRITE_AUTONOMY_LEVEL);
+      }
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('cancel_task rejects cancel_workflow_run and dispatches task.cancel through an operations registry', async () => {
+    const ctx = makeCtx();
+    try {
+      const cancelExecuteCalls: Array<{ input: { taskId: string }; caller: unknown }> = [];
+      const operations = createOperationRegistry([
+        defineOperation({
+          name: 'task.cancel',
+          description: 'Cancel exactly one task',
+          inputSchema: z.object({ taskId: z.string() }),
+          resultSchema: z.union([
+            z.object({ accepted: z.literal(true), jobId: z.string().nullable() }),
+            z.object({ accepted: z.literal(false), reason: z.string() }),
+          ]),
+          execute: async (input, caller) => {
+            cancelExecuteCalls.push({ input, caller });
+            return { accepted: true as const, jobId: null };
+          },
+        }),
+      ]);
+      const entryWithOperations = createSpaceRegistryEntries(ctx.config, operations).find(
+        (entry) => entry.name === 'cancel_task'
+      );
+      if (!entryWithOperations) throw new Error('cancel_task entry missing');
+      expect(() => entryWithOperations.paramsSchema.parse({ task_id: 't-1' })).not.toThrow();
+      expect(() =>
+        entryWithOperations.paramsSchema.parse({ task_id: 't-1', cancel_workflow_run: true })
+      ).toThrow();
+      const result = (await entryWithOperations.handler({ task_id: 't-1' })) as {
+        content: Array<{ text: string }>;
+        isError?: boolean;
+      };
+      expect(result.isError).toBeUndefined();
+      expect(JSON.parse(result.content[0].text)).toEqual({ accepted: true, jobId: null });
+      expect(cancelExecuteCalls).toEqual([
+        { input: { taskId: 't-1' }, caller: { source: 'mcp', sessionId: ctx.config.mySessionId } },
+      ]);
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('cancel_task returns the unavailable error result without an operations registry', async () => {
+    const ctx = makeCtx();
+    try {
+      const entry = createSpaceRegistryEntries(ctx.config).find(
+        (candidate) => candidate.name === 'cancel_task'
+      );
+      if (!entry) throw new Error('cancel_task entry missing');
+      const result = (await entry.handler({ task_id: 't-1' })) as {
+        content: Array<{ text: string }>;
+        isError?: boolean;
+      };
+      expect(result.isError).toBe(true);
+      expect(JSON.parse(result.content[0].text)).toEqual({
+        success: false,
+        error: 'task.cancel is unavailable: no operation registry',
+      });
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('cancel_task cancels a plain open task through the shared task.cancel operation', async () => {
+    const ctx = makeCtx({ mySessionId: 'space-chat-1' });
+    try {
+      const now = new Date().toISOString();
+      ctx.db
+        .prepare(
+          `INSERT INTO sessions (id, title, created_at, last_active_at, status, config, metadata, type, session_context)
+           VALUES ('space-chat-1', 'Space Chat', ?, ?, 'active', '{}', '{}', 'space_chat', ?)`
+        )
+        .run(now, now, JSON.stringify({ spaceId: SPACE_ID }));
+      const plainTask = ctx.taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Plain task',
+        description: '',
+      });
+      const operations = createOperationRegistry([
+        createCancelTaskOperation(() => ctx.db, new JobQueueRepository(ctx.db), {
+          getTaskManager: (spaceId) => new SpaceTaskManager(ctx.db, spaceId),
+          emitTaskUpdated: async () => {},
+        }),
+      ]);
+      const entry = createSpaceRegistryEntries(ctx.config, operations).find(
+        (candidate) => candidate.name === 'cancel_task'
+      );
+      if (!entry) throw new Error('cancel_task entry missing');
+      const result = (await entry.handler({ task_id: plainTask.id })) as {
+        content: Array<{ text: string }>;
+        isError?: boolean;
+      };
+      expect(result.isError).toBeUndefined();
+      expect(JSON.parse(result.content[0].text)).toEqual({ accepted: true, jobId: null });
+      expect(ctx.taskRepo.getTask(plainTask.id)?.status).toBe('cancelled');
     } finally {
       ctx.db.close();
     }
@@ -649,11 +865,6 @@ describe('createSpaceRegistryEntries — handler wiring', () => {
         title: 'Open',
         description: 'Standalone open task',
       });
-      const cancelTarget = ctx.taskRepo.createTask({
-        spaceId: SPACE_ID,
-        title: 'Cancel me',
-        description: '',
-      });
       const retryTarget = ctx.taskRepo.createTask({
         spaceId: SPACE_ID,
         title: 'Not retryable',
@@ -686,7 +897,6 @@ describe('createSpaceRegistryEntries — handler wiring', () => {
           success: true,
         },
         { name: 'retry_task', params: { task_id: retryTarget.id }, success: false },
-        { name: 'cancel_task', params: { task_id: cancelTarget.id }, success: true },
         {
           name: 'reassign_task',
           params: { task_id: reassignTarget.id, custom_agent_id: 'agent-coder-1' },

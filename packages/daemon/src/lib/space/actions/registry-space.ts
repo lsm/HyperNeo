@@ -101,6 +101,9 @@ import {
 } from '../tools/space-agent-tools.ts';
 import { SESSION_WRITE_AUTONOMY_LEVEL } from '../tools/tool-admission-gates.ts';
 import { jsonResult } from '../tools/tool-result.ts';
+import type { OperationRegistrySource } from '../../operations/registry.ts';
+import { canTransition as canTransitionRunStatus } from '../runtime/workflow-run-status-machine.ts';
+import { createOperationActionHandler } from './operation-action.ts';
 import { type ActionDefinition, defineAction } from './registry.ts';
 
 const DEFAULT_COMPLETION_AUTONOMY_LEVEL = 5;
@@ -126,7 +129,10 @@ const forgeTerminalStatusAutonomy =
       ? DESTRUCTIVE_ACTION_AUTONOMY_LEVEL
       : 1;
 
-export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): ActionDefinition[] {
+export function createSpaceRegistryEntries(
+  config: SpaceAgentToolsConfig,
+  operations?: OperationRegistrySource
+): ActionDefinition[] {
   const handlers = createSpaceAgentToolHandlers({ ...config, auditLogRepo: undefined });
 
   const taskInSpace = (taskId: string) => {
@@ -167,14 +173,48 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
     return 1;
   };
 
-  const cancelTaskAutonomy = async (params: z.infer<typeof CancelTaskSchema>) => {
+  const runHasLiveSessions = (workflowRunId: string): boolean => {
+    const hasLiveExecution = config.nodeExecutionRepo
+      .listByWorkflowRun(workflowRunId)
+      .some((execution) => !!execution.agentSessionId && execution.status !== 'cancelled');
+    if (hasLiveExecution) return true;
+    const runTaskIds = config.taskRepo.listByWorkflowRun(workflowRunId).map((t) => t.id);
+    return (config.taskAgentManager?.getLiveSubSessionIdsForTasks(runTaskIds).length ?? 0) > 0;
+  };
+
+  const cancelTaskAutonomy = async (params: { task_id: string }) => {
     const task = taskInSpace(params.task_id);
     if (task?.pendingCheckpointType === 'task_completion') return HUMAN_ONLY_AUTONOMY_LEVEL;
-    if (params.cancel_workflow_run === true && task?.workflowRunId) {
+    if (task?.workflowRunId) {
+      const run = config.workflowRunRepo.getRun(task.workflowRunId);
+      if (run && canTransitionRunStatus(run.status, 'cancelled')) {
+        if (
+          config.taskRepo
+            .listByWorkflowRun(task.workflowRunId)
+            .some((sibling) => sibling.pendingCheckpointType === 'task_completion')
+        ) {
+          return HUMAN_ONLY_AUTONOMY_LEVEL;
+        }
+        return DESTRUCTIVE_ACTION_AUTONOMY_LEVEL;
+      }
+      if (
+        task.taskAgentSessionId ||
+        task.postApprovalSessionId ||
+        runHasLiveSessions(task.workflowRunId)
+      ) {
+        return DESTRUCTIVE_ACTION_AUTONOMY_LEVEL;
+      }
+    }
+    if (task?.taskAgentSessionId && !task.workflowRunId) {
       return DESTRUCTIVE_ACTION_AUTONOMY_LEVEL;
     }
     return 1;
   };
+
+  const cancelTaskUnavailable = async () => ({
+    ...jsonResult({ success: false, error: 'task.cancel is unavailable: no operation registry' }),
+    isError: true,
+  });
 
   const archiveTaskAutonomy = async (params: z.infer<typeof ArchiveTaskSchema>) => {
     const task = taskInSpace(params.task_id);
@@ -798,11 +838,22 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
       family: 'tasks',
       safetyClass: 'mutate',
       description:
-        'Cancel a task, cascading to pending dependents and optionally its workflow run; returns the cancelled task.',
-      paramsDoc: 'task_id, cancel_workflow_run?',
-      paramsSchema: CancelTaskSchema,
+        'Cancel exactly one task through the shared task.cancel operation: no cascade to ' +
+        'dependent tasks, but cancelling a workflow-owned task with an active run also ' +
+        'cancels that run and stops its agents. Returns { accepted: true, jobId } (jobId ' +
+        'null when the cancellation completed synchronously, a job id when a direct-execution ' +
+        'worker will finalize it) or { accepted: false, reason }.',
+      paramsDoc: 'task_id',
+      paramsSchema: CancelTaskSchema.omit({ cancel_workflow_run: true }).strict(),
       autonomyRequirement: cancelTaskAutonomy,
-      handler: (args) => handlers.cancel_task(args),
+      handler: operations
+        ? createOperationActionHandler(
+            operations,
+            { sessionId: config.mySessionId },
+            'task.cancel',
+            (params) => ({ taskId: (params as { task_id: string }).task_id })
+          )
+        : cancelTaskUnavailable,
     }),
     defineAction({
       name: 'reassign_task',

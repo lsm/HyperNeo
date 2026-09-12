@@ -188,7 +188,9 @@ export function createSpaceActionsMcpServer(config: SpaceActionsServerConfig) {
   const spaceConfig = config.spaceConfig
     ? { ...config.spaceConfig, callerRole: config.role }
     : undefined;
-  const spaceEntries = spaceConfig ? createSpaceRegistryEntries(spaceConfig) : [];
+  const spaceEntries = spaceConfig
+    ? createSpaceRegistryEntries(spaceConfig, config.operationRegistry)
+    : [];
   const nodeEntries = config.nodeConfig ? createNodeRegistryEntries(config.nodeConfig) : [];
   const isRoleAdmittedEntry = (entry: ActionDefinition) =>
     spaceConfig?.isDefaultAgent === true || !COORDINATOR_ONLY_ACTIONS.has(entry.name);
