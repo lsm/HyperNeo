@@ -18,16 +18,15 @@ async function createTaskViaRpc(
     async ({ spaceId, title }) => {
       const hub = window.__messageHub || window.appState?.messageHub;
       if (!hub?.request) throw new Error('MessageHub not available');
-      const task = (await hub.request('spaceTask.create', {
-        spaceId,
-        title,
-        description: '',
+      const task = (await hub.request('operation.invoke', {
+        name: 'task.create',
+        input: { spaceId, title, description: '' },
       })) as { id: string };
       return task.id;
     },
     { spaceId, title }
   );
-  if (!id) throw new Error('spaceTask.create returned no id');
+  if (!id) throw new Error('task.create returned no id');
   return id;
 }
 

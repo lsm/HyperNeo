@@ -68,11 +68,9 @@ async function startWorkflowRunAndGetTask(
     agentSessionId: string | null;
   };
 }> {
-  const created = (await daemon.messageHub.request('spaceTask.create', {
-    spaceId,
-    title: runTitle,
-    description: '',
-    preferredWorkflowId: workflowId,
+  const created = (await daemon.messageHub.request('operation.invoke', {
+    name: 'task.create',
+    input: { spaceId, title: runTitle, description: '', preferredWorkflowId: workflowId },
   })) as { id: string };
 
   const deadline = Date.now() + RUN_DISPATCH_TIMEOUT;
