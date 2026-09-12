@@ -9,7 +9,8 @@ import {
 import { LONG_HORIZON_AGENT_REMINDER_FIRE } from '../../../../src/lib/job-queue-constants';
 import type { Job } from '../../../../src/storage/repositories/job-queue-repository';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
-import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
+import { SpaceAgentReminderRepository } from '../../../../src/storage/repositories/space-agent-reminder-repository';
+import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { createSpaceTables } from '../../helpers/space-test-db';
 
@@ -49,7 +50,8 @@ function recordingDeliver() {
 
 describe('handleLongHorizonAgentReminderFire', () => {
   let db: Database;
-  let reminderRepo: SpaceLongHorizonAgentRepository;
+  let reminderRepo: SpaceAgentReminderRepository;
+  let agentRepo: SpaceAgentRepository;
   let spaceRepo: SpaceRepository;
   let jobQueue: JobQueueRepository;
   let spaceId: string;
@@ -80,7 +82,8 @@ describe('handleLongHorizonAgentReminderFire', () => {
 		`);
 
     spaceRepo = new SpaceRepository(db as never);
-    reminderRepo = new SpaceLongHorizonAgentRepository(db);
+    agentRepo = new SpaceAgentRepository(db);
+    reminderRepo = new SpaceAgentReminderRepository(db, agentRepo);
     jobQueue = new JobQueueRepository(db as never);
 
     const space = spaceRepo.createSpace({
@@ -90,7 +93,7 @@ describe('handleLongHorizonAgentReminderFire', () => {
       description: 'Test space',
     });
     spaceId = space.id;
-    const agent = reminderRepo.create({ spaceId, handle: 'steward', displayName: 'Steward' });
+    const agent = agentRepo.create({ spaceId, handle: 'steward', displayName: 'Steward' });
     agentId = agent.id;
   });
 
@@ -182,7 +185,7 @@ describe('handleLongHorizonAgentReminderFire', () => {
 
   it('skips a paused agent reminder without delivering', async () => {
     const now = Date.now();
-    const pausedAgent = reminderRepo.create({
+    const pausedAgent = agentRepo.create({
       spaceId,
       handle: 'paused',
       displayName: 'Paused',
@@ -502,7 +505,8 @@ describe('enqueueLongHorizonAgentReminderScanIfMissing', () => {
 
 describe('backfillLongHorizonAgentReminderNextRunAt', () => {
   let db: Database;
-  let reminderRepo: SpaceLongHorizonAgentRepository;
+  let reminderRepo: SpaceAgentReminderRepository;
+  let agentRepo: SpaceAgentRepository;
   let spaceId: string;
   let agentId: string;
 
@@ -510,7 +514,8 @@ describe('backfillLongHorizonAgentReminderNextRunAt', () => {
     db = new Database(':memory:');
     createSpaceTables(db);
     const spaceRepo = new SpaceRepository(db as never);
-    reminderRepo = new SpaceLongHorizonAgentRepository(db);
+    agentRepo = new SpaceAgentRepository(db);
+    reminderRepo = new SpaceAgentReminderRepository(db, agentRepo);
     const space = spaceRepo.createSpace({
       slug: 'test',
       workspacePath: '/workspace/test',
@@ -518,7 +523,7 @@ describe('backfillLongHorizonAgentReminderNextRunAt', () => {
       description: 'Test space',
     });
     spaceId = space.id;
-    agentId = reminderRepo.create({ spaceId, handle: 'steward', displayName: 'Steward' }).id;
+    agentId = agentRepo.create({ spaceId, handle: 'steward', displayName: 'Steward' }).id;
   });
 
   afterEach(() => {
@@ -570,7 +575,7 @@ describe('backfillLongHorizonAgentReminderNextRunAt', () => {
   });
 
   it('backfills paused-agent reminders too (gated at fire time, not backfill)', () => {
-    const pausedAgent = reminderRepo.create({
+    const pausedAgent = agentRepo.create({
       spaceId,
       handle: 'paused',
       displayName: 'Paused',
