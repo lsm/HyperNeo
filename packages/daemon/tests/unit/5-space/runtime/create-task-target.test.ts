@@ -15,12 +15,12 @@ const spaceOnlyReason =
 
 describe('resolveCreateTaskTarget', () => {
   test.each([
-    ['rpc standalone', rpc, undefined, {}, { value: undefined }],
-    ['rpc targeted', rpc, undefined, { spaceId: 'a' }, { value: 'a' }],
-    ['internal standalone', internal, undefined, {}, { value: undefined }],
-    ['internal targeted', internal, 'other', { spaceId: 'a' }, { value: 'a' }],
-    ['mcp session space, no input', mcp, 'a', {}, { value: 'a' }],
-    ['mcp matching input', mcp, 'a', { spaceId: 'a' }, { value: 'a' }],
+    ['rpc standalone', rpc, undefined, {}, { value: { spaceId: undefined } }],
+    ['rpc targeted', rpc, undefined, { spaceId: 'a' }, { value: { spaceId: 'a' } }],
+    ['internal standalone', internal, undefined, {}, { value: { spaceId: undefined } }],
+    ['internal targeted', internal, 'other', { spaceId: 'a' }, { value: { spaceId: 'a' } }],
+    ['mcp session space, no input', mcp, 'a', {}, { value: { spaceId: 'a' } }],
+    ['mcp matching input', mcp, 'a', { spaceId: 'a' }, { value: { spaceId: 'a' } }],
     ['mcp foreign input', mcp, 'a', { spaceId: 'b' }, { reason: scopeReason }],
     [
       'mcp outside any space requesting a space',
@@ -62,7 +62,7 @@ describe('resolveCreateTaskTarget', () => {
         preferredWorkflowId: 'wf',
         workspacePath: '/repo',
       },
-      { value: 'a' },
+      { value: { spaceId: 'a' } },
     ],
   ])('%s', (_label, caller, sessionSpaceId, input, expected) => {
     expect(resolveCreateTaskTarget(input, caller, sessionSpaceId)).toEqual(expected);

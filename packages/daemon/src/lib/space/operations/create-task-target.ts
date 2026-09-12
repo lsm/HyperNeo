@@ -24,7 +24,7 @@ export function resolveCreateTaskTarget(
   input: Pick<SpaceCreateTaskInput, TargetField>,
   caller: OperationCaller,
   sessionSpaceId: string | undefined
-): { value: string | undefined } | { reason: string } {
+): { value: { spaceId: string | undefined } } | { reason: string } {
   const spaceId = caller.source === 'mcp' ? (input.spaceId ?? sessionSpaceId) : input.spaceId;
   if (caller.source === 'mcp' && spaceId !== undefined && spaceId !== sessionSpaceId) {
     return { reason: 'Task creation requires a session in the owning Space' };
@@ -35,7 +35,7 @@ export function resolveCreateTaskTarget(
       reason: 'dependsOn, draft, preferredWorkflowId and workspacePath require a Space task',
     };
   }
-  return { value: spaceId };
+  return { value: { spaceId } };
 }
 
 export function resolveCreatedBy(session: Session | null): string | null {
