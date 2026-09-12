@@ -24,7 +24,7 @@ Sources of truth (all paths relative to repo root):
 
 | Surface | Count | Consumed by web | Dead |
 |---|---|---|---|
-| RPC methods (REQ→RSP) | **220** static registration sites (**205** in the default configuration — the 15 `space.github.*` handlers register only while the GitHub external-event extension is globally enabled and unregister on disable, `app.ts:791` / `extension-manager.ts:111`) | 218 (216 literal + 2 constant-indirect) | 2 (`spaceAgentV2.get`, added after the audit by #3937; `spaceAgentTemplate.listBuiltIn`, registered for parity with its retired `spaceAgent.*` predecessor while web reads built-ins through `spaceWorkflow.listBuiltInTemplates`; §7) |
+| RPC methods (REQ→RSP) | **221** static registration sites (**206** in the default configuration — the 15 `space.github.*` handlers register only while the GitHub external-event extension is globally enabled and unregister on disable, `app.ts:791` / `extension-manager.ts:111`) | 219 (217 literal + 2 constant-indirect) | 2 (`spaceAgentV2.get`, added after the audit by #3937; `spaceAgentTemplate.listBuiltIn`, registered for parity with its retired `spaceAgent.*` predecessor while web reads built-ins through `spaceWorkflow.listBuiltInTemplates`; §7) |
 | Protocol-level methods (`channel.join`/`channel.leave`) | 2 | 2 (`joinRoom`/`leaveRoom`) | 0 |
 | Event names emitted to clients | **34** statically named | 34 (30 literal + 4 constant/dynamic-indirect) | 0 |
 | LiveQuery named queries | **16** | 16 | 0 |
