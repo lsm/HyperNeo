@@ -15,6 +15,7 @@ import { DirectTaskExecutionRepository } from '../../../../src/storage/repositor
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
+import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
 import { createDirectTaskStarter } from '../../../../src/lib/space/runtime/start-direct-task';
 import { createSubmitTaskForReviewOperation } from '../../../../src/lib/space/operations/submit-for-review';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry';
@@ -231,17 +232,42 @@ test('workflow-owned task via RPC caller completes synchronously with the reason
   expect(outcomeCount()).toBe(0);
 });
 
-test('workflow-owned task via RPC caller persists the submitting node id', async () => {
-  markTaskWorkflowOwned();
+test('an MCP caller executing a node persists the derived node id, not client input', async () => {
+  const runId = markTaskWorkflowOwned();
+  const spaceId = tasks.getTask(taskId)!.spaceId!;
+  const nodeSessionId = 'node-caller-session';
+  const worker = sessions.getSession(sessionId)!;
+  sessions.createSession(
+    { ...worker, id: nodeSessionId, type: 'general', context: { spaceId } },
+    { enforceWorkspaceOwnership: false }
+  );
+  new NodeExecutionRepository(db).create({
+    workflowRunId: runId,
+    workflowNodeId: 'node-1',
+    agentName: 'coder',
+    agentSessionId: nodeSessionId,
+  });
   expect(
     await operation.execute(
-      { taskId, reason: 'Ready', submittedByNodeId: 'node-1' },
-      { source: 'rpc' }
+      { taskId, reason: 'Ready' },
+      { source: 'mcp', sessionId: nodeSessionId }
     )
   ).toEqual({ accepted: true, jobId: null });
   expect(tasks.getTask(taskId)).toMatchObject({
     status: 'review',
     pendingCompletionSubmittedByNodeId: 'node-1',
+  });
+});
+
+test('an rpc caller never gets a submitting node id even without deriving one', async () => {
+  markTaskWorkflowOwned();
+  expect(await operation.execute({ taskId, reason: 'Ready' }, { source: 'rpc' })).toEqual({
+    accepted: true,
+    jobId: null,
+  });
+  expect(tasks.getTask(taskId)).toMatchObject({
+    status: 'review',
+    pendingCompletionSubmittedByNodeId: null,
   });
 });
 

@@ -840,7 +840,7 @@ describe('createNodeRegistryEntries — end-node callbacks', () => {
 
 function makeSubmitForReviewOperation(
   execute: (
-    input: { taskId: string; reason: string | null; submittedByNodeId?: string | null },
+    input: { taskId: string; reason: string | null },
     caller: { source: string; sessionId?: string }
   ) => Promise<{ accepted: true; jobId: string | null } | { accepted: false; reason: string }>
 ) {
@@ -848,11 +848,7 @@ function makeSubmitForReviewOperation(
     defineOperation({
       name: 'task.submitForReview',
       description: 'Submit a task for review',
-      inputSchema: z.object({
-        taskId: z.string(),
-        reason: z.string().nullable().optional(),
-        submittedByNodeId: z.string().nullable().optional(),
-      }),
+      inputSchema: z.object({ taskId: z.string(), reason: z.string().nullable().optional() }),
       resultSchema: z.union([
         z.object({ accepted: z.literal(true), jobId: z.string().nullable() }),
         z.object({ accepted: z.literal(false), reason: z.string() }),
@@ -885,19 +881,11 @@ describe('submit_for_approval — operation-backed', () => {
       await entry.handler({});
       expect(calls).toEqual([
         {
-          input: {
-            taskId: config.taskId,
-            reason: 'looks done',
-            submittedByNodeId: config.workflowNodeId,
-          },
+          input: { taskId: config.taskId, reason: 'looks done' },
           caller: { source: 'mcp', sessionId: config.mySessionId },
         },
         {
-          input: {
-            taskId: config.taskId,
-            reason: null,
-            submittedByNodeId: config.workflowNodeId,
-          },
+          input: { taskId: config.taskId, reason: null },
           caller: { source: 'mcp', sessionId: config.mySessionId },
         },
       ]);
