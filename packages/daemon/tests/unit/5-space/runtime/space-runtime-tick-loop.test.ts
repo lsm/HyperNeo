@@ -532,9 +532,11 @@ describe('SpaceRuntime — tick loop correctness', () => {
               { agentId: AGENT_CODER, name: 'Coder' },
             ],
           },
+          { id: STEP_B, name: 'Done', agentId: AGENT_CODER },
         ],
-        transitions: [],
+        transitions: [{ from: STEP_A, to: STEP_B, condition: { type: 'always' }, order: 0 }],
         startNodeId: STEP_A,
+        endNodeId: STEP_B,
         rules: [],
         tags: [],
       });
