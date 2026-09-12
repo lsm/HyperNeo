@@ -187,6 +187,52 @@ test('completes normally when requiresPostApprovalOwner is absent', async () => 
   const result = await operation.execute({ taskId, result: 'Shipped it.' }, { source: 'rpc' });
   expect(result).toMatchObject({ accepted: true, task: { id: taskId, status: 'done' } });
 });
+test('a completion gate returning ok:true admits the task', async () => {
+  const completionGate = mock(async () => ({ ok: true as const }));
+  const gatedOperation = createCompleteTaskOperation(() => db, {
+    getTaskManager: (id) => new SpaceTaskManager(db, id),
+    emitTaskUpdated: emit,
+    completionGate,
+  });
+  const result = await gatedOperation.execute({ taskId, result: 'Shipped it.' }, { source: 'rpc' });
+  expect(result).toMatchObject({ accepted: true, task: { id: taskId, status: 'done' } });
+  expect(completionGate).toHaveBeenCalledWith(expect.objectContaining({ id: taskId }), {
+    source: 'rpc',
+  });
+});
+test('a completion gate returning ok:false rejects with task_completion_unavailable and no write', async () => {
+  const completionGate = mock(async () => ({ ok: false as const, error: 'PR not merged yet.' }));
+  const gatedOperation = createCompleteTaskOperation(() => db, {
+    getTaskManager: (id) => new SpaceTaskManager(db, id),
+    emitTaskUpdated: emit,
+    completionGate,
+  });
+  const result = await gatedOperation.execute({ taskId }, { source: 'rpc' });
+  expect(result).toEqual({
+    accepted: false,
+    reason: 'task_completion_unavailable',
+    detail: 'PR not merged yet.',
+  });
+  expect(tasks.getTask(taskId)?.status).toBe('approved');
+  expect(emit).not.toHaveBeenCalled();
+});
+test('completes normally when completionGate is absent', async () => {
+  const result = await operation.execute({ taskId, result: 'Shipped it.' }, { source: 'rpc' });
+  expect(result).toMatchObject({ accepted: true, task: { id: taskId, status: 'done' } });
+});
+test('ownership rejections win before the completion gate runs', async () => {
+  const completionGate = mock(async () => ({ ok: true as const }));
+  const routedSessionId = worker('post-approval-owner');
+  tasks.updateTask(taskId, { postApprovalSessionId: routedSessionId });
+  const gatedOperation = createCompleteTaskOperation(() => db, {
+    getTaskManager: (id) => new SpaceTaskManager(db, id),
+    emitTaskUpdated: emit,
+    completionGate,
+  });
+  const result = await gatedOperation.execute({ taskId }, { source: 'rpc' });
+  expect(result).toEqual({ accepted: false, reason: 'task_completion_denied' });
+  expect(completionGate).not.toHaveBeenCalled();
+});
 test('a post-approval owner reassigned between admission and the manager write is rejected', async () => {
   const routedSessionId = worker('post-approval-owner');
   const stolenBySessionId = worker('other-worker');
