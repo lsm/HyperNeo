@@ -20,6 +20,7 @@ export interface TaskOperationDependencies {
   pendingCompletion?: OperationDefinition;
   submitForReview?: OperationDefinition;
   cancel?: OperationDefinition;
+  complete?: OperationDefinition;
   start?: OperationDefinition;
   readTask: (taskId: string) => TaskCore | null;
   createTask: Parameters<typeof createCreateTaskOperation<CreateStandaloneTaskInput>>[0];
@@ -46,6 +47,7 @@ export function createDaemonOperationCatalog(
     ...(tasks.pendingCompletion ? [tasks.pendingCompletion] : []),
     ...(tasks.submitForReview ? [tasks.submitForReview] : []),
     ...(tasks.cancel ? [tasks.cancel] : []),
+    ...(tasks.complete ? [tasks.complete] : []),
     ...(tasks.start ? [tasks.start] : []),
     ...createDiscoveryOperations(() => registry),
   ]);
