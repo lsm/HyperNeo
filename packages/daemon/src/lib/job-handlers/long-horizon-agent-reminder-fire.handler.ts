@@ -2,7 +2,7 @@ import type { SpaceLongHorizonAgentReminder } from '@hyperneo/shared';
 import { LONG_HORIZON_AGENT_REMINDER_FIRE } from '../job-queue-constants.ts';
 import { Logger } from '../logger.ts';
 import { getNextRunAt } from '../space/schedule/cron-utils.ts';
-import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
+import type { SpaceAgentReminderRepository } from '../../storage/repositories/space-agent-reminder-repository.ts';
 import type { SpaceRepository } from '../../storage/repositories/space-repository.ts';
 import type { JobQueueRepository, Job } from '../../storage/repositories/job-queue-repository.ts';
 
@@ -29,7 +29,7 @@ export interface LongHorizonAgentReminderFireResult extends Record<string, unkno
 export type ReminderOccurrenceDeliveryState = 'absent' | 'enqueued' | 'consumed';
 
 export interface LongHorizonAgentReminderFireDeps {
-  reminderRepo: SpaceLongHorizonAgentRepository;
+  reminderRepo: SpaceAgentReminderRepository;
   spaceRepo: SpaceRepository;
   jobQueue: JobQueueRepository;
   deliver: (args: {
@@ -232,7 +232,7 @@ export function enqueueLongHorizonAgentReminderScanIfMissing(
 }
 
 export function backfillLongHorizonAgentReminderNextRunAt(
-  reminderRepo: SpaceLongHorizonAgentRepository
+  reminderRepo: SpaceAgentReminderRepository
 ): number {
   const stale = reminderRepo.listActiveRemindersWithNullNextRunAt();
   if (stale.length === 0) return 0;

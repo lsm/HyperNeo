@@ -77,6 +77,8 @@ import { startEventLoopWatchdog, type EventLoopWatchdogHandle } from './lib/even
 import { WorkflowHookRuntimeService } from './lib/space/workflow-hook-runtime-service.ts';
 import { WorkflowHookStateRepository } from './storage/repositories/workflow-hook-state-repository.ts';
 import { SpaceLongHorizonAgentRepository } from './storage/repositories/space-long-horizon-agent-repository.ts';
+import { SpaceAgentReminderRepository } from './storage/repositories/space-agent-reminder-repository.ts';
+import { SpaceAgentRepository } from './storage/repositories/space-agent-repository.ts';
 import { SpaceManager } from './lib/space/managers/space-manager.ts';
 import type { SpaceRuntimeService } from './lib/space/runtime/space-runtime-service.ts';
 import type { TaskAgentManager } from './lib/space/runtime/task-agent-manager.ts';
@@ -1051,7 +1053,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       });
     });
 
-    const lhAgentReminderRepo = new SpaceLongHorizonAgentRepository(db.getDatabase());
+    const lhAgentReminderRepo = new SpaceAgentReminderRepository(
+      db.getDatabase(),
+      new SpaceAgentRepository(db.getDatabase())
+    );
     const lhAgentReminderSpaceRepo = new SpaceRepository(db.getDatabase());
     jobProcessor.register(LONG_HORIZON_AGENT_REMINDER_FIRE, async (job) => {
       return handleLongHorizonAgentReminderFire(job, {
