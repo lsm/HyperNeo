@@ -35,6 +35,7 @@ import type { NodeExecutionRepository } from '../../../storage/repositories/node
 import { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
 import { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository.ts';
 import type { SpaceAgentTemplateRepository } from '../../../storage/repositories/space-agent-template-repository.ts';
+import type { SpaceAgentSubscriptionRepository } from '../../../storage/repositories/space-agent-subscription-repository.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import { SpaceWorkflowEventSubscriptionRepository } from '../../../storage/repositories/space-workflow-event-subscription-repository.ts';
@@ -204,6 +205,7 @@ export interface SpaceRuntimeConfig {
   channelCycleRepo?: ChannelCycleRepository;
   spaceManager: SpaceManager;
   longHorizonAgentRepo?: SpaceLongHorizonAgentRepository;
+  subscriptionRepo?: SpaceAgentSubscriptionRepository;
   templateRepo?: SpaceAgentTemplateRepository;
   workflowEventSubscriptionRepo?: SpaceWorkflowEventSubscriptionRepository;
   spaceWorkflowManager: SpaceWorkflowManager;
@@ -1240,8 +1242,10 @@ export class SpaceRuntime {
     spaceId: string,
     subscriptionId: string
   ): { success: boolean; error?: string } {
-    const repo = this.config.longHorizonAgentRepo;
-    if (!repo) return { success: false, error: 'Long-horizon agent repository unavailable.' };
+    const repo = this.config.subscriptionRepo;
+    const agents = this.config.longHorizonAgentRepo;
+    if (!repo || !agents)
+      return { success: false, error: 'Long-horizon agent repository unavailable.' };
     this.topicTrie.remove(
       (target) =>
         isLongHorizonSubscriptionTarget(target) &&
@@ -1257,7 +1261,7 @@ export class SpaceRuntime {
       );
       return { success: true };
     }
-    const agent = repo.getById(subscription.agentId);
+    const agent = agents.getById(subscription.agentId);
     if (!agent || agent.spaceId !== spaceId || agent.status !== 'active') {
       this.longHorizonSubscriptionPatterns.delete(subscriptionId);
       this.clearLongHorizonRetries(
@@ -1302,7 +1306,7 @@ export class SpaceRuntime {
     spaceId: string,
     agentId: string
   ): { success: boolean; error?: string } {
-    const repo = this.config.longHorizonAgentRepo;
+    const repo = this.config.subscriptionRepo;
     if (!repo) return { success: false, error: 'Long-horizon agent repository unavailable.' };
     const subscriptions = repo
       .listSubscriptions(agentId)
@@ -4461,7 +4465,7 @@ export class SpaceRuntime {
         continue;
       }
       const eventPayload = this.externalEventPayloadFromRecord(eventRecord.event);
-      const subscription = this.config.longHorizonAgentRepo?.getSubscription(delivery.taskId);
+      const subscription = this.config.subscriptionRepo?.getSubscription(delivery.taskId);
       const agent = subscription
         ? this.config.longHorizonAgentRepo?.getById(subscription.agentId)
         : null;
@@ -4619,7 +4623,7 @@ export class SpaceRuntime {
   }
 
   private rehydrateLongHorizonSubscriptions(spaceId: string): void {
-    const repo = this.config.longHorizonAgentRepo;
+    const repo = this.config.subscriptionRepo;
     if (!repo) return;
     this.topicTrie.remove(
       (target) => isLongHorizonSubscriptionTarget(target) && target.spaceId === spaceId
