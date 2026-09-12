@@ -272,6 +272,21 @@ test('workflow-owned task with an invalid transition is rejected without throwin
   expect(emitTaskUpdated).not.toHaveBeenCalled();
 });
 
+test('a non-domain manager throw propagates instead of becoming a domain rejection', async () => {
+  markTaskWorkflowOwned();
+  const broken = createSubmitTaskForReviewOperation(() => db, jobs, {
+    getTaskManager: () =>
+      ({
+        submitTaskForReview: async () => {
+          throw new Error('boom');
+        },
+      }) as Pick<SpaceTaskManager, 'updateTask' | 'submitTaskForReview'>,
+    emitTaskUpdated,
+  });
+  await expect(broken.execute({ taskId }, { source: 'rpc' })).rejects.toThrow('boom');
+  expect(emitTaskUpdated).not.toHaveBeenCalled();
+});
+
 test('configured shared catalog discovers lazily and both transports persist the same request', async () => {
   const getDatabase = mock(() => db);
   const database = { getDatabase, notifyChange: () => {} } as unknown as AppDatabase;
