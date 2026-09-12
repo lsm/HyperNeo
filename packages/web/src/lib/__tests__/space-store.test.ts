@@ -2137,6 +2137,33 @@ describe('SpaceStore — CRUD methods', () => {
     expect(spaceStore.agents.value.map((agent) => agent.id)).toEqual(['new-lh-agent']);
   });
 
+  it('agent reminder methods call RPC with current space', async () => {
+    await spaceStore.selectSpace('space-1');
+
+    await spaceStore.listAgentReminderCounts(['lh-1', 'lh-2']);
+    await spaceStore.createAgentReminder({
+      agentId: 'lh-1',
+      title: 'Check the PR',
+      triggerType: 'at',
+      runAt: 4242,
+    });
+    await spaceStore.deleteAgentReminder('reminder-1');
+
+    expect(mockHub.request).toHaveBeenCalledWith('spaceAgentReminder.listCounts', {
+      agentIds: ['lh-1', 'lh-2'],
+    });
+    expect(mockHub.request).toHaveBeenCalledWith('spaceAgentReminder.create', {
+      spaceId: 'space-1',
+      agentId: 'lh-1',
+      title: 'Check the PR',
+      triggerType: 'at',
+      runAt: 4242,
+    });
+    expect(mockHub.request).toHaveBeenCalledWith('spaceAgentReminder.delete', {
+      reminderId: 'reminder-1',
+    });
+  });
+
   it('agent subscription methods call RPC with current space', async () => {
     await spaceStore.selectSpace('space-1');
 

@@ -2579,7 +2579,7 @@ class SpaceStore {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
     const { counts } = await hub.request<{ counts: Record<string, number> }>(
-      'spaceAgent.listReminderCounts',
+      'spaceAgentReminder.listCounts',
       { agentIds }
     );
     return counts;
@@ -2593,7 +2593,7 @@ class SpaceStore {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
     const { reminder } = await hub.request<{ reminder: SpaceLongHorizonAgentReminder }>(
-      'spaceAgent.createReminder',
+      'spaceAgentReminder.create',
       { spaceId, ...params }
     );
     return reminder;
@@ -2602,7 +2602,7 @@ class SpaceStore {
   async deleteAgentReminder(reminderId: string): Promise<void> {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
-    await hub.request('spaceAgent.deleteReminder', { reminderId });
+    await hub.request('spaceAgentReminder.delete', { reminderId });
   }
 
   async listAgentSubscriptions(agentId: string): Promise<SpaceLongHorizonAgentEventSubscription[]> {
