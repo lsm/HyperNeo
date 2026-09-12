@@ -1,13 +1,10 @@
 import { describe, expect, mock, test } from 'bun:test';
 import { isWorkflowRecoveryTransition } from '@hyperneo/shared';
+import type { MessageHub, Space, SpaceTask, SpaceTaskStatus } from '@hyperneo/shared';
 import type {
+  DaemonInternalEventMap,
   InternalEventBus,
-  MessageHub,
-  Space,
-  SpaceTask,
-  SpaceTaskStatus,
-} from '@hyperneo/shared';
-import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus';
+} from '../../../../src/lib/internal-event-bus';
 import { setupSpaceTaskHandlers } from '../../../../src/lib/rpc-handlers/space-task-handlers';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
 import type { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager';
@@ -63,6 +60,8 @@ function makeTask(overrides: Partial<SpaceTask> = {}): SpaceTask {
   };
 }
 
+type RequestHandler = (data: unknown) => Promise<unknown>;
+
 interface Row {
   currentStatus: SpaceTaskStatus;
   requestedStatus?: SpaceTaskStatus;
@@ -71,12 +70,12 @@ interface Row {
   withField?: boolean;
 }
 
-function classify(row: Row, hasChanges = true) {
+function classify(row: Row, opts: { hasChanges?: boolean; taskExists?: boolean } = {}) {
   const hasWorkflowRun = row.hasWorkflowRun ?? false;
   const differs = row.requestedStatus !== undefined && row.requestedStatus !== row.currentStatus;
   return routeTaskUpdate({
-    hasChanges,
-    taskExists: true,
+    hasChanges: opts.hasChanges ?? true,
+    taskExists: opts.taskExists ?? true,
     taskInSpace: true,
     currentStatus: row.currentStatus,
     requestedStatus: row.requestedStatus,
@@ -100,6 +99,7 @@ interface DriveOpts {
   withRuntime?: boolean;
   extraParams?: Record<string, unknown>;
   taskOverrides?: Partial<SpaceTask>;
+  taskMissing?: boolean;
 }
 
 async function driveRpc(row: Row, opts: DriveOpts = {}) {
@@ -123,7 +123,7 @@ async function driveRpc(row: Row, opts: DriveOpts = {}) {
   const updateTaskCalls: Array<Record<string, unknown>> = [];
   const seen: string[] = [];
   const taskManager = {
-    getTask: mock(async () => current),
+    getTask: mock(async () => (opts.taskMissing ? null : current)),
     updateTask: mock(async (_id: string, fields: Record<string, unknown>) => {
       updateTaskCalls.push(fields);
       current = { ...current, ...fields } as SpaceTask;
@@ -284,8 +284,16 @@ describe('known deltas (pinned current behavior, not fixed here)', () => {
 
   test('no_updatable_fields: the classifier rejects an empty update; the RPC handler treats it as a no-op', async () => {
     const row: Row = { currentStatus: 'open' };
-    expect(actionOf(classify(row, false))).toBe('reject:no_updatable_fields');
+    expect(actionOf(classify(row, { hasChanges: false }))).toBe('reject:no_updatable_fields');
     const { updateTaskCalls } = await driveRpc(row);
     expect(updateTaskCalls).toEqual([{}]);
+  });
+});
+
+describe('target gate parity', () => {
+  test('task_not_found: both sides reject a missing task the same way', async () => {
+    const row: Row = { currentStatus: 'open' };
+    expect(actionOf(classify(row, { taskExists: false }))).toBe('reject:task_not_found');
+    expect(await observeAction(row, { taskMissing: true })).toBe('reject:task_not_found');
   });
 });
