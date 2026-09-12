@@ -26,9 +26,9 @@ async function createTestSpace(page: Page): Promise<{
       });
       const spaceId = (spaceRes as { id: string }).id;
 
-      const agentRes = await hub.request('spaceAgent.create', {
+      const agentRes = await hub.request('spaceAgentV2.create', {
         spaceId,
-        name: 'Test Coder',
+        displayName: 'Test Coder',
         description: 'A test coder agent',
       });
       const agentId = (agentRes as { agent: { id: string } }).agent.id;

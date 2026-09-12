@@ -1187,7 +1187,7 @@ async function seedSpace(ws: WebSocket): Promise<{ spaceId: string; taskIds: str
   });
   await rpcCall(ws, 'spaceTask.update', { spaceId, taskId: t9, dependsOn: [t6] });
 
-  const agentsRes = await rpcCall(ws, 'spaceAgent.list', { spaceId });
+  const agentsRes = await rpcCall(ws, 'spaceAgentV2.list', { spaceId });
   const agents = (
     (Array.isArray(agentsRes) ? agentsRes : (agentsRes?.agents ?? [])) as Array<{
       id: string;
@@ -1274,7 +1274,7 @@ async function seedSpace(ws: WebSocket): Promise<{ spaceId: string; taskIds: str
     checkInTimezone: 'America/New_York',
   });
 
-  await rpcCall(ws, 'spaceAgent.create', {
+  await rpcCall(ws, 'spaceAgentV2.create', {
     spaceId,
     handle: 'palette-warden',
     displayName: 'Palette Warden',

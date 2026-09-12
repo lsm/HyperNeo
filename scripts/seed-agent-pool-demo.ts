@@ -107,7 +107,7 @@ try {
   console.log(`[seed] reusing space "${space.name}" (${space.id})`);
 }
 
-const agentsResult = await rpcCall(ws, 'spaceAgent.list', { spaceId: space.id });
+const agentsResult = await rpcCall(ws, 'spaceAgentV2.list', { spaceId: space.id });
 const agents: Array<{ id: string; displayName: string }> = agentsResult?.agents ?? [];
 const byName = (name: string) =>
   agents.find((a) => a.displayName.toLowerCase() === name.toLowerCase());
@@ -133,7 +133,7 @@ const reviewerPool = [
   { ...(model(1) ?? { model: 'glm-5' }), maxConcurrent: 2, weight: 40 },
 ].filter((entry) => !!entry.model);
 
-await rpcCall(ws, 'spaceAgent.update', {
+await rpcCall(ws, 'spaceAgentV2.update', {
   id: coder.id,
   spaceId: space.id,
   modelPool: coderPool,
@@ -142,7 +142,7 @@ console.log(
   `[seed] set Coder model pool: ${coderPool.map((e) => `${e.model}(max ${e.maxConcurrent} w${e.weight})`).join(', ')}`
 );
 
-await rpcCall(ws, 'spaceAgent.update', {
+await rpcCall(ws, 'spaceAgentV2.update', {
   id: reviewer.id,
   spaceId: space.id,
   modelPool: reviewerPool,
