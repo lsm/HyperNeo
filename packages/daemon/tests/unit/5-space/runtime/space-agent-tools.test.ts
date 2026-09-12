@@ -232,6 +232,7 @@ function makeCtx(): TestCtx {
     taskRepo,
     nodeExecutionRepo,
     longHorizonAgentRepo,
+    subscriptionRepo,
   });
 
   const taskManager = new SpaceTaskManager(db, spaceId);

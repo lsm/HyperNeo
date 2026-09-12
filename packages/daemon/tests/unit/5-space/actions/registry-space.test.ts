@@ -94,6 +94,7 @@ function makeCtx(overrides: Partial<SpaceAgentToolsConfig> = {}): RegistryCtx {
     taskRepo,
     nodeExecutionRepo,
     longHorizonAgentRepo,
+    subscriptionRepo,
   });
   const config: SpaceAgentToolsConfig = {
     spaceId: SPACE_ID,
