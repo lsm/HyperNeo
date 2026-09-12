@@ -552,6 +552,48 @@ describe('SpaceRuntime — tick loop correctness', () => {
       ).toEqual(['cancelled', 'in_progress']);
     });
 
+    test.each(['missing', 'existing', 'superseded'] as const)(
+      'restored workflow reservation stamps only its %s start timestamp',
+      async (mode) => {
+        const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+          spawnWorkflowNodeAgentForExecution: async (value, _space, _workflow, _run, node) => {
+            const task = value as SpaceTask;
+            if (mode === 'superseded') {
+              taskRepo.updateTask(task.id, { status: 'open' });
+              taskRepo.updateTask(task.id, { status: 'in_progress' });
+            }
+            const execution = node as NodeExecution;
+            nodeExecutionRepo.update(execution.id, {
+              status: 'in_progress',
+              agentSessionId: 'restored-worker',
+              startedAt: Date.now(),
+            });
+            return 'restored-worker';
+          },
+        });
+        const rt = new SpaceRuntime(buildConfig(tam));
+        const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+          { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+        ]);
+        const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+        taskRepo.updateTask(tasks[0].id, {
+          status: 'in_progress',
+          startedAt: mode === 'existing' ? 123 : null,
+        });
+        const restored = new SpaceRuntime(buildConfig(tam));
+        await restored.executeTick();
+        const task = taskRepo.getTask(tasks[0].id)!;
+        expect(task.status).toBe('in_progress');
+        if (mode === 'missing') expect(task.startedAt).toBeTypeOf('number');
+        else expect(task.startedAt).toBe(mode === 'existing' ? 123 : null);
+        expect(
+          nodeExecutionRepo
+            .listByWorkflowRun(run.id)
+            .some((execution) => execution.status === 'in_progress')
+        ).toBe(true);
+      }
+    );
+
     test('missing and finished runs stop before spawn work', async () => {
       let spawnCount = 0;
       const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {

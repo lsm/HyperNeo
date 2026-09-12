@@ -6533,6 +6533,7 @@ export class SpaceRuntime {
       if (!reserved) return { blockedByCrash, permanentSpawnFailureReason, spawned: false };
       canonicalTask = reserved;
     }
+    const startGeneration = this.config.taskRepo.getLifecycleGeneration(canonicalTask.id);
     for (const execution of pendingExecutions) {
       if (tam.isExecutionSpawning(execution.id)) continue;
       try {
@@ -6631,13 +6632,16 @@ export class SpaceRuntime {
       }, 'immediate')();
       if (released) await this.safeOnTaskUpdated(space.id, released, { fromStatus: 'in_progress' });
     }
-    if (
-      reservation.generation !== null &&
-      (spawned || (!releaseSafe && !blockedByCrash && !permanentSpawnFailureReason))
-    ) {
+    if (spawned || (!releaseSafe && !blockedByCrash && !permanentSpawnFailureReason)) {
       const started = this.config.db.transaction(() => {
         const current = this.config.taskRepo.getTask(canonicalTask.id);
-        if (current?.status !== 'in_progress' || current.workflowRunId !== runId) return null;
+        if (
+          current?.status !== 'in_progress' ||
+          current.workflowRunId !== runId ||
+          current.startedAt != null ||
+          this.config.taskRepo.getLifecycleGeneration(current.id) !== startGeneration
+        )
+          return null;
         return this.config.taskRepo.updateTask(
           current.id,
           {
