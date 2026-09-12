@@ -43,6 +43,7 @@ import type { McpAuditLogRepository } from '../../../storage/repositories/mcp-au
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
 import { SpaceAgentTemplateRepository } from '../../../storage/repositories/space-agent-template-repository.ts';
 import type { SpaceAgentGoalScopeRepository } from '../../../storage/repositories/space-agent-goal-scope-repository.ts';
+import type { SpaceAgentReminderRepository } from '../../../storage/repositories/space-agent-reminder-repository.ts';
 import type { SpaceAgentSubscriptionRepository } from '../../../storage/repositories/space-agent-subscription-repository.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
@@ -600,6 +601,7 @@ export interface SpaceAgentToolsConfig {
   longHorizonAgentRepo?: SpaceLongHorizonAgentRepository;
   goalScopeRepo?: SpaceAgentGoalScopeRepository;
   subscriptionRepo?: SpaceAgentSubscriptionRepository;
+  reminderRepo?: SpaceAgentReminderRepository;
   runtime: SpaceRuntime;
   workflowManager: SpaceWorkflowManager;
   spaceManager?: Pick<
@@ -1405,6 +1407,11 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     return config.subscriptionRepo;
   }
 
+  function requireReminderRepo(): SpaceAgentReminderRepository {
+    if (!config.reminderRepo) throw new Error('Long-horizon agent management not available');
+    return config.reminderRepo;
+  }
+
   function requireTemplateManager() {
     if (!config.templateManager) throw new Error('Agent template management not available');
     return config.templateManager;
@@ -1588,7 +1595,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     agentId: string,
     reminders: SpaceLongHorizonAgentTemplate['reminderDefaults']
   ): { seeded: Array<{ title: string }>; skipped: SkippedTemplateReminder[] } {
-    const repo = requireLongHorizonAgentRepo();
+    const repo = requireReminderRepo();
     const seeded: Array<{ title: string }> = [];
     const skipped: SkippedTemplateReminder[] = [];
     for (const reminder of reminders) {
@@ -2316,7 +2323,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     }): Promise<ToolResult> {
       try {
         requireLongHorizonAgentInSpace(args.agent_id);
-        const reminder = requireLongHorizonAgentRepo().createReminder({
+        const reminder = requireReminderRepo().createReminder({
           spaceId,
           agentId: args.agent_id,
           title: args.message,
@@ -2348,7 +2355,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
               : args.status;
         const dueTime = (reminder: { runAt: number | null; nextRunAt: number | null }) =>
           reminder.runAt ?? reminder.nextRunAt ?? 0;
-        const reminders = requireLongHorizonAgentRepo()
+        const reminders = requireReminderRepo()
           .listReminders(args.agent_id)
           .filter((reminder) => !status || reminder.status === status)
           .sort((left, right) => dueTime(left) - dueTime(right))

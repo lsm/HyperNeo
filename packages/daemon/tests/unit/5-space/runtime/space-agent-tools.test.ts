@@ -52,6 +52,7 @@ import { SpaceGoalOutcomeNotificationRepository } from '../../../../src/storage/
 import { SpaceGoalRepository } from '../../../../src/storage/repositories/space-goal-repository.ts';
 import { SpaceAgentGoalScopeRepository } from '../../../../src/storage/repositories/space-agent-goal-scope-repository.ts';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
+import { SpaceAgentReminderRepository } from '../../../../src/storage/repositories/space-agent-reminder-repository';
 import { SpaceAgentSubscriptionRepository } from '../../../../src/storage/repositories/space-agent-subscription-repository.ts';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository.ts';
@@ -195,6 +196,7 @@ interface TestCtx {
   longHorizonAgentRepo: SpaceLongHorizonAgentRepository;
   goalScopeRepo: SpaceAgentGoalScopeRepository;
   subscriptionRepo: SpaceAgentSubscriptionRepository;
+  reminderRepo: SpaceAgentReminderRepository;
   goalService: SpaceGoalService;
   goalRepo: SpaceGoalRepository;
   scheduleService: ScheduleService;
@@ -224,6 +226,7 @@ function makeCtx(): TestCtx {
   const agentIdentityRepo = new SpaceAgentRepository(db);
   const goalScopeRepo = new SpaceAgentGoalScopeRepository(db, agentIdentityRepo);
   const subscriptionRepo = new SpaceAgentSubscriptionRepository(db, agentIdentityRepo);
+  const reminderRepo = new SpaceAgentReminderRepository(db, agentIdentityRepo);
 
   const runtime = new SpaceRuntime({
     db,
@@ -319,6 +322,7 @@ function makeCtx(): TestCtx {
     longHorizonAgentRepo,
     goalScopeRepo,
     subscriptionRepo,
+    reminderRepo,
     goalService,
     goalRepo,
     scheduleService,
@@ -345,6 +349,7 @@ function makeHandlers(
     longHorizonAgentRepo: ctx.longHorizonAgentRepo,
     goalScopeRepo: ctx.goalScopeRepo,
     subscriptionRepo: ctx.subscriptionRepo,
+    reminderRepo: ctx.reminderRepo,
     goalService: ctx.goalService,
     goalRepo: ctx.goalRepo,
     scheduleService: ctx.scheduleService,

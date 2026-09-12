@@ -24,6 +24,7 @@ import type { SessionRepository } from '../../../storage/repositories/session-re
 import { SpaceAgentTemplateRepository } from '../../../storage/repositories/space-agent-template-repository.ts';
 import type { SpaceGoalOutcomeNotificationRepository } from '../../../storage/repositories/space-goal-outcome-notification-repository.ts';
 import type { SpaceAgentGoalScopeRepository } from '../../../storage/repositories/space-agent-goal-scope-repository.ts';
+import type { SpaceAgentReminderRepository } from '../../../storage/repositories/space-agent-reminder-repository.ts';
 import type { SpaceAgentSubscriptionRepository } from '../../../storage/repositories/space-agent-subscription-repository.ts';
 import { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository.ts';
 import {
@@ -141,6 +142,7 @@ export interface SpaceRuntimeServiceConfig {
   longHorizonAgentRepo?: SpaceLongHorizonAgentRepository;
   goalScopeRepo?: SpaceAgentGoalScopeRepository;
   subscriptionRepo?: SpaceAgentSubscriptionRepository;
+  reminderRepo?: SpaceAgentReminderRepository;
   ownedAgents?: OwnedAgentLookup;
   templateRepo?: SpaceAgentTemplateRepository;
   spaceWorkflowManager: SpaceWorkflowManager;
@@ -1000,6 +1002,7 @@ export class SpaceRuntimeService {
       longHorizonAgentRepo: this.config.longHorizonAgentRepo,
       goalScopeRepo: this.config.goalScopeRepo,
       subscriptionRepo: this.config.subscriptionRepo,
+      reminderRepo: this.config.reminderRepo,
       ownedAgents: this.config.ownedAgents,
       runtime: this.runtime,
       workflowManager: this.config.spaceWorkflowManager,
@@ -1586,6 +1589,7 @@ export class SpaceRuntimeService {
       longHorizonAgentRepo: this.config.longHorizonAgentRepo,
       goalScopeRepo: this.config.goalScopeRepo,
       subscriptionRepo: this.config.subscriptionRepo,
+      reminderRepo: this.config.reminderRepo,
       ownedAgents: this.config.ownedAgents,
       runtime: this.runtime,
       workflowManager: this.config.spaceWorkflowManager,
@@ -1783,6 +1787,7 @@ export class SpaceRuntimeService {
       longHorizonAgentRepo: this.config.longHorizonAgentRepo,
       goalScopeRepo: this.config.goalScopeRepo,
       subscriptionRepo: this.config.subscriptionRepo,
+      reminderRepo: this.config.reminderRepo,
       ownedAgents: this.config.ownedAgents,
       runtime: this.runtime,
       workflowManager: spaceWorkflowManager,

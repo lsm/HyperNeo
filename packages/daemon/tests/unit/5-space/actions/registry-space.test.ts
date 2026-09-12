@@ -18,6 +18,7 @@ import { SESSION_WRITE_AUTONOMY_LEVEL } from '../../../../src/lib/space/tools/to
 import type { McpAuditLogRepository } from '../../../../src/storage/repositories/mcp-audit-log-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
+import { SpaceAgentReminderRepository } from '../../../../src/storage/repositories/space-agent-reminder-repository.ts';
 import { SpaceAgentSubscriptionRepository } from '../../../../src/storage/repositories/space-agent-subscription-repository.ts';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
@@ -86,6 +87,7 @@ function makeCtx(overrides: Partial<SpaceAgentToolsConfig> = {}): RegistryCtx {
   const spaceManager = new SpaceManager(db);
   const longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(db);
   const subscriptionRepo = new SpaceAgentSubscriptionRepository(db, new SpaceAgentRepository(db));
+  const reminderRepo = new SpaceAgentReminderRepository(db, new SpaceAgentRepository(db));
   const runtime = new SpaceRuntime({
     db,
     spaceManager,
@@ -107,6 +109,7 @@ function makeCtx(overrides: Partial<SpaceAgentToolsConfig> = {}): RegistryCtx {
     taskAgentManager: stubTaskAgentManager,
     longHorizonAgentRepo,
     subscriptionRepo,
+    reminderRepo,
     ...overrides,
   };
   return { db, config, workflowManager, workflowRunRepo, taskRepo };
