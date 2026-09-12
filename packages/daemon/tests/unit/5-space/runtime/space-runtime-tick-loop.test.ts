@@ -449,6 +449,107 @@ describe('SpaceRuntime — tick loop correctness', () => {
       }
     );
 
+    test('standalone workflow attachment rechecks capacity atomically after awaited run creation starts', async () => {
+      db.exec('DROP TABLE sdk_message_replacements; DROP TABLE sdk_messages');
+      createTables(db);
+      const sessions = new SessionRepository(db);
+      const attempts = new DirectTaskExecutionRepository(db);
+      const direct = taskRepo.createTask({ spaceId: SPACE_ID, title: 'Direct', description: '' });
+      attempts.select(direct.id);
+      const start = createDirectTaskStarter({
+        db,
+        defaultModel: 'claude-sonnet-4-6',
+        sessionDb: {
+          getSession: (id) => sessions.getSession(id),
+          createSession: (session) =>
+            sessions.createSession(session, { enforceWorkspaceOwnership: false }),
+        },
+        sessionManager: {
+          getCachedSession: () => undefined,
+          getSessionForControl: async (id) =>
+            ({
+              getSessionData: () => sessions.getSession(id)!,
+              isQueryActiveOrStarting: () => false,
+            }) as AgentSession,
+          unregisterSession: async () => {},
+        },
+      });
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const parent = taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Workflow parent',
+        preferredWorkflowId: workflow.id,
+      });
+      const rt = new SpaceRuntime(
+        buildConfig(makeMockTaskAgentManager(taskRepo, nodeExecutionRepo))
+      );
+      const original = rt.startWorkflowRun.bind(rt);
+      let intercepted = 0;
+      rt.startWorkflowRun = async (...args) => {
+        intercepted++;
+        expect((await start({ taskId: direct.id, requestKey: 'during-attachment' })).started).toBe(
+          true
+        );
+        return original(...args);
+      };
+      await rt.executeTick();
+      expect(intercepted).toBe(1);
+      expect(taskRepo.getTask(parent.id)?.workflowRunId ?? null).toBeNull();
+      expect(taskRepo.getTask(parent.id)?.status).toBe('open');
+      expect(attempts.getActive(direct.id)?.phase).toBe('running');
+      expect(
+        taskRepo.listBySpace(SPACE_ID).filter((task) => task.status === 'in_progress')
+      ).toHaveLength(1);
+    });
+
+    test('partial multi-agent spawn records start time despite another permanent failure', async () => {
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+        spawnWorkflowNodeAgentForExecution: async (_task, _space, _workflow, _run, value) => {
+          const execution = value as NodeExecution;
+          if (execution.agentName === 'Planner')
+            throw new PermanentSpawnError('unsupported workspace');
+          nodeExecutionRepo.update(execution.id, {
+            status: 'in_progress',
+            agentSessionId: 'worker:surviving',
+            startedAt: Date.now(),
+          });
+          return 'worker:surviving';
+        },
+      });
+      const rt = new SpaceRuntime(buildConfig(tam));
+      const workflow = workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: 'Partial start',
+        description: '',
+        nodes: [
+          {
+            id: STEP_A,
+            name: 'Parallel',
+            agents: [
+              { agentId: AGENT_PLANNER, name: 'Planner' },
+              { agentId: AGENT_CODER, name: 'Coder' },
+            ],
+          },
+        ],
+        transitions: [],
+        startNodeId: STEP_A,
+        rules: [],
+        tags: [],
+      });
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      await processRunTick(rt, run.id);
+      expect(taskRepo.getTask(tasks[0].id)?.status).toBe('in_progress');
+      expect(taskRepo.getTask(tasks[0].id)?.startedAt).not.toBeNull();
+      expect(
+        nodeExecutionRepo
+          .listByWorkflowRun(run.id)
+          .map((execution) => execution.status)
+          .sort()
+      ).toEqual(['cancelled', 'in_progress']);
+    });
+
     test('missing and finished runs stop before spawn work', async () => {
       let spawnCount = 0;
       const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
