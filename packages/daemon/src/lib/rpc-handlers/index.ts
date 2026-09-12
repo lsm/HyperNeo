@@ -76,6 +76,7 @@ import {
 import { ChannelCycleRepository } from '../../storage/repositories/channel-cycle-repository.ts';
 import { SessionRepository } from '../../storage/repositories/session-repository.ts';
 import { setupSpaceAgentHandlers } from './space-agent-handlers.ts';
+import { setupSpaceAgentTemplateHandlers } from './space-agent-template-handlers.ts';
 import { setupSpaceAgentV2Handlers } from './space-agent-v2-handlers.ts';
 import { buildTemplateExtrasSeeder } from '../space/agents/template-extras-seeding.ts';
 import { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository.ts';
@@ -1019,19 +1020,26 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     void spaceRuntimeService.recoverPendingOutcomeNotificationsForSpace(spaceId);
   });
 
+  const spaceAgentTemplateManager = new SpaceAgentTemplateManager(
+    spaceAgentTemplateRepo,
+    undefined,
+    templateInstanceScanFromRepo(longHorizonAgentRepo)
+  );
+
   setupSpaceAgentHandlers(
     deps.messageHub,
     deps.internalEventBus,
     deps.spaceManager,
     longHorizonAgentRepo,
     spaceRuntimeService,
-    new SpaceAgentTemplateManager(
-      spaceAgentTemplateRepo,
-      undefined,
-      templateInstanceScanFromRepo(longHorizonAgentRepo)
-    ),
+    spaceAgentTemplateManager,
     spaceAgentRepo
   );
+
+  setupSpaceAgentTemplateHandlers(deps.messageHub, {
+    spaceManager: deps.spaceManager,
+    templateManager: spaceAgentTemplateManager,
+  });
 
   setupSpaceAgentV2Handlers(deps.messageHub, {
     agents: spaceAgentRepo,
