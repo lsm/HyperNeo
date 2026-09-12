@@ -4,7 +4,6 @@ import type {
   Session,
   GlobalToolsConfig,
   GlobalSettings,
-  RoomGitHubMapping,
   InboxItem,
   MessageOrigin,
   HyperNeoActionMessage,
@@ -19,7 +18,6 @@ export { ShortIdAllocator } from '../lib/short-id-allocator.ts';
 import { SessionRepository } from './repositories/session-repository.ts';
 import { SDKMessageRepository, type SendStatus } from './repositories/sdk-message-repository.ts';
 import { SettingsRepository } from './repositories/settings-repository.ts';
-import { GitHubMappingRepository } from './repositories/github-mapping-repository.ts';
 import {
   InboxItemRepository,
   type CreateInboxItemParams,
@@ -100,7 +98,6 @@ export class Database {
   private sessionRepo!: SessionRepository;
   private sdkMessageRepo!: SDKMessageRepository;
   private settingsRepo!: SettingsRepository;
-  private githubMappingRepo!: GitHubMappingRepository;
   private inboxItemRepo!: InboxItemRepository;
   private goalRepo!: GoalRepository;
   private jobQueueRepo!: JobQueueRepository;
@@ -145,7 +142,6 @@ export class Database {
     this.sessionRepo = new SessionRepository(db);
     this.sdkMessageRepo = new SDKMessageRepository(db, reactiveDb);
     this.settingsRepo = new SettingsRepository(db);
-    this.githubMappingRepo = new GitHubMappingRepository(db);
     this.inboxItemRepo = new InboxItemRepository(db);
     this.goalRepo = new GoalRepository(db, reactiveDb, shortIdAllocator);
     this.spaceTaskRepo = new SpaceTaskRepository(db, reactiveDb);
@@ -406,58 +402,6 @@ export class Database {
     return this.settingsRepo.updateGlobalSettings(updates);
   }
 
-  createGitHubMapping(params: {
-    roomId: string;
-    repositories: Array<{
-      owner: string;
-      repo: string;
-      labels?: string[];
-      issueNumbers?: number[];
-    }>;
-    priority?: number;
-  }): RoomGitHubMapping {
-    return this.githubMappingRepo.createMapping(params);
-  }
-
-  getGitHubMapping(id: string): RoomGitHubMapping | null {
-    return this.githubMappingRepo.getMapping(id);
-  }
-
-  getGitHubMappingByRoomId(roomId: string): RoomGitHubMapping | null {
-    return this.githubMappingRepo.getMappingByRoomId(roomId);
-  }
-
-  listGitHubMappings(): RoomGitHubMapping[] {
-    return this.githubMappingRepo.listMappings();
-  }
-
-  listGitHubMappingsForRepository(owner: string, repo: string): RoomGitHubMapping[] {
-    return this.githubMappingRepo.listMappingsForRepository(owner, repo);
-  }
-
-  updateGitHubMapping(
-    id: string,
-    params: {
-      repositories?: Array<{
-        owner: string;
-        repo: string;
-        labels?: string[];
-        issueNumbers?: number[];
-      }>;
-      priority?: number;
-    }
-  ): RoomGitHubMapping | null {
-    return this.githubMappingRepo.updateMapping(id, params);
-  }
-
-  deleteGitHubMapping(id: string): void {
-    this.githubMappingRepo.deleteMapping(id);
-  }
-
-  deleteGitHubMappingByRoomId(roomId: string): void {
-    this.githubMappingRepo.deleteMappingByRoomId(roomId);
-  }
-
   createInboxItem(params: CreateInboxItemParams): InboxItem {
     return this.inboxItemRepo.createItem(params);
   }
@@ -476,18 +420,13 @@ export class Database {
 
   updateInboxItemStatus(
     id: string,
-    status: 'pending' | 'routed' | 'dismissed' | 'blocked',
-    routedToRoomId?: string
+    status: 'pending' | 'routed' | 'dismissed' | 'blocked'
   ): InboxItem | null {
-    return this.inboxItemRepo.updateItemStatus(id, status, routedToRoomId);
+    return this.inboxItemRepo.updateItemStatus(id, status);
   }
 
   dismissInboxItem(id: string): InboxItem | null {
     return this.inboxItemRepo.dismissItem(id);
-  }
-
-  routeInboxItem(id: string, roomId: string): InboxItem | null {
-    return this.inboxItemRepo.routeItem(id, roomId);
   }
 
   blockInboxItem(id: string): InboxItem | null {

@@ -342,17 +342,6 @@ describe('InboxItemRepository', () => {
     });
   });
 
-  describe('routeItem', () => {
-    it('should set status to routed with room ID', () => {
-      const item = repository.createItem(createInboxItemParams());
-      const updated = repository.routeItem(item.id, 'room-456');
-
-      expect(updated?.status).toBe('routed');
-      expect(updated?.routedToRoomId).toBe('room-456');
-      expect(updated?.routedAt).toBeGreaterThan(0);
-    });
-  });
-
   describe('blockItem', () => {
     it('should set status to blocked', () => {
       const item = repository.createItem(createInboxItemParams());

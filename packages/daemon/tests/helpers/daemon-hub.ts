@@ -199,20 +199,6 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
     };
   };
 
-  'github.roomMappingUpdated': {
-    sessionId: string;
-    roomId: string;
-    mapping: import('@hyperneo/shared').RoomGitHubMapping;
-  };
-  'github.roomMappingDeleted': {
-    sessionId: string;
-    roomId: string;
-  };
-  'github.inboxItemRouted': {
-    sessionId: string;
-    item: import('@hyperneo/shared').InboxItem;
-    roomId: string;
-  };
   'github.inboxItemDismissed': {
     sessionId: string;
     itemId: string;

@@ -66,7 +66,6 @@ function createMockDatabase(): Database {
     listPendingInboxItems: mock(() => [createInboxItem()]),
     updateInboxItemStatus: mock(() => createInboxItem()),
     dismissInboxItem: mock(() => createInboxItem()),
-    routeInboxItem: mock(() => createInboxItem()),
     deleteInboxItem: mock(() => {}),
     countInboxItemsByStatus: mock(() => 1),
   } as unknown as Database;
@@ -205,14 +204,6 @@ describe('InboxManager', () => {
       manager.getItem('inbox-123');
 
       expect(mockDb.getInboxItem).toHaveBeenCalledWith('inbox-123');
-    });
-  });
-
-  describe('routeItem', () => {
-    it('should call database routeInboxItem', () => {
-      manager.routeItem('inbox-123', 'room-456');
-
-      expect(mockDb.routeInboxItem).toHaveBeenCalledWith('inbox-123', 'room-456');
     });
   });
 

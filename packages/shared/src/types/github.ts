@@ -88,31 +88,10 @@ export interface RepositoryMapping {
   issueNumbers?: number[];
 }
 
-export interface RoomGitHubMapping {
-  id: string;
-  roomId: string;
-  repositories: RepositoryMapping[];
-  priority: number;
-  createdAt: number;
-  updatedAt: number;
-}
-
-export interface CreateRoomGitHubMappingParams {
-  roomId: string;
-  repositories: RepositoryMapping[];
-  priority?: number;
-}
-
-export interface UpdateRoomGitHubMappingParams {
-  repositories?: RepositoryMapping[];
-  priority?: number;
-}
-
-export type RoutingDecision = 'route' | 'inbox' | 'reject';
+export type RoutingDecision = 'inbox' | 'reject';
 
 export interface RoutingResult {
   decision: RoutingDecision;
-  roomId?: string;
   confidence: 'high' | 'medium' | 'low';
   reason: string;
   securityCheck: SecurityCheckResult;
