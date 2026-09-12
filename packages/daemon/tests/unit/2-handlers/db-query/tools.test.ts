@@ -60,6 +60,7 @@ import {
 
 function createTestDb(): Database {
   const db = new Database(':memory:');
+  db.exec('PRAGMA foreign_keys = ON');
 
   db.exec(`
 		CREATE TABLE IF NOT EXISTS sessions (
@@ -162,10 +163,10 @@ function seedSpaceTasks(db: Database) {
     "INSERT INTO space_tasks (id, space_id, title, status, priority, created_at) VALUES ('task-1', 'space-1', 'Task 1', 'in_progress', 'high', 1000)"
   );
   db.exec(
-    "INSERT INTO space_tasks (id, space_id, title, status, priority, created_at) VALUES ('task-2', 'space-1', 'Task 2', 'pending', 'normal', 2000)"
+    "INSERT INTO space_tasks (id, space_id, title, status, priority, created_at) VALUES ('task-2', 'space-1', 'Task 2', 'open', 'normal', 2000)"
   );
   db.exec(
-    "INSERT INTO space_tasks (id, space_id, title, status, priority, created_at) VALUES ('task-3', 'space-2', 'Task 3', 'completed', 'low', 3000)"
+    "INSERT INTO space_tasks (id, space_id, title, status, priority, created_at) VALUES ('task-3', 'space-2', 'Task 3', 'done', 'low', 3000)"
   );
 }
 
@@ -188,7 +189,7 @@ function seedSpaceWorkflowRuns(db: Database) {
     "INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at) VALUES ('run-1', 'space-1', 'wf-1', 'Run 1', 'in_progress', 1000)"
   );
   db.exec(
-    "INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at) VALUES ('run-2', 'space-1', 'wf-1', 'Run 2', 'completed', 2000)"
+    "INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at) VALUES ('run-2', 'space-1', 'wf-1', 'Run 2', 'done', 2000)"
   );
   db.exec(
     "INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at) VALUES ('run-3', 'space-2', 'wf-2', 'Run 3', 'pending', 3000)"
@@ -270,7 +271,7 @@ describe('db-query tools', () => {
         );
         const result = await handlers.db_query({
           sql: 'SELECT * FROM space_tasks WHERE status = ?',
-          params: ['pending'],
+          params: ['open'],
         });
         const parsed = parseResult(result);
 
@@ -392,13 +393,13 @@ describe('db-query tools', () => {
         }
       });
 
-      it('space scope filters space_workflow_runs by space_id', async () => {
-        seedSpaceWorkflowRuns(db);
+      it('space scope filters space_workflows by space_id', async () => {
+        seedSpaceWorkflows(db);
         const handlers = createDbQueryToolHandlers(
           { dbPath: ':memory:', scopeType: 'space', scopeValue: 'space-1' },
           db
         );
-        const result = await handlers.db_query({ sql: 'SELECT * FROM space_workflow_runs' });
+        const result = await handlers.db_query({ sql: 'SELECT * FROM space_workflows' });
         const parsed = parseResult(result);
 
         expect(parsed.isError).toBeFalsy();
@@ -434,7 +435,7 @@ describe('db-query tools', () => {
         );
         const result = await handlers.db_query({
           sql: 'SELECT * FROM space_tasks WHERE status = ?',
-          params: ['pending'],
+          params: ['open'],
         });
         const parsed = parseResult(result);
 
@@ -464,18 +465,18 @@ describe('db-query tools', () => {
 
     describe('same-scope JOIN queries', () => {
       it('JOINs two space-scoped tables with deduplicated scope filter', async () => {
-        seedSessions(db);
+        seedSpaceWorkflows(db);
         db.exec(
-          "INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at) VALUES ('run-a', 'space-1', 'wf-1', 'Run A', 'active', 1000)"
+          "INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at) VALUES ('run-a', 'space-1', 'wf-1', 'Run A', 'pending', 1000)"
         );
         db.exec(
-          "INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at) VALUES ('run-b', 'space-1', 'wf-1', 'Run B', 'completed', 2000)"
+          "INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at) VALUES ('run-b', 'space-1', 'wf-1', 'Run B', 'done', 2000)"
         );
         db.exec(
           "INSERT INTO space_tasks (id, space_id, title, status, created_at) VALUES ('task-1', 'space-1', 'Task 1', 'in_progress', 3000)"
         );
         db.exec(
-          "INSERT INTO space_tasks (id, space_id, title, status, created_at) VALUES ('task-2', 'space-1', 'Task 2', 'pending', 4000)"
+          "INSERT INTO space_tasks (id, space_id, title, status, created_at) VALUES ('task-2', 'space-1', 'Task 2', 'open', 4000)"
         );
         const handlers = createDbQueryToolHandlers(
           { dbPath: ':memory:', scopeType: 'space', scopeValue: 'space-1' },
@@ -533,7 +534,7 @@ describe('db-query tools', () => {
         );
         const result = await handlers.db_query({
           sql: 'WITH active AS (SELECT id, title, status FROM space_tasks WHERE status = ?) SELECT id, title FROM active',
-          params: ['pending'],
+          params: ['open'],
         });
         const parsed = parseResult(result);
         expect(parsed.isError).toBeFalsy();
@@ -579,10 +580,10 @@ describe('db-query tools', () => {
 
     describe('row limit cap enforced', () => {
       it('default limit is 200', async () => {
-        seedSessions(db);
+        seedSpaces(db);
         for (let i = 0; i < 10; i++) {
           db.exec(
-            `INSERT INTO space_tasks (id, space_id, title, status, created_at) VALUES ('bulk-${i}', 'space-1', 'Bulk ${i}', 'pending', ${i})`
+            `INSERT INTO space_tasks (id, space_id, title, status, created_at) VALUES ('bulk-${i}', 'space-1', 'Bulk ${i}', 'open', ${i})`
           );
         }
         const handlers = createDbQueryToolHandlers(
@@ -597,10 +598,10 @@ describe('db-query tools', () => {
       });
 
       it('user-specified limit is respected when under max', async () => {
-        seedSessions(db);
+        seedSpaces(db);
         for (let i = 0; i < 10; i++) {
           db.exec(
-            `INSERT INTO space_tasks (id, space_id, title, status, created_at) VALUES ('lim-${i}', 'space-1', 'Limit ${i}', 'pending', ${i})`
+            `INSERT INTO space_tasks (id, space_id, title, status, created_at) VALUES ('lim-${i}', 'space-1', 'Limit ${i}', 'open', ${i})`
           );
         }
         const handlers = createDbQueryToolHandlers(
@@ -615,10 +616,10 @@ describe('db-query tools', () => {
       });
 
       it('limit is capped at 1000 even if user requests more', async () => {
-        seedSessions(db);
+        seedSpaceWorkflows(db);
         for (let i = 0; i < 10; i++) {
           db.exec(
-            `INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at) VALUES ('rlimit-${i}', 'space-1', 'wf-1', 'Run Limit ${i}', 'active', ${i})`
+            `INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at) VALUES ('rlimit-${i}', 'space-1', 'wf-1', 'Run Limit ${i}', 'pending', ${i})`
           );
         }
         const handlers = createDbQueryToolHandlers(
@@ -638,10 +639,10 @@ describe('db-query tools', () => {
 
     describe('truncated flag', () => {
       it('truncated flag is true when results hit the default limit', async () => {
-        seedSessions(db);
+        seedSpaceWorkflows(db);
         for (let i = 0; i < 250; i++) {
           db.exec(
-            `INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at) VALUES ('trunc-${i}', 'space-1', 'wf-1', 'Truncation Test ${i}', 'active', ${i})`
+            `INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at) VALUES ('trunc-${i}', 'space-1', 'wf-1', 'Truncation Test ${i}', 'pending', ${i})`
           );
         }
         const handlers = createDbQueryToolHandlers(
@@ -771,7 +772,7 @@ describe('db-query tools', () => {
         expect(parsed.isError).toBeFalsy();
         expect(parsed.rows).toHaveLength(2);
         const statuses = parsed.rows.map((r: Record<string, unknown>) => r.status);
-        expect(statuses.sort()).toEqual(['in_progress', 'pending']);
+        expect(statuses.sort()).toEqual(['in_progress', 'open']);
       });
     });
 
@@ -1001,15 +1002,15 @@ describe('db-query tools', () => {
 
     describe('DISTINCT queries in scoped mode', () => {
       it('DISTINCT deduplicates on selected columns only', async () => {
-        seedSessions(db);
+        seedSpaces(db);
         db.exec(
-          "INSERT INTO space_tasks (id, space_id, title, status, priority, created_at) VALUES ('t1', 'space-1', 'A', 'active', 'high', 1000)"
+          "INSERT INTO space_tasks (id, space_id, title, status, priority, created_at) VALUES ('t1', 'space-1', 'A', 'open', 'high', 1000)"
         );
         db.exec(
-          "INSERT INTO space_tasks (id, space_id, title, status, priority, created_at) VALUES ('t2', 'space-1', 'B', 'active', 'normal', 2000)"
+          "INSERT INTO space_tasks (id, space_id, title, status, priority, created_at) VALUES ('t2', 'space-1', 'B', 'open', 'normal', 2000)"
         );
         db.exec(
-          "INSERT INTO space_tasks (id, space_id, title, status, priority, created_at) VALUES ('t3', 'space-1', 'C', 'pending', 'low', 3000)"
+          "INSERT INTO space_tasks (id, space_id, title, status, priority, created_at) VALUES ('t3', 'space-1', 'C', 'in_progress', 'low', 3000)"
         );
         const handlers = createDbQueryToolHandlers(
           { dbPath: ':memory:', scopeType: 'space', scopeValue: 'space-1' },
@@ -1153,7 +1154,7 @@ describe('db-query tools', () => {
           db
         );
         const result = await handlers.db_query({
-          sql: "WITH pending AS (SELECT * FROM space_tasks WHERE status = 'pending') SELECT COUNT(*) AS n FROM pending",
+          sql: "WITH pending AS (SELECT * FROM space_tasks WHERE status = 'open') SELECT COUNT(*) AS n FROM pending",
         });
         const parsed = parseResult(result);
         expect(parsed.isError).toBeFalsy();
@@ -1173,7 +1174,7 @@ describe('db-query tools', () => {
         expect(parsed.isError).toBeFalsy();
         expect(parsed.rowCount).toBe(2);
         expect(parsed.rows[0].status).toBe('in_progress');
-        expect(parsed.rows[1].status).toBe('pending');
+        expect(parsed.rows[1].status).toBe('open');
       });
     });
 
@@ -1530,7 +1531,7 @@ describe('db-query tools', () => {
         "INSERT INTO space_tasks (id, space_id, title, status, priority, created_at) VALUES ('task-1', 'space-1', 'Task 1', 'in_progress', 'high', 1000)"
       );
       db.exec(
-        "INSERT INTO space_tasks (id, space_id, title, status, priority, created_at) VALUES ('task-2', 'space-1', 'Task 2', 'pending', 'normal', 2000)"
+        "INSERT INTO space_tasks (id, space_id, title, status, priority, created_at) VALUES ('task-2', 'space-1', 'Task 2', 'open', 'normal', 2000)"
       );
       const handlers = createDbQueryToolHandlers(
         { dbPath: ':memory:', scopeType: 'space', scopeValue: 'space-1' },
@@ -1552,7 +1553,7 @@ describe('db-query tools', () => {
         "INSERT INTO space_tasks (id, space_id, title, status, priority, created_at) VALUES ('task-1', 'space-1', 'Task 1', 'in_progress', 'high', 1000)"
       );
       db.exec(
-        "INSERT INTO space_tasks (id, space_id, title, status, priority, created_at) VALUES ('task-3', 'space-2', 'Task 3', 'completed', 'low', 3000)"
+        "INSERT INTO space_tasks (id, space_id, title, status, priority, created_at) VALUES ('task-3', 'space-2', 'Task 3', 'done', 'low', 3000)"
       );
       const handlers = createDbQueryToolHandlers(
         { dbPath: ':memory:', scopeType: 'space', scopeValue: 'space-2' },
@@ -1613,7 +1614,7 @@ describe('db-query tools', () => {
       );
       const result = await handlers.db_query({
         sql: 'SELECT id, title FROM space_tasks WHERE status != ? ORDER BY created_at DESC',
-        params: ['completed'],
+        params: ['done'],
       });
       const parsed = parseResult(result);
 
