@@ -244,6 +244,15 @@ export function escalateCooldownDecision(
   };
 }
 
+export function floorCooldownDecision(
+  decision: CooldownDecision,
+  floorMs: number,
+  now: number
+): CooldownDecision {
+  if (decision.delayMs >= floorMs) return decision;
+  return { ...decision, delayMs: floorMs, retryAtMs: now + floorMs };
+}
+
 export const USAGE_CAP_KEYWORDS = [
   'usage',
   'cap',

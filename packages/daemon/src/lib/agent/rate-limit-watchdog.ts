@@ -6,6 +6,7 @@ import {
   classifyLimitKind,
   computeCooldown,
   entryKey,
+  floorCooldownDecision,
   selectNextFallback,
 } from './fallback-recovery.ts';
 import { cooldownFromReset, type LimitRetryHint } from './limit-error-classifier.ts';
@@ -368,7 +369,13 @@ export class RateLimitWatchdog {
       this.deps.classifyUnknownLimit &&
       entryGeneration === this.generation
     ) {
-      this.fireLlmRefinement(errorMessage, entryGeneration, trip.charge, queryGeneration);
+      this.fireLlmRefinement(
+        errorMessage,
+        entryGeneration,
+        trip.charge,
+        queryGeneration,
+        trip.decision.reason === 'escalated-park' ? trip.decision.delayMs : undefined
+      );
     }
     return true;
   }
@@ -377,7 +384,8 @@ export class RateLimitWatchdog {
     errorMessage: string,
     entryGeneration: number,
     chargedLadder: boolean,
-    queryGeneration?: number
+    queryGeneration?: number,
+    escalatedFloorMs?: number
   ): void {
     const classify = this.deps.classifyUnknownLimit;
     if (!classify) return;
@@ -395,7 +403,8 @@ export class RateLimitWatchdog {
         if (resetMs === null) return;
         this.logger.info(
           `LLM limit refinement: retry at ${new Date(resetMs).toISOString()} ` +
-            `(was backoff ladder) for error: ${errorMessage}`
+            `(was ${escalatedFloorMs !== undefined ? 'escalated park' : 'backoff ladder'}) ` +
+            `for error: ${errorMessage}`
         );
         const previousHint = this.lastHint;
         const previousLimitKind = this.limitKind;
@@ -413,9 +422,12 @@ export class RateLimitWatchdog {
         };
         const refund = chargedLadder && this.retryCount > 0;
         try {
+          const refinedDecision = cooldownFromReset(resetMs, now);
           const armed = await this.scheduleCooldown(
             errorMessage,
-            cooldownFromReset(resetMs, now),
+            escalatedFloorMs === undefined
+              ? refinedDecision
+              : floorCooldownDecision(refinedDecision, escalatedFloorMs, now),
             entryGeneration,
             refund ? this.retryCount - 1 : this.retryCount,
             queryGeneration

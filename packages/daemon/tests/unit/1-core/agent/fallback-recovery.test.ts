@@ -10,6 +10,7 @@ import {
   entryKey,
   escalateCooldownDecision,
   extractResetTimestamp,
+  floorCooldownDecision,
   isNonRetryableBillingError,
   resolveFallbackChain,
   selectNextFallback,
@@ -406,6 +407,25 @@ describe('escalateCooldownDecision', () => {
     expect(d.freeWait).toBe(false);
     expect(d.reset).toBeNull();
     expect(d.delayMs).toBe(BACKOFF_LADDER_MS[2]);
+  });
+});
+
+describe('floorCooldownDecision', () => {
+  const NOW = new Date('2026-01-01T00:00:00Z').getTime();
+
+  test('returns the decision unchanged when it already waits past the floor', () => {
+    const d = computeCooldown('resets 2026-01-01T03:00:00Z', 0, NOW);
+    expect(floorCooldownDecision(d, 60_000, NOW)).toBe(d);
+  });
+
+  test('clamps a near reset to the escalation floor, preserving reason and reset', () => {
+    const d = computeCooldown('resets 2026-01-01T00:00:30Z', 0, NOW);
+    const out = floorCooldownDecision(d, 10 * 60 * 1000, NOW);
+    expect(out.delayMs).toBe(10 * 60 * 1000);
+    expect(out.retryAtMs).toBe(NOW + 10 * 60 * 1000);
+    expect(out.reason).toBe('parsed-reset');
+    expect(out.freeWait).toBe(true);
+    expect(out.reset).toEqual(d.reset);
   });
 });
 

@@ -1372,14 +1372,15 @@ describe('RateLimitWatchdog', () => {
         expect(watchdog.retryNow()).toBe(true);
         await flush();
       }
+      const parkArmedAt = Date.now();
       await watchdog.scheduleRetry(nearResetMessage(), { uuid: 'm1', content: 'hi' });
       const pause = lastPause(notifyPause);
       expect(pause.reason).toBe('escalated-park');
       expect(pause.kind).toBe('usage_limit');
-      expect(pause.resetAt).toBeGreaterThan(Date.now() + 5 * 60 * 1000);
+      expect(pause.resetAt).toBeGreaterThan(parkArmedAt + 5 * 60 * 1000);
       const cooldownArgs = lastCooldownArgs(stateManager);
       expect(cooldownArgs.retryAt).toBeGreaterThanOrEqual(
-        Date.now() + BACKOFF_LADDER_MS[0] * (1 - BACKOFF_JITTER)
+        parkArmedAt + BACKOFF_LADDER_MS[0] * (1 - BACKOFF_JITTER)
       );
       expect(cooldownArgs.retryCount).toBe(0);
       expect(watchdog.getState().retryCount).toBe(0);
@@ -1442,11 +1443,12 @@ describe('RateLimitWatchdog', () => {
         expect(watchdog.retryNow()).toBe(true);
         await flush();
       }
+      const parkArmedAt = Date.now();
       await watchdog.scheduleRetry(nearResetMessage(), { uuid: 'm1', content: 'hi' });
       const pause = lastPause(notifyPause);
       expect(pause.reason).toBe('escalated-park');
       expect(pause.resetAt ?? 0).toBeGreaterThanOrEqual(
-        Date.now() + BACKOFF_LADDER_MS[1] * (1 - BACKOFF_JITTER)
+        parkArmedAt + BACKOFF_LADDER_MS[1] * (1 - BACKOFF_JITTER)
       );
       watchdog.cancel();
     });
@@ -1481,6 +1483,39 @@ describe('RateLimitWatchdog', () => {
         kind: 'usage_limit',
         resetAt: resetAt + RESET_BUFFER_MS,
       });
+      watchdog.cancel();
+    });
+
+    it('refinement cannot shorten an escalated park below its floor', async () => {
+      const nearResetAt = Date.now() + 30 * 1000;
+      const classify = mock(async () => ({
+        resetAtMs: nearResetAt,
+        kind: 'usage_limit' as const,
+        notALimit: false,
+      }));
+      const { deps, notifyPause } = createMockDeps({ chain: [] });
+      deps.classifyUnknownLimit = classify;
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 5 });
+      for (let i = 0; i < 3; i++) {
+        await watchdog.scheduleRetry(nearResetMessage(), { uuid: 'm1', content: 'x' });
+        expect(watchdog.retryNow()).toBe(true);
+        await flush();
+      }
+      const parkArmedAt = Date.now();
+      await watchdog.scheduleRetry('firewall throttled, no timestamps in body', {
+        uuid: 'm1',
+        content: 'x',
+      });
+      expect(lastPause(notifyPause).reason).toBe('escalated-park');
+      await flush();
+      await flush();
+
+      expect(classify).toHaveBeenCalledTimes(1);
+      const calls = (stateManager.setRateLimitCooldown as ReturnType<typeof mock>).mock.calls;
+      expect(calls[calls.length - 1][0].retryAt).toBeGreaterThanOrEqual(
+        parkArmedAt + BACKOFF_LADDER_MS[0] * (1 - BACKOFF_JITTER)
+      );
+      expect(lastPause(notifyPause).resetAt ?? 0).toBeGreaterThan(nearResetAt + RESET_BUFFER_MS);
       watchdog.cancel();
     });
   });
