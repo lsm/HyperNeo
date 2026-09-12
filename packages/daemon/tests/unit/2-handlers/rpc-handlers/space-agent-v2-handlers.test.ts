@@ -7,7 +7,6 @@ import {
 import { MIGRATED_WORKER_TEMPLATE_KEY } from '../../../../src/lib/space/agents/worker-long-horizon-mapper';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
 import { SpaceAgentReminderRepository } from '../../../../src/storage/repositories/space-agent-reminder-repository';
-import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { SpaceAgentTemplateRepository } from '../../../../src/storage/repositories/space-agent-template-repository';
 import { runMigration226 } from '../../../../src/storage/schema/m226-space-agent-templates-version';
