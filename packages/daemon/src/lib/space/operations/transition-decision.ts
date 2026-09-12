@@ -24,7 +24,7 @@ type RuntimeExecutor = (typeof RUNTIME_ACTIONS)[number];
 const REJECT_UNSUPPORTED = { action: 'reject', result: 'unsupported_status' } as const;
 const REJECT_INVALID = { action: 'reject', result: 'invalid_transition' } as const;
 const REJECT_RESULT_REQUIRES_DONE = { action: 'reject', result: 'result_requires_done' } as const;
-function classifyRequest(input: Input): TaskUpdateRouting {
+export function classifyRequest(input: Input): TaskUpdateRouting {
   const { currentStatus, requestedStatus, workflowRunId, runActive } = input;
   const statusDiffers = currentStatus !== requestedStatus;
   return routeTaskUpdate({
@@ -43,28 +43,28 @@ function classifyRequest(input: Input): TaskUpdateRouting {
     workflowRunId: workflowRunId ?? undefined,
   });
 }
-function rejectUnsupportedRequest(routing: TaskUpdateRouting, input: Input): Gate {
+export function rejectUnsupportedRequest(routing: TaskUpdateRouting, input: Input): Gate {
   if (routing.action === 'fields_only') return { reason: REJECT_INVALID };
   if (routing.action !== 'reject') return { value: routing };
   if (routing.reason !== 'review_to_done') return { reason: REJECT_UNSUPPORTED };
   return input.callerSource !== 'rpc' ? { reason: REJECT_INVALID } : { value: routing };
 }
-function requireResultOnlyWithDone(routing: TaskUpdateRouting, input: Input): Gate {
+export function requireResultOnlyWithDone(routing: TaskUpdateRouting, input: Input): Gate {
   return input.hasResult && input.requestedStatus !== 'done'
     ? { reason: REJECT_RESULT_REQUIRES_DONE }
     : { value: routing };
 }
-function requireTableTransition(routing: TaskUpdateRouting, input: Input): Gate {
+export function requireTableTransition(routing: TaskUpdateRouting, input: Input): Gate {
   return isValidTaskTransition(input.currentStatus, input.requestedStatus)
     ? { value: routing }
     : { reason: REJECT_INVALID };
 }
-function routeRuntimeAction(routing: TaskUpdateRouting): Gate {
+export function routeRuntimeAction(routing: TaskUpdateRouting): Gate {
   return (RUNTIME_ACTIONS as readonly string[]).includes(routing.action)
     ? { reason: { action: 'runtime', executor: routing.action as RuntimeExecutor } }
     : { value: routing };
 }
-function stampApproval(input: Input): SpaceTaskTransitionDecision {
+export function stampApproval(input: Input): SpaceTaskTransitionDecision {
   const approvalSource =
     input.currentStatus === 'review' && input.requestedStatus === 'done' ? 'human' : undefined;
   return { action: 'write', approvalSource };
