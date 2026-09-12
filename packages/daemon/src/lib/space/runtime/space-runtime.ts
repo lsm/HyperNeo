@@ -6536,6 +6536,7 @@ export class SpaceRuntime {
     const startGeneration = this.config.taskRepo.getLifecycleGeneration(canonicalTask.id);
     for (const execution of pendingExecutions) {
       if (tam.isExecutionSpawning(execution.id)) continue;
+      let firstSpawn = false;
       try {
         const sessionId = await tam.spawnWorkflowNodeAgentForExecution(
           canonicalTask,
@@ -6545,6 +6546,7 @@ export class SpaceRuntime {
           execution,
           { kickoff: true }
         );
+        firstSpawn = !spawned;
         spawned = true;
         this.tryRequeuePendingDeliveries(this.pausedSpaceIds, runId);
         const restartNotice = this.consumeAgentRestartNotice(runId, execution);
@@ -6602,6 +6604,15 @@ export class SpaceRuntime {
           `SpaceRuntime: transient spawn failure for workflow node execution ${execution.id}: ${err instanceof Error ? err.message : String(err)}`
         );
       }
+      if (firstSpawn) {
+        await this.stampTaskStartAfterFirstSpawn(
+          runId,
+          space.id,
+          canonicalTask.id,
+          originalTask,
+          startGeneration
+        );
+      }
     }
     if (reservation.generation !== null && !spawned && releaseSafe) {
       const released = this.config.db.transaction(() => {
@@ -6633,29 +6644,45 @@ export class SpaceRuntime {
       if (released) await this.safeOnTaskUpdated(space.id, released, { fromStatus: 'in_progress' });
     }
     if (spawned || (!releaseSafe && !blockedByCrash && !permanentSpawnFailureReason)) {
-      const started = this.config.db.transaction(() => {
-        const current = this.config.taskRepo.getTask(canonicalTask.id);
-        if (
-          current?.status !== 'in_progress' ||
-          current.workflowRunId !== runId ||
-          current.startedAt != null ||
-          this.config.taskRepo.getLifecycleGeneration(current.id) !== startGeneration
-        )
-          return null;
-        return this.config.taskRepo.updateTask(
-          current.id,
-          {
-            startedAt: current.startedAt ?? Date.now(),
-            completedAt: null,
-            pendingCheckpointType: null,
-          },
-          'in_progress'
-        );
-      }, 'immediate')();
-      if (started)
-        await this.safeOnTaskUpdated(space.id, started, { fromStatus: originalTask.status });
+      await this.stampTaskStartAfterFirstSpawn(
+        runId,
+        space.id,
+        canonicalTask.id,
+        originalTask,
+        startGeneration
+      );
     }
     return { blockedByCrash, permanentSpawnFailureReason, spawned };
+  }
+
+  private async stampTaskStartAfterFirstSpawn(
+    runId: string,
+    spaceId: string,
+    taskId: string,
+    originalTask: SpaceTask,
+    startGeneration: number | null
+  ): Promise<void> {
+    const started = this.config.db.transaction(() => {
+      const current = this.config.taskRepo.getTask(taskId);
+      if (
+        current?.status !== 'in_progress' ||
+        current.workflowRunId !== runId ||
+        current.startedAt != null ||
+        this.config.taskRepo.getLifecycleGeneration(current.id) !== startGeneration
+      )
+        return null;
+      return this.config.taskRepo.updateTask(
+        current.id,
+        {
+          startedAt: current.startedAt ?? Date.now(),
+          completedAt: null,
+          pendingCheckpointType: null,
+        },
+        'in_progress'
+      );
+    }, 'immediate')();
+    if (started)
+      await this.safeOnTaskUpdated(spaceId, started, { fromStatus: originalTask.status });
   }
 
   private async blockRunForSpawnFailure(
