@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
 import type { AgentModelPoolEntry, CreateSpaceAgentParams } from '@hyperneo/shared';
+import { SPACE_MANAGER_HANDLE } from '../../../src/lib/space/agent-handle';
 import { SpaceAgentRepository } from '../../../src/storage/repositories/space-agent-repository';
+import { SpaceLongHorizonAgentRepository } from '../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { Database as BunDatabase } from '../../../src/storage/sqlite-compat';
 import { createSpaceTables } from '../helpers/space-test-db';
 
@@ -117,6 +119,44 @@ describe('SpaceAgentRepository', () => {
 
       repo.update(agent.id, { status: 'archived' });
       expect(repo.getByHandle('space-1', 'researcher')).toBeNull();
+    });
+
+    test('getSpaceManager prefers the canonical handle over the legacy alias', () => {
+      const legacy = repo.create({ spaceId: 'space-1', handle: 'coordinator' });
+      expect(repo.getSpaceManager('space-1')?.id).toBe(legacy.id);
+
+      const canonical = repo.create({ spaceId: 'space-1', handle: SPACE_MANAGER_HANDLE });
+      expect(repo.getSpaceManager('space-1')?.id).toBe(canonical.id);
+    });
+
+    test('getSpaceManager ignores archived managers and other spaces', () => {
+      db.prepare(
+        `INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      ).run('space-2', 'space-2', '/tmp/space-2', 'Space Two', Date.now(), Date.now());
+      repo.create({ spaceId: 'space-2', handle: SPACE_MANAGER_HANDLE });
+      expect(repo.getSpaceManager('space-1')).toBeNull();
+
+      const manager = repo.create({ spaceId: 'space-1', handle: SPACE_MANAGER_HANDLE });
+      repo.update(manager.id, { status: 'archived' });
+      expect(repo.getSpaceManager('space-1')).toBeNull();
+    });
+
+    test('getSpaceManager matches the long-horizon repository it replaces', () => {
+      const legacyRepo = new SpaceLongHorizonAgentRepository(db);
+      expect(repo.getSpaceManager('space-1')?.id ?? null).toBe(
+        legacyRepo.getCoordinator('space-1')?.id ?? null
+      );
+
+      const legacy = repo.create({ spaceId: 'space-1', handle: 'coordinator' });
+      expect(repo.getSpaceManager('space-1')?.id).toBe(legacyRepo.getCoordinator('space-1')?.id);
+      expect(repo.getSpaceManager('space-1')?.id).toBe(legacy.id);
+
+      repo.create({ spaceId: 'space-1', handle: SPACE_MANAGER_HANDLE });
+      expect(repo.getSpaceManager('space-1')?.id).toBe(legacyRepo.getCoordinator('space-1')?.id);
+
+      repo.update(legacy.id, { status: 'archived' });
+      expect(repo.getSpaceManager('space-1')?.id).toBe(legacyRepo.getCoordinator('space-1')?.id);
     });
 
     test('getBySessionId resolves the agent bound to a session', () => {
