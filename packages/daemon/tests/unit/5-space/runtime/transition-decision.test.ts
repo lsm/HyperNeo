@@ -129,6 +129,29 @@ const cases: Case[] = [
     { action: 'reject', result: 'result_requires_done' },
   ],
   [
+    'a workflow task requesting stopped from a status that cannot reach it is invalid',
+    {
+      ...base,
+      currentStatus: 'open',
+      requestedStatus: 'stopped',
+      workflowRunId: 'run-1',
+      callerSource: 'rpc',
+    },
+    { action: 'reject', result: 'invalid_transition' },
+  ],
+  [
+    'a workflow task carrying a non-done result before a runtime stop is rejected first',
+    {
+      ...base,
+      currentStatus: 'in_progress',
+      requestedStatus: 'open',
+      workflowRunId: 'run-1',
+      hasResult: true,
+      callerSource: 'rpc',
+    },
+    { action: 'reject', result: 'result_requires_done' },
+  ],
+  [
     'a table-invalid transition is rejected',
     { ...base, currentStatus: 'done', requestedStatus: 'cancelled', callerSource: 'rpc' },
     { action: 'reject', result: 'invalid_transition' },
