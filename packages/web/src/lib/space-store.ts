@@ -3,7 +3,6 @@ import type {
   CreateSpaceGoalParams,
   CreateSpaceLongHorizonAgentReminderParams,
   CreateSpaceLongHorizonAgentSubscriptionParams,
-  CreateSpaceTaskParams,
   CreateSpaceWorkflowParams,
   LiveQueryDeltaEvent,
   LiveQuerySnapshotEvent,
@@ -33,6 +32,7 @@ import type {
   SpaceWorkflowSummary,
   SpaceWorkflowSyncPreview,
   SpaceWorkspace,
+  TaskCore,
   TaskSchedule,
   TaskScheduleStatus,
   TaskScheduleTriggerType,
@@ -239,6 +239,17 @@ function toPaneAgentTemplate(template: SpaceAgentTemplate): SpaceLongHorizonAgen
 export type DirectTaskStartResult =
   | { accepted: true; jobId: string | null }
   | { accepted: false; reason: string };
+
+export interface CreateTaskOperationParams {
+  title: string;
+  description?: string;
+  priority?: SpaceTaskPriority;
+  labels?: string[];
+  dependsOn?: string[];
+  draft?: boolean;
+  preferredWorkflowId?: string;
+  workspacePath?: string;
+}
 
 class SpaceStore {
   readonly spaces = signal<Space[]>([]);
@@ -1946,15 +1957,14 @@ class SpaceStore {
     await this.clearSpace();
   }
 
-  async createTask(params: Omit<CreateSpaceTaskParams, 'spaceId'>): Promise<SpaceTask> {
+  async createTask(params: CreateTaskOperationParams): Promise<TaskCore> {
     const spaceId = this.spaceId.value;
     if (!spaceId) throw new Error('No space selected');
 
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
 
-    const task = await hub.request<SpaceTask>('spaceTask.create', { ...params, spaceId });
-    return task;
+    return invokeOperation<TaskCore>(hub, 'task.create', { ...params, spaceId });
   }
 
   async listWorkspaces(): Promise<SpaceWorkspace[]> {
