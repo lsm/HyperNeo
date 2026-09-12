@@ -12,9 +12,8 @@ describe('Channels factory', () => {
     expect(Channels.global()).toEqual({ kind: 'global' });
   });
 
-  it('produces session/room/space descriptors', () => {
+  it('produces session/space descriptors', () => {
     expect(Channels.session('s1')).toEqual({ kind: 'session', sessionId: 's1' });
-    expect(Channels.room('r1')).toEqual({ kind: 'room', roomId: 'r1' });
     expect(Channels.space('sp1')).toEqual({ kind: 'space', spaceId: 'sp1' });
   });
 
@@ -40,10 +39,6 @@ describe('channelRegistry.toWire', () => {
 
   it('serializes session channels to "session:${id}"', () => {
     expect(channelRegistry.toWire(Channels.session('abc'))).toBe('session:abc');
-  });
-
-  it('serializes room channels to "room:${id}"', () => {
-    expect(channelRegistry.toWire(Channels.room('r-1'))).toBe('room:r-1');
   });
 
   it('serializes space channels to "space:${id}"', () => {
@@ -73,7 +68,6 @@ describe('channelRegistry.parse', () => {
     const samples: EventChannel[] = [
       Channels.global(),
       Channels.session('s1'),
-      Channels.room('r1'),
       Channels.space('sp1'),
       Channels.workflowRun('sp1', 'wr1'),
       Channels.task('sp1', 't1'),

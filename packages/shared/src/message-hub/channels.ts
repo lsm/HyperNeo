@@ -1,7 +1,6 @@
 export type EventChannel =
   | { kind: 'global' }
   | { kind: 'session'; sessionId: string }
-  | { kind: 'room'; roomId: string }
   | { kind: 'space'; spaceId: string }
   | { kind: 'workflowRun'; spaceId: string; workflowRunId: string }
   | { kind: 'task'; spaceId: string; taskId: string };
@@ -11,7 +10,6 @@ export type ChannelWireString = string;
 export const Channels = {
   global: (): EventChannel => ({ kind: 'global' }),
   session: (sessionId: string): EventChannel => ({ kind: 'session', sessionId }),
-  room: (roomId: string): EventChannel => ({ kind: 'room', roomId }),
   space: (spaceId: string): EventChannel => ({ kind: 'space', spaceId }),
   workflowRun: (spaceId: string, workflowRunId: string): EventChannel => ({
     kind: 'workflowRun',
@@ -38,8 +36,6 @@ class DefaultChannelRegistry implements ChannelRegistry {
         return GLOBAL_CHANNEL_WIRE;
       case 'session':
         return `session:${channel.sessionId}`;
-      case 'room':
-        return `room:${channel.roomId}`;
       case 'space':
         return `space:${channel.spaceId}`;
       case 'workflowRun':
@@ -63,8 +59,6 @@ class DefaultChannelRegistry implements ChannelRegistry {
     switch (prefix) {
       case 'session':
         return rest.length > 0 ? { kind: 'session', sessionId: rest } : null;
-      case 'room':
-        return rest.length > 0 ? { kind: 'room', roomId: rest } : null;
       case 'space':
         return rest.length > 0 ? { kind: 'space', spaceId: rest } : null;
       case 'workflowRun': {
