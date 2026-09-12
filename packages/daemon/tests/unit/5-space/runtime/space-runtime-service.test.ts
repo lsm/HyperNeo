@@ -2103,9 +2103,10 @@ describe('SpaceRuntimeService', () => {
     };
 
     test('does not resolve an owner while goal outcome wakes are gated', async () => {
-      const longHorizonAgentRepo = {
+      const goalScopeRepo = {
         getPrimaryGoalOwner: mock(() => null),
-      } as unknown as SpaceLongHorizonAgentRepository;
+      } as unknown as SpaceRuntimeServiceConfig['goalScopeRepo'];
+      const longHorizonAgentRepo = {} as unknown as SpaceLongHorizonAgentRepository;
       const goalService = {
         getGoal: mock(() => ({ id: notification.goalId, spaceId: notification.spaceId })),
       } as unknown as SpaceRuntimeServiceConfig['goalService'];
@@ -2116,20 +2117,21 @@ describe('SpaceRuntimeService', () => {
       const svc = new SpaceRuntimeService({
         ...buildConfig(createMockSpaceManager(mockSpace)),
         longHorizonAgentRepo,
-        goalScopeRepo:
-          longHorizonAgentRepo as unknown as SpaceRuntimeServiceConfig['goalScopeRepo'],
+        goalScopeRepo,
         goalService,
         outcomeNotificationRepo,
       });
 
       await svc.deliverGoalOutcomeWake(notification);
 
-      expect(longHorizonAgentRepo.getPrimaryGoalOwner).not.toHaveBeenCalled();
+      expect(goalScopeRepo.getPrimaryGoalOwner).not.toHaveBeenCalled();
     });
 
     test('resolves the owner when goal outcome wakes are enabled', async () => {
-      const longHorizonAgentRepo = {
+      const goalScopeRepo = {
         getPrimaryGoalOwner: mock(() => ({ action: 'degraded' })),
+      } as unknown as SpaceRuntimeServiceConfig['goalScopeRepo'];
+      const longHorizonAgentRepo = {
         getCoordinator: mock(() => ({ id: 'coordinator-1' })),
         getById: mock(() => null),
       } as unknown as SpaceLongHorizonAgentRepository;
@@ -2144,15 +2146,14 @@ describe('SpaceRuntimeService', () => {
         ...buildConfig(createMockSpaceManager(mockSpace)),
         enableGoalOutcomeWake: true,
         longHorizonAgentRepo,
-        goalScopeRepo:
-          longHorizonAgentRepo as unknown as SpaceRuntimeServiceConfig['goalScopeRepo'],
+        goalScopeRepo,
         goalService,
         outcomeNotificationRepo,
       });
 
       await svc.deliverGoalOutcomeWake(notification);
 
-      expect(longHorizonAgentRepo.getPrimaryGoalOwner).toHaveBeenCalledWith(
+      expect(goalScopeRepo.getPrimaryGoalOwner).toHaveBeenCalledWith(
         notification.goalId,
         notification.spaceId
       );
@@ -2160,8 +2161,10 @@ describe('SpaceRuntimeService', () => {
     });
 
     test('routes a no-recipient wake to the coordinator', async () => {
-      const longHorizonAgentRepo = {
+      const goalScopeRepo = {
         getPrimaryGoalOwner: mock(() => ({ action: 'no_recipient' })),
+      } as unknown as SpaceRuntimeServiceConfig['goalScopeRepo'];
+      const longHorizonAgentRepo = {
         getCoordinator: mock(() => ({ id: 'coordinator-1' })),
         getById: mock(() => null),
       } as unknown as SpaceLongHorizonAgentRepository;
@@ -2175,8 +2178,7 @@ describe('SpaceRuntimeService', () => {
         ...buildConfig(createMockSpaceManager(mockSpace)),
         enableGoalOutcomeWake: true,
         longHorizonAgentRepo,
-        goalScopeRepo:
-          longHorizonAgentRepo as unknown as SpaceRuntimeServiceConfig['goalScopeRepo'],
+        goalScopeRepo,
         goalService,
         outcomeNotificationRepo,
       });
@@ -2191,8 +2193,10 @@ describe('SpaceRuntimeService', () => {
       sessions.set(`space:chat:${mockSpace.id}`, makeWakeSession(`space:chat:${mockSpace.id}`));
       const sessionManager = makeWakeSessionManager(sessions);
       const mailbox = buildMailboxDeliveryDb([`space:chat:${mockSpace.id}`]);
-      const longHorizonAgentRepo = {
+      const goalScopeRepo = {
         getPrimaryGoalOwner: mock(() => ({ action: 'no_recipient' })),
+      } as unknown as SpaceRuntimeServiceConfig['goalScopeRepo'];
+      const longHorizonAgentRepo = {
         getCoordinator: mock(() => ({ id: 'coordinator-alt' })),
         getById: mock(() =>
           buildLongHorizonAgent({ id: 'coordinator-alt', handle: 'coordinator' })
@@ -2221,8 +2225,7 @@ describe('SpaceRuntimeService', () => {
           listWorkflows: mock(() => []),
         } as unknown as SpaceWorkflowManager,
         longHorizonAgentRepo,
-        goalScopeRepo:
-          longHorizonAgentRepo as unknown as SpaceRuntimeServiceConfig['goalScopeRepo'],
+        goalScopeRepo,
         goalService,
         outcomeNotificationRepo,
       });
@@ -2275,11 +2278,13 @@ describe('SpaceRuntimeService', () => {
         longTermAgentSessionId(mockSpace.id, 'agent-a'),
         longTermAgentSessionId(mockSpace.id, 'agent-b'),
       ]);
-      const longHorizonAgentRepo = {
+      const goalScopeRepo = {
         getPrimaryGoalOwner: mock(() => {
           ownerCalls += 1;
           return ownerCalls >= 3 ? ownerB : ownerA;
         }),
+      } as unknown as SpaceRuntimeServiceConfig['goalScopeRepo'];
+      const longHorizonAgentRepo = {
         getCoordinator: mock(() => null),
         getById: mock((id: string) => buildLongHorizonAgent({ id, handle: id, displayName: id })),
         update: mock(() => {}),
@@ -2305,8 +2310,7 @@ describe('SpaceRuntimeService', () => {
         db: mailbox.db,
         reactiveDb: mailbox.reactiveDb,
         longHorizonAgentRepo,
-        goalScopeRepo:
-          longHorizonAgentRepo as unknown as SpaceRuntimeServiceConfig['goalScopeRepo'],
+        goalScopeRepo,
         goalService,
         outcomeNotificationRepo,
       });
@@ -2329,11 +2333,13 @@ describe('SpaceRuntimeService', () => {
         longTermAgentSessionId(mockSpace.id, 'lh-agent-1'),
       ]);
       const mailbox = buildMailboxDeliveryDb([longTermAgentSessionId(mockSpace.id, 'lh-agent-1')]);
-      const longHorizonAgentRepo = {
+      const goalScopeRepo = {
         getPrimaryGoalOwner: mock(() => ({
           action: 'resolved',
           owner: { agentId: 'lh-agent-1' },
         })),
+      } as unknown as SpaceRuntimeServiceConfig['goalScopeRepo'];
+      const longHorizonAgentRepo = {
         getCoordinator: mock(() => null),
         getById: mock(() => buildLongHorizonAgent()),
         update: mock(() => {}),
@@ -2364,8 +2370,7 @@ describe('SpaceRuntimeService', () => {
         db: mailbox.db,
         reactiveDb: mailbox.reactiveDb,
         longHorizonAgentRepo,
-        goalScopeRepo:
-          longHorizonAgentRepo as unknown as SpaceRuntimeServiceConfig['goalScopeRepo'],
+        goalScopeRepo,
         goalService,
         outcomeNotificationRepo,
       });
