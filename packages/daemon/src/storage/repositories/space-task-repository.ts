@@ -433,7 +433,8 @@ export class SpaceTaskRepository {
     id: string,
     params: InternalUpdateSpaceTaskParams,
     expectedStatus?: SpaceTaskStatus,
-    expectedPendingCompletionGeneration?: number
+    expectedPendingCompletionGeneration?: number,
+    expectedPostApprovalSessionId?: string | null
   ): SpaceTask | null {
     if (this.hasTaskWithoutSpace(id)) return null;
     const fields: string[] = [];
@@ -641,12 +642,20 @@ export class SpaceTaskRepository {
           : " AND status = 'review' AND pending_checkpoint_type = 'task_completion' AND pending_completion_generation = ?";
       if (expectedPendingCompletionGeneration !== undefined)
         values.push(expectedPendingCompletionGeneration);
+      const postApprovalGuard =
+        expectedPostApprovalSessionId === undefined
+          ? ''
+          : ' AND ((? IS NULL AND post_approval_session_id IS NULL) OR post_approval_session_id = ?)';
+      if (expectedPostApprovalSessionId !== undefined)
+        values.push(expectedPostApprovalSessionId, expectedPostApprovalSessionId);
       const stmt = this.db.prepare(
-        `UPDATE space_tasks SET ${fields.join(', ')} WHERE space_id IS NOT NULL AND id = ?${expectedStatus === undefined ? '' : ' AND status = ?'}${completionGuard}`
+        `UPDATE space_tasks SET ${fields.join(', ')} WHERE space_id IS NOT NULL AND id = ?${expectedStatus === undefined ? '' : ' AND status = ?'}${completionGuard}${postApprovalGuard}`
       );
       const result = stmt.run(...values);
       if (
-        (expectedStatus !== undefined || expectedPendingCompletionGeneration !== undefined) &&
+        (expectedStatus !== undefined ||
+          expectedPendingCompletionGeneration !== undefined ||
+          expectedPostApprovalSessionId !== undefined) &&
         result.changes === 0
       )
         return null;

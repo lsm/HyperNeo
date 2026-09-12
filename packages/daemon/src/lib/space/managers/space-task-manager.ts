@@ -184,6 +184,7 @@ export class SpaceTaskManager {
       approvalReason?: string | null;
       expectedStatus?: SpaceTaskStatus;
       expectedPendingCompletionGeneration?: number;
+      expectedPostApprovalSessionId?: string | null;
       onCascadedTasks?: (cascaded: SpaceTask[]) => Promise<void>;
     }
   ): Promise<SpaceTask> {
@@ -231,7 +232,8 @@ export class SpaceTaskManager {
           taskId,
           updates,
           expectedStatus,
-          expectedGeneration
+          expectedGeneration,
+          options?.expectedPostApprovalSessionId
         );
         if (!result) {
           if (expectedStatus !== undefined) throw new StaleStatusCasMiss();

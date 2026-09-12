@@ -138,6 +138,78 @@ test.each([
   });
 });
 
+test('the routed post-approval session completes the task', async () => {
+  const sessionId = worker('post-approval-owner');
+  tasks.updateTask(taskId, { postApprovalSessionId: sessionId });
+  const result = await operation.execute({ taskId }, { source: 'mcp', sessionId });
+  expect(result).toMatchObject({ accepted: true });
+  expect(tasks.getTask(taskId)?.status).toBe('done');
+});
+test('a different worker session bound to the task is denied once a post-approval session is routed', async () => {
+  const routedSessionId = worker('post-approval-owner');
+  const otherSessionId = worker('other-worker');
+  tasks.updateTask(taskId, { postApprovalSessionId: routedSessionId });
+  const result = await operation.execute({ taskId }, { source: 'mcp', sessionId: otherSessionId });
+  expect(result).toEqual({ accepted: false, reason: 'task_completion_denied' });
+  expect(tasks.getTask(taskId)?.status).toBe('approved');
+});
+test('an rpc caller is denied once a post-approval session is routed', async () => {
+  const routedSessionId = worker('post-approval-owner');
+  tasks.updateTask(taskId, { postApprovalSessionId: routedSessionId });
+  const result = await operation.execute({ taskId }, { source: 'rpc' });
+  expect(result).toEqual({ accepted: false, reason: 'task_completion_denied' });
+  expect(tasks.getTask(taskId)?.status).toBe('approved');
+});
+test('rejects task_completion_unavailable when a post-approval owner is required but not yet routed', async () => {
+  const requiresPostApprovalOwner = mock(async () => true);
+  const gatedOperation = createCompleteTaskOperation(() => db, {
+    getTaskManager: (id) => new SpaceTaskManager(db, id),
+    emitTaskUpdated: emit,
+    requiresPostApprovalOwner,
+  });
+  const result = await gatedOperation.execute({ taskId }, { source: 'rpc' });
+  expect(result).toEqual({ accepted: false, reason: 'task_completion_unavailable' });
+  expect(tasks.getTask(taskId)?.status).toBe('approved');
+  expect(requiresPostApprovalOwner).toHaveBeenCalledWith(expect.objectContaining({ id: taskId }), {
+    source: 'rpc',
+  });
+});
+test('completes normally when requiresPostApprovalOwner returns false', async () => {
+  const gatedOperation = createCompleteTaskOperation(() => db, {
+    getTaskManager: (id) => new SpaceTaskManager(db, id),
+    emitTaskUpdated: emit,
+    requiresPostApprovalOwner: mock(async () => false),
+  });
+  const result = await gatedOperation.execute({ taskId, result: 'Shipped it.' }, { source: 'rpc' });
+  expect(result).toMatchObject({ accepted: true, task: { id: taskId, status: 'done' } });
+});
+test('completes normally when requiresPostApprovalOwner is absent', async () => {
+  const result = await operation.execute({ taskId, result: 'Shipped it.' }, { source: 'rpc' });
+  expect(result).toMatchObject({ accepted: true, task: { id: taskId, status: 'done' } });
+});
+test('a post-approval owner reassigned between admission and the manager write is rejected', async () => {
+  const routedSessionId = worker('post-approval-owner');
+  const stolenBySessionId = worker('other-worker');
+  tasks.updateTask(taskId, { postApprovalSessionId: routedSessionId });
+  const racyOperation = createCompleteTaskOperation(() => db, {
+    getTaskManager: (id) => {
+      const manager = new SpaceTaskManager(db, id);
+      return {
+        setTaskStatus: (taskIdArg, status, options) => {
+          tasks.updateTask(taskId, { postApprovalSessionId: stolenBySessionId });
+          return manager.setTaskStatus(taskIdArg, status, options);
+        },
+      };
+    },
+    emitTaskUpdated: emit,
+  });
+  await expect(
+    racyOperation.execute({ taskId }, { source: 'mcp', sessionId: routedSessionId })
+  ).rejects.toThrow();
+  expect(tasks.getTask(taskId)?.status).toBe('approved');
+  expect(tasks.getTask(taskId)?.postApprovalSessionId).toBe(stolenBySessionId);
+});
+
 test('catalog discovery reports task.complete when wired through the complete slot', async () => {
   const getDatabase = mock(() => db);
   const database = { getDatabase, notifyChange: () => {} } as unknown as AppDatabase;
