@@ -90,6 +90,17 @@ export class SpaceAgentRepository {
     return null;
   }
 
+  getSpaceManagerRecord(spaceId: string): SpaceAgent | null {
+    const placeholders = SPACE_MANAGER_HANDLE_LOOKUP_ORDER.map(() => '?').join(', ');
+    const row = this.db
+      .prepare(
+        `SELECT * FROM ${AGENTS_TABLE} WHERE space_id = ? AND handle IN (${placeholders})
+         ORDER BY (status = 'archived'), updated_at DESC LIMIT 1`
+      )
+      .get(spaceId, ...SPACE_MANAGER_HANDLE_LOOKUP_ORDER) as Record<string, unknown> | undefined;
+    return row ? rowToSpaceAgent(row) : null;
+  }
+
   getBySessionId(sessionId: string): SpaceAgent | null {
     const row = this.db
       .prepare(
