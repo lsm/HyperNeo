@@ -487,15 +487,6 @@ export class SessionRepository {
     };
   }
 
-  findByRoomId(roomId: string): Session | null {
-    const stmt = this.db.prepare(`SELECT * FROM sessions WHERE type = 'room' AND room_id = ?`);
-    const row = stmt.get(roomId) as Record<string, unknown> | undefined;
-
-    if (!row) return null;
-
-    return this.rowToSession(row);
-  }
-
   findLobbySession(): Session | null {
     const stmt = this.db.prepare(`SELECT * FROM sessions WHERE type = 'lobby' LIMIT 1`);
     const row = stmt.get() as Record<string, unknown> | undefined;

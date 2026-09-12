@@ -196,19 +196,6 @@ describe('Migration 200: sessions session_context generated columns', () => {
   });
 
   describe('query plans use the generated columns', () => {
-    test('findByRoomId resolves through idx_sessions_room_id', () => {
-      createPreM200SessionsTable(db);
-      insertSession(db, 'room-1', 'room', '{"roomId":"r-1"}');
-      runMigration200(db);
-
-      const plan = queryPlan(
-        db,
-        `SELECT * FROM sessions WHERE type = 'room' AND room_id = ?`,
-        'r-1'
-      );
-      expect(plan).toContain('idx_sessions_room_id');
-    });
-
     test('space + provenance lookups resolve through the provenance index', () => {
       createPreM200SessionsTable(db);
       insertSession(db, 'sp-worker', 'worker', '{"spaceId":"sp-1"}');
@@ -242,9 +229,6 @@ describe('Migration 200: sessions session_context generated columns', () => {
 
       const withSpace = repository.listSessions({ includeSpaceSessions: true });
       expect(withSpace.map((s) => s.id).sort()).toEqual(['human-1', 'human-2', 'space-worker']);
-
-      expect(repository.findByRoomId('r-1')?.id).toBe('room-1');
-      expect(repository.findByRoomId('missing')).toBeNull();
     });
 
     test('listSessionsBySpaceAgent matches on spaceId and provenance agentId', () => {
