@@ -260,6 +260,23 @@ export function formatReviewSubmissionRejection(reason: string): string {
   return `Review submission rejected: ${reason}`;
 }
 
+export type CancelTaskResult =
+  | { accepted: true; jobId: string | null }
+  | { accepted: false; reason: string };
+
+function formatCancellationRejection(reason: string): string {
+  if (reason === 'cancellation_invalid_transition') {
+    return 'This task cannot be cancelled from its current state.';
+  }
+  if (reason === 'cancellation_unavailable' || reason === 'direct_cancellation_unavailable') {
+    return 'This task is not available for cancellation right now. Try again after it changes.';
+  }
+  if (reason === 'cancellation_denied' || reason === 'direct_cancellation_denied') {
+    return 'You are not allowed to cancel this task.';
+  }
+  return `Cancellation rejected: ${reason}`;
+}
+
 export interface CreateTaskOperationParams {
   title: string;
   description?: string;
@@ -2146,6 +2163,20 @@ class SpaceStore {
       taskId,
       requestKey: generateUUID(),
     });
+  }
+
+  async cancelTask(taskId: string): Promise<CancelTaskResult> {
+    const spaceId = this.spaceId.value;
+    if (!spaceId) throw new Error('No space selected');
+
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) throw new Error('Not connected');
+
+    const result = await invokeOperation<CancelTaskResult>(hub, 'task.cancel', { taskId });
+    if (!result.accepted) {
+      throw new Error(formatCancellationRejection(result.reason));
+    }
+    return result;
   }
 
   async submitForReview(taskId: string, reason?: string | null): Promise<ReviewSubmissionResult> {

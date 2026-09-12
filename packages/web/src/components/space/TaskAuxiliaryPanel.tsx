@@ -150,6 +150,8 @@ export function TaskAuxiliaryPanel({
         await spaceStore.publishTask(task.id);
       } else if (newStatus === 'review') {
         await spaceStore.submitForReview(task.id);
+      } else if (newStatus === 'cancelled') {
+        await spaceStore.cancelTask(task.id);
       } else {
         await spaceStore.updateTask(task.id, { status: newStatus });
       }

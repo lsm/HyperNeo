@@ -15,6 +15,7 @@ const {
   mockEnsureConfigData,
   mockFetchEvolutionScope,
   mockUpdateTask,
+  mockCancelTask,
   mockSubmitForReview,
   mockPublishTask,
   mockTaskDetails,
@@ -36,6 +37,7 @@ const {
     mockEnsureConfigData: vi.fn().mockResolvedValue(undefined),
     mockFetchEvolutionScope: vi.fn().mockResolvedValue({ id: 'scope-1', name: 'Launch Scope' }),
     mockUpdateTask: vi.fn().mockResolvedValue(undefined),
+    mockCancelTask: vi.fn().mockResolvedValue({ accepted: true, jobId: null }),
     mockSubmitForReview: vi.fn().mockResolvedValue(undefined),
     mockPublishTask: vi.fn().mockResolvedValue(undefined),
     mockTaskDetails: makeSignal(new Map()),
@@ -84,6 +86,7 @@ vi.mock('../../../lib/space-store', () => ({
     ensureConfigData: mockEnsureConfigData,
     fetchEvolutionScope: mockFetchEvolutionScope,
     updateTask: mockUpdateTask,
+    cancelTask: mockCancelTask,
     submitForReview: mockSubmitForReview,
     publishTask: mockPublishTask,
   },
@@ -195,6 +198,8 @@ describe('TaskAuxiliaryPanel', () => {
     mockFetchEvolutionScope.mockClear();
     mockUpdateTask.mockClear();
     mockUpdateTask.mockResolvedValue(undefined);
+    mockCancelTask.mockClear();
+    mockCancelTask.mockResolvedValue({ accepted: true, jobId: null });
     mockSubmitForReview.mockClear();
     mockSubmitForReview.mockResolvedValue(undefined);
     mockPublishTask.mockClear();
@@ -340,6 +345,18 @@ describe('TaskAuxiliaryPanel', () => {
 
     await waitFor(() => expect(mockSubmitForReview).toHaveBeenCalledWith('task-1'));
     expect(mockUpdateTask).not.toHaveBeenCalledWith('task-1', { status: 'review' });
+  });
+
+  it('routes cancel through cancelTask in the middle column', async () => {
+    const { getByLabelText, getByText } = render(
+      <TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" onClose={() => {}} />
+    );
+
+    fireEvent.click(getByLabelText('Task Actions'));
+    fireEvent.click(getByText('Cancel'));
+
+    await waitFor(() => expect(mockCancelTask).toHaveBeenCalledWith('task-1'));
+    expect(mockUpdateTask).not.toHaveBeenCalledWith('task-1', { status: 'cancelled' });
   });
 
   it('exposes the actions menu in the right-panel header too', async () => {

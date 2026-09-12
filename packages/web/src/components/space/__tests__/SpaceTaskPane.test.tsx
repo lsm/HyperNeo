@@ -106,6 +106,7 @@ const mockWorkspaces = signal<unknown[]>([]);
 const mockUpdateTask = vi.fn().mockResolvedValue(undefined);
 const mockRunTaskDirectly = vi.fn().mockResolvedValue({ accepted: true, jobId: 'job-1' });
 const mockCancelWorkflowRun = vi.fn().mockResolvedValue(undefined);
+const mockCancelTask = vi.fn().mockResolvedValue({ accepted: true, jobId: null });
 const mockRecoverWorkflowTask = vi.fn().mockResolvedValue(undefined);
 const mockSubmitForReview = vi.fn().mockResolvedValue(undefined);
 const mockEnsureTaskAgentSession = vi.fn();
@@ -134,6 +135,7 @@ vi.mock('../../../lib/space-store', () => ({
       updateTask: mockUpdateTask,
       runTaskDirectly: mockRunTaskDirectly,
       cancelWorkflowRun: mockCancelWorkflowRun,
+      cancelTask: mockCancelTask,
       recoverWorkflowTask: mockRecoverWorkflowTask,
       submitForReview: mockSubmitForReview,
       ensureTaskAgentSession: mockEnsureTaskAgentSession,
@@ -321,6 +323,7 @@ describe('SpaceTaskPane', () => {
     mockWorkspaces.value = [];
     mockUpdateTask.mockClear();
     mockCancelWorkflowRun.mockClear();
+    mockCancelTask.mockClear();
     mockRecoverWorkflowTask.mockClear();
     mockEnsureTaskAgentSession.mockReset();
     mockEnsureTaskAgentSession.mockImplementation(async () =>
@@ -1761,10 +1764,20 @@ describe('SpaceTaskPane — activity members actions', () => {
     fireEvent.click(getByTestId('task-actions-menu-trigger'));
     fireEvent.click(getByTestId('task-blocked-cancel-btn'));
 
-    await waitFor(() =>
-      expect(mockUpdateTask).toHaveBeenCalledWith('task-1', { status: 'cancelled' })
-    );
+    await waitFor(() => expect(mockCancelTask).toHaveBeenCalledWith('task-1'));
+    expect(mockUpdateTask).not.toHaveBeenCalled();
     expect(mockCancelWorkflowRun).not.toHaveBeenCalled();
+  });
+
+  it('cancels a plain task through cancelTask instead of the generic status update', async () => {
+    mockTasks.value = [makeTask({ status: 'open', taskAgentSessionId: 'session-abc' })];
+    const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" />);
+
+    fireEvent.click(getByTestId('task-actions-menu-trigger'));
+    fireEvent.click(getByText('Cancel'));
+
+    await waitFor(() => expect(mockCancelTask).toHaveBeenCalledWith('task-1'));
+    expect(mockUpdateTask).not.toHaveBeenCalled();
   });
 
   it.each([
