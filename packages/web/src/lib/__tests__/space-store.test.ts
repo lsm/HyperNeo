@@ -261,17 +261,17 @@ function makeMockHub() {
         };
       }
       if (method === 'spaceAgentV2.list') return { agents: [] };
-      if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [] };
-      if (method === 'spaceAgent.listTemplates') return { templates: templateListResult ?? [] };
-      if (method === 'spaceAgent.createTemplate')
+      if (method === 'spaceAgentTemplate.listBuiltIn') return { templates: [] };
+      if (method === 'spaceAgentTemplate.list') return { templates: templateListResult ?? [] };
+      if (method === 'spaceAgentTemplate.create')
         return { template: makeAgentTemplate(params as Partial<SpaceAgentTemplate>) };
-      if (method === 'spaceAgent.updateTemplate') {
+      if (method === 'spaceAgentTemplate.update') {
         if (updateTemplateResult !== undefined) return { template: updateTemplateResult };
         return {
           template: makeAgentTemplate(params as Partial<SpaceAgentTemplate>),
         };
       }
-      if (method === 'spaceAgent.deleteTemplate') return { success: true };
+      if (method === 'spaceAgentTemplate.delete') return { success: true };
       if (method === 'spaceWorkflow.list') return { workflows: [] };
       if (method === 'space.pause') return { ...makeSpace(), paused: true };
       if (method === 'space.resume') return { ...makeSpace(), paused: false };
@@ -455,8 +455,9 @@ describe('SpaceStore — space selection', () => {
     await spaceStore.selectSpace('space-1');
     const calledMethods = mockHub.request.mock.calls.map((c: unknown[]) => c[0]);
     expect(calledMethods).not.toContain('spaceAgentV2.list');
+    expect(calledMethods).not.toContain('spaceAgentTemplate.listBuiltIn');
     expect(calledMethods).not.toContain('spaceAgent.listBuiltInTemplates');
-    expect(calledMethods).not.toContain('spaceAgent.listTemplates');
+    expect(calledMethods).not.toContain('spaceAgentTemplate.list');
     expect(calledMethods).not.toContain('spaceWorkflow.list');
     expect(calledMethods).not.toContain('spaceWorkflow.listBuiltInTemplates');
     expect(calledMethods).not.toContain('nodeExecution.list');
@@ -468,7 +469,7 @@ describe('SpaceStore — space selection', () => {
 
     await spaceStore.ensureConfigData();
     expect(mockHub.request).toHaveBeenCalledWith('spaceAgentV2.list', { spaceId: 'space-1' });
-    expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.listTemplates', {
+    expect(mockHub.request).toHaveBeenCalledWith('spaceAgentTemplate.list', {
       spaceId: 'space-1',
     });
     expect(mockHub.request).toHaveBeenCalledWith('spaceWorkflow.list', { spaceId: 'space-1' });
@@ -489,6 +490,7 @@ describe('SpaceStore — space selection', () => {
     await spaceStore.ensureConfigData();
 
     const calledMethods = mockHub.request.mock.calls.map((c: unknown[]) => c[0]);
+    expect(calledMethods).not.toContain('spaceAgentTemplate.listBuiltIn');
     expect(calledMethods).not.toContain('spaceAgent.listBuiltInTemplates');
     expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual(['worker.swe', 'scribe']);
     expect(spaceStore.agentTemplates.value[1].displayName).toBe('Scribe');
@@ -514,7 +516,7 @@ describe('SpaceStore — space selection', () => {
         });
       }
       if (method === 'spaceAgentV2.list') return Promise.resolve({ agents: [] });
-      if (method === 'spaceAgent.listBuiltInTemplates') return Promise.resolve({ templates: [] });
+      if (method === 'spaceAgentTemplate.listBuiltIn') return Promise.resolve({ templates: [] });
       if (method === 'spaceWorkflow.list') return Promise.resolve({ workflows: [] });
       if (method === 'spaceWorkflow.listBuiltInTemplates')
         return Promise.resolve({ workflows: [] });
@@ -571,7 +573,7 @@ describe('SpaceStore — ensureWorkflowDetails', () => {
           return { workflow: makeWorkflow((params?.id as string) ?? 'wf1') };
         }
         if (method === 'spaceAgentV2.list') return { agents: [] };
-        if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [] };
+        if (method === 'spaceAgentTemplate.listBuiltIn') return { templates: [] };
         if (method === 'spaceWorkflow.listBuiltInTemplates') return { workflows: [] };
         if (method === 'spaceLongHorizonAgent.list') return { agents: [] };
         if (method === 'spaceLongHorizonAgent.listBuiltInTemplates') return { templates: [] };
@@ -817,7 +819,7 @@ describe('SpaceStore — ensureWorkflowDetails', () => {
         }
         if (method === 'spaceWorkflow.get') return { workflow: makeWorkflow('wf1') };
         if (method === 'spaceAgentV2.list') return { agents: [] };
-        if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [] };
+        if (method === 'spaceAgentTemplate.listBuiltIn') return { templates: [] };
         if (method === 'spaceWorkflow.listBuiltInTemplates') return { workflows: [] };
         if (method === 'spaceLongHorizonAgent.list') return { agents: [] };
         if (method === 'spaceLongHorizonAgent.listBuiltInTemplates') return { templates: [] };
@@ -850,7 +852,7 @@ describe('SpaceStore — ensureWorkflowDetails', () => {
         }
         if (method === 'spaceWorkflow.list') throw new Error('summary fetch failed');
         if (method === 'spaceAgentV2.list') return { agents: [] };
-        if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [] };
+        if (method === 'spaceAgentTemplate.listBuiltIn') return { templates: [] };
         if (method === 'spaceWorkflow.listBuiltInTemplates') return { workflows: [] };
         if (method === 'spaceLongHorizonAgent.list') return { agents: [] };
         if (method === 'spaceLongHorizonAgent.listBuiltInTemplates') return { templates: [] };
@@ -1049,7 +1051,7 @@ describe('SpaceStore — promise-chain lock', () => {
       if (method === 'space.overview')
         return { space: makeSpace('space-2'), tasks: [], workflowRuns: [], sessions: [] };
       if (method === 'spaceAgentV2.list') return { agents: [] };
-      if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [] };
+      if (method === 'spaceAgentTemplate.listBuiltIn') return { templates: [] };
       if (method === 'spaceWorkflow.list') return { workflows: [] };
       return {};
     });
@@ -1463,7 +1465,7 @@ describe('SpaceStore — spaceWorkflow events', () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.listTemplates', {
+    expect(mockHub.request).toHaveBeenCalledWith('spaceAgentTemplate.list', {
       spaceId: 'space-1',
     });
   });
@@ -1489,7 +1491,7 @@ describe('SpaceStore — spaceWorkflow events', () => {
     });
     await Promise.resolve();
 
-    expect(mockHub.request).not.toHaveBeenCalledWith('spaceAgent.listTemplates', expect.anything());
+    expect(mockHub.request).not.toHaveBeenCalledWith('spaceAgentTemplate.list', expect.anything());
   });
 
   it('replaces workflow on updated event', async () => {
@@ -2502,7 +2504,7 @@ describe('SpaceStore — refresh', () => {
           return { workflow: makeWorkflow((params?.id as string) ?? 'wf1') };
         }
         if (method === 'spaceAgentV2.list') return { agents: [] };
-        if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [] };
+        if (method === 'spaceAgentTemplate.listBuiltIn') return { templates: [] };
         if (method === 'spaceWorkflow.listBuiltInTemplates') return { workflows: [] };
         if (method === 'spaceLongHorizonAgent.list') return { agents: [] };
         if (method === 'spaceLongHorizonAgent.listBuiltInTemplates') return { templates: [] };
@@ -3045,7 +3047,7 @@ describe('SpaceStore — node execution LiveQuery subscriptions', () => {
       if (method === 'space.overview')
         return { space: makeSpace('space-2'), tasks: [], workflowRuns: [], sessions: [] };
       if (method === 'spaceAgentV2.list') return { agents: [] };
-      if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [] };
+      if (method === 'spaceAgentTemplate.listBuiltIn') return { templates: [] };
       if (method === 'spaceWorkflow.list') return { workflows: [] };
       if (method === 'nodeExecution.list') return { executions: [] };
       return {};
@@ -3193,7 +3195,7 @@ describe('SpaceStore — template CRUD methods', () => {
 
     await spaceStore.fetchTemplates();
 
-    expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.listTemplates', {
+    expect(mockHub.request).toHaveBeenCalledWith('spaceAgentTemplate.list', {
       spaceId: 'space-1',
     });
     expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual(['architect', 'reviewer']);
@@ -3304,7 +3306,7 @@ describe('SpaceStore — template CRUD methods', () => {
       displayName: 'Scribe',
     });
 
-    expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.createTemplate', {
+    expect(mockHub.request).toHaveBeenCalledWith('spaceAgentTemplate.create', {
       spaceId: 'space-1',
       key: 'scribe',
       handle: 'scribe-agent',
@@ -3353,7 +3355,7 @@ describe('SpaceStore — template CRUD methods', () => {
     });
     const template = await spaceStore.updateTemplate('scribe', { displayName: 'Scribe II' });
 
-    expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.updateTemplate', {
+    expect(mockHub.request).toHaveBeenCalledWith('spaceAgentTemplate.update', {
       spaceId: 'space-1',
       key: 'scribe',
       displayName: 'Scribe II',
@@ -3386,11 +3388,11 @@ describe('SpaceStore — template CRUD methods', () => {
     templateListResult = [makeAgentTemplate({ key: 'first', createdAt: 0 })];
     await spaceStore.deleteTemplate('scribe');
 
-    expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.deleteTemplate', {
+    expect(mockHub.request).toHaveBeenCalledWith('spaceAgentTemplate.delete', {
       spaceId: 'space-1',
       key: 'scribe',
     });
-    expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.listTemplates', {
+    expect(mockHub.request).toHaveBeenCalledWith('spaceAgentTemplate.list', {
       spaceId: 'space-1',
     });
     expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual(['first']);
@@ -3404,7 +3406,7 @@ describe('SpaceStore — template CRUD methods', () => {
 
     await spaceStore.deleteTemplate('scribe', 7);
 
-    expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.deleteTemplate', {
+    expect(mockHub.request).toHaveBeenCalledWith('spaceAgentTemplate.delete', {
       spaceId: 'space-1',
       key: 'scribe',
       expectedVersion: 7,
