@@ -22,7 +22,8 @@ import type { SpaceTaskRepository } from '../../../storage/repositories/space-ta
 import type { SpaceGoalEventRepository } from '../../../storage/repositories/space-goal-event-repository.ts';
 import type { SpaceGoalOutcomeNotificationRepository } from '../../../storage/repositories/space-goal-outcome-notification-repository.ts';
 import type { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository.ts';
-import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
+import type { SpaceAgentGoalScopeRepository } from '../../../storage/repositories/space-agent-goal-scope-repository.ts';
+import type { SpaceAgentRepository } from '../../../storage/repositories/space-agent-repository.ts';
 import type { ScheduleService } from '../schedule/schedule-service.ts';
 import { Logger } from '../../logger.ts';
 import type { GoalAutomationService } from './goal-automation-service.ts';
@@ -105,10 +106,8 @@ export interface SpaceGoalServiceDeps {
   };
   goalAutomationService?: Pick<GoalAutomationService, 'onTaskCompleted'>;
   onGoalResumed?: (goalId: string, spaceId: string) => void;
-  longHorizonAgentRepo?: Pick<
-    SpaceLongHorizonAgentRepository,
-    'assignGoal' | 'getPrimaryGoalOwner' | 'getCoordinator' | 'getById'
-  >;
+  goalScopeRepo?: Pick<SpaceAgentGoalScopeRepository, 'assignGoal' | 'getPrimaryGoalOwner'>;
+  agentRepo?: Pick<SpaceAgentRepository, 'getById' | 'getSpaceManager'>;
   outcomeNotificationRepo?: SpaceGoalOutcomeNotificationRepository;
   onOutcomeNotification?: (notification: SpaceGoalOutcomeNotification) => void;
   evolutionScopeService?: Pick<
@@ -154,8 +153,8 @@ export class SpaceGoalService {
 
     const result = this.runAtomic(() => {
       const goal = this.deps.goalRepo.create(params);
-      if (params.primaryOwnerAgentId && this.deps.longHorizonAgentRepo) {
-        this.deps.longHorizonAgentRepo.assignGoal(params.primaryOwnerAgentId, goal.id);
+      if (params.primaryOwnerAgentId && this.deps.goalScopeRepo) {
+        this.deps.goalScopeRepo.assignGoal(params.primaryOwnerAgentId, goal.id);
       }
       if (params.checkInCronExpression) {
         const schedule = this.deps.scheduleService.createGoalSchedule({
@@ -716,14 +715,15 @@ export class SpaceGoalService {
   }
 
   private resolveClaimAuthorizedAgentIds(goal: SpaceGoal): string[] {
-    const repo = this.deps.longHorizonAgentRepo;
-    if (!repo) return [];
-    const resolution = repo.getPrimaryGoalOwner(goal.id, goal.spaceId);
+    const goalScopeRepo = this.deps.goalScopeRepo;
+    const agentRepo = this.deps.agentRepo;
+    if (!goalScopeRepo || !agentRepo) return [];
+    const resolution = goalScopeRepo.getPrimaryGoalOwner(goal.id, goal.spaceId);
     if (resolution.action === 'resolved') return [resolution.owner.agentId];
     const coordinator =
       resolution.action === 'coordinator_fallback'
-        ? repo.getById(resolution.coordinatorAgentId)
-        : repo.getCoordinator(goal.spaceId);
+        ? agentRepo.getById(resolution.coordinatorAgentId)
+        : agentRepo.getSpaceManager(goal.spaceId);
     return coordinator?.status === 'active' ? [coordinator.id] : [];
   }
 

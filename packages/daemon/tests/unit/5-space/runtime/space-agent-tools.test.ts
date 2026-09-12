@@ -219,7 +219,8 @@ function makeCtx(): TestCtx {
   const taskRepo = new SpaceTaskRepository(db);
   const spaceManager = new SpaceManager(db);
   const longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(db);
-  const goalScopeRepo = new SpaceAgentGoalScopeRepository(db, new SpaceAgentRepository(db));
+  const agentIdentityRepo = new SpaceAgentRepository(db);
+  const goalScopeRepo = new SpaceAgentGoalScopeRepository(db, agentIdentityRepo);
 
   const runtime = new SpaceRuntime({
     db,
@@ -248,7 +249,8 @@ function makeCtx(): TestCtx {
     spaceRepo,
     scheduleService,
     db,
-    longHorizonAgentRepo,
+    goalScopeRepo,
+    agentRepo: agentIdentityRepo,
     resolveWorkspacePath: async (_spaceId: string, rawPath: string) => {
       if (rawPath === workspacePath || rawPath === '/tmp/secondary-workspace') return rawPath;
       throw new Error(`Workspace path is not registered to space: ${rawPath}`);
@@ -3420,7 +3422,8 @@ describe('createSpaceAgentToolHandlers — review_goal_outcome', () => {
       spaceRepo: new SpaceRepository(ctx.db),
       scheduleService: ctx.scheduleService,
       db: ctx.db,
-      longHorizonAgentRepo: ctx.longHorizonAgentRepo,
+      goalScopeRepo: ctx.goalScopeRepo,
+      agentRepo: new SpaceAgentRepository(ctx.db),
       outcomeNotificationRepo: notifRepo,
     });
   });

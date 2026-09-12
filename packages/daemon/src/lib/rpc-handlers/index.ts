@@ -464,6 +464,12 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     jobQueue: deps.jobQueue,
   });
   let deliverOutcomeWake: (notification: SpaceGoalOutcomeNotification) => void = () => {};
+  const spaceAgentRepo = new SpaceAgentRepository(deps.db.getDatabase());
+  const spaceAgentGoalScopeRepo = new SpaceAgentGoalScopeRepository(
+    deps.db.getDatabase(),
+    spaceAgentRepo
+  );
+
   const spaceGoalService = new SpaceGoalService({
     goalRepo: spaceGoalRepo,
     goalEventRepo: spaceGoalEventRepo,
@@ -471,7 +477,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     spaceRepo,
     scheduleService,
     db: deps.db.getDatabase(),
-    longHorizonAgentRepo,
+    goalScopeRepo: spaceAgentGoalScopeRepo,
+    agentRepo: spaceAgentRepo,
     outcomeNotificationRepo,
     evolutionScopeService,
     reactiveDb: deps.reactiveDb,
@@ -755,11 +762,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.db.getDatabase()
   );
 
-  const spaceAgentRepo = new SpaceAgentRepository(deps.db.getDatabase());
-  const spaceAgentGoalScopeRepo = new SpaceAgentGoalScopeRepository(
-    deps.db.getDatabase(),
-    spaceAgentRepo
-  );
   const spaceAgentReminderRepo = new SpaceAgentReminderRepository(
     deps.db.getDatabase(),
     spaceAgentRepo
