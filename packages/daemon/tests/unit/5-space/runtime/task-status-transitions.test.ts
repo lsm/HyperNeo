@@ -1,16 +1,16 @@
-import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import type { SpaceTaskStatus } from '@hyperneo/shared';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
+import { runMigrations } from '../../../../src/storage/schema/index.ts';
+import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import {
-  isValidSpaceTaskTransition,
   SpaceTaskManager,
   VALID_SPACE_TASK_TRANSITIONS,
+  isValidSpaceTaskTransition,
 } from '../../../../src/lib/space/managers/space-task-manager.ts';
 import { PendingCompletionSupersededError } from '../../../../src/lib/space/operations/pending-completion-guard.ts';
-import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
-import { runMigrations } from '../../../../src/storage/schema/index.ts';
-import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 
 const SPACE_ID = 'space-trans-test';
 
