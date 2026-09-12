@@ -22,17 +22,20 @@ let db: Database;
 let database: AppDatabase;
 let tasks: SpaceTaskRepository;
 let sessions: SessionRepository;
+let spaces: SpaceRepository;
 let spaceId: string;
 let taskId: string;
 const jobQueue = {} as JobQueueRepository;
 const context = {} as CallContext;
 let emit: ReturnType<typeof mock>;
+let emitCreated: ReturnType<typeof mock>;
 let getDatabase: ReturnType<typeof mock>;
 
 beforeEach(() => {
   db = new Database(':memory:');
   createSpaceTables(db);
-  spaceId = new SpaceRepository(db).createSpace({
+  spaces = new SpaceRepository(db);
+  spaceId = spaces.createSpace({
     name: 'Space',
     slug: 'space',
     workspacePath: '/repo',
@@ -43,6 +46,7 @@ beforeEach(() => {
   getDatabase = mock(() => db);
   database = { getDatabase, notifyChange: mock(() => {}) } as unknown as AppDatabase;
   emit = mock(async () => {});
+  emitCreated = mock(async () => {});
 });
 afterEach(() => db.close());
 
@@ -56,6 +60,9 @@ function provider(extra = {}, pendingCompletion?: OwnedPendingCompletionDependen
       taskRepo: tasks,
       notifyStandalone: () => database.notifyChange('space_tasks'),
       emitTaskUpdated: emit,
+      emitTaskCreated: emitCreated,
+      getSpace: (id: string) => spaces.getSpace(id),
+      validateDefaultTaskWorkspace: async () => null,
       blockExecution: async () => {
         throw new Error('Unexpected workflow cleanup');
       },
@@ -90,6 +97,29 @@ test('provider construction and discovery stay lazy and cache one registry', asy
     await rpc({ name: 'operations.describe', input: { name: 'task.update' } }, context)
   ).toMatchObject({ found: true, name: 'task.update' });
   expect(getDatabase).not.toHaveBeenCalled();
+});
+
+test('rpc task.create with spaceId creates a Space task and calls emitTaskCreated once', async () => {
+  const rpc = createOperationRpcHandler(provider(), () => ({}));
+  const result = (await rpc(
+    { name: 'task.create', input: { spaceId, title: 'Provisioned' } },
+    context
+  )) as { id: string };
+  expect(result).toMatchObject({ title: 'Provisioned' });
+  expect(tasks.getTask(result.id)).toMatchObject({ spaceId, title: 'Provisioned' });
+  expect(emitCreated).toHaveBeenCalledTimes(1);
+});
+
+test('rpc task.create without spaceId creates a standalone row', async () => {
+  const rpc = createOperationRpcHandler(provider(), () => ({}));
+  const result = (await rpc({ name: 'task.create', input: { title: 'Loose' } }, context)) as {
+    id: string;
+  };
+  const row = db.prepare('SELECT space_id FROM space_tasks WHERE id = ?').get(result.id) as {
+    space_id: string | null;
+  };
+  expect(row.space_id).toBeNull();
+  expect(emitCreated).not.toHaveBeenCalled();
 });
 
 test('cached and new MCP handlers adopt the same Space catalog as RPC', async () => {

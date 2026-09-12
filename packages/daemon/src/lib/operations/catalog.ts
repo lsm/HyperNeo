@@ -21,6 +21,7 @@ export interface TaskOperationDependencies {
   submitForReview?: OperationDefinition;
   cancel?: OperationDefinition;
   start?: OperationDefinition;
+  create?: OperationDefinition;
   readTask: (taskId: string) => TaskCore | null;
   createTask: Parameters<typeof createCreateTaskOperation<CreateStandaloneTaskInput>>[0];
   listTasks: Parameters<typeof createListTasksOperation>[0];
@@ -38,7 +39,7 @@ export function createDaemonOperationCatalog(
   const registry: OperationRegistry = createOperationRegistry([
     createSendMessageOperation(jobQueue),
     createGetTaskOperation(tasks.readTask),
-    createCreateTaskOperation(tasks.createTask),
+    tasks.create ?? createCreateTaskOperation(tasks.createTask),
     createListTasksOperation(tasks.listTasks),
     createUpdateTaskOperation(tasks.editTask),
     createTransitionTaskOperation(tasks.transitionTask),

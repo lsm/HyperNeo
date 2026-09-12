@@ -678,6 +678,17 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
           task,
         });
       },
+      emitTaskCreated: async (spaceId, task) => {
+        await deps.internalEventBus.publish('space.task.created', {
+          sessionId: 'global',
+          spaceId,
+          taskId: task.id,
+          task,
+        });
+      },
+      getSpace: (spaceId) => deps.spaceManager.getSpace(spaceId),
+      validateDefaultTaskWorkspace: (spaceId) =>
+        deps.spaceManager.validateDefaultTaskWorkspace(spaceId),
     },
     pendingCompletion,
     {

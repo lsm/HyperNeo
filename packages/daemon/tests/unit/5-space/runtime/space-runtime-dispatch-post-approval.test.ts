@@ -652,6 +652,9 @@ test.each(['rpc', 'mcp'] as const)(
           taskRepo,
           notifyStandalone: () => {},
           emitTaskUpdated,
+          emitTaskCreated: async () => {},
+          getSpace: async () => null,
+          validateDefaultTaskWorkspace: async () => null,
           blockExecution: async () => {
             throw new Error('unexpected workflow stop');
           },
