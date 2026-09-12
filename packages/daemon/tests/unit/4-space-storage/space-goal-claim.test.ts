@@ -59,14 +59,16 @@ describe('SpaceGoalService.claimOutcomeNotification', () => {
     };
     resolutions = {};
     coordinatorAgent = { id: 'coordinator-1', handle: 'coordinator', status: 'active' };
-    const longHorizonAgentRepo = {
+    const goalScopeRepo = {
       assignGoal: mock(() => null),
       getPrimaryGoalOwner: mock((goalId: string) => resolutions[goalId] ?? resolution),
-      getCoordinator: mock(() => coordinatorAgent),
+    } as unknown as SpaceGoalServiceDeps['goalScopeRepo'];
+    const agentRepo = {
+      getSpaceManager: mock(() => coordinatorAgent),
       getById: mock((id: string) =>
         coordinatorAgent && id === coordinatorAgent.id ? coordinatorAgent : null
       ),
-    } as unknown as SpaceGoalServiceDeps['longHorizonAgentRepo'];
+    } as unknown as SpaceGoalServiceDeps['agentRepo'];
     service = new SpaceGoalService({
       goalRepo,
       goalEventRepo: new SpaceGoalEventRepository(db as never),
@@ -75,7 +77,8 @@ describe('SpaceGoalService.claimOutcomeNotification', () => {
       scheduleService: {} as unknown as ScheduleService,
       db: db as never,
       outcomeNotificationRepo: notificationRepo,
-      longHorizonAgentRepo,
+      goalScopeRepo,
+      agentRepo,
     });
     const space = spaceRepo.createSpace({
       slug: 'test',
