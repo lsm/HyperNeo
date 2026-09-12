@@ -76,6 +76,7 @@ import {
 import { ChannelCycleRepository } from '../../storage/repositories/channel-cycle-repository.ts';
 import { SessionRepository } from '../../storage/repositories/session-repository.ts';
 import { setupSpaceAgentHandlers } from './space-agent-handlers.ts';
+import { setupSpaceAgentSubscriptionHandlers } from './space-agent-subscription-handlers.ts';
 import { setupSpaceAgentTemplateHandlers } from './space-agent-template-handlers.ts';
 import { setupSpaceAgentV2Handlers } from './space-agent-v2-handlers.ts';
 import { buildTemplateExtrasSeeder } from '../space/agents/template-extras-seeding.ts';
@@ -86,6 +87,7 @@ import {
 } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
 import { SpaceAgentTemplateRepository } from '../../storage/repositories/space-agent-template-repository.ts';
 import { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository.ts';
+import { SpaceAgentSubscriptionRepository } from '../../storage/repositories/space-agent-subscription-repository.ts';
 import { SpaceAgentTemplateManager } from '../space/managers/space-agent-template-manager.ts';
 import { createAgentTemplateResolverFactory } from '../space/workflows/run-template-snapshot.ts';
 import {
@@ -747,6 +749,10 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   );
 
   const spaceAgentRepo = new SpaceAgentRepository(deps.db.getDatabase());
+  const spaceAgentSubscriptionRepo = new SpaceAgentSubscriptionRepository(
+    deps.db.getDatabase(),
+    spaceAgentRepo
+  );
 
   const spaceRuntimeService: SpaceRuntimeService = new SpaceRuntimeService({
     ownedAgents: spaceAgentRepo,
@@ -1039,6 +1045,12 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   setupSpaceAgentTemplateHandlers(deps.messageHub, {
     spaceManager: deps.spaceManager,
     templateManager: spaceAgentTemplateManager,
+  });
+
+  setupSpaceAgentSubscriptionHandlers(deps.messageHub, {
+    subscriptions: spaceAgentSubscriptionRepo,
+    agents: spaceAgentRepo,
+    runtimeService: spaceRuntimeService,
   });
 
   setupSpaceAgentV2Handlers(deps.messageHub, {
