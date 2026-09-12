@@ -560,7 +560,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
             const task = value as SpaceTask;
             if (mode === 'superseded') {
               taskRepo.updateTask(task.id, { status: 'open' });
-              taskRepo.updateTask(task.id, { status: 'in_progress' });
+              taskRepo.updateTask(task.id, { status: 'in_progress', startedAt: null });
             }
             const execution = node as NodeExecution;
             nodeExecutionRepo.update(execution.id, {
