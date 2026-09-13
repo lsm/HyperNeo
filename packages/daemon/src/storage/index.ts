@@ -32,6 +32,7 @@ import { JobQueueRepository } from './repositories/job-queue-repository.ts';
 import { AppMcpServerRepository } from './repositories/app-mcp-server-repository.ts';
 import { SpaceTaskRepository } from './repositories/space-task-repository.ts';
 import { NodeExecutionRepository } from './repositories/node-execution-repository.ts';
+import { SpaceLongHorizonAgentRepository } from './repositories/space-long-horizon-agent-repository.ts';
 import { McpEnablementRepository } from './repositories/mcp-enablement-repository.ts';
 import { SkillRepository } from './repositories/skill-repository.ts';
 import { WorkspaceHistoryRepository } from './repositories/workspace-history-repository.ts';
@@ -104,6 +105,7 @@ export class Database {
   private appMcpServerRepo!: AppMcpServerRepository;
   private spaceTaskRepo!: SpaceTaskRepository;
   private nodeExecutionRepo!: NodeExecutionRepository;
+  private longHorizonAgentRepo!: SpaceLongHorizonAgentRepository;
   private mcpEnablementRepo!: McpEnablementRepository;
   private skillRepo!: SkillRepository;
   private workspaceHistoryRepo!: WorkspaceHistoryRepository;
@@ -146,6 +148,7 @@ export class Database {
     this.goalRepo = new GoalRepository(db, reactiveDb, shortIdAllocator);
     this.spaceTaskRepo = new SpaceTaskRepository(db, reactiveDb);
     this.nodeExecutionRepo = new NodeExecutionRepository(db, reactiveDb);
+    this.longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(db);
     this.jobQueueRepo = new JobQueueRepository(db);
     this.appMcpServerRepo = new AppMcpServerRepository(db, reactiveDb);
     this.mcpEnablementRepo = new McpEnablementRepository(db, reactiveDb);
@@ -507,6 +510,10 @@ export class Database {
 
   getNodeExecutionRepo(): NodeExecutionRepository {
     return this.nodeExecutionRepo;
+  }
+
+  getLongHorizonAgentRepo(): SpaceLongHorizonAgentRepository {
+    return this.longHorizonAgentRepo;
   }
 
   getDatabasePath(): string {

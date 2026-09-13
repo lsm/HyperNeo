@@ -88,7 +88,6 @@ function makeCtx(overrides: Partial<SpaceAgentToolsConfig> = {}): GoalsCtx {
     taskAgentManager: stubTaskAgentManager,
     goalService,
     callerRole: 'coordinator',
-    isDefaultAgent: true,
     ...overrides,
   };
   return { db, config };
@@ -199,7 +198,7 @@ describe('createSpaceRegistryEntries — goals conditional entries', () => {
 
   test('keeps the nine goal entries but drops review_goal_outcome for non-owning caller roles', () => {
     for (const callerRole of ['ad_hoc_member', 'workflow_worker', undefined] as const) {
-      const ctx = makeCtx({ callerRole, isDefaultAgent: false });
+      const ctx = makeCtx({ callerRole });
       try {
         const entries = createSpaceRegistryEntries(ctx.config);
         expect(entries.some((entry) => entry.name === 'review_goal_outcome')).toBe(false);

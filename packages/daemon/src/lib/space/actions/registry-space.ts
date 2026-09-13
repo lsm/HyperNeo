@@ -4,6 +4,9 @@ import {
   type SpaceTaskStatus,
 } from '@hyperneo/shared';
 import type { z } from 'zod';
+import type { OperationRegistrySource } from '../../operations/registry.ts';
+import { hasSpaceAuthority } from '../runtime/space-mcp-session-policy.ts';
+import { canTransition as canTransitionRunStatus } from '../runtime/workflow-run-status-machine.ts';
 import {
   AddForgeManualNoteSchema,
   AddForgeMetricSnapshotSchema,
@@ -99,10 +102,11 @@ import {
   DEFAULT_INACTIVITY_THRESHOLD_MS,
   type SpaceAgentToolsConfig,
 } from '../tools/space-agent-tools.ts';
-import { SESSION_WRITE_AUTONOMY_LEVEL } from '../tools/tool-admission-gates.ts';
+import {
+  HUMAN_ONLY_AUTONOMY_LEVEL,
+  SESSION_WRITE_AUTONOMY_LEVEL,
+} from '../tools/tool-admission-gates.ts';
 import { jsonResult } from '../tools/tool-result.ts';
-import type { OperationRegistrySource } from '../../operations/registry.ts';
-import { canTransition as canTransitionRunStatus } from '../runtime/workflow-run-status-machine.ts';
 import { createOperationActionHandler } from './operation-action.ts';
 import { type ActionDefinition, defineAction } from './registry.ts';
 
@@ -119,8 +123,6 @@ function routeCancelsActiveWorkflowRun(currentStatus: SpaceTaskStatus): boolean 
 }
 
 const DESTRUCTIVE_ACTION_AUTONOMY_LEVEL = SESSION_WRITE_AUTONOMY_LEVEL;
-
-const HUMAN_ONLY_AUTONOMY_LEVEL = 5;
 
 const forgeTerminalStatusAutonomy =
   (committingStatuses: readonly string[]) =>
@@ -388,7 +390,7 @@ export function createSpaceRegistryEntries(
       family: 'agents',
       safetyClass: 'mutate',
       description:
-        'Assign a long-horizon agent to own a goal (admission-checked for coordinator authorization); returns success.',
+        'Assign a long-horizon agent to own a goal (admission-checked for Space agent session authorization); returns success.',
       paramsDoc: 'agent_id, goal_id',
       paramsSchema: AssignAgentToGoalSchema,
       handler: (args) => handlers.assign_agent_to_goal(args),
@@ -398,7 +400,7 @@ export function createSpaceRegistryEntries(
       family: 'agents',
       safetyClass: 'mutate',
       description:
-        'Remove a long-horizon agent goal ownership (admission-checked for coordinator authorization); returns success.',
+        'Remove a long-horizon agent goal ownership (admission-checked for Space agent session authorization); returns success.',
       paramsDoc: 'agent_id, goal_id',
       paramsSchema: UnassignAgentFromGoalSchema,
       handler: (args) => handlers.unassign_agent_from_goal(args),
@@ -924,7 +926,7 @@ export function createSpaceRegistryEntries(
       family: 'tasks',
       safetyClass: 'human_only',
       description:
-        'Approve or reject a task paused at the submit_for_approval checkpoint; coordinator and task-agent sessions only; returns the updated task.',
+        'Approve or reject a task paused at the submit_for_approval checkpoint; Space agent sessions (coordinator or long-term agent) and legacy task-agent sessions only; returns the updated task.',
       paramsDoc: 'task_id, approved (true approves, false rejects to in_progress), reason?',
       paramsSchema: ApprovePendingCompletionSchema,
       autonomyRequirement: HUMAN_ONLY_AUTONOMY_LEVEL,
@@ -1300,8 +1302,7 @@ export function createSpaceRegistryEntries(
     : [...workflowEntries, ...taskEntries, ...partCEntries];
   if (config.goalService) entries.push(...goalEntries);
   if (config.evolutionScopeService && config.evolutionEpisodeService) entries.push(...forgeEntries);
-  if (config.callerRole === 'long_term_agent' || config.isDefaultAgent === true)
-    entries.push(reviewGoalOutcomeEntry);
+  if (hasSpaceAuthority(config.callerRole)) entries.push(reviewGoalOutcomeEntry);
   return config.taskAgentManager
     ? entries
     : entries.filter((entry) => entry.name !== 'send_message_to_task');

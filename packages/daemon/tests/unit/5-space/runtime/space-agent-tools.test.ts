@@ -1,4 +1,3 @@
-import { PendingCompletionSupersededError } from '../../../../src/lib/space/operations/pending-completion-guard';
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import { execSync } from 'node:child_process';
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
@@ -19,10 +18,11 @@ import { getLongHorizonAgentTemplate } from '../../../../src/lib/space/agents/lo
 import { EvolutionEpisodeService } from '../../../../src/lib/space/evolution-episode-service.ts';
 import { EvolutionScopeService } from '../../../../src/lib/space/evolution-scope-service.ts';
 import { SpaceGoalService } from '../../../../src/lib/space/goals/goal-service.ts';
-import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { SpaceAgentTemplateManager } from '../../../../src/lib/space/managers/space-agent-template-manager.ts';
+import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
+import { PendingCompletionSupersededError } from '../../../../src/lib/space/operations/pending-completion-guard';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import { ScheduleService } from '../../../../src/lib/space/schedule/schedule-service.ts';
@@ -45,15 +45,15 @@ import { EvolutionRepository } from '../../../../src/storage/repositories/evolut
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import { McpAuditLogRepository } from '../../../../src/storage/repositories/mcp-audit-log-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
+import { SpaceAgentGoalScopeRepository } from '../../../../src/storage/repositories/space-agent-goal-scope-repository.ts';
 import { SpaceAgentInactivityConfigRepository } from '../../../../src/storage/repositories/space-agent-inactivity-repository.ts';
+import { SpaceAgentReminderRepository } from '../../../../src/storage/repositories/space-agent-reminder-repository';
+import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
+import { SpaceAgentSubscriptionRepository } from '../../../../src/storage/repositories/space-agent-subscription-repository.ts';
 import { SpaceAgentTemplateRepository } from '../../../../src/storage/repositories/space-agent-template-repository.ts';
 import { SpaceGoalEventRepository } from '../../../../src/storage/repositories/space-goal-event-repository.ts';
 import { SpaceGoalOutcomeNotificationRepository } from '../../../../src/storage/repositories/space-goal-outcome-notification-repository.ts';
 import { SpaceGoalRepository } from '../../../../src/storage/repositories/space-goal-repository.ts';
-import { SpaceAgentGoalScopeRepository } from '../../../../src/storage/repositories/space-agent-goal-scope-repository.ts';
-import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
-import { SpaceAgentReminderRepository } from '../../../../src/storage/repositories/space-agent-reminder-repository';
-import { SpaceAgentSubscriptionRepository } from '../../../../src/storage/repositories/space-agent-subscription-repository.ts';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
@@ -2023,11 +2023,12 @@ describe('createSpaceAgentToolHandlers — session management tools', () => {
     expect(String(parsed.error)).toContain('space autonomy level 3 < required level 4');
   });
 
-  test('send_session_message coordinator can send cross-session without autonomy gate', async () => {
+  test('send_session_message gates a long-term agent with a real backing identity too', async () => {
     seedSession('other-member-coordinator', ctx.spaceId, { status: 'idle' });
     const handlers = makeHandlers(ctx, {
       myAgentName: 'space-agent',
-      isDefaultAgent: true,
+      callerRole: 'long_term_agent',
+      myAgentId: ctx.agentId,
       mySessionId: 'caller-session',
       getSpaceAutonomyLevel: async () => 3,
       getRuntimeSession: () => ({ startQueryAndEnqueue: async () => {} }) as never,
@@ -2040,7 +2041,28 @@ describe('createSpaceAgentToolHandlers — session management tools', () => {
       })
     );
 
-    expect(parsed.success).toBe(true);
+    expect(parsed.success).toBe(false);
+    expect(String(parsed.error)).toContain('space autonomy level 3 < required level 4');
+  });
+
+  test('send_session_message: Space authority without a backing agent record still requires autonomy', async () => {
+    seedSession('other-member-no-agent-record', ctx.spaceId, { status: 'idle' });
+    const handlers = makeHandlers(ctx, {
+      callerRole: 'coordinator',
+      mySessionId: 'caller-session',
+      getSpaceAutonomyLevel: async () => 3,
+      getRuntimeSession: () => ({ startQueryAndEnqueue: async () => {} }) as never,
+    });
+
+    const parsed = parseResult(
+      await handlers.send_session_message({
+        session_id: 'other-member-no-agent-record',
+        message: 'Proceed',
+      })
+    );
+
+    expect(parsed.success).toBe(false);
+    expect(String(parsed.error)).toContain('space autonomy level 3 < required level 4');
   });
 
   test('get_session_messages cursor handles duplicate timestamps', async () => {
@@ -2303,26 +2325,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     expect(clearLongTermAgentSessionProvider).not.toHaveBeenCalled();
   });
 
-  test('update_agent rejects pausing or archiving the default agent (C-2 lock)', async () => {
-    const handlers = makeHandlers(ctx);
-    const coordinator = ctx.longHorizonAgentRepo.ensureSpaceManager(ctx.spaceId);
-
-    const paused = JSON.parse(
-      (await handlers.pause_agent({ agent_id: coordinator.id })).content[0].text
-    );
-    expect(paused.success).toBe(false);
-    expect(paused.error).toContain('cannot be paused, archived, or disabled');
-
-    const archived = JSON.parse(
-      (await handlers.archive_agent({ agent_id: coordinator.id })).content[0].text
-    );
-    expect(archived.success).toBe(false);
-    expect(archived.error).toContain('cannot be paused, archived, or disabled');
-
-    expect(ctx.longHorizonAgentRepo.getById(coordinator.id)?.status).toBe('active');
-  });
-
-  test('update_agent keeps default-agent instructions and model editable (C-2 lock)', async () => {
+  test('update_agent edits a space-manager-handle agent like any other', async () => {
     const handlers = makeHandlers(ctx);
     const coordinator = ctx.longHorizonAgentRepo.ensureSpaceManager(ctx.spaceId);
 
@@ -2691,14 +2694,14 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
         .text
     );
     expect(assign.success).toBe(false);
-    expect(assign.error).toContain('coordinator or explicit human');
+    expect(assign.error).toContain('a Space agent session or explicit human');
 
     const unassign = JSON.parse(
       (await handlers.unassign_agent_from_goal({ agent_id: agent.id, goal_id: goal.id })).content[0]
         .text
     );
     expect(unassign.success).toBe(false);
-    expect(unassign.error).toContain('coordinator or explicit human');
+    expect(unassign.error).toContain('a Space agent session or explicit human');
   });
 
   test('create_goal atomically assigns the coordinator as owner by default', async () => {
@@ -2738,6 +2741,107 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
       action: 'resolved',
       owner: expect.objectContaining({ agentId: agent.id }),
       conflicts: [],
+    });
+  });
+
+  describe('goal-ownership mutations revalidate the caller identity', () => {
+    function callerHandlers(status: 'active' | 'paused') {
+      return makeHandlers(ctx, {
+        callerRole: 'long_term_agent',
+        myAgentId: ctx.agentId,
+        longHorizonAgentRepo: {
+          getById: (id: string) =>
+            id === ctx.agentId
+              ? ({ id, spaceId: ctx.spaceId, status } as unknown as SpaceLongHorizonAgent)
+              : ctx.longHorizonAgentRepo.getById(id),
+        } as unknown as SpaceLongHorizonAgentRepository,
+      });
+    }
+
+    test('assign_agent_to_goal denies a paused caller and admits an active one', async () => {
+      const target = ctx.longHorizonAgentRepo.ensureSpaceManager(ctx.spaceId);
+      const goal = ctx.goalService.createGoal({ spaceId: ctx.spaceId, title: 'Ownership goal' });
+
+      const denied = JSON.parse(
+        (
+          await callerHandlers('paused').assign_agent_to_goal({
+            agent_id: target.id,
+            goal_id: goal.id,
+          })
+        ).content[0].text
+      );
+      expect(denied).toEqual({
+        success: false,
+        error:
+          'This action requires an active Space agent identity; the provenance agent is missing or inactive.',
+      });
+
+      const admitted = JSON.parse(
+        (
+          await callerHandlers('active').assign_agent_to_goal({
+            agent_id: target.id,
+            goal_id: goal.id,
+          })
+        ).content[0].text
+      );
+      expect(admitted.success).toBe(true);
+    });
+
+    test('unassign_agent_from_goal denies a paused caller and admits an active one', async () => {
+      const target = ctx.longHorizonAgentRepo.ensureSpaceManager(ctx.spaceId);
+      const goal = ctx.goalService.createGoal({ spaceId: ctx.spaceId, title: 'Ownership goal' });
+      await makeHandlers(ctx).assign_agent_to_goal({ agent_id: target.id, goal_id: goal.id });
+
+      const denied = JSON.parse(
+        (
+          await callerHandlers('paused').unassign_agent_from_goal({
+            agent_id: target.id,
+            goal_id: goal.id,
+          })
+        ).content[0].text
+      );
+      expect(denied).toEqual({
+        success: false,
+        error:
+          'This action requires an active Space agent identity; the provenance agent is missing or inactive.',
+      });
+
+      const admitted = JSON.parse(
+        (
+          await callerHandlers('active').unassign_agent_from_goal({
+            agent_id: target.id,
+            goal_id: goal.id,
+          })
+        ).content[0].text
+      );
+      expect(admitted.success).toBe(true);
+    });
+
+    test('create_goal with an explicit non-self owner denies a paused caller and admits an active one', async () => {
+      const owner = ctx.longHorizonAgentRepo.ensureSpaceManager(ctx.spaceId);
+
+      const denied = JSON.parse(
+        (
+          await callerHandlers('paused').create_goal({
+            title: 'Paused caller goal',
+            owner_agent_id: owner.id,
+          })
+        ).content[0].text
+      );
+      expect(denied.success).toBe(false);
+      expect(denied.error).toBe(
+        'This action requires an active Space agent identity; the provenance agent is missing or inactive.'
+      );
+
+      const admitted = JSON.parse(
+        (
+          await callerHandlers('active').create_goal({
+            title: 'Active caller goal',
+            owner_agent_id: owner.id,
+          })
+        ).content[0].text
+      );
+      expect(admitted.success).toBe(true);
     });
   });
 
@@ -7048,6 +7152,12 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
     return task.id;
   }
 
+  function makeApproveHandlers(
+    overrides: Partial<Parameters<typeof createSpaceAgentToolHandlers>[0]> = {}
+  ) {
+    return makeHandlers(ctx, { myAgentId: ctx.agentId, ...overrides });
+  }
+
   test.each([true, false])(
     'decision %s emits once before auditing the raw reason',
     async (approved) => {
@@ -7070,8 +7180,9 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
           });
         }
       );
-      const result = await makeHandlers(ctx, {
-        isDefaultAgent: true,
+      const result = await makeApproveHandlers({
+        callerRole: 'long_term_agent',
+        getSpaceAutonomyLevel: async () => 5,
         auditLogRepo,
         internalEventBus:
           bus as unknown as import('../../../../src/lib/internal-event-bus').InternalEventBus<
@@ -7112,8 +7223,9 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
       }
     );
 
-    const result = await makeHandlers(ctx, {
-      isDefaultAgent: true,
+    const result = await makeApproveHandlers({
+      callerRole: 'long_term_agent',
+      getSpaceAutonomyLevel: async () => 5,
     }).approve_pending_completion({ task_id: taskId, approved: true, reason: 'ship it' });
     dispatchSpy.mockRestore();
 
@@ -7137,8 +7249,9 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
       const transition = spyOn(ctx.taskManager, 'setTaskStatus').mockRejectedValue(error);
       const auditLogRepo = new McpAuditLogRepository(ctx.db);
       const publish = mock(async () => {});
-      const result = await makeHandlers(ctx, {
-        isDefaultAgent: true,
+      const result = await makeApproveHandlers({
+        callerRole: 'long_term_agent',
+        getSpaceAutonomyLevel: async () => 5,
         auditLogRepo,
         internalEventBus: { publish } as unknown as NonNullable<
           Parameters<typeof createSpaceAgentToolHandlers>[0]['internalEventBus']
@@ -7173,8 +7286,9 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
       }
     );
 
-    const result = await makeHandlers(ctx, {
-      isDefaultAgent: true,
+    const result = await makeApproveHandlers({
+      callerRole: 'long_term_agent',
+      getSpaceAutonomyLevel: async () => 5,
     }).approve_pending_completion({ task_id: taskId, approved: true });
     dispatchSpy.mockRestore();
 
@@ -7193,8 +7307,9 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
       throw new Error('transition rejected');
     });
 
-    const result = await makeHandlers(ctx, {
-      isDefaultAgent: true,
+    const result = await makeApproveHandlers({
+      callerRole: 'long_term_agent',
+      getSpaceAutonomyLevel: async () => 5,
     }).approve_pending_completion({ task_id: taskId, approved: true });
     dispatchSpy.mockRestore();
 
@@ -7212,8 +7327,9 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
       reason: 'must not be called on reject',
     });
 
-    const result = await makeHandlers(ctx, {
-      isDefaultAgent: true,
+    const result = await makeApproveHandlers({
+      callerRole: 'long_term_agent',
+      getSpaceAutonomyLevel: async () => 5,
     }).approve_pending_completion({ task_id: taskId, approved: false, reason: 'needs rework' });
     dispatchSpy.mockRestore();
 
@@ -7229,8 +7345,9 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
     const taskId = await createReviewTask();
     const dispatchSpy = spyOn(ctx.runtime, 'dispatchPostApproval');
 
-    const result = await makeHandlers(ctx, {
-      isDefaultAgent: true,
+    const result = await makeApproveHandlers({
+      callerRole: 'long_term_agent',
+      getSpaceAutonomyLevel: async () => 5,
     }).approve_pending_completion({ task_id: taskId, approved: false });
     dispatchSpy.mockRestore();
 
@@ -7249,8 +7366,9 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
     ctx.taskRepo.updateTask(task.id, { status: 'review' });
 
     const dispatchSpy = spyOn(ctx.runtime, 'dispatchPostApproval');
-    const result = await makeHandlers(ctx, {
-      isDefaultAgent: true,
+    const result = await makeApproveHandlers({
+      callerRole: 'long_term_agent',
+      getSpaceAutonomyLevel: async () => 5,
     }).approve_pending_completion({ task_id: task.id, approved: true });
     dispatchSpy.mockRestore();
 
@@ -7272,8 +7390,9 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
     });
 
     const dispatchSpy = spyOn(ctx.runtime, 'dispatchPostApproval');
-    const result = await makeHandlers(ctx, {
-      isDefaultAgent: true,
+    const result = await makeApproveHandlers({
+      callerRole: 'long_term_agent',
+      getSpaceAutonomyLevel: async () => 5,
     }).approve_pending_completion({ task_id: task.id, approved: true });
     dispatchSpy.mockRestore();
 
@@ -7337,14 +7456,174 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
     const dispatchSpy = spyOn(ctx.runtime, 'dispatchPostApproval');
 
     const result = await makeHandlers(ctx, {
-      isDefaultAgent: true,
+      callerRole: 'long_term_agent',
+      getSpaceAutonomyLevel: async () => 5,
       spaceId: 'other-space',
+      myAgentId: 'other-space-agent',
+      longHorizonAgentRepo: {
+        getById: (id: string) =>
+          id === 'other-space-agent'
+            ? ({
+                id,
+                spaceId: 'other-space',
+                status: 'active',
+              } as unknown as SpaceLongHorizonAgent)
+            : null,
+      } as unknown as SpaceLongHorizonAgentRepository,
     }).approve_pending_completion({ task_id: taskId, approved: true });
     dispatchSpy.mockRestore();
 
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.success).toBe(false);
     expect(parsed.error).toContain('does not belong');
+  });
+
+  test('long-term agent below the required autonomy level is denied by the raw tool', async () => {
+    const taskId = await createReviewTask();
+    const dispatchSpy = spyOn(ctx.runtime, 'dispatchPostApproval');
+
+    const result = await makeApproveHandlers({
+      callerRole: 'long_term_agent',
+      getSpaceAutonomyLevel: async () => 4,
+    }).approve_pending_completion({ task_id: taskId, approved: true });
+    dispatchSpy.mockRestore();
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('space autonomy level 4 < required level 5');
+    expect(dispatchSpy).not.toHaveBeenCalled();
+    expect(ctx.taskRepo.getTask(taskId)?.status).toBe('review');
+  });
+
+  test('long-term agent at the required autonomy level is admitted by the raw tool', async () => {
+    const taskId = await createReviewTask();
+    const dispatchSpy = spyOn(ctx.runtime, 'dispatchPostApproval').mockImplementation(
+      async (id: string) => {
+        ctx.taskRepo.updateTask(id, { status: 'approved', approvalSource: 'human' });
+      }
+    );
+
+    const result = await makeApproveHandlers({
+      callerRole: 'long_term_agent',
+      getSpaceAutonomyLevel: async () => 5,
+    }).approve_pending_completion({ task_id: taskId, approved: true });
+    dispatchSpy.mockRestore();
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.success).toBe(true);
+    expect(parsed.task.status).toBe('approved');
+  });
+
+  test('coordinator below the required autonomy level is denied by the raw tool', async () => {
+    const taskId = await createReviewTask();
+    const dispatchSpy = spyOn(ctx.runtime, 'dispatchPostApproval');
+
+    const result = await makeApproveHandlers({
+      callerRole: 'coordinator',
+      getSpaceAutonomyLevel: async () => 4,
+    }).approve_pending_completion({ task_id: taskId, approved: true });
+    dispatchSpy.mockRestore();
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('space autonomy level 4 < required level 5');
+    expect(dispatchSpy).not.toHaveBeenCalled();
+  });
+
+  test('coordinator caller is denied by the raw tool when the backing agent is paused', async () => {
+    const taskId = await createReviewTask();
+    const dispatchSpy = spyOn(ctx.runtime, 'dispatchPostApproval');
+
+    const result = await makeHandlers(ctx, {
+      callerRole: 'coordinator',
+      getSpaceAutonomyLevel: async () => 5,
+      myAgentId: 'coord-1',
+      longHorizonAgentRepo: {
+        getById: (id: string) =>
+          id === 'coord-1'
+            ? ({ id, spaceId: ctx.spaceId, status: 'paused' } as unknown as SpaceLongHorizonAgent)
+            : null,
+      } as unknown as SpaceLongHorizonAgentRepository,
+    }).approve_pending_completion({ task_id: taskId, approved: true });
+    dispatchSpy.mockRestore();
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toBe(
+      'This action requires an active Space agent identity; the provenance agent is missing or inactive.'
+    );
+    expect(dispatchSpy).not.toHaveBeenCalled();
+    expect(ctx.taskRepo.getTask(taskId)?.status).toBe('review');
+  });
+
+  test('coordinator caller is admitted by the raw tool when the backing agent is active', async () => {
+    const taskId = await createReviewTask();
+    const dispatchSpy = spyOn(ctx.runtime, 'dispatchPostApproval').mockImplementation(
+      async (id: string) => {
+        ctx.taskRepo.updateTask(id, { status: 'approved', approvalSource: 'human' });
+      }
+    );
+
+    const result = await makeHandlers(ctx, {
+      callerRole: 'coordinator',
+      getSpaceAutonomyLevel: async () => 5,
+      myAgentId: 'coord-1',
+      longHorizonAgentRepo: {
+        getById: (id: string) =>
+          id === 'coord-1'
+            ? ({ id, spaceId: ctx.spaceId, status: 'active' } as unknown as SpaceLongHorizonAgent)
+            : null,
+      } as unknown as SpaceLongHorizonAgentRepository,
+    }).approve_pending_completion({ task_id: taskId, approved: true });
+    dispatchSpy.mockRestore();
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.success).toBe(true);
+    expect(parsed.task.status).toBe('approved');
+  });
+
+  test('long-term agent caller is denied by the raw tool when paused mid-session', async () => {
+    const taskId = await createReviewTask();
+    const dispatchSpy = spyOn(ctx.runtime, 'dispatchPostApproval');
+
+    const result = await makeApproveHandlers({
+      callerRole: 'long_term_agent',
+      getSpaceAutonomyLevel: async () => 5,
+      longHorizonAgentRepo: {
+        getById: (id: string) =>
+          id === ctx.agentId
+            ? ({ id, spaceId: ctx.spaceId, status: 'paused' } as unknown as SpaceLongHorizonAgent)
+            : null,
+      } as unknown as SpaceLongHorizonAgentRepository,
+    }).approve_pending_completion({ task_id: taskId, approved: true });
+    dispatchSpy.mockRestore();
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toBe(
+      'This action requires an active Space agent identity; the provenance agent is missing or inactive.'
+    );
+    expect(dispatchSpy).not.toHaveBeenCalled();
+    expect(ctx.taskRepo.getTask(taskId)?.status).toBe('review');
+  });
+
+  test('legacy task-agent caller bypasses the autonomy gate entirely', async () => {
+    const taskId = await createReviewTask();
+    const dispatchSpy = spyOn(ctx.runtime, 'dispatchPostApproval').mockImplementation(
+      async (id: string) => {
+        ctx.taskRepo.updateTask(id, { status: 'approved', approvalSource: 'human' });
+      }
+    );
+
+    const result = await makeHandlers(ctx, {
+      callerRole: 'legacy_task_agent',
+      getSpaceAutonomyLevel: async () => 1,
+    }).approve_pending_completion({ task_id: taskId, approved: true });
+    dispatchSpy.mockRestore();
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.success).toBe(true);
+    expect(parsed.task.status).toBe('approved');
   });
 });
 
@@ -7620,7 +7899,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
     const handlers = makeHandlersWith(tam, {
       activateNode: async () => {},
       myAgentName: 'space-agent',
-      isDefaultAgent: true,
+      callerRole: 'long_term_agent',
     });
 
     await handlers.send_message_to_task({

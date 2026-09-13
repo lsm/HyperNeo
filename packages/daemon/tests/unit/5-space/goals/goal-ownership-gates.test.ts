@@ -4,19 +4,19 @@ import { decideGoalOwnershipMutationAdmission } from '../../../../src/lib/space/
 describe('decideGoalOwnershipMutationAdmission', () => {
   test('allows a human invocation without a session', () => {
     expect(
-      decideGoalOwnershipMutationAdmission({ isDefaultAgent: false, hasSession: false })
+      decideGoalOwnershipMutationAdmission({ hasSpaceAuthority: false, hasSession: false })
     ).toEqual({ action: 'allow' });
   });
 
-  test('allows the default agent session', () => {
+  test('allows a Space agent session', () => {
     expect(
-      decideGoalOwnershipMutationAdmission({ isDefaultAgent: true, hasSession: true })
+      decideGoalOwnershipMutationAdmission({ hasSpaceAuthority: true, hasSession: true })
     ).toEqual({ action: 'allow' });
   });
 
-  test('denies a long-term agent even with a display name of coordinator', () => {
+  test('denies a session without Space authority', () => {
     expect(
-      decideGoalOwnershipMutationAdmission({ isDefaultAgent: false, hasSession: true })
-    ).toMatchObject({ action: 'deny', reason: 'not_coordinator_or_human' });
+      decideGoalOwnershipMutationAdmission({ hasSpaceAuthority: false, hasSession: true })
+    ).toMatchObject({ action: 'deny', reason: 'not_space_agent_or_human' });
   });
 });

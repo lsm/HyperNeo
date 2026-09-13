@@ -1,4 +1,5 @@
 export const SESSION_WRITE_AUTONOMY_LEVEL = 4;
+export const HUMAN_ONLY_AUTONOMY_LEVEL = 5;
 
 export interface EffectiveAutonomyInput {
   spaceLevel: number;
@@ -74,6 +75,7 @@ export const TOOL_AUTONOMY_REQUIREMENTS: Record<string, number> = {
   update_session_state: SESSION_WRITE_AUTONOMY_LEVEL,
   interrupt_session: SESSION_WRITE_AUTONOMY_LEVEL,
   delete_agent_template: SESSION_WRITE_AUTONOMY_LEVEL,
+  approve_pending_completion: HUMAN_ONLY_AUTONOMY_LEVEL,
 };
 
 export function getToolAutonomyRequirement(toolName: string): number | undefined {

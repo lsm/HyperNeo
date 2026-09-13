@@ -51,6 +51,7 @@ import {
 } from '../agent/query-runner.ts';
 import { isSpaceActionsDispatcherEnabled } from '../space/actions/dispatcher-flag.ts';
 import {
+  FAIL_CLOSED_LONG_HORIZON_AGENT_REPO,
   missingMcpServers,
   resolveSpaceMcpSessionPolicy,
 } from '../space/runtime/space-mcp-session-policy.ts';
@@ -1466,6 +1467,8 @@ export class AcpQueryRunner {
     const policy = resolveSpaceMcpSessionPolicy(session, {
       nodeExecutionRepo: this.ctx.db.getNodeExecutionRepo(),
       taskRepo: this.ctx.db.getSpaceTaskRepo(),
+      longHorizonAgentRepo:
+        this.ctx.db.getLongHorizonAgentRepo?.() ?? FAIL_CLOSED_LONG_HORIZON_AGENT_REPO,
     });
     if (policy.requiredServers.length === 0) return queryOptions;
 

@@ -35,7 +35,7 @@ export function setupSpaceGoalHandlers(messageHub: MessageHub, deps: SpaceGoalHa
 
   function assertOwnerMutationAuthorized(context: CallContext): void {
     const hasSession = (context.sessionId ?? '').startsWith('space:');
-    const decision = decideGoalOwnershipMutationAdmission({ isDefaultAgent: false, hasSession });
+    const decision = decideGoalOwnershipMutationAdmission({ hasSpaceAuthority: false, hasSession });
     if (decision.action === 'deny') throw new Error(decision.message);
   }
 

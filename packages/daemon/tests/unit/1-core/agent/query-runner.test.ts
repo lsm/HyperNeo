@@ -986,6 +986,58 @@ describe('QueryRunner', () => {
       });
     });
 
+    it('does not grant long-term-agent Space tools when the backing agent is paused', async () => {
+      await withAnthropicApiKey(async () => {
+        mockSession.id = longTermAgentSessionId('s1', 'agent-1');
+        mockSession.workspacePath = tmpdir();
+        mockSession.type = 'worker';
+        mockSession.context = { spaceId: 's1' };
+        mockSession.metadata.promptProvenance = {
+          source: 'test',
+          hash: 'hash',
+          agentId: 'agent-1',
+          agentName: 'Long Term',
+        };
+        mockSession.config.mcpServers = {};
+        Object.assign(mockDb, {
+          getLongHorizonAgentRepo: mock(() => ({
+            getById: () => ({ id: 'agent-1', spaceId: 's1', status: 'paused' }),
+          })),
+        });
+
+        const repairedServers = {
+          'space-agent-tools': {
+            type: 'sdk',
+            name: 'space-agent-tools',
+            instance: {},
+          },
+        };
+        buildSpy
+          .mockResolvedValueOnce({ model: 'claude-sonnet-4-20250514', mcpServers: {} })
+          .mockResolvedValueOnce({
+            model: 'claude-sonnet-4-20250514',
+            mcpServers: repairedServers,
+          });
+        stopAfterRebuiltOptions();
+        const onMissingMemberSpaceMcpServers = mock(async () => {
+          mockSession.config.mcpServers =
+            repairedServers as unknown as Session['config']['mcpServers'];
+        });
+
+        const ctx = createContext({ onMissingMemberSpaceMcpServers });
+        runner = new QueryRunner(ctx);
+        runner.start();
+        await ctx.queryPromise?.catch(() => {});
+
+        expect(mockLogger.error).toHaveBeenCalledWith(
+          expect.stringContaining('"role":"ad_hoc_member"')
+        );
+        expect(mockLogger.error).not.toHaveBeenCalledWith(
+          expect.stringContaining('"role":"long_term_agent"')
+        );
+      });
+    });
+
     it('skips member Space MCP invariant for workflow sub-sessions', async () => {
       await withAnthropicApiKey(async () => {
         mockSession.id = 'space:s1:task:t1:exec:e1';

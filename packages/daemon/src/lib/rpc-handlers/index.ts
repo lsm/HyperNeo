@@ -626,7 +626,11 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     getTask: (id) => spaceTaskRepo.getTask(id),
     getTaskManager: spaceTaskManagerFactory,
     coordinatorLookup: longHorizonAgentRepo,
-    policyContext: { taskRepo: spaceTaskRepo, nodeExecutionRepo },
+    policyContext: { taskRepo: spaceTaskRepo, nodeExecutionRepo, longHorizonAgentRepo },
+    getSpaceAutonomyLevel: async (spaceId) => {
+      const space = await deps.spaceManager.getSpace(spaceId);
+      return space?.autonomyLevel ?? 1;
+    },
     dispatchApproval: (spaceId, taskId, source, approvalReason, guard) =>
       spaceRuntimeService.dispatchPostApproval(spaceId, taskId, source, { approvalReason }, guard),
     warn: (taskId, detail) =>
@@ -671,6 +675,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       getTaskManager: spaceTaskManagerFactory,
       taskRepo: spaceTaskRepo,
       nodeExecutionRepo,
+      longHorizonAgentRepo,
       notifyStandalone: () => deps.db.notifyChange('space_tasks'),
       emitTaskUpdated: async (spaceId, task) => {
         await deps.internalEventBus.publish('space.task.updated', {

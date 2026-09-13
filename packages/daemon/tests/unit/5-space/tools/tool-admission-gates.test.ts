@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   decideAutonomyAdmission,
   getToolAutonomyRequirement,
+  HUMAN_ONLY_AUTONOMY_LEVEL,
   resolveEffectiveAutonomyLevel,
   SESSION_WRITE_AUTONOMY_LEVEL,
   TOOL_AUTONOMY_REQUIREMENTS,
@@ -228,17 +229,26 @@ describe('decideAutonomyAdmission', () => {
 });
 
 describe('TOOL_AUTONOMY_REQUIREMENTS', () => {
-  test('seeds every gated tool at SESSION_WRITE_AUTONOMY_LEVEL', () => {
+  test('seeds session-write tools at SESSION_WRITE_AUTONOMY_LEVEL and human-only tools at HUMAN_ONLY_AUTONOMY_LEVEL', () => {
     expect(Object.keys(TOOL_AUTONOMY_REQUIREMENTS).sort()).toEqual([
+      'approve_pending_completion',
       'delete_agent_template',
       'interrupt_session',
       'send_session_message',
       'update_session_state',
     ]);
-    for (const required of Object.values(TOOL_AUTONOMY_REQUIREMENTS)) {
-      expect(required).toBe(SESSION_WRITE_AUTONOMY_LEVEL);
+    const sessionWriteTools = [
+      'delete_agent_template',
+      'interrupt_session',
+      'send_session_message',
+      'update_session_state',
+    ] as const;
+    for (const toolName of sessionWriteTools) {
+      expect(TOOL_AUTONOMY_REQUIREMENTS[toolName]).toBe(SESSION_WRITE_AUTONOMY_LEVEL);
     }
+    expect(TOOL_AUTONOMY_REQUIREMENTS.approve_pending_completion).toBe(HUMAN_ONLY_AUTONOMY_LEVEL);
     expect(SESSION_WRITE_AUTONOMY_LEVEL).toBe(4);
+    expect(HUMAN_ONLY_AUTONOMY_LEVEL).toBe(5);
   });
 
   test('direct lookup of an unlisted tool yields undefined (ungated)', () => {
@@ -253,6 +263,10 @@ describe('getToolAutonomyRequirement', () => {
     expect(getToolAutonomyRequirement('send_session_message')).toBe(4);
     expect(getToolAutonomyRequirement('update_session_state')).toBe(4);
     expect(getToolAutonomyRequirement('interrupt_session')).toBe(4);
+  });
+
+  test('returns the required level for the human-only approval tool', () => {
+    expect(getToolAutonomyRequirement('approve_pending_completion')).toBe(5);
   });
 
   test('returns undefined for unlisted tools, encoding the ungated default', () => {
