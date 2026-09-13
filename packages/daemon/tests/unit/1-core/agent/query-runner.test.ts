@@ -3271,6 +3271,37 @@ describe('QueryRunner', () => {
       expect(ctx.queryPromise).toBeNull();
     });
 
+    it('attributes SDK process exits to the in-flight rate-limit recovery', async () => {
+      const { ctx, outcome } = await runTerminalFailure('Claude Code process exited with code 1', {
+        isLimitRecoveryPending: () => true,
+      });
+
+      expect(outcome).toBe('resolved');
+      expect(mockLogger.info).toHaveBeenCalledWith(expect.stringContaining('rate-limit recovery'));
+      expect(mockLogger.error).not.toHaveBeenCalledWith(
+        'Streaming query error:',
+        expect.anything()
+      );
+      expect(handleErrorSpy).not.toHaveBeenCalled();
+      expect(beginTerminalIdleSpy).not.toHaveBeenCalled();
+      expect(setIdleSpy).not.toHaveBeenCalled();
+      expect(clearSpy).not.toHaveBeenCalled();
+      expect(stopSpy).toHaveBeenCalledTimes(1);
+      expect(ctx.queryPromise).toBeNull();
+    });
+
+    it('reports SDK process exits outside recovery windows as terminal system errors', async () => {
+      const { outcome } = await runTerminalFailure('Claude Code process exited with code 1');
+
+      expect(outcome).toBe('resolved');
+      expect(mockLogger.error).toHaveBeenCalledWith('Streaming query error:', expect.anything());
+      expect(handleErrorSpy).toHaveBeenCalledTimes(1);
+      expect(handleErrorSpy.mock.calls[0][2]).toBe(ErrorCategory.SYSTEM);
+      expect(mockLogger.info).not.toHaveBeenCalledWith(
+        expect.stringContaining('rate-limit recovery')
+      );
+    });
+
     it('passes the assessed limit payload to the handoff callback', async () => {
       const resetAtMs = Date.now() + 60 * 60 * 1000;
       const cases: Array<{ errorMessage: string; hint: LimitRetryHint }> = [
