@@ -202,9 +202,22 @@ function hasInternalSlots(source: object): boolean {
   }
 }
 
-function isProjectable(source: object): boolean {
+function hasOwnEnumerableData(descriptors: Record<string | symbol, PropertyDescriptor>): boolean {
+  return Reflect.ownKeys(descriptors).some((key) => {
+    const descriptor = descriptors[key as string];
+    return descriptor.enumerable && 'value' in descriptor;
+  });
+}
+
+function isProjectable(
+  source: object,
+  descriptors: Record<string | symbol, PropertyDescriptor>
+): boolean {
   if (Array.isArray(source) || typeof source === 'function') return true;
-  return !hasInternalSlots(source);
+  if (hasInternalSlots(source)) return false;
+  const proto = Object.getPrototypeOf(source);
+  if (proto === Object.prototype || proto === null) return true;
+  return hasOwnEnumerableData(descriptors);
 }
 
 function isolateValue<T>(value: T, seen: WeakMap<object, unknown>): T {
@@ -219,8 +232,8 @@ function isolateValue<T>(value: T, seen: WeakMap<object, unknown>): T {
     projectEnumerableData(Object.getOwnPropertyDescriptors(source), detached, seen);
     return detached as T;
   }
-  if (!isProjectable(source)) return UNREPRESENTABLE as T;
   const descriptors = Object.getOwnPropertyDescriptors(source);
+  if (!isProjectable(source, descriptors)) return UNREPRESENTABLE as T;
   if (Array.isArray(source)) {
     const copy: unknown[] = [];
     seen.set(source, copy);
@@ -256,11 +269,22 @@ function cloneValue<T>(value: T): T {
   }
 }
 
-function snapshotPrepared(prepared: PreparedOperation, hooks: AuditHooks): AuditedOperation {
-  const auditing = Boolean(hooks.before || hooks.after);
+function readMetadataField(operation: OperationDefinition, key: string): string {
+  const value = readDataField(operation, key);
+  return typeof value === 'string' ? value : UNREPRESENTABLE;
+}
+
+function snapshotPrepared(
+  prepared: PreparedOperation,
+  hooks: AuditHooks
+): AuditedOperation | undefined {
+  if (!hooks.before && !hooks.after) return undefined;
   return {
-    operation: { name: prepared.operation.name, description: prepared.operation.description },
-    input: auditing ? cloneValue(prepared.input) : prepared.input,
+    operation: {
+      name: readMetadataField(prepared.operation, 'name'),
+      description: readMetadataField(prepared.operation, 'description'),
+    },
+    input: cloneValue(prepared.input),
   };
 }
 

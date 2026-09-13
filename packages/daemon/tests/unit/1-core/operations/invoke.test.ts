@@ -1273,6 +1273,94 @@ describe('shared operation invocation audit hooks', () => {
     expect(recorded.nested).not.toBe(payload.nested);
     expect(hiddenReads).toBe(0);
   });
+  test('a platform object whose state lives in slots is marked, not flattened to an empty object', async () => {
+    const operation = defineOperation({
+      name: 'message.send.platform',
+      description: 'Accept platform objects with slot-backed state',
+      inputSchema: z.object({ content: z.string(), link: z.any(), query: z.any() }),
+      resultSchema: z.object({ accepted: z.string() }),
+      execute: async (input: { content: string }) => ({ accepted: input.content }),
+    });
+    const registry = createOperationRegistry([operation]);
+    let seen: unknown = null;
+    await invokeOperation(
+      registry,
+      'message.send.platform',
+      {
+        content: 'hello',
+        link: new URL('https://example.com/a?b=1'),
+        query: new URLSearchParams('a=1'),
+      },
+      caller,
+      {
+        after: (prepared: { input: unknown }) => {
+          seen = prepared.input;
+        },
+      }
+    );
+    expect(seen).toEqual({
+      content: 'hello',
+      link: '[unrepresentable]',
+      query: '[unrepresentable]',
+    });
+  });
+  test('no operation metadata is read when no hook was captured', async () => {
+    const { operation } = fixture();
+    let metadataReads = 0;
+    const shifty = {
+      get name() {
+        metadataReads += 1;
+        return 'message.send';
+      },
+      get description() {
+        metadataReads += 1;
+        return 'shifting description';
+      },
+      inputSchema: operation.inputSchema,
+      resultSchema: operation.resultSchema,
+      execute: operation.execute,
+    };
+    const registry = {
+      get: (name: string) => (name === 'message.send' ? shifty : undefined),
+      list: () => [shifty],
+    } as unknown as Parameters<typeof invokeOperation>[0];
+
+    const outcome = await invokeOperation(registry, 'message.send', { content: 'hello' }, caller);
+
+    expect(outcome).toEqual({ kind: 'completed', value: { accepted: 'hello' } });
+    expect(metadataReads).toBe(0);
+  });
+  test('a throwing metadata accessor never rejects the invocation', async () => {
+    const { operation } = fixture();
+    const hostile = {
+      get name(): string {
+        throw new Error('name refuses to be read');
+      },
+      get description(): string {
+        throw new Error('description refuses to be read');
+      },
+      inputSchema: operation.inputSchema,
+      resultSchema: operation.resultSchema,
+      execute: operation.execute,
+    };
+    const registry = {
+      get: (name: string) => (name === 'message.send' ? hostile : undefined),
+      list: () => [hostile],
+    } as unknown as Parameters<typeof invokeOperation>[0];
+    let seen: { name: string; description: string } | null = null;
+
+    const outcome = await invokeOperation(registry, 'message.send', { content: 'hello' }, caller, {
+      after: (prepared: { operation: { name: string; description: string } }) => {
+        seen = prepared.operation;
+      },
+    });
+
+    expect(outcome).toEqual({ kind: 'completed', value: { accepted: 'hello' } });
+    expect(seen).toEqual({
+      name: '[unrepresentable]',
+      description: '[unrepresentable]',
+    });
+  });
   test('a handler mutating its caller does not change what after records', async () => {
     const { operation } = fixture();
     const hijackingExecute = async (
