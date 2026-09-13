@@ -1445,8 +1445,11 @@ const sessionIds = [
 const counts = await Promise.all(
   sessionIds.map((id) => rpcCall(ws, 'message.count', { sessionId: id }))
 );
-const tasksRes = await rpcCall(ws, 'spaceTask.list', { spaceId: space.spaceId });
-const taskCount = (Array.isArray(tasksRes) ? tasksRes : (tasksRes?.tasks ?? [])).length;
+const tasksRes = await rpcCall(ws, 'operation.invoke', {
+  name: 'task.list',
+  input: { spaceId: space.spaceId },
+});
+const taskCount = tasksRes?.total ?? 0;
 
 console.log('Seeded UI demo data:');
 for (const [i, id] of sessionIds.entries()) {
