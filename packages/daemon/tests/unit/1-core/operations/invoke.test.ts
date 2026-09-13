@@ -1123,6 +1123,62 @@ describe('shared operation invocation audit hooks', () => {
     expect(indexReads).toBe(0);
     expect(namedReads).toBe(0);
   });
+  test('a proxy in the prototype chain is never traversed while detecting Dates', async () => {
+    const operation = defineOperation({
+      name: 'message.send.proxyproto',
+      description: 'Accept a value whose prototype is a proxy',
+      inputSchema: z.object({ content: z.string(), carrier: z.any() }),
+      resultSchema: z.object({ accepted: z.string() }),
+      execute: async (input: { content: string }) => ({ accepted: input.content }),
+    });
+    const registry = createOperationRegistry([operation]);
+    let prototypeTraps = 0;
+    const proxyProto = new Proxy(
+      {},
+      {
+        getPrototypeOf(target) {
+          prototypeTraps += 1;
+          return Reflect.getPrototypeOf(target);
+        },
+      }
+    );
+    const carrier = Object.create(proxyProto) as Record<string, unknown>;
+    carrier.field = 'kept';
+
+    await invokeOperation(
+      registry,
+      'message.send.proxyproto',
+      { content: 'hello', carrier },
+      caller,
+      { before: () => {}, after: () => {} }
+    );
+
+    expect(prototypeTraps).toBe(0);
+  });
+  test('a Date carrying enumerable fields keeps them in the record', async () => {
+    const operation = defineOperation({
+      name: 'message.send.richdate',
+      description: 'Accept a Date carrying its own fields',
+      inputSchema: z.object({ content: z.string(), when: z.any() }),
+      resultSchema: z.object({ accepted: z.string() }),
+      execute: async (input: { content: string }) => ({ accepted: input.content }),
+    });
+    const registry = createOperationRegistry([operation]);
+    const when = new Date(1700000000000) as Date & { context?: unknown };
+    when.context = { note: 'kept' };
+    let seen: unknown = null;
+    await invokeOperation(registry, 'message.send.richdate', { content: 'hello', when }, caller, {
+      after: (prepared: { input: unknown }) => {
+        seen = prepared.input;
+      },
+    });
+    const recorded = (seen as { when: Date & { context?: { note: string } } }).when;
+    expect(recorded).toBeInstanceOf(Date);
+    expect(recorded.getTime()).toBe(1700000000000);
+    expect(recorded.context).toEqual({ note: 'kept' });
+    expect(recorded).not.toBe(when);
+    expect(recorded.context).not.toBe(when.context);
+  });
   test('a handler mutating its caller does not change what after records', async () => {
     const { operation } = fixture();
     const hijackingExecute = async (

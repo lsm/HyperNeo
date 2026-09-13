@@ -150,6 +150,31 @@ function isProxyBacked(source: object): boolean {
   }
 }
 
+function isDateValue(source: object): boolean {
+  try {
+    return types.isDate(source);
+  } catch {
+    return false;
+  }
+}
+
+function projectEnumerableData(
+  descriptors: Record<string | symbol, PropertyDescriptor>,
+  target: object,
+  seen: WeakMap<object, unknown>
+): void {
+  for (const key of Reflect.ownKeys(descriptors)) {
+    const descriptor = descriptors[key as string];
+    if (!descriptor.enumerable) continue;
+    Object.defineProperty(target, key, {
+      value: 'value' in descriptor ? isolateValue(descriptor.value, seen) : UNREPRESENTABLE,
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+  }
+}
+
 function isArrayIndex(key: string): boolean {
   const index = Number(key);
   return Number.isInteger(index) && index >= 0 && index < 2 ** 32 - 1 && String(index) === key;
@@ -167,12 +192,11 @@ function isolateValue<T>(value: T, seen: WeakMap<object, unknown>): T {
   const cached = seen.get(source);
   if (cached) return cached as T;
   if (isProxyBacked(source)) return UNREPRESENTABLE as T;
-  if (source instanceof Date) {
-    try {
-      return new Date(Date.prototype.getTime.call(source)) as T;
-    } catch {
-      return UNREPRESENTABLE as T;
-    }
+  if (isDateValue(source)) {
+    const detached = new Date(Date.prototype.getTime.call(source as Date));
+    seen.set(source, detached);
+    projectEnumerableData(Object.getOwnPropertyDescriptors(source), detached, seen);
+    return detached as T;
   }
   if (!isProjectable(source)) return UNREPRESENTABLE as T;
   const descriptors = Object.getOwnPropertyDescriptors(source);
@@ -199,16 +223,7 @@ function isolateValue<T>(value: T, seen: WeakMap<object, unknown>): T {
   }
   const copy: Record<string | symbol, unknown> = {};
   seen.set(source, copy);
-  for (const key of Reflect.ownKeys(descriptors)) {
-    const descriptor = descriptors[key as string];
-    if (!descriptor.enumerable) continue;
-    Object.defineProperty(copy, key, {
-      value: 'value' in descriptor ? isolateValue(descriptor.value, seen) : UNREPRESENTABLE,
-      enumerable: true,
-      writable: true,
-      configurable: true,
-    });
-  }
+  projectEnumerableData(descriptors, copy, seen);
   return copy as T;
 }
 
