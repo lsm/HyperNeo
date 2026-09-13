@@ -2,6 +2,9 @@ import { describe, expect, mock, test } from 'bun:test';
 import type { SpaceLongHorizonAgent, SpaceLongHorizonAgentGoal } from '@hyperneo/shared';
 import { createDaemonInternalEventBus } from '../../../../src/lib/internal-event-bus';
 import {
+  createAgentActivationRedeliveryDecider,
+  gateAgentActive,
+  gateOwnedGoalIds,
   ownedGoalIdsFromLinks,
   subscribeAgentActivationOutcomeRedelivery,
 } from '../../../../src/lib/space/goals/agent-activation-outcome-redelivery';
@@ -151,5 +154,56 @@ describe('subscribeAgentActivationOutcomeRedelivery', () => {
     });
 
     expect(recoverPendingOutcomeNotificationsForGoal).not.toHaveBeenCalled();
+  });
+});
+
+describe('gateAgentActive', () => {
+  test('admits an active agent', () => {
+    expect(gateAgentActive(agent('active'))).toEqual({ value: agent('active') });
+  });
+
+  test('rejects a paused agent as not_active', () => {
+    expect(gateAgentActive(agent('paused'))).toEqual({ reason: 'not_active' });
+  });
+
+  test('rejects a missing agent as not_active', () => {
+    expect(gateAgentActive(undefined)).toEqual({ reason: 'not_active' });
+  });
+});
+
+describe('gateOwnedGoalIds', () => {
+  test('admits the owned goal ids', () => {
+    expect(gateOwnedGoalIds(() => [link('goal-1', 'owner')], agent('active'))).toEqual({
+      value: ['goal-1'],
+    });
+  });
+
+  test('rejects an agent that owns no goals as no_owned_goals', () => {
+    expect(gateOwnedGoalIds(() => [link('goal-1', 'watcher')], agent('active'))).toEqual({
+      reason: 'no_owned_goals',
+    });
+  });
+});
+
+describe('createAgentActivationRedeliveryDecider', () => {
+  test('returns the owned goal ids for an active agent', () => {
+    const decide = createAgentActivationRedeliveryDecider({
+      listAgentGoalLinks: () => [link('goal-1', 'owner'), link('goal-2', 'watcher')],
+    });
+    expect(decide(agent('active'))).toEqual(['goal-1']);
+  });
+
+  test('short-circuits on the first failing gate without reading goal links', () => {
+    const listAgentGoalLinks = mock(() => [link('goal-1', 'owner')]);
+    const decide = createAgentActivationRedeliveryDecider({ listAgentGoalLinks });
+    expect(decide(agent('paused'))).toBe('not_active');
+    expect(listAgentGoalLinks).not.toHaveBeenCalled();
+  });
+
+  test('reports no_owned_goals for an active agent with only watched goals', () => {
+    const decide = createAgentActivationRedeliveryDecider({
+      listAgentGoalLinks: () => [link('goal-1', 'watcher')],
+    });
+    expect(decide(agent('active'))).toBe('no_owned_goals');
   });
 });
