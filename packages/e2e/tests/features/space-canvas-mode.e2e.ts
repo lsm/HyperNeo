@@ -91,20 +91,6 @@ async function createSpaceWithCanvasRun(
   return { ...result, wsPath };
 }
 
-async function cancelRunViaRpc(
-  page: Parameters<typeof waitForWebSocketConnected>[0],
-  runId: string
-): Promise<void> {
-  if (!runId) return;
-  try {
-    await page.evaluate(async (rid) => {
-      const hub = window.__messageHub || window.appState?.messageHub;
-      if (!hub?.request) return;
-      await hub.request('spaceWorkflowRun.cancel', { id: rid });
-    }, runId);
-  } catch {}
-}
-
 async function deleteSessionViaRpc(
   page: Parameters<typeof waitForWebSocketConnected>[0],
   sessionId: string
@@ -124,7 +110,6 @@ test.describe('Canvas Mode Toggle', () => {
   test.use({ viewport: DESKTOP_VIEWPORT });
 
   let spaceId = '';
-  let runId = '';
   let taskId = '';
   let sessionId = '';
   let wsPath = '';
@@ -133,7 +118,6 @@ test.describe('Canvas Mode Toggle', () => {
     await page.goto('/');
     const ctx = await createSpaceWithCanvasRun(page);
     spaceId = ctx.spaceId;
-    runId = ctx.runId;
     taskId = ctx.taskId;
     sessionId = ctx.sessionId;
     wsPath = ctx.wsPath;
@@ -145,10 +129,6 @@ test.describe('Canvas Mode Toggle', () => {
       await waitForWebSocketConnected(page, 5000);
     } catch {}
 
-    if (runId) {
-      await cancelRunViaRpc(page, runId);
-      runId = '';
-    }
     if (sessionId) {
       await deleteSessionViaRpc(page, sessionId);
       sessionId = '';
