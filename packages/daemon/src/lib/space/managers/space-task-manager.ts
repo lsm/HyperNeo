@@ -133,23 +133,6 @@ export class SpaceTaskManager {
     return this.taskRepo.listByStatus(this.spaceId, status);
   }
 
-  async listTasksByStatusPaginated(
-    status: SpaceTaskStatus,
-    blockReason: SpaceBlockReason | null | undefined,
-    limit: number,
-    offset = 0,
-    blockReasonNotIn?: SpaceBlockReason[]
-  ): Promise<{ tasks: SpaceTask[]; total: number }> {
-    return this.taskRepo.listBySpaceAndStatus(
-      this.spaceId,
-      status,
-      blockReason,
-      limit,
-      offset,
-      blockReasonNotIn
-    );
-  }
-
   async listTasksByWorkflowRun(workflowRunId: string): Promise<SpaceTask[]> {
     return this.taskRepo.listByWorkflowRun(workflowRunId);
   }
