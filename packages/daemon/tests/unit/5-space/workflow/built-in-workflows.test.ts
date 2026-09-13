@@ -3,7 +3,10 @@ import { createHash } from 'node:crypto';
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { CALL_ACTION_PREFERENCE_GUIDANCE } from '@hyperneo/prompts';
+import {
+  CALL_ACTION_PREFERENCE_GUIDANCE,
+  FULLSTACK_CODING_NOCHANGE_GUIDANCE,
+} from '@hyperneo/prompts';
 import type {
   HandoffTransition,
   SpaceLongHorizonAgent,
@@ -4334,6 +4337,15 @@ test('persisted Coder-Only prompts carrying the retired escalation target reconc
   const mergedPrompt = merged.find((n) => n.name === 'Coding')!.agents[0].customPrompt!.value;
 
   expect(mergedPrompt).toBe(templatePrompt);
+});
+
+test('the Coding-with-QA coder legacy seed is frozen, not composed from the live guidance', () => {
+  const seed = LEGACY_CODING_SLOT_PROMPTS['Coding with QA|coder']!.find((candidate) =>
+    candidate.includes('escalation target listed in your Runtime Execution Contract')
+  );
+  expect(seed).toBeDefined();
+  expect(seed).not.toContain('no_code_changes');
+  expect(seed).not.toContain(FULLSTACK_CODING_NOCHANGE_GUIDANCE);
 });
 
 test('the Coding coder legacy seed keeps its historical escalation wording', () => {
