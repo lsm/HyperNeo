@@ -793,6 +793,14 @@ describe('space-handlers', () => {
   });
 
   describe('space.delete', () => {
+    function stopPersists() {
+      const stopped = { ...mockSpace, stopped: true };
+      (spaceManager.stopSpace as ReturnType<typeof mock>).mockImplementation(async () => {
+        (spaceManager.getSpace as ReturnType<typeof mock>).mockResolvedValue(stopped);
+        return stopped;
+      });
+    }
+
     beforeEach(() => setup());
 
     it('deletes the space and publishes space.deleted', async () => {
@@ -912,6 +920,8 @@ describe('space-handlers', () => {
       } as unknown as SpaceRuntimeService;
       await setup(mockSpace, undefined, mockRuntimeService);
 
+      stopPersists();
+
       await expect(call('space.delete', { id: 'space-1' })).rejects.toThrow('drain exploded');
 
       expect(internalEventBus.publish).toHaveBeenCalledWith('space.updated', {
@@ -924,6 +934,7 @@ describe('space-handlers', () => {
 
     it('publishes the persisted stop when removal fails after fencing', async () => {
       await setup();
+      stopPersists();
       (spaceManager.deleteSpace as ReturnType<typeof mock>).mockResolvedValue(false);
 
       await expect(call('space.delete', { id: 'space-1' })).rejects.toThrow(
@@ -943,6 +954,54 @@ describe('space-handlers', () => {
       await expect(call('space.delete', { id: 'ghost' })).rejects.toThrow('Space not found: ghost');
 
       expect(internalEventBus.publish).not.toHaveBeenCalled();
+    });
+
+    it('refuses a second concurrent delete instead of sharing the fence', async () => {
+      let releaseDrain = () => {};
+      const drainStarted = Promise.withResolvers<void>();
+      const drain = new Promise<void>((resolve) => {
+        releaseDrain = resolve;
+      });
+      const mockRuntimeService = {
+        setupSpaceAgentSession: mock(async () => {}),
+        stopActiveWork: mock(() => {
+          drainStarted.resolve();
+          return drain;
+        }),
+      } as unknown as SpaceRuntimeService;
+      await setup(mockSpace, undefined, mockRuntimeService);
+
+      const first = call('space.delete', { id: 'space-1' });
+      await drainStarted.promise;
+
+      await expect(call('space.delete', { id: 'space-1' })).rejects.toThrow(
+        'Space is being deleted: space-1'
+      );
+
+      releaseDrain();
+      await expect(first).resolves.toEqual({ success: true });
+      expect(mockRuntimeService.stopActiveWork).toHaveBeenCalledTimes(1);
+      expect(spaceManager.deleteSpace).toHaveBeenCalledTimes(1);
+    });
+
+    it('publishes the current space, not the pre-drain snapshot, when a delete fails', async () => {
+      const renamed = { ...mockSpace, name: 'Renamed mid-drain', stopped: true };
+      const mockRuntimeService = {
+        setupSpaceAgentSession: mock(async () => {}),
+        stopActiveWork: mock(async () => {
+          (spaceManager.getSpace as ReturnType<typeof mock>).mockResolvedValue(renamed);
+          throw new Error('drain exploded');
+        }),
+      } as unknown as SpaceRuntimeService;
+      await setup(mockSpace, undefined, mockRuntimeService);
+
+      await expect(call('space.delete', { id: 'space-1' })).rejects.toThrow('drain exploded');
+
+      expect(internalEventBus.publish).toHaveBeenCalledWith('space.updated', {
+        sessionId: 'global',
+        spaceId: 'space-1',
+        space: renamed,
+      });
     });
 
     it('clears the deletion lock when the drain throws', async () => {
