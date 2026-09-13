@@ -571,3 +571,63 @@ test('task.list preserves Space-scoped pagination while adding Space fields, acr
   );
   expect(secondPage).toEqual({ tasks: [tasks.getTask(taskId)], nextCursor: null });
 });
+
+function get(id = taskId) {
+  return { name: 'task.get', input: { taskId: id } };
+}
+function list(owner?: string) {
+  return { name: 'task.list', input: owner ? { spaceId: owner } : {} };
+}
+
+test.each([undefined, 'other-space'])(
+  'task.get hides a Space task from ordinary or cross-Space MCP owner %s',
+  async (owner) => {
+    const caller = member('reader', owner);
+    const mcp = createOperationMcpHandler(provider(), () => caller);
+    const denied = await mcp(get());
+    expect(denied.isError).not.toBe(true);
+    expect(JSON.parse(denied.content[0].text)).toBeNull();
+    const standalone = createStandaloneTask(db, { title: 'Standalone' }, undefined, () => {});
+    const allowed = await mcp(get(standalone.id));
+    expect(JSON.parse(allowed.content[0].text)).toMatchObject({ id: standalone.id });
+  }
+);
+
+test('task.get returns the task to an MCP caller inside the owning Space', async () => {
+  const caller = member('insider', spaceId);
+  const mcp = createOperationMcpHandler(provider(), () => caller);
+  const result = await mcp(get());
+  expect(result.isError).not.toBe(true);
+  expect(JSON.parse(result.content[0].text)).toMatchObject({ id: taskId, spaceId });
+});
+
+test('task.get stays unscoped for rpc callers', async () => {
+  const rpc = createOperationRpcHandler(provider(), () => ({}));
+  expect(await rpc(get(), context)).toMatchObject({ id: taskId, spaceId });
+});
+
+test.each([undefined, 'other-space'])(
+  'task.list yields an empty page for ordinary or cross-Space MCP owner %s',
+  async (owner) => {
+    const caller = member('lister', owner);
+    const mcp = createOperationMcpHandler(provider(), () => caller);
+    const denied = await mcp(list(spaceId));
+    expect(denied.isError).not.toBe(true);
+    expect(JSON.parse(denied.content[0].text)).toEqual({ tasks: [], nextCursor: null });
+  }
+);
+
+test('task.list returns the Space page to an MCP caller inside the owning Space', async () => {
+  const caller = member('own-lister', spaceId);
+  const mcp = createOperationMcpHandler(provider(), () => caller);
+  const result = await mcp(list(spaceId));
+  expect(result.isError).not.toBe(true);
+  const page = JSON.parse(result.content[0].text) as { tasks: Array<{ id: string }> };
+  expect(page.tasks.map((entry) => entry.id)).toContain(taskId);
+});
+
+test('task.list stays unscoped for rpc callers', async () => {
+  const rpc = createOperationRpcHandler(provider(), () => ({}));
+  const page = (await rpc(list(spaceId), context)) as { tasks: Array<{ id: string }> };
+  expect(page.tasks.map((entry) => entry.id)).toContain(taskId);
+});

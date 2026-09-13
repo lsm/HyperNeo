@@ -341,12 +341,7 @@ export class SpaceLongHorizonAgentRepository {
         agentStates[candidate.agentId] = { state: agent.status };
       }
     }
-    const coordinator = this.getCoordinator(spaceId);
-    return decideGoalOwnerResolution({
-      candidates,
-      agentStates,
-      coordinatorAgentId: coordinator?.id ?? null,
-    });
+    return decideGoalOwnerResolution({ candidates, agentStates });
   }
 
   assignForgeScope(

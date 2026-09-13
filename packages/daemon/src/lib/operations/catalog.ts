@@ -3,7 +3,6 @@ import { createTransitionTaskOperation } from './task-transition.ts';
 import { createUpdateTaskOperation } from './task-update.ts';
 import { createListTasksOperation } from './task-list.ts';
 import { createCreateTaskOperation } from './task-create.ts';
-import type { TaskCore } from '@hyperneo/shared/types/task-core';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import type { CreateStandaloneTaskInput } from '../../storage/tasks/create-task.ts';
 import type { TransitionStandaloneTaskInput } from '../../storage/tasks/transition-task.ts';
@@ -26,7 +25,7 @@ export interface TaskOperationDependencies {
   create?: OperationDefinition;
   transition?: OperationDefinition;
   publish?: OperationDefinition;
-  readTask: (taskId: string) => TaskCore | null;
+  readTask: Parameters<typeof createGetTaskOperation>[0];
   readTaskByNumber?: Parameters<typeof createGetTaskOperation>[1];
   createTask: Parameters<typeof createCreateTaskOperation<CreateStandaloneTaskInput>>[0];
   listTasks: Parameters<typeof createListTasksOperation>[0];

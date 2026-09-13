@@ -2704,21 +2704,17 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     expect(unassign.error).toContain('a Space agent session or explicit human');
   });
 
-  test('create_goal atomically assigns the coordinator as owner by default', async () => {
+  test('create_goal leaves the goal unowned when the caller has no agent identity', async () => {
     const handlers = makeHandlers(ctx);
-    const coordinator = ctx.longHorizonAgentRepo.ensureSpaceManager(ctx.spaceId);
+    ctx.longHorizonAgentRepo.ensureSpaceManager(ctx.spaceId);
 
     const created = JSON.parse(
-      (await handlers.create_goal({ title: 'Owned goal', type: 'one_shot' })).content[0].text
+      (await handlers.create_goal({ title: 'Unowned goal', type: 'one_shot' })).content[0].text
     );
     expect(created.success).toBe(true);
 
     const owner = ctx.longHorizonAgentRepo.getPrimaryGoalOwner(created.goal.id, ctx.spaceId);
-    expect(owner).toEqual({
-      action: 'resolved',
-      owner: expect.objectContaining({ agentId: coordinator.id }),
-      conflicts: [],
-    });
+    expect(owner).toEqual({ action: 'no_recipient' });
   });
 
   test('create_goal honors an explicit owner_agent_id', async () => {

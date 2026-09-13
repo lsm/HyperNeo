@@ -2,7 +2,7 @@ import type { SpaceTask } from '@hyperneo/shared/types/space';
 import type { TaskCore, TaskLifecycleStatus } from '@hyperneo/shared/types/task-core';
 import { z } from 'zod';
 import { VALID_TASK_TRANSITIONS } from '../tasks/transitions.ts';
-import { defineOperation } from './registry.ts';
+import { defineOperation, type OperationCaller } from './registry.ts';
 
 export const TaskCoreSchema = z.object({
   id: z.string(),
@@ -79,7 +79,8 @@ export const TaskWithSpaceFieldsSchema = TaskCoreSchema.extend({
 
 export type TaskByNumberReader = (
   spaceId: string,
-  taskNumber: number
+  taskNumber: number,
+  caller: OperationCaller
 ) => TaskCore | null | Promise<TaskCore | null>;
 
 const ById = z.object({ taskId: z.string().min(1) });
@@ -94,7 +95,7 @@ const BY_NUMBER_DESCRIPTION =
   'Read task data by its global task ID, or by the short task number shown inside a Space together with that spaceId. Task numbers are unique only within their Space, which is why the number form requires spaceId; standalone tasks have no number. Returns null when absent. A Space-owned task includes its Space fields (ownership, workflow, approval, and pending-completion state); a standalone task returns only core fields.';
 
 export function createGetTaskOperation(
-  readTask: (taskId: string) => TaskCore | null | Promise<TaskCore | null>,
+  readTask: (taskId: string, caller: OperationCaller) => TaskCore | null | Promise<TaskCore | null>,
   readTaskByNumber?: TaskByNumberReader
 ) {
   if (!readTaskByNumber) {
@@ -103,7 +104,7 @@ export function createGetTaskOperation(
       description: BY_ID_DESCRIPTION,
       inputSchema: ById,
       resultSchema: TaskWithSpaceFieldsSchema.nullable(),
-      execute: async (input) => readTask(input.taskId),
+      execute: async (input, caller) => readTask(input.taskId, caller),
     });
   }
   return defineOperation({
@@ -111,9 +112,9 @@ export function createGetTaskOperation(
     description: BY_NUMBER_DESCRIPTION,
     inputSchema: z.union([ById, ByNumber]),
     resultSchema: TaskWithSpaceFieldsSchema.nullable(),
-    execute: async (input) =>
+    execute: async (input, caller) =>
       'taskId' in input
-        ? readTask(input.taskId)
-        : readTaskByNumber(input.spaceId, input.taskNumber),
+        ? readTask(input.taskId, caller)
+        : readTaskByNumber(input.spaceId, input.taskNumber, caller),
   });
 }
