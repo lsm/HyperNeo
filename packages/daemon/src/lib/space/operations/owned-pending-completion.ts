@@ -102,9 +102,17 @@ export async function requireCompletionAutonomy(
     return { value: actor };
   }
   const spaceLevel = getSpaceAutonomyLevel ? await getSpaceAutonomyLevel(actor.spaceId) : 1;
-  const agentLevel = actor.agentId
-    ? (policyContext.longHorizonAgentRepo?.getById(actor.agentId)?.autonomyLevel ?? null)
+  const agent = actor.agentId
+    ? (policyContext.longHorizonAgentRepo?.getById(actor.agentId) ?? null)
     : null;
+  if (!agent || agent.status !== 'active') {
+    return {
+      reason: new Error(
+        'Pending completion decisions require an active Space agent identity; the provenance agent is missing or inactive.'
+      ),
+    };
+  }
+  const agentLevel = agent.autonomyLevel ?? null;
   const effective = resolveEffectiveAutonomyLevel({ spaceLevel, agentLevel });
   const admission = decideAutonomyAdmission({
     toolName: 'task.resolvePendingCompletion',

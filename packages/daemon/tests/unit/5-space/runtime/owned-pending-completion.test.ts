@@ -228,6 +228,48 @@ test('denies a canonical space-chat caller below the required autonomy level', a
   expect(tasks.getTask(task.id)?.status).toBe('review');
 });
 
+test('denies a canonical space-chat caller whose coordinator is paused, even at sufficient autonomy', async () => {
+  const session = persist('space_chat', `space:chat:${spaceId}`, spaceId);
+  const pausedCoordinator = { id: 'coord-1' } as SpaceLongHorizonAgent;
+  dependencies.coordinatorLookup = { getCoordinator: () => pausedCoordinator };
+  dependencies.getSpaceAutonomyLevel = async () => 5;
+  dependencies.policyContext = {
+    longHorizonAgentRepo: {
+      getById: () =>
+        ({
+          id: 'coord-1',
+          spaceId,
+          status: 'paused',
+          autonomyLevel: 5,
+        }) as unknown as SpaceLongHorizonAgent,
+    },
+  };
+  const outcome = await invoke(session.id);
+  expect(outcome.kind).toBe('failed');
+  expect(dependencies.getTaskManager).not.toHaveBeenCalled();
+  expect(tasks.getTask(task.id)?.status).toBe('review');
+});
+
+test('admits a canonical space-chat caller whose coordinator is active, at sufficient autonomy', async () => {
+  const session = persist('space_chat', `space:chat:${spaceId}`, spaceId);
+  const activeCoordinator = { id: 'coord-1' } as SpaceLongHorizonAgent;
+  dependencies.coordinatorLookup = { getCoordinator: () => activeCoordinator };
+  dependencies.getSpaceAutonomyLevel = async () => 5;
+  dependencies.policyContext = {
+    longHorizonAgentRepo: {
+      getById: () =>
+        ({
+          id: 'coord-1',
+          spaceId,
+          status: 'active',
+          autonomyLevel: 5,
+        }) as unknown as SpaceLongHorizonAgent,
+    },
+  };
+  expect((await invoke(session.id)).kind).toBe('completed');
+  expect(tasks.getTask(task.id)?.status).toBe('approved');
+});
+
 test('legacy task-agent caller bypasses the operations-path autonomy gate entirely', async () => {
   const session = persist('space_task_agent');
   dependencies.getSpaceAutonomyLevel = async () => 1;
