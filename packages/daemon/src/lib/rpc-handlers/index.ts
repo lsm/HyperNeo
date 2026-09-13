@@ -1,5 +1,7 @@
 import { registerDirectStartJobs } from '../space/runtime/direct-start-jobs.ts';
 import { registerDirectOutcomeJobs } from '../space/runtime/direct-outcome-jobs.ts';
+import { createWorkflowTaskRecoveryExecutor } from '../space/runtime/task-recovery-executor.ts';
+import { recoverTaskExecution } from '../tasks/recover-task-execution.ts';
 import { McpAuditLogRepository } from '../../storage/repositories/mcp-audit-log-repository.ts';
 import { createSpaceOperationRegistryProvider } from '../space/operations/registry.ts';
 import { createCompletionGateBindings } from '../space/operations/complete-task-gates.ts';
@@ -749,6 +751,16 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       },
       isWorkflowRunActive: (workflowRunId) =>
         spaceRuntimeService.isWorkflowRunActive(workflowRunId),
+      recoverTransition: (spaceId, taskId, status) =>
+        recoverTaskExecution(
+          createWorkflowTaskRecoveryExecutor(spaceId, spaceRuntimeService),
+          taskId,
+          status
+        ),
+      stopForStatus: (spaceId, taskId, params) =>
+        spaceRuntimeService.stopWorkflowBackedTaskForStatus(spaceId, taskId, params),
+      parkStopped: (spaceId, taskId) =>
+        spaceRuntimeService.parkStoppedWorkflowTask(spaceId, taskId),
     }
   );
   const replyRoutingRegistry = new ReplyRoutingRegistry();
