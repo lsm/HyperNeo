@@ -518,6 +518,16 @@ test('a legacy gate checkpoint does not reject the read or the page', async () =
   expect((page as { tasks: { id: string }[] }).tasks.map((task) => task.id)).toContain(taskId);
 });
 
+test('task.get and task.list stay describable after the Space fields widening', async () => {
+  const rpc = createOperationRpcHandler(provider(), () => ({}));
+
+  for (const name of ['task.get', 'task.list']) {
+    const described = await rpc({ name: 'operations.describe', input: { name } }, context);
+    expect(described).toMatchObject({ name });
+    expect((described as { resultSchema?: unknown }).resultSchema).toBeDefined();
+  }
+});
+
 test('a task repository without a batch read degrades to core rows', async () => {
   const coreOnly = provider({ taskRepo: { getTask: (id: string) => tasks.getTask(id) } });
   const rpc = createOperationRpcHandler(coreOnly, () => ({}));
