@@ -7,6 +7,7 @@ import type { Database as AppDatabase } from '../../../../src/storage/database';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import type { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
+import { SpaceGoalRepository } from '../../../../src/storage/repositories/space-goal-repository';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
 import { createStandaloneTask } from '../../../../src/storage/tasks/create-task';
@@ -454,4 +455,54 @@ test('task.transition is served through the Space registry when bound', async ()
   expect(result).toMatchObject({ id: taskId, status: 'in_progress' });
   expect(tasks.getTask(taskId)?.status).toBe('in_progress');
   expect(emit).toHaveBeenCalledTimes(1);
+});
+
+test('task.get returns the core shape unchanged for a standalone task through the Space registry', async () => {
+  const standalone = createStandaloneTask(db, { title: 'Loose' }, undefined, () => {});
+  const rpc = createOperationRpcHandler(provider(), () => ({}));
+  const result = await rpc({ name: 'task.get', input: { taskId: standalone.id } }, context);
+  expect(result).toEqual(standalone);
+  expect(result).not.toHaveProperty('spaceId');
+});
+
+test('task.get returns full Space fields for a Space-owned task through the Space registry', async () => {
+  const goalId = new SpaceGoalRepository(db).create({ spaceId, title: 'Goal' }).id;
+  const workflow = new SpaceWorkflowRepository(db).createWorkflow({ spaceId, name: 'Workflow' });
+  const workflowRunId = new SpaceWorkflowRunRepository(db).createRun({
+    spaceId,
+    workflowId: workflow.id,
+    title: 'Run',
+  }).id;
+  tasks.updateTask(taskId, {
+    workflowRunId,
+    goalId,
+    workspacePath: '/repo/worker',
+    taskAgentSessionId: 'agent-session',
+    approvalSource: 'human',
+    approvalReason: 'looks good',
+    approvedAt: 111,
+    pendingCheckpointType: 'task_completion',
+    pendingCompletionSubmittedByNodeId: 'node-1',
+    pendingCompletionSubmittedAt: 222,
+    pendingCompletionReason: 'ready for review',
+  });
+  const rpc = createOperationRpcHandler(provider(), () => ({}));
+  const result = await rpc({ name: 'task.get', input: { taskId } }, context);
+  expect(result).toEqual(tasks.getTask(taskId));
+  expect(result).toMatchObject({
+    id: taskId,
+    spaceId,
+    taskNumber: expect.any(Number),
+    workflowRunId,
+    goalId,
+    workspacePath: '/repo/worker',
+    taskAgentSessionId: 'agent-session',
+    approvalSource: 'human',
+    approvalReason: 'looks good',
+    approvedAt: 111,
+    pendingCheckpointType: 'task_completion',
+    pendingCompletionSubmittedByNodeId: 'node-1',
+    pendingCompletionSubmittedAt: 222,
+    pendingCompletionReason: 'ready for review',
+  });
 });
