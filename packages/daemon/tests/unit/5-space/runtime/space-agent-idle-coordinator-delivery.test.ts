@@ -388,6 +388,7 @@ describe('idle coordinator message consumption (issue #2963)', () => {
         spaceId: SPACE_ID,
         spaceAgentInjector: async (_spaceId, message, _replyTo, explicitMessageId) =>
           escalate(explicitMessageId ?? `msg-router-${Date.now()}`, message),
+        replyRoutingLookup: () => SESSION_ID,
       });
 
       const result = await router.deliverMessage({

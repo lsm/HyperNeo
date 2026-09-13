@@ -465,9 +465,10 @@ describe('node-agent-tools: send_message', () => {
         return {
           state: 'accepted',
           messageId: `msg-${spaceMessages.length}`,
-          sessionId: `space:chat:${spaceId}`,
+          sessionId: 'sess-space-agent',
         };
       },
+      replyRoutingLookup: () => 'sess-space-agent',
     });
     const config = makeConfig(ctx, { agentMessageRouter });
     const handlers = createNodeAgentToolHandlers(config);

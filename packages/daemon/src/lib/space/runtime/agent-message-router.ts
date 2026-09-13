@@ -228,11 +228,7 @@ export class AgentMessageRouter {
       }
     }
     if (target.kind === 'agent' && this.config.spaceAgentInjector) {
-      const outcome = await this.config.spaceAgentInjector(
-        target.spaceId,
-        message,
-        target.agentId === 'coordinator' ? null : undefined
-      );
+      const outcome = await this.config.spaceAgentInjector(target.spaceId, message);
       if (outcome.state === 'failed') {
         return { state: 'failed', sessionId: outcome.sessionId, messageId, error: outcome.error };
       }
@@ -247,22 +243,6 @@ export class AgentMessageRouter {
       return { state: 'delivered', sessionId: sessionIdHint, messageId };
     }
     throw new Error(`No delivery door configured for ${target.kind} target`);
-  }
-
-  private async deliverSpaceAgentWithFallback(
-    spaceId: string,
-    target: SessionTarget,
-    envelopedMessage: string
-  ): Promise<AgentMessageDeliveryOutcome> {
-    const outcome = await this.deliverSingleTarget(target, envelopedMessage, generateUUID());
-    if (outcome.state === 'not_found' && target.kind === 'session') {
-      return this.deliverSingleTarget(
-        { kind: 'agent', spaceId, agentId: 'coordinator' },
-        envelopedMessage,
-        generateUUID()
-      );
-    }
-    return outcome;
   }
 
   private async deliverGenericMessage(params: {
@@ -376,46 +356,13 @@ export class AgentMessageRouter {
           notFoundAgentNames: notFound.length > 0 ? notFound : undefined,
         };
       }
-      if (decision.action === 'deliverToCoordinator') {
-        const envelopedMessage = buildEnvelope('space-agent');
-        try {
-          const outcome = await this.deliverSingleTarget(
-            { kind: 'agent', spaceId: spaceId!, agentId: 'coordinator' },
-            envelopedMessage,
-            generateUUID()
-          );
-          if (outcome.state === 'delivered') {
-            delivered.push({
-              agentName: 'space-agent',
-              sessionId: outcome.sessionId ?? `space:chat:${spaceId!}`,
-            });
-          } else if (outcome.state === 'queued') {
-            queued.push({ agentName: 'space-agent', messageId: outcome.messageId });
-          } else if (outcome.state === 'failed') {
-            failed.push({
-              agentName: 'space-agent',
-              sessionId: outcome.sessionId ?? `space:chat:${spaceId!}`,
-              error: outcome.error,
-            });
-          } else {
-            notFound.push('space-agent');
-          }
-        } catch (err) {
-          failed.push({
-            agentName: 'space-agent',
-            sessionId: `space:chat:${spaceId!}`,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
-        continue;
-      }
       if (decision.action === 'deliverToSession') {
         const envelopedMessage = buildEnvelope('space-agent');
         try {
-          const outcome = await this.deliverSpaceAgentWithFallback(
-            spaceId!,
+          const outcome = await this.deliverSingleTarget(
             { kind: 'session', sessionId: decision.sessionId },
-            envelopedMessage
+            envelopedMessage,
+            generateUUID()
           );
           if (outcome.state === 'delivered') {
             delivered.push({
@@ -778,16 +725,17 @@ export class AgentMessageRouter {
           continue;
         }
         const replyTo = replyRoutingLookup ? replyRoutingLookup(fromAgentName) : null;
-        const target: SessionTarget = replyTo
-          ? { kind: 'session', sessionId: replyTo }
-          : { kind: 'agent', spaceId, agentId: 'coordinator' };
-        const expectedSessionId = replyTo || `space:chat:${spaceId}`;
+        if (!replyTo) {
+          notFound.push(agentName);
+          continue;
+        }
+        const expectedSessionId = replyTo;
         const envelopedMessage = buildEnvelope('space-agent');
         try {
-          const outcome = await this.deliverSpaceAgentWithFallback(
-            spaceId,
-            target,
-            envelopedMessage
+          const outcome = await this.deliverSingleTarget(
+            { kind: 'session', sessionId: replyTo },
+            envelopedMessage,
+            generateUUID()
           );
           if (outcome.state === 'delivered') {
             delivered.push({ agentName, sessionId: outcome.sessionId ?? expectedSessionId });

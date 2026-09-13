@@ -1,5 +1,4 @@
 import { formatAddress, type ParsedAddress } from '../../../../../messaging/src/address.ts';
-import { isSpaceManagerHandle } from '../agent-handle.ts';
 
 export interface ResolveNodeAgentTargetsInput {
   target: string | string[];
@@ -200,7 +199,6 @@ export interface GenericAddressRoutingConfig {
 }
 
 export type GenericAddressRoutingDecision =
-  | { action: 'deliverToCoordinator' }
   | { action: 'deliverToSession'; sessionId: string; replyAuthorized: true }
   | { action: 'failSessionUnauthorized'; target: string }
   | { action: 'deliverViaMessagingFacade' }
@@ -215,11 +213,6 @@ export function decideGenericAddressRouting(
   config: GenericAddressRoutingConfig
 ): GenericAddressRoutingDecision {
   const target = formatAddress(address);
-  if (address.kind === 'handle' && isSpaceManagerHandle(address.handle)) {
-    return config.spaceAgentAvailable
-      ? { action: 'deliverToCoordinator' }
-      : { action: 'notFound', target };
-  }
   if (address.kind === 'session') {
     if (!config.spaceAgentAvailable) return { action: 'notFound', target };
     if (config.replyToSessionId === null || address.sessionId !== config.replyToSessionId) {
