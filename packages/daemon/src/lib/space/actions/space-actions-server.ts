@@ -1,3 +1,4 @@
+import { hasSpaceAuthority } from '../runtime/space-mcp-session-policy.ts';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import type { OperationRegistrySource } from '../../operations/registry.ts';
@@ -44,7 +45,7 @@ const WORKER_NODE_HOT_FILL = [
   'restore_node_agent',
 ] as const;
 
-const COORDINATOR_ONLY_ACTIONS = new Set(['approve_pending_completion']);
+const SPACE_AUTHORITY_ONLY_ACTIONS = new Set(['approve_pending_completion']);
 
 const DISPATCHABLE_ROLES: ReadonlySet<SpaceMcpSessionRole> = new Set([
   'coordinator',
@@ -191,9 +192,11 @@ export function createSpaceActionsMcpServer(config: SpaceActionsServerConfig) {
   const spaceEntries = spaceConfig
     ? createSpaceRegistryEntries(spaceConfig, config.operationRegistry)
     : [];
-  const nodeEntries = config.nodeConfig ? createNodeRegistryEntries(config.nodeConfig) : [];
+  const nodeEntries = config.nodeConfig
+    ? createNodeRegistryEntries(config.nodeConfig, config.operationRegistry)
+    : [];
   const isRoleAdmittedEntry = (entry: ActionDefinition) =>
-    spaceConfig?.isDefaultAgent === true || !COORDINATOR_ONLY_ACTIONS.has(entry.name);
+    hasSpaceAuthority(spaceConfig?.callerRole) || !SPACE_AUTHORITY_ONLY_ACTIONS.has(entry.name);
   const isNotDeniedEntry = (entry: ActionDefinition) => !config.deniedActionNames?.has(entry.name);
   const isUniversalReadFiltered = (entry: ActionDefinition) =>
     config.role !== 'universal_read' || entry.safetyClass === 'read';

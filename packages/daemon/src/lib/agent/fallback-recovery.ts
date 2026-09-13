@@ -174,7 +174,7 @@ export function extractResetTimestamp(
   return null;
 }
 
-export type CooldownReason = 'parsed-reset' | 'backoff-ladder';
+export type CooldownReason = 'parsed-reset' | 'backoff-ladder' | 'escalated-park';
 
 export interface CooldownDecision {
   delayMs: number;
@@ -220,6 +220,39 @@ export function computeCooldown(
   };
 }
 
+export function escalateCooldownDecision(
+  base: CooldownDecision,
+  parkLadderIndex: number,
+  now: number,
+  jitterFn: () => number = () => Math.random() * 2 - 1
+): CooldownDecision {
+  const lastIndex = BACKOFF_LADDER_MS.length - 1;
+  const index = Math.min(Math.max(parkLadderIndex, 0), lastIndex);
+  const parkBase = Math.min(BACKOFF_LADDER_MS[index], BACKOFF_CAP_MS);
+  const jitter = parkBase * BACKOFF_JITTER * jitterFn();
+  const parkDelayMs = Math.max(BACKOFF_FLOOR_MS, Math.round(parkBase + jitter));
+  if (base.delayMs >= parkDelayMs) {
+    return { ...base, reason: 'escalated-park', ladderIndex: index };
+  }
+  return {
+    delayMs: parkDelayMs,
+    retryAtMs: now + parkDelayMs,
+    reason: 'escalated-park',
+    ladderIndex: index,
+    freeWait: base.freeWait,
+    reset: base.reset,
+  };
+}
+
+export function floorCooldownDecision(
+  decision: CooldownDecision,
+  floorMs: number,
+  now: number
+): CooldownDecision {
+  if (decision.delayMs >= floorMs) return decision;
+  return { ...decision, delayMs: floorMs, retryAtMs: now + floorMs };
+}
+
 export const USAGE_CAP_KEYWORDS = [
   'usage',
   'cap',
@@ -237,6 +270,9 @@ export function classifyLimitKind(
   decision: CooldownDecision
 ): 'rate_limit' | 'usage_limit' {
   if (decision.reason === 'parsed-reset') {
+    return 'usage_limit';
+  }
+  if (decision.reason === 'escalated-park' && decision.reset !== null) {
     return 'usage_limit';
   }
   const lower = errorMessage.toLowerCase();

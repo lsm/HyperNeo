@@ -1003,16 +1003,10 @@ export function SpaceTaskPane({
       setThreadSendError(null);
       if (task.status === 'draft' && newStatus === 'open') {
         await spaceStore.publishTask(task.id);
-      } else if (task.workflowRunId && newStatus === 'cancelled') {
-        if (task.status === 'blocked') {
-          await spaceStore.cancelTask(task.id);
-        } else {
-          await spaceStore.cancelWorkflowRun(task.workflowRunId);
-        }
-      } else if (task.workflowRunId && isWorkflowRecoveryTransition(task.status, newStatus)) {
-        await spaceStore.recoverWorkflowTask(task.id, newStatus);
       } else if (newStatus === 'cancelled') {
         await spaceStore.cancelTask(task.id);
+      } else if (task.workflowRunId && isWorkflowRecoveryTransition(task.status, newStatus)) {
+        await spaceStore.recoverWorkflowTask(task.id, newStatus);
       } else {
         const payload = newStatus === 'done' ? buildMarkDonePayload(task) : { status: newStatus };
         await spaceStore.updateTask(task.id, payload);

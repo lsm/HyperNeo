@@ -1,8 +1,9 @@
-import type { DirectTaskWorkerIdentity } from './direct-task-worker-identity.ts';
 import type { Session } from '@hyperneo/shared';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
+import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import { longTermAgentSessionId } from '../long-term-agent-session.ts';
+import type { DirectTaskWorkerIdentity } from './direct-task-worker-identity.ts';
 
 export type SpaceMcpSessionRole =
   | 'coordinator'
@@ -14,11 +15,16 @@ export type SpaceMcpSessionRole =
   | 'legacy_task_agent'
   | 'outside_space';
 
+export function hasSpaceAuthority(role: SpaceMcpSessionRole | undefined): boolean {
+  return role === 'long_term_agent' || role === 'coordinator';
+}
+
 export interface SpaceMcpSessionPolicyContext {
   readonly hasDirectWorkerProvenance?: (sessionId: string) => boolean;
   readonly resolveDirectWorker?: (sessionId: string) => DirectTaskWorkerIdentity | null;
   readonly nodeExecutionRepo?: Pick<NodeExecutionRepository, 'getByAgentSessionId' | 'getById'>;
   readonly taskRepo?: Pick<SpaceTaskRepository, 'getTask'>;
+  readonly longHorizonAgentRepo: Pick<SpaceLongHorizonAgentRepository, 'getById'>;
 }
 
 export interface SpaceMcpSessionPolicy {
@@ -36,9 +42,16 @@ export const SPACE_COORDINATOR_REQUIRED_MCP_SERVERS = ['space-agent-tools'] as c
 export const SPACE_AD_HOC_MEMBER_REQUIRED_MCP_SERVERS = ['space-agent-tools'] as const;
 export const SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS = ['node-agent'] as const;
 
+export const FAIL_CLOSED_LONG_HORIZON_AGENT_REPO: SpaceMcpSessionPolicyContext['longHorizonAgentRepo'] =
+  {
+    getById: () => null,
+  };
+
 export function resolveSpaceMcpSessionPolicy(
   session: Session,
-  context: SpaceMcpSessionPolicyContext = {}
+  context: SpaceMcpSessionPolicyContext = {
+    longHorizonAgentRepo: FAIL_CLOSED_LONG_HORIZON_AGENT_REPO,
+  }
 ): SpaceMcpSessionPolicy {
   const spaceId = session.context?.spaceId;
 
@@ -114,7 +127,7 @@ export function resolveSpaceMcpSessionPolicy(
     };
   }
 
-  if (isLongTermAgentSession(session, spaceId)) {
+  if (isLongTermAgentSession(session, spaceId, context.longHorizonAgentRepo)) {
     return {
       role: 'long_term_agent',
       spaceId,
@@ -160,10 +173,16 @@ function parseExecutionIdFromSubSessionId(sessionId: string): string | null {
   return executionId || null;
 }
 
-function isLongTermAgentSession(session: Session, spaceId: string): boolean {
+function isLongTermAgentSession(
+  session: Session,
+  spaceId: string,
+  longHorizonAgentRepo: SpaceMcpSessionPolicyContext['longHorizonAgentRepo']
+): boolean {
   const agentId = session.metadata.promptProvenance?.agentId;
   if (!agentId) return false;
-  return session.id === longTermAgentSessionId(spaceId, agentId);
+  if (session.id !== longTermAgentSessionId(spaceId, agentId)) return false;
+  const agent = longHorizonAgentRepo?.getById(agentId) ?? null;
+  return agent !== null && agent.spaceId === spaceId && agent.status === 'active';
 }
 
 export function missingMcpServers(

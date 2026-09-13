@@ -229,154 +229,6 @@ describe('space-task-handlers', () => {
     return handler(data);
   };
 
-  describe('spaceTask.create', () => {
-    beforeEach(() => setup());
-
-    it('creates a task and publishes space.task.created', async () => {
-      const result = await call('spaceTask.create', {
-        spaceId: 'space-1',
-        title: 'Do work',
-        description: 'description',
-      });
-
-      expect(result).toEqual(mockTask);
-      expect(taskManager.createTask).toHaveBeenCalledTimes(1);
-      expect(internalEventBus.publish).toHaveBeenCalledWith('space.task.created', {
-        sessionId: 'global',
-        spaceId: 'space-1',
-        taskId: mockTask.id,
-        task: mockTask,
-      });
-    });
-
-    it('allows empty string description', async () => {
-      await expect(
-        call('spaceTask.create', { spaceId: 'space-1', title: 'T', description: '' })
-      ).resolves.toBeDefined();
-    });
-
-    it('strips untrusted task id from create requests', async () => {
-      await call('spaceTask.create', {
-        spaceId: 'space-1',
-        id: 'client-controlled-id',
-        title: 'Do work',
-        description: 'description',
-      });
-
-      expect(taskManager.createTask).toHaveBeenCalledWith(
-        expect.not.objectContaining({ id: 'client-controlled-id' })
-      );
-    });
-
-    it('throws when spaceId is missing', async () => {
-      await expect(call('spaceTask.create', { title: 'T', description: 'D' })).rejects.toThrow(
-        'spaceId is required'
-      );
-    });
-
-    it("throws when initial status is 'stopped' (dormant until the Stop action lands)", async () => {
-      await expect(
-        call('spaceTask.create', {
-          spaceId: 'space-1',
-          title: 'T',
-          description: 'D',
-          status: 'stopped',
-        })
-      ).rejects.toThrow(/cannot create a task with initial status 'stopped'/);
-      expect(taskManager.createTask).not.toHaveBeenCalled();
-    });
-
-    it('throws when title is missing', async () => {
-      await expect(
-        call('spaceTask.create', { spaceId: 'space-1', description: 'D' })
-      ).rejects.toThrow('title is required');
-    });
-
-    it('throws when title is empty string', async () => {
-      await expect(
-        call('spaceTask.create', { spaceId: 'space-1', title: '', description: 'D' })
-      ).rejects.toThrow('title is required');
-    });
-
-    it('throws when description is null', async () => {
-      await expect(
-        call('spaceTask.create', { spaceId: 'space-1', title: 'T', description: null })
-      ).rejects.toThrow('description must not be null');
-    });
-
-    it('throws when description is undefined', async () => {
-      await expect(call('spaceTask.create', { spaceId: 'space-1', title: 'T' })).rejects.toThrow(
-        'description must not be null'
-      );
-    });
-
-    it('throws when space is not found', async () => {
-      setup(null);
-      await expect(
-        call('spaceTask.create', {
-          spaceId: 'ghost',
-          title: 'T',
-          description: 'D',
-        })
-      ).rejects.toThrow('Space not found: ghost');
-    });
-
-    it('propagates task manager errors (e.g. invalid dependency)', async () => {
-      (taskManager.createTask as ReturnType<typeof mock>).mockRejectedValue(
-        new Error('Dependency task not found in space: bad-dep')
-      );
-
-      await expect(
-        call('spaceTask.create', {
-          spaceId: 'space-1',
-          title: 'T',
-          description: 'D',
-          dependsOn: ['bad-dep'],
-        })
-      ).rejects.toThrow('Dependency task not found');
-    });
-
-    it('creates a draft task when draft flag is true', async () => {
-      await call('spaceTask.create', {
-        spaceId: 'space-1',
-        title: 'Draft',
-        description: 'D',
-        draft: true,
-      });
-
-      expect(taskManager.createTask).toHaveBeenCalledWith(
-        expect.objectContaining({ status: 'draft' })
-      );
-    });
-
-    it('rejects contradictory draft flag and non-draft status', async () => {
-      await expect(
-        call('spaceTask.create', {
-          spaceId: 'space-1',
-          title: 'Draft',
-          description: 'D',
-          draft: true,
-          status: 'open',
-        })
-      ).rejects.toThrow('draft: true cannot be combined with a non-draft status');
-
-      expect(taskManager.createTask).not.toHaveBeenCalled();
-    });
-
-    it('forwards workspacePath to taskManager.createTask', async () => {
-      await call('spaceTask.create', {
-        spaceId: 'space-1',
-        title: 'T',
-        description: 'D',
-        workspacePath: '/secondary',
-      });
-
-      expect(taskManager.createTask).toHaveBeenCalledWith(
-        expect.objectContaining({ workspacePath: '/secondary' })
-      );
-    });
-  });
-
   describe('spaceTask.list', () => {
     beforeEach(() => setup());
 
@@ -2249,7 +2101,7 @@ describe('space-task-handlers', () => {
       ).rejects.toThrow('Invalid status transition');
     });
 
-    it('rejects bare in_progress→review transitions and points at spaceTask.submitForReview', async () => {
+    it('rejects bare in_progress→review transitions and points at task.submitForReview', async () => {
       const inProgressTask = { ...mockTask, status: 'in_progress' as const };
       setup(mockSpace, inProgressTask);
 
@@ -2259,7 +2111,7 @@ describe('space-task-handlers', () => {
           taskId: 'task-1',
           status: 'review',
         })
-      ).rejects.toThrow(/spaceTask\.submitForReview/);
+      ).rejects.toThrow(/operation\.invoke with task\.submitForReview/);
       expect(taskManager.setTaskStatus).not.toHaveBeenCalled();
       expect(taskManager.updateTask).not.toHaveBeenCalled();
     });
@@ -2312,88 +2164,6 @@ describe('space-task-handlers', () => {
           title: 'X',
         })
       ).rejects.toThrow('Task not found');
-    });
-  });
-
-  describe('spaceTask.submitForReview', () => {
-    beforeEach(() => setup());
-
-    it('delegates to taskManager.submitTaskForReview with submittedByNodeId=null and the reason', async () => {
-      const result = await call('spaceTask.submitForReview', {
-        spaceId: 'space-1',
-        taskId: 'task-1',
-        reason: 'ready for human eyes',
-      });
-
-      expect(taskManager.submitTaskForReview).toHaveBeenCalledWith('task-1', {
-        submittedByNodeId: null,
-        reason: 'ready for human eyes',
-      });
-      expect((result as SpaceTask).status).toBe('review');
-      expect((result as SpaceTask).pendingCheckpointType).toBe('task_completion');
-      expect((result as SpaceTask).pendingCompletionReason).toBe('ready for human eyes');
-    });
-
-    it('coerces missing reason to null so the manager always receives an explicit value', async () => {
-      await call('spaceTask.submitForReview', {
-        spaceId: 'space-1',
-        taskId: 'task-1',
-      });
-
-      expect(taskManager.submitTaskForReview).toHaveBeenCalledWith('task-1', {
-        submittedByNodeId: null,
-        reason: null,
-      });
-    });
-
-    it('publishes space.task.updated with the post-submit task', async () => {
-      await call('spaceTask.submitForReview', {
-        spaceId: 'space-1',
-        taskId: 'task-1',
-        reason: 'ready',
-      });
-
-      expect(internalEventBus.publish).toHaveBeenCalledWith('space.task.updated', {
-        sessionId: 'global',
-        spaceId: 'space-1',
-        taskId: 'task-1',
-        task: expect.objectContaining({
-          status: 'review',
-          pendingCheckpointType: 'task_completion',
-        }),
-      });
-    });
-
-    it('throws when spaceId is missing', async () => {
-      await expect(call('spaceTask.submitForReview', { taskId: 'task-1' })).rejects.toThrow(
-        'spaceId is required'
-      );
-      expect(taskManager.submitTaskForReview).not.toHaveBeenCalled();
-    });
-
-    it('throws when taskId is missing', async () => {
-      await expect(call('spaceTask.submitForReview', { spaceId: 'space-1' })).rejects.toThrow(
-        'taskId is required'
-      );
-      expect(taskManager.submitTaskForReview).not.toHaveBeenCalled();
-    });
-
-    it('throws Space not found when space does not exist', async () => {
-      setup(null);
-      await expect(
-        call('spaceTask.submitForReview', { spaceId: 'ghost', taskId: 'task-1' })
-      ).rejects.toThrow('Space not found: ghost');
-      expect(taskManager.submitTaskForReview).not.toHaveBeenCalled();
-    });
-
-    it('propagates manager errors (e.g. invalid status transition)', async () => {
-      (taskManager.submitTaskForReview as ReturnType<typeof mock>).mockRejectedValue(
-        new Error("Invalid status transition from 'archived' to 'review'. Allowed: none")
-      );
-
-      await expect(
-        call('spaceTask.submitForReview', { spaceId: 'space-1', taskId: 'task-1' })
-      ).rejects.toThrow('Invalid status transition');
     });
   });
 

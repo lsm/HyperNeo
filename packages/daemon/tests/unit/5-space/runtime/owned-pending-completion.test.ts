@@ -1,22 +1,22 @@
 import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
 import type { NodeExecution, Session, SpaceLongHorizonAgent, SpaceTask } from '@hyperneo/shared';
-import { Database } from '../../../../src/storage/sqlite-compat';
-import { createSpaceTables } from '../../helpers/space-test-db';
-import { createTestSession } from '../../../helpers/database';
-import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
-import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
-import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
-import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager';
-import { createOperationRegistry } from '../../../../src/lib/operations/registry';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
+import { createOperationRegistry } from '../../../../src/lib/operations/registry';
 import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session';
+import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager';
 import {
   createOwnedPendingCompletionOperation,
-  resolveCompletionActor,
-  requireCompletionTarget,
   loadCompletionTarget,
   type OwnedPendingCompletionDependencies,
+  requireCompletionTarget,
+  resolveCompletionActor,
 } from '../../../../src/lib/space/operations/owned-pending-completion';
+import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
+import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
+import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
+import { Database } from '../../../../src/storage/sqlite-compat';
+import { createTestSession } from '../../../helpers/database';
+import { createSpaceTables } from '../../helpers/space-test-db';
 
 let db: Database;
 let spaceId: string;
@@ -44,6 +44,12 @@ beforeEach(() => {
     getSession: (id) => sessions.getSession(id),
     getTask: (id) => tasks.getTask(id),
     coordinatorLookup: { getCoordinator: () => coordinator },
+    getSpaceAutonomyLevel: async () => 5,
+    policyContext: {
+      longHorizonAgentRepo: {
+        getById: (id) => ({ id, spaceId, status: 'active' }) as unknown as SpaceLongHorizonAgent,
+      },
+    },
     getTaskManager: mock((id) => new SpaceTaskManager(db, id)),
     dispatchApproval: mock(async (owner, id, source, reason, guard) => {
       expect(owner).toBe(spaceId);
@@ -144,29 +150,131 @@ test.each(['rpc', 'internal'] as const)(
   }
 );
 
-test.each([
-  'missing',
-  'ordinary',
-  'member',
-  'nondefault',
-  'noncanonical-chat',
-  'missing-coordinator',
-] as const)('denies %s before mutation', async (kind) => {
-  let session: Session | undefined;
-  if (kind === 'ordinary') session = persist('worker', 'ordinary', null);
-  if (kind === 'member') session = persist('worker');
-  if (kind === 'nondefault')
-    session = persist('worker', longTermAgentSessionId(spaceId, 'other'), spaceId, 'other');
-  if (kind === 'noncanonical-chat') session = persist('space_chat', 'not-canonical');
-  if (kind === 'missing-coordinator') {
-    session = persist('space_chat', `space:chat:${spaceId}`);
-    dependencies.coordinatorLookup = { getCoordinator: () => null };
+test.each(['missing', 'ordinary', 'member', 'noncanonical-chat', 'missing-coordinator'] as const)(
+  'denies %s before mutation',
+  async (kind) => {
+    let session: Session | undefined;
+    if (kind === 'ordinary') session = persist('worker', 'ordinary', null);
+    if (kind === 'member') session = persist('worker');
+    if (kind === 'noncanonical-chat') session = persist('space_chat', 'not-canonical');
+    if (kind === 'missing-coordinator') {
+      session = persist('space_chat', `space:chat:${spaceId}`);
+      dependencies.coordinatorLookup = { getCoordinator: () => null };
+    }
+    const outcome = await invoke(session?.id ?? 'missing');
+    expect(outcome.kind).toBe('failed');
+    expect(dependencies.getTaskManager).not.toHaveBeenCalled();
+    expect(order).toEqual([]);
+    expect(tasks.getTask(task.id)?.status).toBe('review');
   }
-  const outcome = await invoke(session?.id ?? 'missing');
+);
+
+test('admits a Space agent that is not the space manager', async () => {
+  const session = persist('worker', longTermAgentSessionId(spaceId, 'other'), spaceId, 'other');
+  expect((await invoke(session.id)).kind).toBe('completed');
+  expect(tasks.getTask(task.id)?.status).toBe('approved');
+});
+
+test('denies a long-term agent session whose backing agent is no longer active', async () => {
+  const session = persist('worker', longTermAgentSessionId(spaceId, 'agent-1'), spaceId, 'agent-1');
+  dependencies.policyContext = {
+    longHorizonAgentRepo: {
+      getById: () =>
+        ({ id: 'agent-1', spaceId, status: 'paused' }) as unknown as SpaceLongHorizonAgent,
+    },
+  };
+  const outcome = await invoke(session.id);
   expect(outcome.kind).toBe('failed');
   expect(dependencies.getTaskManager).not.toHaveBeenCalled();
-  expect(order).toEqual([]);
   expect(tasks.getTask(task.id)?.status).toBe('review');
+});
+
+test('admits a long-term agent session whose backing agent is still active', async () => {
+  const session = persist('worker', longTermAgentSessionId(spaceId, 'agent-1'), spaceId, 'agent-1');
+  dependencies.policyContext = {
+    longHorizonAgentRepo: {
+      getById: () =>
+        ({ id: 'agent-1', spaceId, status: 'active' }) as unknown as SpaceLongHorizonAgent,
+    },
+  };
+  expect((await invoke(session.id)).kind).toBe('completed');
+  expect(tasks.getTask(task.id)?.status).toBe('approved');
+});
+
+test('denies a long-term agent below the required autonomy level via the operations MCP path', async () => {
+  const session = persist('worker', longTermAgentSessionId(spaceId, 'other'), spaceId, 'other');
+  dependencies.getSpaceAutonomyLevel = async () => 4;
+  const outcome = await invoke(session.id);
+  expect(outcome).toMatchObject({
+    kind: 'failed',
+    message: expect.stringContaining('space autonomy level 4 < required level 5'),
+  });
+  expect(dependencies.getTaskManager).not.toHaveBeenCalled();
+  expect(tasks.getTask(task.id)?.status).toBe('review');
+});
+
+test('admits a long-term agent at the required autonomy level via the operations MCP path', async () => {
+  const session = persist('worker', longTermAgentSessionId(spaceId, 'other'), spaceId, 'other');
+  dependencies.getSpaceAutonomyLevel = async () => 5;
+  expect((await invoke(session.id)).kind).toBe('completed');
+  expect(tasks.getTask(task.id)?.status).toBe('approved');
+});
+
+test('denies a canonical space-chat caller below the required autonomy level', async () => {
+  const session = persist('space_chat', `space:chat:${spaceId}`, spaceId);
+  dependencies.getSpaceAutonomyLevel = async () => 4;
+  const outcome = await invoke(session.id);
+  expect(outcome.kind).toBe('failed');
+  expect(tasks.getTask(task.id)?.status).toBe('review');
+});
+
+test('denies a canonical space-chat caller whose coordinator is paused, even at sufficient autonomy', async () => {
+  const session = persist('space_chat', `space:chat:${spaceId}`, spaceId);
+  const pausedCoordinator = { id: 'coord-1' } as SpaceLongHorizonAgent;
+  dependencies.coordinatorLookup = { getCoordinator: () => pausedCoordinator };
+  dependencies.getSpaceAutonomyLevel = async () => 5;
+  dependencies.policyContext = {
+    longHorizonAgentRepo: {
+      getById: () =>
+        ({
+          id: 'coord-1',
+          spaceId,
+          status: 'paused',
+          autonomyLevel: 5,
+        }) as unknown as SpaceLongHorizonAgent,
+    },
+  };
+  const outcome = await invoke(session.id);
+  expect(outcome.kind).toBe('failed');
+  expect(dependencies.getTaskManager).not.toHaveBeenCalled();
+  expect(tasks.getTask(task.id)?.status).toBe('review');
+});
+
+test('admits a canonical space-chat caller whose coordinator is active, at sufficient autonomy', async () => {
+  const session = persist('space_chat', `space:chat:${spaceId}`, spaceId);
+  const activeCoordinator = { id: 'coord-1' } as SpaceLongHorizonAgent;
+  dependencies.coordinatorLookup = { getCoordinator: () => activeCoordinator };
+  dependencies.getSpaceAutonomyLevel = async () => 5;
+  dependencies.policyContext = {
+    longHorizonAgentRepo: {
+      getById: () =>
+        ({
+          id: 'coord-1',
+          spaceId,
+          status: 'active',
+          autonomyLevel: 5,
+        }) as unknown as SpaceLongHorizonAgent,
+    },
+  };
+  expect((await invoke(session.id)).kind).toBe('completed');
+  expect(tasks.getTask(task.id)?.status).toBe('approved');
+});
+
+test('legacy task-agent caller bypasses the operations-path autonomy gate entirely', async () => {
+  const session = persist('space_task_agent');
+  dependencies.getSpaceAutonomyLevel = async () => 1;
+  expect((await invoke(session.id)).kind).toBe('completed');
+  expect(tasks.getTask(task.id)?.status).toBe('approved');
 });
 
 test('denies workflow worker even with default-agent provenance', async () => {

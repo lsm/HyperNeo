@@ -28,7 +28,6 @@ const stubSpaceConfig = {
   spaceId: SPACE_ID,
   db: {},
   taskAgentManager: {},
-  isDefaultAgent: true,
 } as unknown as SpaceAgentToolsConfig;
 const stubNodeConfig = { spaceId: SPACE_ID } as unknown as NodeAgentToolsConfig;
 
@@ -334,26 +333,16 @@ describe('createSpaceActionsMcpServer — call_action dispatch', () => {
     expect(dynamic.autonomyRequirement).toBe('depends on the provided parameters');
   });
 
-  test('excludes coordinator-only actions from non-default-agent registries', () => {
-    expect(makeServer().registry.get('approve_pending_completion')).toBeDefined();
-    expect(
-      makeServer({
-        role: 'ad_hoc_member',
-        spaceConfig: { ...stubSpaceConfig, isDefaultAgent: false },
-      }).registry.get('approve_pending_completion')
-    ).toBeUndefined();
-    expect(
-      makeServer({
-        role: 'long_term_agent',
-        spaceConfig: { ...stubSpaceConfig, isDefaultAgent: false },
-      }).registry.get('approve_pending_completion')
-    ).toBeUndefined();
+  test('excludes Space-authority-only actions from roles without Space authority', () => {
+    for (const role of ['ad_hoc_member', 'workflow_worker'] as const) {
+      expect(makeServer({ role }).registry.get('approve_pending_completion')).toBeUndefined();
+    }
   });
 
-  test('admits coordinator-only actions for the default agent regardless of session role', () => {
-    expect(
-      makeServer({ role: 'long_term_agent' }).registry.get('approve_pending_completion')
-    ).toBeDefined();
+  test('admits Space-authority-only actions for every Space agent role', () => {
+    for (const role of ['coordinator', 'long_term_agent'] as const) {
+      expect(makeServer({ role }).registry.get('approve_pending_completion')).toBeDefined();
+    }
   });
 
   test('backfills worker hot lists with always-registered node actions', () => {

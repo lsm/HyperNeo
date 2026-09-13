@@ -1836,6 +1836,24 @@ describe('SpaceTaskPane — activity members actions', () => {
     expect(mockCancelWorkflowRun).not.toHaveBeenCalled();
   });
 
+  it('cancels an in_progress workflow task through cancelTask, not cancelWorkflowRun', async () => {
+    mockTasks.value = [
+      makeTask({
+        status: 'in_progress',
+        workflowRunId: 'run-1',
+        taskAgentSessionId: 'session-abc',
+      }),
+    ];
+    mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', status: 'in_progress' })];
+    const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" />);
+
+    fireEvent.click(getByTestId('task-actions-menu-trigger'));
+    fireEvent.click(getByText('Cancel'));
+
+    await waitFor(() => expect(mockCancelTask).toHaveBeenCalledWith('task-1'));
+    expect(mockCancelWorkflowRun).not.toHaveBeenCalled();
+  });
+
   it('resumes a stopped workflow task through workflow recovery', async () => {
     mockTasks.value = [
       makeTask({

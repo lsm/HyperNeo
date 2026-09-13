@@ -658,6 +658,8 @@ test.each(['rpc', 'mcp'] as const)(
           blockExecution: async () => {
             throw new Error('unexpected workflow stop');
           },
+          requiresPostApprovalOwner: () => false,
+          completionGate: async () => ({ ok: true as const }),
         },
         {
           getSession: (id) => sessions.getSession(id),
@@ -665,6 +667,13 @@ test.each(['rpc', 'mcp'] as const)(
           getTaskManager,
           coordinatorLookup: {
             getCoordinator: () => ({ id: 'coordinator' }) as SpaceLongHorizonAgent,
+          },
+          getSpaceAutonomyLevel: async () => 5,
+          policyContext: {
+            longHorizonAgentRepo: {
+              getById: (id: string) =>
+                ({ id, spaceId: SPACE_ID, status: 'active' }) as unknown as SpaceLongHorizonAgent,
+            },
           },
           dispatchApproval: (_spaceId, id, approvalSource, reason, guard) =>
             runtime.dispatchPostApproval(id, approvalSource, { approvalReason: reason }, guard),

@@ -2,6 +2,9 @@ import { registerDirectStartJobs } from '../space/runtime/direct-start-jobs.ts';
 import { registerDirectOutcomeJobs } from '../space/runtime/direct-outcome-jobs.ts';
 import { McpAuditLogRepository } from '../../storage/repositories/mcp-audit-log-repository.ts';
 import { createSpaceOperationRegistryProvider } from '../space/operations/registry.ts';
+import { createCompletionGateBindings } from '../space/operations/complete-task-gates.ts';
+import { isCoderOwnedMergeWorkflow } from '../space/runtime/post-approval-router.ts';
+import { createGithubConnector } from '../space/runtime/connectors/github-connector.ts';
 import { setupOperationHandlers } from './operation-handlers.ts';
 import type { MessageHub } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
@@ -623,7 +626,11 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     getTask: (id) => spaceTaskRepo.getTask(id),
     getTaskManager: spaceTaskManagerFactory,
     coordinatorLookup: longHorizonAgentRepo,
-    policyContext: { taskRepo: spaceTaskRepo, nodeExecutionRepo },
+    policyContext: { taskRepo: spaceTaskRepo, nodeExecutionRepo, longHorizonAgentRepo },
+    getSpaceAutonomyLevel: async (spaceId) => {
+      const space = await deps.spaceManager.getSpace(spaceId);
+      return space?.autonomyLevel ?? 1;
+    },
     dispatchApproval: (spaceId, taskId, source, approvalReason, guard) =>
       spaceRuntimeService.dispatchPostApproval(spaceId, taskId, source, { approvalReason }, guard),
     warn: (taskId, detail) =>
@@ -668,6 +675,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       getTaskManager: spaceTaskManagerFactory,
       taskRepo: spaceTaskRepo,
       nodeExecutionRepo,
+      longHorizonAgentRepo,
       notifyStandalone: () => deps.db.notifyChange('space_tasks'),
       emitTaskUpdated: async (spaceId, task) => {
         await deps.internalEventBus.publish('space.task.updated', {
@@ -688,6 +696,28 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       getSpace: (spaceId) => deps.spaceManager.getSpace(spaceId),
       validateDefaultTaskWorkspace: (spaceId) =>
         deps.spaceManager.validateDefaultTaskWorkspace(spaceId),
+      ...createCompletionGateBindings({
+        resolveWorkflowForTask: (task) => {
+          const run = task.workflowRunId ? spaceWorkflowRunRepo.getRun(task.workflowRunId) : null;
+          return run?.workflowId ? (spaceWorkflowManager.getWorkflowForRun(run) ?? null) : null;
+        },
+        isCoderOwnedMergeWorkflow,
+        resolvePrUrl: (task) =>
+          task.workflowRunId
+            ? artifactProfile.resolveInitialPrimaryLinkUrl(task.workflowRunId)
+            : '',
+        getPrState: async (prUrl) => {
+          const outcome = await createGithubConnector().ops.getPr(
+            { prUrl },
+            { workspacePath: '', params: {}, rawParams: {}, hookLocalState: {} }
+          );
+          if (!outcome.ok) throw new Error(outcome.error);
+          const state = (outcome.data as { state?: unknown } | null)?.state;
+          return typeof state === 'string' ? state : 'UNKNOWN';
+        },
+        workflowDeclaresPostApprovalRoute: (taskId) =>
+          spaceRuntimeService.workflowDeclaresPostApprovalRoute(taskId),
+      }),
     },
     pendingCompletion,
     {

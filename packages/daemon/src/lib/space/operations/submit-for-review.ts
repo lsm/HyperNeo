@@ -5,6 +5,7 @@ import type { JobQueueRepository } from '../../../storage/repositories/job-queue
 import { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import { SessionRepository } from '../../../storage/repositories/session-repository.ts';
 import { DirectTaskExecutionRepository } from '../../../storage/repositories/direct-task-execution-repository.ts';
+import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
 import { defineOperation, type OperationCaller } from '../../operations/registry.ts';
 import type { SpaceMcpSessionPolicyContext } from '../runtime/space-mcp-session-policy.ts';
 import { requireDirectTaskWorkerIdentity } from '../runtime/direct-task-worker-identity.ts';
@@ -83,9 +84,17 @@ async function admitManagedSubmission(
   }
   if (!task.workflowRunId && new DirectTaskExecutionRepository(db).getActive(task.id))
     return { reason: { accepted: false, reason: 'review_submission_unavailable' } };
+  const callerExecution =
+    caller.source === 'mcp' && caller.sessionId
+      ? new NodeExecutionRepository(db).getByAgentSessionId(caller.sessionId)
+      : null;
+  const submittedByNodeId =
+    callerExecution && callerExecution.workflowRunId === task.workflowRunId
+      ? callerExecution.workflowNodeId
+      : null;
   try {
     const updated = await tasks.getTaskManager(task.spaceId).submitTaskForReview(task.id, {
-      submittedByNodeId: null,
+      submittedByNodeId,
       reason: input.reason ?? null,
     });
     await tasks.emitTaskUpdated(task.spaceId, updated).catch((error: unknown) => {

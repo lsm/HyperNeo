@@ -2,6 +2,7 @@ import { createStartTaskOperation, type DirectStartOperationDependencies } from 
 import { createCancelTaskOperation, type CancelPolicyContext } from './cancel-task.ts';
 import { createSubmitTaskForReviewOperation } from './submit-for-review.ts';
 import { createSpaceCreateTaskOperation, type SpaceCreateTaskDependencies } from './create-task.ts';
+import { createCompleteTaskOperation, type CompleteTaskDependencies } from './complete-task.ts';
 import {
   createOwnedPendingCompletionOperation,
   type OwnedPendingCompletionDependencies,
@@ -26,7 +27,12 @@ export function createSpaceOperationRegistryProvider(
     SpaceTaskMetadataDependencies & SpaceTaskDependencyDependencies & SpaceCreateTaskDependencies,
     'db'
   > &
-    CancelPolicyContext,
+    CancelPolicyContext &
+    Omit<
+      CompleteTaskDependencies,
+      'getTaskManager' | 'emitTaskUpdated' | 'requiresPostApprovalOwner' | 'completionGate'
+    > &
+    Required<Pick<CompleteTaskDependencies, 'requiresPostApprovalOwner' | 'completionGate'>>,
   pendingCompletion?: OwnedPendingCompletionDependencies,
   directStart?: DirectStartOperationDependencies
 ) {
@@ -48,6 +54,7 @@ export function createSpaceOperationRegistryProvider(
         jobQueue,
         tasks
       ),
+      complete: createCompleteTaskOperation(() => database.getDatabase(), tasks),
       pendingCompletion: pendingCompletion
         ? createOwnedPendingCompletionOperation(pendingCompletion)
         : undefined,

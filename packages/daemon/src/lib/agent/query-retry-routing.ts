@@ -55,6 +55,7 @@ export type QueryRetryRoute =
   | { action: 'aborted_noop' }
   | { action: 'cleanup_noop' }
   | { action: 'superseded_noop' }
+  | { action: 'expected_recovery_noop' }
   | { action: 'terminal'; category: ErrorCategory; messageHint: string | undefined };
 
 export interface QueryRetryRouteInput {
@@ -90,6 +91,12 @@ function isQueryInterrupted(
     lifecycle.processingStatus === 'interrupted' ||
     lifecycle.abortSignalAborted
   );
+}
+
+const SDK_PROCESS_EXIT_ERROR_RE = /claude code process (?:exited with code|terminated by signal)/i;
+
+export function isSdkProcessExitError(rawText: string): boolean {
+  return SDK_PROCESS_EXIT_ERROR_RE.test(rawText);
 }
 
 export function decideProviderTerminalCategory(
@@ -169,6 +176,9 @@ export function classifyQueryRetryRoute(input: QueryRetryRouteInput): QueryRetry
   if (errorSignal.errorName === 'AbortError') return { action: 'aborted_noop' };
   if (errorSignal.apiValidationText !== null)
     return { action: 'api_validation', text: errorSignal.apiValidationText };
+  if (isSdkProcessExitError(errorSignal.rawText) && limitRecoveryInFlight(env)) {
+    return { action: 'expected_recovery_noop' };
+  }
   if (errorSignal.isRateLimit && env.hasRateLimitHandoff && errorSignal.rateLimitHint !== null)
     return { action: 'rate_limit_handoff', hint: errorSignal.rateLimitHint };
   return {
@@ -190,12 +200,16 @@ function makeFinalizer(overrides: Partial<QueryRetryFinalizer>): QueryRetryFinal
   };
 }
 
-function skipIdleDueToRecovery(env: QueryRetryEnvironment): boolean {
+function limitRecoveryInFlight(env: QueryRetryEnvironment): boolean {
   return (
     env.recoveryState.rateLimitCooldownScheduled ||
     env.lifecycle.isLimitRecoveryPending ||
     env.lifecycle.processingStatus === 'rate_limit_cooldown'
   );
+}
+
+function skipIdleDueToRecovery(env: QueryRetryEnvironment): boolean {
+  return limitRecoveryInFlight(env);
 }
 
 function skipFinalizerIdleDueToLifecycle(env: QueryRetryEnvironment): boolean {
@@ -309,6 +323,17 @@ function resolveDecision(
       return {
         route,
         finalizer: makeFinalizer({
+          skipCatchIdle: true,
+          skipFinalizerIdle: skipIdleDueToRecovery,
+          skipBeginTerminalIdle: true,
+          skipErrorManager: true,
+        }),
+      };
+    case 'expected_recovery_noop':
+      return {
+        route,
+        finalizer: makeFinalizer({
+          skipQueueClear: true,
           skipCatchIdle: true,
           skipFinalizerIdle: skipIdleDueToRecovery,
           skipBeginTerminalIdle: true,

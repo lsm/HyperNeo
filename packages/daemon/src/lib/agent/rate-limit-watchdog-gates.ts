@@ -1,6 +1,7 @@
 import {
   type CooldownDecision,
   computeCooldown,
+  escalateCooldownDecision,
   MAX_RESET_HORIZON_MS,
 } from './fallback-recovery.ts';
 import {
@@ -17,12 +18,16 @@ export type RateLimitTripDecision =
   | { action: 'give-up' }
   | { action: 'cooldown'; decision: CooldownDecision; charge: boolean };
 
+export const DEFAULT_PARK_AFTER_EXHAUSTED_CYCLES = 3;
+
 export function decideRateLimitTrip(input: {
   hint: LimitRetryHint | null;
   errorMessage: string;
   retryCount: number;
   maxAutoRetries: number;
   now: number;
+  exhaustedRetryCycles?: number;
+  parkAfterCycles?: number;
 }): RateLimitTripDecision {
   if (input.hint?.billingTerminal) {
     return { action: 'surface-billing' };
@@ -40,6 +45,16 @@ export function decideRateLimitTrip(input: {
       : computeCooldown(input.errorMessage, input.retryCount, input.now);
   if (!decision.freeWait && input.retryCount >= input.maxAutoRetries) {
     return { action: 'give-up' };
+  }
+  const exhaustedRetryCycles = input.exhaustedRetryCycles ?? 0;
+  const parkAfterCycles = input.parkAfterCycles ?? DEFAULT_PARK_AFTER_EXHAUSTED_CYCLES;
+  if (exhaustedRetryCycles >= parkAfterCycles) {
+    const escalated = escalateCooldownDecision(
+      decision,
+      exhaustedRetryCycles - parkAfterCycles,
+      input.now
+    );
+    return { action: 'cooldown', decision: escalated, charge: !escalated.freeWait };
   }
   return { action: 'cooldown', decision, charge: !decision.freeWait };
 }

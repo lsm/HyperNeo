@@ -66,6 +66,8 @@ function provider(extra = {}, pendingCompletion?: OwnedPendingCompletionDependen
       blockExecution: async () => {
         throw new Error('Unexpected workflow cleanup');
       },
+      requiresPostApprovalOwner: () => false,
+      completionGate: async () => ({ ok: true as const }),
       ...extra,
     },
     pendingCompletion
@@ -392,11 +394,37 @@ test('discovered pending completion rejects an ordinary Space member before effe
   expect(result.isError).toBe(true);
   expect(JSON.parse(result.content[0].text)).toMatchObject({
     code: 'execution_failed',
-    message: expect.stringContaining('coordinator or task-agent'),
+    message: expect.stringContaining(
+      'Space agent session in the owning space or a task-agent session'
+    ),
   });
   expect(tasks.getTask(taskId)).toEqual(previous);
   expect(deps.dispatchApproval).not.toHaveBeenCalled();
   expect(deps.audit).not.toHaveBeenCalled();
   expect(deps.warn).not.toHaveBeenCalled();
   expect(emit).not.toHaveBeenCalled();
+});
+
+test('task.complete is served through the Space registry and completes an approved task', async () => {
+  tasks.updateTask(taskId, { status: 'approved' });
+  const rpc = createOperationRpcHandler(provider(), () => ({}));
+  const result = await rpc(
+    { name: 'task.complete', input: { taskId, result: 'Shipped it.' } },
+    context
+  );
+  expect(result).toMatchObject({ accepted: true, task: { id: taskId, status: 'done' } });
+  expect(tasks.getTask(taskId)?.status).toBe('done');
+});
+
+test('a bound completionGate returning ok:false yields task_completion_unavailable through the registry', async () => {
+  tasks.updateTask(taskId, { status: 'approved' });
+  const completionGate = mock(async () => ({ ok: false as const, error: 'PR not merged yet.' }));
+  const rpc = createOperationRpcHandler(provider({ completionGate }), () => ({}));
+  const result = await rpc({ name: 'task.complete', input: { taskId } }, context);
+  expect(result).toEqual({
+    accepted: false,
+    reason: 'task_completion_unavailable',
+    detail: 'PR not merged yet.',
+  });
+  expect(tasks.getTask(taskId)?.status).toBe('approved');
 });

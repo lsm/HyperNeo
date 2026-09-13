@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'bun:test';
-import { RESET_BUFFER_MS } from '../../../../src/lib/agent/fallback-recovery';
+import {
+  BACKOFF_JITTER,
+  BACKOFF_LADDER_MS,
+  RESET_BUFFER_MS,
+} from '../../../../src/lib/agent/fallback-recovery';
 import {
   canRetryNow,
+  DEFAULT_PARK_AFTER_EXHAUSTED_CYCLES,
   decideRateLimitTrip,
   manualRecoveryPause,
   type RateLimitTripDecision,
@@ -129,6 +134,181 @@ describe('rate-limit-watchdog-gates', () => {
       );
       expect(trip.charge).toBe(true);
       expect(trip.decision.reason).toBe('backoff-ladder');
+    });
+  });
+
+  describe('decideRateLimitTrip — consecutive-exhaustion escalation', () => {
+    const SHORT_RESET = NOW + 60 * 1000;
+
+    it('below the threshold a short free wait defers to the reset window unchanged', () => {
+      const trip = asCooldownTrip(
+        decideRateLimitTrip({
+          hint: { resetAtMs: SHORT_RESET, kind: 'rate_limit' },
+          errorMessage: '429',
+          retryCount: 0,
+          maxAutoRetries: 5,
+          now: NOW,
+          exhaustedRetryCycles: DEFAULT_PARK_AFTER_EXHAUSTED_CYCLES - 1,
+        })
+      );
+      expect(trip.decision.reason).toBe('parsed-reset');
+      expect(trip.decision.retryAtMs).toBe(SHORT_RESET + RESET_BUFFER_MS);
+      expect(trip.charge).toBe(false);
+    });
+
+    it('parks past a short reset window once N consecutive cycles exhausted, without charging', () => {
+      const trip = asCooldownTrip(
+        decideRateLimitTrip({
+          hint: { resetAtMs: SHORT_RESET, kind: 'rate_limit' },
+          errorMessage: '429',
+          retryCount: 0,
+          maxAutoRetries: 5,
+          now: NOW,
+          exhaustedRetryCycles: DEFAULT_PARK_AFTER_EXHAUSTED_CYCLES,
+        })
+      );
+      expect(trip.decision.reason).toBe('escalated-park');
+      expect(trip.decision.freeWait).toBe(true);
+      expect(trip.charge).toBe(false);
+      expect(trip.decision.ladderIndex).toBe(0);
+      expect(trip.decision.retryAtMs).toBeGreaterThanOrEqual(
+        NOW + BACKOFF_LADDER_MS[0] * (1 - BACKOFF_JITTER)
+      );
+      expect(trip.decision.retryAtMs).toBeGreaterThan(SHORT_RESET + RESET_BUFFER_MS);
+    });
+
+    it('each further exhausted cycle advances the park ladder', () => {
+      const trip = asCooldownTrip(
+        decideRateLimitTrip({
+          hint: { resetAtMs: SHORT_RESET, kind: 'rate_limit' },
+          errorMessage: '429',
+          retryCount: 0,
+          maxAutoRetries: 5,
+          now: NOW,
+          exhaustedRetryCycles: DEFAULT_PARK_AFTER_EXHAUSTED_CYCLES + 1,
+        })
+      );
+      expect(trip.decision.reason).toBe('escalated-park');
+      expect(trip.decision.ladderIndex).toBe(1);
+      expect(trip.decision.retryAtMs).toBeGreaterThanOrEqual(
+        NOW + BACKOFF_LADDER_MS[1] * (1 - BACKOFF_JITTER)
+      );
+    });
+
+    it('a reset window longer than the park ladder still defers to the window', () => {
+      const longReset = NOW + 3 * 60 * 60 * 1000;
+      const trip = asCooldownTrip(
+        decideRateLimitTrip({
+          hint: { resetAtMs: longReset, kind: 'rate_limit' },
+          errorMessage: '429',
+          retryCount: 0,
+          maxAutoRetries: 5,
+          now: NOW,
+          exhaustedRetryCycles: DEFAULT_PARK_AFTER_EXHAUSTED_CYCLES,
+        })
+      );
+      expect(trip.decision.reason).toBe('escalated-park');
+      expect(trip.decision.retryAtMs).toBe(longReset + RESET_BUFFER_MS);
+      expect(trip.decision.freeWait).toBe(true);
+      expect(trip.charge).toBe(false);
+    });
+
+    it('carries backoff forward onto ladder cycles that follow free-wait cycles', () => {
+      const trip = asCooldownTrip(
+        decideRateLimitTrip({
+          hint: null,
+          errorMessage: '429',
+          retryCount: 0,
+          maxAutoRetries: 5,
+          now: NOW,
+          exhaustedRetryCycles: DEFAULT_PARK_AFTER_EXHAUSTED_CYCLES + 2,
+        })
+      );
+      expect(trip.decision.reason).toBe('escalated-park');
+      expect(trip.decision.freeWait).toBe(false);
+      expect(trip.charge).toBe(true);
+      expect(trip.decision.ladderIndex).toBe(2);
+      expect(trip.decision.retryAtMs).toBeGreaterThanOrEqual(
+        NOW + BACKOFF_LADDER_MS[2] * (1 - BACKOFF_JITTER)
+      );
+    });
+
+    it('a spent ladder budget still gives up instead of parking', () => {
+      const trip = decideRateLimitTrip({
+        hint: null,
+        errorMessage: '429',
+        retryCount: 2,
+        maxAutoRetries: 2,
+        now: NOW,
+        exhaustedRetryCycles: 9,
+      });
+      expect(trip).toEqual({ action: 'give-up' });
+    });
+
+    it('billing-terminal limits still surface instead of parking', () => {
+      const trip = decideRateLimitTrip({
+        hint: { billingTerminal: true, kind: 'usage_limit' },
+        errorMessage: '429',
+        retryCount: 0,
+        maxAutoRetries: 5,
+        now: NOW,
+        exhaustedRetryCycles: 9,
+      });
+      expect(trip).toEqual({ action: 'surface-billing' });
+    });
+
+    it('defaults the threshold to three consecutive exhausted cycles', () => {
+      expect(DEFAULT_PARK_AFTER_EXHAUSTED_CYCLES).toBe(3);
+      const below = asCooldownTrip(
+        decideRateLimitTrip({
+          hint: { resetAtMs: SHORT_RESET, kind: 'rate_limit' },
+          errorMessage: '429',
+          retryCount: 0,
+          maxAutoRetries: 5,
+          now: NOW,
+          exhaustedRetryCycles: 2,
+        })
+      );
+      expect(below.decision.reason).toBe('parsed-reset');
+      const at = asCooldownTrip(
+        decideRateLimitTrip({
+          hint: { resetAtMs: SHORT_RESET, kind: 'rate_limit' },
+          errorMessage: '429',
+          retryCount: 0,
+          maxAutoRetries: 5,
+          now: NOW,
+          exhaustedRetryCycles: 3,
+        })
+      );
+      expect(at.decision.reason).toBe('escalated-park');
+    });
+
+    it('a custom threshold of zero parks on the first exhaustion', () => {
+      const trip = asCooldownTrip(
+        decideRateLimitTrip({
+          hint: { resetAtMs: SHORT_RESET, kind: 'rate_limit' },
+          errorMessage: '429',
+          retryCount: 0,
+          maxAutoRetries: 5,
+          now: NOW,
+          exhaustedRetryCycles: 0,
+          parkAfterCycles: 0,
+        })
+      );
+      expect(trip.decision.reason).toBe('escalated-park');
+    });
+
+    it('omitting the cycle count never parks (single-cycle behavior unchanged)', () => {
+      const trip = asCooldownTrip(
+        decideRateLimitTrip({
+          hint: { resetAtMs: SHORT_RESET, kind: 'rate_limit' },
+          errorMessage: '429',
+          retryCount: 0,
+          maxAutoRetries: 5,
+          now: NOW,
+        })
+      );
+      expect(trip.decision.reason).toBe('parsed-reset');
     });
   });
 

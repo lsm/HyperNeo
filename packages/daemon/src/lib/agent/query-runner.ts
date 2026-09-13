@@ -21,6 +21,7 @@ import type { OriginalEnvVars, ProviderEnvVars } from '../provider-service.ts';
 import { NON_ANTHROPIC_PREFIX_PROVIDER_VARS } from '../provider-service.ts';
 import { isSpaceActionsDispatcherEnabled } from '../space/actions/dispatcher-flag.ts';
 import {
+  FAIL_CLOSED_LONG_HORIZON_AGENT_REPO,
   missingMcpServers,
   resolveSpaceMcpSessionPolicy,
   SPACE_COORDINATOR_REQUIRED_MCP_SERVERS,
@@ -753,6 +754,8 @@ export class QueryRunner {
       const spacePolicy = resolveSpaceMcpSessionPolicy(session, {
         nodeExecutionRepo: this.ctx.db.getNodeExecutionRepo(),
         taskRepo: this.ctx.db.getSpaceTaskRepo(),
+        longHorizonAgentRepo:
+          this.ctx.db.getLongHorizonAgentRepo?.() ?? FAIL_CLOSED_LONG_HORIZON_AGENT_REPO,
       });
       const isWorkflowSubSession = spacePolicy.isWorkflowWorker;
       const sessionTaskId = session.context?.taskId as string | undefined;
@@ -1298,8 +1301,6 @@ export class QueryRunner {
         resolveDrain = () => {};
       }
     } catch (error) {
-      logger.error('Streaming query error:', error);
-
       this.ctx.attemptTokens.invalidate(attemptToken);
 
       releaseStartupPermit('query_error');
@@ -1359,6 +1360,16 @@ export class QueryRunner {
       };
       const routeDecision = decideQueryRetry({ errorSignal: retrySignal, env: retryEnv });
       const queueRunningAtEntry = messageQueue.isRunning();
+
+      if (routeDecision.route.action === 'expected_recovery_noop') {
+        logger.info(
+          'SDK process exit during rate-limit recovery: attributing the CLI process exit ' +
+            'to the in-flight recovery restart; no error report.'
+        );
+        return;
+      }
+
+      logger.error('Streaming query error:', error);
 
       if (
         routeDecision.route.action === 'superseded_noop' ||
@@ -1762,6 +1773,8 @@ export class QueryRunner {
     const policy = resolveSpaceMcpSessionPolicy(session, {
       nodeExecutionRepo: this.ctx.db.getNodeExecutionRepo(),
       taskRepo: this.ctx.db.getSpaceTaskRepo(),
+      longHorizonAgentRepo:
+        this.ctx.db.getLongHorizonAgentRepo?.() ?? FAIL_CLOSED_LONG_HORIZON_AGENT_REPO,
     });
     if (!policy.attachGenericSpaceTools && !policy.attachLongTermAgentTools) return queryOptions;
 
@@ -1832,6 +1845,8 @@ export class QueryRunner {
     const policy = resolveSpaceMcpSessionPolicy(session, {
       nodeExecutionRepo: this.ctx.db.getNodeExecutionRepo(),
       taskRepo: this.ctx.db.getSpaceTaskRepo(),
+      longHorizonAgentRepo:
+        this.ctx.db.getLongHorizonAgentRepo?.() ?? FAIL_CLOSED_LONG_HORIZON_AGENT_REPO,
     });
     if (policy.role !== 'universal_read') return queryOptions;
 

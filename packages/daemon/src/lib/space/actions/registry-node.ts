@@ -1,3 +1,4 @@
+import type { OperationRegistrySource } from '../../operations/registry.ts';
 import type { SpaceMcpSessionRole } from '../runtime/space-mcp-session-policy.ts';
 import { wrapHandlerWithHooks } from '../runtime/workflow-hook-engine.ts';
 import {
@@ -8,6 +9,7 @@ import {
   ApproveTaskSchema,
   MarkCompleteSchema,
   SubmitForApprovalSchema,
+  type SubmitForApprovalInput,
 } from '../tools/task-agent-tool-schemas.ts';
 import {
   ArchiveTaskSchema,
@@ -31,13 +33,17 @@ import {
   UnsubscribeExternalEventSchema,
 } from '../tools/node-agent-tool-schemas.ts';
 import type { ToolResult } from '../tools/tool-result.ts';
+import { createOperationActionHandler } from './operation-action.ts';
 import { type ActionDefinition, defineAction, type ActionEntry } from './registry.ts';
 
 function nodeAction<P>(entry: Omit<ActionEntry<P>, 'family'>): ActionDefinition {
   return defineAction({ ...entry, family: 'node' });
 }
 
-export function createNodeRegistryEntries(config: NodeAgentToolsConfig): ActionDefinition[] {
+export function createNodeRegistryEntries(
+  config: NodeAgentToolsConfig,
+  operations?: OperationRegistrySource
+): ActionDefinition[] {
   const handlers = createNodeAgentToolHandlers({ ...config, disableAuditLogWrites: true });
   const {
     onSubmitForApproval,
@@ -267,7 +273,17 @@ export function createNodeRegistryEntries(config: NodeAgentToolsConfig): ActionD
             paramsSchema: SubmitForApprovalSchema,
             handler: wrapHandlerWithHooks(
               'submit_for_approval',
-              onSubmitForApproval,
+              operations
+                ? (createOperationActionHandler(
+                    operations,
+                    { sessionId: config.mySessionId },
+                    'task.submitForReview',
+                    (params) => ({
+                      taskId: config.taskId,
+                      reason: (params as { reason?: string | null }).reason ?? null,
+                    })
+                  ) as unknown as (args: SubmitForApprovalInput) => Promise<ToolResult>)
+                : onSubmitForApproval,
               hookEngine,
               handlerMap,
               hookMeta

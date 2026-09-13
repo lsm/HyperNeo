@@ -233,6 +233,103 @@ describe('query-retry-routing', () => {
       signal: { rawText: 'insufficient permissions' },
       expected: { action: 'terminal', category: ErrorCategory.PERMISSION },
     },
+    {
+      name: 'SDK process exit with pending limit recovery is expected',
+      signal: { rawText: 'Claude Code process exited with code 1' },
+      env: {
+        lifecycle: {
+          processingStatus: 'processing',
+          abortSignalAborted: false,
+          isLimitRecoveryPending: true,
+        },
+      },
+      expected: { action: 'expected_recovery_noop' },
+    },
+    {
+      name: 'SDK process exit during rate_limit_cooldown is expected',
+      signal: { rawText: 'Error: Claude Code process exited with code 1' },
+      env: {
+        lifecycle: {
+          processingStatus: 'rate_limit_cooldown',
+          abortSignalAborted: false,
+          isLimitRecoveryPending: false,
+        },
+      },
+      expected: { action: 'expected_recovery_noop' },
+    },
+    {
+      name: 'SDK process exit with scheduled cooldown is expected',
+      signal: { rawText: 'Claude Code process exited with code 1' },
+      env: { recoveryState: { rateLimitCooldownScheduled: true } },
+      expected: { action: 'expected_recovery_noop' },
+    },
+    {
+      name: 'SDK signal exit with pending limit recovery is expected',
+      signal: { rawText: 'Claude Code process terminated by signal SIGTERM' },
+      env: {
+        lifecycle: {
+          processingStatus: 'processing',
+          abortSignalAborted: false,
+          isLimitRecoveryPending: true,
+        },
+      },
+      expected: { action: 'expected_recovery_noop' },
+    },
+    {
+      name: 'SDK process exit with stderr tail and pending recovery is expected',
+      signal: { rawText: 'Claude Code process exited with code 1. stderr: rate limit hit' },
+      env: {
+        lifecycle: {
+          processingStatus: 'processing',
+          abortSignalAborted: false,
+          isLimitRecoveryPending: true,
+        },
+      },
+      expected: { action: 'expected_recovery_noop' },
+    },
+    {
+      name: 'SDK process exit outside recovery windows stays terminal',
+      signal: { rawText: 'Claude Code process exited with code 1' },
+      expected: { action: 'terminal', category: ErrorCategory.SYSTEM },
+    },
+    {
+      name: 'genuine terminal error during pending recovery stays terminal',
+      signal: { rawText: 'invalid_api_key' },
+      env: {
+        lifecycle: {
+          processingStatus: 'processing',
+          abortSignalAborted: false,
+          isLimitRecoveryPending: true,
+        },
+      },
+      expected: { action: 'terminal', category: ErrorCategory.AUTHENTICATION },
+    },
+    {
+      name: 'SDK process exit during recovery yields to superseded',
+      signal: { rawText: 'Claude Code process exited with code 1' },
+      env: {
+        isSuperseded: true,
+        lifecycle: {
+          processingStatus: 'processing',
+          abortSignalAborted: false,
+          isLimitRecoveryPending: true,
+        },
+      },
+      expected: { action: 'superseded_noop' },
+    },
+    {
+      name: 'SDK process exit during recovery yields to cleanup',
+      signal: { rawText: 'Claude Code process exited with code 1' },
+      env: {
+        isCleaningUp: true,
+        lifecycle: {
+          processingStatus: 'processing',
+          abortSignalAborted: false,
+          isLimitRecoveryPending: true,
+        },
+      },
+      expected: { action: 'cleanup_noop' },
+    },
   ];
 
   for (const { name, signal: sig, env: e, expected } of cases) {
@@ -408,6 +505,25 @@ describe('decideQueryRetry', () => {
       },
       expectedRoute: { action: 'aborted_noop' },
       expectedFinalizer: finalizer({
+        skipCatchIdle: true,
+        skipFinalizerIdle: true,
+        skipBeginTerminalIdle: true,
+        skipErrorManager: true,
+      }),
+    },
+    {
+      name: 'expected_recovery_noop preserves the queue and skips terminal handling',
+      signal: { rawText: 'Claude Code process exited with code 1' },
+      env: {
+        lifecycle: {
+          processingStatus: 'processing',
+          abortSignalAborted: false,
+          isLimitRecoveryPending: true,
+        },
+      },
+      expectedRoute: { action: 'expected_recovery_noop' },
+      expectedFinalizer: finalizer({
+        skipQueueClear: true,
         skipCatchIdle: true,
         skipFinalizerIdle: true,
         skipBeginTerminalIdle: true,

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { NodeExecution, Session, SpaceTask } from '@hyperneo/shared';
+import type { NodeExecution, Session, SpaceLongHorizonAgent, SpaceTask } from '@hyperneo/shared';
 import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session.ts';
 import {
   missingMcpServers,
@@ -243,7 +243,7 @@ describe('resolveSpaceMcpSessionPolicy', () => {
     expect(policy.requiredServers).toBe(SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS);
   });
 
-  test('routes long-term agents using canonical session identity and prompt provenance', () => {
+  test('fails closed (demotes to ad_hoc_member) for a canonical long-term-agent session when no context is given', () => {
     const session = makeSession({
       id: longTermAgentSessionId('space-1', 'agent-1'),
       context: { spaceId: 'space-1' },
@@ -260,13 +260,85 @@ describe('resolveSpaceMcpSessionPolicy', () => {
     const policy = resolveSpaceMcpSessionPolicy(session);
 
     expect(policy).toMatchObject({
-      role: 'long_term_agent',
+      role: 'ad_hoc_member',
       spaceId: 'space-1',
       owner: 'space-runtime',
-      attachLongTermAgentTools: true,
-      attachGenericSpaceTools: false,
+      attachLongTermAgentTools: false,
+      attachGenericSpaceTools: true,
       isWorkflowWorker: false,
     });
+  });
+
+  test('routes long-term agents as active when the repository confirms membership and status', () => {
+    const session = makeSession({
+      id: longTermAgentSessionId('space-1', 'agent-1'),
+      context: { spaceId: 'space-1' },
+      metadata: {
+        messageCount: 0,
+        totalTokens: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        totalCost: 0,
+        toolCallCount: 0,
+        promptProvenance: { source: 'custom_agent', hash: 'hash', agentId: 'agent-1' },
+      },
+    });
+    const policy = resolveSpaceMcpSessionPolicy(session, {
+      longHorizonAgentRepo: {
+        getById: () =>
+          ({ id: 'agent-1', spaceId: 'space-1', status: 'active' }) as SpaceLongHorizonAgent,
+      },
+    });
+
+    expect(policy.role).toBe('long_term_agent');
+  });
+
+  test.each(['paused', 'disabled', 'archived'] as const)(
+    'demotes long-term agent identity when the repository reports status %s',
+    (status) => {
+      const session = makeSession({
+        id: longTermAgentSessionId('space-1', 'agent-1'),
+        context: { spaceId: 'space-1' },
+        metadata: {
+          messageCount: 0,
+          totalTokens: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          totalCost: 0,
+          toolCallCount: 0,
+          promptProvenance: { source: 'custom_agent', hash: 'hash', agentId: 'agent-1' },
+        },
+      });
+      const policy = resolveSpaceMcpSessionPolicy(session, {
+        longHorizonAgentRepo: {
+          getById: () => ({ id: 'agent-1', spaceId: 'space-1', status }) as SpaceLongHorizonAgent,
+        },
+      });
+
+      expect(policy.role).not.toBe('long_term_agent');
+      expect(policy.attachLongTermAgentTools).toBe(false);
+    }
+  );
+
+  test('demotes long-term agent identity when the repository has no record for the agent', () => {
+    const session = makeSession({
+      id: longTermAgentSessionId('space-1', 'agent-1'),
+      context: { spaceId: 'space-1' },
+      metadata: {
+        messageCount: 0,
+        totalTokens: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        totalCost: 0,
+        toolCallCount: 0,
+        promptProvenance: { source: 'custom_agent', hash: 'hash', agentId: 'agent-1' },
+      },
+    });
+    const policy = resolveSpaceMcpSessionPolicy(session, {
+      longHorizonAgentRepo: { getById: () => null },
+    });
+
+    expect(policy.role).not.toBe('long_term_agent');
   });
 
   test('leaves legacy space_task_agent sessions unowned', () => {

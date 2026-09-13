@@ -106,12 +106,11 @@ import {
   spaceAgentTemplateToNodeSource,
   type NodeAgentTemplateSource,
 } from '../runtime/spawn-slot-resolution.ts';
-import type { SpaceMcpSessionRole } from '../runtime/space-mcp-session-policy.ts';
-import { decideGoalOwnershipMutationAdmission } from '../goals/goal-ownership-gates.ts';
 import {
-  decideDefaultAgentUpdateAdmission,
-  resolveIsDefaultAgent,
-} from '../agents/default-agent-policy.ts';
+  hasSpaceAuthority,
+  type SpaceMcpSessionRole,
+} from '../runtime/space-mcp-session-policy.ts';
+import { decideGoalOwnershipMutationAdmission } from '../goals/goal-ownership-gates.ts';
 import type { ToolResult } from './tool-result.ts';
 import { jsonResult } from './tool-result.ts';
 import { instrumentTypedTelemetryAtMcpBoundary } from './mcp-typed-telemetry-boundary.ts';
@@ -625,7 +624,6 @@ export interface SpaceAgentToolsConfig {
   myAgentName?: string;
   myAgentNameAliases?: string[];
   myAgentId?: string;
-  isDefaultAgent?: boolean;
   mySessionId?: string;
   callerRole?: SpaceMcpSessionRole;
 
@@ -828,13 +826,13 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     messageResolver,
     longTermAgentDelivery,
   } = config;
-  const isDefaultAgent = config.isDefaultAgent === true;
+  const callerHasSpaceAuthority = hasSpaceAuthority(callerRole);
 
   const outboundSenderName = myAgentName ?? (mySessionId ? 'space-member' : 'space-agent');
   const outboundSenderLevel =
     outboundSenderName === 'task-agent'
       ? 'task-agent'
-      : isDefaultAgent
+      : callerHasSpaceAuthority && myAgentId
         ? 'space-agent'
         : 'session-agent';
   const outboundSenderDisplayName = outboundSenderName;
@@ -1272,6 +1270,15 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     return 1;
   }
 
+  function requireActiveCallingAgent(): void {
+    const agent = myAgentId ? (config.longHorizonAgentRepo?.getById(myAgentId) ?? null) : null;
+    if (!agent || agent.spaceId !== spaceId || agent.status !== 'active') {
+      throw new Error(
+        'This action requires an active Space agent identity; the provenance agent is missing or inactive.'
+      );
+    }
+  }
+
   async function requireSessionWriteAutonomy(toolName: string): Promise<void> {
     const spaceLevel = getSpaceAutonomyLevel ? await getSpaceAutonomyLevel(spaceId) : 1;
     const agentLevel = getCallingAgentAutonomyLevel();
@@ -1421,13 +1428,16 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     if (typeof explicitOwnerAgentId === 'string' && explicitOwnerAgentId.length > 0) {
       requireLongHorizonAgentInSpace(explicitOwnerAgentId);
       const isSelf = typeof myAgentId === 'string' && myAgentId === explicitOwnerAgentId;
+      if (callerHasSpaceAuthority) {
+        requireActiveCallingAgent();
+      }
       const admission = decideGoalOwnershipMutationAdmission({
-        isDefaultAgent,
+        hasSpaceAuthority: callerHasSpaceAuthority,
         hasSession: typeof mySessionId === 'string',
       });
       if (!isSelf && admission.action === 'deny') {
         throw new Error(
-          'Specifying an owner other than yourself requires coordinator or explicit human authorization.'
+          'Specifying an owner other than yourself requires a Space agent session or explicit human authorization.'
         );
       }
       return explicitOwnerAgentId;
@@ -2161,18 +2171,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       try {
         const existingAgent = requireLongHorizonAgentInSpace(args.agent_id);
         if (!existingAgent) throw new Error(`Long-horizon agent not found: ${args.agent_id}`);
-        const lockDecision = decideDefaultAgentUpdateAdmission({
-          isDefaultAgent: resolveIsDefaultAgent(
-            spaceId,
-            args.agent_id,
-            config.longHorizonAgentRepo
-          ),
-          handleChanged: false,
-          nextStatus: args.status,
-        });
-        if (lockDecision.action === 'reject') {
-          return jsonResult({ success: false, error: lockDecision.message });
-        }
         if (args.name !== undefined && args.name.trim() === '') {
           return jsonResult({ success: false, error: 'Agent name cannot be empty' });
         }
@@ -2237,8 +2235,11 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 
     async assign_agent_to_goal(args: { agent_id: string; goal_id: string }): Promise<ToolResult> {
       try {
+        if (callerHasSpaceAuthority) {
+          requireActiveCallingAgent();
+        }
         const admission = decideGoalOwnershipMutationAdmission({
-          isDefaultAgent,
+          hasSpaceAuthority: callerHasSpaceAuthority,
           hasSession: typeof mySessionId === 'string',
         });
         if (admission.action === 'deny') {
@@ -2261,8 +2262,11 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       goal_id: string;
     }): Promise<ToolResult> {
       try {
+        if (callerHasSpaceAuthority) {
+          requireActiveCallingAgent();
+        }
         const admission = decideGoalOwnershipMutationAdmission({
-          isDefaultAgent,
+          hasSpaceAuthority: callerHasSpaceAuthority,
           hasSession: typeof mySessionId === 'string',
         });
         if (admission.action === 'deny') {
@@ -3552,12 +3556,21 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       approved: boolean;
       reason?: string | null;
     }): Promise<ToolResult> {
-      if (!isDefaultAgent && callerRole !== 'legacy_task_agent') {
+      if (!callerHasSpaceAuthority && callerRole !== 'legacy_task_agent') {
         return jsonResult({
           success: false,
           error:
-            'approve_pending_completion is only available to the coordinator and task-agent sessions. Worker node agents must use approve_task to self-close.',
+            'approve_pending_completion is only available to Space agent sessions (coordinator or long-term agent) and legacy task-agent sessions. Worker node agents must use approve_task to self-close.',
         });
+      }
+      if (callerHasSpaceAuthority) {
+        try {
+          requireActiveCallingAgent();
+          await requireSessionWriteAutonomy('approve_pending_completion');
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          return jsonResult({ success: false, error: message });
+        }
       }
 
       const task = taskRepo.getTask(args.task_id);
@@ -4808,7 +4821,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
     ),
     tool(
       'approve_pending_completion',
-      "Approve or reject a task paused at a submit_for_approval checkpoint (the human-approval path). This is the coordinator's programmatic equivalent of the UI 'Approve' banner: approved transitions review → approved and fires the post-approval router; rejected resumes an existing active worker in in_progress, or queues a fresh direct worker with the task open until execution is ready. Coordinator/task-agent sessions only — worker node agents use approve_task to self-close.",
+      "Approve or reject a task paused at a submit_for_approval checkpoint (the human-approval path). This is a Space agent session's programmatic equivalent of the UI 'Approve' banner: approved transitions review → approved and fires the post-approval router; rejected resumes an existing active worker in in_progress, or queues a fresh direct worker with the task open until execution is ready. Space agent (coordinator or long-term agent) and legacy task-agent sessions only — worker node agents use approve_task to self-close.",
       ApprovePendingCompletionSchema.shape,
       (args) => handlers.approve_pending_completion(args)
     ),
@@ -5195,7 +5208,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
     );
   }
 
-  if (config.callerRole === 'long_term_agent' || config.isDefaultAgent === true) {
+  if (hasSpaceAuthority(config.callerRole)) {
     tools.push(
       tool(
         'review_goal_outcome',
