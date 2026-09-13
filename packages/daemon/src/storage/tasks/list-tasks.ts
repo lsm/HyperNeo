@@ -28,6 +28,7 @@ export interface TaskListPage {
 }
 
 interface TaskListQuery {
+  cursorable: boolean;
   sql: string;
   values: SQLiteValue[];
   countSql: string;
@@ -69,6 +70,7 @@ function buildTaskListQuery(input: ListTasksInput): TaskListQuery {
   const whereSql = where.join(' AND ');
   values.push(limit + 1, offset);
   return {
+    cursorable: input.orderBy !== 'updatedAt',
     sql: `SELECT * FROM space_tasks WHERE ${whereSql} ORDER BY ${
       input.orderBy === 'updatedAt' ? 'updated_at' : 'created_at'
     } DESC, id DESC LIMIT ? OFFSET ?`,
@@ -101,7 +103,9 @@ function toTaskListPage(
     tasks,
     total,
     nextCursor:
-      rows.length > query.limit && last ? { createdAt: last.createdAt, id: last.id } : null,
+      query.cursorable && rows.length > query.limit && last
+        ? { createdAt: last.createdAt, id: last.id }
+        : null,
   };
 }
 

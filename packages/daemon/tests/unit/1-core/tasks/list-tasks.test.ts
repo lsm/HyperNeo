@@ -193,7 +193,11 @@ describe('bounded core task listing', () => {
     const touched = listTaskCores(db, { orderBy: 'updatedAt' });
     expect(touched.tasks.map((t) => t.id)).toEqual(['a', 'b', 'c']);
     expect(touched.total).toBe(3);
-    expect(listTaskCores(db, { orderBy: 'updatedAt', limit: 1, offset: 1 }).tasks[0].id).toBe('b');
+    const page = listTaskCores(db, { orderBy: 'updatedAt', limit: 1, offset: 1 });
+    expect(page.tasks[0].id).toBe('b');
+    expect(page.nextCursor).toBeNull();
+    expect(listTaskCores(db, { orderBy: 'updatedAt', limit: 1 }).nextCursor).toBeNull();
+    expect(listTaskCores(db, { limit: 1 }).nextCursor).not.toBeNull();
   });
 
   test('bounds page size and normalizes invalid limits', () => {
