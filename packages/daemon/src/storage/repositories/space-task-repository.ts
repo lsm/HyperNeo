@@ -3,7 +3,6 @@ import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import { generateUUID, isRateOrUsageLimited } from '@hyperneo/shared';
 import type {
   SpaceTask,
-  SpaceBlockReason,
   SpaceTaskStatus,
   InternalCreateSpaceTaskParams,
   InternalUpdateSpaceTaskParams,
@@ -362,49 +361,6 @@ export class SpaceTaskRepository {
     );
     const rows = stmt.all(spaceId) as Record<string, unknown>[];
     return rows.map((r) => this.rowToSpaceTask(r));
-  }
-
-  listBySpaceAndStatus(
-    spaceId: string,
-    status: SpaceTaskStatus,
-    blockReason: SpaceBlockReason | null | undefined,
-    limit?: number,
-    offset = 0,
-    blockReasonNotIn?: SpaceBlockReason[]
-  ): { tasks: SpaceTask[]; total: number } {
-    if (blockReason !== undefined && blockReasonNotIn && blockReasonNotIn.length > 0) {
-      throw new Error('blockReason and blockReasonNotIn are mutually exclusive');
-    }
-
-    const filterParams: SQLiteValue[] = [spaceId, status];
-    let where = `WHERE space_id = ? AND status = ?`;
-    if (blockReason !== undefined) {
-      if (blockReason === null) {
-        where += ` AND block_reason IS NULL`;
-      } else {
-        where += ` AND block_reason = ?`;
-        filterParams.push(blockReason);
-      }
-    } else if (blockReasonNotIn && blockReasonNotIn.length > 0) {
-      const placeholders = blockReasonNotIn.map(() => '?').join(', ');
-      where += ` AND (block_reason IS NULL OR block_reason NOT IN (${placeholders}))`;
-      for (const reason of blockReasonNotIn) filterParams.push(reason);
-    }
-
-    const countRow = this.db
-      .prepare(`SELECT COUNT(*) AS total FROM space_tasks ${where}`)
-      .get(...filterParams) as { total: number } | undefined;
-    const total = countRow?.total ?? 0;
-
-    let pageQuery = `SELECT * FROM space_tasks ${where} ORDER BY updated_at DESC, id DESC`;
-    const pageParams: SQLiteValue[] = [...filterParams];
-    if (limit && limit > 0) {
-      pageQuery += ` LIMIT ? OFFSET ?`;
-      pageParams.push(limit, offset);
-    }
-
-    const rows = this.db.prepare(pageQuery).all(...pageParams) as Record<string, unknown>[];
-    return { tasks: rows.map((r) => this.rowToSpaceTask(r)), total };
   }
 
   countBySpace(spaceId: string, status?: SpaceTaskStatus, includeArchived = false): number {

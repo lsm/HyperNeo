@@ -107,17 +107,6 @@ describe('Migration 174: space_tasks (space_id, status, updated_at, id) index', 
       expect(joined).not.toContain('USE TEMP B-TREE FOR ORDER BY');
     });
 
-    test('listBySpaceAndStatus query uses the index', () => {
-      runMigration174(db);
-      const plan = explainQueryPlan(
-        db,
-        `SELECT * FROM space_tasks WHERE space_id = ? AND status = ? AND block_reason = ? ORDER BY updated_at DESC, id DESC`
-      );
-      const joined = plan.join(' | ');
-      expect(joined).toContain('idx_space_tasks_space_status_updated');
-      expect(joined).not.toMatch(/SCAN space_tasks/);
-    });
-
     test('listBySpace query scopes to the space via the index prefix', () => {
       runMigration174(db);
       const plan = explainQueryPlan(
