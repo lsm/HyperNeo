@@ -23,11 +23,11 @@ export function resolveCancellationRoute(
 
 export function supersedeReservedAttempt(db: Database, attempt: DirectTaskAttempt): boolean {
   const repo = new DirectTaskExecutionRepository(db);
-  repo.requestStop(attempt.id, attempt.sessionId, 'cancelled');
-  const request = db
-    .prepare(
-      'SELECT outcome FROM direct_task_stop_requests WHERE attempt_id = ? AND session_id = ?'
-    )
-    .get(attempt.id, attempt.sessionId) as { outcome: string } | null;
-  return request?.outcome === 'cancelled';
+  return db.transaction(() => {
+    const current = repo.get(attempt.id);
+    if (!current || current.sessionId !== attempt.sessionId || current.phase !== 'reserved')
+      return false;
+    repo.requestStop(current.id, current.sessionId, 'cancelled');
+    return repo.stop(current.id, current.sessionId, 'cancelled')?.phase === 'stopped';
+  })();
 }

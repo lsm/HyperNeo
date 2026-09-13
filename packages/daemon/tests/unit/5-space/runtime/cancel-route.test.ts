@@ -85,20 +85,28 @@ test.each([
     expect(route.attempt.id).toBe(attempt!.id);
 });
 
-test('a reserved attempt gets a stop request and returns true, idempotently, and can no longer be activated', () => {
+test('a reserved attempt is retired, and a second call returns false and leaves the stopped attempt unchanged', () => {
   const attempt = setupAttempt(createTask(), 'reserved')!;
   expect(supersedeReservedAttempt(db, attempt)).toBe(true);
-  expect(supersedeReservedAttempt(db, attempt)).toBe(true);
+  const stopped = attempts.get(attempt.id);
+  expect(stopped?.phase).toBe('stopped');
+  expect(supersedeReservedAttempt(db, attempt)).toBe(false);
+  expect(attempts.get(attempt.id)).toEqual(stopped);
   expect(attempts.activate(attempt.id, attempt.sessionId)).toBeNull();
+  expect(attempts.getActive(attempt.taskId)).toBeNull();
 });
 
-test('an already-stopped attempt returns false', () => {
-  const attempt = setupAttempt(createTask(), 'stopped')!;
-  expect(supersedeReservedAttempt(db, attempt)).toBe(false);
-});
-
-test('a reserved attempt already superseded by a different outcome does not report success', () => {
+test('an attempt already stopped by the normal flow, with its leftover stop request row, returns false untouched', () => {
   const attempt = setupAttempt(createTask(), 'reserved')!;
-  attempts.requestStop(attempt.id, attempt.sessionId, 'start_superseded');
+  attempts.requestStop(attempt.id, attempt.sessionId, 'done');
+  const stoppedNormally = attempts.stop(attempt.id, attempt.sessionId, 'done');
+  expect(stoppedNormally?.phase).toBe('stopped');
   expect(supersedeReservedAttempt(db, attempt)).toBe(false);
+  expect(attempts.get(attempt.id)).toEqual(stoppedNormally);
+});
+
+test('a running attempt is not reserved and returns false, untouched', () => {
+  const attempt = setupAttempt(createTask(), 'running')!;
+  expect(supersedeReservedAttempt(db, attempt)).toBe(false);
+  expect(attempts.get(attempt.id)?.phase).toBe('running');
 });
