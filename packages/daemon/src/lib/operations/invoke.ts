@@ -217,7 +217,8 @@ function isPlatformBranded(source: object): boolean {
 }
 
 function isProjectable(source: object): boolean {
-  if (Array.isArray(source) || typeof source === 'function') return true;
+  if (typeof source === 'function') return false;
+  if (Array.isArray(source)) return true;
   if (hasInternalSlots(source)) return false;
   const proto = Object.getPrototypeOf(source);
   if (proto === Object.prototype || proto === null) return true;
@@ -257,7 +258,7 @@ function isolateValue<T>(value: T, seen: WeakMap<object, unknown>, depth: number
     copy.length = source.length;
     return copy as T;
   }
-  const copy: Record<string | symbol, unknown> = {};
+  const copy = Object.create(null) as Record<string | symbol, unknown>;
   seen.set(source, copy);
   projectEnumerableData(descriptors, copy, seen, depth);
   return copy as T;

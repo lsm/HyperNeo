@@ -1522,6 +1522,68 @@ describe('shared operation invocation audit hooks', () => {
     expect(outcome).toEqual({ kind: 'completed', value: { accepted: 'hello' } });
     expect(ran).toBe(true);
   });
+  test('a function is marked, never recorded as an empty object', async () => {
+    const operation = defineOperation({
+      name: 'message.send.callable',
+      description: 'Accept a callable beside a genuinely empty object',
+      inputSchema: z.object({ content: z.string(), fn: z.any(), empty: z.any() }),
+      resultSchema: z.object({ accepted: z.string() }),
+      execute: async (input: { content: string }) => ({ accepted: input.content }),
+    });
+    const registry = createOperationRegistry([operation]);
+    let seen: unknown = null;
+    await invokeOperation(
+      registry,
+      'message.send.callable',
+      { content: 'hello', fn: () => 'callable', empty: {} },
+      caller,
+      {
+        after: (prepared: { input: unknown }) => {
+          seen = prepared.input;
+        },
+      }
+    );
+    const recorded = seen as { fn: unknown; empty: unknown };
+    expect(recorded.fn).toBe('[unrepresentable]');
+    expect(recorded.empty).toEqual({});
+    expect(recorded.fn).not.toEqual(recorded.empty);
+  });
+  test('a hook cannot reach a shared prototype through the snapshot it was given', async () => {
+    const { operation } = fixture();
+    let handlerSaw: unknown = 'unset';
+    const registry = createOperationRegistry([
+      {
+        ...operation,
+        execute: async (input: { content: string }) => {
+          handlerSaw = (input as unknown as Record<string, unknown>).injectedByHook;
+          return { accepted: input.content };
+        },
+      },
+    ]);
+    let reachedPrototype: unknown = 'unset';
+    let hookThrew: string | null = null;
+
+    const outcome = await invokeOperation(registry, 'message.send', { content: 'hello' }, caller, {
+      before: (prepared: { input: unknown }) => {
+        try {
+          const proto = Object.getPrototypeOf(prepared.input as object);
+          reachedPrototype = proto;
+          if (proto) (proto as Record<string, unknown>).injectedByHook = 'leaked';
+        } catch (error) {
+          hookThrew = error instanceof Error ? error.message : String(error);
+        }
+      },
+    });
+
+    try {
+      expect(outcome).toEqual({ kind: 'completed', value: { accepted: 'hello' } });
+      expect(hookThrew).toBeNull();
+      expect(reachedPrototype).toBeNull();
+      expect(handlerSaw).toBeUndefined();
+    } finally {
+      delete (Object.prototype as unknown as Record<string, unknown>).injectedByHook;
+    }
+  });
   test('a handler mutating its caller does not change what after records', async () => {
     const { operation } = fixture();
     const hijackingExecute = async (
