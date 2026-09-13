@@ -69,16 +69,12 @@ The merge must satisfy ALL of the following against the PR's CURRENT head before
             data: { pr_url: "{{pr_url}}", blockers: ["<kind: detail>"], headRefOid: "<headRefOid>", reason: "merge_blocked" })
         Then STOP. Do NOT self-approve, resolve others' threads, or run gh pr merge again until {{approval_authority}} tells you to continue.
    c. When {{approval_authority}} replies to continue: the head likely changed (or you just pushed a fix), so re-verify from scratch — re-run step 1 (state/CI), step 2 (unresolved threads), and step 3 (a real approval covering the CURRENT head). A stale approval on the old head does NOT cover the new one. Only then re-attempt the merge bound to the head you just verified. If it fails again, loop to 4a with the fresh reasons (never reuse stale blockers or headRefOid).
-   d. Cycle cap / genuinely stuck: this implementer ↔ {{approval_authority}} loop is bounded by the channel cycle budget (check `list_channels` — the Coding ↔ {{approval_authority}} budget specifically; do NOT read an unrelated route). If a handoff is rejected because the cap is reached, or the blocker is unresolvable (data reason "unresolvable" — administrative, neither of you can fix it), escalate to space-agent — record a NON-result artifact and notify:
+   d. Cycle cap / genuinely stuck: this implementer ↔ {{approval_authority}} loop is bounded by the channel cycle budget (check `list_channels` — the Coding ↔ {{approval_authority}} budget specifically; do NOT read an unrelated route). If a handoff is rejected because the cap is reached, or the blocker is unresolvable (data reason "unresolvable" — administrative, neither of you can fix it), stop and leave a durable record. There is no Space-level recipient to escalate to; the unfinished task carrying this artifact is the signal a human acts on:
         save_artifact({ shape: "note", kind: "merge_blocked",
           summary: "Merge blocked on PR {{pr_url}} (<N> attempts, <exit>)",
           data: { pr_url: "{{pr_url}}", blockers: ["..."], attempts: <N>,
                   exit_reason: "<cycle_cap|unresolvable>" } })
-        send_message(target="space-agent", message="Merge blocked on PR
-          {{pr_url}} (<N> attempts, exit: <cycle_cap|unresolvable>)",
-          data: { pr_url: "{{pr_url}}", blockers: ["..."], attempts: <N>,
-                  exit_reason: "<cycle_cap|unresolvable>" })
-      Do NOT mark the task complete (the PR is not merged).
+      Then STOP. Do NOT mark the task complete (the PR is not merged), and do NOT wait for a reply — nobody is listening.
 5. Delete the PR remote branch — ONLY after a successful merge, and as a SEPARATE command. Do NOT pass a delete flag to the merge command; and only delete for same-repository heads — forked PRs keep their branch in the fork:
      HEAD_REF=$(gh pr view {{pr_url}} --json headRefName --jq .headRefName)
      IS_FORK=$(gh pr view {{pr_url}} --json isCrossRepository --jq .isCrossRepository)

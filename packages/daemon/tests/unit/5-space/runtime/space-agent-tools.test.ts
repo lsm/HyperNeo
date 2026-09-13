@@ -7897,7 +7897,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
     );
   });
 
-  test('coordinator sender falls back to the space manager handle when no alias exists', async () => {
+  test('a space-agent sender with no alias names the routable space-agent reply target', async () => {
     const wf = buildSingleStepWorkflow(
       ctx.spaceId,
       ctx.workflowManager,
@@ -7929,9 +7929,9 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 
     expect(tam.subSessionInjects[0]?.message).toContain('─── Message from space-agent ───');
     expect(tam.subSessionInjects[0]?.message).toContain(
-      'To reply, use: send_message with target "@space-manager"'
+      'To reply, use: send_message with target "space-agent"'
     );
-    expect(tam.subSessionInjects[0]?.message).not.toContain('target "@space-agent"');
+    expect(tam.subSessionInjects[0]?.message).not.toContain('@space-manager');
   });
 
   test('long-horizon sender uses canonical handle alias without double prefix', async () => {

@@ -307,7 +307,7 @@ describe('node-agent-tools: list_peers', () => {
 
     expect(data.channelTopologyDeclared).toBe(false);
     expect(data.permittedTargets).toEqual(['space-agent']);
-    expect(data.message).toContain('Use "space-agent"');
+    expect(data.message).not.toContain('Use "space-agent"');
   });
 
   test('reports permitted targets when channels declared', async () => {
@@ -465,9 +465,10 @@ describe('node-agent-tools: send_message', () => {
         return {
           state: 'accepted',
           messageId: `msg-${spaceMessages.length}`,
-          sessionId: `space:chat:${spaceId}`,
+          sessionId: 'sess-space-agent',
         };
       },
+      replyRoutingLookup: () => 'sess-space-agent',
     });
     const config = makeConfig(ctx, { agentMessageRouter });
     const handlers = createNodeAgentToolHandlers(config);
@@ -679,7 +680,7 @@ describe('node-agent-tools: send_message', () => {
 
     expect(data.success).toBe(false);
     expect(data.error).toContain('Could not deliver message to target agent(s): tester');
-    expect(data.error).toContain('no live session received the message');
+    expect(data.error).toContain('it has no live session');
   });
 
   test('returns unknown-target when role is not in topology or any execution', async () => {

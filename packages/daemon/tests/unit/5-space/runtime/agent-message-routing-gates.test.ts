@@ -402,7 +402,7 @@ describe('foldAgentMessageResult', () => {
       failed: [],
       reason:
         `Could not deliver message to target agent(s): reviewer. ` +
-        `The target is declared but no live session received the message.`,
+        `The target is not reachable: it has no live session, or it is not a routable address.`,
       queued,
       notFoundAgentNames: ['reviewer'],
     });
@@ -417,7 +417,7 @@ describe('foldAgentMessageResult', () => {
       failed: [],
       reason:
         `Could not deliver message to target agent(s): a, b. ` +
-        `The target is declared but no live session received the message.`,
+        `The target is not reachable: it has no live session, or it is not a routable address.`,
       notFoundAgentNames: ['a', 'b'],
     });
   });
@@ -510,26 +510,42 @@ function makeGenericConfig(
   };
 }
 
-describe('decideGenericAddressRouting: @coordinator', () => {
-  test('delivers when the space agent is available', () => {
+describe('decideGenericAddressRouting: the former space-manager handles', () => {
+  test('reports @coordinator not found rather than routing it anywhere', () => {
     expect(decideGenericAddressRouting(parseAddress('@coordinator'), makeGenericConfig())).toEqual({
-      action: 'deliverToCoordinator',
+      action: 'notFound',
+      target: '@coordinator',
     });
   });
 
-  test('marks the target not found when the space agent is unavailable', () => {
-    expect(
-      decideGenericAddressRouting(
-        parseAddress('@coordinator'),
-        makeGenericConfig({ spaceAgentAvailable: false })
-      )
-    ).toEqual({ action: 'notFound', target: '@coordinator' });
-  });
-
-  test('routes the canonical @space-manager handle to the coordinator', () => {
+  test('reports @space-manager not found rather than routing it anywhere', () => {
     expect(
       decideGenericAddressRouting(parseAddress('@space-manager'), makeGenericConfig())
-    ).toEqual({ action: 'deliverToCoordinator' });
+    ).toEqual({ action: 'notFound', target: '@space-manager' });
+  });
+
+  test('reports @role:coordinator not found — the synthetic actor is the only holder of that role', () => {
+    expect(
+      decideGenericAddressRouting(parseAddress('@role:coordinator'), makeGenericConfig())
+    ).toEqual({ action: 'notFound', target: '@role:coordinator' });
+  });
+
+  test('still routes other roles through the facade, including the shared space-agent role', () => {
+    expect(
+      decideGenericAddressRouting(parseAddress('@role:space-agent'), makeGenericConfig())
+    ).toEqual({ action: 'deliverViaMessagingFacade' });
+    expect(
+      decideGenericAddressRouting(parseAddress('@role:reviewer'), makeGenericConfig())
+    ).toEqual({ action: 'deliverViaMessagingFacade' });
+  });
+
+  test('does not fall through to the messaging facade, which would resolve the synthetic coordinator actor', () => {
+    expect(
+      decideGenericAddressRouting(
+        parseAddress('@space-manager'),
+        makeGenericConfig({ messagingFacadeAvailable: true })
+      )
+    ).not.toEqual({ action: 'deliverViaMessagingFacade' });
   });
 });
 

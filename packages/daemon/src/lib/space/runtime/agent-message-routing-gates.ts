@@ -1,5 +1,5 @@
-import { formatAddress, type ParsedAddress } from '../../../../../messaging/src/address.ts';
 import { isSpaceManagerHandle } from '../agent-handle.ts';
+import { formatAddress, type ParsedAddress } from '../../../../../messaging/src/address.ts';
 
 export interface ResolveNodeAgentTargetsInput {
   target: string | string[];
@@ -143,7 +143,7 @@ export function foldAgentMessageResult(input: FoldAgentMessageResultInput): Agen
       failed: [],
       reason:
         `Could not deliver message to target agent(s): ${notFound.join(', ')}. ` +
-        `The target is declared but no live session received the message.`,
+        `The target is not reachable: it has no live session, or it is not a routable address.`,
       queued: queued.length > 0 ? queued : undefined,
       notFoundAgentNames: notFound,
     };
@@ -200,7 +200,6 @@ export interface GenericAddressRoutingConfig {
 }
 
 export type GenericAddressRoutingDecision =
-  | { action: 'deliverToCoordinator' }
   | { action: 'deliverToSession'; sessionId: string; replyAuthorized: true }
   | { action: 'failSessionUnauthorized'; target: string }
   | { action: 'deliverViaMessagingFacade' }
@@ -216,9 +215,10 @@ export function decideGenericAddressRouting(
 ): GenericAddressRoutingDecision {
   const target = formatAddress(address);
   if (address.kind === 'handle' && isSpaceManagerHandle(address.handle)) {
-    return config.spaceAgentAvailable
-      ? { action: 'deliverToCoordinator' }
-      : { action: 'notFound', target };
+    return { action: 'notFound', target };
+  }
+  if (address.kind === 'role' && address.role === 'coordinator') {
+    return { action: 'notFound', target };
   }
   if (address.kind === 'session') {
     if (!config.spaceAgentAvailable) return { action: 'notFound', target };

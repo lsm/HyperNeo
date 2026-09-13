@@ -408,7 +408,7 @@ Legacy node targets must be translated before calling generic `send_message`:
 | --- | --- |
 | `'*'` | expand before send to topology-permitted exact worker-slot targets `@worker:<run>/<node>/<agent>` |
 | `string[]` multicast | translate each element independently with these rules, flatten, and de-dupe by recipient target |
-| `space-agent` | reserved compatibility target; first check stored reply-session route `(taskId, agentName) → replyToSessionId` and deliver to `@session:<id>` if present, otherwise fall back to Coordinator (`@coordinator`) |
+| `space-agent` | reserved compatibility target; check the stored reply-session route `(taskId, agentName) → replyToSessionId` and deliver to `@session:<id>` if present, otherwise report not found — there is no default recipient to fall back to |
 | `task-agent` | removed legacy target; reject explicitly or map only in temporary migration shims for old queued rows, never as a worker alias |
 | bare agent name | expand to all `(nodeId, agentName)` matches across run topology (fan-out); each match becomes a separate `@worker:<run>/<node>/<agent>` delivery |
 | bare node name | expand to all agent slots in that node (fan-out); each slot becomes a separate `@worker:<run>/<node>/<agent>` delivery |

@@ -14,7 +14,7 @@ import type { SpaceWorkflowRunRepository } from '../../storage/repositories/spac
 import type { SpaceWorkflow, WorkflowChannel, WorkflowNode } from '@hyperneo/shared';
 import { ChannelResolver } from './runtime/channel-resolver.ts';
 import type { SpaceActorRegistryAdapter } from './actor-registry.ts';
-import { SPACE_MANAGER_HANDLE, canonicalizeSpaceManagerHandle } from './agent-handle.ts';
+import { canonicalizeSpaceManagerHandle } from './agent-handle.ts';
 
 export interface SpaceMessageResolverContext {
   spaceId: string;
@@ -408,9 +408,7 @@ export function translateTaskMessageTarget(
   const explicitTarget = input.target?.trim();
   if (explicitTarget) {
     if (explicitTarget === 'task-agent') {
-      throw new Error(
-        `Target "task-agent" is no longer supported. Use @${SPACE_MANAGER_HANDLE} or a worker target.`
-      );
+      throw new Error('Target "task-agent" is no longer supported. Use a worker target.');
     }
     const address = parseAddress(explicitTarget);
     if (
@@ -431,9 +429,7 @@ export function translateTaskMessageTarget(
     throw new Error('Target is required. Provide target or node_id.');
   }
   if (nodeId === 'task-agent') {
-    throw new Error(
-      `Target "task-agent" is no longer supported. Use @${SPACE_MANAGER_HANDLE} or a worker target.`
-    );
+    throw new Error('Target "task-agent" is no longer supported. Use a worker target.');
   }
 
   const resolved = resolveTaskNodeExecution(config.nodeExecutions, nodeId);
@@ -545,7 +541,7 @@ function translateLegacyNodeTarget(
   if (!targetRef) return [];
   if (targetRef === 'task-agent') {
     throw new Error(
-      `Target "task-agent" is no longer supported. Use space-agent or @${SPACE_MANAGER_HANDLE}.`
+      'Target "task-agent" is no longer supported. Use space-agent or a worker target.'
     );
   }
   if (targetRef.startsWith('@') || targetRef.startsWith('#')) {
@@ -554,7 +550,12 @@ function translateLegacyNodeTarget(
   }
   if (targetRef === 'space-agent') {
     const replyTo = config.replyRoutingLookup?.(config.agentName);
-    return [replyTo ? `@session:${replyTo}` : `@${SPACE_MANAGER_HANDLE}`];
+    if (!replyTo) {
+      throw new Error(
+        'Target "space-agent" has no reply route in this task. There is no default Space recipient; record the blocker as an artifact and stop instead of waiting for a reply.'
+      );
+    }
+    return [`@session:${replyTo}`];
   }
   if (targetRef === '*') {
     return permittedWorkerTargets(config);

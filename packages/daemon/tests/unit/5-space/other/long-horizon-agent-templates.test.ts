@@ -112,12 +112,12 @@ describe('long-horizon agent templates', () => {
     }
   });
 
-  test('coordinator teaches the fallback-reviewer duty (MC5-B2)', () => {
+  test('coordinator teaches outcome review without claiming a fallback duty', () => {
     const coordinator = getLongHorizonAgentTemplates().find(
       (template) => template.key === 'coordinator.default'
     );
-    expect(coordinator?.instructions).toContain('fallback reviewer');
     expect(coordinator?.instructions).toContain('review_goal_outcome');
+    expect(coordinator?.instructions).not.toContain('fallback reviewer');
   });
 
   test('returns cloned template data', () => {
