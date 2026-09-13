@@ -9,6 +9,8 @@ import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import { createListTaskMembersOperation } from '../../../../src/lib/space/operations/list-task-members';
+import { readTaskCore } from '../../../../src/storage/tasks/task-reader';
+import { createStandaloneTask } from '../../../../src/storage/tasks/create-task';
 import { createDatabaseOperationCatalog } from '../../../../src/lib/operations/database-catalog';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
 
@@ -38,7 +40,11 @@ beforeEach(() => {
     workflowId: workflow.id,
     title: 'Task run',
   }).id;
-  operation = createListTaskMembersOperation({ taskRepo, nodeExecutionRepo });
+  operation = createListTaskMembersOperation({
+    taskRepo,
+    nodeExecutionRepo,
+    readCoreTask: (id) => readTaskCore(db, id),
+  });
 });
 
 function catalog(overrides: Parameters<typeof createDatabaseOperationCatalog>[2]) {
@@ -201,6 +207,50 @@ test('the result survives validation instead of being stripped to a bare task id
       'workflowRunId',
     ].sort()
   );
+});
+
+test('a standalone task reads as an empty roster, not as a missing task', async () => {
+  const standalone = createStandaloneTask(
+    db,
+    { title: 'Standalone', description: '' },
+    undefined,
+    () => {}
+  );
+  expect(taskRepo.getTask(standalone.id)).toBeNull();
+
+  const outcome = await invokeOperation(
+    registry(),
+    'task.members.list',
+    { taskId: standalone.id },
+    caller
+  );
+
+  expect(outcome).toEqual({
+    kind: 'completed',
+    value: { taskId: standalone.id, members: [] },
+  });
+});
+
+test('a node with two agents contributes one member per execution slot', async () => {
+  const task = taskRepo.createTask({
+    spaceId,
+    title: 'Two agents on one node',
+    description: '',
+    workflowRunId: runId,
+  });
+  nodeExecutionRepo.create({ workflowRunId: runId, workflowNodeId: 'Coding', agentName: 'Coder' });
+  nodeExecutionRepo.create({ workflowRunId: runId, workflowNodeId: 'Coding', agentName: 'Pair' });
+
+  const outcome = await invokeOperation(
+    registry(),
+    'task.members.list',
+    { taskId: task.id },
+    caller
+  );
+
+  const value = (outcome as { value: { members: Array<{ workflowNodeId: string }> } }).value;
+  expect(value.members).toHaveLength(2);
+  expect(value.members.every((m) => m.workflowNodeId === 'Coding')).toBe(true);
 });
 
 test('a legacy done row from before the idle rename still reads instead of failing validation', async () => {
