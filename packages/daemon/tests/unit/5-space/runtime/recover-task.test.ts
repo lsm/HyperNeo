@@ -23,6 +23,7 @@ let sessions: SessionRepository;
 let spaceId: string;
 let taskId: string;
 let recoverWorkflowTask: ReturnType<typeof mock>;
+let emit: ReturnType<typeof mock>;
 const jobQueue = {} as JobQueueRepository;
 const context = {} as CallContext;
 
@@ -40,6 +41,7 @@ beforeEach(() => {
   sessions = new SessionRepository(db);
   database = { getDatabase: () => db, notifyChange: mock(() => {}) } as unknown as AppDatabase;
   recoverWorkflowTask = mock(async () => tasks.getTask(taskId) as SpaceTask);
+  emit = mock(async () => {});
 });
 afterEach(() => db.close());
 
@@ -50,7 +52,7 @@ function provider() {
     recoverWorkflowTask,
     taskRepo: tasks,
     notifyStandalone: () => database.notifyChange('space_tasks'),
-    emitTaskUpdated: mock(async () => {}),
+    emitTaskUpdated: emit,
     emitTaskCreated: mock(async () => {}),
     getSpace: (id: string) => new SpaceRepository(db).getSpace(id),
     validateDefaultTaskWorkspace: async () => null,
@@ -154,6 +156,23 @@ test('rejects an absent task, a standalone task and a non-retryable workflow sta
 test('an MCP session in the owning Space that is no longer active is denied', async () => {
   const mcp = createOperationMcpHandler(provider(), () => endedMember('stale', spaceId));
   expect(JSON.parse((await mcp(recover(taskId))).content[0].text)).toBe('recovery_denied');
+});
+
+test('plain recovery publishes space.task.updated so other clients refresh', async () => {
+  const rpc = createOperationRpcHandler(provider(), () => ({}));
+  await rpc(recover(taskId), context);
+  expect(recoverWorkflowTask).not.toHaveBeenCalled();
+  expect(emit).toHaveBeenCalledTimes(1);
+  expect(emit.mock.calls[0]?.[0]).toBe(spaceId);
+  expect(emit.mock.calls[0]?.[1]).toMatchObject({ id: taskId });
+});
+
+test('workflow recovery does not double-publish from this operation', async () => {
+  attachRun('blocked');
+  const rpc = createOperationRpcHandler(provider(), () => ({}));
+  await rpc(recover(taskId), context);
+  expect(recoverWorkflowTask).toHaveBeenCalledTimes(1);
+  expect(emit).not.toHaveBeenCalled();
 });
 
 test('task.recover is discoverable through the door', async () => {

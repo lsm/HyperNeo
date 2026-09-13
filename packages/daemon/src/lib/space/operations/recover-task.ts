@@ -3,6 +3,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import type { Database } from '../../../storage/sqlite-compat.ts';
+import { Logger } from '../../logger.ts';
 import { defineOperation, type OperationCaller } from '../../operations/registry.ts';
 import { TaskWithSpaceFieldsSchema } from '../../operations/task-get.ts';
 import type { SpaceTaskManager } from '../managers/space-task-manager.ts';
@@ -14,6 +15,7 @@ import {
   type SpaceTaskMetadataDependencies,
 } from './task-metadata.ts';
 
+const log = new Logger('RecoverSpaceTask');
 const inputSchema = z
   .object({ taskId: z.string().min(1), description: z.string().optional() })
   .strict();
@@ -33,6 +35,7 @@ type Planned = { task: SpaceTask; plan: Plan };
 export interface RecoverTaskDependencies extends SpaceMcpSessionPolicyContext {
   getSession: SpaceTaskMetadataDependencies['getSession'];
   getTaskManager: (spaceId: string) => Pick<SpaceTaskManager, 'retryTask'>;
+  emitTaskUpdated: SpaceTaskMetadataDependencies['emitTaskUpdated'];
   recoverWorkflowTask: (
     spaceId: string,
     taskId: string,
@@ -80,9 +83,13 @@ async function applyRecovery(
 ): Promise<Result> {
   const { task, plan } = planned;
   if (plan.action === 'retry_task') {
-    return tasks
+    const retried = await tasks
       .getTaskManager(task.spaceId)
       .retryTask(task.id, { description: input.description });
+    await tasks.emitTaskUpdated(task.spaceId, retried).catch((error: unknown) => {
+      log.warn('Failed to emit space.task.updated:', error);
+    });
+    return retried;
   }
   const recovered = await tasks.recoverWorkflowTask(
     task.spaceId,
