@@ -290,11 +290,11 @@ type CancelRejectionGate =
   | { value: SpaceTaskStatus | undefined }
   | { reason: CancelRejectionDecision };
 
-function gateNotAlreadyCancelled(status: SpaceTaskStatus | undefined): CancelRejectionGate {
+export function gateNotAlreadyCancelled(status: SpaceTaskStatus | undefined): CancelRejectionGate {
   return status === 'cancelled' ? { reason: { kind: 'silent' } } : { value: status };
 }
 
-function gateNotAlreadyFinished(status: SpaceTaskStatus | undefined): CancelRejectionGate {
+export function gateNotAlreadyFinished(status: SpaceTaskStatus | undefined): CancelRejectionGate {
   return isFinishedTaskStatus(status) ? { reason: { kind: 'finished' } } : { value: status };
 }
 

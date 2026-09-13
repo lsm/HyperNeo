@@ -2557,6 +2557,36 @@ describe('SpaceStore — cancelTask', () => {
       expect(decideCancelRejection(status, reason)).toEqual({ kind: 'rejected', message });
     });
   });
+
+  describe('gateNotAlreadyCancelled', () => {
+    it('rejects a cancelled status', async () => {
+      const { gateNotAlreadyCancelled } = await import('../space-store.ts');
+      expect(gateNotAlreadyCancelled('cancelled')).toEqual({ reason: { kind: 'silent' } });
+    });
+
+    it.each(['open', 'done', 'archived', undefined] as const)(
+      'passes %s through unchanged',
+      async (status) => {
+        const { gateNotAlreadyCancelled } = await import('../space-store.ts');
+        expect(gateNotAlreadyCancelled(status)).toEqual({ value: status });
+      }
+    );
+  });
+
+  describe('gateNotAlreadyFinished', () => {
+    it.each(['done', 'archived'] as const)('rejects a %s status', async (status) => {
+      const { gateNotAlreadyFinished } = await import('../space-store.ts');
+      expect(gateNotAlreadyFinished(status)).toEqual({ reason: { kind: 'finished' } });
+    });
+
+    it.each(['open', 'in_progress', 'cancelled', undefined] as const)(
+      'passes %s through unchanged',
+      async (status) => {
+        const { gateNotAlreadyFinished } = await import('../space-store.ts');
+        expect(gateNotAlreadyFinished(status)).toEqual({ value: status });
+      }
+    );
+  });
 });
 
 describe('SpaceStore — runtimeState', () => {
