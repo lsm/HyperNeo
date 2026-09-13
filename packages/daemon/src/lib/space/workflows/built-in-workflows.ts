@@ -189,9 +189,10 @@ const LEGACY_CODING_SLOT_PROMPTS: Record<string, string[]> = {
       'you must re-supply it.\n' +
       '7. If the task requires no code changes (validation-only, a diagnostic, or already ' +
       'complete): do NOT create an empty commit or PR. This workflow only completes via a ' +
-      'reviewed PR, so a no-change task is misrouted — escalate via `send_message` to the ' +
-      'escalation target listed in your Runtime Execution Contract, explaining that the task ' +
-      'produced no code changes and needs re-routing, then stop and wait for guidance.\n\n' +
+      'reviewed PR, so a no-change task is misrouted — record the blocker with ' +
+      '`save_artifact({ shape: "note", kind: "no_code_changes", summary: "<why this task needs no code changes>" })` ' +
+      'and stop. Do NOT mark the task complete and do NOT wait for a reply: there is no Space-level ' +
+      'recipient, and the unfinished task carrying that artifact is the signal a human acts on.\n\n' +
       'If re-activated after review:\n' +
       '1. Read the incoming message `data` — you should find `review_url` and ' +
       '`comment_urls` (an array of comment thread URLs). Open each one; do not rely on ' +
@@ -938,9 +939,10 @@ const RETIRED_HARDCODED_CODING_WORKFLOW_REHANDOFF_PROMPT =
 const CURRENT_CODING_WORKFLOW_NOCHANGE_STEP_PROMPT =
   '7. If the task requires no code changes (validation-only, a diagnostic, or already ' +
   'complete): do NOT create an empty commit or PR. This workflow only completes via a ' +
-  'reviewed PR, so a no-change task is misrouted — escalate via `send_message` to the ' +
-  'escalation target listed in your Runtime Execution Contract, explaining that the task ' +
-  'produced no code changes and needs re-routing, then stop and wait for guidance.\n\n';
+  'reviewed PR, so a no-change task is misrouted — record the blocker with ' +
+  '`save_artifact({ shape: "note", kind: "no_code_changes", summary: "<why this task needs no code changes>" })` ' +
+  'and stop. Do NOT mark the task complete and do NOT wait for a reply: there is no Space-level ' +
+  'recipient, and the unfinished task carrying that artifact is the signal a human acts on.\n\n';
 const RETIRED_PREVIOUS_CODING_WORKFLOW_NOCHANGE_STEP_PROMPT =
   '7. If the task requires no code changes (validation-only, a diagnostic, or already ' +
   'complete): do NOT create an empty commit or PR. This workflow only completes via a ' +
