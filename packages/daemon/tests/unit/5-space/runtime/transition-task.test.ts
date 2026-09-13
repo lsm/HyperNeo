@@ -318,6 +318,34 @@ describe('writeStatus', () => {
     expect(emitTaskUpdated).toHaveBeenCalledTimes(1);
   });
 
+  test('a direct attempt claimed after admission still blocks the write', async () => {
+    const owned = createOwned('open');
+    const decided = { ...owned, approvalSource: undefined };
+    attempts.select(owned.task.id);
+    attempts.claim(owned.task.id, 'attempt', 'worker');
+    const result = await writeStatus(
+      decided,
+      { taskId: owned.task.id, status: 'in_progress' },
+      deps()
+    );
+    expect(result).toBe('invalid_transition');
+    expect(tasks.getTask(owned.task.id)?.status).toBe('open');
+  });
+
+  test('a workflow run activated after admission still blocks the write', async () => {
+    const run = createWorkflowRun();
+    const owned = createOwned('open', run.id);
+    const decided = { ...owned, approvalSource: undefined };
+    isWorkflowRunActive.mockImplementation(() => true);
+    const result = await writeStatus(
+      decided,
+      { taskId: owned.task.id, status: 'in_progress' },
+      deps()
+    );
+    expect(result).toBe('invalid_transition');
+    expect(tasks.getTask(owned.task.id)?.status).toBe('open');
+  });
+
   test('a stale-guard error maps to invalid_transition', async () => {
     const owned = createOwned('open');
     const decided = { ...owned, approvalSource: undefined };

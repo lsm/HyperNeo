@@ -1,6 +1,7 @@
 import type { SpaceTask } from '@hyperneo/shared';
 import type { TaskCore } from '@hyperneo/shared/types/task-core';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import { DirectTaskExecutionRepository } from '../../../storage/repositories/direct-task-execution-repository.ts';
 import { Logger } from '../../logger.ts';
 import type { OperationCaller } from '../../operations/registry.ts';
 import { createTransitionTaskOperation } from '../../operations/task-transition.ts';
@@ -58,6 +59,17 @@ async function emitUpdated(spaceId: string, task: SpaceTask, deps: Deps): Promis
     .emitTaskUpdated(spaceId, task)
     .catch((error: unknown) => log.warn('Failed to emit space.task.updated:', error));
 }
+function guardActiveExecution(deps: Deps): (current: SpaceTask) => string | undefined {
+  return (current) => {
+    if (new DirectTaskExecutionRepository(deps.db).getActive(current.id)) {
+      return 'active_direct_attempt';
+    }
+    if (current.workflowRunId && deps.isWorkflowRunActive(current.workflowRunId)) {
+      return 'active_workflow_run';
+    }
+    return undefined;
+  };
+}
 export async function writeStatus(decided: DecidedTask, input: In, deps: Deps): Promise<Result> {
   const { spaceId, task, approvalSource } = decided;
   try {
@@ -66,6 +78,7 @@ export async function writeStatus(decided: DecidedTask, input: In, deps: Deps): 
       approvalSource,
       expectedStatus: task.status,
       expectedWorkflowRunId: task.workflowRunId ?? null,
+      guardWrite: guardActiveExecution(deps),
       onCascadedTasks: async (cascaded) => {
         for (const cascadedTask of cascaded) await emitUpdated(spaceId, cascadedTask, deps);
       },

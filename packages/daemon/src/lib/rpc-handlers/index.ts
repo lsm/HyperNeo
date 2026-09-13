@@ -723,6 +723,23 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     {
       reactiveDb: deps.reactiveDb,
       onTaskReopened: (taskId) => spaceGoalService.supersedeOutcomeNotificationsForTask(taskId),
+    },
+    {
+      getSession: (sessionId) => deps.db.getSession(sessionId),
+      getTaskManager: spaceTaskManagerFactory,
+      taskRepo: spaceTaskRepo,
+      nodeExecutionRepo,
+      notifyStandalone: () => deps.db.notifyChange('space_tasks'),
+      emitTaskUpdated: async (spaceId, task) => {
+        await deps.internalEventBus.publish('space.task.updated', {
+          sessionId: 'global',
+          spaceId,
+          taskId: task.id,
+          task,
+        });
+      },
+      isWorkflowRunActive: (workflowRunId) =>
+        spaceRuntimeService.isWorkflowRunActive(workflowRunId),
     }
   );
   const replyRoutingRegistry = new ReplyRoutingRegistry();

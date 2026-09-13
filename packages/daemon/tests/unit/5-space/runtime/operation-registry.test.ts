@@ -50,7 +50,11 @@ beforeEach(() => {
 });
 afterEach(() => db.close());
 
-function provider(extra = {}, pendingCompletion?: OwnedPendingCompletionDependencies) {
+function provider(
+  extra = {},
+  pendingCompletion?: OwnedPendingCompletionDependencies,
+  transition?: Parameters<typeof createSpaceOperationRegistryProvider>[5]
+) {
   return createSpaceOperationRegistryProvider(
     database,
     jobQueue,
@@ -70,7 +74,9 @@ function provider(extra = {}, pendingCompletion?: OwnedPendingCompletionDependen
       completionGate: async () => ({ ok: true as const }),
       ...extra,
     },
-    pendingCompletion
+    pendingCompletion,
+    undefined,
+    transition
   );
 }
 function member(id: string, owner?: string) {
@@ -427,4 +433,25 @@ test('a bound completionGate returning ok:false yields task_completion_unavailab
     detail: 'PR not merged yet.',
   });
   expect(tasks.getTask(taskId)?.status).toBe('approved');
+});
+
+test('task.transition is served through the Space registry when bound', async () => {
+  const isWorkflowRunActive = mock(() => false);
+  const rpc = createOperationRpcHandler(
+    provider({}, undefined, {
+      getSession: (id) => sessions.getSession(id),
+      getTaskManager: (id) => new SpaceTaskManager(db, id),
+      notifyStandalone: () => database.notifyChange('space_tasks'),
+      emitTaskUpdated: emit,
+      isWorkflowRunActive,
+    }),
+    () => ({})
+  );
+  const result = await rpc(
+    { name: 'task.transition', input: { taskId, status: 'in_progress' } },
+    context
+  );
+  expect(result).toMatchObject({ id: taskId, status: 'in_progress' });
+  expect(tasks.getTask(taskId)?.status).toBe('in_progress');
+  expect(emit).toHaveBeenCalledTimes(1);
 });
