@@ -272,6 +272,77 @@ test('a task reopened to in_progress between admission and the manager write is 
   expect(tasks.getTask(taskId)?.status).toBe('in_progress');
 });
 
+test('an explicit input result wins over the artifact summary and existing result', async () => {
+  tasks.updateTask(taskId, { result: 'Existing result.', reportedSummary: 'Reported summary.' });
+  const gatedOperation = createCompleteTaskOperation(() => db, {
+    getTaskManager: (id) => new SpaceTaskManager(db, id),
+    emitTaskUpdated: emit,
+    resolveResultArtifactSummary: () => 'Artifact summary.',
+  });
+  const result = await gatedOperation.execute(
+    { taskId, result: 'Explicit result.' },
+    { source: 'rpc' }
+  );
+  expect(result).toMatchObject({ accepted: true, task: { result: 'Explicit result.' } });
+});
+test('falls back to the artifact summary when no result is supplied', async () => {
+  tasks.updateTask(taskId, { result: 'Existing result.', reportedSummary: 'Reported summary.' });
+  const gatedOperation = createCompleteTaskOperation(() => db, {
+    getTaskManager: (id) => new SpaceTaskManager(db, id),
+    emitTaskUpdated: emit,
+    resolveResultArtifactSummary: () => 'Artifact summary.',
+  });
+  const result = await gatedOperation.execute({ taskId }, { source: 'rpc' });
+  expect(result).toMatchObject({ accepted: true, task: { result: 'Artifact summary.' } });
+  expect(tasks.getTask(taskId)?.reportedSummary).toBe('Artifact summary.');
+});
+test('falls back to the existing task result when there is no artifact summary', async () => {
+  tasks.updateTask(taskId, { result: 'Existing result.', reportedSummary: 'Reported summary.' });
+  const result = await operation.execute({ taskId }, { source: 'rpc' });
+  expect(result).toMatchObject({ accepted: true, task: { result: 'Existing result.' } });
+  expect(tasks.getTask(taskId)?.reportedSummary).toBe('Reported summary.');
+});
+test('falls back to the reported summary when there is no artifact summary or existing result', async () => {
+  tasks.updateTask(taskId, { reportedSummary: 'Reported summary.' });
+  const result = await operation.execute({ taskId }, { source: 'rpc' });
+  expect(result).toMatchObject({ accepted: true, task: { result: 'Reported summary.' } });
+  expect(tasks.getTask(taskId)?.reportedSummary).toBe('Reported summary.');
+});
+test('falls back to the literal default when nothing else is available', async () => {
+  const result = await operation.execute({ taskId }, { source: 'rpc' });
+  expect(result).toMatchObject({ accepted: true, task: { result: 'Task completed.' } });
+  expect(tasks.getTask(taskId)?.reportedSummary).toBeNull();
+});
+test('an unbound artifact resolver falls through to the rest of the chain', async () => {
+  tasks.updateTask(taskId, { reportedSummary: 'Reported summary.' });
+  const result = await operation.execute({ taskId }, { source: 'rpc' });
+  expect(result).toMatchObject({ accepted: true, task: { result: 'Reported summary.' } });
+});
+test('the stored approvalSource wins over the caller-derived default', async () => {
+  const sessionId = worker('owner-session');
+  tasks.updateTask(taskId, { approvalSource: 'auto_policy' });
+  const result = await operation.execute(
+    { taskId, result: 'Shipped it.' },
+    { source: 'mcp', sessionId }
+  );
+  expect(result).toMatchObject({ accepted: true });
+  expect(tasks.getTask(taskId)?.approvalSource).toBe('auto_policy');
+});
+test('an MCP caller with no stored approvalSource is recorded as agent', async () => {
+  const sessionId = worker('owner-session');
+  const result = await operation.execute(
+    { taskId, result: 'Shipped it.' },
+    { source: 'mcp', sessionId }
+  );
+  expect(result).toMatchObject({ accepted: true });
+  expect(tasks.getTask(taskId)?.approvalSource).toBe('agent');
+});
+test('an RPC caller with no stored approvalSource is recorded as human', async () => {
+  const result = await operation.execute({ taskId, result: 'Shipped it.' }, { source: 'rpc' });
+  expect(result).toMatchObject({ accepted: true });
+  expect(tasks.getTask(taskId)?.approvalSource).toBe('human');
+});
+
 test('catalog discovery reports task.complete when wired through the complete slot', async () => {
   const getDatabase = mock(() => db);
   const database = { getDatabase, notifyChange: () => {} } as unknown as AppDatabase;

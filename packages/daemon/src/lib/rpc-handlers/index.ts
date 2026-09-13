@@ -691,6 +691,10 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       getSpace: (spaceId) => deps.spaceManager.getSpace(spaceId),
       validateDefaultTaskWorkspace: (spaceId) =>
         deps.spaceManager.validateDefaultTaskWorkspace(spaceId),
+      resolveResultArtifactSummary: (task) =>
+        task.workflowRunId
+          ? (artifactProfile.summarizeRunOutcome(task.workflowRunId) ?? null)
+          : null,
       ...createCompletionGateBindings({
         resolveWorkflowForTask: (task) => {
           const run = task.workflowRunId ? spaceWorkflowRunRepo.getRun(task.workflowRunId) : null;
