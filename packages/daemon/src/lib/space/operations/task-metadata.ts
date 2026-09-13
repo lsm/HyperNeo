@@ -47,6 +47,19 @@ export function resolveMetadataSessionSpace(
   );
 }
 
+export function admitActiveSpaceTaskCaller(
+  owner: TaskMetadataOwner,
+  caller: OperationCaller,
+  deps: Pick<SpaceTaskMetadataDependencies, 'getSession'> & SpaceMcpSessionPolicyContext
+): { value: true } | { reason: 'denied' } {
+  if (owner.kind === 'standalone' || caller.source !== 'mcp') return { value: true };
+  const session = caller.sessionId ? deps.getSession(caller.sessionId) : null;
+  return session?.status === 'active' &&
+    resolveMetadataSessionSpace(session, deps) === owner.spaceId
+    ? { value: true }
+    : { reason: 'denied' };
+}
+
 export function resolveSpaceTaskOwner(db: Database, taskId: string): TaskMetadataOwner | null {
   const row = db.prepare('SELECT space_id FROM space_tasks WHERE id = ?').get(taskId) as {
     space_id: string | null;

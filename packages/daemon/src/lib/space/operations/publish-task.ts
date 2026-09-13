@@ -10,7 +10,7 @@ import type { SpaceTaskManager } from '../managers/space-task-manager.ts';
 import type { SpaceMcpSessionPolicyContext } from '../runtime/space-mcp-session-policy.ts';
 import { routePublishTask } from '../tools/task-transition-routing.ts';
 import {
-  resolveMetadataSessionSpace,
+  admitActiveSpaceTaskCaller,
   resolveSpaceTaskOwner,
   type SpaceTaskMetadataDependencies,
 } from './task-metadata.ts';
@@ -36,14 +36,8 @@ export function admitPublisher(
   const owner = resolveSpaceTaskOwner(db, input.taskId);
   if (owner === null) return { reason: 'task_not_found' };
   if (owner.kind === 'standalone') return { reason: 'task_not_in_space' };
-  if (caller.source === 'mcp') {
-    const session = caller.sessionId ? tasks.getSession(caller.sessionId) : null;
-    if (
-      session?.status !== 'active' ||
-      resolveMetadataSessionSpace(session, tasks) !== owner.spaceId
-    )
-      return { reason: 'publish_denied' };
-  }
+  if ('reason' in admitActiveSpaceTaskCaller(owner, caller, tasks))
+    return { reason: 'publish_denied' };
   const task = new SpaceTaskRepository(db).getTask(input.taskId);
   return task ? { value: task } : { reason: 'task_not_found' };
 }
