@@ -46,6 +46,7 @@ import type {
 } from '@hyperneo/shared';
 import { generateUUID, isUUID, Logger } from '@hyperneo/shared';
 import { computed, signal } from '@preact/signals';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import { connectionManager } from './connection-manager';
 import { invokeOperation } from './operations';
 import { currentSpaceCanonicalIdSignal, currentSpaceIdSignal } from './signals';
@@ -276,6 +277,43 @@ function formatCancellationRejection(reason: string): string {
   }
   return `Cancellation rejected: ${reason}`;
 }
+
+function isFinishedTaskStatus(status: SpaceTaskStatus | undefined): boolean {
+  return status === 'done' || status === 'archived';
+}
+
+export type CancelRejectionDecision =
+  | { kind: 'silent' }
+  | { kind: 'finished' }
+  | { kind: 'rejected'; message: string };
+type CancelRejectionGate =
+  | { value: SpaceTaskStatus | undefined }
+  | { reason: CancelRejectionDecision };
+
+export function gateNotAlreadyCancelled(status: SpaceTaskStatus | undefined): CancelRejectionGate {
+  return status === 'cancelled' ? { reason: { kind: 'silent' } } : { value: status };
+}
+
+export function gateNotAlreadyFinished(status: SpaceTaskStatus | undefined): CancelRejectionGate {
+  return isFinishedTaskStatus(status) ? { reason: { kind: 'finished' } } : { value: status };
+}
+
+function toRejectedDecision(
+  _status: SpaceTaskStatus | undefined,
+  reason: string
+): CancelRejectionDecision {
+  return { kind: 'rejected', message: formatCancellationRejection(reason) };
+}
+
+export const decideCancelRejection = (superpipe({})('cancel-task-rejection') as PipelineAPI)
+  .input(['status', 'reason'])
+  .pipe(gateNotAlreadyCancelled, 'status', 'result:decision')
+  .pipe(gateNotAlreadyFinished, 'decision', 'result:decision')
+  .pipe(toRejectedDecision, ['decision', 'reason'], 'decision')
+  .end('decision') as (
+  status: SpaceTaskStatus | undefined,
+  reason: string
+) => CancelRejectionDecision;
 
 export interface CreateTaskOperationParams {
   title: string;
@@ -2174,7 +2212,15 @@ class SpaceStore {
 
     const result = await invokeOperation<CancelTaskResult>(hub, 'task.cancel', { taskId });
     if (!result.accepted) {
-      throw new Error(formatCancellationRejection(result.reason));
+      const status = this.tasks.value.find((task) => task.id === taskId)?.status;
+      const decision = decideCancelRejection(status, result.reason);
+      if (decision.kind === 'silent') {
+        return result;
+      }
+      if (decision.kind === 'finished') {
+        throw new Error('This task has already finished and cannot be cancelled.');
+      }
+      throw new Error(decision.message);
     }
     return result;
   }

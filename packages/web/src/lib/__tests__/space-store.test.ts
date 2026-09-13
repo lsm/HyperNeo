@@ -2467,6 +2467,126 @@ describe('SpaceStore — cancelTask', () => {
   it('throws when no space selected', async () => {
     await expect(spaceStore.cancelTask('task-1')).rejects.toThrow('No space selected');
   });
+
+  it('resolves without throwing when a rejection targets an already-cancelled task', async () => {
+    await spaceStore.selectSpace('space-1');
+    spaceStore.tasks.value = [makeTask('task-1', 'cancelled')];
+    mockHub.request.mockResolvedValueOnce({
+      accepted: false,
+      reason: 'cancellation_invalid_transition',
+    });
+
+    const result = await spaceStore.cancelTask('task-1');
+
+    expect(result).toEqual({ accepted: false, reason: 'cancellation_invalid_transition' });
+  });
+
+  it.each(['done', 'archived'])(
+    'throws a finished-task message, not the try-again text, when a %s task rejects cancellation',
+    async (status) => {
+      await spaceStore.selectSpace('space-1');
+      spaceStore.tasks.value = [makeTask('task-1', status)];
+      mockHub.request.mockResolvedValueOnce({
+        accepted: false,
+        reason: 'cancellation_unavailable',
+      });
+
+      let caught: Error | undefined;
+      try {
+        await spaceStore.cancelTask('task-1');
+      } catch (err) {
+        caught = err as Error;
+      }
+
+      expect(caught?.message).toBe('This task has already finished and cannot be cancelled.');
+      expect(caught?.message).not.toContain('Try again after it changes');
+    }
+  );
+
+  it('throws the existing mapped message when a rejection targets a live task', async () => {
+    await spaceStore.selectSpace('space-1');
+    spaceStore.tasks.value = [makeTask('task-1', 'in_progress')];
+    mockHub.request.mockResolvedValueOnce({
+      accepted: false,
+      reason: 'cancellation_denied',
+    });
+
+    await expect(spaceStore.cancelTask('task-1')).rejects.toThrow(
+      'You are not allowed to cancel this task.'
+    );
+  });
+
+  it('returns the acknowledgement on success without consulting task status', async () => {
+    await spaceStore.selectSpace('space-1');
+    spaceStore.tasks.value = [makeTask('task-1', 'cancelled')];
+    mockHub.request.mockResolvedValueOnce({ accepted: true, jobId: 'job-2' });
+
+    const result = await spaceStore.cancelTask('task-1');
+
+    expect(result).toEqual({ accepted: true, jobId: 'job-2' });
+  });
+
+  describe('decideCancelRejection', () => {
+    it('is silent for an already-cancelled task regardless of the rejection reason', async () => {
+      const { decideCancelRejection } = await import('../space-store.ts');
+      expect(decideCancelRejection('cancelled', 'cancellation_denied')).toEqual({
+        kind: 'silent',
+      });
+    });
+
+    it.each(['done', 'archived'] as const)(
+      'is "finished" for a %s task ahead of the cancelled check',
+      async (status) => {
+        const { decideCancelRejection } = await import('../space-store.ts');
+        expect(decideCancelRejection(status, 'cancellation_unavailable')).toEqual({
+          kind: 'finished',
+        });
+      }
+    );
+
+    it.each([
+      ['in_progress', 'cancellation_denied', 'You are not allowed to cancel this task.'],
+      [
+        'open',
+        'cancellation_invalid_transition',
+        'This task cannot be cancelled from its current state.',
+      ],
+      [undefined, 'some_unmapped_reason', 'Cancellation rejected: some_unmapped_reason'],
+    ] as const)('maps %s + %s to a rejected message', async (status, reason, message) => {
+      const { decideCancelRejection } = await import('../space-store.ts');
+      expect(decideCancelRejection(status, reason)).toEqual({ kind: 'rejected', message });
+    });
+  });
+
+  describe('gateNotAlreadyCancelled', () => {
+    it('rejects a cancelled status', async () => {
+      const { gateNotAlreadyCancelled } = await import('../space-store.ts');
+      expect(gateNotAlreadyCancelled('cancelled')).toEqual({ reason: { kind: 'silent' } });
+    });
+
+    it.each(['open', 'done', 'archived', undefined] as const)(
+      'passes %s through unchanged',
+      async (status) => {
+        const { gateNotAlreadyCancelled } = await import('../space-store.ts');
+        expect(gateNotAlreadyCancelled(status)).toEqual({ value: status });
+      }
+    );
+  });
+
+  describe('gateNotAlreadyFinished', () => {
+    it.each(['done', 'archived'] as const)('rejects a %s status', async (status) => {
+      const { gateNotAlreadyFinished } = await import('../space-store.ts');
+      expect(gateNotAlreadyFinished(status)).toEqual({ reason: { kind: 'finished' } });
+    });
+
+    it.each(['open', 'in_progress', 'cancelled', undefined] as const)(
+      'passes %s through unchanged',
+      async (status) => {
+        const { gateNotAlreadyFinished } = await import('../space-store.ts');
+        expect(gateNotAlreadyFinished(status)).toEqual({ value: status });
+      }
+    );
+  });
 });
 
 describe('SpaceStore — runtimeState', () => {
