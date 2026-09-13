@@ -73,6 +73,12 @@ export function prepareSpaceTaskStatusUpdate(
     updates.postApprovalSourceNodeId = null;
   }
 
+  if (task.status === 'approved' && newStatus !== 'approved') {
+    updates.postApprovalSessionId = null;
+    updates.postApprovalStartedAt = null;
+    updates.postApprovalBlockedReason = null;
+  }
+
   if (task.status === 'stopped' && (newStatus === 'open' || newStatus === 'in_progress')) {
     updates.reportedStatus = null;
     updates.reportedSummary = null;
