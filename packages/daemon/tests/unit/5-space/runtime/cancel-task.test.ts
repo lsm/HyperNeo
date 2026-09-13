@@ -81,7 +81,7 @@ function outcomeCount() {
 }
 
 test.each(['rpc', 'internal', 'mcp'] as const)(
-  '%s invocation returns durable acknowledgement before shutdown/status changes',
+  '%s invocation returns a durable acknowledgement before shutdown, and repeating it while the stop is merely requested (attempt still running) replays the same ack idempotently',
   async (source) => {
     const registry = createOperationRegistry([operation]);
     const result = await registry.get('task.cancel')!.execute({ taskId }, { source, sessionId });
@@ -154,54 +154,57 @@ test('enqueue failure rolls back stop request and later cancellation can succeed
   expect(await operation.execute({ taskId }, { source: 'rpc' })).toMatchObject({ accepted: true });
 });
 
-test('a repeat cancellation after full finalization is rejected as unavailable, not re-acknowledged from a stale session', async () => {
-  const accepted = (await operation.execute({ taskId }, { source: 'mcp', sessionId })) as {
-    accepted: true;
-    jobId: string;
-  };
-  const dependent = tasks.createTask({
-    spaceId: tasks.getTask(taskId)!.spaceId!,
-    title: 'Dependent',
-    description: '',
-    dependsOn: [taskId],
-  });
-  const terminal = mock(() => {});
-  let cached = {
-    getSessionData: () => sessions.getSession(sessionId)!,
-    getProcessingState: () => ({ status: 'idle' }),
-    isInterruptInProgress: () => false,
-    getTrackedAgentRootPidsSplit: () => ({ live: [], exited: [] }),
-    handleInterrupt: async () => {},
-    cleanup: async () => {},
-  } as unknown as AgentSession | null;
-  const owner = Object.assign(Object.create(SessionManager.prototype), {
-    directStopVerificationJobs: new Map(),
-  }) as SessionManager;
-  const result = await createDirectOutcomeHandler({
-    db,
-    jobQueue: jobs,
-    onTerminalTransition: terminal,
-    sessionManager: {
-      coalesceDirectStopVerification: owner.coalesceDirectStopVerification.bind(owner),
-      getCachedSession: () => cached,
-      isSessionLoading: () => false,
-      unregisterSession: async () => {
-        cached = null;
+test.each(['rpc', 'internal', 'mcp'] as const)(
+  'a repeat %s cancellation once the attempt is fully finalized is rejected as unavailable, not replayed as an acknowledgement, even from an ended session',
+  async (source) => {
+    const accepted = (await operation.execute({ taskId }, { source, sessionId })) as {
+      accepted: true;
+      jobId: string;
+    };
+    const dependent = tasks.createTask({
+      spaceId: tasks.getTask(taskId)!.spaceId!,
+      title: 'Dependent',
+      description: '',
+      dependsOn: [taskId],
+    });
+    const terminal = mock(() => {});
+    let cached = {
+      getSessionData: () => sessions.getSession(sessionId)!,
+      getProcessingState: () => ({ status: 'idle' }),
+      isInterruptInProgress: () => false,
+      getTrackedAgentRootPidsSplit: () => ({ live: [], exited: [] }),
+      handleInterrupt: async () => {},
+      cleanup: async () => {},
+    } as unknown as AgentSession | null;
+    const owner = Object.assign(Object.create(SessionManager.prototype), {
+      directStopVerificationJobs: new Map(),
+    }) as SessionManager;
+    const result = await createDirectOutcomeHandler({
+      db,
+      jobQueue: jobs,
+      onTerminalTransition: terminal,
+      sessionManager: {
+        coalesceDirectStopVerification: owner.coalesceDirectStopVerification.bind(owner),
+        getCachedSession: () => cached,
+        isSessionLoading: () => false,
+        unregisterSession: async () => {
+          cached = null;
+        },
       },
-    },
-  })(jobs.getJob(accepted.jobId)!);
-  expect(result).toMatchObject({ finalized: true });
-  expect(attempts.getActive(taskId)).toBeNull();
-  expect(tasks.getTask(taskId)?.status).toBe('cancelled');
-  expect(tasks.getTask(dependent.id)?.status).toBe(dependent.status);
-  expect(terminal).toHaveBeenCalledTimes(1);
-  db.prepare("UPDATE sessions SET status='ended' WHERE id=?").run(sessionId);
-  expect(await operation.execute({ taskId }, { source: 'mcp', sessionId })).toMatchObject({
-    accepted: false,
-    reason: 'cancellation_unavailable',
-  });
-  expect(outcomeCount()).toBe(1);
-});
+    })(jobs.getJob(accepted.jobId)!);
+    expect(result).toMatchObject({ finalized: true });
+    expect(attempts.getActive(taskId)).toBeNull();
+    expect(tasks.getTask(taskId)?.status).toBe('cancelled');
+    expect(tasks.getTask(dependent.id)?.status).toBe(dependent.status);
+    expect(terminal).toHaveBeenCalledTimes(1);
+    db.prepare("UPDATE sessions SET status='ended' WHERE id=?").run(sessionId);
+    expect(await operation.execute({ taskId }, { source, sessionId })).toMatchObject({
+      accepted: false,
+      reason: 'cancellation_unavailable',
+    });
+    expect(outcomeCount()).toBe(1);
+  }
+);
 
 test('configured shared catalog discovers lazily and both transports persist the same request', async () => {
   const getDatabase = mock(() => db);
