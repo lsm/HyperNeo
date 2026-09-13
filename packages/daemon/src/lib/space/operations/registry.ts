@@ -31,7 +31,7 @@ import {
   createListTaskMembersOperation,
   type TaskMemberRepositories,
 } from './list-task-members.ts';
-import { admitSpaceScope, admitTaskRead } from './read-admission.ts';
+import { listScopedTasks, readScopedTask, readScopedTaskByNumber } from './scoped-task-reads.ts';
 
 interface TaskNumberRepository {
   taskRepo?: Pick<SpaceTaskRepository, 'getTaskByNumber'>;
@@ -60,23 +60,35 @@ export function createSpaceOperationRegistryProvider(
   return () =>
     (registry ??= createDatabaseOperationCatalog(database, jobQueue, {
       readTask: (taskId, caller) =>
-        !admitTaskRead(database.getDatabase(), taskId, caller, tasks)
-          ? null
-          : (tasks.taskRepo?.getTask(taskId) ?? readTaskCore(database.getDatabase(), taskId)),
+        readScopedTask(
+          database.getDatabase(),
+          caller,
+          tasks,
+          (id) => tasks.taskRepo?.getTask(id) ?? readTaskCore(database.getDatabase(), id),
+          taskId
+        ),
       readTaskByNumber: tasks.taskRepo?.getTaskByNumber
         ? (spaceId, taskNumber, caller) =>
-            !admitSpaceScope(spaceId, caller, tasks)
-              ? null
-              : (tasks.taskRepo?.getTaskByNumber(spaceId, taskNumber) ?? null)
+            readScopedTaskByNumber(
+              caller,
+              tasks,
+              (id, number) => tasks.taskRepo?.getTaskByNumber(id, number) ?? null,
+              spaceId,
+              taskNumber
+            )
         : undefined,
       listTasks: (input, caller) =>
-        !admitSpaceScope(input.spaceId, caller, tasks)
-          ? { tasks: [], nextCursor: null }
-          : listTasksWithSpaceFields(
-              (listInput) => listTaskCores(database.getDatabase(), listInput),
-              input,
+        listScopedTasks(
+          caller,
+          tasks,
+          (listInput) =>
+            listTasksWithSpaceFields(
+              (coreInput) => listTaskCores(database.getDatabase(), coreInput),
+              listInput,
               spaceTaskBatchReader(tasks.taskRepo)
             ),
+          input
+        ),
       create: createSpaceCreateTaskOperation({
         ...tasks,
         get db() {
