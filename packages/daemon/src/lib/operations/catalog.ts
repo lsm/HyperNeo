@@ -17,6 +17,7 @@ import {
 } from './registry.ts';
 
 export interface TaskOperationDependencies {
+  members?: OperationDefinition;
   pendingCompletion?: OperationDefinition;
   submitForReview?: OperationDefinition;
   cancel?: OperationDefinition;
@@ -46,6 +47,7 @@ export function createDaemonOperationCatalog(
     createUpdateTaskOperation(tasks.editTask),
     tasks.transition ?? createTransitionTaskOperation(tasks.transitionTask),
     createSetTaskDependenciesOperation(tasks.setDependencies),
+    ...(tasks.members ? [tasks.members] : []),
     ...(tasks.pendingCompletion ? [tasks.pendingCompletion] : []),
     ...(tasks.submitForReview ? [tasks.submitForReview] : []),
     ...(tasks.cancel ? [tasks.cancel] : []),
