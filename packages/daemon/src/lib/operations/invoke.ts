@@ -1,3 +1,4 @@
+import { types } from 'node:util';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { OperationCaller, OperationDefinition, OperationRegistry } from './registry.ts';
 
@@ -138,6 +139,14 @@ function readField(target: unknown, key: string): unknown {
   }
 }
 
+function isProxyBacked(source: object): boolean {
+  try {
+    return types.isProxy(source);
+  } catch {
+    return false;
+  }
+}
+
 function isArrayIndex(key: string): boolean {
   const index = Number(key);
   return Number.isInteger(index) && index >= 0 && index < 2 ** 32 - 1 && String(index) === key;
@@ -154,6 +163,7 @@ function isolateValue<T>(value: T, seen: WeakMap<object, unknown>): T {
   const source = value as object;
   const cached = seen.get(source);
   if (cached) return cached as T;
+  if (isProxyBacked(source)) return UNREPRESENTABLE as T;
   if (source instanceof Date) return new Date(Date.prototype.getTime.call(source)) as T;
   if (!isProjectable(source)) return UNREPRESENTABLE as T;
   const descriptors = Object.getOwnPropertyDescriptors(source);

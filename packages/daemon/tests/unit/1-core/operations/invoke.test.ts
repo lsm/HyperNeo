@@ -485,7 +485,55 @@ describe('shared operation invocation audit hooks', () => {
       }
     );
     expect(outcome).toEqual({ kind: 'completed', value: { accepted: 'hello' } });
-    expect(seen).toBe('[unrepresentable]');
+    expect(seen).toEqual({ content: 'hello', opaque: '[unrepresentable]' });
+    expect((seen as { opaque: unknown }).opaque).not.toBe(opaque);
+  });
+  test('a proxy trap never runs while the audit snapshot is taken', async () => {
+    const operation = defineOperation({
+      name: 'message.send.trapped',
+      description: 'Accept a value whose traps record every reflection',
+      inputSchema: z.object({ content: z.string(), trapped: z.any() }),
+      resultSchema: z.object({ accepted: z.string() }),
+      execute: async (input: { content: string }) => ({ accepted: input.content }),
+    });
+    const registry = createOperationRegistry([operation]);
+    const trapsRun: string[] = [];
+    const trapped = new Proxy(
+      { safe: 'value' },
+      {
+        ownKeys(target) {
+          trapsRun.push('ownKeys');
+          return Reflect.ownKeys(target);
+        },
+        getOwnPropertyDescriptor(target, key) {
+          trapsRun.push('getOwnPropertyDescriptor');
+          return Reflect.getOwnPropertyDescriptor(target, key);
+        },
+        get(target, key, receiver) {
+          trapsRun.push('get');
+          return Reflect.get(target, key, receiver);
+        },
+        getPrototypeOf(target) {
+          trapsRun.push('getPrototypeOf');
+          return Reflect.getPrototypeOf(target);
+        },
+      }
+    );
+    let seen: unknown = null;
+    const outcome = await invokeOperation(
+      registry,
+      'message.send.trapped',
+      { content: 'hello', trapped },
+      caller,
+      {
+        after: (prepared: { input: unknown }) => {
+          seen = prepared.input;
+        },
+      }
+    );
+    expect(outcome).toEqual({ kind: 'completed', value: { accepted: 'hello' } });
+    expect(trapsRun).toEqual([]);
+    expect(seen).toEqual({ content: 'hello', trapped: '[unrepresentable]' });
   });
   test('operation metadata mutated by before does not reach after', async () => {
     const { registry } = fixture();
