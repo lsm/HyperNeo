@@ -89,6 +89,70 @@ describe('bounded core task listing', () => {
     expect(page.total).toBe(3);
   });
 
+  test('blockReason narrows to one reason, and null selects tasks with none', () => {
+    const insert = db.prepare(
+      "INSERT INTO space_tasks (id, space_id, task_number, title, status, block_reason, created_at, updated_at) VALUES (?, ?, ?, ?, 'blocked', ?, ?, ?)"
+    );
+    insert.run('crashed', spaceId, 10, 'Crashed', 'agent_crashed', 50, 50);
+    insert.run('waiting', spaceId, 11, 'Waiting', 'human_input_requested', 60, 60);
+    insert.run('bare', spaceId, 12, 'Bare', null, 70, 70);
+
+    const one = listTaskCores(db, { spaceId, status: 'blocked', blockReason: 'agent_crashed' });
+    expect(one.tasks.map((task) => task.id)).toEqual(['crashed']);
+    expect(one.total).toBe(1);
+    expect(
+      listTaskCores(db, { spaceId, status: 'blocked', blockReason: null }).tasks.map((t) => t.id)
+    ).toEqual(['bare']);
+    expect(
+      listTaskCores(db, { spaceId, status: 'blocked', blockReason: 'dependency_added' }).tasks
+    ).toEqual([]);
+  });
+
+  test('blockReasonNotIn excludes the listed reasons and keeps tasks with none', () => {
+    const insert = db.prepare(
+      "INSERT INTO space_tasks (id, space_id, task_number, title, status, block_reason, created_at, updated_at) VALUES (?, ?, ?, ?, 'blocked', ?, ?, ?)"
+    );
+    insert.run('crashed', spaceId, 10, 'Crashed', 'agent_crashed', 50, 50);
+    insert.run('waiting', spaceId, 11, 'Waiting', 'human_input_requested', 60, 60);
+    insert.run('bare', spaceId, 12, 'Bare', null, 70, 70);
+
+    const page = listTaskCores(db, {
+      spaceId,
+      status: 'blocked',
+      blockReasonNotIn: ['agent_crashed'],
+    });
+    expect(page.tasks.map((task) => task.id)).toEqual(['bare', 'waiting']);
+    expect(page.total).toBe(2);
+    expect(
+      listTaskCores(db, {
+        spaceId,
+        status: 'blocked',
+        blockReasonNotIn: ['agent_crashed', 'human_input_requested'],
+      }).tasks.map((task) => task.id)
+    ).toEqual(['bare']);
+  });
+
+  test('a block-reason filter composes with paging and leaves other statuses empty', () => {
+    const insert = db.prepare(
+      "INSERT INTO space_tasks (id, space_id, task_number, title, status, block_reason, created_at, updated_at) VALUES (?, ?, ?, ?, 'blocked', 'agent_crashed', ?, ?)"
+    );
+    insert.run('c1', spaceId, 10, 'One', 50, 50);
+    insert.run('c2', spaceId, 11, 'Two', 60, 60);
+
+    const first = listTaskCores(db, {
+      spaceId,
+      status: 'blocked',
+      blockReason: 'agent_crashed',
+      limit: 1,
+    });
+    expect(first.tasks.map((task) => task.id)).toEqual(['c2']);
+    expect(first.total).toBe(2);
+    expect(first.nextCursor).toEqual({ createdAt: 60, id: 'c2' });
+    expect(
+      listTaskCores(db, { spaceId, status: 'open', blockReason: 'agent_crashed' }).tasks
+    ).toEqual([]);
+  });
+
   test('bounds page size and normalizes invalid limits', () => {
     const insert = db.prepare(
       "INSERT INTO space_tasks (id, title, status, created_at, updated_at) VALUES (?, 'Extra', 'open', 1, 1)"
