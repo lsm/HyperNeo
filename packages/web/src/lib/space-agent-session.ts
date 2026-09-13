@@ -1,10 +1,3 @@
-export function isCoordinatorSessionId(
-  spaceId: string,
-  sessionId: string | null | undefined
-): boolean {
-  return !!sessionId && sessionId === `space:chat:${spaceId}`;
-}
-
 export function isLongHorizonAgentSessionId(sessionId: string | null | undefined): boolean {
   return !!sessionId && sessionId.startsWith('space:agent:');
 }
