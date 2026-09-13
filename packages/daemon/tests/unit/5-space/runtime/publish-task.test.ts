@@ -71,6 +71,20 @@ function member(id: string, owner?: string) {
   return { sessionId: id };
 }
 
+function endedMember(id: string, owner: string) {
+  sessions.createSession(
+    {
+      ...createTestSession(id),
+      workspacePath: '/repo',
+      type: 'worker',
+      status: 'archived',
+      context: { spaceId: owner },
+    },
+    { enforceWorkspaceOwnership: false }
+  );
+  return { sessionId: id };
+}
+
 function publish(taskId: string) {
   return { name: 'task.publish', input: { taskId } };
 }
@@ -133,6 +147,13 @@ test('losing a concurrent publish reports not_draft, not execution_failed', asyn
     () => ({})
   );
   expect(await rpc(publish(draftId), context)).toBe('not_draft');
+  expect(emit).not.toHaveBeenCalled();
+});
+
+test('an MCP session in the owning Space that is no longer active is denied', async () => {
+  const mcp = createOperationMcpHandler(provider(), () => endedMember('stale', spaceId));
+  expect(JSON.parse((await mcp(publish(draftId))).content[0].text)).toBe('publish_denied');
+  expect(tasks.getTask(draftId)?.status).toBe('draft');
   expect(emit).not.toHaveBeenCalled();
 });
 
