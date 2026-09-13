@@ -343,6 +343,70 @@ describe('shared operation invocation audit hooks', () => {
     expect(meta.tag).toBe('real');
     expect((afterInput as { meta: { tag: string } }).meta.tag).toBe('real');
   });
+  test('an input that defeats both structured and JSON cloning is still isolated', async () => {
+    const operation = defineOperation({
+      name: 'message.send.compound',
+      description: 'Accept a message that no standard clone can copy',
+      inputSchema: z.object({
+        content: z.string(),
+        meta: z.object({ tag: z.string() }),
+        callback: z.any(),
+        big: z.any(),
+      }),
+      resultSchema: z.object({ accepted: z.string() }),
+      execute: async (input: { content: string }) => ({ accepted: input.content }),
+    });
+    const registry = createOperationRegistry([operation]);
+    let afterInput: unknown = null;
+    const audit = {
+      before: (prepared: { input: { meta: { tag: string } } }) => {
+        prepared.input.meta.tag = 'redacted-by-before';
+      },
+      after: (prepared: { input: unknown }) => {
+        afterInput = prepared.input;
+      },
+    };
+    const meta = { tag: 'real' };
+    await invokeOperation(
+      registry,
+      'message.send.compound',
+      { content: 'hello', meta, callback: () => 'not cloneable', big: BigInt(7) },
+      caller,
+      audit
+    );
+    expect(meta.tag).toBe('real');
+    expect((afterInput as { meta: { tag: string } }).meta.tag).toBe('real');
+  });
+  test('a self-referencing uncloneable input does not hang the isolating copy', async () => {
+    const operation = defineOperation({
+      name: 'message.send.cyclic',
+      description: 'Accept a message with a cycle and a callback',
+      inputSchema: z.object({ content: z.string(), node: z.any(), callback: z.any() }),
+      resultSchema: z.object({ accepted: z.string() }),
+      execute: async (input: { content: string }) => ({ accepted: input.content }),
+    });
+    const registry = createOperationRegistry([operation]);
+    const node: Record<string, unknown> = { tag: 'real' };
+    node.self = node;
+    let afterInput: unknown = null;
+    const audit = {
+      after: (prepared: { input: unknown }) => {
+        afterInput = prepared.input;
+      },
+    };
+    const outcome = await invokeOperation(
+      registry,
+      'message.send.cyclic',
+      { content: 'hello', node, callback: () => 'not cloneable' },
+      caller,
+      audit
+    );
+    expect(outcome.kind).toBe('completed');
+    const copied = (afterInput as { node: Record<string, unknown> }).node;
+    expect(copied.tag).toBe('real');
+    expect(copied.self).toBe(copied);
+    expect(copied).not.toBe(node);
+  });
   test('no snapshot work happens when no audit hook is installed', async () => {
     const { registry } = fixture();
     const originalClone = globalThis.structuredClone;

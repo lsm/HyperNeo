@@ -105,14 +105,30 @@ async function runAudited(fn: (() => void | Promise<void>) | undefined): Promise
   } catch {}
 }
 
+function isolateValue<T>(value: T, seen: WeakMap<object, unknown>): T {
+  if (!value || typeof value !== 'object') return value;
+  const source = value as object;
+  const cached = seen.get(source);
+  if (cached) return cached as T;
+  if (source instanceof Date) return new Date(source.getTime()) as T;
+  if (Array.isArray(source)) {
+    const copy: unknown[] = [];
+    seen.set(source, copy);
+    for (const item of source) copy.push(isolateValue(item, seen));
+    return copy as T;
+  }
+  const copy: Record<string, unknown> = {};
+  seen.set(source, copy);
+  for (const [key, item] of Object.entries(source)) copy[key] = isolateValue(item, seen);
+  return copy as T;
+}
+
 function cloneValue<T>(value: T): T {
   try {
     return structuredClone(value);
-  } catch {}
-  try {
-    return JSON.parse(JSON.stringify(value)) as T;
-  } catch {}
-  return value && typeof value === 'object' ? ({ ...value } as T) : value;
+  } catch {
+    return isolateValue(value, new WeakMap<object, unknown>());
+  }
 }
 
 function snapshotPrepared(prepared: PreparedOperation): Readonly<PreparedOperation> {
