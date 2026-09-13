@@ -1361,6 +1361,167 @@ describe('shared operation invocation audit hooks', () => {
       description: '[unrepresentable]',
     });
   });
+  test('an augmented platform object is still marked, not reduced to its attached field', async () => {
+    const operation = defineOperation({
+      name: 'message.send.augmented',
+      description: 'Accept platform objects carrying an extra public field',
+      inputSchema: z.object({ content: z.string(), first: z.any(), second: z.any() }),
+      resultSchema: z.object({ accepted: z.string() }),
+      execute: async (input: { content: string }) => ({ accepted: input.content }),
+    });
+    const registry = createOperationRegistry([operation]);
+    const first = new URL('https://first.test/a') as URL & { label?: string };
+    const second = new URL('https://second.test/b') as URL & { label?: string };
+    first.label = 'same';
+    second.label = 'same';
+    let seen: unknown = null;
+    await invokeOperation(
+      registry,
+      'message.send.augmented',
+      { content: 'hello', first, second },
+      caller,
+      {
+        after: (prepared: { input: unknown }) => {
+          seen = prepared.input;
+        },
+      }
+    );
+    expect(seen).toEqual({
+      content: 'hello',
+      first: '[unrepresentable]',
+      second: '[unrepresentable]',
+    });
+  });
+  test('a chain too deep to walk marks only the level that exceeds the budget', async () => {
+    const operation = defineOperation({
+      name: 'message.send.deep',
+      description: 'Accept a deeply nested chain',
+      inputSchema: z.object({ content: z.string(), chain: z.any() }),
+      resultSchema: z.object({ accepted: z.string() }),
+      execute: async (input: { content: string }) => ({ accepted: input.content }),
+    });
+    const registry = createOperationRegistry([operation]);
+    const root: Record<string, unknown> = {};
+    let cursor = root;
+    for (let i = 0; i < 50_000; i += 1) {
+      const next: Record<string, unknown> = {};
+      cursor.next = next;
+      cursor = next;
+    }
+    let seen: { content?: string; chain?: Record<string, unknown> } | null = null;
+    const outcome = await invokeOperation(
+      registry,
+      'message.send.deep',
+      { content: 'hello', chain: root },
+      caller,
+      {
+        after: (prepared: { input: unknown }) => {
+          seen = prepared.input as { content?: string; chain?: Record<string, unknown> };
+        },
+      }
+    );
+
+    expect(outcome).toEqual({ kind: 'completed', value: { accepted: 'hello' } });
+    const recorded = seen as unknown as { content: string; chain: Record<string, unknown> };
+    expect(recorded.content).toBe('hello');
+    expect(typeof recorded.chain).toBe('object');
+    let depth = 0;
+    let node: unknown = recorded.chain;
+    while (node && typeof node === 'object') {
+      depth += 1;
+      node = (node as { next?: unknown }).next;
+    }
+    expect(depth).toBeGreaterThan(1);
+    expect(node).toBe('[unrepresentable]');
+  });
+  test('a completed outcome stays an outcome even when its value cannot be walked', async () => {
+    const deep: Record<string, unknown> = {};
+    let cursor = deep;
+    for (let i = 0; i < 50_000; i += 1) {
+      const next: Record<string, unknown> = {};
+      cursor.next = next;
+      cursor = next;
+    }
+    const operation = defineOperation({
+      name: 'message.send.deepresult',
+      description: 'Return a deeply nested chain',
+      inputSchema: z.object({ content: z.string() }),
+      resultSchema: z.object({ chain: z.any() }),
+      execute: async () => ({ chain: deep }),
+    });
+    const registry = createOperationRegistry([operation]);
+    let seen: { kind?: string } | null = null;
+    await invokeOperation(registry, 'message.send.deepresult', { content: 'hello' }, caller, {
+      after: (_prepared: unknown, _callerArg: unknown, outcome: { kind?: string }) => {
+        seen = outcome;
+      },
+    });
+    expect((seen as unknown as { kind: string }).kind).toBe('completed');
+  });
+  test('an inherited index setter never runs while copying an array', async () => {
+    const operation = defineOperation({
+      name: 'message.send.indexsetter',
+      description: 'Accept an array while the prototype defines an index setter',
+      inputSchema: z.object({ content: z.string(), rows: z.any() }),
+      resultSchema: z.object({ accepted: z.string() }),
+      execute: async (input: { content: string }) => ({ accepted: input.content }),
+    });
+    const registry = createOperationRegistry([operation]);
+    let setterRuns = 0;
+    const SLOT = '50';
+    Object.defineProperty(Array.prototype, SLOT, {
+      configurable: true,
+      set() {
+        setterRuns += 1;
+      },
+      get() {
+        return 'from-prototype';
+      },
+    });
+    try {
+      const rows: unknown[] = [];
+      Object.defineProperty(rows, SLOT, {
+        value: 'mine',
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
+      rows.length = 51;
+      let seen: unknown = null;
+      await invokeOperation(
+        registry,
+        'message.send.indexsetter',
+        { content: 'hello', rows },
+        caller,
+        {
+          after: (prepared: { input: unknown }) => {
+            seen = prepared.input;
+          },
+        }
+      );
+      const recorded = (seen as { rows: unknown[] }).rows;
+      expect(setterRuns).toBe(0);
+      expect(Object.hasOwn(recorded, SLOT)).toBe(true);
+      expect(recorded[50]).toBe('mine');
+    } finally {
+      delete (Array.prototype as unknown as Record<string, unknown>)[SLOT];
+    }
+  });
+  test('a hook that shadows its own bind is still captured', async () => {
+    const { registry } = fixture();
+    let ran = false;
+    const before = () => {
+      ran = true;
+    };
+    (before as unknown as { bind?: unknown }).bind = undefined;
+
+    const outcome = await invokeOperation(registry, 'message.send', { content: 'hello' }, caller, {
+      before,
+    });
+
+    expect(outcome).toEqual({ kind: 'completed', value: { accepted: 'hello' } });
+    expect(ran).toBe(true);
+  });
   test('a handler mutating its caller does not change what after records', async () => {
     const { operation } = fixture();
     const hijackingExecute = async (

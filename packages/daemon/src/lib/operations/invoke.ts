@@ -117,6 +117,7 @@ async function runAudited(fn: (() => void | Promise<void>) | undefined): Promise
 }
 
 const UNREPRESENTABLE = '[unrepresentable]';
+const MAX_SNAPSHOT_DEPTH = 200;
 
 type AuditHooks = {
   before?: NonNullable<OperationAudit['before']>;
@@ -129,7 +130,9 @@ function resolveAuditHook<K extends keyof OperationAudit>(
 ): AuditHooks[K] {
   try {
     const hook = audit?.[key];
-    return typeof hook === 'function' ? (hook.bind(audit) as AuditHooks[K]) : undefined;
+    return typeof hook === 'function'
+      ? (Function.prototype.bind.call(hook, audit) as AuditHooks[K])
+      : undefined;
   } catch {
     return undefined;
   }
@@ -161,23 +164,20 @@ function isDateValue(source: object): boolean {
 function projectEnumerableData(
   descriptors: Record<string | symbol, PropertyDescriptor>,
   target: object,
-  seen: WeakMap<object, unknown>
+  seen: WeakMap<object, unknown>,
+  depth: number
 ): void {
   for (const key of Reflect.ownKeys(descriptors)) {
     const descriptor = descriptors[key as string];
     if (!descriptor.enumerable) continue;
     Object.defineProperty(target, key, {
-      value: 'value' in descriptor ? isolateValue(descriptor.value, seen) : UNREPRESENTABLE,
+      value:
+        'value' in descriptor ? isolateValue(descriptor.value, seen, depth + 1) : UNREPRESENTABLE,
       enumerable: true,
       writable: true,
       configurable: true,
     });
   }
-}
-
-function isArrayIndex(key: string): boolean {
-  const index = Number(key);
-  return Number.isInteger(index) && index >= 0 && index < 2 ** 32 - 1 && String(index) === key;
 }
 
 function hasInternalSlots(source: object): boolean {
@@ -202,26 +202,31 @@ function hasInternalSlots(source: object): boolean {
   }
 }
 
-function hasOwnEnumerableData(descriptors: Record<string | symbol, PropertyDescriptor>): boolean {
-  return Reflect.ownKeys(descriptors).some((key) => {
-    const descriptor = descriptors[key as string];
-    return descriptor.enumerable && 'value' in descriptor;
-  });
+function isPlatformBranded(source: object): boolean {
+  let cursor: unknown = Object.getPrototypeOf(source);
+  try {
+    while (cursor && (typeof cursor === 'object' || typeof cursor === 'function')) {
+      if (isProxyBacked(cursor as object)) return true;
+      if (Object.getOwnPropertyDescriptor(cursor, Symbol.toStringTag)) return true;
+      cursor = Object.getPrototypeOf(cursor);
+    }
+  } catch {
+    return true;
+  }
+  return false;
 }
 
-function isProjectable(
-  source: object,
-  descriptors: Record<string | symbol, PropertyDescriptor>
-): boolean {
+function isProjectable(source: object): boolean {
   if (Array.isArray(source) || typeof source === 'function') return true;
   if (hasInternalSlots(source)) return false;
   const proto = Object.getPrototypeOf(source);
   if (proto === Object.prototype || proto === null) return true;
-  return hasOwnEnumerableData(descriptors);
+  return !isPlatformBranded(source);
 }
 
-function isolateValue<T>(value: T, seen: WeakMap<object, unknown>): T {
+function isolateValue<T>(value: T, seen: WeakMap<object, unknown>, depth: number): T {
   if (!value || (typeof value !== 'object' && typeof value !== 'function')) return value;
+  if (depth >= MAX_SNAPSHOT_DEPTH) return UNREPRESENTABLE as T;
   const source = value as object;
   const cached = seen.get(source);
   if (cached) return cached as T;
@@ -229,22 +234,19 @@ function isolateValue<T>(value: T, seen: WeakMap<object, unknown>): T {
   if (isDateValue(source)) {
     const detached = new Date(Date.prototype.getTime.call(source as Date));
     seen.set(source, detached);
-    projectEnumerableData(Object.getOwnPropertyDescriptors(source), detached, seen);
+    projectEnumerableData(Object.getOwnPropertyDescriptors(source), detached, seen, depth);
     return detached as T;
   }
+  if (!isProjectable(source)) return UNREPRESENTABLE as T;
   const descriptors = Object.getOwnPropertyDescriptors(source);
-  if (!isProjectable(source, descriptors)) return UNREPRESENTABLE as T;
   if (Array.isArray(source)) {
     const copy: unknown[] = [];
     seen.set(source, copy);
     for (const key of Reflect.ownKeys(descriptors)) {
       const descriptor = descriptors[key as string];
       if (!descriptor.enumerable) continue;
-      const entry = 'value' in descriptor ? isolateValue(descriptor.value, seen) : UNREPRESENTABLE;
-      if (typeof key === 'string' && isArrayIndex(key)) {
-        copy[Number(key)] = entry;
-        continue;
-      }
+      const entry =
+        'value' in descriptor ? isolateValue(descriptor.value, seen, depth + 1) : UNREPRESENTABLE;
       Object.defineProperty(copy, key, {
         value: entry,
         enumerable: true,
@@ -257,13 +259,13 @@ function isolateValue<T>(value: T, seen: WeakMap<object, unknown>): T {
   }
   const copy: Record<string | symbol, unknown> = {};
   seen.set(source, copy);
-  projectEnumerableData(descriptors, copy, seen);
+  projectEnumerableData(descriptors, copy, seen, depth);
   return copy as T;
 }
 
 function cloneValue<T>(value: T): T {
   try {
-    return isolateValue(value, new WeakMap<object, unknown>());
+    return isolateValue(value, new WeakMap<object, unknown>(), 0);
   } catch {
     return UNREPRESENTABLE as T;
   }
