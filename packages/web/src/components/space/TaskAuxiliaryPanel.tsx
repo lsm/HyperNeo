@@ -153,7 +153,7 @@ export function TaskAuxiliaryPanel({
       } else if (newStatus === 'cancelled') {
         await spaceStore.cancelTask(task.id);
       } else {
-        await spaceStore.updateTask(task.id, { status: newStatus });
+        await spaceStore.transitionTask(task.id, newStatus);
       }
     } catch (err) {
       setTransitionError(err instanceof Error ? err.message : 'Failed to update task status');

@@ -2158,7 +2158,7 @@ class SpaceStore {
     return result.scope ?? null;
   }
 
-  async recoverWorkflowTask(taskId: string, status: 'open' | 'in_progress'): Promise<SpaceTask> {
+  async transitionTask(taskId: string, status: SpaceTaskStatus): Promise<SpaceTask> {
     const spaceId = this.spaceId.value;
     if (!spaceId) throw new Error('No space selected');
 
@@ -2166,6 +2166,10 @@ class SpaceStore {
     if (!hub) throw new Error('Not connected');
 
     return transitionTask(hub, { taskId, status });
+  }
+
+  async recoverWorkflowTask(taskId: string, status: 'open' | 'in_progress'): Promise<SpaceTask> {
+    return this.transitionTask(taskId, status);
   }
 
   async publishTask(taskId: string): Promise<SpaceTask> {

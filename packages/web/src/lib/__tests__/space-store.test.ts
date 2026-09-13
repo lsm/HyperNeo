@@ -12,7 +12,7 @@ import type {
   SpaceWorkflowRun,
 } from '@hyperneo/shared';
 import { signal } from '@preact/signals';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 import { connectionManager } from '../connection-manager.ts';
 
 const currentSpaceIdSignal = signal<string | null>(null);
@@ -1813,6 +1813,28 @@ describe('SpaceStore — CRUD methods', () => {
     await expect(spaceStore.publishTask('t1')).rejects.toThrow(
       'Cannot move task t1 to open: invalid_transition'
     );
+  });
+
+  it('transitionTask sends the bare status through the operations door', async () => {
+    await spaceStore.selectSpace('space-1');
+    const task = await spaceStore.transitionTask('t1', 'stopped');
+
+    expect(mockHub.request).toHaveBeenCalledWith('operation.invoke', {
+      name: 'task.transition',
+      input: { taskId: 't1', status: 'stopped' },
+    });
+    expect(task.id).toBe('t1');
+  });
+
+  it('transitionTask carries no post-approval fields; the daemon clears them', async () => {
+    await spaceStore.selectSpace('space-1');
+    await spaceStore.transitionTask('t1', 'done');
+
+    const [, payload] = (mockHub.request as Mock).mock.calls.find(
+      ([method, params]) =>
+        method === 'operation.invoke' && (params as { name?: string })?.name === 'task.transition'
+    ) as [string, { input: Record<string, unknown> }];
+    expect(Object.keys(payload.input).sort()).toEqual(['status', 'taskId']);
   });
 
   it('recoverWorkflowTask transitions through the operations door without a spaceId', async () => {

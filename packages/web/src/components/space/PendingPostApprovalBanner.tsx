@@ -1,6 +1,5 @@
 import { useCallback, useState } from 'preact/hooks';
 import type { SpaceTask } from '@hyperneo/shared';
-import { buildMarkDonePayload } from '../../lib/space-task-helpers';
 import { spaceStore } from '../../lib/space-store';
 import { InlineStatusBanner, type InlineStatusBannerAction } from './InlineStatusBanner';
 
@@ -25,7 +24,7 @@ export function PendingPostApprovalBanner({
     setBusy(true);
     setError(null);
     try {
-      await spaceStore.updateTask(task.id, buildMarkDonePayload(task));
+      await spaceStore.transitionTask(task.id, 'done');
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to mark done');
     } finally {
@@ -37,10 +36,7 @@ export function PendingPostApprovalBanner({
     setBusy(true);
     setError(null);
     try {
-      await spaceStore.updateTask(task.id, {
-        status: 'in_progress',
-        postApprovalBlockedReason: null,
-      });
+      await spaceStore.transitionTask(task.id, 'in_progress');
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to send back');
     } finally {

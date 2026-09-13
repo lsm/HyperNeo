@@ -1,17 +1,4 @@
-import type { SpaceTask, SpaceWorkspace, UpdateSpaceTaskParams } from '@hyperneo/shared';
-
-export function buildMarkDonePayload(task: SpaceTask): UpdateSpaceTaskParams {
-  return {
-    status: 'done',
-    ...(task.status === 'approved'
-      ? {
-          postApprovalSessionId: null,
-          postApprovalStartedAt: null,
-          postApprovalBlockedReason: null,
-        }
-      : {}),
-  };
-}
+import type { SpaceTask, SpaceWorkspace } from '@hyperneo/shared';
 
 export function getWorkspaceLabel(
   workspacePath: string | null | undefined,

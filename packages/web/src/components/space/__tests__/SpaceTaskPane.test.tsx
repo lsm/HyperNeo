@@ -104,6 +104,7 @@ let mockNodeExecutionsByNodeId: ReturnType<typeof signal<Map<string, unknown[]>>
 const mockWorkspaces = signal<unknown[]>([]);
 
 const mockUpdateTask = vi.fn().mockResolvedValue(undefined);
+const mockTransitionTask = vi.fn().mockResolvedValue(undefined);
 const mockRunTaskDirectly = vi.fn().mockResolvedValue({ accepted: true, jobId: 'job-1' });
 const mockCancelTask = vi.fn().mockResolvedValue({ accepted: true, jobId: null });
 const mockRecoverWorkflowTask = vi.fn().mockResolvedValue(undefined);
@@ -132,6 +133,7 @@ vi.mock('../../../lib/space-store', () => ({
       nodeExecutionsByNodeId: mockNodeExecutionsByNodeId,
       workspaces: mockWorkspaces,
       updateTask: mockUpdateTask,
+      transitionTask: mockTransitionTask,
       runTaskDirectly: mockRunTaskDirectly,
       cancelTask: mockCancelTask,
       recoverWorkflowTask: mockRecoverWorkflowTask,
@@ -320,6 +322,7 @@ describe('SpaceTaskPane', () => {
     mockNodeExecutions.value = [];
     mockWorkspaces.value = [];
     mockUpdateTask.mockClear();
+    mockTransitionTask.mockClear();
     mockCancelTask.mockClear();
     mockRecoverWorkflowTask.mockClear();
     mockEnsureTaskAgentSession.mockReset();
@@ -1737,14 +1740,12 @@ describe('SpaceTaskPane — activity members actions', () => {
     expect(getByText('Archive')).toBeTruthy();
   });
 
-  it('calls updateTask when a transition action is clicked in the dropdown', async () => {
+  it('transitions through the operations door when a dropdown action is clicked', async () => {
     mockTasks.value = [makeTask({ status: 'done', taskAgentSessionId: 'session-abc' })];
     const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" />);
     fireEvent.click(getByTestId('task-actions-menu-trigger'));
     fireEvent.click(getByText('Reopen'));
-    await waitFor(() =>
-      expect(mockUpdateTask).toHaveBeenCalledWith('task-1', { status: 'in_progress' })
-    );
+    await waitFor(() => expect(mockTransitionTask).toHaveBeenCalledWith('task-1', 'in_progress'));
   });
 
   it('cancels blocked workflow tasks with a task status transition', async () => {
@@ -1811,7 +1812,7 @@ describe('SpaceTaskPane — activity members actions', () => {
     expect(mockUpdateTask).not.toHaveBeenCalled();
   });
 
-  it('stops an in_progress workflow task with a plain updateTask call', async () => {
+  it('stops an in_progress workflow task with a plain transition', async () => {
     mockTasks.value = [
       makeTask({
         status: 'in_progress',
@@ -1825,9 +1826,7 @@ describe('SpaceTaskPane — activity members actions', () => {
     fireEvent.click(getByTestId('task-actions-menu-trigger'));
     fireEvent.click(getByText('Stop'));
 
-    await waitFor(() =>
-      expect(mockUpdateTask).toHaveBeenCalledWith('task-1', { status: 'stopped' })
-    );
+    await waitFor(() => expect(mockTransitionTask).toHaveBeenCalledWith('task-1', 'stopped'));
     expect(mockRecoverWorkflowTask).not.toHaveBeenCalled();
   });
 
@@ -1865,19 +1864,17 @@ describe('SpaceTaskPane — activity members actions', () => {
     await waitFor(() =>
       expect(mockRecoverWorkflowTask).toHaveBeenCalledWith('task-1', 'in_progress')
     );
-    expect(mockUpdateTask).not.toHaveBeenCalled();
+    expect(mockTransitionTask).not.toHaveBeenCalled();
   });
 
-  it('resumes a stopped standalone task with a plain updateTask call', async () => {
+  it('resumes a stopped standalone task with a plain transition', async () => {
     mockTasks.value = [makeTask({ status: 'stopped', taskAgentSessionId: 'session-abc' })];
     const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" />);
 
     fireEvent.click(getByTestId('task-actions-menu-trigger'));
     fireEvent.click(getByText('Resume'));
 
-    await waitFor(() =>
-      expect(mockUpdateTask).toHaveBeenCalledWith('task-1', { status: 'in_progress' })
-    );
+    await waitFor(() => expect(mockTransitionTask).toHaveBeenCalledWith('task-1', 'in_progress'));
     expect(mockRecoverWorkflowTask).not.toHaveBeenCalled();
   });
 
