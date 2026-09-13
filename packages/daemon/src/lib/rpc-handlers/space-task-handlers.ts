@@ -3,10 +3,7 @@ import {
   isWorkflowRecoveryTransition,
   resolveNodeAgents,
   type MessageHub,
-  type PaginatedSpaceTaskResult,
-  type SpaceBlockReason,
   type SpaceTask,
-  type SpaceTaskStatus,
   type UpdateSpaceTaskParams,
 } from '@hyperneo/shared';
 
@@ -101,71 +98,6 @@ export function setupSpaceTaskHandlers(
   internalEventBus: InternalEventBus<DaemonInternalEventMap>,
   spaceRuntimeService?: SpaceRuntimeService
 ): void {
-  messageHub.onRequest('spaceTask.list', async (data) => {
-    const params = data as {
-      spaceId: string;
-      includeArchived?: boolean;
-      status?: SpaceTaskStatus;
-      blockReason?: SpaceBlockReason | null;
-      blockReasonNotIn?: SpaceBlockReason[];
-      limit?: number;
-      offset?: number;
-    };
-
-    if (!params.spaceId) {
-      throw new Error('spaceId is required');
-    }
-
-    const space = await spaceManager.getSpace(params.spaceId);
-    if (!space) {
-      throw new Error(`Space not found: ${params.spaceId}`);
-    }
-
-    const taskManager = taskManagerFactory(params.spaceId);
-
-    const usePagination =
-      params.status !== undefined ||
-      params.limit !== undefined ||
-      params.offset !== undefined ||
-      params.blockReason !== undefined ||
-      params.blockReasonNotIn !== undefined;
-
-    if (!usePagination) {
-      return taskManager.listTasks(params.includeArchived ?? false);
-    }
-
-    if (params.status === undefined) {
-      throw new Error('status is required when paginating spaceTask.list');
-    }
-    if (
-      (params.blockReason !== undefined || params.blockReasonNotIn !== undefined) &&
-      params.status !== 'blocked'
-    ) {
-      throw new Error("blockReason / blockReasonNotIn filter requires status === 'blocked'");
-    }
-    if (params.blockReason !== undefined && params.blockReasonNotIn !== undefined) {
-      throw new Error('blockReason and blockReasonNotIn are mutually exclusive');
-    }
-
-    const limit = params.limit ?? 10;
-    const offset = params.offset ?? 0;
-    if (!Number.isFinite(limit) || limit <= 0) {
-      throw new Error('limit must be a positive number');
-    }
-    if (!Number.isFinite(offset) || offset < 0) {
-      throw new Error('offset must be a non-negative number');
-    }
-
-    const result: PaginatedSpaceTaskResult = await taskManager.listTasksByStatusPaginated(
-      params.status,
-      params.blockReason,
-      limit,
-      offset,
-      params.blockReasonNotIn
-    );
-    return result;
-  });
-
   messageHub.onRequest('spaceTask.update', async (data) => {
     const params = data as {
       spaceId: string;
