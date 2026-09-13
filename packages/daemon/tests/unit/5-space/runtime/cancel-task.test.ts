@@ -8,7 +8,7 @@ import { createDatabaseOperationCatalog } from '../../../../src/lib/operations/d
 import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager';
 import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-adapter';
 import { createOperationRpcHandler } from '../../../../src/lib/operations/rpc-adapter';
-import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
+import { afterEach, beforeEach, expect, mock, spyOn, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { createTables, runMigrations } from '../../../../src/storage/schema';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
@@ -281,6 +281,40 @@ test('a reserved attempt with a retained task session is fenced and cancelled th
   expect(attempts.get(attemptId)?.phase).toBe('reserved');
   expect(tasks.getTask(taskId)?.status).toBe('cancelled');
   expect(emitTaskUpdated).toHaveBeenCalledTimes(1);
+});
+
+test('a completion landing between the read and the guarded write blocks both the fence and the status overwrite', async () => {
+  db.prepare("UPDATE direct_task_execution_attempts SET phase='reserved' WHERE id=?").run(
+    attemptId
+  );
+  const realGetTask = SpaceTaskRepository.prototype.getTask;
+  let calls = 0;
+  const spy = spyOn(SpaceTaskRepository.prototype, 'getTask').mockImplementation(function (
+    this: SpaceTaskRepository,
+    id: string
+  ) {
+    calls += 1;
+    const row = realGetTask.call(this, id);
+    if (calls === 2) db.prepare("UPDATE space_tasks SET status='done' WHERE id=?").run(id);
+    return row;
+  });
+  const emitTaskUpdated = mock(async () => {});
+  const managedOp = createCancelTaskOperation(() => db, jobs, {
+    getTaskManager: (id) => new SpaceTaskManager(db, id),
+    emitTaskUpdated,
+  });
+  try {
+    expect(await managedOp.execute({ taskId }, { source: 'rpc' })).toEqual({
+      accepted: false,
+      reason: 'cancellation_unavailable',
+    });
+  } finally {
+    spy.mockRestore();
+  }
+  expect(tasks.getTask(taskId)?.status).toBe('done');
+  expect(attempts.isStopRequested(attemptId, sessionId)).toBe(false);
+  expect(attempts.get(attemptId)?.phase).toBe('reserved');
+  expect(emitTaskUpdated).not.toHaveBeenCalled();
 });
 
 test('a task with a retained agent session whose attempt already stopped is cancelled through the manager, not the direct binding', async () => {

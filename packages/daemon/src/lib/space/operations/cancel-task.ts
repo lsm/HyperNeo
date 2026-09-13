@@ -8,7 +8,7 @@ import { SessionRepository } from '../../../storage/repositories/session-reposit
 import { DirectTaskExecutionRepository } from '../../../storage/repositories/direct-task-execution-repository.ts';
 import { defineOperation, type OperationCaller } from '../../operations/registry.ts';
 import type { SpaceMcpSessionPolicyContext } from '../runtime/space-mcp-session-policy.ts';
-import type { SpaceTaskManager } from '../managers/space-task-manager.ts';
+import { StaleTaskGuardError, type SpaceTaskManager } from '../managers/space-task-manager.ts';
 import { resolveMetadataSessionSpace } from './task-metadata.ts';
 import { resolveCancellationRoute, supersedeReservedAttempt } from './cancel-route.ts';
 import type { SpaceTaskDependencyDependencies } from './task-dependencies.ts';
@@ -80,10 +80,17 @@ async function admitManagedCancellation(
   }
   const getTaskManager = policy.getTaskManager;
   if (!getTaskManager) return { reason: { accepted: false, reason: 'cancellation_unavailable' } };
-  if (route.kind === 'reserved' && !supersedeReservedAttempt(db, route.attempt))
-    return { reason: { accepted: false, reason: 'cancellation_unavailable' } };
+  const guardWrite =
+    route.kind === 'reserved'
+      ? (current: SpaceTask): string | undefined => {
+          if (current.archivedAt || current.status === 'cancelled' || current.status === 'done')
+            return 'already_terminal';
+          return supersedeReservedAttempt(db, route.attempt) ? undefined : 'reserved_attempt_race';
+        }
+      : undefined;
   try {
     const updated = await getTaskManager(task.spaceId).setTaskStatus(task.id, 'cancelled', {
+      guardWrite,
       onCascadedTasks: async (cascaded) => {
         for (const cascadedTask of cascaded) {
           await policy.emitTaskUpdated?.(task.spaceId, cascadedTask).catch((error: unknown) => {
@@ -97,6 +104,9 @@ async function admitManagedCancellation(
     });
     return { reason: { accepted: true, jobId: null } };
   } catch (error) {
+    if (error instanceof StaleTaskGuardError) {
+      return { reason: { accepted: false, reason: 'cancellation_unavailable' } };
+    }
     if (!resolveWorkflowCancellationRejection(error)) throw error;
     return { reason: { accepted: false, reason: 'cancellation_invalid_transition' } };
   }
