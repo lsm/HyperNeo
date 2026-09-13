@@ -1731,7 +1731,11 @@ describe('SpaceStore — CRUD methods', () => {
     await spaceStore.selectSpace('space-1');
     await spaceStore.deleteSpace();
 
-    expect(mockHub.request).toHaveBeenCalledWith('space.delete', { id: 'space-1' });
+    expect(mockHub.request).toHaveBeenCalledWith(
+      'space.delete',
+      { id: 'space-1' },
+      { timeout: 60000 }
+    );
     expect(spaceStore.spaceId.value).toBeNull();
   });
 

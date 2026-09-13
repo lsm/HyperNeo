@@ -22,6 +22,10 @@ import type { SpaceTaskRepository } from '../../storage/repositories/space-task-
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository.ts';
 import type { SessionManager } from '../session-manager.ts';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
+import {
+  runSpaceDeletion,
+  type DeleteSpaceResult,
+} from '../space/managers/delete-space-pipeline.ts';
 import { createSpace, type CreateSpaceDeps } from '../space/create-space-pipeline.ts';
 import { seedBuiltInWorkflows } from '../space/workflows/built-in-workflows.ts';
 import { Logger } from '../logger.ts';
@@ -236,6 +240,8 @@ export function setupSpaceHandlers(
     return space;
   });
 
+  const deletingSpaceIds = new Set<string>();
+
   messageHub.onRequest('space.stop', async (data) => {
     const params = data as { id: string };
 
@@ -263,6 +269,10 @@ export function setupSpaceHandlers(
 
     if (!params.id) {
       throw new Error('id is required');
+    }
+
+    if (deletingSpaceIds.has(params.id)) {
+      throw new Error(`Space is being deleted: ${params.id}`);
     }
 
     const space = await spaceManager.startSpace(params.id);
@@ -319,8 +329,52 @@ export function setupSpaceHandlers(
       throw new Error('id is required');
     }
 
-    const deleted = await spaceManager.deleteSpace(params.id);
-    if (!deleted) {
+    if (deletingSpaceIds.has(params.id)) {
+      throw new Error(`Space is being deleted: ${params.id}`);
+    }
+
+    let fenced = false;
+    const publishAbandonedFence = async () => {
+      if (!fenced) return;
+      try {
+        const current = await spaceManager.getSpace(params.id);
+        if (!current) return;
+        await internalEventBus.publish('space.updated', {
+          sessionId: 'global',
+          spaceId: params.id,
+          space: current,
+        });
+      } catch (err) {
+        log.warn('Failed to emit space.updated after a failed delete:', err);
+      }
+    };
+
+    deletingSpaceIds.add(params.id);
+    let outcome: DeleteSpaceResult;
+    try {
+      outcome = await runSpaceDeletion(
+        {
+          fenceSpace: async (spaceId) => {
+            if (!(await spaceManager.getSpace(spaceId))) return false;
+            await spaceManager.stopSpace(spaceId);
+            fenced = true;
+            return true;
+          },
+          quiesceSpace: spaceRuntimeService
+            ? (spaceId) => spaceRuntimeService.stopActiveWork(spaceId)
+            : undefined,
+          removeSpace: (spaceId) => spaceManager.deleteSpace(spaceId),
+        },
+        params.id
+      );
+    } catch (err) {
+      await publishAbandonedFence();
+      throw err;
+    } finally {
+      deletingSpaceIds.delete(params.id);
+    }
+    if (outcome === 'space_not_found') {
+      await publishAbandonedFence();
       throw new Error(`Space not found: ${params.id}`);
     }
 
@@ -330,7 +384,7 @@ export function setupSpaceHandlers(
         log.warn('Failed to emit space.deleted:', err);
       });
 
-    return { success: true };
+    return outcome;
   });
 
   messageHub.onRequest('space.listWithTasks', async (data) => {
