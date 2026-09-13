@@ -607,7 +607,7 @@ describe('shared operation invocation audit hooks', () => {
     expect(recorded).toBeNull();
   });
 
-  test('a caller whose enumeration throws does not fail the operation', async () => {
+  test('a proxy-backed caller is recorded as undetermined rather than reflected over', async () => {
     const { registry } = fixture();
     const hostileCaller = new Proxy(
       { source: 'rpc' as const, sessionId: 'sender' },
@@ -630,7 +630,37 @@ describe('shared operation invocation audit hooks', () => {
       }
     );
     expect(outcome).toEqual({ kind: 'completed', value: { accepted: 'hello' } });
-    expect(seen).toEqual({ source: 'rpc', sessionId: 'sender' });
+    expect(seen).toEqual({});
+  });
+
+  test('a caller trap never runs because auditing is enabled', async () => {
+    const { operation } = fixture();
+    const trapsRun: string[] = [];
+    const target = { source: 'rpc' as const, sessionId: 'sender' };
+    const trappedCaller = new Proxy(target, {
+      getOwnPropertyDescriptor(t, key) {
+        trapsRun.push('getOwnPropertyDescriptor');
+        return Reflect.getOwnPropertyDescriptor(t, key);
+      },
+      getPrototypeOf(t) {
+        trapsRun.push('getPrototypeOf');
+        return Reflect.getPrototypeOf(t);
+      },
+      ownKeys(t) {
+        trapsRun.push('ownKeys');
+        return Reflect.ownKeys(t);
+      },
+    });
+    const registry = createOperationRegistry([
+      { ...operation, execute: async () => ({ accepted: 'hello' }) },
+    ]);
+
+    await invokeOperation(registry, 'message.send', { content: 'hello' }, trappedCaller, {
+      before: () => {},
+      after: () => {},
+    });
+
+    expect(trapsRun).toEqual([]);
   });
 
   test('a non-enumerable input property stays out of the audit record', async () => {
@@ -679,7 +709,11 @@ describe('shared operation invocation audit hooks', () => {
     });
     const recorded = (seen as { carrier: Record<string, unknown> }).carrier;
     expect(Object.hasOwn(recorded, '__proto__')).toBe(true);
-    expect(JSON.parse(JSON.stringify(recorded))).toEqual({ __proto__: { injected: true } });
+    const roundTripped = JSON.parse(JSON.stringify(recorded)) as Record<string, unknown>;
+    expect(Object.keys(roundTripped)).toEqual(['__proto__']);
+    expect(Object.getOwnPropertyDescriptor(roundTripped, '__proto__')?.value).toEqual({
+      injected: true,
+    });
   });
 
   test('a sparse array with a huge length does not scan its holes', async () => {
@@ -1041,6 +1075,53 @@ describe('shared operation invocation audit hooks', () => {
     expect(recorded.plain).toBe('kept');
     expect(recorded[tag]).toBe('also kept');
     expect(recorded).not.toBe(payload);
+  });
+  test('an enumerable accessor on an array keeps its key with the marker', async () => {
+    const operation = defineOperation({
+      name: 'message.send.arrayaccessor',
+      description: 'Accept an array carrying accessor properties',
+      inputSchema: z.object({ content: z.string(), rows: z.any() }),
+      resultSchema: z.object({ accepted: z.string() }),
+      execute: async (input: { content: string }) => ({ accepted: input.content }),
+    });
+    const registry = createOperationRegistry([operation]);
+    let indexReads = 0;
+    let namedReads = 0;
+    const rows: unknown[] = ['first'];
+    Object.defineProperty(rows, '1', {
+      enumerable: true,
+      configurable: true,
+      get() {
+        indexReads += 1;
+        return 'computed';
+      },
+    });
+    Object.defineProperty(rows, 'label', {
+      enumerable: true,
+      configurable: true,
+      get() {
+        namedReads += 1;
+        return 'computed';
+      },
+    });
+    let seen: unknown = null;
+    await invokeOperation(
+      registry,
+      'message.send.arrayaccessor',
+      { content: 'hello', rows },
+      caller,
+      {
+        after: (prepared: { input: unknown }) => {
+          seen = prepared.input;
+        },
+      }
+    );
+    const recorded = (seen as { rows: unknown[] & { label?: unknown } }).rows;
+    expect(recorded[0]).toBe('first');
+    expect(recorded[1]).toBe('[unrepresentable]');
+    expect(recorded.label).toBe('[unrepresentable]');
+    expect(indexReads).toBe(0);
+    expect(namedReads).toBe(0);
   });
   test('a handler mutating its caller does not change what after records', async () => {
     const { operation } = fixture();
