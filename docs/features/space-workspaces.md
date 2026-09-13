@@ -153,7 +153,8 @@ be registered in only one of them.
 task resolves to the space primary — never a literal duplicate of it: pinning the primary
 path is collapsed back to `NULL` at write time, so the column only ever stores an override.
 
-- **Create/update** (`spaceTask.create`, `spaceTask.update`, and the internal creators) run
+- **Create/update** (`operation.invoke` with `task.create`, `spaceTask.update`, and the
+  internal creators) run
   `SpaceTaskManager.resolveWorkspacePathParam`: `undefined` leaves the column untouched,
   `null` / `''` explicitly unpins, any other value is canonicalized and must be registered
   to this space (`Workspace path is not registered to space: ...`), then collapsed to `NULL`
@@ -242,8 +243,8 @@ worktrees are deliberately **not** registered workspaces.
 
 - RPCs: `space.workspace.list` / `space.workspace.add` / `space.workspace.remove` /
   `space.workspace.updateLabel` (`packages/daemon/src/lib/rpc-handlers/space-handlers.ts`);
-  `space.create` takes `additionalWorkspaces`; `spaceTask.create` / `spaceTask.update` and
-  `spaceGoal.create` / `spaceGoal.update` take `workspacePath`.
+  `space.create` takes `additionalWorkspaces`; `operation.invoke` with `task.create` /
+  `spaceTask.update` and `spaceGoal.create` / `spaceGoal.update` take `workspacePath`.
 - **SpaceCreateDialog** — optional "Additional Workspaces" rows (path + label, folder
   picker, at most 7) submitted with the create; an invalid extra path rejects the whole
   creation atomically.
