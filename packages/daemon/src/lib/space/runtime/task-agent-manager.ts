@@ -186,8 +186,6 @@ import {
 
 const log = new Logger('task-agent-manager');
 
-const WORKFLOW_ESCALATION_TARGET = 'space-agent';
-
 export function isWorkflowTerminalNode(
   workflow: SpaceWorkflow | null | undefined,
   workflowNodeId: string
@@ -3273,8 +3271,7 @@ export class TaskAgentManager {
       'Tools available:',
       ...(dispatcherTools ?? []),
       ...typedTools,
-      `Escalation: send_message({ target: "${WORKFLOW_ESCALATION_TARGET}", message }) requests human/space-level judgment (use for misrouted no-code tasks or hard blockers).`,
-      'Only contact the task-agent via send_message if you are blocked or need human input.',
+      'If you hit a hard blocker: record it with save_artifact({ shape: "note", kind: "blocked", summary: "<what blocks you>" }) and stop. Do NOT wait for a reply — there is no Space-level recipient, and the unfinished task carrying that artifact is the signal a human acts on.',
     ].join('\n');
 
     if (!workflow) {
@@ -3300,10 +3297,7 @@ export class TaskAgentManager {
     ];
 
     lines.push(
-      `Escalation: send_message({ target: "${WORKFLOW_ESCALATION_TARGET}", message }) requests human/space-level judgment (use for misrouted no-code tasks or hard blockers).`
-    );
-    lines.push(
-      'Only contact the task-agent via send_message if you are blocked or need human input.'
+      'If you hit a hard blocker: record it with save_artifact({ shape: "note", kind: "blocked", summary: "<what blocks you>" }) and stop. Do NOT wait for a reply — there is no Space-level recipient, and the unfinished task carrying that artifact is the signal a human acts on.'
     );
     if (isEndNode) {
       if (approveUnlocked) {

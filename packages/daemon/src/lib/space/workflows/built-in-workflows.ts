@@ -97,6 +97,9 @@ const RETIRED_P3_REVIEWER_ZERO_FINDINGS_GATE =
 const RETIRED_PREVIOUS_FULLSTACK_CODING_NOCHANGE_GUIDANCE =
   'If the task requires no code changes (validation-only, a diagnostic, or already complete): do NOT create an empty commit or PR. This workflow only completes via a reviewed PR, so a no-change task is misrouted — send a message to `space-agent` explaining that the task produced no code changes and needs re-routing, then stop and wait for guidance.\n\n';
 
+const RETIRED_ESCALATION_FULLSTACK_CODING_NOCHANGE_GUIDANCE =
+  'If the task requires no code changes (validation-only, a diagnostic, or already complete): do NOT create an empty commit or PR. This workflow only completes via a reviewed PR, so a no-change task is misrouted — escalate via `send_message` to the escalation target listed in your Runtime Execution Contract, explaining that the task produced no code changes and needs re-routing, then stop and wait for guidance.\n\n';
+
 const RESEARCH_RESEARCH_NODE = 'tpl-research-research';
 const RESEARCH_REVIEW_NODE = 'tpl-research-review';
 
@@ -168,7 +171,7 @@ export const RETIRED_PRE_TYPENAME_CODEX_REACTION_APPROVAL_GUIDANCE =
   ' not close the task before the Codex bot has `+1` unless that timeout window' +
   ' has elapsed.';
 
-const LEGACY_CODING_SLOT_PROMPTS: Record<string, string[]> = {
+export const LEGACY_CODING_SLOT_PROMPTS: Record<string, string[]> = {
   'Coding|coder': [
     'You are a software engineer in a Coding→Review iterative workflow. Your job is implementation only: ' +
       'implement the task, write tests, commit your changes, and open a pull request. ' +
@@ -254,7 +257,7 @@ const LEGACY_CODING_SLOT_PROMPTS: Record<string, string[]> = {
       '3. Open or update the PR and ensure it remains mergeable. After `gh pr create`, call `subscribe_pr_events({})` (no arguments needed — the PR URL is auto-resolved from the run). This subscribes you to review comments, CI failures, and reactions for your PR so you receive them directly and can act on them. Do this once per PR.\n' +
       '4. Hand off by calling `send_message` to the review target with ' +
       '`data: { pr_url: "<url>" }`; `save_artifact` alone will not deliver the handoff\n' +
-      FULLSTACK_CODING_NOCHANGE_GUIDANCE +
+      RETIRED_ESCALATION_FULLSTACK_CODING_NOCHANGE_GUIDANCE +
       '5. Share blockers clearly with Reviewer/QA when needed',
   ],
   'Coding with QA|reviewer': [
@@ -938,9 +941,36 @@ const RETIRED_HARDCODED_CODING_WORKFLOW_REHANDOFF_PROMPT =
 const CURRENT_CODING_WORKFLOW_NOCHANGE_STEP_PROMPT =
   '7. If the task requires no code changes (validation-only, a diagnostic, or already ' +
   'complete): do NOT create an empty commit or PR. This workflow only completes via a ' +
+  'reviewed PR, so a no-change task is misrouted — record the blocker with ' +
+  '`save_artifact({ shape: "note", kind: "no_code_changes", summary: "<why this task needs no code changes>" })` ' +
+  'and stop. Do NOT mark the task complete and do NOT wait for a reply: there is no Space-level ' +
+  'recipient, and the unfinished task carrying that artifact is the signal a human acts on.\n\n';
+const CURRENT_CODER_ONLY_NO_BOT_STOP =
+  'an EXPLICIT `external` with no installed bot is likewise never substituted — record the blocker with `save_artifact({ shape: "note", kind: "no_external_review_bot", summary: "the repository has no external reviewer despite an explicit external selection" })` and stop)';
+const RETIRED_ESCALATION_CODER_ONLY_NO_BOT =
+  'an EXPLICIT `external` with no installed bot is likewise never substituted — escalate saying the repository has no external reviewer)';
+const CURRENT_CODER_ONLY_GATE_DIED_STOP =
+  '(`both` mode excepted — an emptied gate set there is a blocker: record it with `save_artifact({ shape: "note", kind: "external_gate_died", summary: "every gate-set bot failed and `both` mode forbids the internal fallback" })` and stop)';
+const RETIRED_ESCALATION_CODER_ONLY_GATE_DIED =
+  '(`both` mode excepted — an emptied gate set there is a blocker: escalate saying the external gate died)';
+const CURRENT_CODER_ONLY_NOCHANGE_STEP =
+  'do NOT fabricate an empty commit or PR — record the blocker with `save_artifact({ shape: "note", kind: "no_code_changes", summary: "<why this task needs no code changes>" })` and stop. Do NOT wait for a reply: there is no Space-level recipient, and the unfinished task carrying that artifact is the signal a human acts on.';
+const RETIRED_ESCALATION_CODER_ONLY_NOCHANGE_STEP =
+  'do NOT fabricate an empty commit or PR — escalate via send_message to the escalation target in your Runtime Execution Contract, explain that the task produced no code changes and needs re-routing, and stop and wait for guidance.';
+const CURRENT_CODER_ONLY_GATE_FAILURE_STEP =
+  'Record the failure with `save_artifact({ shape: "note", kind: "review_gate_failed", summary: "<which gate failed and why>" })` and STOP only when you can run neither an external gate nor a credible internal fallback review (for example, the diff is too large or too risky to self-review). Do NOT wait for a reply: there is no Space-level recipient.';
+const RETIRED_ESCALATION_CODER_ONLY_GATE_FAILURE_STEP =
+  'Escalate via send_message to the escalation target in your Runtime Execution Contract and STOP only when you can run neither an external gate nor a credible internal fallback review (for example, the diff is too large or too risky to self-review) — say which gate failed and why.';
+const RETIRED_ESCALATION_CODING_WORKFLOW_NOCHANGE_STEP_PROMPT =
+  '7. If the task requires no code changes (validation-only, a diagnostic, or already ' +
+  'complete): do NOT create an empty commit or PR. This workflow only completes via a ' +
   'reviewed PR, so a no-change task is misrouted — escalate via `send_message` to the ' +
   'escalation target listed in your Runtime Execution Contract, explaining that the task ' +
   'produced no code changes and needs re-routing, then stop and wait for guidance.\n\n';
+const CURRENT_EXTERNAL_REVIEW_NO_BOT_STOP =
+  'save a NON-result artifact describing the blocker (`save_artifact({ shape: "note", kind: "no_external_review_bot", summary: "<why the explicit external selection cannot be satisfied>" })`) and stop; do NOT mark the task complete and do NOT wait for a reply — the unfinished task carrying that artifact is the signal a human acts on. The fallback substitution is for `auto`';
+const RETIRED_EXTERNAL_REVIEW_NO_BOT_ESCALATION =
+  'and escalate per your escalation contract; the fallback substitution is for `auto`';
 const RETIRED_PREVIOUS_CODING_WORKFLOW_NOCHANGE_STEP_PROMPT =
   '7. If the task requires no code changes (validation-only, a diagnostic, or already ' +
   'complete): do NOT create an empty commit or PR. This workflow only completes via a ' +
@@ -1991,6 +2021,18 @@ const BUILT_IN_PROMPT_PATCH_VARIANTS = [
       RETIRED_PREVIOUS_CODING_WORKFLOW_NOCHANGE_STEP_PROMPT,
     ],
   ],
+  [
+    [
+      CURRENT_CODING_WORKFLOW_NOCHANGE_STEP_PROMPT,
+      RETIRED_ESCALATION_CODING_WORKFLOW_NOCHANGE_STEP_PROMPT,
+    ],
+  ],
+  [[FULLSTACK_CODING_NOCHANGE_GUIDANCE, RETIRED_ESCALATION_FULLSTACK_CODING_NOCHANGE_GUIDANCE]],
+  [[CURRENT_EXTERNAL_REVIEW_NO_BOT_STOP, RETIRED_EXTERNAL_REVIEW_NO_BOT_ESCALATION]],
+  [[CURRENT_CODER_ONLY_NOCHANGE_STEP, RETIRED_ESCALATION_CODER_ONLY_NOCHANGE_STEP]],
+  [[CURRENT_CODER_ONLY_GATE_FAILURE_STEP, RETIRED_ESCALATION_CODER_ONLY_GATE_FAILURE_STEP]],
+  [[CURRENT_CODER_ONLY_NO_BOT_STOP, RETIRED_ESCALATION_CODER_ONLY_NO_BOT]],
+  [[CURRENT_CODER_ONLY_GATE_DIED_STOP, RETIRED_ESCALATION_CODER_ONLY_GATE_DIED]],
   [[CURRENT_FULLSTACK_CODING_PR_STEP_PROMPT, RETIRED_FULLSTACK_CODING_PR_STEP_PROMPT]],
   [
     [CURRENT_FULLSTACK_CODING_PR_STEP_PROMPT, RETIRED_FULLSTACK_CODING_PR_STEP_PROMPT],

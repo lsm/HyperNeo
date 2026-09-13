@@ -540,9 +540,7 @@ function translateLegacyNodeTarget(
   const targetRef = target.trim();
   if (!targetRef) return [];
   if (targetRef === 'task-agent') {
-    throw new Error(
-      'Target "task-agent" is no longer supported. Use space-agent or a worker target.'
-    );
+    throw new Error('Target "task-agent" is no longer supported. Use a worker target.');
   }
   if (targetRef.startsWith('@') || targetRef.startsWith('#')) {
     parseAddress(targetRef);
@@ -550,12 +548,7 @@ function translateLegacyNodeTarget(
   }
   if (targetRef === 'space-agent') {
     const replyTo = config.replyRoutingLookup?.(config.agentName);
-    if (!replyTo) {
-      throw new Error(
-        'Target "space-agent" has no reply route in this task. There is no default Space recipient; record the blocker as an artifact and stop instead of waiting for a reply.'
-      );
-    }
-    return [`@session:${replyTo}`];
+    return replyTo ? [`@session:${replyTo}`] : [];
   }
   if (targetRef === '*') {
     return permittedWorkerTargets(config);

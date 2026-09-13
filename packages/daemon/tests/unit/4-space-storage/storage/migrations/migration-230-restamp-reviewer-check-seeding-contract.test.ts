@@ -1,9 +1,5 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import {
-  EXTERNAL_REVIEW_BOTS_GUIDANCE,
-  EXTERNAL_REVIEW_BOTS_GUIDANCE_PRE_CHECK_SEEDING,
-} from '@hyperneo/prompts';
 import { REVIEWER_SYSTEM_CONTRACT } from '../../../../../src/lib/space/agents/system-contracts.ts';
 import {
   PRE_CHECK_SEEDING_REVIEWER_CONTRACT_SHA256,
@@ -15,12 +11,10 @@ import {
 } from '../../../../../src/storage/schema/m229-restamp-reviewer-typename-bot-filter.ts';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
 import { RETIRED_PRE_TYPENAME_REVIEWER_CONTRACT } from './fixtures/retired-pre-typename-reviewer-contract.ts';
+import { RETIRED_PRE_CHECK_SEEDING_REVIEWER_CONTRACT } from './fixtures/retired-pre-check-seeding-reviewer-contract.ts';
 
 const STALE_CONTRACT = RETIRED_PRE_TYPENAME_REVIEWER_CONTRACT;
-const PRE_CHECK_SEEDING_CONTRACT = REVIEWER_SYSTEM_CONTRACT.replace(
-  EXTERNAL_REVIEW_BOTS_GUIDANCE,
-  EXTERNAL_REVIEW_BOTS_GUIDANCE_PRE_CHECK_SEEDING
-);
+const PRE_CHECK_SEEDING_CONTRACT = RETIRED_PRE_CHECK_SEEDING_REVIEWER_CONTRACT;
 
 interface Row {
   instructions: string | null;

@@ -110,7 +110,7 @@ export function createNodeRegistryEntries(
       name: 'list_reachable_agents',
       safetyClass: 'read',
       description:
-        'List within-node peers and cross-node targets reachable over declared channels, plus the space-agent escalation target.',
+        'List within-node peers and cross-node targets reachable over declared channels.',
       paramsDoc: 'none',
       paramsSchema: ListReachableAgentsSchema,
       handler: handlers.list_reachable_agents,

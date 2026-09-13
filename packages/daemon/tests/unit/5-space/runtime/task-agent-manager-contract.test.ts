@@ -17,7 +17,7 @@ describe('TaskAgentManager Runtime Execution Contract', () => {
     autonomyLevel: 1,
   } as Space;
 
-  test('includes the centrally injected escalation target when no workflow is present', () => {
+  test('no longer injects an escalation target when no workflow is present', () => {
     const manager = makeManager();
     const execution: NodeExecution = {
       id: 'exec-1',
@@ -30,12 +30,10 @@ describe('TaskAgentManager Runtime Execution Contract', () => {
     ).buildNodeExecutionRuntimeContract(null, execution, space);
 
     expect(contract).toContain('## Runtime Execution Contract');
-    expect(contract).toContain(
-      'Escalation: send_message({ target: "space-agent", message }) requests human/space-level judgment'
-    );
+    expect(contract).not.toContain('Escalation: send_message');
   });
 
-  test('includes the centrally injected escalation target inside a workflow run', () => {
+  test('no longer injects an escalation target inside a workflow run', () => {
     const manager = makeManager();
     const workflow: SpaceWorkflow = {
       id: 'wf-1',
@@ -69,9 +67,7 @@ describe('TaskAgentManager Runtime Execution Contract', () => {
     ).buildNodeExecutionRuntimeContract(workflow, execution, space);
 
     expect(contract).toContain('Node: "Coding" (node-1)');
-    expect(contract).toContain(
-      'Escalation: send_message({ target: "space-agent", message }) requests human/space-level judgment'
-    );
+    expect(contract).not.toContain('Escalation: send_message');
   });
 
   describe('listLiveSessionTaskIdsForSpace', () => {

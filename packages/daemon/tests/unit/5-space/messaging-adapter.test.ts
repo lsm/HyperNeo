@@ -415,7 +415,7 @@ describe('Space messaging adapter', () => {
     ).toEqual(['@session:session-origin']);
 
     expect(() => translateLegacyNodeTargets('space-agent', base)).toThrow(
-      'no reply route in this task'
+      'Unknown target "space-agent"'
     );
   });
 

@@ -306,8 +306,33 @@ describe('node-agent-tools: list_peers', () => {
     const data = JSON.parse(result.content[0].text);
 
     expect(data.channelTopologyDeclared).toBe(false);
-    expect(data.permittedTargets).toEqual(['space-agent']);
+    expect(data.permittedTargets).toEqual([]);
     expect(data.message).not.toContain('Use "space-agent"');
+  });
+
+  test('omits space-agent when no reply route exists for this worker', async () => {
+    const config = makeConfig(ctx, {
+      channelResolver: makeResolver([makeResolvedChannel('coder', 'reviewer')]),
+      replyRoutingLookup: () => null,
+    });
+    const handlers = createNodeAgentToolHandlers(config);
+    const result = await handlers.list_peers({});
+    const data = JSON.parse(result.content[0].text);
+
+    expect(data.permittedTargets).toEqual(['reviewer']);
+    expect(data.message).not.toContain('space-agent');
+  });
+
+  test('advertises space-agent once a reply route is registered', async () => {
+    const config = makeConfig(ctx, {
+      channelResolver: makeResolver([makeResolvedChannel('coder', 'reviewer')]),
+      replyRoutingLookup: () => 'reply-session-1',
+    });
+    const handlers = createNodeAgentToolHandlers(config);
+    const result = await handlers.list_peers({});
+    const data = JSON.parse(result.content[0].text);
+
+    expect(data.permittedTargets).toEqual(['reviewer', 'space-agent']);
   });
 
   test('reports permitted targets when channels declared', async () => {
@@ -319,7 +344,7 @@ describe('node-agent-tools: list_peers', () => {
     const data = JSON.parse(result.content[0].text);
 
     expect(data.channelTopologyDeclared).toBe(true);
-    expect(data.permittedTargets).toEqual(['reviewer', 'space-agent']);
+    expect(data.permittedTargets).toEqual(['reviewer']);
   });
 
   test('returns empty peer list when no peers in the run', async () => {
@@ -1212,11 +1237,8 @@ describe('node-agent-tools: list_reachable_agents', () => {
     expect(data.success).toBe(true);
     expect(data.reachabilityDeclared).toBe(false);
     expect(data.crossNodeTargets).toHaveLength(0);
-    expect(data.spaceAgent).toEqual({
-      target: 'space-agent',
-      description: 'Space-level escalation target. Use to request human/space-level judgment.',
-    });
-    expect(data.message).toContain('space-agent escalation target');
+    expect(data.spaceAgent).toBeUndefined();
+    expect(data.message).not.toContain('escalation');
   });
 
   test('returns cross-node targets for channels to roles not in current group', async () => {

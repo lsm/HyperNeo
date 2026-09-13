@@ -32,6 +32,7 @@ export function normalizeReplyTargetHandle(value: string): string | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
   if (trimmed === 'space-agent') return 'space-agent';
+  if (isSpaceManagerHandle(trimmed.replace(/^@/, ''))) return 'space-agent';
   return trimmed.startsWith('@') ? trimmed : handleFromName(trimmed);
 }
 

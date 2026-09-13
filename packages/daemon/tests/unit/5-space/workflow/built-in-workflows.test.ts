@@ -3,7 +3,10 @@ import { createHash } from 'node:crypto';
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { CALL_ACTION_PREFERENCE_GUIDANCE } from '@hyperneo/prompts';
+import {
+  CALL_ACTION_PREFERENCE_GUIDANCE,
+  FULLSTACK_CODING_NOCHANGE_GUIDANCE,
+} from '@hyperneo/prompts';
 import type {
   HandoffTransition,
   SpaceLongHorizonAgent,
@@ -37,6 +40,7 @@ import {
   CODEX_REACTION_APPROVAL_GUIDANCE,
   CODING_WITH_QA_WORKFLOW,
   CODING_WORKFLOW,
+  LEGACY_CODING_SLOT_PROMPTS,
   EXTERNAL_REVIEW_BOTS_GUIDANCE,
   EXTERNAL_REVIEW_BOTS_GUIDANCE_PRE_CHECK_SEEDING,
   EXTERNAL_REVIEW_BOTS_GUIDANCE_PRE_TYPENAME,
@@ -379,10 +383,10 @@ describe('coder-only workflow template', () => {
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).not.toContain('`dev` branch ruleset');
   });
 
-  test('coder prompt reroutes no-change tasks instead of fabricating a PR', () => {
+  test('coder prompt records and stops on no-change tasks instead of fabricating a PR', () => {
     expect(CODER_ONLY_PROMPT).toContain('no code changes');
-    expect(CODER_ONLY_PROMPT).toContain('needs');
-    expect(CODER_ONLY_PROMPT).toContain('re-routing');
+    expect(CODER_ONLY_PROMPT).toContain('kind: "no_code_changes"');
+    expect(CODER_ONLY_PROMPT).not.toContain('escalation target');
   });
 
   test('gate note artifact carries an explicit key, gate set, and inline reaction evidence', () => {
@@ -414,7 +418,10 @@ describe('coder-only workflow template', () => {
     expect(CODER_ONLY_PROMPT).toContain('when no external gate was recorded for this run');
     expect(CODER_ONLY_PROMPT).toContain('on a mid-run source switch TO `internal`');
     expect(CODER_ONLY_PROMPT).toContain('the internal fallback applies ONLY under `auto`');
-    expect(CODER_ONLY_PROMPT).toContain('escalate saying the repository has no external reviewer');
+    expect(CODER_ONLY_PROMPT).toContain(
+      'the repository has no external reviewer despite an explicit external selection'
+    );
+    expect(CODER_ONLY_PROMPT).not.toContain('escalate saying');
     expect(CODER_ONLY_PROMPT).toContain('the merge cannot proceed under the selected source');
     expect(CODER_ONLY_PROMPT).toContain(
       'Capture `headRefOid`, `baseRefName`, and `baseRefOid` BEFORE starting the fallback review'
@@ -4278,17 +4285,115 @@ test('patchKnownBuiltInPromptDrift rewrites a persisted legacy Coding-with-QA co
   expect(mergedPrompt).toBe(legacySeed);
 });
 
+test('persisted prompts carrying the retired escalation target reconcile to the current text', () => {
+  const templateNode = CODING_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
+  const templatePrompt = templateNode.agents[0].customPrompt!.value;
+
+  const persisted = templatePrompt.replace(
+    'save a NON-result artifact describing the blocker (`save_artifact({ shape: "note", ' +
+      'kind: "no_external_review_bot", summary: "<why the explicit external selection cannot be satisfied>" })`) ' +
+      'and stop; do NOT mark the task complete and do NOT wait for a reply — the unfinished task carrying ' +
+      'that artifact is the signal a human acts on. The fallback substitution is for `auto`',
+    'and escalate per your escalation contract; the fallback substitution is for `auto`'
+  );
+
+  expect(persisted).not.toBe(templatePrompt);
+  expect(persisted).toContain('escalate per your escalation contract');
+
+  const existingNode: WorkflowNode = {
+    ...templateNode,
+    agents: templateNode.agents.map((a, i) =>
+      i === 0 ? { ...a, customPrompt: { value: persisted } } : a
+    ),
+  };
+  const merged = mergeNodeStructuralFieldsFromTemplate([existingNode], CODING_WORKFLOW.nodes);
+  const mergedPrompt = merged.find((n) => n.name === 'Coding')!.agents[0].customPrompt!.value;
+
+  expect(mergedPrompt).toBe(templatePrompt);
+});
+
+test('persisted Coder-Only prompts carrying the retired escalation target reconcile', () => {
+  const templateNode = CODER_ONLY_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
+  const templatePrompt = templateNode.agents[0].customPrompt!.value;
+
+  const persisted = templatePrompt
+    .replace(
+      'do NOT fabricate an empty commit or PR — record the blocker with `save_artifact({ shape: "note", kind: "no_code_changes", summary: "<why this task needs no code changes>" })` and stop. Do NOT wait for a reply: there is no Space-level recipient, and the unfinished task carrying that artifact is the signal a human acts on.',
+      'do NOT fabricate an empty commit or PR — escalate via send_message to the escalation target in your Runtime Execution Contract, explain that the task produced no code changes and needs re-routing, and stop and wait for guidance.'
+    )
+    .replace(
+      'Record the failure with `save_artifact({ shape: "note", kind: "review_gate_failed", summary: "<which gate failed and why>" })` and STOP only when you can run neither an external gate nor a credible internal fallback review (for example, the diff is too large or too risky to self-review). Do NOT wait for a reply: there is no Space-level recipient.',
+      'Escalate via send_message to the escalation target in your Runtime Execution Contract and STOP only when you can run neither an external gate nor a credible internal fallback review (for example, the diff is too large or too risky to self-review) — say which gate failed and why.'
+    )
+    .replace(
+      'an EXPLICIT `external` with no installed bot is likewise never substituted — record the blocker with `save_artifact({ shape: "note", kind: "no_external_review_bot", summary: "the repository has no external reviewer despite an explicit external selection" })` and stop)',
+      'an EXPLICIT `external` with no installed bot is likewise never substituted — escalate saying the repository has no external reviewer)'
+    )
+    .replace(
+      '(`both` mode excepted — an emptied gate set there is a blocker: record it with `save_artifact({ shape: "note", kind: "external_gate_died", summary: "every gate-set bot failed and `both` mode forbids the internal fallback" })` and stop)',
+      '(`both` mode excepted — an emptied gate set there is a blocker: escalate saying the external gate died)'
+    );
+
+  expect(persisted).not.toBe(templatePrompt);
+  expect(persisted).toContain('escalate via send_message to the escalation target');
+  expect(persisted).toContain('Escalate via send_message to the escalation target');
+  expect(persisted).toContain('escalate saying the repository has no external reviewer');
+  expect(persisted).toContain('escalate saying the external gate died');
+
+  const existingNode: WorkflowNode = {
+    ...templateNode,
+    agents: templateNode.agents.map((a, i) =>
+      i === 0 ? { ...a, customPrompt: { value: persisted } } : a
+    ),
+  };
+  const merged = mergeNodeStructuralFieldsFromTemplate([existingNode], CODER_ONLY_WORKFLOW.nodes);
+  const mergedPrompt = merged.find((n) => n.name === 'Coding')!.agents[0].customPrompt!.value;
+
+  expect(mergedPrompt).toBe(templatePrompt);
+});
+
+test('the Coding-with-QA coder legacy seed is frozen, not composed from the live guidance', () => {
+  const seed = LEGACY_CODING_SLOT_PROMPTS['Coding with QA|coder']!.find((candidate) =>
+    candidate.includes('escalation target listed in your Runtime Execution Contract')
+  );
+  expect(seed).toBeDefined();
+  expect(seed).not.toContain('no_code_changes');
+  expect(seed).not.toContain(FULLSTACK_CODING_NOCHANGE_GUIDANCE);
+});
+
+test('the Coding coder legacy seed keeps its historical escalation wording', () => {
+  const templateNode = CODING_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
+  const seed = LEGACY_CODING_SLOT_PROMPTS['Coding|coder']!.find((candidate) =>
+    candidate.includes('escalation target listed in your Runtime Execution Contract')
+  );
+  expect(seed).toBeDefined();
+  const existingNode: WorkflowNode = {
+    ...templateNode,
+    agents: templateNode.agents.map((a, i) =>
+      i === 0
+        ? {
+            ...a,
+            customPrompt: { value: seed! },
+          }
+        : a
+    ),
+  };
+  const merged = mergeNodeStructuralFieldsFromTemplate([existingNode], CODING_WORKFLOW.nodes);
+  const mergedPrompt = merged.find((n) => n.name === 'Coding')!.agents[0].customPrompt!.value;
+  expect(mergedPrompt).toBe(templateNode.agents[0].customPrompt!.value);
+});
+
 test('persisted pre-call-action prompts migrate to the dispatcher preference templates', () => {
   const preDispatcherHashes = new Map<string, string>([
-    [CODER_ONLY_PROMPT, 'b3b6c7720e7b650d3155e8109b07458f315b1120a2503a7ea583946d509f2649'],
-    [CODER_OWNED_MERGE_PROMPT, '20bbaa921ea9d3a89d1fc4d6106b191a24b8c3de3d9acfe8361ff12c32fd641e'],
+    [CODER_ONLY_PROMPT, '94d119f31fcc92b72c8ce759a67c96392698c93318ca874d8f082ce59b1d825a'],
+    [CODER_OWNED_MERGE_PROMPT, '882f1beaabbe9dc502f1f3f3f1de247cdb97779a0462731e2f594f3276ad43c0'],
     [CODER_OWNED_REVIEW_PROMPT, 'da51558acb0459acf61beda09a4390557966320dd0ab95d74b115dfd5e940740'],
     [CODER_OWNED_QA_PROMPT, '662b1e20d219237c8d4dfa4add74d10f54bc9bc1888dc0e7ab267f2ece7f7eb8'],
     [
       CODER_OWNED_QA_REVIEW_PROMPT,
       'f915282840b18893b1200da0d648e2e37032b9488492674ac5d4ed1fefe80f20',
     ],
-    [RESEARCH_PROMPT, 'dec331f45759fa496387fe41ae6d62627a361ee3dc2c24d4c004e6b35bcfea6a'],
+    [RESEARCH_PROMPT, '8e19248b31a36c8b4f7f09ee09aae1a6acd6221867b12c093359b0930b72fa83'],
     [RESEARCH_REVIEW_PROMPT, '199f7ad7c972d1495f978924a26cff953680c8fddf73f33e25de3b0bb4621c56'],
     [REVIEW_ONLY_REVIEW_PROMPT, '9e223b7e6c1c306e66288916cc42e2f5f7211b997cfaf3db06f9ecb7033317ee'],
   ]);

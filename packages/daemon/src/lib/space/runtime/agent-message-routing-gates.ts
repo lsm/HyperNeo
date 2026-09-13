@@ -10,6 +10,7 @@ export interface ResolveNodeAgentTargetsInput {
   declaredAgentNames: Set<string> | string[];
   permittedTargets: string[];
   spaceAgentAvailable: boolean;
+  spaceAgentRoutable?: boolean;
   canSend: (fromNode: string, toNode: string) => boolean;
 }
 
@@ -82,7 +83,7 @@ export function resolveNodeAgentTargets(
       const allTargets = [
         ...new Set([...knownAgentNames, ...nodeNames, ...declaredAgentNames]),
       ].sort();
-      if (input.spaceAgentAvailable) allTargets.push('space-agent');
+      if (input.spaceAgentRoutable ?? input.spaceAgentAvailable) allTargets.push('space-agent');
       return {
         status: 'unknownTarget',
         target,

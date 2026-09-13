@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
 import { PRESET_GENERAL_PROMPT, PRESET_PLANNER_PROMPT } from '@hyperneo/prompts';
 import { getPresetAgentTemplates } from '../../../../../src/lib/space/agents/seed-agents.ts';
 import { SpaceLongHorizonAgentRepository } from '../../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
@@ -7,6 +8,11 @@ import { runMigration233 } from '../../../../../src/storage/schema/m233-retire-p
 import { Database } from '../../../../../src/storage/sqlite-compat.ts';
 import { insertSpace } from '../../../helpers/space-agent-schema.ts';
 import { createSpaceTables } from '../../../helpers/space-test-db.ts';
+
+const M233_REVIEWER_PROMPT = readFileSync(
+  new URL('fixtures/m233-reviewer-prompt.txt', import.meta.url),
+  'utf8'
+);
 
 const RETIRED_PRESET_MIRRORS = [
   {
@@ -38,9 +44,11 @@ function createDb(): {
   insertSpace(db);
   const repo = new SpaceLongHorizonAgentRepository(db);
   const presets = [
-    ...getPresetAgentTemplates().map((preset) =>
-      preset.handle === 'swe' ? { ...preset, name: 'Coder', handle: 'coder' } : preset
-    ),
+    ...getPresetAgentTemplates().map((preset) => {
+      if (preset.handle === 'swe') return { ...preset, name: 'Coder', handle: 'coder' };
+      if (preset.handle === 'reviewer') return { ...preset, customPrompt: M233_REVIEWER_PROMPT };
+      return preset;
+    }),
     ...RETIRED_PRESET_MIRRORS,
   ];
   const insertMirror = db.prepare(
