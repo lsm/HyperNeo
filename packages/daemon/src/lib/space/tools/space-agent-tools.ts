@@ -5211,7 +5211,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
     tools.push(
       tool(
         'review_goal_outcome',
-        'Review a terminal goal-outcome notification. Call without notification_id to discover pending notifications you own or are the authorized fallback for; call with notification_id, goal_id, task_id and either a disposition (acknowledge, reject, or supersede) to terminalize a pending outcome without goal mutation, or goal-state updates (summary, next_steps, metrics, observations, progress) to acknowledge the outcome while persisting your review to the goal.',
+        'Review a terminal goal-outcome notification. Call without notification_id to discover pending notifications for goals you own; call with notification_id, goal_id, task_id and either a disposition (acknowledge, reject, or supersede) to terminalize a pending outcome without goal mutation, or goal-state updates (summary, next_steps, metrics, observations, progress) to acknowledge the outcome while persisting your review to the goal.',
         {
           goal_id: z
             .string()
