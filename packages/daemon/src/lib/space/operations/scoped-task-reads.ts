@@ -17,7 +17,7 @@ type TaskReader = (taskId: string) => TaskCore | null;
 type TaskNumberReader = (spaceId: string, taskNumber: number) => TaskCore | null;
 type TaskPageReader = (input: ListTasksInput) => TaskListPage;
 
-const EMPTY_PAGE: TaskListPage = { tasks: [], nextCursor: null };
+const EMPTY_PAGE: TaskListPage = { tasks: [], total: 0, nextCursor: null };
 
 export function admitTaskOwner(
   db: Database,

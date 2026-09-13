@@ -615,7 +615,7 @@ test('task.list returns the core shape unchanged for standalone tasks through th
   const standalone = createStandaloneTask(db, { title: 'Loose' }, undefined, () => {});
   const rpc = createOperationRpcHandler(provider(), () => ({}));
   const result = await rpc({ name: 'task.list', input: {} }, context);
-  expect(result).toEqual({ tasks: [standalone], nextCursor: null });
+  expect(result).toEqual({ tasks: [standalone], total: 1, nextCursor: null });
   expect((result as { tasks: unknown[] }).tasks[0]).not.toHaveProperty('spaceId');
 });
 
@@ -630,6 +630,7 @@ test('task.list preserves Space-scoped pagination while adding Space fields, acr
   const firstPage = await rpc({ name: 'task.list', input: { spaceId, limit: 2 } }, context);
   expect(firstPage).toEqual({
     tasks: [tasks.getTask(third.id), tasks.getTask(second.id)],
+    total: 3,
     nextCursor: { createdAt: 20, id: second.id },
   });
   expect(firstPage).toMatchObject({
@@ -643,7 +644,7 @@ test('task.list preserves Space-scoped pagination while adding Space fields, acr
     { name: 'task.list', input: { spaceId, limit: 2, before: nextCursor } },
     context
   );
-  expect(secondPage).toEqual({ tasks: [tasks.getTask(taskId)], nextCursor: null });
+  expect(secondPage).toEqual({ tasks: [tasks.getTask(taskId)], total: 3, nextCursor: null });
 });
 
 function get(id = taskId) {
@@ -687,7 +688,7 @@ test.each([undefined, 'other-space'])(
     const mcp = createOperationMcpHandler(provider(), () => caller);
     const denied = await mcp(list(spaceId));
     expect(denied.isError).not.toBe(true);
-    expect(JSON.parse(denied.content[0].text)).toEqual({ tasks: [], nextCursor: null });
+    expect(JSON.parse(denied.content[0].text)).toEqual({ tasks: [], total: 0, nextCursor: null });
   }
 );
 

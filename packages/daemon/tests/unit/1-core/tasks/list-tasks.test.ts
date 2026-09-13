@@ -51,8 +51,42 @@ describe('bounded core task listing', () => {
     expect(listTaskCores(db, { status: 'archived' }).tasks.map((task) => task.id)).toEqual([
       'archived',
     ]);
-    expect(listTaskCores(db, { spaceId, status: 'done' })).toEqual({ tasks: [], nextCursor: null });
+    expect(listTaskCores(db, { spaceId, status: 'done' })).toEqual({
+      tasks: [],
+      total: 0,
+      nextCursor: null,
+    });
     expect(listTaskCores(db, { spaceId: "' OR 1=1 --" }).tasks).toEqual([]);
+  });
+
+  test('total counts every match regardless of limit, offset or cursor', () => {
+    const page = listTaskCores(db, { limit: 1 });
+    expect(page.tasks.map((task) => task.id)).toEqual(['c']);
+    expect(page.total).toBe(3);
+    expect(listTaskCores(db, { limit: 1, before: page.nextCursor! }).total).toBe(3);
+    expect(listTaskCores(db, { status: 'open' }).total).toBe(2);
+    expect(listTaskCores(db, { spaceId }).total).toBe(1);
+  });
+
+  test('offset skips matches while keeping order, and normalizes invalid values', () => {
+    expect(listTaskCores(db, { offset: 1 }).tasks.map((task) => task.id)).toEqual(['b', 'a']);
+    expect(listTaskCores(db, { limit: 1, offset: 2 }).tasks.map((task) => task.id)).toEqual(['a']);
+    expect(listTaskCores(db, { offset: 99 }).tasks).toEqual([]);
+    expect(listTaskCores(db, { offset: 99 }).total).toBe(3);
+    expect(listTaskCores(db, { offset: -5 }).tasks.map((task) => task.id)).toEqual(['c', 'b', 'a']);
+    expect(listTaskCores(db, { offset: 1.9 }).tasks.map((task) => task.id)).toEqual(['b', 'a']);
+    expect(listTaskCores(db, { offset: Number.NaN }).tasks.map((task) => task.id)).toEqual([
+      'c',
+      'b',
+      'a',
+    ]);
+  });
+
+  test('a page that ends exactly on the last match reports no nextCursor', () => {
+    const page = listTaskCores(db, { limit: 2, offset: 1 });
+    expect(page.tasks.map((task) => task.id)).toEqual(['b', 'a']);
+    expect(page.nextCursor).toBeNull();
+    expect(page.total).toBe(3);
   });
 
   test('bounds page size and normalizes invalid limits', () => {
