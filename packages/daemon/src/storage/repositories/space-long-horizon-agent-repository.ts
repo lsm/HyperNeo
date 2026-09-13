@@ -13,7 +13,6 @@ import type {
   UpdateSpaceLongHorizonAgentSubscriptionParams,
 } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
-import { getLongHorizonAgentTemplate } from '../../lib/space/agents/long-horizon-agent-templates.ts';
 import { SPACE_MANAGER_HANDLE } from '../../lib/space/agent-handle.ts';
 import { MIGRATED_WORKER_TEMPLATE_KEY } from '../../lib/space/agents/worker-long-horizon-mapper.ts';
 import {
@@ -103,46 +102,6 @@ export class SpaceLongHorizonAgentRepository {
       )
       .get(spaceId, SPACE_MANAGER_HANDLE, 'coordinator') as Record<string, unknown> | undefined;
     return row ? rowToAgent(row) : null;
-  }
-
-  ensureSpaceManager(spaceId: string): SpaceLongHorizonAgent {
-    const existingByHandle = this.getCoordinator(spaceId);
-    if (existingByHandle) {
-      if (existingByHandle.handle === SPACE_MANAGER_HANDLE) return existingByHandle;
-      return this.update(existingByHandle.id, {
-        handle: SPACE_MANAGER_HANDLE,
-        description: existingByHandle.description ?? null,
-        modelPool: existingByHandle.modelPool ?? null,
-      }) as SpaceLongHorizonAgent;
-    }
-    const existingById = this.getById(coordinatorLongHorizonAgentId(spaceId));
-    if (existingById) {
-      if (existingById.handle !== SPACE_MANAGER_HANDLE) {
-        return this.update(existingById.id, {
-          handle: SPACE_MANAGER_HANDLE,
-          description: existingById.description ?? null,
-          modelPool: existingById.modelPool ?? null,
-        }) as SpaceLongHorizonAgent;
-      }
-      return existingById;
-    }
-
-    const template = getLongHorizonAgentTemplate('coordinator.default');
-
-    return this.create({
-      id: coordinatorLongHorizonAgentId(spaceId),
-      spaceId,
-      handle: template?.handle ?? SPACE_MANAGER_HANDLE,
-      displayName: template?.displayName ?? 'Space Manager',
-      templateKey: template?.key ?? 'coordinator.default',
-      status: 'active',
-      sessionId: coordinatorSessionId(spaceId),
-      instructions:
-        template?.instructions ??
-        'Coordinate goals, tasks, reminders, event subscriptions, and Space activity.',
-      autonomyLevel: template?.suggestedAutonomyLevel,
-      toolPermissions: template?.toolPermissions,
-    });
   }
 
   listBySpaceId(spaceId: string): SpaceLongHorizonAgent[] {

@@ -1,23 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import {
-  isCoordinatorSessionId,
   isLongHorizonAgentSessionId,
   parseLongHorizonAgentSessionId,
 } from '../space-agent-session';
 
 const SPACE_ID = 'b90171e4-a9c2-4ac2-8de9-143e5c1fea65';
-
-describe('isCoordinatorSessionId', () => {
-  it('matches the per-space coordinator id', () => {
-    expect(isCoordinatorSessionId(SPACE_ID, `space:chat:${SPACE_ID}`)).toBe(true);
-  });
-
-  it('rejects a long-horizon agent id and a foreign coordinator id', () => {
-    expect(isCoordinatorSessionId(SPACE_ID, `space:agent:${SPACE_ID}:agent-1`)).toBe(false);
-    expect(isCoordinatorSessionId(SPACE_ID, 'space:chat:another-space')).toBe(false);
-    expect(isCoordinatorSessionId(SPACE_ID, null)).toBe(false);
-  });
-});
 
 describe('isLongHorizonAgentSessionId', () => {
   it('recognizes the space:agent: prefix', () => {
