@@ -739,7 +739,7 @@ describe('AgentMessageRouter: unknown target → clear error', () => {
       failed: [],
       reason:
         'Could not deliver message to target agent(s): ghost-a, ghost-b. ' +
-        'The target is declared but no live session received the message.',
+        'The target is not reachable: it has no live session, or it is not a routable address.',
       notFoundAgentNames: ['ghost-a', 'ghost-b'],
     });
   });
@@ -1187,7 +1187,7 @@ describe('AgentMessageRouter: queue message for declared-but-inactive target', (
 
     expect(result.success).toBe(false);
     expect(result.reason).toContain('Could not deliver message to target agent(s): reviewer');
-    expect(result.reason).toContain('no live session received the message');
+    expect(result.reason).toContain('it has no live session');
   });
 });
 

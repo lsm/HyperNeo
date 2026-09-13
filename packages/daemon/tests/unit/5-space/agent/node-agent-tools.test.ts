@@ -680,7 +680,7 @@ describe('node-agent-tools: send_message', () => {
 
     expect(data.success).toBe(false);
     expect(data.error).toContain('Could not deliver message to target agent(s): tester');
-    expect(data.error).toContain('no live session received the message');
+    expect(data.error).toContain('it has no live session');
   });
 
   test('returns unknown-target when role is not in topology or any execution', async () => {

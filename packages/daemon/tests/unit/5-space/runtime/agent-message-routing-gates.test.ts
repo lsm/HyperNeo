@@ -402,7 +402,7 @@ describe('foldAgentMessageResult', () => {
       failed: [],
       reason:
         `Could not deliver message to target agent(s): reviewer. ` +
-        `The target is declared but no live session received the message.`,
+        `The target is not reachable: it has no live session, or it is not a routable address.`,
       queued,
       notFoundAgentNames: ['reviewer'],
     });
@@ -417,7 +417,7 @@ describe('foldAgentMessageResult', () => {
       failed: [],
       reason:
         `Could not deliver message to target agent(s): a, b. ` +
-        `The target is declared but no live session received the message.`,
+        `The target is not reachable: it has no live session, or it is not a routable address.`,
       notFoundAgentNames: ['a', 'b'],
     });
   });

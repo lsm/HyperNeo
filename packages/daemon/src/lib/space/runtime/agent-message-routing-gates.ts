@@ -143,7 +143,7 @@ export function foldAgentMessageResult(input: FoldAgentMessageResultInput): Agen
       failed: [],
       reason:
         `Could not deliver message to target agent(s): ${notFound.join(', ')}. ` +
-        `The target is declared but no live session received the message.`,
+        `The target is not reachable: it has no live session, or it is not a routable address.`,
       queued: queued.length > 0 ? queued : undefined,
       notFoundAgentNames: notFound,
     };
