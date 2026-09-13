@@ -28,6 +28,9 @@ export function supersedeReservedAttempt(db: Database, attempt: DirectTaskAttemp
     if (!current || current.sessionId !== attempt.sessionId || current.phase !== 'reserved')
       return false;
     repo.requestStop(current.id, current.sessionId, 'cancelled');
-    return repo.stop(current.id, current.sessionId, 'cancelled')?.phase === 'stopped';
+    return (
+      repo.isStopRequested(current.id, current.sessionId) &&
+      repo.get(current.id)?.phase === 'reserved'
+    );
   })();
 }

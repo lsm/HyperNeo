@@ -85,15 +85,24 @@ test.each([
     expect(route.attempt.id).toBe(attempt!.id);
 });
 
-test('a reserved attempt is retired, and a second call returns false and leaves the stopped attempt unchanged', () => {
+test('a reserved attempt is fenced (activation blocked, reservation kept) with a cancelled stop request', () => {
   const attempt = setupAttempt(createTask(), 'reserved')!;
   expect(supersedeReservedAttempt(db, attempt)).toBe(true);
-  const stopped = attempts.get(attempt.id);
-  expect(stopped?.phase).toBe('stopped');
-  expect(supersedeReservedAttempt(db, attempt)).toBe(false);
-  expect(attempts.get(attempt.id)).toEqual(stopped);
   expect(attempts.activate(attempt.id, attempt.sessionId)).toBeNull();
-  expect(attempts.getActive(attempt.taskId)).toBeNull();
+  expect(attempts.getActive(attempt.taskId)).toMatchObject({ id: attempt.id, phase: 'reserved' });
+  const request = db
+    .prepare(
+      'SELECT outcome FROM direct_task_stop_requests WHERE attempt_id = ? AND session_id = ?'
+    )
+    .get(attempt.id, attempt.sessionId) as { outcome: string } | null;
+  expect(request?.outcome).toBe('cancelled');
+});
+
+test('a second call is idempotent: it returns true and leaves the fence and reservation as-is', () => {
+  const attempt = setupAttempt(createTask(), 'reserved')!;
+  expect(supersedeReservedAttempt(db, attempt)).toBe(true);
+  expect(supersedeReservedAttempt(db, attempt)).toBe(true);
+  expect(attempts.get(attempt.id)?.phase).toBe('reserved');
 });
 
 test('an attempt already stopped by the normal flow, with its leftover stop request row, returns false untouched', () => {
