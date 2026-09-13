@@ -7,7 +7,6 @@ const DESKTOP_VIEWPORT = { width: 1440, height: 900 };
 
 interface CanvasTestContext {
   spaceId: string;
-  runId: string;
   taskId: string;
   sessionId: string;
   wsPath: string;
@@ -83,7 +82,7 @@ async function createSpaceWithCanvasRun(
         taskAgentSessionId: newSessionId,
       });
 
-      return { spaceId, runId, taskId, sessionId: newSessionId };
+      return { spaceId, taskId, sessionId: newSessionId };
     },
     { wsPath }
   );

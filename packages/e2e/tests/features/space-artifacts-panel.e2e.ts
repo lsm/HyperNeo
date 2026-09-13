@@ -22,7 +22,6 @@ function setupGitRepoWithChanges(wsPath: string): void {
 
 interface SpaceRunTask {
   spaceId: string;
-  runId: string;
   taskId: string;
   wsPath: string;
 }
@@ -85,7 +84,7 @@ async function createSpaceWithRunAndChanges(
 
       await hub.request('spaceTask.update', { spaceId, taskId, status: 'done' });
 
-      return { spaceId, runId, taskId };
+      return { spaceId, taskId };
     },
     { wsPath }
   );
