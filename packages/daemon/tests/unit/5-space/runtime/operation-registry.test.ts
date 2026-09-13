@@ -637,6 +637,19 @@ test('task.list refuses blockReason together with blockReasonNotIn', async () =>
   ).rejects.toThrow('mutually exclusive');
 });
 
+test('task.list refuses an updatedAt ordering paged by cursor', async () => {
+  const rpc = createOperationRpcHandler(provider(), () => ({}));
+  await expect(
+    rpc(
+      {
+        name: 'task.list',
+        input: { spaceId, orderBy: 'updatedAt', before: { createdAt: 1, id: 'x' } },
+      },
+      context
+    )
+  ).rejects.toThrow('cannot page an updatedAt ordering');
+});
+
 test('task.list refuses a block-reason filter outside the blocked status', async () => {
   const rpc = createOperationRpcHandler(provider(), () => ({}));
   for (const input of [

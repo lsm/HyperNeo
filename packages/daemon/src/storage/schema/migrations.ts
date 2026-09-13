@@ -16,6 +16,7 @@ import { runMigration246 } from './m246-template-version-seq-space-key.ts';
 import { runMigration244 } from './m244-backfill-template-ownership.ts';
 import { runMigration243 } from './m243-space-agent-template-space-key.ts';
 import { runMigration242 } from './m242-task-list-indexes.ts';
+import { runMigration261 } from './m261-task-list-updated-indexes.ts';
 import { migrateStandaloneTaskOwnership } from '../tasks/ownership-migration.ts';
 import {
   type ArtifactShape,
@@ -596,6 +597,7 @@ export function runMigrations(
   run(migrationMarkerKey(257), () => runMigration257(db));
   run(migrationMarkerKey(258), () => runMigration258(db));
   run(migrationMarkerKey(260), () => runMigration260(db));
+  run(migrationMarkerKey(261), () => runMigration261(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }
