@@ -359,10 +359,6 @@ describe('Migration 240: rename coordinator handle to space-manager', () => {
     expect(handleById(db, 'space-lh-agent:coordinator:space-8')).toBe('renamed-prelock');
     expect(rowById(db, 'space-lh-agent:coordinator:space-8').display_name).toBe('Space Manager');
 
-    const repo = new SpaceLongHorizonAgentRepository(db);
-    const healed = repo.ensureSpaceManager('space-8');
-    expect(healed.id).toBe('space-lh-agent:coordinator:space-8');
-    expect(healed.handle).toBe('space-manager');
     db.close();
   });
 
@@ -374,10 +370,6 @@ describe('Migration 240: rename coordinator handle to space-manager', () => {
     expect(impostor.startsWith('space-manager-migrated-')).toBe(true);
     expect(handleById(db, 'space-lh-agent:coordinator:space-12')).toBe('renamed-prelock');
 
-    const repo = new SpaceLongHorizonAgentRepository(db);
-    const healed = repo.ensureSpaceManager('space-12');
-    expect(healed.id).toBe('space-lh-agent:coordinator:space-12');
-    expect(healed.handle).toBe('space-manager');
     db.close();
   });
 

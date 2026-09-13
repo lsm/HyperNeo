@@ -15,6 +15,7 @@ import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/sp
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { seedWorkerMirror } from '../../helpers/seed-worker-mirror';
+import { seedSpaceManagerAgent } from '../../helpers/seed-space-manager';
 
 function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
@@ -1273,7 +1274,7 @@ describe('createSpaceAgentLookup — runtime-shaped resolution', () => {
       id: orphanedMirrorId,
       name: 'Orphaned Mirror',
     });
-    const coordinator = longHorizonAgentRepo.ensureSpaceManager('space-1');
+    const coordinator = seedSpaceManagerAgent(longHorizonAgentRepo, 'space-1');
     expect(lookup.getAgentById('space-1', coordinator.id)).toBeNull();
     seedSpace(db, 'space-3');
     const renamedDerivedId = coordinatorLongHorizonAgentId('space-3');

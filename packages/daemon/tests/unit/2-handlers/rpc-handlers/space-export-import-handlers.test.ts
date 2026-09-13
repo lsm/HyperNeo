@@ -29,6 +29,7 @@ import { runMigration243 } from '../../../../src/storage/schema/m243-space-agent
 import { runMigration246 } from '../../../../src/storage/schema/m246-template-version-seq-space-key';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { seedWorkerMirror } from '../../helpers/seed-worker-mirror';
+import { seedSpaceManagerAgent } from '../../helpers/seed-space-manager';
 
 interface SeedAgentParams {
   spaceId: string;
@@ -435,7 +436,7 @@ describe('Space Export/Import RPC Handlers', () => {
     });
 
     it('rejects when a workflow references the space coordinator', async () => {
-      const coordinator = longHorizonAgentRepo.ensureSpaceManager(SPACE_ID);
+      const coordinator = seedSpaceManagerAgent(longHorizonAgentRepo, SPACE_ID);
       workflowRepo.createWorkflow({
         spaceId: SPACE_ID,
         name: 'Pipe',
@@ -518,7 +519,7 @@ describe('Space Export/Import RPC Handlers', () => {
     });
 
     it('reserves the coordinator name for new imports', async () => {
-      const coordinator = longHorizonAgentRepo.ensureSpaceManager(SPACE_ID);
+      const coordinator = seedSpaceManagerAgent(longHorizonAgentRepo, SPACE_ID);
       const coordinatorName = longHorizonAgentRepo.getById(coordinator.id)!.displayName;
       const coordinatorBundle = makeBundle([{ name: coordinatorName }], []);
 
