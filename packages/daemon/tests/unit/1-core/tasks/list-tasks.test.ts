@@ -89,6 +89,98 @@ describe('bounded core task listing', () => {
     expect(page.total).toBe(3);
   });
 
+  test('blockReason narrows to one reason, and null selects tasks with none', () => {
+    const insert = db.prepare(
+      "INSERT INTO space_tasks (id, space_id, task_number, title, status, block_reason, created_at, updated_at) VALUES (?, ?, ?, ?, 'blocked', ?, ?, ?)"
+    );
+    insert.run('crashed', spaceId, 10, 'Crashed', 'agent_crashed', 50, 50);
+    insert.run('waiting', spaceId, 11, 'Waiting', 'human_input_requested', 60, 60);
+    insert.run('bare', spaceId, 12, 'Bare', null, 70, 70);
+
+    const one = listTaskCores(db, { spaceId, status: 'blocked', blockReason: 'agent_crashed' });
+    expect(one.tasks.map((task) => task.id)).toEqual(['crashed']);
+    expect(one.total).toBe(1);
+    expect(
+      listTaskCores(db, { spaceId, status: 'blocked', blockReason: null }).tasks.map((t) => t.id)
+    ).toEqual(['bare']);
+    expect(
+      listTaskCores(db, { spaceId, status: 'blocked', blockReason: 'dependency_added' }).tasks
+    ).toEqual([]);
+  });
+
+  test('blockReasonNotIn excludes the listed reasons and keeps tasks with none', () => {
+    const insert = db.prepare(
+      "INSERT INTO space_tasks (id, space_id, task_number, title, status, block_reason, created_at, updated_at) VALUES (?, ?, ?, ?, 'blocked', ?, ?, ?)"
+    );
+    insert.run('crashed', spaceId, 10, 'Crashed', 'agent_crashed', 50, 50);
+    insert.run('waiting', spaceId, 11, 'Waiting', 'human_input_requested', 60, 60);
+    insert.run('bare', spaceId, 12, 'Bare', null, 70, 70);
+
+    const page = listTaskCores(db, {
+      spaceId,
+      status: 'blocked',
+      blockReasonNotIn: ['agent_crashed'],
+    });
+    expect(page.tasks.map((task) => task.id)).toEqual(['bare', 'waiting']);
+    expect(page.total).toBe(2);
+    expect(
+      listTaskCores(db, {
+        spaceId,
+        status: 'blocked',
+        blockReasonNotIn: ['agent_crashed', 'human_input_requested'],
+      }).tasks.map((task) => task.id)
+    ).toEqual(['bare']);
+  });
+
+  test('a block-reason filter composes with paging, and an empty exclusion list is no filter', () => {
+    const insert = db.prepare(
+      "INSERT INTO space_tasks (id, space_id, task_number, title, status, block_reason, created_at, updated_at) VALUES (?, ?, ?, ?, 'blocked', 'agent_crashed', ?, ?)"
+    );
+    insert.run('c1', spaceId, 10, 'One', 50, 50);
+    insert.run('c2', spaceId, 11, 'Two', 60, 60);
+
+    const first = listTaskCores(db, {
+      spaceId,
+      status: 'blocked',
+      blockReason: 'agent_crashed',
+      limit: 1,
+    });
+    expect(first.tasks.map((task) => task.id)).toEqual(['c2']);
+    expect(first.total).toBe(2);
+    expect(first.nextCursor).toEqual({ createdAt: 60, id: 'c2' });
+    const second = listTaskCores(db, {
+      spaceId,
+      status: 'blocked',
+      blockReason: 'agent_crashed',
+      limit: 1,
+      before: first.nextCursor!,
+    });
+    expect(second.tasks.map((task) => task.id)).toEqual(['c1']);
+    expect(second.total).toBe(2);
+    expect(
+      listTaskCores(db, { spaceId, status: 'blocked', blockReasonNotIn: [] }).tasks.map(
+        (task) => task.id
+      )
+    ).toEqual(['c2', 'c1']);
+  });
+
+  test('the storage query does not constrain reason filters by status; task.list does', () => {
+    const insert = db.prepare(
+      "INSERT INTO space_tasks (id, space_id, task_number, title, status, block_reason, created_at, updated_at) VALUES (?, ?, ?, 'Open', 'open', NULL, ?, ?)"
+    );
+    insert.run('o1', spaceId, 10, 50, 50);
+    insert.run('o2', spaceId, 11, 60, 60);
+
+    expect(
+      listTaskCores(db, { spaceId, status: 'open', blockReason: null }).tasks.map((task) => task.id)
+    ).toEqual(['o2', 'o1', 'owned']);
+    expect(
+      listTaskCores(db, { spaceId, status: 'open', blockReasonNotIn: ['agent_crashed'] }).tasks.map(
+        (task) => task.id
+      )
+    ).toEqual(['o2', 'o1', 'owned']);
+  });
+
   test('bounds page size and normalizes invalid limits', () => {
     const insert = db.prepare(
       "INSERT INTO space_tasks (id, title, status, created_at, updated_at) VALUES (?, 'Extra', 'open', 1, 1)"

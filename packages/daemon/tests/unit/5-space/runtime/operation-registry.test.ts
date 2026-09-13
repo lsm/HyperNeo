@@ -619,6 +619,50 @@ test('task.list returns the core shape unchanged for standalone tasks through th
   expect((result as { tasks: unknown[] }).tasks[0]).not.toHaveProperty('spaceId');
 });
 
+test('task.list refuses blockReason together with blockReasonNotIn', async () => {
+  const rpc = createOperationRpcHandler(provider(), () => ({}));
+  await expect(
+    rpc(
+      {
+        name: 'task.list',
+        input: {
+          spaceId,
+          status: 'blocked',
+          blockReason: 'agent_crashed',
+          blockReasonNotIn: ['dependency_added'],
+        },
+      },
+      context
+    )
+  ).rejects.toThrow('mutually exclusive');
+});
+
+test('task.list refuses a block-reason filter outside the blocked status', async () => {
+  const rpc = createOperationRpcHandler(provider(), () => ({}));
+  for (const input of [
+    { spaceId, status: 'open', blockReason: null },
+    { spaceId, status: 'open', blockReasonNotIn: ['agent_crashed'] },
+    { spaceId, blockReason: 'agent_crashed' },
+  ]) {
+    await expect(rpc({ name: 'task.list', input }, context)).rejects.toThrow(
+      "require status === 'blocked'"
+    );
+  }
+});
+
+test('task.list filters a Space page by block reason through the registry', async () => {
+  tasks.updateTask(taskId, { status: 'blocked', blockReason: 'agent_crashed' });
+  const other = tasks.createTask({ spaceId, title: 'Other', description: '' });
+  tasks.updateTask(other.id, { status: 'blocked', blockReason: 'dependency_added' });
+  const rpc = createOperationRpcHandler(provider(), () => ({}));
+  const page = (await rpc(
+    { name: 'task.list', input: { spaceId, status: 'blocked', blockReason: 'agent_crashed' } },
+    context
+  )) as { tasks: { id: string }[]; total: number };
+  expect(page.tasks.map((task) => task.id)).toEqual([taskId]);
+  expect(page.total).toBe(1);
+});
+
 test('task.list preserves Space-scoped pagination while adding Space fields, across a cursor boundary', async () => {
   const second = tasks.createTask({ spaceId, title: 'Second', description: '' });
   const third = tasks.createTask({ spaceId, title: 'Third', description: '' });
