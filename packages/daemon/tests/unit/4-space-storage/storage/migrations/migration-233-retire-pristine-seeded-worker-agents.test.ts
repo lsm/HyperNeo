@@ -1,6 +1,5 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { PRESET_GENERAL_PROMPT, PRESET_PLANNER_PROMPT } from '@hyperneo/prompts';
 import { getPresetAgentTemplates } from '../../../../../src/lib/space/agents/seed-agents.ts';
 import { SpaceLongHorizonAgentRepository } from '../../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
@@ -11,7 +10,7 @@ import { insertSpace } from '../../../helpers/space-agent-schema.ts';
 import { createSpaceTables } from '../../../helpers/space-test-db.ts';
 
 const M233_REVIEWER_PROMPT = readFileSync(
-  join(import.meta.dir, 'fixtures', 'm233-reviewer-prompt.txt'),
+  new URL('fixtures/m233-reviewer-prompt.txt', import.meta.url),
   'utf8'
 );
 
