@@ -154,7 +154,7 @@ test('enqueue failure rolls back stop request and later cancellation can succeed
   expect(await operation.execute({ taskId }, { source: 'rpc' })).toMatchObject({ accepted: true });
 });
 
-test('completed frozen cancellation acknowledges again without granting execution authority', async () => {
+test('a repeat cancellation after full finalization is rejected as unavailable, not re-acknowledged from a stale session', async () => {
   const accepted = (await operation.execute({ taskId }, { source: 'mcp', sessionId })) as {
     accepted: true;
     jobId: string;
@@ -196,7 +196,10 @@ test('completed frozen cancellation acknowledges again without granting executio
   expect(tasks.getTask(dependent.id)?.status).toBe(dependent.status);
   expect(terminal).toHaveBeenCalledTimes(1);
   db.prepare("UPDATE sessions SET status='ended' WHERE id=?").run(sessionId);
-  expect(await operation.execute({ taskId }, { source: 'mcp', sessionId })).toEqual(accepted);
+  expect(await operation.execute({ taskId }, { source: 'mcp', sessionId })).toMatchObject({
+    accepted: false,
+    reason: 'cancellation_unavailable',
+  });
   expect(outcomeCount()).toBe(1);
 });
 
@@ -257,13 +260,40 @@ test.each(['space_chat', 'general', 'space_task_agent'] as const)(
   }
 );
 
-test('reserved attempts reject without freezing an outcome', async () => {
+test('a reserved attempt with a retained task session is fenced and cancelled through the manager, not frozen as an outcome', async () => {
   db.prepare("UPDATE direct_task_execution_attempts SET phase='reserved' WHERE id=?").run(
     attemptId
   );
-  expect(await operation.execute({ taskId }, { source: 'rpc' })).toMatchObject({ accepted: false });
+  const emitTaskUpdated = mock(async () => {});
+  const managedOp = createCancelTaskOperation(() => db, jobs, {
+    getTaskManager: (id) => new SpaceTaskManager(db, id),
+    emitTaskUpdated,
+  });
+  expect(await managedOp.execute({ taskId }, { source: 'rpc' })).toEqual({
+    accepted: true,
+    jobId: null,
+  });
   expect(outcomeCount()).toBe(0);
-  expect(attempts.isStopRequested(attemptId, sessionId)).toBe(false);
+  expect(attempts.isStopRequested(attemptId, sessionId)).toBe(true);
+  expect(attempts.get(attemptId)?.phase).toBe('reserved');
+  expect(tasks.getTask(taskId)?.status).toBe('cancelled');
+  expect(emitTaskUpdated).toHaveBeenCalledTimes(1);
+});
+
+test('a task with a retained agent session whose attempt already stopped is cancelled through the manager, not the direct binding', async () => {
+  db.prepare("UPDATE direct_task_execution_attempts SET phase='stopped' WHERE id=?").run(attemptId);
+  const emitTaskUpdated = mock(async () => {});
+  const managedOp = createCancelTaskOperation(() => db, jobs, {
+    getTaskManager: (id) => new SpaceTaskManager(db, id),
+    emitTaskUpdated,
+  });
+  expect(await managedOp.execute({ taskId }, { source: 'rpc' })).toEqual({
+    accepted: true,
+    jobId: null,
+  });
+  expect(outcomeCount()).toBe(0);
+  expect(attempts.get(attemptId)?.phase).toBe('stopped');
+  expect(tasks.getTask(taskId)?.status).toBe('cancelled');
 });
 
 function mockStopForStatus() {
@@ -445,20 +475,25 @@ test('a plain open task can be cancelled', async () => {
   expect(tasks.getTask(plainTaskId)?.status).toBe('cancelled');
 });
 
-test('a plain task with a reserved direct attempt is unavailable, not written through the manager', async () => {
+test('a plain task with a reserved direct attempt and no session yet is fenced then cancelled through the manager', async () => {
   const spaceId = tasks.getTask(taskId)!.spaceId!;
   const plainTaskId = tasks.createTask({ spaceId, title: 'Plain', description: '' }).id;
   attempts.select(plainTaskId);
-  expect(attempts.claim(plainTaskId, 'direct-reserved', 'reserved-session')).not.toBeNull();
+  const reserved = attempts.claim(plainTaskId, 'direct-reserved', 'reserved-session');
+  expect(reserved).not.toBeNull();
+  const emitTaskUpdated = mock(async () => {});
   const plainOp = createCancelTaskOperation(() => db, jobs, {
     getTaskManager: (id) => new SpaceTaskManager(db, id),
-    emitTaskUpdated: async () => {},
+    emitTaskUpdated,
   });
-  expect(await plainOp.execute({ taskId: plainTaskId }, { source: 'rpc' })).toMatchObject({
-    accepted: false,
-    reason: 'cancellation_unavailable',
+  expect(await plainOp.execute({ taskId: plainTaskId }, { source: 'rpc' })).toEqual({
+    accepted: true,
+    jobId: null,
   });
-  expect(tasks.getTask(plainTaskId)?.status).toBe('open');
+  expect(tasks.getTask(plainTaskId)?.status).toBe('cancelled');
+  expect(attempts.isStopRequested(reserved!.id, reserved!.sessionId)).toBe(true);
+  expect(attempts.get(reserved!.id)?.phase).toBe('reserved');
+  expect(emitTaskUpdated).toHaveBeenCalledTimes(1);
 });
 
 test('a plain done task returns cancellation_unavailable', async () => {

@@ -10,6 +10,7 @@ import { defineOperation, type OperationCaller } from '../../operations/registry
 import type { SpaceMcpSessionPolicyContext } from '../runtime/space-mcp-session-policy.ts';
 import type { SpaceTaskManager } from '../managers/space-task-manager.ts';
 import { resolveMetadataSessionSpace } from './task-metadata.ts';
+import { resolveCancellationRoute, supersedeReservedAttempt } from './cancel-route.ts';
 import type { SpaceTaskDependencyDependencies } from './task-dependencies.ts';
 import { Logger } from '../../logger.ts';
 import {
@@ -47,8 +48,9 @@ async function admitManagedCancellation(
   policy: CancelPolicyContext
 ): Promise<{ value: undefined } | { reason: DirectOutcomeAcknowledgement }> {
   const task = new SpaceTaskRepository(db).getTask(input.taskId);
-  if (!task?.spaceId || (task.taskAgentSessionId && !task.workflowRunId))
-    return { value: undefined };
+  if (!task?.spaceId) return { value: undefined };
+  const route = resolveCancellationRoute(db, task);
+  if (route.kind === 'direct') return { value: undefined };
   if (task.archivedAt || task.status === 'cancelled' || task.status === 'done')
     return { reason: { accepted: false, reason: 'cancellation_unavailable' } };
   if (caller.source === 'mcp') {
@@ -61,7 +63,7 @@ async function admitManagedCancellation(
     )
       return { reason: { accepted: false, reason: 'cancellation_denied' } };
   }
-  if (task.workflowRunId) {
+  if (route.kind === 'workflow') {
     const stopForStatus = policy.stopForStatus;
     if (!stopForStatus) return { reason: { accepted: false, reason: 'cancellation_unavailable' } };
     const executor: TaskStoppingExecutor<SpaceTask> = {
@@ -78,7 +80,7 @@ async function admitManagedCancellation(
   }
   const getTaskManager = policy.getTaskManager;
   if (!getTaskManager) return { reason: { accepted: false, reason: 'cancellation_unavailable' } };
-  if (new DirectTaskExecutionRepository(db).getActive(task.id))
+  if (route.kind === 'reserved' && !supersedeReservedAttempt(db, route.attempt))
     return { reason: { accepted: false, reason: 'cancellation_unavailable' } };
   try {
     const updated = await getTaskManager(task.spaceId).setTaskStatus(task.id, 'cancelled', {
@@ -164,7 +166,7 @@ export function createCancelTaskOperation(
   return defineOperation({
     name: 'task.cancel',
     description:
-      'Persist cancellation of one running task, direct-execution or Space-owned, and return its acknowledgement. RPC/internal callers and active persisted MCP sessions in the owning Space use the same operation. Never cascades to dependent tasks: it cancels exactly the named task. The direct-execution binding (a task with no direct-execution attempt is out of scope for it) returns a durable job acknowledgement ({ accepted: true, jobId }) that a worker later fulfills. The managed binding covers every Space-owned task without a direct-execution attempt: workflow-owned tasks run the same stopWorkflowBackedTaskForStatus stop path as spaceTask.update — validating the transition, setting status, and tearing down the task-owning workflow agents — while plain tasks (no workflow run) get a direct status write through the Space task manager; both complete synchronously with jobId: null. Rejects direct_cancellation_unavailable/direct_cancellation_denied for the direct binding, and cancellation_unavailable/cancellation_denied for the managed binding, on the same unsupported-state-vs-out-of-scope-caller split (unavailable: retry after state changes, including when the required binding is not configured; denied: do not retry); an invalid-transition rejection from the managed path itself returns cancellation_invalid_transition; any other failure (an infrastructure fault, not a domain rejection) throws through as execution_failed. Acceptance does not mean shutdown has completed.',
+      'Persist cancellation of one running task, direct-execution or Space-owned, and return its acknowledgement. RPC/internal callers and active persisted MCP sessions in the owning Space use the same operation. Never cascades to dependent tasks: it cancels exactly the named task. The direct-execution binding (a task with no running direct-execution attempt is out of scope for it) returns a durable job acknowledgement ({ accepted: true, jobId }) that a worker later fulfills. The managed binding covers every Space-owned task without a running direct-execution attempt: workflow-owned tasks run the same stopWorkflowBackedTaskForStatus stop path as spaceTask.update — validating the transition, setting status, and tearing down the task-owning workflow agents — while plain tasks (no workflow run), including one with a reserved but not-yet-running attempt (fenced first so a queued start job cannot promote it), get a direct status write through the Space task manager; both complete synchronously with jobId: null. Rejects direct_cancellation_unavailable/direct_cancellation_denied for the direct binding, and cancellation_unavailable/cancellation_denied for the managed binding, on the same unsupported-state-vs-out-of-scope-caller split (unavailable: retry after state changes, including when the required binding is not configured; denied: do not retry); an invalid-transition rejection from the managed path itself returns cancellation_invalid_transition; any other failure (an infrastructure fault, not a domain rejection) throws through as execution_failed. Acceptance does not mean shutdown has completed.',
     inputSchema,
     resultSchema: z.union([
       z.object({ accepted: z.literal(true), jobId: z.string().nullable() }),

@@ -6,7 +6,11 @@ import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-
 import { DirectTaskExecutionRepository } from '../../../../src/storage/repositories/direct-task-execution-repository';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
-import { createDirectTaskStarter } from '../../../../src/lib/space/runtime/start-direct-task';
+import {
+  claimDirectStart,
+  createDirectTaskStarter,
+} from '../../../../src/lib/space/runtime/start-direct-task';
+import { supersedeReservedAttempt } from '../../../../src/lib/space/operations/cancel-route';
 import {
   readDirectKickoffIntent,
   recordDirectKickoffAtomically,
@@ -535,4 +539,13 @@ test('kickoff feedback uses admitted review reason despite metadata changing dur
   const content = readDirectKickoffIntent(db, result.attempt.id)!.message.message.content;
   expect(content).toContain('Fix the requested edge case');
   expect(content).not.toContain('Concurrent unrelated note');
+});
+
+test('a reservation fenced by a cancellation cannot be promoted to running by a later start call', async () => {
+  const claimed = claimDirectStart(db, undefined, { taskId, requestKey });
+  if (!('value' in claimed)) throw new Error('claim failed');
+  const attempt = claimed.value;
+  expect(supersedeReservedAttempt(db, attempt)).toBe(true);
+  expect((await start({ taskId, requestKey })).started).toBe(false);
+  expect(attempts.get(attempt.id)?.phase).toBe('reserved');
 });
