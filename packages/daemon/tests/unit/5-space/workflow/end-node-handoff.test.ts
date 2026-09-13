@@ -187,8 +187,8 @@ describe('Implementer merge template (verify current-head approval, then gh pr m
     );
   });
 
-  test('escalates to space-agent only on cycle-cap or unresolvable blocker', () => {
-    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('send_message(target="space-agent"');
+  test('records and stops on cycle-cap or unresolvable blocker, with nobody to escalate to', () => {
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).not.toContain('space-agent');
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('shape: "note", kind: "merge_blocked"');
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('exit_reason');
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('Do NOT mark the task complete');

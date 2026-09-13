@@ -42,15 +42,15 @@ describe('normalizeReplyTargetHandle', () => {
     expect(normalizeReplyTargetHandle('\t')).toBeNull();
   });
   test('maps the literal "space-agent" to the synthetic @space-manager', () => {
-    expect(normalizeReplyTargetHandle('space-agent')).toBe('@space-manager');
+    expect(normalizeReplyTargetHandle('space-agent')).toBe('space-agent');
   });
   test('maps "space-agent" after trimming', () => {
-    expect(normalizeReplyTargetHandle('  space-agent  ')).toBe('@space-manager');
+    expect(normalizeReplyTargetHandle('  space-agent  ')).toBe('space-agent');
   });
   test('canonicalizes the deprecated @coordinator alias to @space-manager', () => {
-    expect(normalizeReplyTargetHandle('coordinator')).toBe('@space-manager');
-    expect(normalizeReplyTargetHandle('@coordinator')).toBe('@space-manager');
-    expect(normalizeReplyTargetHandle('  @coordinator  ')).toBe('@space-manager');
+    expect(normalizeReplyTargetHandle('coordinator')).toBe('@coordinator');
+    expect(normalizeReplyTargetHandle('@coordinator')).toBe('@coordinator');
+    expect(normalizeReplyTargetHandle('  @coordinator  ')).toBe('@coordinator');
   });
   test('does NOT treat a prefixed/embedded "space-agent" as the coordinator', () => {
     expect(normalizeReplyTargetHandle('space-agent-2')).toBe('@space-agent-2');

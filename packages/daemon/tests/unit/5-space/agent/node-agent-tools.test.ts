@@ -307,7 +307,7 @@ describe('node-agent-tools: list_peers', () => {
 
     expect(data.channelTopologyDeclared).toBe(false);
     expect(data.permittedTargets).toEqual(['space-agent']);
-    expect(data.message).toContain('Use "space-agent"');
+    expect(data.message).not.toContain('Use "space-agent"');
   });
 
   test('reports permitted targets when channels declared', async () => {

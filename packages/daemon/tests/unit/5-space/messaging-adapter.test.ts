@@ -398,8 +398,29 @@ describe('Space messaging adapter', () => {
     expect(result.deliveries[0].deliveredSessionId).toBeUndefined();
   });
 
+  it('routes space-agent to the authorized reply session, and refuses it without one', () => {
+    const base = {
+      spaceId,
+      workflowRunId: runId,
+      workflowNodeId: 'node-coding',
+      agentName: 'coder',
+      workflow: workflowRepo.getWorkflow(workflowRunRepo.getRun(runId)!.workflowId),
+    };
+
+    expect(
+      translateLegacyNodeTargets('space-agent', {
+        ...base,
+        replyRoutingLookup: () => 'session-origin',
+      })
+    ).toEqual(['@session:session-origin']);
+
+    expect(() => translateLegacyNodeTargets('space-agent', base)).toThrow(
+      'no reply route in this task'
+    );
+  });
+
   it('translates legacy node-agent targets to generic worker targets', () => {
-    const targets = translateLegacyNodeTargets(['Review', 'reviewer', 'space-agent', '*'], {
+    const targets = translateLegacyNodeTargets(['Review', 'reviewer', '*'], {
       spaceId,
       workflowRunId: runId,
       workflowNodeId: 'node-coding',
@@ -411,7 +432,6 @@ describe('Space messaging adapter', () => {
       `@worker:${encodeURIComponent(runId)}/Review/reviewer`,
       `@worker:${encodeURIComponent(runId)}/Review/observer`,
       `@worker:${encodeURIComponent(runId)}/QA/reviewer`,
-      '@space-manager',
       `@worker:${encodeURIComponent(runId)}/Deploy/deployer`,
     ]);
     expect(() =>

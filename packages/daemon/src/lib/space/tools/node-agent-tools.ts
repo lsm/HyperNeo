@@ -340,8 +340,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
         channelTopologyDeclared,
         message:
           `Found ${peers.length} peer(s). ` +
-          `Permitted direct targets via send_message: ${permittedTargets.join(', ')}. ` +
-          `Use "space-agent" to escalate blockers or request human/space-level judgment.`,
+          `Permitted direct targets via send_message: ${permittedTargets.join(', ')}.`,
       });
     },
 
