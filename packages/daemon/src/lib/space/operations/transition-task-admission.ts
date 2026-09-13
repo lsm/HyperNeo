@@ -16,6 +16,7 @@ export const SpaceTransitionTaskInputSchema = z
     taskId: z.string().min(1),
     status: TaskCoreSchema.shape.status,
     result: z.string().optional(),
+    expectedStatus: TaskCoreSchema.shape.status.optional(),
   })
   .strict();
 export type SpaceTransitionTaskInput = z.infer<typeof SpaceTransitionTaskInputSchema>;

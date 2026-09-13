@@ -259,6 +259,35 @@ test('writeStatus threads expectedWorkflowRunId from the loaded task into setTas
   );
 });
 
+test('a matching expectedStatus is threaded through and the write proceeds', async () => {
+  const task = tasks.createTask({ spaceId, title: 'Draft', description: '' });
+  tasks.updateTask(task.id, { status: 'draft' });
+  const result = await invoke({ taskId: task.id, status: 'open', expectedStatus: 'draft' }, rpc);
+  expect(result).toMatchObject({ kind: 'completed', value: { id: task.id, status: 'open' } });
+  expect(tasks.getTask(task.id)?.status).toBe('open');
+});
+
+test('a stale expectedStatus rejects with invalid_transition and leaves the task alone', async () => {
+  const task = tasks.createTask({ spaceId, title: 'Finished', description: '' });
+  tasks.updateTask(task.id, { status: 'done' });
+  const result = await invoke({ taskId: task.id, status: 'open', expectedStatus: 'draft' }, rpc);
+  expect(result).toEqual({ kind: 'completed', value: 'invalid_transition' });
+  expect(tasks.getTask(task.id)?.status).toBe('done');
+});
+
+test('an omitted expectedStatus still guards on the loaded status', async () => {
+  const task = tasks.createTask({ spaceId, title: 'T', description: '' });
+  const setTaskStatus = mock(async () => tasks.getTask(task.id)!);
+  await invoke({ taskId: task.id, status: 'in_progress' }, rpc, {
+    getTaskManager: () => ({ getTask: async (id) => tasks.getTask(id), setTaskStatus }),
+  });
+  expect(setTaskStatus).toHaveBeenCalledWith(
+    task.id,
+    'in_progress',
+    expect.objectContaining({ expectedStatus: 'open' })
+  );
+});
+
 test('a rejecting emitTaskUpdated still returns the updated task', async () => {
   const task = tasks.createTask({ spaceId, title: 'T', description: '' });
   emitTaskUpdated.mockImplementation(async () => {
