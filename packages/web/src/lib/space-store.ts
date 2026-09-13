@@ -48,7 +48,7 @@ import { generateUUID, isUUID, Logger } from '@hyperneo/shared';
 import { computed, signal } from '@preact/signals';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { connectionManager } from './connection-manager';
-import { invokeOperation, transitionTask } from './operations';
+import { invokeOperation } from './operations';
 import { currentSpaceCanonicalIdSignal, currentSpaceIdSignal } from './signals';
 
 const logger = new Logger('hyperneo:web:spacestore');
@@ -2165,7 +2165,11 @@ class SpaceStore {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
 
-    return transitionTask<SpaceTask>(hub, taskId, status);
+    return hub.request<SpaceTask>('spaceTask.recoverWorkflow', {
+      taskId,
+      spaceId,
+      status,
+    });
   }
 
   async publishTask(taskId: string): Promise<SpaceTask> {
@@ -2175,7 +2179,10 @@ class SpaceStore {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
 
-    return transitionTask<SpaceTask>(hub, taskId, 'open');
+    return hub.request<SpaceTask>('spaceTask.publish', {
+      taskId,
+      spaceId,
+    });
   }
 
   async runTaskDirectly(taskId: string): Promise<DirectTaskStartResult> {
@@ -2241,11 +2248,13 @@ class SpaceStore {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
 
-    return invokeOperation<SpaceTask>(hub, 'task.resolvePendingCompletion', {
+    const task = await hub.request<SpaceTask>('spaceTask.approvePendingCompletion', {
       taskId,
+      spaceId,
       approved,
       reason: reason ?? null,
     });
+    return task;
   }
 
   async sendTaskMessage(
