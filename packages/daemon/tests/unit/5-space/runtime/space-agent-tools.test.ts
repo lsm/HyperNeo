@@ -2682,12 +2682,12 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     ).toBe(true);
   });
 
-  test('assign_agent_to_goal wakes the space pending outcome notifications', async () => {
+  test('assign_agent_to_goal wakes the goal pending outcome notifications', async () => {
     const internalEventBus = createDaemonInternalEventBus();
-    const recoverPendingOutcomeNotificationsForSpace = mock(async (_spaceId: string) => {});
+    const recoverPendingOutcomeNotificationsForGoal = mock(async (_goalId: string) => {});
     subscribeGoalOwnerChangeOutcomeRedelivery({
       internalEventBus,
-      recoverPendingOutcomeNotificationsForSpace,
+      recoverPendingOutcomeNotificationsForGoal,
     });
     const handlers = makeHandlers(ctx, { internalEventBus });
     const agent = ctx.longHorizonAgentRepo.ensureSpaceManager(ctx.spaceId);
@@ -2699,7 +2699,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     );
 
     expect(assigned.success).toBe(true);
-    expect(recoverPendingOutcomeNotificationsForSpace).toHaveBeenCalledWith(ctx.spaceId);
+    expect(recoverPendingOutcomeNotificationsForGoal).toHaveBeenCalledWith(goal.id);
   });
 
   test('rejects owner mutations from a workflow worker session', async () => {

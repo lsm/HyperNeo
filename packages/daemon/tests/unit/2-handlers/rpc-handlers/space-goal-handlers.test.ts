@@ -239,12 +239,12 @@ describe('spaceGoal owner handlers', () => {
     });
   });
 
-  it('wakes the space pending outcome notifications when an owner is assigned', async () => {
+  it('wakes the goal pending outcome notifications when an owner is assigned', async () => {
     const internalEventBus = createDaemonInternalEventBus();
-    const recoverPendingOutcomeNotificationsForSpace = mock(async (_spaceId: string) => {});
+    const recoverPendingOutcomeNotificationsForGoal = mock(async (_goalId: string) => {});
     subscribeGoalOwnerChangeOutcomeRedelivery({
       internalEventBus,
-      recoverPendingOutcomeNotificationsForSpace,
+      recoverPendingOutcomeNotificationsForGoal,
     });
     const { hub, handlers } = createMockHub();
     setupSpaceGoalHandlers(hub, {
@@ -263,7 +263,7 @@ describe('spaceGoal owner handlers', () => {
       makeContext('global')
     );
 
-    expect(recoverPendingOutcomeNotificationsForSpace).toHaveBeenCalledWith(SPACE_ID);
+    expect(recoverPendingOutcomeNotificationsForGoal).toHaveBeenCalledWith(GOAL_ID);
   });
 
   it('unassigns the current owner and clears ownership', async () => {

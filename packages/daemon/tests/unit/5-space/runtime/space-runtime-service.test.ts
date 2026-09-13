@@ -2442,6 +2442,98 @@ describe('SpaceRuntimeService', () => {
     });
   });
 
+  describe('recoverPendingOutcomeNotificationsForGoal()', () => {
+    const strandedNotification: SpaceGoalOutcomeNotification = {
+      id: 'notif-stranded',
+      spaceId: mockSpace.id,
+      goalId: 'goal-stranded',
+      taskId: 'task-stranded',
+      terminalGeneration: 1,
+      goalRevision: 1,
+      status: 'pending',
+      payload: {
+        summary: '',
+        taskStatus: 'done',
+        taskTitle: 'Task',
+        goalTitle: 'Goal',
+      },
+      createdAt: NOW,
+      updatedAt: NOW,
+    };
+
+    function makeDeps() {
+      return {
+        outcomeNotificationRepo: {
+          listPendingByGoal: mock(() => [strandedNotification]),
+          listPendingBySpace: mock(() => []),
+          getById: mock(() => ({ status: 'pending' })),
+          getCoordinator: mock(() => null),
+        } as unknown as SpaceGoalOutcomeNotificationRepository,
+        goalScopeRepo: {
+          getPrimaryGoalOwner: mock(() => ({ action: 'no_recipient' })),
+        } as unknown as SpaceRuntimeServiceConfig['goalScopeRepo'],
+        agentRepo: {
+          getSpaceManager: mock(() => null),
+        } as unknown as SpaceRuntimeServiceConfig['agentRepo'],
+        goalService: {
+          getGoal: mock(() => ({
+            id: strandedNotification.goalId,
+            spaceId: strandedNotification.spaceId,
+          })),
+        } as unknown as SpaceRuntimeServiceConfig['goalService'],
+        longHorizonAgentRepo: {} as unknown as SpaceLongHorizonAgentRepository,
+      };
+    }
+
+    test('reads the uncapped per-goal pending query, not the capped per-space one', async () => {
+      const deps = makeDeps();
+      const svc = new SpaceRuntimeService({
+        ...buildConfig(createMockSpaceManager(mockSpace)),
+        enableGoalOutcomeWake: true,
+        ...deps,
+      });
+
+      await svc.recoverPendingOutcomeNotificationsForGoal(strandedNotification.goalId);
+
+      expect(deps.outcomeNotificationRepo.listPendingByGoal).toHaveBeenCalledWith(
+        strandedNotification.goalId
+      );
+      expect(deps.outcomeNotificationRepo.listPendingBySpace).not.toHaveBeenCalled();
+      expect(deps.goalScopeRepo.getPrimaryGoalOwner).toHaveBeenCalledWith(
+        strandedNotification.goalId,
+        strandedNotification.spaceId
+      );
+    });
+
+    test('skips redelivery while goal outcome wakes are gated', async () => {
+      const deps = makeDeps();
+      const svc = new SpaceRuntimeService({
+        ...buildConfig(createMockSpaceManager(mockSpace)),
+        ...deps,
+      });
+
+      await svc.recoverPendingOutcomeNotificationsForGoal(strandedNotification.goalId);
+
+      expect(deps.outcomeNotificationRepo.listPendingByGoal).not.toHaveBeenCalled();
+    });
+
+    test('skips redelivery for a paused space', async () => {
+      const deps = makeDeps();
+      const svc = new SpaceRuntimeService({
+        ...buildConfig(createMockSpaceManager({ ...mockSpace, paused: true })),
+        enableGoalOutcomeWake: true,
+        ...deps,
+      });
+
+      await svc.recoverPendingOutcomeNotificationsForGoal(strandedNotification.goalId);
+
+      expect(deps.outcomeNotificationRepo.listPendingByGoal).toHaveBeenCalledWith(
+        strandedNotification.goalId
+      );
+      expect(deps.goalScopeRepo.getPrimaryGoalOwner).not.toHaveBeenCalled();
+    });
+  });
+
   describe('attachSpaceToolsToMemberSession()', () => {
     function makeMemberAgentSession(overrides: Partial<Session> = {}) {
       const sessionData = makeMemberSession(overrides);

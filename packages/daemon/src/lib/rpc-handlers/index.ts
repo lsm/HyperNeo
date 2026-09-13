@@ -1130,8 +1130,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
   subscribeGoalOwnerChangeOutcomeRedelivery({
     internalEventBus: deps.internalEventBus,
-    recoverPendingOutcomeNotificationsForSpace: (spaceId) =>
-      spaceRuntimeService.recoverPendingOutcomeNotificationsForSpace(spaceId),
+    recoverPendingOutcomeNotificationsForGoal: (goalId) =>
+      spaceRuntimeService.recoverPendingOutcomeNotificationsForGoal(goalId),
   });
 
   const spaceAgentTemplateManager = new SpaceAgentTemplateManager(
