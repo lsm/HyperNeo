@@ -3271,7 +3271,7 @@ export class TaskAgentManager {
       'Tools available:',
       ...(dispatcherTools ?? []),
       ...typedTools,
-      'Only contact the task-agent via send_message if you are blocked or need human input.',
+      'If you hit a hard blocker: record it with save_artifact({ shape: "note", kind: "blocked", summary: "<what blocks you>" }) and stop. Do NOT wait for a reply — there is no Space-level recipient, and the unfinished task carrying that artifact is the signal a human acts on.',
     ].join('\n');
 
     if (!workflow) {
@@ -3297,7 +3297,7 @@ export class TaskAgentManager {
     ];
 
     lines.push(
-      'Only contact the task-agent via send_message if you are blocked or need human input.'
+      'If you hit a hard blocker: record it with save_artifact({ shape: "note", kind: "blocked", summary: "<what blocks you>" }) and stop. Do NOT wait for a reply — there is no Space-level recipient, and the unfinished task carrying that artifact is the signal a human acts on.'
     );
     if (isEndNode) {
       if (approveUnlocked) {

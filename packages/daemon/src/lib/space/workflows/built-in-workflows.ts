@@ -942,6 +942,14 @@ const CURRENT_CODING_WORKFLOW_NOCHANGE_STEP_PROMPT =
   '`save_artifact({ shape: "note", kind: "no_code_changes", summary: "<why this task needs no code changes>" })` ' +
   'and stop. Do NOT mark the task complete and do NOT wait for a reply: there is no Space-level ' +
   'recipient, and the unfinished task carrying that artifact is the signal a human acts on.\n\n';
+const CURRENT_CODER_ONLY_NOCHANGE_STEP =
+  'do NOT fabricate an empty commit or PR — record the blocker with `save_artifact({ shape: "note", kind: "no_code_changes", summary: "<why this task needs no code changes>" })` and stop. Do NOT wait for a reply: there is no Space-level recipient, and the unfinished task carrying that artifact is the signal a human acts on.';
+const RETIRED_ESCALATION_CODER_ONLY_NOCHANGE_STEP =
+  'do NOT fabricate an empty commit or PR — escalate via send_message to the escalation target in your Runtime Execution Contract, explain that the task produced no code changes and needs re-routing, and stop and wait for guidance.';
+const CURRENT_CODER_ONLY_GATE_FAILURE_STEP =
+  'Record the failure with `save_artifact({ shape: "note", kind: "review_gate_failed", summary: "<which gate failed and why>" })` and STOP only when you can run neither an external gate nor a credible internal fallback review (for example, the diff is too large or too risky to self-review). Do NOT wait for a reply: there is no Space-level recipient.';
+const RETIRED_ESCALATION_CODER_ONLY_GATE_FAILURE_STEP =
+  'Escalate via send_message to the escalation target in your Runtime Execution Contract and STOP only when you can run neither an external gate nor a credible internal fallback review (for example, the diff is too large or too risky to self-review) — say which gate failed and why.';
 const RETIRED_ESCALATION_CODING_WORKFLOW_NOCHANGE_STEP_PROMPT =
   '7. If the task requires no code changes (validation-only, a diagnostic, or already ' +
   'complete): do NOT create an empty commit or PR. This workflow only completes via a ' +
@@ -2012,6 +2020,8 @@ const BUILT_IN_PROMPT_PATCH_VARIANTS = [
   ],
   [[FULLSTACK_CODING_NOCHANGE_GUIDANCE, RETIRED_ESCALATION_FULLSTACK_CODING_NOCHANGE_GUIDANCE]],
   [[CURRENT_EXTERNAL_REVIEW_NO_BOT_STOP, RETIRED_EXTERNAL_REVIEW_NO_BOT_ESCALATION]],
+  [[CURRENT_CODER_ONLY_NOCHANGE_STEP, RETIRED_ESCALATION_CODER_ONLY_NOCHANGE_STEP]],
+  [[CURRENT_CODER_ONLY_GATE_FAILURE_STEP, RETIRED_ESCALATION_CODER_ONLY_GATE_FAILURE_STEP]],
   [[CURRENT_FULLSTACK_CODING_PR_STEP_PROMPT, RETIRED_FULLSTACK_CODING_PR_STEP_PROMPT]],
   [
     [CURRENT_FULLSTACK_CODING_PR_STEP_PROMPT, RETIRED_FULLSTACK_CODING_PR_STEP_PROMPT],

@@ -4306,6 +4306,36 @@ test('persisted prompts carrying the retired escalation target reconcile to the 
   expect(mergedPrompt).toBe(templatePrompt);
 });
 
+test('persisted Coder-Only prompts carrying the retired escalation target reconcile', () => {
+  const templateNode = CODER_ONLY_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
+  const templatePrompt = templateNode.agents[0].customPrompt!.value;
+
+  const persisted = templatePrompt
+    .replace(
+      'do NOT fabricate an empty commit or PR — record the blocker with `save_artifact({ shape: "note", kind: "no_code_changes", summary: "<why this task needs no code changes>" })` and stop. Do NOT wait for a reply: there is no Space-level recipient, and the unfinished task carrying that artifact is the signal a human acts on.',
+      'do NOT fabricate an empty commit or PR — escalate via send_message to the escalation target in your Runtime Execution Contract, explain that the task produced no code changes and needs re-routing, and stop and wait for guidance.'
+    )
+    .replace(
+      'Record the failure with `save_artifact({ shape: "note", kind: "review_gate_failed", summary: "<which gate failed and why>" })` and STOP only when you can run neither an external gate nor a credible internal fallback review (for example, the diff is too large or too risky to self-review). Do NOT wait for a reply: there is no Space-level recipient.',
+      'Escalate via send_message to the escalation target in your Runtime Execution Contract and STOP only when you can run neither an external gate nor a credible internal fallback review (for example, the diff is too large or too risky to self-review) — say which gate failed and why.'
+    );
+
+  expect(persisted).not.toBe(templatePrompt);
+  expect(persisted).toContain('escalate via send_message to the escalation target');
+  expect(persisted).toContain('Escalate via send_message to the escalation target');
+
+  const existingNode: WorkflowNode = {
+    ...templateNode,
+    agents: templateNode.agents.map((a, i) =>
+      i === 0 ? { ...a, customPrompt: { value: persisted } } : a
+    ),
+  };
+  const merged = mergeNodeStructuralFieldsFromTemplate([existingNode], CODER_ONLY_WORKFLOW.nodes);
+  const mergedPrompt = merged.find((n) => n.name === 'Coding')!.agents[0].customPrompt!.value;
+
+  expect(mergedPrompt).toBe(templatePrompt);
+});
+
 test('the Coding coder legacy seed keeps its historical escalation wording', () => {
   const templateNode = CODING_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
   const seed = LEGACY_CODING_SLOT_PROMPTS['Coding|coder']!.find((candidate) =>
