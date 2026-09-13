@@ -1,4 +1,9 @@
-import type { OperationRegistrySource } from '../../operations/registry.ts';
+import superpipe, { type PipelineAPI } from 'superpipe';
+import { invokeOperation, type OperationOutcome } from '../../operations/invoke.ts';
+import {
+  resolveOperationRegistry,
+  type OperationRegistrySource,
+} from '../../operations/registry.ts';
 import type { SpaceMcpSessionRole } from '../runtime/space-mcp-session-policy.ts';
 import { wrapHandlerWithHooks } from '../runtime/workflow-hook-engine.ts';
 import {
@@ -41,61 +46,133 @@ function nodeAction<P>(entry: Omit<ActionEntry<P>, 'family'>): ActionDefinition 
   return defineAction({ ...entry, family: 'node' });
 }
 
-function isAcceptedTaskCompletion(result: ToolResult): boolean {
-  const text = result.content?.[0]?.text;
-  if (typeof text !== 'string') return false;
+type GoalUpdatePayload = NonNullable<MarkCompleteInput['goal_update']>;
+type PendingGoalUpdate = { goalId: string; spaceId: string; update: GoalUpdatePayload } | null;
+type GoalTarget = { goalId: string; update: GoalUpdatePayload } | null;
+type MarkCompleteDeps = Pick<
+  NodeAgentToolsConfig,
+  'taskId' | 'mySessionId' | 'taskRepo' | 'goalService'
+> & { operations: OperationRegistrySource };
+
+function requireGoalServiceForUpdate(
+  params: MarkCompleteInput,
+  deps: MarkCompleteDeps
+): { value: GoalUpdatePayload | null } | { reason: ToolResult } {
+  const update = params.goal_update;
+  if (!update) return { value: null };
+  if (!deps.goalService)
+    return {
+      reason: jsonResult({
+        success: false,
+        error: 'Goal update is not available in this context.',
+      }),
+    };
+  return { value: update };
+}
+
+function requireTaskGoalLink(
+  update: GoalUpdatePayload | null,
+  deps: MarkCompleteDeps
+): { value: PendingGoalUpdate } | { reason: ToolResult } {
+  if (!update) return { value: null };
+  const task = deps.taskRepo?.getTask(deps.taskId);
+  if (!task?.goalId)
+    return {
+      reason: jsonResult({
+        success: false,
+        error: 'Cannot apply goal_update: this task is not linked to a goal.',
+      }),
+    };
+  return { value: { goalId: task.goalId, spaceId: task.spaceId, update } };
+}
+
+function requireGoalExists(
+  pending: PendingGoalUpdate,
+  deps: MarkCompleteDeps
+): { value: GoalTarget } | { reason: ToolResult } {
+  if (!pending) return { value: null };
+  const goal = deps.goalService?.getGoal(pending.goalId);
+  if (!goal || goal.spaceId !== pending.spaceId)
+    return { reason: jsonResult({ success: false, error: `Goal not found: ${pending.goalId}` }) };
+  return { value: { goalId: goal.id, update: pending.update } };
+}
+
+async function invokeCompleteTaskOperation(deps: MarkCompleteDeps): Promise<OperationOutcome> {
+  return invokeOperation(
+    resolveOperationRegistry(deps.operations),
+    'task.complete',
+    { taskId: deps.taskId },
+    { source: 'mcp', sessionId: deps.mySessionId }
+  );
+}
+
+function isAcceptedCompletion(outcome: OperationOutcome): boolean {
+  return (
+    outcome.kind === 'completed' && (outcome.value as { accepted?: boolean })?.accepted === true
+  );
+}
+
+async function applyGoalUpdateEffect(
+  outcome: OperationOutcome,
+  target: GoalTarget,
+  deps: MarkCompleteDeps
+): Promise<string | null> {
+  if (!target || !isAcceptedCompletion(outcome)) return null;
   try {
-    return (JSON.parse(text) as { accepted?: boolean }).accepted === true;
-  } catch {
-    return false;
+    await deps.goalService?.updateGoal(
+      target.goalId,
+      {
+        summary: target.update.summary,
+        progress: target.update.progress,
+        metrics: target.update.metrics,
+        nextSteps: target.update.nextSteps,
+      },
+      { source: 'workflow_node_agent', sourceTaskId: deps.taskId }
+    );
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
   }
 }
+
+function formatMarkCompleteResult(
+  outcome: OperationOutcome,
+  goalUpdateError: string | null
+): ToolResult {
+  if (outcome.kind !== 'completed')
+    return { ...jsonResult({ code: outcome.code, message: outcome.message }), isError: true };
+  return jsonResult(
+    goalUpdateError
+      ? { ...(outcome.value as Record<string, unknown>), goalUpdateError }
+      : outcome.value
+  );
+}
+
+const runMarkCompleteOperation = (superpipe({})('mark-complete-operation') as PipelineAPI)
+  .input(['params', 'deps'])
+  .pipe(requireGoalServiceForUpdate, ['params', 'deps'], 'result:outcome')
+  .pipe(requireTaskGoalLink, ['outcome', 'deps'], 'result:outcome')
+  .pipe(requireGoalExists, ['outcome', 'deps'], 'result:outcome')
+  .pipe(invokeCompleteTaskOperation, ['deps'], 'operationOutcome')
+  .pipe(applyGoalUpdateEffect, ['operationOutcome', 'outcome', 'deps'], 'goalUpdateError')
+  .pipe(formatMarkCompleteResult, ['operationOutcome', 'goalUpdateError'], 'outcome')
+  .endAsync('outcome') as (
+  params: MarkCompleteInput,
+  deps: MarkCompleteDeps
+) => Promise<ToolResult>;
 
 function createMarkCompleteOperationHandler(
   config: NodeAgentToolsConfig,
   operations: OperationRegistrySource
 ): (args: MarkCompleteInput) => Promise<ToolResult> {
-  const completeTask = createOperationActionHandler(
+  const deps: MarkCompleteDeps = {
+    taskId: config.taskId,
+    mySessionId: config.mySessionId,
+    taskRepo: config.taskRepo,
+    goalService: config.goalService,
     operations,
-    { sessionId: config.mySessionId },
-    'task.complete',
-    () => ({ taskId: config.taskId })
-  ) as unknown as (args: MarkCompleteInput) => Promise<ToolResult>;
-  return async (args: MarkCompleteInput): Promise<ToolResult> => {
-    const goalUpdate = args.goal_update;
-    let goalId: string | null = null;
-    if (goalUpdate) {
-      if (!config.goalService)
-        return jsonResult({
-          success: false,
-          error: 'Goal update is not available in this context.',
-        });
-      const task = config.taskRepo?.getTask(config.taskId);
-      if (!task?.goalId)
-        return jsonResult({
-          success: false,
-          error: 'Cannot apply goal_update: this task is not linked to a goal.',
-        });
-      const goal = config.goalService.getGoal(task.goalId);
-      if (!goal || goal.spaceId !== task.spaceId)
-        return jsonResult({ success: false, error: `Goal not found: ${task.goalId}` });
-      goalId = goal.id;
-    }
-    const result = await completeTask(args);
-    if (goalId && isAcceptedTaskCompletion(result)) {
-      config.goalService?.updateGoal(
-        goalId,
-        {
-          summary: goalUpdate?.summary,
-          progress: goalUpdate?.progress,
-          metrics: goalUpdate?.metrics,
-          nextSteps: goalUpdate?.nextSteps,
-        },
-        { source: 'workflow_node_agent', sourceTaskId: config.taskId }
-      );
-    }
-    return result;
   };
+  return (args: MarkCompleteInput) => runMarkCompleteOperation(args, deps);
 }
 
 export function createNodeRegistryEntries(

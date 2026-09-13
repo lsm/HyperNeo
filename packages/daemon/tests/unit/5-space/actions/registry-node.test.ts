@@ -1129,6 +1129,55 @@ describe('mark_complete — operation-backed', () => {
     }
   });
 
+  test('a goal-update failure after an accepted completion is reported in the result, not thrown', async () => {
+    const ctx = makeCtx();
+    try {
+      seedSpaceRow(ctx.db, SPACE_ID);
+      const taskRepo = new SpaceTaskRepository(ctx.db);
+      const task = taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'T',
+        description: '',
+        status: 'approved',
+        goalId: 'goal-1',
+      });
+      const goalService = {
+        getGoal: (goalId: string) =>
+          goalId === 'goal-1' ? { id: 'goal-1', spaceId: SPACE_ID } : null,
+        updateGoal: () => {
+          throw new Error('goal db locked');
+        },
+      };
+      const operations = makeCompleteTaskOperation(async () => ({
+        accepted: true,
+        task: { id: task.id, status: 'done' },
+      }));
+      const config = makeBareConfig(ctx, {
+        taskId: task.id,
+        taskRepo,
+        goalService: goalService as unknown as NodeAgentToolsConfig['goalService'],
+        ...keepCallbacks(ctx, ['onMarkComplete']),
+      });
+      const entry = createNodeRegistryEntries(config, operations).find(
+        (candidate) => candidate.name === 'mark_complete'
+      );
+      if (!entry) throw new Error('mark_complete entry missing');
+
+      const out = (await entry.handler({ goal_update: { summary: 'Shipped' } })) as {
+        content: Array<{ text: string }>;
+        isError?: boolean;
+      };
+      expect(out.isError).toBeUndefined();
+      expect(JSON.parse(out.content[0].text)).toEqual({
+        accepted: true,
+        task: { id: task.id, status: 'done' },
+        goalUpdateError: 'goal db locked',
+      });
+    } finally {
+      ctx.db.close();
+    }
+  });
+
   test('a goal validation failure rejects with the existing message and leaves the task untouched', async () => {
     const ctx = makeCtx();
     try {
