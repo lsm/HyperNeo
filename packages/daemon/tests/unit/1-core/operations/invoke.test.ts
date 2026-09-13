@@ -1023,7 +1023,7 @@ describe('shared operation invocation audit hooks', () => {
     await invokeOperation(registry, 'message.send', { content: 'hello' }, caller, audit);
     expect(afterRan).toBe(true);
   });
-  test('a counterfeit Date marks only itself, leaving the rest of the input recorded', async () => {
+  test('a counterfeit Date is projected as an ordinary object, never through Date internals', async () => {
     const operation = defineOperation({
       name: 'message.send.counterfeit',
       description: 'Accept a value that claims to be a Date without being one',
@@ -1032,7 +1032,8 @@ describe('shared operation invocation audit hooks', () => {
       execute: async (input: { content: string }) => ({ accepted: input.content }),
     });
     const registry = createOperationRegistry([operation]);
-    const when = Object.create(Date.prototype) as Date;
+    const when = Object.create(Date.prototype) as Date & { label?: string };
+    when.label = 'not really a date';
     let seen: unknown = null;
     const outcome = await invokeOperation(
       registry,
@@ -1046,7 +1047,8 @@ describe('shared operation invocation audit hooks', () => {
       }
     );
     expect(outcome).toEqual({ kind: 'completed', value: { accepted: 'hello' } });
-    expect(seen).toEqual({ content: 'hello', when: '[unrepresentable]' });
+    expect(seen).toEqual({ content: 'hello', when: { label: 'not really a date' } });
+    expect((seen as { when: unknown }).when).not.toBeInstanceOf(Date);
   });
   test('an enumerable symbol-keyed field survives the snapshot', async () => {
     const tag = Symbol('tag');
@@ -1178,6 +1180,98 @@ describe('shared operation invocation audit hooks', () => {
     expect(recorded.context).toEqual({ note: 'kept' });
     expect(recorded).not.toBe(when);
     expect(recorded.context).not.toBe(when.context);
+  });
+  test('a caller inheriting from a proxy never reaches that proxy traps', async () => {
+    const { operation } = fixture();
+    const trapsRun: string[] = [];
+    const proxyAncestor = new Proxy(
+      {},
+      {
+        getOwnPropertyDescriptor(target, key) {
+          trapsRun.push('getOwnPropertyDescriptor');
+          return Reflect.getOwnPropertyDescriptor(target, key);
+        },
+        getPrototypeOf(target) {
+          trapsRun.push('getPrototypeOf');
+          return Reflect.getPrototypeOf(target);
+        },
+      }
+    );
+    const heir = Object.create(proxyAncestor) as { source: 'rpc' };
+    heir.source = 'rpc';
+    const registry = createOperationRegistry([
+      { ...operation, execute: async () => ({ accepted: 'hello' }) },
+    ]);
+    let seen: unknown = null;
+
+    await invokeOperation(registry, 'message.send', { content: 'hello' }, heir, {
+      after: (_prepared: unknown, callerArg: unknown) => {
+        seen = callerArg;
+      },
+    });
+
+    expect(trapsRun).toEqual([]);
+    expect(seen).toEqual({ source: 'rpc' });
+  });
+  test('a caller whose proxy ancestor returns itself as prototype does not hang', async () => {
+    const { registry } = fixture();
+    const selfReferential: { proxy?: object } = {};
+    selfReferential.proxy = new Proxy(
+      {},
+      {
+        getPrototypeOf() {
+          return selfReferential.proxy as object;
+        },
+      }
+    );
+    const heir = Object.create(selfReferential.proxy) as { source: 'rpc' };
+    heir.source = 'rpc';
+
+    const outcome = await invokeOperation(registry, 'message.send', { content: 'hello' }, heir, {
+      after: () => {},
+    });
+
+    expect(outcome).toEqual({ kind: 'completed', value: { accepted: 'hello' } });
+  });
+  test('a class instance keeps its own enumerable fields in the record', async () => {
+    const operation = defineOperation({
+      name: 'message.send.instance',
+      description: 'Accept a class instance carrying public fields',
+      inputSchema: z.object({ content: z.string(), payload: z.any() }),
+      resultSchema: z.object({ accepted: z.string() }),
+      execute: async (input: { content: string }) => ({ accepted: input.content }),
+    });
+    const registry = createOperationRegistry([operation]);
+    let hiddenReads = 0;
+    class Payload {
+      readonly value: string;
+      readonly nested: { deep: number };
+      constructor(value: string) {
+        this.value = value;
+        this.nested = { deep: 1 };
+      }
+      get computed(): string {
+        hiddenReads += 1;
+        return 'never read';
+      }
+    }
+    const payload = new Payload('kept');
+    let seen: unknown = null;
+    await invokeOperation(
+      registry,
+      'message.send.instance',
+      { content: 'hello', payload },
+      caller,
+      {
+        after: (prepared: { input: unknown }) => {
+          seen = prepared.input;
+        },
+      }
+    );
+    const recorded = (seen as { payload: { value: string; nested: { deep: number } } }).payload;
+    expect(recorded).toEqual({ value: 'kept', nested: { deep: 1 } });
+    expect(recorded.nested).not.toBe(payload.nested);
+    expect(hiddenReads).toBe(0);
   });
   test('a handler mutating its caller does not change what after records', async () => {
     const { operation } = fixture();

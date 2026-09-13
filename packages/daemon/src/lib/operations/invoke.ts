@@ -180,10 +180,31 @@ function isArrayIndex(key: string): boolean {
   return Number.isInteger(index) && index >= 0 && index < 2 ** 32 - 1 && String(index) === key;
 }
 
+function hasInternalSlots(source: object): boolean {
+  try {
+    return (
+      types.isMap(source) ||
+      types.isSet(source) ||
+      types.isWeakMap(source) ||
+      types.isWeakSet(source) ||
+      types.isPromise(source) ||
+      types.isRegExp(source) ||
+      types.isNativeError(source) ||
+      types.isBoxedPrimitive(source) ||
+      types.isArrayBuffer(source) ||
+      types.isSharedArrayBuffer(source) ||
+      types.isArrayBufferView(source) ||
+      types.isGeneratorObject(source) ||
+      types.isModuleNamespaceObject(source)
+    );
+  } catch {
+    return true;
+  }
+}
+
 function isProjectable(source: object): boolean {
   if (Array.isArray(source) || typeof source === 'function') return true;
-  const proto = Object.getPrototypeOf(source);
-  return proto === Object.prototype || proto === null;
+  return !hasInternalSlots(source);
 }
 
 function isolateValue<T>(value: T, seen: WeakMap<object, unknown>): T {
@@ -247,6 +268,7 @@ function readDataField(target: unknown, key: string): unknown {
   let cursor: unknown = target;
   try {
     while (cursor && (typeof cursor === 'object' || typeof cursor === 'function')) {
+      if (isProxyBacked(cursor as object)) return undefined;
       const descriptor = Object.getOwnPropertyDescriptor(cursor, key);
       if (descriptor) return 'value' in descriptor ? descriptor.value : undefined;
       cursor = Object.getPrototypeOf(cursor);
