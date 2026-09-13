@@ -886,6 +886,162 @@ describe('shared operation invocation audit hooks', () => {
     );
     expect(outcome).toEqual({ kind: 'completed', value: { accepted: 'hello' } });
   });
+  test('enabling a hook never consumes a caller accessor the handler still has to read', async () => {
+    const { operation } = fixture();
+    const reads: string[] = [];
+    const sources = ['rpc', 'mcp', 'internal'];
+    const makeCaller = () => {
+      let index = 0;
+      return {
+        get source() {
+          reads.push('source');
+          return sources[index++] as 'rpc';
+        },
+        sessionId: 'sender',
+      };
+    };
+    const seenByHandler: string[] = [];
+    const registry = createOperationRegistry([
+      {
+        ...operation,
+        execute: async (input: { content: string }, callerArg: { source: string }) => {
+          seenByHandler.push(callerArg.source);
+          return { accepted: input.content };
+        },
+      },
+    ]);
+
+    await invokeOperation(registry, 'message.send', { content: 'hello' }, makeCaller(), undefined);
+    const withoutAudit = seenByHandler.pop();
+
+    await invokeOperation(registry, 'message.send', { content: 'hello' }, makeCaller(), {
+      before: () => {},
+      after: () => {},
+    });
+    const withAudit = seenByHandler.pop();
+
+    expect(withAudit).toBe(withoutAudit);
+  });
+  test('an accessor-backed caller field is recorded as absent rather than invoked', async () => {
+    const { registry } = fixture();
+    let invoked = 0;
+    const accessorCaller = {
+      source: 'rpc' as const,
+      get sessionId() {
+        invoked += 1;
+        return 'leaked';
+      },
+    };
+    let seen: unknown = null;
+    await invokeOperation(registry, 'message.send', { content: 'hello' }, accessorCaller, {
+      after: (_prepared: unknown, callerArg: unknown) => {
+        seen = callerArg;
+      },
+    });
+    expect(seen).toEqual({ source: 'rpc' });
+    expect(invoked).toBe(0);
+  });
+  test('a caller inheriting its fields as data still projects them', async () => {
+    const { registry } = fixture();
+    const inherited = Object.create({ source: 'mcp', sessionId: 'from-prototype' }) as {
+      source: 'mcp';
+    };
+    let seen: unknown = null;
+    await invokeOperation(registry, 'message.send', { content: 'hello' }, inherited, {
+      after: (_prepared: unknown, callerArg: unknown) => {
+        seen = callerArg;
+      },
+    });
+    expect(seen).toEqual({ source: 'mcp', sessionId: 'from-prototype' });
+  });
+  test('one unreadable hook never discards the other', async () => {
+    const { registry } = fixture();
+    let beforeRan = false;
+    const audit = {
+      before: () => {
+        beforeRan = true;
+      },
+      get after() {
+        throw new Error('after refuses to be read');
+      },
+    };
+    const outcome = await invokeOperation(
+      registry,
+      'message.send',
+      { content: 'hello' },
+      caller,
+      audit
+    );
+    expect(outcome).toEqual({ kind: 'completed', value: { accepted: 'hello' } });
+    expect(beforeRan).toBe(true);
+  });
+  test('an unreadable before never hides a healthy after', async () => {
+    const { registry } = fixture();
+    let afterRan = false;
+    const audit = {
+      get before() {
+        throw new Error('before refuses to be read');
+      },
+      after: () => {
+        afterRan = true;
+      },
+    };
+    await invokeOperation(registry, 'message.send', { content: 'hello' }, caller, audit);
+    expect(afterRan).toBe(true);
+  });
+  test('a counterfeit Date marks only itself, leaving the rest of the input recorded', async () => {
+    const operation = defineOperation({
+      name: 'message.send.counterfeit',
+      description: 'Accept a value that claims to be a Date without being one',
+      inputSchema: z.object({ content: z.string(), when: z.any() }),
+      resultSchema: z.object({ accepted: z.string() }),
+      execute: async (input: { content: string }) => ({ accepted: input.content }),
+    });
+    const registry = createOperationRegistry([operation]);
+    const when = Object.create(Date.prototype) as Date;
+    let seen: unknown = null;
+    const outcome = await invokeOperation(
+      registry,
+      'message.send.counterfeit',
+      { content: 'hello', when },
+      caller,
+      {
+        after: (prepared: { input: unknown }) => {
+          seen = prepared.input;
+        },
+      }
+    );
+    expect(outcome).toEqual({ kind: 'completed', value: { accepted: 'hello' } });
+    expect(seen).toEqual({ content: 'hello', when: '[unrepresentable]' });
+  });
+  test('an enumerable symbol-keyed field survives the snapshot', async () => {
+    const tag = Symbol('tag');
+    const operation = defineOperation({
+      name: 'message.send.symbolic',
+      description: 'Accept a value carrying a symbol-keyed field',
+      inputSchema: z.object({ content: z.string(), payload: z.any() }),
+      resultSchema: z.object({ accepted: z.string() }),
+      execute: async (input: { content: string }) => ({ accepted: input.content }),
+    });
+    const registry = createOperationRegistry([operation]);
+    const payload = { plain: 'kept', [tag]: 'also kept' };
+    let seen: Record<string, unknown> | null = null;
+    await invokeOperation(
+      registry,
+      'message.send.symbolic',
+      { content: 'hello', payload },
+      caller,
+      {
+        after: (prepared: { input: Record<string, unknown> }) => {
+          seen = prepared.input;
+        },
+      }
+    );
+    const recorded = (seen as unknown as { payload: Record<string | symbol, unknown> }).payload;
+    expect(recorded.plain).toBe('kept');
+    expect(recorded[tag]).toBe('also kept');
+    expect(recorded).not.toBe(payload);
+  });
   test('a handler mutating its caller does not change what after records', async () => {
     const { operation } = fixture();
     const hijackingExecute = async (

@@ -118,25 +118,23 @@ type AuditHooks = {
   after?: NonNullable<OperationAudit['after']>;
 };
 
-function resolveAuditHooks(audit?: OperationAudit): AuditHooks {
+function resolveAuditHook<K extends keyof OperationAudit>(
+  audit: OperationAudit | undefined,
+  key: K
+): AuditHooks[K] {
   try {
-    const before = audit?.before;
-    const after = audit?.after;
-    return {
-      before: typeof before === 'function' ? before.bind(audit) : undefined,
-      after: typeof after === 'function' ? after.bind(audit) : undefined,
-    };
-  } catch {
-    return {};
-  }
-}
-
-function readField(target: unknown, key: string): unknown {
-  try {
-    return (target as Record<string, unknown>)[key];
+    const hook = audit?.[key];
+    return typeof hook === 'function' ? (hook.bind(audit) as AuditHooks[K]) : undefined;
   } catch {
     return undefined;
   }
+}
+
+function resolveAuditHooks(audit?: OperationAudit): AuditHooks {
+  return {
+    before: resolveAuditHook(audit, 'before'),
+    after: resolveAuditHook(audit, 'after'),
+  };
 }
 
 function isProxyBacked(source: object): boolean {
@@ -164,16 +162,23 @@ function isolateValue<T>(value: T, seen: WeakMap<object, unknown>): T {
   const cached = seen.get(source);
   if (cached) return cached as T;
   if (isProxyBacked(source)) return UNREPRESENTABLE as T;
-  if (source instanceof Date) return new Date(Date.prototype.getTime.call(source)) as T;
+  if (source instanceof Date) {
+    try {
+      return new Date(Date.prototype.getTime.call(source)) as T;
+    } catch {
+      return UNREPRESENTABLE as T;
+    }
+  }
   if (!isProjectable(source)) return UNREPRESENTABLE as T;
   const descriptors = Object.getOwnPropertyDescriptors(source);
   if (Array.isArray(source)) {
     const copy: unknown[] = [];
     seen.set(source, copy);
-    for (const [key, descriptor] of Object.entries(descriptors)) {
+    for (const key of Reflect.ownKeys(descriptors)) {
+      const descriptor = descriptors[key as string];
       if (!descriptor.enumerable || !('value' in descriptor)) continue;
       const entry = isolateValue(descriptor.value, seen);
-      if (isArrayIndex(key)) {
+      if (typeof key === 'string' && isArrayIndex(key)) {
         copy[Number(key)] = entry;
         continue;
       }
@@ -187,9 +192,10 @@ function isolateValue<T>(value: T, seen: WeakMap<object, unknown>): T {
     copy.length = source.length;
     return copy as T;
   }
-  const copy: Record<string, unknown> = {};
+  const copy: Record<string | symbol, unknown> = {};
   seen.set(source, copy);
-  for (const [key, descriptor] of Object.entries(descriptors)) {
+  for (const key of Reflect.ownKeys(descriptors)) {
+    const descriptor = descriptors[key as string];
     if (!descriptor.enumerable) continue;
     Object.defineProperty(copy, key, {
       value: 'value' in descriptor ? isolateValue(descriptor.value, seen) : UNREPRESENTABLE,
@@ -217,9 +223,21 @@ function snapshotPrepared(prepared: PreparedOperation, hooks: AuditHooks): Audit
   };
 }
 
+function readDataField(target: unknown, key: string): unknown {
+  let cursor: unknown = target;
+  try {
+    while (cursor && (typeof cursor === 'object' || typeof cursor === 'function')) {
+      const descriptor = Object.getOwnPropertyDescriptor(cursor, key);
+      if (descriptor) return 'value' in descriptor ? descriptor.value : undefined;
+      cursor = Object.getPrototypeOf(cursor);
+    }
+  } catch {}
+  return undefined;
+}
+
 function snapshotCaller(caller: OperationCaller): OperationCaller {
-  const source = readField(caller, 'source') as OperationCaller['source'];
-  const sessionId = readField(caller, 'sessionId');
+  const source = readDataField(caller, 'source') as OperationCaller['source'];
+  const sessionId = readDataField(caller, 'sessionId');
   return typeof sessionId === 'string' ? { source, sessionId } : { source };
 }
 
