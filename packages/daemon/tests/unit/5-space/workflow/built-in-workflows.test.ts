@@ -379,10 +379,10 @@ describe('coder-only workflow template', () => {
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).not.toContain('`dev` branch ruleset');
   });
 
-  test('coder prompt reroutes no-change tasks instead of fabricating a PR', () => {
+  test('coder prompt records and stops on no-change tasks instead of fabricating a PR', () => {
     expect(CODER_ONLY_PROMPT).toContain('no code changes');
-    expect(CODER_ONLY_PROMPT).toContain('needs');
-    expect(CODER_ONLY_PROMPT).toContain('re-routing');
+    expect(CODER_ONLY_PROMPT).toContain('kind: "no_code_changes"');
+    expect(CODER_ONLY_PROMPT).not.toContain('escalation target');
   });
 
   test('gate note artifact carries an explicit key, gate set, and inline reaction evidence', () => {
@@ -4280,7 +4280,7 @@ test('patchKnownBuiltInPromptDrift rewrites a persisted legacy Coding-with-QA co
 
 test('persisted pre-call-action prompts migrate to the dispatcher preference templates', () => {
   const preDispatcherHashes = new Map<string, string>([
-    [CODER_ONLY_PROMPT, 'b3b6c7720e7b650d3155e8109b07458f315b1120a2503a7ea583946d509f2649'],
+    [CODER_ONLY_PROMPT, '8da5920a098225e0a53aec02e8c72d010f2d6b6f9462c5a630cf3bd9204a7a60'],
     [CODER_OWNED_MERGE_PROMPT, '20bbaa921ea9d3a89d1fc4d6106b191a24b8c3de3d9acfe8361ff12c32fd641e'],
     [CODER_OWNED_REVIEW_PROMPT, 'da51558acb0459acf61beda09a4390557966320dd0ab95d74b115dfd5e940740'],
     [CODER_OWNED_QA_PROMPT, '662b1e20d219237c8d4dfa4add74d10f54bc9bc1888dc0e7ab267f2ece7f7eb8'],
