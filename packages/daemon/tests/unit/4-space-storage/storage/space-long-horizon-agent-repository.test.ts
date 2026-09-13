@@ -6,6 +6,7 @@ import {
 } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { createSpaceTables } from '../../helpers/space-test-db';
+import { seedSpaceManagerAgent } from '../../helpers/seed-space-manager';
 
 describe('SpaceLongHorizonAgentRepository', () => {
   let db: BunDatabase;
@@ -28,23 +29,6 @@ describe('SpaceLongHorizonAgentRepository', () => {
     db.close();
   });
 
-  test('ensures default Space Manager row once with stable session identity', () => {
-    const coordinator = repo.ensureSpaceManager('space-1');
-    const again = repo.ensureSpaceManager('space-1');
-
-    expect(coordinator).toEqual(again);
-    expect(coordinator.id).toBe(coordinatorLongHorizonAgentId('space-1'));
-    expect(coordinator.handle).toBe('space-manager');
-    expect(coordinator.displayName).toBe('Space Manager');
-    expect(coordinator.templateKey).toBe('coordinator.default');
-    expect(coordinator.status).toBe('active');
-    expect(coordinator.sessionId).toBe(coordinatorSessionId('space-1'));
-    expect(coordinator.instructions).toContain('Coordinate long-horizon Space activity');
-    expect(coordinator.autonomyLevel).toBe(2);
-    expect(coordinator.toolPermissions).toEqual({});
-    expect(repo.listBySpaceId('space-1')).toHaveLength(1);
-  });
-
   test('resolves legacy coordinator-handle rows via getCoordinator', () => {
     const legacy = repo.create({
       id: coordinatorLongHorizonAgentId('space-1'),
@@ -58,23 +42,6 @@ describe('SpaceLongHorizonAgentRepository', () => {
     expect(repo.getCoordinatorRecord('space-1')?.id).toBe(legacy.id);
   });
 
-  test('ensures the coordinator repairs a legacy coordinator handle to space-manager', () => {
-    const legacy = repo.create({
-      id: coordinatorLongHorizonAgentId('space-1'),
-      spaceId: 'space-1',
-      handle: 'coordinator',
-      displayName: 'Coordinator',
-      status: 'active',
-    });
-
-    const coordinator = repo.ensureSpaceManager('space-1');
-
-    expect(coordinator.id).toBe(legacy.id);
-    expect(coordinator.handle).toBe('space-manager');
-    expect(repo.getByHandle('space-1', 'coordinator')).toBeNull();
-    expect(repo.getByHandle('space-1', 'space-manager')?.id).toBe(legacy.id);
-  });
-
   test('ignores archived rows when fetching by handle', () => {
     const archived = repo.create({
       spaceId: 'space-1',
@@ -83,79 +50,13 @@ describe('SpaceLongHorizonAgentRepository', () => {
       status: 'archived',
     });
 
-    const coordinator = repo.ensureSpaceManager('space-1');
+    const coordinator = seedSpaceManagerAgent(repo, 'space-1');
 
     expect(archived.status).toBe('archived');
     expect(coordinator.id).toBe(coordinatorLongHorizonAgentId('space-1'));
     expect(coordinator.status).toBe('active');
     expect(repo.getByHandle('space-1', 'space-manager')?.id).toBe(coordinator.id);
     expect(repo.listBySpaceId('space-1')).toHaveLength(2);
-  });
-
-  test('returns the archived deterministic Coordinator row without reviving it', () => {
-    const archived = repo.ensureSpaceManager('space-1');
-    repo.update(archived.id, { status: 'archived' });
-
-    const coordinator = repo.ensureSpaceManager('space-1');
-
-    expect(coordinator.id).toBe(coordinatorLongHorizonAgentId('space-1'));
-    expect(coordinator.status).toBe('archived');
-    expect(repo.getCoordinator('space-1')).toBeNull();
-    expect(repo.listBySpaceId('space-1')).toHaveLength(1);
-  });
-
-  test('self-heals a pre-lock renamed handle on the deterministic Coordinator row', () => {
-    const created = repo.ensureSpaceManager('space-1');
-    repo.update(created.id, { handle: 'renamed' });
-    expect(repo.getCoordinator('space-1')).toBeNull();
-
-    const coordinator = repo.ensureSpaceManager('space-1');
-
-    expect(coordinator.id).toBe(coordinatorLongHorizonAgentId('space-1'));
-    expect(coordinator.handle).toBe('space-manager');
-    expect(repo.getCoordinator('space-1')?.id).toBe(coordinator.id);
-    expect(repo.listBySpaceId('space-1')).toHaveLength(1);
-  });
-
-  test('self-heal restores the handle without reviving the status', () => {
-    const created = repo.ensureSpaceManager('space-1');
-    repo.update(created.id, { handle: 'renamed', status: 'archived' });
-
-    const coordinator = repo.ensureSpaceManager('space-1');
-
-    expect(coordinator.id).toBe(coordinatorLongHorizonAgentId('space-1'));
-    expect(coordinator.handle).toBe('space-manager');
-    expect(coordinator.status).toBe('archived');
-    expect(repo.getCoordinator('space-1')).toBeNull();
-    expect(repo.listBySpaceId('space-1')).toHaveLength(1);
-
-    db.prepare(
-      `INSERT INTO spaces (
-				id, slug, workspace_path, name, description, background_context, instructions,
-				allowed_models, session_ids, status, paused, stopped, autonomy_level,
-				max_concurrent_tasks, created_at, updated_at
-			) VALUES (?, ?, ?, ?, '', '', '', '[]', '[]', 'active', 0, 0, 1, 1, ?, ?)`
-    ).run('space-2', 'space-2', '/tmp/space-2', 'Space 2', 1, 1);
-    const paused = repo.ensureSpaceManager('space-2');
-    repo.update(paused.id, { handle: 'renamed-2', status: 'paused' });
-
-    const healedPaused = repo.ensureSpaceManager('space-2');
-
-    expect(healedPaused.handle).toBe('space-manager');
-    expect(healedPaused.status).toBe('paused');
-  });
-
-  test('returns an unchanged-handle paused coordinator row as-is', () => {
-    const created = repo.ensureSpaceManager('space-1');
-    repo.update(created.id, { status: 'paused' });
-    expect(repo.getCoordinator('space-1')?.status).toBe('paused');
-
-    const healed = repo.ensureSpaceManager('space-1');
-
-    expect(healed.id).toBe(coordinatorLongHorizonAgentId('space-1'));
-    expect(healed.handle).toBe('space-manager');
-    expect(healed.status).toBe('paused');
-    expect(repo.listBySpaceId('space-1')).toHaveLength(1);
   });
 
   test('persists agent fields and updates nullable policy fields', () => {
@@ -211,7 +112,7 @@ describe('SpaceLongHorizonAgentRepository', () => {
 				max_concurrent_tasks, created_at, updated_at
 			) VALUES (?, ?, ?, ?, '', '', '', '[]', '[]', 'active', 0, 0, 1, 1, ?, ?)`
     ).run('space-2', 'space-2', '/tmp/space-2', 'Space 2', 1, 1);
-    const agent = repo.ensureSpaceManager('space-1');
+    const agent = seedSpaceManagerAgent(repo, 'space-1');
     db.prepare(
       `INSERT INTO space_goals (
 				id, space_id, title, description, status, type, priority, labels, metrics,
@@ -249,7 +150,7 @@ describe('SpaceLongHorizonAgentRepository', () => {
   });
 
   test('persists managed goals, Forge scopes, reminders, and event subscriptions', () => {
-    const agent = repo.ensureSpaceManager('space-1');
+    const agent = seedSpaceManagerAgent(repo, 'space-1');
     db.prepare(
       `INSERT INTO space_goals (
 				id, space_id, title, description, status, type, priority, labels, metrics,
@@ -304,7 +205,7 @@ describe('SpaceLongHorizonAgentRepository', () => {
   });
 
   test('lists goal assignments by goal and deletes a single relationship', () => {
-    const agent = repo.ensureSpaceManager('space-1');
+    const agent = seedSpaceManagerAgent(repo, 'space-1');
     db.prepare(
       `INSERT INTO space_goals (
 				id, space_id, title, description, status, type, priority, labels, metrics,
@@ -337,7 +238,7 @@ describe('SpaceLongHorizonAgentRepository', () => {
       displayName: 'Task Manager',
       status: 'active',
     });
-    repo.ensureSpaceManager('space-1');
+    seedSpaceManagerAgent(repo, 'space-1');
     db.prepare(
       `INSERT INTO space_goals (
 				id, space_id, title, description, status, type, priority, labels, metrics,
@@ -349,7 +250,7 @@ describe('SpaceLongHorizonAgentRepository', () => {
   });
 
   test('resolves the primary goal owner once an owner row exists', () => {
-    const coordinator = repo.ensureSpaceManager('space-1');
+    const coordinator = seedSpaceManagerAgent(repo, 'space-1');
     db.prepare(
       `INSERT INTO space_goals (
 				id, space_id, title, description, status, type, priority, labels, metrics,
@@ -368,7 +269,7 @@ describe('SpaceLongHorizonAgentRepository', () => {
   });
 
   test('resolves a degraded owner when the agent is paused', () => {
-    const agent = repo.ensureSpaceManager('space-1');
+    const agent = seedSpaceManagerAgent(repo, 'space-1');
     db.prepare(
       `INSERT INTO space_goals (
 				id, space_id, title, description, status, type, priority, labels, metrics,
@@ -387,7 +288,7 @@ describe('SpaceLongHorizonAgentRepository', () => {
   });
 
   test('assigning a new owner replaces the existing owner atomically', () => {
-    const coordinator = repo.ensureSpaceManager('space-1');
+    const coordinator = seedSpaceManagerAgent(repo, 'space-1');
     const newOwner = repo.create({
       spaceId: 'space-1',
       handle: 'new-owner',
@@ -414,7 +315,7 @@ describe('SpaceLongHorizonAgentRepository', () => {
   });
 
   test('upserts, lists active, and deletes event subscriptions by route', () => {
-    const agent = repo.ensureSpaceManager('space-1');
+    const agent = seedSpaceManagerAgent(repo, 'space-1');
 
     const created = repo.upsertSubscription({
       spaceId: 'space-1',
@@ -591,7 +492,7 @@ describe('SpaceLongHorizonAgentRepository', () => {
 
   test('listDueReminders pages past excluded ids so poison batches cannot starve later rows', () => {
     const now = 40_000_000;
-    const agent = repo.ensureSpaceManager('space-1');
+    const agent = seedSpaceManagerAgent(repo, 'space-1');
     const ids: string[] = [];
     for (let i = 0; i < 3; i++) {
       const r = repo.createReminder({
@@ -617,7 +518,7 @@ describe('SpaceLongHorizonAgentRepository', () => {
 
   test('advanceReminderAfterFire advances cron, fires one-shot, and honors the CAS', () => {
     const now = 20_000_000;
-    const agent = repo.ensureSpaceManager('space-1');
+    const agent = seedSpaceManagerAgent(repo, 'space-1');
 
     const cron = repo.createReminder({
       spaceId: 'space-1',
@@ -720,8 +621,8 @@ describe('SpaceLongHorizonAgentRepository', () => {
     expect(repo.update('mirror-bind-id', { sessionId: null })?.sessionId).toBeNull();
   });
 
-  test('coordinator row stays repository-mutable — the C-2 lock guards update paths, not the repo (ensureSpaceManager self-heal needs it)', () => {
-    const coordinator = repo.ensureSpaceManager('space-1');
+  test('coordinator row stays repository-mutable — the C-2 lock guards update paths, not the repo', () => {
+    const coordinator = seedSpaceManagerAgent(repo, 'space-1');
 
     const renamed = repo.update(coordinator.id, { displayName: 'Renamed Coordinator' });
     expect(renamed?.displayName).toBe('Renamed Coordinator');
