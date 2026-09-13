@@ -272,6 +272,10 @@ function cloneValue<T>(value: T): T {
   }
 }
 
+function detached<T extends object>(fields: T): T {
+  return Object.assign(Object.create(null) as T, fields);
+}
+
 function readMetadataField(operation: OperationDefinition, key: string): string {
   const value = readDataField(operation, key);
   return typeof value === 'string' ? value : UNREPRESENTABLE;
@@ -282,13 +286,13 @@ function snapshotPrepared(
   hooks: AuditHooks
 ): AuditedOperation | undefined {
   if (!hooks.before && !hooks.after) return undefined;
-  return {
-    operation: {
+  return detached({
+    operation: detached({
       name: readMetadataField(prepared.operation, 'name'),
       description: readMetadataField(prepared.operation, 'description'),
-    },
+    }),
     input: cloneValue(prepared.input),
-  };
+  });
 }
 
 function readDataField(target: unknown, key: string): unknown {
@@ -305,15 +309,19 @@ function readDataField(target: unknown, key: string): unknown {
 }
 
 function snapshotCaller(caller: OperationCaller): AuditedCaller {
-  if (!caller || (typeof caller !== 'object' && typeof caller !== 'function')) return {};
-  if (isProxyBacked(caller)) return {};
+  if (!caller || (typeof caller !== 'object' && typeof caller !== 'function'))
+    return detached({} as AuditedCaller);
+  if (isProxyBacked(caller)) return detached({} as AuditedCaller);
   const source = readDataField(caller, 'source') as OperationCaller['source'];
   const sessionId = readDataField(caller, 'sessionId');
-  return typeof sessionId === 'string' ? { source, sessionId } : { source };
+  return typeof sessionId === 'string' ? detached({ source, sessionId }) : detached({ source });
 }
 
 function snapshotForHook(prepared: Readonly<AuditedOperation>): Readonly<AuditedOperation> {
-  return { operation: { ...prepared.operation }, input: cloneValue(prepared.input) };
+  return detached({
+    operation: detached({ ...prepared.operation }),
+    input: cloneValue(prepared.input),
+  });
 }
 
 async function auditBefore(
@@ -321,7 +329,7 @@ async function auditBefore(
   caller: AuditedCaller,
   hooks: AuditHooks
 ): Promise<void> {
-  await runAudited(() => hooks.before?.(snapshotForHook(prepared), { ...caller }));
+  await runAudited(() => hooks.before?.(snapshotForHook(prepared), detached({ ...caller })));
 }
 
 const runInvocation = (superpipe({})('invoke-operation') as PipelineAPI)
@@ -368,7 +376,7 @@ export async function invokeOperation(
   );
   if (prepared && baseCaller && hooks?.after) {
     await runAudited(() =>
-      hooks.after?.(snapshotForHook(prepared), { ...baseCaller }, cloneValue(invocation))
+      hooks.after?.(snapshotForHook(prepared), detached({ ...baseCaller }), cloneValue(invocation))
     );
   }
   return invocation;

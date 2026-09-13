@@ -1584,6 +1584,56 @@ describe('shared operation invocation audit hooks', () => {
       delete (Object.prototype as unknown as Record<string, unknown>).injectedByHook;
     }
   });
+  test('every wrapper handed to a hook is detached from the shared prototype', async () => {
+    const { operation } = fixture();
+    let handlerSaw: unknown = 'unset';
+    const registry = createOperationRegistry([
+      {
+        ...operation,
+        execute: async (input: { content: string }) => {
+          handlerSaw = (input as unknown as Record<string, unknown>).injectedByHook;
+          return { accepted: input.content };
+        },
+      },
+    ]);
+    const prototypes: Record<string, unknown> = {};
+    let hookThrew: string | null = null;
+
+    const outcome = await invokeOperation(registry, 'message.send', { content: 'hello' }, caller, {
+      before: (prepared: Record<string, unknown>, callerArg: Record<string, unknown>) => {
+        try {
+          prototypes.envelope = Object.getPrototypeOf(prepared);
+          prototypes.operation = Object.getPrototypeOf(prepared.operation as object);
+          prototypes.input = Object.getPrototypeOf(prepared.input as object);
+          prototypes.caller = Object.getPrototypeOf(callerArg);
+          for (const reachable of Object.values(prototypes)) {
+            if (reachable) (reachable as Record<string, unknown>).injectedByHook = 'leaked';
+          }
+        } catch (error) {
+          hookThrew = error instanceof Error ? error.message : String(error);
+        }
+      },
+    });
+
+    try {
+      expect(outcome).toEqual({ kind: 'completed', value: { accepted: 'hello' } });
+      expect(hookThrew).toBeNull();
+      expect(Object.values(prototypes)).toEqual([null, null, null, null]);
+      expect(handlerSaw).toBeUndefined();
+    } finally {
+      delete (Object.prototype as unknown as Record<string, unknown>).injectedByHook;
+    }
+  });
+  test('the outcome handed to after is detached as well', async () => {
+    const { registry } = fixture();
+    let outcomePrototype: unknown = 'unset';
+    await invokeOperation(registry, 'message.send', { content: 'hello' }, caller, {
+      after: (_prepared: unknown, _callerArg: unknown, outcome: object) => {
+        outcomePrototype = Object.getPrototypeOf(outcome);
+      },
+    });
+    expect(outcomePrototype).toBeNull();
+  });
   test('a handler mutating its caller does not change what after records', async () => {
     const { operation } = fixture();
     const hijackingExecute = async (
