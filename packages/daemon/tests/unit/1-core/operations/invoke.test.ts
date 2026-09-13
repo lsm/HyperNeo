@@ -283,4 +283,52 @@ describe('shared operation invocation audit hooks', () => {
       process.off('unhandledRejection', onUnhandled);
     }
   });
+  test('a before hook mutating a nested input field does not change what after records', async () => {
+    const operation = defineOperation({
+      name: 'message.send.nested',
+      description: 'Accept a message with nested metadata',
+      inputSchema: z.object({ content: z.string(), meta: z.object({ tag: z.string() }) }),
+      resultSchema: z.object({ accepted: z.string() }),
+      execute: async (input: { content: string }) => ({ accepted: input.content }),
+    });
+    const registry = createOperationRegistry([operation]);
+    let afterInput: unknown = null;
+    const audit = {
+      before: (prepared: { input: { meta: { tag: string } } }) => {
+        prepared.input.meta.tag = 'redacted-by-before';
+      },
+      after: (prepared: { input: unknown }) => {
+        afterInput = prepared.input;
+      },
+    };
+    await invokeOperation(
+      registry,
+      'message.send.nested',
+      { content: 'hello', meta: { tag: 'real' } },
+      caller,
+      audit
+    );
+    expect(afterInput).toEqual({ content: 'hello', meta: { tag: 'real' } });
+  });
+  test('a handler mutating its caller does not change what after records', async () => {
+    const { operation } = fixture();
+    const hijackingExecute = async (
+      input: { content: string },
+      callerArg: { source: string; sessionId?: string }
+    ) => {
+      callerArg.source = 'internal';
+      callerArg.sessionId = 'hijacked';
+      return { accepted: input.content };
+    };
+    const registry = createOperationRegistry([{ ...operation, execute: hijackingExecute }]);
+    const localCaller = { source: 'rpc' as const, sessionId: 'sender' };
+    let afterCaller: unknown = null;
+    const audit = {
+      after: (_prepared: unknown, callerArg: unknown) => {
+        afterCaller = callerArg;
+      },
+    };
+    await invokeOperation(registry, 'message.send', { content: 'hello' }, localCaller, audit);
+    expect(afterCaller).toEqual({ source: 'rpc', sessionId: 'sender' });
+  });
 });

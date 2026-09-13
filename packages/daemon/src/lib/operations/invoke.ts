@@ -123,10 +123,10 @@ function snapshotCaller(caller: OperationCaller): OperationCaller {
 
 async function auditBefore(
   prepared: Readonly<PreparedOperation>,
-  caller: OperationCaller,
+  baseCaller: OperationCaller,
   audit?: OperationAudit
 ): Promise<void> {
-  await runAudited(() => audit?.before?.(prepared, snapshotCaller(caller)));
+  await runAudited(() => audit?.before?.(snapshotPrepared(prepared), snapshotCaller(baseCaller)));
 }
 
 const runInvocation = (superpipe({})('invoke-operation') as PipelineAPI)
@@ -134,16 +134,21 @@ const runInvocation = (superpipe({})('invoke-operation') as PipelineAPI)
   .pipe(resolveOperation, ['registry', 'name'], 'result:invocation')
   .pipe(parseOperationInput, ['invocation', 'input'], 'result:invocation')
   .pipe((prepared: PreparedOperation) => snapshotPrepared(prepared), 'invocation', 'prepared')
-  .pipe(auditBefore, ['prepared', 'caller', 'audit'])
+  .pipe((callerArg: OperationCaller) => snapshotCaller(callerArg), 'caller', 'baseCaller')
+  .pipe(auditBefore, ['prepared', 'baseCaller', 'audit'])
   .pipe(executeOperation, ['invocation', 'caller'], 'result:invocation')
   .pipe(validateOperationResult, 'invocation', 'result:invocation')
-  .endAsync('{invocation, prepared}') as (
+  .endAsync('{invocation, prepared, baseCaller}') as (
   registry: OperationRegistry,
   name: string,
   input: unknown,
   caller: OperationCaller,
   audit?: OperationAudit
-) => Promise<{ invocation: OperationOutcome; prepared?: Readonly<PreparedOperation> }>;
+) => Promise<{
+  invocation: OperationOutcome;
+  prepared?: Readonly<PreparedOperation>;
+  baseCaller?: OperationCaller;
+}>;
 
 export async function invokeOperation(
   registry: OperationRegistry,
@@ -152,10 +157,16 @@ export async function invokeOperation(
   caller: OperationCaller,
   audit?: OperationAudit
 ): Promise<OperationOutcome> {
-  const { invocation, prepared } = await runInvocation(registry, name, input, caller, audit);
-  if (prepared) {
+  const { invocation, prepared, baseCaller } = await runInvocation(
+    registry,
+    name,
+    input,
+    caller,
+    audit
+  );
+  if (prepared && baseCaller) {
     await runAudited(() =>
-      audit?.after?.(prepared, snapshotCaller(caller), cloneValue(invocation))
+      audit?.after?.(snapshotPrepared(prepared), snapshotCaller(baseCaller), cloneValue(invocation))
     );
   }
   return invocation;
