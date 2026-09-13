@@ -121,7 +121,6 @@ import {
 } from '../tools/end-node-handlers.ts';
 import { createNodeAgentMcpServer, type NodeAgentToolsConfig } from '../tools/node-agent-tools.ts';
 import { jsonResult } from '../tools/tool-result.ts';
-import { builtInWorkflowRequiresPrMerge } from '../workflows/built-in-workflows.ts';
 import { POST_APPROVAL_TASK_AGENT_TARGET } from '../workflows/post-approval-validator.ts';
 import { decideActivationRouting, selectWorkflowNodeForAgent } from './activation-routing.ts';
 import { AgentMessageRouter } from './agent-message-router.ts';
@@ -136,7 +135,10 @@ import {
   reopenFailedDeliveryRow,
   settleDeliveryRowStatus,
 } from './injection-delivery-steps.ts';
-import { collectDispatchablePostApprovalRoutes } from './post-approval-router.ts';
+import {
+  collectDispatchablePostApprovalRoutes,
+  isCoderOwnedMergeWorkflow as resolveIsCoderOwnedMergeWorkflow,
+} from './post-approval-router.ts';
 import {
   deliverAgentMessageToTarget,
   type AgentMessageDeliveryDeps,
@@ -1848,6 +1850,16 @@ export class TaskAgentManager {
     } catch {
       return false;
     }
+  }
+
+  workflowDeclaresPostApprovalRoute(taskId: string): boolean {
+    const task = this.config.taskRepo.getTask(taskId);
+    if (!task) return false;
+    const run = task.workflowRunId ? this.config.workflowRunRepo.getRun(task.workflowRunId) : null;
+    const workflow = run?.workflowId
+      ? (this.config.spaceWorkflowManager.getWorkflowForRun(run) ?? null)
+      : null;
+    return collectDispatchablePostApprovalRoutes(workflow).length > 0;
   }
 
   private readPostApprovalWorkerIdentity(
@@ -5071,9 +5083,7 @@ export class TaskAgentManager {
     const onSubmitForApproval = endNodeHandlers?.onSubmitForApproval;
 
     const dispatchedPostApprovalRoute = collectDispatchablePostApprovalRoutes(workflow ?? null)[0];
-    const isCoderOwnedMergeWorkflow =
-      dispatchedPostApprovalRoute?.requirePrMerge === true ||
-      builtInWorkflowRequiresPrMerge(workflow?.templateName);
+    const isCoderOwnedMergeWorkflow = resolveIsCoderOwnedMergeWorkflow(workflow ?? null);
     const onMarkComplete = createMarkCompleteHandler({
       taskId,
       spaceId,

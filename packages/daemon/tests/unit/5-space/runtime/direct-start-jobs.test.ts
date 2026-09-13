@@ -668,6 +668,8 @@ test('configured start capability is lazy and requires bound lifecycle callbacks
     blockExecution: async () => {
       throw new Error('unexpected workflow');
     },
+    requiresPostApprovalOwner: () => false,
+    completionGate: async () => ({ ok: true as const }),
   };
   expect(
     createSpaceOperationRegistryProvider(database, jobs, dependencies)().get('task.start')

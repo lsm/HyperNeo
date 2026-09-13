@@ -82,6 +82,7 @@ async function completeApprovedTask(
 ): Promise<CompletionResult> {
   const updated = await deps.getTaskManager(task.spaceId).setTaskStatus(task.id, 'done', {
     result: input.result,
+    expectedStatus: task.status,
     expectedPostApprovalSessionId: task.postApprovalSessionId ?? null,
     onCascadedTasks: async (cascaded) => {
       for (const cascadedTask of cascaded)

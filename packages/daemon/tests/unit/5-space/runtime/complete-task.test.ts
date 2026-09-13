@@ -255,6 +255,22 @@ test('a post-approval owner reassigned between admission and the manager write i
   expect(tasks.getTask(taskId)?.status).toBe('approved');
   expect(tasks.getTask(taskId)?.postApprovalSessionId).toBe(stolenBySessionId);
 });
+test('a task reopened to in_progress between admission and the manager write is rejected', async () => {
+  const racyOperation = createCompleteTaskOperation(() => db, {
+    getTaskManager: (id) => {
+      const manager = new SpaceTaskManager(db, id);
+      return {
+        setTaskStatus: (taskIdArg, status, options) => {
+          tasks.updateTask(taskId, { status: 'in_progress' });
+          return manager.setTaskStatus(taskIdArg, status, options);
+        },
+      };
+    },
+    emitTaskUpdated: emit,
+  });
+  await expect(racyOperation.execute({ taskId }, { source: 'rpc' })).rejects.toThrow();
+  expect(tasks.getTask(taskId)?.status).toBe('in_progress');
+});
 
 test('catalog discovery reports task.complete when wired through the complete slot', async () => {
   const getDatabase = mock(() => db);

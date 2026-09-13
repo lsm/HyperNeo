@@ -390,6 +390,8 @@ test('configured shared catalog discovers lazily and both transports persist the
     blockExecution: async () => {
       throw new Error('unexpected workflow cleanup');
     },
+    requiresPostApprovalOwner: () => false,
+    completionGate: async () => ({ ok: true as const }),
   });
   const rpc = createOperationRpcHandler(provider, () => ({}));
   const mcp = createOperationMcpHandler(provider, () => ({ sessionId }));
