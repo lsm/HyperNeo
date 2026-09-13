@@ -8,6 +8,7 @@ import type { ModelInfo, SpaceTask, SpaceTaskStatus, SpaceWorkflow } from '@hype
 import { z } from 'zod';
 import { ExternalEventStore } from '../../../../src/lib/external-events/external-event-store.ts';
 import type { ExternalEvent } from '../../../../src/lib/external-events/types.ts';
+import { createDaemonInternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
 import { getModelsCache, setModelsCache } from '../../../../src/lib/model-service.ts';
 import type {
   EnsureSessionOutcome,
@@ -17,6 +18,7 @@ import { formatAgentMessage } from '../../../../src/lib/space/agent-message-enve
 import { getLongHorizonAgentTemplate } from '../../../../src/lib/space/agents/long-horizon-agent-templates.ts';
 import { EvolutionEpisodeService } from '../../../../src/lib/space/evolution-episode-service.ts';
 import { EvolutionScopeService } from '../../../../src/lib/space/evolution-scope-service.ts';
+import { subscribeGoalOwnerChangeOutcomeRedelivery } from '../../../../src/lib/space/goals/goal-owner-change-outcome-redelivery.ts';
 import { SpaceGoalService } from '../../../../src/lib/space/goals/goal-service.ts';
 import { SpaceAgentTemplateManager } from '../../../../src/lib/space/managers/space-agent-template-manager.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
@@ -2678,6 +2680,26 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
           .content[0].text
       ).success
     ).toBe(true);
+  });
+
+  test('assign_agent_to_goal wakes the goal pending outcome notifications', async () => {
+    const internalEventBus = createDaemonInternalEventBus();
+    const recoverPendingOutcomeNotificationsForGoal = mock(async (_goalId: string) => {});
+    subscribeGoalOwnerChangeOutcomeRedelivery({
+      internalEventBus,
+      recoverPendingOutcomeNotificationsForGoal,
+    });
+    const handlers = makeHandlers(ctx, { internalEventBus });
+    const agent = ctx.longHorizonAgentRepo.ensureSpaceManager(ctx.spaceId);
+    const goal = ctx.goalService.createGoal({ spaceId: ctx.spaceId, title: 'Stranded goal' });
+
+    const assigned = JSON.parse(
+      (await handlers.assign_agent_to_goal({ agent_id: agent.id, goal_id: goal.id })).content[0]
+        .text
+    );
+
+    expect(assigned.success).toBe(true);
+    expect(recoverPendingOutcomeNotificationsForGoal).toHaveBeenCalledWith(goal.id);
   });
 
   test('rejects owner mutations from a workflow worker session', async () => {
