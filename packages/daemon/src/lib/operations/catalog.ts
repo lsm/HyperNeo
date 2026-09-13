@@ -25,6 +25,7 @@ export interface TaskOperationDependencies {
   start?: OperationDefinition;
   create?: OperationDefinition;
   transition?: OperationDefinition;
+  recover?: OperationDefinition;
   readTask: (taskId: string) => TaskCore | null;
   readTaskByNumber?: Parameters<typeof createGetTaskOperation>[1];
   createTask: Parameters<typeof createCreateTaskOperation<CreateStandaloneTaskInput>>[0];
@@ -49,6 +50,7 @@ export function createDaemonOperationCatalog(
     tasks.transition ?? createTransitionTaskOperation(tasks.transitionTask),
     createSetTaskDependenciesOperation(tasks.setDependencies),
     ...(tasks.members ? [tasks.members] : []),
+    ...(tasks.recover ? [tasks.recover] : []),
     ...(tasks.pendingCompletion ? [tasks.pendingCompletion] : []),
     ...(tasks.submitForReview ? [tasks.submitForReview] : []),
     ...(tasks.cancel ? [tasks.cancel] : []),

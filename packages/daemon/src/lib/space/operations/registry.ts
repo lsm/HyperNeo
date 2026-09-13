@@ -31,6 +31,12 @@ import {
   createListTaskMembersOperation,
   type TaskMemberRepositories,
 } from './list-task-members.ts';
+import { createRecoverTaskOperation, type RecoverTaskDependencies } from './recover-task.ts';
+
+interface RecoverTaskCapability {
+  getTaskManager: RecoverTaskDependencies['getTaskManager'];
+  recoverWorkflowTask: RecoverTaskDependencies['recoverWorkflowTask'];
+}
 
 interface TaskNumberRepository {
   taskRepo?: Pick<SpaceTaskRepository, 'getTaskByNumber'>;
@@ -45,6 +51,7 @@ export function createSpaceOperationRegistryProvider(
   > &
     CancelPolicyContext &
     TaskMemberRepositories &
+    RecoverTaskCapability &
     TaskNumberRepository &
     Omit<
       CompleteTaskDependencies,
@@ -79,6 +86,7 @@ export function createSpaceOperationRegistryProvider(
         ? createStartTaskOperation(() => database.getDatabase(), jobQueue, tasks, directStart)
         : undefined,
       cancel: createCancelTaskOperation(() => database.getDatabase(), jobQueue, tasks),
+      recover: createRecoverTaskOperation(() => database.getDatabase(), tasks),
       members:
         tasks.taskRepo && tasks.nodeExecutionRepo
           ? createListTaskMembersOperation({
