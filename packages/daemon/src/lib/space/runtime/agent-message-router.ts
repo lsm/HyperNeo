@@ -594,6 +594,7 @@ export class AgentMessageRouter {
         declaredAgentNames: allDeclaredAgentNames,
         permittedTargets,
         spaceAgentAvailable,
+        spaceAgentRoutable: spaceAgentAvailable && Boolean(replyRoutingLookup?.(fromAgentName)),
         canSend: (fromNode, toNode) => resolver.canSend(fromNode, toNode),
       }),
     });

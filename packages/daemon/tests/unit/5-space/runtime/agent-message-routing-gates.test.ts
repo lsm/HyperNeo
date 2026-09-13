@@ -251,6 +251,42 @@ describe('resolveNodeAgentTargets: unknown target', () => {
     });
   });
 
+  test('omits space-agent from the suggestions when no reply route exists', () => {
+    const outcome = resolveNodeAgentTargets(
+      makeInput({
+        target: 'ghost',
+        peerAgentNames: ['alpha-agent'],
+        spaceAgentAvailable: true,
+        spaceAgentRoutable: false,
+      })
+    );
+
+    expect(outcome).toEqual({
+      status: 'unknownTarget',
+      target: 'ghost',
+      allTargets: ['alpha-agent'],
+      reason:
+        `Unknown target 'ghost': no agent or node found with this name. ` +
+        `Reachable targets: alpha-agent.`,
+    });
+  });
+
+  test('suggests space-agent once a reply route exists', () => {
+    const outcome = resolveNodeAgentTargets(
+      makeInput({
+        target: 'ghost',
+        peerAgentNames: ['alpha-agent'],
+        spaceAgentAvailable: true,
+        spaceAgentRoutable: true,
+      })
+    );
+
+    expect(outcome.status).toBe('unknownTarget');
+    if (outcome.status === 'unknownTarget') {
+      expect(outcome.allTargets).toEqual(['alpha-agent', 'space-agent']);
+    }
+  });
+
   test('reports no reachable targets when every source is empty', () => {
     const outcome = resolveNodeAgentTargets(makeInput({ target: 'ghost' }));
 
