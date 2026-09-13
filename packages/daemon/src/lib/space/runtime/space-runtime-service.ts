@@ -487,15 +487,8 @@ export class SpaceRuntimeService {
     const goal = this.config.goalService?.getGoal(notification.goalId);
     if (!goal || goal.spaceId !== notification.spaceId) return false;
     const resolution = this.config.goalScopeRepo?.getPrimaryGoalOwner(goal.id, goal.spaceId);
-    let authorizedId: string | null = null;
-    if (resolution?.action === 'resolved') {
-      authorizedId = resolution.owner.agentId;
-    } else if (resolution?.action === 'coordinator_fallback') {
-      authorizedId = resolution.coordinatorAgentId;
-    } else if (resolution?.action === 'degraded' || resolution?.action === 'no_recipient') {
-      authorizedId = this.config.agentRepo?.getSpaceManager(goal.spaceId)?.id ?? null;
-    }
-    return authorizedId != null && agentIdFromActorId(actor.actorId) === authorizedId;
+    if (resolution?.action !== 'resolved') return false;
+    return agentIdFromActorId(actor.actorId) === resolution.owner.agentId;
   }
 
   async deliverGoalOutcomeWake(notification: SpaceGoalOutcomeNotification): Promise<void> {
@@ -522,20 +515,11 @@ export class SpaceRuntimeService {
     const goal = this.config.goalService?.getGoal(notification.goalId);
     if (!goal || goal.spaceId !== notification.spaceId) return false;
     const resolution = this.config.goalScopeRepo?.getPrimaryGoalOwner(goal.id, goal.spaceId);
-    let targetAgentId: string | null = null;
-    if (resolution?.action === 'resolved') {
-      targetAgentId = resolution.owner.agentId;
-    } else if (resolution?.action === 'coordinator_fallback') {
-      targetAgentId = resolution.coordinatorAgentId;
-    } else if (resolution?.action === 'degraded' || resolution?.action === 'no_recipient') {
-      targetAgentId = this.config.agentRepo?.getSpaceManager(goal.spaceId)?.id ?? null;
-    }
-    if (!targetAgentId) {
-      log.warn(
-        `Goal outcome wake has no owner or coordinator for notification "${notification.id}"`
-      );
+    if (resolution?.action !== 'resolved') {
+      log.warn(`Goal outcome wake has no active owner for notification "${notification.id}"`);
       return false;
     }
+    const targetAgentId = resolution.owner.agentId;
     const agent = this.config.longHorizonAgentRepo?.getById(targetAgentId);
     if (!agent) return false;
     const actor: ActorRef = {

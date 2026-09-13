@@ -329,7 +329,26 @@ describe('SpaceLongHorizonAgentRepository', () => {
     ]);
   });
 
-  test('resolves the primary goal owner with coordinator fallback', () => {
+  test('an unowned goal has no recipient even when the space has active agents', () => {
+    repo.create({
+      id: 'lh-first',
+      spaceId: 'space-1',
+      handle: 'task-manager',
+      displayName: 'Task Manager',
+      status: 'active',
+    });
+    repo.ensureSpaceManager('space-1');
+    db.prepare(
+      `INSERT INTO space_goals (
+				id, space_id, title, description, status, type, priority, labels, metrics,
+				summary, progress, next_steps, auto_trigger_next, pending_next_run, created_at, updated_at
+			) VALUES (?, ?, ?, '', 'active', 'one_shot', 'normal', '[]', '{}', '', 0, '[]', 0, 0, ?, ?)`
+    ).run('goal-fb', 'space-1', 'Goal FB', 1, 1);
+
+    expect(repo.getPrimaryGoalOwner('goal-fb', 'space-1')).toEqual({ action: 'no_recipient' });
+  });
+
+  test('resolves the primary goal owner once an owner row exists', () => {
     const coordinator = repo.ensureSpaceManager('space-1');
     db.prepare(
       `INSERT INTO space_goals (
@@ -338,10 +357,7 @@ describe('SpaceLongHorizonAgentRepository', () => {
 			) VALUES (?, ?, ?, '', 'active', 'one_shot', 'normal', '[]', '{}', '', 0, '[]', 0, 0, ?, ?)`
     ).run('goal-1', 'space-1', 'Goal 1', 1, 1);
 
-    expect(repo.getPrimaryGoalOwner('goal-1', 'space-1')).toEqual({
-      action: 'coordinator_fallback',
-      coordinatorAgentId: coordinator.id,
-    });
+    expect(repo.getPrimaryGoalOwner('goal-1', 'space-1')).toEqual({ action: 'no_recipient' });
 
     repo.assignGoal(coordinator.id, 'goal-1', 'owner');
     expect(repo.getPrimaryGoalOwner('goal-1', 'space-1')).toEqual({

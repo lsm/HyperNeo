@@ -53,7 +53,7 @@ The repo already has several proven pipelines. Use these as the model for each s
 | `packages/daemon/src/lib/space/tools/space-tool-pipeline.ts` | P3 + tool autonomy gate | Wraps `routeTaskUpdate` from `task-transition-routing.ts` and adds an autonomy gate at the front. Shows how a tool-specific pipeline composes a shared routing core. |
 | `packages/daemon/src/lib/space/goals/claim-admission-gates.ts` | P3 | Five ordered gates: `authorized`, `unsuperseded`, `identity-bound`, `revision-match`, `admit`. The output is `ClaimAdmissionDecision`. |
 | `packages/daemon/src/lib/space/goals/reportable-terminal-gates.ts` | P3 + domain-specific terminal logic | `decideReportableTerminal` with branches `none`/`notify`/`supersede_notify`. |
-| `packages/daemon/src/lib/space/goals/goal-owner-resolution.ts` | P3 + data-driven ranking | Filters/sorts `candidates` and decides `resolved`/`degraded`/`coordinator_fallback`/`no_recipient`. |
+| `packages/daemon/src/lib/space/goals/goal-owner-resolution.ts` | P3 + data-driven ranking | Filters/sorts `candidates` and decides `resolved`/`degraded`/`no_recipient`. |
 
 ### `stagedRun` examples (P8)
 
