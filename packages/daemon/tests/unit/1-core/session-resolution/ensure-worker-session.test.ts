@@ -38,7 +38,6 @@ const workerTarget = (overrides?: Partial<SessionTargetWorker>): SessionTargetWo
 const buildDeps = (overrides: Partial<SessionResolutionDeps> = {}): SessionResolutionDeps => ({
   getSession: async () => null,
   rehydrateSubSession: async () => null,
-  getCoordinator: async () => null,
   ensureLongTermAgent: async () => null,
   isAgentTargetLifecycleEligible: async () => true,
   listWorkerExecutions: () => [],

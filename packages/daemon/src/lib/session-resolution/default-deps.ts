@@ -46,10 +46,6 @@ export function createDefaultSessionResolutionDeps(
       return restored;
     },
 
-    async getCoordinator(spaceId) {
-      return services.longHorizonAgentRepo.getCoordinator(spaceId);
-    },
-
     ensureLongTermAgent(spaceId, agentId) {
       return spaceRuntimeService.ensureAgentSession(spaceId, agentId);
     },

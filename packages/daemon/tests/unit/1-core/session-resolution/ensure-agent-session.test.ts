@@ -8,11 +8,7 @@ import {
 import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session';
 import { coordinatorSessionId } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 
-function makeDeps(config?: {
-  existingSessionIds?: string[];
-  ensureOutcome?: 'create' | 'fail';
-  coordinatorId?: string;
-}): {
+function makeDeps(config?: { existingSessionIds?: string[]; ensureOutcome?: 'create' | 'fail' }): {
   deps: SessionResolutionDeps;
   ensureCalls: Array<[string, string]>;
 } {
@@ -28,8 +24,6 @@ function makeDeps(config?: {
       return { id: sessionId };
     },
     rehydrateSubSession: async () => null,
-    getCoordinator: async () =>
-      config?.coordinatorId === undefined ? null : { id: config.coordinatorId },
     isAgentTargetLifecycleEligible: async () => true,
     listWorkerExecutions: () => [],
     readWorkerTaskPhase: () => 'run_active',

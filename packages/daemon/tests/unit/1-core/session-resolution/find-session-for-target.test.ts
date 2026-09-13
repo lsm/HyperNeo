@@ -19,7 +19,6 @@ function makeDeps(
   handlers: {
     getSession?: (sessionId: string) => unknown;
     rehydrateSubSession?: (sessionId: string) => unknown;
-    getCoordinator?: () => { id: string } | null;
     isAgentTargetLifecycleEligible?: (spaceId: string, agentId: string) => boolean;
   } = {}
 ): { deps: SessionResolutionDeps; log: DepsLog } {
@@ -41,10 +40,6 @@ function makeDeps(
     rehydrateSubSession: async (sessionId) => {
       log.rehydrateSubSession.push(sessionId);
       return handlers.rehydrateSubSession ? handlers.rehydrateSubSession(sessionId) : null;
-    },
-    getCoordinator: async () => {
-      log.order.push('getCoordinator');
-      return handlers.getCoordinator ? handlers.getCoordinator() : null;
     },
     ensureLongTermAgent: async (spaceId, agentId) => {
       log.ensureLongTermAgent.push([spaceId, agentId]);
@@ -144,7 +139,6 @@ describe('findSessionForTarget', () => {
       const agentId = 'agent-7';
       const sessionId = longTermAgentSessionId(spaceId, agentId);
       const { deps, log } = makeDeps({
-        getCoordinator: () => ({ id: 'coordinator-row-9' }),
         getSession: (queried) => (queried === sessionId ? { id: sessionId } : null),
       });
       const target: FindTarget = { kind: 'agent', spaceId, agentId };
@@ -182,7 +176,6 @@ describe('findSessionForTarget', () => {
       const agentId = 'agent-7';
       const sessionId = longTermAgentSessionId(spaceId, agentId);
       const { deps, log } = makeDeps({
-        getCoordinator: () => ({ id: 'coordinator-row-9' }),
         getSession: (queried) => (queried === sessionId ? { id: sessionId } : null),
       });
       const target: FindTarget = { kind: 'agent', spaceId, agentId };

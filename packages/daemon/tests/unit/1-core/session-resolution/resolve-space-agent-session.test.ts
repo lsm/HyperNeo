@@ -9,7 +9,6 @@ interface TestSession {
 
 function makeDeps(config?: {
   existingSessionIds?: string[];
-  coordinatorId?: string;
   ensureOutcome?: 'create' | 'fail';
   getSessionError?: Error;
 }): {
@@ -40,8 +39,6 @@ function makeDeps(config?: {
       return session;
     },
     rehydrateSubSession: async () => null,
-    getCoordinator: async () =>
-      config?.coordinatorId === undefined ? null : { id: config.coordinatorId },
     isAgentTargetLifecycleEligible: async () => true,
     listWorkerExecutions: () => [],
     readWorkerTaskPhase: () => 'run_active',

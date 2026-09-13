@@ -39,7 +39,6 @@ interface Harness {
     getCachedSession: string[];
     getSessionAsync: string[];
     rehydrateSubSessionById: string[];
-    getCoordinator: string[];
     ensureAgentSession: Array<[string, string]>;
     isAgentTargetLifecycleEligible: Array<[string, string]>;
     listByWorkflowRun: string[];
@@ -56,7 +55,6 @@ function makeHarness(
     cached?: (sessionId: string) => FakeSession | undefined;
     asyncSession?: (sessionId: string) => FakeSession | null;
     rehydrated?: FakeSession | null;
-    coordinator?: { id: string } | null;
     ensured?: FakeSession | null;
     eligible?: boolean;
     task?: (taskId: string) => SpaceTask | null;
@@ -77,7 +75,6 @@ function makeHarness(
     getCachedSession: [],
     getSessionAsync: [],
     rehydrateSubSessionById: [],
-    getCoordinator: [],
     ensureAgentSession: [],
     isAgentTargetLifecycleEligible: [],
     listByWorkflowRun: [],
@@ -150,12 +147,7 @@ function makeHarness(
         return overrides.task ? overrides.task(taskId) : makeTask({ id: taskId });
       },
     },
-    longHorizonAgentRepo: {
-      getCoordinator: (spaceId: string) => {
-        calls.getCoordinator.push(spaceId);
-        return overrides.coordinator ?? null;
-      },
-    },
+    longHorizonAgentRepo: { getCoordinator: () => null },
   } as unknown as DefaultSessionResolutionServices;
   return { deps: createDefaultSessionResolutionDeps(services), calls };
 }
@@ -246,16 +238,6 @@ describe('createDefaultSessionResolutionDeps', () => {
         const dead = makeHarness({ rehydrated });
         expect(await dead.deps.rehydrateSubSession(WORKFLOW_ID)).toBeNull();
       }
-    });
-  });
-
-  describe('getCoordinator', () => {
-    test('returns the coordinator row keyed by space, or null', async () => {
-      const { deps, calls } = makeHarness({ coordinator: { id: 'coord-9' } });
-      expect(await deps.getCoordinator('space-1')).toEqual({ id: 'coord-9' });
-      expect(calls.getCoordinator).toEqual(['space-1']);
-      const missing = makeHarness({ coordinator: null });
-      expect(await missing.deps.getCoordinator('space-1')).toBeNull();
     });
   });
 
