@@ -2112,18 +2112,19 @@ class SpaceStore {
     const limit = options?.limit ?? 10;
     const offset = options?.offset ?? 0;
 
-    const payload: {
+    const input: {
       spaceId: string;
       status: SpaceTaskStatus;
       limit: number;
       offset: number;
+      orderBy: 'updatedAt';
       blockReason?: SpaceBlockReason | null;
       blockReasonNotIn?: SpaceBlockReason[];
-    } = { spaceId, status, limit, offset };
-    if (options && 'blockReason' in options) payload.blockReason = options.blockReason;
-    if (options?.blockReasonNotIn) payload.blockReasonNotIn = options.blockReasonNotIn;
+    } = { spaceId, status, limit, offset, orderBy: 'updatedAt' };
+    if (options && 'blockReason' in options) input.blockReason = options.blockReason;
+    if (options?.blockReasonNotIn) input.blockReasonNotIn = options.blockReasonNotIn;
 
-    const result = await hub.request<PaginatedSpaceTaskResult>('spaceTask.list', payload);
+    const result = await invokeOperation<PaginatedSpaceTaskResult>(hub, 'task.list', input);
     return {
       tasks: result?.tasks ?? [],
       total: result?.total ?? 0,

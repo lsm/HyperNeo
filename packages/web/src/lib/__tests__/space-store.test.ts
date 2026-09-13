@@ -303,6 +303,9 @@ function makeMockHub() {
         return makeTask(input.taskId as string, input.approved ? 'approved' : 'in_progress');
       }
       if (method === 'spaceTask.update') return makeTask('t1', 'in_progress');
+      if (method === 'operation.invoke' && params?.name === 'task.list') {
+        return { tasks: [makeTask('t1'), makeTask('t2')], total: 7, nextCursor: null };
+      }
       if (method === 'operation.invoke' && params?.name === 'task.transition') {
         if (transitionResult !== undefined) return transitionResult;
         const input = (params?.input ?? {}) as Record<string, unknown>;
@@ -2993,6 +2996,64 @@ function makeNodeExecution(overrides: Partial<NodeExecution> = {}): NodeExecutio
     lastActivityAt: overrides.lastActivityAt ?? null,
   };
 }
+
+describe('SpaceStore — task group paging', () => {
+  beforeEach(async () => {
+    await resetStore();
+  });
+  afterEach(() => vi.clearAllMocks());
+
+  it('pages a task group through the operations door, ordered by most recently touched', async () => {
+    await spaceStore.selectSpace('space-1');
+    mockHub.request.mockClear();
+
+    const page = await spaceStore.fetchTaskGroup('open', { limit: 25, offset: 50 });
+
+    expect(mockHub.request).toHaveBeenCalledWith('operation.invoke', {
+      name: 'task.list',
+      input: {
+        spaceId: 'space-1',
+        status: 'open',
+        limit: 25,
+        offset: 50,
+        orderBy: 'updatedAt',
+      },
+    });
+    expect(page.total).toBe(7);
+    expect(page.tasks).toHaveLength(2);
+  });
+
+  it('forwards block-reason filters and defaults limit and offset', async () => {
+    await spaceStore.selectSpace('space-1');
+    mockHub.request.mockClear();
+
+    await spaceStore.fetchTaskGroup('blocked', { blockReason: null });
+    expect(mockHub.request).toHaveBeenLastCalledWith('operation.invoke', {
+      name: 'task.list',
+      input: {
+        spaceId: 'space-1',
+        status: 'blocked',
+        limit: 10,
+        offset: 0,
+        orderBy: 'updatedAt',
+        blockReason: null,
+      },
+    });
+
+    await spaceStore.fetchTaskGroup('blocked', { blockReasonNotIn: ['agent_crashed'] });
+    expect(mockHub.request).toHaveBeenLastCalledWith('operation.invoke', {
+      name: 'task.list',
+      input: {
+        spaceId: 'space-1',
+        status: 'blocked',
+        limit: 10,
+        offset: 0,
+        orderBy: 'updatedAt',
+        blockReasonNotIn: ['agent_crashed'],
+      },
+    });
+  });
+});
 
 describe('SpaceStore — pending completion approval', () => {
   beforeEach(async () => {
