@@ -18,6 +18,13 @@ import {
 export { VALID_SPACE_TASK_TRANSITIONS, isValidSpaceTaskTransition, assertValidSpaceTaskTransition };
 
 class StaleGuardCasMiss extends Error {}
+export class NotDraftTaskError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'NotDraftTaskError';
+  }
+}
+
 export class StaleTaskGuardError extends Error {
   constructor(message: string) {
     super(message);
@@ -370,7 +377,7 @@ export class SpaceTaskManager {
       async () => this.taskRepo.updateTask(taskId, { status: 'open' }, 'draft') ?? 'not_draft'
     );
     if (task === 'not_draft') {
-      throw new Error('Only draft tasks can be published');
+      throw new NotDraftTaskError('Only draft tasks can be published');
     }
     return task;
   }

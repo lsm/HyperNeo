@@ -6,7 +6,7 @@ import type { Database } from '../../../storage/sqlite-compat.ts';
 import { Logger } from '../../logger.ts';
 import { defineOperation, type OperationCaller } from '../../operations/registry.ts';
 import { TaskWithSpaceFieldsSchema } from '../../operations/task-get.ts';
-import type { SpaceTaskManager } from '../managers/space-task-manager.ts';
+import { NotDraftTaskError, type SpaceTaskManager } from '../managers/space-task-manager.ts';
 import type { SpaceMcpSessionPolicyContext } from '../runtime/space-mcp-session-policy.ts';
 import { routePublishTask } from '../tools/task-transition-routing.ts';
 import {
@@ -52,8 +52,6 @@ export function routePublish(task: SpaceTask): { value: SpaceTask } | { reason: 
   return plan.action === 'reject' ? { reason: plan.reason } : { value: task };
 }
 
-const LOST_PUBLISH_RACE = 'Only draft tasks can be published';
-
 async function applyPublish(task: SpaceTask, tasks: PublishTaskDependencies): Promise<Result> {
   try {
     const updated = await tasks.getTaskManager(task.spaceId).publishTask(task.id);
@@ -62,7 +60,7 @@ async function applyPublish(task: SpaceTask, tasks: PublishTaskDependencies): Pr
     });
     return updated;
   } catch (error) {
-    if (error instanceof Error && error.message === LOST_PUBLISH_RACE) return 'not_draft';
+    if (error instanceof NotDraftTaskError) return 'not_draft';
     throw error;
   }
 }

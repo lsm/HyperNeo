@@ -7,7 +7,10 @@ import { SessionRepository } from '../../../../src/storage/repositories/session-
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import { createStandaloneTask } from '../../../../src/storage/tasks/create-task';
-import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager';
+import {
+  NotDraftTaskError,
+  SpaceTaskManager,
+} from '../../../../src/lib/space/managers/space-task-manager';
 import { createSpaceOperationRegistryProvider } from '../../../../src/lib/space/operations/registry';
 import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-adapter';
 import { createOperationRpcHandler } from '../../../../src/lib/operations/rpc-adapter';
@@ -129,7 +132,7 @@ test('losing a concurrent publish reports not_draft, not execution_failed', asyn
       getSession: (id: string) => sessions.getSession(id),
       getTaskManager: () => ({
         publishTask: async () => {
-          throw new Error('Only draft tasks can be published');
+          throw new NotDraftTaskError('Only draft tasks can be published');
         },
       }),
       taskRepo: tasks,
