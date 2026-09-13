@@ -31,6 +31,12 @@ import {
   createListTaskMembersOperation,
   type TaskMemberRepositories,
 } from './list-task-members.ts';
+import { createArchiveTaskOperation, type ArchiveTaskDependencies } from './archive-task.ts';
+
+interface ArchiveTaskCapability {
+  getTaskManager: ArchiveTaskDependencies['getTaskManager'];
+  isWorkflowRunActive: ArchiveTaskDependencies['isWorkflowRunActive'];
+}
 
 interface TaskNumberRepository {
   taskRepo?: Pick<SpaceTaskRepository, 'getTaskByNumber'>;
@@ -45,6 +51,7 @@ export function createSpaceOperationRegistryProvider(
   > &
     CancelPolicyContext &
     TaskMemberRepositories &
+    ArchiveTaskCapability &
     TaskNumberRepository &
     Omit<
       CompleteTaskDependencies,
@@ -79,6 +86,7 @@ export function createSpaceOperationRegistryProvider(
         ? createStartTaskOperation(() => database.getDatabase(), jobQueue, tasks, directStart)
         : undefined,
       cancel: createCancelTaskOperation(() => database.getDatabase(), jobQueue, tasks),
+      archive: createArchiveTaskOperation(() => database.getDatabase(), tasks),
       members:
         tasks.taskRepo && tasks.nodeExecutionRepo
           ? createListTaskMembersOperation({
