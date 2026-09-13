@@ -554,41 +554,6 @@ export function setupSpaceTaskHandlers(
     return recovered;
   });
 
-  messageHub.onRequest('spaceTask.submitForReview', async (data) => {
-    const params = data as {
-      spaceId: string;
-      taskId: string;
-      reason?: string | null;
-    };
-
-    if (!params.spaceId) throw new Error('spaceId is required');
-    if (!params.taskId) throw new Error('taskId is required');
-
-    const space = await spaceManager.getSpace(params.spaceId);
-    if (!space) {
-      throw new Error(`Space not found: ${params.spaceId}`);
-    }
-
-    const taskManager = taskManagerFactory(params.spaceId);
-    const task = await taskManager.submitTaskForReview(params.taskId, {
-      submittedByNodeId: null,
-      reason: params.reason ?? null,
-    });
-
-    internalEventBus
-      .publish('space.task.updated', {
-        sessionId: 'global',
-        spaceId: params.spaceId,
-        taskId: params.taskId,
-        task,
-      })
-      .catch((err) => {
-        log.warn('Failed to emit space.task.updated:', err);
-      });
-
-    return task;
-  });
-
   messageHub.onRequest('spaceTask.approvePendingCompletion', async (data) => {
     const params = data as {
       spaceId: string;
