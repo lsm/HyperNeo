@@ -875,6 +875,47 @@ describe('space-handlers', () => {
       expect(spaceManager.stopSpace).toHaveBeenCalledWith('space-1');
     });
 
+    it('refuses space.start while a deletion is draining, then allows it again', async () => {
+      const mockRuntimeService = {
+        setupSpaceAgentSession: mock(async () => {}),
+        stopActiveWork: mock(async () => {}),
+      } as unknown as SpaceRuntimeService;
+      await setup(mockSpace, undefined, mockRuntimeService);
+
+      let startDuringDrain: Error | null = null;
+      (mockRuntimeService.stopActiveWork as ReturnType<typeof mock>).mockImplementation(
+        async () => {
+          startDuringDrain = await call('space.start', { id: 'space-1' }).then(
+            () => null,
+            (err: Error) => err
+          );
+        }
+      );
+
+      await call('space.delete', { id: 'space-1' });
+
+      expect(startDuringDrain).not.toBeNull();
+      expect((startDuringDrain as unknown as Error).message).toBe(
+        'Space is being deleted: space-1'
+      );
+      expect(spaceManager.startSpace).not.toHaveBeenCalled();
+
+      await expect(call('space.start', { id: 'space-1' })).resolves.toBeDefined();
+    });
+
+    it('clears the deletion lock when the drain throws', async () => {
+      const mockRuntimeService = {
+        setupSpaceAgentSession: mock(async () => {}),
+        stopActiveWork: mock(async () => {
+          throw new Error('drain exploded');
+        }),
+      } as unknown as SpaceRuntimeService;
+      await setup(mockSpace, undefined, mockRuntimeService);
+
+      await expect(call('space.delete', { id: 'space-1' })).rejects.toThrow('drain exploded');
+      await expect(call('space.start', { id: 'space-1' })).resolves.toBeDefined();
+    });
+
     it('does not fence or drain when the space is absent', async () => {
       const mockRuntimeService = {
         setupSpaceAgentSession: mock(async () => {}),

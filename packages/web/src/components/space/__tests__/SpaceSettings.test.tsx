@@ -981,7 +981,11 @@ describe('SpaceSettings', () => {
     fireEvent.click(getByText('Delete'));
 
     await waitFor(() => {
-      expect(mockRequest).toHaveBeenCalledWith('space.delete', { id: 'space-1' });
+      expect(mockRequest).toHaveBeenCalledWith(
+        'space.delete',
+        { id: 'space-1' },
+        { timeout: 60000 }
+      );
       expect(mockNavigateToSpaces).toHaveBeenCalled();
     });
   });

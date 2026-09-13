@@ -10,7 +10,7 @@ import type {
 import { MAX_SPACE_CONCURRENT_TASKS, MIN_SPACE_CONCURRENT_TASKS } from '@hyperneo/shared';
 import { connectionManager } from '../../lib/connection-manager.ts';
 import { globalSettings, connectionState } from '../../lib/state.ts';
-import { spaceStore } from '../../lib/space-store.ts';
+import { spaceStore, SPACE_DELETE_TIMEOUT_MS } from '../../lib/space-store.ts';
 import { toast } from '../../lib/toast.ts';
 import { cn } from '../../lib/utils.ts';
 import {
@@ -578,7 +578,7 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
     }
     try {
       setIsDeleting(true);
-      await hub.request('space.delete', { id: space.id });
+      await hub.request('space.delete', { id: space.id }, { timeout: SPACE_DELETE_TIMEOUT_MS });
       toast.success(`Space "${space.name}" deleted`);
       navigateToSpaces();
     } catch (err) {

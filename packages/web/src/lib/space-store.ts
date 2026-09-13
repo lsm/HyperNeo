@@ -53,6 +53,8 @@ import { currentSpaceCanonicalIdSignal, currentSpaceIdSignal } from './signals';
 
 const logger = new Logger('hyperneo:web:spacestore');
 
+export const SPACE_DELETE_TIMEOUT_MS = 60000;
+
 export interface SpaceSessionSummary {
   id: string;
   title: string;
@@ -2028,7 +2030,7 @@ class SpaceStore {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
 
-    await hub.request('space.delete', { id: spaceId });
+    await hub.request('space.delete', { id: spaceId }, { timeout: SPACE_DELETE_TIMEOUT_MS });
     await this.clearSpace();
   }
 
