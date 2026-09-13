@@ -1447,8 +1447,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       const self = config.longHorizonAgentRepo.getById(myAgentId);
       if (self?.spaceId === spaceId) return self.id;
     }
-    const coordinator = config.longHorizonAgentRepo.getCoordinator(spaceId);
-    return coordinator?.id ?? null;
+    return null;
   }
 
   function getLongHorizonAgentInSpace(agentId: string) {

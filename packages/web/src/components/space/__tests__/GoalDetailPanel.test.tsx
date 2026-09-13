@@ -412,28 +412,16 @@ describe('GoalDetailPanel', () => {
     expect(notice.textContent).not.toMatch(/coordinator covers/);
   });
 
-  it('shows the unowned state for no-recipient and space manager fallback', async () => {
+  it('shows the unowned state for no-recipient', async () => {
     mockFetchGoalOwner.mockImplementation(async (goalId: string) => {
       const owner: SpaceGoalOwnerResolution = { action: 'no_recipient' };
       mockGoalOwners.value = new Map(mockGoalOwners.value).set(goalId, owner);
       return owner;
     });
-    const { unmount } = render(<GoalDetailPanel spaceId="space-1" goalId="goal-1" />);
+    render(<GoalDetailPanel spaceId="space-1" goalId="goal-1" />);
     await waitFor(() =>
       expect(screen.getByText('No long-horizon agent owns this goal.')).toBeTruthy()
     );
-    unmount();
-
-    mockFetchGoalOwner.mockImplementation(async (goalId: string) => {
-      const owner: SpaceGoalOwnerResolution = {
-        action: 'coordinator_fallback',
-        coordinatorAgentId: 'agent-1',
-      };
-      mockGoalOwners.value = new Map(mockGoalOwners.value).set(goalId, owner);
-      return owner;
-    });
-    render(<GoalDetailPanel spaceId="space-1" goalId="goal-1" />);
-    await waitFor(() => expect(screen.getByText('Falls back to Scout (@scout)')).toBeTruthy());
   });
 
   it('assigns a new owner from the picker and reports the fresh owner', async () => {
@@ -574,23 +562,6 @@ describe('GoalDetailPanel', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(screen.getByText('Owner unavailable — refresh to retry.')).toBeTruthy();
-  });
-
-  it('shows unavailable fallback when the space manager is not active', async () => {
-    mockAgents.value = [makeAgent({ status: 'paused' })];
-    mockFetchGoalOwner.mockImplementation(async (goalId: string) => {
-      const owner: SpaceGoalOwnerResolution = {
-        action: 'coordinator_fallback',
-        coordinatorAgentId: 'agent-1',
-      };
-      mockGoalOwners.value = new Map(mockGoalOwners.value).set(goalId, owner);
-      return owner;
-    });
-    render(<GoalDetailPanel spaceId="space-1" goalId="goal-1" />);
-
-    await waitFor(() =>
-      expect(screen.getByText(/Space Manager fallback unavailable/)).toBeTruthy()
-    );
   });
 
   it('clears the owner error when an event-driven refresh caches a fresh owner', async () => {

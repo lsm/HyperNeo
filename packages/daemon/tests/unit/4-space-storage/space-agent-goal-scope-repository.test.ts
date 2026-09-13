@@ -156,35 +156,19 @@ describe('SpaceAgentGoalScopeRepository', () => {
       });
     });
 
-    test('falls back to the space manager when there is no owner', () => {
+    test('reports no recipient when the goal has no owner row', () => {
+      expect(repo.getPrimaryGoalOwner('goal-1', 'space-1')).toEqual({ action: 'no_recipient' });
+    });
+
+    test('does not fall back to another active agent in the space', () => {
       seedAgent(db, 'agent-mgr', 'space-1', 'space-manager');
 
-      expect(repo.getPrimaryGoalOwner('goal-1', 'space-1')).toEqual({
-        action: 'coordinator_fallback',
-        coordinatorAgentId: 'agent-mgr',
-      });
+      expect(repo.getPrimaryGoalOwner('goal-1', 'space-1')).toEqual({ action: 'no_recipient' });
     });
 
-    test('falls back to a legacy coordinator handle when no space-manager exists', () => {
-      seedAgent(db, 'agent-coord', 'space-1', 'coordinator');
+    test('reports no recipient when only a non-owner relationship exists', () => {
+      repo.assignGoal('agent-1', 'goal-1', 'watcher');
 
-      expect(repo.getPrimaryGoalOwner('goal-1', 'space-1')).toEqual({
-        action: 'coordinator_fallback',
-        coordinatorAgentId: 'agent-coord',
-      });
-    });
-
-    test('prefers the space-manager handle over the legacy coordinator handle', () => {
-      seedAgent(db, 'agent-coord', 'space-1', 'coordinator');
-      seedAgent(db, 'agent-mgr', 'space-1', 'space-manager');
-
-      expect(repo.getPrimaryGoalOwner('goal-1', 'space-1')).toEqual({
-        action: 'coordinator_fallback',
-        coordinatorAgentId: 'agent-mgr',
-      });
-    });
-
-    test('reports no recipient when there is neither an owner nor a coordinator', () => {
       expect(repo.getPrimaryGoalOwner('goal-1', 'space-1')).toEqual({ action: 'no_recipient' });
     });
   });
