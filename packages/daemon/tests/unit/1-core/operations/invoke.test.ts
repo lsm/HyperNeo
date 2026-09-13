@@ -656,6 +656,40 @@ describe('shared operation invocation audit hooks', () => {
     expect(recorded[0]).toBe('only');
   });
 
+  test('slot-based values are marked rather than recorded as empty objects', async () => {
+    const operation = defineOperation({
+      name: 'message.send.slots',
+      description: 'Accept values whose contents live in internal slots',
+      inputSchema: z.object({ content: z.string(), bag: z.any(), seen: z.any(), pattern: z.any() }),
+      resultSchema: z.object({ accepted: z.string() }),
+      execute: async (input: { content: string }) => ({ accepted: input.content }),
+    });
+    const registry = createOperationRegistry([operation]);
+    let recorded: unknown = null;
+    await invokeOperation(
+      registry,
+      'message.send.slots',
+      {
+        content: 'hello',
+        bag: new Map([['k', 'v']]),
+        seen: new Set([1, 2]),
+        pattern: /abc/g,
+      },
+      caller,
+      {
+        after: (prepared: { input: unknown }) => {
+          recorded = prepared.input;
+        },
+      }
+    );
+    expect(recorded).toEqual({
+      content: 'hello',
+      bag: '[unrepresentable]',
+      seen: '[unrepresentable]',
+      pattern: '[unrepresentable]',
+    });
+  });
+
   test('a method-style hook keeps its own receiver', async () => {
     const { registry } = fixture();
     class Recorder {

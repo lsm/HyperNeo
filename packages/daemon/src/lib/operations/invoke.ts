@@ -138,12 +138,19 @@ function readField(target: unknown, key: string): unknown {
   }
 }
 
+function isProjectable(source: object): boolean {
+  if (Array.isArray(source) || typeof source === 'function') return true;
+  const proto = Object.getPrototypeOf(source);
+  return proto === Object.prototype || proto === null;
+}
+
 function isolateValue<T>(value: T, seen: WeakMap<object, unknown>): T {
   if (!value || (typeof value !== 'object' && typeof value !== 'function')) return value;
   const source = value as object;
   const cached = seen.get(source);
   if (cached) return cached as T;
   if (source instanceof Date) return new Date(source.getTime()) as T;
+  if (!isProjectable(source)) return UNREPRESENTABLE as T;
   const descriptors = Object.getOwnPropertyDescriptors(source);
   if (Array.isArray(source)) {
     const copy: unknown[] = [];
