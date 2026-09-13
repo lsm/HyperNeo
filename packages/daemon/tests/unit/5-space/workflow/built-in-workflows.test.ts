@@ -418,7 +418,10 @@ describe('coder-only workflow template', () => {
     expect(CODER_ONLY_PROMPT).toContain('when no external gate was recorded for this run');
     expect(CODER_ONLY_PROMPT).toContain('on a mid-run source switch TO `internal`');
     expect(CODER_ONLY_PROMPT).toContain('the internal fallback applies ONLY under `auto`');
-    expect(CODER_ONLY_PROMPT).toContain('escalate saying the repository has no external reviewer');
+    expect(CODER_ONLY_PROMPT).toContain(
+      'the repository has no external reviewer despite an explicit external selection'
+    );
+    expect(CODER_ONLY_PROMPT).not.toContain('escalate saying');
     expect(CODER_ONLY_PROMPT).toContain('the merge cannot proceed under the selected source');
     expect(CODER_ONLY_PROMPT).toContain(
       'Capture `headRefOid`, `baseRefName`, and `baseRefOid` BEFORE starting the fallback review'
@@ -4372,7 +4375,7 @@ test('the Coding coder legacy seed keeps its historical escalation wording', () 
 
 test('persisted pre-call-action prompts migrate to the dispatcher preference templates', () => {
   const preDispatcherHashes = new Map<string, string>([
-    [CODER_ONLY_PROMPT, 'cad5c74730ebd34a5b990eb6fa672475f73273ac2298f1fd75534334a0c25d48'],
+    [CODER_ONLY_PROMPT, '94d119f31fcc92b72c8ce759a67c96392698c93318ca874d8f082ce59b1d825a'],
     [CODER_OWNED_MERGE_PROMPT, '882f1beaabbe9dc502f1f3f3f1de247cdb97779a0462731e2f594f3276ad43c0'],
     [CODER_OWNED_REVIEW_PROMPT, 'da51558acb0459acf61beda09a4390557966320dd0ab95d74b115dfd5e940740'],
     [CODER_OWNED_QA_PROMPT, '662b1e20d219237c8d4dfa4add74d10f54bc9bc1888dc0e7ab267f2ece7f7eb8'],
