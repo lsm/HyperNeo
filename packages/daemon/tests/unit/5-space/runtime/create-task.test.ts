@@ -93,8 +93,7 @@ test('rpc with spaceId creates a numbered Space task and emits once', async () =
   const result = await invoke({ title: 'Second', spaceId }, rpc);
   expect(result.kind).toBe('completed');
   const value = (result as { value: SpaceTask }).value;
-  expect(value).not.toHaveProperty('spaceId');
-  expect(value).not.toHaveProperty('taskNumber');
+  expect(value).toMatchObject({ spaceId, taskNumber: 2 });
   const created = tasks.getTask(value.id);
   expect(created?.taskNumber).toBe(2);
   expect(emitTaskCreated).toHaveBeenCalledTimes(1);

@@ -3,7 +3,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { Logger } from '../../logger.ts';
 import { defineOperation, type OperationCaller } from '../../operations/registry.ts';
-import { TaskCoreSchema } from '../../operations/task-get.ts';
+import { TaskWithSpaceFieldsSchema } from '../../operations/task-get.ts';
 import type { SpaceTaskManager } from '../managers/space-task-manager.ts';
 import {
   FAIL_CLOSED_LONG_HORIZON_AGENT_REPO,
@@ -255,7 +255,7 @@ export function createOwnedPendingCompletionOperation(
         reason: z.string().nullable().optional(),
       })
       .strict(),
-    resultSchema: TaskCoreSchema.extend({
+    resultSchema: TaskWithSpaceFieldsSchema.extend({
       pendingCheckpointType: z.literal('task_completion').nullable(),
       approvalSource: z.enum(['human', 'agent', 'auto_policy']).nullable(),
       approvalReason: z.string().nullable(),

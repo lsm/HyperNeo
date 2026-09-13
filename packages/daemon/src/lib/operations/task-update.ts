@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { OperationCaller } from './registry.ts';
 import type { TaskMetadataInput } from './task-metadata.ts';
 import { defineOperation } from './registry.ts';
-import { TaskCoreSchema } from './task-get.ts';
+import { TaskCoreSchema, TaskWithSpaceFieldsSchema } from './task-get.ts';
 
 export function createUpdateTaskOperation(
   editTask: (
@@ -31,7 +31,7 @@ export function createUpdateTaskOperation(
           ),
         'Task update requires at least one editable field'
       ),
-    resultSchema: TaskCoreSchema.nullable(),
+    resultSchema: TaskWithSpaceFieldsSchema.nullable(),
     execute: async (input, caller) => editTask(input, caller),
   });
 }

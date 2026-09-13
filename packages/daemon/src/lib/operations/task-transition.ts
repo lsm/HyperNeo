@@ -5,7 +5,7 @@ import type {
 } from '../../storage/tasks/transition-task.ts';
 import { STANDALONE_TASK_STATUSES } from '../tasks/standalone-lifecycle.ts';
 import { defineOperation, type OperationCaller, type OperationDefinition } from './registry.ts';
-import { TaskCoreSchema } from './task-get.ts';
+import { TaskWithSpaceFieldsSchema } from './task-get.ts';
 
 type TransitionResult = ReturnType<typeof transitionStandaloneTask>;
 
@@ -52,7 +52,7 @@ export function createTransitionTaskOperation<Input = TransitionStandaloneTaskIn
     inputSchema:
       options.inputSchema ?? (StandaloneTransitionTaskInputSchema as unknown as z.ZodType<Input>),
     resultSchema: z.union([
-      TaskCoreSchema.nullable(),
+      TaskWithSpaceFieldsSchema.nullable(),
       z.enum(['unsupported_status', 'invalid_transition', 'result_requires_done']),
     ]),
     execute: async (input, caller) => transitionTask(input, caller),
