@@ -1,4 +1,4 @@
-import type { Space } from '@hyperneo/shared';
+import { DEFAULT_SEED_AGENT_TEMPLATE_KEY, type SpaceCreateResult } from '@hyperneo/shared';
 import { useState } from 'preact/hooks';
 import { connectionManager } from '../../lib/connection-manager';
 import { navigateToSpace } from '../../lib/router';
@@ -6,6 +6,7 @@ import {
   hasNativeFolderPicker,
   NATIVE_FOLDER_PICKER_TIMEOUT_MS,
 } from '../../lib/runtime-capabilities';
+import { toast } from '../../lib/toast';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 
@@ -40,6 +41,7 @@ export function SpaceCreateDialog({ isOpen, onClose }: SpaceCreateDialogProps) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [extraWorkspaces, setExtraWorkspaces] = useState<ExtraWorkspaceRow[]>([]);
+  const [seedAgent, setSeedAgent] = useState(true);
   const [nativeFolderPickerAvailable] = useState(() => hasNativeFolderPicker());
 
   const handlePathInput = (value: string) => {
@@ -121,19 +123,24 @@ export function SpaceCreateDialog({ isOpen, onClose }: SpaceCreateDialogProps) {
       const createTimeoutMs =
         SPACE_CREATE_TIMEOUT_MS + additionalWorkspaces.length * PER_WORKSPACE_TIMEOUT_MS;
 
-      const space = await hub.request<Space>(
+      const space = await hub.request<SpaceCreateResult>(
         'space.create',
         {
           workspacePath: workspacePath.trim(),
           name: name.trim() || basenameFromPath(workspacePath.trim()),
           description: description.trim() || undefined,
           ...(additionalWorkspaces.length > 0 ? { additionalWorkspaces } : {}),
+          ...(seedAgent ? { seedAgentTemplateKeys: [DEFAULT_SEED_AGENT_TEMPLATE_KEY] } : {}),
         },
         { timeout: createTimeoutMs }
       );
 
       if (!space) {
         throw new Error('Server returned no data');
+      }
+
+      if (space.seedWarnings && space.seedWarnings.length > 0) {
+        toast.warning(space.seedWarnings.join(' · '));
       }
 
       navigateToSpace(space.slug);
@@ -152,6 +159,7 @@ export function SpaceCreateDialog({ isOpen, onClose }: SpaceCreateDialogProps) {
     setNameTouched(false);
     setError(null);
     setExtraWorkspaces([]);
+    setSeedAgent(true);
     onClose();
   };
 
@@ -308,6 +316,24 @@ export function SpaceCreateDialog({ isOpen, onClose }: SpaceCreateDialogProps) {
             rows={3}
             class="w-full bg-surface-raised border border-line rounded-lg px-4 py-2.5 text-fg placeholder-gray-500 focus:outline-none focus:border-accent resize-none text-sm"
           />
+        </div>
+
+        <div>
+          <label class="flex items-start gap-2.5 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={seedAgent}
+              onChange={(e) => setSeedAgent((e.target as HTMLInputElement).checked)}
+              class="w-4 h-4 mt-0.5 rounded border-line-strong text-accent focus:ring-accent focus:ring-offset-bg"
+            />
+            <span>
+              <span class="block text-sm font-medium text-fg-soft">Start with an agent</span>
+              <span class="block text-xs text-fg-muted mt-0.5">
+                Adds a Task Manager agent that can approve work and own goals. Uncheck to create an
+                empty Space you staff yourself.
+              </span>
+            </span>
+          </label>
         </div>
 
         <div class="flex gap-3 pt-1">

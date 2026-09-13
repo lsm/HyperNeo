@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'bun:test';
+import { DEFAULT_SEED_AGENT_TEMPLATE_KEY } from '@hyperneo/shared';
+import { RESERVED_SPACE_AGENT_HANDLES } from '../../../../src/lib/space/slug';
 import {
   getLongHorizonAgentTemplates,
   isLegacyWorkerTemplateKey,
@@ -13,6 +15,15 @@ function getLongHorizonFamilyTemplates() {
 }
 
 describe('long-horizon agent templates', () => {
+  test('the space-creation default seed template exists and its handle is not reserved', () => {
+    const template = getLongHorizonAgentTemplates().find(
+      (candidate) => candidate.key === DEFAULT_SEED_AGENT_TEMPLATE_KEY
+    );
+
+    expect(template).toBeDefined();
+    expect(RESERVED_SPACE_AGENT_HANDLES as readonly string[]).not.toContain(template?.handle);
+  });
+
   test('keeps only the coordinator and task-manager as non-worker built-ins (ATC-3, ATC-4)', () => {
     const templates = getLongHorizonFamilyTemplates();
 

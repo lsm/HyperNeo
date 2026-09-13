@@ -30,6 +30,10 @@ vi.mock('../../../lib/runtime-capabilities', () => ({
   NATIVE_FOLDER_PICKER_TIMEOUT_MS: 605000,
 }));
 
+vi.mock('../../../lib/toast', () => ({
+  toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
+}));
+
 vi.mock('../../ui/Modal', () => ({
   Modal: ({
     isOpen,
@@ -78,6 +82,7 @@ import {
   hasNativeFolderPicker,
   NATIVE_FOLDER_PICKER_TIMEOUT_MS,
 } from '../../../lib/runtime-capabilities';
+import { toast } from '../../../lib/toast';
 import { SpaceCreateDialog } from '../SpaceCreateDialog';
 
 const SPACE_MOCK = {
@@ -102,6 +107,9 @@ describe('SpaceCreateDialog', () => {
     mockRequest.mockReset();
     mockGetHubIfConnected.mockReset();
     mockNavigateToSpace.mockReset();
+    vi.mocked(toast.success).mockClear();
+    vi.mocked(toast.error).mockClear();
+    vi.mocked(toast.warning).mockClear();
     vi.mocked(hasNativeFolderPicker).mockReturnValue(false);
   });
 
@@ -220,6 +228,7 @@ describe('SpaceCreateDialog', () => {
           workspacePath: '/projects/my-app',
           name: 'my-app',
           description: undefined,
+          seedAgentTemplateKeys: ['task-manager.default'],
         },
         {
           timeout: 10000,
@@ -247,6 +256,57 @@ describe('SpaceCreateDialog', () => {
       expect(mockNavigateToSpace).toHaveBeenCalledWith('my-app');
       expect(onClose).toHaveBeenCalled();
     });
+    expect(toast.warning).not.toHaveBeenCalled();
+  });
+
+  it('surfaces seed warnings via toast and still navigates and closes', async () => {
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockResolvedValue({
+      ...SPACE_MOCK,
+      seedWarnings: ['Failed to seed agents: task-manager.default'],
+    });
+
+    const { getByPlaceholderText, getByRole } = render(
+      <SpaceCreateDialog isOpen={true} onClose={onClose} />
+    );
+
+    fireEvent.input(getByPlaceholderText('/Users/you/projects/my-app'), {
+      target: { value: '/projects/my-app' },
+    });
+
+    const form = getByRole('dialog').querySelector('form');
+    fireEvent.submit(form!);
+
+    await waitFor(() => {
+      expect(toast.warning).toHaveBeenCalledWith('Failed to seed agents: task-manager.default');
+      expect(mockNavigateToSpace).toHaveBeenCalledWith('my-app');
+      expect(onClose).toHaveBeenCalled();
+    });
+  });
+
+  it('joins multiple seed warnings into a single toast', async () => {
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockResolvedValue({
+      ...SPACE_MOCK,
+      seedWarnings: ['Failed to seed agents: task-manager.default', 'Failed to seed workflows'],
+    });
+
+    const { getByPlaceholderText, getByRole } = render(
+      <SpaceCreateDialog isOpen={true} onClose={onClose} />
+    );
+
+    fireEvent.input(getByPlaceholderText('/Users/you/projects/my-app'), {
+      target: { value: '/projects/my-app' },
+    });
+
+    const form = getByRole('dialog').querySelector('form');
+    fireEvent.submit(form!);
+
+    await waitFor(() => {
+      expect(toast.warning).toHaveBeenCalledWith(
+        'Failed to seed agents: task-manager.default · Failed to seed workflows'
+      );
+    });
   });
 
   it('shows error message when space.create fails', async () => {
@@ -266,6 +326,67 @@ describe('SpaceCreateDialog', () => {
 
     expect(await findByText('Workspace path does not exist')).toBeTruthy();
     expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('seeds a starting agent by default', async () => {
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockResolvedValue(SPACE_MOCK);
+
+    const { getByPlaceholderText, getByRole, getByLabelText } = render(
+      <SpaceCreateDialog isOpen={true} onClose={onClose} />
+    );
+
+    expect((getByLabelText(/Start with an agent/i) as HTMLInputElement).checked).toBe(true);
+
+    fireEvent.input(getByPlaceholderText('/Users/you/projects/my-app'), {
+      target: { value: '/projects/my-app' },
+    });
+    fireEvent.submit(getByRole('dialog').querySelector('form')!);
+
+    await waitFor(() => {
+      expect(mockRequest).toHaveBeenCalledWith(
+        'space.create',
+        expect.objectContaining({ seedAgentTemplateKeys: ['task-manager.default'] }),
+        expect.anything()
+      );
+    });
+  });
+
+  it('omits the seed field entirely when the box is unchecked', async () => {
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockResolvedValue(SPACE_MOCK);
+
+    const { getByPlaceholderText, getByRole, getByLabelText } = render(
+      <SpaceCreateDialog isOpen={true} onClose={onClose} />
+    );
+
+    fireEvent.click(getByLabelText(/Start with an agent/i));
+    fireEvent.input(getByPlaceholderText('/Users/you/projects/my-app'), {
+      target: { value: '/projects/my-app' },
+    });
+    fireEvent.submit(getByRole('dialog').querySelector('form')!);
+
+    await waitFor(() => {
+      expect(mockRequest).toHaveBeenCalled();
+    });
+    expect(mockRequest.mock.calls[0][1]).not.toHaveProperty('seedAgentTemplateKeys');
+  });
+
+  it('restores the default seed choice after the dialog is closed', () => {
+    const { getByLabelText, getByRole, rerender } = render(
+      <SpaceCreateDialog isOpen={true} onClose={onClose} />
+    );
+
+    fireEvent.click(getByLabelText(/Start with an agent/i));
+    expect((getByLabelText(/Start with an agent/i) as HTMLInputElement).checked).toBe(false);
+
+    fireEvent.click(getByRole('button', { name: 'Cancel' }));
+    expect(onClose).toHaveBeenCalled();
+
+    rerender(<SpaceCreateDialog isOpen={false} onClose={onClose} />);
+    rerender(<SpaceCreateDialog isOpen={true} onClose={onClose} />);
+
+    expect((getByLabelText(/Start with an agent/i) as HTMLInputElement).checked).toBe(true);
   });
 
   it('calls onClose when Cancel is clicked', () => {
@@ -364,6 +485,7 @@ describe('SpaceCreateDialog', () => {
             { path: '/projects/shared-lib', label: 'Shared lib' },
             { path: '/projects/tools' },
           ],
+          seedAgentTemplateKeys: ['task-manager.default'],
         },
         {
           timeout: 12000,
@@ -425,6 +547,7 @@ describe('SpaceCreateDialog', () => {
           workspacePath: '/projects/my-app',
           name: 'my-app',
           description: undefined,
+          seedAgentTemplateKeys: ['task-manager.default'],
         },
         {
           timeout: 10000,
