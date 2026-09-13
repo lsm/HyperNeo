@@ -84,10 +84,13 @@ async function admitManagedSubmission(
   }
   if (!task.workflowRunId && new DirectTaskExecutionRepository(db).getActive(task.id))
     return { reason: { accepted: false, reason: 'review_submission_unavailable' } };
-  const submittedByNodeId =
+  const callerExecution =
     caller.source === 'mcp' && caller.sessionId
-      ? (new NodeExecutionRepository(db).getByAgentSessionId(caller.sessionId)?.workflowNodeId ??
-        null)
+      ? new NodeExecutionRepository(db).getByAgentSessionId(caller.sessionId)
+      : null;
+  const submittedByNodeId =
+    callerExecution && callerExecution.workflowRunId === task.workflowRunId
+      ? callerExecution.workflowNodeId
       : null;
   try {
     const updated = await tasks.getTaskManager(task.spaceId).submitTaskForReview(task.id, {

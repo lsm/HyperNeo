@@ -259,6 +259,42 @@ test('an MCP caller executing a node persists the derived node id, not client in
   });
 });
 
+test('an MCP caller executing a node for a different run does not get its node id attached', async () => {
+  markTaskWorkflowOwned();
+  const spaceId = tasks.getTask(taskId)!.spaceId!;
+  const otherWorkflow = new SpaceWorkflowRepository(db).createWorkflow({
+    spaceId,
+    name: 'Other workflow',
+  });
+  const otherRun = new SpaceWorkflowRunRepository(db).createRun({
+    spaceId,
+    workflowId: otherWorkflow.id,
+    title: 'Other run',
+  });
+  const nodeSessionId = 'other-run-node-session';
+  const worker = sessions.getSession(sessionId)!;
+  sessions.createSession(
+    { ...worker, id: nodeSessionId, type: 'general', context: { spaceId } },
+    { enforceWorkspaceOwnership: false }
+  );
+  new NodeExecutionRepository(db).create({
+    workflowRunId: otherRun.id,
+    workflowNodeId: 'other-node',
+    agentName: 'coder',
+    agentSessionId: nodeSessionId,
+  });
+  expect(
+    await operation.execute(
+      { taskId, reason: 'Ready' },
+      { source: 'mcp', sessionId: nodeSessionId }
+    )
+  ).toEqual({ accepted: true, jobId: null });
+  expect(tasks.getTask(taskId)).toMatchObject({
+    status: 'review',
+    pendingCompletionSubmittedByNodeId: null,
+  });
+});
+
 test('an rpc caller never gets a submitting node id even without deriving one', async () => {
   markTaskWorkflowOwned();
   expect(await operation.execute({ taskId, reason: 'Ready' }, { source: 'rpc' })).toEqual({
