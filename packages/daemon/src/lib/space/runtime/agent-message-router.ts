@@ -227,17 +227,6 @@ export class AgentMessageRouter {
         return { state: 'delivered', sessionId: target.sessionId, messageId };
       }
     }
-    if (target.kind === 'agent' && this.config.spaceAgentInjector) {
-      const outcome = await this.config.spaceAgentInjector(target.spaceId, message);
-      if (outcome.state === 'failed') {
-        return { state: 'failed', sessionId: outcome.sessionId, messageId, error: outcome.error };
-      }
-      return {
-        state: 'queued',
-        sessionId: outcome.sessionId,
-        messageId: outcome.messageId,
-      };
-    }
     if (target.kind === 'worker' && sessionIdHint && this.config.messageInjector) {
       await this.config.messageInjector(sessionIdHint, message);
       return { state: 'delivered', sessionId: sessionIdHint, messageId };

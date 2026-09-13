@@ -1,3 +1,4 @@
+import { isSpaceManagerHandle } from '../agent-handle.ts';
 import { formatAddress, type ParsedAddress } from '../../../../../messaging/src/address.ts';
 
 export interface ResolveNodeAgentTargetsInput {
@@ -213,6 +214,9 @@ export function decideGenericAddressRouting(
   config: GenericAddressRoutingConfig
 ): GenericAddressRoutingDecision {
   const target = formatAddress(address);
+  if (address.kind === 'handle' && isSpaceManagerHandle(address.handle)) {
+    return { action: 'notFound', target };
+  }
   if (address.kind === 'session') {
     if (!config.spaceAgentAvailable) return { action: 'notFound', target };
     if (config.replyToSessionId === null || address.sessionId !== config.replyToSessionId) {

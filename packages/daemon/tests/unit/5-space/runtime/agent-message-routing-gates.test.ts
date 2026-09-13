@@ -511,25 +511,26 @@ function makeGenericConfig(
 }
 
 describe('decideGenericAddressRouting: the former space-manager handles', () => {
-  test('routes @coordinator through the messaging facade like any other handle', () => {
+  test('reports @coordinator not found rather than routing it anywhere', () => {
     expect(decideGenericAddressRouting(parseAddress('@coordinator'), makeGenericConfig())).toEqual({
-      action: 'deliverViaMessagingFacade',
+      action: 'notFound',
+      target: '@coordinator',
     });
   });
 
-  test('routes @space-manager through the messaging facade like any other handle', () => {
+  test('reports @space-manager not found rather than routing it anywhere', () => {
     expect(
       decideGenericAddressRouting(parseAddress('@space-manager'), makeGenericConfig())
-    ).toEqual({ action: 'deliverViaMessagingFacade' });
+    ).toEqual({ action: 'notFound', target: '@space-manager' });
   });
 
-  test('fails unsupported when no messaging facade is available', () => {
+  test('does not fall through to the messaging facade, which would resolve the synthetic coordinator actor', () => {
     expect(
       decideGenericAddressRouting(
         parseAddress('@space-manager'),
-        makeGenericConfig({ messagingFacadeAvailable: false })
+        makeGenericConfig({ messagingFacadeAvailable: true })
       )
-    ).toEqual({ action: 'failUnsupported', target: '@space-manager' });
+    ).not.toEqual({ action: 'deliverViaMessagingFacade' });
   });
 });
 
