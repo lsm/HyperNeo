@@ -18,6 +18,8 @@ import {
 export { VALID_SPACE_TASK_TRANSITIONS, isValidSpaceTaskTransition, assertValidSpaceTaskTransition };
 
 class StaleGuardCasMiss extends Error {}
+export const RETRYABLE_TASK_STATUSES: SpaceTaskStatus[] = ['blocked', 'cancelled', 'done'];
+
 export class StaleTaskGuardError extends Error {
   constructor(message: string) {
     super(message);
@@ -578,8 +580,7 @@ export class SpaceTaskManager {
       throw new Error(`Task not found: ${taskId}`);
     }
 
-    const retryableStatuses: SpaceTaskStatus[] = ['blocked', 'cancelled', 'done'];
-    if (!retryableStatuses.includes(task.status)) {
+    if (!RETRYABLE_TASK_STATUSES.includes(task.status)) {
       throw new Error(
         `Cannot retry task in '${task.status}' status. Task must be in 'blocked', 'cancelled', or 'done' status.`
       );

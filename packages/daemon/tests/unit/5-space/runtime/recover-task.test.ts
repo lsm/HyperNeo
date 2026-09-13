@@ -175,6 +175,13 @@ test('workflow recovery does not double-publish from this operation', async () =
   expect(emit).not.toHaveBeenCalled();
 });
 
+test('a plain task in a non-retryable status rejects instead of throwing', async () => {
+  tasks.updateTask(taskId, { status: 'in_progress' });
+  const rpc = createOperationRpcHandler(provider(), () => ({}));
+  expect(await rpc(recover(taskId), context)).toBe('status_not_retryable');
+  expect(emit).not.toHaveBeenCalled();
+});
+
 test('task.recover is discoverable through the door', async () => {
   const rpc = createOperationRpcHandler(provider(), () => ({}));
   expect(

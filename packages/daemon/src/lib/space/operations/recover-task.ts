@@ -6,7 +6,7 @@ import type { Database } from '../../../storage/sqlite-compat.ts';
 import { Logger } from '../../logger.ts';
 import { defineOperation, type OperationCaller } from '../../operations/registry.ts';
 import { TaskWithSpaceFieldsSchema } from '../../operations/task-get.ts';
-import type { SpaceTaskManager } from '../managers/space-task-manager.ts';
+import { RETRYABLE_TASK_STATUSES, type SpaceTaskManager } from '../managers/space-task-manager.ts';
 import type { SpaceMcpSessionPolicyContext } from '../runtime/space-mcp-session-policy.ts';
 import { routeRetryTask, type RetryTaskRouting } from '../tools/task-transition-routing.ts';
 import {
@@ -73,7 +73,10 @@ export function planRecovery(task: SpaceTask): { value: Planned } | { reason: Re
     hasWorkflowRun: task.workflowRunId != null,
     taskId: task.id,
   });
-  return plan.action === 'reject' ? { reason: plan.reason } : { value: { task, plan } };
+  if (plan.action === 'reject') return { reason: plan.reason };
+  if (plan.action === 'retry_task' && !RETRYABLE_TASK_STATUSES.includes(task.status))
+    return { reason: 'status_not_retryable' };
+  return { value: { task, plan } };
 }
 
 async function applyRecovery(
