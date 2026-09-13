@@ -138,6 +138,7 @@ import { SpaceRepository } from '../../storage/repositories/space-repository.ts'
 import { setupTaskScheduleHandlers } from './task-schedule-handlers.ts';
 import { setupAgentMemoryHandlers } from './agent-memory-handlers.ts';
 import { setupSpaceGoalHandlers } from './space-goal-handlers.ts';
+import { subscribeAgentActivationOutcomeRedelivery } from '../space/goals/agent-activation-outcome-redelivery.ts';
 import { subscribeGoalOwnerChangeOutcomeRedelivery } from '../space/goals/goal-owner-change-outcome-redelivery.ts';
 import { setupEvolutionHandlers } from './evolution-handlers.ts';
 import { EvolutionConversationAnalysisService } from '../space/evolution-conversation-analysis-service.ts';
@@ -1132,6 +1133,13 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
   subscribeGoalOwnerChangeOutcomeRedelivery({
     internalEventBus: deps.internalEventBus,
+    recoverPendingOutcomeNotificationsForGoal: (goalId) =>
+      spaceRuntimeService.recoverPendingOutcomeNotificationsForGoal(goalId),
+  });
+
+  subscribeAgentActivationOutcomeRedelivery({
+    internalEventBus: deps.internalEventBus,
+    listAgentGoalLinks: (agentId) => spaceAgentGoalScopeRepo.listGoals(agentId),
     recoverPendingOutcomeNotificationsForGoal: (goalId) =>
       spaceRuntimeService.recoverPendingOutcomeNotificationsForGoal(goalId),
   });
