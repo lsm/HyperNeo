@@ -373,6 +373,17 @@ test.each(['cancelled', 'archived', 'done', 'blocked'] as const)(
     expect(tasks.getTask(taskId)?.status).toBe(status);
   }
 );
+test('a cancelled fence on a non-terminal task retires the reservation through the verified stopper', async () => {
+  const job = acceptedJob();
+  const old = attempts.getActive(taskId)!;
+  attempts.requestStop(old.id, old.sessionId, 'cancelled');
+  expect(await createDirectStartJobHandler(db, start, jobs, control)(job)).toMatchObject({
+    reason: 'superseded',
+  });
+  expect(attempts.getActive(taskId)).toBeNull();
+  expect(attempts.get(old.id)).toMatchObject({ phase: 'stopped', outcome: 'cancelled' });
+  expect(tasks.getTask(taskId)?.status).toBe('open');
+});
 test('cancellation during loading retains fenced ownership until verification then releases exact reservation', async () => {
   const queued = acceptedJob();
   const [job] = jobs.dequeue(DIRECT_TASK_START, 1);

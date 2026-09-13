@@ -92,7 +92,7 @@ export function createDirectStartJobHandler(
         request.lifecycleGeneration + (current.phase === 'running' ? 1 : 0);
     const retiring = !!db
       .prepare(
-        "SELECT 1 FROM direct_task_stop_requests WHERE attempt_id = ? AND session_id = ? AND outcome = 'start_superseded'"
+        "SELECT 1 FROM direct_task_stop_requests WHERE attempt_id = ? AND session_id = ? AND outcome IN ('start_superseded', 'cancelled')"
       )
       .get(attempt.id, attempt.sessionId);
     if (terminal || retiring) {
