@@ -342,6 +342,44 @@ describe('decide', () => {
     expect(result).toEqual({ reason: recovered });
   });
 
+  test('a lifecycle change after the snapshot refuses the runtime executor', async () => {
+    const owned = createOwned('blocked', createWorkflowRun().id);
+    const recoverTransition = mock(async () => owned.task);
+    const movedOn: Pick<SpaceTaskManager, 'getTask' | 'setTaskStatus'> = {
+      getTask: async () => ({ ...owned.task, status: 'in_progress' }),
+      setTaskStatus: async () => {
+        throw new Error('should not write');
+      },
+    };
+    const result = await decide(
+      owned,
+      { taskId: owned.task.id, status: 'in_progress' },
+      rpc,
+      deps({ recoverTransition, getTaskManager: () => movedOn })
+    );
+    expect(result).toEqual({ reason: 'invalid_transition' });
+    expect(recoverTransition).not.toHaveBeenCalled();
+  });
+
+  test('a workflow run swapped after the snapshot refuses the runtime executor', async () => {
+    const owned = createOwned('in_progress', createWorkflowRun().id);
+    const parkStopped = mock(async () => owned.task);
+    const rebound: Pick<SpaceTaskManager, 'getTask' | 'setTaskStatus'> = {
+      getTask: async () => ({ ...owned.task, workflowRunId: createWorkflowRun().id }),
+      setTaskStatus: async () => {
+        throw new Error('should not write');
+      },
+    };
+    const result = await decide(
+      owned,
+      { taskId: owned.task.id, status: 'stopped' },
+      rpc,
+      deps({ parkStopped, getTaskManager: () => rebound })
+    );
+    expect(result).toEqual({ reason: 'invalid_transition' });
+    expect(parkStopped).not.toHaveBeenCalled();
+  });
+
   test('a string rejection from recover_transition becomes the operation rejection', async () => {
     const owned = createOwned('blocked', createWorkflowRun().id);
     const recoverTransition = mock(async () => 'invalid_recovery_status');

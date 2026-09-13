@@ -68,6 +68,15 @@ async function runRuntimeExecutor(
   return stopped ?? 'invalid_transition';
 }
 
+async function snapshotStillCurrent({ spaceId, task }: OwnedTask, deps: Deps): Promise<boolean> {
+  const current = await deps.getTaskManager(spaceId).getTask(task.id);
+  return (
+    current !== null &&
+    current.status === task.status &&
+    (current.workflowRunId ?? null) === (task.workflowRunId ?? null)
+  );
+}
+
 export async function decide(
   owned: OwnedTask,
   input: In,
@@ -86,6 +95,7 @@ export async function decide(
   });
   if (decision.action === 'reject') return { reason: decision.result };
   if (decision.action === 'runtime') {
+    if (!(await snapshotStillCurrent(owned, deps))) return { reason: 'invalid_transition' };
     return { reason: await runRuntimeExecutor(decision.executor, owned, input, deps) };
   }
   return { value: { ...owned, approvalSource: decision.approvalSource } };
