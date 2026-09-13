@@ -435,8 +435,9 @@ describe('Space Export/Import RPC Handlers', () => {
       );
     });
 
-    it('rejects when a workflow references the space coordinator', async () => {
+    it('exports a workflow referencing the space coordinator like any other agent', async () => {
       const coordinator = seedSpaceManagerAgent(longHorizonAgentRepo, SPACE_ID);
+      longHorizonAgentRepo.update(coordinator.id, { autonomyLevel: null });
       workflowRepo.createWorkflow({
         spaceId: SPACE_ID,
         name: 'Pipe',
@@ -448,9 +449,12 @@ describe('Space Export/Import RPC Handlers', () => {
         updatedAt: 1,
       } as never);
 
-      await expect(call(handlers, 'spaceExport.workflows', { spaceId: SPACE_ID })).rejects.toThrow(
-        'space manager is not exportable'
+      const result = await call<{ bundle: { agents: Array<{ name: string }> } }>(
+        handlers,
+        'spaceExport.workflows',
+        { spaceId: SPACE_ID }
       );
+      expect(result.bundle.agents.some((a) => a.name === coordinator.displayName)).toBe(true);
     });
 
     it('rejects imports into a target with ambiguous normalized names', async () => {
@@ -518,7 +522,7 @@ describe('Space Export/Import RPC Handlers', () => {
       );
     });
 
-    it('reserves the coordinator name for new imports', async () => {
+    it('treats a bundle agent whose name matches the space coordinator as an ordinary name conflict', async () => {
       const coordinator = seedSpaceManagerAgent(longHorizonAgentRepo, SPACE_ID);
       const coordinatorName = longHorizonAgentRepo.getById(coordinator.id)!.displayName;
       const coordinatorBundle = makeBundle([{ name: coordinatorName }], []);
@@ -527,9 +531,10 @@ describe('Space Export/Import RPC Handlers', () => {
         spaceId: SPACE_ID,
         bundle: coordinatorBundle,
       });
-      expect(
-        preview.validationErrors.some((e) => e.includes('reserved by the space manager'))
-      ).toBe(true);
+      expect(preview.agents).toEqual([
+        { name: coordinatorName, action: 'conflict', existingId: coordinator.id },
+      ]);
+      expect(preview.validationErrors).toEqual([]);
     });
 
     it('flags skipped non-runnable conflicts as unresolved references', async () => {

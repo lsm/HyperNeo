@@ -13,10 +13,7 @@ import type {
 import { generateUUID } from '@hyperneo/shared';
 import { SpaceAgentTemplateRepository } from '../../storage/repositories/space-agent-template-repository.ts';
 import { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository.ts';
-import {
-  coordinatorLongHorizonAgentId,
-  type SpaceLongHorizonAgentRepository,
-} from '../../storage/repositories/space-long-horizon-agent-repository.ts';
+import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
 import type { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository.ts';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
@@ -86,13 +83,8 @@ function unifiedExportAgents(
   longHorizonAgentRepo: SpaceLongHorizonAgentRepository,
   spaceId: string
 ): SpaceLongHorizonAgent[] {
-  const coordinatorByHandle = longHorizonAgentRepo.getCoordinator(spaceId);
   const unifiedRows = longHorizonAgentRepo.listBySpaceId(spaceId);
-  return unifiedRows
-    .filter((a) => a.id !== coordinatorLongHorizonAgentId(spaceId))
-    .filter((a) => !coordinatorByHandle || a.id !== coordinatorByHandle.id)
-    .filter((a) => a.status === 'active')
-    .filter((a) => a.autonomyLevel == null);
+  return unifiedRows.filter((a) => a.status === 'active').filter((a) => a.autonomyLevel == null);
 }
 
 function assertExportableAgentNames(agents: Array<{ id: string; displayName: string }>): void {
@@ -120,22 +112,6 @@ function nonRunnableUnifiedIds(
       .filter((a) => !isRunnableUnifiedAgent(a))
       .map((a) => a.id)
   );
-}
-
-function reservedCoordinatorNames(
-  longHorizonAgentRepo: SpaceLongHorizonAgentRepository,
-  spaceId: string
-): Set<string> {
-  const rows = longHorizonAgentRepo.listBySpaceId(spaceId);
-  const canonical = rows.find((a) => a.id === coordinatorLongHorizonAgentId(spaceId));
-  const byHandle = longHorizonAgentRepo.getCoordinator(spaceId);
-  const names = new Set<string>();
-  for (const row of [canonical, byHandle]) {
-    if (row && (row.displayName ?? '').trim() !== '') {
-      names.add(nameKey(row.displayName));
-    }
-  }
-  return names;
 }
 
 function findDuplicateBundleAgentNames(agents: Array<{ name: string }>): string[] {
@@ -765,16 +741,9 @@ export function setupSpaceExportImportHandlers(
     }
     const liveById = new Map(allAgents.map((a) => [a.id, a]));
     const allSpaceAgents = longHorizonAgentRepo.listBySpaceId(params.spaceId);
-    const coordinatorByHandle = longHorizonAgentRepo.getCoordinator(params.spaceId);
     const unexportable = [...referencedAgentIds].filter((id) => !liveById.has(id));
     if (unexportable.length > 0) {
       const details = unexportable.map((id) => {
-        if (
-          id === coordinatorLongHorizonAgentId(params.spaceId) ||
-          coordinatorByHandle?.id === id
-        ) {
-          return `${id} (the space manager is not exportable)`;
-        }
         const lha = allSpaceAgents.find((a) => a.id === id);
         if (!lha) return `${id} (missing in this space)`;
         if (lha.status === 'active' && lha.autonomyLevel != null) {
@@ -889,15 +858,9 @@ export function setupSpaceExportImportHandlers(
     }
     const bundle = validation.value;
 
-    const coordinatorByHandle = longHorizonAgentRepo.getCoordinator(params.spaceId);
     const existingAgents = longHorizonAgentRepo
       .listBySpaceId(params.spaceId)
-      .filter(
-        (a) =>
-          a.status !== 'archived' &&
-          a.id !== coordinatorLongHorizonAgentId(params.spaceId) &&
-          (!coordinatorByHandle || a.id !== coordinatorByHandle.id)
-      );
+      .filter((a) => a.status !== 'archived');
     const existingWorkflows = workflowRepo.listWorkflows(params.spaceId);
 
     const agentNameAmbiguities = findAmbiguousAgentNames(existingAgents);
@@ -953,17 +916,7 @@ export function setupSpaceExportImportHandlers(
       }
     }
 
-    const coordinatorNameCollisions = bundle.agents
-      .filter((a) =>
-        reservedCoordinatorNames(longHorizonAgentRepo, params.spaceId).has(nameKey(a.name))
-      )
-      .map(
-        (a) =>
-          `Cannot import: agent name "${a.name}" is reserved by the space manager. ` +
-          `Rename the agent in the bundle and retry.`
-      );
     validationErrors.push(...agentNameAmbiguities);
-    validationErrors.push(...coordinatorNameCollisions);
     validationErrors.push(...findDuplicateBundleAgentNames(bundle.agents));
     const result: ImportPreviewResult = {
       agents: agentPreviews,
@@ -996,28 +949,14 @@ export function setupSpaceExportImportHandlers(
     const deferredUnifiedUpdates: Array<{ spaceId: string; agentId: string }> = [];
     const executeImport = db.transaction(
       (spaceId: string, res: ImportConflictResolution): ImportExecuteResult => {
-        const coordinatorByHandle = longHorizonAgentRepo.getCoordinator(spaceId);
         const existingAgents = longHorizonAgentRepo
           .listBySpaceId(spaceId)
-          .filter(
-            (a) =>
-              a.status !== 'archived' &&
-              a.id !== coordinatorLongHorizonAgentId(spaceId) &&
-              (!coordinatorByHandle || a.id !== coordinatorByHandle.id)
-          );
+          .filter((a) => a.status !== 'archived');
         const existingWorkflows = workflowRepo.listWorkflows(spaceId);
 
         assertUnambiguousAgentNames(existingAgents);
         const duplicateBundleNames = findDuplicateBundleAgentNames(bundle.agents);
         if (duplicateBundleNames.length > 0) throw new Error(duplicateBundleNames[0]);
-        const coordinatorCollision = bundle.agents.find((a) =>
-          reservedCoordinatorNames(longHorizonAgentRepo, spaceId).has(nameKey(a.name))
-        );
-        if (coordinatorCollision) {
-          throw new Error(
-            `Cannot import: agent name "${coordinatorCollision.name}" is reserved by the space manager.`
-          );
-        }
         const existingAgentByName = new Map(existingAgents.map((a) => [nameKey(a.displayName), a]));
         const existingWorkflowByName = new Map(existingWorkflows.map((w) => [w.name, w]));
         const nonRunnableIds = nonRunnableUnifiedIds(longHorizonAgentRepo, spaceId);
