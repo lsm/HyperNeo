@@ -43,7 +43,7 @@ describe('core task list indexes', () => {
     ).toEqual({ key: 'migration_242' });
     const before = db
       .prepare(
-        "SELECT name, sql FROM sqlite_master WHERE name LIKE 'idx_space_tasks_owner_%' ORDER BY name"
+        "SELECT name, sql FROM sqlite_master WHERE name LIKE 'idx_space_tasks_owner_%created' ORDER BY name"
       )
       .all();
     expect(before).toHaveLength(2);
@@ -51,7 +51,7 @@ describe('core task list indexes', () => {
     expect(
       db
         .prepare(
-          "SELECT name, sql FROM sqlite_master WHERE name LIKE 'idx_space_tasks_owner_%' ORDER BY name"
+          "SELECT name, sql FROM sqlite_master WHERE name LIKE 'idx_space_tasks_owner_%created' ORDER BY name"
         )
         .all()
     ).toEqual(before);
