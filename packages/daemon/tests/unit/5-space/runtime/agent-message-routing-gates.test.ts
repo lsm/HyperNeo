@@ -524,6 +524,12 @@ describe('decideGenericAddressRouting: the former space-manager handles', () => 
     ).toEqual({ action: 'notFound', target: '@space-manager' });
   });
 
+  test('rejects the unroutable space-agent sentinel before any handle resolution', () => {
+    expect(
+      decideGenericAddressRouting(parseAddress('@space-agent-unrouted'), makeGenericConfig())
+    ).toEqual({ action: 'notFound', target: 'space-agent' });
+  });
+
   test('reports @role:coordinator not found — the synthetic actor is the only holder of that role', () => {
     expect(
       decideGenericAddressRouting(parseAddress('@role:coordinator'), makeGenericConfig())
