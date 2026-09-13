@@ -59,7 +59,10 @@ export const TaskWithSpaceFieldsSchema = TaskCoreSchema.extend({
   approvalSource: z.enum(['human', 'auto_policy', 'agent']).nullable().optional(),
   approvalReason: z.string().nullable().optional(),
   approvedAt: z.number().nullable().optional(),
-  pendingCheckpointType: z.literal('task_completion').nullable().optional(),
+  pendingCheckpointType: z.preprocess(
+    (value) => (value === undefined || value === 'task_completion' ? value : null),
+    z.literal('task_completion').nullable().optional()
+  ),
   pendingCompletionGeneration: z.number().optional(),
   pendingCompletionSubmittedByNodeId: z.string().nullable().optional(),
   pendingCompletionSubmittedAt: z.number().nullable().optional(),

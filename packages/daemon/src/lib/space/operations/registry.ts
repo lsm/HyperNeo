@@ -17,7 +17,9 @@ import {
 } from './transition-task.ts';
 import type { Database } from '../../../storage/database.ts';
 import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
+import { listTaskCores } from '../../../storage/tasks/list-tasks.ts';
 import { readTaskCore } from '../../../storage/tasks/task-reader.ts';
+import { listTasksWithSpaceFields, spaceTaskBatchReader } from './list-tasks-with-space-fields.ts';
 import { createDatabaseOperationCatalog } from '../../operations/database-catalog.ts';
 import type { OperationRegistry } from '../../operations/registry.ts';
 import {
@@ -47,6 +49,12 @@ export function createSpaceOperationRegistryProvider(
     (registry ??= createDatabaseOperationCatalog(database, jobQueue, {
       readTask: (taskId) =>
         tasks.taskRepo?.getTask(taskId) ?? readTaskCore(database.getDatabase(), taskId),
+      listTasks: (input) =>
+        listTasksWithSpaceFields(
+          (listInput) => listTaskCores(database.getDatabase(), listInput),
+          input,
+          spaceTaskBatchReader(tasks.taskRepo)
+        ),
       create: createSpaceCreateTaskOperation({
         ...tasks,
         get db() {

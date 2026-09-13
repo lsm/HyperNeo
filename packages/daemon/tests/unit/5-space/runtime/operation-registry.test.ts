@@ -506,3 +506,68 @@ test('task.get returns full Space fields for a Space-owned task through the Spac
     pendingCompletionReason: 'ready for review',
   });
 });
+
+test('a legacy gate checkpoint does not reject the read or the page', async () => {
+  db.prepare(`UPDATE space_tasks SET pending_checkpoint_type = 'gate' WHERE id = ?`).run(taskId);
+  const rpc = createOperationRpcHandler(provider(), () => ({}));
+
+  const single = await rpc({ name: 'task.get', input: { taskId } }, context);
+  expect(single).toMatchObject({ id: taskId, pendingCheckpointType: null });
+
+  const page = await rpc({ name: 'task.list', input: { spaceId } }, context);
+  expect((page as { tasks: { id: string }[] }).tasks.map((task) => task.id)).toContain(taskId);
+});
+
+test('task.get and task.list stay describable after the Space fields widening', async () => {
+  const rpc = createOperationRpcHandler(provider(), () => ({}));
+
+  for (const name of ['task.get', 'task.list']) {
+    const described = await rpc({ name: 'operations.describe', input: { name } }, context);
+    expect(described).toMatchObject({ name });
+    expect((described as { resultSchema?: unknown }).resultSchema).toBeDefined();
+  }
+});
+
+test('a task repository without a batch read degrades to core rows', async () => {
+  const coreOnly = provider({ taskRepo: { getTask: (id: string) => tasks.getTask(id) } });
+  const rpc = createOperationRpcHandler(coreOnly, () => ({}));
+  const result = await rpc({ name: 'task.list', input: { spaceId } }, context);
+  const listed = (result as { tasks: Record<string, unknown>[] }).tasks;
+  expect(listed.length).toBeGreaterThan(0);
+  expect(listed[0]).not.toHaveProperty('spaceId');
+});
+
+test('task.list returns the core shape unchanged for standalone tasks through the Space registry', async () => {
+  const standalone = createStandaloneTask(db, { title: 'Loose' }, undefined, () => {});
+  const rpc = createOperationRpcHandler(provider(), () => ({}));
+  const result = await rpc({ name: 'task.list', input: {} }, context);
+  expect(result).toEqual({ tasks: [standalone], nextCursor: null });
+  expect((result as { tasks: unknown[] }).tasks[0]).not.toHaveProperty('spaceId');
+});
+
+test('task.list preserves Space-scoped pagination while adding Space fields, across a cursor boundary', async () => {
+  const second = tasks.createTask({ spaceId, title: 'Second', description: '' });
+  const third = tasks.createTask({ spaceId, title: 'Third', description: '' });
+  db.prepare('UPDATE space_tasks SET created_at = ? WHERE id = ?').run(10, taskId);
+  db.prepare('UPDATE space_tasks SET created_at = ? WHERE id = ?').run(20, second.id);
+  db.prepare('UPDATE space_tasks SET created_at = ? WHERE id = ?').run(30, third.id);
+  tasks.updateTask(third.id, { approvalSource: 'human', approvalReason: 'ok', approvedAt: 500 });
+  const rpc = createOperationRpcHandler(provider(), () => ({}));
+  const firstPage = await rpc({ name: 'task.list', input: { spaceId, limit: 2 } }, context);
+  expect(firstPage).toEqual({
+    tasks: [tasks.getTask(third.id), tasks.getTask(second.id)],
+    nextCursor: { createdAt: 20, id: second.id },
+  });
+  expect(firstPage).toMatchObject({
+    tasks: [
+      expect.objectContaining({ spaceId, taskNumber: expect.any(Number), approvalSource: 'human' }),
+      expect.objectContaining({ spaceId, taskNumber: expect.any(Number) }),
+    ],
+  });
+  const { nextCursor } = firstPage as { nextCursor: { createdAt: number; id: string } };
+  const secondPage = await rpc(
+    { name: 'task.list', input: { spaceId, limit: 2, before: nextCursor } },
+    context
+  );
+  expect(secondPage).toEqual({ tasks: [tasks.getTask(taskId)], nextCursor: null });
+});
