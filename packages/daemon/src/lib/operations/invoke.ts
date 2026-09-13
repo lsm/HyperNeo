@@ -13,6 +13,11 @@ type Gate<T> = { value: T } | { reason: OperationFailure };
 type PreparedOperation = { operation: OperationDefinition; input: unknown };
 type ExecutedOperation = { operation: OperationDefinition; result: unknown };
 
+export type OperationAudit = {
+  before?: (prepared: PreparedOperation, caller: OperationCaller) => void;
+  after?: (prepared: PreparedOperation, caller: OperationCaller, outcome: OperationOutcome) => void;
+};
+
 export function resolveOperation(
   registry: OperationRegistry,
   name: string
@@ -90,15 +95,44 @@ export async function validateOperationResult(
   }
 }
 
-export const invokeOperation = (superpipe({})('invoke-operation') as PipelineAPI)
-  .input(['registry', 'name', 'input', 'caller'])
+function runAudited(fn: (() => void) | undefined): void {
+  try {
+    fn?.();
+  } catch {}
+}
+
+function auditBefore(
+  prepared: PreparedOperation,
+  caller: OperationCaller,
+  audit?: OperationAudit
+): void {
+  runAudited(() => audit?.before?.(prepared, caller));
+}
+
+const runInvocation = (superpipe({})('invoke-operation') as PipelineAPI)
+  .input(['registry', 'name', 'input', 'caller', 'audit'])
   .pipe(resolveOperation, ['registry', 'name'], 'result:invocation')
   .pipe(parseOperationInput, ['invocation', 'input'], 'result:invocation')
+  .pipe((prepared: PreparedOperation) => prepared, 'invocation', 'prepared')
+  .pipe(auditBefore, ['prepared', 'caller', 'audit'])
   .pipe(executeOperation, ['invocation', 'caller'], 'result:invocation')
   .pipe(validateOperationResult, 'invocation', 'result:invocation')
-  .endAsync('invocation') as (
+  .endAsync('{invocation, prepared}') as (
   registry: OperationRegistry,
   name: string,
   input: unknown,
-  caller: OperationCaller
-) => Promise<OperationOutcome>;
+  caller: OperationCaller,
+  audit?: OperationAudit
+) => Promise<{ invocation: OperationOutcome; prepared?: PreparedOperation }>;
+
+export async function invokeOperation(
+  registry: OperationRegistry,
+  name: string,
+  input: unknown,
+  caller: OperationCaller,
+  audit?: OperationAudit
+): Promise<OperationOutcome> {
+  const { invocation, prepared } = await runInvocation(registry, name, input, caller, audit);
+  if (prepared) runAudited(() => audit?.after?.(prepared, caller, invocation));
+  return invocation;
+}

@@ -144,3 +144,71 @@ describe('shared operation invocation', () => {
     }
   );
 });
+
+describe('shared operation invocation audit hooks', () => {
+  test('before sees the parsed input before execute, after sees the outcome after validation', async () => {
+    const { registry, execute } = fixture();
+    const order: string[] = [];
+    execute.mockImplementation(async (input: { content: string }) => {
+      order.push('execute');
+      return { accepted: input.content };
+    });
+    const before = mock((prepared: { input: unknown }) => {
+      order.push('before');
+      expect(prepared.input).toEqual({ content: 'hello' });
+    });
+    const after = mock(() => order.push('after'));
+    expect(
+      await invokeOperation(registry, 'message.send', { content: ' hello ' }, caller, {
+        before,
+        after,
+      })
+    ).toEqual({ kind: 'completed', value: { accepted: 'hello' } });
+    expect(order).toEqual(['before', 'execute', 'after']);
+    expect(after.mock.calls[0][2]).toEqual({ kind: 'completed', value: { accepted: 'hello' } });
+  });
+  test('absent audit is a no-op', async () => {
+    const { registry } = fixture();
+    expect(await invokeOperation(registry, 'message.send', { content: 'hello' }, caller)).toEqual({
+      kind: 'completed',
+      value: { accepted: 'hello' },
+    });
+  });
+  test.each([
+    { name: 'missing', input: {}, code: 'unknown_operation' },
+    { name: 'message.send', input: { content: '' }, code: 'invalid_input' },
+  ])('before is skipped when resolve or parse rejects ($code)', async ({ name, input }) => {
+    const { registry } = fixture();
+    const before = mock(() => {});
+    await invokeOperation(registry, name, input, caller, { before });
+    expect(before).not.toHaveBeenCalled();
+  });
+  test('after still runs for an execution_failed outcome', async () => {
+    const { registry, execute } = fixture();
+    execute.mockRejectedValue(new Error('unavailable'));
+    const after = mock(() => {});
+    const outcome = await invokeOperation(registry, 'message.send', { content: 'hello' }, caller, {
+      after,
+    });
+    expect(outcome).toEqual({ kind: 'failed', code: 'execution_failed', message: 'unavailable' });
+    expect(after).toHaveBeenCalledTimes(1);
+    const [prepared, callerArg, outcomeArg] = after.mock.calls[0];
+    expect(prepared.input).toEqual({ content: 'hello' });
+    expect(callerArg).toBe(caller);
+    expect(outcomeArg).toEqual(outcome);
+  });
+  test('a hook that throws leaves the invocation result unchanged', async () => {
+    const { registry } = fixture();
+    const audit = {
+      before: () => {
+        throw new Error('before boom');
+      },
+      after: () => {
+        throw new Error('after boom');
+      },
+    };
+    expect(
+      await invokeOperation(registry, 'message.send', { content: 'hello' }, caller, audit)
+    ).toEqual({ kind: 'completed', value: { accepted: 'hello' } });
+  });
+});
