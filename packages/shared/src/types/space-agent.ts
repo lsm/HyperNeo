@@ -4,6 +4,8 @@ import type { AgentModelPoolEntry, SpaceAgentAutonomyLevel } from './space.ts';
 
 export type SpaceAgentStatus = 'active' | 'paused' | 'disabled' | 'archived';
 
+export const DEFAULT_SEED_AGENT_TEMPLATE_KEY = 'task-manager.default';
+
 export interface SpaceAgent {
   id: string;
   spaceId: string;

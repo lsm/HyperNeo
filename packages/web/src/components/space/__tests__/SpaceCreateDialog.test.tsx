@@ -220,6 +220,7 @@ describe('SpaceCreateDialog', () => {
           workspacePath: '/projects/my-app',
           name: 'my-app',
           description: undefined,
+          seedAgentTemplateKeys: ['task-manager.default'],
         },
         {
           timeout: 10000,
@@ -266,6 +267,67 @@ describe('SpaceCreateDialog', () => {
 
     expect(await findByText('Workspace path does not exist')).toBeTruthy();
     expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('seeds a starting agent by default', async () => {
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockResolvedValue(SPACE_MOCK);
+
+    const { getByPlaceholderText, getByRole, getByLabelText } = render(
+      <SpaceCreateDialog isOpen={true} onClose={onClose} />
+    );
+
+    expect((getByLabelText(/Start with an agent/i) as HTMLInputElement).checked).toBe(true);
+
+    fireEvent.input(getByPlaceholderText('/Users/you/projects/my-app'), {
+      target: { value: '/projects/my-app' },
+    });
+    fireEvent.submit(getByRole('dialog').querySelector('form')!);
+
+    await waitFor(() => {
+      expect(mockRequest).toHaveBeenCalledWith(
+        'space.create',
+        expect.objectContaining({ seedAgentTemplateKeys: ['task-manager.default'] }),
+        expect.anything()
+      );
+    });
+  });
+
+  it('omits the seed field entirely when the box is unchecked', async () => {
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockResolvedValue(SPACE_MOCK);
+
+    const { getByPlaceholderText, getByRole, getByLabelText } = render(
+      <SpaceCreateDialog isOpen={true} onClose={onClose} />
+    );
+
+    fireEvent.click(getByLabelText(/Start with an agent/i));
+    fireEvent.input(getByPlaceholderText('/Users/you/projects/my-app'), {
+      target: { value: '/projects/my-app' },
+    });
+    fireEvent.submit(getByRole('dialog').querySelector('form')!);
+
+    await waitFor(() => {
+      expect(mockRequest).toHaveBeenCalled();
+    });
+    expect(mockRequest.mock.calls[0][1]).not.toHaveProperty('seedAgentTemplateKeys');
+  });
+
+  it('restores the default seed choice after the dialog is closed', () => {
+    const { getByLabelText, getByRole } = render(
+      <SpaceCreateDialog isOpen={true} onClose={onClose} />
+    );
+
+    fireEvent.click(getByLabelText(/Start with an agent/i));
+    expect((getByLabelText(/Start with an agent/i) as HTMLInputElement).checked).toBe(false);
+
+    fireEvent.click(getByRole('button', { name: 'Cancel' }));
+    cleanup();
+
+    const reopened = render(<SpaceCreateDialog isOpen={true} onClose={onClose} />);
+    expect((reopened.getByLabelText(/Start with an agent/i) as HTMLInputElement).checked).toBe(
+      true
+    );
   });
 
   it('calls onClose when Cancel is clicked', () => {
@@ -364,6 +426,7 @@ describe('SpaceCreateDialog', () => {
             { path: '/projects/shared-lib', label: 'Shared lib' },
             { path: '/projects/tools' },
           ],
+          seedAgentTemplateKeys: ['task-manager.default'],
         },
         {
           timeout: 12000,
@@ -425,6 +488,7 @@ describe('SpaceCreateDialog', () => {
           workspacePath: '/projects/my-app',
           name: 'my-app',
           description: undefined,
+          seedAgentTemplateKeys: ['task-manager.default'],
         },
         {
           timeout: 10000,
