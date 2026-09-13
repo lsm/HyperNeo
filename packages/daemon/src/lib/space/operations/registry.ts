@@ -26,6 +26,10 @@ import {
   createSpaceTaskMetadataEditor,
   type SpaceTaskMetadataDependencies,
 } from './task-metadata.ts';
+import {
+  createListTaskMembersOperation,
+  type ListTaskMembersDependencies,
+} from './list-task-members.ts';
 
 export function createSpaceOperationRegistryProvider(
   database: Database,
@@ -35,6 +39,7 @@ export function createSpaceOperationRegistryProvider(
     'db'
   > &
     CancelPolicyContext &
+    ListTaskMembersDependencies &
     Omit<
       CompleteTaskDependencies,
       'getTaskManager' | 'emitTaskUpdated' | 'requiresPostApprovalOwner' | 'completionGate'
@@ -65,6 +70,7 @@ export function createSpaceOperationRegistryProvider(
         ? createStartTaskOperation(() => database.getDatabase(), jobQueue, tasks, directStart)
         : undefined,
       cancel: createCancelTaskOperation(() => database.getDatabase(), jobQueue, tasks),
+      members: createListTaskMembersOperation(tasks),
       submitForReview: createSubmitTaskForReviewOperation(
         () => database.getDatabase(),
         jobQueue,
