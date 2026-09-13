@@ -112,6 +112,7 @@ import {
   type SpaceAgentNotificationServiceConfig,
 } from './space-agent-notification-service.ts';
 import {
+  FAIL_CLOSED_LONG_HORIZON_AGENT_REPO,
   resolveSpaceMcpSessionPolicy,
   type SpaceMcpSessionPolicy,
 } from './space-mcp-session-policy.ts';
@@ -275,7 +276,7 @@ export class SpaceRuntimeService {
       resolveDirectWorker: (id) => createDatabaseDirectTaskWorkerResolver(this.config.db)(id),
       nodeExecutionRepo: this.nodeExecutionRepo,
       taskRepo: this.config.taskRepo,
-      longHorizonAgentRepo: this.config.longHorizonAgentRepo,
+      longHorizonAgentRepo: this.config.longHorizonAgentRepo ?? FAIL_CLOSED_LONG_HORIZON_AGENT_REPO,
     });
   }
 

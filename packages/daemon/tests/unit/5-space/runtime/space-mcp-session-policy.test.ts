@@ -243,7 +243,7 @@ describe('resolveSpaceMcpSessionPolicy', () => {
     expect(policy.requiredServers).toBe(SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS);
   });
 
-  test('routes long-term agents using canonical session identity and prompt provenance', () => {
+  test('fails closed (demotes to ad_hoc_member) for a canonical long-term-agent session when no context is given', () => {
     const session = makeSession({
       id: longTermAgentSessionId('space-1', 'agent-1'),
       context: { spaceId: 'space-1' },
@@ -260,11 +260,11 @@ describe('resolveSpaceMcpSessionPolicy', () => {
     const policy = resolveSpaceMcpSessionPolicy(session);
 
     expect(policy).toMatchObject({
-      role: 'long_term_agent',
+      role: 'ad_hoc_member',
       spaceId: 'space-1',
       owner: 'space-runtime',
-      attachLongTermAgentTools: true,
-      attachGenericSpaceTools: false,
+      attachLongTermAgentTools: false,
+      attachGenericSpaceTools: true,
       isWorkflowWorker: false,
     });
   });

@@ -6,9 +6,16 @@ import { defineOperation, type OperationCaller } from '../../operations/registry
 import { TaskCoreSchema } from '../../operations/task-get.ts';
 import type { SpaceTaskManager } from '../managers/space-task-manager.ts';
 import {
+  FAIL_CLOSED_LONG_HORIZON_AGENT_REPO,
   resolveSpaceMcpSessionPolicy,
   type SpaceMcpSessionPolicyContext,
+  type SpaceMcpSessionRole,
 } from '../runtime/space-mcp-session-policy.ts';
+import {
+  decideAutonomyAdmission,
+  HUMAN_ONLY_AUTONOMY_LEVEL,
+  resolveEffectiveAutonomyLevel,
+} from '../tools/tool-admission-gates.ts';
 import {
   normalizePendingCompletion,
   rejectPendingCompletion,
@@ -24,13 +31,20 @@ export interface SpaceCoordinatorLookup {
   getCoordinator(spaceId: string): SpaceLongHorizonAgent | null;
 }
 type Gate<T> = { value: T } | { reason: Error };
-type CompletionActor = { source: OperationCaller['source']; session?: Session; spaceId?: string };
+type CompletionActor = {
+  source: OperationCaller['source'];
+  session?: Session;
+  spaceId?: string;
+  role?: SpaceMcpSessionRole;
+  agentId?: string | null;
+};
 
 export interface OwnedPendingCompletionDependencies {
   getSession: (sessionId: string) => Session | null;
   getTask: (taskId: string) => SpaceTask | null | Promise<SpaceTask | null>;
   coordinatorLookup: SpaceCoordinatorLookup;
   policyContext?: SpaceMcpSessionPolicyContext;
+  getSpaceAutonomyLevel?: (spaceId: string) => number | Promise<number>;
   getTaskManager: (
     spaceId: string
   ) => Pick<SpaceTaskManager, 'getTask' | 'reopenPendingCompletion' | 'updateTask'>;
@@ -66,11 +80,40 @@ export function resolveCompletionActor(
     (session.type === 'space_chat' ? session.id.match(/^space:chat:(.+)$/)?.[1] : undefined);
   if (!spaceId) return denied;
   const canonicalChat = session.type === 'space_chat' && session.id === `space:chat:${spaceId}`;
+  const coordinator = canonicalChat ? coordinatorLookup.getCoordinator(spaceId) : null;
   const allowed =
     policy.role === 'legacy_task_agent' ||
     policy.role === 'long_term_agent' ||
-    (canonicalChat && coordinatorLookup.getCoordinator(spaceId) !== null);
-  return allowed ? { value: { source: 'mcp', session, spaceId } } : denied;
+    (canonicalChat && coordinator !== null);
+  if (!allowed) return denied;
+  const agentId =
+    policy.role === 'long_term_agent'
+      ? (session.metadata.promptProvenance?.agentId ?? null)
+      : (coordinator?.id ?? null);
+  return { value: { source: 'mcp', session, spaceId, role: policy.role, agentId } };
+}
+
+export async function requireCompletionAutonomy(
+  actor: CompletionActor,
+  policyContext: SpaceMcpSessionPolicyContext,
+  getSpaceAutonomyLevel: OwnedPendingCompletionDependencies['getSpaceAutonomyLevel']
+): Promise<Gate<CompletionActor>> {
+  if (actor.source !== 'mcp' || actor.role === 'legacy_task_agent' || !actor.spaceId) {
+    return { value: actor };
+  }
+  const spaceLevel = getSpaceAutonomyLevel ? await getSpaceAutonomyLevel(actor.spaceId) : 1;
+  const agentLevel = actor.agentId
+    ? (policyContext.longHorizonAgentRepo?.getById(actor.agentId)?.autonomyLevel ?? null)
+    : null;
+  const effective = resolveEffectiveAutonomyLevel({ spaceLevel, agentLevel });
+  const admission = decideAutonomyAdmission({
+    toolName: 'task.resolvePendingCompletion',
+    level: effective.level,
+    required: HUMAN_ONLY_AUTONOMY_LEVEL,
+    agentLevel,
+    spaceLevel,
+  });
+  return admission.action === 'allow' ? { value: actor } : { reason: new Error(admission.message) };
 }
 
 export function requireCompletionTarget(
@@ -146,14 +189,23 @@ export function createOwnedPendingCompletionOperation(
   dependencies: OwnedPendingCompletionDependencies
 ) {
   const resolve = (
-    superpipe({ ...dependencies, policyContext: dependencies.policyContext ?? {} })(
-      'resolve-owned-pending-completion'
-    ) as PipelineAPI
+    superpipe({
+      ...dependencies,
+      policyContext: dependencies.policyContext ?? {
+        longHorizonAgentRepo: FAIL_CLOSED_LONG_HORIZON_AGENT_REPO,
+      },
+    })('resolve-owned-pending-completion') as PipelineAPI
   )
     .input(['input', 'caller'])
     .pipe(
       resolveCompletionActor,
       ['caller', 'getSession', 'coordinatorLookup', 'policyContext'],
+      'result:task'
+    )
+    .pipe((actor: CompletionActor) => actor, 'task', 'actor')
+    .pipe(
+      requireCompletionAutonomy,
+      ['actor', 'policyContext', 'getSpaceAutonomyLevel'],
       'result:task'
     )
     .pipe((actor: CompletionActor) => actor, 'task', 'actor')

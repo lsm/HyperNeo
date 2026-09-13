@@ -44,6 +44,12 @@ beforeEach(() => {
     getSession: (id) => sessions.getSession(id),
     getTask: (id) => tasks.getTask(id),
     coordinatorLookup: { getCoordinator: () => coordinator },
+    getSpaceAutonomyLevel: async () => 5,
+    policyContext: {
+      longHorizonAgentRepo: {
+        getById: (id) => ({ id, spaceId, status: 'active' }) as unknown as SpaceLongHorizonAgent,
+      },
+    },
     getTaskManager: mock((id) => new SpaceTaskManager(db, id)),
     dispatchApproval: mock(async (owner, id, source, reason, guard) => {
       expect(owner).toBe(spaceId);
@@ -191,6 +197,40 @@ test('admits a long-term agent session whose backing agent is still active', asy
         ({ id: 'agent-1', spaceId, status: 'active' }) as unknown as SpaceLongHorizonAgent,
     },
   };
+  expect((await invoke(session.id)).kind).toBe('completed');
+  expect(tasks.getTask(task.id)?.status).toBe('approved');
+});
+
+test('denies a long-term agent below the required autonomy level via the operations MCP path', async () => {
+  const session = persist('worker', longTermAgentSessionId(spaceId, 'other'), spaceId, 'other');
+  dependencies.getSpaceAutonomyLevel = async () => 4;
+  const outcome = await invoke(session.id);
+  expect(outcome).toMatchObject({
+    kind: 'failed',
+    message: expect.stringContaining('space autonomy level 4 < required level 5'),
+  });
+  expect(dependencies.getTaskManager).not.toHaveBeenCalled();
+  expect(tasks.getTask(task.id)?.status).toBe('review');
+});
+
+test('admits a long-term agent at the required autonomy level via the operations MCP path', async () => {
+  const session = persist('worker', longTermAgentSessionId(spaceId, 'other'), spaceId, 'other');
+  dependencies.getSpaceAutonomyLevel = async () => 5;
+  expect((await invoke(session.id)).kind).toBe('completed');
+  expect(tasks.getTask(task.id)?.status).toBe('approved');
+});
+
+test('denies a canonical space-chat caller below the required autonomy level', async () => {
+  const session = persist('space_chat', `space:chat:${spaceId}`, spaceId);
+  dependencies.getSpaceAutonomyLevel = async () => 4;
+  const outcome = await invoke(session.id);
+  expect(outcome.kind).toBe('failed');
+  expect(tasks.getTask(task.id)?.status).toBe('review');
+});
+
+test('legacy task-agent caller bypasses the operations-path autonomy gate entirely', async () => {
+  const session = persist('space_task_agent');
+  dependencies.getSpaceAutonomyLevel = async () => 1;
   expect((await invoke(session.id)).kind).toBe('completed');
   expect(tasks.getTask(task.id)?.status).toBe('approved');
 });

@@ -666,6 +666,7 @@ test.each(['rpc', 'mcp'] as const)(
           coordinatorLookup: {
             getCoordinator: () => ({ id: 'coordinator' }) as SpaceLongHorizonAgent,
           },
+          getSpaceAutonomyLevel: async () => 5,
           dispatchApproval: (_spaceId, id, approvalSource, reason, guard) =>
             runtime.dispatchPostApproval(id, approvalSource, { approvalReason: reason }, guard),
           warn: () => {

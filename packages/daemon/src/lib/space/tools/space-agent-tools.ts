@@ -832,7 +832,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
   const outboundSenderLevel =
     outboundSenderName === 'task-agent'
       ? 'task-agent'
-      : callerHasSpaceAuthority
+      : callerHasSpaceAuthority && myAgentId
         ? 'space-agent'
         : 'session-agent';
   const outboundSenderDisplayName = outboundSenderName;

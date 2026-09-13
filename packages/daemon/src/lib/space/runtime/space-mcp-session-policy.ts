@@ -24,7 +24,7 @@ export interface SpaceMcpSessionPolicyContext {
   readonly resolveDirectWorker?: (sessionId: string) => DirectTaskWorkerIdentity | null;
   readonly nodeExecutionRepo?: Pick<NodeExecutionRepository, 'getByAgentSessionId' | 'getById'>;
   readonly taskRepo?: Pick<SpaceTaskRepository, 'getTask'>;
-  readonly longHorizonAgentRepo?: Pick<SpaceLongHorizonAgentRepository, 'getById'>;
+  readonly longHorizonAgentRepo: Pick<SpaceLongHorizonAgentRepository, 'getById'>;
 }
 
 export interface SpaceMcpSessionPolicy {
@@ -42,9 +42,16 @@ export const SPACE_COORDINATOR_REQUIRED_MCP_SERVERS = ['space-agent-tools'] as c
 export const SPACE_AD_HOC_MEMBER_REQUIRED_MCP_SERVERS = ['space-agent-tools'] as const;
 export const SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS = ['node-agent'] as const;
 
+export const FAIL_CLOSED_LONG_HORIZON_AGENT_REPO: SpaceMcpSessionPolicyContext['longHorizonAgentRepo'] =
+  {
+    getById: () => null,
+  };
+
 export function resolveSpaceMcpSessionPolicy(
   session: Session,
-  context: SpaceMcpSessionPolicyContext = {}
+  context: SpaceMcpSessionPolicyContext = {
+    longHorizonAgentRepo: FAIL_CLOSED_LONG_HORIZON_AGENT_REPO,
+  }
 ): SpaceMcpSessionPolicy {
   const spaceId = session.context?.spaceId;
 
@@ -169,13 +176,12 @@ function parseExecutionIdFromSubSessionId(sessionId: string): string | null {
 function isLongTermAgentSession(
   session: Session,
   spaceId: string,
-  longHorizonAgentRepo?: SpaceMcpSessionPolicyContext['longHorizonAgentRepo']
+  longHorizonAgentRepo: SpaceMcpSessionPolicyContext['longHorizonAgentRepo']
 ): boolean {
   const agentId = session.metadata.promptProvenance?.agentId;
   if (!agentId) return false;
   if (session.id !== longTermAgentSessionId(spaceId, agentId)) return false;
-  if (!longHorizonAgentRepo) return true;
-  const agent = longHorizonAgentRepo.getById(agentId);
+  const agent = longHorizonAgentRepo?.getById(agentId) ?? null;
   return agent !== null && agent.spaceId === spaceId && agent.status === 'active';
 }
 

@@ -2023,11 +2023,12 @@ describe('createSpaceAgentToolHandlers — session management tools', () => {
     expect(String(parsed.error)).toContain('space autonomy level 3 < required level 4');
   });
 
-  test('send_session_message coordinator can send cross-session without autonomy gate', async () => {
+  test('send_session_message gates a long-term agent with a real backing identity too', async () => {
     seedSession('other-member-coordinator', ctx.spaceId, { status: 'idle' });
     const handlers = makeHandlers(ctx, {
       myAgentName: 'space-agent',
       callerRole: 'long_term_agent',
+      myAgentId: ctx.agentId,
       mySessionId: 'caller-session',
       getSpaceAutonomyLevel: async () => 3,
       getRuntimeSession: () => ({ startQueryAndEnqueue: async () => {} }) as never,
@@ -2040,7 +2041,28 @@ describe('createSpaceAgentToolHandlers — session management tools', () => {
       })
     );
 
-    expect(parsed.success).toBe(true);
+    expect(parsed.success).toBe(false);
+    expect(String(parsed.error)).toContain('space autonomy level 3 < required level 4');
+  });
+
+  test('send_session_message: Space authority without a backing agent record still requires autonomy', async () => {
+    seedSession('other-member-no-agent-record', ctx.spaceId, { status: 'idle' });
+    const handlers = makeHandlers(ctx, {
+      callerRole: 'coordinator',
+      mySessionId: 'caller-session',
+      getSpaceAutonomyLevel: async () => 3,
+      getRuntimeSession: () => ({ startQueryAndEnqueue: async () => {} }) as never,
+    });
+
+    const parsed = parseResult(
+      await handlers.send_session_message({
+        session_id: 'other-member-no-agent-record',
+        message: 'Proceed',
+      })
+    );
+
+    expect(parsed.success).toBe(false);
+    expect(String(parsed.error)).toContain('space autonomy level 3 < required level 4');
   });
 
   test('get_session_messages cursor handles duplicate timestamps', async () => {

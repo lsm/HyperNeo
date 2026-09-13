@@ -2464,6 +2464,16 @@ describe('SpaceRuntimeService', () => {
       };
     }
 
+    function makeActiveLhAgentRepo(): SpaceRuntimeServiceConfig['longHorizonAgentRepo'] {
+      return {
+        getById: mock(() => ({
+          id: 'agent-1',
+          spaceId: mockSpace.id,
+          status: 'active',
+        })),
+      } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
+    }
+
     function insertSession(db: BunDatabase, session: Session): void {
       db.prepare(
         `INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata,
@@ -2556,7 +2566,9 @@ describe('SpaceRuntimeService', () => {
           },
         });
         const sessionManager = makeSessionManager(agent);
-        const svc = new SpaceRuntimeService(buildMemberConfig({ sessionManager }));
+        const svc = new SpaceRuntimeService(
+          buildMemberConfig({ sessionManager, longHorizonAgentRepo: makeActiveLhAgentRepo() })
+        );
 
         await (
           svc as unknown as {
@@ -2959,7 +2971,9 @@ describe('SpaceRuntimeService', () => {
           },
         });
         const sessionManager = makeSessionManager(agent);
-        const svc = new SpaceRuntimeService(buildMemberConfig({ sessionManager }));
+        const svc = new SpaceRuntimeService(
+          buildMemberConfig({ sessionManager, longHorizonAgentRepo: makeActiveLhAgentRepo() })
+        );
 
         await (
           svc as unknown as {
@@ -3054,7 +3068,13 @@ describe('SpaceRuntimeService', () => {
       tmpDb.close();
 
       try {
-        const svc = new SpaceRuntimeService(buildMemberConfig({ sessionManager, dbPath }));
+        const svc = new SpaceRuntimeService(
+          buildMemberConfig({
+            sessionManager,
+            dbPath,
+            longHorizonAgentRepo: makeActiveLhAgentRepo(),
+          })
+        );
         await (
           svc as unknown as {
             attachLongTermAgentMcpServersForSession(session: Session): Promise<void>;
