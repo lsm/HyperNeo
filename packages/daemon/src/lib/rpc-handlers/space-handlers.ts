@@ -319,6 +319,15 @@ export function setupSpaceHandlers(
       throw new Error('id is required');
     }
 
+    const existing = await spaceManager.getSpace(params.id);
+    if (!existing) {
+      throw new Error(`Space not found: ${params.id}`);
+    }
+
+    if (spaceRuntimeService) {
+      await spaceRuntimeService.stopActiveWork(params.id);
+    }
+
     const deleted = await spaceManager.deleteSpace(params.id);
     if (!deleted) {
       throw new Error(`Space not found: ${params.id}`);
