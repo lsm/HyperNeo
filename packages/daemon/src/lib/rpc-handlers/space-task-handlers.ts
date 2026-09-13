@@ -357,9 +357,8 @@ export function setupSpaceTaskHandlers(
           ) {
             throw new Error(
               `Cannot archive task ${taskId}: it belongs to an active workflow run ` +
-                `(${currentTask.workflowRunId}). Cancel the run instead (the task ` +
-                `Cancel action or spaceWorkflowRun.cancel) so its agents and ` +
-                `lifecycle are torn down — archiving would leave the run stranded.`
+                `(${currentTask.workflowRunId}). Cancel the run instead so its agents ` +
+                `and lifecycle are torn down — archiving would leave the run stranded.`
             );
           }
           if (Object.hasOwn(updateParams, 'workspacePath')) {

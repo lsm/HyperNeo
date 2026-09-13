@@ -8,7 +8,6 @@ import type { WorkflowRunArtifactRepository } from '../../storage/repositories/w
 import type { WorkflowRunArtifactCacheRepository } from '../../storage/repositories/workflow-run-artifact-cache-repository.ts';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import type { WorkflowHookStateRepository } from '../../storage/repositories/workflow-hook-state-repository.ts';
-import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
 import type { SpaceTaskManager } from '../space/managers/space-task-manager.ts';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
 import type { SpaceWorktreeManager } from '../space/managers/space-worktree-manager.ts';
@@ -148,7 +147,6 @@ export function setupSpaceWorkflowRunHandlers(
   spaceManager: SpaceManager,
   spaceWorkflowManager: SpaceWorkflowManager,
   workflowRunRepo: SpaceWorkflowRunRepository,
-  spaceRuntimeService: SpaceRuntimeService,
   taskManagerFactory: SpaceWorkflowRunTaskManagerFactory,
   internalEventBus: InternalEventBus<DaemonInternalEventMap>,
   spaceTaskRepo: SpaceTaskRepository,
@@ -158,26 +156,6 @@ export function setupSpaceWorkflowRunHandlers(
   jobQueue: JobQueueRepository,
   hookStateRepo: WorkflowHookStateRepository
 ): void {
-  messageHub.onRequest('spaceWorkflowRun.cancel', async (data) => {
-    const params = data as { id: string };
-
-    if (!params.id) throw new Error('id is required');
-
-    const run = workflowRunRepo.getRun(params.id);
-    if (!run) throw new Error(`WorkflowRun not found: ${params.id}`);
-
-    if (run.status === 'cancelled') {
-      return { success: true };
-    }
-    if (run.status === 'done') {
-      throw new Error('Cannot cancel a succeeded workflow run');
-    }
-
-    await spaceRuntimeService.cancelWorkflowRun(run.spaceId, run.id);
-
-    return { success: true };
-  });
-
   messageHub.onRequest('spaceWorkflowRun.getGateArtifacts', async (data) => {
     const params = data as { runId: string; taskId?: string };
 

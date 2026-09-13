@@ -105,7 +105,6 @@ const mockWorkspaces = signal<unknown[]>([]);
 
 const mockUpdateTask = vi.fn().mockResolvedValue(undefined);
 const mockRunTaskDirectly = vi.fn().mockResolvedValue({ accepted: true, jobId: 'job-1' });
-const mockCancelWorkflowRun = vi.fn().mockResolvedValue(undefined);
 const mockCancelTask = vi.fn().mockResolvedValue({ accepted: true, jobId: null });
 const mockRecoverWorkflowTask = vi.fn().mockResolvedValue(undefined);
 const mockSubmitForReview = vi.fn().mockResolvedValue(undefined);
@@ -134,7 +133,6 @@ vi.mock('../../../lib/space-store', () => ({
       workspaces: mockWorkspaces,
       updateTask: mockUpdateTask,
       runTaskDirectly: mockRunTaskDirectly,
-      cancelWorkflowRun: mockCancelWorkflowRun,
       cancelTask: mockCancelTask,
       recoverWorkflowTask: mockRecoverWorkflowTask,
       submitForReview: mockSubmitForReview,
@@ -322,7 +320,6 @@ describe('SpaceTaskPane', () => {
     mockNodeExecutions.value = [];
     mockWorkspaces.value = [];
     mockUpdateTask.mockClear();
-    mockCancelWorkflowRun.mockClear();
     mockCancelTask.mockClear();
     mockRecoverWorkflowTask.mockClear();
     mockEnsureTaskAgentSession.mockReset();
@@ -1766,7 +1763,6 @@ describe('SpaceTaskPane — activity members actions', () => {
 
     await waitFor(() => expect(mockCancelTask).toHaveBeenCalledWith('task-1'));
     expect(mockUpdateTask).not.toHaveBeenCalled();
-    expect(mockCancelWorkflowRun).not.toHaveBeenCalled();
   });
 
   it('cancels a plain task through cancelTask instead of the generic status update', async () => {
@@ -1833,10 +1829,9 @@ describe('SpaceTaskPane — activity members actions', () => {
       expect(mockUpdateTask).toHaveBeenCalledWith('task-1', { status: 'stopped' })
     );
     expect(mockRecoverWorkflowTask).not.toHaveBeenCalled();
-    expect(mockCancelWorkflowRun).not.toHaveBeenCalled();
   });
 
-  it('cancels an in_progress workflow task through cancelTask, not cancelWorkflowRun', async () => {
+  it('cancels an in_progress workflow task through cancelTask', async () => {
     mockTasks.value = [
       makeTask({
         status: 'in_progress',
@@ -1851,7 +1846,6 @@ describe('SpaceTaskPane — activity members actions', () => {
     fireEvent.click(getByText('Cancel'));
 
     await waitFor(() => expect(mockCancelTask).toHaveBeenCalledWith('task-1'));
-    expect(mockCancelWorkflowRun).not.toHaveBeenCalled();
   });
 
   it('resumes a stopped workflow task through workflow recovery', async () => {

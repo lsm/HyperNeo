@@ -9,7 +9,6 @@ import type { SpaceManager } from '../../../../src/lib/space/managers/space-mana
 import type { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import type { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
 import type { WorkflowHookStateRepository } from '../../../../src/storage/repositories/workflow-hook-state-repository.ts';
-import type { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-runtime-service.ts';
 import type { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
 import type { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import type { SpaceWorktreeManager } from '../../../../src/lib/space/managers/space-worktree-manager.ts';
@@ -147,15 +146,6 @@ function createMockHookStateRepo(): WorkflowHookStateRepository {
   } as unknown as WorkflowHookStateRepository;
 }
 
-function createMockRuntimeService(): SpaceRuntimeService {
-  return {
-    cancelWorkflowRun: mock(async () => ({ ...mockRun, status: 'cancelled' as const })),
-    start: mock(() => {}),
-    stop: mock(() => {}),
-    stopRuntime: mock(() => {}),
-  } as unknown as SpaceRuntimeService;
-}
-
 function createMockTaskManager(tasks: SpaceTask[] = []): SpaceTaskManager {
   return {
     listTasksByWorkflowRun: mock(async () => tasks),
@@ -240,7 +230,6 @@ describe('space-workflow-run-handlers', () => {
   let spaceManager: SpaceManager;
   let workflowManager: SpaceWorkflowManager;
   let runRepo: SpaceWorkflowRunRepository;
-  let runtimeService: SpaceRuntimeService;
   let taskManagerFactory: SpaceWorkflowRunTaskManagerFactory;
   let taskManager: SpaceTaskManager;
   let spaceTaskRepo: SpaceTaskRepository;
@@ -263,7 +252,6 @@ describe('space-workflow-run-handlers', () => {
     workflowManager = createMockWorkflowManager();
     const resolvedRun = 'run' in opts ? opts.run : mockRun;
     runRepo = createMockRunRepo(resolvedRun ?? null);
-    runtimeService = createMockRuntimeService();
     taskManager = createMockTaskManager(opts.tasks ?? []);
     taskManagerFactory = mock(() => taskManager);
     spaceTaskRepo = createMockSpaceTaskRepo([mockTask]);
@@ -274,7 +262,6 @@ describe('space-workflow-run-handlers', () => {
       spaceManager,
       workflowManager,
       runRepo,
-      runtimeService,
       taskManagerFactory,
       internalEventBus,
       spaceTaskRepo,
@@ -293,64 +280,6 @@ describe('space-workflow-run-handlers', () => {
   };
 
   beforeEach(() => setup());
-
-  describe('spaceWorkflowRun.cancel', () => {
-    it('throws if id is missing', async () => {
-      await expect(call('spaceWorkflowRun.cancel', {})).rejects.toThrow('id is required');
-    });
-
-    it('throws if run not found', async () => {
-      setup({ run: null });
-      await expect(call('spaceWorkflowRun.cancel', { id: 'missing-run' })).rejects.toThrow(
-        'WorkflowRun not found: missing-run'
-      );
-    });
-
-    it('returns success immediately if already cancelled', async () => {
-      const cancelledRun: SpaceWorkflowRun = { ...mockRun, status: 'cancelled' };
-      setup({ run: cancelledRun });
-
-      const result = await call('spaceWorkflowRun.cancel', { id: 'run-1' });
-      expect(result).toEqual({ success: true });
-      expect(runRepo.updateStatus).not.toHaveBeenCalled();
-    });
-
-    it('throws if trying to cancel a succeeded run', async () => {
-      const doneRun: SpaceWorkflowRun = { ...mockRun, status: 'done' };
-      setup({ run: doneRun });
-
-      await expect(call('spaceWorkflowRun.cancel', { id: 'run-1' })).rejects.toThrow(
-        'Cannot cancel a succeeded workflow run'
-      );
-    });
-
-    it('delegates cancellation to the runtime service', async () => {
-      setup({ tasks: [] });
-
-      const result = await call('spaceWorkflowRun.cancel', { id: 'run-1' });
-      expect(result).toEqual({ success: true });
-
-      expect(runtimeService.cancelWorkflowRun).toHaveBeenCalledWith('space-1', 'run-1');
-      expect(runRepo.transitionStatus).not.toHaveBeenCalled();
-      expect(taskManager.cancelTask).not.toHaveBeenCalled();
-    });
-
-    it('does not cancel tasks in the RPC handler when delegating to runtime', async () => {
-      const inProgressTask: SpaceTask = {
-        ...mockTask,
-        id: 'task-2',
-        status: 'in_progress',
-      };
-      setup({ tasks: [mockTask, inProgressTask] });
-
-      await call('spaceWorkflowRun.cancel', { id: 'run-1' });
-
-      expect(runtimeService.cancelWorkflowRun).toHaveBeenCalledWith('space-1', 'run-1');
-      expect(taskManagerFactory).not.toHaveBeenCalled();
-      expect(taskManager.cancelTask).not.toHaveBeenCalled();
-      expect(runRepo.transitionStatus).not.toHaveBeenCalled();
-    });
-  });
 
   describe('spaceWorkflowRun.getGateArtifacts — worktree resolution', () => {
     it('throws if runId is missing', async () => {
@@ -388,8 +317,6 @@ describe('space-workflow-run-handlers', () => {
         createMockSpaceManager(mockSpace),
         createMockWorkflowManager(),
         createMockRunRepo(mockRun),
-
-        createMockRuntimeService(),
         mock(() => createMockTaskManager()),
         createMockInternalEventBus(),
         mockTaskRepo,
@@ -422,8 +349,6 @@ describe('space-workflow-run-handlers', () => {
         createMockSpaceManager(mockSpace),
         createMockWorkflowManager(),
         createMockRunRepo(mockRun),
-
-        createMockRuntimeService(),
         mock(() => createMockTaskManager()),
         createMockInternalEventBus(),
         mockTaskRepo,
@@ -454,8 +379,6 @@ describe('space-workflow-run-handlers', () => {
         mockSpaceMgr,
         createMockWorkflowManager(),
         createMockRunRepo(mockRun),
-
-        createMockRuntimeService(),
         mock(() => createMockTaskManager()),
         createMockInternalEventBus(),
         mockTaskRepo,
@@ -487,8 +410,6 @@ describe('space-workflow-run-handlers', () => {
         mockSpaceMgr,
         createMockWorkflowManager(),
         createMockRunRepo(mockRun),
-
-        createMockRuntimeService(),
         mock(() => createMockTaskManager()),
         createMockInternalEventBus(),
         mockTaskRepo,
@@ -522,8 +443,6 @@ describe('space-workflow-run-handlers', () => {
         mockSpaceMgr,
         createMockWorkflowManager(),
         createMockRunRepo(mockRun),
-
-        createMockRuntimeService(),
         mock(() => createMockTaskManager()),
         createMockInternalEventBus(),
         mockTaskRepo,
@@ -590,8 +509,6 @@ describe('space-workflow-run-handlers', () => {
         createMockSpaceManager(mockSpace),
         createMockWorkflowManager(),
         createMockRunRepo(mockRun),
-
-        createMockRuntimeService(),
         mock(() => createMockTaskManager()),
         createMockInternalEventBus(),
         mockTaskRepo,
@@ -625,8 +542,6 @@ describe('space-workflow-run-handlers', () => {
         createMockSpaceManager(mockSpace),
         createMockWorkflowManager(),
         createMockRunRepo(mockRun),
-
-        createMockRuntimeService(),
         mock(() => createMockTaskManager()),
         createMockInternalEventBus(),
         mockTaskRepo,
@@ -660,8 +575,6 @@ describe('space-workflow-run-handlers', () => {
         createMockSpaceManager(spaceWithoutWorkspace),
         createMockWorkflowManager(),
         createMockRunRepo(mockRun),
-
-        createMockRuntimeService(),
         mock(() => createMockTaskManager()),
         createMockInternalEventBus(),
         mockTaskRepo,
@@ -723,8 +636,6 @@ describe('space-workflow-run-handlers', () => {
         createMockSpaceManager(mockSpace),
         createMockWorkflowManager(),
         createMockRunRepo(mockRun),
-
-        createMockRuntimeService(),
         mock(() => createMockTaskManager()),
         createMockInternalEventBus(),
         createMockSpaceTaskRepo([mockTask]),
@@ -837,8 +748,6 @@ describe('space-workflow-run-handlers', () => {
         createMockSpaceManager(mockSpace),
         createMockWorkflowManager(),
         createMockRunRepo(mockRun),
-
-        createMockRuntimeService(),
         mock(() => createMockTaskManager()),
         createMockInternalEventBus(),
         createMockSpaceTaskRepo([mockTask]),
@@ -899,8 +808,6 @@ describe('space-workflow-run-handlers', () => {
         createMockSpaceManager(mockSpace),
         createMockWorkflowManager(),
         createMockRunRepo(mockRun),
-
-        createMockRuntimeService(),
         mock(() => createMockTaskManager()),
         createMockInternalEventBus(),
         createMockSpaceTaskRepo([mockTask]),
