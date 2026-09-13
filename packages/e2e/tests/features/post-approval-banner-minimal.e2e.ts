@@ -38,10 +38,9 @@ async function createBlockedTaskFixture(
         input: { spaceId: space.id, title: 'Banner geometry probe', description: '' },
       })) as { id: string };
 
-      await hub.request('spaceTask.update', {
-        spaceId: space.id,
-        taskId: task.id,
-        status: 'in_progress',
+      await hub.request('operation.invoke', {
+        name: 'task.transition',
+        input: { taskId: task.id, status: 'in_progress' },
       });
       await hub.request('spaceTask.update', {
         spaceId: space.id,

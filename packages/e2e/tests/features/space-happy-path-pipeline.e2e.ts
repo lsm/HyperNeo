@@ -72,10 +72,10 @@ async function getRunTaskId(
     async ({ sid, rid }) => {
       const hub = window.__messageHub || window.appState?.messageHub;
       if (!hub?.request) return false;
-      const tasks = (await hub.request('spaceTask.list', { spaceId: sid })) as Array<{
-        id: string;
-        workflowRunId?: string;
-      }>;
+      const { tasks } = (await hub.request('operation.invoke', {
+        name: 'task.list',
+        input: { spaceId: sid, limit: 100 },
+      })) as { tasks: Array<{ id: string; workflowRunId?: string }> };
       return tasks.some((t) => t.workflowRunId === rid);
     },
     { sid: spaceId, rid: runId },
@@ -86,10 +86,10 @@ async function getRunTaskId(
     async ({ sid, rid }) => {
       const hub = window.__messageHub || window.appState?.messageHub;
       if (!hub?.request) throw new Error('MessageHub not available');
-      const tasks = (await hub.request('spaceTask.list', { spaceId: sid })) as Array<{
-        id: string;
-        workflowRunId?: string;
-      }>;
+      const { tasks } = (await hub.request('operation.invoke', {
+        name: 'task.list',
+        input: { spaceId: sid, limit: 100 },
+      })) as { tasks: Array<{ id: string; workflowRunId?: string }> };
       const match = tasks.find((t) => t.workflowRunId === rid);
       return match?.id ?? '';
     },
@@ -193,13 +193,15 @@ test.describe('Space Happy Path Pipeline (Task-First)', () => {
           input: { taskId: tid },
         })) as { status: string };
         if (current.status === 'pending') {
-          await hub.request('spaceTask.update', {
-            spaceId: sid,
-            taskId: tid,
-            status: 'in_progress',
+          await hub.request('operation.invoke', {
+            name: 'task.transition',
+            input: { taskId: tid, status: 'in_progress' },
           });
         }
-        await hub.request('spaceTask.update', { spaceId: sid, taskId: tid, status: 'done' });
+        await hub.request('operation.invoke', {
+          name: 'task.transition',
+          input: { taskId: tid, status: 'done' },
+        });
       },
       { sid: spaceId, tid: taskId }
     );
