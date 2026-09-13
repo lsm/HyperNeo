@@ -1533,7 +1533,6 @@ export class AcpQueryRunner {
     policy: ReturnType<typeof resolveSpaceMcpSessionPolicy>
   ): boolean {
     if (policy.isWorkflowWorker) return !!this.ctx.onMissingWorkflowMcpServers;
-    if (policy.attachCoordinatorTools) return !!this.ctx.onMissingSpaceChatMcpServers;
     if (policy.attachGenericSpaceTools || policy.attachLongTermAgentTools) {
       return !!this.ctx.onMissingMemberSpaceMcpServers;
     }
@@ -1546,10 +1545,6 @@ export class AcpQueryRunner {
   ): Promise<void> {
     if (policy.isWorkflowWorker && this.ctx.onMissingWorkflowMcpServers) {
       await this.ctx.onMissingWorkflowMcpServers(this.ctx as AgentSession, missing);
-      return;
-    }
-    if (policy.attachCoordinatorTools && this.ctx.onMissingSpaceChatMcpServers) {
-      await this.ctx.onMissingSpaceChatMcpServers(this.ctx.session.id, missing);
       return;
     }
     if (

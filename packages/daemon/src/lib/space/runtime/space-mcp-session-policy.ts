@@ -6,7 +6,6 @@ import { longTermAgentSessionId } from '../long-term-agent-session.ts';
 import type { DirectTaskWorkerIdentity } from './direct-task-worker-identity.ts';
 
 export type SpaceMcpSessionRole =
-  | 'coordinator'
   | 'ad_hoc_member'
   | 'workflow_worker'
   | 'direct_task_worker'
@@ -16,7 +15,7 @@ export type SpaceMcpSessionRole =
   | 'outside_space';
 
 export function hasSpaceAuthority(role: SpaceMcpSessionRole | undefined): boolean {
-  return role === 'long_term_agent' || role === 'coordinator';
+  return role === 'long_term_agent';
 }
 
 export interface SpaceMcpSessionPolicyContext {
@@ -33,12 +32,10 @@ export interface SpaceMcpSessionPolicy {
   readonly owner: 'space-runtime' | 'task-agent-manager' | 'direct-task-executor' | 'none';
   readonly requiredServers: readonly string[];
   readonly attachGenericSpaceTools: boolean;
-  readonly attachCoordinatorTools: boolean;
   readonly attachLongTermAgentTools: boolean;
   readonly isWorkflowWorker: boolean;
 }
 
-export const SPACE_COORDINATOR_REQUIRED_MCP_SERVERS = ['space-agent-tools'] as const;
 export const SPACE_AD_HOC_MEMBER_REQUIRED_MCP_SERVERS = ['space-agent-tools'] as const;
 export const SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS = ['node-agent'] as const;
 
@@ -65,7 +62,6 @@ export function resolveSpaceMcpSessionPolicy(
       owner: directWorker ? 'direct-task-executor' : 'none',
       requiredServers: [],
       attachGenericSpaceTools: false,
-      attachCoordinatorTools: false,
       attachLongTermAgentTools: false,
       isWorkflowWorker: false,
     };
@@ -78,20 +74,6 @@ export function resolveSpaceMcpSessionPolicy(
       owner: 'none',
       requiredServers: [],
       attachGenericSpaceTools: false,
-      attachCoordinatorTools: false,
-      attachLongTermAgentTools: false,
-      isWorkflowWorker: false,
-    };
-  }
-
-  if (session.type === 'space_chat' && spaceId) {
-    return {
-      role: 'coordinator',
-      spaceId,
-      owner: 'space-runtime',
-      requiredServers: SPACE_COORDINATOR_REQUIRED_MCP_SERVERS,
-      attachGenericSpaceTools: false,
-      attachCoordinatorTools: true,
       attachLongTermAgentTools: false,
       isWorkflowWorker: false,
     };
@@ -108,7 +90,6 @@ export function resolveSpaceMcpSessionPolicy(
       owner: 'task-agent-manager',
       requiredServers: SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS,
       attachGenericSpaceTools: false,
-      attachCoordinatorTools: false,
       attachLongTermAgentTools: false,
       isWorkflowWorker: true,
     };
@@ -121,7 +102,6 @@ export function resolveSpaceMcpSessionPolicy(
       owner: 'none',
       requiredServers: ['space-actions'],
       attachGenericSpaceTools: false,
-      attachCoordinatorTools: false,
       attachLongTermAgentTools: false,
       isWorkflowWorker: false,
     };
@@ -134,7 +114,6 @@ export function resolveSpaceMcpSessionPolicy(
       owner: 'space-runtime',
       requiredServers: ['space-agent-tools'],
       attachGenericSpaceTools: false,
-      attachCoordinatorTools: false,
       attachLongTermAgentTools: true,
       isWorkflowWorker: false,
     };
@@ -146,7 +125,6 @@ export function resolveSpaceMcpSessionPolicy(
     owner: 'space-runtime',
     requiredServers: SPACE_AD_HOC_MEMBER_REQUIRED_MCP_SERVERS,
     attachGenericSpaceTools: true,
-    attachCoordinatorTools: false,
     attachLongTermAgentTools: false,
     isWorkflowWorker: false,
   };

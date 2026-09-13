@@ -488,7 +488,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     scheduleService,
     db: deps.db.getDatabase(),
     goalScopeRepo: spaceAgentGoalScopeRepo,
-    agentRepo: spaceAgentRepo,
     outcomeNotificationRepo,
     evolutionScopeService,
     reactiveDb: deps.reactiveDb,
@@ -633,7 +632,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     getSession: (id) => deps.db.getSession(id),
     getTask: (id) => spaceTaskRepo.getTask(id),
     getTaskManager: spaceTaskManagerFactory,
-    coordinatorLookup: longHorizonAgentRepo,
     policyContext: { taskRepo: spaceTaskRepo, nodeExecutionRepo, longHorizonAgentRepo },
     getSpaceAutonomyLevel: async (spaceId) => {
       const space = await deps.spaceManager.getSpace(spaceId);
@@ -864,7 +862,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     goalScopeRepo: spaceAgentGoalScopeRepo,
     subscriptionRepo: spaceAgentSubscriptionRepo,
     reminderRepo: spaceAgentReminderRepo,
-    agentRepo: spaceAgentRepo,
     spaceWorkflowManager,
     workflowRunRepo: spaceWorkflowRunRepo,
     taskRepo: spaceTaskRepo,

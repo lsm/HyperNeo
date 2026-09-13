@@ -281,7 +281,10 @@ export class AgentMessageRouter {
     const notFound: string[] = [];
     const failed: Array<{ agentName: string; sessionId: string; error: string }> = [];
     const body = `${message}${buildDataAppendix(data)}`;
-    const buildEnvelope = (toLevel: 'node-agent' | 'space-agent', replyToSessionId?: string) =>
+    const buildEnvelope = (
+      toLevel: 'node-agent' | 'long-horizon-agent',
+      replyToSessionId?: string
+    ) =>
       formatAgentMessage({
         fromLevel: 'node-agent',
         fromAgentName,
@@ -345,7 +348,7 @@ export class AgentMessageRouter {
         };
       }
       if (decision.action === 'deliverToSession') {
-        const envelopedMessage = buildEnvelope('space-agent');
+        const envelopedMessage = buildEnvelope('long-horizon-agent');
         try {
           const outcome = await this.deliverSingleTarget(
             { kind: 'session', sessionId: decision.sessionId },
@@ -378,7 +381,7 @@ export class AgentMessageRouter {
         continue;
       }
       if (decision.action === 'deliverViaMessagingFacade') {
-        const rawMessage = buildEnvelope('space-agent', fromSessionId);
+        const rawMessage = buildEnvelope('long-horizon-agent', fromSessionId);
         const messageRecord: MessageRecord = {
           messageId: `msg_node_${Date.now()}_${Math.random().toString(36).slice(2)}`,
           spaceId: spaceId!,
@@ -685,7 +688,10 @@ export class AgentMessageRouter {
     }
 
     const body = `${message}${buildDataAppendix(data)}`;
-    const buildEnvelope = (toLevel: 'node-agent' | 'space-agent', replyToSessionId?: string) =>
+    const buildEnvelope = (
+      toLevel: 'node-agent' | 'long-horizon-agent',
+      replyToSessionId?: string
+    ) =>
       formatAgentMessage({
         fromLevel: 'node-agent',
         fromAgentName,
@@ -720,7 +726,7 @@ export class AgentMessageRouter {
           continue;
         }
         const expectedSessionId = replyTo;
-        const envelopedMessage = buildEnvelope('space-agent');
+        const envelopedMessage = buildEnvelope('long-horizon-agent');
         try {
           const outcome = await this.deliverSingleTarget(
             { kind: 'session', sessionId: replyTo },

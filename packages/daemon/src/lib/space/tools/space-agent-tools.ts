@@ -232,7 +232,6 @@ import {
 import { normalizeMeaningfulTaskResult } from '../task-result-utils.ts';
 import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit } from '../slug.ts';
 import {
-  canonicalizeSpaceManagerHandle,
   isReservedAgentHandle,
   normalizeAgentNameToken,
   normalizeReplyTargetHandle,
@@ -520,8 +519,7 @@ async function resolveHandleForTaskRouting(
 
   const handle = `@${address.handle}`;
   const canonicalHandle = `@${normalizeAgentNameToken(address.handle)}`;
-  const canonicalHandleToken = (value: string) =>
-    canonicalizeSpaceManagerHandle(normalizeAgentNameToken(value).replace(/^@/, ''));
+  const canonicalHandleToken = (value: string) => normalizeAgentNameToken(value).replace(/^@/, '');
   const handlesEquivalent = (actorHandle: string) =>
     canonicalHandleToken(actorHandle) === canonicalHandleToken(handle);
   const taskWorker =
@@ -551,7 +549,6 @@ async function resolveHandleForTaskRouting(
   const longHorizonActors = actors.filter((actor) => {
     if (actor.actorId.startsWith('system:')) return true;
     if (!actor.actorId.startsWith('agent:')) return false;
-    if (actor.actorId === `agent:coordinator:${spaceId}`) return taskWorker !== null;
     if (!longHorizonAgentRepo) return true;
     const agentId = decodeURIComponent(actor.actorId.slice('agent:'.length));
     const unifiedAgent = longHorizonAgentRepo.getById(agentId);
@@ -833,7 +830,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     outboundSenderName === 'task-agent'
       ? 'task-agent'
       : callerHasSpaceAuthority && myAgentId
-        ? 'space-agent'
+        ? 'long-horizon-agent'
         : 'session-agent';
   const outboundSenderDisplayName = outboundSenderName;
   const outboundReplyTargetHandle = myAgentName
@@ -1746,7 +1743,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           args.answer_question ||
           (mySessionId &&
             args.session_id !== mySessionId &&
-            (outboundSenderLevel !== 'space-agent' || myAgentId))
+            (outboundSenderLevel !== 'long-horizon-agent' || myAgentId))
         ) {
           await requireSessionWriteAutonomy('send_session_message');
         }
@@ -3333,7 +3330,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             body: formatAgentMessage({
               fromLevel: outboundSenderLevel,
               fromAgentName: outboundSenderDisplayName,
-              toLevel: 'space-agent',
+              toLevel: 'long-horizon-agent',
               body: args.message,
               taskId: task.id,
               taskNumber: task.taskNumber,

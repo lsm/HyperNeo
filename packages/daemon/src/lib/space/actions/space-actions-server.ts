@@ -48,7 +48,6 @@ const WORKER_NODE_HOT_FILL = [
 const SPACE_AUTHORITY_ONLY_ACTIONS = new Set(['approve_pending_completion']);
 
 const DISPATCHABLE_ROLES: ReadonlySet<SpaceMcpSessionRole> = new Set([
-  'coordinator',
   'ad_hoc_member',
   'workflow_worker',
   'long_term_agent',

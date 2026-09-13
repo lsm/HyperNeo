@@ -1,4 +1,3 @@
-import { SPACE_MANAGER_HANDLE } from '../../lib/space/agent-handle.ts';
 import { slugifyWithinLimit } from '../../lib/space/slug.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 
@@ -56,7 +55,7 @@ export function runMigration240(db: BunDatabase): void {
           )
         )`
     )
-    .all(SPACE_MANAGER_HANDLE) as AgentIdRow[];
+    .all('space-manager') as AgentIdRow[];
   db.exec('BEGIN');
   try {
     const spaceHandles = db.prepare(
@@ -86,7 +85,7 @@ export function runMigration240(db: BunDatabase): void {
     );
     db.prepare(
       `UPDATE space_long_horizon_agents SET handle = ?, updated_at = ? WHERE handle = 'coordinator'`
-    ).run(SPACE_MANAGER_HANDLE, now);
+    ).run('space-manager', now);
     const bySpace = new Map<string, AgentRow[]>();
     for (const row of agents) {
       const spaceRows = bySpace.get(row.space_id) ?? [];

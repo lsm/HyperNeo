@@ -13,7 +13,6 @@ import type {
   UpdateSpaceLongHorizonAgentSubscriptionParams,
 } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
-import { SPACE_MANAGER_HANDLE } from '../../lib/space/agent-handle.ts';
 import { MIGRATED_WORKER_TEMPLATE_KEY } from '../../lib/space/agents/worker-long-horizon-mapper.ts';
 import {
   decideGoalOwnerResolution,
@@ -85,22 +84,6 @@ export class SpaceLongHorizonAgentRepository {
         `SELECT * FROM space_long_horizon_agents WHERE space_id = ? AND handle = ? AND status != 'archived'`
       )
       .get(spaceId, handle) as Record<string, unknown> | undefined;
-    return row ? rowToAgent(row) : null;
-  }
-
-  getCoordinator(spaceId: string): SpaceLongHorizonAgent | null {
-    return (
-      this.getByHandle(spaceId, SPACE_MANAGER_HANDLE) ?? this.getByHandle(spaceId, 'coordinator')
-    );
-  }
-
-  getCoordinatorRecord(spaceId: string): SpaceLongHorizonAgent | null {
-    const row = this.db
-      .prepare(
-        `SELECT * FROM space_long_horizon_agents WHERE space_id = ? AND handle IN (?, ?)
-				 ORDER BY (status = 'archived'), updated_at DESC LIMIT 1`
-      )
-      .get(spaceId, SPACE_MANAGER_HANDLE, 'coordinator') as Record<string, unknown> | undefined;
     return row ? rowToAgent(row) : null;
   }
 
@@ -649,14 +632,6 @@ export class SpaceLongHorizonAgentRepository {
       throw new Error(`${label} ${id} does not belong to space ${spaceId}`);
     }
   }
-}
-
-export function coordinatorSessionId(spaceId: string): string {
-  return `space:chat:${spaceId}`;
-}
-
-export function coordinatorLongHorizonAgentId(spaceId: string): string {
-  return `space-lh-agent:coordinator:${spaceId}`;
 }
 
 function rowToAgent(row: Record<string, unknown>): SpaceLongHorizonAgent {

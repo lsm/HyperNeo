@@ -3,7 +3,6 @@ import type { SpaceAgentRepository } from '../../storage/repositories/space-agen
 import type { SpaceAgentReminderRepository } from '../../storage/repositories/space-agent-reminder-repository.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
 import type { SpaceAgentTemplateRepository } from '../../storage/repositories/space-agent-template-repository.ts';
-import { SPACE_MANAGER_HANDLE } from '../space/agent-handle.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import {
   validateAgentModel,
@@ -49,14 +48,6 @@ export interface SpaceAgentV2Deps {
   ): { success: boolean; error?: string };
   clearSessionProvider?(spaceId: string, agentId: string): Promise<void>;
   seedTemplateExtras?(agent: SpaceAgent, template: SpaceAgentTemplate): void;
-}
-
-const COORDINATOR_HANDLES = new Set([SPACE_MANAGER_HANDLE, 'coordinator']);
-
-export function assertAgentDeletable(agent: SpaceAgent): void {
-  if (COORDINATOR_HANDLES.has(agent.handle)) {
-    throw new Error('The Space Manager agent cannot be deleted');
-  }
 }
 
 export function toBindableSession(session: SessionLookup | null): BindableSession | null {
@@ -242,7 +233,6 @@ export function setupSpaceAgentV2Handlers(messageHub: MessageHub, deps: SpaceAge
     if (params.spaceId && existing.spaceId !== params.spaceId) {
       throw new Error(`Agent ${id} does not belong to space ${params.spaceId}`);
     }
-    assertAgentDeletable(existing);
     deps.agents.delete(id);
     deps.removeAgentSubscriptions?.(existing.spaceId, id);
     await publishAgentDeleted(deps, existing.spaceId, id);

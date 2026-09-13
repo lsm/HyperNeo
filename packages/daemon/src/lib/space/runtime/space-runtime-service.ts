@@ -24,7 +24,6 @@ import { SpaceAgentTemplateRepository } from '../../../storage/repositories/spac
 import type { SpaceGoalOutcomeNotificationRepository } from '../../../storage/repositories/space-goal-outcome-notification-repository.ts';
 import type { SpaceAgentGoalScopeRepository } from '../../../storage/repositories/space-agent-goal-scope-repository.ts';
 import type { SpaceAgentReminderRepository } from '../../../storage/repositories/space-agent-reminder-repository.ts';
-import type { SpaceAgentRepository } from '../../../storage/repositories/space-agent-repository.ts';
 import type { SpaceAgentSubscriptionRepository } from '../../../storage/repositories/space-agent-subscription-repository.ts';
 import { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository.ts';
 import {
@@ -142,7 +141,6 @@ export interface SpaceRuntimeServiceConfig {
   goalScopeRepo?: SpaceAgentGoalScopeRepository;
   subscriptionRepo?: SpaceAgentSubscriptionRepository;
   reminderRepo?: SpaceAgentReminderRepository;
-  agentRepo?: Pick<SpaceAgentRepository, 'getSpaceManager'>;
   ownedAgents?: OwnedAgentLookup;
   templateRepo?: SpaceAgentTemplateRepository;
   spaceWorkflowManager: SpaceWorkflowManager;
@@ -789,14 +787,11 @@ export class SpaceRuntimeService {
     spaceId: string
   ): Array<{ id: string; name: string; description?: string }> {
     const unified = this.config.longHorizonAgentRepo?.listBySpaceId(spaceId) ?? [];
-    const coordinatorAgentId = this.config.agentRepo?.getSpaceManager(spaceId)?.id;
-    return unified
-      .filter((agent) => agent.id !== coordinatorAgentId)
-      .map((agent) => ({
-        id: agent.id,
-        name: agent.displayName,
-        description: agent.description,
-      }));
+    return unified.map((agent) => ({
+      id: agent.id,
+      name: agent.displayName,
+      description: agent.description,
+    }));
   }
 
   private async attachLongTermAgentMcpServersForSession(
@@ -1747,7 +1742,6 @@ export class SpaceRuntimeService {
       return;
     }
 
-    const coordinator = this.config.agentRepo?.getSpaceManager(space.id) ?? null;
     const agents = this.listPromptRestampAgents(space.id);
     const workflows = spaceWorkflowManager.listWorkflows(space.id);
 
@@ -1795,11 +1789,8 @@ export class SpaceRuntimeService {
         const s = await spaceManagerForApproval.getSpace(sid);
         return s?.autonomyLevel ?? 1;
       },
-      myAgentName: 'space-agent',
-      myAgentNameAliases: coordinator ? [coordinator.handle] : undefined,
-      myAgentId: coordinator ? coordinator.id : undefined,
       mySessionId: spaceChatSessionId,
-      callerRole: 'coordinator',
+      callerRole: 'ad_hoc_member',
       auditLogRepo: this.auditLogRepo,
       scheduleService: this.config.scheduleService,
       goalService: this.config.goalService,
@@ -1810,9 +1801,6 @@ export class SpaceRuntimeService {
       messageResolver: this.createMessageResolver(space.id),
       longTermAgentDelivery: this.longTermAgentDeliveryCallbacks(),
       externalEventStore: this.config.externalEventStore,
-      inactivityConfigRepo: coordinator ? this.config.inactivityConfigRepo : undefined,
-      inactivityClaimRepo: coordinator ? this.config.inactivityClaimRepo : undefined,
-      inactivityRunNow: coordinator ? this.config.inactivityRunNow : undefined,
       templateManager: this.templateManager,
     };
     const mcpServer = createSpaceAgentMcpServer(spaceToolsConfig);
@@ -1846,7 +1834,7 @@ export class SpaceRuntimeService {
       mcpServers['db-query'] = dbQueryServer as unknown as McpServerConfig;
     }
     this.attachSpaceActionsMcpServer(mcpServers, () => ({
-      role: 'coordinator',
+      role: 'ad_hoc_member',
       spaceId: space.id,
       spaceConfig: spaceToolsConfig,
     }));

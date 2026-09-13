@@ -7,7 +7,6 @@ import { MIGRATED_WORKER_TEMPLATE_KEY } from './agents/worker-long-horizon-mappe
 import type { SpaceRepository } from '../../storage/repositories/space-repository.ts';
 import type { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository.ts';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository.ts';
-import { SPACE_MANAGER_HANDLE } from './agent-handle.ts';
 import { encodeActorIdComponent, longTermAgentSessionId } from './long-term-agent-session.ts';
 
 export const SPACE_SYSTEM_ACTORS = [
@@ -41,8 +40,6 @@ export class SpaceActorRegistryAdapter {
       if (sessionActor) this.add(actors, sessionActor);
     }
 
-    this.add(actors, coordinatorActor(space, this.findCoordinatorSession(spaceId)));
-
     for (const actor of this.agentActors(spaceId)) {
       this.add(actors, actor);
     }
@@ -72,14 +69,11 @@ export class SpaceActorRegistryAdapter {
   }
 
   private agentActors(spaceId: string): ActorRef[] {
-    const coordinatorAgentId = this.repos.longHorizonAgentRepo?.getCoordinator(spaceId)?.id ?? null;
-    return (this.repos.longHorizonAgentRepo?.listBySpaceId(spaceId) ?? [])
-      .filter((agent) => agent.id !== coordinatorAgentId)
-      .map((agent) =>
-        agent.templateKey === MIGRATED_WORKER_TEMPLATE_KEY
-          ? agentActor(agent, this.findLongTermAgentSession(spaceId, agent.id))
-          : longHorizonAgentActor(agent)
-      );
+    return (this.repos.longHorizonAgentRepo?.listBySpaceId(spaceId) ?? []).map((agent) =>
+      agent.templateKey === MIGRATED_WORKER_TEMPLATE_KEY
+        ? agentActor(agent, this.findLongTermAgentSession(spaceId, agent.id))
+        : longHorizonAgentActor(agent)
+    );
   }
 
   private findLongTermAgentSession(spaceId: string, agentId: string): Session | null {
@@ -90,18 +84,6 @@ export class SpaceActorRegistryAdapter {
     return (
       this.repos.sessionRepo
         .listSessionsBySpaceAgent(spaceId, agentId)
-        .find((session) => isSessionInSpace(session, spaceId)) ?? null
-    );
-  }
-
-  private findCoordinatorSession(spaceId: string): Session | null {
-    const canonicalId = `space:chat:${spaceId}`;
-    const canonical = this.repos.sessionRepo.getSession(canonicalId);
-    if (canonical && isSessionInSpace(canonical, spaceId)) return canonical;
-
-    return (
-      this.repos.sessionRepo
-        .listSessionsByType('space_chat')
         .find((session) => isSessionInSpace(session, spaceId)) ?? null
     );
   }
@@ -125,17 +107,6 @@ function humanActorForSession(session: Session, space: Space): ActorRef {
     handle: undefined,
     roles: ['member'],
     status: statusFromSession(session),
-  };
-}
-
-function coordinatorActor(space: Space, session: Session | null): ActorRef {
-  return {
-    actorId: `agent:coordinator:${space.id}`,
-    kind: 'agent',
-    spaceId: space.id,
-    handle: `@${SPACE_MANAGER_HANDLE}`,
-    roles: ['coordinator', 'space-agent'],
-    status: session ? statusFromSession(session) : 'inactive',
   };
 }
 
@@ -167,7 +138,7 @@ function agentActor(agent: SpaceLongHorizonAgent, session: Session | null): Acto
     kind: 'agent',
     spaceId: agent.spaceId,
     handle,
-    roles: unique(['space-agent', routingRole(agent.handle)]),
+    roles: unique([routingRole(agent.handle)]),
     status: session ? statusFromSession(session) : 'inactive',
   };
 }
@@ -178,7 +149,7 @@ function longHorizonAgentActor(agent: SpaceLongHorizonAgent): ActorRef {
     kind: 'agent',
     spaceId: agent.spaceId,
     handle: `@${agent.handle}`,
-    roles: unique(['space-agent', routingRole(agent.handle)]),
+    roles: unique([routingRole(agent.handle)]),
     status: agent.status === 'active' ? 'active' : 'archived',
   };
 }
@@ -203,7 +174,7 @@ function workerHandle(workflowRunId: string, nodeId: string, agentName: string):
 }
 
 function reservedHandles(): string[] {
-  return ['coordinator', ...SPACE_SYSTEM_ACTORS.map((actor) => actor.handle.slice(1))];
+  return SPACE_SYSTEM_ACTORS.map((actor) => actor.handle.slice(1));
 }
 
 const ROUTING_ROLE_PREFIX = 'actor-role:';

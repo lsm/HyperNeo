@@ -46,16 +46,12 @@ export interface SpaceAgentLookup {
 }
 
 export function createSpaceAgentLookup(
-  longHorizonAgentRepo: Pick<SpaceLongHorizonAgentRepository, 'getById' | 'getCoordinator'>
+  longHorizonAgentRepo: Pick<SpaceLongHorizonAgentRepository, 'getById'>
 ): SpaceAgentLookup {
   return {
     getAgentById(spaceId: string, id: string) {
       const unified = longHorizonAgentRepo.getById(id);
       if (unified && unified.spaceId === spaceId) {
-        const coordinator = longHorizonAgentRepo.getCoordinator(spaceId);
-        if (coordinator && unified.id === coordinator.id) {
-          return null;
-        }
         if (!isRunnableUnifiedAgent(unified)) return null;
         return { id: unified.id, name: unified.displayName };
       }
