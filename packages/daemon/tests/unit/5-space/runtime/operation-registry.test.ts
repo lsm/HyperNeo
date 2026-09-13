@@ -507,6 +507,26 @@ test('task.get returns full Space fields for a Space-owned task through the Spac
   });
 });
 
+test('a legacy gate checkpoint does not reject the read or the page', async () => {
+  db.prepare(`UPDATE space_tasks SET pending_checkpoint_type = 'gate' WHERE id = ?`).run(taskId);
+  const rpc = createOperationRpcHandler(provider(), () => ({}));
+
+  const single = await rpc({ name: 'task.get', input: { taskId } }, context);
+  expect(single).toMatchObject({ id: taskId, pendingCheckpointType: null });
+
+  const page = await rpc({ name: 'task.list', input: { spaceId } }, context);
+  expect((page as { tasks: { id: string }[] }).tasks.map((task) => task.id)).toContain(taskId);
+});
+
+test('a task repository without a batch read degrades to core rows', async () => {
+  const coreOnly = provider({ taskRepo: { getTask: (id: string) => tasks.getTask(id) } });
+  const rpc = createOperationRpcHandler(coreOnly, () => ({}));
+  const result = await rpc({ name: 'task.list', input: { spaceId } }, context);
+  const listed = (result as { tasks: Record<string, unknown>[] }).tasks;
+  expect(listed.length).toBeGreaterThan(0);
+  expect(listed[0]).not.toHaveProperty('spaceId');
+});
+
 test('task.list returns the core shape unchanged for standalone tasks through the Space registry', async () => {
   const standalone = createStandaloneTask(db, { title: 'Loose' }, undefined, () => {});
   const rpc = createOperationRpcHandler(provider(), () => ({}));

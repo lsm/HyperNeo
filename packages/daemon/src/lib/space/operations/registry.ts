@@ -17,9 +17,9 @@ import {
 } from './transition-task.ts';
 import type { Database } from '../../../storage/database.ts';
 import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
-import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import { listTaskCores } from '../../../storage/tasks/list-tasks.ts';
 import { readTaskCore } from '../../../storage/tasks/task-reader.ts';
+import { listTasksWithSpaceFields, spaceTaskBatchReader } from './list-tasks-with-space-fields.ts';
 import { createDatabaseOperationCatalog } from '../../operations/database-catalog.ts';
 import type { OperationRegistry } from '../../operations/registry.ts';
 import {
@@ -49,15 +49,12 @@ export function createSpaceOperationRegistryProvider(
     (registry ??= createDatabaseOperationCatalog(database, jobQueue, {
       readTask: (taskId) =>
         tasks.taskRepo?.getTask(taskId) ?? readTaskCore(database.getDatabase(), taskId),
-      listTasks: async (input) => {
-        const page = listTaskCores(database.getDatabase(), input);
-        const taskRepo = tasks.taskRepo as SpaceTaskRepository | undefined;
-        if (!taskRepo || page.tasks.length === 0) return page;
-        const bySpaceId = new Map(
-          taskRepo.getTasksByIds(page.tasks.map((task) => task.id)).map((task) => [task.id, task])
-        );
-        return { ...page, tasks: page.tasks.map((task) => bySpaceId.get(task.id) ?? task) };
-      },
+      listTasks: (input) =>
+        listTasksWithSpaceFields(
+          (listInput) => listTaskCores(database.getDatabase(), listInput),
+          input,
+          spaceTaskBatchReader(tasks.taskRepo)
+        ),
       create: createSpaceCreateTaskOperation({
         ...tasks,
         get db() {
