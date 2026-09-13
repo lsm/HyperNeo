@@ -1762,6 +1762,7 @@ export class QueryRunner {
     const policy = resolveSpaceMcpSessionPolicy(session, {
       nodeExecutionRepo: this.ctx.db.getNodeExecutionRepo(),
       taskRepo: this.ctx.db.getSpaceTaskRepo(),
+      longHorizonAgentRepo: this.ctx.db.getLongHorizonAgentRepo?.(),
     });
     if (!policy.attachGenericSpaceTools && !policy.attachLongTermAgentTools) return queryOptions;
 

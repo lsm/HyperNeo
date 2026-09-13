@@ -275,6 +275,7 @@ export class SpaceRuntimeService {
       resolveDirectWorker: (id) => createDatabaseDirectTaskWorkerResolver(this.config.db)(id),
       nodeExecutionRepo: this.nodeExecutionRepo,
       taskRepo: this.config.taskRepo,
+      longHorizonAgentRepo: this.config.longHorizonAgentRepo,
     });
   }
 

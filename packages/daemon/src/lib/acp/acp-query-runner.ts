@@ -1466,6 +1466,7 @@ export class AcpQueryRunner {
     const policy = resolveSpaceMcpSessionPolicy(session, {
       nodeExecutionRepo: this.ctx.db.getNodeExecutionRepo(),
       taskRepo: this.ctx.db.getSpaceTaskRepo(),
+      longHorizonAgentRepo: this.ctx.db.getLongHorizonAgentRepo?.(),
     });
     if (policy.requiredServers.length === 0) return queryOptions;
 
