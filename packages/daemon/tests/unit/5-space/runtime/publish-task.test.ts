@@ -160,6 +160,34 @@ test('an MCP session in the owning Space that is no longer active is denied', as
   expect(emit).not.toHaveBeenCalled();
 });
 
+test('a draft deleted mid-publish reports task_not_found, not not_draft', async () => {
+  const rpc = createOperationRpcHandler(
+    createSpaceOperationRegistryProvider(database, jobQueue, {
+      getSession: (id: string) => sessions.getSession(id),
+      getTaskManager: () => ({
+        publishTask: async () => {
+          db.prepare('DELETE FROM space_tasks WHERE id = ?').run(draftId);
+          throw new NotDraftTaskError('Only draft tasks can be published');
+        },
+      }),
+      taskRepo: tasks,
+      notifyStandalone: () => database.notifyChange('space_tasks'),
+      emitTaskUpdated: emit,
+      emitTaskCreated: mock(async () => {}),
+      getSpace: (id: string) => new SpaceRepository(db).getSpace(id),
+      validateDefaultTaskWorkspace: async () => null,
+      blockExecution: async () => {
+        throw new Error('Unexpected workflow cleanup');
+      },
+      requiresPostApprovalOwner: () => false,
+      completionGate: async () => ({ ok: true as const }),
+    } as unknown as Parameters<typeof createSpaceOperationRegistryProvider>[2]),
+    () => ({})
+  );
+  expect(await rpc(publish(draftId), context)).toBe('task_not_found');
+  expect(emit).not.toHaveBeenCalled();
+});
+
 test('task.publish is discoverable through the door', async () => {
   const rpc = createOperationRpcHandler(provider(), () => ({}));
   expect(

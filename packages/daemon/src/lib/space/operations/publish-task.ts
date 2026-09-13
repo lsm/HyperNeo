@@ -52,7 +52,11 @@ export function routePublish(task: SpaceTask): { value: SpaceTask } | { reason: 
   return plan.action === 'reject' ? { reason: plan.reason } : { value: task };
 }
 
-async function applyPublish(task: SpaceTask, tasks: PublishTaskDependencies): Promise<Result> {
+async function applyPublish(
+  db: Database,
+  task: SpaceTask,
+  tasks: PublishTaskDependencies
+): Promise<Result> {
   try {
     const updated = await tasks.getTaskManager(task.spaceId).publishTask(task.id);
     await tasks.emitTaskUpdated(task.spaceId, updated).catch((error: unknown) => {
@@ -60,7 +64,8 @@ async function applyPublish(task: SpaceTask, tasks: PublishTaskDependencies): Pr
     });
     return updated;
   } catch (error) {
-    if (error instanceof NotDraftTaskError) return 'not_draft';
+    if (error instanceof NotDraftTaskError)
+      return resolveSpaceTaskOwner(db, task.id) === null ? 'task_not_found' : 'not_draft';
     throw error;
   }
 }
@@ -77,7 +82,7 @@ export function createPublishTaskOperation(
     .pipe(getDatabase, undefined, 'db')
     .pipe(admitPublisher, ['db', 'input', 'caller', 'tasks'], 'result:outcome')
     .pipe(routePublish, ['outcome'], 'result:outcome')
-    .pipe(applyPublish, ['outcome', 'tasks'], 'outcome')
+    .pipe(applyPublish, ['db', 'outcome', 'tasks'], 'outcome')
     .endAsync('outcome') as (input: Input, caller: OperationCaller) => Promise<Result>;
   return defineOperation({
     name: 'task.publish',
