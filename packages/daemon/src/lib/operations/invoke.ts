@@ -112,8 +112,30 @@ async function runAudited(fn: (() => void | Promise<void>) | undefined): Promise
 
 const UNREPRESENTABLE = '[unrepresentable]';
 
-function isolateEntry(descriptor: PropertyDescriptor, seen: WeakMap<object, unknown>): unknown {
-  return 'value' in descriptor ? isolateValue(descriptor.value, seen) : UNREPRESENTABLE;
+type AuditHooks = {
+  before?: NonNullable<OperationAudit['before']>;
+  after?: NonNullable<OperationAudit['after']>;
+};
+
+function resolveAuditHooks(audit?: OperationAudit): AuditHooks {
+  try {
+    const before = audit?.before;
+    const after = audit?.after;
+    return {
+      before: typeof before === 'function' ? before : undefined,
+      after: typeof after === 'function' ? after : undefined,
+    };
+  } catch {
+    return {};
+  }
+}
+
+function readField(target: unknown, key: string): unknown {
+  try {
+    return (target as Record<string, unknown>)[key];
+  } catch {
+    return undefined;
+  }
 }
 
 function isolateValue<T>(value: T, seen: WeakMap<object, unknown>): T {
@@ -128,14 +150,19 @@ function isolateValue<T>(value: T, seen: WeakMap<object, unknown>): T {
     seen.set(source, copy);
     for (let index = 0; index < source.length; index += 1) {
       const descriptor = descriptors[index];
-      copy.push(descriptor ? isolateEntry(descriptor, seen) : undefined);
+      copy.push(
+        descriptor?.enumerable && 'value' in descriptor
+          ? isolateValue(descriptor.value, seen)
+          : undefined
+      );
     }
     return copy as T;
   }
   const copy: Record<string, unknown> = {};
   seen.set(source, copy);
   for (const [key, descriptor] of Object.entries(descriptors)) {
-    copy[key] = isolateEntry(descriptor, seen);
+    if (!descriptor.enumerable) continue;
+    copy[key] = 'value' in descriptor ? isolateValue(descriptor.value, seen) : UNREPRESENTABLE;
   }
   return copy as T;
 }
@@ -148,26 +175,18 @@ function cloneValue<T>(value: T): T {
   }
 }
 
-function snapshotPrepared(
-  prepared: PreparedOperation,
-  audit?: OperationAudit
-): Readonly<AuditedOperation> {
+function snapshotPrepared(prepared: PreparedOperation, hooks: AuditHooks): AuditedOperation {
+  const auditing = Boolean(hooks.before || hooks.after);
   return {
     operation: { name: prepared.operation.name, description: prepared.operation.description },
-    input: hasAuditHooks(audit) ? cloneValue(prepared.input) : prepared.input,
+    input: auditing ? cloneValue(prepared.input) : prepared.input,
   };
 }
 
-function hasAuditHooks(audit?: OperationAudit): boolean {
-  try {
-    return Boolean(audit?.before || audit?.after);
-  } catch {
-    return false;
-  }
-}
-
 function snapshotCaller(caller: OperationCaller): OperationCaller {
-  return { ...caller };
+  const source = readField(caller, 'source') as OperationCaller['source'];
+  const sessionId = readField(caller, 'sessionId');
+  return typeof sessionId === 'string' ? { source, sessionId } : { source };
 }
 
 function snapshotForHook(prepared: Readonly<AuditedOperation>): Readonly<AuditedOperation> {
@@ -176,31 +195,23 @@ function snapshotForHook(prepared: Readonly<AuditedOperation>): Readonly<Audited
 
 async function auditBefore(
   prepared: Readonly<AuditedOperation>,
-  baseCaller: OperationCaller,
-  audit?: OperationAudit
+  caller: OperationCaller,
+  hooks: AuditHooks
 ): Promise<void> {
-  await runAudited(() => audit?.before?.(snapshotForHook(prepared), snapshotCaller(baseCaller)));
+  await runAudited(() => hooks.before?.(snapshotForHook(prepared), snapshotCaller(caller)));
 }
 
 const runInvocation = (superpipe({})('invoke-operation') as PipelineAPI)
   .input(['registry', 'name', 'input', 'caller', 'audit'])
+  .pipe((audit?: OperationAudit) => resolveAuditHooks(audit), 'audit', 'hooks')
   .pipe(resolveOperation, ['registry', 'name'], 'result:invocation')
   .pipe(parseOperationInput, ['invocation', 'input'], 'result:invocation')
-  .pipe(
-    (prepared: PreparedOperation, audit?: OperationAudit) => snapshotPrepared(prepared, audit),
-    ['invocation', 'audit'],
-    'prepared'
-  )
-  .pipe(
-    (callerArg: OperationCaller, audit?: OperationAudit) =>
-      hasAuditHooks(audit) ? snapshotCaller(callerArg) : callerArg,
-    ['caller', 'audit'],
-    'baseCaller'
-  )
-  .pipe(auditBefore, ['prepared', 'baseCaller', 'audit'])
+  .pipe(snapshotPrepared, ['invocation', 'hooks'], 'prepared')
+  .pipe((callerArg: OperationCaller) => snapshotCaller(callerArg), 'caller', 'baseCaller')
+  .pipe(auditBefore, ['prepared', 'baseCaller', 'hooks'])
   .pipe(executeOperation, ['invocation', 'caller'], 'result:invocation')
   .pipe(validateOperationResult, 'invocation', 'result:invocation')
-  .endAsync('{invocation, prepared, baseCaller}') as (
+  .endAsync('{invocation, prepared, baseCaller, hooks}') as (
   registry: OperationRegistry,
   name: string,
   input: unknown,
@@ -210,6 +221,7 @@ const runInvocation = (superpipe({})('invoke-operation') as PipelineAPI)
   invocation: OperationOutcome;
   prepared?: Readonly<AuditedOperation>;
   baseCaller?: OperationCaller;
+  hooks?: AuditHooks;
 }>;
 
 export async function invokeOperation(
@@ -219,16 +231,16 @@ export async function invokeOperation(
   caller: OperationCaller,
   audit?: OperationAudit
 ): Promise<OperationOutcome> {
-  const { invocation, prepared, baseCaller } = await runInvocation(
+  const { invocation, prepared, baseCaller, hooks } = await runInvocation(
     registry,
     name,
     input,
     caller,
     audit
   );
-  if (prepared && baseCaller) {
+  if (prepared && baseCaller && hooks?.after) {
     await runAudited(() =>
-      audit?.after?.(snapshotForHook(prepared), snapshotCaller(baseCaller), cloneValue(invocation))
+      hooks.after?.(snapshotForHook(prepared), snapshotCaller(baseCaller), cloneValue(invocation))
     );
   }
   return invocation;

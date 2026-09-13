@@ -522,6 +522,82 @@ describe('shared operation invocation audit hooks', () => {
     }
   });
 
+  test('a hook set that changes between reads cannot disable snapshotting', async () => {
+    const { registry } = fixture();
+    let reads = 0;
+    const shiftingAudit = {};
+    let recorded: unknown = null;
+    Object.defineProperty(shiftingAudit, 'before', {
+      enumerable: true,
+      get() {
+        reads += 1;
+        return reads === 1
+          ? undefined
+          : (prepared: { input: { content: string } }) => {
+              prepared.input.content = 'rewritten-by-before';
+              recorded = prepared.input;
+            };
+      },
+    });
+    const outcome = await invokeOperation(
+      registry,
+      'message.send',
+      { content: 'hello' },
+      caller,
+      shiftingAudit
+    );
+    expect(outcome).toEqual({ kind: 'completed', value: { accepted: 'hello' } });
+    expect(recorded).toBeNull();
+  });
+
+  test('a caller whose enumeration throws does not fail the operation', async () => {
+    const { registry } = fixture();
+    const hostileCaller = new Proxy(
+      { source: 'rpc' as const, sessionId: 'sender' },
+      {
+        ownKeys() {
+          throw new Error('ownKeys refuses');
+        },
+      }
+    );
+    let seen: unknown = null;
+    const outcome = await invokeOperation(
+      registry,
+      'message.send',
+      { content: 'hello' },
+      hostileCaller,
+      {
+        after: (_prepared: unknown, callerArg: unknown) => {
+          seen = callerArg;
+        },
+      }
+    );
+    expect(outcome).toEqual({ kind: 'completed', value: { accepted: 'hello' } });
+    expect(seen).toEqual({ source: 'rpc', sessionId: 'sender' });
+  });
+
+  test('a non-enumerable input property stays out of the audit record', async () => {
+    const operation = defineOperation({
+      name: 'message.send.hidden',
+      description: 'Accept a value carrying a hidden field',
+      inputSchema: z.object({ content: z.string(), carrier: z.any() }),
+      resultSchema: z.object({ accepted: z.string() }),
+      execute: async (input: { content: string }) => ({ accepted: input.content }),
+    });
+    const registry = createOperationRegistry([operation]);
+    const carrier = { visible: 'yes' };
+    Object.defineProperty(carrier, 'secret', { enumerable: false, value: 'do-not-record' });
+    let seen: unknown = null;
+    await invokeOperation(registry, 'message.send.hidden', { content: 'hello', carrier }, caller, {
+      after: (prepared: { input: unknown }) => {
+        seen = prepared.input;
+      },
+    });
+    const recorded = (seen as { carrier: Record<string, unknown> }).carrier;
+    expect(recorded).toEqual({ visible: 'yes' });
+    expect(Object.hasOwn(recorded, 'secret')).toBe(false);
+  });
+
   test('snapshotting never invokes an input accessor', async () => {
     const operation = defineOperation({
       name: 'message.send.accessor',
