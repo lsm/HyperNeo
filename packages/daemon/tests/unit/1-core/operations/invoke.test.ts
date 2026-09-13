@@ -501,19 +501,28 @@ describe('shared operation invocation audit hooks', () => {
     expect(afterName).toBe('message.send');
   });
   test('no snapshot work happens when no audit hook is installed', async () => {
-    const { registry } = fixture();
+    const probeOperation = defineOperation({
+      name: 'message.send.probe',
+      description: 'Accept a message carrying a probe object',
+      inputSchema: z.object({ content: z.string(), probe: z.any() }),
+      resultSchema: z.object({ accepted: z.string() }),
+      execute: async (input: { content: string }) => ({ accepted: input.content }),
+    });
+    const registry = createOperationRegistry([probeOperation]);
+    const probe = { nested: 'value' };
     const originalDescriptors = Object.getOwnPropertyDescriptors;
     let copyCalls = 0;
     Object.getOwnPropertyDescriptors = ((target: object) => {
-      copyCalls += 1;
+      if (target === probe) copyCalls += 1;
       return originalDescriptors(target);
     }) as typeof Object.getOwnPropertyDescriptors;
+    const withProbe = { content: 'hello', probe };
     try {
-      await invokeOperation(registry, 'message.send', { content: 'hello' }, caller);
+      await invokeOperation(registry, 'message.send.probe', withProbe, caller);
       expect(copyCalls).toBe(0);
-      await invokeOperation(registry, 'message.send', { content: 'hello' }, caller, {});
+      await invokeOperation(registry, 'message.send.probe', withProbe, caller, {});
       expect(copyCalls).toBe(0);
-      await invokeOperation(registry, 'message.send', { content: 'hello' }, caller, {
+      await invokeOperation(registry, 'message.send.probe', withProbe, caller, {
         before: () => {},
       });
       expect(copyCalls).toBeGreaterThan(0);
