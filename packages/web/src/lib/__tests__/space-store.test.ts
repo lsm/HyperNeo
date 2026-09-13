@@ -297,7 +297,6 @@ function makeMockHub() {
           taskDetailResult ?? { ...makeTask(input.taskId as string), description: 'full text' }
         );
       }
-      if (method === 'spaceTask.recoverWorkflow') return makeTask('t1', 'in_progress');
       if (method === 'spaceTask.update') return makeTask('t1', 'in_progress');
       if (method === 'spaceTask.recoverWorkflow') return makeTask('t1', 'in_progress');
       if (method === 'spaceAgentV2.update') return { agent: makeLongHorizonAgent('a1') };
