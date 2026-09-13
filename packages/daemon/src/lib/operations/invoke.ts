@@ -226,6 +226,7 @@ function isProjectable(source: object): boolean {
 }
 
 function isolateValue<T>(value: T, seen: WeakMap<object, unknown>, depth: number): T {
+  if (typeof value === 'bigint') return UNREPRESENTABLE as T;
   if (!value || (typeof value !== 'object' && typeof value !== 'function')) return value;
   if (depth >= MAX_SNAPSHOT_DEPTH) return UNREPRESENTABLE as T;
   const source = value as object;
@@ -233,10 +234,11 @@ function isolateValue<T>(value: T, seen: WeakMap<object, unknown>, depth: number
   if (cached) return cached as T;
   if (isProxyBacked(source)) return UNREPRESENTABLE as T;
   if (isDateValue(source)) {
-    const detached = new Date(Date.prototype.getTime.call(source as Date));
-    seen.set(source, detached);
-    projectEnumerableData(Object.getOwnPropertyDescriptors(source), detached, seen, depth);
-    return detached as T;
+    const copiedDate = new Date(Date.prototype.getTime.call(source as Date));
+    seen.set(source, copiedDate);
+    projectEnumerableData(Object.getOwnPropertyDescriptors(source), copiedDate, seen, depth);
+    Object.setPrototypeOf(copiedDate, Object.create(Date.prototype));
+    return copiedDate as T;
   }
   if (!isProjectable(source)) return UNREPRESENTABLE as T;
   const descriptors = Object.getOwnPropertyDescriptors(source);

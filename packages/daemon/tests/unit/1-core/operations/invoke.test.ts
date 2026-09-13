@@ -1707,6 +1707,80 @@ describe('shared operation invocation audit hooks', () => {
       delete (Array.prototype as unknown as Record<string, unknown>).injectedByHook;
     }
   });
+  test('a Date snapshot keeps its behaviour but not the shared Date prototype', async () => {
+    const operation = defineOperation({
+      name: 'message.send.dateproto',
+      description: 'Accept a Date while a hook reaches for its prototype',
+      inputSchema: z.object({ content: z.string(), when: z.any() }),
+      resultSchema: z.object({ accepted: z.string() }),
+      execute: async (input: { content: string; when: Date }) => ({
+        accepted: (input.when as unknown as Record<string, unknown>).injectedByHook
+          ? 'leaked'
+          : input.content,
+      }),
+    });
+    const registry = createOperationRegistry([operation]);
+    let recordedProto: unknown = 'unset';
+    let seen: unknown = null;
+    let hookThrew: string | null = null;
+
+    const outcome = await invokeOperation(
+      registry,
+      'message.send.dateproto',
+      { content: 'hello', when: new Date(1700000000000) },
+      caller,
+      {
+        before: (prepared: { input: unknown }) => {
+          try {
+            const when = (prepared.input as { when: object }).when;
+            recordedProto = Object.getPrototypeOf(when);
+            (recordedProto as Record<string, unknown>).injectedByHook = 'leaked';
+          } catch (error) {
+            hookThrew = error instanceof Error ? error.message : String(error);
+          }
+        },
+        after: (prepared: { input: unknown }) => {
+          seen = prepared.input;
+        },
+      }
+    );
+
+    try {
+      expect(hookThrew).toBeNull();
+      expect(outcome).toEqual({ kind: 'completed', value: { accepted: 'hello' } });
+      expect(recordedProto).not.toBe(Date.prototype);
+      expect('injectedByHook' in Date.prototype).toBe(false);
+      const recorded = (seen as { when: Date }).when;
+      expect(recorded.getTime()).toBe(1700000000000);
+      expect(JSON.parse(JSON.stringify({ when: recorded })).when).toBe('2023-11-14T22:13:20.000Z');
+    } finally {
+      delete (Date.prototype as unknown as Record<string, unknown>).injectedByHook;
+    }
+  });
+  test('a bigint is marked so the record can still be serialized', async () => {
+    const operation = defineOperation({
+      name: 'message.send.bigint',
+      description: 'Accept a bigint that JSON cannot serialize',
+      inputSchema: z.object({ content: z.string(), big: z.any() }),
+      resultSchema: z.object({ accepted: z.string() }),
+      execute: async (input: { content: string }) => ({ accepted: input.content }),
+    });
+    const registry = createOperationRegistry([operation]);
+    let seen: unknown = null;
+    await invokeOperation(
+      registry,
+      'message.send.bigint',
+      { content: 'hello', big: BigInt(7) },
+      caller,
+      {
+        after: (prepared: { input: unknown }) => {
+          seen = prepared.input;
+        },
+      }
+    );
+    expect(seen).toEqual({ content: 'hello', big: '[unrepresentable]' });
+    expect(() => JSON.stringify(seen)).not.toThrow();
+  });
   test('a handler mutating its caller does not change what after records', async () => {
     const { operation } = fixture();
     const hijackingExecute = async (
