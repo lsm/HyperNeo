@@ -502,24 +502,78 @@ describe('shared operation invocation audit hooks', () => {
   });
   test('no snapshot work happens when no audit hook is installed', async () => {
     const { registry } = fixture();
-    const originalClone = globalThis.structuredClone;
-    let cloneCalls = 0;
-    globalThis.structuredClone = ((value: unknown) => {
-      cloneCalls += 1;
-      return originalClone(value);
-    }) as typeof structuredClone;
+    const originalDescriptors = Object.getOwnPropertyDescriptors;
+    let copyCalls = 0;
+    Object.getOwnPropertyDescriptors = ((target: object) => {
+      copyCalls += 1;
+      return originalDescriptors(target);
+    }) as typeof Object.getOwnPropertyDescriptors;
     try {
       await invokeOperation(registry, 'message.send', { content: 'hello' }, caller);
-      expect(cloneCalls).toBe(0);
+      expect(copyCalls).toBe(0);
       await invokeOperation(registry, 'message.send', { content: 'hello' }, caller, {});
-      expect(cloneCalls).toBe(0);
+      expect(copyCalls).toBe(0);
       await invokeOperation(registry, 'message.send', { content: 'hello' }, caller, {
         before: () => {},
       });
-      expect(cloneCalls).toBeGreaterThan(0);
+      expect(copyCalls).toBeGreaterThan(0);
     } finally {
-      globalThis.structuredClone = originalClone;
+      Object.getOwnPropertyDescriptors = originalDescriptors;
     }
+  });
+
+  test('snapshotting never invokes an input accessor', async () => {
+    const operation = defineOperation({
+      name: 'message.send.accessor',
+      description: 'Accept a value carrying a side-effecting getter',
+      inputSchema: z.object({ content: z.string(), probe: z.any() }),
+      resultSchema: z.object({ accepted: z.string() }),
+      execute: async (input: { content: string }) => ({ accepted: input.content }),
+    });
+    const registry = createOperationRegistry([operation]);
+    let getterCalls = 0;
+    const probe = {};
+    Object.defineProperty(probe, 'tripwire', {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        return 'side effect';
+      },
+    });
+    let seen: unknown = null;
+    const outcome = await invokeOperation(
+      registry,
+      'message.send.accessor',
+      { content: 'hello', probe },
+      caller,
+      {
+        after: (prepared: { input: unknown }) => {
+          seen = prepared.input;
+        },
+      }
+    );
+    expect(getterCalls).toBe(0);
+    expect(outcome).toEqual({ kind: 'completed', value: { accepted: 'hello' } });
+    expect((seen as { probe: { tripwire: string } }).probe.tripwire).toBe('[unrepresentable]');
+  });
+
+  test('an audit object whose hook lookup throws does not fail the operation', async () => {
+    const { registry } = fixture();
+    const hostileAudit = {};
+    Object.defineProperty(hostileAudit, 'before', {
+      enumerable: true,
+      get() {
+        throw new Error('hook discovery exploded');
+      },
+    });
+    const outcome = await invokeOperation(
+      registry,
+      'message.send',
+      { content: 'hello' },
+      caller,
+      hostileAudit
+    );
+    expect(outcome).toEqual({ kind: 'completed', value: { accepted: 'hello' } });
   });
   test('a handler mutating its caller does not change what after records', async () => {
     const { operation } = fixture();

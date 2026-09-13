@@ -112,28 +112,35 @@ async function runAudited(fn: (() => void | Promise<void>) | undefined): Promise
 
 const UNREPRESENTABLE = '[unrepresentable]';
 
+function isolateEntry(descriptor: PropertyDescriptor, seen: WeakMap<object, unknown>): unknown {
+  return 'value' in descriptor ? isolateValue(descriptor.value, seen) : UNREPRESENTABLE;
+}
+
 function isolateValue<T>(value: T, seen: WeakMap<object, unknown>): T {
   if (!value || (typeof value !== 'object' && typeof value !== 'function')) return value;
   const source = value as object;
   const cached = seen.get(source);
   if (cached) return cached as T;
   if (source instanceof Date) return new Date(source.getTime()) as T;
+  const descriptors = Object.getOwnPropertyDescriptors(source);
   if (Array.isArray(source)) {
     const copy: unknown[] = [];
     seen.set(source, copy);
-    for (const item of source) copy.push(isolateValue(item, seen));
+    for (let index = 0; index < source.length; index += 1) {
+      const descriptor = descriptors[index];
+      copy.push(descriptor ? isolateEntry(descriptor, seen) : undefined);
+    }
     return copy as T;
   }
   const copy: Record<string, unknown> = {};
   seen.set(source, copy);
-  for (const [key, item] of Object.entries(source)) copy[key] = isolateValue(item, seen);
+  for (const [key, descriptor] of Object.entries(descriptors)) {
+    copy[key] = isolateEntry(descriptor, seen);
+  }
   return copy as T;
 }
 
 function cloneValue<T>(value: T): T {
-  try {
-    return structuredClone(value);
-  } catch {}
   try {
     return isolateValue(value, new WeakMap<object, unknown>());
   } catch {
@@ -152,7 +159,11 @@ function snapshotPrepared(
 }
 
 function hasAuditHooks(audit?: OperationAudit): boolean {
-  return Boolean(audit?.before || audit?.after);
+  try {
+    return Boolean(audit?.before || audit?.after);
+  } catch {
+    return false;
+  }
 }
 
 function snapshotCaller(caller: OperationCaller): OperationCaller {
