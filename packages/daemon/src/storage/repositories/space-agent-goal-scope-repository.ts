@@ -1,5 +1,4 @@
 import type { SpaceLongHorizonAgentForgeScope, SpaceLongHorizonAgentGoal } from '@hyperneo/shared';
-import { SPACE_MANAGER_HANDLE } from '../../lib/space/agent-handle.ts';
 import {
   decideGoalOwnerResolution,
   type GoalOwnerAgentState,
@@ -11,7 +10,7 @@ import type { SpaceAgentRepository } from './space-agent-repository.ts';
 export class SpaceAgentGoalScopeRepository {
   constructor(
     private db: BunDatabase,
-    private agents: Pick<SpaceAgentRepository, 'getById' | 'getByHandle'>
+    private agents: Pick<SpaceAgentRepository, 'getById' | 'getFallbackAgent'>
   ) {}
 
   assignGoal(
@@ -91,11 +90,11 @@ export class SpaceAgentGoalScopeRepository {
         agentStates[candidate.agentId] = { state: agent.status };
       }
     }
-    const coordinator = this.getCoordinator(spaceId);
+    const fallback = this.agents.getFallbackAgent(spaceId);
     return decideGoalOwnerResolution({
       candidates,
       agentStates,
-      coordinatorAgentId: coordinator?.id ?? null,
+      fallbackAgentId: fallback?.id ?? null,
     });
   }
 
@@ -131,13 +130,6 @@ export class SpaceAgentGoalScopeRepository {
         `DELETE FROM space_long_horizon_agent_forge_scopes WHERE agent_id = ? AND scope_id = ?`
       )
       .run(agentId, scopeId);
-  }
-
-  private getCoordinator(spaceId: string): { id: string } | null {
-    return (
-      this.agents.getByHandle(spaceId, SPACE_MANAGER_HANDLE) ??
-      this.agents.getByHandle(spaceId, 'coordinator')
-    );
   }
 
   private requireAgent(agentId: string): { spaceId: string } {

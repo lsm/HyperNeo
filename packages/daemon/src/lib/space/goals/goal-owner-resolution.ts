@@ -21,13 +21,13 @@ export type GoalOwnerResolutionDecision =
       owner: GoalOwnerCandidate;
       conflicts: GoalOwnerCandidate[];
     }
-  | { action: 'coordinator_fallback'; coordinatorAgentId: string }
+  | { action: 'fallback_agent'; fallbackAgentId: string }
   | { action: 'no_recipient' };
 
 export interface GoalOwnerResolutionCtx {
   candidates: GoalOwnerCandidate[];
   agentStates: Record<string, GoalOwnerAgentState>;
-  coordinatorAgentId: string | null;
+  fallbackAgentId: string | null;
   decision: GoalOwnerResolutionDecision | null;
 }
 
@@ -74,20 +74,20 @@ export function applyDegradedOwnerGate(ctx: GoalOwnerResolutionCtx): GoalOwnerRe
   });
 }
 
-export function applyCoordinatorFallbackGate(ctx: GoalOwnerResolutionCtx): GoalOwnerResolutionCtx {
+export function applyFallbackAgentGate(ctx: GoalOwnerResolutionCtx): GoalOwnerResolutionCtx {
   const owners = ownerCandidates(ctx.candidates);
   if (owners.length >= 1) return ctx;
-  if (ctx.coordinatorAgentId === null) return decided(ctx, { action: 'no_recipient' });
+  if (ctx.fallbackAgentId === null) return decided(ctx, { action: 'no_recipient' });
   return decided(ctx, {
-    action: 'coordinator_fallback',
-    coordinatorAgentId: ctx.coordinatorAgentId,
+    action: 'fallback_agent',
+    fallbackAgentId: ctx.fallbackAgentId,
   });
 }
 
 const ownerResolutionRun = decisionRun('goal-owner-resolution', [
   applyResolvedOwnerGate,
   applyDegradedOwnerGate,
-  applyCoordinatorFallbackGate,
+  applyFallbackAgentGate,
 ]);
 
 export function decideGoalOwnerResolution(

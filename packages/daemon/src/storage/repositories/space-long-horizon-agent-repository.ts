@@ -89,6 +89,16 @@ export class SpaceLongHorizonAgentRepository {
     return row ? rowToAgent(row) : null;
   }
 
+  getFallbackAgent(spaceId: string): SpaceLongHorizonAgent | null {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM space_long_horizon_agents WHERE space_id = ? AND status = 'active'
+         ORDER BY created_at ASC, id ASC LIMIT 1`
+      )
+      .get(spaceId) as Record<string, unknown> | undefined;
+    return row ? rowToAgent(row) : null;
+  }
+
   getCoordinator(spaceId: string): SpaceLongHorizonAgent | null {
     return (
       this.getByHandle(spaceId, SPACE_MANAGER_HANDLE) ?? this.getByHandle(spaceId, 'coordinator')
@@ -341,11 +351,11 @@ export class SpaceLongHorizonAgentRepository {
         agentStates[candidate.agentId] = { state: agent.status };
       }
     }
-    const coordinator = this.getCoordinator(spaceId);
+    const fallback = this.getFallbackAgent(spaceId);
     return decideGoalOwnerResolution({
       candidates,
       agentStates,
-      coordinatorAgentId: coordinator?.id ?? null,
+      fallbackAgentId: fallback?.id ?? null,
     });
   }
 
