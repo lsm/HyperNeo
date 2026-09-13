@@ -96,3 +96,9 @@ test('an already-stopped attempt returns false', () => {
   const attempt = setupAttempt(createTask(), 'stopped')!;
   expect(supersedeReservedAttempt(db, attempt)).toBe(false);
 });
+
+test('a reserved attempt already superseded by a different outcome does not report success', () => {
+  const attempt = setupAttempt(createTask(), 'reserved')!;
+  attempts.requestStop(attempt.id, attempt.sessionId, 'start_superseded');
+  expect(supersedeReservedAttempt(db, attempt)).toBe(false);
+});
