@@ -194,7 +194,7 @@ describe('shared operation invocation audit hooks', () => {
     expect(after).toHaveBeenCalledTimes(1);
     const [prepared, callerArg, outcomeArg] = after.mock.calls[0];
     expect(prepared.input).toEqual({ content: 'hello' });
-    expect(callerArg).toBe(caller);
+    expect(callerArg).toEqual(caller);
     expect(outcomeArg).toEqual(outcome);
   });
   test('a hook that throws leaves the invocation result unchanged', async () => {
@@ -214,8 +214,13 @@ describe('shared operation invocation audit hooks', () => {
   test('a mutating before hook cannot change what executeOperation runs', async () => {
     const { registry, execute } = fixture();
     const audit = {
-      before: (prepared: { input: { content: string } }) => {
+      before: (
+        prepared: { input: { content: string } },
+        callerArg: { source: string; sessionId?: string }
+      ) => {
         prepared.input.content = 'tampered';
+        callerArg.source = 'internal';
+        callerArg.sessionId = 'hijacked';
       },
     };
     await invokeOperation(registry, 'message.send', { content: 'hello' }, caller, audit);
@@ -236,5 +241,46 @@ describe('shared operation invocation audit hooks', () => {
     expect(
       await invokeOperation(registry, 'message.send', { content: 'hello' }, caller, audit)
     ).toEqual({ kind: 'completed', value: { accepted: 'hello' } });
+  });
+  test('a handler that mutates its input during execution does not change what after reports', async () => {
+    const { operation } = fixture();
+    const mutatingExecute = async (input: { content: string }) => {
+      input.content = 'mutated-during-execution';
+      return { accepted: 'ok' };
+    };
+    const registry = createOperationRegistry([{ ...operation, execute: mutatingExecute }]);
+    const after = mock(() => {});
+    await invokeOperation(registry, 'message.send', { content: 'original' }, caller, { after });
+    expect(after.mock.calls[0][0].input).toEqual({ content: 'original' });
+  });
+  test('an async hook that rejects leaves the outcome unchanged and produces no unhandled rejection', async () => {
+    let unhandled: unknown = null;
+    const onUnhandled = (error: unknown) => {
+      unhandled = error;
+    };
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      const { registry } = fixture();
+      const audit = {
+        before: async () => {
+          throw new Error('before rejected');
+        },
+        after: async () => {
+          throw new Error('after rejected');
+        },
+      };
+      const outcome = await invokeOperation(
+        registry,
+        'message.send',
+        { content: 'hello' },
+        caller,
+        audit
+      );
+      expect(outcome).toEqual({ kind: 'completed', value: { accepted: 'hello' } });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(unhandled).toBeNull();
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
   });
 });
