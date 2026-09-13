@@ -13,7 +13,6 @@ export interface EnsuredSession {
 export interface EnsureAgentSessionDeps {
   getSpace(spaceId: string): Promise<Space | null>;
   recordDeps: ResolveAgentRecordDeps;
-  ensureCoordinatorSession(spaceId: string): Promise<EnsuredSession | null>;
   ensureLongHorizon(spaceId: string, agentId: string): Promise<EnsuredSession | null>;
 }
 
@@ -45,7 +44,6 @@ export async function provisionAgentSessionStage(
   deps: EnsureAgentSessionDeps
 ): Promise<EnsuredSession | null> {
   if (resolution === null || resolution.kind === 'missing') return null;
-  if (resolution.kind === 'coordinator') return deps.ensureCoordinatorSession(spaceId);
   return deps.ensureLongHorizon(spaceId, agentId);
 }
 

@@ -170,7 +170,7 @@ describe('findStage', () => {
       created: false,
     });
     expect(log.getSession).toEqual([agentSessionId]);
-    expect(log.getCoordinator).toBe(1);
+    expect(log.getCoordinator).toBe(0);
   });
 
   test('agent kind missed writes no outcome and never creates', async () => {

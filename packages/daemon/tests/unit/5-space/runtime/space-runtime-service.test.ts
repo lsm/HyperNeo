@@ -4128,36 +4128,6 @@ describe('long-term agent delivery — id→session routing table', () => {
     );
   }
 
-  test('coordinator alias resolves the space:chat session instead of an agent session', async () => {
-    const canonical = buildLongHorizonAgent({
-      id: 'space-lh-agent:coordinator:space-1',
-      handle: 'coordinator',
-    });
-    const canonicalRun = buildRoutingService({
-      longHorizonAgents: [canonical],
-      coordinatorId: canonical.id,
-    });
-
-    await route(canonicalRun.svc, canonical.id);
-
-    expect(canonicalRun.lookupIds[0]).toBe('space:chat:space-1');
-    expect(canonicalRun.createCalls).toHaveLength(0);
-
-    const discovered = buildLongHorizonAgent({
-      id: 'legacy-coordinator-row',
-      handle: 'coordinator',
-    });
-    const discoveredRun = buildRoutingService({
-      longHorizonAgents: [discovered],
-      coordinatorId: discovered.id,
-    });
-
-    await route(discoveredRun.svc, discovered.id);
-
-    expect(discoveredRun.lookupIds[0]).toBe('space:chat:space-1');
-    expect(discoveredRun.createCalls).toHaveLength(0);
-  });
-
   test('non-coordinator long-horizon agent resolves space:agent:<space>:<id>', async () => {
     const agent = buildLongHorizonAgent({ id: 'lh-1', handle: 'researcher' });
     const { svc, createCalls, lookupIds } = buildRoutingService({
@@ -4175,38 +4145,6 @@ describe('long-term agent delivery — id→session routing table', () => {
         worktreeMode: 'direct',
       })
     );
-  });
-
-  test('coordinator alias actor reaches the space:chat session via queueForActivation', async () => {
-    const canonical = buildLongHorizonAgent({
-      id: 'space-lh-agent:coordinator:space-1',
-      handle: 'coordinator',
-    });
-    const run = buildRoutingService({
-      longHorizonAgents: [canonical],
-      coordinatorId: canonical.id,
-    });
-    const delivery = run.svc.longTermAgentDeliveryCallbacks();
-
-    await delivery?.queueForActivation(
-      {
-        actorId: 'agent:coordinator:space-1',
-        spaceId: 'space-1',
-        status: 'inactive',
-      } as ActorRef,
-      {
-        messageId: 'routing-probe-2',
-        spaceId: 'space-1',
-        senderActorId: 'space:space-1:human:user-1',
-        kind: 'message',
-        body: 'routing probe',
-        createdAt: NOW,
-      } as MessageRecord
-    );
-
-    expect(run.lookupIds[0]).toBe('space:chat:space-1');
-    expect(run.lookupIds.some((id) => id.startsWith('space:agent:'))).toBe(false);
-    expect(run.createCalls).toHaveLength(0);
   });
 });
 
@@ -4315,64 +4253,4 @@ describe('ensureAgentSession() / isAgentTargetLifecycleEligible()', () => {
       longHorizonAgentRepo: repo,
     };
   }
-
-  test('archived-only coordinator rejects; a live replacement admits', async () => {
-    const db = makeTestDb();
-    seedEnsureSpace(db);
-    const repo = new SpaceLongHorizonAgentRepository(db as never);
-    repo.create({
-      id: 'lha-archived-co',
-      spaceId: ENSURE_SPACE_ID,
-      handle: 'coordinator',
-      status: 'archived',
-    });
-    expect(repo.getCoordinatorRecord(ENSURE_SPACE_ID)?.id).toBe('lha-archived-co');
-    const sessionManager = {
-      getSessionAsync: mock(async () => null),
-      createSession: mock(async () => ENSURE_SESSION_ID),
-    } as unknown as SessionManager;
-    const svc = new SpaceRuntimeService(
-      buildEnsureConfig(db, repo, makeEnsureSpaceManager(makeEnsureSpace()), sessionManager)
-    );
-
-    expect(await svc.isAgentTargetLifecycleEligible(ENSURE_SPACE_ID, 'coordinator')).toBe(false);
-    expect(await svc.ensureAgentSession(ENSURE_SPACE_ID, 'coordinator')).toBeNull();
-    expect(sessionManager.createSession).not.toHaveBeenCalled();
-
-    repo.create({
-      id: coordinatorLongHorizonAgentId(ENSURE_SPACE_ID),
-      spaceId: ENSURE_SPACE_ID,
-      handle: 'coordinator',
-      status: 'archived',
-    });
-    repo.create({ id: 'lha-live-co', spaceId: ENSURE_SPACE_ID, handle: 'coordinator' });
-
-    expect(await svc.isAgentTargetLifecycleEligible(ENSURE_SPACE_ID, 'coordinator')).toBe(true);
-    expect(await svc.isAgentTargetLifecycleEligible(ENSURE_SPACE_ID, 'lha-live-co')).toBe(true);
-  });
-
-  test('an already-ensured coordinator record bootstraps the coordinator session', async () => {
-    const db = makeTestDb();
-    seedEnsureSpace(db);
-    const repo = new SpaceLongHorizonAgentRepository(db as never);
-    seedSpaceManagerAgent(repo, ENSURE_SPACE_ID);
-    const session = makeEnsureSession('active');
-    let live: AgentSession | null = null;
-    const sessionManager = {
-      getSessionAsync: mock(async () => live),
-      createSession: mock(async () => {
-        live = session;
-        return ENSURE_SESSION_ID;
-      }),
-    } as unknown as SessionManager;
-    const svc = new SpaceRuntimeService(
-      buildEnsureConfig(db, repo, makeEnsureSpaceManager(makeEnsureSpace()), sessionManager)
-    );
-
-    const ensured = await svc.ensureAgentSession(ENSURE_SPACE_ID, 'coordinator');
-
-    expect(ensured).not.toBeNull();
-    expect(sessionManager.createSession).toHaveBeenCalledTimes(1);
-    expect(repo.getById(coordinatorLongHorizonAgentId(ENSURE_SPACE_ID))?.status).toBe('active');
-  });
 });

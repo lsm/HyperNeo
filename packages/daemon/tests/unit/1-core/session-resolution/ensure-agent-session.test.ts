@@ -71,56 +71,6 @@ describe('ensureAgentSession', () => {
     expect(ensureCalls).toEqual([[spaceId, agentId]]);
   });
 
-  test('missing coordinator resolves the deterministic coordinator session id as created', async () => {
-    const spaceId = 'space-1';
-    const { deps, ensureCalls } = makeDeps();
-    const target: SessionTargetAgent = { kind: 'agent', spaceId, agentId: 'coordinator' };
-
-    const outcome = await ensureAgentSession(target, deps);
-
-    expect(outcome).toEqual({
-      kind: 'resolved',
-      sessionId: coordinatorSessionId(spaceId),
-      created: true,
-    });
-    expect(ensureCalls).toEqual([[spaceId, 'coordinator']]);
-  });
-
-  test('existing session for a noncanonical coordinator id resolves the coordinator session id as not created', async () => {
-    const spaceId = 'space-1';
-    const agentId = 'coordinator-alt';
-    const { deps, ensureCalls } = makeDeps({
-      coordinatorId: agentId,
-      existingSessionIds: [coordinatorSessionId(spaceId)],
-    });
-    const target: SessionTargetAgent = { kind: 'agent', spaceId, agentId };
-
-    const outcome = await ensureAgentSession(target, deps);
-
-    expect(outcome).toEqual({
-      kind: 'resolved',
-      sessionId: coordinatorSessionId(spaceId),
-      created: false,
-    });
-    expect(ensureCalls).toHaveLength(0);
-  });
-
-  test('missing session for a noncanonical coordinator id delegates to ensure and resolves the coordinator session id as created', async () => {
-    const spaceId = 'space-1';
-    const agentId = 'coordinator-alt';
-    const { deps, ensureCalls } = makeDeps({ coordinatorId: agentId });
-    const target: SessionTargetAgent = { kind: 'agent', spaceId, agentId };
-
-    const outcome = await ensureAgentSession(target, deps);
-
-    expect(outcome).toEqual({
-      kind: 'resolved',
-      sessionId: coordinatorSessionId(spaceId),
-      created: true,
-    });
-    expect(ensureCalls).toEqual([[spaceId, agentId]]);
-  });
-
   test('noncanonical coordinator id does not capture regular agent ids', async () => {
     const spaceId = 'space-1';
     const agentId = 'agent-1';

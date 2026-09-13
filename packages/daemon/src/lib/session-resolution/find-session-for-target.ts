@@ -15,8 +15,7 @@ export async function findSessionForTarget(
     }
     return { kind: 'unresolved', reason: 'not_found' };
   }
-  const coordinator = await deps.getCoordinator(target.spaceId);
-  const sessionId = agentSessionIdOf(target.spaceId, target.agentId, coordinator?.id);
+  const sessionId = agentSessionIdOf(target.spaceId, target.agentId);
   if (
     (await deps.getSession(sessionId)) !== null &&
     (await deps.isAgentTargetLifecycleEligible(target.spaceId, target.agentId))

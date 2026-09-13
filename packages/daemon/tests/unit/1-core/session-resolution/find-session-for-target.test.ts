@@ -123,21 +123,6 @@ describe('findSessionForTarget', () => {
   });
 
   describe('agent kind', () => {
-    test('coordinator agentId resolves the space:chat: session id', async () => {
-      const spaceId = 'space-1';
-      const chatId = coordinatorSessionId(spaceId);
-      const { deps, log } = makeDeps({
-        getSession: (sessionId) => (sessionId === chatId ? { id: chatId } : null),
-      });
-      const target: FindTarget = { kind: 'agent', spaceId, agentId: 'coordinator' };
-      expect(await findSessionForTarget(target, deps)).toEqual({
-        kind: 'resolved',
-        sessionId: chatId,
-        created: false,
-      });
-      expect(log.getSession).toEqual([chatId]);
-    });
-
     test('plain agentId resolves the space:agent: session id', async () => {
       const spaceId = 'space-1';
       const agentId = 'agent-7';
@@ -152,22 +137,6 @@ describe('findSessionForTarget', () => {
         created: false,
       });
       expect(log.getSession).toEqual([sessionId]);
-    });
-
-    test('repository-derived coordinator agentId resolves the space:chat: session id', async () => {
-      const spaceId = 'space-1';
-      const chatId = coordinatorSessionId(spaceId);
-      const { deps, log } = makeDeps({
-        getCoordinator: () => ({ id: 'coordinator-row-9' }),
-        getSession: (queried) => (queried === chatId ? { id: chatId } : null),
-      });
-      const target: FindTarget = { kind: 'agent', spaceId, agentId: 'coordinator-row-9' };
-      expect(await findSessionForTarget(target, deps)).toEqual({
-        kind: 'resolved',
-        sessionId: chatId,
-        created: false,
-      });
-      expect(log.getSession).toEqual([chatId]);
     });
 
     test('non-coordinator agentId with a coordinator row present resolves the space:agent: id', async () => {
@@ -223,7 +192,6 @@ describe('findSessionForTarget', () => {
         created: false,
       });
       expect(log.order).toEqual([
-        'getCoordinator',
         `getSession:${sessionId}`,
         `isAgentTargetLifecycleEligible:${spaceId}:${agentId}`,
       ]);

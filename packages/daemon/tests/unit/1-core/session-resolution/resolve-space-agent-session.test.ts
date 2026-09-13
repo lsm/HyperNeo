@@ -85,24 +85,6 @@ describe('resolveSpaceAgentSession', () => {
     expect(ensureCalls).toHaveLength(0);
   });
 
-  test('falls back from a missing reply session and creates the coordinator session', async () => {
-    const spaceId = 'space-1';
-    const sessionId = coordinatorSessionId(spaceId);
-    const { deps, getSessionCalls, refetchCalls, ensureCalls, getSession } = makeDeps();
-
-    const outcome = await resolveSpaceAgentSession<TestSession>(
-      spaceId,
-      'missing-session',
-      deps,
-      getSession
-    );
-
-    expect(outcome).toEqual({ sessionId, session: { id: sessionId } });
-    expect(ensureCalls).toEqual([[spaceId, 'coordinator']]);
-    expect(getSessionCalls).toEqual(['missing-session', sessionId, sessionId]);
-    expect(refetchCalls).toEqual([sessionId]);
-  });
-
   test('reports the coordinator when fallback provisioning fails', async () => {
     const spaceId = 'space-1';
     const { deps, refetchCalls, ensureCalls, getSession } = makeDeps({ ensureOutcome: 'fail' });
@@ -128,26 +110,6 @@ describe('resolveSpaceAgentSession', () => {
     );
     expect(ensureCalls).toHaveLength(0);
     expect(refetchCalls).toHaveLength(0);
-  });
-
-  test('maps the coordinator row id to coordinatorSessionId without provisioning', async () => {
-    const spaceId = 'space-1';
-    const coordinatorId = coordinatorLongHorizonAgentId(spaceId);
-    const sessionId = coordinatorSessionId(spaceId);
-    const { deps, ensureCalls, getSession } = makeDeps({
-      coordinatorId,
-      existingSessionIds: [sessionId],
-    });
-
-    const outcome = await resolveSpaceAgentSession<TestSession>(
-      spaceId,
-      undefined,
-      deps,
-      getSession
-    );
-
-    expect(outcome.sessionId).toBe(sessionId);
-    expect(ensureCalls).toHaveLength(0);
   });
 
   test('preserves coordinator provisioning failure as the existing routing error', async () => {

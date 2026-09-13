@@ -53,43 +53,6 @@ function makeDeps(config?: {
 }
 
 describe('resolveAgentRecord', () => {
-  test("bare 'coordinator' alias resolves the coordinator record from getCoordinator", () => {
-    const coordinator = makeAgent('space-lh-agent:coordinator:space-1', { handle: 'coordinator' });
-    const deps = makeDeps({ longHorizonAgents: [coordinator], coordinatorId: coordinator.id });
-
-    expect(resolveAgentRecord('space-1', 'coordinator', deps)).toEqual({
-      kind: 'coordinator',
-      agent: coordinator,
-    });
-  });
-
-  test("bare 'coordinator' alias stays coordinator with no coordinator row on disk", () => {
-    const deps = makeDeps();
-
-    expect(resolveAgentRecord('space-1', 'coordinator', deps)).toEqual({
-      kind: 'coordinator',
-      agent: null,
-    });
-  });
-
-  test("'coordinator:<spaceId>' alias resolves the same way as the bare alias", () => {
-    const coordinator = makeAgent('discovered-coordinator', { handle: 'coordinator' });
-    const deps = makeDeps({ longHorizonAgents: [coordinator], coordinatorId: coordinator.id });
-
-    expect(resolveAgentRecord('space-1', 'coordinator:space-1', deps)).toEqual({
-      kind: 'coordinator',
-      agent: coordinator,
-    });
-  });
-
-  test('stable derived coordinator id resolves the coordinator kind', () => {
-    const coordinator = makeAgent('space-lh-agent:coordinator:space-1', { handle: 'coordinator' });
-
-    expect(
-      resolveAgentRecord('space-1', coordinator.id, makeDeps({ longHorizonAgents: [coordinator] }))
-    ).toEqual({ kind: 'coordinator', agent: coordinator });
-  });
-
   test('coordinator-ness is data-derived — a derived-id row with a renamed handle is a regular long-horizon agent', () => {
     const renamed = makeAgent('space-lh-agent:coordinator:space-1', { handle: 'renamed' });
 
@@ -131,29 +94,6 @@ describe('resolveAgentRecord', () => {
     expect(resolveAgentRecord('space-1', 'coordinator:space-1', deps)).toEqual({ kind: 'missing' });
   });
 
-  test('alias with no coordinator row at any status still resolves the coordinator kind', () => {
-    const deps = makeDeps({ longHorizonAgents: [makeAgent('lh-1')] });
-
-    expect(resolveAgentRecord('space-1', 'coordinator', deps)).toEqual({
-      kind: 'coordinator',
-      agent: null,
-    });
-    expect(resolveAgentRecord('space-1', 'coordinator:space-1', deps)).toEqual({
-      kind: 'coordinator',
-      agent: null,
-    });
-  });
-
-  test('coordinator discovered by handle resolves the coordinator kind', () => {
-    const discovered = makeAgent('legacy-coordinator-row', { handle: 'coordinator' });
-    const deps = makeDeps({ longHorizonAgents: [discovered], coordinatorId: discovered.id });
-
-    expect(resolveAgentRecord('space-1', discovered.id, deps)).toEqual({
-      kind: 'coordinator',
-      agent: discovered,
-    });
-  });
-
   test('plain long-horizon agent in the space resolves long_horizon', () => {
     const agent = makeAgent('lh-1', { handle: 'researcher' });
 
@@ -193,27 +133,5 @@ describe('resolveAgentRecord', () => {
     expect(
       resolveAgentRecord('space-1', 'mirror-1', makeDeps({ longHorizonAgents: [mirror] }))
     ).toEqual({ kind: 'long_horizon', agent: mirror });
-  });
-
-  test('resolution kinds compose with agentSessionIdOf routing', () => {
-    const spaceId = 'space-1';
-    const coordinator = makeAgent('space-lh-agent:coordinator:space-1', { handle: 'coordinator' });
-    const agent = makeAgent('lh-1');
-    const deps = makeDeps({
-      longHorizonAgents: [coordinator, agent],
-      coordinatorId: coordinator.id,
-    });
-
-    expect(resolveAgentRecord(spaceId, 'coordinator', deps)).toEqual({
-      kind: 'coordinator',
-      agent: coordinator,
-    });
-    expect(resolveAgentRecord(spaceId, 'lh-1', deps)).toEqual({ kind: 'long_horizon', agent });
-    expect(resolveAgentRecord(spaceId, 'ghost', deps)).toEqual({ kind: 'missing' });
-
-    expect(agentSessionIdOf(spaceId, 'coordinator', coordinator.id)).toBe(
-      coordinatorSessionId(spaceId)
-    );
-    expect(agentSessionIdOf(spaceId, agent.id, coordinator.id)).toBe('space:agent:space-1:lh-1');
   });
 });
