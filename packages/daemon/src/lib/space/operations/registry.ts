@@ -16,6 +16,7 @@ import {
   type SpaceTransitionTaskDependencies,
 } from './transition-task.ts';
 import type { Database } from '../../../storage/database.ts';
+import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
 import { listTaskCores } from '../../../storage/tasks/list-tasks.ts';
 import { readTaskCore } from '../../../storage/tasks/task-reader.ts';
@@ -31,6 +32,10 @@ import {
   type TaskMemberRepositories,
 } from './list-task-members.ts';
 
+interface TaskNumberRepository {
+  taskRepo?: Pick<SpaceTaskRepository, 'getTaskByNumber'>;
+}
+
 export function createSpaceOperationRegistryProvider(
   database: Database,
   jobQueue: JobQueueRepository,
@@ -40,6 +45,7 @@ export function createSpaceOperationRegistryProvider(
   > &
     CancelPolicyContext &
     TaskMemberRepositories &
+    TaskNumberRepository &
     Omit<
       CompleteTaskDependencies,
       'getTaskManager' | 'emitTaskUpdated' | 'requiresPostApprovalOwner' | 'completionGate'
@@ -54,6 +60,9 @@ export function createSpaceOperationRegistryProvider(
     (registry ??= createDatabaseOperationCatalog(database, jobQueue, {
       readTask: (taskId) =>
         tasks.taskRepo?.getTask(taskId) ?? readTaskCore(database.getDatabase(), taskId),
+      readTaskByNumber: tasks.taskRepo?.getTaskByNumber
+        ? (spaceId, taskNumber) => tasks.taskRepo?.getTaskByNumber(spaceId, taskNumber) ?? null
+        : undefined,
       listTasks: (input) =>
         listTasksWithSpaceFields(
           (listInput) => listTaskCores(database.getDatabase(), listInput),
