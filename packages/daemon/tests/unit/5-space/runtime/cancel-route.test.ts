@@ -105,6 +105,25 @@ test('a second call is idempotent: it returns true and leaves the fence and rese
   expect(attempts.get(attempt.id)?.phase).toBe('reserved');
 });
 
+test('a pre-existing start_superseded fence is still a valid fence and is left untouched', () => {
+  const attempt = setupAttempt(createTask(), 'reserved')!;
+  attempts.requestStop(attempt.id, attempt.sessionId, 'start_superseded');
+  expect(supersedeReservedAttempt(db, attempt)).toBe(true);
+  const request = db
+    .prepare(
+      'SELECT outcome FROM direct_task_stop_requests WHERE attempt_id = ? AND session_id = ?'
+    )
+    .get(attempt.id, attempt.sessionId) as { outcome: string } | null;
+  expect(request?.outcome).toBe('start_superseded');
+  expect(attempts.get(attempt.id)?.phase).toBe('reserved');
+});
+
+test('a pre-existing fence with an unrelated outcome is not a valid fence', () => {
+  const attempt = setupAttempt(createTask(), 'reserved')!;
+  attempts.requestStop(attempt.id, attempt.sessionId, 'other');
+  expect(supersedeReservedAttempt(db, attempt)).toBe(false);
+});
+
 test('an attempt already stopped by the normal flow, with its leftover stop request row, returns false untouched', () => {
   const attempt = setupAttempt(createTask(), 'reserved')!;
   attempts.requestStop(attempt.id, attempt.sessionId, 'done');

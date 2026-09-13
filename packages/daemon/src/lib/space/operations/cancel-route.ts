@@ -21,6 +21,8 @@ export function resolveCancellationRoute(
   return attempt.phase === 'reserved' ? { kind: 'reserved', attempt } : { kind: 'direct', attempt };
 }
 
+const VALID_FENCE_OUTCOMES = new Set(['cancelled', 'start_superseded']);
+
 export function supersedeReservedAttempt(db: Database, attempt: DirectTaskAttempt): boolean {
   const repo = new DirectTaskExecutionRepository(db);
   return db.transaction(() => {
@@ -28,9 +30,15 @@ export function supersedeReservedAttempt(db: Database, attempt: DirectTaskAttemp
     if (!current || current.sessionId !== attempt.sessionId || current.phase !== 'reserved')
       return false;
     repo.requestStop(current.id, current.sessionId, 'cancelled');
+    const request = db
+      .prepare(
+        'SELECT outcome FROM direct_task_stop_requests WHERE attempt_id = ? AND session_id = ?'
+      )
+      .get(current.id, current.sessionId) as { outcome: string } | null;
     return (
-      repo.isStopRequested(current.id, current.sessionId) &&
-      repo.get(current.id)?.phase === 'reserved'
+      repo.get(current.id)?.phase === 'reserved' &&
+      !!request &&
+      VALID_FENCE_OUTCOMES.has(request.outcome)
     );
   })();
 }
