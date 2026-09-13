@@ -186,8 +186,6 @@ import {
 
 const log = new Logger('task-agent-manager');
 
-const WORKFLOW_ESCALATION_TARGET = 'space-agent';
-
 export function isWorkflowTerminalNode(
   workflow: SpaceWorkflow | null | undefined,
   workflowNodeId: string
@@ -3273,7 +3271,6 @@ export class TaskAgentManager {
       'Tools available:',
       ...(dispatcherTools ?? []),
       ...typedTools,
-      `Escalation: send_message({ target: "${WORKFLOW_ESCALATION_TARGET}", message }) requests human/space-level judgment (use for misrouted no-code tasks or hard blockers).`,
       'Only contact the task-agent via send_message if you are blocked or need human input.',
     ].join('\n');
 
@@ -3299,9 +3296,6 @@ export class TaskAgentManager {
       '  - restore_node_agent({ reason? }) — self-heal fallback: if a previous mcp__node-agent__* call ever returned "No such tool available", call this once and then retry the original tool',
     ];
 
-    lines.push(
-      `Escalation: send_message({ target: "${WORKFLOW_ESCALATION_TARGET}", message }) requests human/space-level judgment (use for misrouted no-code tasks or hard blockers).`
-    );
     lines.push(
       'Only contact the task-agent via send_message if you are blocked or need human input.'
     );

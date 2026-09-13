@@ -1,4 +1,3 @@
-import { UNROUTABLE_SPACE_AGENT_TARGET } from '../messaging-adapter.ts';
 import { isSpaceManagerHandle } from '../agent-handle.ts';
 import { formatAddress, type ParsedAddress } from '../../../../../messaging/src/address.ts';
 
@@ -220,9 +219,6 @@ export function decideGenericAddressRouting(
   }
   if (address.kind === 'role' && address.role === 'coordinator') {
     return { action: 'notFound', target };
-  }
-  if (address.kind === 'handle' && `@${address.handle}` === UNROUTABLE_SPACE_AGENT_TARGET) {
-    return { action: 'notFound', target: 'space-agent' };
   }
   if (address.kind === 'session') {
     if (!config.spaceAgentAvailable) return { action: 'notFound', target };

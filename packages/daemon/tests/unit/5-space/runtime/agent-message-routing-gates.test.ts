@@ -11,8 +11,6 @@ import {
   type ResolveNodeAgentTargetsInput,
   resolveNodeAgentTargets,
 } from '../../../../src/lib/space/runtime/agent-message-routing-gates';
-import { RESERVED_SPACE_AGENT_HANDLES } from '../../../../src/lib/space/slug';
-import { UNROUTABLE_SPACE_AGENT_TARGET } from '../../../../src/lib/space/messaging-adapter';
 
 function makeInput(
   overrides: Partial<ResolveNodeAgentTargetsInput> = {}
@@ -524,17 +522,6 @@ describe('decideGenericAddressRouting: the former space-manager handles', () => 
     expect(
       decideGenericAddressRouting(parseAddress('@space-manager'), makeGenericConfig())
     ).toEqual({ action: 'notFound', target: '@space-manager' });
-  });
-
-  test('the sentinel handle is reserved, so no user agent can claim the address it occupies', () => {
-    expect(RESERVED_SPACE_AGENT_HANDLES as readonly string[]).toContain('space-agent-unrouted');
-    expect(`@${'space-agent-unrouted'}`).toBe(UNROUTABLE_SPACE_AGENT_TARGET);
-  });
-
-  test('rejects the unroutable space-agent sentinel before any handle resolution', () => {
-    expect(
-      decideGenericAddressRouting(parseAddress('@space-agent-unrouted'), makeGenericConfig())
-    ).toEqual({ action: 'notFound', target: 'space-agent' });
   });
 
   test('reports @role:coordinator not found — the synthetic actor is the only holder of that role', () => {

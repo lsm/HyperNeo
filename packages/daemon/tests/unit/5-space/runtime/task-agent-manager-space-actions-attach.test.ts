@@ -228,9 +228,7 @@ describe('TaskAgentManager — space-actions dispatcher attach (flag-gated)', ()
     expect(contract).not.toContain('call_action(name="update_task")');
     expect(contract).toContain('send_message({ target, message, data? })');
     expect(contract).toContain('restore_node_agent({ reason? })');
-    expect(contract).toContain(
-      'Escalation: send_message({ target: "space-agent", message }) requests human/space-level judgment'
-    );
+    expect(contract).not.toContain('Escalation: send_message');
   });
 
   test('flag on: every suggested contract action resolves through the attached worker registry', () => {

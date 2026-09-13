@@ -533,8 +533,6 @@ function createFailedDelivery(
   };
 }
 
-export const UNROUTABLE_SPACE_AGENT_TARGET = '@space-agent-unrouted';
-
 function translateLegacyNodeTarget(
   target: string,
   config: LegacyNodeTargetTranslatorConfig
@@ -552,7 +550,7 @@ function translateLegacyNodeTarget(
   }
   if (targetRef === 'space-agent') {
     const replyTo = config.replyRoutingLookup?.(config.agentName);
-    return replyTo ? [`@session:${replyTo}`] : [UNROUTABLE_SPACE_AGENT_TARGET];
+    return replyTo ? [`@session:${replyTo}`] : [];
   }
   if (targetRef === '*') {
     return permittedWorkerTargets(config);
