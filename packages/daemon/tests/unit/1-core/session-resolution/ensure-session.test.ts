@@ -22,7 +22,6 @@ const agentSessionId = longTermAgentSessionId(SPACE_ID, AGENT_ONE);
 interface DepsLog {
   getSession: string[];
   rehydrateSubSession: string[];
-  getCoordinator: number;
   ensureLongTermAgent: Array<[spaceId: string, agentId: string]>;
   listWorkerExecutions: number;
   getTaskSpaceId: number;
@@ -34,7 +33,6 @@ function makeDeps(
   handlers: {
     getSession?: (sessionId: string) => unknown;
     rehydrateSubSession?: (sessionId: string) => unknown;
-    getCoordinator?: () => { id: string } | null;
     ensureLongTermAgent?: (spaceId: string, agentId: string) => unknown;
     listWorkerExecutions?: () => WorkerExecutionSession[];
     readWorkerTaskPhase?: () => WorkerTaskPhase;
@@ -55,7 +53,6 @@ function makeDeps(
   const log: DepsLog = {
     getSession: [],
     rehydrateSubSession: [],
-    getCoordinator: 0,
     ensureLongTermAgent: [],
     listWorkerExecutions: 0,
     getTaskSpaceId: 0,
@@ -70,10 +67,6 @@ function makeDeps(
     rehydrateSubSession: async (sessionId) => {
       log.rehydrateSubSession.push(sessionId);
       return handlers.rehydrateSubSession ? handlers.rehydrateSubSession(sessionId) : null;
-    },
-    getCoordinator: async () => {
-      log.getCoordinator += 1;
-      return handlers.getCoordinator ? handlers.getCoordinator() : null;
     },
     ensureLongTermAgent: async (spaceId, agentId) => {
       log.ensureLongTermAgent.push([spaceId, agentId]);
@@ -170,7 +163,6 @@ describe('findStage', () => {
       created: false,
     });
     expect(log.getSession).toEqual([agentSessionId]);
-    expect(log.getCoordinator).toBe(1);
   });
 
   test('agent kind missed writes no outcome and never creates', async () => {
@@ -187,7 +179,6 @@ describe('findStage', () => {
     expect(await findStage(workerTarget(), deps)).toBeUndefined();
     expect(log.getSession).toEqual([]);
     expect(log.rehydrateSubSession).toEqual([]);
-    expect(log.getCoordinator).toBe(0);
     expect(log.ensureLongTermAgent).toEqual([]);
     expect(log.listWorkerExecutions).toBe(0);
     expect(log.getTaskSpaceId).toBe(0);
@@ -205,7 +196,6 @@ describe('ensureStage', () => {
     });
     expect(log.getSession).toEqual([]);
     expect(log.rehydrateSubSession).toEqual([]);
-    expect(log.getCoordinator).toBe(0);
     expect(log.ensureLongTermAgent).toEqual([]);
     expect(log.listWorkerExecutions).toBe(0);
     expect(log.getTaskSpaceId).toBe(0);
@@ -386,7 +376,6 @@ describe('ensureSession', () => {
     });
     expect(log.listWorkerExecutions).toBe(1);
     expect(log.getSession).toEqual([]);
-    expect(log.getCoordinator).toBe(0);
     expect(log.activateTaskAgent).toBe(0);
     expect(log.spawnPostApprovalWorker).toEqual([]);
   });

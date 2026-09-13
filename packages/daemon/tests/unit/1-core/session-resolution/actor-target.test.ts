@@ -1,9 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { ActorRef } from '../../../../../messaging/src/types.ts';
-import {
-  actorRefToSessionTarget,
-  isCoordinatorActorId,
-} from '../../../../src/lib/session-resolution/actor-target';
+import { actorRefToSessionTarget } from '../../../../src/lib/session-resolution/actor-target';
 
 function actor(
   actorId: string,
@@ -18,22 +15,6 @@ function actor(
     ...overrides,
   };
 }
-
-describe('isCoordinatorActorId', () => {
-  test('matches the exact alias for the space', () => {
-    expect(isCoordinatorActorId('agent:coordinator:space-1', 'space-1')).toBe(true);
-  });
-
-  test('rejects aliases scoped to another space', () => {
-    expect(isCoordinatorActorId('agent:coordinator:space-2', 'space-1')).toBe(false);
-  });
-
-  test('rejects plain agent actors and the derived coordinator row id form', () => {
-    expect(isCoordinatorActorId('agent:lh-1', 'space-1')).toBe(false);
-    expect(isCoordinatorActorId('agent:space-lh-agent:coordinator:space-1', 'space-1')).toBe(false);
-    expect(isCoordinatorActorId('session:sess-1', 'space-1')).toBe(false);
-  });
-});
 
 describe('actorRefToSessionTarget', () => {
   test('human actor maps to the session target under the human: prefix', () => {
@@ -56,12 +37,12 @@ describe('actorRefToSessionTarget', () => {
     ).toEqual({ kind: 'agent', spaceId: 'space-1', agentId: 'agent one' });
   });
 
-  test('coordinator alias actor normalizes to the coordinator agentId value', () => {
+  test('the former coordinator alias actor decodes as an ordinary agent id', () => {
     expect(actorRefToSessionTarget(actor('agent:coordinator:space-1', 'agent'), 'space-1')).toEqual(
       {
         kind: 'agent',
         spaceId: 'space-1',
-        agentId: 'coordinator',
+        agentId: 'coordinator:space-1',
       }
     );
   });

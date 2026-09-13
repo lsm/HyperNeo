@@ -13,7 +13,6 @@ interface TestSession {
 }
 
 function makeDeps(config?: {
-  coordinatorId?: string;
   existing?: TestSession;
   ensured?: TestSession;
   ensureOutcome?: 'ok' | 'fail';
@@ -47,8 +46,6 @@ function makeDeps(config?: {
       return ensured;
     },
     rehydrateSubSession: async () => null,
-    getCoordinator: async () =>
-      config?.coordinatorId === undefined ? null : { id: config.coordinatorId },
     isAgentTargetLifecycleEligible: async () => true,
     listWorkerExecutions: () => [],
     readWorkerTaskPhase: () => 'run_active',
@@ -85,46 +82,6 @@ describe('resolveAgentDeliverySession', () => {
     expect(getSessionCalls).toEqual([sessionId]);
     expect(refetchCalls).toEqual([sessionId]);
     expect(ensureCalls).toEqual([['space-1', 'agent-1']]);
-  });
-
-  test('creates a missing coordinator and maps its row id to the coordinator session', async () => {
-    const spaceId = 'space-1';
-    const coordinatorId = coordinatorLongHorizonAgentId(spaceId);
-    const sessionId = coordinatorSessionId(spaceId);
-    const ensured = { id: sessionId, generation: 1 };
-    const { deps, getSessionCalls, refetchCalls, ensureCalls, getSession } = makeDeps({
-      coordinatorId,
-      ensured,
-    });
-
-    const session = await resolveAgentDeliverySession(spaceId, coordinatorId, deps, getSession);
-
-    expect(session).toBe(ensured);
-    expect(getSessionCalls).toEqual([sessionId, sessionId]);
-    expect(refetchCalls).toEqual([sessionId]);
-    expect(ensureCalls).toEqual([[spaceId, coordinatorId]]);
-  });
-
-  test('normalizes the canonical coordinator actor alias to the coordinator target', async () => {
-    const spaceId = 'space-1';
-    const coordinatorId = coordinatorLongHorizonAgentId(spaceId);
-    const sessionId = coordinatorSessionId(spaceId);
-    const ensured = { id: sessionId, generation: 1 };
-    const { deps, refetchCalls, ensureCalls, getSession } = makeDeps({
-      coordinatorId,
-      ensured,
-    });
-
-    const session = await resolveAgentDeliverySession(
-      spaceId,
-      `coordinator:${spaceId}`,
-      deps,
-      getSession
-    );
-
-    expect(session).toBe(ensured);
-    expect(refetchCalls).toEqual([sessionId]);
-    expect(ensureCalls).toEqual([[spaceId, 'coordinator']]);
   });
 
   test('returns null without re-fetching when provisioning fails', async () => {

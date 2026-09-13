@@ -28,7 +28,6 @@ import type { SpaceAgentRepository } from '../../../storage/repositories/space-a
 import type { SpaceAgentSubscriptionRepository } from '../../../storage/repositories/space-agent-subscription-repository.ts';
 import { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository.ts';
 import {
-  coordinatorSessionId,
   SpaceLongHorizonAgentRepository,
   templateInstanceScanFromRepo,
 } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
@@ -663,36 +662,6 @@ export class SpaceRuntimeService {
     });
   }
 
-  private async ensureCoordinatorSession(spaceId: string) {
-    const sessionManager = this.config.sessionManager;
-    if (!sessionManager) return null;
-    const space = await this.config.spaceManager.getSpace(spaceId);
-    if (!space) return null;
-    const sessionId = coordinatorSessionId(spaceId);
-    let session = await sessionManager.getSessionAsync(sessionId);
-    if (!session) {
-      try {
-        await sessionManager.createSession({
-          sessionId,
-          title: space.name,
-          workspacePath: space.workspacePath,
-          config: { model: space.defaultModel },
-          sessionType: 'space_chat',
-          spaceId: space.id,
-        });
-        await this.config.spaceManager.addSession(space.id, sessionId);
-      } catch (err) {
-        session = await sessionManager.getSessionAsync(sessionId);
-        if (!session) throw err;
-      }
-      session = session ?? (await sessionManager.getSessionAsync(sessionId));
-      if (!session) return null;
-    }
-    if (['ended', 'archived'].includes(session.getSessionData().status)) return null;
-    await this.setupSpaceAgentSession(space);
-    return session;
-  }
-
   private async ensureLongHorizonAgentSession(spaceId: string, agentId: string) {
     const sessionManager = this.config.sessionManager;
     const repo = this.config.longHorizonAgentRepo;
@@ -799,7 +768,6 @@ export class SpaceRuntimeService {
     return {
       getSpace: (spaceId) => this.config.spaceManager.getSpace(spaceId),
       recordDeps: this.agentRecordDeps(),
-      ensureCoordinatorSession: (spaceId) => this.ensureCoordinatorSession(spaceId),
       ensureLongHorizon: this.ensureLongHorizonAgentSession.bind(this),
     };
   }
@@ -808,8 +776,6 @@ export class SpaceRuntimeService {
     const repo = this.config.longHorizonAgentRepo;
     return {
       getLongHorizonAgent: (agentId) => repo?.getById(agentId) ?? null,
-      getCoordinator: (spaceId) => repo?.getCoordinator(spaceId) ?? null,
-      getCoordinatorRecord: (spaceId) => repo?.getCoordinatorRecord(spaceId) ?? null,
     };
   }
 

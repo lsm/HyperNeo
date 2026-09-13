@@ -5,8 +5,7 @@ export async function ensureAgentSession(
   target: SessionTargetAgent,
   deps: SessionResolutionDeps
 ): Promise<EnsureSessionOutcome> {
-  const coordinator = await deps.getCoordinator(target.spaceId);
-  const sessionId = agentSessionIdOf(target.spaceId, target.agentId, coordinator?.id);
+  const sessionId = agentSessionIdOf(target.spaceId, target.agentId);
   if ((await deps.getSession(sessionId)) !== null) {
     return { kind: 'resolved', sessionId, created: false };
   }

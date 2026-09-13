@@ -27,7 +27,6 @@ function makeAgent(
 }
 
 interface ProvisionCalls {
-  coordinator: string[];
   provisioned: string[];
 }
 
@@ -37,18 +36,11 @@ function makeDeps(config?: {
   longHorizonAgents?: SpaceLongHorizonAgent[];
   ensuredStatus?: string;
 }): { deps: EnsureAgentSessionDeps; calls: ProvisionCalls } {
-  const calls: ProvisionCalls = { coordinator: [], provisioned: [] };
+  const calls: ProvisionCalls = { provisioned: [] };
   const agents = config?.longHorizonAgents ?? [];
   const ensured = { getSessionData: () => ({ status: config?.ensuredStatus ?? 'active' }) };
   const recordDeps: ResolveAgentRecordDeps = {
     getLongHorizonAgent: (agentId) => agents.find((agent) => agent.id === agentId) ?? null,
-    getCoordinator: (spaceId) =>
-      agents.find(
-        (agent) =>
-          agent.handle === 'coordinator' && agent.spaceId === spaceId && agent.status !== 'archived'
-      ) ?? null,
-    getCoordinatorRecord: (spaceId) =>
-      agents.find((agent) => agent.handle === 'coordinator' && agent.spaceId === spaceId) ?? null,
   };
   const deps: EnsureAgentSessionDeps = {
     getSpace: async () => {
@@ -56,10 +48,6 @@ function makeDeps(config?: {
       return config?.space === undefined ? makeSpace() : config.space;
     },
     recordDeps,
-    ensureCoordinatorSession: async (spaceId) => {
-      calls.coordinator.push(spaceId);
-      return ensured;
-    },
     ensureLongHorizon: async (spaceId, agentId) => {
       calls.provisioned.push(`${spaceId}:${agentId}`);
       return ensured;
@@ -75,7 +63,7 @@ async function expectTargetRejected(
 ): Promise<void> {
   expect(await runEnsureAgentSession(SPACE_ID, agentId, deps)).toBeNull();
   expect(await isAgentTargetLifecycleEligible(SPACE_ID, agentId, deps)).toBe(false);
-  expect(calls).toEqual({ coordinator: [], provisioned: [] });
+  expect(calls).toEqual({ provisioned: [] });
 }
 
 describe('ensure-agent-session lifecycle admission', () => {
@@ -129,7 +117,7 @@ describe('ensure-agent-session lifecycle admission', () => {
     });
     expect(await isAgentTargetLifecycleEligible(SPACE_ID, 'lha-2', deps)).toBe(true);
     expect(await runEnsureAgentSession(SPACE_ID, 'lha-2', deps)).not.toBeNull();
-    expect(calls).toEqual({ coordinator: [], provisioned: [`${SPACE_ID}:lha-2`] });
+    expect(calls).toEqual({ provisioned: [`${SPACE_ID}:lha-2`] });
   });
 
   test('inactive long-horizon agent records reject', async () => {
@@ -145,21 +133,12 @@ describe('ensure-agent-session lifecycle admission', () => {
     await expectTargetRejected(deps, 'lha-unknown', calls);
   });
 
-  test('coordinator-less spaces bootstrap and noncanonical coordinator ids provision', async () => {
-    const empty = makeDeps();
-    expect(await isAgentTargetLifecycleEligible(SPACE_ID, 'coordinator', empty.deps)).toBe(true);
-    expect(await runEnsureAgentSession(SPACE_ID, 'coordinator', empty.deps)).not.toBeNull();
-    expect(empty.calls.coordinator).toEqual([SPACE_ID]);
-    const alt = makeDeps({ longHorizonAgents: [makeAgent('lha-alt', { handle: 'coordinator' })] });
-    expect(await runEnsureAgentSession(SPACE_ID, 'lha-alt', alt.deps)).not.toBeNull();
-    expect(alt.calls.coordinator).toEqual([SPACE_ID]);
-  });
-
   test('ensured sessions with ended or archived status reject after provisioning', async () => {
     for (const status of ['ended', 'archived']) {
-      const { deps, calls } = makeDeps({ ensuredStatus: status });
-      expect(await runEnsureAgentSession(SPACE_ID, 'coordinator', deps)).toBeNull();
-      expect(calls.coordinator).toEqual([SPACE_ID]);
+      const agent = makeAgent('agent-1');
+      const { deps, calls } = makeDeps({ ensuredStatus: status, longHorizonAgents: [agent] });
+      expect(await runEnsureAgentSession(SPACE_ID, 'agent-1', deps)).toBeNull();
+      expect(calls.provisioned).toEqual([`${SPACE_ID}:agent-1`]);
     }
   });
 });

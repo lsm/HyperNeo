@@ -1,5 +1,4 @@
 import { longTermAgentSessionId } from '../space/long-term-agent-session.ts';
-import { coordinatorSessionId } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
 
 export interface SessionTargetSession {
   kind: 'session';
@@ -30,16 +29,6 @@ export type EnsureSessionOutcome =
   | { kind: 'resolved'; sessionId: string; created: boolean }
   | { kind: 'unresolved'; reason: string };
 
-export function agentSessionIdOf(
-  spaceId: string,
-  agentId: string,
-  coordinatorAgentId?: string
-): string {
-  if (
-    agentId === 'coordinator' ||
-    (coordinatorAgentId !== undefined && agentId === coordinatorAgentId)
-  ) {
-    return coordinatorSessionId(spaceId);
-  }
+export function agentSessionIdOf(spaceId: string, agentId: string): string {
   return longTermAgentSessionId(spaceId, agentId);
 }

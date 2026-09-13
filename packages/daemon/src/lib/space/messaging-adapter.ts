@@ -459,6 +459,10 @@ export class SpaceDeliveryFacade {
             delivery.state = 'delivered';
             delivery.deliveredAt = Date.now();
             delivery.deliveredSessionId = deliveredSessionId;
+          } else {
+            delivery.state = 'failed';
+            delivery.attemptCount += 1;
+            delivery.lastError = 'Session delivery returned no delivered session';
           }
         } catch (error) {
           delivery.state = 'failed';

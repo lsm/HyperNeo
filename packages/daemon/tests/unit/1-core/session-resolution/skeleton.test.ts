@@ -22,15 +22,12 @@ describe('session-resolution type assignment tests', () => {
 });
 
 describe('agentSessionIdOf', () => {
-  test('coordinator agentId reuses coordinatorSessionId', () => {
+  test('the literal coordinator id routes to its own session, never the Space chat session', () => {
     const spaceId = 'space-1';
-    expect(agentSessionIdOf(spaceId, 'coordinator')).toBe(coordinatorSessionId(spaceId));
-  });
-
-  test('coordinator long-horizon agentId reuses coordinatorSessionId', () => {
-    const spaceId = 'space-1';
-    const agentId = coordinatorLongHorizonAgentId(spaceId);
-    expect(agentSessionIdOf(spaceId, agentId, agentId)).toBe(coordinatorSessionId(spaceId));
+    expect(agentSessionIdOf(spaceId, 'coordinator')).toBe(
+      longTermAgentSessionId(spaceId, 'coordinator')
+    );
+    expect(agentSessionIdOf(spaceId, 'coordinator')).not.toBe(`space:chat:${spaceId}`);
   });
 
   test('a derived coordinator id without a coordinator row routes to its own long-horizon session', () => {
@@ -43,11 +40,5 @@ describe('agentSessionIdOf', () => {
     const spaceId = 'space-1';
     const agentId = 'agent-1';
     expect(agentSessionIdOf(spaceId, agentId)).toBe(longTermAgentSessionId(spaceId, agentId));
-  });
-
-  test('noncanonical coordinator agentId reuses coordinatorSessionId', () => {
-    const spaceId = 'space-1';
-    const agentId = 'coordinator-alt';
-    expect(agentSessionIdOf(spaceId, agentId, agentId)).toBe(coordinatorSessionId(spaceId));
   });
 });

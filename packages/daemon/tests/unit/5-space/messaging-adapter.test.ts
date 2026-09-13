@@ -375,7 +375,7 @@ describe('Space messaging adapter', () => {
     );
   });
 
-  it('keeps active actors queued when delivery callback returns no session id', async () => {
+  it('fails active actors when the delivery callback returns no session id', async () => {
     const resolver = new SpaceMessageResolver(
       { actorRegistry: registry, workflowRepo, workflowRunRepo },
       { spaceId, workflowRunId: runId, nodeId: 'node-coding', agentName: 'coder' }
@@ -392,10 +392,31 @@ describe('Space messaging adapter', () => {
     expect(result.deliveries).toHaveLength(1);
     expect(result.deliveries[0]).toMatchObject({
       targetActorId: `worker:${encodeURIComponent(runId)}:node-review:reviewer`,
-      state: 'queued',
+      state: 'failed',
+      attemptCount: 1,
+      lastError: 'Session delivery returned no delivered session',
     });
     expect(result.deliveries[0].deliveredAt).toBeUndefined();
     expect(result.deliveries[0].deliveredSessionId).toBeUndefined();
+  });
+
+  it('keeps active actors queued when no delivery callback is configured', async () => {
+    const resolver = new SpaceMessageResolver(
+      { actorRegistry: registry, workflowRepo, workflowRunRepo },
+      { spaceId, workflowRunId: runId, nodeId: 'node-coding', agentName: 'coder' }
+    );
+    const facade = new SpaceDeliveryFacade({ resolver });
+    const result = await facade.routeMessage({
+      ...message,
+      targets: ['@worker:node-review/reviewer'],
+    });
+
+    expect(result.deliveries).toHaveLength(1);
+    expect(result.deliveries[0]).toMatchObject({
+      targetActorId: `worker:${encodeURIComponent(runId)}:node-review:reviewer`,
+      state: 'queued',
+      attemptCount: 0,
+    });
   });
 
   it('routes space-agent to the authorized reply session, and refuses it without one', () => {
