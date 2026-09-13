@@ -28,7 +28,11 @@ export function createSpaceOperationRegistryProvider(
     'db'
   > &
     CancelPolicyContext &
-    Omit<CompleteTaskDependencies, 'getTaskManager' | 'emitTaskUpdated'>,
+    Omit<
+      CompleteTaskDependencies,
+      'getTaskManager' | 'emitTaskUpdated' | 'requiresPostApprovalOwner' | 'completionGate'
+    > &
+    Required<Pick<CompleteTaskDependencies, 'requiresPostApprovalOwner' | 'completionGate'>>,
   pendingCompletion?: OwnedPendingCompletionDependencies,
   directStart?: DirectStartOperationDependencies
 ) {

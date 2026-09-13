@@ -8,7 +8,7 @@ export function createCompletionGateBindings(deps: {
   resolvePrUrl: (task: SpaceTask) => string;
   getPrState: (prUrl: string) => Promise<string>;
   workflowDeclaresPostApprovalRoute: (taskId: string) => boolean;
-}): Pick<CompleteTaskDependencies, 'requiresPostApprovalOwner' | 'completionGate'> {
+}): Required<Pick<CompleteTaskDependencies, 'requiresPostApprovalOwner' | 'completionGate'>> {
   const prMergedGate = createPrMergedGate({
     requirePrUrl: true,
     resolvePrUrl: deps.resolvePrUrl,

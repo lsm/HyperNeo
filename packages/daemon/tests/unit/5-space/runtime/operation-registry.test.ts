@@ -66,6 +66,8 @@ function provider(extra = {}, pendingCompletion?: OwnedPendingCompletionDependen
       blockExecution: async () => {
         throw new Error('Unexpected workflow cleanup');
       },
+      requiresPostApprovalOwner: () => false,
+      completionGate: async () => ({ ok: true as const }),
       ...extra,
     },
     pendingCompletion

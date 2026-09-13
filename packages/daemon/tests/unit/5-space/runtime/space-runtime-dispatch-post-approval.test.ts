@@ -658,6 +658,8 @@ test.each(['rpc', 'mcp'] as const)(
           blockExecution: async () => {
             throw new Error('unexpected workflow stop');
           },
+          requiresPostApprovalOwner: () => false,
+          completionGate: async () => ({ ok: true as const }),
         },
         {
           getSession: (id) => sessions.getSession(id),
