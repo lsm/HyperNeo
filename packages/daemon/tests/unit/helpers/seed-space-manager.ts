@@ -1,4 +1,3 @@
-import { getLongHorizonAgentTemplate } from '../../../src/lib/space/agents/long-horizon-agent-templates';
 import {
   coordinatorLongHorizonAgentId,
   coordinatorSessionId,
@@ -6,21 +5,22 @@ import {
 } from '../../../src/storage/repositories/space-long-horizon-agent-repository';
 import type { SpaceLongHorizonAgent } from '@hyperneo/shared';
 
+const LEGACY_SPACE_MANAGER_INSTRUCTIONS =
+  'Coordinate goals, tasks, reminders, event subscriptions, and Space activity.';
+
 export function seedSpaceManagerAgent(
   repo: SpaceLongHorizonAgentRepository,
   spaceId: string
 ): SpaceLongHorizonAgent {
-  const template = getLongHorizonAgentTemplate('coordinator.default');
   return repo.create({
     id: coordinatorLongHorizonAgentId(spaceId),
     spaceId,
-    handle: template?.handle ?? 'space-manager',
-    displayName: template?.displayName ?? 'Space Manager',
-    templateKey: template?.key ?? 'coordinator.default',
+    handle: 'space-manager',
+    displayName: 'Space Manager',
+    templateKey: 'coordinator.default',
     status: 'active',
     sessionId: coordinatorSessionId(spaceId),
-    instructions: template?.instructions ?? '',
-    autonomyLevel: template?.suggestedAutonomyLevel,
-    toolPermissions: template?.toolPermissions,
+    instructions: LEGACY_SPACE_MANAGER_INSTRUCTIONS,
+    autonomyLevel: 2,
   });
 }
