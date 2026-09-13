@@ -23,12 +23,12 @@ function selfNagSchedule(id: string, createdAt: number, status: TaskSchedule['st
   } as unknown as TaskSchedule;
 }
 
-function makeScope(): EvolutionScope {
+function makeScope(selfNagCronExpression?: string): EvolutionScope {
   return {
     id: SCOPE_ID,
     spaceId: SPACE_ID,
     spaceGoalId: GOAL_ID,
-    policy: {},
+    policy: selfNagCronExpression ? { automation: { selfNagCronExpression } } : {},
   } as unknown as EvolutionScope;
 }
 
@@ -91,5 +91,44 @@ describe('syncGoalAutomationSelfNagScheduleForScope — clearing automation', ()
     syncGoalAutomationSelfNagScheduleForScope({ goalRepo, scheduleService, scope: makeScope() });
 
     expect(paused).toEqual(['sched-a']);
+  });
+});
+
+describe('syncGoalAutomationSelfNagScheduleForScope — automation enabled', () => {
+  test('pauses active duplicates so only the canonical schedule survives', () => {
+    const schedules = [
+      selfNagSchedule('sched-new', 2000, 'active'),
+      selfNagSchedule('sched-old', 1000, 'active'),
+    ];
+    const { paused, scheduleService, goalRepo } = makeHarness(schedules);
+
+    syncGoalAutomationSelfNagScheduleForScope({
+      goalRepo,
+      scheduleService,
+      scope: makeScope('0 9 * * 1'),
+    });
+
+    expect(paused).toEqual(['sched-old']);
+    expect(scheduleService.updateSchedule).toHaveBeenCalledWith(
+      'sched-new',
+      expect.objectContaining({ cronExpression: '0 9 * * 1' })
+    );
+  });
+
+  test('resumes the canonical schedule only after pausing the other active duplicate', () => {
+    const schedules = [
+      selfNagSchedule('sched-new', 2000, 'paused'),
+      selfNagSchedule('sched-old', 1000, 'active'),
+    ];
+    const { paused, scheduleService, goalRepo } = makeHarness(schedules);
+
+    syncGoalAutomationSelfNagScheduleForScope({
+      goalRepo,
+      scheduleService,
+      scope: makeScope('0 9 * * 1'),
+    });
+
+    expect(paused).toEqual(['sched-old']);
+    expect(scheduleService.resumeSchedule).toHaveBeenCalledWith('sched-new');
   });
 });

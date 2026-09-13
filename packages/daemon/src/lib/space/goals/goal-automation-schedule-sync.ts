@@ -85,6 +85,11 @@ export function syncGoalAutomationSelfNagScheduleForScope(params: {
       return;
     }
     if (existing) {
+      for (const sched of goalSchedules) {
+        if (sched.id !== existing.id && sched.status === 'active') {
+          pauseScheduleStrict(scheduleService, sched.id);
+        }
+      }
       scheduleService.updateSchedule(existing.id, {
         title: `Evolve self-nag: ${goal.title}`,
         description: `Run Evolve automation for goal: ${goal.title}`,
