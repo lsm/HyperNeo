@@ -141,6 +141,7 @@ test('leaving approved clears post-approval bookkeeping', () => {
       postApprovalSessionId: null,
       postApprovalStartedAt: null,
       postApprovalBlockedReason: null,
+      postApprovalSourceNodeId: null,
     });
   }
   expect(source.postApprovalSessionId).toBe('session-1');
