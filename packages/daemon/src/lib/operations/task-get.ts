@@ -77,15 +77,43 @@ export const TaskWithSpaceFieldsSchema = TaskCoreSchema.extend({
   terminalGeneration: z.number().optional(),
 }) satisfies z.ZodType<TaskCore & Partial<SpaceOnlyFields>>;
 
+export type TaskByNumberReader = (
+  spaceId: string,
+  taskNumber: number
+) => TaskCore | null | Promise<TaskCore | null>;
+
+const ById = z.object({ taskId: z.string().min(1) });
+const ByNumber = z
+  .object({ spaceId: z.string().min(1), taskNumber: z.number().int().positive() })
+  .strict();
+
+const BY_ID_DESCRIPTION =
+  'Read task data by its global task ID. Returns null when absent. A Space-owned task includes its Space fields (ownership, workflow, approval, and pending-completion state); a standalone task returns only core fields.';
+
+const BY_NUMBER_DESCRIPTION =
+  'Read task data by its global task ID, or by the short task number shown inside a Space together with that spaceId. Task numbers are unique only within their Space, which is why the number form requires spaceId; standalone tasks have no number. Returns null when absent. A Space-owned task includes its Space fields (ownership, workflow, approval, and pending-completion state); a standalone task returns only core fields.';
+
 export function createGetTaskOperation(
-  readTask: (taskId: string) => TaskCore | null | Promise<TaskCore | null>
+  readTask: (taskId: string) => TaskCore | null | Promise<TaskCore | null>,
+  readTaskByNumber?: TaskByNumberReader
 ) {
+  if (!readTaskByNumber) {
+    return defineOperation({
+      name: 'task.get',
+      description: BY_ID_DESCRIPTION,
+      inputSchema: ById,
+      resultSchema: TaskWithSpaceFieldsSchema.nullable(),
+      execute: async (input) => readTask(input.taskId),
+    });
+  }
   return defineOperation({
     name: 'task.get',
-    description:
-      'Read task data by its global task ID. Returns null when absent. A Space-owned task includes its Space fields (ownership, workflow, approval, and pending-completion state); a standalone task returns only core fields.',
-    inputSchema: z.object({ taskId: z.string().min(1) }),
+    description: BY_NUMBER_DESCRIPTION,
+    inputSchema: z.union([ById, ByNumber]),
     resultSchema: TaskWithSpaceFieldsSchema.nullable(),
-    execute: async (input) => readTask(input.taskId),
+    execute: async (input) =>
+      'taskId' in input
+        ? readTask(input.taskId)
+        : readTaskByNumber(input.spaceId, input.taskNumber),
   });
 }
