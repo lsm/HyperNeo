@@ -140,7 +140,7 @@ export async function writeStatus(decided: DecidedTask, input: In, deps: Deps): 
   }
 }
 const SPACE_TRANSITION_TASK_DESCRIPTION =
-  'Space-scoped callers change the lifecycle state of a task in their Space; review and approved are entered only through the submit-for-review and approval operations, and rate_limited/usage_limited are runtime-owned. Tasks with an active direct-execution attempt are managed by the durable start/cancel/complete operations, and result may accompany only a transition to done. Supply expectedStatus to make the write conditional on the task still being in that state, which rejects with invalid_transition when another writer moved it first. Returns core task data, null for absent or unavailable tasks, or unsupported_status, invalid_transition, or result_requires_done when rejected.';
+  'Space-scoped callers change the lifecycle state of a task in their Space; review and approved are entered only through the submit-for-review and approval operations, and rate_limited/usage_limited are runtime-owned. Tasks with an active direct-execution attempt are managed by the durable start/cancel/complete operations, and result may accompany only a transition to done. Supply expectedStatus to reject with invalid_transition unless the task is still in that state; it is applied as a compare-and-set on a direct write, and as a pre-dispatch check for transitions handed to the workflow runtime. Returns core task data, null for absent or unavailable tasks, or unsupported_status, invalid_transition, or result_requires_done when rejected.';
 export function createSpaceTransitionTaskOperation(deps: Deps) {
   const transition = (superpipe({ deps })('transition-space-task') as PipelineAPI)
     .input(['input', 'caller'])
