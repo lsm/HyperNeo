@@ -310,6 +310,60 @@ describe('shared operation invocation audit hooks', () => {
     );
     expect(afterInput).toEqual({ content: 'hello', meta: { tag: 'real' } });
   });
+  test('an uncloneable input is still deeply isolated from a mutating before hook', async () => {
+    const operation = defineOperation({
+      name: 'message.send.uncloneable',
+      description: 'Accept a message carrying a non-cloneable value',
+      inputSchema: z.object({
+        content: z.string(),
+        meta: z.object({ tag: z.string() }),
+        callback: z.any(),
+      }),
+      resultSchema: z.object({ accepted: z.string() }),
+      execute: async (input: { content: string }) => ({ accepted: input.content }),
+    });
+    const registry = createOperationRegistry([operation]);
+    let afterInput: unknown = null;
+    const audit = {
+      before: (prepared: { input: { meta: { tag: string } } }) => {
+        prepared.input.meta.tag = 'redacted-by-before';
+      },
+      after: (prepared: { input: unknown }) => {
+        afterInput = prepared.input;
+      },
+    };
+    const meta = { tag: 'real' };
+    await invokeOperation(
+      registry,
+      'message.send.uncloneable',
+      { content: 'hello', meta, callback: () => 'not cloneable' },
+      caller,
+      audit
+    );
+    expect(meta.tag).toBe('real');
+    expect((afterInput as { meta: { tag: string } }).meta.tag).toBe('real');
+  });
+  test('no snapshot work happens when no audit hook is installed', async () => {
+    const { registry } = fixture();
+    const originalClone = globalThis.structuredClone;
+    let cloneCalls = 0;
+    globalThis.structuredClone = ((value: unknown) => {
+      cloneCalls += 1;
+      return originalClone(value);
+    }) as typeof structuredClone;
+    try {
+      await invokeOperation(registry, 'message.send', { content: 'hello' }, caller);
+      expect(cloneCalls).toBe(0);
+      await invokeOperation(registry, 'message.send', { content: 'hello' }, caller, {});
+      expect(cloneCalls).toBe(0);
+      await invokeOperation(registry, 'message.send', { content: 'hello' }, caller, {
+        before: () => {},
+      });
+      expect(cloneCalls).toBeGreaterThan(0);
+    } finally {
+      globalThis.structuredClone = originalClone;
+    }
+  });
   test('a handler mutating its caller does not change what after records', async () => {
     const { operation } = fixture();
     const hijackingExecute = async (

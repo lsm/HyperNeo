@@ -108,13 +108,19 @@ async function runAudited(fn: (() => void | Promise<void>) | undefined): Promise
 function cloneValue<T>(value: T): T {
   try {
     return structuredClone(value);
-  } catch {
-    return value && typeof value === 'object' ? ({ ...value } as T) : value;
-  }
+  } catch {}
+  try {
+    return JSON.parse(JSON.stringify(value)) as T;
+  } catch {}
+  return value && typeof value === 'object' ? ({ ...value } as T) : value;
 }
 
 function snapshotPrepared(prepared: PreparedOperation): Readonly<PreparedOperation> {
   return { operation: prepared.operation, input: cloneValue(prepared.input) };
+}
+
+function hasAuditHooks(audit?: OperationAudit): boolean {
+  return Boolean(audit?.before || audit?.after);
 }
 
 function snapshotCaller(caller: OperationCaller): OperationCaller {
@@ -133,8 +139,18 @@ const runInvocation = (superpipe({})('invoke-operation') as PipelineAPI)
   .input(['registry', 'name', 'input', 'caller', 'audit'])
   .pipe(resolveOperation, ['registry', 'name'], 'result:invocation')
   .pipe(parseOperationInput, ['invocation', 'input'], 'result:invocation')
-  .pipe((prepared: PreparedOperation) => snapshotPrepared(prepared), 'invocation', 'prepared')
-  .pipe((callerArg: OperationCaller) => snapshotCaller(callerArg), 'caller', 'baseCaller')
+  .pipe(
+    (prepared: PreparedOperation, audit?: OperationAudit) =>
+      hasAuditHooks(audit) ? snapshotPrepared(prepared) : prepared,
+    ['invocation', 'audit'],
+    'prepared'
+  )
+  .pipe(
+    (callerArg: OperationCaller, audit?: OperationAudit) =>
+      hasAuditHooks(audit) ? snapshotCaller(callerArg) : callerArg,
+    ['caller', 'audit'],
+    'baseCaller'
+  )
   .pipe(auditBefore, ['prepared', 'baseCaller', 'audit'])
   .pipe(executeOperation, ['invocation', 'caller'], 'result:invocation')
   .pipe(validateOperationResult, 'invocation', 'result:invocation')
