@@ -168,7 +168,7 @@ export const RETIRED_PRE_TYPENAME_CODEX_REACTION_APPROVAL_GUIDANCE =
   ' not close the task before the Codex bot has `+1` unless that timeout window' +
   ' has elapsed.';
 
-const LEGACY_CODING_SLOT_PROMPTS: Record<string, string[]> = {
+export const LEGACY_CODING_SLOT_PROMPTS: Record<string, string[]> = {
   'Coding|coder': [
     'You are a software engineer in a Coding→Review iterative workflow. Your job is implementation only: ' +
       'implement the task, write tests, commit your changes, and open a pull request. ' +
@@ -189,10 +189,9 @@ const LEGACY_CODING_SLOT_PROMPTS: Record<string, string[]> = {
       'you must re-supply it.\n' +
       '7. If the task requires no code changes (validation-only, a diagnostic, or already ' +
       'complete): do NOT create an empty commit or PR. This workflow only completes via a ' +
-      'reviewed PR, so a no-change task is misrouted — record the blocker with ' +
-      '`save_artifact({ shape: "note", kind: "no_code_changes", summary: "<why this task needs no code changes>" })` ' +
-      'and stop. Do NOT mark the task complete and do NOT wait for a reply: there is no Space-level ' +
-      'recipient, and the unfinished task carrying that artifact is the signal a human acts on.\n\n' +
+      'reviewed PR, so a no-change task is misrouted — escalate via `send_message` to the ' +
+      'escalation target listed in your Runtime Execution Contract, explaining that the task ' +
+      'produced no code changes and needs re-routing, then stop and wait for guidance.\n\n' +
       'If re-activated after review:\n' +
       '1. Read the incoming message `data` — you should find `review_url` and ' +
       '`comment_urls` (an array of comment thread URLs). Open each one; do not rely on ' +
@@ -943,6 +942,18 @@ const CURRENT_CODING_WORKFLOW_NOCHANGE_STEP_PROMPT =
   '`save_artifact({ shape: "note", kind: "no_code_changes", summary: "<why this task needs no code changes>" })` ' +
   'and stop. Do NOT mark the task complete and do NOT wait for a reply: there is no Space-level ' +
   'recipient, and the unfinished task carrying that artifact is the signal a human acts on.\n\n';
+const RETIRED_ESCALATION_CODING_WORKFLOW_NOCHANGE_STEP_PROMPT =
+  '7. If the task requires no code changes (validation-only, a diagnostic, or already ' +
+  'complete): do NOT create an empty commit or PR. This workflow only completes via a ' +
+  'reviewed PR, so a no-change task is misrouted — escalate via `send_message` to the ' +
+  'escalation target listed in your Runtime Execution Contract, explaining that the task ' +
+  'produced no code changes and needs re-routing, then stop and wait for guidance.\n\n';
+const RETIRED_ESCALATION_FULLSTACK_CODING_NOCHANGE_GUIDANCE =
+  'If the task requires no code changes (validation-only, a diagnostic, or already complete): do NOT create an empty commit or PR. This workflow only completes via a reviewed PR, so a no-change task is misrouted — escalate via `send_message` to the escalation target listed in your Runtime Execution Contract, explaining that the task produced no code changes and needs re-routing, then stop and wait for guidance.\n\n';
+const CURRENT_EXTERNAL_REVIEW_NO_BOT_STOP =
+  'save a NON-result artifact describing the blocker (`save_artifact({ shape: "note", kind: "no_external_review_bot", summary: "<why the explicit external selection cannot be satisfied>" })`) and stop; do NOT mark the task complete and do NOT wait for a reply — the unfinished task carrying that artifact is the signal a human acts on. The fallback substitution is for `auto`';
+const RETIRED_EXTERNAL_REVIEW_NO_BOT_ESCALATION =
+  'and escalate per your escalation contract; the fallback substitution is for `auto`';
 const RETIRED_PREVIOUS_CODING_WORKFLOW_NOCHANGE_STEP_PROMPT =
   '7. If the task requires no code changes (validation-only, a diagnostic, or already ' +
   'complete): do NOT create an empty commit or PR. This workflow only completes via a ' +
@@ -1993,6 +2004,14 @@ const BUILT_IN_PROMPT_PATCH_VARIANTS = [
       RETIRED_PREVIOUS_CODING_WORKFLOW_NOCHANGE_STEP_PROMPT,
     ],
   ],
+  [
+    [
+      CURRENT_CODING_WORKFLOW_NOCHANGE_STEP_PROMPT,
+      RETIRED_ESCALATION_CODING_WORKFLOW_NOCHANGE_STEP_PROMPT,
+    ],
+  ],
+  [[FULLSTACK_CODING_NOCHANGE_GUIDANCE, RETIRED_ESCALATION_FULLSTACK_CODING_NOCHANGE_GUIDANCE]],
+  [[CURRENT_EXTERNAL_REVIEW_NO_BOT_STOP, RETIRED_EXTERNAL_REVIEW_NO_BOT_ESCALATION]],
   [[CURRENT_FULLSTACK_CODING_PR_STEP_PROMPT, RETIRED_FULLSTACK_CODING_PR_STEP_PROMPT]],
   [
     [CURRENT_FULLSTACK_CODING_PR_STEP_PROMPT, RETIRED_FULLSTACK_CODING_PR_STEP_PROMPT],

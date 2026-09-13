@@ -37,6 +37,7 @@ import {
   CODEX_REACTION_APPROVAL_GUIDANCE,
   CODING_WITH_QA_WORKFLOW,
   CODING_WORKFLOW,
+  LEGACY_CODING_SLOT_PROMPTS,
   EXTERNAL_REVIEW_BOTS_GUIDANCE,
   EXTERNAL_REVIEW_BOTS_GUIDANCE_PRE_CHECK_SEEDING,
   EXTERNAL_REVIEW_BOTS_GUIDANCE_PRE_TYPENAME,
@@ -4278,17 +4279,66 @@ test('patchKnownBuiltInPromptDrift rewrites a persisted legacy Coding-with-QA co
   expect(mergedPrompt).toBe(legacySeed);
 });
 
+test('persisted prompts carrying the retired escalation target reconcile to the current text', () => {
+  const templateNode = CODING_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
+  const templatePrompt = templateNode.agents[0].customPrompt!.value;
+
+  const persisted = templatePrompt.replace(
+    'save a NON-result artifact describing the blocker (`save_artifact({ shape: "note", ' +
+      'kind: "no_external_review_bot", summary: "<why the explicit external selection cannot be satisfied>" })`) ' +
+      'and stop; do NOT mark the task complete and do NOT wait for a reply — the unfinished task carrying ' +
+      'that artifact is the signal a human acts on. The fallback substitution is for `auto`',
+    'and escalate per your escalation contract; the fallback substitution is for `auto`'
+  );
+
+  expect(persisted).not.toBe(templatePrompt);
+  expect(persisted).toContain('escalate per your escalation contract');
+
+  const existingNode: WorkflowNode = {
+    ...templateNode,
+    agents: templateNode.agents.map((a, i) =>
+      i === 0 ? { ...a, customPrompt: { value: persisted } } : a
+    ),
+  };
+  const merged = mergeNodeStructuralFieldsFromTemplate([existingNode], CODING_WORKFLOW.nodes);
+  const mergedPrompt = merged.find((n) => n.name === 'Coding')!.agents[0].customPrompt!.value;
+
+  expect(mergedPrompt).toBe(templatePrompt);
+});
+
+test('the Coding coder legacy seed keeps its historical escalation wording', () => {
+  const templateNode = CODING_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
+  const seed = LEGACY_CODING_SLOT_PROMPTS['Coding|coder']!.find((candidate) =>
+    candidate.includes('escalation target listed in your Runtime Execution Contract')
+  );
+  expect(seed).toBeDefined();
+  const existingNode: WorkflowNode = {
+    ...templateNode,
+    agents: templateNode.agents.map((a, i) =>
+      i === 0
+        ? {
+            ...a,
+            customPrompt: { value: seed! },
+          }
+        : a
+    ),
+  };
+  const merged = mergeNodeStructuralFieldsFromTemplate([existingNode], CODING_WORKFLOW.nodes);
+  const mergedPrompt = merged.find((n) => n.name === 'Coding')!.agents[0].customPrompt!.value;
+  expect(mergedPrompt).toBe(templateNode.agents[0].customPrompt!.value);
+});
+
 test('persisted pre-call-action prompts migrate to the dispatcher preference templates', () => {
   const preDispatcherHashes = new Map<string, string>([
-    [CODER_ONLY_PROMPT, '8da5920a098225e0a53aec02e8c72d010f2d6b6f9462c5a630cf3bd9204a7a60'],
-    [CODER_OWNED_MERGE_PROMPT, '20bbaa921ea9d3a89d1fc4d6106b191a24b8c3de3d9acfe8361ff12c32fd641e'],
+    [CODER_ONLY_PROMPT, 'cad5c74730ebd34a5b990eb6fa672475f73273ac2298f1fd75534334a0c25d48'],
+    [CODER_OWNED_MERGE_PROMPT, '882f1beaabbe9dc502f1f3f3f1de247cdb97779a0462731e2f594f3276ad43c0'],
     [CODER_OWNED_REVIEW_PROMPT, 'da51558acb0459acf61beda09a4390557966320dd0ab95d74b115dfd5e940740'],
     [CODER_OWNED_QA_PROMPT, '662b1e20d219237c8d4dfa4add74d10f54bc9bc1888dc0e7ab267f2ece7f7eb8'],
     [
       CODER_OWNED_QA_REVIEW_PROMPT,
       'f915282840b18893b1200da0d648e2e37032b9488492674ac5d4ed1fefe80f20',
     ],
-    [RESEARCH_PROMPT, 'dec331f45759fa496387fe41ae6d62627a361ee3dc2c24d4c004e6b35bcfea6a'],
+    [RESEARCH_PROMPT, '8e19248b31a36c8b4f7f09ee09aae1a6acd6221867b12c093359b0930b72fa83'],
     [RESEARCH_REVIEW_PROMPT, '199f7ad7c972d1495f978924a26cff953680c8fddf73f33e25de3b0bb4621c56'],
     [REVIEW_ONLY_REVIEW_PROMPT, '9e223b7e6c1c306e66288916cc42e2f5f7211b997cfaf3db06f9ecb7033317ee'],
   ]);

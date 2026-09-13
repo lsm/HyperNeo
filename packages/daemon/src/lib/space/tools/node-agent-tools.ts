@@ -328,7 +328,9 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
         ...topologyTargets,
         ...crossNodePeers.map((p) => p.agentName),
       ]);
-      const permittedTargets = [...permittedTargetSet, 'space-agent'];
+      const permittedTargets = config.replyRoutingLookup?.(myAgentName)
+        ? [...permittedTargetSet, 'space-agent']
+        : [...permittedTargetSet];
       const channelTopologyDeclared = !resolver.isEmpty();
 
       return jsonResult({
