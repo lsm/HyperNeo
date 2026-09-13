@@ -2,7 +2,6 @@ import {
   isRateOrUsageLimited,
   isWorkflowRecoveryTransition,
   resolveNodeAgents,
-  type CreateSpaceTaskParams,
   type MessageHub,
   type PaginatedSpaceTaskResult,
   type SpaceBlockReason,
@@ -103,64 +102,6 @@ export function setupSpaceTaskHandlers(
   internalEventBus: InternalEventBus<DaemonInternalEventMap>,
   spaceRuntimeService?: SpaceRuntimeService
 ): void {
-  messageHub.onRequest('spaceTask.create', async (data) => {
-    const params = data as CreateSpaceTaskParams & { draft?: boolean; goalId?: unknown };
-
-    if (!params.spaceId) {
-      throw new Error('spaceId is required');
-    }
-    if (!params.title || params.title.trim() === '') {
-      throw new Error('title is required');
-    }
-    if (params.description === undefined || params.description === null) {
-      throw new Error('description must not be null');
-    }
-
-    const space = await spaceManager.getSpace(params.spaceId);
-    if (!space) {
-      throw new Error(`Space not found: ${params.spaceId}`);
-    }
-
-    const taskManager = taskManagerFactory(params.spaceId);
-    const {
-      spaceId,
-      draft,
-      id: _id,
-      goalId: _goalId,
-      createdBy: _cb,
-      createdBySession: _cbs,
-      ...rest
-    } = params as typeof params & { id?: unknown };
-
-    if (draft && rest.status && rest.status !== 'draft') {
-      throw new Error('draft: true cannot be combined with a non-draft status');
-    }
-    if (draft) {
-      rest.status = 'draft';
-    }
-    if (rest.status === 'stopped') {
-      throw new Error(
-        `spaceTask.create cannot create a task with initial status 'stopped'. ` +
-          `Tasks are stopped through the task Stop action once it lands — ` +
-          `'stopped' is a dormant capability until then.`
-      );
-    }
-    const task = await taskManager.createTask(rest);
-
-    internalEventBus
-      .publish('space.task.created', {
-        sessionId: 'global',
-        spaceId,
-        taskId: task.id,
-        task,
-      })
-      .catch((err) => {
-        log.warn('Failed to emit space.task.created:', err);
-      });
-
-    return task;
-  });
-
   messageHub.onRequest('spaceTask.list', async (data) => {
     const params = data as {
       spaceId: string;
