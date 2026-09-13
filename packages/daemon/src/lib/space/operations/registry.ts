@@ -11,6 +11,10 @@ import {
   createSpaceTaskDependencyEditor,
   type SpaceTaskDependencyDependencies,
 } from './task-dependencies.ts';
+import {
+  createSpaceTransitionTaskOperation,
+  type SpaceTransitionTaskDependencies,
+} from './transition-task.ts';
 import type { Database } from '../../../storage/database.ts';
 import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
 import { createDatabaseOperationCatalog } from '../../operations/database-catalog.ts';
@@ -34,7 +38,8 @@ export function createSpaceOperationRegistryProvider(
     > &
     Required<Pick<CompleteTaskDependencies, 'requiresPostApprovalOwner' | 'completionGate'>>,
   pendingCompletion?: OwnedPendingCompletionDependencies,
-  directStart?: DirectStartOperationDependencies
+  directStart?: DirectStartOperationDependencies,
+  transition?: Omit<SpaceTransitionTaskDependencies, 'db'>
 ) {
   let registry: OperationRegistry | undefined;
   return () =>
@@ -55,6 +60,14 @@ export function createSpaceOperationRegistryProvider(
         tasks
       ),
       complete: createCompleteTaskOperation(() => database.getDatabase(), tasks),
+      transition: transition
+        ? createSpaceTransitionTaskOperation({
+            ...transition,
+            get db() {
+              return database.getDatabase();
+            },
+          })
+        : undefined,
       pendingCompletion: pendingCompletion
         ? createOwnedPendingCompletionOperation(pendingCompletion)
         : undefined,
