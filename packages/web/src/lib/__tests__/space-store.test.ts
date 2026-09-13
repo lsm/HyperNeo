@@ -308,7 +308,6 @@ function makeMockHub() {
         const input = (params?.input ?? {}) as Record<string, unknown>;
         return makeTask(input.taskId as string, input.status as string);
       }
-      if (method === 'spaceTask.recoverWorkflow') return makeTask('t1', 'in_progress');
       if (method === 'spaceAgentV2.update') return { agent: makeLongHorizonAgent('a1') };
       if (method === 'spaceAgentV2.create') {
         return {
@@ -1789,6 +1788,28 @@ describe('SpaceStore — CRUD methods', () => {
       status: 'in_progress',
     });
     expect(task.status).toBe('in_progress');
+  });
+
+  it('publishTask transitions draft to open with an expectedStatus guard', async () => {
+    await spaceStore.selectSpace('space-1');
+    mockHub.request.mockClear();
+
+    const task = await spaceStore.publishTask('t1');
+
+    expect(mockHub.request).toHaveBeenCalledWith('operation.invoke', {
+      name: 'task.transition',
+      input: { taskId: 't1', status: 'open', expectedStatus: 'draft' },
+    });
+    expect(task.status).toBe('open');
+  });
+
+  it('publishTask throws when the task is no longer draft', async () => {
+    await spaceStore.selectSpace('space-1');
+    transitionResult = 'invalid_transition';
+
+    await expect(spaceStore.publishTask('t1')).rejects.toThrow(
+      'Cannot move task t1 to open: invalid_transition'
+    );
   });
 
   it('recoverWorkflowTask transitions through the operations door without a spaceId', async () => {
