@@ -192,6 +192,7 @@ export class SpaceTaskManager {
       expectedWorkflowRunId?: string | null;
       expectedPendingCompletionGeneration?: number;
       expectedPostApprovalSessionId?: string | null;
+      guardWrite?: (current: SpaceTask) => string | undefined;
       onCascadedTasks?: (cascaded: SpaceTask[]) => Promise<void>;
     }
   ): Promise<SpaceTask> {
@@ -246,6 +247,16 @@ export class SpaceTaskManager {
     let updated: SpaceTask;
     try {
       updated = this.db.transaction(() => {
+        if (options?.guardWrite) {
+          const current = this.taskRepo.getTask(taskId);
+          if (!current) {
+            throw new Error(`Task not found: ${taskId}`);
+          }
+          const rejectionReason = options.guardWrite(current);
+          if (rejectionReason !== undefined) {
+            throw new StaleTaskGuardError(`Task ${taskId} rejected: ${rejectionReason}`);
+          }
+        }
         const result = this.taskRepo.updateTask(
           taskId,
           updates,
