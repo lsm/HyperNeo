@@ -63,7 +63,7 @@ async function deleteSpace(page: Page, spaceId: string): Promise<void> {
     await page.evaluate(async (id) => {
       const hub = window.__messageHub || window.appState?.messageHub;
       if (!hub?.request) return;
-      await hub.request('space.delete', { id });
+      await hub.request('space.delete', { id }, { timeout: 60000 });
     }, spaceId);
   } catch {}
 }

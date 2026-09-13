@@ -329,6 +329,16 @@ export function setupSpaceHandlers(
       throw new Error('id is required');
     }
 
+    let fencedSpace: Space | null = null;
+    const publishAbandonedFence = () => {
+      if (!fencedSpace) return;
+      internalEventBus
+        .publish('space.updated', { sessionId: 'global', spaceId: params.id, space: fencedSpace })
+        .catch((err) => {
+          log.warn('Failed to emit space.updated after a failed delete:', err);
+        });
+    };
+
     deletingSpaceIds.add(params.id);
     let outcome: DeleteSpaceResult;
     try {
@@ -336,7 +346,7 @@ export function setupSpaceHandlers(
         {
           fenceSpace: async (spaceId) => {
             if (!(await spaceManager.getSpace(spaceId))) return false;
-            await spaceManager.stopSpace(spaceId);
+            fencedSpace = await spaceManager.stopSpace(spaceId);
             return true;
           },
           quiesceSpace: spaceRuntimeService
@@ -346,10 +356,14 @@ export function setupSpaceHandlers(
         },
         params.id
       );
+    } catch (err) {
+      publishAbandonedFence();
+      throw err;
     } finally {
       deletingSpaceIds.delete(params.id);
     }
     if (outcome === 'space_not_found') {
+      publishAbandonedFence();
       throw new Error(`Space not found: ${params.id}`);
     }
 
