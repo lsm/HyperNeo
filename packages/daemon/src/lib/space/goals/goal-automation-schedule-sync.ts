@@ -15,6 +15,12 @@ function goalAutomationSelfNagMetadata(scopeId: string): Record<string, unknown>
   return { goalAutomationKind: 'self_nag', goalAutomationScopeId: scopeId };
 }
 
+export function orderSelfNagSchedules<T extends { id: string; createdAt: number }>(
+  schedules: T[]
+): T[] {
+  return [...schedules].sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id));
+}
+
 export function pauseScheduleStrict(scheduleService: ScheduleService, scheduleId: string): void {
   let result;
   try {
@@ -40,13 +46,15 @@ export function syncGoalAutomationSelfNagScheduleForScope(params: {
   const { goalRepo, scheduleService, scope, db } = params;
   const run = () => {
     const policy = readAutomationPolicyForScope(scope);
-    const allScopeSchedules = scheduleService
-      .listSchedules(scope.spaceId)
-      .filter(
-        (schedule) =>
-          schedule.createdByAgent === 'goal-automation-service' &&
-          readSelfNagScheduleScopeId(schedule) === scope.id
-      );
+    const allScopeSchedules = orderSelfNagSchedules(
+      scheduleService
+        .listSchedules(scope.spaceId)
+        .filter(
+          (schedule) =>
+            schedule.createdByAgent === 'goal-automation-service' &&
+            readSelfNagScheduleScopeId(schedule) === scope.id
+        )
+    );
     for (const sched of allScopeSchedules) {
       if (
         sched.status === 'active' &&
@@ -68,14 +76,20 @@ export function syncGoalAutomationSelfNagScheduleForScope(params: {
     const goal = goalRepo.getById(scope.spaceGoalId);
     if (!goal || goal.status !== 'active') return;
     const scopeLabel = `scope:${scope.id}`;
-    const existing = allScopeSchedules
-      .filter((schedule) => schedule.goalId === goal.id)
-      .find((schedule) => schedule.status !== 'completed');
+    const goalSchedules = allScopeSchedules.filter((schedule) => schedule.goalId === goal.id);
+    const existing = goalSchedules.find((schedule) => schedule.status !== 'completed');
     if (!policy.selfNagCronExpression) {
-      if (existing?.status === 'active') pauseScheduleStrict(scheduleService, existing.id);
+      for (const sched of goalSchedules) {
+        if (sched.status === 'active') pauseScheduleStrict(scheduleService, sched.id);
+      }
       return;
     }
     if (existing) {
+      for (const sched of goalSchedules) {
+        if (sched.id !== existing.id && sched.status === 'active') {
+          pauseScheduleStrict(scheduleService, sched.id);
+        }
+      }
       scheduleService.updateSchedule(existing.id, {
         title: `Evolve self-nag: ${goal.title}`,
         description: `Run Evolve automation for goal: ${goal.title}`,
