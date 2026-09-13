@@ -30,6 +30,10 @@ vi.mock('../../../lib/runtime-capabilities', () => ({
   NATIVE_FOLDER_PICKER_TIMEOUT_MS: 605000,
 }));
 
+vi.mock('../../../lib/toast', () => ({
+  toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
+}));
+
 vi.mock('../../ui/Modal', () => ({
   Modal: ({
     isOpen,
@@ -78,6 +82,7 @@ import {
   hasNativeFolderPicker,
   NATIVE_FOLDER_PICKER_TIMEOUT_MS,
 } from '../../../lib/runtime-capabilities';
+import { toast } from '../../../lib/toast';
 import { SpaceCreateDialog } from '../SpaceCreateDialog';
 
 const SPACE_MOCK = {
@@ -102,6 +107,9 @@ describe('SpaceCreateDialog', () => {
     mockRequest.mockReset();
     mockGetHubIfConnected.mockReset();
     mockNavigateToSpace.mockReset();
+    vi.mocked(toast.success).mockClear();
+    vi.mocked(toast.error).mockClear();
+    vi.mocked(toast.warning).mockClear();
     vi.mocked(hasNativeFolderPicker).mockReturnValue(false);
   });
 
@@ -248,6 +256,57 @@ describe('SpaceCreateDialog', () => {
       expect(mockNavigateToSpace).toHaveBeenCalledWith('my-app');
       expect(onClose).toHaveBeenCalled();
     });
+    expect(toast.warning).not.toHaveBeenCalled();
+  });
+
+  it('surfaces seed warnings via toast and still navigates and closes', async () => {
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockResolvedValue({
+      ...SPACE_MOCK,
+      seedWarnings: ['Failed to seed agents: task-manager.default'],
+    });
+
+    const { getByPlaceholderText, getByRole } = render(
+      <SpaceCreateDialog isOpen={true} onClose={onClose} />
+    );
+
+    fireEvent.input(getByPlaceholderText('/Users/you/projects/my-app'), {
+      target: { value: '/projects/my-app' },
+    });
+
+    const form = getByRole('dialog').querySelector('form');
+    fireEvent.submit(form!);
+
+    await waitFor(() => {
+      expect(toast.warning).toHaveBeenCalledWith('Failed to seed agents: task-manager.default');
+      expect(mockNavigateToSpace).toHaveBeenCalledWith('my-app');
+      expect(onClose).toHaveBeenCalled();
+    });
+  });
+
+  it('joins multiple seed warnings into a single toast', async () => {
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockResolvedValue({
+      ...SPACE_MOCK,
+      seedWarnings: ['Failed to seed agents: task-manager.default', 'Failed to seed workflows'],
+    });
+
+    const { getByPlaceholderText, getByRole } = render(
+      <SpaceCreateDialog isOpen={true} onClose={onClose} />
+    );
+
+    fireEvent.input(getByPlaceholderText('/Users/you/projects/my-app'), {
+      target: { value: '/projects/my-app' },
+    });
+
+    const form = getByRole('dialog').querySelector('form');
+    fireEvent.submit(form!);
+
+    await waitFor(() => {
+      expect(toast.warning).toHaveBeenCalledWith(
+        'Failed to seed agents: task-manager.default · Failed to seed workflows'
+      );
+    });
   });
 
   it('shows error message when space.create fails', async () => {
@@ -314,7 +373,7 @@ describe('SpaceCreateDialog', () => {
   });
 
   it('restores the default seed choice after the dialog is closed', () => {
-    const { getByLabelText, getByRole } = render(
+    const { getByLabelText, getByRole, rerender } = render(
       <SpaceCreateDialog isOpen={true} onClose={onClose} />
     );
 
@@ -322,12 +381,12 @@ describe('SpaceCreateDialog', () => {
     expect((getByLabelText(/Start with an agent/i) as HTMLInputElement).checked).toBe(false);
 
     fireEvent.click(getByRole('button', { name: 'Cancel' }));
-    cleanup();
+    expect(onClose).toHaveBeenCalled();
 
-    const reopened = render(<SpaceCreateDialog isOpen={true} onClose={onClose} />);
-    expect((reopened.getByLabelText(/Start with an agent/i) as HTMLInputElement).checked).toBe(
-      true
-    );
+    rerender(<SpaceCreateDialog isOpen={false} onClose={onClose} />);
+    rerender(<SpaceCreateDialog isOpen={true} onClose={onClose} />);
+
+    expect((getByLabelText(/Start with an agent/i) as HTMLInputElement).checked).toBe(true);
   });
 
   it('calls onClose when Cancel is clicked', () => {

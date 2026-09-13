@@ -1,4 +1,4 @@
-import { DEFAULT_SEED_AGENT_TEMPLATE_KEY, type Space } from '@hyperneo/shared';
+import { DEFAULT_SEED_AGENT_TEMPLATE_KEY, type SpaceCreateResult } from '@hyperneo/shared';
 import { useState } from 'preact/hooks';
 import { connectionManager } from '../../lib/connection-manager';
 import { navigateToSpace } from '../../lib/router';
@@ -6,6 +6,7 @@ import {
   hasNativeFolderPicker,
   NATIVE_FOLDER_PICKER_TIMEOUT_MS,
 } from '../../lib/runtime-capabilities';
+import { toast } from '../../lib/toast';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 
@@ -122,7 +123,7 @@ export function SpaceCreateDialog({ isOpen, onClose }: SpaceCreateDialogProps) {
       const createTimeoutMs =
         SPACE_CREATE_TIMEOUT_MS + additionalWorkspaces.length * PER_WORKSPACE_TIMEOUT_MS;
 
-      const space = await hub.request<Space>(
+      const space = await hub.request<SpaceCreateResult>(
         'space.create',
         {
           workspacePath: workspacePath.trim(),
@@ -136,6 +137,10 @@ export function SpaceCreateDialog({ isOpen, onClose }: SpaceCreateDialogProps) {
 
       if (!space) {
         throw new Error('Server returned no data');
+      }
+
+      if (space.seedWarnings && space.seedWarnings.length > 0) {
+        toast.warning(space.seedWarnings.join(' · '));
       }
 
       navigateToSpace(space.slug);
