@@ -64,6 +64,7 @@ import { createTables, runMigrations } from '../../../../src/storage/schema/inde
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { createTestInternalEventBus } from '../../../helpers/database.ts';
 import { seedUnifiedAgentMirror } from '../../helpers/seed-unified-agent';
+import { seedSpaceManagerAgent } from '../../helpers/seed-space-manager';
 
 const NOW = Date.now();
 
@@ -4354,7 +4355,7 @@ describe('ensureAgentSession() / isAgentTargetLifecycleEligible()', () => {
     const db = makeTestDb();
     seedEnsureSpace(db);
     const repo = new SpaceLongHorizonAgentRepository(db as never);
-    repo.ensureSpaceManager(ENSURE_SPACE_ID);
+    seedSpaceManagerAgent(repo, ENSURE_SPACE_ID);
     const session = makeEnsureSession('active');
     let live: AgentSession | null = null;
     const sessionManager = {
