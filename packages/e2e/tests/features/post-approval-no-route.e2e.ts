@@ -93,16 +93,16 @@ test.describe('Post-approval routing: no-route branch', () => {
     await page.waitForURL(`/space/${fixture.spaceId}/task/${fixture.taskId}`, { timeout: 10000 });
 
     const status = await page.evaluate(
-      async ({ sid, tid }) => {
+      async ({ tid }) => {
         const hub = window.__messageHub || window.appState?.messageHub;
         if (!hub?.request) throw new Error('MessageHub not available');
-        const task = (await hub.request('spaceTask.get', {
-          spaceId: sid,
-          taskId: tid,
+        const task = (await hub.request('operation.invoke', {
+          name: 'task.get',
+          input: { taskId: tid },
         })) as { status: string };
         return task.status;
       },
-      { sid: fixture.spaceId, tid: fixture.taskId }
+      { tid: fixture.taskId }
     );
     expect(status).toBe('approved');
   });

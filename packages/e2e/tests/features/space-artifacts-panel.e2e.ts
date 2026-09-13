@@ -67,9 +67,9 @@ async function createSpaceWithRunAndChanges(
       const dispatchDeadline = Date.now() + 30_000;
       let runId: string | null = null;
       while (Date.now() < dispatchDeadline) {
-        const current = (await hub.request('spaceTask.get', {
-          spaceId,
-          taskId: taskRes.id,
+        const current = (await hub.request('operation.invoke', {
+          name: 'task.get',
+          input: { taskId: taskRes.id },
         })) as { workflowRunId?: string | null };
         if (current.workflowRunId) {
           runId = current.workflowRunId;

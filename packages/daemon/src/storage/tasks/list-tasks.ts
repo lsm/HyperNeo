@@ -1,3 +1,4 @@
+import type { SpaceBlockReason } from '@hyperneo/shared/types/space';
 import type { TaskCore, TaskLifecycleStatus } from '@hyperneo/shared/types/task-core';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../sqlite-compat.ts';
@@ -12,6 +13,8 @@ export interface TaskListCursor {
 export interface ListTasksInput {
   spaceId?: string;
   status?: TaskLifecycleStatus;
+  blockReason?: SpaceBlockReason | null;
+  blockReasonNotIn?: SpaceBlockReason[];
   limit?: number;
   offset?: number;
   before?: TaskListCursor;
@@ -42,6 +45,18 @@ function buildTaskListQuery(input: ListTasksInput): TaskListQuery {
     values.push(input.status);
   } else {
     where.push("status != 'archived'");
+  }
+  if (input.blockReason !== undefined) {
+    if (input.blockReason === null) {
+      where.push('block_reason IS NULL');
+    } else {
+      where.push('block_reason = ?');
+      values.push(input.blockReason);
+    }
+  } else if (input.blockReasonNotIn && input.blockReasonNotIn.length > 0) {
+    const placeholders = input.blockReasonNotIn.map(() => '?').join(', ');
+    where.push(`(block_reason IS NULL OR block_reason NOT IN (${placeholders}))`);
+    for (const reason of input.blockReasonNotIn) values.push(reason);
   }
   const countSql = `SELECT COUNT(*) AS total FROM space_tasks WHERE ${where.join(' AND ')}`;
   const countValues = [...values];

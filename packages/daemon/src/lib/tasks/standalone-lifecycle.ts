@@ -16,6 +16,7 @@ export type StandaloneTaskStatus = (typeof STANDALONE_TASK_STATUSES)[number];
 export interface StandaloneTaskTransitionInput {
   status: StandaloneTaskStatus;
   result?: string;
+  expectedStatus?: StandaloneTaskStatus;
 }
 
 export type StandaloneTaskLifecyclePatch = Pick<

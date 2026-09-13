@@ -43,9 +43,9 @@ async function createSpaceWithRun(
       const dispatchDeadline = Date.now() + 30_000;
       let runId: string | null = null;
       while (Date.now() < dispatchDeadline) {
-        const current = (await hub.request('spaceTask.get', {
-          spaceId: spaceRes.id,
-          taskId: taskRes.id,
+        const current = (await hub.request('operation.invoke', {
+          name: 'task.get',
+          input: { taskId: taskRes.id },
         })) as { workflowRunId?: string | null };
         if (current.workflowRunId) {
           runId = current.workflowRunId;
@@ -188,9 +188,9 @@ test.describe('Space Happy Path Pipeline (Task-First)', () => {
       async ({ sid, tid }) => {
         const hub = window.__messageHub || window.appState?.messageHub;
         if (!hub?.request) throw new Error('MessageHub not available');
-        const current = (await hub.request('spaceTask.get', {
-          spaceId: sid,
-          taskId: tid,
+        const current = (await hub.request('operation.invoke', {
+          name: 'task.get',
+          input: { taskId: tid },
         })) as { status: string };
         if (current.status === 'pending') {
           await hub.request('spaceTask.update', {

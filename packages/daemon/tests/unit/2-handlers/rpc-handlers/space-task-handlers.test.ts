@@ -377,45 +377,6 @@ describe('space-task-handlers', () => {
     });
   });
 
-  describe('spaceTask.get', () => {
-    beforeEach(() => setup());
-
-    it('returns the task when found', async () => {
-      const result = await call('spaceTask.get', {
-        spaceId: 'space-1',
-        taskId: 'task-1',
-      });
-      expect(result).toEqual(mockTask);
-    });
-
-    it('verifies space existence before fetching task', async () => {
-      setup(null);
-      await expect(call('spaceTask.get', { spaceId: 'ghost', taskId: 'task-1' })).rejects.toThrow(
-        'Space not found: ghost'
-      );
-      expect(taskManager.getTask).not.toHaveBeenCalled();
-    });
-
-    it('throws when spaceId is missing', async () => {
-      await expect(call('spaceTask.get', { taskId: 'task-1' })).rejects.toThrow(
-        'spaceId is required'
-      );
-    });
-
-    it('throws when taskId is missing', async () => {
-      await expect(call('spaceTask.get', { spaceId: 'space-1' })).rejects.toThrow(
-        'taskId is required'
-      );
-    });
-
-    it('throws when task is not found', async () => {
-      setup(mockSpace, null);
-      await expect(call('spaceTask.get', { spaceId: 'space-1', taskId: 'ghost' })).rejects.toThrow(
-        'Task not found: ghost'
-      );
-    });
-  });
-
   describe('spaceTask.archive via spaceTask.update', () => {
     it('archives a done task via status transition and publishes space.task.updated', async () => {
       const doneTask = { ...mockTask, status: 'done' as const };

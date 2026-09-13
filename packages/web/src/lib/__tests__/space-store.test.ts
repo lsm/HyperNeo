@@ -22,6 +22,7 @@ let mockEventHandlers: Map<string, (event: unknown) => void>;
 let mockEventHandlerSets: Map<string, Set<(event: unknown) => void>>;
 let mockHub: ReturnType<typeof makeMockHub>;
 let taskDetailResult: SpaceTask | null = null;
+let transitionResult: SpaceTask | string | null | undefined;
 let templateListResult: SpaceAgentTemplate[] | null = null;
 let updateTemplateResult: SpaceAgentTemplate | null | undefined;
 
@@ -302,7 +303,11 @@ function makeMockHub() {
         return makeTask(input.taskId as string, input.approved ? 'approved' : 'in_progress');
       }
       if (method === 'spaceTask.update') return makeTask('t1', 'in_progress');
-      if (method === 'spaceTask.recoverWorkflow') return makeTask('t1', 'in_progress');
+      if (method === 'operation.invoke' && params?.name === 'task.transition') {
+        if (transitionResult !== undefined) return transitionResult;
+        const input = (params?.input ?? {}) as Record<string, unknown>;
+        return makeTask(input.taskId as string, input.status as string);
+      }
       if (method === 'spaceAgentV2.update') return { agent: makeLongHorizonAgent('a1') };
       if (method === 'spaceAgentV2.create') {
         return {
@@ -1711,7 +1716,10 @@ describe('SpaceStore — task visibility after real-time events', () => {
 });
 
 describe('SpaceStore — CRUD methods', () => {
-  beforeEach(resetStore);
+  beforeEach(async () => {
+    transitionResult = undefined;
+    await resetStore();
+  });
   afterEach(() => vi.clearAllMocks());
 
   it('updateSpace calls space.update RPC and applies direct response', async () => {
@@ -1782,16 +1790,55 @@ describe('SpaceStore — CRUD methods', () => {
     expect(task.status).toBe('in_progress');
   });
 
-  it('recoverWorkflowTask calls spaceTask.recoverWorkflow RPC', async () => {
+  it('publishTask transitions draft to open with an expectedStatus guard', async () => {
+    await spaceStore.selectSpace('space-1');
+    mockHub.request.mockClear();
+
+    const task = await spaceStore.publishTask('t1');
+
+    expect(mockHub.request).toHaveBeenCalledWith('operation.invoke', {
+      name: 'task.transition',
+      input: { taskId: 't1', status: 'open', expectedStatus: 'draft' },
+    });
+    expect(task.status).toBe('open');
+  });
+
+  it('publishTask throws when the task is no longer draft', async () => {
+    await spaceStore.selectSpace('space-1');
+    transitionResult = 'invalid_transition';
+
+    await expect(spaceStore.publishTask('t1')).rejects.toThrow(
+      'Cannot move task t1 to open: invalid_transition'
+    );
+  });
+
+  it('recoverWorkflowTask transitions through the operations door without a spaceId', async () => {
     await spaceStore.selectSpace('space-1');
     const task = await spaceStore.recoverWorkflowTask('t1', 'in_progress');
 
-    expect(mockHub.request).toHaveBeenCalledWith('spaceTask.recoverWorkflow', {
-      taskId: 't1',
-      spaceId: 'space-1',
-      status: 'in_progress',
+    expect(mockHub.request).toHaveBeenCalledWith('operation.invoke', {
+      name: 'task.transition',
+      input: { taskId: 't1', status: 'in_progress' },
     });
     expect(task.status).toBe('in_progress');
+  });
+
+  it('recoverWorkflowTask throws when the door returns a typed rejection', async () => {
+    await spaceStore.selectSpace('space-1');
+    transitionResult = 'invalid_transition';
+
+    await expect(spaceStore.recoverWorkflowTask('t1', 'in_progress')).rejects.toThrow(
+      'Cannot move task t1 to in_progress: invalid_transition'
+    );
+  });
+
+  it('recoverWorkflowTask throws when the door returns null', async () => {
+    await spaceStore.selectSpace('space-1');
+    transitionResult = null;
+
+    await expect(spaceStore.recoverWorkflowTask('t1', 'in_progress')).rejects.toThrow(
+      'Task t1 is unavailable'
+    );
   });
 
   it('listGoals calls spaceGoal.list RPC and updates goal state', async () => {

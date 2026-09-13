@@ -76,9 +76,9 @@ async function startWorkflowRunAndGetTask(
   const deadline = Date.now() + RUN_DISPATCH_TIMEOUT;
   let task: { id: string; status: string; workflowRunId?: string | null } | null = null;
   while (Date.now() < deadline) {
-    const current = (await daemon.messageHub.request('spaceTask.get', {
-      spaceId,
-      taskId: created.id,
+    const current = (await daemon.messageHub.request('operation.invoke', {
+      name: 'task.get',
+      input: { taskId: created.id },
     })) as { id: string; status: string; workflowRunId?: string | null };
     if (current.workflowRunId && current.status !== 'open') {
       task = current;

@@ -16,6 +16,7 @@ export const SpaceTransitionTaskInputSchema = z
     taskId: z.string().min(1),
     status: TaskCoreSchema.shape.status,
     result: z.string().optional(),
+    expectedStatus: TaskCoreSchema.shape.status.optional(),
   })
   .strict();
 export type SpaceTransitionTaskInput = z.infer<typeof SpaceTransitionTaskInputSchema>;
@@ -40,6 +41,7 @@ export function resolveOwner(input: In, deps: Deps): Gate<string, Result> {
     taskId: input.taskId,
     status: input.status as StandaloneTaskStatus,
     result: input.result,
+    expectedStatus: input.expectedStatus as StandaloneTaskStatus | undefined,
   };
   return { reason: transitionStandaloneTask(deps.db, standalone, deps.notifyStandalone) };
 }
@@ -50,6 +52,11 @@ export function admitCaller(
 ): Gate<string, null> {
   const admitted = admitSpaceTaskCaller({ kind: 'space', spaceId }, caller, deps);
   return 'reason' in admitted ? { reason: null } : { value: spaceId };
+}
+export function requireExpectedStatus(owned: OwnedTask, input: In): Gate<OwnedTask, Result> {
+  return input.expectedStatus === undefined || owned.task.status === input.expectedStatus
+    ? { value: owned }
+    : { reason: 'invalid_transition' };
 }
 export async function loadTask(
   spaceId: string,

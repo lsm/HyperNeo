@@ -94,6 +94,14 @@ function invoke(
   return invokeOperation(registry, 'task.transition', input, caller);
 }
 
+function readStandaloneStatus(taskId: string): string {
+  return (
+    db.prepare('SELECT status FROM space_tasks WHERE id = ?').get(taskId) as {
+      status: string;
+    }
+  ).status;
+}
+
 test('a standalone task passes through to the plain status writer', async () => {
   const task = createStandaloneTask(db, { title: 'Solo' }, undefined, () => {});
   const result = await invoke({ taskId: task.id, status: 'in_progress' }, rpc);
@@ -256,6 +264,70 @@ test('writeStatus threads expectedWorkflowRunId from the loaded task into setTas
     task.id,
     'archived',
     expect.objectContaining({ expectedStatus: 'open', expectedWorkflowRunId: run.id })
+  );
+});
+
+test('a matching expectedStatus is threaded through and the write proceeds', async () => {
+  const task = tasks.createTask({ spaceId, title: 'Draft', description: '' });
+  tasks.updateTask(task.id, { status: 'draft' });
+  const result = await invoke({ taskId: task.id, status: 'open', expectedStatus: 'draft' }, rpc);
+  expect(result).toMatchObject({ kind: 'completed', value: { id: task.id, status: 'open' } });
+  expect(tasks.getTask(task.id)?.status).toBe('open');
+});
+
+test('a stale expectedStatus rejects with invalid_transition and leaves the task alone', async () => {
+  const task = tasks.createTask({ spaceId, title: 'Finished', description: '' });
+  tasks.updateTask(task.id, { status: 'done' });
+  const result = await invoke({ taskId: task.id, status: 'open', expectedStatus: 'draft' }, rpc);
+  expect(result).toEqual({ kind: 'completed', value: 'invalid_transition' });
+  expect(tasks.getTask(task.id)?.status).toBe('done');
+});
+
+test('a stale expectedStatus rejects before a runtime executor can run', async () => {
+  const task = tasks.createTask({ spaceId, title: 'Workflow', description: '' });
+  const run = createWorkflowRun();
+  tasks.updateTask(task.id, { workflowRunId: run.id, status: 'in_progress' });
+  const stopForStatus = mock(async () => tasks.getTask(task.id));
+  const result = await invoke(
+    { taskId: task.id, status: 'cancelled', expectedStatus: 'open' },
+    rpc,
+    { stopForStatus }
+  );
+  expect(result).toEqual({ kind: 'completed', value: 'invalid_transition' });
+  expect(stopForStatus).not.toHaveBeenCalled();
+  expect(tasks.getTask(task.id)?.status).toBe('in_progress');
+});
+
+test('a stale expectedStatus rejects a standalone transition inside its transaction', async () => {
+  const task = createStandaloneTask(db, { title: 'Solo' }, undefined, () => {});
+  const result = await invoke(
+    { taskId: task.id, status: 'in_progress', expectedStatus: 'done' },
+    rpc
+  );
+  expect(result).toEqual({ kind: 'completed', value: 'invalid_transition' });
+  expect(readStandaloneStatus(task.id)).toBe('open');
+});
+
+test('a matching expectedStatus lets a standalone transition through', async () => {
+  const task = createStandaloneTask(db, { title: 'Solo' }, undefined, () => {});
+  const result = await invoke(
+    { taskId: task.id, status: 'in_progress', expectedStatus: 'open' },
+    rpc
+  );
+  expect(result).toMatchObject({ kind: 'completed', value: { status: 'in_progress' } });
+  expect(readStandaloneStatus(task.id)).toBe('in_progress');
+});
+
+test('an omitted expectedStatus still guards on the loaded status', async () => {
+  const task = tasks.createTask({ spaceId, title: 'T', description: '' });
+  const setTaskStatus = mock(async () => tasks.getTask(task.id)!);
+  await invoke({ taskId: task.id, status: 'in_progress' }, rpc, {
+    getTaskManager: () => ({ getTask: async (id) => tasks.getTask(id), setTaskStatus }),
+  });
+  expect(setTaskStatus).toHaveBeenCalledWith(
+    task.id,
+    'in_progress',
+    expect.objectContaining({ expectedStatus: 'open' })
   );
 });
 

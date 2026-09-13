@@ -48,7 +48,7 @@ import { generateUUID, isUUID, Logger } from '@hyperneo/shared';
 import { computed, signal } from '@preact/signals';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { connectionManager } from './connection-manager';
-import { invokeOperation } from './operations';
+import { invokeOperation, transitionTask } from './operations';
 import { currentSpaceCanonicalIdSignal, currentSpaceIdSignal } from './signals';
 
 const logger = new Logger('hyperneo:web:spacestore');
@@ -2164,11 +2164,7 @@ class SpaceStore {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
 
-    return hub.request<SpaceTask>('spaceTask.recoverWorkflow', {
-      taskId,
-      spaceId,
-      status,
-    });
+    return transitionTask(hub, { taskId, status });
   }
 
   async publishTask(taskId: string): Promise<SpaceTask> {
@@ -2178,10 +2174,7 @@ class SpaceStore {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
 
-    return hub.request<SpaceTask>('spaceTask.publish', {
-      taskId,
-      spaceId,
-    });
+    return transitionTask(hub, { taskId, status: 'open', expectedStatus: 'draft' });
   }
 
   async runTaskDirectly(taskId: string): Promise<DirectTaskStartResult> {
