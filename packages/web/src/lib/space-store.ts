@@ -277,6 +277,10 @@ function formatCancellationRejection(reason: string): string {
   return `Cancellation rejected: ${reason}`;
 }
 
+function isFinishedTaskStatus(status: SpaceTaskStatus | undefined): boolean {
+  return status === 'done' || status === 'archived';
+}
+
 export interface CreateTaskOperationParams {
   title: string;
   description?: string;
@@ -2174,6 +2178,13 @@ class SpaceStore {
 
     const result = await invokeOperation<CancelTaskResult>(hub, 'task.cancel', { taskId });
     if (!result.accepted) {
+      const status = this.tasks.value.find((task) => task.id === taskId)?.status;
+      if (status === 'cancelled') {
+        return result;
+      }
+      if (isFinishedTaskStatus(status)) {
+        throw new Error('This task has already finished and cannot be cancelled.');
+      }
       throw new Error(formatCancellationRejection(result.reason));
     }
     return result;

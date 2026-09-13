@@ -2467,6 +2467,64 @@ describe('SpaceStore — cancelTask', () => {
   it('throws when no space selected', async () => {
     await expect(spaceStore.cancelTask('task-1')).rejects.toThrow('No space selected');
   });
+
+  it('resolves without throwing when a rejection targets an already-cancelled task', async () => {
+    await spaceStore.selectSpace('space-1');
+    spaceStore.tasks.value = [makeTask('task-1', 'cancelled')];
+    mockHub.request.mockResolvedValueOnce({
+      accepted: false,
+      reason: 'cancellation_invalid_transition',
+    });
+
+    const result = await spaceStore.cancelTask('task-1');
+
+    expect(result).toEqual({ accepted: false, reason: 'cancellation_invalid_transition' });
+  });
+
+  it.each(['done', 'archived'])(
+    'throws a finished-task message, not the try-again text, when a %s task rejects cancellation',
+    async (status) => {
+      await spaceStore.selectSpace('space-1');
+      spaceStore.tasks.value = [makeTask('task-1', status)];
+      mockHub.request.mockResolvedValueOnce({
+        accepted: false,
+        reason: 'cancellation_unavailable',
+      });
+
+      let caught: Error | undefined;
+      try {
+        await spaceStore.cancelTask('task-1');
+      } catch (err) {
+        caught = err as Error;
+      }
+
+      expect(caught?.message).toBe('This task has already finished and cannot be cancelled.');
+      expect(caught?.message).not.toContain('Try again after it changes');
+    }
+  );
+
+  it('throws the existing mapped message when a rejection targets a live task', async () => {
+    await spaceStore.selectSpace('space-1');
+    spaceStore.tasks.value = [makeTask('task-1', 'in_progress')];
+    mockHub.request.mockResolvedValueOnce({
+      accepted: false,
+      reason: 'cancellation_denied',
+    });
+
+    await expect(spaceStore.cancelTask('task-1')).rejects.toThrow(
+      'You are not allowed to cancel this task.'
+    );
+  });
+
+  it('returns the acknowledgement on success without consulting task status', async () => {
+    await spaceStore.selectSpace('space-1');
+    spaceStore.tasks.value = [makeTask('task-1', 'cancelled')];
+    mockHub.request.mockResolvedValueOnce({ accepted: true, jobId: 'job-2' });
+
+    const result = await spaceStore.cancelTask('task-1');
+
+    expect(result).toEqual({ accepted: true, jobId: 'job-2' });
+  });
 });
 
 describe('SpaceStore — runtimeState', () => {
