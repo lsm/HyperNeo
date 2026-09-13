@@ -524,6 +524,21 @@ describe('decideGenericAddressRouting: the former space-manager handles', () => 
     ).toEqual({ action: 'notFound', target: '@space-manager' });
   });
 
+  test('reports @role:coordinator not found — the synthetic actor is the only holder of that role', () => {
+    expect(
+      decideGenericAddressRouting(parseAddress('@role:coordinator'), makeGenericConfig())
+    ).toEqual({ action: 'notFound', target: '@role:coordinator' });
+  });
+
+  test('still routes other roles through the facade, including the shared space-agent role', () => {
+    expect(
+      decideGenericAddressRouting(parseAddress('@role:space-agent'), makeGenericConfig())
+    ).toEqual({ action: 'deliverViaMessagingFacade' });
+    expect(
+      decideGenericAddressRouting(parseAddress('@role:reviewer'), makeGenericConfig())
+    ).toEqual({ action: 'deliverViaMessagingFacade' });
+  });
+
   test('does not fall through to the messaging facade, which would resolve the synthetic coordinator actor', () => {
     expect(
       decideGenericAddressRouting(

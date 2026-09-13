@@ -217,6 +217,9 @@ export function decideGenericAddressRouting(
   if (address.kind === 'handle' && isSpaceManagerHandle(address.handle)) {
     return { action: 'notFound', target };
   }
+  if (address.kind === 'role' && address.role === 'coordinator') {
+    return { action: 'notFound', target };
+  }
   if (address.kind === 'session') {
     if (!config.spaceAgentAvailable) return { action: 'notFound', target };
     if (config.replyToSessionId === null || address.sessionId !== config.replyToSessionId) {
