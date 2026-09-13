@@ -110,6 +110,8 @@ async function runAudited(fn: (() => void | Promise<void>) | undefined): Promise
   } catch {}
 }
 
+const UNREPRESENTABLE = '[unrepresentable]';
+
 function isolateValue<T>(value: T, seen: WeakMap<object, unknown>): T {
   if (!value || (typeof value !== 'object' && typeof value !== 'function')) return value;
   const source = value as object;
@@ -135,7 +137,7 @@ function cloneValue<T>(value: T): T {
   try {
     return isolateValue(value, new WeakMap<object, unknown>());
   } catch {
-    return value;
+    return UNREPRESENTABLE as T;
   }
 }
 
@@ -157,14 +159,16 @@ function snapshotCaller(caller: OperationCaller): OperationCaller {
   return { ...caller };
 }
 
+function snapshotForHook(prepared: Readonly<AuditedOperation>): Readonly<AuditedOperation> {
+  return { operation: { ...prepared.operation }, input: cloneValue(prepared.input) };
+}
+
 async function auditBefore(
   prepared: Readonly<AuditedOperation>,
   baseCaller: OperationCaller,
   audit?: OperationAudit
 ): Promise<void> {
-  await runAudited(() =>
-    audit?.before?.({ ...prepared, input: cloneValue(prepared.input) }, snapshotCaller(baseCaller))
-  );
+  await runAudited(() => audit?.before?.(snapshotForHook(prepared), snapshotCaller(baseCaller)));
 }
 
 const runInvocation = (superpipe({})('invoke-operation') as PipelineAPI)
@@ -213,11 +217,7 @@ export async function invokeOperation(
   );
   if (prepared && baseCaller) {
     await runAudited(() =>
-      audit?.after?.(
-        { ...prepared, input: cloneValue(prepared.input) },
-        snapshotCaller(baseCaller),
-        cloneValue(invocation)
-      )
+      audit?.after?.(snapshotForHook(prepared), snapshotCaller(baseCaller), cloneValue(invocation))
     );
   }
   return invocation;

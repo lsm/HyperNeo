@@ -455,6 +455,51 @@ describe('shared operation invocation audit hooks', () => {
     expect(outcome).toEqual({ kind: 'completed', value: { accepted: 'hello' } });
     expect(afterRan).toBe(true);
   });
+  test('a value no copy can represent is never handed to a hook live', async () => {
+    const operation = defineOperation({
+      name: 'message.send.opaque',
+      description: 'Accept a value that defeats every copy strategy',
+      inputSchema: z.object({ content: z.string(), opaque: z.any() }),
+      resultSchema: z.object({ accepted: z.string() }),
+      execute: async (input: { content: string }) => ({ accepted: input.content }),
+    });
+    const registry = createOperationRegistry([operation]);
+    const opaque = new Proxy(
+      { callback: () => 'x' },
+      {
+        ownKeys() {
+          throw new Error('ownKeys refuses');
+        },
+      }
+    );
+    let seen: unknown = null;
+    const outcome = await invokeOperation(
+      registry,
+      'message.send.opaque',
+      { content: 'hello', opaque },
+      caller,
+      {
+        after: (prepared: { input: unknown }) => {
+          seen = prepared.input;
+        },
+      }
+    );
+    expect(outcome).toEqual({ kind: 'completed', value: { accepted: 'hello' } });
+    expect(seen).toBe('[unrepresentable]');
+  });
+  test('operation metadata mutated by before does not reach after', async () => {
+    const { registry } = fixture();
+    let afterName: string | null = null;
+    await invokeOperation(registry, 'message.send', { content: 'hello' }, caller, {
+      before: (prepared: { operation: { name: string } }) => {
+        prepared.operation.name = 'rewritten-by-before';
+      },
+      after: (prepared: { operation: { name: string } }) => {
+        afterName = prepared.operation.name;
+      },
+    });
+    expect(afterName).toBe('message.send');
+  });
   test('no snapshot work happens when no audit hook is installed', async () => {
     const { registry } = fixture();
     const originalClone = globalThis.structuredClone;
