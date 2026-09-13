@@ -6,6 +6,8 @@ import { Database } from '../../../../src/storage/sqlite-compat';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
+import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
+import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import { createStandaloneTask } from '../../../../src/storage/tasks/create-task';
 import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager';
 import { createSpaceOperationRegistryProvider } from '../../../../src/lib/space/operations/registry';
@@ -125,7 +127,12 @@ test('rejects an absent task and a standalone task', async () => {
 });
 
 test('refuses a task whose workflow run is still active, and allows it once the run is not', async () => {
-  const runId = 'run-1';
+  const workflow = new SpaceWorkflowRepository(db).createWorkflow({ spaceId, name: 'Workflow' });
+  const runId = new SpaceWorkflowRunRepository(db).createRun({
+    spaceId,
+    workflowId: workflow.id,
+    title: 'Run',
+  }).id;
   tasks.updateTask(taskId, { workflowRunId: runId });
   activeRuns.add(runId);
   const rpc = createOperationRpcHandler(provider(), () => ({}));

@@ -83,8 +83,9 @@ Everything below exists on `dev` or is an approved in-flight epic slice. The pat
   Forge-proposal tasks run outside that slot and can proceed concurrently with it (§5
   accounts for them).
 - Goal-linked task terminal outcomes produce durable outcome notifications in the same
-  transaction as the terminal write; they wake the **primary owner** (or the coordinator
-  fallback when no usable owner exists — `goals/goal-owner-resolution.ts`), are recovered
+  transaction as the terminal write; they wake the **primary owner** only — a goal with no
+  usable owner resolves to `no_recipient` and the wake is dropped
+  (`goals/goal-owner-resolution.ts`) — are recovered
   at startup (`SpaceRuntimeService.recoverPendingOutcomeNotifications`), and are disposed
   through `review_goal_outcome`: identity-bound claim, revision CAS, acknowledge/reject/
   supersede dispositions, idempotent retries.

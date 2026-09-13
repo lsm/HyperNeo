@@ -32,6 +32,7 @@ import {
   type TaskMemberRepositories,
 } from './list-task-members.ts';
 import { createArchiveTaskOperation, type ArchiveTaskDependencies } from './archive-task.ts';
+import { listScopedTasks, readScopedTask, readScopedTaskByNumber } from './scoped-task-reads.ts';
 
 interface ArchiveTaskCapability {
   getTaskManager: ArchiveTaskDependencies['getTaskManager'];
@@ -65,16 +66,35 @@ export function createSpaceOperationRegistryProvider(
   let registry: OperationRegistry | undefined;
   return () =>
     (registry ??= createDatabaseOperationCatalog(database, jobQueue, {
-      readTask: (taskId) =>
-        tasks.taskRepo?.getTask(taskId) ?? readTaskCore(database.getDatabase(), taskId),
+      readTask: (taskId, caller) =>
+        readScopedTask(
+          database.getDatabase(),
+          caller,
+          tasks,
+          (id) => tasks.taskRepo?.getTask(id) ?? readTaskCore(database.getDatabase(), id),
+          taskId
+        ),
       readTaskByNumber: tasks.taskRepo?.getTaskByNumber
-        ? (spaceId, taskNumber) => tasks.taskRepo?.getTaskByNumber(spaceId, taskNumber) ?? null
+        ? (spaceId, taskNumber, caller) =>
+            readScopedTaskByNumber(
+              caller,
+              tasks,
+              (id, number) => tasks.taskRepo?.getTaskByNumber(id, number) ?? null,
+              spaceId,
+              taskNumber
+            )
         : undefined,
-      listTasks: (input) =>
-        listTasksWithSpaceFields(
-          (listInput) => listTaskCores(database.getDatabase(), listInput),
-          input,
-          spaceTaskBatchReader(tasks.taskRepo)
+      listTasks: (input, caller) =>
+        listScopedTasks(
+          caller,
+          tasks,
+          (listInput) =>
+            listTasksWithSpaceFields(
+              (coreInput) => listTaskCores(database.getDatabase(), coreInput),
+              listInput,
+              spaceTaskBatchReader(tasks.taskRepo)
+            ),
+          input
         ),
       create: createSpaceCreateTaskOperation({
         ...tasks,

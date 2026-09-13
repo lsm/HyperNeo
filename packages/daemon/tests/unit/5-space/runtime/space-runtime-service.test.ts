@@ -2163,22 +2163,17 @@ describe('SpaceRuntimeService', () => {
       expect(goalScopeRepo.getPrimaryGoalOwner).not.toHaveBeenCalled();
     });
 
-    test('resolves the owner when goal outcome wakes are enabled', async () => {
+    test('drops a degraded-owner wake instead of routing it elsewhere', async () => {
       const goalScopeRepo = {
         getPrimaryGoalOwner: mock(() => ({ action: 'degraded' })),
       } as unknown as SpaceRuntimeServiceConfig['goalScopeRepo'];
-      const agentRepo = {
-        getSpaceManager: mock(() => ({ id: 'coordinator-1' })),
-      } as unknown as SpaceRuntimeServiceConfig['agentRepo'];
       const longHorizonAgentRepo = {
-        getCoordinator: mock(() => ({ id: 'coordinator-1' })),
         getById: mock(() => null),
       } as unknown as SpaceLongHorizonAgentRepository;
       const goalService = {
         getGoal: mock(() => ({ id: notification.goalId, spaceId: notification.spaceId })),
       } as unknown as SpaceRuntimeServiceConfig['goalService'];
       const outcomeNotificationRepo = {
-        getCoordinator: mock(() => null),
         getById: mock(() => ({ status: 'pending' })),
       } as unknown as SpaceGoalOutcomeNotificationRepository;
       const svc = new SpaceRuntimeService({
@@ -2186,7 +2181,6 @@ describe('SpaceRuntimeService', () => {
         enableGoalOutcomeWake: true,
         longHorizonAgentRepo,
         goalScopeRepo,
-        agentRepo,
         goalService,
         outcomeNotificationRepo,
       });
@@ -2197,18 +2191,14 @@ describe('SpaceRuntimeService', () => {
         notification.goalId,
         notification.spaceId
       );
-      expect(agentRepo.getSpaceManager).toHaveBeenCalledWith(notification.spaceId);
+      expect(longHorizonAgentRepo.getById).not.toHaveBeenCalled();
     });
 
-    test('routes a no-recipient wake to the coordinator', async () => {
+    test('drops a no-recipient wake', async () => {
       const goalScopeRepo = {
         getPrimaryGoalOwner: mock(() => ({ action: 'no_recipient' })),
       } as unknown as SpaceRuntimeServiceConfig['goalScopeRepo'];
-      const agentRepo = {
-        getSpaceManager: mock(() => ({ id: 'coordinator-1' })),
-      } as unknown as SpaceRuntimeServiceConfig['agentRepo'];
       const longHorizonAgentRepo = {
-        getCoordinator: mock(() => ({ id: 'coordinator-1' })),
         getById: mock(() => null),
       } as unknown as SpaceLongHorizonAgentRepository;
       const goalService = {
@@ -2222,14 +2212,13 @@ describe('SpaceRuntimeService', () => {
         enableGoalOutcomeWake: true,
         longHorizonAgentRepo,
         goalScopeRepo,
-        agentRepo,
         goalService,
         outcomeNotificationRepo,
       });
 
       await svc.deliverGoalOutcomeWake(notification);
 
-      expect(agentRepo.getSpaceManager).toHaveBeenCalledWith(notification.spaceId);
+      expect(longHorizonAgentRepo.getById).not.toHaveBeenCalled();
     });
 
     test('routes a noncanonical handle-coordinator wake to the Space chat session', async () => {
@@ -2238,11 +2227,11 @@ describe('SpaceRuntimeService', () => {
       const sessionManager = makeWakeSessionManager(sessions);
       const mailbox = buildMailboxDeliveryDb([`space:chat:${mockSpace.id}`]);
       const goalScopeRepo = {
-        getPrimaryGoalOwner: mock(() => ({ action: 'no_recipient' })),
+        getPrimaryGoalOwner: mock(() => ({
+          action: 'resolved',
+          owner: { agentId: 'coordinator-alt' },
+        })),
       } as unknown as SpaceRuntimeServiceConfig['goalScopeRepo'];
-      const agentRepo = {
-        getSpaceManager: mock(() => ({ id: 'coordinator-alt' })),
-      } as unknown as SpaceRuntimeServiceConfig['agentRepo'];
       const longHorizonAgentRepo = {
         getCoordinator: mock(() => ({ id: 'coordinator-alt' })),
         getById: mock(() =>
@@ -2273,7 +2262,6 @@ describe('SpaceRuntimeService', () => {
         } as unknown as SpaceWorkflowManager,
         longHorizonAgentRepo,
         goalScopeRepo,
-        agentRepo,
         goalService,
         outcomeNotificationRepo,
       });
