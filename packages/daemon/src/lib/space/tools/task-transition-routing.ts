@@ -1,3 +1,4 @@
+import { RETRYABLE_TASK_STATUSES } from '../managers/space-task-manager.ts';
 import type { SpaceTaskStatus } from '@hyperneo/shared';
 import { isRateOrUsageLimited } from '@hyperneo/shared';
 import { requireDraftTask } from '../../tasks/publication.ts';
@@ -268,8 +269,7 @@ export function routeRetryTask(input: RetryTaskRoutingInput): RetryTaskRouting {
     return target;
   }
   if (input.hasWorkflowRun) {
-    const retryableStatuses = ['blocked', 'cancelled', 'done'];
-    if (!retryableStatuses.includes(input.currentStatus)) {
+    if (!RETRYABLE_TASK_STATUSES.includes(input.currentStatus as SpaceTaskStatus)) {
       return {
         action: 'reject',
         reason: 'status_not_retryable',
