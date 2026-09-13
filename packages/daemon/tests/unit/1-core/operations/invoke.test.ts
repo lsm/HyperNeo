@@ -211,4 +211,30 @@ describe('shared operation invocation audit hooks', () => {
       await invokeOperation(registry, 'message.send', { content: 'hello' }, caller, audit)
     ).toEqual({ kind: 'completed', value: { accepted: 'hello' } });
   });
+  test('a mutating before hook cannot change what executeOperation runs', async () => {
+    const { registry, execute } = fixture();
+    const audit = {
+      before: (prepared: { input: { content: string } }) => {
+        prepared.input.content = 'tampered';
+      },
+    };
+    await invokeOperation(registry, 'message.send', { content: 'hello' }, caller, audit);
+    expect(execute).toHaveBeenCalledWith({ content: 'hello' }, caller);
+  });
+  test('a mutating after hook cannot change the returned outcome', async () => {
+    const { registry } = fixture();
+    const audit = {
+      after: (
+        _prepared: unknown,
+        _caller: unknown,
+        outcome: { kind: string; value: { accepted: string } }
+      ) => {
+        outcome.kind = 'failed';
+        outcome.value.accepted = 'tampered';
+      },
+    };
+    expect(
+      await invokeOperation(registry, 'message.send', { content: 'hello' }, caller, audit)
+    ).toEqual({ kind: 'completed', value: { accepted: 'hello' } });
+  });
 });

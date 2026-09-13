@@ -14,8 +14,12 @@ type PreparedOperation = { operation: OperationDefinition; input: unknown };
 type ExecutedOperation = { operation: OperationDefinition; result: unknown };
 
 export type OperationAudit = {
-  before?: (prepared: PreparedOperation, caller: OperationCaller) => void;
-  after?: (prepared: PreparedOperation, caller: OperationCaller, outcome: OperationOutcome) => void;
+  before?: (prepared: Readonly<PreparedOperation>, caller: OperationCaller) => void;
+  after?: (
+    prepared: Readonly<PreparedOperation>,
+    caller: OperationCaller,
+    outcome: Readonly<OperationOutcome>
+  ) => void;
 };
 
 export function resolveOperation(
@@ -101,12 +105,24 @@ function runAudited(fn: (() => void) | undefined): void {
   } catch {}
 }
 
+function cloneValue<T>(value: T): T {
+  try {
+    return structuredClone(value);
+  } catch {
+    return value && typeof value === 'object' ? ({ ...value } as T) : value;
+  }
+}
+
+function snapshotPrepared(prepared: PreparedOperation): Readonly<PreparedOperation> {
+  return { operation: prepared.operation, input: cloneValue(prepared.input) };
+}
+
 function auditBefore(
   prepared: PreparedOperation,
   caller: OperationCaller,
   audit?: OperationAudit
 ): void {
-  runAudited(() => audit?.before?.(prepared, caller));
+  runAudited(() => audit?.before?.(snapshotPrepared(prepared), caller));
 }
 
 const runInvocation = (superpipe({})('invoke-operation') as PipelineAPI)
@@ -133,6 +149,8 @@ export async function invokeOperation(
   audit?: OperationAudit
 ): Promise<OperationOutcome> {
   const { invocation, prepared } = await runInvocation(registry, name, input, caller, audit);
-  if (prepared) runAudited(() => audit?.after?.(prepared, caller, invocation));
+  if (prepared) {
+    runAudited(() => audit?.after?.(snapshotPrepared(prepared), caller, cloneValue(invocation)));
+  }
   return invocation;
 }
