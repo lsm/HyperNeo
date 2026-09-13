@@ -22,7 +22,6 @@ function setupGitRepoWithChanges(wsPath: string): void {
 
 interface SpaceRunTask {
   spaceId: string;
-  runId: string;
   taskId: string;
   wsPath: string;
 }
@@ -85,25 +84,12 @@ async function createSpaceWithRunAndChanges(
 
       await hub.request('spaceTask.update', { spaceId, taskId, status: 'done' });
 
-      return { spaceId, runId, taskId };
+      return { spaceId, taskId };
     },
     { wsPath }
   );
 
   return { ...ids, wsPath };
-}
-
-async function cancelRun(
-  page: Parameters<typeof waitForWebSocketConnected>[0],
-  runId: string
-): Promise<void> {
-  try {
-    await page.evaluate(async (rid) => {
-      const hub = window.__messageHub || window.appState?.messageHub;
-      if (!hub?.request) return;
-      await hub.request('spaceWorkflowRun.cancel', { id: rid });
-    }, runId);
-  } catch {}
 }
 
 async function deleteSpace(
@@ -124,7 +110,6 @@ test.describe('Artifacts Side Panel', () => {
   test.use({ viewport: DESKTOP_VIEWPORT });
 
   let spaceId = '';
-  let runId = '';
   let taskId = '';
   let wsPath = '';
 
@@ -132,16 +117,11 @@ test.describe('Artifacts Side Panel', () => {
     await page.goto('/');
     const ids = await createSpaceWithRunAndChanges(page);
     spaceId = ids.spaceId;
-    runId = ids.runId;
     taskId = ids.taskId;
     wsPath = ids.wsPath;
   });
 
   test.afterEach(async ({ page }) => {
-    if (runId) {
-      await cancelRun(page, runId);
-      runId = '';
-    }
     if (spaceId) {
       await deleteSpace(page, spaceId);
       spaceId = '';

@@ -63,19 +63,6 @@ async function createSpaceWithRun(
   );
 }
 
-async function cancelRun(
-  page: Parameters<typeof waitForWebSocketConnected>[0],
-  runId: string
-): Promise<void> {
-  try {
-    await page.evaluate(async (rid) => {
-      const hub = window.__messageHub || window.appState?.messageHub;
-      if (!hub?.request) return;
-      await hub.request('spaceWorkflowRun.cancel', { id: rid });
-    }, runId);
-  } catch {}
-}
-
 async function getRunTaskId(
   page: Parameters<typeof waitForWebSocketConnected>[0],
   spaceId: string,
@@ -140,10 +127,6 @@ test.describe('Space Happy Path Pipeline (Task-First)', () => {
       await waitForWebSocketConnected(page, 5000);
     } catch {}
 
-    if (runId) {
-      await cancelRun(page, runId);
-      runId = '';
-    }
     if (spaceId) {
       await deleteSpaceViaRpc(page, spaceId);
       spaceId = '';
