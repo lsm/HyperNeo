@@ -82,6 +82,16 @@ export class SpaceAgentRepository {
     return row ? rowToSpaceAgent(row) : null;
   }
 
+  getFallbackAgent(spaceId: string): SpaceAgent | null {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM ${AGENTS_TABLE} WHERE space_id = ? AND status = 'active'
+         ORDER BY created_at ASC, id ASC LIMIT 1`
+      )
+      .get(spaceId) as Record<string, unknown> | undefined;
+    return row ? rowToSpaceAgent(row) : null;
+  }
+
   getSpaceManager(spaceId: string): SpaceAgent | null {
     for (const handle of SPACE_MANAGER_HANDLE_LOOKUP_ORDER) {
       const agent = this.getByHandle(spaceId, handle);

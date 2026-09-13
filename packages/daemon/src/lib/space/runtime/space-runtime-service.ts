@@ -144,7 +144,7 @@ export interface SpaceRuntimeServiceConfig {
   goalScopeRepo?: SpaceAgentGoalScopeRepository;
   subscriptionRepo?: SpaceAgentSubscriptionRepository;
   reminderRepo?: SpaceAgentReminderRepository;
-  agentRepo?: Pick<SpaceAgentRepository, 'getSpaceManager'>;
+  agentRepo?: Pick<SpaceAgentRepository, 'getSpaceManager' | 'getFallbackAgent'>;
   ownedAgents?: OwnedAgentLookup;
   templateRepo?: SpaceAgentTemplateRepository;
   spaceWorkflowManager: SpaceWorkflowManager;
@@ -491,10 +491,10 @@ export class SpaceRuntimeService {
     let authorizedId: string | null = null;
     if (resolution?.action === 'resolved') {
       authorizedId = resolution.owner.agentId;
-    } else if (resolution?.action === 'coordinator_fallback') {
-      authorizedId = resolution.coordinatorAgentId;
+    } else if (resolution?.action === 'fallback_agent') {
+      authorizedId = resolution.fallbackAgentId;
     } else if (resolution?.action === 'degraded' || resolution?.action === 'no_recipient') {
-      authorizedId = this.config.agentRepo?.getSpaceManager(goal.spaceId)?.id ?? null;
+      authorizedId = this.config.agentRepo?.getFallbackAgent(goal.spaceId)?.id ?? null;
     }
     return authorizedId != null && agentIdFromActorId(actor.actorId) === authorizedId;
   }
@@ -526,10 +526,10 @@ export class SpaceRuntimeService {
     let targetAgentId: string | null = null;
     if (resolution?.action === 'resolved') {
       targetAgentId = resolution.owner.agentId;
-    } else if (resolution?.action === 'coordinator_fallback') {
-      targetAgentId = resolution.coordinatorAgentId;
+    } else if (resolution?.action === 'fallback_agent') {
+      targetAgentId = resolution.fallbackAgentId;
     } else if (resolution?.action === 'degraded' || resolution?.action === 'no_recipient') {
-      targetAgentId = this.config.agentRepo?.getSpaceManager(goal.spaceId)?.id ?? null;
+      targetAgentId = this.config.agentRepo?.getFallbackAgent(goal.spaceId)?.id ?? null;
     }
     if (!targetAgentId) {
       log.warn(

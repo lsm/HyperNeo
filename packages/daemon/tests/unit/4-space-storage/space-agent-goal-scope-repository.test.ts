@@ -156,35 +156,38 @@ describe('SpaceAgentGoalScopeRepository', () => {
       });
     });
 
-    test('falls back to the space manager when there is no owner', () => {
+    test('falls back to the earliest active agent when there is no owner', () => {
+      expect(repo.getPrimaryGoalOwner('goal-1', 'space-1')).toEqual({
+        action: 'fallback_agent',
+        fallbackAgentId: 'agent-1',
+      });
+    });
+
+    test('ignores the space-manager handle when picking the fallback', () => {
       seedAgent(db, 'agent-mgr', 'space-1', 'space-manager');
 
       expect(repo.getPrimaryGoalOwner('goal-1', 'space-1')).toEqual({
-        action: 'coordinator_fallback',
-        coordinatorAgentId: 'agent-mgr',
+        action: 'fallback_agent',
+        fallbackAgentId: 'agent-1',
       });
     });
 
-    test('falls back to a legacy coordinator handle when no space-manager exists', () => {
-      seedAgent(db, 'agent-coord', 'space-1', 'coordinator');
+    test('skips inactive agents when picking the fallback', () => {
+      db.prepare(
+        `UPDATE space_long_horizon_agents SET status = 'paused' WHERE id = 'agent-1'`
+      ).run();
 
       expect(repo.getPrimaryGoalOwner('goal-1', 'space-1')).toEqual({
-        action: 'coordinator_fallback',
-        coordinatorAgentId: 'agent-coord',
+        action: 'fallback_agent',
+        fallbackAgentId: 'agent-1b',
       });
     });
 
-    test('prefers the space-manager handle over the legacy coordinator handle', () => {
-      seedAgent(db, 'agent-coord', 'space-1', 'coordinator');
-      seedAgent(db, 'agent-mgr', 'space-1', 'space-manager');
+    test('reports no recipient when the space has no active agent', () => {
+      db.prepare(
+        `UPDATE space_long_horizon_agents SET status = 'paused' WHERE space_id = 'space-1'`
+      ).run();
 
-      expect(repo.getPrimaryGoalOwner('goal-1', 'space-1')).toEqual({
-        action: 'coordinator_fallback',
-        coordinatorAgentId: 'agent-mgr',
-      });
-    });
-
-    test('reports no recipient when there is neither an owner nor a coordinator', () => {
       expect(repo.getPrimaryGoalOwner('goal-1', 'space-1')).toEqual({ action: 'no_recipient' });
     });
   });

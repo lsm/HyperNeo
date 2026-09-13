@@ -2136,7 +2136,7 @@ describe('SpaceRuntimeService', () => {
         getPrimaryGoalOwner: mock(() => ({ action: 'degraded' })),
       } as unknown as SpaceRuntimeServiceConfig['goalScopeRepo'];
       const agentRepo = {
-        getSpaceManager: mock(() => ({ id: 'coordinator-1' })),
+        getFallbackAgent: mock(() => ({ id: 'coordinator-1' })),
       } as unknown as SpaceRuntimeServiceConfig['agentRepo'];
       const longHorizonAgentRepo = {
         getCoordinator: mock(() => ({ id: 'coordinator-1' })),
@@ -2165,15 +2165,15 @@ describe('SpaceRuntimeService', () => {
         notification.goalId,
         notification.spaceId
       );
-      expect(agentRepo.getSpaceManager).toHaveBeenCalledWith(notification.spaceId);
+      expect(agentRepo.getFallbackAgent).toHaveBeenCalledWith(notification.spaceId);
     });
 
-    test('routes a no-recipient wake to the coordinator', async () => {
+    test('routes a no-recipient wake to the space fallback agent', async () => {
       const goalScopeRepo = {
         getPrimaryGoalOwner: mock(() => ({ action: 'no_recipient' })),
       } as unknown as SpaceRuntimeServiceConfig['goalScopeRepo'];
       const agentRepo = {
-        getSpaceManager: mock(() => ({ id: 'coordinator-1' })),
+        getFallbackAgent: mock(() => ({ id: 'coordinator-1' })),
       } as unknown as SpaceRuntimeServiceConfig['agentRepo'];
       const longHorizonAgentRepo = {
         getCoordinator: mock(() => ({ id: 'coordinator-1' })),
@@ -2197,7 +2197,7 @@ describe('SpaceRuntimeService', () => {
 
       await svc.deliverGoalOutcomeWake(notification);
 
-      expect(agentRepo.getSpaceManager).toHaveBeenCalledWith(notification.spaceId);
+      expect(agentRepo.getFallbackAgent).toHaveBeenCalledWith(notification.spaceId);
     });
 
     test('routes a noncanonical handle-coordinator wake to the Space chat session', async () => {
@@ -2209,7 +2209,7 @@ describe('SpaceRuntimeService', () => {
         getPrimaryGoalOwner: mock(() => ({ action: 'no_recipient' })),
       } as unknown as SpaceRuntimeServiceConfig['goalScopeRepo'];
       const agentRepo = {
-        getSpaceManager: mock(() => ({ id: 'coordinator-alt' })),
+        getFallbackAgent: mock(() => ({ id: 'coordinator-alt' })),
       } as unknown as SpaceRuntimeServiceConfig['agentRepo'];
       const longHorizonAgentRepo = {
         getCoordinator: mock(() => ({ id: 'coordinator-alt' })),
