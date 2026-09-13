@@ -66,13 +66,6 @@ export {
 } from './agents/custom-agent.ts';
 export type { CustomAgentConfig, ResolveAgentInitConfig } from './agents/custom-agent.ts';
 
-export { buildSpaceChatSystemPrompt } from './agents/space-chat-agent.ts';
-export type {
-  SpaceChatAgentContext,
-  WorkflowSummary,
-  AgentSummary,
-} from './agents/space-chat-agent.ts';
-
 export {
   createSpaceAgentToolHandlers,
   createSpaceAgentMcpServer,

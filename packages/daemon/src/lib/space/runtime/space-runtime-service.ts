@@ -78,7 +78,6 @@ import {
 } from '../actions/space-actions-server.ts';
 import { SpaceActorRegistryAdapter } from '../actor-registry.ts';
 import { LONG_HORIZON_AGENT_BUILTIN_TOOLS } from '../agents/long-horizon-agent-tools.ts';
-import { buildSpaceChatSystemPrompt } from '../agents/space-chat-agent.ts';
 import { unifiedAgentRecordExists } from '../agents/worker-long-horizon-mapper.ts';
 import { encodeActorIdComponent, longTermAgentSessionId } from '../long-term-agent-session.ts';
 import { SpaceAgentTemplateManager } from '../managers/space-agent-template-manager.ts';
@@ -781,17 +780,6 @@ export class SpaceRuntimeService {
     const unified = this.config.longHorizonAgentRepo?.getById(agentId);
     if (!unified) return false;
     return unifiedAgentRecordExists(unified, expectedSpaceId);
-  }
-
-  private listPromptRestampAgents(
-    spaceId: string
-  ): Array<{ id: string; name: string; description?: string }> {
-    const unified = this.config.longHorizonAgentRepo?.listBySpaceId(spaceId) ?? [];
-    return unified.map((agent) => ({
-      id: agent.id,
-      name: agent.displayName,
-      description: agent.description,
-    }));
   }
 
   private async attachLongTermAgentMcpServersForSession(
@@ -1742,9 +1730,6 @@ export class SpaceRuntimeService {
       return;
     }
 
-    const agents = this.listPromptRestampAgents(space.id);
-    const workflows = spaceWorkflowManager.listWorkflows(space.id);
-
     const spaceManagerForApproval = this.config.spaceManager;
     const spaceToolsConfig: SpaceAgentToolsConfig = {
       spaceId: space.id,
@@ -1857,28 +1842,6 @@ export class SpaceRuntimeService {
         sdkToolsPreset: [...LONG_HORIZON_AGENT_BUILTIN_TOOLS],
       });
     }
-
-    session.setRuntimeSystemPrompt(
-      buildSpaceChatSystemPrompt({
-        background: space.backgroundContext,
-        instructions: space.instructions,
-        autonomyLevel: space.autonomyLevel,
-        workflows: workflows.map((w) => ({
-          id: w.id,
-          handle: w.handle ?? undefined,
-          name: w.name,
-          description: w.description,
-          tags: w.tags ?? [],
-          nodeCount: w.nodes?.length ?? 0,
-        })),
-        agents: agents.map((a) => ({
-          id: a.id,
-          name: a.name,
-
-          description: a.description,
-        })),
-      })
-    );
 
     log.info(`Space chat session provisioned for space ${space.id}`);
     if (options.replayPendingMessages !== false) {
