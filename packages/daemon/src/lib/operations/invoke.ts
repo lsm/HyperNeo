@@ -138,6 +138,11 @@ function readField(target: unknown, key: string): unknown {
   }
 }
 
+function isArrayIndex(key: string): boolean {
+  const index = Number(key);
+  return Number.isInteger(index) && index >= 0 && index < 2 ** 32 - 1 && String(index) === key;
+}
+
 function isProjectable(source: object): boolean {
   if (Array.isArray(source) || typeof source === 'function') return true;
   const proto = Object.getPrototypeOf(source);
@@ -149,17 +154,25 @@ function isolateValue<T>(value: T, seen: WeakMap<object, unknown>): T {
   const source = value as object;
   const cached = seen.get(source);
   if (cached) return cached as T;
-  if (source instanceof Date) return new Date(source.getTime()) as T;
+  if (source instanceof Date) return new Date(Date.prototype.getTime.call(source)) as T;
   if (!isProjectable(source)) return UNREPRESENTABLE as T;
   const descriptors = Object.getOwnPropertyDescriptors(source);
   if (Array.isArray(source)) {
     const copy: unknown[] = [];
     seen.set(source, copy);
     for (const [key, descriptor] of Object.entries(descriptors)) {
-      const index = Number(key);
-      if (!Number.isInteger(index) || index < 0) continue;
       if (!descriptor.enumerable || !('value' in descriptor)) continue;
-      copy[index] = isolateValue(descriptor.value, seen);
+      const entry = isolateValue(descriptor.value, seen);
+      if (isArrayIndex(key)) {
+        copy[Number(key)] = entry;
+        continue;
+      }
+      Object.defineProperty(copy, key, {
+        value: entry,
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
     }
     copy.length = source.length;
     return copy as T;
@@ -218,7 +231,12 @@ const runInvocation = (superpipe({})('invoke-operation') as PipelineAPI)
   .pipe(resolveOperation, ['registry', 'name'], 'result:invocation')
   .pipe(parseOperationInput, ['invocation', 'input'], 'result:invocation')
   .pipe(snapshotPrepared, ['invocation', 'hooks'], 'prepared')
-  .pipe((callerArg: OperationCaller) => snapshotCaller(callerArg), 'caller', 'baseCaller')
+  .pipe(
+    (callerArg: OperationCaller, hooks: AuditHooks) =>
+      hooks.before || hooks.after ? snapshotCaller(callerArg) : callerArg,
+    ['caller', 'hooks'],
+    'baseCaller'
+  )
   .pipe(auditBefore, ['prepared', 'baseCaller', 'hooks'])
   .pipe(executeOperation, ['invocation', 'caller'], 'result:invocation')
   .pipe(validateOperationResult, 'invocation', 'result:invocation')

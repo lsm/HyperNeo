@@ -665,6 +665,79 @@ describe('shared operation invocation audit hooks', () => {
     expect(recorded[0]).toBe('only');
   });
 
+  test('a caller accessor is not consumed when no hook is installed', async () => {
+    const { registry } = fixture();
+    let reads = 0;
+    const oneShotCaller = { sessionId: 'sender' } as unknown as typeof caller;
+    Object.defineProperty(oneShotCaller, 'source', {
+      enumerable: true,
+      get() {
+        reads += 1;
+        return reads === 1 ? 'rpc' : 'internal';
+      },
+    });
+    const outcome = await invokeOperation(
+      registry,
+      'message.send',
+      { content: 'hello' },
+      oneShotCaller
+    );
+    expect(outcome.kind).toBe('completed');
+    expect(reads).toBe(0);
+  });
+
+  test('a Date with an overridden getTime is copied without calling it', async () => {
+    const operation = defineOperation({
+      name: 'message.send.clock',
+      description: 'Accept a value carrying a tampered Date',
+      inputSchema: z.object({ content: z.string(), at: z.any() }),
+      resultSchema: z.object({ accepted: z.string() }),
+      execute: async (input: { content: string }) => ({ accepted: input.content }),
+    });
+    const registry = createOperationRegistry([operation]);
+    const at = new Date(1000);
+    let calls = 0;
+    Object.defineProperty(at, 'getTime', {
+      value: () => {
+        calls += 1;
+        return 999999;
+      },
+    });
+    let seen: unknown = null;
+    await invokeOperation(registry, 'message.send.clock', { content: 'hello', at }, caller, {
+      after: (prepared: { input: unknown }) => {
+        seen = prepared.input;
+      },
+    });
+    expect(calls).toBe(0);
+    expect((seen as { at: Date }).at.valueOf()).toBe(1000);
+  });
+
+  test('an array keeps its named fields and does not coerce lookalike keys', async () => {
+    const operation = defineOperation({
+      name: 'message.send.mixed',
+      description: 'Accept an array carrying named fields',
+      inputSchema: z.object({ content: z.string(), items: z.any() }),
+      resultSchema: z.object({ accepted: z.string() }),
+      execute: async (input: { content: string }) => ({ accepted: input.content }),
+    });
+    const registry = createOperationRegistry([operation]);
+    const items: unknown[] = ['first'];
+    (items as unknown as Record<string, unknown>).meta = 'kept';
+    (items as unknown as Record<string, unknown>)['01'] = 'not-an-index';
+    let seen: unknown = null;
+    await invokeOperation(registry, 'message.send.mixed', { content: 'hello', items }, caller, {
+      after: (prepared: { input: unknown }) => {
+        seen = prepared.input;
+      },
+    });
+    const recorded = (seen as { items: unknown[] & Record<string, unknown> }).items;
+    expect(recorded[0]).toBe('first');
+    expect(recorded.length).toBe(1);
+    expect(recorded.meta).toBe('kept');
+    expect(recorded['01']).toBe('not-an-index');
+  });
+
   test('slot-based values are marked rather than recorded as empty objects', async () => {
     const operation = defineOperation({
       name: 'message.send.slots',
