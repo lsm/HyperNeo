@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from 'bun:test';
+import { copyFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Database } from '../../../../src/storage/sqlite-compat';
@@ -25,13 +25,30 @@ let taskId: string;
 let spaceId: string;
 let entry: MailboxEntry;
 let reconcile: ReturnType<typeof createDirectKickoffReconciler>;
+let templateDirectory: string;
+let templatePath: string;
 const input = { sessionId: 'worker', attemptId: 'attempt', generation: 1 };
+beforeAll(() => {
+  templateDirectory = mkdtempSync(join(tmpdir(), 'direct-kickoff-template-'));
+  templatePath = join(templateDirectory, 'template.sqlite');
+  const template = new Database(':memory:');
+  try {
+    template.exec('PRAGMA foreign_keys = ON');
+    runMigrations(template, () => {});
+    createTables(template);
+    template.exec(`VACUUM INTO '${templatePath}'`);
+  } finally {
+    template.close();
+  }
+});
+afterAll(() => {
+  rmSync(templateDirectory, { recursive: true, force: true });
+});
 beforeEach(() => {
   directory = mkdtempSync(join(tmpdir(), 'direct-kickoff-'));
+  copyFileSync(templatePath, join(directory, 'db.sqlite'));
   db = new Database(join(directory, 'db.sqlite'));
   db.exec('PRAGMA foreign_keys = ON');
-  runMigrations(db, () => {});
-  createTables(db);
   spaceId = new SpaceRepository(db).createSpace({
     name: 'Space',
     slug: 'space',
@@ -67,8 +84,11 @@ afterEach(() => {
   rmSync(directory, { recursive: true, force: true });
 });
 
+function jobFor(id: string) {
+  return jobs.getLatestByPayload(MAILBOX_LANE, { id });
+}
 function job() {
-  return jobs.getLatestByPayload(MAILBOX_LANE, { id: entry.id });
+  return jobFor(entry.id);
 }
 function receiptCount() {
   return (
@@ -145,12 +165,13 @@ test.each(['consumed', 'failed'] as const)(
 );
 
 test('expired intent keeps its original identity and never enqueues', () => {
-  entry = { ...entry, id: createUlid(Date.now() - entry.policy.ttlMs - 10) };
+  const expired = { ...entry, id: createUlid(Date.now() - entry.policy.ttlMs - 10) };
   db.prepare('UPDATE direct_task_kickoff_intents SET entry = ? WHERE attempt_id = ?').run(
-    JSON.stringify(entry),
+    JSON.stringify(expired),
     input.attemptId
   );
   expect(reconcile(input)).toEqual({ kind: 'blocked', reason: 'expired' });
+  expect(jobFor(expired.id)).toBeNull();
   expect(job()).toBeNull();
   expect(receiptCount()).toBe(0);
 });
