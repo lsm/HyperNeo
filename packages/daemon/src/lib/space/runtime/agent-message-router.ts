@@ -579,6 +579,7 @@ export class AgentMessageRouter {
     const spaceAgentAvailable = Boolean(
       (this.config.deliverToTarget || spaceAgentInjector) && spaceId
     );
+    const spaceAgentReplyTo = replyRoutingLookup ? replyRoutingLookup(fromAgentName) : null;
     const permittedTargets = resolver.getPermittedTargets(fromNodeName);
     const routing = decideAgentMessageRouting({
       target,
@@ -594,7 +595,7 @@ export class AgentMessageRouter {
         declaredAgentNames: allDeclaredAgentNames,
         permittedTargets,
         spaceAgentAvailable,
-        spaceAgentRoutable: spaceAgentAvailable && Boolean(replyRoutingLookup?.(fromAgentName)),
+        spaceAgentRoutable: spaceAgentAvailable && Boolean(spaceAgentReplyTo),
         canSend: (fromNode, toNode) => resolver.canSend(fromNode, toNode),
       }),
     });
@@ -713,7 +714,7 @@ export class AgentMessageRouter {
           notFound.push(agentName);
           continue;
         }
-        const replyTo = replyRoutingLookup ? replyRoutingLookup(fromAgentName) : null;
+        const replyTo = spaceAgentReplyTo;
         if (!replyTo) {
           notFound.push(agentName);
           continue;
