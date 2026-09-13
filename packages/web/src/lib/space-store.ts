@@ -2172,13 +2172,6 @@ class SpaceStore {
     });
   }
 
-  async cancelWorkflowRun(runId: string): Promise<void> {
-    const hub = connectionManager.getHubIfConnected();
-    if (!hub) throw new Error('Not connected');
-
-    await hub.request('spaceWorkflowRun.cancel', { id: runId });
-  }
-
   async publishTask(taskId: string): Promise<SpaceTask> {
     const spaceId = this.spaceId.value;
     if (!spaceId) throw new Error('No space selected');

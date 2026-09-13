@@ -9,7 +9,6 @@ import type {
   SpaceGoalOutcomeNotification,
   SpaceLongHorizonAgent,
   SpaceTask,
-  SpaceWorkflowRun,
   UpdateSpaceTaskParams,
 } from '@hyperneo/shared';
 import { generateUUID, isRateOrUsageLimited } from '@hyperneo/shared';
@@ -2115,10 +2114,6 @@ export class SpaceRuntimeService {
       throw new Error(`Failed to stop (park) workflow-backed task ${taskId}`);
     }
     return updated;
-  }
-
-  async cancelWorkflowRun(spaceId: string, runId: string): Promise<SpaceWorkflowRun> {
-    return this.runtime.cancelWorkflowRun(spaceId, runId);
   }
 
   isWorkflowRunActive(runId: string): boolean {
