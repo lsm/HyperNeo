@@ -648,11 +648,8 @@ export class WorkflowHookEngine {
     const isRoutableTarget = (targetNode: string): boolean =>
       nodeNames.has(targetNode) &&
       (resolver.canSend(fromNode, targetNode) || resolver.canSend(meta.agentName, targetNode));
-    const isBuiltInInterLevelTarget = (targetValue: string): boolean =>
-      targetValue.trim() === 'space-agent';
     const hasValidAddressTarget = (targetValue: string): boolean => {
       const trimmed = targetValue.trim();
-      if (isBuiltInInterLevelTarget(trimmed)) return true;
       if (!trimmed.startsWith('@')) return true;
       try {
         const address = parseAddress(trimmed);
@@ -746,10 +743,8 @@ export class WorkflowHookEngine {
               actionTargets.add(resolved);
             }
             if (
-              (!isBuiltInInterLevelTarget(t) && !hasValidAddressTarget(t)) ||
-              resolvedTargets.some(
-                (resolved) => !isBuiltInInterLevelTarget(t) && !isRoutableTarget(resolved)
-              )
+              !hasValidAddressTarget(t) ||
+              resolvedTargets.some((resolved) => !isRoutableTarget(resolved))
             ) {
               allRequestedTargetsRoutable = false;
             }

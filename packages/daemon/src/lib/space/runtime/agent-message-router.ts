@@ -14,7 +14,6 @@ import {
   decideGenericAddressRouting,
   decideNodeTargetDelivery,
   foldAgentMessageResult,
-  promoteQueuedSpaceAgentResult,
   resolveNodeAgentTargets,
 } from './agent-message-routing-gates.ts';
 import { decideAgentMessageRouting } from './agent-message-routing-pipeline.ts';
@@ -296,14 +295,14 @@ export class AgentMessageRouter {
         replyToSessionId,
       });
 
-    const spaceAgentAvailable = Boolean(
+    const sessionDeliveryAvailable = Boolean(
       (this.config.deliverToTarget || spaceAgentInjector) && spaceId
     );
     const messagingFacadeAvailable = Boolean(messageResolver && longTermAgentDelivery && spaceId);
 
     for (const target of targets) {
       const decision = decideGenericAddressRouting(parseAddress(target), {
-        spaceAgentAvailable,
+        sessionDeliveryAvailable,
         messagingFacadeAvailable,
         replyToSessionId: replyRoutingLookup?.(fromAgentName) || null,
         workflowRunId,
@@ -348,6 +347,7 @@ export class AgentMessageRouter {
         };
       }
       if (decision.action === 'deliverToSession') {
+        const sessionTarget = `@session:${decision.sessionId}`;
         const envelopedMessage = buildEnvelope('long-horizon-agent');
         try {
           const outcome = await this.deliverSingleTarget(
@@ -357,23 +357,23 @@ export class AgentMessageRouter {
           );
           if (outcome.state === 'delivered') {
             delivered.push({
-              agentName: 'space-agent',
+              agentName: sessionTarget,
               sessionId: outcome.sessionId ?? decision.sessionId,
             });
           } else if (outcome.state === 'queued') {
-            queued.push({ agentName: 'space-agent', messageId: outcome.messageId });
+            queued.push({ agentName: sessionTarget, messageId: outcome.messageId });
           } else if (outcome.state === 'failed') {
             failed.push({
-              agentName: 'space-agent',
+              agentName: sessionTarget,
               sessionId: outcome.sessionId ?? decision.sessionId,
               error: outcome.error,
             });
           } else {
-            notFound.push('space-agent');
+            notFound.push(sessionTarget);
           }
         } catch (err) {
           failed.push({
-            agentName: 'space-agent',
+            agentName: sessionTarget,
             sessionId: decision.sessionId,
             error: err instanceof Error ? err.message : String(err),
           });
@@ -548,9 +548,7 @@ export class AgentMessageRouter {
       notFound.push(agentName);
     }
 
-    return promoteQueuedSpaceAgentResult(
-      foldAgentMessageResult({ delivered, queued, failed, notFound })
-    );
+    return foldAgentMessageResult({ delivered, queued, failed, notFound });
   }
 
   async deliverMessage(params: AgentMessageParams): Promise<AgentMessageResult> {
@@ -560,12 +558,9 @@ export class AgentMessageRouter {
       workflowChannels,
       channelRouter,
       nodeGroups,
-      spaceAgentInjector,
-      spaceId,
       taskId,
       taskNumber,
       activateTargetSession,
-      replyRoutingLookup,
     } = this.config;
 
     const resolver = new ChannelResolver(workflowChannels);
@@ -579,16 +574,11 @@ export class AgentMessageRouter {
     const allDeclaredAgentNames = peerSnapshot.declaredAgentNames;
     let peers = peerSnapshot.peers;
 
-    const spaceAgentAvailable = Boolean(
-      (this.config.deliverToTarget || spaceAgentInjector) && spaceId
-    );
-    const spaceAgentReplyTo = replyRoutingLookup ? replyRoutingLookup(fromAgentName) : null;
     const permittedTargets = resolver.getPermittedTargets(fromNodeName);
     const routing = decideAgentMessageRouting({
       target,
       requestedTargets,
       topologyEmpty: resolver.isEmpty(),
-      spaceAgentAvailable,
       resolution: resolveNodeAgentTargets({
         target,
         fromAgentName,
@@ -597,8 +587,6 @@ export class AgentMessageRouter {
         nodeGroups,
         declaredAgentNames: allDeclaredAgentNames,
         permittedTargets,
-        spaceAgentAvailable,
-        spaceAgentRoutable: spaceAgentAvailable && Boolean(spaceAgentReplyTo),
         canSend: (fromNode, toNode) => resolver.canSend(fromNode, toNode),
       }),
     });
@@ -645,7 +633,6 @@ export class AgentMessageRouter {
 
     if (channelRouter) {
       for (const agentName of targetAgentNames) {
-        if (agentName === 'space-agent') continue;
         try {
           await channelRouter.deliverMessage(workflowRunId, fromAgentName, agentName, message);
         } catch (err) {
@@ -670,7 +657,6 @@ export class AgentMessageRouter {
     if (activateTargetSession) {
       const refreshed = new Map(peers.map((peer) => [`${peer.agentName}:${peer.sessionId}`, peer]));
       for (const agentName of targetAgentNames) {
-        if (agentName === 'space-agent') continue;
         if (peers.some((peer) => peer.agentName === agentName)) continue;
         try {
           const activatedSessions = await activateTargetSession(agentName);
@@ -711,47 +697,8 @@ export class AgentMessageRouter {
     for (const agentName of targetAgentNames) {
       const agentSessions = peers.filter((m) => m.agentName === agentName);
       const decision = decideNodeTargetDelivery(agentName, {
-        isSpaceAgent: agentName === 'space-agent',
         hasLiveSessions: agentSessions.length > 0,
       });
-
-      if (decision === 'deliverToSpaceAgent') {
-        if ((!this.config.deliverToTarget && !spaceAgentInjector) || !spaceId) {
-          notFound.push(agentName);
-          continue;
-        }
-        const replyTo = spaceAgentReplyTo;
-        if (!replyTo) {
-          notFound.push(agentName);
-          continue;
-        }
-        const expectedSessionId = replyTo;
-        const envelopedMessage = buildEnvelope('long-horizon-agent');
-        try {
-          const outcome = await this.deliverSingleTarget(
-            { kind: 'session', sessionId: replyTo },
-            envelopedMessage,
-            generateUUID()
-          );
-          if (outcome.state === 'delivered') {
-            delivered.push({ agentName, sessionId: outcome.sessionId ?? expectedSessionId });
-          } else if (outcome.state === 'queued') {
-            queued.push({ agentName, messageId: outcome.messageId });
-          } else if (outcome.state === 'failed') {
-            failed.push({
-              agentName,
-              sessionId: outcome.sessionId ?? expectedSessionId,
-              error: outcome.error,
-            });
-          } else {
-            notFound.push(agentName);
-          }
-        } catch (err) {
-          const errMsg = err instanceof Error ? err.message : String(err);
-          failed.push({ agentName, sessionId: expectedSessionId, error: errMsg });
-        }
-        continue;
-      }
 
       if (decision === 'injectLiveSessions') {
         if (this.config.deliverToTarget && !taskId) {
@@ -804,8 +751,6 @@ export class AgentMessageRouter {
       notFound.push(agentName);
     }
 
-    return promoteQueuedSpaceAgentResult(
-      foldAgentMessageResult({ delivered, queued, failed, notFound })
-    );
+    return foldAgentMessageResult({ delivered, queued, failed, notFound });
   }
 }

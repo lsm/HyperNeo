@@ -40,7 +40,5 @@ export function resolveCreateTaskTarget(
 
 export function resolveCreatedBy(session: Session | null): string | null {
   if (!session) return null;
-  return session.type === 'space_chat'
-    ? 'space-agent'
-    : (session.metadata.promptProvenance?.agentName ?? null);
+  return session.metadata.promptProvenance?.agentName ?? null;
 }

@@ -654,10 +654,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     audit: (session, previous, input) => {
       new McpAuditLogRepository(deps.db.getDatabase()).createEntry({
         sessionId: session.id,
-        agentName:
-          session.type === 'space_chat'
-            ? 'space-agent'
-            : session.metadata.promptProvenance?.agentName,
+        agentName: session.metadata.promptProvenance?.agentName,
         toolName: 'task.resolvePendingCompletion',
         spaceId: previous.spaceId,
         taskId: input.taskId,

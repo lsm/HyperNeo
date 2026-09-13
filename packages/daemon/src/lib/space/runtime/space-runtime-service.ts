@@ -524,7 +524,7 @@ export class SpaceRuntimeService {
       kind: 'agent',
       spaceId: goal.spaceId,
       handle: `@${agent.handle}`,
-      roles: ['space-agent'],
+      roles: [],
       status: 'inactive',
     };
     const { summary, taskStatus, taskTitle, goalTitle } = notification.payload;
@@ -532,7 +532,7 @@ export class SpaceRuntimeService {
     const message: MessageRecord = {
       messageId: generateUUID(),
       spaceId: goal.spaceId,
-      senderActorId: `agent:coordinator:${goal.spaceId}`,
+      senderActorId: 'system:runtime',
       targets: [actor.actorId],
       body: `Goal outcome ready for review: "${goalTitle}". Task "${taskTitle}" reached ${taskStatus}.${detail}`,
       kind: 'message',

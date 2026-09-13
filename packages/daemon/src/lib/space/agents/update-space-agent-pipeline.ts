@@ -35,9 +35,6 @@ export interface AdmittedUpdate {
   changes: UpdateSpaceAgentParams;
 }
 
-const COORDINATOR_HANDLES = new Set(['space-manager', 'coordinator']);
-const LOCKED_COORDINATOR_STATUSES = new Set(['paused', 'disabled', 'archived']);
-
 function isReservedHandle(handle: string): boolean {
   return (RESERVED_SPACE_AGENT_HANDLES as readonly string[]).includes(handle);
 }
@@ -56,22 +53,6 @@ export function gateTarget(
 export function gateChanges(admitted: AdmittedUpdate): Gate<AdmittedUpdate> {
   const fieldError = firstAgentFieldError(admitted.changes);
   if (fieldError) return reject('invalid_request', fieldError);
-  return { value: admitted };
-}
-
-export function gateDefaultAgent(admitted: AdmittedUpdate): Gate<AdmittedUpdate> {
-  const { agent, changes } = admitted;
-  if (!COORDINATOR_HANDLES.has(agent.handle)) return { value: admitted };
-
-  if (changes.handle !== undefined && changes.handle !== agent.handle) {
-    return reject(
-      'invalid_identity',
-      'The Space Manager handle is locked; instructions, model, provider and tools stay editable'
-    );
-  }
-  if (changes.status !== undefined && LOCKED_COORDINATOR_STATUSES.has(changes.status)) {
-    return reject('invalid_request', 'The Space Manager cannot be paused, disabled or archived');
-  }
   return { value: admitted };
 }
 
@@ -227,7 +208,6 @@ export function buildUpdateSpaceAgentPipeline(
     .input(['input'])
     .pipe(gateTarget, ['input', 'getAgent'], 'result:admitted')
     .pipe(gateChanges, 'admitted', 'result:admitted')
-    .pipe(gateDefaultAgent, 'admitted', 'result:admitted')
     .pipe(gateSessionChange, ['admitted', 'getSession', 'sessionOwner'], 'result:admitted')
     .pipe(gateIdentityChange, ['admitted', 'listHandles', 'listDisplayNames'], 'result:admitted')
     .pipe(gateUpdateTools, ['admitted', 'validateTools'], 'result:admitted')

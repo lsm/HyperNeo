@@ -31,7 +31,7 @@ import { slugify, validateSlug } from '../slug.ts';
 import type { SpaceAgentTemplateRepository } from '../../../storage/repositories/space-agent-template-repository.ts';
 
 const logger = new Logger('SpaceWorkflowManager');
-const RESERVED_WORKFLOW_AGENT_NAMES = new Set(['space-agent', 'task-agent']);
+const RESERVED_WORKFLOW_AGENT_NAMES = new Set(['task-agent']);
 
 function normalizeWorkflowAgentName(name: string): string {
   return name.trim().toLowerCase();

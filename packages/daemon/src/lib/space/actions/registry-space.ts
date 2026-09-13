@@ -934,7 +934,7 @@ export function createSpaceRegistryEntries(
       family: 'tasks',
       safetyClass: 'human_only',
       description:
-        'Approve or reject a task paused at the submit_for_approval checkpoint; Space agent sessions (coordinator or long-term agent) and legacy task-agent sessions only; returns the updated task.',
+        'Approve or reject a task paused at the submit_for_approval checkpoint; long-horizon agent and legacy task-agent sessions only; returns the updated task.',
       paramsDoc: 'task_id, approved (true approves, false rejects to in_progress), reason?',
       paramsSchema: ApprovePendingCompletionSchema,
       autonomyRequirement: HUMAN_ONLY_AUTONOMY_LEVEL,

@@ -4871,7 +4871,7 @@ export class TaskAgentManager {
     const longHorizonAgentRepo =
       this.config.longHorizonAgentRepo ??
       ({
-        getCoordinator: () => {
+        getById: () => {
           throw new Error('Long-horizon agent repository unavailable');
         },
       } as unknown as SpaceLongHorizonAgentRepository);

@@ -549,10 +549,6 @@ function translateLegacyNodeTarget(
     parseAddress(targetRef);
     return [targetRef];
   }
-  if (targetRef === 'space-agent') {
-    const replyTo = config.replyRoutingLookup?.(config.agentName);
-    return replyTo ? [`@session:${replyTo}`] : [];
-  }
   if (targetRef === '*') {
     return permittedWorkerTargets(config);
   }
