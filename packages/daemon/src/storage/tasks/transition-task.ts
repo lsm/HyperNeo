@@ -23,6 +23,15 @@ function selectStandaloneTask(
   return row ? { value: decodeTaskCoreRow(row) } : { reason: null };
 }
 
+export function requireExpectedStandaloneStatus(
+  task: TaskCore,
+  input: TransitionStandaloneTaskInput
+): { value: TaskCore } | { reason: Rejection } {
+  return input.expectedStatus === undefined || task.status === input.expectedStatus
+    ? { value: task }
+    : { reason: 'invalid_transition' };
+}
+
 export function decidePersistedTaskTransition(
   task: TaskCore,
   input: StandaloneTaskTransitionInput,
@@ -56,6 +65,7 @@ function writeTaskTransition(
 const persistTaskTransition = (superpipe({})('persist-standalone-task-transition') as PipelineAPI)
   .input(['db', 'input'])
   .pipe(selectStandaloneTask, ['db', 'input'], 'result:transition')
+  .pipe(requireExpectedStandaloneStatus, ['transition', 'input'], 'result:transition')
   .pipe(Date.now, undefined, 'now')
   .pipe(decidePersistedTaskTransition, ['transition', 'input', 'now'], 'result:transition')
   .pipe(writeTaskTransition, ['db', 'input', 'transition'], 'transition')

@@ -77,7 +77,7 @@ describe('task.transition schema options', () => {
       z.toJSONSchema(StandaloneTransitionTaskInputSchema, { io: 'input' })
     );
     expect(described.description).toBe(
-      'Change a standalone task lifecycle state. in_progress tracks manual work without starting an agent. Supply result only for done. Returns updated core data, null for absent or Space-owned tasks, or unsupported_status, invalid_transition, or result_requires_done when rejected. Archived tasks cannot reopen.'
+      'Change a standalone task lifecycle state. in_progress tracks manual work without starting an agent. Supply result only for done. Returns updated core data, null for absent or Space-owned tasks, or unsupported_status, invalid_transition, or result_requires_done when rejected. Supply expectedStatus to make the write conditional on the task still being in that state, which rejects with invalid_transition when another writer moved it first. Archived tasks cannot reopen.'
     );
   });
 
