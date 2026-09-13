@@ -6,6 +6,8 @@ import { Database } from '../../../../src/storage/sqlite-compat';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
+import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
+import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import { createStandaloneTask } from '../../../../src/storage/tasks/create-task';
 import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager';
 import { createSpaceOperationRegistryProvider } from '../../../../src/lib/space/operations/registry';
@@ -87,6 +89,17 @@ function member(id: string, owner?: string) {
   return { sessionId: id };
 }
 
+function attachRun(status: 'blocked' | 'in_progress') {
+  const workflow = new SpaceWorkflowRepository(db).createWorkflow({ spaceId, name: 'Workflow' });
+  const runId = new SpaceWorkflowRunRepository(db).createRun({
+    spaceId,
+    workflowId: workflow.id,
+    title: 'Run',
+  }).id;
+  tasks.updateTask(taskId, { workflowRunId: runId, status });
+  return runId;
+}
+
 function recover(id: string, description?: string) {
   return {
     name: 'task.recover',
@@ -101,14 +114,14 @@ test('a plain task is retried directly, without the workflow recovery path', asy
 });
 
 test('a workflow-backed task is recovered through its run at the routed status', async () => {
-  tasks.updateTask(taskId, { workflowRunId: 'run-1', status: 'blocked' });
+  attachRun('blocked');
   const rpc = createOperationRpcHandler(provider(), () => ({}));
   await rpc(recover(taskId, 'try again'), context);
   expect(recoverWorkflowTask).toHaveBeenCalledWith(spaceId, taskId, 'open', 'try again');
 });
 
 test('a workflow recovery that refuses reports recovery_failed', async () => {
-  tasks.updateTask(taskId, { workflowRunId: 'run-1', status: 'blocked' });
+  attachRun('blocked');
   recoverWorkflowTask = mock(async () => 'no workflow run to recover');
   const rpc = createOperationRpcHandler(provider(), () => ({}));
   expect(await rpc(recover(taskId), context)).toBe('recovery_failed');
@@ -134,7 +147,7 @@ test('rejects an absent task, a standalone task and a non-retryable workflow sta
   expect(await rpc(recover('absent'), context)).toBe('task_not_found');
   const standalone = createStandaloneTask(db, { title: 'Loose' }, undefined, () => {});
   expect(await rpc(recover(standalone.id), context)).toBe('task_not_in_space');
-  tasks.updateTask(taskId, { workflowRunId: 'run-1', status: 'in_progress' });
+  attachRun('in_progress');
   expect(await rpc(recover(taskId), context)).toBe('status_not_retryable');
 });
 

@@ -19,7 +19,6 @@ function input(overrides: Partial<GoalOwnerResolutionInput> = {}): GoalOwnerReso
   return {
     candidates: [],
     agentStates: {},
-    coordinatorAgentId: 'coordinator-1',
     ...overrides,
   };
 }
@@ -102,30 +101,19 @@ describe('decideGoalOwnerResolution', () => {
     });
   });
 
-  test('falls back to the coordinator when there is no owner row', () => {
+  test('reports no_recipient when there is no owner row', () => {
     const result = decideGoalOwnerResolution(input({ candidates: [] }));
-    expect(result).toEqual({
-      action: 'coordinator_fallback',
-      coordinatorAgentId: 'coordinator-1',
-    });
-  });
-
-  test('reports no_recipient when there is no owner and no coordinator', () => {
-    const result = decideGoalOwnerResolution(input({ candidates: [], coordinatorAgentId: null }));
     expect(result).toEqual({ action: 'no_recipient' });
   });
 
-  test('falls back to the coordinator when only non-owner relationships exist', () => {
+  test('reports no_recipient when only non-owner relationships exist', () => {
     const result = decideGoalOwnerResolution(
       input({
         candidates: [{ agentId: 'agent-w', relationship: 'watcher', createdAt: 50 }],
         agentStates: { 'agent-w': active },
       })
     );
-    expect(result).toEqual({
-      action: 'coordinator_fallback',
-      coordinatorAgentId: 'coordinator-1',
-    });
+    expect(result).toEqual({ action: 'no_recipient' });
   });
 
   test('resolves duplicate owners deterministically to the earliest assignment', () => {

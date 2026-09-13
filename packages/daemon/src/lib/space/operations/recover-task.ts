@@ -15,7 +15,7 @@ import {
 } from './task-metadata.ts';
 
 const inputSchema = z
-  .object({ taskId: z.string().min(1), description: z.string().min(1).optional() })
+  .object({ taskId: z.string().min(1), description: z.string().optional() })
   .strict();
 type Input = z.infer<typeof inputSchema>;
 const REJECTIONS = [

@@ -195,7 +195,6 @@ export type SpaceGoalOwnerResolution =
       owner: SpaceGoalOwnerCandidate;
       conflicts: SpaceGoalOwnerCandidate[];
     }
-  | { action: 'coordinator_fallback'; coordinatorAgentId: string }
   | { action: 'no_recipient' };
 
 export interface SpaceLongHorizonAgentForgeScope {
