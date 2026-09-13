@@ -4,6 +4,7 @@ import { editStandaloneTask } from '../../../storage/tasks/edit-task.ts';
 import type { OperationCaller } from '../../operations/registry.ts';
 import {
   createTaskMetadataEditor,
+  rejectStandalonePreferredWorkflow,
   type TaskMetadataOwner,
 } from '../../operations/task-metadata.ts';
 import { Logger } from '../../logger.ts';
@@ -18,7 +19,9 @@ const log = new Logger('SpaceTaskMetadata');
 export interface SpaceTaskMetadataDependencies extends SpaceMcpSessionPolicyContext {
   db: Database;
   getSession: (sessionId: string) => Session | null;
-  getTaskManager: (spaceId: string) => Pick<SpaceTaskManager, 'updateTask' | 'submitTaskForReview'>;
+  getTaskManager: (
+    spaceId: string
+  ) => Pick<SpaceTaskManager, 'updateTask' | 'submitTaskForReview' | 'getTask'>;
   notifyStandalone: () => void;
   emitTaskUpdated: (spaceId: string, task: SpaceTask) => Promise<void>;
 }
@@ -78,9 +81,26 @@ export function createSpaceTaskMetadataEditor(dependencies: SpaceTaskMetadataDep
       const scope = admitSpaceTaskCaller(owner, caller, dependencies);
       if ('reason' in scope) throw new Error(scope.reason);
     },
-    editStandalone: (input) => editStandaloneTask(db, input, notifyStandalone),
-    editSpace: (spaceId, { taskId, ...metadata }) =>
-      getTaskManager(spaceId).updateTask(taskId, metadata),
+    editStandalone: (input) => {
+      rejectStandalonePreferredWorkflow(input);
+      return editStandaloneTask(db, input, notifyStandalone);
+    },
+    editSpace: async (spaceId, { taskId, ...metadata }) => {
+      const manager = getTaskManager(spaceId);
+      if (!Object.hasOwn(metadata, 'preferredWorkflowId')) {
+        return manager.updateTask(taskId, metadata);
+      }
+      const current = await manager.getTask(taskId);
+      if (!current) return null;
+      if (current.workflowRunId || current.startedAt) {
+        throw new Error('Workflow model overrides are locked after the task starts');
+      }
+      const selectionChanged = metadata.preferredWorkflowId !== current.preferredWorkflowId;
+      return manager.updateTask(
+        taskId,
+        selectionChanged ? { ...metadata, workflowModelOverrides: null } : metadata
+      );
+    },
     afterEdit: async (owner, task) => {
       if (owner.kind === 'space') {
         await emitTaskUpdated(owner.spaceId, task as SpaceTask).catch((error: unknown) => {

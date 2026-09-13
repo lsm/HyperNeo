@@ -658,6 +658,41 @@ test('task.update sets preferredWorkflowId for RPC callers and refuses MCP ones'
   expect(tasks.getTask(taskId)?.preferredWorkflowId).toBe(workflow.id);
 });
 
+test('switching preferredWorkflowId clears the previous workflow model overrides', async () => {
+  const workflows = new SpaceWorkflowRepository(db);
+  const first = workflows.createWorkflow({ spaceId, name: 'First' });
+  const second = workflows.createWorkflow({ spaceId, name: 'Second' });
+  tasks.updateTask(taskId, {
+    preferredWorkflowId: first.id,
+    workflowModelOverrides: { coder: 'opus' },
+  });
+  const rpc = createOperationRpcHandler(provider(), () => ({}));
+  await rpc({ name: 'task.update', input: { taskId, preferredWorkflowId: second.id } }, context);
+  expect(tasks.getTask(taskId)).toMatchObject({ preferredWorkflowId: second.id });
+  expect(tasks.getTask(taskId)?.workflowModelOverrides ?? null).toBeNull();
+
+  tasks.updateTask(taskId, { workflowModelOverrides: { coder: 'sonnet' } });
+  await rpc({ name: 'task.update', input: { taskId, preferredWorkflowId: second.id } }, context);
+  expect(tasks.getTask(taskId)?.workflowModelOverrides).toEqual({ coder: 'sonnet' });
+});
+
+test('preferredWorkflowId is locked once the task has started and refused for standalone tasks', async () => {
+  const workflow = new SpaceWorkflowRepository(db).createWorkflow({ spaceId, name: 'W' });
+  tasks.updateTask(taskId, { startedAt: 1000 });
+  const rpc = createOperationRpcHandler(provider(), () => ({}));
+  await expect(
+    rpc({ name: 'task.update', input: { taskId, preferredWorkflowId: workflow.id } }, context)
+  ).rejects.toThrow('locked after the task starts');
+
+  const standalone = createStandaloneTask(db, { title: 'Loose' }, undefined, () => {});
+  await expect(
+    rpc(
+      { name: 'task.update', input: { taskId: standalone.id, preferredWorkflowId: workflow.id } },
+      context
+    )
+  ).rejects.toThrow('Space-only');
+});
+
 test('task.list refuses a block-reason filter outside the blocked status', async () => {
   const rpc = createOperationRpcHandler(provider(), () => ({}));
   for (const input of [

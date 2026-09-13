@@ -1,6 +1,6 @@
 import type { Database } from '../../storage/sqlite-compat.ts';
 import { editStandaloneTask } from '../../storage/tasks/edit-task.ts';
-import { createTaskMetadataEditor } from './task-metadata.ts';
+import { createTaskMetadataEditor, rejectStandalonePreferredWorkflow } from './task-metadata.ts';
 
 export function createStandaloneTaskMetadataEditor(db: Database, notifyChange: () => void) {
   return createTaskMetadataEditor({
@@ -9,7 +9,10 @@ export function createStandaloneTaskMetadataEditor(db: Database, notifyChange: (
         ? { kind: 'standalone' }
         : null,
     admit: () => {},
-    editStandalone: (input) => editStandaloneTask(db, input, notifyChange),
+    editStandalone: (input) => {
+      rejectStandalonePreferredWorkflow(input);
+      return editStandaloneTask(db, input, notifyChange);
+    },
     editSpace: () => null,
   });
 }

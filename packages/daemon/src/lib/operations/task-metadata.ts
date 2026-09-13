@@ -75,6 +75,12 @@ export async function persistTaskMetadata(
   return task === null ? { reason: null } : { value: task };
 }
 
+export function rejectStandalonePreferredWorkflow(input: TaskMetadataInput): void {
+  if (Object.hasOwn(input, 'preferredWorkflowId')) {
+    throw new Error('preferredWorkflowId is Space-only and cannot be set on a standalone task');
+  }
+}
+
 export function createTaskMetadataEditor(dependencies: TaskMetadataDependencies) {
   return (superpipe({ ...dependencies })('edit-task-metadata') as PipelineAPI)
     .input(['input', 'caller'])
