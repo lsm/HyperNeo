@@ -1,8 +1,9 @@
-import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
-import type { SpaceTaskStatus } from '@hyperneo/shared';
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
+import type { SpaceTask, SpaceTaskStatus } from '@hyperneo/shared';
 import {
   isValidSpaceTaskTransition,
   SpaceTaskManager,
+  StaleTaskGuardError,
   VALID_SPACE_TASK_TRANSITIONS,
 } from '../../../../src/lib/space/managers/space-task-manager.ts';
 import { PendingCompletionSupersededError } from '../../../../src/lib/space/operations/pending-completion-guard.ts';
@@ -465,6 +466,81 @@ describe('SpaceTaskManager.setTaskStatus — expectedStatus guard', () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+describe('SpaceTaskManager.setTaskStatus — guardWrite hook', () => {
+  let db: BunDatabase;
+  let taskRepo: SpaceTaskRepository;
+  let taskManager: SpaceTaskManager;
+
+  beforeEach(() => {
+    db = makeDb();
+    taskRepo = new SpaceTaskRepository(db);
+    taskManager = new SpaceTaskManager(db, SPACE_ID);
+  });
+  afterEach(() => {
+    db.close();
+  });
+
+  test('guardWrite returning undefined lets the write proceed', async () => {
+    const task = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'T',
+      description: '',
+      status: 'in_progress',
+    });
+    const updated = await taskManager.setTaskStatus(task.id, 'review', {
+      guardWrite: () => undefined,
+    });
+    expect(updated.status).toBe('review');
+  });
+
+  test('guardWrite returning a reason throws StaleTaskGuardError and leaves the row untouched', async () => {
+    const task = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'T',
+      description: '',
+      status: 'in_progress',
+    });
+    taskRepo.updateTask(task.id, { title: 'mutated-before-guard' });
+    let seenTitle: string | undefined;
+    const guardWrite = (current: SpaceTask) => {
+      seenTitle = current.title;
+      return 'an active workflow run is attached';
+    };
+    const rejection = taskManager.setTaskStatus(task.id, 'review', { guardWrite });
+    await expect(rejection).rejects.toBeInstanceOf(StaleTaskGuardError);
+    await expect(rejection).rejects.toThrow(
+      `Task ${task.id} rejected: an active workflow run is attached`
+    );
+    expect(seenTitle).toBe('mutated-before-guard');
+    expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
+  });
+
+  test('a wrong expectedStatus short-circuits before guardWrite runs', async () => {
+    const task = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'T',
+      description: '',
+      status: 'in_progress',
+    });
+    const guardWrite = mock(() => 'should not be reached');
+    await expect(
+      taskManager.setTaskStatus(task.id, 'review', { expectedStatus: 'open', guardWrite })
+    ).rejects.toThrow(`Task ${task.id} is no longer 'open' (now 'in_progress')`);
+    expect(guardWrite).not.toHaveBeenCalled();
+  });
+
+  test('omitting guardWrite behaves exactly as before', async () => {
+    const task = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'T',
+      description: '',
+      status: 'in_progress',
+    });
+    const updated = await taskManager.setTaskStatus(task.id, 'review');
+    expect(updated.status).toBe('review');
   });
 });
 
