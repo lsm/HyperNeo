@@ -598,6 +598,77 @@ describe('shared operation invocation audit hooks', () => {
     expect(Object.hasOwn(recorded, 'secret')).toBe(false);
   });
 
+  test('an own __proto__ field stays an own field in the record', async () => {
+    const operation = defineOperation({
+      name: 'message.send.proto',
+      description: 'Accept a value carrying an own __proto__ field',
+      inputSchema: z.object({ content: z.string(), carrier: z.any() }),
+      resultSchema: z.object({ accepted: z.string() }),
+      execute: async (input: { content: string }) => ({ accepted: input.content }),
+    });
+    const registry = createOperationRegistry([operation]);
+    const carrier: Record<string, unknown> = {};
+    Object.defineProperty(carrier, '__proto__', {
+      enumerable: true,
+      configurable: true,
+      writable: true,
+      value: { injected: true },
+    });
+    let seen: unknown = null;
+    await invokeOperation(registry, 'message.send.proto', { content: 'hello', carrier }, caller, {
+      after: (prepared: { input: unknown }) => {
+        seen = prepared.input;
+      },
+    });
+    const recorded = (seen as { carrier: Record<string, unknown> }).carrier;
+    expect(Object.hasOwn(recorded, '__proto__')).toBe(true);
+    expect(JSON.parse(JSON.stringify(recorded))).toEqual({ __proto__: { injected: true } });
+  });
+
+  test('a sparse array with a huge length does not scan its holes', async () => {
+    const operation = defineOperation({
+      name: 'message.send.sparse',
+      description: 'Accept a sparse array',
+      inputSchema: z.object({ content: z.string(), items: z.any() }),
+      resultSchema: z.object({ accepted: z.string() }),
+      execute: async (input: { content: string }) => ({ accepted: input.content }),
+    });
+    const registry = createOperationRegistry([operation]);
+    const items: unknown[] = ['only'];
+    items.length = 2 ** 30;
+    let seen: unknown = null;
+    const startedAt = Date.now();
+    const outcome = await invokeOperation(
+      registry,
+      'message.send.sparse',
+      { content: 'hello', items },
+      caller,
+      {
+        after: (prepared: { input: unknown }) => {
+          seen = prepared.input;
+        },
+      }
+    );
+    expect(Date.now() - startedAt).toBeLessThan(2000);
+    expect(outcome).toEqual({ kind: 'completed', value: { accepted: 'hello' } });
+    const recorded = (seen as { items: unknown[] }).items;
+    expect(recorded.length).toBe(2 ** 30);
+    expect(recorded[0]).toBe('only');
+  });
+
+  test('a method-style hook keeps its own receiver', async () => {
+    const { registry } = fixture();
+    class Recorder {
+      readonly seen: string[] = [];
+      before(prepared: { operation: { name: string } }) {
+        this.seen.push(prepared.operation.name);
+      }
+    }
+    const recorder = new Recorder();
+    await invokeOperation(registry, 'message.send', { content: 'hello' }, caller, recorder);
+    expect(recorder.seen).toEqual(['message.send']);
+  });
+
   test('snapshotting never invokes an input accessor', async () => {
     const operation = defineOperation({
       name: 'message.send.accessor',

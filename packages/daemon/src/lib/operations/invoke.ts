@@ -122,8 +122,8 @@ function resolveAuditHooks(audit?: OperationAudit): AuditHooks {
     const before = audit?.before;
     const after = audit?.after;
     return {
-      before: typeof before === 'function' ? before : undefined,
-      after: typeof after === 'function' ? after : undefined,
+      before: typeof before === 'function' ? before.bind(audit) : undefined,
+      after: typeof after === 'function' ? after.bind(audit) : undefined,
     };
   } catch {
     return {};
@@ -148,21 +148,25 @@ function isolateValue<T>(value: T, seen: WeakMap<object, unknown>): T {
   if (Array.isArray(source)) {
     const copy: unknown[] = [];
     seen.set(source, copy);
-    for (let index = 0; index < source.length; index += 1) {
-      const descriptor = descriptors[index];
-      copy.push(
-        descriptor?.enumerable && 'value' in descriptor
-          ? isolateValue(descriptor.value, seen)
-          : undefined
-      );
+    for (const [key, descriptor] of Object.entries(descriptors)) {
+      const index = Number(key);
+      if (!Number.isInteger(index) || index < 0) continue;
+      if (!descriptor.enumerable || !('value' in descriptor)) continue;
+      copy[index] = isolateValue(descriptor.value, seen);
     }
+    copy.length = source.length;
     return copy as T;
   }
   const copy: Record<string, unknown> = {};
   seen.set(source, copy);
   for (const [key, descriptor] of Object.entries(descriptors)) {
     if (!descriptor.enumerable) continue;
-    copy[key] = 'value' in descriptor ? isolateValue(descriptor.value, seen) : UNREPRESENTABLE;
+    Object.defineProperty(copy, key, {
+      value: 'value' in descriptor ? isolateValue(descriptor.value, seen) : UNREPRESENTABLE,
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
   }
   return copy as T;
 }
