@@ -8,6 +8,7 @@ import {
   createSpaceRecord,
   provisionChatSession,
   publishSpaceCreated,
+  seedAgents,
   seedWorkflows,
   validateParams,
 } from '../../../src/lib/space/create-space-pipeline.ts';
@@ -46,6 +47,10 @@ function makeDeps(
     createSpaceRecord: async (input) => {
       log.calls.push(`create:${input.name}`);
       return space;
+    },
+    seedAgents: async (spaceId, templateKeys) => {
+      log.calls.push(`agents:${spaceId}:${templateKeys.join('|')}`);
+      return { errors: [] };
     },
     seedWorkflows: (spaceId) => {
       log.calls.push(`seed:${spaceId}`);
@@ -148,6 +153,85 @@ describe('createSpace pipeline stages', () => {
     const result = await createSpaceRecord(ctx);
     expect(createSpaceRecordDep).toHaveBeenCalledWith(params);
     expect(result).toEqual({ ...ctx, space });
+  });
+
+  describe('seedAgents', () => {
+    test('skips the seeder when no template keys are requested', async () => {
+      const { deps, log } = makeDeps();
+      const ctx = makeCtx({ deps, space });
+      expect(await seedAgents(ctx)).toBe(ctx);
+      expect(log.calls).toEqual([]);
+    });
+
+    test('skips the seeder when the space requests an empty key list', async () => {
+      const { deps, log } = makeDeps();
+      const ctx = makeCtx({ deps, space, params: { ...params, seedAgentTemplateKeys: [] } });
+      expect(await seedAgents(ctx)).toBe(ctx);
+      expect(log.calls).toEqual([]);
+    });
+
+    test('preserves context and forwards every requested key when seeding succeeds', async () => {
+      const { deps, log } = makeDeps();
+      const ctx = makeCtx({
+        deps,
+        space,
+        params: { ...params, seedAgentTemplateKeys: ['task-manager.default', 'other.default'] },
+      });
+      expect(await seedAgents(ctx)).toBe(ctx);
+      expect(log.calls).toEqual(['agents:space-1:task-manager.default|other.default']);
+    });
+
+    test('continues without a seeder dependency', async () => {
+      const { deps } = makeDeps();
+      delete deps.seedAgents;
+      const ctx = makeCtx({
+        deps,
+        space,
+        params: { ...params, seedAgentTemplateKeys: ['task-manager.default'] },
+      });
+      expect(await seedAgents(ctx)).toBe(ctx);
+    });
+
+    test('appends failed template keys without mutating prior warnings', async () => {
+      const warnings = ['prior warning'];
+      const deps = makeDeps({
+        seedAgents: async () => ({
+          errors: [
+            { key: 'task-manager.default', error: 'failed' },
+            { key: 'other.default', error: 'failed' },
+          ],
+        }),
+      }).deps;
+      const result = await seedAgents(
+        makeCtx({
+          deps,
+          space,
+          warnings,
+          params: { ...params, seedAgentTemplateKeys: ['task-manager.default', 'other.default'] },
+        })
+      );
+      expect(result.warnings).toEqual([
+        'prior warning',
+        'Failed to seed agents: task-manager.default, other.default',
+      ]);
+      expect(warnings).toEqual(['prior warning']);
+    });
+
+    test('converts a thrown seed error into a warning', async () => {
+      const deps = makeDeps({
+        seedAgents: async () => {
+          throw new Error('seed failed');
+        },
+      }).deps;
+      const result = await seedAgents(
+        makeCtx({
+          deps,
+          space,
+          params: { ...params, seedAgentTemplateKeys: ['task-manager.default'] },
+        })
+      );
+      expect(result.warnings).toEqual(['Failed to seed agents']);
+    });
   });
 
   describe('seedWorkflows', () => {
@@ -312,6 +396,32 @@ describe('createSpace pipeline', () => {
       'runtime:space-1',
       'publish:space-1',
     ]);
+  });
+
+  test('seeds requested agents before workflows and the chat session', async () => {
+    const { deps, log } = makeDeps();
+    await createSpace(deps, { ...params, seedAgentTemplateKeys: ['task-manager.default'] });
+    expect(log.calls).toEqual([
+      'create:Test Space',
+      'agents:space-1:task-manager.default',
+      'seed:space-1',
+      'session:space:chat:space-1',
+      'add:space-1:space:chat:space-1',
+      'runtime:space-1',
+      'publish:space-1',
+    ]);
+  });
+
+  test('a failed agent seed warns and still creates the space', async () => {
+    const { deps, log } = makeDeps({
+      seedAgents: async () => ({ errors: [{ key: 'task-manager.default', error: 'failed' }] }),
+    });
+    const result = await createSpace(deps, {
+      ...params,
+      seedAgentTemplateKeys: ['task-manager.default'],
+    });
+    expect(result.seedWarnings).toEqual(['Failed to seed agents: task-manager.default']);
+    expect(log.calls.at(-1)).toBe('publish:space-1');
   });
 
   test('validation early return prevents every effect', async () => {

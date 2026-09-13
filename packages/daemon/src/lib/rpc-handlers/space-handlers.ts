@@ -22,7 +22,7 @@ import type { SpaceTaskRepository } from '../../storage/repositories/space-task-
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository.ts';
 import type { SessionManager } from '../session-manager.ts';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
-import { createSpace } from '../space/create-space-pipeline.ts';
+import { createSpace, type CreateSpaceDeps } from '../space/create-space-pipeline.ts';
 import { seedBuiltInWorkflows } from '../space/workflows/built-in-workflows.ts';
 import { Logger } from '../logger.ts';
 
@@ -149,12 +149,14 @@ export function setupSpaceHandlers(
   internalEventBus: InternalEventBus<DaemonInternalEventMap>,
   spaceWorkflowManager: SpaceWorkflowManager,
   sessionManager?: SessionManager,
-  spaceRuntimeService?: SpaceRuntimeService
+  spaceRuntimeService?: SpaceRuntimeService,
+  seedAgents?: CreateSpaceDeps['seedAgents']
 ): void {
   messageHub.onRequest('space.create', async (data) => {
     return createSpace(
       {
         createSpaceRecord: (params) => spaceManager.createSpace(params),
+        ...(seedAgents ? { seedAgents } : {}),
         seedWorkflows: (spaceId) => seedBuiltInWorkflows(spaceId, spaceWorkflowManager),
         ...(sessionManager
           ? {
