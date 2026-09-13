@@ -104,7 +104,7 @@ async function applyRecovery(
 }
 
 const RECOVER_TASK_DESCRIPTION =
-  'Retry a Space task that failed, was blocked, or was cancelled, optionally replacing its description for the new attempt. A workflow-backed task is recovered through its workflow run and reopens at open when it was blocked, otherwise at in_progress; a plain task is retried directly. RPC and internal callers, and MCP sessions active in the owning Space, are admitted; other MCP sessions are rejected with recovery_denied. Rejects task_not_found when the task is absent, task_not_in_space when it is standalone rather than Space-owned, status_not_retryable when a workflow-backed task is not blocked, cancelled or done, and recovery_failed when the workflow recovery itself refuses. Returns the reopened task on success.';
+  'Retry a Space task that failed, was blocked, or was cancelled, optionally replacing its description for the new attempt. A workflow-backed task is recovered through its workflow run and reopens at open when it was blocked, otherwise at in_progress; a plain task is retried directly. RPC and internal callers, and MCP sessions active in the owning Space, are admitted; other MCP sessions are rejected with recovery_denied. Rejects task_not_found when the task is absent, task_not_in_space when it is standalone rather than Space-owned, status_not_retryable when the task is not blocked, cancelled or done, and recovery_failed when the workflow recovery itself refuses. Returns the reopened task on success.';
 
 export function createRecoverTaskOperation(
   getDatabase: () => Database,
