@@ -1,12 +1,15 @@
 import { z } from 'zod';
 import type { ListTasksInput, TaskListPage } from '../../storage/tasks/list-tasks.ts';
-import { defineOperation } from './registry.ts';
+import { defineOperation, type OperationCaller } from './registry.ts';
 import { TaskCoreSchema, TaskWithSpaceFieldsSchema } from './task-get.ts';
 
 const cursorSchema = z.object({ createdAt: z.number(), id: z.string().min(1) }).strict();
 
 export function createListTasksOperation(
-  listTasks: (input: ListTasksInput) => TaskListPage | Promise<TaskListPage>
+  listTasks: (
+    input: ListTasksInput,
+    caller: OperationCaller
+  ) => TaskListPage | Promise<TaskListPage>
 ) {
   return defineOperation({
     name: 'task.list',
@@ -25,6 +28,6 @@ export function createListTasksOperation(
       tasks: z.array(TaskWithSpaceFieldsSchema),
       nextCursor: cursorSchema.nullable(),
     }),
-    execute: async (input) => listTasks(input),
+    execute: async (input, caller) => listTasks(input, caller),
   });
 }
