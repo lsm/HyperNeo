@@ -2174,10 +2174,7 @@ class SpaceStore {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
 
-    return hub.request<SpaceTask>('spaceTask.publish', {
-      taskId,
-      spaceId,
-    });
+    return transitionTask(hub, { taskId, status: 'open', expectedStatus: 'draft' });
   }
 
   async runTaskDirectly(taskId: string): Promise<DirectTaskStartResult> {

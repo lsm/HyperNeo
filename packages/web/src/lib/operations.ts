@@ -6,7 +6,7 @@ export function invokeOperation<T>(hub: MessageHub, name: string, input?: unknow
 
 export async function transitionTask(
   hub: MessageHub,
-  input: { taskId: string; status: string; result?: string }
+  input: { taskId: string; status: string; result?: string; expectedStatus?: string }
 ): Promise<SpaceTask> {
   const result = await invokeOperation<SpaceTask | string | null>(hub, 'task.transition', input);
   if (result === null) throw new Error(`Task ${input.taskId} is unavailable`);
