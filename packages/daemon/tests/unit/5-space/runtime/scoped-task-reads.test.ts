@@ -93,7 +93,7 @@ test('admitSpaceScope passes an absent scope and refuses a foreign one', () => {
 
 test('admitListedScope refuses with an empty page rather than null', () => {
   expect(admitListedScope({ spaceId }, member('foreign-list', 'other-space'), admission)).toEqual({
-    reason: { tasks: [], nextCursor: null },
+    reason: { tasks: [], total: 0, nextCursor: null },
   });
 });
 
@@ -108,12 +108,12 @@ test('readScopedTask never reaches the reader when the gate refuses', () => {
 });
 
 test('listScopedTasks never reaches the reader when the gate refuses', () => {
-  const page: TaskListPage = { tasks: [], nextCursor: null };
+  const page: TaskListPage = { tasks: [], total: 0, nextCursor: null };
   const list = mock((_input: ListTasksInput) => page);
   const refused = listScopedTasks(member('blocked-list', 'other-space'), admission, list, {
     spaceId,
   });
-  expect(refused).toEqual({ tasks: [], nextCursor: null });
+  expect(refused).toEqual({ tasks: [], total: 0, nextCursor: null });
   expect(list).not.toHaveBeenCalled();
   listScopedTasks(member('allowed-list', spaceId), admission, list, { spaceId });
   expect(list).toHaveBeenCalledTimes(1);

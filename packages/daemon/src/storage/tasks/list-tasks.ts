@@ -13,17 +13,21 @@ export interface ListTasksInput {
   spaceId?: string;
   status?: TaskLifecycleStatus;
   limit?: number;
+  offset?: number;
   before?: TaskListCursor;
 }
 
 export interface TaskListPage {
   tasks: TaskCore[];
+  total: number;
   nextCursor: TaskListCursor | null;
 }
 
 interface TaskListQuery {
   sql: string;
   values: SQLiteValue[];
+  countSql: string;
+  countValues: SQLiteValue[];
   limit: number;
 }
 
@@ -39,27 +43,45 @@ function buildTaskListQuery(input: ListTasksInput): TaskListQuery {
   } else {
     where.push("status != 'archived'");
   }
+  const countSql = `SELECT COUNT(*) AS total FROM space_tasks WHERE ${where.join(' AND ')}`;
+  const countValues = [...values];
   if (input.before) {
     where.push('(created_at, id) < (?, ?)');
     values.push(input.before.createdAt, input.before.id);
   }
-  values.push(limit + 1);
+  const offset = Number.isFinite(input.offset) ? Math.max(0, Math.trunc(input.offset!)) : 0;
+  const whereSql = where.join(' AND ');
+  values.push(limit + 1, offset);
   return {
-    sql: `SELECT * FROM space_tasks WHERE ${where.join(' AND ')} ORDER BY created_at DESC, id DESC LIMIT ?`,
+    sql: `SELECT * FROM space_tasks WHERE ${whereSql} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
     values,
+    countSql,
+    countValues,
     limit,
   };
+}
+
+function countTaskListRows(db: Database, query: TaskListQuery): number {
+  const row = db.prepare(query.countSql).get(...query.countValues) as
+    | { total?: number }
+    | undefined;
+  return row?.total ?? 0;
 }
 
 function selectTaskListRows(db: Database, query: TaskListQuery): Record<string, unknown>[] {
   return db.prepare(query.sql).all(...query.values) as Record<string, unknown>[];
 }
 
-function toTaskListPage(rows: Record<string, unknown>[], query: TaskListQuery): TaskListPage {
+function toTaskListPage(
+  rows: Record<string, unknown>[],
+  query: TaskListQuery,
+  total: number
+): TaskListPage {
   const tasks = rows.slice(0, query.limit).map(decodeTaskCoreRow);
   const last = tasks.at(-1);
   return {
     tasks,
+    total,
     nextCursor:
       rows.length > query.limit && last ? { createdAt: last.createdAt, id: last.id } : null,
   };
@@ -68,6 +90,7 @@ function toTaskListPage(rows: Record<string, unknown>[], query: TaskListQuery): 
 export const listTaskCores = (superpipe({})('list-core-tasks') as PipelineAPI)
   .input(['db', 'input'])
   .pipe(buildTaskListQuery, 'input', 'query')
+  .pipe(countTaskListRows, ['db', 'query'], 'total')
   .pipe(selectTaskListRows, ['db', 'query'], 'rows')
-  .pipe(toTaskListPage, ['rows', 'query'], 'page')
+  .pipe(toTaskListPage, ['rows', 'query', 'total'], 'page')
   .end('page') as (db: Database, input: ListTasksInput) => TaskListPage;
