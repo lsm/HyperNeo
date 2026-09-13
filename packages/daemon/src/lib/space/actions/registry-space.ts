@@ -106,7 +106,7 @@ import {
   HUMAN_ONLY_AUTONOMY_LEVEL,
   SESSION_WRITE_AUTONOMY_LEVEL,
 } from '../tools/tool-admission-gates.ts';
-import { jsonResult } from '../tools/tool-result.ts';
+import { jsonResult, type ToolResult } from '../tools/tool-result.ts';
 import { type CreateStandaloneTaskParams, mapCreateTaskParams } from './create-task-params.ts';
 import { createOperationActionHandler } from './operation-action.ts';
 import { type ActionDefinition, defineAction } from './registry.ts';
@@ -218,6 +218,17 @@ export function createSpaceRegistryEntries(
     ...jsonResult({ success: false, error: 'task.cancel is unavailable: no operation registry' }),
     isError: true,
   });
+  const auditCreatedTask = async (result: ToolResult): Promise<ToolResult> => {
+    if (config.auditLogRepo && !result.isError) {
+      config.auditLogRepo.createEntry({
+        toolName: 'create_standalone_task',
+        sessionId: config.mySessionId ?? null,
+        spaceId: config.spaceId,
+        taskId: (JSON.parse(result.content[0].text) as { id?: string }).id ?? null,
+      });
+    }
+    return result;
+  };
 
   const archiveTaskAutonomy = async (params: z.infer<typeof ArchiveTaskSchema>) => {
     const task = taskInSpace(params.task_id);
@@ -801,12 +812,15 @@ export function createSpaceRegistryEntries(
       auditRedactKeys: ['description'],
       paramsSchema: CreateStandaloneTaskSchema,
       handler: operations
-        ? createOperationActionHandler(
-            operations,
-            { sessionId: config.mySessionId },
-            'task.create',
-            (params) => mapCreateTaskParams(params as CreateStandaloneTaskParams, config)
-          )
+        ? async (args: unknown) =>
+            auditCreatedTask(
+              (await createOperationActionHandler(
+                operations,
+                { sessionId: config.mySessionId },
+                'task.create',
+                (params) => mapCreateTaskParams(params as CreateStandaloneTaskParams, config)
+              )(args)) as ToolResult
+            )
         : (args) => handlers.create_standalone_task(args),
     }),
     defineAction({

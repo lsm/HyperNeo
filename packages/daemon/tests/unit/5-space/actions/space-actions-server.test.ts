@@ -1,5 +1,10 @@
 /// <reference types="bun" />
 import { describe, expect, test } from 'bun:test';
+import { z } from 'zod';
+import {
+  createOperationRegistry,
+  defineOperation,
+} from '../../../../src/lib/operations/registry.ts';
 import {
   GENERAL_HOT_ACTIONS,
   ROLE_HOT_ACTIONS,
@@ -397,6 +402,40 @@ describe('createSpaceActionsMcpServer — call_action dispatch', () => {
     expect(entries).toHaveLength(1);
     expect(entries[0].paramsSummary).not.toContain('super-secret-plan');
     expect(entries[0].paramsSummary).not.toContain('description');
+  });
+
+  test('associates the dispatcher audit row with the created task id on the operations path', async () => {
+    const entries: CreateMcpAuditLogParams[] = [];
+    const operations = createOperationRegistry([
+      defineOperation({
+        name: 'task.create',
+        description: 'Create a task',
+        inputSchema: z.object({ title: z.string() }).passthrough(),
+        resultSchema: z.object({ id: z.string(), title: z.string() }),
+        execute: async (input) => ({
+          id: 'task-created-1',
+          title: (input as { title: string }).title,
+        }),
+      }),
+    ]);
+    const server = makeServer({
+      operationRegistry: operations,
+      spaceConfig: {
+        ...stubSpaceConfig,
+        auditLogRepo: {
+          createEntry: (entry: CreateMcpAuditLogParams) => {
+            entries.push(entry);
+            return null as never;
+          },
+        },
+      } as unknown as SpaceAgentToolsConfig,
+    });
+    const result = (await dispatch(server, {
+      name: 'create_standalone_task',
+      params: { title: 'From ops', description: 'via operations' },
+    })) as { id: string };
+    expect(result.id).toBe('task-created-1');
+    expect(entries.some((entry) => entry.taskId === result.id)).toBe(true);
   });
 
   test('derives a long-term-agent autonomy ceiling fresh on each dispatch', async () => {
