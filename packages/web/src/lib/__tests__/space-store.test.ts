@@ -297,6 +297,10 @@ function makeMockHub() {
           taskDetailResult ?? { ...makeTask(input.taskId as string), description: 'full text' }
         );
       }
+      if (method === 'operation.invoke' && params?.name === 'task.resolvePendingCompletion') {
+        const input = (params?.input ?? {}) as Record<string, unknown>;
+        return makeTask(input.taskId as string, input.approved ? 'approved' : 'in_progress');
+      }
       if (method === 'spaceTask.update') return makeTask('t1', 'in_progress');
       if (method === 'spaceTask.recoverWorkflow') return makeTask('t1', 'in_progress');
       if (method === 'spaceAgentV2.update') return { agent: makeLongHorizonAgent('a1') };
@@ -2942,6 +2946,50 @@ function makeNodeExecution(overrides: Partial<NodeExecution> = {}): NodeExecutio
     lastActivityAt: overrides.lastActivityAt ?? null,
   };
 }
+
+describe('SpaceStore — pending completion approval', () => {
+  beforeEach(async () => {
+    await resetStore();
+  });
+  afterEach(() => vi.clearAllMocks());
+
+  it('resolves a pending completion through the operations door without a spaceId', async () => {
+    await spaceStore.selectSpace('space-1');
+    mockHub.request.mockClear();
+
+    const task = await spaceStore.approvePendingCompletion('t1', true, '  ships  ');
+
+    const calls = mockHub.request.mock.calls.filter(
+      (c: unknown[]) =>
+        c[0] === 'operation.invoke' &&
+        (c[1] as { name?: string } | undefined)?.name === 'task.resolvePendingCompletion'
+    );
+    expect(calls).toHaveLength(1);
+    expect(calls[0][1]).toEqual({
+      name: 'task.resolvePendingCompletion',
+      input: { taskId: 't1', approved: true, reason: '  ships  ' },
+    });
+    expect(task.status).toBe('approved');
+  });
+
+  it('sends a null reason when none is given and carries rejection through', async () => {
+    await spaceStore.selectSpace('space-1');
+    mockHub.request.mockClear();
+
+    const task = await spaceStore.approvePendingCompletion('t1', false);
+
+    const calls = mockHub.request.mock.calls.filter(
+      (c: unknown[]) =>
+        c[0] === 'operation.invoke' &&
+        (c[1] as { name?: string } | undefined)?.name === 'task.resolvePendingCompletion'
+    );
+    expect(calls[0][1]).toEqual({
+      name: 'task.resolvePendingCompletion',
+      input: { taskId: 't1', approved: false, reason: null },
+    });
+    expect(task.status).toBe('in_progress');
+  });
+});
 
 describe('SpaceStore — task detail cache', () => {
   beforeEach(async () => {
