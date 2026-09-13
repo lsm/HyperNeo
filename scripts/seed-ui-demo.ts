@@ -1083,9 +1083,10 @@ async function seedSpace(ws: WebSocket): Promise<{ spaceId: string; taskIds: str
   const spaceId = space.id as string;
 
   const mk = (title: string, description: string, priority: string, labels: string[]) =>
-    rpcCall(ws, 'spaceTask.create', { spaceId, title, description, priority, labels }).then(
-      (t) => t.id as string
-    );
+    rpcCall(ws, 'operation.invoke', {
+      name: 'task.create',
+      input: { spaceId, title, description, priority, labels },
+    }).then((t) => t.id as string);
 
   const t1 = await mk(
     'Scaffold two-layer token architecture',
