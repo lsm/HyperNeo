@@ -1,9 +1,11 @@
 import { describe, expect, it, mock } from 'bun:test';
 import type { MessageHub, RequestHandler, SpaceGoalOwnerResolution } from '@hyperneo/shared';
-import type {
-  DaemonInternalEventMap,
-  InternalEventBus,
+import {
+  createDaemonInternalEventBus,
+  type DaemonInternalEventMap,
+  type InternalEventBus,
 } from '../../../../src/lib/internal-event-bus.ts';
+import { subscribeGoalOwnerChangeOutcomeRedelivery } from '../../../../src/lib/space/goals/goal-owner-change-outcome-redelivery.ts';
 import type { SpaceGoalService } from '../../../../src/lib/space/goals/goal-service.ts';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { setupSpaceGoalHandlers } from '../../../../src/lib/rpc-handlers/space-goal-handlers.ts';
@@ -223,6 +225,33 @@ describe('spaceGoal owner handlers', () => {
       spaceId: SPACE_ID,
       goalId: GOAL_ID,
     });
+  });
+
+  it('wakes the goal pending outcome notifications when an owner is assigned', async () => {
+    const internalEventBus = createDaemonInternalEventBus();
+    const recoverPendingOutcomeNotificationsForGoal = mock(async (_goalId: string) => {});
+    subscribeGoalOwnerChangeOutcomeRedelivery({
+      internalEventBus,
+      recoverPendingOutcomeNotificationsForGoal,
+    });
+    const { hub, handlers } = createMockHub();
+    setupSpaceGoalHandlers(hub, {
+      goalService: {
+        getGoal: mock(() => ({ id: GOAL_ID, spaceId: SPACE_ID })),
+      } as unknown as SpaceGoalService,
+      spaceManager: {
+        getSpace: mock(async () => ({ id: SPACE_ID })),
+      } as unknown as SpaceManager,
+      goalScopeRepo: makeRepoMock({ action: 'no_recipient' }),
+      internalEventBus,
+    });
+
+    await handlers.get('spaceGoal.assignOwner')!(
+      { spaceId: SPACE_ID, goalId: GOAL_ID, agentId: 'agent-1' },
+      makeContext('global')
+    );
+
+    expect(recoverPendingOutcomeNotificationsForGoal).toHaveBeenCalledWith(GOAL_ID);
   });
 
   it('unassigns the current owner and clears ownership', async () => {

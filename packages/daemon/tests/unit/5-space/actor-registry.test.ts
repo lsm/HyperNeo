@@ -16,6 +16,7 @@ import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/sp
 import type { Session } from '@hyperneo/shared';
 import { createSpaceTables } from '../helpers/space-test-db';
 import { seedWorkerMirror } from '../helpers/seed-worker-mirror';
+import { seedSpaceManagerAgent } from '../helpers/seed-space-manager';
 
 function makeSession(id: string, overrides: Partial<Session> = {}): Session {
   return {
@@ -509,7 +510,7 @@ describe('SpaceActorRegistryAdapter', () => {
       slug: 'project',
       name: 'Project',
     });
-    longHorizonAgentRepo.ensureSpaceManager(space.id);
+    seedSpaceManagerAgent(longHorizonAgentRepo, space.id);
 
     const actors = registry.listActors(space.id);
 
@@ -522,7 +523,10 @@ describe('SpaceActorRegistryAdapter', () => {
       status: 'inactive',
     });
     expect(
-      actors.some((actor) => actor.actorId === `agent:${coordinatorLongHorizonAgentId(space.id)}`)
+      actors.some(
+        (actor) =>
+          actor.actorId === `agent:${encodeURIComponent(coordinatorLongHorizonAgentId(space.id))}`
+      )
     ).toBe(false);
     expect(actors.filter((actor) => actor.handle === '@space-manager')).toHaveLength(1);
   });

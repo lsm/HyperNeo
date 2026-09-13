@@ -138,6 +138,7 @@ import { SpaceRepository } from '../../storage/repositories/space-repository.ts'
 import { setupTaskScheduleHandlers } from './task-schedule-handlers.ts';
 import { setupAgentMemoryHandlers } from './agent-memory-handlers.ts';
 import { setupSpaceGoalHandlers } from './space-goal-handlers.ts';
+import { subscribeGoalOwnerChangeOutcomeRedelivery } from '../space/goals/goal-owner-change-outcome-redelivery.ts';
 import { setupEvolutionHandlers } from './evolution-handlers.ts';
 import { EvolutionConversationAnalysisService } from '../space/evolution-conversation-analysis-service.ts';
 import { EvolutionEpisodeService } from '../space/evolution-episode-service.ts';
@@ -679,6 +680,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
         spaceRuntimeService.stopWorkflowBackedTaskForStatus(spaceId, taskId, params),
       getSession: (sessionId) => deps.db.getSession(sessionId),
       getTaskManager: spaceTaskManagerFactory,
+      isWorkflowRunActive: (workflowRunId) =>
+        spaceRuntimeService.isWorkflowRunActive(workflowRunId),
       taskRepo: spaceTaskRepo,
       nodeExecutionRepo,
       longHorizonAgentRepo,
@@ -1125,6 +1128,12 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     }
     spaceRuntimeService.recoverStalledWorkflowRunsAfterSpaceResume(spaceId);
     void spaceRuntimeService.recoverPendingOutcomeNotificationsForSpace(spaceId);
+  });
+
+  subscribeGoalOwnerChangeOutcomeRedelivery({
+    internalEventBus: deps.internalEventBus,
+    recoverPendingOutcomeNotificationsForGoal: (goalId) =>
+      spaceRuntimeService.recoverPendingOutcomeNotificationsForGoal(goalId),
   });
 
   const spaceAgentTemplateManager = new SpaceAgentTemplateManager(
