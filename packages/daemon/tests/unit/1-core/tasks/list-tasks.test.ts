@@ -181,6 +181,21 @@ describe('bounded core task listing', () => {
     ).toEqual(['o2', 'o1', 'owned']);
   });
 
+  test('orderBy updatedAt sorts by most recently touched, leaving createdAt the default', () => {
+    db.exec("UPDATE space_tasks SET updated_at = 900 WHERE id = 'a'");
+    db.exec("UPDATE space_tasks SET updated_at = 50 WHERE id = 'c'");
+    expect(listTaskCores(db, {}).tasks.map((t) => t.id)).toEqual(['c', 'b', 'a']);
+    expect(listTaskCores(db, { orderBy: 'createdAt' }).tasks.map((t) => t.id)).toEqual([
+      'c',
+      'b',
+      'a',
+    ]);
+    const touched = listTaskCores(db, { orderBy: 'updatedAt' });
+    expect(touched.tasks.map((t) => t.id)).toEqual(['a', 'b', 'c']);
+    expect(touched.total).toBe(3);
+    expect(listTaskCores(db, { orderBy: 'updatedAt', limit: 1, offset: 1 }).tasks[0].id).toBe('b');
+  });
+
   test('bounds page size and normalizes invalid limits', () => {
     const insert = db.prepare(
       "INSERT INTO space_tasks (id, title, status, created_at, updated_at) VALUES (?, 'Extra', 'open', 1, 1)"

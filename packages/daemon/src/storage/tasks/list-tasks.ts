@@ -17,6 +17,7 @@ export interface ListTasksInput {
   blockReasonNotIn?: SpaceBlockReason[];
   limit?: number;
   offset?: number;
+  orderBy?: 'createdAt' | 'updatedAt';
   before?: TaskListCursor;
 }
 
@@ -68,7 +69,9 @@ function buildTaskListQuery(input: ListTasksInput): TaskListQuery {
   const whereSql = where.join(' AND ');
   values.push(limit + 1, offset);
   return {
-    sql: `SELECT * FROM space_tasks WHERE ${whereSql} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
+    sql: `SELECT * FROM space_tasks WHERE ${whereSql} ORDER BY ${
+      input.orderBy === 'updatedAt' ? 'updated_at' : 'created_at'
+    } DESC, id DESC LIMIT ? OFFSET ?`,
     values,
     countSql,
     countValues,
