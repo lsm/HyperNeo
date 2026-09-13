@@ -94,6 +94,14 @@ function invoke(
   return invokeOperation(registry, 'task.transition', input, caller);
 }
 
+function readStandaloneStatus(taskId: string): string {
+  return (
+    db.prepare('SELECT status FROM space_tasks WHERE id = ?').get(taskId) as {
+      status: string;
+    }
+  ).status;
+}
+
 test('a standalone task passes through to the plain status writer', async () => {
   const task = createStandaloneTask(db, { title: 'Solo' }, undefined, () => {});
   const result = await invoke({ taskId: task.id, status: 'in_progress' }, rpc);
@@ -273,6 +281,41 @@ test('a stale expectedStatus rejects with invalid_transition and leaves the task
   const result = await invoke({ taskId: task.id, status: 'open', expectedStatus: 'draft' }, rpc);
   expect(result).toEqual({ kind: 'completed', value: 'invalid_transition' });
   expect(tasks.getTask(task.id)?.status).toBe('done');
+});
+
+test('a stale expectedStatus rejects before a runtime executor can run', async () => {
+  const task = tasks.createTask({ spaceId, title: 'Workflow', description: '' });
+  const run = createWorkflowRun();
+  tasks.updateTask(task.id, { workflowRunId: run.id, status: 'in_progress' });
+  const stopForStatus = mock(async () => tasks.getTask(task.id));
+  const result = await invoke(
+    { taskId: task.id, status: 'cancelled', expectedStatus: 'open' },
+    rpc,
+    { stopForStatus }
+  );
+  expect(result).toEqual({ kind: 'completed', value: 'invalid_transition' });
+  expect(stopForStatus).not.toHaveBeenCalled();
+  expect(tasks.getTask(task.id)?.status).toBe('in_progress');
+});
+
+test('a stale expectedStatus rejects a standalone transition inside its transaction', async () => {
+  const task = createStandaloneTask(db, { title: 'Solo' }, undefined, () => {});
+  const result = await invoke(
+    { taskId: task.id, status: 'in_progress', expectedStatus: 'done' },
+    rpc
+  );
+  expect(result).toEqual({ kind: 'completed', value: 'invalid_transition' });
+  expect(readStandaloneStatus(task.id)).toBe('open');
+});
+
+test('a matching expectedStatus lets a standalone transition through', async () => {
+  const task = createStandaloneTask(db, { title: 'Solo' }, undefined, () => {});
+  const result = await invoke(
+    { taskId: task.id, status: 'in_progress', expectedStatus: 'open' },
+    rpc
+  );
+  expect(result).toMatchObject({ kind: 'completed', value: { status: 'in_progress' } });
+  expect(readStandaloneStatus(task.id)).toBe('in_progress');
 });
 
 test('an omitted expectedStatus still guards on the loaded status', async () => {

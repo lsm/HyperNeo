@@ -11,6 +11,7 @@ import {
   admitCaller,
   type Gate,
   loadTask,
+  requireExpectedStatus,
   type OwnedTask,
   rejectActiveDirectAttempt,
   resolveOwner,
@@ -122,7 +123,7 @@ export async function writeStatus(decided: DecidedTask, input: In, deps: Deps): 
     const updated = await deps.getTaskManager(spaceId).setTaskStatus(task.id, input.status, {
       result: input.result,
       approvalSource,
-      expectedStatus: input.expectedStatus ?? task.status,
+      expectedStatus: task.status,
       expectedWorkflowRunId: task.workflowRunId ?? null,
       guardWrite: guardActiveExecution(deps),
       onCascadedTasks: async (cascaded) => {
@@ -146,6 +147,7 @@ export function createSpaceTransitionTaskOperation(deps: Deps) {
     .pipe(resolveOwner, ['input', 'deps'], 'result:outcome')
     .pipe(admitCaller, ['outcome', 'caller', 'deps'], 'result:outcome')
     .pipe(loadTask, ['outcome', 'input', 'deps'], 'result:outcome')
+    .pipe(requireExpectedStatus, ['outcome', 'input'], 'result:outcome')
     .pipe(rejectActiveDirectAttempt, ['outcome', 'deps'], 'result:outcome')
     .pipe(decide, ['outcome', 'input', 'caller', 'deps'], 'result:outcome')
     .pipe(writeStatus, ['outcome', 'input', 'deps'], 'outcome')
