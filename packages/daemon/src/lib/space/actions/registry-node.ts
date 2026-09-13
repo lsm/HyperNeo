@@ -9,6 +9,7 @@ import {
   ApproveTaskSchema,
   MarkCompleteSchema,
   SubmitForApprovalSchema,
+  type MarkCompleteInput,
   type SubmitForApprovalInput,
 } from '../tools/task-agent-tool-schemas.ts';
 import {
@@ -32,12 +33,69 @@ import {
   SubscribePrEventsSchema,
   UnsubscribeExternalEventSchema,
 } from '../tools/node-agent-tool-schemas.ts';
-import type { ToolResult } from '../tools/tool-result.ts';
+import { jsonResult, type ToolResult } from '../tools/tool-result.ts';
 import { createOperationActionHandler } from './operation-action.ts';
 import { type ActionDefinition, defineAction, type ActionEntry } from './registry.ts';
 
 function nodeAction<P>(entry: Omit<ActionEntry<P>, 'family'>): ActionDefinition {
   return defineAction({ ...entry, family: 'node' });
+}
+
+function isAcceptedTaskCompletion(result: ToolResult): boolean {
+  const text = result.content?.[0]?.text;
+  if (typeof text !== 'string') return false;
+  try {
+    return (JSON.parse(text) as { accepted?: boolean }).accepted === true;
+  } catch {
+    return false;
+  }
+}
+
+function createMarkCompleteOperationHandler(
+  config: NodeAgentToolsConfig,
+  operations: OperationRegistrySource
+): (args: MarkCompleteInput) => Promise<ToolResult> {
+  const completeTask = createOperationActionHandler(
+    operations,
+    { sessionId: config.mySessionId },
+    'task.complete',
+    () => ({ taskId: config.taskId })
+  ) as unknown as (args: MarkCompleteInput) => Promise<ToolResult>;
+  return async (args: MarkCompleteInput): Promise<ToolResult> => {
+    const goalUpdate = args.goal_update;
+    let goalId: string | null = null;
+    if (goalUpdate) {
+      if (!config.goalService)
+        return jsonResult({
+          success: false,
+          error: 'Goal update is not available in this context.',
+        });
+      const task = config.taskRepo?.getTask(config.taskId);
+      if (!task?.goalId)
+        return jsonResult({
+          success: false,
+          error: 'Cannot apply goal_update: this task is not linked to a goal.',
+        });
+      const goal = config.goalService.getGoal(task.goalId);
+      if (!goal || goal.spaceId !== task.spaceId)
+        return jsonResult({ success: false, error: `Goal not found: ${task.goalId}` });
+      goalId = goal.id;
+    }
+    const result = await completeTask(args);
+    if (goalId && isAcceptedTaskCompletion(result)) {
+      config.goalService?.updateGoal(
+        goalId,
+        {
+          summary: goalUpdate?.summary,
+          progress: goalUpdate?.progress,
+          metrics: goalUpdate?.metrics,
+          nextSteps: goalUpdate?.nextSteps,
+        },
+        { source: 'workflow_node_agent', sourceTaskId: config.taskId }
+      );
+    }
+    return result;
+  };
 }
 
 export function createNodeRegistryEntries(
@@ -303,7 +361,7 @@ export function createNodeRegistryEntries(
             paramsSchema: MarkCompleteSchema,
             handler: wrapHandlerWithHooks(
               'mark_complete',
-              onMarkComplete,
+              operations ? createMarkCompleteOperationHandler(config, operations) : onMarkComplete,
               hookEngine,
               handlerMap,
               hookMeta
