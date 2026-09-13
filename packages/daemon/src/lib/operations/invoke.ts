@@ -13,10 +13,15 @@ type Gate<T> = { value: T } | { reason: OperationFailure };
 type PreparedOperation = { operation: OperationDefinition; input: unknown };
 type ExecutedOperation = { operation: OperationDefinition; result: unknown };
 
+export type AuditedOperation = {
+  operation: { name: string; description: string };
+  input: unknown;
+};
+
 export type OperationAudit = {
-  before?: (prepared: Readonly<PreparedOperation>, caller: OperationCaller) => void | Promise<void>;
+  before?: (prepared: Readonly<AuditedOperation>, caller: OperationCaller) => void | Promise<void>;
   after?: (
-    prepared: Readonly<PreparedOperation>,
+    prepared: Readonly<AuditedOperation>,
     caller: OperationCaller,
     outcome: Readonly<OperationOutcome>
   ) => void | Promise<void>;
@@ -106,7 +111,7 @@ async function runAudited(fn: (() => void | Promise<void>) | undefined): Promise
 }
 
 function isolateValue<T>(value: T, seen: WeakMap<object, unknown>): T {
-  if (!value || typeof value !== 'object') return value;
+  if (!value || (typeof value !== 'object' && typeof value !== 'function')) return value;
   const source = value as object;
   const cached = seen.get(source);
   if (cached) return cached as T;
@@ -126,13 +131,22 @@ function isolateValue<T>(value: T, seen: WeakMap<object, unknown>): T {
 function cloneValue<T>(value: T): T {
   try {
     return structuredClone(value);
-  } catch {
+  } catch {}
+  try {
     return isolateValue(value, new WeakMap<object, unknown>());
+  } catch {
+    return value;
   }
 }
 
-function snapshotPrepared(prepared: PreparedOperation): Readonly<PreparedOperation> {
-  return { operation: prepared.operation, input: cloneValue(prepared.input) };
+function snapshotPrepared(
+  prepared: PreparedOperation,
+  audit?: OperationAudit
+): Readonly<AuditedOperation> {
+  return {
+    operation: { name: prepared.operation.name, description: prepared.operation.description },
+    input: hasAuditHooks(audit) ? cloneValue(prepared.input) : prepared.input,
+  };
 }
 
 function hasAuditHooks(audit?: OperationAudit): boolean {
@@ -144,11 +158,13 @@ function snapshotCaller(caller: OperationCaller): OperationCaller {
 }
 
 async function auditBefore(
-  prepared: Readonly<PreparedOperation>,
+  prepared: Readonly<AuditedOperation>,
   baseCaller: OperationCaller,
   audit?: OperationAudit
 ): Promise<void> {
-  await runAudited(() => audit?.before?.(snapshotPrepared(prepared), snapshotCaller(baseCaller)));
+  await runAudited(() =>
+    audit?.before?.({ ...prepared, input: cloneValue(prepared.input) }, snapshotCaller(baseCaller))
+  );
 }
 
 const runInvocation = (superpipe({})('invoke-operation') as PipelineAPI)
@@ -156,8 +172,7 @@ const runInvocation = (superpipe({})('invoke-operation') as PipelineAPI)
   .pipe(resolveOperation, ['registry', 'name'], 'result:invocation')
   .pipe(parseOperationInput, ['invocation', 'input'], 'result:invocation')
   .pipe(
-    (prepared: PreparedOperation, audit?: OperationAudit) =>
-      hasAuditHooks(audit) ? snapshotPrepared(prepared) : prepared,
+    (prepared: PreparedOperation, audit?: OperationAudit) => snapshotPrepared(prepared, audit),
     ['invocation', 'audit'],
     'prepared'
   )
@@ -178,7 +193,7 @@ const runInvocation = (superpipe({})('invoke-operation') as PipelineAPI)
   audit?: OperationAudit
 ) => Promise<{
   invocation: OperationOutcome;
-  prepared?: Readonly<PreparedOperation>;
+  prepared?: Readonly<AuditedOperation>;
   baseCaller?: OperationCaller;
 }>;
 
@@ -198,7 +213,11 @@ export async function invokeOperation(
   );
   if (prepared && baseCaller) {
     await runAudited(() =>
-      audit?.after?.(snapshotPrepared(prepared), snapshotCaller(baseCaller), cloneValue(invocation))
+      audit?.after?.(
+        { ...prepared, input: cloneValue(prepared.input) },
+        snapshotCaller(baseCaller),
+        cloneValue(invocation)
+      )
     );
   }
   return invocation;

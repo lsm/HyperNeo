@@ -407,6 +407,54 @@ describe('shared operation invocation audit hooks', () => {
     expect(copied.self).toBe(copied);
     expect(copied).not.toBe(node);
   });
+  test('hooks never receive the registry operation definition', async () => {
+    const { registry, operation } = fixture();
+    let seen: { name: string; description: string } | null = null;
+    await invokeOperation(registry, 'message.send', { content: 'hello' }, caller, {
+      before: (prepared: { operation: { name: string; description: string } }) => {
+        seen = { ...prepared.operation };
+        (prepared.operation as Record<string, unknown>).resultSchema = 'hijacked';
+      },
+    });
+    expect(seen).toEqual({ name: operation.name, description: operation.description });
+    expect((registry.get('message.send') as Record<string, unknown>).resultSchema).not.toBe(
+      'hijacked'
+    );
+    const outcome = await invokeOperation(registry, 'message.send', { content: 'hi' }, caller);
+    expect(outcome.kind).toBe('completed');
+  });
+  test('a snapshot that cannot be copied at all leaves the operation running', async () => {
+    const operation = defineOperation({
+      name: 'message.send.hostile',
+      description: 'Accept a value that defeats every copy strategy',
+      inputSchema: z.object({ content: z.string(), hostile: z.any() }),
+      resultSchema: z.object({ accepted: z.string() }),
+      execute: async (input: { content: string }) => ({ accepted: input.content }),
+    });
+    const registry = createOperationRegistry([operation]);
+    const hostile = new Proxy(
+      { callback: () => 'x' },
+      {
+        ownKeys() {
+          throw new Error('ownKeys refuses');
+        },
+      }
+    );
+    let afterRan = false;
+    const outcome = await invokeOperation(
+      registry,
+      'message.send.hostile',
+      { content: 'hello', hostile },
+      caller,
+      {
+        after: () => {
+          afterRan = true;
+        },
+      }
+    );
+    expect(outcome).toEqual({ kind: 'completed', value: { accepted: 'hello' } });
+    expect(afterRan).toBe(true);
+  });
   test('no snapshot work happens when no audit hook is installed', async () => {
     const { registry } = fixture();
     const originalClone = globalThis.structuredClone;
