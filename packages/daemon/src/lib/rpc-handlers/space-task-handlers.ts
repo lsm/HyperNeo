@@ -318,7 +318,7 @@ export function setupSpaceTaskHandlers(
           if (updateParams.status === 'approved') {
             throw new Error(
               `spaceTask.update cannot transition a task into 'approved' directly. ` +
-                `Use spaceTask.approvePendingCompletion (UI Approve banner) or let the ` +
+                `Use operation.invoke with task.resolvePendingCompletion (UI Approve banner) or let the ` +
                 `runtime's post-approval router handle the transition — both stamp the ` +
                 `approval metadata and dispatch the configured post-approval step.`
             );

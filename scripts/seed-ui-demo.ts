@@ -1160,11 +1160,9 @@ async function seedSpace(ws: WebSocket): Promise<{ spaceId: string; taskIds: str
     name: 'task.submitForReview',
     input: { taskId: t4, reason: 'Ratchet at 358, wired into root check.' },
   });
-  await rpcCall(ws, 'spaceTask.approvePendingCompletion', {
-    spaceId,
-    taskId: t4,
-    approved: true,
-    reason: 'Solid tooling.',
+  await rpcCall(ws, 'operation.invoke', {
+    name: 'task.resolvePendingCompletion',
+    input: { taskId: t4, approved: true, reason: 'Solid tooling.' },
   });
   await rpcCall(ws, 'operation.invoke', {
     name: 'task.submitForReview',
