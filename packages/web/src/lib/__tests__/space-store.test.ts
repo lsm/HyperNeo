@@ -291,10 +291,12 @@ function makeMockHub() {
           },
         ];
       }
-      if (method === 'spaceTask.get')
+      if (method === 'operation.invoke' && params?.name === 'task.get') {
+        const input = (params?.input ?? {}) as Record<string, unknown>;
         return (
-          taskDetailResult ?? { ...makeTask(params?.taskId as string), description: 'full text' }
+          taskDetailResult ?? { ...makeTask(input.taskId as string), description: 'full text' }
         );
+      }
       if (method === 'spaceTask.update') return makeTask('t1', 'in_progress');
       if (method === 'spaceTask.recoverWorkflow') return makeTask('t1', 'in_progress');
       if (method === 'spaceAgentV2.update') return { agent: makeLongHorizonAgent('a1') };
@@ -2962,9 +2964,12 @@ describe('SpaceStore — task detail cache', () => {
     expect(a?.description).toBe('full description');
     expect(b).toBe(a);
     expect(third).toBe(a);
-    const getCalls = mockHub.request.mock.calls.filter((c: unknown[]) => c[0] === 'spaceTask.get');
+    const getCalls = mockHub.request.mock.calls.filter(
+      (c: unknown[]) =>
+        c[0] === 'operation.invoke' && (c[1] as { name?: string } | undefined)?.name === 'task.get'
+    );
     expect(getCalls).toHaveLength(1);
-    expect(getCalls[0][1]).toEqual({ spaceId: 'space-1', taskId: 't1' });
+    expect(getCalls[0][1]).toEqual({ name: 'task.get', input: { taskId: 't1' } });
     expect(spaceStore.taskDetails.value.get('t1')).toBe(a);
   });
 
@@ -2989,7 +2994,11 @@ describe('SpaceStore — task detail cache', () => {
     expect(spaceStore.taskDetails.value.get('t1')?.description).toBe('updated full description');
     await expect(spaceStore.ensureTaskDetail('t1')).resolves.toBe(eventTask);
     expect(
-      mockHub.request.mock.calls.filter((c: unknown[]) => c[0] === 'spaceTask.get')
+      mockHub.request.mock.calls.filter(
+        (c: unknown[]) =>
+          c[0] === 'operation.invoke' &&
+          (c[1] as { name?: string } | undefined)?.name === 'task.get'
+      )
     ).toHaveLength(0);
   });
 
@@ -3068,7 +3077,11 @@ describe('SpaceStore — task detail cache', () => {
     );
 
     expect(
-      mockHub.request.mock.calls.filter((c: unknown[]) => c[0] === 'spaceTask.get')
+      mockHub.request.mock.calls.filter(
+        (c: unknown[]) =>
+          c[0] === 'operation.invoke' &&
+          (c[1] as { name?: string } | undefined)?.name === 'task.get'
+      )
     ).toHaveLength(1);
     expect(spaceStore.taskDetails.value.get('t1')?.description).toBe('fresh full');
   });
@@ -3122,7 +3135,11 @@ describe('SpaceStore — task detail cache', () => {
     await expect(third).resolves.toHaveProperty('description', 'fresh full');
 
     expect(
-      mockHub.request.mock.calls.filter((c: unknown[]) => c[0] === 'spaceTask.get')
+      mockHub.request.mock.calls.filter(
+        (c: unknown[]) =>
+          c[0] === 'operation.invoke' &&
+          (c[1] as { name?: string } | undefined)?.name === 'task.get'
+      )
     ).toHaveLength(2);
     expect(spaceStore.taskDetails.value.get('t1')?.description).toBe('fresh full');
   });
