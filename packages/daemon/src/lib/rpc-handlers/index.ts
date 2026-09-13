@@ -729,6 +729,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       getTaskManager: spaceTaskManagerFactory,
       taskRepo: spaceTaskRepo,
       nodeExecutionRepo,
+      longHorizonAgentRepo,
       notifyStandalone: () => deps.db.notifyChange('space_tasks'),
       emitTaskUpdated: async (spaceId, task) => {
         await deps.internalEventBus.publish('space.task.updated', {
