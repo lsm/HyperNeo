@@ -132,7 +132,7 @@ describe('bounded core task listing', () => {
     ).toEqual(['bare']);
   });
 
-  test('a block-reason filter composes with paging and leaves other statuses empty', () => {
+  test('a block-reason filter composes with paging, and an empty exclusion list is no filter', () => {
     const insert = db.prepare(
       "INSERT INTO space_tasks (id, space_id, task_number, title, status, block_reason, created_at, updated_at) VALUES (?, ?, ?, ?, 'blocked', 'agent_crashed', ?, ?)"
     );
@@ -162,6 +162,23 @@ describe('bounded core task listing', () => {
         (task) => task.id
       )
     ).toEqual(['c2', 'c1']);
+  });
+
+  test('the storage query does not constrain reason filters by status; task.list does', () => {
+    const insert = db.prepare(
+      "INSERT INTO space_tasks (id, space_id, task_number, title, status, block_reason, created_at, updated_at) VALUES (?, ?, ?, 'Open', 'open', NULL, ?, ?)"
+    );
+    insert.run('o1', spaceId, 10, 50, 50);
+    insert.run('o2', spaceId, 11, 60, 60);
+
+    expect(
+      listTaskCores(db, { spaceId, status: 'open', blockReason: null }).tasks.map((task) => task.id)
+    ).toEqual(['o2', 'o1', 'owned']);
+    expect(
+      listTaskCores(db, { spaceId, status: 'open', blockReasonNotIn: ['agent_crashed'] }).tasks.map(
+        (task) => task.id
+      )
+    ).toEqual(['o2', 'o1', 'owned']);
   });
 
   test('bounds page size and normalizes invalid limits', () => {
