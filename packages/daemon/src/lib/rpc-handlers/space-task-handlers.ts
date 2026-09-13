@@ -19,7 +19,6 @@ import {
 } from '../space/managers/space-task-manager.ts';
 import type { SpaceWorkflowManager } from '../space/managers/space-workflow-manager.ts';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
-import { createPendingCompletionOperation } from '../space/operations/pending-completion.ts';
 import { createWorkflowTaskRecoveryExecutor } from '../space/runtime/task-recovery-executor.ts';
 import { recoverTaskExecution } from '../tasks/recover-task-execution.ts';
 import { parkTaskExecution } from '../tasks/park-task-execution.ts';
@@ -319,7 +318,7 @@ export function setupSpaceTaskHandlers(
           if (updateParams.status === 'approved') {
             throw new Error(
               `spaceTask.update cannot transition a task into 'approved' directly. ` +
-                `Use spaceTask.approvePendingCompletion (UI Approve banner) or let the ` +
+                `Use operation.invoke with task.resolvePendingCompletion (UI Approve banner) or let the ` +
                 `runtime's post-approval router handle the transition — both stamp the ` +
                 `approval metadata and dispatch the configured post-approval step.`
             );
@@ -493,157 +492,6 @@ export function setupSpaceTaskHandlers(
           log.warn('Failed to emit space.task.updated:', err);
         });
     }
-
-    return task;
-  });
-
-  messageHub.onRequest('spaceTask.recoverWorkflow', async (data) => {
-    const params = data as {
-      spaceId: string;
-      taskId: string;
-      status: 'open' | 'in_progress';
-    };
-
-    if (!params.spaceId) throw new Error('spaceId is required');
-    if (!params.taskId) throw new Error('taskId is required');
-    if (params.status !== 'open' && params.status !== 'in_progress') {
-      throw new Error(`status must be 'open' or 'in_progress'`);
-    }
-    if (!spaceRuntimeService) {
-      throw new Error(
-        `Cannot recover workflow-backed task ${params.taskId}: SpaceRuntimeService is unavailable.`
-      );
-    }
-
-    const space = await spaceManager.getSpace(params.spaceId);
-    if (!space) {
-      throw new Error(`Space not found: ${params.spaceId}`);
-    }
-
-    const recovered = await recoverTaskExecution(
-      createWorkflowTaskRecoveryExecutor(params.spaceId, spaceRuntimeService),
-      params.taskId,
-      params.status
-    );
-    if (typeof recovered === 'string') throw new Error(recovered);
-    return recovered;
-  });
-
-  messageHub.onRequest('spaceTask.approvePendingCompletion', async (data) => {
-    const params = data as {
-      spaceId: string;
-      taskId: string;
-      approved: boolean;
-      reason?: string | null;
-    };
-
-    if (!params.spaceId) throw new Error('spaceId is required');
-    if (!params.taskId) throw new Error('taskId is required');
-    if (typeof params.approved !== 'boolean') throw new Error('approved must be a boolean');
-
-    const space = await spaceManager.getSpace(params.spaceId);
-    if (!space) {
-      throw new Error(`Space not found: ${params.spaceId}`);
-    }
-
-    const taskManager = taskManagerFactory(params.spaceId);
-    const currentTask = await taskManager.getTask(params.taskId);
-    if (!currentTask) {
-      throw new Error(`Task not found: ${params.taskId}`);
-    }
-
-    if (currentTask.pendingCheckpointType !== 'task_completion') {
-      throw new Error(
-        `Task ${params.taskId} is not awaiting submit_for_approval review ` +
-          `(pendingCheckpointType=${currentTask.pendingCheckpointType ?? 'null'}).`
-      );
-    }
-
-    if (currentTask.status !== 'review') {
-      throw new Error(
-        `Task ${params.taskId} is not in 'review' status ` + `(current: ${currentTask.status}).`
-      );
-    }
-
-    if (params.approved && !spaceRuntimeService) {
-      throw new Error(
-        'spaceRuntimeService is required to approve pending completion — post-approval routing is the sole approval path.'
-      );
-    }
-    const guard = {
-      expectedPendingCompletionGeneration: currentTask.pendingCompletionGeneration ?? 0,
-    };
-    const task = await createPendingCompletionOperation({
-      getTask: (taskId) => taskManager.getTask(taskId),
-      dispatchApproval: (taskId, reason) =>
-        spaceRuntimeService!.dispatchPostApproval(
-          params.spaceId,
-          taskId,
-          'human',
-          {
-            approvalReason: reason,
-          },
-          guard
-        ),
-      reopenTask: (taskId, reason) => taskManager.reopenPendingCompletion(taskId, reason, guard),
-      updateTask: (taskId, fields) => taskManager.updateTask(taskId, fields),
-      warn: (taskId, detail) => {
-        log.warn(
-          `approvePendingCompletion: post-approval dispatch failed for task ${taskId} ` +
-            `after status commit (${detail}); capturing as post-approval-blocked`
-        );
-      },
-    })({ taskId: params.taskId, approved: params.approved, reason: params.reason });
-
-    internalEventBus
-      .publish('space.task.updated', {
-        sessionId: 'global',
-        spaceId: params.spaceId,
-        taskId: params.taskId,
-        task,
-      })
-      .catch((err) => {
-        log.warn('Failed to emit space.task.updated:', err);
-      });
-
-    return task;
-  });
-
-  messageHub.onRequest('spaceTask.publish', async (data) => {
-    const params = data as { spaceId: string; taskId: string };
-
-    if (!params.spaceId) throw new Error('spaceId is required');
-    if (!params.taskId) throw new Error('taskId is required');
-
-    const space = await spaceManager.getSpace(params.spaceId);
-    if (!space) {
-      throw new Error(`Space not found: ${params.spaceId}`);
-    }
-
-    const taskManager = taskManagerFactory(params.spaceId);
-    const currentTask = await taskManager.getTask(params.taskId);
-    if (!currentTask) {
-      throw new Error(`Task not found: ${params.taskId}`);
-    }
-
-    if (currentTask.status !== 'draft') {
-      throw new Error(
-        `Task ${params.taskId} is not in 'draft' status (current: ${currentTask.status}). Only draft tasks can be published.`
-      );
-    }
-
-    const task = await taskManager.publishTask(params.taskId);
-
-    internalEventBus
-      .publish('space.task.updated', {
-        sessionId: 'global',
-        spaceId: params.spaceId,
-        taskId: params.taskId,
-        task,
-      })
-      .catch((err) => {
-        log.warn('Failed to emit space.task.updated:', err);
-      });
 
     return task;
   });
