@@ -31,6 +31,11 @@ import {
   createListTaskMembersOperation,
   type TaskMemberRepositories,
 } from './list-task-members.ts';
+import { createPublishTaskOperation, type PublishTaskDependencies } from './publish-task.ts';
+
+interface PublishTaskCapability {
+  getTaskManager: PublishTaskDependencies['getTaskManager'];
+}
 
 interface TaskNumberRepository {
   taskRepo?: Pick<SpaceTaskRepository, 'getTaskByNumber'>;
@@ -45,6 +50,7 @@ export function createSpaceOperationRegistryProvider(
   > &
     CancelPolicyContext &
     TaskMemberRepositories &
+    PublishTaskCapability &
     TaskNumberRepository &
     Omit<
       CompleteTaskDependencies,
@@ -79,6 +85,7 @@ export function createSpaceOperationRegistryProvider(
         ? createStartTaskOperation(() => database.getDatabase(), jobQueue, tasks, directStart)
         : undefined,
       cancel: createCancelTaskOperation(() => database.getDatabase(), jobQueue, tasks),
+      publish: createPublishTaskOperation(() => database.getDatabase(), tasks),
       members:
         tasks.taskRepo && tasks.nodeExecutionRepo
           ? createListTaskMembersOperation({
