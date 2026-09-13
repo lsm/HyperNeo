@@ -167,30 +167,6 @@ export function setupSpaceTaskHandlers(
     return result;
   });
 
-  messageHub.onRequest('spaceTask.get', async (data) => {
-    const params = data as { spaceId: string; taskId: string };
-
-    if (!params.spaceId) {
-      throw new Error('spaceId is required');
-    }
-    if (!params.taskId) {
-      throw new Error('taskId is required');
-    }
-
-    const space = await spaceManager.getSpace(params.spaceId);
-    if (!space) {
-      throw new Error(`Space not found: ${params.spaceId}`);
-    }
-
-    const taskManager = taskManagerFactory(params.spaceId);
-    const task = await taskManager.getTask(params.taskId);
-    if (!task) {
-      throw new Error(`Task not found: ${params.taskId}`);
-    }
-
-    return task;
-  });
-
   messageHub.onRequest('spaceTask.update', async (data) => {
     const params = data as {
       spaceId: string;
