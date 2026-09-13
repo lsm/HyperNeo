@@ -48,7 +48,7 @@ import { generateUUID, isUUID, Logger } from '@hyperneo/shared';
 import { computed, signal } from '@preact/signals';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { connectionManager } from './connection-manager';
-import { invokeOperation } from './operations';
+import { invokeOperation, transitionTask } from './operations';
 import { currentSpaceCanonicalIdSignal, currentSpaceIdSignal } from './signals';
 
 const logger = new Logger('hyperneo:web:spacestore');
@@ -2075,7 +2075,7 @@ class SpaceStore {
     const generation = this.selectGeneration;
 
     const promise = hub
-      .request<SpaceTask>('spaceTask.get', { spaceId, taskId })
+      .request<SpaceTask>('operation.invoke', { name: 'task.get', input: { taskId } })
       .then((task) => {
         if (!task) return null;
         if (this.selectGeneration !== generation) return null;
@@ -2165,11 +2165,7 @@ class SpaceStore {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
 
-    return hub.request<SpaceTask>('spaceTask.recoverWorkflow', {
-      taskId,
-      spaceId,
-      status,
-    });
+    return transitionTask<SpaceTask>(hub, taskId, status);
   }
 
   async publishTask(taskId: string): Promise<SpaceTask> {
@@ -2179,10 +2175,7 @@ class SpaceStore {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
 
-    return hub.request<SpaceTask>('spaceTask.publish', {
-      taskId,
-      spaceId,
-    });
+    return transitionTask<SpaceTask>(hub, taskId, 'open');
   }
 
   async runTaskDirectly(taskId: string): Promise<DirectTaskStartResult> {
@@ -2248,13 +2241,11 @@ class SpaceStore {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
 
-    const task = await hub.request<SpaceTask>('spaceTask.approvePendingCompletion', {
+    return invokeOperation<SpaceTask>(hub, 'task.resolvePendingCompletion', {
       taskId,
-      spaceId,
       approved,
       reason: reason ?? null,
     });
-    return task;
   }
 
   async sendTaskMessage(
