@@ -35,7 +35,7 @@ describe('task.get operation', () => {
         value: task,
       });
       expect(read).toHaveBeenCalledTimes(1);
-      expect(read).toHaveBeenCalledWith(task.id);
+      expect(read).toHaveBeenCalledWith(task.id, { source });
     }
   );
 

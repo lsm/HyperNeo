@@ -31,6 +31,7 @@ import {
   createListTaskMembersOperation,
   type TaskMemberRepositories,
 } from './list-task-members.ts';
+import { admitSpaceScope, admitTaskRead } from './read-admission.ts';
 
 interface TaskNumberRepository {
   taskRepo?: Pick<SpaceTaskRepository, 'getTaskByNumber'>;
@@ -58,17 +59,24 @@ export function createSpaceOperationRegistryProvider(
   let registry: OperationRegistry | undefined;
   return () =>
     (registry ??= createDatabaseOperationCatalog(database, jobQueue, {
-      readTask: (taskId) =>
-        tasks.taskRepo?.getTask(taskId) ?? readTaskCore(database.getDatabase(), taskId),
+      readTask: (taskId, caller) =>
+        !admitTaskRead(database.getDatabase(), taskId, caller, tasks)
+          ? null
+          : (tasks.taskRepo?.getTask(taskId) ?? readTaskCore(database.getDatabase(), taskId)),
       readTaskByNumber: tasks.taskRepo?.getTaskByNumber
-        ? (spaceId, taskNumber) => tasks.taskRepo?.getTaskByNumber(spaceId, taskNumber) ?? null
+        ? (spaceId, taskNumber, caller) =>
+            !admitSpaceScope(spaceId, caller, tasks)
+              ? null
+              : (tasks.taskRepo?.getTaskByNumber(spaceId, taskNumber) ?? null)
         : undefined,
-      listTasks: (input) =>
-        listTasksWithSpaceFields(
-          (listInput) => listTaskCores(database.getDatabase(), listInput),
-          input,
-          spaceTaskBatchReader(tasks.taskRepo)
-        ),
+      listTasks: (input, caller) =>
+        !admitSpaceScope(input.spaceId, caller, tasks)
+          ? { tasks: [], nextCursor: null }
+          : listTasksWithSpaceFields(
+              (listInput) => listTaskCores(database.getDatabase(), listInput),
+              input,
+              spaceTaskBatchReader(tasks.taskRepo)
+            ),
       create: createSpaceCreateTaskOperation({
         ...tasks,
         get db() {
