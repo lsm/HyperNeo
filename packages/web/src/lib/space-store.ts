@@ -2074,8 +2074,7 @@ class SpaceStore {
     if (!hub) return null;
     const generation = this.selectGeneration;
 
-    const promise = hub
-      .request<SpaceTask>('operation.invoke', { name: 'task.get', input: { taskId } })
+    const promise = invokeOperation<SpaceTask>(hub, 'task.get', { taskId })
       .then((task) => {
         if (!task) return null;
         if (this.selectGeneration !== generation) return null;
