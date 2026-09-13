@@ -61,6 +61,20 @@ function provider() {
   } as unknown as Parameters<typeof createSpaceOperationRegistryProvider>[2]);
 }
 
+function endedMember(id: string, owner: string) {
+  sessions.createSession(
+    {
+      ...createTestSession(id),
+      workspacePath: '/repo',
+      type: 'worker',
+      status: 'archived',
+      context: { spaceId: owner },
+    },
+    { enforceWorkspaceOwnership: false }
+  );
+  return { sessionId: id };
+}
+
 function member(id: string, owner?: string) {
   sessions.createSession(
     {
@@ -120,6 +134,12 @@ test('refuses a task whose workflow run is still active, and allows it once the 
   activeRuns.delete(runId);
   expect(await rpc(archive(taskId), context)).toMatchObject({ id: taskId });
   expect(tasks.getTask(taskId)?.archivedAt).not.toBeNull();
+});
+
+test('an MCP session in the owning Space that is no longer active is denied', async () => {
+  const mcp = createOperationMcpHandler(provider(), () => endedMember('stale', spaceId));
+  expect(JSON.parse((await mcp(archive(taskId))).content[0].text)).toBe('archive_denied');
+  expect(tasks.getTask(taskId)?.archivedAt).toBeNull();
 });
 
 test('task.archive is discoverable through the door', async () => {
