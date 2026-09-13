@@ -282,7 +282,7 @@ function isFinishedTaskStatus(status: SpaceTaskStatus | undefined): boolean {
   return status === 'done' || status === 'archived';
 }
 
-type CancelRejectionDecision =
+export type CancelRejectionDecision =
   | { kind: 'silent' }
   | { kind: 'finished' }
   | { kind: 'rejected'; message: string };
@@ -305,7 +305,7 @@ function toRejectedDecision(
   return { kind: 'rejected', message: formatCancellationRejection(reason) };
 }
 
-const decideCancelRejection = (superpipe({})('cancel-task-rejection') as PipelineAPI)
+export const decideCancelRejection = (superpipe({})('cancel-task-rejection') as PipelineAPI)
   .input(['status', 'reason'])
   .pipe(gateNotAlreadyCancelled, 'status', 'result:decision')
   .pipe(gateNotAlreadyFinished, 'decision', 'result:decision')

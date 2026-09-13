@@ -2525,6 +2525,38 @@ describe('SpaceStore — cancelTask', () => {
 
     expect(result).toEqual({ accepted: true, jobId: 'job-2' });
   });
+
+  describe('decideCancelRejection', () => {
+    it('is silent for an already-cancelled task regardless of the rejection reason', async () => {
+      const { decideCancelRejection } = await import('../space-store.ts');
+      expect(decideCancelRejection('cancelled', 'cancellation_denied')).toEqual({
+        kind: 'silent',
+      });
+    });
+
+    it.each(['done', 'archived'] as const)(
+      'is "finished" for a %s task ahead of the cancelled check',
+      async (status) => {
+        const { decideCancelRejection } = await import('../space-store.ts');
+        expect(decideCancelRejection(status, 'cancellation_unavailable')).toEqual({
+          kind: 'finished',
+        });
+      }
+    );
+
+    it.each([
+      ['in_progress', 'cancellation_denied', 'You are not allowed to cancel this task.'],
+      [
+        'open',
+        'cancellation_invalid_transition',
+        'This task cannot be cancelled from its current state.',
+      ],
+      [undefined, 'some_unmapped_reason', 'Cancellation rejected: some_unmapped_reason'],
+    ] as const)('maps %s + %s to a rejected message', async (status, reason, message) => {
+      const { decideCancelRejection } = await import('../space-store.ts');
+      expect(decideCancelRejection(status, reason)).toEqual({ kind: 'rejected', message });
+    });
+  });
 });
 
 describe('SpaceStore — runtimeState', () => {
