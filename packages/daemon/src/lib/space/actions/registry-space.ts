@@ -793,7 +793,7 @@ export function createSpaceRegistryEntries(
       family: 'tasks',
       safetyClass: 'mutate',
       description:
-        'Create a task the runtime may attach a workflow to; supports dependencies, draft mode, and workspace selection; returns the created task.',
+        'Create a task the runtime may attach a workflow to, through the shared task.create operation; supports dependencies, draft mode, and workspace selection; returns the created task core.',
       paramsDoc:
         'title, description, priority?, workflow_id?/workflow_handle?, depends_on? (task ids), draft?, workspace?',
       auditRedactKeys: ['description'],

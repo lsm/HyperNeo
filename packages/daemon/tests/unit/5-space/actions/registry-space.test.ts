@@ -4,6 +4,11 @@ import {
   createOperationRegistry,
   defineOperation,
 } from '../../../../src/lib/operations/registry.ts';
+import {
+  buildCreateTaskInput,
+  resolveWorkspacePath,
+  routeWorkflowReference,
+} from '../../../../src/lib/space/actions/create-task-params.ts';
 import { createActionRegistry } from '../../../../src/lib/space/actions/registry.ts';
 import { createSpaceRegistryEntries } from '../../../../src/lib/space/actions/registry-space.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
@@ -675,6 +680,7 @@ describe('createSpaceRegistryEntries — composition', () => {
       expect(calls).toEqual([
         {
           input: {
+            spaceId: SPACE_ID,
             title: 'Round trip',
             description: 'via dispatcher',
             priority: 'high',
@@ -689,167 +695,13 @@ describe('createSpaceRegistryEntries — composition', () => {
     }
   });
 
-  test('create_standalone_task resolves an explicit workspace through resolveWorkspaceSelection', async () => {
-    const resolveCalls: Array<{ spaceId: string; selection: string }> = [];
-    const ctx = makeCtx({
-      spaceManager: {
-        getSpace: async () => null,
-        resolveWorkspaceSelection: async (spaceId, selection) => {
-          resolveCalls.push({ spaceId, selection });
-          return '/workspaces/chosen';
-        },
-        validateDefaultTaskWorkspace: async () => null,
-      },
-    });
+  test('create_standalone_task carries the registry space into the operation input even when the session context is unresolvable', async () => {
+    const ctx = makeCtx({ mySessionId: 'session-does-not-exist' });
     try {
       const { operations, calls } = makeFakeCreateTaskOperation();
       const entry = findCreateStandaloneTaskEntry(ctx, operations);
-      await entry.handler({ title: 'T', description: 'D', workspace: 'my-workspace' });
-      expect(resolveCalls).toEqual([{ spaceId: SPACE_ID, selection: 'my-workspace' }]);
-      expect(calls[0]?.input).toMatchObject({ workspacePath: '/workspaces/chosen' });
-    } finally {
-      ctx.db.close();
-    }
-  });
-
-  test('create_standalone_task rejects when resolveWorkspaceSelection throws, without invoking the operation', async () => {
-    const ctx = makeCtx({
-      spaceManager: {
-        getSpace: async () => null,
-        resolveWorkspaceSelection: async () => {
-          throw new Error('unknown workspace: nope');
-        },
-        validateDefaultTaskWorkspace: async () => null,
-      },
-    });
-    try {
-      const { operations, calls } = makeFakeCreateTaskOperation();
-      const entry = findCreateStandaloneTaskEntry(ctx, operations);
-      const result = (await entry.handler({
-        title: 'T',
-        description: 'D',
-        workspace: 'nope',
-      })) as { content: Array<{ text: string }>; isError?: boolean };
-      expect(result.isError).toBe(true);
-      expect(JSON.parse(result.content[0].text)).toEqual({
-        success: false,
-        error: 'unknown workspace: nope',
-      });
-      expect(calls).toEqual([]);
-    } finally {
-      ctx.db.close();
-    }
-  });
-
-  test('create_standalone_task rejects when the space has no usable default workspace', async () => {
-    const ctx = makeCtx({
-      spaceManager: {
-        getSpace: async () => null,
-        resolveWorkspaceSelection: async () => {
-          throw new Error('should not be called');
-        },
-        validateDefaultTaskWorkspace: async () => 'no workspace registered',
-      },
-    });
-    try {
-      const { operations, calls } = makeFakeCreateTaskOperation();
-      const entry = findCreateStandaloneTaskEntry(ctx, operations);
-      const result = (await entry.handler({ title: 'T', description: 'D' })) as {
-        content: Array<{ text: string }>;
-        isError?: boolean;
-      };
-      expect(result.isError).toBe(true);
-      expect(JSON.parse(result.content[0].text)).toEqual({
-        success: false,
-        error: 'no workspace registered',
-      });
-      expect(calls).toEqual([]);
-    } finally {
-      ctx.db.close();
-    }
-  });
-
-  test('create_standalone_task resolves workflow_handle to preferredWorkflowId', async () => {
-    const ctx = makeCtx();
-    try {
-      const workflow = ctx.workflowManager.createWorkflow({
-        spaceId: SPACE_ID,
-        name: 'Handle Flow',
-        nodes: [{ name: 'Work', agents: [{ agentId: 'agent-coder-1', name: 'Coder' }] }],
-        tags: [],
-      });
-      const { operations, calls } = makeFakeCreateTaskOperation();
-      const entry = findCreateStandaloneTaskEntry(ctx, operations);
-      await entry.handler({ title: 'T', description: 'D', workflow_handle: workflow.handle });
-      expect(calls[0]?.input).toMatchObject({ preferredWorkflowId: workflow.id });
-    } finally {
-      ctx.db.close();
-    }
-  });
-
-  test('create_standalone_task rejects a disabled or unknown workflow_handle', async () => {
-    const ctx = makeCtx();
-    try {
-      const disabled = ctx.workflowManager.createWorkflow({
-        spaceId: SPACE_ID,
-        name: 'Disabled Flow',
-        nodes: [{ name: 'Work', agents: [{ agentId: 'agent-coder-1', name: 'Coder' }] }],
-        tags: [],
-        disabled: true,
-      });
-      const { operations, calls } = makeFakeCreateTaskOperation();
-      const entry = findCreateStandaloneTaskEntry(ctx, operations);
-      const disabledResult = (await entry.handler({
-        title: 'T',
-        description: 'D',
-        workflow_handle: disabled.handle,
-      })) as { content: Array<{ text: string }>; isError?: boolean };
-      expect(disabledResult.isError).toBe(true);
-      expect(JSON.parse(disabledResult.content[0].text)).toEqual({
-        success: false,
-        error: `Workflow is disabled: ${disabled.handle}`,
-      });
-
-      const unknownResult = (await entry.handler({
-        title: 'T',
-        description: 'D',
-        workflow_handle: 'no-such-handle',
-      })) as { content: Array<{ text: string }>; isError?: boolean };
-      expect(unknownResult.isError).toBe(true);
-      expect(JSON.parse(unknownResult.content[0].text)).toEqual({
-        success: false,
-        error: 'Workflow not found by handle: no-such-handle',
-      });
-      expect(calls).toEqual([]);
-    } finally {
-      ctx.db.close();
-    }
-  });
-
-  test('create_standalone_task prefers a usable workflow_id over workflow_handle', async () => {
-    const ctx = makeCtx();
-    try {
-      const idWorkflow = ctx.workflowManager.createWorkflow({
-        spaceId: SPACE_ID,
-        name: 'Id Flow',
-        nodes: [{ name: 'Work', agents: [{ agentId: 'agent-coder-1', name: 'Coder' }] }],
-        tags: [],
-      });
-      const handleWorkflow = ctx.workflowManager.createWorkflow({
-        spaceId: SPACE_ID,
-        name: 'Handle Flow',
-        nodes: [{ name: 'Work', agents: [{ agentId: 'agent-coder-1', name: 'Coder' }] }],
-        tags: [],
-      });
-      const { operations, calls } = makeFakeCreateTaskOperation();
-      const entry = findCreateStandaloneTaskEntry(ctx, operations);
-      await entry.handler({
-        title: 'T',
-        description: 'D',
-        workflow_id: idWorkflow.id,
-        workflow_handle: handleWorkflow.handle,
-      });
-      expect(calls[0]?.input).toMatchObject({ preferredWorkflowId: idWorkflow.id });
+      await entry.handler({ title: 'T', description: 'D' });
+      expect(calls[0]?.input).toMatchObject({ spaceId: SPACE_ID });
     } finally {
       ctx.db.close();
     }
@@ -868,6 +720,239 @@ describe('createSpaceRegistryEntries — composition', () => {
       };
       expect(payload.success).toBe(true);
       expect(payload.task?.title).toBe('T');
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('resolveWorkspacePath keeps the draft empty when no workspace and no spaceManager', async () => {
+    const ctx = makeCtx();
+    try {
+      const outcome = await resolveWorkspacePath({ title: 'T', description: 'D' }, ctx.config);
+      expect(outcome).toEqual({ value: {} });
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('resolveWorkspacePath calls neither spaceManager method when workspace is absent', async () => {
+    const calls: string[] = [];
+    const ctx = makeCtx({
+      spaceManager: {
+        getSpace: async () => null,
+        resolveWorkspaceSelection: async () => {
+          calls.push('resolveWorkspaceSelection');
+          return '';
+        },
+        validateDefaultTaskWorkspace: async () => {
+          calls.push('validateDefaultTaskWorkspace');
+          return null;
+        },
+      },
+    });
+    try {
+      const outcome = await resolveWorkspacePath({ title: 'T', description: 'D' }, ctx.config);
+      expect(outcome).toEqual({ value: {} });
+      expect(calls).toEqual([]);
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('resolveWorkspacePath rejects an explicit workspace when spaceManager is unavailable', async () => {
+    const ctx = makeCtx();
+    try {
+      const outcome = await resolveWorkspacePath(
+        { title: 'T', description: 'D', workspace: 'my-workspace' },
+        ctx.config
+      );
+      expect(outcome).toEqual({
+        reason: { reject: 'Workspace selection is not available for this space' },
+      });
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('resolveWorkspacePath resolves an explicit workspace through resolveWorkspaceSelection', async () => {
+    const resolveCalls: Array<{ spaceId: string; selection: string }> = [];
+    const ctx = makeCtx({
+      spaceManager: {
+        getSpace: async () => null,
+        resolveWorkspaceSelection: async (spaceId, selection) => {
+          resolveCalls.push({ spaceId, selection });
+          return '/workspaces/chosen';
+        },
+        validateDefaultTaskWorkspace: async () => null,
+      },
+    });
+    try {
+      const outcome = await resolveWorkspacePath(
+        { title: 'T', description: 'D', workspace: 'my-workspace' },
+        ctx.config
+      );
+      expect(resolveCalls).toEqual([{ spaceId: SPACE_ID, selection: 'my-workspace' }]);
+      expect(outcome).toEqual({ value: { workspacePath: '/workspaces/chosen' } });
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('resolveWorkspacePath rejects when resolveWorkspaceSelection throws', async () => {
+    const ctx = makeCtx({
+      spaceManager: {
+        getSpace: async () => null,
+        resolveWorkspaceSelection: async () => {
+          throw new Error('unknown workspace: nope');
+        },
+        validateDefaultTaskWorkspace: async () => null,
+      },
+    });
+    try {
+      const outcome = await resolveWorkspacePath(
+        { title: 'T', description: 'D', workspace: 'nope' },
+        ctx.config
+      );
+      expect(outcome).toEqual({ reason: { reject: 'unknown workspace: nope' } });
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('routeWorkflowReference resolves workflow_handle and carries the draft forward', () => {
+    const ctx = makeCtx();
+    try {
+      const workflow = ctx.workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: 'Handle Flow',
+        nodes: [{ name: 'Work', agents: [{ agentId: 'agent-coder-1', name: 'Coder' }] }],
+        tags: [],
+      });
+      const outcome = routeWorkflowReference(
+        { title: 'T', description: 'D', workflow_handle: workflow.handle },
+        ctx.config,
+        { workspacePath: '/ws' }
+      );
+      expect(outcome).toEqual({
+        value: { workspacePath: '/ws', preferredWorkflowId: workflow.id },
+      });
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('routeWorkflowReference prefers a usable workflow_id over workflow_handle', () => {
+    const ctx = makeCtx();
+    try {
+      const idWorkflow = ctx.workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: 'Id Flow',
+        nodes: [{ name: 'Work', agents: [{ agentId: 'agent-coder-1', name: 'Coder' }] }],
+        tags: [],
+      });
+      const handleWorkflow = ctx.workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: 'Handle Flow',
+        nodes: [{ name: 'Work', agents: [{ agentId: 'agent-coder-1', name: 'Coder' }] }],
+        tags: [],
+      });
+      const outcome = routeWorkflowReference(
+        {
+          title: 'T',
+          description: 'D',
+          workflow_id: idWorkflow.id,
+          workflow_handle: handleWorkflow.handle,
+        },
+        ctx.config,
+        {}
+      );
+      expect(outcome).toEqual({ value: { preferredWorkflowId: idWorkflow.id } });
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('routeWorkflowReference rejects a disabled workflow_handle', () => {
+    const ctx = makeCtx();
+    try {
+      const disabled = ctx.workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: 'Disabled Flow',
+        nodes: [{ name: 'Work', agents: [{ agentId: 'agent-coder-1', name: 'Coder' }] }],
+        tags: [],
+        disabled: true,
+      });
+      const outcome = routeWorkflowReference(
+        { title: 'T', description: 'D', workflow_handle: disabled.handle },
+        ctx.config,
+        {}
+      );
+      expect(outcome).toEqual({ reason: { reject: `Workflow is disabled: ${disabled.handle}` } });
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('routeWorkflowReference rejects an unknown workflow_handle', () => {
+    const ctx = makeCtx();
+    try {
+      const outcome = routeWorkflowReference(
+        { title: 'T', description: 'D', workflow_handle: 'no-such-handle' },
+        ctx.config,
+        {}
+      );
+      expect(outcome).toEqual({
+        reason: { reject: 'Workflow not found by handle: no-such-handle' },
+      });
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('buildCreateTaskInput carries the registry space and keeps only the provided fields', () => {
+    const ctx = makeCtx();
+    try {
+      expect(buildCreateTaskInput({ title: 'T', description: 'D' }, ctx.config, {})).toEqual({
+        spaceId: SPACE_ID,
+        title: 'T',
+        description: 'D',
+      });
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('buildCreateTaskInput includes optional fields and the resolved draft', () => {
+    const ctx = makeCtx();
+    try {
+      expect(
+        buildCreateTaskInput(
+          { title: 'T', description: 'D', priority: 'high', depends_on: ['dep-1'], draft: true },
+          ctx.config,
+          { workspacePath: '/ws', preferredWorkflowId: 'wf-1' }
+        )
+      ).toEqual({
+        spaceId: SPACE_ID,
+        title: 'T',
+        description: 'D',
+        priority: 'high',
+        dependsOn: ['dep-1'],
+        draft: true,
+        preferredWorkflowId: 'wf-1',
+        workspacePath: '/ws',
+      });
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('buildCreateTaskInput never sends createdBy; the operation resolves it from the caller session', () => {
+    const ctx = makeCtx();
+    try {
+      const keys = Object.keys(
+        buildCreateTaskInput({ title: 'T', description: 'D' }, ctx.config, {})
+      );
+      expect(keys).not.toContain('createdBy');
     } finally {
       ctx.db.close();
     }

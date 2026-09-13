@@ -1,31 +1,33 @@
 import type { z } from 'zod';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import type { CreateStandaloneTaskSchema } from '../tools/space-agent-tool-schemas.ts';
 import type { SpaceAgentToolsConfig } from '../tools/space-agent-tools.ts';
 import { routeCreateTaskWorkflowRef } from '../tools/task-transition-routing.ts';
 
 export type CreateStandaloneTaskParams = z.infer<typeof CreateStandaloneTaskSchema>;
+type In = CreateStandaloneTaskParams;
+type Deps = Pick<SpaceAgentToolsConfig, 'spaceId' | 'spaceManager' | 'workflowManager'>;
+type Draft = { workspacePath?: string; preferredWorkflowId?: string; reject?: never };
+type Gate = { value: Draft } | { reason: { reject: string } };
+type Input = Record<string, unknown>;
+type Output = (Input & { reject?: never }) | { reject: string };
 
-export async function mapCreateTaskParams(
-  params: CreateStandaloneTaskParams,
-  deps: Pick<SpaceAgentToolsConfig, 'spaceId' | 'spaceManager' | 'workflowManager'>
-): Promise<Record<string, unknown> | { reject: string }> {
-  let workspacePath: string | undefined;
-  if (params.workspace !== undefined) {
-    if (!deps.spaceManager) {
-      return { reject: 'Workspace selection is not available for this space' };
-    }
-    try {
-      workspacePath = await deps.spaceManager.resolveWorkspaceSelection(
-        deps.spaceId,
-        params.workspace
-      );
-    } catch (err) {
-      return { reject: err instanceof Error ? err.message : String(err) };
-    }
-  } else if (deps.spaceManager) {
-    const error = await deps.spaceManager.validateDefaultTaskWorkspace(deps.spaceId);
-    if (error) return { reject: error };
+export async function resolveWorkspacePath(params: In, deps: Deps): Promise<Gate> {
+  if (params.workspace === undefined) return { value: {} };
+  if (!deps.spaceManager) {
+    return { reason: { reject: 'Workspace selection is not available for this space' } };
   }
+  try {
+    const workspacePath = await deps.spaceManager.resolveWorkspaceSelection(
+      deps.spaceId,
+      params.workspace
+    );
+    return { value: { workspacePath } };
+  } catch (err) {
+    return { reason: { reject: err instanceof Error ? err.message : String(err) } };
+  }
+}
+export function routeWorkflowReference(params: In, deps: Deps, draft: Draft): Gate {
   const workflowIdArg = params.workflow_id ?? null;
   const idWorkflow = workflowIdArg ? deps.workflowManager.getWorkflow(workflowIdArg) : null;
   const workflowIdUsable =
@@ -44,16 +46,27 @@ export async function mapCreateTaskParams(
     handleWorkflowId: handleWorkflow?.id ?? null,
     handleWorkflowDisabled: handleWorkflow?.disabled ?? false,
   });
-  if (ref.action === 'reject') return { reject: ref.message };
+  return ref.action === 'reject'
+    ? { reason: { reject: ref.message } }
+    : { value: { ...draft, preferredWorkflowId: ref.preferredWorkflowId ?? undefined } };
+}
+export function buildCreateTaskInput(params: In, deps: Deps, draft: Draft): Input {
   return Object.fromEntries(
     Object.entries({
+      spaceId: deps.spaceId,
       title: params.title,
       description: params.description,
       priority: params.priority,
       dependsOn: params.depends_on,
       draft: params.draft,
-      preferredWorkflowId: ref.preferredWorkflowId ?? undefined,
-      workspacePath,
+      preferredWorkflowId: draft.preferredWorkflowId,
+      workspacePath: draft.workspacePath,
     }).filter(([, value]) => value !== undefined)
   );
 }
+export const mapCreateTaskParams = (superpipe({})('create-task-action-params') as PipelineAPI)
+  .input(['params', 'deps'])
+  .pipe(resolveWorkspacePath, ['params', 'deps'], 'result:draft')
+  .pipe(routeWorkflowReference, ['params', 'deps', 'draft'], 'result:draft')
+  .pipe(buildCreateTaskInput, ['params', 'deps', 'draft'], 'draft')
+  .endAsync('draft') as (params: In, deps: Deps) => Promise<Output>;
