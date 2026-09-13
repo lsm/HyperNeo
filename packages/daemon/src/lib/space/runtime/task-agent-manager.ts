@@ -5358,6 +5358,7 @@ export class TaskAgentManager {
       agentMessageRouter,
       internalEventBus: this.config.internalEventBus,
       workflow,
+      goalService: this.config.goalService,
       onApproveTask,
       onSubmitForApproval,
       onMarkComplete,

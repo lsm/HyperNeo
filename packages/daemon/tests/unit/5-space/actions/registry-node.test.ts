@@ -962,3 +962,265 @@ describe('submit_for_approval — operation-backed', () => {
     }
   });
 });
+
+function seedSpaceRow(db: BunDatabase, spaceId: string): void {
+  db.prepare(
+    `INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions,
+     allowed_models, session_ids, slug, status, autonomy_level, created_at, updated_at)
+     VALUES (?, '/tmp', ?, '', '', '', '[]', '[]', ?, 'active', 1, ?, ?)`
+  ).run(spaceId, `Space ${spaceId}`, spaceId, Date.now(), Date.now());
+}
+
+function makeCompleteTaskOperation(
+  execute: (
+    input: { taskId: string },
+    caller: { source: string; sessionId?: string }
+  ) => Promise<{ accepted: true; task: unknown } | { accepted: false; reason: string }>
+) {
+  return createOperationRegistry([
+    defineOperation({
+      name: 'task.complete',
+      description: 'Complete a task',
+      inputSchema: z.object({ taskId: z.string(), result: z.string().optional() }).strict(),
+      resultSchema: z.union([
+        z.object({ accepted: z.literal(true), task: z.unknown() }),
+        z.object({ accepted: z.literal(false), reason: z.string() }),
+      ]),
+      execute: execute as never,
+    }),
+  ]);
+}
+
+describe('mark_complete — operation-backed', () => {
+  test('invokes task.complete with the config task id, returning its result', async () => {
+    const ctx = makeCtx();
+    try {
+      const calls: Array<{ input: unknown; caller: unknown }> = [];
+      const operations = makeCompleteTaskOperation(async (input, caller) => {
+        calls.push({ input, caller });
+        return { accepted: true, task: { id: 'task-1', status: 'done' } };
+      });
+      const config = makeBareConfig(ctx, keepCallbacks(ctx, ['onMarkComplete']));
+      const entry = createNodeRegistryEntries(config, operations).find(
+        (candidate) => candidate.name === 'mark_complete'
+      );
+      if (!entry) throw new Error('mark_complete entry missing');
+      const result = (await entry.handler({})) as {
+        content: Array<{ text: string }>;
+        isError?: boolean;
+      };
+      expect(result.isError).toBeUndefined();
+      expect(JSON.parse(result.content[0].text)).toEqual({
+        accepted: true,
+        task: { id: 'task-1', status: 'done' },
+      });
+      await entry.handler({});
+      expect(calls).toEqual([
+        {
+          input: { taskId: config.taskId },
+          caller: { source: 'mcp', sessionId: config.mySessionId },
+        },
+        {
+          input: { taskId: config.taskId },
+          caller: { source: 'mcp', sessionId: config.mySessionId },
+        },
+      ]);
+      expect(ctx.calls.get('mark_complete')).toBeUndefined();
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('the hook wrapper still runs around the operation-backed handler', async () => {
+    const ctx = makeCtx();
+    try {
+      const executeCalls: string[] = [];
+      const operations = makeCompleteTaskOperation(async () => ({
+        accepted: true,
+        task: { id: 'task-1', status: 'done' },
+      }));
+      const entry = createNodeRegistryEntries(
+        makeBareConfig(ctx, {
+          hookEngine: makeStubEngine(executeCalls),
+          ...keepCallbacks(ctx, ['onMarkComplete']),
+        }),
+        operations
+      ).find((candidate) => candidate.name === 'mark_complete');
+      if (!entry) throw new Error('mark_complete entry missing');
+      const result = (await entry.handler({})) as { content: Array<{ text: string }> };
+      expect(JSON.parse(result.content[0].text)).toEqual({
+        accepted: true,
+        task: { id: 'task-1', status: 'done' },
+      });
+      expect(executeCalls).toEqual(['mark_complete']);
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('without an operations registry, the typed onMarkComplete handler runs unchanged', async () => {
+    const ctx = makeCtx();
+    try {
+      const entry = createNodeRegistryEntries(
+        makeBareConfig(ctx, keepCallbacks(ctx, ['onMarkComplete']))
+      ).find((candidate) => candidate.name === 'mark_complete');
+      if (!entry) throw new Error('mark_complete entry missing');
+      const result = (await entry.handler({})) as { content: Array<{ text: string }> };
+      expect(JSON.parse(result.content[0].text)).toEqual({
+        success: true,
+        key: 'mark_complete',
+      });
+      expect(ctx.calls.get('mark_complete')).toBe(1);
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('an accepted completion applies the goal update through the goal service', async () => {
+    const ctx = makeCtx();
+    try {
+      seedSpaceRow(ctx.db, SPACE_ID);
+      const taskRepo = new SpaceTaskRepository(ctx.db);
+      const task = taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'T',
+        description: '',
+        status: 'approved',
+        goalId: 'goal-1',
+      });
+      const updateCalls: Array<{ goalId: string; params: unknown; context: unknown }> = [];
+      const goalService = {
+        getGoal: (goalId: string) =>
+          goalId === 'goal-1' ? { id: 'goal-1', spaceId: SPACE_ID } : null,
+        updateGoal: (goalId: string, params: unknown, context: unknown) => {
+          updateCalls.push({ goalId, params, context });
+          return {};
+        },
+      };
+      const operations = makeCompleteTaskOperation(async () => ({
+        accepted: true,
+        task: { id: task.id, status: 'done' },
+      }));
+      const config = makeBareConfig(ctx, {
+        taskId: task.id,
+        taskRepo,
+        goalService: goalService as unknown as NodeAgentToolsConfig['goalService'],
+        ...keepCallbacks(ctx, ['onMarkComplete']),
+      });
+      const entry = createNodeRegistryEntries(config, operations).find(
+        (candidate) => candidate.name === 'mark_complete'
+      );
+      if (!entry) throw new Error('mark_complete entry missing');
+
+      const out = await entry.handler({ goal_update: { summary: 'Shipped', progress: 80 } });
+      expect(JSON.parse(out.content[0].text)).toEqual({
+        accepted: true,
+        task: { id: task.id, status: 'done' },
+      });
+      expect(updateCalls).toEqual([
+        {
+          goalId: 'goal-1',
+          params: { summary: 'Shipped', progress: 80, metrics: undefined, nextSteps: undefined },
+          context: { source: 'workflow_node_agent', sourceTaskId: task.id },
+        },
+      ]);
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('a goal-update failure after an accepted completion is reported in the result, not thrown', async () => {
+    const ctx = makeCtx();
+    try {
+      seedSpaceRow(ctx.db, SPACE_ID);
+      const taskRepo = new SpaceTaskRepository(ctx.db);
+      const task = taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'T',
+        description: '',
+        status: 'approved',
+        goalId: 'goal-1',
+      });
+      const goalService = {
+        getGoal: (goalId: string) =>
+          goalId === 'goal-1' ? { id: 'goal-1', spaceId: SPACE_ID } : null,
+        updateGoal: () => {
+          throw new Error('goal db locked');
+        },
+      };
+      const operations = makeCompleteTaskOperation(async () => ({
+        accepted: true,
+        task: { id: task.id, status: 'done' },
+      }));
+      const config = makeBareConfig(ctx, {
+        taskId: task.id,
+        taskRepo,
+        goalService: goalService as unknown as NodeAgentToolsConfig['goalService'],
+        ...keepCallbacks(ctx, ['onMarkComplete']),
+      });
+      const entry = createNodeRegistryEntries(config, operations).find(
+        (candidate) => candidate.name === 'mark_complete'
+      );
+      if (!entry) throw new Error('mark_complete entry missing');
+
+      const out = (await entry.handler({ goal_update: { summary: 'Shipped' } })) as {
+        content: Array<{ text: string }>;
+        isError?: boolean;
+      };
+      expect(out.isError).toBeUndefined();
+      expect(JSON.parse(out.content[0].text)).toEqual({
+        accepted: true,
+        task: { id: task.id, status: 'done' },
+        goalUpdateError: 'goal db locked',
+      });
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('a goal validation failure rejects with the existing message and leaves the task untouched', async () => {
+    const ctx = makeCtx();
+    try {
+      seedSpaceRow(ctx.db, SPACE_ID);
+      const taskRepo = new SpaceTaskRepository(ctx.db);
+      const task = taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'T',
+        description: '',
+        status: 'approved',
+        goalId: 'goal-missing',
+      });
+      let operationCalls = 0;
+      const operations = makeCompleteTaskOperation(async () => {
+        operationCalls += 1;
+        return { accepted: true, task: { id: task.id, status: 'done' } };
+      });
+      const goalService = {
+        getGoal: () => null,
+        updateGoal: () => {
+          throw new Error('updateGoal should not be called');
+        },
+      };
+      const config = makeBareConfig(ctx, {
+        taskId: task.id,
+        taskRepo,
+        goalService: goalService as unknown as NodeAgentToolsConfig['goalService'],
+        ...keepCallbacks(ctx, ['onMarkComplete']),
+      });
+      const entry = createNodeRegistryEntries(config, operations).find(
+        (candidate) => candidate.name === 'mark_complete'
+      );
+      if (!entry) throw new Error('mark_complete entry missing');
+
+      const out = await entry.handler({ goal_update: { summary: 'Should not apply' } });
+      expect(JSON.parse(out.content[0].text)).toEqual({
+        success: false,
+        error: 'Goal not found: goal-missing',
+      });
+      expect(operationCalls).toBe(0);
+      expect(taskRepo.getTask(task.id)?.status).toBe('approved');
+    } finally {
+      ctx.db.close();
+    }
+  });
+});

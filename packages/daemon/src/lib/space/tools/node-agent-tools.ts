@@ -16,6 +16,7 @@ import { ChannelResolver } from '../runtime/channel-resolver.ts';
 import type { AgentMessageRouter } from '../runtime/agent-message-router.ts';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository.ts';
 import type { SpaceWorkflow } from '@hyperneo/shared';
+import type { SpaceGoalService } from '../goals/goal-service.ts';
 import {
   ARTIFACT_SHAPES,
   deriveArtifactKey,
@@ -105,6 +106,7 @@ export interface NodeAgentToolsConfig {
   internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
   agentMessageRouter: AgentMessageRouter;
   workflow: SpaceWorkflow | null;
+  goalService?: Pick<SpaceGoalService, 'getGoal' | 'updateGoal'>;
   onApproveTask?: (args: ApproveTaskInput) => Promise<ToolResult>;
   onSubmitForApproval?: (args: SubmitForApprovalInput) => Promise<ToolResult>;
   onMarkComplete?: (args: MarkCompleteInput) => Promise<ToolResult>;

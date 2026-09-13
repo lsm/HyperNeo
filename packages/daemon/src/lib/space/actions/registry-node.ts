@@ -1,4 +1,8 @@
-import type { OperationRegistrySource } from '../../operations/registry.ts';
+import { invokeOperation } from '../../operations/invoke.ts';
+import {
+  resolveOperationRegistry,
+  type OperationRegistrySource,
+} from '../../operations/registry.ts';
 import type { SpaceMcpSessionRole } from '../runtime/space-mcp-session-policy.ts';
 import { wrapHandlerWithHooks } from '../runtime/workflow-hook-engine.ts';
 import {
@@ -9,6 +13,7 @@ import {
   ApproveTaskSchema,
   MarkCompleteSchema,
   SubmitForApprovalSchema,
+  type MarkCompleteInput,
   type SubmitForApprovalInput,
 } from '../tools/task-agent-tool-schemas.ts';
 import {
@@ -33,11 +38,27 @@ import {
   UnsubscribeExternalEventSchema,
 } from '../tools/node-agent-tool-schemas.ts';
 import type { ToolResult } from '../tools/tool-result.ts';
+import { runMarkCompleteOperation } from './mark-complete-operation.ts';
 import { createOperationActionHandler } from './operation-action.ts';
 import { type ActionDefinition, defineAction, type ActionEntry } from './registry.ts';
 
 function nodeAction<P>(entry: Omit<ActionEntry<P>, 'family'>): ActionDefinition {
   return defineAction({ ...entry, family: 'node' });
+}
+
+function createMarkCompleteOperationHandler(
+  config: NodeAgentToolsConfig,
+  operations: OperationRegistrySource
+): (args: MarkCompleteInput) => Promise<ToolResult> {
+  return (args: MarkCompleteInput) =>
+    runMarkCompleteOperation(args, {
+      taskId: config.taskId,
+      mySessionId: config.mySessionId,
+      invoke: (input, caller) =>
+        invokeOperation(resolveOperationRegistry(operations), 'task.complete', input, caller),
+      taskRepo: config.taskRepo,
+      goalService: config.goalService,
+    });
 }
 
 export function createNodeRegistryEntries(
@@ -303,7 +324,7 @@ export function createNodeRegistryEntries(
             paramsSchema: MarkCompleteSchema,
             handler: wrapHandlerWithHooks(
               'mark_complete',
-              onMarkComplete,
+              operations ? createMarkCompleteOperationHandler(config, operations) : onMarkComplete,
               hookEngine,
               handlerMap,
               hookMeta
