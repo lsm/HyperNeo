@@ -1422,6 +1422,10 @@ export class SpaceRuntime {
     this.pausedSpaceIds.add(spaceId);
   }
 
+  releaseSpaceDeliveries(spaceId: string): void {
+    this.pausedSpaceIds.delete(spaceId);
+  }
+
   clearTaskInterests(taskId: string): void {
     this.workflowEventSubscriptionRepo.deleteByTask(taskId);
     this.topicTrie.remove(

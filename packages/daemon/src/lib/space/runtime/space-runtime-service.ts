@@ -1412,6 +1412,7 @@ export class SpaceRuntimeService {
       for (const run of this.config.workflowRunRepo.listBySpace(event.spaceId)) {
         this.runtime.clearRunInterests(run.id);
       }
+      this.runtime.releaseSpaceDeliveries(event.spaceId);
       this.tearDownSpaceNotificationService(event.spaceId, 'deleted');
     };
     const unsubSpaceDeleted = internalEventBus.subscribe('space.deleted', handleSpaceDeleted, {

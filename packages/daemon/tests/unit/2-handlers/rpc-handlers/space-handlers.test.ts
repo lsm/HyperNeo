@@ -834,15 +834,57 @@ describe('space-handlers', () => {
         return true;
       });
 
+      (spaceManager.stopSpace as ReturnType<typeof mock>).mockImplementation(async () => {
+        callOrder.push('stopSpace');
+        return { ...mockSpace, stopped: true };
+      });
+
       const result = await call('space.delete', { id: 'space-1' });
 
-      expect(callOrder).toEqual(['stopActiveWork', 'deleteSpace']);
+      expect(callOrder).toEqual(['stopSpace', 'stopActiveWork', 'deleteSpace']);
       expect(mockRuntimeService.stopActiveWork).toHaveBeenCalledWith('space-1');
       expect(result).toEqual({ success: true });
       expect(internalEventBus.publish).toHaveBeenCalledWith('space.deleted', {
         sessionId: 'global',
         spaceId: 'space-1',
       });
+    });
+
+    it('fences the space before draining so a racing direct start is refused admission', async () => {
+      const mockRuntimeService = {
+        setupSpaceAgentSession: mock(async () => {}),
+        stopActiveWork: mock(async () => {}),
+      } as unknown as SpaceRuntimeService;
+      await setup(mockSpace, undefined, mockRuntimeService);
+
+      let stoppedBeforeDrain = false;
+      (spaceManager.stopSpace as ReturnType<typeof mock>).mockImplementation(async () => ({
+        ...mockSpace,
+        stopped: true,
+      }));
+      (mockRuntimeService.stopActiveWork as ReturnType<typeof mock>).mockImplementation(
+        async () => {
+          stoppedBeforeDrain =
+            (spaceManager.stopSpace as ReturnType<typeof mock>).mock.calls.length > 0;
+        }
+      );
+
+      await call('space.delete', { id: 'space-1' });
+
+      expect(stoppedBeforeDrain).toBe(true);
+      expect(spaceManager.stopSpace).toHaveBeenCalledWith('space-1');
+    });
+
+    it('does not fence or drain when the space is absent', async () => {
+      const mockRuntimeService = {
+        setupSpaceAgentSession: mock(async () => {}),
+        stopActiveWork: mock(async () => {}),
+      } as unknown as SpaceRuntimeService;
+      await setup(null, undefined, mockRuntimeService);
+
+      await expect(call('space.delete', { id: 'ghost' })).rejects.toThrow('Space not found: ghost');
+      expect(spaceManager.stopSpace).not.toHaveBeenCalled();
+      expect(spaceManager.deleteSpace).not.toHaveBeenCalled();
     });
 
     it('rejects a ghost id without calling stopActiveWork', async () => {

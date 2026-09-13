@@ -362,6 +362,7 @@ describe('SpaceRuntimeService', () => {
         svc as unknown as {
           runtime: {
             holdSpaceDeliveries: (spaceId: string) => void;
+            releaseSpaceDeliveries: (spaceId: string) => void;
             parkInFlightExecutionsForSpace: (spaceId: string) => void;
             clearRunInterests: (runId: string) => void;
           };
@@ -379,8 +380,39 @@ describe('SpaceRuntimeService', () => {
       runtime.clearRunInterests = (runId: string) => {
         runtimeCalls.push(`clearRunInterests:${runId}`);
       };
+      const originalRelease = runtime.releaseSpaceDeliveries.bind(runtime);
+      runtime.releaseSpaceDeliveries = (spaceId: string) => {
+        runtimeCalls.push(`releaseDeliveries:${spaceId}`);
+        return originalRelease(spaceId);
+      };
       return runtimeCalls;
     }
+
+    test('deleting a space releases the delivery hold that stopping it took', async () => {
+      const internalEventBus = await createTestInternalEventBus();
+      const svc = new SpaceRuntimeService({
+        ...buildConfig(createMockSpaceManager()),
+        internalEventBus,
+        workflowRunRepo: { listBySpace: () => [] } as unknown as SpaceWorkflowRunRepository,
+        taskRepo: { listBySpace: () => [] } as unknown as SpaceTaskRepository,
+        sessionManager: {
+          listSessions: () => [],
+        } as unknown as SpaceRuntimeServiceConfig['sessionManager'],
+      } as SpaceRuntimeServiceConfig);
+      const runtimeCalls = spyRuntime(svc);
+      svc.start();
+
+      await svc.stopActiveWork('space-1');
+      expect(runtimeCalls).toContain('holdDeliveries:space-1');
+
+      await internalEventBus.publish('space.deleted', {
+        sessionId: 'global',
+        spaceId: 'space-1',
+      });
+
+      expect(runtimeCalls).toContain('releaseDeliveries:space-1');
+      svc.stop();
+    });
 
     test('cleans up in_progress, open, and rate-limited tasks with reason stopped and never writes task status', async () => {
       const tasks = [
