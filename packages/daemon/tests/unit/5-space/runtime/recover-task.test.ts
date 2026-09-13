@@ -60,6 +60,20 @@ function provider() {
   } as unknown as Parameters<typeof createSpaceOperationRegistryProvider>[2]);
 }
 
+function endedMember(id: string, owner: string) {
+  sessions.createSession(
+    {
+      ...createTestSession(id),
+      workspacePath: '/repo',
+      type: 'worker',
+      status: 'archived',
+      context: { spaceId: owner },
+    },
+    { enforceWorkspaceOwnership: false }
+  );
+  return { sessionId: id };
+}
+
 function member(id: string, owner?: string) {
   sessions.createSession(
     {
@@ -122,6 +136,11 @@ test('rejects an absent task, a standalone task and a non-retryable workflow sta
   expect(await rpc(recover(standalone.id), context)).toBe('task_not_in_space');
   tasks.updateTask(taskId, { workflowRunId: 'run-1', status: 'in_progress' });
   expect(await rpc(recover(taskId), context)).toBe('status_not_retryable');
+});
+
+test('an MCP session in the owning Space that is no longer active is denied', async () => {
+  const mcp = createOperationMcpHandler(provider(), () => endedMember('stale', spaceId));
+  expect(JSON.parse((await mcp(recover(taskId))).content[0].text)).toBe('recovery_denied');
 });
 
 test('task.recover is discoverable through the door', async () => {
