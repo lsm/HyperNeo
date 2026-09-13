@@ -2744,6 +2744,107 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     });
   });
 
+  describe('goal-ownership mutations revalidate the caller identity', () => {
+    function callerHandlers(status: 'active' | 'paused') {
+      return makeHandlers(ctx, {
+        callerRole: 'long_term_agent',
+        myAgentId: ctx.agentId,
+        longHorizonAgentRepo: {
+          getById: (id: string) =>
+            id === ctx.agentId
+              ? ({ id, spaceId: ctx.spaceId, status } as unknown as SpaceLongHorizonAgent)
+              : ctx.longHorizonAgentRepo.getById(id),
+        } as unknown as SpaceLongHorizonAgentRepository,
+      });
+    }
+
+    test('assign_agent_to_goal denies a paused caller and admits an active one', async () => {
+      const target = ctx.longHorizonAgentRepo.ensureSpaceManager(ctx.spaceId);
+      const goal = ctx.goalService.createGoal({ spaceId: ctx.spaceId, title: 'Ownership goal' });
+
+      const denied = JSON.parse(
+        (
+          await callerHandlers('paused').assign_agent_to_goal({
+            agent_id: target.id,
+            goal_id: goal.id,
+          })
+        ).content[0].text
+      );
+      expect(denied).toEqual({
+        success: false,
+        error:
+          'This action requires an active Space agent identity; the provenance agent is missing or inactive.',
+      });
+
+      const admitted = JSON.parse(
+        (
+          await callerHandlers('active').assign_agent_to_goal({
+            agent_id: target.id,
+            goal_id: goal.id,
+          })
+        ).content[0].text
+      );
+      expect(admitted.success).toBe(true);
+    });
+
+    test('unassign_agent_from_goal denies a paused caller and admits an active one', async () => {
+      const target = ctx.longHorizonAgentRepo.ensureSpaceManager(ctx.spaceId);
+      const goal = ctx.goalService.createGoal({ spaceId: ctx.spaceId, title: 'Ownership goal' });
+      await makeHandlers(ctx).assign_agent_to_goal({ agent_id: target.id, goal_id: goal.id });
+
+      const denied = JSON.parse(
+        (
+          await callerHandlers('paused').unassign_agent_from_goal({
+            agent_id: target.id,
+            goal_id: goal.id,
+          })
+        ).content[0].text
+      );
+      expect(denied).toEqual({
+        success: false,
+        error:
+          'This action requires an active Space agent identity; the provenance agent is missing or inactive.',
+      });
+
+      const admitted = JSON.parse(
+        (
+          await callerHandlers('active').unassign_agent_from_goal({
+            agent_id: target.id,
+            goal_id: goal.id,
+          })
+        ).content[0].text
+      );
+      expect(admitted.success).toBe(true);
+    });
+
+    test('create_goal with an explicit non-self owner denies a paused caller and admits an active one', async () => {
+      const owner = ctx.longHorizonAgentRepo.ensureSpaceManager(ctx.spaceId);
+
+      const denied = JSON.parse(
+        (
+          await callerHandlers('paused').create_goal({
+            title: 'Paused caller goal',
+            owner_agent_id: owner.id,
+          })
+        ).content[0].text
+      );
+      expect(denied.success).toBe(false);
+      expect(denied.error).toBe(
+        'This action requires an active Space agent identity; the provenance agent is missing or inactive.'
+      );
+
+      const admitted = JSON.parse(
+        (
+          await callerHandlers('active').create_goal({
+            title: 'Active caller goal',
+            owner_agent_id: owner.id,
+          })
+        ).content[0].text
+      );
+      expect(admitted.success).toBe(true);
+    });
+  });
+
   test('returns errors for missing and cross-space agents', async () => {
     const handlers = makeHandlers(ctx);
     const missingId = 'missing-agent';
@@ -7449,7 +7550,7 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.success).toBe(false);
     expect(parsed.error).toBe(
-      'Pending completion decisions require an active Space agent identity; the provenance agent is missing or inactive.'
+      'This action requires an active Space agent identity; the provenance agent is missing or inactive.'
     );
     expect(dispatchSpy).not.toHaveBeenCalled();
     expect(ctx.taskRepo.getTask(taskId)?.status).toBe('review');
@@ -7500,7 +7601,7 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.success).toBe(false);
     expect(parsed.error).toBe(
-      'Pending completion decisions require an active Space agent identity; the provenance agent is missing or inactive.'
+      'This action requires an active Space agent identity; the provenance agent is missing or inactive.'
     );
     expect(dispatchSpy).not.toHaveBeenCalled();
     expect(ctx.taskRepo.getTask(taskId)?.status).toBe('review');

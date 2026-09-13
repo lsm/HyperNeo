@@ -1274,7 +1274,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     const agent = myAgentId ? (config.longHorizonAgentRepo?.getById(myAgentId) ?? null) : null;
     if (!agent || agent.spaceId !== spaceId || agent.status !== 'active') {
       throw new Error(
-        'Pending completion decisions require an active Space agent identity; the provenance agent is missing or inactive.'
+        'This action requires an active Space agent identity; the provenance agent is missing or inactive.'
       );
     }
   }
@@ -1428,6 +1428,9 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     if (typeof explicitOwnerAgentId === 'string' && explicitOwnerAgentId.length > 0) {
       requireLongHorizonAgentInSpace(explicitOwnerAgentId);
       const isSelf = typeof myAgentId === 'string' && myAgentId === explicitOwnerAgentId;
+      if (callerHasSpaceAuthority) {
+        requireActiveCallingAgent();
+      }
       const admission = decideGoalOwnershipMutationAdmission({
         hasSpaceAuthority: callerHasSpaceAuthority,
         hasSession: typeof mySessionId === 'string',
@@ -2232,6 +2235,9 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 
     async assign_agent_to_goal(args: { agent_id: string; goal_id: string }): Promise<ToolResult> {
       try {
+        if (callerHasSpaceAuthority) {
+          requireActiveCallingAgent();
+        }
         const admission = decideGoalOwnershipMutationAdmission({
           hasSpaceAuthority: callerHasSpaceAuthority,
           hasSession: typeof mySessionId === 'string',
@@ -2256,6 +2262,9 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       goal_id: string;
     }): Promise<ToolResult> {
       try {
+        if (callerHasSpaceAuthority) {
+          requireActiveCallingAgent();
+        }
         const admission = decideGoalOwnershipMutationAdmission({
           hasSpaceAuthority: callerHasSpaceAuthority,
           hasSession: typeof mySessionId === 'string',
