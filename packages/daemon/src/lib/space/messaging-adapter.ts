@@ -533,6 +533,8 @@ function createFailedDelivery(
   };
 }
 
+export const UNROUTABLE_SPACE_AGENT_TARGET = '@space-agent-unrouted';
+
 function translateLegacyNodeTarget(
   target: string,
   config: LegacyNodeTargetTranslatorConfig
@@ -550,12 +552,7 @@ function translateLegacyNodeTarget(
   }
   if (targetRef === 'space-agent') {
     const replyTo = config.replyRoutingLookup?.(config.agentName);
-    if (!replyTo) {
-      throw new Error(
-        'Target "space-agent" has no reply route in this task. There is no default Space recipient; record the blocker as an artifact and stop instead of waiting for a reply.'
-      );
-    }
-    return [`@session:${replyTo}`];
+    return replyTo ? [`@session:${replyTo}`] : [UNROUTABLE_SPACE_AGENT_TARGET];
   }
   if (targetRef === '*') {
     return permittedWorkerTargets(config);

@@ -522,16 +522,11 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
         myNodeName,
         withinNodePeers,
         crossNodeTargets,
-        spaceAgent: {
-          target: 'space-agent',
-          description: 'Space-level escalation target. Use to request human/space-level judgment.',
-        },
         reachabilityDeclared,
         message:
-          `You can reach ${totalReachable} target(s) plus the space-agent escalation target. ` +
+          `You can reach ${totalReachable} target(s). ` +
           `Within-node peers: ${withinNodePeers.length > 0 ? withinNodePeers.map((p) => p.agentName).join(', ') : 'none'}.` +
-          crossNodeSummary +
-          ` Use target 'space-agent' to escalate blockers or request human/space-level judgment.`,
+          crossNodeSummary,
       });
     },
 
@@ -1087,7 +1082,7 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
       'Send a message to a peer agent by name (DM), a node by name (fan-out), or broadcast to all permitted targets. ' +
         "Use agent name for DM (e.g. 'coder'), node name for fan-out, or '*' for broadcast. " +
         'Validates against declared channel topology — returns an error with available targets if not permitted. ' +
-        "The optional `data` payload is passed to any send_message hooks for validation. Use target 'space-agent' to escalate blockers or request human/space-level judgment.",
+        'The optional `data` payload is passed to any send_message hooks for validation.',
       SendMessageSchema.shape,
       (args) => handlers.send_message(args)
     ),

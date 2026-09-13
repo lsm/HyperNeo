@@ -1,6 +1,7 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../src/storage/sqlite-compat';
 import {
+  UNROUTABLE_SPACE_AGENT_TARGET,
   SpaceDeliveryFacade,
   SpaceMessageResolver,
   translateLegacyNodeTargets,
@@ -414,9 +415,15 @@ describe('Space messaging adapter', () => {
       })
     ).toEqual(['@session:session-origin']);
 
-    expect(() => translateLegacyNodeTargets('space-agent', base)).toThrow(
-      'no reply route in this task'
-    );
+    expect(translateLegacyNodeTargets('space-agent', base)).toEqual([
+      UNROUTABLE_SPACE_AGENT_TARGET,
+    ]);
+
+    expect(
+      translateLegacyNodeTargets(['reviewer', 'space-agent'], base).filter(
+        (t) => t !== UNROUTABLE_SPACE_AGENT_TARGET
+      )
+    ).not.toHaveLength(0);
   });
 
   it('translates legacy node-agent targets to generic worker targets', () => {

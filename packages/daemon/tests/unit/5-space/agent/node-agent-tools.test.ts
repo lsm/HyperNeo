@@ -1212,11 +1212,8 @@ describe('node-agent-tools: list_reachable_agents', () => {
     expect(data.success).toBe(true);
     expect(data.reachabilityDeclared).toBe(false);
     expect(data.crossNodeTargets).toHaveLength(0);
-    expect(data.spaceAgent).toEqual({
-      target: 'space-agent',
-      description: 'Space-level escalation target. Use to request human/space-level judgment.',
-    });
-    expect(data.message).toContain('space-agent escalation target');
+    expect(data.spaceAgent).toBeUndefined();
+    expect(data.message).not.toContain('escalation');
   });
 
   test('returns cross-node targets for channels to roles not in current group', async () => {
