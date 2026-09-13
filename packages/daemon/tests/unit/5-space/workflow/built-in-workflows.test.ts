@@ -4324,11 +4324,21 @@ test('persisted Coder-Only prompts carrying the retired escalation target reconc
     .replace(
       'Record the failure with `save_artifact({ shape: "note", kind: "review_gate_failed", summary: "<which gate failed and why>" })` and STOP only when you can run neither an external gate nor a credible internal fallback review (for example, the diff is too large or too risky to self-review). Do NOT wait for a reply: there is no Space-level recipient.',
       'Escalate via send_message to the escalation target in your Runtime Execution Contract and STOP only when you can run neither an external gate nor a credible internal fallback review (for example, the diff is too large or too risky to self-review) — say which gate failed and why.'
+    )
+    .replace(
+      'an EXPLICIT `external` with no installed bot is likewise never substituted — record the blocker with `save_artifact({ shape: "note", kind: "no_external_review_bot", summary: "the repository has no external reviewer despite an explicit external selection" })` and stop)',
+      'an EXPLICIT `external` with no installed bot is likewise never substituted — escalate saying the repository has no external reviewer)'
+    )
+    .replace(
+      '(`both` mode excepted — an emptied gate set there is a blocker: record it with `save_artifact({ shape: "note", kind: "external_gate_died", summary: "every gate-set bot failed and `both` mode forbids the internal fallback" })` and stop)',
+      '(`both` mode excepted — an emptied gate set there is a blocker: escalate saying the external gate died)'
     );
 
   expect(persisted).not.toBe(templatePrompt);
   expect(persisted).toContain('escalate via send_message to the escalation target');
   expect(persisted).toContain('Escalate via send_message to the escalation target');
+  expect(persisted).toContain('escalate saying the repository has no external reviewer');
+  expect(persisted).toContain('escalate saying the external gate died');
 
   const existingNode: WorkflowNode = {
     ...templateNode,

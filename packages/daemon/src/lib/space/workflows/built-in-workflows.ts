@@ -945,6 +945,14 @@ const CURRENT_CODING_WORKFLOW_NOCHANGE_STEP_PROMPT =
   '`save_artifact({ shape: "note", kind: "no_code_changes", summary: "<why this task needs no code changes>" })` ' +
   'and stop. Do NOT mark the task complete and do NOT wait for a reply: there is no Space-level ' +
   'recipient, and the unfinished task carrying that artifact is the signal a human acts on.\n\n';
+const CURRENT_CODER_ONLY_NO_BOT_STOP =
+  'an EXPLICIT `external` with no installed bot is likewise never substituted — record the blocker with `save_artifact({ shape: "note", kind: "no_external_review_bot", summary: "the repository has no external reviewer despite an explicit external selection" })` and stop)';
+const RETIRED_ESCALATION_CODER_ONLY_NO_BOT =
+  'an EXPLICIT `external` with no installed bot is likewise never substituted — escalate saying the repository has no external reviewer)';
+const CURRENT_CODER_ONLY_GATE_DIED_STOP =
+  '(`both` mode excepted — an emptied gate set there is a blocker: record it with `save_artifact({ shape: "note", kind: "external_gate_died", summary: "every gate-set bot failed and `both` mode forbids the internal fallback" })` and stop)';
+const RETIRED_ESCALATION_CODER_ONLY_GATE_DIED =
+  '(`both` mode excepted — an emptied gate set there is a blocker: escalate saying the external gate died)';
 const CURRENT_CODER_ONLY_NOCHANGE_STEP =
   'do NOT fabricate an empty commit or PR — record the blocker with `save_artifact({ shape: "note", kind: "no_code_changes", summary: "<why this task needs no code changes>" })` and stop. Do NOT wait for a reply: there is no Space-level recipient, and the unfinished task carrying that artifact is the signal a human acts on.';
 const RETIRED_ESCALATION_CODER_ONLY_NOCHANGE_STEP =
@@ -2023,6 +2031,8 @@ const BUILT_IN_PROMPT_PATCH_VARIANTS = [
   [[CURRENT_EXTERNAL_REVIEW_NO_BOT_STOP, RETIRED_EXTERNAL_REVIEW_NO_BOT_ESCALATION]],
   [[CURRENT_CODER_ONLY_NOCHANGE_STEP, RETIRED_ESCALATION_CODER_ONLY_NOCHANGE_STEP]],
   [[CURRENT_CODER_ONLY_GATE_FAILURE_STEP, RETIRED_ESCALATION_CODER_ONLY_GATE_FAILURE_STEP]],
+  [[CURRENT_CODER_ONLY_NO_BOT_STOP, RETIRED_ESCALATION_CODER_ONLY_NO_BOT]],
+  [[CURRENT_CODER_ONLY_GATE_DIED_STOP, RETIRED_ESCALATION_CODER_ONLY_GATE_DIED]],
   [[CURRENT_FULLSTACK_CODING_PR_STEP_PROMPT, RETIRED_FULLSTACK_CODING_PR_STEP_PROMPT]],
   [
     [CURRENT_FULLSTACK_CODING_PR_STEP_PROMPT, RETIRED_FULLSTACK_CODING_PR_STEP_PROMPT],
