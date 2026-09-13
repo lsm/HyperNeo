@@ -111,6 +111,22 @@ describe('createSpace pipeline stages', () => {
       });
     });
 
+    const validSeedAgentCases: Array<[string, CreateSpaceParams]> = [
+      ['seedAgentTemplateKeys is omitted', { ...params }],
+      ['seedAgentTemplateKeys is an empty array', { ...params, seedAgentTemplateKeys: [] }],
+      [
+        'seedAgentTemplateKeys is a valid array of keys',
+        { ...params, seedAgentTemplateKeys: ['task-manager.default', 'other.default'] },
+      ],
+    ];
+
+    for (const [name, input] of validSeedAgentCases) {
+      test(`passes validation when ${name}`, () => {
+        const result = validateParams(makeCtx({ params: input }));
+        expect(result).toEqual({ value: expect.objectContaining({ params: input }) });
+      });
+    }
+
     const invalidCases: Array<[string, CreateSpaceParams, string]> = [
       ['missing workspace path', { ...params, workspacePath: '' }, 'workspacePath is required'],
       ['blank name', { ...params, name: '  ' }, 'name is required'],
@@ -136,6 +152,26 @@ describe('createSpace pipeline stages', () => {
           additionalWorkspaces: [{ path: '/valid' }, { path: 3 as unknown as string }],
         },
         'additionalWorkspaces[1].path is required',
+      ],
+      [
+        'seedAgentTemplateKeys is a bare string',
+        { ...params, seedAgentTemplateKeys: 'task-manager.default' as unknown as string[] },
+        'seedAgentTemplateKeys must be an array of strings',
+      ],
+      [
+        'seedAgentTemplateKeys is a non-array value',
+        { ...params, seedAgentTemplateKeys: { key: 'value' } as unknown as string[] },
+        'seedAgentTemplateKeys must be an array of strings',
+      ],
+      [
+        'empty seedAgentTemplateKeys entry at its index',
+        { ...params, seedAgentTemplateKeys: ['task-manager.default', ''] },
+        'seedAgentTemplateKeys[1] is required',
+      ],
+      [
+        'whitespace-only seedAgentTemplateKeys entry at its index',
+        { ...params, seedAgentTemplateKeys: ['task-manager.default', '   '] },
+        'seedAgentTemplateKeys[1] is required',
       ],
     ];
 
@@ -429,6 +465,17 @@ describe('createSpace pipeline', () => {
     await expect(createSpace(deps, { ...params, autonomyLevel: 0 as 1 })).rejects.toThrow(
       'Invalid autonomyLevel: 0'
     );
+    expect(log.calls).toEqual([]);
+  });
+
+  test('an invalid seedAgentTemplateKeys value rejects before persisting the space', async () => {
+    const { deps, log } = makeDeps();
+    await expect(
+      createSpace(deps, {
+        ...params,
+        seedAgentTemplateKeys: 'task-manager.default' as unknown as string[],
+      })
+    ).rejects.toThrow('seedAgentTemplateKeys must be an array of strings');
     expect(log.calls).toEqual([]);
   });
 

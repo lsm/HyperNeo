@@ -85,6 +85,16 @@ export function validateParams(ctx: CreateSpaceCtx): ValidateParamsResult {
     );
     if (index >= 0) reason = new Error(`additionalWorkspaces[${index}].path is required`);
   }
+  if (!reason && params.seedAgentTemplateKeys !== undefined) {
+    if (!Array.isArray(params.seedAgentTemplateKeys)) {
+      reason = new Error('seedAgentTemplateKeys must be an array of strings');
+    } else {
+      const index = params.seedAgentTemplateKeys.findIndex(
+        (key) => typeof key !== 'string' || key.trim() === ''
+      );
+      if (index >= 0) reason = new Error(`seedAgentTemplateKeys[${index}] is required`);
+    }
+  }
   return reason ? { reason } : { value: ctx };
 }
 
