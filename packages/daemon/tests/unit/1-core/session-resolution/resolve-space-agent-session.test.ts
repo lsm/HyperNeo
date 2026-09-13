@@ -2,10 +2,6 @@ import { describe, expect, test } from 'bun:test';
 import type { SessionResolutionDeps } from '../../../../src/lib/session-resolution/deps';
 import { resolveSpaceAgentSession } from '../../../../src/lib/session-resolution/resolve-space-agent-session';
 import { agentSessionIdOf } from '../../../../src/lib/session-resolution/target';
-import {
-  coordinatorLongHorizonAgentId,
-  coordinatorSessionId,
-} from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 
 interface TestSession {
   id: string;
@@ -85,34 +81,14 @@ describe('resolveSpaceAgentSession', () => {
     expect(ensureCalls).toHaveLength(0);
   });
 
-  test('falls back from a missing reply session and creates the coordinator session', async () => {
+  test('throws instead of falling back when the reply session is missing', async () => {
     const spaceId = 'space-1';
-    const sessionId = coordinatorSessionId(spaceId);
-    const { deps, getSessionCalls, refetchCalls, ensureCalls, getSession } = makeDeps();
-
-    const outcome = await resolveSpaceAgentSession<TestSession>(
-      spaceId,
-      'missing-session',
-      deps,
-      getSession
-    );
-
-    expect(outcome).toEqual({ sessionId, session: { id: sessionId } });
-    expect(ensureCalls).toEqual([[spaceId, 'coordinator']]);
-    expect(getSessionCalls).toEqual(['missing-session', sessionId, sessionId]);
-    expect(refetchCalls).toEqual([sessionId]);
-  });
-
-  test('reports the coordinator when fallback provisioning fails', async () => {
-    const spaceId = 'space-1';
-    const { deps, refetchCalls, ensureCalls, getSession } = makeDeps({ ensureOutcome: 'fail' });
+    const { deps, refetchCalls, ensureCalls, getSession } = makeDeps();
 
     await expect(
       resolveSpaceAgentSession<TestSession>(spaceId, 'missing-session', deps, getSession)
-    ).rejects.toThrow(
-      `Session not found for Space Agent reply routing: ${coordinatorSessionId(spaceId)}; ensure_failed`
-    );
-    expect(ensureCalls).toEqual([[spaceId, 'coordinator']]);
+    ).rejects.toThrow('Session not found for Space Agent reply routing: missing-session');
+    expect(ensureCalls).toHaveLength(0);
     expect(refetchCalls).toHaveLength(0);
   });
 
@@ -130,35 +106,15 @@ describe('resolveSpaceAgentSession', () => {
     expect(refetchCalls).toHaveLength(0);
   });
 
-  test('maps the coordinator row id to coordinatorSessionId without provisioning', async () => {
+  test('throws when no reply route is supplied', async () => {
     const spaceId = 'space-1';
-    const coordinatorId = coordinatorLongHorizonAgentId(spaceId);
-    const sessionId = coordinatorSessionId(spaceId);
-    const { deps, ensureCalls, getSession } = makeDeps({
-      coordinatorId,
-      existingSessionIds: [sessionId],
-    });
+    for (const replyTo of [undefined, null]) {
+      const { deps, ensureCalls, getSession } = makeDeps();
 
-    const outcome = await resolveSpaceAgentSession<TestSession>(
-      spaceId,
-      undefined,
-      deps,
-      getSession
-    );
-
-    expect(outcome.sessionId).toBe(sessionId);
-    expect(ensureCalls).toHaveLength(0);
-  });
-
-  test('preserves coordinator provisioning failure as the existing routing error', async () => {
-    const spaceId = 'space-1';
-    const { deps, ensureCalls, getSession } = makeDeps({ ensureOutcome: 'fail' });
-
-    await expect(
-      resolveSpaceAgentSession<TestSession>(spaceId, null, deps, getSession)
-    ).rejects.toThrow(
-      `Session not found for Space Agent reply routing: ${coordinatorSessionId(spaceId)}; ensure_failed`
-    );
-    expect(ensureCalls).toEqual([[spaceId, 'coordinator']]);
+      await expect(
+        resolveSpaceAgentSession<TestSession>(spaceId, replyTo, deps, getSession)
+      ).rejects.toThrow(`No reply route for Space Agent delivery in space ${spaceId}`);
+      expect(ensureCalls).toHaveLength(0);
+    }
   });
 });
