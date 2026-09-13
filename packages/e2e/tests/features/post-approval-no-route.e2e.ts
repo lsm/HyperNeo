@@ -27,9 +27,10 @@ async function createStandaloneTaskInApproved(
         input: { spaceId: space.id, title: 'Standalone task with no workflow', description: '' },
       })) as { id: string };
 
-      await hub.request('operation.invoke', {
-        name: 'task.transition',
-        input: { taskId: task.id, status: 'in_progress' },
+      await hub.request('spaceTask.update', {
+        spaceId: space.id,
+        taskId: task.id,
+        status: 'in_progress',
       });
       await hub.request('spaceTask.update', {
         spaceId: space.id,

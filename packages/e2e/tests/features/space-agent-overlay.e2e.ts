@@ -33,10 +33,7 @@ async function createSpaceWithTaskAndSession(
       const hub = window.__messageHub || window.appState?.messageHub;
       if (!hub?.request) throw new Error('MessageHub not available');
 
-      await hub.request('operation.invoke', {
-        name: 'task.transition',
-        input: { taskId: tid, status: 'done' },
-      });
+      await hub.request('spaceTask.update', { spaceId: sid, taskId: tid, status: 'done' });
 
       const { sessionId: newSessionId } = (await hub.request('session.create', {
         workspacePath: wp,
