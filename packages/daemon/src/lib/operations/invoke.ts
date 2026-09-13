@@ -256,6 +256,7 @@ function isolateValue<T>(value: T, seen: WeakMap<object, unknown>, depth: number
       });
     }
     copy.length = source.length;
+    Object.setPrototypeOf(copy, null);
     return copy as T;
   }
   const copy = Object.create(null) as Record<string | symbol, unknown>;

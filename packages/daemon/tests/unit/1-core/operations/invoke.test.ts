@@ -1634,6 +1634,79 @@ describe('shared operation invocation audit hooks', () => {
     });
     expect(outcomePrototype).toBeNull();
   });
+  test('an array snapshot is detached yet keeps its array brand and contents', async () => {
+    const operation = defineOperation({
+      name: 'message.send.detachedarray',
+      description: 'Accept an array so its snapshot can be inspected',
+      inputSchema: z.object({ content: z.string(), rows: z.any() }),
+      resultSchema: z.object({ accepted: z.string() }),
+      execute: async (input: { content: string }) => ({ accepted: input.content }),
+    });
+    const registry = createOperationRegistry([operation]);
+    let seen: unknown = null;
+    await invokeOperation(
+      registry,
+      'message.send.detachedarray',
+      { content: 'hello', rows: ['first', 'second'] },
+      caller,
+      {
+        after: (prepared: { input: unknown }) => {
+          seen = prepared.input;
+        },
+      }
+    );
+    const recorded = (seen as { rows: string[] }).rows;
+    expect(Object.getPrototypeOf(recorded)).toBeNull();
+    expect(Array.isArray(recorded)).toBe(true);
+    expect(recorded.length).toBe(2);
+    expect(recorded[0]).toBe('first');
+    expect(recorded[1]).toBe('second');
+    expect(JSON.parse(JSON.stringify({ rows: recorded }))).toEqual({
+      rows: ['first', 'second'],
+    });
+  });
+  test('a hook cannot reach the array prototype through an array snapshot', async () => {
+    const operation = defineOperation({
+      name: 'message.send.arrayproto',
+      description: 'Accept an array while a hook tries to reach its prototype',
+      inputSchema: z.object({ content: z.string(), rows: z.any() }),
+      resultSchema: z.object({ accepted: z.string() }),
+      execute: async (input: { content: string; rows: string[] }) => ({
+        accepted: (rowsFlag(input.rows) ?? input.content) as string,
+      }),
+    });
+    const rowsFlag = (rows: string[]) =>
+      (rows as unknown as Record<string, unknown>).injectedByHook as string | undefined;
+    const registry = createOperationRegistry([operation]);
+    let reached: unknown = 'unset';
+    let hookThrew: string | null = null;
+
+    const outcome = await invokeOperation(
+      registry,
+      'message.send.arrayproto',
+      { content: 'hello', rows: ['first'] },
+      caller,
+      {
+        before: (prepared: { input: unknown }) => {
+          try {
+            const rows = (prepared.input as { rows: unknown }).rows as object;
+            reached = Object.getPrototypeOf(rows);
+            if (reached) (reached as Record<string, unknown>).injectedByHook = 'leaked';
+          } catch (error) {
+            hookThrew = error instanceof Error ? error.message : String(error);
+          }
+        },
+      }
+    );
+
+    try {
+      expect(hookThrew).toBeNull();
+      expect(reached).toBeNull();
+      expect(outcome).toEqual({ kind: 'completed', value: { accepted: 'hello' } });
+    } finally {
+      delete (Array.prototype as unknown as Record<string, unknown>).injectedByHook;
+    }
+  });
   test('a handler mutating its caller does not change what after records', async () => {
     const { operation } = fixture();
     const hijackingExecute = async (
