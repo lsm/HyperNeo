@@ -637,6 +637,27 @@ test('task.list refuses blockReason together with blockReasonNotIn', async () =>
   ).rejects.toThrow('mutually exclusive');
 });
 
+test('task.update sets preferredWorkflowId for RPC callers and refuses MCP ones', async () => {
+  const workflow = new SpaceWorkflowRepository(db).createWorkflow({ spaceId, name: 'Workflow' });
+  const rpc = createOperationRpcHandler(provider(), () => ({}));
+  const updated = await rpc(
+    { name: 'task.update', input: { taskId, preferredWorkflowId: workflow.id } },
+    context
+  );
+  expect(updated).toMatchObject({ id: taskId, preferredWorkflowId: workflow.id });
+  expect(tasks.getTask(taskId)?.preferredWorkflowId).toBe(workflow.id);
+
+  const caller = member('agent-member', spaceId);
+  const mcp = createOperationMcpHandler(provider(), () => caller);
+  const denied = await mcp({
+    name: 'task.update',
+    input: { taskId, preferredWorkflowId: null },
+  });
+  expect(denied.isError).toBe(true);
+  expect(denied.content[0].text).toContain('cannot be set through the MCP operations door');
+  expect(tasks.getTask(taskId)?.preferredWorkflowId).toBe(workflow.id);
+});
+
 test('task.list refuses a block-reason filter outside the blocked status', async () => {
   const rpc = createOperationRpcHandler(provider(), () => ({}));
   for (const input of [

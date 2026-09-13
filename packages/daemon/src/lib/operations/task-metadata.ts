@@ -8,6 +8,7 @@ export interface TaskMetadataInput {
   description?: string;
   priority?: TaskPriority;
   labels?: string[];
+  preferredWorkflowId?: string | null;
 }
 
 export type TaskMetadataOwner = { kind: 'standalone' } | { kind: 'space'; spaceId: string };
@@ -29,7 +30,21 @@ export function selectTaskMetadata(input: TaskMetadataInput): TaskMetadataInput 
     ...(Object.hasOwn(input, 'description') ? { description: input.description } : {}),
     ...(Object.hasOwn(input, 'priority') ? { priority: input.priority } : {}),
     ...(Object.hasOwn(input, 'labels') ? { labels: input.labels } : {}),
+    ...(Object.hasOwn(input, 'preferredWorkflowId')
+      ? { preferredWorkflowId: input.preferredWorkflowId }
+      : {}),
   };
+}
+
+export function admitPreferredWorkflowEdit(
+  input: TaskMetadataInput,
+  caller: OperationCaller
+): void {
+  if (Object.hasOwn(input, 'preferredWorkflowId') && caller.source === 'mcp') {
+    throw new Error(
+      'preferredWorkflowId selects which workflow a task runs and cannot be set through the MCP operations door'
+    );
+  }
 }
 
 export async function resolveTaskMetadataOwner(
@@ -64,6 +79,7 @@ export function createTaskMetadataEditor(dependencies: TaskMetadataDependencies)
   return (superpipe({ ...dependencies })('edit-task-metadata') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(selectTaskMetadata, 'input', 'metadata')
+    .pipe(admitPreferredWorkflowEdit, ['metadata', 'caller'])
     .pipe(resolveTaskMetadataOwner, ['resolveOwner', 'metadata'], 'result:editedTask')
     .pipe(admitTaskMetadataEdit, ['admit', 'editedTask', 'caller'])
     .pipe((owner: TaskMetadataOwner) => owner, 'editedTask', 'owner')
