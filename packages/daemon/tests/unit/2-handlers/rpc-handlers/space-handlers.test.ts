@@ -1004,6 +1004,24 @@ describe('space-handlers', () => {
       });
     });
 
+    it('surfaces the original failure even when the re-read for the event throws', async () => {
+      const mockRuntimeService = {
+        setupSpaceAgentSession: mock(async () => {}),
+        stopActiveWork: mock(async () => {
+          throw new Error('drain exploded');
+        }),
+      } as unknown as SpaceRuntimeService;
+      await setup(mockSpace, undefined, mockRuntimeService);
+      let reads = 0;
+      (spaceManager.getSpace as ReturnType<typeof mock>).mockImplementation(async () => {
+        reads += 1;
+        if (reads > 1) throw new Error('database unavailable');
+        return mockSpace;
+      });
+
+      await expect(call('space.delete', { id: 'space-1' })).rejects.toThrow('drain exploded');
+    });
+
     it('clears the deletion lock when the drain throws', async () => {
       const mockRuntimeService = {
         setupSpaceAgentSession: mock(async () => {}),

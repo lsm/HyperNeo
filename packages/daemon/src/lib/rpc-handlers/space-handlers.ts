@@ -336,13 +336,17 @@ export function setupSpaceHandlers(
     let fenced = false;
     const publishAbandonedFence = async () => {
       if (!fenced) return;
-      const current = await spaceManager.getSpace(params.id);
-      if (!current) return;
-      await internalEventBus
-        .publish('space.updated', { sessionId: 'global', spaceId: params.id, space: current })
-        .catch((err) => {
-          log.warn('Failed to emit space.updated after a failed delete:', err);
+      try {
+        const current = await spaceManager.getSpace(params.id);
+        if (!current) return;
+        await internalEventBus.publish('space.updated', {
+          sessionId: 'global',
+          spaceId: params.id,
+          space: current,
         });
+      } catch (err) {
+        log.warn('Failed to emit space.updated after a failed delete:', err);
+      }
     };
 
     deletingSpaceIds.add(params.id);
