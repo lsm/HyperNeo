@@ -148,9 +148,20 @@ describe('bounded core task listing', () => {
     expect(first.tasks.map((task) => task.id)).toEqual(['c2']);
     expect(first.total).toBe(2);
     expect(first.nextCursor).toEqual({ createdAt: 60, id: 'c2' });
+    const second = listTaskCores(db, {
+      spaceId,
+      status: 'blocked',
+      blockReason: 'agent_crashed',
+      limit: 1,
+      before: first.nextCursor!,
+    });
+    expect(second.tasks.map((task) => task.id)).toEqual(['c1']);
+    expect(second.total).toBe(2);
     expect(
-      listTaskCores(db, { spaceId, status: 'open', blockReason: 'agent_crashed' }).tasks
-    ).toEqual([]);
+      listTaskCores(db, { spaceId, status: 'blocked', blockReasonNotIn: [] }).tasks.map(
+        (task) => task.id
+      )
+    ).toEqual(['c2', 'c1']);
   });
 
   test('bounds page size and normalizes invalid limits', () => {

@@ -1,4 +1,4 @@
-import type { SpaceTask } from '@hyperneo/shared/types/space';
+import type { SpaceBlockReason, SpaceTask } from '@hyperneo/shared/types/space';
 import type { TaskCore, TaskLifecycleStatus } from '@hyperneo/shared/types/task-core';
 import { z } from 'zod';
 import { VALID_TASK_TRANSITIONS } from '../tasks/transitions.ts';
@@ -30,6 +30,15 @@ const TaskRestrictionSchema = z.object({
   retryAfter: z.number().optional(),
 });
 
+export const BlockReasonSchema = z.enum([
+  'agent_crashed',
+  'workflow_invalid',
+  'execution_failed',
+  'human_input_requested',
+  'dependency_failed',
+  'dependency_added',
+]) satisfies z.ZodType<SpaceBlockReason>;
+
 export const TaskWithSpaceFieldsSchema = TaskCoreSchema.extend({
   spaceId: z.string().optional(),
   taskNumber: z.number().optional(),
@@ -45,17 +54,7 @@ export const TaskWithSpaceFieldsSchema = TaskCoreSchema.extend({
   workflowModelOverrides: z.record(z.string(), z.string()).optional(),
   activeSession: z.enum(['worker', 'leader']).nullable().optional(),
   taskAgentSessionId: z.string().nullable().optional(),
-  blockReason: z
-    .enum([
-      'agent_crashed',
-      'workflow_invalid',
-      'execution_failed',
-      'human_input_requested',
-      'dependency_failed',
-      'dependency_added',
-    ])
-    .nullable()
-    .optional(),
+  blockReason: BlockReasonSchema.nullable().optional(),
   approvalSource: z.enum(['human', 'auto_policy', 'agent']).nullable().optional(),
   approvalReason: z.string().nullable().optional(),
   approvedAt: z.number().nullable().optional(),

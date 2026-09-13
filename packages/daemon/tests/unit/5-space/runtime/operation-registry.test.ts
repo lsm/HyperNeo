@@ -637,6 +637,19 @@ test('task.list refuses blockReason together with blockReasonNotIn', async () =>
   ).rejects.toThrow('mutually exclusive');
 });
 
+test('task.list refuses a block-reason filter outside the blocked status', async () => {
+  const rpc = createOperationRpcHandler(provider(), () => ({}));
+  for (const input of [
+    { spaceId, status: 'open', blockReason: null },
+    { spaceId, status: 'open', blockReasonNotIn: ['agent_crashed'] },
+    { spaceId, blockReason: 'agent_crashed' },
+  ]) {
+    await expect(rpc({ name: 'task.list', input }, context)).rejects.toThrow(
+      "require status === 'blocked'"
+    );
+  }
+});
+
 test('task.list filters a Space page by block reason through the registry', async () => {
   tasks.updateTask(taskId, { status: 'blocked', blockReason: 'agent_crashed' });
   const other = tasks.createTask({ spaceId, title: 'Other', description: '' });
