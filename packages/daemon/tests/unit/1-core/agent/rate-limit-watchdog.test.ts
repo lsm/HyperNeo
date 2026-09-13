@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { FallbackModelEntry } from '@hyperneo/shared';
 import {
+  BACKOFF_JITTER,
   BACKOFF_LADDER_MS,
   MAX_RESET_HORIZON_MS,
   RESET_BUFFER_MS,
@@ -1340,6 +1341,181 @@ describe('RateLimitWatchdog', () => {
       await flush();
       expect(switchAndRetry).toHaveBeenCalledTimes(2);
       expect(switchAndRetry.mock.calls[1][1]).toEqual(A);
+      watchdog.cancel();
+    });
+  });
+
+  describe('consecutive-exhaustion circuit breaker (repeated 429 cycles)', () => {
+    const nearResetMessage = (): string =>
+      `429 rate limit; retry at ${new Date(Date.now() + 30 * 1000).toISOString()}`;
+
+    const lastPause = (notifyPause: ReturnType<typeof mock>) => {
+      const calls = notifyPause.mock.calls;
+      return calls[calls.length - 1][0] as { kind: string; reason: string; resetAt?: number };
+    };
+
+    const lastCooldownArgs = (stateManager: ProcessingStateManager) => {
+      const calls = (stateManager.setRateLimitCooldown as ReturnType<typeof mock>).mock.calls;
+      return calls[calls.length - 1][0] as {
+        retryCount: number;
+        maxRetries: number;
+        retryAt: number;
+      };
+    };
+
+    it('parks instead of re-entering short reset windows once cycles keep exhausting', async () => {
+      const { deps, notifyPause } = createMockDeps({ chain: [] });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 5 });
+      for (let i = 0; i < 3; i++) {
+        await watchdog.scheduleRetry(nearResetMessage(), { uuid: 'm1', content: 'hi' });
+        expect(lastPause(notifyPause).reason).toBe('parsed-reset');
+        expect(watchdog.retryNow()).toBe(true);
+        await flush();
+      }
+      const parkArmedAt = Date.now();
+      await watchdog.scheduleRetry(nearResetMessage(), { uuid: 'm1', content: 'hi' });
+      const pause = lastPause(notifyPause);
+      expect(pause.reason).toBe('escalated-park');
+      expect(pause.kind).toBe('usage_limit');
+      expect(pause.resetAt).toBeGreaterThan(parkArmedAt + 5 * 60 * 1000);
+      const cooldownArgs = lastCooldownArgs(stateManager);
+      expect(cooldownArgs.retryAt).toBeGreaterThanOrEqual(
+        parkArmedAt + BACKOFF_LADDER_MS[0] * (1 - BACKOFF_JITTER)
+      );
+      expect(cooldownArgs.retryCount).toBe(0);
+      expect(watchdog.getState().retryCount).toBe(0);
+      watchdog.cancel();
+    });
+
+    it('re-exhaustions that never fired a retry do not consume the escalation budget', async () => {
+      const { deps, notifyPause } = createMockDeps({ chain: [] });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 5 });
+      for (let i = 0; i < 4; i++) {
+        await watchdog.scheduleRetry(nearResetMessage(), { uuid: 'm1', content: 'hi' });
+      }
+      expect(lastPause(notifyPause).reason).toBe('parsed-reset');
+      watchdog.cancel();
+    });
+
+    it('a new user message resets the escalation', async () => {
+      const { deps, notifyPause } = createMockDeps({ chain: [] });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 5 });
+      for (let i = 0; i < 3; i++) {
+        await watchdog.scheduleRetry(nearResetMessage(), { uuid: 'm1', content: 'hi' });
+        expect(watchdog.retryNow()).toBe(true);
+        await flush();
+      }
+      await watchdog.scheduleRetry(nearResetMessage(), { uuid: 'm2', content: 'hey' });
+      const pause = lastPause(notifyPause);
+      expect(pause.reason).toBe('parsed-reset');
+      expect(pause.resetAt ?? 0).toBeLessThan(Date.now() + 5 * 60 * 1000);
+      watchdog.cancel();
+    });
+
+    it('counts one cycle per error event even when fallback re-entries reschedule', async () => {
+      const A: FallbackModelEntry = { provider: 'glm', model: 'glm-a' };
+      const { deps, notifyPause, setModel } = createMockDeps({
+        current: { provider: 'anthropic', model: 'sonnet' },
+        chain: [A],
+        switchSucceeds: false,
+      });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 5 });
+      for (let i = 0; i < 3; i++) {
+        await watchdog.scheduleRetry(nearResetMessage(), { uuid: 'm1', content: 'hi' });
+        await flush();
+        await flush();
+        expect(lastPause(notifyPause).reason).toBe('parsed-reset');
+        expect(watchdog.retryNow()).toBe(true);
+        await flush();
+        setModel('anthropic', 'sonnet');
+      }
+      await watchdog.scheduleRetry(nearResetMessage(), { uuid: 'm1', content: 'hi' });
+      await flush();
+      expect(lastPause(notifyPause).reason).toBe('escalated-park');
+      watchdog.cancel();
+    });
+
+    it('parks keep escalating with each further exhausted cycle', async () => {
+      const { deps, notifyPause } = createMockDeps({ chain: [] });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 5 });
+      for (let i = 0; i < 4; i++) {
+        await watchdog.scheduleRetry(nearResetMessage(), { uuid: 'm1', content: 'hi' });
+        expect(watchdog.retryNow()).toBe(true);
+        await flush();
+      }
+      const parkArmedAt = Date.now();
+      await watchdog.scheduleRetry(nearResetMessage(), { uuid: 'm1', content: 'hi' });
+      const pause = lastPause(notifyPause);
+      expect(pause.reason).toBe('escalated-park');
+      expect(pause.resetAt ?? 0).toBeGreaterThanOrEqual(
+        parkArmedAt + BACKOFF_LADDER_MS[1] * (1 - BACKOFF_JITTER)
+      );
+      watchdog.cancel();
+    });
+
+    it('an escalated park over an unparseable limit still triggers LLM refinement', async () => {
+      const resetAt = Date.now() + 2 * 60 * 60 * 1000;
+      const classify = mock(async () => ({
+        resetAtMs: resetAt,
+        kind: 'usage_limit' as const,
+        notALimit: false,
+      }));
+      const { deps, notifyPause } = createMockDeps({ chain: [] });
+      deps.classifyUnknownLimit = classify;
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 5 });
+      for (let i = 0; i < 3; i++) {
+        await watchdog.scheduleRetry(nearResetMessage(), { uuid: 'm1', content: 'x' });
+        expect(watchdog.retryNow()).toBe(true);
+        await flush();
+      }
+      await watchdog.scheduleRetry('firewall throttled, no timestamps in body', {
+        uuid: 'm1',
+        content: 'x',
+      });
+      expect(lastPause(notifyPause).reason).toBe('escalated-park');
+      await flush();
+      await flush();
+
+      expect(classify).toHaveBeenCalledTimes(1);
+      const calls = (stateManager.setRateLimitCooldown as ReturnType<typeof mock>).mock.calls;
+      expect(calls[calls.length - 1][0].retryAt).toBe(resetAt + RESET_BUFFER_MS);
+      expect(lastPause(notifyPause)).toMatchObject({
+        kind: 'usage_limit',
+        resetAt: resetAt + RESET_BUFFER_MS,
+      });
+      watchdog.cancel();
+    });
+
+    it('refinement cannot shorten an escalated park below its floor', async () => {
+      const nearResetAt = Date.now() + 30 * 1000;
+      const classify = mock(async () => ({
+        resetAtMs: nearResetAt,
+        kind: 'usage_limit' as const,
+        notALimit: false,
+      }));
+      const { deps, notifyPause } = createMockDeps({ chain: [] });
+      deps.classifyUnknownLimit = classify;
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 5 });
+      for (let i = 0; i < 3; i++) {
+        await watchdog.scheduleRetry(nearResetMessage(), { uuid: 'm1', content: 'x' });
+        expect(watchdog.retryNow()).toBe(true);
+        await flush();
+      }
+      const parkArmedAt = Date.now();
+      await watchdog.scheduleRetry('firewall throttled, no timestamps in body', {
+        uuid: 'm1',
+        content: 'x',
+      });
+      expect(lastPause(notifyPause).reason).toBe('escalated-park');
+      await flush();
+      await flush();
+
+      expect(classify).toHaveBeenCalledTimes(1);
+      const calls = (stateManager.setRateLimitCooldown as ReturnType<typeof mock>).mock.calls;
+      expect(calls[calls.length - 1][0].retryAt).toBeGreaterThanOrEqual(
+        parkArmedAt + BACKOFF_LADDER_MS[0] * (1 - BACKOFF_JITTER)
+      );
+      expect(lastPause(notifyPause).resetAt ?? 0).toBeGreaterThan(nearResetAt + RESET_BUFFER_MS);
       watchdog.cancel();
     });
   });

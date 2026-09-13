@@ -8,7 +8,9 @@ import {
   classifyLimitKind,
   computeCooldown,
   entryKey,
+  escalateCooldownDecision,
   extractResetTimestamp,
+  floorCooldownDecision,
   isNonRetryableBillingError,
   resolveFallbackChain,
   selectNextFallback,
@@ -341,6 +343,92 @@ describe('computeCooldown', () => {
   });
 });
 
+describe('escalateCooldownDecision', () => {
+  const NOW = new Date('2026-01-01T00:00:00Z').getTime();
+  const noJitter = () => 0;
+
+  test('a park ladder longer than the base delay takes over, keeping charge semantics', () => {
+    const base = computeCooldown('resets 2026-01-01T00:00:30Z', 0, NOW);
+    const d = escalateCooldownDecision(base, 0, NOW, noJitter);
+    expect(d.reason).toBe('escalated-park');
+    expect(d.ladderIndex).toBe(0);
+    expect(d.delayMs).toBe(BACKOFF_LADDER_MS[0]);
+    expect(d.retryAtMs).toBe(NOW + BACKOFF_LADDER_MS[0]);
+    expect(d.freeWait).toBe(true);
+    expect(d.reset).toEqual(base.reset);
+  });
+
+  test('a base reset window longer than the park ladder defers to the window', () => {
+    const base = computeCooldown('resets 2026-01-01T03:00:00Z', 0, NOW);
+    const d = escalateCooldownDecision(base, 0, NOW, noJitter);
+    expect(d.reason).toBe('escalated-park');
+    expect(d.ladderIndex).toBe(0);
+    expect(d.delayMs).toBe(base.delayMs);
+    expect(d.retryAtMs).toBe(base.retryAtMs);
+    expect(d.freeWait).toBe(true);
+  });
+
+  test('advances the ladder with the exhausted-cycle count and caps at the last step', () => {
+    const base = computeCooldown('429', 0, NOW, noJitter);
+    const lastIndex = BACKOFF_LADDER_MS.length - 1;
+    for (let i = 0; i < BACKOFF_LADDER_MS.length + 3; i++) {
+      const d = escalateCooldownDecision(base, i, NOW, noJitter);
+      const expectedIndex = Math.min(i, lastIndex);
+      expect(d.ladderIndex).toBe(expectedIndex);
+      expect(d.delayMs).toBe(Math.min(BACKOFF_LADDER_MS[expectedIndex], BACKOFF_CAP_MS));
+    }
+  });
+
+  test('negative indexes clamp to the first ladder step', () => {
+    const base = computeCooldown('429', 0, NOW, noJitter);
+    const d = escalateCooldownDecision(base, -2, NOW, noJitter);
+    expect(d.ladderIndex).toBe(0);
+    expect(d.delayMs).toBe(BACKOFF_LADDER_MS[0]);
+  });
+
+  test('jitter stays within ±BACKOFF_JITTER of the (capped) ladder step', () => {
+    const base = computeCooldown('resets 2026-01-01T00:00:30Z', 0, NOW);
+    const parkBase = Math.min(BACKOFF_LADDER_MS[1], BACKOFF_CAP_MS);
+    let min = Infinity;
+    let max = -Infinity;
+    for (let i = 0; i < 1000; i++) {
+      const d = escalateCooldownDecision(base, 1, NOW);
+      min = Math.min(min, d.delayMs);
+      max = Math.max(max, d.delayMs);
+    }
+    expect(min).toBeGreaterThanOrEqual(Math.round(parkBase * (1 - BACKOFF_JITTER)));
+    expect(max).toBeLessThanOrEqual(Math.round(parkBase * (1 + BACKOFF_JITTER)));
+  });
+
+  test('carries a ladder base upward without flipping its charge semantics', () => {
+    const base = computeCooldown('429', 0, NOW, noJitter);
+    const d = escalateCooldownDecision(base, 2, NOW, noJitter);
+    expect(d.reason).toBe('escalated-park');
+    expect(d.freeWait).toBe(false);
+    expect(d.reset).toBeNull();
+    expect(d.delayMs).toBe(BACKOFF_LADDER_MS[2]);
+  });
+});
+
+describe('floorCooldownDecision', () => {
+  const NOW = new Date('2026-01-01T00:00:00Z').getTime();
+
+  test('returns the decision unchanged when it already waits past the floor', () => {
+    const d = computeCooldown('resets 2026-01-01T03:00:00Z', 0, NOW);
+    expect(floorCooldownDecision(d, 60_000, NOW)).toBe(d);
+  });
+
+  test('clamps a near reset to the escalation floor, preserving reason and reset', () => {
+    const d = computeCooldown('resets 2026-01-01T00:00:30Z', 0, NOW);
+    const out = floorCooldownDecision(d, 10 * 60 * 1000, NOW);
+    expect(out.delayMs).toBe(10 * 60 * 1000);
+    expect(out.retryAtMs).toBe(NOW + 10 * 60 * 1000);
+    expect(out.reason).toBe('parsed-reset');
+    expect(out.freeWait).toBe(true);
+    expect(out.reset).toEqual(d.reset);
+  });
+});
+
 describe('classifyLimitKind', () => {
   test('parsed-reset → usage_limit', () => {
     const d = computeCooldown(
@@ -364,6 +452,20 @@ describe('classifyLimitKind', () => {
   test('backoff with no cap signal → rate_limit', () => {
     const d = { reason: 'backoff-ladder' } as ReturnType<typeof computeCooldown>;
     expect(classifyLimitKind('429 too many requests', d)).toBe('rate_limit');
+  });
+
+  test('an escalated park over a reset keeps usage_limit (kind stays stable mid-episode)', () => {
+    const NOW = new Date('2026-01-01T00:00:00Z').getTime();
+    const base = computeCooldown('resets 2026-01-01T00:00:30Z', 0, NOW);
+    const parked = escalateCooldownDecision(base, 0, NOW, () => 0);
+    expect(classifyLimitKind('429 too many requests', parked)).toBe('usage_limit');
+  });
+
+  test('an escalated park over a ladder classifies like the ladder', () => {
+    const NOW = new Date('2026-01-01T00:00:00Z').getTime();
+    const base = computeCooldown('429 too many requests', 0, NOW, () => 0);
+    const parked = escalateCooldownDecision(base, 0, NOW, () => 0);
+    expect(classifyLimitKind('429 too many requests', parked)).toBe('rate_limit');
   });
 });
 

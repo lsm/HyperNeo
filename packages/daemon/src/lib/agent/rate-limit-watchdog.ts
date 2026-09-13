@@ -6,6 +6,7 @@ import {
   classifyLimitKind,
   computeCooldown,
   entryKey,
+  floorCooldownDecision,
   selectNextFallback,
 } from './fallback-recovery.ts';
 import { cooldownFromReset, type LimitRetryHint } from './limit-error-classifier.ts';
@@ -13,6 +14,7 @@ import type { LlmLimitAssessment } from './limit-error-llm-classifier.ts';
 import type { ProcessingStateManager } from './processing-state-manager.ts';
 import {
   canRetryNow,
+  DEFAULT_PARK_AFTER_EXHAUSTED_CYCLES,
   decideRateLimitTrip,
   manualRecoveryPause,
   type RateLimitWatchdogStatus,
@@ -23,11 +25,13 @@ import {
 export interface RateLimitWatchdogConfig {
   cooldownMs: number;
   maxAutoRetries: number;
+  parkAfterExhaustedCycles: number;
 }
 
 const DEFAULT_CONFIG: RateLimitWatchdogConfig = {
   cooldownMs: 10 * 60 * 1000,
   maxAutoRetries: BACKOFF_LADDER_MS.length,
+  parkAfterExhaustedCycles: DEFAULT_PARK_AFTER_EXHAUSTED_CYCLES,
 };
 
 const STARTUP_RETRY_DELAY_MS = 60 * 1000;
@@ -107,6 +111,8 @@ export class RateLimitWatchdog {
   private persistedCooldownArm = false;
   private persistedEpisodeMessageUuid: string | null = null;
   private persistedExpiryCallback: (() => void) | null = null;
+  private exhaustedRetryCycles = 0;
+  private retryFiredForEpisode = false;
 
   constructor(
     sessionId: string,
@@ -219,6 +225,12 @@ export class RateLimitWatchdog {
       this.bannerCancelled = false;
       this.billingPauseSurfaced = false;
       this.lastHint = hint ?? null;
+      this.exhaustedRetryCycles = 0;
+      this.retryFiredForEpisode = false;
+    }
+    if (this.retryFiredForEpisode) {
+      this.exhaustedRetryCycles += 1;
+      this.retryFiredForEpisode = false;
     }
 
     const { provider, model } = this.deps.getCurrentModel();
@@ -293,6 +305,8 @@ export class RateLimitWatchdog {
       retryCount: this.retryCount,
       maxAutoRetries: this.config.maxAutoRetries,
       now: Date.now(),
+      exhaustedRetryCycles: this.exhaustedRetryCycles,
+      parkAfterCycles: this.config.parkAfterExhaustedCycles,
     });
     if (trip.action === 'surface-billing') {
       this.logger.warn(
@@ -307,6 +321,13 @@ export class RateLimitWatchdog {
           `Error: ${errorMessage}`
       );
       return false;
+    }
+    if (trip.action === 'cooldown' && trip.decision.reason === 'escalated-park') {
+      this.logger.warn(
+        `${this.exhaustedRetryCycles} consecutive rate-limit retry cycles exhausted for this ` +
+          `message; parking until ${new Date(trip.decision.retryAtMs).toISOString()} ` +
+          `instead of restarting the retry cycle. Error: ${errorMessage}`
+      );
     }
     if (entryGeneration !== this.generation || this.querySuperseded(queryGeneration)) {
       this.logger.info(
@@ -343,11 +364,18 @@ export class RateLimitWatchdog {
 
     if (
       armed &&
-      trip.decision.reason === 'backoff-ladder' &&
+      (trip.decision.reason === 'backoff-ladder' ||
+        (trip.decision.reason === 'escalated-park' && trip.decision.reset === null)) &&
       this.deps.classifyUnknownLimit &&
       entryGeneration === this.generation
     ) {
-      this.fireLlmRefinement(errorMessage, entryGeneration, trip.charge, queryGeneration);
+      this.fireLlmRefinement(
+        errorMessage,
+        entryGeneration,
+        trip.charge,
+        queryGeneration,
+        trip.decision.reason === 'escalated-park' ? trip.decision.delayMs : undefined
+      );
     }
     return true;
   }
@@ -356,7 +384,8 @@ export class RateLimitWatchdog {
     errorMessage: string,
     entryGeneration: number,
     chargedLadder: boolean,
-    queryGeneration?: number
+    queryGeneration?: number,
+    escalatedFloorMs?: number
   ): void {
     const classify = this.deps.classifyUnknownLimit;
     if (!classify) return;
@@ -374,7 +403,8 @@ export class RateLimitWatchdog {
         if (resetMs === null) return;
         this.logger.info(
           `LLM limit refinement: retry at ${new Date(resetMs).toISOString()} ` +
-            `(was backoff ladder) for error: ${errorMessage}`
+            `(was ${escalatedFloorMs !== undefined ? 'escalated park' : 'backoff ladder'}) ` +
+            `for error: ${errorMessage}`
         );
         const previousHint = this.lastHint;
         const previousLimitKind = this.limitKind;
@@ -392,9 +422,12 @@ export class RateLimitWatchdog {
         };
         const refund = chargedLadder && this.retryCount > 0;
         try {
+          const refinedDecision = cooldownFromReset(resetMs, now);
           const armed = await this.scheduleCooldown(
             errorMessage,
-            cooldownFromReset(resetMs, now),
+            escalatedFloorMs === undefined
+              ? refinedDecision
+              : floorCooldownDecision(refinedDecision, escalatedFloorMs, now),
             entryGeneration,
             refund ? this.retryCount - 1 : this.retryCount,
             queryGeneration
@@ -527,6 +560,7 @@ export class RateLimitWatchdog {
     }
     const entryGeneration = this.generation;
     const armedQueryGeneration = this.cooldownQueryGeneration;
+    this.retryFiredForEpisode = true;
     const attemptId = ++this.retryCallbackAttemptSeq;
     this.retryCallbackInFlight = true;
     try {
@@ -870,6 +904,8 @@ export class RateLimitWatchdog {
     this.startupExhausted = false;
     this.bannerCancelled = false;
     this.billingPauseSurfaced = false;
+    this.exhaustedRetryCycles = 0;
+    this.retryFiredForEpisode = false;
     this.lastUserMessage = null;
     this.lastErrorMessage = '';
     this.triedKeys.clear();
