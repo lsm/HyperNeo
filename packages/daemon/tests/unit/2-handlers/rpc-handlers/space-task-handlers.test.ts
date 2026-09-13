@@ -2065,7 +2065,7 @@ describe('space-task-handlers', () => {
           taskId: 'task-1',
           status: 'approved',
         })
-      ).rejects.toThrow(/approvePendingCompletion|post-approval/);
+      ).rejects.toThrow(/task\.resolvePendingCompletion/);
       expect(taskManager.setTaskStatus).not.toHaveBeenCalled();
       expect(taskManager.updateTask).not.toHaveBeenCalled();
     });
