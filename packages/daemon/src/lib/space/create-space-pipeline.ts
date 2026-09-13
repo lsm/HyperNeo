@@ -13,6 +13,10 @@ const VALID_AUTONOMY_LEVELS: SpaceAutonomyLevel[] = [1, 2, 3, 4, 5];
 
 export interface CreateSpaceDeps {
   createSpaceRecord(params: CreateSpaceParams): Promise<Space>;
+  seedAgents?(
+    spaceId: string,
+    templateKeys: readonly string[]
+  ): Promise<{ errors: ReadonlyArray<{ key: string; error: string }> }>;
   seedWorkflows(spaceId: string): { errors: ReadonlyArray<{ name: string; error: string }> };
   chat?: {
     createSession(params: CreateSessionParams): Promise<string>;
@@ -81,11 +85,38 @@ export function validateParams(ctx: CreateSpaceCtx): ValidateParamsResult {
     );
     if (index >= 0) reason = new Error(`additionalWorkspaces[${index}].path is required`);
   }
+  if (!reason && params.seedAgentTemplateKeys !== undefined) {
+    if (!Array.isArray(params.seedAgentTemplateKeys)) {
+      reason = new Error('seedAgentTemplateKeys must be an array of strings');
+    } else {
+      const index = params.seedAgentTemplateKeys.findIndex(
+        (key) => typeof key !== 'string' || key.trim() === ''
+      );
+      if (index >= 0) reason = new Error(`seedAgentTemplateKeys[${index}] is required`);
+    }
+  }
   return reason ? { reason } : { value: ctx };
 }
 
 export async function createSpaceRecord(ctx: CreateSpaceCtx): Promise<CreateSpaceCtx> {
   return { ...ctx, space: await ctx.deps.createSpaceRecord(ctx.params) };
+}
+
+export async function seedAgents(ctx: CreateSpaceCtx): Promise<CreateSpaceCtx> {
+  const templateKeys = ctx.params.seedAgentTemplateKeys;
+  if (!templateKeys || templateKeys.length === 0) return ctx;
+  if (!ctx.deps.seedAgents) return ctx;
+  const space = requireSpace(ctx);
+  try {
+    const { errors } = await ctx.deps.seedAgents(space.id, templateKeys);
+    if (errors.length === 0) return ctx;
+    const failedKeys = errors.map((error) => error.key).join(', ');
+    ctx.deps.warn(`Partial agent seed failure for space ${space.id}: ${failedKeys}`, errors);
+    return withWarning(ctx, `Failed to seed agents: ${failedKeys}`);
+  } catch (error) {
+    ctx.deps.warn(`Failed to seed agents for space ${space.id}`, error);
+    return withWarning(ctx, 'Failed to seed agents');
+  }
 }
 
 export function seedWorkflows(ctx: CreateSpaceCtx): CreateSpaceCtx {
@@ -145,6 +176,7 @@ const runCreateSpace = (superpipe()('createSpace') as PipelineAPI)
   .input(['ctx'])
   .pipe(validateParams, 'ctx', 'result:ctx')
   .pipe(createSpaceRecord, 'ctx', 'ctx')
+  .pipe(seedAgents, 'ctx', 'ctx')
   .pipe(seedWorkflows, 'ctx', 'ctx')
   .pipe(provisionChatSession, 'ctx', 'ctx')
   .pipe(publishSpaceCreated, 'ctx', 'ctx')

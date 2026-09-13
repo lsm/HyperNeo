@@ -81,7 +81,11 @@ import { SessionRepository } from '../../storage/repositories/session-repository
 import { setupSpaceAgentReminderHandlers } from './space-agent-reminder-handlers.ts';
 import { setupSpaceAgentSubscriptionHandlers } from './space-agent-subscription-handlers.ts';
 import { setupSpaceAgentTemplateHandlers } from './space-agent-template-handlers.ts';
-import { setupSpaceAgentV2Handlers } from './space-agent-v2-handlers.ts';
+import {
+  buildAgentCreate,
+  type SpaceAgentV2Deps,
+  setupSpaceAgentV2Handlers,
+} from './space-agent-v2-handlers.ts';
 import { buildTemplateExtrasSeeder } from '../space/agents/template-extras-seeding.ts';
 import { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository.ts';
 import {
@@ -1112,7 +1116,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
   setupSpaceAgentReminderHandlers(deps.messageHub, { reminders: spaceAgentReminderRepo });
 
-  setupSpaceAgentV2Handlers(deps.messageHub, {
+  const spaceAgentV2Deps: SpaceAgentV2Deps = {
     agents: spaceAgentRepo,
     templates: spaceAgentTemplateRepo,
     spaceExists: async (spaceId) => (await deps.spaceManager.getSpace(spaceId)) !== null,
@@ -1135,7 +1139,22 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       refreshSubscription: (spaceId, subscriptionId) =>
         spaceRuntimeService.refreshLongHorizonSubscription(spaceId, subscriptionId),
     }),
-  });
+  };
+
+  setupSpaceAgentV2Handlers(deps.messageHub, spaceAgentV2Deps);
+
+  const createSeedAgent = buildAgentCreate(spaceAgentV2Deps);
+  const seedSpaceAgents = async (spaceId: string, templateKeys: readonly string[]) => {
+    const errors: { key: string; error: string }[] = [];
+    for (const key of templateKeys) {
+      try {
+        await createSeedAgent({ spaceId, templateKey: key });
+      } catch (error) {
+        errors.push({ key, error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+    return { errors };
+  };
 
   setupSessionHandlers(
     deps.messageHub,
@@ -1175,7 +1194,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.internalEventBus,
     spaceWorkflowManager,
     deps.sessionManager,
-    spaceRuntimeService
+    spaceRuntimeService,
+    seedSpaceAgents
   );
 
   deps.messageHub.onRequest('space.externalEvents.queueHealth', async () => {

@@ -325,6 +325,7 @@ export interface CreateSpaceParams {
   config?: SpaceConfig;
   taskAgentConfig?: TaskAgentConfig;
   settingSources?: SettingSource[] | null;
+  seedAgentTemplateKeys?: string[];
 }
 
 export interface UpdateSpaceParams {
