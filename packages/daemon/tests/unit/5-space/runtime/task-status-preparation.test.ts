@@ -129,3 +129,26 @@ test('terminal classification retains blocked and excludes review and stopped', 
   expect(isTerminalTaskStatus('review')).toBe(false);
   expect(isTerminalTaskStatus('stopped')).toBe(false);
 });
+
+test('leaving approved clears post-approval bookkeeping', () => {
+  const source = task('approved', {
+    postApprovalSessionId: 'session-1',
+    postApprovalStartedAt: 500,
+    postApprovalBlockedReason: 'dispatcher down',
+  });
+  for (const next of ['done', 'in_progress', 'cancelled'] as SpaceTaskStatus[]) {
+    expect(prepareSpaceTaskStatusUpdate(source, next, undefined, 123).updates).toMatchObject({
+      postApprovalSessionId: null,
+      postApprovalStartedAt: null,
+      postApprovalBlockedReason: null,
+      postApprovalSourceNodeId: null,
+    });
+  }
+  expect(source.postApprovalSessionId).toBe('session-1');
+});
+
+test('staying in approved leaves post-approval bookkeeping alone', () => {
+  const source = task('approved', { postApprovalSessionId: 'session-1' });
+  const updates = prepareSpaceTaskStatusUpdate(source, 'approved', undefined, 123).updates;
+  expect(updates).not.toHaveProperty('postApprovalSessionId');
+});
