@@ -1,4 +1,4 @@
-import type { SpaceTask } from '@hyperneo/shared';
+import type { SpaceTask, UpdateSpaceTaskParams } from '@hyperneo/shared';
 import type { TaskCore } from '@hyperneo/shared/types/task-core';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { DirectTaskExecutionRepository } from '../../../storage/repositories/direct-task-execution-repository.ts';
@@ -28,16 +28,52 @@ export interface SpaceTransitionTaskDependencies extends SpaceTransitionAdmissio
   getTaskManager: (spaceId: string) => Pick<SpaceTaskManager, 'getTask' | 'setTaskStatus'>;
   emitTaskUpdated: (spaceId: string, task: SpaceTask) => Promise<void>;
   isWorkflowRunActive: (workflowRunId: string) => boolean;
+  recoverTransition?: (
+    spaceId: string,
+    taskId: string,
+    status: 'open' | 'in_progress'
+  ) => Promise<TaskCore | string>;
+  stopForStatus?: (
+    spaceId: string,
+    taskId: string,
+    params: UpdateSpaceTaskParams
+  ) => Promise<SpaceTask | null>;
+  parkStopped?: (spaceId: string, taskId: string) => Promise<SpaceTask>;
 }
 type Deps = SpaceTransitionTaskDependencies;
 type DecidedTask = OwnedTask & { approvalSource: 'human' | undefined };
+type RuntimeExecutor = 'park_stopped' | 'recover_transition' | 'stop_for_status';
 
-export function decide(
+async function runRuntimeExecutor(
+  executor: RuntimeExecutor,
+  { spaceId, task }: OwnedTask,
+  input: In,
+  deps: Deps
+): Promise<Result> {
+  if (executor === 'park_stopped') {
+    if (!deps.parkStopped) throw new Error(`Space runtime executor unavailable: ${executor}`);
+    return deps.parkStopped(spaceId, task.id);
+  }
+  if (executor === 'recover_transition') {
+    if (!deps.recoverTransition) throw new Error(`Space runtime executor unavailable: ${executor}`);
+    const recovered = await deps.recoverTransition(
+      spaceId,
+      task.id,
+      input.status as 'open' | 'in_progress'
+    );
+    return typeof recovered === 'string' ? 'invalid_transition' : recovered;
+  }
+  if (!deps.stopForStatus) throw new Error(`Space runtime executor unavailable: ${executor}`);
+  const stopped = await deps.stopForStatus(spaceId, task.id, { status: input.status });
+  return stopped ?? 'invalid_transition';
+}
+
+export async function decide(
   owned: OwnedTask,
   input: In,
   caller: Caller,
   deps: Deps
-): Gate<DecidedTask, Rejection> {
+): Promise<Gate<DecidedTask, Result>> {
   const { task } = owned;
   const decision = decideSpaceTaskTransition({
     taskId: input.taskId,
@@ -50,7 +86,7 @@ export function decide(
   });
   if (decision.action === 'reject') return { reason: decision.result };
   if (decision.action === 'runtime') {
-    throw new Error(`Space runtime executor unavailable: ${decision.executor}`);
+    return { reason: await runRuntimeExecutor(decision.executor, owned, input, deps) };
   }
   return { value: { ...owned, approvalSource: decision.approvalSource } };
 }

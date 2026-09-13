@@ -282,26 +282,90 @@ describe('decide', () => {
   test.each([
     ['open to in_progress writes without approval', 'open', 'in_progress', undefined],
     ['review to done via rpc stamps human approval', 'review', 'done', 'human'],
-  ] as const)('%s', (_name, currentStatus, requestedStatus, approvalSource) => {
+  ] as const)('%s', async (_name, currentStatus, requestedStatus, approvalSource) => {
     const owned = createOwned(currentStatus);
-    const result = decide(owned, { taskId: owned.task.id, status: requestedStatus }, rpc, deps());
+    const result = await decide(
+      owned,
+      { taskId: owned.task.id, status: requestedStatus },
+      rpc,
+      deps()
+    );
     expect(result).toEqual({ value: { ...owned, approvalSource } });
   });
 
   test.each([
     ['requesting review directly is unsupported', 'open', 'review', 'unsupported_status'],
     ['requesting the current status is invalid', 'open', 'open', 'invalid_transition'],
-  ] as const)('%s', (_name, currentStatus, requestedStatus, rejection) => {
+  ] as const)('%s', async (_name, currentStatus, requestedStatus, rejection) => {
     const owned = createOwned(currentStatus);
-    const result = decide(owned, { taskId: owned.task.id, status: requestedStatus }, rpc, deps());
+    const result = await decide(
+      owned,
+      { taskId: owned.task.id, status: requestedStatus },
+      rpc,
+      deps()
+    );
     expect(result).toEqual({ reason: rejection });
   });
 
-  test('a runtime action throws with the executor name', () => {
+  test('an unbound runtime executor still throws with the executor name', async () => {
     const owned = createOwned('in_progress', createWorkflowRun().id);
-    expect(() => decide(owned, { taskId: owned.task.id, status: 'open' }, rpc, deps())).toThrow(
-      'Space runtime executor unavailable: stop_for_status'
+    await expect(
+      decide(owned, { taskId: owned.task.id, status: 'open' }, rpc, deps())
+    ).rejects.toThrow('Space runtime executor unavailable: stop_for_status');
+  });
+
+  test('park_stopped calls the bound executor and completes the transition', async () => {
+    const owned = createOwned('in_progress', createWorkflowRun().id);
+    const parked = { ...owned.task, status: 'stopped' as const };
+    const parkStopped = mock(async () => parked);
+    const result = await decide(
+      owned,
+      { taskId: owned.task.id, status: 'stopped' },
+      rpc,
+      deps({ parkStopped })
     );
+    expect(parkStopped).toHaveBeenCalledWith(spaceId, owned.task.id);
+    expect(result).toEqual({ reason: parked });
+  });
+
+  test('recover_transition calls the bound executor and completes the transition', async () => {
+    const owned = createOwned('blocked', createWorkflowRun().id);
+    const recovered = { ...owned.task, status: 'in_progress' as const };
+    const recoverTransition = mock(async () => recovered);
+    const result = await decide(
+      owned,
+      { taskId: owned.task.id, status: 'in_progress' },
+      rpc,
+      deps({ recoverTransition })
+    );
+    expect(recoverTransition).toHaveBeenCalledWith(spaceId, owned.task.id, 'in_progress');
+    expect(result).toEqual({ reason: recovered });
+  });
+
+  test('a string rejection from recover_transition becomes the operation rejection', async () => {
+    const owned = createOwned('blocked', createWorkflowRun().id);
+    const recoverTransition = mock(async () => 'invalid_recovery_status');
+    const result = await decide(
+      owned,
+      { taskId: owned.task.id, status: 'in_progress' },
+      rpc,
+      deps({ recoverTransition })
+    );
+    expect(result).toEqual({ reason: 'invalid_transition' });
+  });
+
+  test('stop_for_status calls the bound executor and completes the transition', async () => {
+    const owned = createOwned('in_progress', createWorkflowRun().id);
+    const stopped = { ...owned.task, status: 'open' as const };
+    const stopForStatus = mock(async () => stopped);
+    const result = await decide(
+      owned,
+      { taskId: owned.task.id, status: 'open' },
+      rpc,
+      deps({ stopForStatus })
+    );
+    expect(stopForStatus).toHaveBeenCalledWith(spaceId, owned.task.id, { status: 'open' });
+    expect(result).toEqual({ reason: stopped });
   });
 });
 
