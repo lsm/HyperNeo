@@ -109,6 +109,33 @@ test('rejects an absent task, a standalone task and a non-draft task', async () 
   expect(emit).not.toHaveBeenCalled();
 });
 
+test('losing a concurrent publish reports not_draft, not execution_failed', async () => {
+  const rpc = createOperationRpcHandler(
+    createSpaceOperationRegistryProvider(database, jobQueue, {
+      getSession: (id: string) => sessions.getSession(id),
+      getTaskManager: () => ({
+        publishTask: async () => {
+          throw new Error('Only draft tasks can be published');
+        },
+      }),
+      taskRepo: tasks,
+      notifyStandalone: () => database.notifyChange('space_tasks'),
+      emitTaskUpdated: emit,
+      emitTaskCreated: mock(async () => {}),
+      getSpace: (id: string) => new SpaceRepository(db).getSpace(id),
+      validateDefaultTaskWorkspace: async () => null,
+      blockExecution: async () => {
+        throw new Error('Unexpected workflow cleanup');
+      },
+      requiresPostApprovalOwner: () => false,
+      completionGate: async () => ({ ok: true as const }),
+    } as unknown as Parameters<typeof createSpaceOperationRegistryProvider>[2]),
+    () => ({})
+  );
+  expect(await rpc(publish(draftId), context)).toBe('not_draft');
+  expect(emit).not.toHaveBeenCalled();
+});
+
 test('task.publish is discoverable through the door', async () => {
   const rpc = createOperationRpcHandler(provider(), () => ({}));
   expect(

@@ -51,12 +51,19 @@ export function routePublish(task: SpaceTask): { value: SpaceTask } | { reason: 
   return plan.action === 'reject' ? { reason: plan.reason } : { value: task };
 }
 
+const LOST_PUBLISH_RACE = 'Only draft tasks can be published';
+
 async function applyPublish(task: SpaceTask, tasks: PublishTaskDependencies): Promise<Result> {
-  const updated = await tasks.getTaskManager(task.spaceId).publishTask(task.id);
-  await tasks.emitTaskUpdated(task.spaceId, updated).catch((error: unknown) => {
-    log.warn('Failed to emit space.task.updated:', error);
-  });
-  return updated;
+  try {
+    const updated = await tasks.getTaskManager(task.spaceId).publishTask(task.id);
+    await tasks.emitTaskUpdated(task.spaceId, updated).catch((error: unknown) => {
+      log.warn('Failed to emit space.task.updated:', error);
+    });
+    return updated;
+  } catch (error) {
+    if (error instanceof Error && error.message === LOST_PUBLISH_RACE) return 'not_draft';
+    throw error;
+  }
 }
 
 const PUBLISH_TASK_DESCRIPTION =
