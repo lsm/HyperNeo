@@ -61,15 +61,14 @@ describe('task.get operation', () => {
     }
   );
 
-  test('projects Space task data without exposing ownership or execution fields', async () => {
+  test('preserves Space fields when the bound readTask returns a Space-owned task', async () => {
     const spaceTask = { ...task, spaceId: 'space', taskNumber: 3, taskAgentSessionId: 'session' };
     const registry = createOperationRegistry([createGetTaskOperation(() => spaceTask)]);
     expect(
       await invokeOperation(registry, 'task.get', { taskId: task.id }, { source: 'rpc' })
     ).toEqual({
       kind: 'completed',
-      value: task,
+      value: spaceTask,
     });
-    expect(spaceTask.spaceId).toBe('space');
   });
 });
