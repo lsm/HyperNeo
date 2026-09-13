@@ -1270,6 +1270,15 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     return 1;
   }
 
+  function requireActiveCallingAgent(): void {
+    const agent = myAgentId ? (config.longHorizonAgentRepo?.getById(myAgentId) ?? null) : null;
+    if (!agent || agent.spaceId !== spaceId || agent.status !== 'active') {
+      throw new Error(
+        'Pending completion decisions require an active Space agent identity; the provenance agent is missing or inactive.'
+      );
+    }
+  }
+
   async function requireSessionWriteAutonomy(toolName: string): Promise<void> {
     const spaceLevel = getSpaceAutonomyLevel ? await getSpaceAutonomyLevel(spaceId) : 1;
     const agentLevel = getCallingAgentAutonomyLevel();
@@ -3547,6 +3556,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       }
       if (callerHasSpaceAuthority) {
         try {
+          requireActiveCallingAgent();
           await requireSessionWriteAutonomy('approve_pending_completion');
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
