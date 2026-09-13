@@ -96,6 +96,18 @@ function update(title: string, id = taskId) {
   return { name: 'task.update', input: { taskId: id, title } };
 }
 
+function attachSpaceFields() {
+  const goalId = new SpaceGoalRepository(db).create({ spaceId, title: 'Goal' }).id;
+  const workflow = new SpaceWorkflowRepository(db).createWorkflow({ spaceId, name: 'Workflow' });
+  const workflowRunId = new SpaceWorkflowRunRepository(db).createRun({
+    spaceId,
+    workflowId: workflow.id,
+    title: 'Run',
+  }).id;
+  tasks.updateTask(taskId, { workflowRunId, goalId, workspacePath: '/repo/worker' });
+  return { goalId, workflowRunId };
+}
+
 test('provider construction and discovery stay lazy and cache one registry', async () => {
   const getRegistry = provider();
   expect(getDatabase).not.toHaveBeenCalled();
@@ -114,7 +126,7 @@ test('rpc task.create with spaceId creates a Space task and calls emitTaskCreate
     { name: 'task.create', input: { spaceId, title: 'Provisioned' } },
     context
   )) as { id: string };
-  expect(result).toMatchObject({ title: 'Provisioned' });
+  expect(result).toMatchObject({ title: 'Provisioned', spaceId, taskNumber: expect.any(Number) });
   expect(tasks.getTask(result.id)).toMatchObject({ spaceId, title: 'Provisioned' });
   expect(emitCreated).toHaveBeenCalledTimes(1);
 });
@@ -374,6 +386,8 @@ test('cached and future MCP use the same pending completion operation as RPC', a
     const previous = reviewTask();
     expect(await invoke()).toMatchObject({
       id: taskId,
+      spaceId,
+      taskNumber: expect.any(Number),
       status: 'approved',
       approvalSource: 'human',
       approvalReason: '  accepted  ',
@@ -504,6 +518,66 @@ test('task.get returns full Space fields for a Space-owned task through the Spac
     pendingCompletionSubmittedByNodeId: 'node-1',
     pendingCompletionSubmittedAt: 222,
     pendingCompletionReason: 'ready for review',
+  });
+});
+
+test('task.update returns full Space fields for a Space-owned task', async () => {
+  const { goalId, workflowRunId } = attachSpaceFields();
+  const rpc = createOperationRpcHandler(provider(), () => ({}));
+  const result = await rpc(update('Renamed'), context);
+  expect(result).toEqual(tasks.getTask(taskId));
+  expect(result).toMatchObject({
+    title: 'Renamed',
+    spaceId,
+    taskNumber: expect.any(Number),
+    workflowRunId,
+    goalId,
+    workspacePath: '/repo/worker',
+  });
+});
+
+test('task.transition returns full Space fields for a Space-owned task', async () => {
+  const { goalId, workflowRunId } = attachSpaceFields();
+  const rpc = createOperationRpcHandler(
+    provider({}, undefined, {
+      getSession: (id) => sessions.getSession(id),
+      getTaskManager: (id) => new SpaceTaskManager(db, id),
+      notifyStandalone: () => database.notifyChange('space_tasks'),
+      emitTaskUpdated: emit,
+      isWorkflowRunActive: () => false,
+    }),
+    () => ({})
+  );
+  const result = await rpc(
+    { name: 'task.transition', input: { taskId, status: 'in_progress' } },
+    context
+  );
+  expect(result).toEqual(tasks.getTask(taskId));
+  expect(result).toMatchObject({
+    status: 'in_progress',
+    spaceId,
+    taskNumber: expect.any(Number),
+    workflowRunId,
+    goalId,
+    workspacePath: '/repo/worker',
+  });
+});
+
+test('task.complete returns full Space fields on the completed task', async () => {
+  const { goalId, workflowRunId } = attachSpaceFields();
+  tasks.updateTask(taskId, { status: 'approved' });
+  const rpc = createOperationRpcHandler(provider(), () => ({}));
+  const result = (await rpc({ name: 'task.complete', input: { taskId } }, context)) as {
+    task: unknown;
+  };
+  expect(result.task).toEqual(tasks.getTask(taskId));
+  expect(result.task).toMatchObject({
+    status: 'done',
+    spaceId,
+    taskNumber: expect.any(Number),
+    workflowRunId,
+    goalId,
+    workspacePath: '/repo/worker',
   });
 });
 
