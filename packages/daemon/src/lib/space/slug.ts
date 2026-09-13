@@ -7,6 +7,7 @@ export const RESERVED_SPACE_AGENT_HANDLES = [
   'system-runtime',
   'system-workflow',
   'system-messaging',
+  'space-agent-unrouted',
 ] as const;
 
 export function slugify(input: string, existingSlugs: string[] = []): string {
