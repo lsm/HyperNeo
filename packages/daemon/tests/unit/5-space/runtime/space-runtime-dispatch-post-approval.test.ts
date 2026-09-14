@@ -665,9 +665,7 @@ test.each(['rpc', 'mcp'] as const)(
           getSession: (id) => sessions.getSession(id),
           getTask: (id) => taskRepo.getTask(id),
           getTaskManager,
-          coordinatorLookup: {
-            getCoordinator: () => ({ id: 'coordinator' }) as SpaceLongHorizonAgent,
-          },
+          coordinatorLookup: {},
           getSpaceAutonomyLevel: async () => 5,
           policyContext: {
             longHorizonAgentRepo: {

@@ -940,7 +940,7 @@ describe('SpaceRuntimeService', () => {
         else process.env[FLAG] = previous;
       });
 
-      test('coordinator: attaches space-actions by default; omits it when the flag is off', async () => {
+      test('space chat: attaches space-actions by default; omits it when the flag is off', async () => {
         const session = makeSession();
         const sessionManager = makeSessionManager(session);
         const svc = new SpaceRuntimeService(buildConfigWithSession(sessionManager));
@@ -962,7 +962,7 @@ describe('SpaceRuntimeService', () => {
       });
     });
 
-    test('provisions the coordinator space:chat session with the 24-tool sdkToolsPreset (Task #794)', async () => {
+    test('provisions the space:chat session with the 24-tool sdkToolsPreset (Task #794)', async () => {
       const session = makeSession();
       const sessionManager = makeSessionManager(session);
       const svc = new SpaceRuntimeService(buildConfigWithSession(sessionManager));
@@ -976,7 +976,7 @@ describe('SpaceRuntimeService', () => {
       );
     });
 
-    test('does not rewrite sdkToolsPreset when the coordinator preset is already set (idempotent)', async () => {
+    test('does not rewrite sdkToolsPreset when the preset is already set (idempotent)', async () => {
       const session = makeSession();
       (session.getSessionData as Mock<typeof session.getSessionData>).mockReturnValue({
         id: 'session-1',
@@ -1157,7 +1157,6 @@ describe('SpaceRuntimeService', () => {
           updatedAt: NOW,
         })),
         update: mock(() => {}),
-        getCoordinator: mock(() => null),
       } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
       const mailbox = buildMailboxDeliveryDb([sessionId]);
       const svc = new SpaceRuntimeService({
@@ -1212,7 +1211,6 @@ describe('SpaceRuntimeService', () => {
         .mockResolvedValue(createdSession);
       const spaceManager = createMockSpaceManager(mockSpace);
       const longHorizonAgentRepo = {
-        getCoordinator: mock(() => null),
         getById: mock(() =>
           buildLongHorizonAgent({ id: 'agent-1', spaceId: mockSpace.id, displayName: 'Researcher' })
         ),
@@ -1291,7 +1289,6 @@ describe('SpaceRuntimeService', () => {
           updatedAt: NOW,
         })),
         update: mock(() => {}),
-        getCoordinator: mock(() => null),
       } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
       const mailbox = buildMailboxDeliveryDb([sessionId]);
       const svc = buildDeliveryService({
@@ -1364,7 +1361,6 @@ describe('SpaceRuntimeService', () => {
           updatedAt: NOW,
         })),
         update: mock(() => {}),
-        getCoordinator: mock(() => null),
       } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
     }
 
@@ -1692,7 +1688,6 @@ describe('SpaceRuntimeService', () => {
           updatedAt: NOW,
         })),
         update: mock(() => {}),
-        getCoordinator: mock(() => null),
       } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
       let configCalls = 0;
       const inactivityConfigRepo = {
@@ -1776,7 +1771,6 @@ describe('SpaceRuntimeService', () => {
         .mockResolvedValueOnce(null)
         .mockResolvedValue(createdSession);
       const longHorizonAgentRepo = {
-        getCoordinator: mock(() => null),
         getById: mock(() => ({
           id: 'lh-agent-1',
           spaceId: mockSpace.id,
@@ -1842,7 +1836,6 @@ describe('SpaceRuntimeService', () => {
         .mockResolvedValueOnce(null)
         .mockResolvedValue(createdSession);
       const longHorizonAgentRepo = {
-        getCoordinator: mock(() => null),
         getById: mock(() => ({
           id: 'lh-agent-1',
           spaceId: mockSpace.id,
@@ -1923,7 +1916,6 @@ describe('SpaceRuntimeService', () => {
       } as unknown as AgentSession;
       const sessionManager = makeSessionManager(existingSession);
       const longHorizonAgentRepo = {
-        getCoordinator: mock(() => null),
         getById: mock(() => ({
           id: 'lh-agent-1',
           spaceId: mockSpace.id,
@@ -2144,7 +2136,6 @@ describe('SpaceRuntimeService', () => {
         getGoal: mock(() => ({ id: notification.goalId, spaceId: notification.spaceId })),
       } as unknown as SpaceRuntimeServiceConfig['goalService'];
       const outcomeNotificationRepo = {
-        getCoordinator: mock(() => null),
         getById: mock(() => ({ status: 'pending' })),
       } as unknown as SpaceGoalOutcomeNotificationRepository;
       const svc = new SpaceRuntimeService({
@@ -2219,7 +2210,7 @@ describe('SpaceRuntimeService', () => {
       expect(longHorizonAgentRepo.getById).not.toHaveBeenCalled();
     });
 
-    test('routes a noncanonical handle-coordinator wake to the Space chat session', async () => {
+    test('routes a goal-owner wake to the owning agent session', async () => {
       const sessions = new Map<string, AgentSession>();
       sessions.set(`space:chat:${mockSpace.id}`, makeWakeSession(`space:chat:${mockSpace.id}`));
       const sessionManager = makeWakeSessionManager(sessions);
@@ -2231,7 +2222,6 @@ describe('SpaceRuntimeService', () => {
         })),
       } as unknown as SpaceRuntimeServiceConfig['goalScopeRepo'];
       const longHorizonAgentRepo = {
-        getCoordinator: mock(() => ({ id: 'coordinator-alt' })),
         getById: mock(() =>
           buildLongHorizonAgent({ id: 'coordinator-alt', handle: 'coordinator' })
         ),
@@ -2322,7 +2312,6 @@ describe('SpaceRuntimeService', () => {
         getSpaceManager: mock(() => null),
       } as unknown as SpaceRuntimeServiceConfig['agentRepo'];
       const longHorizonAgentRepo = {
-        getCoordinator: mock(() => null),
         getById: mock((id: string) => buildLongHorizonAgent({ id, handle: id, displayName: id })),
         update: mock(() => {}),
       } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
@@ -2381,7 +2370,6 @@ describe('SpaceRuntimeService', () => {
         getSpaceManager: mock(() => null),
       } as unknown as SpaceRuntimeServiceConfig['agentRepo'];
       const longHorizonAgentRepo = {
-        getCoordinator: mock(() => null),
         getById: mock(() => buildLongHorizonAgent()),
         update: mock(() => {}),
       } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
@@ -2389,7 +2377,6 @@ describe('SpaceRuntimeService', () => {
         getGoal: mock(() => ({ id: notification.goalId, spaceId: notification.spaceId })),
       } as unknown as SpaceRuntimeServiceConfig['goalService'];
       const outcomeNotificationRepo = {
-        getCoordinator: mock(() => null),
         getById: mock(() => {
           notificationCalls += 1;
           const status = notificationCalls >= 3 ? 'acknowledged' : 'pending';
@@ -2453,7 +2440,6 @@ describe('SpaceRuntimeService', () => {
           listPendingByGoal: mock(() => [strandedNotification]),
           listPendingBySpace: mock(() => []),
           getById: mock(() => ({ status: 'pending' })),
-          getCoordinator: mock(() => null),
         } as unknown as SpaceGoalOutcomeNotificationRepository,
         goalScopeRepo: {
           getPrimaryGoalOwner: mock(() => ({ action: 'no_recipient' })),
@@ -3002,7 +2988,6 @@ describe('SpaceRuntimeService', () => {
           sessionManager,
           listSessionsResult: [longTermSession],
           longHorizonAgentRepo: {
-            getCoordinator: mock(() => null),
             getById: mock(() =>
               buildLongHorizonAgent({
                 id: 'agent-1',
@@ -3130,7 +3115,6 @@ describe('SpaceRuntimeService', () => {
           autonomyLevel: 2,
           status: 'active',
         })),
-        getCoordinator: mock(() => null),
         listBySpaceId: mock(() => []),
       } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
       const actorRegistryRepos = {
@@ -4055,10 +4039,7 @@ describe('refreshLongHorizonAgentSessionConfig — self-heals undefined provider
 });
 
 describe('long-term agent delivery — id→session routing table', () => {
-  function buildRoutingService(options: {
-    longHorizonAgents: SpaceLongHorizonAgent[];
-    coordinatorId?: string;
-  }): {
+  function buildRoutingService(options: { longHorizonAgents: SpaceLongHorizonAgent[] }): {
     svc: SpaceRuntimeService;
     createCalls: Array<{ sessionId?: string; title?: string }>;
     lookupIds: string[];
@@ -4084,12 +4065,6 @@ describe('long-term agent delivery — id→session routing table', () => {
     } as unknown as SessionManager;
     const longHorizonAgentRepo = {
       getById: mock((id: string) => options.longHorizonAgents.find((a) => a.id === id) ?? null),
-      getCoordinator: mock(
-        () => options.longHorizonAgents.find((a) => a.id === options.coordinatorId) ?? null
-      ),
-      getCoordinatorRecord: mock(
-        () => options.longHorizonAgents.find((a) => a.id === options.coordinatorId) ?? null
-      ),
       update: mock(() => ({})),
     } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
     const svc = new SpaceRuntimeService({

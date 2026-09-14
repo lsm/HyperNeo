@@ -307,7 +307,6 @@ function completionDependencies(): OwnedPendingCompletionDependencies {
     getSession: (id) => sessions.getSession(id),
     getTask: (id) => tasks.getTask(id),
     getTaskManager: (id) => new SpaceTaskManager(db, id),
-    coordinatorLookup: { getCoordinator: () => null },
     dispatchApproval: mock(async (owner, id, source, reason, guard) => {
       await new SpaceTaskManager(db, owner).setTaskStatus(id, 'approved', {
         ...guard,

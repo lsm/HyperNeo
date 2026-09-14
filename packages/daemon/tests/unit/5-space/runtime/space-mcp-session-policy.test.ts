@@ -5,7 +5,6 @@ import {
   missingMcpServers,
   resolveSpaceMcpSessionPolicy,
   SPACE_AD_HOC_MEMBER_REQUIRED_MCP_SERVERS,
-  SPACE_COORDINATOR_REQUIRED_MCP_SERVERS,
   SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS,
   type SpaceMcpSessionRole,
 } from '../../../../src/lib/space/runtime/space-mcp-session-policy.ts';
@@ -98,7 +97,7 @@ function makeTask(overrides: Partial<SpaceTask> = {}): SpaceTask {
 }
 
 describe('resolveSpaceMcpSessionPolicy', () => {
-  test('routes space_chat sessions to SpaceRuntime coordinator tools', () => {
+  test('routes space_chat sessions to the ordinary member policy', () => {
     const policy = resolveSpaceMcpSessionPolicy(
       makeSession({ id: 'space:chat:space-1', type: 'space_chat', context: { spaceId: 'space-1' } })
     );
@@ -107,11 +106,10 @@ describe('resolveSpaceMcpSessionPolicy', () => {
       role: 'ad_hoc_member',
       spaceId: 'space-1',
       owner: 'space-runtime',
-      attachCoordinatorTools: true,
-      attachGenericSpaceTools: false,
+      attachGenericSpaceTools: true,
       isWorkflowWorker: false,
     });
-    expect(policy.requiredServers).toBe(SPACE_COORDINATOR_REQUIRED_MCP_SERVERS);
+    expect(policy.requiredServers).toBe(SPACE_AD_HOC_MEMBER_REQUIRED_MCP_SERVERS);
   });
 
   test('routes ad-hoc Space sessions to SpaceRuntime generic member tools', () => {
@@ -124,7 +122,6 @@ describe('resolveSpaceMcpSessionPolicy', () => {
       spaceId: 'space-1',
       owner: 'space-runtime',
       attachGenericSpaceTools: true,
-      attachCoordinatorTools: false,
       isWorkflowWorker: false,
     });
     expect(policy.requiredServers).toBe(SPACE_AD_HOC_MEMBER_REQUIRED_MCP_SERVERS);
@@ -174,7 +171,6 @@ describe('resolveSpaceMcpSessionPolicy', () => {
       spaceId: 'space-1',
       owner: 'task-agent-manager',
       attachGenericSpaceTools: false,
-      attachCoordinatorTools: false,
       isWorkflowWorker: true,
     });
     expect(policy.requiredServers).toBe(SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS);
@@ -350,7 +346,6 @@ describe('resolveSpaceMcpSessionPolicy', () => {
       role: 'legacy_task_agent',
       owner: 'none',
       attachGenericSpaceTools: false,
-      attachCoordinatorTools: false,
       isWorkflowWorker: false,
     });
     expect(policy.requiredServers).toEqual([]);
@@ -363,7 +358,6 @@ describe('resolveSpaceMcpSessionPolicy', () => {
       role: 'universal_read',
       owner: 'none',
       attachGenericSpaceTools: false,
-      attachCoordinatorTools: false,
       isWorkflowWorker: false,
     });
     expect(policy.spaceId).toBeUndefined();
