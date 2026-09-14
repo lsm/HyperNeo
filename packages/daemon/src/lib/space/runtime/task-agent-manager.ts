@@ -20,7 +20,7 @@ import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { UUID } from 'crypto';
 import { createDefaultSessionResolutionDeps } from '../../session-resolution/default-deps.ts';
 import { ensureSession } from '../../session-resolution/ensure-session.ts';
-import { inferProviderForModel } from '../../providers/registry.js';
+import { inferSpawnProviderForModel } from '../../providers/registry.js';
 import type { ActorResolver } from '../../../../../messaging/src/contracts.ts';
 import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types.ts';
 import type { AgentSessionInit } from '../../../lib/agent/agent-session.ts';
@@ -937,18 +937,21 @@ export class TaskAgentManager {
           customAgent?.model ??
           request.space.defaultModel ??
           DEFAULT_CUSTOM_AGENT_MODEL;
+        const routedSpawnProvider = await inferSpawnProviderForModel(assignedModel);
+        const routedOverrideProvider = taskModelOverride
+          ? await inferSpawnProviderForModel(taskModelOverride)
+          : undefined;
         const assignment = {
           spaceId: request.space.id,
           taskId: request.task.id,
           model: assignedModel,
           provider: taskModelOverride
-            ? inferProviderForModel(taskModelOverride)
+            ? routedOverrideProvider
             : poolApplied
-              ? (poolProvider ?? inferProviderForModel(assignedModel))
+              ? (poolProvider ?? routedSpawnProvider)
               : slot.model !== undefined
-                ? ((slot.provider?.trim() || undefined) ?? inferProviderForModel(assignedModel))
-                : ((customAgent?.provider?.trim() || undefined) ??
-                  inferProviderForModel(assignedModel)),
+                ? ((slot.provider?.trim() || undefined) ?? routedSpawnProvider)
+                : ((customAgent?.provider?.trim() || undefined) ?? routedSpawnProvider),
         };
         reserveModelPoolSlot(this.modelPoolAssignments, request.execution, assignment);
 
@@ -5598,18 +5601,22 @@ export class TaskAgentManager {
       poolAgent?.model ??
       space.defaultModel ??
       DEFAULT_CUSTOM_AGENT_MODEL;
+    const routedSpawnProvider = await inferSpawnProviderForModel(assignedModel);
+    const routedOverrideProvider = postApprovalModelOverride
+      ? await inferSpawnProviderForModel(postApprovalModelOverride)
+      : undefined;
     const reservationKey = { id: `post-approval:${taskId}:${slot.name}:${generateUUID()}` };
     const assignment = {
       spaceId,
       taskId,
       model: assignedModel,
       provider: postApprovalModelOverride
-        ? inferProviderForModel(postApprovalModelOverride)
+        ? routedOverrideProvider
         : poolApplied
-          ? (poolProvider ?? inferProviderForModel(assignedModel))
+          ? (poolProvider ?? routedSpawnProvider)
           : slot.model !== undefined
-            ? ((slot.provider?.trim() || undefined) ?? inferProviderForModel(assignedModel))
-            : ((poolAgent?.provider?.trim() || undefined) ?? inferProviderForModel(assignedModel)),
+            ? ((slot.provider?.trim() || undefined) ?? routedSpawnProvider)
+            : ((poolAgent?.provider?.trim() || undefined) ?? routedSpawnProvider),
     };
     reserveModelPoolSlot(this.modelPoolAssignments, reservationKey, assignment);
 
