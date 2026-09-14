@@ -926,6 +926,68 @@ function attachCodeBlockCopyButtons(container: HTMLElement) {
   return mounts;
 }
 
+type MarkdownImageNode = {
+  type: string;
+  tagName?: string;
+  properties?: Record<string, unknown>;
+  children?: MarkdownImageNode[];
+  value?: string;
+};
+
+const uriSchemePattern = /^([a-zA-Z][a-zA-Z0-9+.-]*):/;
+
+function isAllowedImageSrc(src: string) {
+  const normalized = src.replace(/[\t\n\r]+/g, '').trim();
+  const schemeMatch = uriSchemePattern.exec(normalized);
+  if (!schemeMatch) return true;
+  const scheme = schemeMatch[1].toLowerCase();
+  if (scheme === 'http' || scheme === 'https') return true;
+  return scheme === 'data' && /^data:image\//i.test(normalized);
+}
+
+function transformMarkdownImageNodes(node: MarkdownImageNode) {
+  const { children } = node;
+  if (!children) return;
+
+  for (let index = children.length - 1; index >= 0; index -= 1) {
+    const child = children[index];
+    if (child.type === 'element' && child.tagName === 'img') {
+      if (!child.properties) child.properties = {};
+      const properties = child.properties;
+      const src = typeof properties.src === 'string' ? properties.src : '';
+      if (src && isAllowedImageSrc(src)) {
+        properties.loading = 'lazy';
+        continue;
+      }
+      const alt = typeof properties.alt === 'string' ? properties.alt : '';
+      const title = typeof properties.title === 'string' ? ` "${properties.title}"` : '';
+      children[index] = { type: 'text', value: `![${alt}](${src}${title})` };
+      continue;
+    }
+    transformMarkdownImageNodes(child);
+  }
+}
+
+function rehypeMarkdownImages() {
+  return (tree: MarkdownImageNode) => {
+    transformMarkdownImageNodes(tree);
+  };
+}
+
+function openImageAtFullSize(src: string) {
+  const dataImageMatch = /^data:(image\/[a-z0-9.+-]+)/i.exec(src);
+  if (dataImageMatch && !dataImageMatch[1].toLowerCase().includes('svg')) {
+    fetch(src)
+      .then((response) => response.blob())
+      .then((blob) => {
+        window.open(URL.createObjectURL(blob), '_blank', 'noopener,noreferrer');
+      })
+      .catch(() => undefined);
+    return;
+  }
+  window.open(src, '_blank', 'noopener,noreferrer');
+}
+
 async function renderMarkdown(content: string) {
   const modules = await getMarkdownModules();
   const escapedContent = escapeRawHtmlBlocks(content);
@@ -944,7 +1006,8 @@ async function renderMarkdown(content: string) {
     .use(modules.remarkGfm)
     .use(modules.remarkMath, { singleDollarTextMath: false })
     .use(modules.remarkBreaks)
-    .use(modules.remarkRehype);
+    .use(modules.remarkRehype)
+    .use(rehypeMarkdownImages);
 
   if (rehypeKatex) {
     processor.use(rehypeKatex);
@@ -987,7 +1050,16 @@ export default function MarkdownRenderer({ content, class: className }: Markdown
 
   useLayoutEffect(() => {
     if (html == null || !containerRef.current) return;
-    containerRef.current.innerHTML = html;
+    const container = containerRef.current;
+    container.innerHTML = html;
+
+    const handleImageClick = (event: Event) => {
+      if (!(event.target instanceof HTMLImageElement)) return;
+      event.preventDefault();
+      const src = event.target.getAttribute('src');
+      if (src) openImageAtFullSize(src);
+    };
+    container.addEventListener('click', handleImageClick);
 
     const copyMounts = attachCodeBlockCopyButtons(containerRef.current);
 
@@ -1016,6 +1088,7 @@ export default function MarkdownRenderer({ content, class: className }: Markdown
     }
 
     return () => {
+      container.removeEventListener('click', handleImageClick);
       copyMounts.forEach((mount) => {
         render(null, mount);
       });

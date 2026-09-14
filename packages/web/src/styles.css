@@ -700,7 +700,10 @@ html {
 
 .prose img {
   border-radius: 0.5rem;
+  cursor: zoom-in;
+  height: auto;
   margin: 1.7em 0;
+  max-width: 100%;
 }
 
 /* Syntax highlighting — per-theme palette via --hljs-* vars

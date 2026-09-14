@@ -297,6 +297,137 @@ describe('MarkdownRenderer', () => {
     });
   });
 
+  describe('Markdown Images', () => {
+    it('should render an https image with alt, title and lazy loading', async () => {
+      const { container } = render(
+        <MarkdownRenderer content={'![chart](https://example.com/chart.png "Quarterly chart")'} />
+      );
+      await waitFor(() => {
+        expect(container.querySelector('img')).toBeTruthy();
+      });
+      const img = container.querySelector('img');
+      expect(img?.getAttribute('src')).toBe('https://example.com/chart.png');
+      expect(img?.getAttribute('alt')).toBe('chart');
+      expect(img?.getAttribute('title')).toBe('Quarterly chart');
+      expect(img?.getAttribute('loading')).toBe('lazy');
+    });
+
+    it('should render a data image url', async () => {
+      const dataUrl = 'data:image/png;base64,iVBORw0KGgo=';
+      const { container } = render(<MarkdownRenderer content={`![pic](${dataUrl})`} />);
+      await waitFor(() => {
+        expect(container.querySelector('img')).toBeTruthy();
+      });
+      expect(container.querySelector('img')?.getAttribute('src')).toBe(dataUrl);
+      expect(container.querySelector('img')?.getAttribute('alt')).toBe('pic');
+      expect(container.querySelector('img')?.getAttribute('loading')).toBe('lazy');
+    });
+
+    it('should keep relative image urls unresolved like links', async () => {
+      const { container } = render(<MarkdownRenderer content={'![local](./assets/pic.png)'} />);
+      await waitFor(() => {
+        expect(container.querySelector('img')).toBeTruthy();
+      });
+      expect(container.querySelector('img')?.getAttribute('src')).toBe('./assets/pic.png');
+    });
+
+    it('should not render javascript scheme images', async () => {
+      const { container } = render(
+        <MarkdownRenderer content={'before ![xss](javascript:alert(1)) after'} />
+      );
+      await waitFor(() => {
+        expect(container.textContent).toContain('![xss](javascript:alert(1))');
+      });
+      expect(container.querySelector('img')).toBeFalsy();
+    });
+
+    it('should not render images with an obfuscated scheme casing', async () => {
+      const { container } = render(<MarkdownRenderer content={'![xss](JaVaScRiPt:alert(1))'} />);
+      await waitFor(() => {
+        expect(container.textContent).toContain('JaVaScRiPt:alert(1)');
+      });
+      expect(container.querySelector('img')).toBeFalsy();
+    });
+
+    it('should not render unknown scheme images', async () => {
+      const { container } = render(
+        <MarkdownRenderer content={'![vb](vbscript:msgbox(1)) ![ftp](ftp://example.com/a.png)'} />
+      );
+      await waitFor(() => {
+        expect(container.textContent).toContain('vbscript:msgbox(1)');
+        expect(container.textContent).toContain('ftp://example.com/a.png');
+      });
+      expect(container.querySelector('img')).toBeFalsy();
+    });
+
+    it('should not render non-image data urls', async () => {
+      const { container } = render(
+        <MarkdownRenderer content={'![html](data:text/html;base64,PGI+aGk8L2I+)'} />
+      );
+      await waitFor(() => {
+        expect(container.textContent).toContain('data:text/html');
+      });
+      expect(container.querySelector('img')).toBeFalsy();
+    });
+
+    it('should leave surrounding non-image markdown untouched', async () => {
+      const { container } = render(
+        <MarkdownRenderer
+          content={'**bold** and ![a](https://example.com/a.png) plus [link](https://example.com)'}
+        />
+      );
+      await waitFor(() => {
+        expect(container.querySelector('img')).toBeTruthy();
+      });
+      expect(container.textContent).toContain('bold');
+      expect(container.querySelector('a')?.getAttribute('href')).toBe('https://example.com');
+      expect(container.querySelectorAll('img')).toHaveLength(1);
+    });
+
+    it('should open an https image in a new tab on click', async () => {
+      const openMock = vi.spyOn(window, 'open').mockImplementation(() => null);
+      const { container } = render(
+        <MarkdownRenderer content={'![chart](https://example.com/chart.png)'} />
+      );
+      await waitFor(() => {
+        expect(container.querySelector('img')).toBeTruthy();
+      });
+      container.querySelector('img')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      expect(openMock).toHaveBeenCalledWith(
+        'https://example.com/chart.png',
+        '_blank',
+        'noopener,noreferrer'
+      );
+      openMock.mockRestore();
+    });
+
+    it('should open a data image through a blob url on click', async () => {
+      const openMock = vi.spyOn(window, 'open').mockImplementation(() => null);
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValue({ blob: () => Promise.resolve(new Blob(['x'], { type: 'image/png' })) });
+      vi.stubGlobal('fetch', fetchMock);
+      const originalCreateObjectURL = URL.createObjectURL;
+      URL.createObjectURL = vi.fn(() => 'blob:mock-url');
+
+      try {
+        const dataUrl = 'data:image/png;base64,iVBORw0KGgo=';
+        const { container } = render(<MarkdownRenderer content={`![pic](${dataUrl})`} />);
+        await waitFor(() => {
+          expect(container.querySelector('img')).toBeTruthy();
+        });
+        container.querySelector('img')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        await waitFor(() => {
+          expect(openMock).toHaveBeenCalledWith('blob:mock-url', '_blank', 'noopener,noreferrer');
+        });
+      } finally {
+        URL.createObjectURL = originalCreateObjectURL;
+        vi.unstubAllGlobals();
+        openMock.mockRestore();
+      }
+    });
+  });
+
   describe('Code Blocks', () => {
     it('should render code blocks', async () => {
       const { container } = render(<MarkdownRenderer content={'```\nconst x = 1;\n```'} />);
