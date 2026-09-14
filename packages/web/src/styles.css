@@ -643,6 +643,10 @@ html {
   color: var(--prose-link-hover);
 }
 
+.prose a.markdown-image-link {
+  text-decoration: none;
+}
+
 .prose blockquote {
   font-style: italic;
   border-left: 4px solid var(--line);

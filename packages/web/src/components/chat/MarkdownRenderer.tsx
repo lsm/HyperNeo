@@ -957,6 +957,20 @@ function transformMarkdownImageNodes(node: MarkdownImageNode) {
       const src = typeof properties.src === 'string' ? properties.src : '';
       if (src && isAllowedImageSrc(src)) {
         properties.loading = 'lazy';
+        properties.referrerpolicy = 'no-referrer';
+        if (node.tagName !== 'a') {
+          children[index] = {
+            type: 'element',
+            tagName: 'a',
+            properties: {
+              className: ['markdown-image-link'],
+              href: src,
+              target: '_blank',
+              rel: 'noopener noreferrer',
+            },
+            children: [child],
+          };
+        }
         continue;
       }
       const alt = typeof properties.alt === 'string' ? properties.alt : '';
@@ -980,7 +994,9 @@ function openImageAtFullSize(src: string) {
     fetch(src)
       .then((response) => response.blob())
       .then((blob) => {
-        window.open(URL.createObjectURL(blob), '_blank', 'noopener,noreferrer');
+        const objectUrl = URL.createObjectURL(blob);
+        window.open(objectUrl, '_blank', 'noopener,noreferrer');
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
       })
       .catch(() => undefined);
     return;
@@ -1055,9 +1071,12 @@ export default function MarkdownRenderer({ content, class: className }: Markdown
 
     const handleImageClick = (event: Event) => {
       if (!(event.target instanceof HTMLImageElement)) return;
+      const src = event.target.getAttribute('src') || '';
+      if (!src || !/^data:image\//i.test(src)) return;
+      const href = event.target.closest('a')?.getAttribute('href');
+      if (href && href !== src) return;
       event.preventDefault();
-      const src = event.target.getAttribute('src');
-      if (src) openImageAtFullSize(src);
+      openImageAtFullSize(src);
     };
     container.addEventListener('click', handleImageClick);
 

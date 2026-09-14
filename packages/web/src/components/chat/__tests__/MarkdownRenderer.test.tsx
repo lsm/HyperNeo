@@ -310,6 +310,11 @@ describe('MarkdownRenderer', () => {
       expect(img?.getAttribute('alt')).toBe('chart');
       expect(img?.getAttribute('title')).toBe('Quarterly chart');
       expect(img?.getAttribute('loading')).toBe('lazy');
+      expect(img?.getAttribute('referrerpolicy')).toBe('no-referrer');
+      const anchor = container.querySelector('a.markdown-image-link');
+      expect(anchor?.getAttribute('href')).toBe('https://example.com/chart.png');
+      expect(anchor?.getAttribute('target')).toBe('_blank');
+      expect(anchor?.getAttribute('rel')).toBe('noopener noreferrer');
     });
 
     it('should render a data image url', async () => {
@@ -380,24 +385,37 @@ describe('MarkdownRenderer', () => {
         expect(container.querySelector('img')).toBeTruthy();
       });
       expect(container.textContent).toContain('bold');
-      expect(container.querySelector('a')?.getAttribute('href')).toBe('https://example.com');
+      expect(container.querySelector('a[href="https://example.com"]')).toBeTruthy();
       expect(container.querySelectorAll('img')).toHaveLength(1);
     });
 
-    it('should open an https image in a new tab on click', async () => {
+    it('should let the wrapper anchor open an https image natively on click', async () => {
       const openMock = vi.spyOn(window, 'open').mockImplementation(() => null);
       const { container } = render(
         <MarkdownRenderer content={'![chart](https://example.com/chart.png)'} />
       );
       await waitFor(() => {
-        expect(container.querySelector('img')).toBeTruthy();
+        expect(container.querySelector('a.markdown-image-link')).toBeTruthy();
       });
       container.querySelector('img')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-      expect(openMock).toHaveBeenCalledWith(
-        'https://example.com/chart.png',
-        '_blank',
-        'noopener,noreferrer'
+      expect(openMock).not.toHaveBeenCalled();
+      openMock.mockRestore();
+    });
+
+    it('should follow the author link when a linked image is clicked', async () => {
+      const openMock = vi.spyOn(window, 'open').mockImplementation(() => null);
+      const { container } = render(
+        <MarkdownRenderer
+          content={'[![chart](https://example.com/chart.png)](https://example.com/page)'}
+        />
       );
+      await waitFor(() => {
+        expect(container.querySelector('a[href="https://example.com/page"] img')).toBeTruthy();
+      });
+      expect(container.querySelectorAll('a')).toHaveLength(1);
+      expect(container.querySelector('a')?.classList.contains('markdown-image-link')).toBe(false);
+      container.querySelector('img')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      expect(openMock).not.toHaveBeenCalled();
       openMock.mockRestore();
     });
 
@@ -416,6 +434,9 @@ describe('MarkdownRenderer', () => {
         await waitFor(() => {
           expect(container.querySelector('img')).toBeTruthy();
         });
+        expect(container.querySelector('a.markdown-image-link')?.getAttribute('href')).toBe(
+          dataUrl
+        );
         container.querySelector('img')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
         await waitFor(() => {
           expect(openMock).toHaveBeenCalledWith('blob:mock-url', '_blank', 'noopener,noreferrer');
