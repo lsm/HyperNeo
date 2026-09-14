@@ -8826,7 +8826,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
     expect(countSdkMessages()).toBe(before);
   });
 
-  test('a bare handle routes to the long-horizon agent when no workflow worker collides', async () => {
+  test('a bare handle with no long-horizon backing is delivered through the messaging facade', async () => {
     const wf = buildSingleStepWorkflow(
       ctx.spaceId,
       ctx.workflowManager,
@@ -8884,6 +8884,54 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       outcome: 'delivered',
       target: 'agent',
       agent_name: '@planner',
+    });
+  });
+
+  test('a registered long-horizon handle is rejected rather than routed through a task', async () => {
+    const wf = buildSingleStepWorkflow(
+      ctx.spaceId,
+      ctx.workflowManager,
+      ctx.agentId,
+      'WF Planner Registered'
+    );
+    const { tasks } = await ctx.runtime.startWorkflowRun(ctx.spaceId, wf.id, 'Planner registered');
+    const task = tasks[0];
+    ctx.longHorizonAgentRepo.create({
+      id: 'lh-planner-registered',
+      spaceId: ctx.spaceId,
+      handle: 'planner',
+      displayName: 'Planner',
+    });
+    const auditLogRepo = new McpAuditLogRepository(ctx.db);
+    const deliveries: string[] = [];
+
+    const tam = makeFakeTaskAgentManager(ctx);
+    const result = await makeHandlersWith(tam, {
+      auditLogRepo,
+      messageResolver: resolverForActors([
+        { actorId: 'agent:lh-planner-registered', handle: '@planner' },
+      ]),
+      longTermAgentDelivery: {
+        deliverToSession: async () => {
+          deliveries.push('delivered');
+          return 'planner-session';
+        },
+        queueForActivation: async () => null,
+      },
+    }).send_message_to_task({
+      task_id: task.id,
+      target: '@planner',
+      message: 'hello planner',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('Ambiguous target');
+    expect(parsed.error).toContain('long-horizon agent "planner"');
+    expect(parsed.error).toContain('send_session_message');
+    expect(deliveries).toHaveLength(0);
+    expect(parseAuditSummaries(auditLogRepo, task.id)[0]).toMatchObject({
+      reason: 'ambiguous_long_horizon_target',
     });
   });
 
@@ -10101,7 +10149,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       expect(audit[0].sdk_message_id).toBe(parsed.sdk_message_id);
     });
 
-    test('long-horizon handle delivery echoes matching delivered_session_id in response and audit', async () => {
+    test('facade-delivered handle echoes matching delivered_session_id in response and audit', async () => {
       const { task } = await makeTracedTask('Trace handle');
       const auditLogRepo = new McpAuditLogRepository(ctx.db);
       const tam = makeFakeTaskAgentManager(ctx);

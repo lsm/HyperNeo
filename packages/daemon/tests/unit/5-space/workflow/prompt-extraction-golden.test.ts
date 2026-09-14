@@ -14,7 +14,6 @@ import { verifierAgent } from '../../../../src/lib/agent/coordinator/verifier.ts
 import { SECURITY_AGENT_SYSTEM_PROMPT } from '../../../../src/lib/github/prompts/security-prompt.ts';
 import { buildTitleGenerationPrompt } from '../../../../src/lib/session/session-lifecycle.ts';
 import { NON_DELEGATING_GENERAL_AGENT } from '../../../../src/lib/space/agents/custom-agent.ts';
-import { getLongHorizonAgentTemplates } from '../../../../src/lib/space/agents/long-horizon-agent-templates.ts';
 import { LONG_HORIZON_SCHEDULING_GUARDRAIL } from '../../../../src/lib/space/agents/long-horizon-agent-tools.ts';
 import {
   getPresetAgentTemplates,
@@ -108,13 +107,6 @@ const GOLDEN: Record<string, string> = {
 };
 
 const byPreset = new Map(getPresetAgentTemplates().map((p) => [p.handle, p.customPrompt]));
-const lhInstructions = new Map(
-  getLongHorizonAgentTemplates().map((t) => [
-    `LH_${t.key.replace('.default', '').toUpperCase().replace(/-/g, '_')}_INSTRUCTIONS`,
-    t.instructions,
-  ])
-);
-
 const VALUES: Record<string, string> = {
   WORKFLOW_SELECTOR_INSTRUCTIONS: (() => {
     const full = buildSelectionPrompt(
