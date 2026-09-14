@@ -868,6 +868,8 @@ function hasCodeBlock(content: string) {
   );
 }
 
+const codeBlockCopyGutter = '2.5rem';
+
 async function renderMermaidBlocks(container: HTMLElement, isCancelled?: () => boolean) {
   const blocks = Array.from(container.querySelectorAll('pre code.language-mermaid'));
   if (blocks.length === 0) return;
@@ -884,6 +886,7 @@ async function renderMermaidBlocks(container: HTMLElement, isCancelled?: () => b
       const source = block.textContent || '';
       const wrapper = document.createElement('div');
       wrapper.className = 'mermaid';
+      wrapper.style.paddingRight = codeBlockCopyGutter;
       wrapper.textContent = source;
 
       try {
@@ -915,7 +918,7 @@ function attachCodeBlockCopyButtons(container: HTMLElement) {
   const mounts: Array<HTMLElement> = [];
   container.querySelectorAll('pre').forEach((pre) => {
     const code = pre.querySelector('code');
-    pre.style.paddingRight = '2.5rem';
+    pre.style.paddingRight = codeBlockCopyGutter;
     const wrapper = document.createElement('div');
     wrapper.className = 'code-block-wrapper relative';
     pre.parentNode?.insertBefore(wrapper, pre);

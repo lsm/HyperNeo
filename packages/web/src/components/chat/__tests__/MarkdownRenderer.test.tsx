@@ -562,6 +562,17 @@ describe('MarkdownRenderer', () => {
       });
     });
 
+    it('should reserve the copy-button gutter on rendered mermaid blocks', async () => {
+      const { container } = render(
+        <MarkdownRenderer content={'```mermaid\ngraph TD\n  A-->B\n```'} />
+      );
+      await waitFor(() => {
+        expect(mermaidRunMock).toHaveBeenCalled();
+      });
+      const mermaid = container.querySelector('.mermaid') as HTMLElement;
+      expect(mermaid?.style.paddingRight).toBe('2.5rem');
+    });
+
     it('should preserve mermaid code blocks when parsing fails', async () => {
       mermaidParseMock.mockRejectedValueOnce(new Error('invalid mermaid'));
       const { container } = render(
