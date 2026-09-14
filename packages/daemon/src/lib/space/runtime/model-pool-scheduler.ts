@@ -137,17 +137,6 @@ export function releaseModelPoolReservation(
   assignments.delete(modelPoolReservationKey(execution.id));
 }
 
-export function correctModelPoolReservationProvider(
-  assignments: ModelPoolAssignmentMap,
-  execution: Pick<NodeExecution, 'id'>,
-  provider: string | undefined
-): void {
-  const key = modelPoolReservationKey(execution.id);
-  const existing = assignments.get(key);
-  if (!existing || existing.provider === provider) return;
-  assignments.set(key, { ...existing, provider });
-}
-
 export function raiseModelPoolDeferred(agentName: string, spaceId: string): never {
   throw new TransientSpawnError(
     `Model pool for agent "${agentName}" is at capacity in space ${spaceId} — deferring spawn`

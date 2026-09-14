@@ -378,8 +378,14 @@ export function buildWorkflowCreateParams(
   existingAgentNameToId: Map<string, string>,
   usedWorkflowHandles?: Set<string>,
   relocatedTemplateKey?: (fromKey: string) => string | null
-): { params: CreateSpaceWorkflowParams; nodeNameToId: Map<string, string>; warnings: string[] } {
+): {
+  params: CreateSpaceWorkflowParams;
+  nodeNameToId: Map<string, string>;
+  warnings: string[];
+  recoveries: string[];
+} {
   const warnings: string[] = [];
+  const recoveries: string[] = [];
 
   const normalizedImportedAgentNameToId = new Map(
     [...importedAgentNameToId].map(([n, id]) => [nameKey(n), id])
@@ -455,11 +461,18 @@ export function buildWorkflowCreateParams(
       if (entry.provider) {
         const provider = getProviderRegistry().get(entry.provider);
         const effectiveModel = entry.model;
-        if (provider && effectiveModel && !providerMayOfferModel(provider, effectiveModel)) {
-          warnings.push(
+        if (!provider) {
+          recoveries.push(
+            `node "${exportedNode.name}" slot "${entry.name}" pins provider ` +
+              `"${entry.provider}" which is not registered here; ` +
+              'the slot was imported without the provider pin'
+          );
+          entry.provider = undefined;
+        } else if (effectiveModel && !providerMayOfferModel(provider, effectiveModel)) {
+          recoveries.push(
             `node "${exportedNode.name}" slot "${entry.name}" pins provider ` +
               `"${entry.provider}" which does not offer model "${effectiveModel}"; ` +
-              'the slot will be imported without the provider pin'
+              'the slot was imported without the provider pin'
           );
           entry.provider = undefined;
         }
@@ -535,7 +548,7 @@ export function buildWorkflowCreateParams(
     params.handle = exported.handle;
   }
 
-  return { params, nodeNameToId, warnings };
+  return { params, nodeNameToId, warnings, recoveries };
 }
 
 function referencedStoredTemplateKeys(
@@ -1213,7 +1226,11 @@ export function setupSpaceExportImportHandlers(
 
           usedWorkflowNames.add(finalName);
 
-          const { params: createParams, warnings } = buildWorkflowCreateParams(
+          const {
+            params: createParams,
+            warnings,
+            recoveries,
+          } = buildWorkflowCreateParams(
             spaceId,
             finalName,
             exportedWorkflow,
@@ -1229,6 +1246,10 @@ export function setupSpaceExportImportHandlers(
             allWarnings.push(
               `Workflow "${finalName}": exported handle "${exportedHandle}" already exists in the target space; a new handle was auto-generated`
             );
+          }
+
+          for (const recovery of recoveries) {
+            allWarnings.push(`Workflow "${finalName}": ${recovery}`);
           }
 
           if (warnings.length > 0) {

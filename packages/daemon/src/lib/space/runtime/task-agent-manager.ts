@@ -18,7 +18,10 @@ import type {
 import { generateUUID, isRateOrUsageLimited, resolveNodeAgents } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { UUID } from 'crypto';
-import { inferAvailableSpawnProviderForModel } from '../../providers/registry.js';
+import {
+  inferAvailableSpawnProviderForModel,
+  inferProviderForModel,
+} from '../../providers/registry.js';
 import type { ActorResolver } from '../../../../../messaging/src/contracts.ts';
 import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types.ts';
 import type { AgentSessionInit } from '../../../lib/agent/agent-session.ts';
@@ -63,7 +66,6 @@ import {
 import {
   activateModelPoolReservation,
   applyModelPoolToSlot,
-  correctModelPoolReservationProvider,
   type ModelPoolAssignmentMap,
   raiseModelPoolDeferred,
   releaseModelPoolReservation,
@@ -912,13 +914,18 @@ export class TaskAgentManager {
         const taskModelOverride = request.node
           ? request.task.workflowModelOverrides?.[`${request.node.id}:${request.slot.name}`]
           : undefined;
-        const prePoolModel =
-          taskModelOverride ??
-          request.slot.model ??
-          customAgent?.model ??
-          request.space.defaultModel ??
-          DEFAULT_CUSTOM_AGENT_MODEL;
-        const routedSpawnProvider = await inferAvailableSpawnProviderForModel(prePoolModel);
+        const routingCandidates = new Set<string>();
+        if (taskModelOverride) routingCandidates.add(taskModelOverride);
+        for (const entry of customAgent?.modelPool ?? []) {
+          if (entry.model) routingCandidates.add(entry.model);
+        }
+        if (request.slot.model) routingCandidates.add(request.slot.model);
+        if (customAgent?.model) routingCandidates.add(customAgent.model);
+        if (request.space.defaultModel) routingCandidates.add(request.space.defaultModel);
+        const routedByModel = new Map<string, string | undefined>();
+        for (const candidate of routingCandidates) {
+          routedByModel.set(candidate, await inferAvailableSpawnProviderForModel(candidate));
+        }
         let slot = request.slot;
         let poolProvider: string | undefined;
         let poolApplied = false;
@@ -948,6 +955,8 @@ export class TaskAgentManager {
           customAgent?.model ??
           request.space.defaultModel ??
           DEFAULT_CUSTOM_AGENT_MODEL;
+        const routedSpawnProvider =
+          routedByModel.get(assignedModel) ?? inferProviderForModel(assignedModel);
         const assignment = {
           spaceId: request.space.id,
           taskId: request.task.id,
@@ -961,14 +970,6 @@ export class TaskAgentManager {
                 : ((customAgent?.provider?.trim() || undefined) ?? routedSpawnProvider),
         };
         reserveModelPoolSlot(this.modelPoolAssignments, request.execution, assignment);
-        if (poolApplied && !poolProvider && assignedModel !== prePoolModel) {
-          const correctedProvider = await inferAvailableSpawnProviderForModel(assignedModel);
-          correctModelPoolReservationProvider(
-            this.modelPoolAssignments,
-            request.execution,
-            correctedProvider
-          );
-        }
 
         try {
           const slotOverrides = {
@@ -5584,13 +5585,18 @@ export class TaskAgentManager {
     const postApprovalModelOverride = matchedNodeId
       ? task.workflowModelOverrides?.[`${matchedNodeId}:${matchedSlot.name}`]
       : undefined;
-    const prePoolModel =
-      postApprovalModelOverride ??
-      matchedSlot.model ??
-      poolAgent?.model ??
-      space.defaultModel ??
-      DEFAULT_CUSTOM_AGENT_MODEL;
-    const routedSpawnProvider = await inferAvailableSpawnProviderForModel(prePoolModel);
+    const routingCandidates = new Set<string>();
+    if (postApprovalModelOverride) routingCandidates.add(postApprovalModelOverride);
+    for (const entry of poolAgent?.modelPool ?? []) {
+      if (entry.model) routingCandidates.add(entry.model);
+    }
+    if (matchedSlot.model) routingCandidates.add(matchedSlot.model);
+    if (poolAgent?.model) routingCandidates.add(poolAgent.model);
+    if (space.defaultModel) routingCandidates.add(space.defaultModel);
+    const routedByModel = new Map<string, string | undefined>();
+    for (const candidate of routingCandidates) {
+      routedByModel.set(candidate, await inferAvailableSpawnProviderForModel(candidate));
+    }
     let slot = matchedSlot;
     let poolProvider: string | undefined;
     let poolApplied = false;
@@ -5619,6 +5625,8 @@ export class TaskAgentManager {
       poolAgent?.model ??
       space.defaultModel ??
       DEFAULT_CUSTOM_AGENT_MODEL;
+    const routedSpawnProvider =
+      routedByModel.get(assignedModel) ?? inferProviderForModel(assignedModel);
     const reservationKey = { id: `post-approval:${taskId}:${slot.name}:${generateUUID()}` };
     const assignment = {
       spaceId,
@@ -5633,14 +5641,6 @@ export class TaskAgentManager {
             : ((poolAgent?.provider?.trim() || undefined) ?? routedSpawnProvider),
     };
     reserveModelPoolSlot(this.modelPoolAssignments, reservationKey, assignment);
-    if (poolApplied && !poolProvider && assignedModel !== prePoolModel) {
-      const correctedProvider = await inferAvailableSpawnProviderForModel(assignedModel);
-      correctModelPoolReservationProvider(
-        this.modelPoolAssignments,
-        reservationKey,
-        correctedProvider
-      );
-    }
 
     try {
       const slotOverrides = {

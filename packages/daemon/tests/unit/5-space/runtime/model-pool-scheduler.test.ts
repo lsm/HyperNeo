@@ -8,7 +8,6 @@ import type {
 import {
   activateModelPoolReservation,
   applyModelPoolToSlot,
-  correctModelPoolReservationProvider,
   countRunningModels,
   isPoolSessionActive,
   type ModelPoolAssignment,
@@ -207,39 +206,6 @@ describe('reservation lifecycle', () => {
 
     releaseModelPoolReservation(assignments, execution);
     expect(assignments.size).toBe(1);
-  });
-
-  test('correcting a reservation provider rekeys the bucket without dropping the slot', () => {
-    const assignments = new Map<string, ModelPoolAssignment>();
-    reserveModelPoolSlot(assignments, execution, {
-      spaceId: 'space-1',
-      taskId: 'task-1',
-      model: 'glm-5',
-      provider: 'anthropic',
-    });
-    const key = modelPoolReservationKey(execution.id);
-
-    correctModelPoolReservationProvider(assignments, execution, 'glm');
-
-    expect(assignments.get(key)).toMatchObject({ model: 'glm-5', provider: 'glm' });
-    expect(assignments.size).toBe(1);
-  });
-
-  test('correcting a missing or identical reservation is a no-op', () => {
-    const assignments = new Map<string, ModelPoolAssignment>();
-    const executionTwo = { id: 'exec-2' } as NodeExecution;
-    correctModelPoolReservationProvider(assignments, executionTwo, 'glm');
-    expect(assignments.size).toBe(0);
-
-    reserveModelPoolSlot(assignments, execution, {
-      spaceId: 'space-1',
-      taskId: 'task-1',
-      model: 'glm-5',
-      provider: 'glm',
-    });
-    const key = modelPoolReservationKey(execution.id);
-    correctModelPoolReservationProvider(assignments, execution, 'glm');
-    expect(assignments.get(key)).toMatchObject({ provider: 'glm' });
   });
 
   test('activating without a reservation is a no-op', () => {
