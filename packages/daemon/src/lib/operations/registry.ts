@@ -1,3 +1,4 @@
+import type { OperationName } from '@hyperneo/shared/types/operation-names';
 import type { z } from 'zod';
 
 export interface OperationCaller {
@@ -6,7 +7,7 @@ export interface OperationCaller {
 }
 
 export interface OperationEntry<Input, Output> {
-  readonly name: string;
+  readonly name: OperationName;
   readonly description: string;
   readonly inputSchema: z.ZodType<Input>;
   readonly resultSchema: z.ZodType<Output>;
