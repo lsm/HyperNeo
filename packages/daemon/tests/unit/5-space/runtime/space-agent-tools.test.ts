@@ -7738,8 +7738,6 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       auditLogRepo: opts.auditLogRepo,
       messageResolver: opts.messageResolver,
       longTermAgentDelivery: opts.longTermAgentDelivery,
-      messageResolver: opts.messageResolver,
-      longTermAgentDelivery: opts.longTermAgentDelivery,
     });
   }
 
