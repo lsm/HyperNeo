@@ -158,11 +158,11 @@ describe('long-horizon agent lifecycle integration', () => {
   });
 
   it('runs from template-created agent through nudge, Forge trigger, episode, lesson, and proposal task', async () => {
-    const template = getLongHorizonAgentTemplate('coordinator.default');
+    const template = getLongHorizonAgentTemplate('task-manager.default');
     expect(template).toBeDefined();
     const agent = agentRepo.create({
       spaceId,
-      handle: template?.handle ?? 'coordinator',
+      handle: template?.handle ?? 'task-manager',
       displayName: template?.displayName,
       templateKey: template?.key,
       status: 'active',
@@ -204,7 +204,7 @@ describe('long-horizon agent lifecycle integration', () => {
     });
 
     expect(agent).toMatchObject({
-      templateKey: 'coordinator.default',
+      templateKey: 'task-manager.default',
       status: 'active',
       autonomyLevel: 2,
     });
