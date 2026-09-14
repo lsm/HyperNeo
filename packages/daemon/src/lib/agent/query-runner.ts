@@ -683,23 +683,17 @@ export class QueryRunner {
       const modelId = session.config.model || 'sonnet';
       const rawProviderId = session.config.provider as string | undefined;
       const explicitProviderId = rawProviderId?.trim() || undefined;
-      let provider = await resolveAvailableQueryProvider(
+      const resolvedProvider = await resolveAvailableQueryProvider(
         providerRegistry,
         modelId,
         explicitProviderId
       );
+      let provider = resolvedProvider.provider;
+      const resolvedProviderAvailable = resolvedProvider.available;
       const normalizedProviderId = explicitProviderId ?? provider?.id;
-      let inferredPinAllowed = true;
-      if (!explicitProviderId && provider?.isAvailable) {
-        try {
-          inferredPinAllowed = await provider.isAvailable();
-        } catch {
-          inferredPinAllowed = false;
-        }
-      }
       if (
         normalizedProviderId !== undefined &&
-        inferredPinAllowed &&
+        resolvedProviderAvailable !== false &&
         (rawProviderId == null || rawProviderId !== normalizedProviderId)
       ) {
         session.config.provider = normalizedProviderId as Session['config']['provider'];
@@ -715,7 +709,15 @@ export class QueryRunner {
         }
       }
 
-      if (provider?.isAvailable && !(await provider.isAvailable())) {
+      let providerAvailable = resolvedProviderAvailable;
+      if (provider?.isAvailable && providerAvailable === null) {
+        try {
+          providerAvailable = await provider.isAvailable();
+        } catch {
+          providerAvailable = false;
+        }
+      }
+      if (provider && providerAvailable === false) {
         const authStatus = provider.getAuthStatus ? await provider.getAuthStatus() : null;
         const errorMsg = authStatus?.error || 'Please configure credentials.';
         const authError = new Error(

@@ -1106,6 +1106,24 @@ describe('createCustomAgentInit', () => {
     expect(inferred.provider).toBeUndefined();
   });
 
+  it('preserves the acp pin for providerless ACP models', () => {
+    const slotAcp = createCustomAgentInit(
+      makeConfig({
+        customAgent: makeAgent({ model: null, provider: null }),
+        slotOverrides: { model: 'acp-coder' },
+      })
+    );
+    expect(slotAcp.model).toBe('acp-coder');
+    expect(slotAcp.provider).toBe('acp');
+
+    const agentAcp = createCustomAgentInit(
+      makeConfig({
+        customAgent: makeAgent({ model: 'acp-coder', provider: null }),
+      })
+    );
+    expect(agentAcp.provider).toBe('acp');
+  });
+
   it('applies thinking level precedence slot > agent > app default', () => {
     const slot = createCustomAgentInit(
       makeConfig({

@@ -425,6 +425,14 @@ describe('QueryRunner', () => {
       );
     });
 
+    it('routes bare shorthand aliases through their legacy provider', () => {
+      const registry = makeRegistry([
+        { id: 'anthropic', owns: anthropicCatchAll },
+        { id: 'glm', owns: (m) => m.startsWith('glm-') },
+      ]);
+      expect(resolveQueryProvider(registry, 'glm', undefined)?.id).toBe('glm');
+    });
+
     it('prefers a warm owner over a cold-catalog candidate', () => {
       const registry = makeRegistry([
         { id: 'anthropic-copilot', owns: () => false, cold: true },
@@ -452,7 +460,7 @@ describe('QueryRunner', () => {
         { id: 'anthropic-copilot', owns: (m) => m === 'gpt-5.4', available: true },
       ]);
       const picked = await resolveAvailableQueryProvider(registry, 'gpt-5.4', undefined);
-      expect(picked?.id).toBe('anthropic-copilot');
+      expect(picked.provider?.id).toBe('anthropic-copilot');
     });
 
     it('falls back to the first owner when every owner is unavailable', async () => {
@@ -461,7 +469,7 @@ describe('QueryRunner', () => {
         { id: 'anthropic-copilot', owns: (m) => m === 'gpt-5.4', available: false },
       ]);
       const picked = await resolveAvailableQueryProvider(registry, 'gpt-5.4', undefined);
-      expect(picked?.id).toBe('anthropic-codex');
+      expect(picked.provider?.id).toBe('anthropic-codex');
     });
 
     it('returns the explicit provider without availability filtering', async () => {
@@ -470,7 +478,7 @@ describe('QueryRunner', () => {
         { id: 'anthropic-copilot', owns: (m) => m === 'gpt-5.4', available: true },
       ]);
       const picked = await resolveAvailableQueryProvider(registry, 'gpt-5.4', 'anthropic-codex');
-      expect(picked?.id).toBe('anthropic-codex');
+      expect(picked.provider?.id).toBe('anthropic-codex');
     });
 
     it('skips an unavailable cold-catalog candidate and falls back to anthropic', async () => {
@@ -479,7 +487,7 @@ describe('QueryRunner', () => {
         { id: 'anthropic-copilot', owns: () => false, cold: true, available: false },
       ]);
       const picked = await resolveAvailableQueryProvider(registry, 'copilot-only-model', undefined);
-      expect(picked?.id).toBe('anthropic');
+      expect(picked.provider?.id).toBe('anthropic');
     });
 
     it('keeps the known owner when it is unavailable and only a cold candidate remains', async () => {
@@ -488,7 +496,7 @@ describe('QueryRunner', () => {
         { id: 'anthropic-copilot', owns: () => false, cold: true, available: true },
       ]);
       const picked = await resolveAvailableQueryProvider(registry, 'glm-4.7', undefined);
-      expect(picked?.id).toBe('glm');
+      expect(picked.provider?.id).toBe('glm');
     });
   });
 

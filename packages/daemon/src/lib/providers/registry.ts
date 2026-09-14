@@ -17,6 +17,7 @@ function orderedOwnerCandidates(
   ];
   const warmOwners: Provider[] = [];
   const coldCatalogCandidates: Provider[] = [];
+  const shorthandOwnerId = inferProviderForModel(modelId);
   for (const provider of ordered) {
     if (provider.id === 'anthropic' || provider.id === 'acp') continue;
     if (
@@ -26,7 +27,7 @@ function orderedOwnerCandidates(
       continue;
     }
     if (typeof provider.ownsModel !== 'function') continue;
-    if (provider.ownsModel(modelId)) {
+    if (provider.ownsModel(modelId) || provider.id === shorthandOwnerId) {
       warmOwners.push(provider);
     } else if (provider.hasCuratedModelList?.() === false) {
       coldCatalogCandidates.push(provider);
@@ -52,24 +53,29 @@ export function resolveQueryProvider(
   return warmOwners[0] ?? coldCatalogCandidates[0] ?? registry.get('anthropic');
 }
 
+export interface ResolvedAvailableProvider {
+  provider: Provider | undefined;
+  available: boolean | null;
+}
+
 export async function resolveAvailableQueryProvider(
   registry: Pick<ProviderRegistry, 'get' | 'getAll'>,
   modelId: string,
   explicitProviderId: string | undefined
-): Promise<Provider | undefined> {
+): Promise<ResolvedAvailableProvider> {
   if (explicitProviderId) {
-    return registry.get(explicitProviderId);
+    return { provider: registry.get(explicitProviderId), available: null };
   }
   const { warmOwners, coldCatalogCandidates } = orderedOwnerCandidates(registry, modelId);
   const candidates = warmOwners.length > 0 ? warmOwners : coldCatalogCandidates;
-  if (candidates.length === 0) return registry.get('anthropic');
+  if (candidates.length === 0) return { provider: registry.get('anthropic'), available: null };
   for (const owner of candidates) {
-    if (typeof owner.isAvailable !== 'function') return owner;
+    if (typeof owner.isAvailable !== 'function') return { provider: owner, available: null };
     try {
-      if (await owner.isAvailable()) return owner;
+      if (await owner.isAvailable()) return { provider: owner, available: true };
     } catch {}
   }
-  return warmOwners[0] ?? registry.get('anthropic');
+  return { provider: warmOwners[0] ?? registry.get('anthropic'), available: false };
 }
 
 export class ProviderRegistry {
@@ -248,8 +254,8 @@ export function resetProviderRegistry(): void {
 export async function inferAvailableSpawnProviderForModel(
   modelId: string
 ): Promise<string | undefined> {
-  const provider = await resolveAvailableQueryProvider(getProviderRegistry(), modelId, undefined);
-  return provider?.id;
+  const resolved = await resolveAvailableQueryProvider(getProviderRegistry(), modelId, undefined);
+  return resolved.provider?.id;
 }
 
 export function inferProviderForModel(modelId: string): ProviderIdStr {

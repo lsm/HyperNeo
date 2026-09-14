@@ -766,7 +766,7 @@ describe('worker-template spawn payload (ATC-1 pin, feeds slice 7 lock semantics
     expect(init?.type).toBe('worker');
     expect(init?.title).toBe('Task #3832: Pin template resolution — Coder');
     expect(init?.model).toBe('claude-sonnet-4-6');
-    expect(init?.provider).toBe('anthropic');
+    expect(init?.provider).toBeUndefined();
     expect(init?.thinkingLevel).toBeUndefined();
     expect(init?.context).toEqual({ spaceId: SPACE_ID, taskId: TASK_ID });
     expect(init?.workspacePath).toBe('/tmp/ws');
@@ -872,7 +872,7 @@ describe('worker-template spawn payload (ATC-1 pin, feeds slice 7 lock semantics
     expect(init?.disallowedTools).toEqual(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
   });
 
-  test('a slot model override re-points the spawn model and inferred provider', async () => {
+  test('a slot model override re-points the spawn model without pinning an inferred provider', async () => {
     const h = makeSpawnPayloadHarness(
       makeWorkflow(
         makeTemplateWorkflowNode({ model: 'moonshot-custom', thinkingLevel: 'think8k' })
@@ -884,7 +884,7 @@ describe('worker-template spawn payload (ATC-1 pin, feeds slice 7 lock semantics
 
     const init = h.capturedInit();
     expect(init?.model).toBe('moonshot-custom');
-    expect(init?.provider).toBe('kimi');
+    expect(init?.provider).toBeUndefined();
     expect(init?.thinkingLevel).toBe('think8k');
   });
 });
