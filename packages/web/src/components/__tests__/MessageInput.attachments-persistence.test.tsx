@@ -17,7 +17,7 @@ const mockRequest = vi.fn(async () => ({ messages: [] }));
 
 vi.mock('../../lib/state.ts', () => ({
   globalSettings: { value: { voice: { enabled: false } } },
-  connectionState: { value: 'connected' },
+  connectionState: { value: 'connected', subscribe: vi.fn(() => vi.fn()) },
   get isAgentWorking() {
     return {
       get value() {
@@ -256,5 +256,27 @@ describe('MessageInput pending attachment persistence', () => {
 
     const third = renderComposer();
     expect(third.container.querySelector('img[alt="pasted.png"]')).toBeNull();
+  });
+
+  it('restores attachments when the send fails and keeps them persisted', async () => {
+    mockDraftContent = 'hello';
+    const onSend = vi.fn(async () => false);
+    const view = renderComposer(onSend);
+
+    await act(async () => {
+      pasteImage(view.container);
+    });
+    const textarea = view.container.querySelector('textarea') as HTMLTextAreaElement;
+
+    fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
+
+    await waitFor(() => expect(onSend).toHaveBeenCalledOnce());
+    await waitFor(() => {
+      expect(view.container.querySelector('img[alt="pasted.png"]')).toBeTruthy();
+    });
+    view.unmount();
+
+    const after = renderComposer();
+    expect(after.container.querySelector('img[alt="pasted.png"]')).toBeTruthy();
   });
 });

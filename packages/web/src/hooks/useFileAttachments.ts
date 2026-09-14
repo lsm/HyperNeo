@@ -24,6 +24,7 @@ export interface UseFileAttachmentsResult {
   handleRemove: (index: number) => void;
   clear: () => void;
   restore: (attachments: AttachmentWithMetadata[]) => void;
+  restoreAfterFailedSend: (attachments: AttachmentWithMetadata[]) => void;
   openFilePicker: () => void;
   getImagesForSend: () => MessageImage[] | undefined;
   handlePaste: (e: ClipboardEvent) => void;
@@ -131,6 +132,16 @@ export function useFileAttachments(sessionId?: string): UseFileAttachmentsResult
     [setAttachments]
   );
 
+  const restoreAfterFailedSend = useCallback(
+    (items: AttachmentWithMetadata[]) => {
+      setAttachments((prev) => {
+        const savedData = new Set(items.map((item) => item.data));
+        return [...items, ...prev.filter((item) => !savedData.has(item.data))];
+      });
+    },
+    [setAttachments]
+  );
+
   const openFilePicker = useCallback(() => {
     fileInputRef.current?.click();
   }, []);
@@ -148,6 +159,7 @@ export function useFileAttachments(sessionId?: string): UseFileAttachmentsResult
     handleRemove,
     clear,
     restore,
+    restoreAfterFailedSend,
     openFilePicker,
     getImagesForSend,
     handlePaste,

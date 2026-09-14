@@ -25,6 +25,7 @@ import {
 
 import { getMessagesBottomPaddingPx } from '../lib/layout-metrics.ts';
 import { connectionManager } from '../lib/connection-manager';
+import { removeDeliveredComposerAttachments } from '../lib/composer-attachment-store.ts';
 import type { SessionStore } from '../lib/session-store.ts';
 import { connectionState, globalSettings, isAgentWorking } from '../lib/state.ts';
 import { toast } from '../lib/toast.ts';
@@ -261,7 +262,7 @@ export default function MessageInput({
     handleFileDrop,
     handleRemove,
     clear: clearAttachments,
-    restore: restoreAttachments,
+    restoreAfterFailedSend,
     openFilePicker,
     getImagesForSend,
     handlePaste,
@@ -547,6 +548,9 @@ export default function MessageInput({
       }
       if (sent === false) {
         return stageFallback('Voice send failed — transcript saved to the session draft');
+      }
+      if (payload.images && payload.images.length > 0) {
+        removeDeliveredComposerAttachments(targetSessionId, payload.images);
       }
       if (payload.full.trim().length > 0) {
         const hub = connectionManager.getHubIfConnected();
@@ -1072,7 +1076,7 @@ export default function MessageInput({
           if (result === false) {
             setContent(savedContent);
             if (savedAttachments.length > 0) {
-              restoreAttachments(savedAttachments);
+              restoreAfterFailedSend(savedAttachments);
             }
             return;
           }
@@ -1096,7 +1100,7 @@ export default function MessageInput({
       attachments,
       clearDraft,
       clearAttachments,
-      restoreAttachments,
+      restoreAfterFailedSend,
       setContent,
       onSend,
       holdDraftAdoption,

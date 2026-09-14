@@ -393,18 +393,33 @@ describe('AttachmentPreview', () => {
   });
 
   describe('Click to Enlarge', () => {
+    function openButton(container: Element) {
+      return container.querySelector('button[aria-label="Open screenshot.png full size"]');
+    }
+
     it('should not render the lightbox initially', () => {
       render(<AttachmentPreview attachments={[mockAttachments[0]]} onRemove={mockOnRemove} />);
 
       expect(document.querySelector(`[data-testid="${ATTACHMENT_LIGHTBOX_TEST_ID}"]`)).toBeNull();
     });
 
-    it('should open a full-size overlay when a thumbnail is clicked', () => {
+    it('should expose enlargement through a focusable button', () => {
       const { container } = render(
         <AttachmentPreview attachments={[mockAttachments[0]]} onRemove={mockOnRemove} />
       );
 
-      fireEvent.click(container.querySelector('.group'));
+      const button = openButton(container) as HTMLButtonElement;
+      expect(button).toBeTruthy();
+      expect(button.type).toBe('button');
+      expect(button.className).toContain('cursor-zoom-in');
+    });
+
+    it('should open a full-size overlay when the thumbnail button is clicked', () => {
+      const { container } = render(
+        <AttachmentPreview attachments={[mockAttachments[0]]} onRemove={mockOnRemove} />
+      );
+
+      fireEvent.click(openButton(container));
 
       const lightbox = document.querySelector(`[data-testid="${ATTACHMENT_LIGHTBOX_TEST_ID}"]`);
       expect(lightbox).toBeTruthy();
@@ -421,7 +436,7 @@ describe('AttachmentPreview', () => {
         <AttachmentPreview attachments={[mockAttachments[0]]} onRemove={mockOnRemove} />
       );
 
-      fireEvent.click(container.querySelector('.group'));
+      fireEvent.click(openButton(container));
       const lightbox = document.querySelector(`[data-testid="${ATTACHMENT_LIGHTBOX_TEST_ID}"]`);
       expect(lightbox).toBeTruthy();
 
@@ -435,7 +450,7 @@ describe('AttachmentPreview', () => {
         <AttachmentPreview attachments={[mockAttachments[0]]} onRemove={mockOnRemove} />
       );
 
-      fireEvent.click(container.querySelector('.group'));
+      fireEvent.click(openButton(container));
       expect(document.querySelector(`[data-testid="${ATTACHMENT_LIGHTBOX_TEST_ID}"]`)).toBeTruthy();
 
       fireEvent.keyDown(document, { key: 'Escape' });
@@ -454,12 +469,36 @@ describe('AttachmentPreview', () => {
       expect(document.querySelector(`[data-testid="${ATTACHMENT_LIGHTBOX_TEST_ID}"]`)).toBeNull();
     });
 
-    it('should show zoom cursor affordance on thumbnails', () => {
+    it('should move focus into the dialog on open and trap Tab', () => {
       const { container } = render(
         <AttachmentPreview attachments={[mockAttachments[0]]} onRemove={mockOnRemove} />
       );
 
-      expect(container.querySelector('.group')?.className).toContain('cursor-zoom-in');
+      fireEvent.click(openButton(container));
+
+      const lightbox = document.querySelector(
+        `[data-testid="${ATTACHMENT_LIGHTBOX_TEST_ID}"]`
+      ) as HTMLElement;
+      expect(lightbox.tabIndex).toBe(-1);
+      expect(document.activeElement).toBe(lightbox);
+
+      fireEvent.keyDown(lightbox, { key: 'Tab' });
+
+      expect(document.activeElement).toBe(lightbox);
+    });
+
+    it('should restore focus to the triggering thumbnail on close', () => {
+      const { container } = render(
+        <AttachmentPreview attachments={[mockAttachments[0]]} onRemove={mockOnRemove} />
+      );
+
+      const button = openButton(container) as HTMLElement;
+      fireEvent.click(button);
+
+      fireEvent.keyDown(document, { key: 'Escape' });
+
+      expect(document.querySelector(`[data-testid="${ATTACHMENT_LIGHTBOX_TEST_ID}"]`)).toBeNull();
+      expect(document.activeElement).toBe(button);
     });
   });
 });

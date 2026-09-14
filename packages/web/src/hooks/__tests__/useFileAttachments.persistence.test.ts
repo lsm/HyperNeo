@@ -5,7 +5,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { useFileAttachments } from '../useFileAttachments.ts';
 import {
   composerAttachmentsSignal,
+  dropPendingComposerAttachments,
   readPendingComposerAttachments,
+  removeDeliveredComposerAttachments,
   writePendingComposerAttachments,
 } from '../../lib/composer-attachment-store.ts';
 import {
@@ -165,6 +167,42 @@ describe('useFileAttachments session persistence', () => {
     expect(second.result.current.attachments).toEqual(snapshot);
   });
 
+  it('restoreAfterFailedSend merges the saved snapshot with attachments added during the send', () => {
+    const { result } = renderHook(() => useFileAttachments('session-a'));
+    const saved = [{ data: 'AAAA', media_type: 'image/png' as const, name: 'a.png', size: 4 }];
+    const addedDuringSend = [
+      { data: 'BBBB', media_type: 'image/jpeg' as const, name: 'b.jpg', size: 4 },
+    ];
+
+    act(() => {
+      result.current.restoreAfterFailedSend(saved);
+    });
+    expect(result.current.attachments).toEqual(saved);
+
+    act(() => {
+      result.current.restore(addedDuringSend);
+    });
+
+    act(() => {
+      result.current.restoreAfterFailedSend(saved);
+    });
+    expect(result.current.attachments).toEqual([...saved, ...addedDuringSend]);
+  });
+
+  it('restoreAfterFailedSend does not duplicate re-added copies of saved images', () => {
+    const { result } = renderHook(() => useFileAttachments('session-a'));
+    const saved = [{ data: 'AAAA', media_type: 'image/png' as const, name: 'a.png', size: 4 }];
+
+    act(() => {
+      result.current.restore(saved);
+    });
+    act(() => {
+      result.current.restoreAfterFailedSend(saved);
+    });
+
+    expect(result.current.attachments).toEqual(saved);
+  });
+
   it('does not persist when no sessionId is provided', async () => {
     const first = renderHook(() => useFileAttachments());
     await pasteImages(first.result, [createMockFile('pasted.png', 'image/png')]);
@@ -242,5 +280,43 @@ describe('composer-attachment-store', () => {
   it('clearing an untouched session is a no-op', () => {
     writePendingComposerAttachments('session-a', []);
     expect(composerAttachmentsSignal.value).toEqual({});
+  });
+
+  it('dropPendingComposerAttachments removes only the targeted session entry', () => {
+    writePendingComposerAttachments('session-a', [
+      { data: 'AAAA', media_type: 'image/png', name: 'a.png', size: 4 },
+    ]);
+    writePendingComposerAttachments('session-b', [
+      { data: 'BBBB', media_type: 'image/png', name: 'b.png', size: 4 },
+    ]);
+
+    dropPendingComposerAttachments('session-a');
+
+    expect(readPendingComposerAttachments('session-a')).toEqual([]);
+    expect(readPendingComposerAttachments('session-b')).toHaveLength(1);
+  });
+
+  it('removeDeliveredComposerAttachments drops delivered images and keeps later additions', () => {
+    writePendingComposerAttachments('session-a', [
+      { data: 'AAAA', media_type: 'image/png', name: 'a.png', size: 4 },
+      { data: 'CCCC', media_type: 'image/png', name: 'c.png', size: 4 },
+    ]);
+
+    removeDeliveredComposerAttachments('session-a', [{ data: 'AAAA', media_type: 'image/png' }]);
+
+    expect(readPendingComposerAttachments('session-a')).toEqual([
+      { data: 'CCCC', media_type: 'image/png', name: 'c.png', size: 4 },
+    ]);
+  });
+
+  it('removeDeliveredComposerAttachments is a no-op for unknown sessions or data', () => {
+    removeDeliveredComposerAttachments('missing', [{ data: 'AAAA', media_type: 'image/png' }]);
+
+    writePendingComposerAttachments('session-a', [
+      { data: 'CCCC', media_type: 'image/png', name: 'c.png', size: 4 },
+    ]);
+    removeDeliveredComposerAttachments('session-a', [{ data: 'ZZZZ', media_type: 'image/png' }]);
+
+    expect(readPendingComposerAttachments('session-a')).toHaveLength(1);
   });
 });

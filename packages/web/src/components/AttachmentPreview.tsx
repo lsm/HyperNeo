@@ -1,5 +1,5 @@
 import type { MessageImage } from '@hyperneo/shared/types';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { formatFileSize } from '../lib/file-utils.ts';
 import { Portal } from './ui/Portal.tsx';
 
@@ -12,10 +12,18 @@ export const ATTACHMENT_LIGHTBOX_TEST_ID = 'attachment-lightbox';
 
 export function AttachmentPreview({ attachments, onRemove }: AttachmentPreviewProps) {
   const [enlargedIndex, setEnlargedIndex] = useState<number | null>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLElement | null>(null);
   const enlarged =
     enlargedIndex !== null && enlargedIndex < attachments.length
       ? attachments[enlargedIndex]
       : undefined;
+
+  const closeLightbox = () => {
+    setEnlargedIndex(null);
+    triggerRef.current?.focus();
+    triggerRef.current = null;
+  };
 
   useEffect(() => {
     if (enlargedIndex === null) return;
@@ -23,8 +31,14 @@ export function AttachmentPreview({ attachments, onRemove }: AttachmentPreviewPr
       setEnlargedIndex(null);
       return;
     }
+    dialogRef.current?.focus();
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setEnlargedIndex(null);
+      if (e.key === 'Escape') {
+        closeLightbox();
+      } else if (e.key === 'Tab') {
+        e.preventDefault();
+        dialogRef.current?.focus();
+      }
     };
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
@@ -37,17 +51,26 @@ export function AttachmentPreview({ attachments, onRemove }: AttachmentPreviewPr
       {attachments.map((attachment, index) => (
         <div
           key={index}
-          class="relative group w-20 h-20 rounded overflow-hidden border border-line-strong hover:border-fg-faint transition-colors cursor-zoom-in"
-          title="Open full size"
-          onClick={() => setEnlargedIndex(index)}
+          class="relative group w-20 h-20 rounded overflow-hidden border border-line-strong hover:border-fg-faint transition-colors"
         >
-          <img
-            src={`data:${attachment.media_type};base64,${attachment.data}`}
-            alt={attachment.name}
-            class="w-full h-full object-cover"
-          />
+          <button
+            type="button"
+            class="absolute inset-0 flex cursor-zoom-in"
+            aria-label={`Open ${attachment.name} full size`}
+            title="Open full size"
+            onClick={(e) => {
+              triggerRef.current = e.currentTarget;
+              setEnlargedIndex(index);
+            }}
+          >
+            <img
+              src={`data:${attachment.media_type};base64,${attachment.data}`}
+              alt={attachment.name}
+              class="w-full h-full object-cover"
+            />
+          </button>
 
-          <div class="absolute inset-0 bg-scrim-strong opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center p-1">
+          <div class="pointer-events-none absolute inset-0 bg-scrim-strong opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center p-1">
             <div class="text-xs text-accent-fg text-center truncate w-full px-1">
               {attachment.name}
             </div>
@@ -80,12 +103,14 @@ export function AttachmentPreview({ attachments, onRemove }: AttachmentPreviewPr
       {enlarged && (
         <Portal into="body">
           <div
+            ref={dialogRef}
             data-testid={ATTACHMENT_LIGHTBOX_TEST_ID}
             role="dialog"
             aria-modal="true"
             aria-label={enlarged.name}
-            class="fixed inset-0 z-50 flex items-center justify-center p-6 bg-scrim backdrop-blur-sm cursor-zoom-out animate-fadeIn"
-            onClick={() => setEnlargedIndex(null)}
+            tabindex={-1}
+            class="fixed inset-0 z-50 flex items-center justify-center p-6 bg-scrim backdrop-blur-sm cursor-zoom-out animate-fadeIn outline-none"
+            onClick={closeLightbox}
           >
             <img
               src={`data:${enlarged.media_type};base64,${enlarged.data}`}
