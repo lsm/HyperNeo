@@ -330,6 +330,21 @@ describe('TaskAuxiliaryPanel', () => {
     await waitFor(() => expect(mockSetPreferredWorkflow).toHaveBeenCalledWith('task-1', null));
   });
 
+  it('shows why a workflow change was rejected', async () => {
+    mockSetPreferredWorkflow.mockRejectedValueOnce(
+      new Error('Cannot change the workflow for task task-1: the task has already started')
+    );
+    const { getByTestId } = render(<TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" />);
+
+    fireEvent.change(getByTestId('task-workflow-select'), { target: { value: 'workflow-1' } });
+
+    await waitFor(() =>
+      expect(getByTestId('task-workflow-error').textContent).toContain(
+        'the task has already started'
+      )
+    );
+  });
+
   it('uses the route space id for goal and forge links', async () => {
     mockTasks.value = [makeTask({ goalId: 'goal-1', evolutionScopeId: 'scope-1' })];
     const { getByText } = render(

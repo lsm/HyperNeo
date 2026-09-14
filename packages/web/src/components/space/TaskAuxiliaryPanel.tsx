@@ -84,6 +84,7 @@ export function TaskAuxiliaryPanel({
   const scrollRef = useRef<HTMLDivElement>(null);
   const [scopeName, setScopeName] = useState<string | null>(null);
   const [savingWorkflow, setSavingWorkflow] = useState(false);
+  const [workflowError, setWorkflowError] = useState<string | null>(null);
   const [statusTransitioning, setStatusTransitioning] = useState(false);
   const [transitionError, setTransitionError] = useState<string | null>(null);
   const [descriptionDraft, setDescriptionDraft] = useState(resolvedTask?.description ?? '');
@@ -178,8 +179,10 @@ export function TaskAuxiliaryPanel({
   const handleWorkflowChange = async (nextWorkflowId: string | null) => {
     try {
       setSavingWorkflow(true);
+      setWorkflowError(null);
       await spaceStore.setPreferredWorkflow(task.id, nextWorkflowId);
-    } catch {
+    } catch (err) {
+      setWorkflowError(err instanceof Error ? err.message : 'Failed to change the workflow');
     } finally {
       setSavingWorkflow(false);
     }
@@ -324,6 +327,11 @@ export function TaskAuxiliaryPanel({
           ))}
         </select>
         {savingWorkflow && <p class="mt-1 text-[11px] text-fg-muted">Saving…</p>}
+        {!savingWorkflow && workflowError && (
+          <p class="mt-1 text-[11px] text-danger" data-testid="task-workflow-error">
+            {workflowError}
+          </p>
+        )}
       </div>
       {task.dependsOn.length > 0 && (
         <div>

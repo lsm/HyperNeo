@@ -72,6 +72,7 @@ async function runRuntimeExecutor(
   const stopped = await deps.stopForStatus(spaceId, task.id, {
     status: input.status,
     result: input.result,
+    blockReason: input.blockReason,
   });
   return stopped ?? 'invalid_transition';
 }
