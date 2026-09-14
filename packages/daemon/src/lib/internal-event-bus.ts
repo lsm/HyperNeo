@@ -255,7 +255,6 @@ export interface SessionEvents {
   };
   'session.deleted': { sessionId: string };
   'commands.updated': { sessionId: string; commands: string[] };
-  'session.providerRouted': { sessionId: string; model: string; provider?: string };
   'session.error': { sessionId: string; error: string; details?: unknown };
   'session.errorObserved': { sessionId: string; details: unknown };
   'session.errorClear': { sessionId: string };

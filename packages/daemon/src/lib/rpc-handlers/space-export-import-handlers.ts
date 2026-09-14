@@ -1058,6 +1058,19 @@ export function setupSpaceExportImportHandlers(
         const allWarnings: string[] = [];
 
         for (const exportedAgent of bundle.agents) {
+          if (
+            typeof bundle.version === 'number' &&
+            bundle.version < 7 &&
+            exportedAgent.modelPool?.some((entry) => entry.provider !== undefined)
+          ) {
+            allWarnings.push(
+              `Agent "${exportedAgent.name}": modelPool provider pins require export version 7; ` +
+                'the pins were dropped on import'
+            );
+            exportedAgent.modelPool = exportedAgent.modelPool.map((entry) =>
+              entry.provider !== undefined ? { ...entry, provider: undefined } : entry
+            );
+          }
           const existing = existingAgentByName.get(nameKey(exportedAgent.name));
 
           if (!existing) {

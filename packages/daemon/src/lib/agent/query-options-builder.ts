@@ -353,8 +353,8 @@ export class QueryOptionsBuilder {
       } else if (outcome === 'allowed') {
         const contextManager = getProviderContextManager();
         const fallbackSession = {
-          ...this.ctx.session,
-          config: { ...this.ctx.session.config, model: config.fallbackModel },
+          ...session,
+          config: { ...session.config, model: config.fallbackModel },
         };
         try {
           await contextManager.ensureContextReady(fallbackSession);

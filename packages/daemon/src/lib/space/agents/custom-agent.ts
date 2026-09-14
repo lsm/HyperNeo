@@ -479,7 +479,7 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
   const acpProviderId = inferProviderForModel(model) === 'acp' ? 'acp' : undefined;
   const provider = slotOverrides?.model
     ? (slotOverrides?.provider ?? acpProviderId)
-    : (customAgent.provider ?? acpProviderId);
+    : (slotOverrides?.provider ?? customAgent.provider ?? acpProviderId);
 
   const resolvedPrompt = resolveCustomAgentPrompt(customAgent, slotOverrides);
   const visiblePrompt = resolvedPrompt.value;
