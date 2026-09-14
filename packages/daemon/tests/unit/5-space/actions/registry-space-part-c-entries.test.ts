@@ -16,7 +16,7 @@ import {
   EXTERNAL_EVENT_TOOL_SCHEMAS,
   INACTIVITY_TOOL_SCHEMAS,
   SCHEDULED_TOOL_SCHEMAS,
-} from '../../../../src/lib/space/tools/space-agent-tool-schemas.ts';
+} from '../../../../src/lib/space/actions/space-agent-schemas.ts';
 import type { SpaceAgentToolsConfig } from '../../../../src/lib/space/tools/space-agent-tools.ts';
 import { DEFAULT_INACTIVITY_THRESHOLD_MS } from '../../../../src/lib/space/tools/space-agent-tools.ts';
 import { SESSION_WRITE_AUTONOMY_LEVEL } from '../../../../src/lib/space/tools/tool-admission-gates.ts';

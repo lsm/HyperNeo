@@ -1,11 +1,5 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import {
-  createNodeAgentToolHandlers,
-  type NodeAgentToolsConfig,
-} from '../actions/node-handlers.ts';
-import { wrapHandlerWithHooks } from '../runtime/workflow-hook-engine.ts';
-import { instrumentTypedTelemetryAtMcpBoundary } from './mcp-typed-telemetry-boundary.ts';
-import {
   ArchiveTaskSchema,
   CreateStandaloneTaskSchema,
   GetExternalEventSchema,
@@ -25,17 +19,23 @@ import {
   SubscribeExternalEventSchema,
   SubscribePrEventsSchema,
   UnsubscribeExternalEventSchema,
-} from './node-agent-tool-schemas.ts';
-import type { SubmitForApprovalInput } from './task-agent-tool-schemas.ts';
+} from '../actions/node-agent-schemas.ts';
+import {
+  createNodeAgentToolHandlers,
+  type NodeAgentToolsConfig,
+} from '../actions/node-handlers.ts';
+import type { SubmitForApprovalInput } from '../actions/task-agent-schemas.ts';
 import {
   ApproveTaskSchema,
   MarkCompleteSchema,
   SubmitForApprovalSchema,
-} from './task-agent-tool-schemas.ts';
+} from '../actions/task-agent-schemas.ts';
+import { wrapHandlerWithHooks } from '../runtime/workflow-hook-engine.ts';
+import { instrumentTypedTelemetryAtMcpBoundary } from './mcp-typed-telemetry-boundary.ts';
 import type { ToolResult } from './tool-result.ts';
 
-export { createNodeAgentToolHandlers };
 export type { NodeAgentToolsConfig, ToolResult };
+export { createNodeAgentToolHandlers };
 export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
   const handlers = createNodeAgentToolHandlers(config);
   async function submitForApproval(args: SubmitForApprovalInput): Promise<ToolResult> {

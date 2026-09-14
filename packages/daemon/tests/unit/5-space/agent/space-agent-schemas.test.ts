@@ -15,7 +15,7 @@ import {
   type SpaceAgentToolName,
   type SpaceForgeToolName,
   type SpaceGoalToolName,
-} from '../../../../src/lib/space/tools/space-agent-tool-schemas.ts';
+} from '../../../../src/lib/space/actions/space-agent-schemas.ts';
 
 const BASE_TOOL_NAMES: SpaceAgentToolName[] = [
   'list_sessions',

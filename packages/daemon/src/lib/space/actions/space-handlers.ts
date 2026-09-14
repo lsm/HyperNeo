@@ -123,10 +123,7 @@ import { createWorkflowTaskStoppingExecutor } from '../runtime/task-stopping-exe
 import { getNextRunAt, isValidCronExpression } from '../schedule/cron-utils.ts';
 import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit } from '../slug.ts';
 import { normalizeMeaningfulTaskResult } from '../task-result-utils.ts';
-import {
-  SESSION_MESSAGE_MAX_LIMIT,
-  SPACE_SESSION_MAX_LIMIT,
-} from '../tools/space-agent-tool-schemas.ts';
+import { SESSION_MESSAGE_MAX_LIMIT, SPACE_SESSION_MAX_LIMIT } from './space-agent-schemas.ts';
 import { decideUpdateTask } from '../tools/space-tool-pipeline.ts';
 import {
   routeApproveTask,

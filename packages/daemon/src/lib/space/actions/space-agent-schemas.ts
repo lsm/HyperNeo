@@ -1,8 +1,5 @@
 import { z } from 'zod';
-import {
-  SpaceTaskStatusSchema,
-  UpdateTaskStatusParamDescription,
-} from './task-agent-tool-schemas.ts';
+import { SpaceTaskStatusSchema, UpdateTaskStatusParamDescription } from './task-agent-schemas.ts';
 
 export const SpaceSessionStatusSchema = z.enum([
   'active',

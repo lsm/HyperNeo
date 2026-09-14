@@ -11,7 +11,7 @@ import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-ag
 import {
   ReviewGoalOutcomeSchema,
   SPACE_GOAL_TOOL_SCHEMAS,
-} from '../../../../src/lib/space/tools/space-agent-tool-schemas.ts';
+} from '../../../../src/lib/space/actions/space-agent-schemas.ts';
 import type { SpaceAgentToolsConfig } from '../../../../src/lib/space/tools/space-agent-tools.ts';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';

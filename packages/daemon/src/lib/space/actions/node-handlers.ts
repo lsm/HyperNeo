@@ -41,12 +41,12 @@ import type {
   SubscribeExternalEventInput,
   SubscribePrEventsInput,
   UnsubscribeExternalEventInput,
-} from '../tools/node-agent-tool-schemas.ts';
+} from './node-agent-schemas.ts';
 import type {
   ApproveTaskInput,
   MarkCompleteInput,
   SubmitForApprovalInput,
-} from '../tools/task-agent-tool-schemas.ts';
+} from './task-agent-schemas.ts';
 import type { ToolResult } from '../tools/tool-result.ts';
 import { jsonResult } from '../tools/tool-result.ts';
 

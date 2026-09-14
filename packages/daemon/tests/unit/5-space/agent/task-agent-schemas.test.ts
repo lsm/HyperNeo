@@ -7,7 +7,7 @@ import {
   SubmitForApprovalSchema,
   UpdateTaskSchema,
   TASK_AGENT_TOOL_SCHEMAS,
-} from '../../../../src/lib/space/tools/task-agent-tool-schemas.ts';
+} from '../../../../src/lib/space/actions/task-agent-schemas.ts';
 
 describe('ApproveTaskSchema', () => {
   test('accepts empty object', () => {

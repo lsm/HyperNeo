@@ -19,7 +19,7 @@ import { jsonResult } from '../../../../src/lib/space/tools/tool-result.ts';
 import type {
   SaveArtifactInput,
   SubscribeExternalEventInput,
-} from '../../../../src/lib/space/tools/node-agent-tool-schemas.ts';
+} from '../../../../src/lib/space/actions/node-agent-schemas.ts';
 import {
   clearBuiltInValidatorRegistry,
   registerBuiltInValidator,
