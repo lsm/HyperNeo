@@ -49,7 +49,7 @@
 52	packages/daemon/tests/unit/5-space/agent/task-agent-manager-spawn-cas.test.ts
 85	packages/daemon/tests/unit/5-space/agent/task-agent-manager-spawn-flow.test.ts
 4	packages/daemon/tests/unit/5-space/agent/task-agent-memory-mcp.test.ts
-17	packages/daemon/tests/unit/5-space/agent/task-agent-tool-schemas.test.ts
+17	packages/daemon/tests/unit/5-space/agent/task-agent-schemas.test.ts
 102	packages/daemon/tests/unit/5-space/evolution-conversation-analysis-service.test.ts
 291	packages/daemon/tests/unit/5-space/evolution-episode-service.test.ts
 88	packages/daemon/tests/unit/5-space/evolution-log-evidence-service.test.ts

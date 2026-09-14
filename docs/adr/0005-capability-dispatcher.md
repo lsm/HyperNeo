@@ -77,7 +77,7 @@ strongly-typed in-process dispatch, not a generic remote-procedure gateway.
    superpipe pipeline (per ADR 0004) that mixes validation, safety, autonomy,
    handler resolution, execution, audit, and telemetry.
 9. **Schema ownership.** Zod schemas move from monolithic handlers into
-   `tools/space-agent-tool-schemas.ts` and registry sources so the registry can
+   `actions/space-agent-schemas.ts` and registry sources so the registry can
    validate `params` and generate `describe_action` output. Tool names are stable
    slugs.
 10. **Coexistence rollout.** `HYPERNEO_SPACE_ACTIONS_DISPATCHER` gates the server.
@@ -98,7 +98,7 @@ strongly-typed in-process dispatch, not a generic remote-procedure gateway.
 | Space registry | `packages/daemon/src/lib/space/actions/registry-space.ts` | Space/coordinator actions |
 | Node registry | `packages/daemon/src/lib/space/actions/registry-node.ts` | Node-agent actions |
 | Server | `packages/daemon/src/lib/space/actions/space-actions-server.ts` | MCP server and `call_action` tool |
-| Schemas | `packages/daemon/src/lib/space/tools/space-agent-tool-schemas.ts` | Extracted Zod schemas |
+| Schemas | `packages/daemon/src/lib/space/actions/space-agent-schemas.ts` | Extracted Zod schemas |
 
 ## Where the dispatcher must not be used
 
@@ -152,7 +152,7 @@ The epic #3129 tracks the work as CD 00–CD 17 slices. This ADR is CD 00.
 - ADR 0004: `docs/adr/0004-superpipe-pipelines.md`
 - Typed surface: `packages/daemon/src/lib/space/tools/space-agent-tools.ts`,
   `packages/daemon/src/lib/space/tools/node-agent-tools.ts`,
-  `packages/daemon/src/lib/space/tools/task-agent-tool-schemas.ts`
+  `packages/daemon/src/lib/space/actions/task-agent-schemas.ts`
 - Admission gates: `packages/daemon/src/lib/space/tools/tool-admission-gates.ts`
 - Worker tool policy: `packages/daemon/src/lib/space/agents/tool-policy.ts`
 - MCP attach sites: `packages/daemon/src/lib/space/runtime/space-runtime-service.ts`

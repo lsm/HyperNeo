@@ -18,8 +18,6 @@ import type {
 import { generateUUID, isRateOrUsageLimited, resolveNodeAgents } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { UUID } from 'crypto';
-import { createDefaultSessionResolutionDeps } from '../../session-resolution/default-deps.ts';
-import { ensureSession } from '../../session-resolution/ensure-session.ts';
 import { inferAvailableSpawnProviderForModel } from '../../providers/registry.js';
 import type { ActorResolver } from '../../../../../messaging/src/contracts.ts';
 import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types.ts';
@@ -30,18 +28,19 @@ import {
   type ContextClearBoundaryOwner,
   withSessionOperationLock,
 } from '../../../lib/agent/message-delivery.ts';
-import { verifyPromptContent } from '../../../lib/agent/message-delivery-outbox.ts';
+import {
+  activatePrompts,
+  verifyPromptContent,
+} from '../../../lib/agent/message-delivery-outbox.ts';
 import { decideInjectDelivery } from '../../../lib/agent/message-delivery-pipeline.ts';
-import { activatePrompts } from '../../../lib/agent/message-delivery-outbox.ts';
-import { readRestartRecoveryNote } from './restart-recovery-note.ts';
 import type { Database } from '../../../storage/database.ts';
 import type { ReactiveDatabase } from '../../../storage/reactive-database.ts';
 import type { AppMcpServerRepository } from '../../../storage/repositories/app-mcp-server-repository.ts';
 import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository.ts';
 import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository.ts';
 import { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository.ts';
-import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
 import type { SpaceAgentTemplateRepository } from '../../../storage/repositories/space-agent-template-repository.ts';
+import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
 import type { ToolContinuationRecoveryRepository } from '../../../storage/repositories/tool-continuation-recovery-repository.ts';
@@ -49,16 +48,17 @@ import type { WorkflowRunArtifactRepository } from '../../../storage/repositorie
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
 import { validateImageSizes } from '../../session/message-persistence.ts';
 import { CleanupState, type SessionManager } from '../../session-manager.ts';
+import { createDefaultSessionResolutionDeps } from '../../session-resolution/default-deps.ts';
+import { ensureSession } from '../../session-resolution/ensure-session.ts';
 import type { SkillsManager } from '../../skills-manager.ts';
 import { getLongHorizonAgentTemplate } from '../agents/long-horizon-agent-templates.ts';
-import type { NodeAgentTemplateSource } from './spawn-slot-resolution.ts';
 import { isRunnableUnifiedAgent } from '../agents/worker-long-horizon-mapper.ts';
 import type { SpaceManager } from '../managers/space-manager.ts';
 import { SpaceTaskManager } from '../managers/space-task-manager.ts';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager.ts';
 import {
-  WorkspaceNotGitRepositoryError,
   type SpaceWorktreeManager,
+  WorkspaceNotGitRepositoryError,
 } from '../managers/space-worktree-manager.ts';
 import {
   activateModelPoolReservation,
@@ -69,7 +69,9 @@ import {
   releaseModelPoolReservation,
   reserveModelPoolSlot,
 } from './model-pool-scheduler.ts';
+import { readRestartRecoveryNote } from './restart-recovery-note.ts';
 import type { SpaceRuntimeService } from './space-runtime-service.ts';
+import type { NodeAgentTemplateSource } from './spawn-slot-resolution.ts';
 export interface SubSessionMemberInfo {
   agentId?: string;
   agentName?: string;
@@ -103,6 +105,7 @@ import {
   taskIdFromSubSessionIdentity,
 } from '../../session/sub-session-identity.ts';
 import { isSpaceActionsDispatcherEnabled } from '../actions/dispatcher-flag.ts';
+import type { NodeAgentToolsConfig } from '../actions/node-handlers.ts';
 import {
   buildWorkerDispatcherContractTools,
   createSpaceActionsMcpServer,
@@ -121,10 +124,15 @@ import {
   createMarkCompleteHandler,
   createPrMergedGate,
 } from '../tools/end-node-handlers.ts';
-import { createNodeAgentMcpServer, type NodeAgentToolsConfig } from '../tools/node-agent-tools.ts';
+import { createNodeAgentMcpServer } from '../tools/node-agent-tools.ts';
 import { jsonResult } from '../tools/tool-result.ts';
 import { POST_APPROVAL_TASK_AGENT_TARGET } from '../workflows/post-approval-validator.ts';
+import { runTemplateSnapshotRecord } from '../workflows/run-template-snapshot.ts';
 import { decideActivationRouting, selectWorkflowNodeForAgent } from './activation-routing.ts';
+import {
+  type AgentMessageDeliveryDeps,
+  deliverAgentMessageToTarget,
+} from './agent-message-delivery-pipeline.ts';
 import { AgentMessageRouter } from './agent-message-router.ts';
 import type { WorkflowArtifactProfile } from './artifact-profile.ts';
 import { ChannelResolver } from './channel-resolver.ts';
@@ -141,10 +149,6 @@ import {
   collectDispatchablePostApprovalRoutes,
   isCoderOwnedMergeWorkflow as resolveIsCoderOwnedMergeWorkflow,
 } from './post-approval-router.ts';
-import {
-  deliverAgentMessageToTarget,
-  type AgentMessageDeliveryDeps,
-} from './agent-message-delivery-pipeline.ts';
 import type { ReplyRoutingRegistry } from './reply-routing-registry.ts';
 import { decideRestoredWorkerAdmission } from './restored-worker-admission-decision-pipeline.ts';
 import { isCanonicalTaskTerminalForSpawn } from './run-spawn-decisions.ts';
@@ -166,7 +170,6 @@ import {
   resolveWorkflowNodeSlot,
   spaceAgentTemplateToNodeSource,
 } from './spawn-slot-resolution.ts';
-import { runTemplateSnapshotRecord } from '../workflows/run-template-snapshot.ts';
 import { stagedRun } from './staged-run.ts';
 import { runVerifiedStopFlow, type VerifiedStopFlowDeps } from './verified-stop-flow.ts';
 import {
@@ -2763,7 +2766,7 @@ export class TaskAgentManager {
     if (!this.isSessionAlive(sessionId)) return false;
     const session = this.getAgentSessionById(sessionId);
     if (!session) return false;
-    await this.mcpSelfHeal(session, ['node-agent']);
+    await this.mcpSelfHeal(session, ['node-agent', 'space-actions']);
     await this.startRestoredWorkerForResume(session);
     return true;
   }
@@ -4620,12 +4623,9 @@ export class TaskAgentManager {
     );
   }
 
-  private static readonly REQUIRED_WORKFLOW_SUBSESSION_MCP_SERVERS = ['node-agent'] as const;
-
   requiredWorkflowSubSessionMcpServers(): string[] {
-    return this.config.memoryRepo
-      ? [...TaskAgentManager.REQUIRED_WORKFLOW_SUBSESSION_MCP_SERVERS, 'agent-memory']
-      : [...TaskAgentManager.REQUIRED_WORKFLOW_SUBSESSION_MCP_SERVERS];
+    const required = isSpaceActionsDispatcherEnabled() ? ['space-actions'] : ['node-agent'];
+    return this.config.memoryRepo ? [...required, 'agent-memory'] : required;
   }
 
   async ensureNodeAgentAttached(
@@ -4662,12 +4662,11 @@ export class TaskAgentManager {
         `Self-healing by re-injecting before first turn — but this indicates a regression in the spawn/rehydrate merge logic.`
     );
 
-    for (const name of missing) {
-      if (name === 'node-agent') {
-        await this.reinjectNodeAgentMcpServer(session, ctx);
-      } else if (name === 'agent-memory') {
-        await this.reinjectAgentMemoryMcpServer(session, ctx);
-      }
+    if (missing.includes('node-agent') || missing.includes('space-actions')) {
+      await this.reinjectNodeAgentMcpServer(session, ctx);
+    }
+    if (missing.includes('agent-memory')) {
+      await this.reinjectAgentMemoryMcpServer(session, ctx);
     }
 
     const verifyMcpServers =

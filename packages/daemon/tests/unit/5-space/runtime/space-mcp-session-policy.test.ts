@@ -4,9 +4,9 @@ import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agen
 import {
   missingMcpServers,
   resolveSpaceMcpSessionPolicy,
-  SPACE_AD_HOC_MEMBER_REQUIRED_MCP_SERVERS,
-  SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS,
   type SpaceMcpSessionRole,
+  spaceAdHocMemberRequiredMcpServers,
+  spaceWorkflowWorkerRequiredMcpServers,
 } from '../../../../src/lib/space/runtime/space-mcp-session-policy.ts';
 
 const now = Date.now();
@@ -110,7 +110,7 @@ describe('resolveSpaceMcpSessionPolicy', () => {
       attachSpaceChatTools: true,
       isWorkflowWorker: false,
     });
-    expect(policy.requiredServers).toBe(SPACE_AD_HOC_MEMBER_REQUIRED_MCP_SERVERS);
+    expect(policy.requiredServers).toEqual(spaceAdHocMemberRequiredMcpServers());
   });
 
   test('only space_chat carries the space-chat self-heal discriminator', () => {
@@ -139,10 +139,10 @@ describe('resolveSpaceMcpSessionPolicy', () => {
       attachGenericSpaceTools: true,
       isWorkflowWorker: false,
     });
-    expect(policy.requiredServers).toBe(SPACE_AD_HOC_MEMBER_REQUIRED_MCP_SERVERS);
+    expect(policy.requiredServers).toEqual(spaceAdHocMemberRequiredMcpServers());
   });
 
-  test('routes post-approval sub-sessions as ad-hoc members requiring space-agent-tools (#852)', () => {
+  test('routes post-approval sub-sessions as ad-hoc members requiring space-actions (#852)', () => {
     const session = makeSession({
       id: 'space:space-1:task:task-1:post-approval:merger',
       type: 'worker',
@@ -163,8 +163,10 @@ describe('resolveSpaceMcpSessionPolicy', () => {
       attachGenericSpaceTools: true,
       isWorkflowWorker: false,
     });
-    expect(policy.requiredServers).toBe(SPACE_AD_HOC_MEMBER_REQUIRED_MCP_SERVERS);
-    expect(missingMcpServers(undefined, policy.requiredServers)).toEqual(['space-agent-tools']);
+    expect(policy.requiredServers).toEqual(spaceAdHocMemberRequiredMcpServers());
+    expect(missingMcpServers(undefined, policy.requiredServers)).toEqual([
+      ...policy.requiredServers,
+    ]);
   });
 
   test('routes workflow workers by node execution ownership, not session ID shape', () => {
@@ -188,7 +190,7 @@ describe('resolveSpaceMcpSessionPolicy', () => {
       attachGenericSpaceTools: false,
       isWorkflowWorker: true,
     });
-    expect(policy.requiredServers).toBe(SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS);
+    expect(policy.requiredServers).toEqual(spaceWorkflowWorkerRequiredMcpServers());
   });
 
   test('resolves workflow worker space from task when session context lacks spaceId', () => {
@@ -226,7 +228,7 @@ describe('resolveSpaceMcpSessionPolicy', () => {
       attachGenericSpaceTools: false,
       isWorkflowWorker: true,
     });
-    expect(policy.requiredServers).toBe(SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS);
+    expect(policy.requiredServers).toEqual(spaceWorkflowWorkerRequiredMcpServers());
   });
 
   test('routes suffixed workflow workers by embedded execution id even when another session owns the row', () => {
@@ -251,7 +253,7 @@ describe('resolveSpaceMcpSessionPolicy', () => {
       attachGenericSpaceTools: false,
       isWorkflowWorker: true,
     });
-    expect(policy.requiredServers).toBe(SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS);
+    expect(policy.requiredServers).toEqual(spaceWorkflowWorkerRequiredMcpServers());
   });
 
   test('fails closed (demotes to ad_hoc_member) for a canonical long-term-agent session when no context is given', () => {
@@ -378,6 +380,36 @@ describe('resolveSpaceMcpSessionPolicy', () => {
     expect(policy.spaceId).toBeUndefined();
     expect(policy.requiredServers).toEqual(['space-actions']);
   });
+
+  test('falls back to the legacy typed servers when the dispatcher flag is off', () => {
+    const previous = process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER;
+    process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER = '0';
+    try {
+      const member = resolveSpaceMcpSessionPolicy(
+        makeSession({ id: 'ad-hoc-1', type: 'worker', context: { spaceId: 'space-1' } })
+      );
+      expect(member.requiredServers).toEqual(['space-agent-tools']);
+
+      const worker = resolveSpaceMcpSessionPolicy(
+        makeSession({
+          id: 'space:space-1:task:task-1:exec:exec-1',
+          type: 'worker',
+          context: { spaceId: 'space-1', taskId: 'task-1' },
+        }),
+        {
+          nodeExecutionRepo: {
+            getByAgentSessionId: () => makeNodeExecution(),
+            getById: () => null,
+          },
+          taskRepo: { getTask: () => makeTask({ id: 'task-1', spaceId: 'space-1' }) },
+        }
+      );
+      expect(worker.requiredServers).toEqual(['node-agent']);
+    } finally {
+      if (previous === undefined) delete process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER;
+      else process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER = previous;
+    }
+  });
 });
 
 describe('SpaceMcpSessionRole', () => {
@@ -390,7 +422,7 @@ describe('SpaceMcpSessionRole', () => {
 describe('missingMcpServers', () => {
   test('returns only required servers missing from the MCP map', () => {
     expect(
-      missingMcpServers({ 'other-server': {} }, SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS)
-    ).toEqual(['node-agent']);
+      missingMcpServers({ 'other-server': {} }, spaceWorkflowWorkerRequiredMcpServers())
+    ).toEqual([...spaceWorkflowWorkerRequiredMcpServers()]);
   });
 });

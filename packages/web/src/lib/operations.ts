@@ -20,3 +20,18 @@ export async function transitionTask(
   }
   return result;
 }
+
+export async function editTaskMetadata(
+  hub: MessageHub,
+  input: {
+    taskId: string;
+    title?: string;
+    description?: string;
+    priority?: SpaceTask['priority'];
+    labels?: string[];
+  }
+): Promise<SpaceTask> {
+  const result = await invokeOperation<SpaceTask | null>(hub, 'task.update', input);
+  if (result === null) throw new Error(`Task ${input.taskId} is unavailable`);
+  return result;
+}

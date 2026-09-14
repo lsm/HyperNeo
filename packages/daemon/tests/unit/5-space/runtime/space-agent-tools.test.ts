@@ -37,7 +37,7 @@ import {
   SPACE_FORGE_TOOL_SCHEMAS,
   SPACE_GOAL_TOOL_SCHEMAS,
   type SpaceAgentToolName,
-} from '../../../../src/lib/space/tools/space-agent-tool-schemas.ts';
+} from '../../../../src/lib/space/actions/space-agent-schemas.ts';
 import {
   createSpaceAgentMcpServer,
   createSpaceAgentToolHandlers,

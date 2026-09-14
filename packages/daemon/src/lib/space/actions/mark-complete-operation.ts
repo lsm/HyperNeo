@@ -3,7 +3,7 @@ import type { OperationOutcome } from '../../operations/invoke.ts';
 import type { OperationCaller } from '../../operations/registry.ts';
 import type { SpaceGoalService } from '../goals/goal-service.ts';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
-import type { MarkCompleteInput } from '../tools/task-agent-tool-schemas.ts';
+import type { MarkCompleteInput } from './task-agent-schemas.ts';
 import { jsonResult, type ToolResult } from '../tools/tool-result.ts';
 
 type GoalUpdatePayload = NonNullable<MarkCompleteInput['goal_update']>;

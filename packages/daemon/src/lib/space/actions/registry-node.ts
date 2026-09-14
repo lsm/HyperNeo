@@ -1,21 +1,12 @@
 import { invokeOperation } from '../../operations/invoke.ts';
 import {
-  resolveOperationRegistry,
   type OperationRegistrySource,
+  resolveOperationRegistry,
 } from '../../operations/registry.ts';
 import type { SpaceMcpSessionRole } from '../runtime/space-mcp-session-policy.ts';
 import { wrapHandlerWithHooks } from '../runtime/workflow-hook-engine.ts';
-import {
-  createNodeAgentToolHandlers,
-  type NodeAgentToolsConfig,
-} from '../tools/node-agent-tools.ts';
-import {
-  ApproveTaskSchema,
-  MarkCompleteSchema,
-  SubmitForApprovalSchema,
-  type MarkCompleteInput,
-  type SubmitForApprovalInput,
-} from '../tools/task-agent-tool-schemas.ts';
+import type { ToolResult } from '../tools/tool-result.ts';
+import { runMarkCompleteOperation } from './mark-complete-operation.ts';
 import {
   ArchiveTaskSchema,
   CreateStandaloneTaskSchema,
@@ -36,11 +27,17 @@ import {
   SubscribeExternalEventSchema,
   SubscribePrEventsSchema,
   UnsubscribeExternalEventSchema,
-} from '../tools/node-agent-tool-schemas.ts';
-import type { ToolResult } from '../tools/tool-result.ts';
-import { runMarkCompleteOperation } from './mark-complete-operation.ts';
+} from './node-agent-schemas.ts';
+import { createNodeAgentToolHandlers, type NodeAgentToolsConfig } from './node-handlers.ts';
 import { createOperationActionHandler } from './operation-action.ts';
-import { type ActionDefinition, defineAction, type ActionEntry } from './registry.ts';
+import { type ActionDefinition, type ActionEntry, defineAction } from './registry.ts';
+import {
+  ApproveTaskSchema,
+  type MarkCompleteInput,
+  MarkCompleteSchema,
+  type SubmitForApprovalInput,
+  SubmitForApprovalSchema,
+} from './task-agent-schemas.ts';
 
 function nodeAction<P>(entry: Omit<ActionEntry<P>, 'family'>): ActionDefinition {
   return defineAction({ ...entry, family: 'node' });

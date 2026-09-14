@@ -1,5 +1,5 @@
-import { z } from 'zod';
 import { ARTIFACT_SHAPES } from '@hyperneo/shared';
+import { z } from 'zod';
 
 export const ListPeersSchema = z.object({});
 
