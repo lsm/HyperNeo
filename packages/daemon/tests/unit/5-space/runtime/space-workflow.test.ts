@@ -7,15 +7,12 @@ import {
   WorkflowDeletionBlockedError,
   WorkflowValidationError,
 } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
-import {
-  coordinatorLongHorizonAgentId,
-  SpaceLongHorizonAgentRepository,
-} from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
+import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { seedWorkerMirror } from '../../helpers/seed-worker-mirror';
-import { seedSpaceManagerAgent } from '../../helpers/seed-space-manager';
+import { seedLongHorizonAgent } from '../../helpers/seed-long-horizon-agent';
 
 function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
@@ -1274,10 +1271,8 @@ describe('createSpaceAgentLookup — runtime-shaped resolution', () => {
       id: orphanedMirrorId,
       name: 'Orphaned Mirror',
     });
-    const coordinator = seedSpaceManagerAgent(longHorizonAgentRepo, 'space-1');
-    expect(lookup.getAgentById('space-1', coordinator.id)).toBeNull();
     seedSpace(db, 'space-3');
-    const renamedDerivedId = coordinatorLongHorizonAgentId('space-3');
+    const renamedDerivedId = 'space-lh-agent:coordinator:space-3';
     longHorizonAgentRepo.create({
       id: renamedDerivedId,
       spaceId: 'space-3',

@@ -3,26 +3,26 @@ import type { SessionResolutionDeps } from './deps.ts';
 import { ensureSession } from './ensure-session.ts';
 import type { EnsureSessionOutcome, SessionTarget } from './target.ts';
 
-export function selectSpaceAgentTargetStage(
+export function selectDeliveryTargetStage(
   spaceId: string,
   replyToSessionId: string | null | undefined
 ): Exclude<SessionTarget, { kind: 'worker' }> {
   if (replyToSessionId === null || replyToSessionId === undefined) {
     throw new Error(
-      `No reply route for Space Agent delivery in space ${spaceId}; the sender must supply a session`
+      `No reply route for session delivery in space ${spaceId}; the sender must supply a session`
     );
   }
   return { kind: 'session', sessionId: replyToSessionId };
 }
 
-export function resolveSpaceAgentTargetStage(
+export function resolveDeliveryTargetStage(
   target: SessionTarget,
   deps: SessionResolutionDeps
 ): Promise<EnsureSessionOutcome> {
   return ensureSession(target, deps);
 }
 
-export async function refetchSpaceAgentSessionStage<Session>(
+export async function refetchDeliverySessionStage<Session>(
   outcome: EnsureSessionOutcome,
   target: Exclude<SessionTarget, { kind: 'worker' }>,
   getSession: (sessionId: string) => Promise<Session | null>
@@ -40,12 +40,12 @@ export async function refetchSpaceAgentSessionStage<Session>(
   return { resolvedSessionId: outcome.sessionId, resolvedSession: session };
 }
 
-const runResolveSpaceAgentSession = (superpipe()('resolve-space-agent-session') as PipelineAPI)
+const runResolveDeliverySession = (superpipe()('resolve-delivery-session') as PipelineAPI)
   .input(['spaceId', 'replyToSessionId', 'deps', 'getSession'])
-  .pipe(selectSpaceAgentTargetStage, ['spaceId', 'replyToSessionId'], 'target')
-  .pipe(resolveSpaceAgentTargetStage, ['target', 'deps'], 'outcome')
+  .pipe(selectDeliveryTargetStage, ['spaceId', 'replyToSessionId'], 'target')
+  .pipe(resolveDeliveryTargetStage, ['target', 'deps'], 'outcome')
   .pipe(
-    refetchSpaceAgentSessionStage,
+    refetchDeliverySessionStage,
     ['outcome', 'target', 'getSession'],
     ['resolvedSessionId', 'resolvedSession']
   )
@@ -54,13 +54,13 @@ const runResolveSpaceAgentSession = (superpipe()('resolve-space-agent-session') 
   resolvedSession: unknown;
 }>;
 
-export async function resolveSpaceAgentSession<Session>(
+export async function resolveDeliverySession<Session>(
   spaceId: string,
   replyToSessionId: string | null | undefined,
   deps: SessionResolutionDeps,
   getSession: (sessionId: string) => Promise<Session | null>
 ): Promise<{ sessionId: string; session: Session }> {
-  const { resolvedSessionId, resolvedSession } = await runResolveSpaceAgentSession(
+  const { resolvedSessionId, resolvedSession } = await runResolveDeliverySession(
     spaceId,
     replyToSessionId,
     deps,

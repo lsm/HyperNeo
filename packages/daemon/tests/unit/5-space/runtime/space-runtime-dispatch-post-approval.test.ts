@@ -1,3 +1,4 @@
+import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import { DirectTaskExecutionRepository } from '../../../../src/storage/repositories/direct-task-execution-repository';
@@ -628,13 +629,19 @@ test.each(['rpc', 'mcp'] as const)(
       });
       const started = await starter({ taskId: task.id, requestKey: 'first' });
       if (!started.started) throw new Error(started.reason);
-      const coordinatorId = `space:chat:${SPACE_ID}`;
+      const approverAgentId = 'lh-approver';
+      const approverSessionId = longTermAgentSessionId(SPACE_ID, approverAgentId);
+      const baseSession = sessions.getSession(started.attempt.sessionId)!;
       sessions.createSession(
         {
-          ...sessions.getSession(started.attempt.sessionId)!,
-          id: coordinatorId,
-          type: 'space_chat',
+          ...baseSession,
+          id: approverSessionId,
+          type: 'worker',
           context: { spaceId: SPACE_ID },
+          metadata: {
+            ...baseSession.metadata,
+            promptProvenance: { agentId: approverAgentId },
+          },
         },
         { enforceWorkspaceOwnership: false }
       );
@@ -665,9 +672,6 @@ test.each(['rpc', 'mcp'] as const)(
           getSession: (id) => sessions.getSession(id),
           getTask: (id) => taskRepo.getTask(id),
           getTaskManager,
-          coordinatorLookup: {
-            getCoordinator: () => ({ id: 'coordinator' }) as SpaceLongHorizonAgent,
-          },
           getSpaceAutonomyLevel: async () => 5,
           policyContext: {
             longHorizonAgentRepo: {
@@ -729,7 +733,7 @@ test.each(['rpc', 'mcp'] as const)(
           ? await createOperationRpcHandler(provider, () => ({}))(invocation, {} as CallContext)
           : JSON.parse(
               (
-                await createOperationMcpHandler(provider, () => ({ sessionId: coordinatorId }))(
+                await createOperationMcpHandler(provider, () => ({ sessionId: approverSessionId }))(
                   invocation
                 )
               ).content[0].text

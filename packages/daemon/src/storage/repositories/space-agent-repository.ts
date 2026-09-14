@@ -6,7 +6,6 @@ import type {
   UpdateSpaceAgentParams,
 } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
-import { SPACE_MANAGER_HANDLE_LOOKUP_ORDER } from '../../lib/space/agent-handle.ts';
 import { MIGRATED_WORKER_TEMPLATE_KEY } from '../../lib/space/agents/worker-long-horizon-mapper.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import type { SQLiteValue } from '../types.ts';
@@ -79,25 +78,6 @@ export class SpaceAgentRepository {
         `SELECT * FROM ${AGENTS_TABLE} WHERE space_id = ? AND handle = ? AND status != 'archived'`
       )
       .get(spaceId, handle) as Record<string, unknown> | undefined;
-    return row ? rowToSpaceAgent(row) : null;
-  }
-
-  getSpaceManager(spaceId: string): SpaceAgent | null {
-    for (const handle of SPACE_MANAGER_HANDLE_LOOKUP_ORDER) {
-      const agent = this.getByHandle(spaceId, handle);
-      if (agent) return agent;
-    }
-    return null;
-  }
-
-  getSpaceManagerRecord(spaceId: string): SpaceAgent | null {
-    const placeholders = SPACE_MANAGER_HANDLE_LOOKUP_ORDER.map(() => '?').join(', ');
-    const row = this.db
-      .prepare(
-        `SELECT * FROM ${AGENTS_TABLE} WHERE space_id = ? AND handle IN (${placeholders})
-         ORDER BY (status = 'archived'), updated_at DESC LIMIT 1`
-      )
-      .get(spaceId, ...SPACE_MANAGER_HANDLE_LOOKUP_ORDER) as Record<string, unknown> | undefined;
     return row ? rowToSpaceAgent(row) : null;
   }
 

@@ -24,7 +24,6 @@ import { SpaceAgentTemplateRepository } from '../../../storage/repositories/spac
 import type { SpaceGoalOutcomeNotificationRepository } from '../../../storage/repositories/space-goal-outcome-notification-repository.ts';
 import type { SpaceAgentGoalScopeRepository } from '../../../storage/repositories/space-agent-goal-scope-repository.ts';
 import type { SpaceAgentReminderRepository } from '../../../storage/repositories/space-agent-reminder-repository.ts';
-import type { SpaceAgentRepository } from '../../../storage/repositories/space-agent-repository.ts';
 import type { SpaceAgentSubscriptionRepository } from '../../../storage/repositories/space-agent-subscription-repository.ts';
 import { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository.ts';
 import {
@@ -79,7 +78,6 @@ import {
 } from '../actions/space-actions-server.ts';
 import { SpaceActorRegistryAdapter } from '../actor-registry.ts';
 import { LONG_HORIZON_AGENT_BUILTIN_TOOLS } from '../agents/long-horizon-agent-tools.ts';
-import { buildSpaceChatSystemPrompt } from '../agents/space-chat-agent.ts';
 import { unifiedAgentRecordExists } from '../agents/worker-long-horizon-mapper.ts';
 import { encodeActorIdComponent, longTermAgentSessionId } from '../long-term-agent-session.ts';
 import { SpaceAgentTemplateManager } from '../managers/space-agent-template-manager.ts';
@@ -105,10 +103,6 @@ import { selectWorkflowWithLlmDefault } from './llm-workflow-selector.ts';
 import type { PostApprovalRouteResult } from './post-approval-router.ts';
 import type { RenderPendingDigestOutcome } from './render-pending-digest-pipeline.ts';
 import type { ReplyRoutingRegistry } from './reply-routing-registry.ts';
-import {
-  SpaceAgentNotificationService,
-  type SpaceAgentNotificationServiceConfig,
-} from './space-agent-notification-service.ts';
 import {
   FAIL_CLOSED_LONG_HORIZON_AGENT_REPO,
   resolveSpaceMcpSessionPolicy,
@@ -142,7 +136,6 @@ export interface SpaceRuntimeServiceConfig {
   goalScopeRepo?: SpaceAgentGoalScopeRepository;
   subscriptionRepo?: SpaceAgentSubscriptionRepository;
   reminderRepo?: SpaceAgentReminderRepository;
-  agentRepo?: Pick<SpaceAgentRepository, 'getSpaceManager'>;
   ownedAgents?: OwnedAgentLookup;
   templateRepo?: SpaceAgentTemplateRepository;
   spaceWorkflowManager: SpaceWorkflowManager;
@@ -198,7 +191,6 @@ export class SpaceRuntimeService {
   private readonly spaceDbQueryServers = new Map<string, DbQueryMcpServer>();
   private readonly memberSessionDbQueryServers = new Map<string, DbQueryMcpServer>();
   private readonly longTermAgentDbQueryServers = new Map<string, DbQueryMcpServer>();
-  private readonly spaceAgentNotificationUnsubs = new Map<string, () => void>();
   private resumeStalledRecoveryPromise: Promise<void> = Promise.resolve();
   private provisioningPromise: Promise<void> | null = null;
 
@@ -526,7 +518,7 @@ export class SpaceRuntimeService {
       kind: 'agent',
       spaceId: goal.spaceId,
       handle: `@${agent.handle}`,
-      roles: ['space-agent'],
+      roles: [],
       status: 'inactive',
     };
     const { summary, taskStatus, taskTitle, goalTitle } = notification.payload;
@@ -534,7 +526,7 @@ export class SpaceRuntimeService {
     const message: MessageRecord = {
       messageId: generateUUID(),
       spaceId: goal.spaceId,
-      senderActorId: `agent:coordinator:${goal.spaceId}`,
+      senderActorId: 'system:runtime',
       targets: [actor.actorId],
       body: `Goal outcome ready for review: "${goalTitle}". Task "${taskTitle}" reached ${taskStatus}.${detail}`,
       kind: 'message',
@@ -783,20 +775,6 @@ export class SpaceRuntimeService {
     const unified = this.config.longHorizonAgentRepo?.getById(agentId);
     if (!unified) return false;
     return unifiedAgentRecordExists(unified, expectedSpaceId);
-  }
-
-  private listPromptRestampAgents(
-    spaceId: string
-  ): Array<{ id: string; name: string; description?: string }> {
-    const unified = this.config.longHorizonAgentRepo?.listBySpaceId(spaceId) ?? [];
-    const coordinatorAgentId = this.config.agentRepo?.getSpaceManager(spaceId)?.id;
-    return unified
-      .filter((agent) => agent.id !== coordinatorAgentId)
-      .map((agent) => ({
-        id: agent.id,
-        name: agent.displayName,
-        description: agent.description,
-      }));
   }
 
   private async attachLongTermAgentMcpServersForSession(
@@ -1287,18 +1265,6 @@ export class SpaceRuntimeService {
     }
     this.longTermAgentDbQueryServers.clear();
 
-    for (const [spaceId, unsub] of this.spaceAgentNotificationUnsubs) {
-      try {
-        unsub();
-      } catch (error) {
-        log.warn(
-          `Failed to unsubscribe SpaceAgentNotificationService for space ${spaceId}:`,
-          error
-        );
-      }
-    }
-    this.spaceAgentNotificationUnsubs.clear();
-
     log.info('SpaceRuntimeService stopped');
   }
 
@@ -1369,7 +1335,6 @@ export class SpaceRuntimeService {
       for (const run of this.config.workflowRunRepo.listBySpace(event.spaceId)) {
         this.runtime.clearRunInterests(run.id);
       }
-      this.tearDownSpaceNotificationService(event.spaceId, 'archived');
     };
     const unsubSpaceArchived = internalEventBus.subscribe('space.archived', handleSpaceArchived, {
       sessionId: 'global',
@@ -1382,7 +1347,6 @@ export class SpaceRuntimeService {
         this.runtime.clearRunInterests(run.id);
       }
       this.runtime.releaseSpaceDeliveries(event.spaceId);
-      this.tearDownSpaceNotificationService(event.spaceId, 'deleted');
     };
     const unsubSpaceDeleted = internalEventBus.subscribe('space.deleted', handleSpaceDeleted, {
       sessionId: 'global',
@@ -1393,9 +1357,6 @@ export class SpaceRuntimeService {
     const unsubSpaceUpdated = internalEventBus.subscribe(
       'space.updated',
       (event) => {
-        const existingUnsub = this.spaceAgentNotificationUnsubs.get(event.spaceId);
-        if (!existingUnsub) return;
-
         if (event.space) {
           void this.setupSpaceAgentSession(event.space as Space).catch((err) => {
             log.error(
@@ -1468,19 +1429,6 @@ export class SpaceRuntimeService {
       log.warn(`Failed to close db-query server for member session ${sessionId}:`, err);
     }
     this.memberSessionDbQueryServers.delete(sessionId);
-  }
-
-  private tearDownSpaceNotificationService(spaceId: string, reason: 'archived' | 'deleted'): void {
-    const unsub = this.spaceAgentNotificationUnsubs.get(spaceId);
-    if (!unsub) return;
-    try {
-      unsub();
-    } catch {
-      log.warn(
-        `Failed to unsubscribe SpaceAgentNotificationService for ${reason} space ${spaceId}:`
-      );
-    }
-    this.spaceAgentNotificationUnsubs.delete(spaceId);
   }
 
   private async provisionExistingSpaces(): Promise<void> {
@@ -1747,10 +1695,6 @@ export class SpaceRuntimeService {
       return;
     }
 
-    const coordinator = this.config.agentRepo?.getSpaceManager(space.id) ?? null;
-    const agents = this.listPromptRestampAgents(space.id);
-    const workflows = spaceWorkflowManager.listWorkflows(space.id);
-
     const spaceManagerForApproval = this.config.spaceManager;
     const spaceToolsConfig: SpaceAgentToolsConfig = {
       spaceId: space.id,
@@ -1795,11 +1739,8 @@ export class SpaceRuntimeService {
         const s = await spaceManagerForApproval.getSpace(sid);
         return s?.autonomyLevel ?? 1;
       },
-      myAgentName: 'space-agent',
-      myAgentNameAliases: coordinator ? [coordinator.handle] : undefined,
-      myAgentId: coordinator ? coordinator.id : undefined,
       mySessionId: spaceChatSessionId,
-      callerRole: 'coordinator',
+      callerRole: 'ad_hoc_member',
       auditLogRepo: this.auditLogRepo,
       scheduleService: this.config.scheduleService,
       goalService: this.config.goalService,
@@ -1810,9 +1751,6 @@ export class SpaceRuntimeService {
       messageResolver: this.createMessageResolver(space.id),
       longTermAgentDelivery: this.longTermAgentDeliveryCallbacks(),
       externalEventStore: this.config.externalEventStore,
-      inactivityConfigRepo: coordinator ? this.config.inactivityConfigRepo : undefined,
-      inactivityClaimRepo: coordinator ? this.config.inactivityClaimRepo : undefined,
-      inactivityRunNow: coordinator ? this.config.inactivityRunNow : undefined,
       templateManager: this.templateManager,
     };
     const mcpServer = createSpaceAgentMcpServer(spaceToolsConfig);
@@ -1846,7 +1784,7 @@ export class SpaceRuntimeService {
       mcpServers['db-query'] = dbQueryServer as unknown as McpServerConfig;
     }
     this.attachSpaceActionsMcpServer(mcpServers, () => ({
-      role: 'coordinator',
+      role: 'ad_hoc_member',
       spaceId: space.id,
       spaceConfig: spaceToolsConfig,
     }));
@@ -1870,49 +1808,9 @@ export class SpaceRuntimeService {
       });
     }
 
-    session.setRuntimeSystemPrompt(
-      buildSpaceChatSystemPrompt({
-        background: space.backgroundContext,
-        instructions: space.instructions,
-        autonomyLevel: space.autonomyLevel,
-        workflows: workflows.map((w) => ({
-          id: w.id,
-          handle: w.handle ?? undefined,
-          name: w.name,
-          description: w.description,
-          tags: w.tags ?? [],
-          nodeCount: w.nodes?.length ?? 0,
-        })),
-        agents: agents.map((a) => ({
-          id: a.id,
-          name: a.name,
-
-          description: a.description,
-        })),
-      })
-    );
-
     log.info(`Space chat session provisioned for space ${space.id}`);
     if (options.replayPendingMessages !== false) {
       await this.replayPendingMessagesAfterRuntimeProvisioning(session);
-    }
-
-    if (this.config.internalEventBus && sessionManager) {
-      const existingUnsub = this.spaceAgentNotificationUnsubs.get(space.id);
-      if (existingUnsub) {
-        existingUnsub();
-      }
-
-      const notificationService = new SpaceAgentNotificationService({
-        internalEventBus: this.config.internalEventBus,
-        sessionFactory: sessionManager,
-        sessionId: spaceChatSessionId,
-        spaceId: space.id,
-        autonomyLevel: space.autonomyLevel ?? 1,
-      } as SpaceAgentNotificationServiceConfig);
-      const unsub = notificationService.subscribe();
-      this.spaceAgentNotificationUnsubs.set(space.id, unsub);
-      log.info(`SpaceAgentNotificationService wired for space ${space.id} (${spaceChatSessionId})`);
     }
   }
 

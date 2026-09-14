@@ -142,19 +142,19 @@ describe('SpaceAgentTemplateManager', () => {
     test('hides reserved built-ins but keeps custom templates with reserved handles (ATC-3)', () => {
       const withReserved = new SpaceAgentTemplateManager(repo, () => [
         ...BUILT_INS,
-        { ...BUILT_INS[0], key: 'coordinator.default', handle: 'coordinator' },
+        { ...BUILT_INS[0], key: 'task-manager.default', handle: 'task-manager' },
       ]);
       repo.createOwned(OWNER, {
-        key: 'custom.coordinator',
-        handle: 'coordinator',
-        displayName: 'Custom Coord',
+        key: 'custom.task-manager',
+        handle: 'task-manager',
+        displayName: 'Custom TM',
       });
 
       const keys = withReserved.listIn(OWNER).map((template) => template.key);
 
-      expect(keys).not.toContain('coordinator.default');
-      expect(keys).toContain('custom.coordinator');
-      expect(withReserved.getIn(OWNER, 'coordinator.default')?.key).toBe('coordinator.default');
+      expect(keys).not.toContain('task-manager.default');
+      expect(keys).toContain('custom.task-manager');
+      expect(withReserved.getIn(OWNER, 'task-manager.default')?.key).toBe('task-manager.default');
     });
   });
 
@@ -412,7 +412,7 @@ describe('SpaceAgentTemplateManager', () => {
     });
 
     test('rejects keys reserved for code built-in templates', async () => {
-      for (const key of ['worker.swe', 'worker.coder', 'worker.reviewer', 'coordinator.default']) {
+      for (const key of ['worker.swe', 'worker.coder', 'worker.reviewer', 'task-manager.default']) {
         const result = await manager.createIn(OWNER, { ...fullParams(), key });
         expect(result.ok, key).toBe(false);
         if (!result.ok) expect(result.error).toContain('reserved for a built-in agent template');
@@ -1228,7 +1228,7 @@ describe('SpaceAgentTemplateManager', () => {
 
     test('long-horizon built-ins still expose no tools', () => {
       const defaultManager = new SpaceAgentTemplateManager(repo);
-      const template = defaultManager.getIn(OWNER, 'coordinator.default');
+      const template = defaultManager.getIn(OWNER, 'task-manager.default');
       expect(template?.tools).toBeNull();
     });
 

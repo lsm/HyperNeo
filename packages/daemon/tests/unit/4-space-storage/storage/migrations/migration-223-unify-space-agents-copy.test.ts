@@ -10,7 +10,6 @@ import {
   createSpaceAgentSchema,
   insertSpace,
 } from '../../../helpers/space-agent-schema.ts';
-import { seedSpaceManagerAgent } from '../../../helpers/seed-space-manager';
 
 interface WorkerSeed {
   id: string;
@@ -420,8 +419,12 @@ describe('migration 223 — handle collisions', () => {
   test('collisions against the coordinator row dedupe and leave it untouched', () => {
     const db = makeOverlayDb();
     insertSpace(db, 'space-a');
-    const repo = new SpaceLongHorizonAgentRepository(db);
-    seedSpaceManagerAgent(repo, 'space-a');
+    seedLongHorizonAgent(db, {
+      id: 'space-lh-agent:coordinator:space-a',
+      spaceId: 'space-a',
+      handle: 'space-manager',
+      displayName: 'Space Manager',
+    });
     seedWorker(db, {
       id: 'w-coordinator',
       spaceId: 'space-a',
@@ -432,9 +435,9 @@ describe('migration 223 — handle collisions', () => {
     runMigration223(db);
 
     expect(longHorizonRow(db, 'w-coordinator')?.handle).toBe('space-manager-w-coordinator');
-    const coordinator = repo.getCoordinator('space-a');
-    expect(coordinator?.id).toBe('space-lh-agent:coordinator:space-a');
-    expect(coordinator?.status).toBe('active');
+    const preserved = longHorizonRow(db, 'space-lh-agent:coordinator:space-a');
+    expect(preserved?.handle).toBe('space-manager');
+    expect(preserved?.status).toBe('active');
     db.close();
   });
 

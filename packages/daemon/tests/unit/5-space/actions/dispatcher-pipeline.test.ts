@@ -94,7 +94,7 @@ function baseInput(overrides: Partial<DispatchActionInput> = {}): DispatchAction
   return {
     actionName: 'list_tasks',
     params: {},
-    role: 'coordinator',
+    role: 'ad_hoc_member',
     spaceId: SPACE_ID,
     ...overrides,
   };
@@ -483,18 +483,18 @@ describe('resolveTargets', () => {
 });
 
 describe('applyRoleAdmission', () => {
-  test('allows coordinator to access space-family actions', () => {
+  test('allows a space member to access space-family actions', () => {
     const ctx = applySafetyClass(resolveAction(buildCtx({ actionName: 'list_tasks' })));
     const next = applyRoleAdmission(ctx);
     expect(next.outcome).toBeUndefined();
   });
 
-  test('denies coordinator access to node-family actions', () => {
+  test('denies a space member access to node-family actions', () => {
     const ctx = applySafetyClass(resolveAction(buildCtx({ actionName: 'send_message' })));
     const next = applyRoleAdmission(ctx);
     assertDenied(next.outcome!);
     expect(next.outcome.reason).toBe('role_denied');
-    expect(next.outcome.message).toContain('not available for role coordinator');
+    expect(next.outcome.message).toContain('not available for role ad_hoc_member');
   });
 
   test('allows workflow_worker to access both node and space families', () => {
@@ -532,7 +532,7 @@ describe('applyRoleAdmission', () => {
         })
       )
     );
-    for (const role of ['coordinator', 'ad_hoc_member', 'long_term_agent'] as const) {
+    for (const role of ['ad_hoc_member', 'long_term_agent'] as const) {
       for (const family of families) {
         const ctx = applyRoleAdmission(
           applySafetyClass(
@@ -544,7 +544,7 @@ describe('applyRoleAdmission', () => {
     }
   });
 
-  test('keeps coordinator-wide registry families out of worker admission', () => {
+  test('keeps space-wide registry families out of worker admission', () => {
     const families = [
       'agents',
       'sessions',
@@ -1568,7 +1568,7 @@ describe('buildDispatchTelemetryEvent', () => {
     expect(event.actionName).toBe('update_task');
     expect(event.family).toBe('space');
     expect(event.safetyClass).toBe('mutate');
-    expect(event.role).toBe('coordinator');
+    expect(event.role).toBe('ad_hoc_member');
     expect(event.spaceId).toBe(SPACE_ID);
     expect(event.taskId).toBe(TASK_ID);
     expect(event.outcome).toBe('dispatched');
@@ -1947,7 +1947,7 @@ describe('runDispatchAction', () => {
           telemetry.push(event);
         },
       }),
-      baseInput({ actionName: 'send_message', role: 'coordinator' })
+      baseInput({ actionName: 'send_message', role: 'ad_hoc_member' })
     );
     assertDenied(outcome);
     expect(outcome.reason).toBe('role_denied');

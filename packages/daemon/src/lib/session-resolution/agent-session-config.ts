@@ -103,7 +103,7 @@ function sanitizeLongTermAgentKey(name: string): string {
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-+|-+$/g, '')
-      .slice(0, 40) || 'space-agent'
+      .slice(0, 40) || 'space-member'
   );
 }
 

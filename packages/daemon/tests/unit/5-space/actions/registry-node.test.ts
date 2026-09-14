@@ -526,7 +526,7 @@ describe('composeRoleActionEntries — approve_task collision resolution', () =>
       {
         actionName: 'list_sessions',
         params: {},
-        role: 'coordinator',
+        role: 'ad_hoc_member',
         spaceId: SPACE_ID,
       }
     );
@@ -730,7 +730,7 @@ describe('composeRoleActionEntries — approve_task collision resolution', () =>
         {
           actionName: 'approve_task',
           params: { task_id: 'task-9' },
-          role: 'coordinator',
+          role: 'ad_hoc_member',
           spaceId: SPACE_ID,
         }
       );

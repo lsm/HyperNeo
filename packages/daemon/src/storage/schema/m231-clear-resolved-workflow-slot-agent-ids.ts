@@ -77,11 +77,16 @@ function effectiveSlotName(rawName: unknown, agentId: string): string {
   return agentId;
 }
 
+const FROZEN_BUILT_IN_TEMPLATE_KEYS = ['coordinator.default', 'task-manager.default'] as const;
+
 export function runMigration231(db: BunDatabase): void {
   if (!tableExists(db, 'space_workflow_nodes')) return;
   if (!tableExists(db, 'space_agent_templates')) return;
 
-  const builtInKeys = new Set(getLongHorizonAgentTemplates().map((t) => t.key));
+  const builtInKeys = new Set([
+    ...FROZEN_BUILT_IN_TEMPLATE_KEYS,
+    ...getLongHorizonAgentTemplates().map((t) => t.key),
+  ]);
   const resolvable = (key: string): boolean =>
     frozenTemplateExists(db, key) || builtInKeys.has(key);
   const now = Date.now();

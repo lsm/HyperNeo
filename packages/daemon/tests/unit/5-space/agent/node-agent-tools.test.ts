@@ -323,7 +323,7 @@ describe('node-agent-tools: list_peers', () => {
     expect(data.message).not.toContain('space-agent');
   });
 
-  test('advertises space-agent once a reply route is registered', async () => {
+  test('advertises the reply-route session once registered', async () => {
     const config = makeConfig(ctx, {
       channelResolver: makeResolver([makeResolvedChannel('coder', 'reviewer')]),
       replyRoutingLookup: () => 'reply-session-1',
@@ -332,7 +332,7 @@ describe('node-agent-tools: list_peers', () => {
     const result = await handlers.list_peers({});
     const data = JSON.parse(result.content[0].text);
 
-    expect(data.permittedTargets).toEqual(['reviewer', 'space-agent']);
+    expect(data.permittedTargets).toEqual(['reviewer', '@session:reply-session-1']);
   });
 
   test('reports permitted targets when channels declared', async () => {
@@ -473,51 +473,6 @@ describe('node-agent-tools: send_message', () => {
 
     expect(data.success).toBe(false);
     expect(data.error).toContain('No channel topology declared');
-  });
-
-  test('delivers space-agent target through send_message tool handler', async () => {
-    const spaceMessages: Array<{ spaceId: string; message: string }> = [];
-    const agentMessageRouter = new AgentMessageRouter({
-      nodeExecutionRepo: ctx.nodeExecutionRepo,
-      workflowRunId: ctx.workflowRunId,
-      workflowChannels: [],
-      messageInjector: async () => {},
-      spaceId: ctx.spaceId,
-      taskId: ctx.parentTaskId,
-      taskNumber: 42,
-      spaceAgentInjector: async (spaceId, message) => {
-        spaceMessages.push({ spaceId, message });
-        return {
-          state: 'accepted',
-          messageId: `msg-${spaceMessages.length}`,
-          sessionId: 'sess-space-agent',
-        };
-      },
-      replyRoutingLookup: () => 'sess-space-agent',
-    });
-    const config = makeConfig(ctx, { agentMessageRouter });
-    const handlers = createNodeAgentToolHandlers(config);
-
-    const result = await handlers.send_message({
-      target: 'space-agent',
-      message: 'Need space-level judgment',
-    });
-    const data = JSON.parse(result.content[0].text);
-
-    expect(data.success).toBe(true);
-    expect(data.queued).toEqual([{ agentName: 'space-agent', messageId: 'msg-1' }]);
-    expect(spaceMessages).toEqual([
-      {
-        spaceId: ctx.spaceId,
-        message:
-          '─── Message from coder (task #42) ───\n\n' +
-          'Need space-level judgment\n\n' +
-          '─── Reply ───\n' +
-          REPLY_PROTOCOL +
-          '\n' +
-          `To reply, use: send_message_to_task with task_id="${ctx.parentTaskId}" and target node "coder"`,
-      },
-    ]);
   });
 
   test('broadcast (*) succeeds and delivers to all permitted targets', async () => {

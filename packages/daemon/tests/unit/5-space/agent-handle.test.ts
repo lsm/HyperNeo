@@ -1,9 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
-  SPACE_MANAGER_HANDLE,
-  canonicalizeSpaceManagerHandle,
   isReservedAgentHandle,
-  isSpaceManagerHandle,
   normalizeAgentNameToken,
   normalizeReplyTargetHandle,
 } from '../../../src/lib/space/agent-handle';
@@ -41,25 +38,7 @@ describe('normalizeReplyTargetHandle', () => {
     expect(normalizeReplyTargetHandle('   ')).toBeNull();
     expect(normalizeReplyTargetHandle('\t')).toBeNull();
   });
-  test('maps the literal "space-agent" to the routable space-agent target', () => {
-    expect(normalizeReplyTargetHandle('space-agent')).toBe('space-agent');
-  });
-  test('maps "space-agent" after trimming', () => {
-    expect(normalizeReplyTargetHandle('  space-agent  ')).toBe('space-agent');
-  });
-  test('maps every space-manager handle form to the routable space-agent target', () => {
-    for (const value of [
-      'space-manager',
-      '@space-manager',
-      '  @space-manager  ',
-      'coordinator',
-      '@coordinator',
-      '  @coordinator  ',
-    ]) {
-      expect(normalizeReplyTargetHandle(value)).toBe('space-agent');
-    }
-  });
-  test('does NOT treat a prefixed/embedded "space-agent" as the coordinator', () => {
+  test('slugifies any bare name into an @handle', () => {
     expect(normalizeReplyTargetHandle('space-agent-2')).toBe('@space-agent-2');
   });
 
@@ -106,15 +85,12 @@ describe('normalizeReplyTargetHandle', () => {
 });
 
 describe('isReservedAgentHandle', () => {
-  test.each([
-    'coordinator',
-    'space-manager',
-    'system-runtime',
-    'system-workflow',
-    'system-messaging',
-  ])('returns true for the reserved singleton %s', (handle) => {
-    expect(isReservedAgentHandle(handle)).toBe(true);
-  });
+  test.each(['system-runtime', 'system-workflow', 'system-messaging'])(
+    'returns true for the reserved singleton %s',
+    (handle) => {
+      expect(isReservedAgentHandle(handle)).toBe(true);
+    }
+  );
   test('returns false for an ordinary agent handle', () => {
     expect(isReservedAgentHandle('coder')).toBe(false);
     expect(isReservedAgentHandle('reviewer')).toBe(false);
@@ -129,27 +105,5 @@ describe('isReservedAgentHandle', () => {
   test('does not match a reserved handle embedded in a longer string', () => {
     expect(isReservedAgentHandle('coordinator-2')).toBe(false);
     expect(isReservedAgentHandle('system-runtime-backup')).toBe(false);
-  });
-});
-
-describe('space manager handle alias', () => {
-  test('exposes the canonical handle', () => {
-    expect(SPACE_MANAGER_HANDLE).toBe('space-manager');
-  });
-  test('isSpaceManagerHandle accepts the canonical handle and the deprecated alias', () => {
-    expect(isSpaceManagerHandle('space-manager')).toBe(true);
-    expect(isSpaceManagerHandle('coordinator')).toBe(true);
-    expect(isSpaceManagerHandle('reviewer')).toBe(false);
-    expect(isSpaceManagerHandle('')).toBe(false);
-  });
-  test('canonicalizeSpaceManagerHandle rewrites the alias and passes others through', () => {
-    expect(canonicalizeSpaceManagerHandle('coordinator')).toBe('space-manager');
-    expect(canonicalizeSpaceManagerHandle('space-manager')).toBe('space-manager');
-    expect(canonicalizeSpaceManagerHandle('reviewer')).toBe('reviewer');
-  });
-  test('alias matching stays exact (no prefix or case variants)', () => {
-    expect(isSpaceManagerHandle('Coordinator')).toBe(false);
-    expect(isSpaceManagerHandle('coordinator-2')).toBe(false);
-    expect(canonicalizeSpaceManagerHandle('Coordinator')).toBe('Coordinator');
   });
 });

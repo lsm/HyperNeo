@@ -33,7 +33,7 @@ describe('emitActionDispatchedEvent', () => {
         actionName: 'create_scheduled_task',
         family: 'scheduled',
         safetyClass: 'mutate',
-        role: 'coordinator',
+        role: 'ad_hoc_member',
         spaceId: 'space-1',
         taskId: 'task-1',
         workflowRunId: 'run-1',
@@ -53,7 +53,7 @@ describe('emitActionDispatchedEvent', () => {
       action: 'create_scheduled_task',
       family: 'scheduled',
       safetyClass: 'mutate',
-      role: 'coordinator',
+      role: 'ad_hoc_member',
       spaceId: 'space-1',
       taskId: 'task-1',
       workflowRunId: 'run-1',
@@ -101,7 +101,7 @@ describe('emitActionDispatchedEvent', () => {
         actionName: 'inactivity_run_now',
         family: 'inactivity',
         safetyClass: 'mutate',
-        role: 'coordinator',
+        role: 'ad_hoc_member',
         spaceId: 'space-1',
         outcome: 'failed',
         elapsedMs: 3,
@@ -216,7 +216,7 @@ describe('dispatch telemetry through runDispatchAction', () => {
       {
         actionName: 'list_scheduled_tasks',
         params: {},
-        role: 'coordinator',
+        role: 'ad_hoc_member',
         spaceId: 'space-1',
       }
     );

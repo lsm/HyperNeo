@@ -1,4 +1,8 @@
-export type AgentMessageLevel = 'space-agent' | 'task-agent' | 'node-agent' | 'session-agent';
+export type AgentMessageLevel =
+  | 'long-horizon-agent'
+  | 'task-agent'
+  | 'node-agent'
+  | 'session-agent';
 
 export interface FormatAgentMessageOptions {
   fromLevel: AgentMessageLevel;
@@ -27,7 +31,6 @@ function replyTargetSuffix(options: FormatAgentMessageOptions): string {
 
 function replyTargetHandle(options: FormatAgentMessageOptions): string {
   if (options.replyTargetHandle) return options.replyTargetHandle;
-  if (options.fromAgentName === 'space-agent') return 'space-agent';
   return `@${options.fromAgentName}`;
 }
 
@@ -41,7 +44,7 @@ export function formatAgentMessage(options: FormatAgentMessageOptions): string {
   const footer = replyRoutingFooter(options);
   const protocolLine = `${REPLY_PROTOCOL}\n`;
 
-  if (options.toLevel === 'space-agent') {
+  if (options.toLevel === 'long-horizon-agent') {
     const task = taskLabel(options.taskNumber);
     const taskId = options.taskId ? ` with task_id="${options.taskId}"` : '';
     return (
@@ -53,7 +56,7 @@ export function formatAgentMessage(options: FormatAgentMessageOptions): string {
     );
   }
 
-  if (options.fromLevel === 'space-agent' || options.fromLevel === 'session-agent') {
+  if (options.fromLevel === 'long-horizon-agent' || options.fromLevel === 'session-agent') {
     return (
       `─── Message from ${options.fromAgentName} ───\n\n` +
       `${body}${footer}\n\n` +

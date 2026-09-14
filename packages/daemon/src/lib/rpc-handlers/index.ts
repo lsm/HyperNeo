@@ -103,9 +103,9 @@ import { SpaceAgentTemplateManager } from '../space/managers/space-agent-templat
 import { createAgentTemplateResolverFactory } from '../space/workflows/run-template-snapshot.ts';
 import {
   deliverSpaceAgentMessage,
-  type SpaceAgentInjectionOutcome,
-} from '../space/runtime/space-agent-message-delivery.ts';
-import { resolveSpaceAgentSession } from '../session-resolution/resolve-space-agent-session.ts';
+  type SessionInjectionOutcome,
+} from '../space/runtime/session-message-delivery.ts';
+import { resolveDeliverySession } from '../session-resolution/resolve-delivery-session.ts';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import type { JobQueueProcessor } from '../../storage/job-queue-processor.ts';
 import type { EvolutionRepository } from '../../storage/repositories/evolution-repository.ts';
@@ -633,7 +633,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     getSession: (id) => deps.db.getSession(id),
     getTask: (id) => spaceTaskRepo.getTask(id),
     getTaskManager: spaceTaskManagerFactory,
-    coordinatorLookup: longHorizonAgentRepo,
     policyContext: { taskRepo: spaceTaskRepo, nodeExecutionRepo, longHorizonAgentRepo },
     getSpaceAutonomyLevel: async (spaceId) => {
       const space = await deps.spaceManager.getSpace(spaceId);
@@ -656,10 +655,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     audit: (session, previous, input) => {
       new McpAuditLogRepository(deps.db.getDatabase()).createEntry({
         sessionId: session.id,
-        agentName:
-          session.type === 'space_chat'
-            ? 'space-agent'
-            : session.metadata.promptProvenance?.agentName,
+        agentName: session.metadata.promptProvenance?.agentName,
         toolName: 'task.resolvePendingCompletion',
         spaceId: previous.spaceId,
         taskId: input.taskId,
@@ -864,7 +860,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     goalScopeRepo: spaceAgentGoalScopeRepo,
     subscriptionRepo: spaceAgentSubscriptionRepo,
     reminderRepo: spaceAgentReminderRepo,
-    agentRepo: spaceAgentRepo,
     spaceWorkflowManager,
     workflowRunRepo: spaceWorkflowRunRepo,
     taskRepo: spaceTaskRepo,
@@ -1253,18 +1248,18 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
   let taskAgentManager: TaskAgentManager;
   let sessionResolutionDeps: ReturnType<typeof createDefaultSessionResolutionDeps>;
-  const spaceAgentInjector = async (
+  const sessionMessageInjector = async (
     spaceId: string,
     message: string,
     replyToSessionId?: string | null,
     explicitMessageId?: string,
     injectorOptions?: {
       onConsumed?: (settledSessionId: string) => void;
-      lateSettlement?: import('../space/runtime/space-agent-message-delivery.ts').SpaceAgentLateSettlementOwner;
+      lateSettlement?: import('../space/runtime/session-message-delivery.ts').SessionLateSettlementOwner;
       onLateFailure?: () => void;
     }
-  ): Promise<SpaceAgentInjectionOutcome> => {
-    const { sessionId, session } = await resolveSpaceAgentSession<AgentSession>(
+  ): Promise<SessionInjectionOutcome> => {
+    const { sessionId, session } = await resolveDeliverySession<AgentSession>(
       spaceId,
       replyToSessionId,
       sessionResolutionDeps,
@@ -1330,7 +1325,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     nodeExecutionRepo,
     dbPath: deps.db.getDatabasePath(),
     artifactRepo,
-    spaceAgentInjector,
+    sessionMessageInjector,
     messageResolverFactory: (spaceId, context) =>
       spaceRuntimeService.createMessageResolver(spaceId, context),
     longTermAgentDelivery: spaceRuntimeService.longTermAgentDeliveryCallbacks(),

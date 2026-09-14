@@ -22,7 +22,6 @@ function makeInput(
     peerAgentNames: [],
     declaredAgentNames: [],
     permittedTargets: [],
-    spaceAgentAvailable: false,
     canSend: () => true,
     ...overrides,
   };
@@ -102,51 +101,6 @@ describe('resolveNodeAgentTargets: array target', () => {
         `Channel topology does not permit 'coder' to send to: security. ` +
         `Permitted targets: reviewer.`,
     });
-  });
-
-  test('skips the authorization predicate for space-agent entries in array targets', () => {
-    const outcome = resolveNodeAgentTargets(
-      makeInput({
-        target: ['space-agent', 'reviewer'],
-        spaceAgentAvailable: true,
-        declaredAgentNames: ['reviewer'],
-        canSend: (_fromNode, toNode) => toNode === 'reviewer',
-      })
-    );
-
-    expect(outcome).toEqual({ status: 'resolved', targetAgentNames: ['space-agent', 'reviewer'] });
-  });
-});
-
-describe('resolveNodeAgentTargets: space-agent target', () => {
-  test('passes space-agent through without the authorization predicate when available', () => {
-    const outcome = resolveNodeAgentTargets(
-      makeInput({
-        target: 'space-agent',
-        spaceAgentAvailable: true,
-        canSend: () => {
-          throw new Error('canSend must not be consulted for space-agent');
-        },
-      })
-    );
-
-    expect(outcome).toEqual({ status: 'resolved', targetAgentNames: ['space-agent'] });
-  });
-
-  test('falls back to the plain-name cascade when space-agent is unavailable', () => {
-    const outcome = resolveNodeAgentTargets(
-      makeInput({
-        target: 'space-agent',
-        spaceAgentAvailable: false,
-        peerAgentNames: ['reviewer'],
-      })
-    );
-
-    expect(outcome.status).toBe('unknownTarget');
-    if (outcome.status === 'unknownTarget') {
-      expect(outcome.target).toBe('space-agent');
-      expect(outcome.allTargets).toEqual(['reviewer']);
-    }
   });
 });
 
@@ -230,63 +184,6 @@ describe('resolveNodeAgentTargets: plain-name precedence', () => {
 });
 
 describe('resolveNodeAgentTargets: unknown target', () => {
-  test('builds the sorted reachable-target list with space-agent appended last', () => {
-    const outcome = resolveNodeAgentTargets(
-      makeInput({
-        target: 'ghost',
-        peerAgentNames: ['zebra-agent', 'alpha-agent', 'alpha-agent'],
-        nodeGroups: { 'beta-node': ['reviewer'] },
-        declaredAgentNames: new Set(['gamma-slot']),
-        spaceAgentAvailable: true,
-      })
-    );
-
-    expect(outcome).toEqual({
-      status: 'unknownTarget',
-      target: 'ghost',
-      allTargets: ['alpha-agent', 'beta-node', 'gamma-slot', 'zebra-agent', 'space-agent'],
-      reason:
-        `Unknown target 'ghost': no agent or node found with this name. ` +
-        `Reachable targets: alpha-agent, beta-node, gamma-slot, zebra-agent, space-agent.`,
-    });
-  });
-
-  test('omits space-agent from the suggestions when no reply route exists', () => {
-    const outcome = resolveNodeAgentTargets(
-      makeInput({
-        target: 'ghost',
-        peerAgentNames: ['alpha-agent'],
-        spaceAgentAvailable: true,
-        spaceAgentRoutable: false,
-      })
-    );
-
-    expect(outcome).toEqual({
-      status: 'unknownTarget',
-      target: 'ghost',
-      allTargets: ['alpha-agent'],
-      reason:
-        `Unknown target 'ghost': no agent or node found with this name. ` +
-        `Reachable targets: alpha-agent.`,
-    });
-  });
-
-  test('suggests space-agent once a reply route exists', () => {
-    const outcome = resolveNodeAgentTargets(
-      makeInput({
-        target: 'ghost',
-        peerAgentNames: ['alpha-agent'],
-        spaceAgentAvailable: true,
-        spaceAgentRoutable: true,
-      })
-    );
-
-    expect(outcome.status).toBe('unknownTarget');
-    if (outcome.status === 'unknownTarget') {
-      expect(outcome.allTargets).toEqual(['alpha-agent', 'space-agent']);
-    }
-  });
-
   test('reports no reachable targets when every source is empty', () => {
     const outcome = resolveNodeAgentTargets(makeInput({ target: 'ghost' }));
 
@@ -407,15 +304,6 @@ function makeSnapshot(
 }
 
 describe('decideNodeTargetDelivery', () => {
-  test('routes space-agent to the space-agent injector before any session lookup', () => {
-    expect(
-      decideNodeTargetDelivery(
-        'space-agent',
-        makeSnapshot({ isSpaceAgent: true, hasLiveSessions: true })
-      )
-    ).toBe('deliverToSpaceAgent');
-  });
-
   test('routes agents with live sessions to session injection', () => {
     expect(decideNodeTargetDelivery('reviewer', makeSnapshot({ hasLiveSessions: true }))).toBe(
       'injectLiveSessions'
@@ -538,52 +426,13 @@ function makeGenericConfig(
   overrides: Partial<GenericAddressRoutingConfig> = {}
 ): GenericAddressRoutingConfig {
   return {
-    spaceAgentAvailable: true,
+    sessionDeliveryAvailable: true,
     messagingFacadeAvailable: true,
     replyToSessionId: null,
     workflowRunId: 'run-1',
     ...overrides,
   };
 }
-
-describe('decideGenericAddressRouting: the former space-manager handles', () => {
-  test('reports @coordinator not found rather than routing it anywhere', () => {
-    expect(decideGenericAddressRouting(parseAddress('@coordinator'), makeGenericConfig())).toEqual({
-      action: 'notFound',
-      target: '@coordinator',
-    });
-  });
-
-  test('reports @space-manager not found rather than routing it anywhere', () => {
-    expect(
-      decideGenericAddressRouting(parseAddress('@space-manager'), makeGenericConfig())
-    ).toEqual({ action: 'notFound', target: '@space-manager' });
-  });
-
-  test('reports @role:coordinator not found — the synthetic actor is the only holder of that role', () => {
-    expect(
-      decideGenericAddressRouting(parseAddress('@role:coordinator'), makeGenericConfig())
-    ).toEqual({ action: 'notFound', target: '@role:coordinator' });
-  });
-
-  test('still routes other roles through the facade, including the shared space-agent role', () => {
-    expect(
-      decideGenericAddressRouting(parseAddress('@role:space-agent'), makeGenericConfig())
-    ).toEqual({ action: 'deliverViaMessagingFacade' });
-    expect(
-      decideGenericAddressRouting(parseAddress('@role:reviewer'), makeGenericConfig())
-    ).toEqual({ action: 'deliverViaMessagingFacade' });
-  });
-
-  test('does not fall through to the messaging facade, which would resolve the synthetic coordinator actor', () => {
-    expect(
-      decideGenericAddressRouting(
-        parseAddress('@space-manager'),
-        makeGenericConfig({ messagingFacadeAvailable: true })
-      )
-    ).not.toEqual({ action: 'deliverViaMessagingFacade' });
-  });
-});
 
 describe('decideGenericAddressRouting: @session', () => {
   test('delivers to the authorized reply-route session', () => {
@@ -618,7 +467,7 @@ describe('decideGenericAddressRouting: @session', () => {
     expect(
       decideGenericAddressRouting(
         parseAddress('@session:session-origin'),
-        makeGenericConfig({ spaceAgentAvailable: false, replyToSessionId: 'session-origin' })
+        makeGenericConfig({ sessionDeliveryAvailable: false, replyToSessionId: 'session-origin' })
       )
     ).toEqual({ action: 'notFound', target: '@session:session-origin' });
   });

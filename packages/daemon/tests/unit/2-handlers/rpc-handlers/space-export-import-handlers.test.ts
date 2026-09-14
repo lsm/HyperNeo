@@ -29,7 +29,7 @@ import { runMigration243 } from '../../../../src/storage/schema/m243-space-agent
 import { runMigration246 } from '../../../../src/storage/schema/m246-template-version-seq-space-key';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { seedWorkerMirror } from '../../helpers/seed-worker-mirror';
-import { seedSpaceManagerAgent } from '../../helpers/seed-space-manager';
+import { seedLongHorizonAgent } from '../../helpers/seed-long-horizon-agent';
 
 interface SeedAgentParams {
   spaceId: string;
@@ -436,7 +436,7 @@ describe('Space Export/Import RPC Handlers', () => {
     });
 
     it('exports a workflow referencing the space coordinator like any other agent', async () => {
-      const coordinator = seedSpaceManagerAgent(longHorizonAgentRepo, SPACE_ID);
+      const coordinator = seedLongHorizonAgent(longHorizonAgentRepo, SPACE_ID);
       longHorizonAgentRepo.update(coordinator.id, { autonomyLevel: null });
       workflowRepo.createWorkflow({
         spaceId: SPACE_ID,
@@ -523,7 +523,7 @@ describe('Space Export/Import RPC Handlers', () => {
     });
 
     it('treats a bundle agent whose name matches the space coordinator as an ordinary name conflict', async () => {
-      const coordinator = seedSpaceManagerAgent(longHorizonAgentRepo, SPACE_ID);
+      const coordinator = seedLongHorizonAgent(longHorizonAgentRepo, SPACE_ID);
       const coordinatorName = longHorizonAgentRepo.getById(coordinator.id)!.displayName;
       const coordinatorBundle = makeBundle([{ name: coordinatorName }], []);
 
@@ -2044,7 +2044,7 @@ describe('Space Export/Import RPC Handlers', () => {
 
       it('auto-generates an imported agent handle and warns when exported handle is reserved', async () => {
         const bundle = makeBundle(
-          [{ name: 'Coordinator', handle: 'coordinator', role: 'coordinator' }],
+          [{ name: 'System Runtime', handle: 'system-runtime', role: 'member' }],
           []
         );
 
@@ -2053,13 +2053,13 @@ describe('Space Export/Import RPC Handlers', () => {
           bundle,
         });
 
-        expect(result.agents[0]).toMatchObject({ name: 'Coordinator', action: 'created' });
+        expect(result.agents[0]).toMatchObject({ name: 'System Runtime', action: 'created' });
         expect(result.warnings).toContain(
-          'Agent "Coordinator": exported handle "coordinator" is reserved; a new handle was auto-generated'
+          'Agent "System Runtime": exported handle "system-runtime" is reserved; a new handle was auto-generated'
         );
 
         const importedAgent = longHorizonAgentRepo.getById(result.agents[0].id)!;
-        expect(importedAgent.handle).toBe('coordinator-2');
+        expect(importedAgent.handle).toBe('system-runtime-2');
       });
 
       it('renames conflicting workflow', async () => {
@@ -2328,7 +2328,7 @@ describe('Space Export/Import RPC Handlers', () => {
 
         const bundle = makeBundle(
           [
-            { name: 'A', handle: 'coordinator', model: 'claude-new-a' },
+            { name: 'A', handle: 'system-runtime', model: 'claude-new-a' },
             { name: 'New Agent', handle: 'a', model: 'claude-new-b' },
           ],
           []
@@ -2341,7 +2341,7 @@ describe('Space Export/Import RPC Handlers', () => {
         });
 
         expect(result.warnings).toContain(
-          'Agent "A": exported handle "coordinator" is reserved; a new handle was auto-generated'
+          'Agent "A": exported handle "system-runtime" is reserved; a new handle was auto-generated'
         );
         expect(result.warnings).toContain(
           'Agent "New Agent": exported handle "a" already exists in the target space; a new handle was auto-generated'
@@ -2361,7 +2361,7 @@ describe('Space Export/Import RPC Handlers', () => {
         const bundle = makeBundle(
           [
             { name: 'A', handle: 'b', model: 'claude-new-a' },
-            { name: 'B', handle: 'coordinator', model: 'claude-new-b' },
+            { name: 'B', handle: 'system-runtime', model: 'claude-new-b' },
           ],
           []
         );
@@ -2377,7 +2377,7 @@ describe('Space Export/Import RPC Handlers', () => {
           { name: 'B', id: existingB.id, action: 'replaced' },
         ]);
         expect(result.warnings).toContain(
-          'Agent "B": exported handle "coordinator" is reserved; a new handle was auto-generated'
+          'Agent "B": exported handle "system-runtime" is reserved; a new handle was auto-generated'
         );
         expect(longHorizonAgentRepo.getById(existingA.id)?.handle).toBe('b');
         expect(longHorizonAgentRepo.getById(existingB.id)?.handle).toBe('b-2');

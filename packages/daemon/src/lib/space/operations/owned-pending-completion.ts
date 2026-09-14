@@ -1,4 +1,4 @@
-import type { Session, SpaceLongHorizonAgent, SpaceTask } from '@hyperneo/shared';
+import type { Session, SpaceTask } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { Logger } from '../../logger.ts';
@@ -27,9 +27,6 @@ import {
 
 const log = new Logger('OwnedPendingCompletion');
 
-export interface SpaceCoordinatorLookup {
-  getCoordinator(spaceId: string): SpaceLongHorizonAgent | null;
-}
 type Gate<T> = { value: T } | { reason: Error };
 type CompletionActor = {
   source: OperationCaller['source'];
@@ -42,7 +39,6 @@ type CompletionActor = {
 export interface OwnedPendingCompletionDependencies {
   getSession: (sessionId: string) => Session | null;
   getTask: (taskId: string) => SpaceTask | null | Promise<SpaceTask | null>;
-  coordinatorLookup: SpaceCoordinatorLookup;
   policyContext?: SpaceMcpSessionPolicyContext;
   getSpaceAutonomyLevel?: (spaceId: string) => number | Promise<number>;
   getTaskManager: (
@@ -63,7 +59,6 @@ export interface OwnedPendingCompletionDependencies {
 export function resolveCompletionActor(
   caller: OperationCaller,
   getSession: OwnedPendingCompletionDependencies['getSession'],
-  coordinatorLookup: SpaceCoordinatorLookup,
   policyContext: SpaceMcpSessionPolicyContext
 ): Gate<CompletionActor> {
   if (caller.source !== 'mcp') return { value: { source: caller.source } };
@@ -79,17 +74,10 @@ export function resolveCompletionActor(
     policy.spaceId ??
     (session.type === 'space_chat' ? session.id.match(/^space:chat:(.+)$/)?.[1] : undefined);
   if (!spaceId) return denied;
-  const canonicalChat = session.type === 'space_chat' && session.id === `space:chat:${spaceId}`;
-  const coordinator = canonicalChat ? coordinatorLookup.getCoordinator(spaceId) : null;
-  const allowed =
-    policy.role === 'legacy_task_agent' ||
-    policy.role === 'long_term_agent' ||
-    (canonicalChat && coordinator !== null);
+  const allowed = policy.role === 'legacy_task_agent' || policy.role === 'long_term_agent';
   if (!allowed) return denied;
   const agentId =
-    policy.role === 'long_term_agent'
-      ? (session.metadata.promptProvenance?.agentId ?? null)
-      : (coordinator?.id ?? null);
+    policy.role === 'long_term_agent' ? (session.metadata.promptProvenance?.agentId ?? null) : null;
   return { value: { source: 'mcp', session, spaceId, role: policy.role, agentId } };
 }
 
@@ -205,11 +193,7 @@ export function createOwnedPendingCompletionOperation(
     })('resolve-owned-pending-completion') as PipelineAPI
   )
     .input(['input', 'caller'])
-    .pipe(
-      resolveCompletionActor,
-      ['caller', 'getSession', 'coordinatorLookup', 'policyContext'],
-      'result:task'
-    )
+    .pipe(resolveCompletionActor, ['caller', 'getSession', 'policyContext'], 'result:task')
     .pipe((actor: CompletionActor) => actor, 'task', 'actor')
     .pipe(
       requireCompletionAutonomy,

@@ -147,7 +147,7 @@ function makeHarness(
         return overrides.task ? overrides.task(taskId) : makeTask({ id: taskId });
       },
     },
-    longHorizonAgentRepo: { getCoordinator: () => null },
+    longHorizonAgentRepo: {},
   } as unknown as DefaultSessionResolutionServices;
   return { deps: createDefaultSessionResolutionDeps(services), calls };
 }
@@ -168,7 +168,7 @@ describe('createDefaultSessionResolutionDeps', () => {
         },
         nodeExecutionRepo: { listByWorkflowRun: () => [] },
         taskRepo: { getTask: () => null },
-        longHorizonAgentRepo: { getCoordinator: () => null },
+        longHorizonAgentRepo: {},
       } as unknown as DefaultSessionResolutionServices;
 
       expect(await createDefaultSessionResolutionDeps(services).getSession('agent-session')).toBe(

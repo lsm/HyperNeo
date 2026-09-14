@@ -24,7 +24,7 @@ import {
   FAIL_CLOSED_LONG_HORIZON_AGENT_REPO,
   missingMcpServers,
   resolveSpaceMcpSessionPolicy,
-  SPACE_COORDINATOR_REQUIRED_MCP_SERVERS,
+  SPACE_AD_HOC_MEMBER_REQUIRED_MCP_SERVERS,
   SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS,
 } from '../space/runtime/space-mcp-session-policy.ts';
 import type { AgentSession } from './agent-session.ts';
@@ -280,7 +280,7 @@ function applyProviderEnvToFlagSettings(queryOptions: Options, envVars: Provider
   };
 }
 
-const REQUIRED_SPACE_CHAT_MCP_SERVERS = SPACE_COORDINATOR_REQUIRED_MCP_SERVERS;
+const REQUIRED_SPACE_CHAT_MCP_SERVERS = SPACE_AD_HOC_MEMBER_REQUIRED_MCP_SERVERS;
 const REQUIRED_SPACE_CHAT_COORDINATION_TOOLS = [
   'create_standalone_task',
   'get_task_detail',

@@ -219,7 +219,7 @@ export function BottomTabBar({ inline }: { inline?: boolean } = {}) {
   const isTabActive = (id: TabItem['id']): boolean => {
     if (isInSpaceContext) {
       const routeSpaceIds = [spaceId, canonicalSpaceId].filter((id): id is string => id !== null);
-      const isSpaceAgentSession = routeSpaceIds.some((id) => spaceSessionId === `space:chat:${id}`);
+      const isSpaceChatSession = routeSpaceIds.some((id) => spaceSessionId === `space:chat:${id}`);
       const isLongHorizonAgentSession =
         spaceSessionId !== null &&
         (spaceSessionId.startsWith('space:agent:') ||
@@ -229,10 +229,10 @@ export function BottomTabBar({ inline }: { inline?: boolean } = {}) {
       if (id === 'space-sessions')
         return (
           spaceViewMode === 'sessions' ||
-          (!!spaceSessionId && !isSpaceAgentSession && !isLongHorizonAgentSession)
+          (!!spaceSessionId && !isSpaceChatSession && !isLongHorizonAgentSession)
         );
       if (id === 'space-agent')
-        return spaceViewMode === 'agents' || isSpaceAgentSession || isLongHorizonAgentSession;
+        return spaceViewMode === 'agents' || isSpaceChatSession || isLongHorizonAgentSession;
       if (id === 'space-tasks') return spaceViewMode === 'tasks' || spaceTaskId !== null;
       if (id === 'space-overview')
         return spaceViewMode === 'overview' && spaceTaskId === null && spaceSessionId === null;

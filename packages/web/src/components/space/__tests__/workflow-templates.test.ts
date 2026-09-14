@@ -51,17 +51,6 @@ function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
 }
 
 describe('filterAgents', () => {
-  it('removes the space manager agent under both handles', () => {
-    const agents = [
-      makeAgent('a1', 'Coder'),
-      { ...makeAgent('a2', 'Space Manager'), handle: 'space-manager' },
-      { ...makeAgent('a3', 'Legacy Coordinator'), handle: 'coordinator' },
-      makeAgent('a5', 'Reviewer'),
-    ];
-    const result = filterAgents(agents);
-    expect(result.map((a) => a.id)).toEqual(['a1', 'a5']);
-  });
-
   it('keeps migrated worker mirrors and drops non-active native agents', () => {
     const agents: SpaceLongHorizonAgent[] = [
       makeAgent('a1', 'Coder'),

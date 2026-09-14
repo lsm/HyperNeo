@@ -233,8 +233,8 @@ describe('createSpaceAgent', () => {
 
     test('rejects a reserved handle', async () => {
       expectRejection(
-        await run(h, baseInput({ handle: 'coordinator' })),
-        'Handle "coordinator" is reserved'
+        await run(h, baseInput({ handle: 'system-runtime' })),
+        'Handle "system-runtime" is reserved'
       );
     });
 
@@ -493,7 +493,7 @@ describe('gate order and rejection taxonomy', () => {
   test('each gate reports its own rejection kind', async () => {
     const cases: Array<[string, CreateSpaceAgentInput, string]> = [
       ['blank spaceId', baseInput({ spaceId: '' }), 'invalid_request'],
-      ['reserved handle', baseInput({ handle: 'coordinator' }), 'invalid_identity'],
+      ['reserved handle', baseInput({ handle: 'system-runtime' }), 'invalid_identity'],
       ['unknown template', baseInput({ templateKey: 'missing.v1' }), 'template_not_found'],
     ];
 
@@ -597,13 +597,13 @@ describe('gate order and rejection taxonomy', () => {
     });
 
     test('generates a suffixed handle instead of failing on a reserved word', async () => {
-      const agent = await expectAgent(h, baseInput({ displayName: 'Coordinator' }));
-      expect(agent.handle).not.toBe('coordinator');
-      expect(agent.handle.startsWith('coordinator')).toBe(true);
+      const agent = await expectAgent(h, baseInput({ displayName: 'System Runtime' }));
+      expect(agent.handle).not.toBe('system-runtime');
+      expect(agent.handle.startsWith('system-runtime')).toBe(true);
     });
 
     test('still rejects an explicitly requested reserved handle', async () => {
-      expectRejection(await run(h, baseInput({ handle: 'coordinator' })), 'is reserved');
+      expectRejection(await run(h, baseInput({ handle: 'system-runtime' })), 'is reserved');
     });
 
     test('rejects a blank model rather than persisting an empty string', async () => {

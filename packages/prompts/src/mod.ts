@@ -1,8 +1,5 @@
 /// <reference path="./markdown.d.ts" />
 
-import mdagentsLongHorizonCoordinator from './agents/long-horizon/coordinator.md' with {
-  type: 'text',
-};
 import mdagentsLongHorizonOwnerReviewContract from './agents/long-horizon/owner-review-contract.md' with {
   type: 'text',
 };
@@ -47,22 +44,6 @@ import mdruntimeWorkflowSelectorInstructions from './runtime/workflow-selector-i
   type: 'text',
 };
 import mdsessionTitleGeneration from './session/title-generation.md' with { type: 'text' };
-import mdspaceChatAutonomy3 from './space-chat/autonomy-3.md' with { type: 'text' };
-import mdspaceChatAutonomy4 from './space-chat/autonomy-4.md' with { type: 'text' };
-import mdspaceChatAutonomy5 from './space-chat/autonomy-5.md' with { type: 'text' };
-import mdspaceChatAutonomyLow from './space-chat/autonomy-low.md' with { type: 'text' };
-import mdspaceChatCoordinationInvariants from './space-chat/coordination-invariants.md' with {
-  type: 'text',
-};
-import mdspaceChatEscalationAct from './space-chat/escalation-act.md' with { type: 'text' };
-import mdspaceChatEscalationAsk from './space-chat/escalation-ask.md' with { type: 'text' };
-import mdspaceChatEventHandling from './space-chat/event-handling.md' with { type: 'text' };
-import mdspaceChatIntro from './space-chat/intro.md' with { type: 'text' };
-import mdspaceChatSubagents from './space-chat/subagents.md' with { type: 'text' };
-import mdspaceChatWorkCreation from './space-chat/work-creation.md' with { type: 'text' };
-import mdspaceChatWorkflowListingNote from './space-chat/workflow-listing-note.md' with {
-  type: 'text',
-};
 import mdworkflowsCoderOnlyMergeInstructions from './workflows/coder-only/merge-instructions.md' with {
   type: 'text',
 };
@@ -136,7 +117,6 @@ import mdworkflowsReviewOnlyReviewPrompt from './workflows/review-only/review-pr
 
 const registry: Record<string, string> = {
   'agents/long-horizon-scheduling-guardrail.md': mdagentsLongHorizonSchedulingGuardrail,
-  'agents/long-horizon/coordinator.md': mdagentsLongHorizonCoordinator,
   'agents/long-horizon/owner-review-contract.md': mdagentsLongHorizonOwnerReviewContract,
   'agents/long-horizon/task-manager.md': mdagentsLongHorizonTaskManager,
   'agents/non-delegating-general.md': mdagentsNonDelegatingGeneral,
@@ -162,18 +142,6 @@ const registry: Record<string, string> = {
   'runtime/prompt-too-long-continue-nag.md': mdruntimePromptTooLongContinueNag,
   'runtime/workflow-selector-instructions.md': mdruntimeWorkflowSelectorInstructions,
   'session/title-generation.md': mdsessionTitleGeneration,
-  'space-chat/autonomy-3.md': mdspaceChatAutonomy3,
-  'space-chat/autonomy-4.md': mdspaceChatAutonomy4,
-  'space-chat/autonomy-5.md': mdspaceChatAutonomy5,
-  'space-chat/autonomy-low.md': mdspaceChatAutonomyLow,
-  'space-chat/coordination-invariants.md': mdspaceChatCoordinationInvariants,
-  'space-chat/escalation-act.md': mdspaceChatEscalationAct,
-  'space-chat/escalation-ask.md': mdspaceChatEscalationAsk,
-  'space-chat/event-handling.md': mdspaceChatEventHandling,
-  'space-chat/intro.md': mdspaceChatIntro,
-  'space-chat/subagents.md': mdspaceChatSubagents,
-  'space-chat/work-creation.md': mdspaceChatWorkCreation,
-  'space-chat/workflow-listing-note.md': mdspaceChatWorkflowListingNote,
   'workflows/coder-only/merge-instructions.md': mdworkflowsCoderOnlyMergeInstructions,
   'workflows/coder-only/prompt.md': mdworkflowsCoderOnlyPrompt,
   'workflows/coder-owned/external-gate.md': mdworkflowsCoderOwnedExternalGate,
@@ -206,7 +174,6 @@ const registry: Record<string, string> = {
 
 export const {
   LONG_HORIZON_SCHEDULING_GUARDRAIL,
-  LH_COORDINATOR_INSTRUCTIONS,
   LONG_HORIZON_OWNER_REVIEW_CONTRACT,
   LH_TASK_MANAGER_INSTRUCTIONS,
   NON_DELEGATING_GENERAL_PROMPT,
@@ -231,18 +198,6 @@ export const {
   PROMPT_TOO_LONG_CONTINUE_NAG,
   WORKFLOW_SELECTOR_INSTRUCTIONS,
   TITLE_GENERATION_PROMPT,
-  SPACE_CHAT_AUTONOMY_3,
-  SPACE_CHAT_AUTONOMY_4,
-  SPACE_CHAT_AUTONOMY_5,
-  SPACE_CHAT_AUTONOMY_LOW,
-  SPACE_CHAT_COORDINATION_INVARIANTS,
-  SPACE_CHAT_ESCALATION_ACT,
-  SPACE_CHAT_ESCALATION_ASK,
-  SPACE_CHAT_EVENT_HANDLING,
-  SPACE_CHAT_INTRO,
-  SPACE_CHAT_SUBAGENTS,
-  SPACE_CHAT_WORK_CREATION,
-  SPACE_CHAT_WORKFLOW_LISTING_NOTE,
   CODER_ONLY_MERGE_INSTRUCTIONS,
   CODER_ONLY_PROMPT,
   CODER_EXTERNAL_GATE_BLOCK,

@@ -2,8 +2,6 @@ const MAX_SLUG_LENGTH = 60;
 const DEFAULT_SLUG = 'unnamed-space';
 
 export const RESERVED_SPACE_AGENT_HANDLES = [
-  'coordinator',
-  'space-manager',
   'system-runtime',
   'system-workflow',
   'system-messaging',

@@ -6,7 +6,6 @@ import {
   type SessionTargetAgent,
 } from '../../../../src/lib/session-resolution/target';
 import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session';
-import { coordinatorSessionId } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 
 function makeDeps(config?: { existingSessionIds?: string[]; ensureOutcome?: 'create' | 'fail' }): {
   deps: SessionResolutionDeps;

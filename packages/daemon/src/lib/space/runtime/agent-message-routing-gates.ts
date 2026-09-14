@@ -1,4 +1,3 @@
-import { isSpaceManagerHandle } from '../agent-handle.ts';
 import { formatAddress, type ParsedAddress } from '../../../../../messaging/src/address.ts';
 
 export interface ResolveNodeAgentTargetsInput {
@@ -9,8 +8,6 @@ export interface ResolveNodeAgentTargetsInput {
   nodeGroups?: Record<string, string[]>;
   declaredAgentNames: Set<string> | string[];
   permittedTargets: string[];
-  spaceAgentAvailable: boolean;
-  spaceAgentRoutable?: boolean;
   canSend: (fromNode: string, toNode: string) => boolean;
 }
 
@@ -63,8 +60,6 @@ export function resolveNodeAgentTargets(
     targetAgentNames = [...permittedTargets];
   } else if (Array.isArray(target)) {
     targetAgentNames = [...target];
-  } else if (target === 'space-agent' && input.spaceAgentAvailable) {
-    targetAgentNames = ['space-agent'];
   } else if (peerAgentNames.includes(target)) {
     targetAgentNames = [target];
   } else if (nodeGroups && nodeGroups[target]) {
@@ -83,7 +78,6 @@ export function resolveNodeAgentTargets(
       const allTargets = [
         ...new Set([...knownAgentNames, ...nodeNames, ...declaredAgentNames]),
       ].sort();
-      if (input.spaceAgentRoutable ?? input.spaceAgentAvailable) allTargets.push('space-agent');
       return {
         status: 'unknownTarget',
         target,
@@ -97,8 +91,7 @@ export function resolveNodeAgentTargets(
     }
   }
 
-  const topologyTargets = targetAgentNames.filter((r) => r !== 'space-agent');
-  const unauthorized = topologyTargets.filter(
+  const unauthorized = targetAgentNames.filter(
     (r) => !input.canSend(fromNodeName, resolveNodeName(r))
   );
   if (unauthorized.length > 0) {
@@ -167,20 +160,9 @@ export function foldAgentMessageResult(input: FoldAgentMessageResultInput): Agen
   };
 }
 
-export function promoteQueuedSpaceAgentResult(result: AgentMessageResult): AgentMessageResult {
-  if (
-    result.success === false &&
-    result.queued?.some((entry) => entry.agentName === 'space-agent')
-  ) {
-    return { ...result, success: 'partial' };
-  }
-  return result;
-}
-
-export type NodeTargetDeliveryDecision = 'deliverToSpaceAgent' | 'injectLiveSessions' | 'notFound';
+export type NodeTargetDeliveryDecision = 'injectLiveSessions' | 'notFound';
 
 export interface NodeTargetDeliverySnapshot {
-  isSpaceAgent: boolean;
   hasLiveSessions: boolean;
 }
 
@@ -188,13 +170,12 @@ export function decideNodeTargetDelivery(
   agentName: string,
   snapshot: NodeTargetDeliverySnapshot
 ): NodeTargetDeliveryDecision {
-  if (snapshot.isSpaceAgent) return 'deliverToSpaceAgent';
   if (snapshot.hasLiveSessions) return 'injectLiveSessions';
   return 'notFound';
 }
 
 export interface GenericAddressRoutingConfig {
-  spaceAgentAvailable: boolean;
+  sessionDeliveryAvailable: boolean;
   messagingFacadeAvailable: boolean;
   replyToSessionId: string | null;
   workflowRunId: string;
@@ -215,14 +196,8 @@ export function decideGenericAddressRouting(
   config: GenericAddressRoutingConfig
 ): GenericAddressRoutingDecision {
   const target = formatAddress(address);
-  if (address.kind === 'handle' && isSpaceManagerHandle(address.handle)) {
-    return { action: 'notFound', target };
-  }
-  if (address.kind === 'role' && address.role === 'coordinator') {
-    return { action: 'notFound', target };
-  }
   if (address.kind === 'session') {
-    if (!config.spaceAgentAvailable) return { action: 'notFound', target };
+    if (!config.sessionDeliveryAvailable) return { action: 'notFound', target };
     if (config.replyToSessionId === null || address.sessionId !== config.replyToSessionId) {
       return { action: 'failSessionUnauthorized', target };
     }

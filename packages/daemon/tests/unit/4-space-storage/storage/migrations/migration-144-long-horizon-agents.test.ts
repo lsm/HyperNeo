@@ -1,9 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
-import {
-  coordinatorLongHorizonAgentId,
-  coordinatorSessionId,
-} from '../../../../../src/storage/repositories/space-long-horizon-agent-repository';
+import {} from '../../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { runMigration144 } from '../../../../../src/storage/schema';
 
 describe('Migration 144: long-horizon Space agents', () => {
@@ -52,13 +49,13 @@ describe('Migration 144: long-horizon Space agents', () => {
       .get('space-1') as Record<string, unknown>;
 
     expect(coordinator).toEqual({
-      id: coordinatorLongHorizonAgentId('space-1'),
+      id: `space-lh-agent:coordinator:space-1`,
       space_id: 'space-1',
       handle: 'coordinator',
       display_name: 'Coordinator',
       template_key: 'coordinator.default',
       status: 'active',
-      session_id: coordinatorSessionId('space-1'),
+      session_id: 'space:chat:space-1',
       instructions: 'Coordinate goals, tasks, reminders, event subscriptions, and Space activity.',
       autonomy_level: null,
       tool_permissions_json: '{}',
@@ -79,7 +76,7 @@ describe('Migration 144: long-horizon Space agents', () => {
     runMigration144(db);
     db.prepare(`UPDATE space_long_horizon_agents SET instructions = ? WHERE id = ?`).run(
       'Custom Coordinator instructions.',
-      coordinatorLongHorizonAgentId('space-1')
+      `space-lh-agent:coordinator:space-1`
     );
 
     runMigration144(db);

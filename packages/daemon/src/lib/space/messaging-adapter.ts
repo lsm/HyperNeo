@@ -14,7 +14,6 @@ import type { SpaceWorkflowRunRepository } from '../../storage/repositories/spac
 import type { SpaceWorkflow, WorkflowChannel, WorkflowNode } from '@hyperneo/shared';
 import { ChannelResolver } from './runtime/channel-resolver.ts';
 import type { SpaceActorRegistryAdapter } from './actor-registry.ts';
-import { canonicalizeSpaceManagerHandle } from './agent-handle.ts';
 
 export interface SpaceMessageResolverContext {
   spaceId: string;
@@ -101,7 +100,7 @@ export class SpaceMessageResolver implements ActorResolver {
 
     switch (address.kind) {
       case 'handle': {
-        const handle = `@${canonicalizeSpaceManagerHandle(address.handle)}`;
+        const handle = `@${address.handle}`;
         const matches = actors.filter((actor) => actor.handle === handle && isRoutable(actor));
         return matches.length > 0
           ? { actors: stableActors(matches) }
@@ -549,10 +548,6 @@ function translateLegacyNodeTarget(
   if (targetRef.startsWith('@') || targetRef.startsWith('#')) {
     parseAddress(targetRef);
     return [targetRef];
-  }
-  if (targetRef === 'space-agent') {
-    const replyTo = config.replyRoutingLookup?.(config.agentName);
-    return replyTo ? [`@session:${replyTo}`] : [];
   }
   if (targetRef === '*') {
     return permittedWorkerTargets(config);

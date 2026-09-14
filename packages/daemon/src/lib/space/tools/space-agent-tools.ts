@@ -232,7 +232,6 @@ import {
 import { normalizeMeaningfulTaskResult } from '../task-result-utils.ts';
 import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit } from '../slug.ts';
 import {
-  canonicalizeSpaceManagerHandle,
   isReservedAgentHandle,
   normalizeAgentNameToken,
   normalizeReplyTargetHandle,
@@ -520,8 +519,7 @@ async function resolveHandleForTaskRouting(
 
   const handle = `@${address.handle}`;
   const canonicalHandle = `@${normalizeAgentNameToken(address.handle)}`;
-  const canonicalHandleToken = (value: string) =>
-    canonicalizeSpaceManagerHandle(normalizeAgentNameToken(value).replace(/^@/, ''));
+  const canonicalHandleToken = (value: string) => normalizeAgentNameToken(value).replace(/^@/, '');
   const handlesEquivalent = (actorHandle: string) =>
     canonicalHandleToken(actorHandle) === canonicalHandleToken(handle);
   const taskWorker =
@@ -551,7 +549,6 @@ async function resolveHandleForTaskRouting(
   const longHorizonActors = actors.filter((actor) => {
     if (actor.actorId.startsWith('system:')) return true;
     if (!actor.actorId.startsWith('agent:')) return false;
-    if (actor.actorId === `agent:coordinator:${spaceId}`) return taskWorker !== null;
     if (!longHorizonAgentRepo) return true;
     const agentId = decodeURIComponent(actor.actorId.slice('agent:'.length));
     const unifiedAgent = longHorizonAgentRepo.getById(agentId);
@@ -833,7 +830,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     outboundSenderName === 'task-agent'
       ? 'task-agent'
       : callerHasSpaceAuthority && myAgentId
-        ? 'space-agent'
+        ? 'long-horizon-agent'
         : 'session-agent';
   const outboundSenderDisplayName = outboundSenderName;
   const outboundReplyTargetHandle = myAgentName
@@ -1746,7 +1743,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           args.answer_question ||
           (mySessionId &&
             args.session_id !== mySessionId &&
-            (outboundSenderLevel !== 'space-agent' || myAgentId))
+            (outboundSenderLevel !== 'long-horizon-agent' || myAgentId))
         ) {
           await requireSessionWriteAutonomy('send_session_message');
         }
@@ -3328,12 +3325,12 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           const messageRecord: MessageRecord = {
             messageId: `msg_space_tool_${Date.now()}_${Math.random().toString(36).slice(2)}`,
             spaceId,
-            senderActorId: mySessionId ? `session:${mySessionId}` : `agent:coordinator:${spaceId}`,
+            senderActorId: mySessionId ? `session:${mySessionId}` : 'system:runtime',
             targets: [genericTarget],
             body: formatAgentMessage({
               fromLevel: outboundSenderLevel,
               fromAgentName: outboundSenderDisplayName,
-              toLevel: 'space-agent',
+              toLevel: 'long-horizon-agent',
               body: args.message,
               taskId: task.id,
               taskNumber: task.taskNumber,
@@ -3559,7 +3556,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         return jsonResult({
           success: false,
           error:
-            'approve_pending_completion is only available to Space agent sessions (coordinator or long-term agent) and legacy task-agent sessions. Worker node agents must use approve_task to self-close.',
+            'approve_pending_completion is only available to long-horizon agent sessions and legacy task-agent sessions. Worker node agents must use approve_task to self-close.',
         });
       }
       if (callerHasSpaceAuthority) {
@@ -4820,7 +4817,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
     ),
     tool(
       'approve_pending_completion',
-      "Approve or reject a task paused at a submit_for_approval checkpoint (the human-approval path). This is a Space agent session's programmatic equivalent of the UI 'Approve' banner: approved transitions review → approved and fires the post-approval router; rejected resumes an existing active worker in in_progress, or queues a fresh direct worker with the task open until execution is ready. Space agent (coordinator or long-term agent) and legacy task-agent sessions only — worker node agents use approve_task to self-close.",
+      "Approve or reject a task paused at a submit_for_approval checkpoint (the human-approval path). This is a Space agent session's programmatic equivalent of the UI 'Approve' banner: approved transitions review → approved and fires the post-approval router; rejected resumes an existing active worker in in_progress, or queues a fresh direct worker with the task open until execution is ready. Long-horizon agent and legacy task-agent sessions only — worker node agents use approve_task to self-close.",
       ApprovePendingCompletionSchema.shape,
       (args) => handlers.approve_pending_completion(args)
     ),

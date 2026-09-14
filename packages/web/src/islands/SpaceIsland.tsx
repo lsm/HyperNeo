@@ -245,8 +245,8 @@ export default function SpaceIsland({
   };
 
   if (sessionViewId) {
-    const isSpaceAgentSession = sessionViewId === `space:chat:${spaceId}`;
-    const isAgentSession = isSpaceAgentSession || sessionViewId.startsWith('space:agent:');
+    const isSpaceChatSession = sessionViewId === `space:chat:${spaceId}`;
+    const isAgentSession = isSpaceChatSession || sessionViewId.startsWith('space:agent:');
     return (
       <>
         <div
@@ -257,9 +257,8 @@ export default function SpaceIsland({
           <ChatContainer
             key={sessionViewId}
             sessionId={sessionViewId}
-            titleOverride={isSpaceAgentSession ? 'Space Manager' : undefined}
             onBack={handleSessionBack}
-            agentLabel={isSpaceAgentSession ? 'space' : undefined}
+            agentLabel={isSpaceChatSession ? 'space' : undefined}
             onRefreshAgent={isAgentSession ? handleRefreshAgentRecord : undefined}
           />
         </div>

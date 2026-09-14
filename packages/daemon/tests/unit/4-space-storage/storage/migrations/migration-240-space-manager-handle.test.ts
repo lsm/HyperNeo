@@ -273,14 +273,13 @@ describe('Migration 240: rename coordinator handle to space-manager', () => {
     db.close();
   });
 
-  test('renamed rows keep resolving through the repository coordinator lookup', () => {
+  test('renamed rows keep resolving through the repository handle lookup', () => {
     const db = makeDb();
     runMigration240(db);
 
     const repo = new SpaceLongHorizonAgentRepository(db);
-    expect(repo.getCoordinator('space-1')?.id).toBe('agent-coord-1');
-    expect(repo.getCoordinatorRecord('space-1')?.id).toBe('agent-coord-1');
-    expect(repo.getCoordinator('space-3')?.id).toBe('agent-coord-3');
+    expect(repo.getByHandle('space-1', 'space-manager')?.id).toBe('agent-coord-1');
+    expect(repo.getByHandle('space-3', 'space-manager')?.id).toBe('agent-coord-3');
     db.close();
   });
 

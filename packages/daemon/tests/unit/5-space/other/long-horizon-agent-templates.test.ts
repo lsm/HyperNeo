@@ -24,17 +24,11 @@ describe('long-horizon agent templates', () => {
     expect(RESERVED_SPACE_AGENT_HANDLES as readonly string[]).not.toContain(template?.handle);
   });
 
-  test('keeps only the coordinator and task-manager as non-worker built-ins (ATC-3, ATC-4)', () => {
+  test('keeps only the task-manager as a non-worker built-in (ATC-3, ATC-4)', () => {
     const templates = getLongHorizonFamilyTemplates();
 
-    expect(templates.map((template) => template.key)).toEqual([
-      'coordinator.default',
-      'task-manager.default',
-    ]);
-    expect(templates.map((template) => template.displayName)).toEqual([
-      'Space Manager',
-      'Task Manager',
-    ]);
+    expect(templates.map((template) => template.key)).toEqual(['task-manager.default']);
+    expect(templates.map((template) => template.displayName)).toEqual(['Task Manager']);
   });
 
   test('registers the worker presets as code built-ins under the worker namespace', () => {
@@ -112,31 +106,14 @@ describe('long-horizon agent templates', () => {
     }
   });
 
-  test('coordinator teaches outcome review without claiming a fallback duty', () => {
-    const coordinator = getLongHorizonAgentTemplates().find(
-      (template) => template.key === 'coordinator.default'
-    );
-    expect(coordinator?.instructions).toContain('review_goal_outcome');
-    expect(coordinator?.instructions).not.toContain('fallback reviewer');
-  });
-
   test('returns cloned template data', () => {
     const [template] = getLongHorizonAgentTemplates();
-    const statuses = template.suggestedEventSubscriptions[0].filter.statuses as string[];
-    statuses.push('mutated');
-    template.suggestedEventSubscriptions[0].filter.mutated = true;
     template.reminderDefaults[0].title = 'Mutated';
     template.ownershipPatterns[0].description = 'Mutated';
     template.toolPermissions.mutated = true;
 
     const [again] = getLongHorizonAgentTemplates();
 
-    expect(again.suggestedEventSubscriptions[0].filter).not.toHaveProperty('mutated');
-    expect(again.suggestedEventSubscriptions[0].filter.statuses).toEqual([
-      'blocked',
-      'review',
-      'done',
-    ]);
     expect(again.reminderDefaults[0].title).not.toBe('Mutated');
     expect(again.ownershipPatterns[0].description).not.toBe('Mutated');
     expect(again.toolPermissions).not.toHaveProperty('mutated');

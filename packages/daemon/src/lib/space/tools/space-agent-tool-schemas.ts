@@ -665,7 +665,7 @@ export const CreateGoalSchema = z.object({
     .nullable()
     .optional()
     .describe(
-      'Long-horizon agent id to assign as the goal primary owner atomically at creation. Defaults to the calling agent (self-claim) or the coordinator when absent.'
+      'Long-horizon agent id to assign as the goal primary owner atomically at creation. Defaults to the calling agent (self-claim) when absent.'
     ),
   workspace_path: z
     .string()

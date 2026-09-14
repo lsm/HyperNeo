@@ -41,9 +41,6 @@ export { SpaceRuntime } from './runtime/space-runtime.ts';
 export type { SpaceRuntimeConfig } from './runtime/space-runtime.ts';
 export { SpaceRuntimeService } from './runtime/space-runtime-service.ts';
 export type { SpaceRuntimeServiceConfig } from './runtime/space-runtime-service.ts';
-export { SpaceAgentNotificationService } from './runtime/space-agent-notification-service.ts';
-export type { SpaceAgentNotificationServiceConfig } from './runtime/space-agent-notification-service.ts';
-export type { SessionFactory } from './runtime/types.ts';
 export { TaskAgentManager } from './runtime/task-agent-manager.ts';
 export type { TaskAgentManagerConfig } from './runtime/task-agent-manager.ts';
 export { SpaceActorRegistryAdapter, SPACE_SYSTEM_ACTORS } from './actor-registry.ts';
@@ -65,13 +62,6 @@ export {
   resolveAgentInit,
 } from './agents/custom-agent.ts';
 export type { CustomAgentConfig, ResolveAgentInitConfig } from './agents/custom-agent.ts';
-
-export { buildSpaceChatSystemPrompt } from './agents/space-chat-agent.ts';
-export type {
-  SpaceChatAgentContext,
-  WorkflowSummary,
-  AgentSummary,
-} from './agents/space-chat-agent.ts';
 
 export {
   createSpaceAgentToolHandlers,

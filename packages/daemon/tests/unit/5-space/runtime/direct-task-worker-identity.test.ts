@@ -98,7 +98,6 @@ test('ordinary Space membership remains separate from stopped execution ownershi
   expect(before).toMatchObject({
     role: 'ad_hoc_member',
     isWorkflowWorker: false,
-    attachCoordinatorTools: false,
   });
   attempts.stop('attempt-1', 'worker-1', 'stopped');
   expect(resolve('worker-1')).toBeNull();

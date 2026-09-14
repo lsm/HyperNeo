@@ -3,7 +3,6 @@ import type { SessionResolutionDeps } from '../../../../src/lib/session-resoluti
 import { findSessionForTarget } from '../../../../src/lib/session-resolution/find-session-for-target';
 import type { FindTarget } from '../../../../src/lib/session-resolution/target';
 import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session';
-import { coordinatorSessionId } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 
 interface DepsLog {
   order: string[];

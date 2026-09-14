@@ -43,7 +43,7 @@ describe('Migration 148: Space agent handles', () => {
     }>;
 
     expect(rows).toEqual([
-      { id: 'agent-1', handle: 'coordinator-2' },
+      { id: 'agent-1', handle: 'coordinator' },
       { id: 'agent-2', handle: 'system-runtime-2' },
     ]);
   });

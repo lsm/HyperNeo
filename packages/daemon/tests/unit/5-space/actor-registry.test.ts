@@ -6,7 +6,6 @@ import {
   SpaceActorRegistryAdapter,
 } from '../../../src/lib/space/actor-registry';
 import { longTermAgentSessionId } from '../../../src/lib/space/long-term-agent-session';
-import { coordinatorLongHorizonAgentId } from '../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { NodeExecutionRepository } from '../../../src/storage/repositories/node-execution-repository';
 import { SessionRepository } from '../../../src/storage/repositories/session-repository';
 import { SpaceLongHorizonAgentRepository } from '../../../src/storage/repositories/space-long-horizon-agent-repository';
@@ -16,7 +15,7 @@ import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/sp
 import type { Session } from '@hyperneo/shared';
 import { createSpaceTables } from '../helpers/space-test-db';
 import { seedWorkerMirror } from '../helpers/seed-worker-mirror';
-import { seedSpaceManagerAgent } from '../helpers/seed-space-manager';
+import { seedLongHorizonAgent } from '../helpers/seed-long-horizon-agent';
 
 function makeSession(id: string, overrides: Partial<Session> = {}): Session {
   return {
@@ -75,7 +74,7 @@ describe('SpaceActorRegistryAdapter', () => {
     db.close();
   });
 
-  it('seeds humans, coordinator, ad-hoc sessions, agents, workers, and systems', () => {
+  it('seeds humans, ad-hoc sessions, agents, workers, and systems', () => {
     const space = spaceRepo.createSpace({
       workspacePath: '/workspace/project',
       slug: 'project',
@@ -270,19 +269,11 @@ describe('SpaceActorRegistryAdapter', () => {
       status: 'active',
     });
     expect(actors).toContainEqual({
-      actorId: `agent:coordinator:${space.id}`,
-      kind: 'agent',
-      spaceId: space.id,
-      handle: '@space-manager',
-      roles: ['coordinator', 'space-agent'],
-      status: 'active',
-    });
-    expect(actors).toContainEqual({
       actorId: `agent:${agent.id}`,
       kind: 'agent',
       spaceId: space.id,
       handle: '@long-term-agent',
-      roles: ['actor-role:long-term-agent', 'space-agent'],
+      roles: ['actor-role:long-term-agent'],
       status: 'active',
     });
     expect(actors).toContainEqual({
@@ -290,7 +281,7 @@ describe('SpaceActorRegistryAdapter', () => {
       kind: 'agent',
       spaceId: space.id,
       handle: '@mcp-created-agent',
-      roles: ['actor-role:mcp-created-agent', 'space-agent'],
+      roles: ['actor-role:mcp-created-agent'],
       status: 'active',
     });
     expect(actors).toContainEqual({
@@ -298,7 +289,7 @@ describe('SpaceActorRegistryAdapter', () => {
       kind: 'agent',
       spaceId: space.id,
       handle: '@coordinator-2',
-      roles: ['actor-role:coordinator-2', 'space-agent'],
+      roles: ['actor-role:coordinator-2'],
       status: 'active',
     });
     expect(actors).toContainEqual({
@@ -374,17 +365,10 @@ describe('SpaceActorRegistryAdapter', () => {
 
     expect(registry.getActor(space.id, `agent:${first}`)?.handle).toBe('@a-b');
     expect(registry.getActor(space.id, `agent:${second}`)?.handle).toBe('@a-b-2');
-    expect(registry.getActor(space.id, `agent:${first}`)?.roles).toEqual([
-      'actor-role:a-b',
-      'space-agent',
-    ]);
-    expect(registry.getActor(space.id, `agent:${second}`)?.roles).toEqual([
-      'actor-role:a-b-2',
-      'space-agent',
-    ]);
+    expect(registry.getActor(space.id, `agent:${first}`)?.roles).toEqual(['actor-role:a-b']);
+    expect(registry.getActor(space.id, `agent:${second}`)?.roles).toEqual(['actor-role:a-b-2']);
     expect(registry.getActor(space.id, `agent:${prefixed}`)?.roles).toEqual([
       'actor-role:custom-coordinator',
-      'space-agent',
     ]);
     expect(registry.getActor(space.id, `agent:${cjk}`)?.handle).toBe('@unnamed-space');
     for (const actor of actors) {
@@ -502,101 +486,5 @@ describe('SpaceActorRegistryAdapter', () => {
     expect(
       actors.filter((a) => a.actorId === `agent:${bridged}` || a.handle === '@bridged')
     ).toHaveLength(1);
-  });
-
-  it('does not expose long-horizon coordinator row as separate actor', () => {
-    const space = spaceRepo.createSpace({
-      workspacePath: '/workspace/project',
-      slug: 'project',
-      name: 'Project',
-    });
-    seedSpaceManagerAgent(longHorizonAgentRepo, space.id);
-
-    const actors = registry.listActors(space.id);
-
-    expect(actors).toContainEqual({
-      actorId: `agent:coordinator:${space.id}`,
-      kind: 'agent',
-      spaceId: space.id,
-      handle: '@space-manager',
-      roles: ['coordinator', 'space-agent'],
-      status: 'inactive',
-    });
-    expect(
-      actors.some(
-        (actor) =>
-          actor.actorId === `agent:${encodeURIComponent(coordinatorLongHorizonAgentId(space.id))}`
-      )
-    ).toBe(false);
-    expect(actors.filter((actor) => actor.handle === '@space-manager')).toHaveLength(1);
-  });
-
-  it('exposes a pre-lock renamed derived-id row under its handle once it is not the coordinator row', () => {
-    const space = spaceRepo.createSpace({
-      workspacePath: '/workspace/project',
-      slug: 'project',
-      name: 'Project',
-    });
-    longHorizonAgentRepo.create({
-      id: coordinatorLongHorizonAgentId(space.id),
-      spaceId: space.id,
-      handle: 'renamed',
-      displayName: 'Renamed Row',
-      status: 'active',
-    });
-
-    const actors = registry.listActors(space.id);
-
-    const renamedActor = actors.find((actor) => actor.handle === '@renamed');
-    expect(renamedActor).toMatchObject({
-      actorId: `agent:${encodeURIComponent(coordinatorLongHorizonAgentId(space.id))}`,
-      kind: 'agent',
-      spaceId: space.id,
-      status: 'active',
-    });
-    expect(renamedActor?.roles).toContain('space-agent');
-    expect(actors.filter((actor) => actor.handle === '@space-manager')).toHaveLength(1);
-  });
-
-  it('returns row-backed inactive coordinator when no space chat session exists', () => {
-    const space = spaceRepo.createSpace({
-      workspacePath: '/workspace/project',
-      slug: 'project',
-      name: 'Project',
-    });
-
-    expect(registry.getActor(space.id, `agent:coordinator:${space.id}`)).toEqual({
-      actorId: `agent:coordinator:${space.id}`,
-      kind: 'agent',
-      spaceId: space.id,
-      handle: '@space-manager',
-      roles: ['coordinator', 'space-agent'],
-      status: 'inactive',
-    });
-  });
-
-  it('preserves synthetic coordinator actor when no long-horizon repository is configured', () => {
-    const space = spaceRepo.createSpace({
-      workspacePath: '/workspace/project',
-      slug: 'project',
-      name: 'Project',
-    });
-    const fallbackRegistry = new SpaceActorRegistryAdapter({
-      spaceRepo,
-      sessionRepo,
-      longHorizonAgentRepo,
-      workflowRepo,
-      workflowRunRepo,
-      nodeExecutionRepo,
-    });
-
-    expect(fallbackRegistry.getActor(space.id, `agent:coordinator:${space.id}`)).toEqual({
-      actorId: `agent:coordinator:${space.id}`,
-      kind: 'agent',
-      spaceId: space.id,
-      handle: '@space-manager',
-      roles: ['coordinator', 'space-agent'],
-      status: 'inactive',
-    });
   });
 });

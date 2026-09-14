@@ -258,18 +258,18 @@ export interface TaskAgentManagerConfig {
   artifactRepo?: WorkflowRunArtifactRepository;
   artifactProfile?: WorkflowArtifactProfile;
   toolContinuationRepo?: ToolContinuationRecoveryRepository;
-  spaceAgentInjector?: (
+  sessionMessageInjector?: (
     spaceId: string,
     message: string,
     replyToSessionId?: string | null,
     explicitMessageId?: string,
     options?: {
       onConsumed?: (settledSessionId: string) => void;
-      lateSettlement?: import('./space-agent-message-delivery.ts').SpaceAgentLateSettlementOwner;
+      lateSettlement?: import('./session-message-delivery.ts').SessionLateSettlementOwner;
       onLateFailure?: () => void;
       disposeSignal?: AbortSignal;
     }
-  ) => Promise<import('./space-agent-message-delivery.ts').SpaceAgentInjectionOutcome>;
+  ) => Promise<import('./session-message-delivery.ts').SessionInjectionOutcome>;
   scheduleService?: import('../schedule/schedule-service.ts').ScheduleService;
   replyRoutingRegistry?: ReplyRoutingRegistry;
   memoryRepo?: AgentMemoryRepository;
@@ -4871,7 +4871,7 @@ export class TaskAgentManager {
     const longHorizonAgentRepo =
       this.config.longHorizonAgentRepo ??
       ({
-        getCoordinator: () => {
+        getById: () => {
           throw new Error('Long-horizon agent repository unavailable');
         },
       } as unknown as SpaceLongHorizonAgentRepository);
@@ -5017,7 +5017,7 @@ export class TaskAgentManager {
         }),
       channelRouter: nodeAgentChannelRouter,
       nodeGroups,
-      spaceAgentInjector: this.config.spaceAgentInjector,
+      sessionMessageInjector: this.config.sessionMessageInjector,
       findPostApprovalSessionId: () => {
         const task = this.config.taskRepo.getTask(taskId);
         const sid = task?.postApprovalSessionId;

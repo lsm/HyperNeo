@@ -32,15 +32,12 @@ export interface MatchedRequest extends LinkedRequest {
 
 export type DeepLinkGate<T> = { value: T } | { reason: DeepLinkDecision };
 
-const COORDINATOR_ALIASES = new Set(['space-manager', 'coordinator']);
-
 export function deepLinkKey(spaceId: string, selectedHandle?: string | null): string | null {
   return selectedHandle ? `${spaceId} ${selectedHandle}` : null;
 }
 
 export function matchesSelectedHandle(agent: SpaceAgent, handle: string): boolean {
-  if (agent.handle === handle) return true;
-  return handle === 'coordinator' && COORDINATOR_ALIASES.has(agent.handle);
+  return agent.handle === handle;
 }
 
 export function findLinkTarget(input: DeepLinkInput): SpaceAgent | null {

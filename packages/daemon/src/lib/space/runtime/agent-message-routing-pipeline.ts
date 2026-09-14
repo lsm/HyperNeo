@@ -18,7 +18,6 @@ export interface AgentMessageRoutingCtx {
   target: string | string[];
   requestedTargets: string[];
   topologyEmpty: boolean;
-  spaceAgentAvailable: boolean;
   resolution: ResolveNodeAgentTargetsOutcome;
   decision: AgentMessageRoutingDecision | null;
 }
@@ -49,9 +48,7 @@ export function applyGenericAddressDispatchGate(
 }
 
 export function applyEmptyTopologyGate(ctx: AgentMessageRoutingCtx): AgentMessageRoutingCtx {
-  const wantsSpaceAgent = ctx.target !== '*' && ctx.requestedTargets.includes('space-agent');
-  const blocked = ctx.topologyEmpty && !(wantsSpaceAgent && ctx.spaceAgentAvailable);
-  return blocked ? decided(ctx, { action: 'failNoTopology' }) : ctx;
+  return ctx.topologyEmpty ? decided(ctx, { action: 'failNoTopology' }) : ctx;
 }
 
 export function applyTargetResolutionGate(ctx: AgentMessageRoutingCtx): AgentMessageRoutingCtx {

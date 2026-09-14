@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { SessionResolutionDeps } from '../../../../src/lib/session-resolution/deps';
-import { resolveSpaceAgentSession } from '../../../../src/lib/session-resolution/resolve-space-agent-session';
+import { resolveDeliverySession } from '../../../../src/lib/session-resolution/resolve-delivery-session';
 import { agentSessionIdOf } from '../../../../src/lib/session-resolution/target';
 
 interface TestSession {
@@ -59,13 +59,13 @@ function makeDeps(config?: {
   };
 }
 
-describe('resolveSpaceAgentSession', () => {
+describe('resolveDeliverySession', () => {
   test('finds and re-fetches an explicit reply session', async () => {
     const { deps, getSessionCalls, refetchCalls, ensureCalls, getSession } = makeDeps({
       existingSessionIds: ['reply-session'],
     });
 
-    const outcome = await resolveSpaceAgentSession<TestSession>(
+    const outcome = await resolveDeliverySession<TestSession>(
       'space-1',
       'reply-session',
       deps,
@@ -83,7 +83,7 @@ describe('resolveSpaceAgentSession', () => {
     const { deps, refetchCalls, ensureCalls, getSession } = makeDeps();
 
     await expect(
-      resolveSpaceAgentSession<TestSession>(spaceId, 'missing-session', deps, getSession)
+      resolveDeliverySession<TestSession>(spaceId, 'missing-session', deps, getSession)
     ).rejects.toThrow('Session not found for Space Agent reply routing: missing-session');
     expect(ensureCalls).toHaveLength(0);
     expect(refetchCalls).toHaveLength(0);
@@ -95,7 +95,7 @@ describe('resolveSpaceAgentSession', () => {
     });
 
     await expect(
-      resolveSpaceAgentSession<TestSession>('space-1', 'reply-session', deps, getSession)
+      resolveDeliverySession<TestSession>('space-1', 'reply-session', deps, getSession)
     ).rejects.toThrow(
       'Session not found for Space Agent reply routing: reply-session; internal: database unavailable'
     );
@@ -109,8 +109,8 @@ describe('resolveSpaceAgentSession', () => {
       const { deps, ensureCalls, getSession } = makeDeps();
 
       await expect(
-        resolveSpaceAgentSession<TestSession>(spaceId, replyTo, deps, getSession)
-      ).rejects.toThrow(`No reply route for Space Agent delivery in space ${spaceId}`);
+        resolveDeliverySession<TestSession>(spaceId, replyTo, deps, getSession)
+      ).rejects.toThrow(`No reply route for session delivery in space ${spaceId}`);
       expect(ensureCalls).toHaveLength(0);
     }
   });

@@ -5,10 +5,7 @@ import {
   type SessionTarget,
 } from '../../../../src/lib/session-resolution/target';
 import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session';
-import {
-  coordinatorLongHorizonAgentId,
-  coordinatorSessionId,
-} from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
+import {} from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 
 describe('session-resolution type assignment tests', () => {
   test('new types accept their literal shapes', () => {
@@ -32,7 +29,7 @@ describe('agentSessionIdOf', () => {
 
   test('a derived coordinator id without a coordinator row routes to its own long-horizon session', () => {
     const spaceId = 'space-1';
-    const agentId = coordinatorLongHorizonAgentId(spaceId);
+    const agentId = `space-lh-agent:coordinator:${spaceId}`;
     expect(agentSessionIdOf(spaceId, agentId)).toBe(longTermAgentSessionId(spaceId, agentId));
   });
 

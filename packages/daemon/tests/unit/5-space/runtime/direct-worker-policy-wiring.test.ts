@@ -45,7 +45,7 @@ function policy() {
   });
 }
 
-test('reserved and running identities never inherit legacy, member or coordinator tools', () => {
+test('reserved and running identities never inherit legacy or member tools', () => {
   for (const phase of ['reserved', 'running']) {
     if (phase === 'running') attempts.activate('attempt', 'direct');
     expect(policy()).toEqual({
@@ -55,7 +55,6 @@ test('reserved and running identities never inherit legacy, member or coordinato
       isWorkflowWorker: false,
       requiredServers: [],
       attachGenericSpaceTools: false,
-      attachCoordinatorTools: false,
       attachLongTermAgentTools: false,
     });
   }
@@ -182,7 +181,7 @@ test('ordinary query startup still invokes its existing runner', async () => {
   expect(start).toHaveBeenCalledTimes(1);
 });
 
-test('coordinator setup rejects conflicting direct provenance before loading or rewriting its session', async () => {
+test('space chat setup rejects conflicting direct provenance before loading or rewriting its session', async () => {
   const coordinatorId = `space:chat:${spaceId}`;
   const coordinator = {
     ...createTestSession(coordinatorId),

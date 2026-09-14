@@ -1,52 +1,8 @@
-import { LH_COORDINATOR_INSTRUCTIONS, LH_TASK_MANAGER_INSTRUCTIONS } from '@hyperneo/prompts';
+import { LH_TASK_MANAGER_INSTRUCTIONS } from '@hyperneo/prompts';
 import type { SpaceLongHorizonAgentTemplate } from '@hyperneo/shared';
-import { SPACE_MANAGER_HANDLE } from '../agent-handle.ts';
 import { getPresetAgentTemplates } from './seed-agents.ts';
 
 const LONG_HORIZON_AGENT_TEMPLATES: SpaceLongHorizonAgentTemplate[] = [
-  {
-    key: 'coordinator.default',
-    handle: SPACE_MANAGER_HANDLE,
-    displayName: 'Space Manager',
-    description:
-      'Orchestrates goals, reminders, reactive subscriptions, and handoffs across the Space.',
-    instructions: LH_COORDINATOR_INSTRUCTIONS,
-    suggestedAutonomyLevel: 2,
-    suggestedEventSubscriptions: [
-      {
-        source: 'space',
-        topic: 'task.*',
-        filter: { statuses: ['blocked', 'review', 'done'] },
-      },
-      {
-        source: 'space',
-        topic: 'goal.*',
-        filter: { statuses: ['active', 'blocked', 'done'] },
-      },
-    ],
-    reminderDefaults: [
-      {
-        title: 'Review Space plan',
-        body: 'Review active goals, blocked work, stale tasks, and needed follow-ups.',
-        triggerType: 'cron',
-        cronExpression: '0 9 * * 1',
-        timezone: 'UTC',
-      },
-    ],
-    ownershipPatterns: [
-      {
-        target: 'goal',
-        relationship: 'manager',
-        description: 'Manage cross-cutting recurring goals and delegate execution tasks.',
-      },
-      {
-        target: 'forge_scope',
-        relationship: 'watcher',
-        description: 'Watch broad Forge scopes for new lessons and proposed work.',
-      },
-    ],
-    toolPermissions: {},
-  },
   {
     key: 'task-manager.default',
     handle: 'task-manager',
