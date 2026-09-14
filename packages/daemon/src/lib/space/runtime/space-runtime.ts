@@ -3224,6 +3224,17 @@ export class SpaceRuntime {
     const nextStatus = params.status;
     if (nextStatus && previous.status !== nextStatus) {
       assertValidSpaceTaskTransition(previous.status, nextStatus);
+      if (
+        params.workflowRunId !== undefined &&
+        params.workflowRunId !== previous.workflowRunId &&
+        previous.workflowRunId
+      ) {
+        throw new Error(
+          `Cannot change workflowRunId while transitioning task ${taskId} to '${nextStatus}': ` +
+            `the transition tears down run ${previous.workflowRunId}. ` +
+            `Transition the task first, then reassign it.`
+        );
+      }
       const taskManager = this.getOrCreateTaskManager(spaceId);
       if (Object.hasOwn(params, 'workspacePath')) {
         await taskManager.updateTask(
@@ -3236,7 +3247,10 @@ export class SpaceRuntime {
         delete (params as Record<string, unknown>).workspacePath;
       }
       let updated = await taskManager.setTaskStatus(taskId, nextStatus, {
-        result: params.result ?? undefined,
+        result: Object.hasOwn(params, 'result') ? params.result : undefined,
+        reportedSummary: Object.hasOwn(params, 'reportedSummary')
+          ? params.reportedSummary
+          : undefined,
         blockReason: params.blockReason ?? undefined,
         approvalSource: params.approvalSource ?? undefined,
         approvalReason:
@@ -3285,6 +3299,17 @@ export class SpaceRuntime {
       );
       await this.safeOnTaskUpdated(spaceId, updated);
 
+      if (nextStatus === 'blocked') {
+        const latest = this.config.taskRepo.getTask(taskId);
+        const stillBlockedOnRun =
+          latest?.status === 'blocked' && latest.workflowRunId === previous.workflowRunId;
+        const run = stillBlockedOnRun
+          ? this.config.workflowRunRepo.getRun(previous.workflowRunId)
+          : null;
+        if (run && canTransitionRunStatus(run.status, 'blocked')) {
+          await this.transitionRunStatusAndEmit(previous.workflowRunId, 'blocked');
+        }
+      }
       if (nextStatus === 'cancelled') {
         const run = this.config.workflowRunRepo.getRun(previous.workflowRunId);
         if (run && canTransitionRunStatus(run.status, 'cancelled')) {

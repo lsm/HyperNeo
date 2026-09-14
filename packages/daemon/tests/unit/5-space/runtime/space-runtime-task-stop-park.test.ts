@@ -579,6 +579,92 @@ describe('SpaceRuntime — task-level stop parks the run', () => {
       expect(workflowRunRepo.getRun(run.id)?.status).toBe('cancelled');
     });
 
+    test('blocking a task settles its run instead of leaving it in_progress', async () => {
+      const { workflow, stepA } = buildWorkflow(SPACE_ID);
+      const run = createRun(SPACE_ID, workflow.id, 'Block Run');
+      const task = seedTask(run.id, { taskAgentSessionId: 'session-task-agent' });
+      seedExec(run.id, stepA, 'Step A', 'in_progress', { agentSessionId: 'session-in-flight' });
+      const rt = buildRuntime(
+        makeParkTam(nodeExecutionRepo, {
+          liveSessionIds: ['session-in-flight', 'session-task-agent'],
+        })
+      );
+
+      const blocked = await rt.stopWorkflowBackedTaskForStatus(SPACE_ID, task.id, {
+        status: 'blocked',
+      });
+
+      expect(blocked?.status).toBe('blocked');
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
+    });
+
+    test('a terminal write carries reportedSummary into the status write', async () => {
+      const { workflow, stepA } = buildWorkflow(SPACE_ID);
+      const run = createRun(SPACE_ID, workflow.id, 'Summary Run');
+      const task = seedTask(run.id, { taskAgentSessionId: 'session-task-agent' });
+      seedExec(run.id, stepA, 'Step A', 'in_progress', { agentSessionId: 'session-in-flight' });
+      const rt = buildRuntime(
+        makeParkTam(nodeExecutionRepo, {
+          liveSessionIds: ['session-in-flight', 'session-task-agent'],
+        })
+      );
+
+      const done = await rt.stopWorkflowBackedTaskForStatus(SPACE_ID, task.id, {
+        status: 'done',
+        reportedSummary: 'agent wrote this summary',
+      });
+
+      expect(done?.status).toBe('done');
+      expect(done?.reportedSummary).toBe('agent wrote this summary');
+      expect(done?.result).toBe('agent wrote this summary');
+    });
+
+    test('an explicit null reportedSummary is preserved instead of promoted into result', async () => {
+      const { workflow, stepA } = buildWorkflow(SPACE_ID);
+      const run = createRun(SPACE_ID, workflow.id, 'Clear Summary Run');
+      const task = seedTask(run.id, {
+        taskAgentSessionId: 'session-task-agent',
+        reportedSummary: 'partial summary so far',
+      });
+      seedExec(run.id, stepA, 'Step A', 'in_progress', { agentSessionId: 'session-in-flight' });
+      const rt = buildRuntime(
+        makeParkTam(nodeExecutionRepo, {
+          liveSessionIds: ['session-in-flight', 'session-task-agent'],
+        })
+      );
+
+      const done = await rt.stopWorkflowBackedTaskForStatus(SPACE_ID, task.id, {
+        status: 'done',
+        reportedSummary: null,
+      });
+
+      expect(done?.status).toBe('done');
+      expect(done?.reportedSummary).toBeNull();
+      expect(done?.result).toBeNull();
+    });
+
+    test('reassigning the run during a terminal transition is rejected, not silently dropped', async () => {
+      const { workflow, stepA } = buildWorkflow(SPACE_ID);
+      const run = createRun(SPACE_ID, workflow.id, 'Reassign Reject Run');
+      const task = seedTask(run.id, { taskAgentSessionId: 'session-task-agent' });
+      seedExec(run.id, stepA, 'Step A', 'in_progress', { agentSessionId: 'session-in-flight' });
+      const rt = buildRuntime(
+        makeParkTam(nodeExecutionRepo, {
+          liveSessionIds: ['session-in-flight', 'session-task-agent'],
+        })
+      );
+
+      await expect(
+        rt.stopWorkflowBackedTaskForStatus(SPACE_ID, task.id, {
+          status: 'done',
+          workflowRunId: null,
+        })
+      ).rejects.toThrow(/Cannot change workflowRunId while transitioning/);
+
+      expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
+      expect(taskRepo.getTask(task.id)?.workflowRunId).toBe(run.id);
+    });
+
     test('a stopped review task on a done run does not break the tick', async () => {
       const { workflow, stepA } = buildWorkflow(SPACE_ID);
       const run = createRun(SPACE_ID, workflow.id, 'Review Park Run');
