@@ -4,7 +4,6 @@ import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/s
 import type { OperationRegistrySource } from '../../operations/registry.ts';
 import type { SpaceMcpSessionRole } from '../runtime/space-mcp-session-policy.ts';
 import { hasSpaceAuthority } from '../runtime/space-mcp-session-policy.ts';
-import type { SpaceAgentToolsConfig } from '../tools/space-agent-tools.ts';
 import { jsonResult } from '../tools/tool-result.ts';
 import {
   buildCallActionDescription,
@@ -31,6 +30,7 @@ import {
 } from './registry.ts';
 import { composeRoleActionEntries, createNodeRegistryEntries } from './registry-node.ts';
 import { createSpaceRegistryEntries } from './registry-space.ts';
+import type { SpaceAgentToolsConfig } from './space-handlers.ts';
 
 const CallActionParamsSchema = z.object({
   name: z.string(),

@@ -1,7 +1,3 @@
-import { createDirectKickoffReconciler } from './reconcile-direct-kickoff.ts';
-import { DirectTaskExecutionRepository } from '../../../storage/repositories/direct-task-execution-repository.ts';
-import { createDatabaseDirectTaskWorkerResolver } from './direct-task-worker-identity.ts';
-import type { OwnedAgentLookup } from '../agents/unified-agent-events.ts';
 import type {
   McpServerConfig,
   Session,
@@ -17,14 +13,15 @@ import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types
 import type { ReactiveDatabase } from '../../../storage/reactive-database.ts';
 import type { AgentMemoryRepository } from '../../../storage/repositories/agent-memory-repository.ts';
 import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository.ts';
+import { DirectTaskExecutionRepository } from '../../../storage/repositories/direct-task-execution-repository.ts';
 import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository.ts';
 import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
 import type { SessionRepository } from '../../../storage/repositories/session-repository.ts';
-import { SpaceAgentTemplateRepository } from '../../../storage/repositories/space-agent-template-repository.ts';
-import type { SpaceGoalOutcomeNotificationRepository } from '../../../storage/repositories/space-goal-outcome-notification-repository.ts';
 import type { SpaceAgentGoalScopeRepository } from '../../../storage/repositories/space-agent-goal-scope-repository.ts';
 import type { SpaceAgentReminderRepository } from '../../../storage/repositories/space-agent-reminder-repository.ts';
 import type { SpaceAgentSubscriptionRepository } from '../../../storage/repositories/space-agent-subscription-repository.ts';
+import { SpaceAgentTemplateRepository } from '../../../storage/repositories/space-agent-template-repository.ts';
+import type { SpaceGoalOutcomeNotificationRepository } from '../../../storage/repositories/space-goal-outcome-notification-repository.ts';
 import { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository.ts';
 import {
   SpaceLongHorizonAgentRepository,
@@ -33,7 +30,7 @@ import {
 import type { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import { SpaceWorkflowEventSubscriptionRepository } from '../../../storage/repositories/space-workflow-event-subscription-repository.ts';
-import { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository.ts';
+import type { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository.ts';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository.ts';
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
@@ -59,8 +56,8 @@ import {
 import {
   createMailboxEntry,
   type MailboxEntry,
-  toMailboxMessage,
   type MailboxMessage,
+  toMailboxMessage,
 } from '../../mailbox/entry.ts';
 import type { SessionManager } from '../../session-manager.ts';
 import { buildAgentSessionConfig } from '../../session-resolution/agent-session-config.ts';
@@ -76,8 +73,10 @@ import {
   type SpaceActionsMcpServer,
   type SpaceActionsServerConfig,
 } from '../actions/space-actions-server.ts';
+import type { SpaceAgentToolsConfig } from '../actions/space-handlers.ts';
 import { SpaceActorRegistryAdapter } from '../actor-registry.ts';
 import { LONG_HORIZON_AGENT_BUILTIN_TOOLS } from '../agents/long-horizon-agent-tools.ts';
+import type { OwnedAgentLookup } from '../agents/unified-agent-events.ts';
 import { unifiedAgentRecordExists } from '../agents/worker-long-horizon-mapper.ts';
 import { encodeActorIdComponent, longTermAgentSessionId } from '../long-term-agent-session.ts';
 import { SpaceAgentTemplateManager } from '../managers/space-agent-template-manager.ts';
@@ -86,12 +85,10 @@ import { SpaceTaskManager } from '../managers/space-task-manager.ts';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager.ts';
 import { SpaceMessageResolver } from '../messaging-adapter.ts';
 import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools.ts';
-import {
-  createSpaceAgentMcpServer,
-  type SpaceAgentToolsConfig,
-} from '../tools/space-agent-tools.ts';
+import { createSpaceAgentMcpServer } from '../tools/space-agent-tools.ts';
 import type { WorkflowArtifactProfile } from './artifact-profile.ts';
 import { ChannelRouter } from './channel-router.ts';
+import { createDatabaseDirectTaskWorkerResolver } from './direct-task-worker-identity.ts';
 import {
   type EnsureAgentSessionDeps,
   type EnsuredSession,
@@ -101,6 +98,7 @@ import {
 import type { SelectWorkflowWithLlm } from './llm-workflow-selector.ts';
 import { selectWorkflowWithLlmDefault } from './llm-workflow-selector.ts';
 import type { PostApprovalRouteResult } from './post-approval-router.ts';
+import { createDirectKickoffReconciler } from './reconcile-direct-kickoff.ts';
 import type { RenderPendingDigestOutcome } from './render-pending-digest-pipeline.ts';
 import type { ReplyRoutingRegistry } from './reply-routing-registry.ts';
 import {

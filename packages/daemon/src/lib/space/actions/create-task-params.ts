@@ -1,8 +1,8 @@
-import type { z } from 'zod';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import type { z } from 'zod';
 import type { CreateStandaloneTaskSchema } from '../tools/space-agent-tool-schemas.ts';
-import type { SpaceAgentToolsConfig } from '../tools/space-agent-tools.ts';
 import { routeCreateTaskWorkflowRef } from '../tools/task-transition-routing.ts';
+import type { SpaceAgentToolsConfig } from './space-handlers.ts';
 
 export type CreateStandaloneTaskParams = z.infer<typeof CreateStandaloneTaskSchema>;
 type In = CreateStandaloneTaskParams;
