@@ -3237,6 +3237,7 @@ export class SpaceRuntime {
       }
       let updated = await taskManager.setTaskStatus(taskId, nextStatus, {
         result: params.result ?? undefined,
+        reportedSummary: params.reportedSummary ?? undefined,
         approvalSource: params.approvalSource ?? undefined,
         approvalReason:
           nextStatus === 'cancelled'
@@ -3283,6 +3284,21 @@ export class SpaceRuntime {
       );
       await this.safeOnTaskUpdated(spaceId, updated);
 
+      if (
+        Object.hasOwn(params, 'workflowRunId') &&
+        params.workflowRunId !== updated.workflowRunId
+      ) {
+        updated =
+          this.config.taskRepo.updateTask(taskId, {
+            workflowRunId: params.workflowRunId ?? null,
+          }) ?? updated;
+      }
+      if (nextStatus === 'blocked') {
+        const run = this.config.workflowRunRepo.getRun(previous.workflowRunId);
+        if (run && canTransitionRunStatus(run.status, 'blocked')) {
+          await this.transitionRunStatusAndEmit(previous.workflowRunId, 'blocked');
+        }
+      }
       if (nextStatus === 'cancelled') {
         const run = this.config.workflowRunRepo.getRun(previous.workflowRunId);
         if (run && canTransitionRunStatus(run.status, 'cancelled')) {

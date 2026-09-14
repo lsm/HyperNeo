@@ -579,6 +579,66 @@ describe('SpaceRuntime — task-level stop parks the run', () => {
       expect(workflowRunRepo.getRun(run.id)?.status).toBe('cancelled');
     });
 
+    test('blocking a task settles its run instead of leaving it in_progress', async () => {
+      const { workflow, stepA } = buildWorkflow(SPACE_ID);
+      const run = createRun(SPACE_ID, workflow.id, 'Block Run');
+      const task = seedTask(run.id, { taskAgentSessionId: 'session-task-agent' });
+      seedExec(run.id, stepA, 'Step A', 'in_progress', { agentSessionId: 'session-in-flight' });
+      const rt = buildRuntime(
+        makeParkTam(nodeExecutionRepo, {
+          liveSessionIds: ['session-in-flight', 'session-task-agent'],
+        })
+      );
+
+      const blocked = await rt.stopWorkflowBackedTaskForStatus(SPACE_ID, task.id, {
+        status: 'blocked',
+      });
+
+      expect(blocked?.status).toBe('blocked');
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
+    });
+
+    test('a terminal write carries reportedSummary into the status write', async () => {
+      const { workflow, stepA } = buildWorkflow(SPACE_ID);
+      const run = createRun(SPACE_ID, workflow.id, 'Summary Run');
+      const task = seedTask(run.id, { taskAgentSessionId: 'session-task-agent' });
+      seedExec(run.id, stepA, 'Step A', 'in_progress', { agentSessionId: 'session-in-flight' });
+      const rt = buildRuntime(
+        makeParkTam(nodeExecutionRepo, {
+          liveSessionIds: ['session-in-flight', 'session-task-agent'],
+        })
+      );
+
+      const done = await rt.stopWorkflowBackedTaskForStatus(SPACE_ID, task.id, {
+        status: 'done',
+        reportedSummary: 'agent wrote this summary',
+      });
+
+      expect(done?.status).toBe('done');
+      expect(done?.reportedSummary).toBe('agent wrote this summary');
+      expect(done?.result).toBe('agent wrote this summary');
+    });
+
+    test('a requested workflowRunId detach survives the teardown write-back', async () => {
+      const { workflow, stepA } = buildWorkflow(SPACE_ID);
+      const run = createRun(SPACE_ID, workflow.id, 'Detach Run');
+      const task = seedTask(run.id, { taskAgentSessionId: 'session-task-agent' });
+      seedExec(run.id, stepA, 'Step A', 'in_progress', { agentSessionId: 'session-in-flight' });
+      const rt = buildRuntime(
+        makeParkTam(nodeExecutionRepo, {
+          liveSessionIds: ['session-in-flight', 'session-task-agent'],
+        })
+      );
+
+      const detached = await rt.stopWorkflowBackedTaskForStatus(SPACE_ID, task.id, {
+        status: 'done',
+        workflowRunId: null,
+      });
+
+      expect(detached?.status).toBe('done');
+      expect(taskRepo.getTask(task.id)?.workflowRunId).toBeFalsy();
+    });
+
     test('a stopped review task on a done run does not break the tick', async () => {
       const { workflow, stepA } = buildWorkflow(SPACE_ID);
       const run = createRun(SPACE_ID, workflow.id, 'Review Park Run');
