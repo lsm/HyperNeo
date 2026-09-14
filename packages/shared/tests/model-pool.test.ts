@@ -49,14 +49,19 @@ test('padded provider entries score under their trimmed bucket', () => {
   expect(scored[0]).toMatchObject({ running: 1, left: 0 });
 });
 
-test('provider-qualified entries share the model-wide run count', () => {
+test('qualified entries count their own bucket plus providerless runs, not other providers', () => {
   const entries = [
     { model: 'gpt-5.4', provider: 'openai', maxConcurrent: 2, weight: 50 },
     { model: 'gpt-5.4', provider: 'custom:endpoint-2', maxConcurrent: 2, weight: 50 },
   ];
   const scored = scoreModelPoolEntries(entries, { '["openai","gpt-5.4"]': 1 });
-  expect(scored[0]).toMatchObject({ left: 1 });
-  expect(scored[1]).toMatchObject({ left: 1 });
+  expect(scored[0]).toMatchObject({ running: 1, left: 1 });
+  expect(scored[1]).toMatchObject({ running: 0, left: 2 });
+  const withProviderless = scoreModelPoolEntries(entries, {
+    '["openai","gpt-5.4"]': 1,
+    '[null,"gpt-5.4"]': 1,
+  });
+  expect(withProviderless[1]).toMatchObject({ running: 1, left: 1 });
 });
 
 test('providerless entries count qualified runs against their model-wide cap', () => {

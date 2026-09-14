@@ -57,7 +57,15 @@ export function scoreModelPoolEntries(
       ? { ...rawEntry, provider: rawEntry.provider?.trim() }
       : { ...rawEntry, provider: undefined };
     const cap = Math.max(1, Math.floor(Number(entry.maxConcurrent) || 1));
-    const running = Math.max(0, Math.floor(modelTotals.get(entry.model) ?? 0));
+    const running = Math.max(
+      0,
+      Math.floor(
+        entry.provider
+          ? (runningCounts[modelPoolEntryKey(entry)] ?? 0) +
+              (runningCounts[modelPoolEntryKey({ model: entry.model })] ?? 0)
+          : (modelTotals.get(entry.model) ?? 0)
+      )
+    );
     const left = Math.max(0, cap - running);
     const weight = Number.isFinite(entry.weight) && entry.weight > 0 ? entry.weight : 0;
     const score = Math.min(left * weight, Number.MAX_SAFE_INTEGER);
