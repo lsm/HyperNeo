@@ -14,6 +14,7 @@ const {
   mockSchedules,
   mockEnsureConfigData,
   mockFetchEvolutionScope,
+  mockSetPreferredWorkflow,
   mockUpdateTask,
   mockEditTaskMetadata,
   mockCancelTask,
@@ -38,6 +39,7 @@ const {
     mockEnsureConfigData: vi.fn().mockResolvedValue(undefined),
     mockFetchEvolutionScope: vi.fn().mockResolvedValue({ id: 'scope-1', name: 'Launch Scope' }),
     mockUpdateTask: vi.fn().mockResolvedValue(undefined),
+    mockSetPreferredWorkflow: vi.fn().mockResolvedValue(undefined),
     mockEditTaskMetadata: vi.fn().mockResolvedValue(undefined),
     mockCancelTask: vi.fn().mockResolvedValue({ accepted: true, jobId: null }),
     mockSubmitForReview: vi.fn().mockResolvedValue(undefined),
@@ -88,6 +90,7 @@ vi.mock('../../../lib/space-store', () => ({
     ensureConfigData: mockEnsureConfigData,
     fetchEvolutionScope: mockFetchEvolutionScope,
     updateTask: mockUpdateTask,
+    setPreferredWorkflow: mockSetPreferredWorkflow,
     editTaskMetadata: mockEditTaskMetadata,
     cancelTask: mockCancelTask,
     submitForReview: mockSubmitForReview,
@@ -201,6 +204,8 @@ describe('TaskAuxiliaryPanel', () => {
     mockFetchEvolutionScope.mockClear();
     mockUpdateTask.mockClear();
     mockUpdateTask.mockResolvedValue(undefined);
+    mockSetPreferredWorkflow.mockClear();
+    mockSetPreferredWorkflow.mockResolvedValue(undefined);
     mockEditTaskMetadata.mockClear();
     mockEditTaskMetadata.mockResolvedValue(undefined);
     mockCancelTask.mockClear();
@@ -312,7 +317,7 @@ describe('TaskAuxiliaryPanel', () => {
     fireEvent.change(select, { target: { value: 'workflow-1' } });
 
     await waitFor(() =>
-      expect(mockUpdateTask).toHaveBeenCalledWith('task-1', { preferredWorkflowId: 'workflow-1' })
+      expect(mockSetPreferredWorkflow).toHaveBeenCalledWith('task-1', 'workflow-1')
     );
   });
 
@@ -322,9 +327,7 @@ describe('TaskAuxiliaryPanel', () => {
     const select = getByTestId('task-workflow-select') as HTMLSelectElement;
     fireEvent.change(select, { target: { value: '' } });
 
-    await waitFor(() =>
-      expect(mockUpdateTask).toHaveBeenCalledWith('task-1', { preferredWorkflowId: null })
-    );
+    await waitFor(() => expect(mockSetPreferredWorkflow).toHaveBeenCalledWith('task-1', null));
   });
 
   it('uses the route space id for goal and forge links', async () => {

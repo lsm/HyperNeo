@@ -112,6 +112,42 @@ test('a standalone task passes through to the plain status writer', async () => 
   expect(notifyStandalone).toHaveBeenCalledTimes(1);
 });
 
+test('a block reason accompanies a move to blocked and is persisted', async () => {
+  const task = tasks.createTask({ spaceId, title: 'T', description: '' });
+  await invoke({ taskId: task.id, status: 'in_progress' }, rpc);
+
+  const result = await invoke(
+    { taskId: task.id, status: 'blocked', blockReason: 'human_input_requested' },
+    rpc
+  );
+
+  expect(result).toMatchObject({ kind: 'completed', value: { id: task.id, status: 'blocked' } });
+  expect(tasks.getTask(task.id)?.blockReason).toBe('human_input_requested');
+});
+
+test('a block reason on any other status is rejected and makes no write', async () => {
+  const task = tasks.createTask({ spaceId, title: 'T', description: '' });
+
+  const result = await invoke(
+    { taskId: task.id, status: 'in_progress', blockReason: 'human_input_requested' },
+    rpc
+  );
+
+  expect(result).toEqual({ kind: 'completed', value: 'block_reason_requires_blocked' });
+  expect(tasks.getTask(task.id)?.status).toBe('open');
+});
+
+test('a runtime-owned block reason is rejected by the schema', async () => {
+  const task = tasks.createTask({ spaceId, title: 'T', description: '' });
+
+  const result = await invoke(
+    { taskId: task.id, status: 'blocked', blockReason: 'agent_crashed' },
+    rpc
+  );
+
+  expect(result).toMatchObject({ kind: 'failed', code: 'invalid_input' });
+});
+
 test('a missing task resolves to null', async () => {
   expect(await invoke({ taskId: 'missing', status: 'open' }, rpc)).toEqual({
     kind: 'completed',

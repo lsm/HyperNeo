@@ -8,11 +8,16 @@ export interface SpaceTaskTransitionDecisionInput {
   currentStatus: SpaceTaskStatus;
   requestedStatus: SpaceTaskStatus;
   hasResult: boolean;
+  hasBlockReason: boolean;
   workflowRunId: string | null;
   runActive: boolean;
   callerSource: OperationCaller['source'];
 }
-type RejectResult = 'unsupported_status' | 'invalid_transition' | 'result_requires_done';
+type RejectResult =
+  | 'unsupported_status'
+  | 'invalid_transition'
+  | 'result_requires_done'
+  | 'block_reason_requires_blocked';
 export type SpaceTaskTransitionDecision =
   | { action: 'write'; approvalSource: 'human' | undefined }
   | { action: 'reject'; result: RejectResult }
@@ -24,6 +29,10 @@ type RuntimeExecutor = (typeof RUNTIME_ACTIONS)[number];
 const REJECT_UNSUPPORTED = { action: 'reject', result: 'unsupported_status' } as const;
 const REJECT_INVALID = { action: 'reject', result: 'invalid_transition' } as const;
 const REJECT_RESULT_REQUIRES_DONE = { action: 'reject', result: 'result_requires_done' } as const;
+const REJECT_BLOCK_REASON_REQUIRES_BLOCKED = {
+  action: 'reject',
+  result: 'block_reason_requires_blocked',
+} as const;
 export function classifyRequest(input: Input): TaskUpdateRouting {
   const { currentStatus, requestedStatus, workflowRunId, runActive } = input;
   const statusDiffers = currentStatus !== requestedStatus;
@@ -54,6 +63,11 @@ export function requireResultOnlyWithDone(routing: TaskUpdateRouting, input: Inp
     ? { reason: REJECT_RESULT_REQUIRES_DONE }
     : { value: routing };
 }
+export function requireBlockReasonOnlyWithBlocked(routing: TaskUpdateRouting, input: Input): Gate {
+  return input.hasBlockReason && input.requestedStatus !== 'blocked'
+    ? { reason: REJECT_BLOCK_REASON_REQUIRES_BLOCKED }
+    : { value: routing };
+}
 export function requireTableTransition(routing: TaskUpdateRouting, input: Input): Gate {
   return isValidTaskTransition(input.currentStatus, input.requestedStatus)
     ? { value: routing }
@@ -74,6 +88,7 @@ export const decideSpaceTaskTransition = (superpipe({})('space-task-transition')
   .pipe(classifyRequest, 'input', 'routing')
   .pipe(rejectUnsupportedRequest, ['routing', 'input'], 'result:decision')
   .pipe(requireResultOnlyWithDone, ['decision', 'input'], 'result:decision')
+  .pipe(requireBlockReasonOnlyWithBlocked, ['decision', 'input'], 'result:decision')
   .pipe(requireTableTransition, ['decision', 'input'], 'result:decision')
   .pipe(routeRuntimeAction, 'decision', 'result:decision')
   .pipe(stampApproval, 'input', 'decision')

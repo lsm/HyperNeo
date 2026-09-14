@@ -1143,19 +1143,26 @@ async function seedSpace(ws: WebSocket): Promise<{ spaceId: string; taskIds: str
     ['e2e']
   );
 
-  await rpcCall(ws, 'spaceTask.update', {
-    spaceId,
-    taskId: t1,
-    status: 'done',
-    result: 'Two-layer architecture merged in c0151cbd23.',
+  await rpcCall(ws, 'operation.invoke', {
+    name: 'task.transition',
+    input: {
+      taskId: t1,
+      status: 'done',
+      result: 'Two-layer architecture merged in c0151cbd23.',
+    },
   });
-  await rpcCall(ws, 'spaceTask.update', {
-    spaceId,
-    taskId: t2,
-    status: 'done',
-    result: 'Glass classes extracted; dark output unchanged.',
+  await rpcCall(ws, 'operation.invoke', {
+    name: 'task.transition',
+    input: {
+      taskId: t2,
+      status: 'done',
+      result: 'Glass classes extracted; dark output unchanged.',
+    },
   });
-  await rpcCall(ws, 'spaceTask.update', { spaceId, taskId: t3, status: 'in_progress' });
+  await rpcCall(ws, 'operation.invoke', {
+    name: 'task.transition',
+    input: { taskId: t3, status: 'in_progress' },
+  });
   await rpcCall(ws, 'operation.invoke', {
     name: 'task.submitForReview',
     input: { taskId: t4, reason: 'Ratchet at 358, wired into root check.' },
@@ -1168,21 +1175,30 @@ async function seedSpace(ws: WebSocket): Promise<{ spaceId: string; taskIds: str
     name: 'task.submitForReview',
     input: { taskId: t5, reason: 'Modules deleted; all consumers inlined. Ready for review.' },
   });
-  await rpcCall(ws, 'spaceTask.update', { spaceId, taskId: t6, status: 'in_progress' });
-  await rpcCall(ws, 'spaceTask.update', { spaceId, taskId: t6, status: 'stopped' });
-  await rpcCall(ws, 'spaceTask.update', {
-    spaceId,
-    taskId: t7,
-    status: 'done',
-    result: 'Mermaid re-inits per theme; markdown re-renders on switch.',
+  await rpcCall(ws, 'operation.invoke', {
+    name: 'task.transition',
+    input: { taskId: t6, status: 'in_progress' },
   });
-  await rpcCall(ws, 'spaceTask.update', {
-    spaceId,
-    taskId: t8,
-    status: 'blocked',
-    blockReason: 'human_input_requested',
+  await rpcCall(ws, 'operation.invoke', {
+    name: 'task.transition',
+    input: { taskId: t6, status: 'stopped' },
   });
-  await rpcCall(ws, 'spaceTask.update', { spaceId, taskId: t9, dependsOn: [t6] });
+  await rpcCall(ws, 'operation.invoke', {
+    name: 'task.transition',
+    input: {
+      taskId: t7,
+      status: 'done',
+      result: 'Mermaid re-inits per theme; markdown re-renders on switch.',
+    },
+  });
+  await rpcCall(ws, 'operation.invoke', {
+    name: 'task.transition',
+    input: { taskId: t8, status: 'blocked', blockReason: 'human_input_requested' },
+  });
+  await rpcCall(ws, 'operation.invoke', {
+    name: 'task.dependencies.set',
+    input: { taskId: t9, dependsOn: [t6] },
+  });
 
   const agentsRes = await rpcCall(ws, 'spaceAgentV2.list', { spaceId });
   const agents = (

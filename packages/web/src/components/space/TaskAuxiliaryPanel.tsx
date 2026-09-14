@@ -178,7 +178,7 @@ export function TaskAuxiliaryPanel({
   const handleWorkflowChange = async (nextWorkflowId: string | null) => {
     try {
       setSavingWorkflow(true);
-      await spaceStore.updateTask(task.id, { preferredWorkflowId: nextWorkflowId });
+      await spaceStore.setPreferredWorkflow(task.id, nextWorkflowId);
     } catch {
     } finally {
       setSavingWorkflow(false);

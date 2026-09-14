@@ -16,12 +16,17 @@ export const SpaceTransitionTaskInputSchema = z
     taskId: z.string().min(1),
     status: TaskCoreSchema.shape.status,
     result: z.string().optional(),
+    blockReason: z.literal('human_input_requested').optional(),
     expectedStatus: TaskCoreSchema.shape.status.optional(),
   })
   .strict();
 export type SpaceTransitionTaskInput = z.infer<typeof SpaceTransitionTaskInputSchema>;
 type In = SpaceTransitionTaskInput;
-type Rejection = 'unsupported_status' | 'invalid_transition' | 'result_requires_done';
+type Rejection =
+  | 'unsupported_status'
+  | 'invalid_transition'
+  | 'result_requires_done'
+  | 'block_reason_requires_blocked';
 type Result = TaskCore | Rejection | null;
 export type Gate<T, R> = { value: T } | { reason: R };
 export type OwnedTask = { spaceId: string; task: SpaceTask };

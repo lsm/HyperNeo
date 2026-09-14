@@ -48,7 +48,12 @@ import { generateUUID, isUUID, Logger } from '@hyperneo/shared';
 import { computed, signal } from '@preact/signals';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { connectionManager } from './connection-manager';
-import { editTaskMetadata, invokeOperation, transitionTask } from './operations';
+import {
+  editTaskMetadata,
+  invokeOperation,
+  setPreferredWorkflow,
+  transitionTask,
+} from './operations';
 import { currentSpaceCanonicalIdSignal, currentSpaceIdSignal } from './signals';
 
 const logger = new Logger('hyperneo:web:spacestore');
@@ -2144,6 +2149,13 @@ class SpaceStore {
       ...params,
     });
     return task;
+  }
+
+  async setPreferredWorkflow(taskId: string, workflowId: string | null): Promise<SpaceTask> {
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) throw new Error('Not connected');
+
+    return setPreferredWorkflow(hub, { taskId, workflowId });
   }
 
   async editTaskMetadata(

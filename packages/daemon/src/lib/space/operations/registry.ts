@@ -33,6 +33,10 @@ import {
 } from './list-task-members.ts';
 import { createArchiveTaskOperation, type ArchiveTaskDependencies } from './archive-task.ts';
 import { listScopedTasks, readScopedTask, readScopedTaskByNumber } from './scoped-task-reads.ts';
+import {
+  createSetPreferredWorkflowOperation,
+  type SetPreferredWorkflowDependencies,
+} from './set-preferred-workflow.ts';
 
 interface ArchiveTaskCapability {
   getTaskManager: ArchiveTaskDependencies['getTaskManager'];
@@ -41,6 +45,10 @@ interface ArchiveTaskCapability {
 
 interface TaskNumberRepository {
   taskRepo?: Pick<SpaceTaskRepository, 'getTaskByNumber'>;
+}
+
+interface PreferredWorkflowCapability {
+  getWorkflow?: SetPreferredWorkflowDependencies['getWorkflow'];
 }
 
 export function createSpaceOperationRegistryProvider(
@@ -54,6 +62,7 @@ export function createSpaceOperationRegistryProvider(
     TaskMemberRepositories &
     ArchiveTaskCapability &
     TaskNumberRepository &
+    PreferredWorkflowCapability &
     Omit<
       CompleteTaskDependencies,
       'getTaskManager' | 'emitTaskUpdated' | 'requiresPostApprovalOwner' | 'completionGate'
@@ -106,6 +115,13 @@ export function createSpaceOperationRegistryProvider(
         ? createStartTaskOperation(() => database.getDatabase(), jobQueue, tasks, directStart)
         : undefined,
       cancel: createCancelTaskOperation(() => database.getDatabase(), jobQueue, tasks),
+      setPreferredWorkflow: tasks.getWorkflow
+        ? createSetPreferredWorkflowOperation({
+            ...tasks,
+            getWorkflow: tasks.getWorkflow,
+            db: database.getDatabase(),
+          })
+        : undefined,
       archive: createArchiveTaskOperation(() => database.getDatabase(), tasks),
       members:
         tasks.taskRepo && tasks.nodeExecutionRepo

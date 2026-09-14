@@ -9,6 +9,14 @@ import { TaskWithSpaceFieldsSchema } from './task-get.ts';
 
 type TransitionResult = ReturnType<typeof transitionStandaloneTask>;
 
+export type TransitionTaskRejection =
+  | 'unsupported_status'
+  | 'invalid_transition'
+  | 'result_requires_done'
+  | 'block_reason_requires_blocked';
+
+export type TransitionTaskOutput = TransitionResult | TransitionTaskRejection;
+
 export const StandaloneTransitionTaskInputSchema = z
   .object({
     taskId: z.string().min(1),
@@ -30,21 +38,21 @@ export function createTransitionTaskOperation<Input>(
   transitionTask: (
     input: Input,
     caller: OperationCaller
-  ) => TransitionResult | Promise<TransitionResult>,
+  ) => TransitionTaskOutput | Promise<TransitionTaskOutput>,
   options: { inputSchema: z.ZodType<Input>; description?: string }
 ): OperationDefinition;
 export function createTransitionTaskOperation(
   transitionTask: (
     input: TransitionStandaloneTaskInput,
     caller: OperationCaller
-  ) => TransitionResult | Promise<TransitionResult>,
+  ) => TransitionTaskOutput | Promise<TransitionTaskOutput>,
   options?: { description?: string }
 ): OperationDefinition;
 export function createTransitionTaskOperation<Input = TransitionStandaloneTaskInput>(
   transitionTask: (
     input: Input,
     caller: OperationCaller
-  ) => TransitionResult | Promise<TransitionResult>,
+  ) => TransitionTaskOutput | Promise<TransitionTaskOutput>,
   options: TransitionTaskOperationOptions<Input> = {}
 ) {
   return defineOperation({
@@ -54,7 +62,12 @@ export function createTransitionTaskOperation<Input = TransitionStandaloneTaskIn
       options.inputSchema ?? (StandaloneTransitionTaskInputSchema as unknown as z.ZodType<Input>),
     resultSchema: z.union([
       TaskWithSpaceFieldsSchema.nullable(),
-      z.enum(['unsupported_status', 'invalid_transition', 'result_requires_done']),
+      z.enum([
+        'unsupported_status',
+        'invalid_transition',
+        'result_requires_done',
+        'block_reason_requires_blocked',
+      ]),
     ]),
     execute: async (input, caller) => transitionTask(input, caller),
   });

@@ -11,6 +11,7 @@ export const OPERATION_NAMES = [
   'task.list',
   'task.members.list',
   'task.resolvePendingCompletion',
+  'task.setPreferredWorkflow',
   'task.start',
   'task.submitForReview',
   'task.transition',
