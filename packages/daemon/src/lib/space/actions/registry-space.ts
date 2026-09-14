@@ -102,6 +102,7 @@ import {
   DEFAULT_INACTIVITY_THRESHOLD_MS,
   type SpaceAgentToolsConfig,
 } from '../tools/space-agent-tools.ts';
+import { RestoreNodeAgentSchema } from '../tools/node-agent-tool-schemas.ts';
 import {
   HUMAN_ONLY_AUTONOMY_LEVEL,
   SESSION_WRITE_AUTONOMY_LEVEL,
@@ -783,6 +784,31 @@ export function createSpaceRegistryEntries(
         })
       );
     }
+  }
+
+  if (config.onRestoreNodeAgent) {
+    const restoreCallback = config.onRestoreNodeAgent;
+    partCEntries.push(
+      defineAction({
+        name: 'restore_node_agent',
+        family: 'sessions',
+        safetyClass: 'mutate',
+        description:
+          'Self-heal: re-attach this session’s node MCP server and restart the query so the restored tool surface takes effect; the current turn is interrupted, retry the failed call afterwards.',
+        paramsDoc: 'reason?',
+        paramsSchema: RestoreNodeAgentSchema,
+        handler: async (args) => {
+          try {
+            await restoreCallback({ reason: args.reason });
+          } catch {}
+          return jsonResult({
+            success: true,
+            message:
+              'node MCP server re-attached and query restarted; retry the failed tool call in the next turn.',
+          });
+        },
+      })
+    );
   }
 
   const taskEntries: ActionDefinition[] = [

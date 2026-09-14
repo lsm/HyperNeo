@@ -641,6 +641,43 @@ describe('createSpaceRegistryEntries — composition', () => {
     }
   });
 
+  test('restore_node_agent is absent without onRestoreNodeAgent and invokes the callback when set', async () => {
+    const without = makeCtx();
+    try {
+      expect(
+        createSpaceRegistryEntries(without.config).find(
+          (entry) => entry.name === 'restore_node_agent'
+        )
+      ).toBeUndefined();
+    } finally {
+      without.db.close();
+    }
+
+    const calls: Array<{ reason?: string }> = [];
+    const ctx = makeCtx({
+      onRestoreNodeAgent: async (args) => {
+        calls.push(args);
+      },
+    });
+    try {
+      const entry = createSpaceRegistryEntries(ctx.config).find(
+        (candidate) => candidate.name === 'restore_node_agent'
+      );
+      if (!entry) throw new Error('restore_node_agent entry missing');
+      expect(entry.family).toBe('sessions');
+      expect(entry.safetyClass).toBe('mutate');
+      const result = (await entry.handler(entry.paramsSchema.parse({ reason: 'wedged' }))) as {
+        content: Array<{ text: string }>;
+        isError?: boolean;
+      };
+      expect(result.isError).toBeUndefined();
+      expect(calls).toEqual([{ reason: 'wedged' }]);
+      expect(JSON.parse(result.content[0].text)).toMatchObject({ success: true });
+    } finally {
+      ctx.db.close();
+    }
+  });
+
   function makeFakeCreateTaskOperation() {
     const calls: Array<{ input: unknown; caller: unknown }> = [];
     const operations = createOperationRegistry([
