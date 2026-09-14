@@ -41,7 +41,7 @@ describe('TaskToolsModal', () => {
 
   it('shows tools after loading', async () => {
     mockListRuntimeMcpServers.mockResolvedValue({
-      servers: [{ name: 'space-agent-tools' }, { name: 'custom-tool' }],
+      servers: [{ name: 'space-actions' }, { name: 'custom-tool' }],
     });
     const { getByText, queryByText, container } = render(
       <TaskToolsModal isOpen={true} onClose={() => {}} sessionId="sess-123" agentLabel="Coder" />
@@ -51,7 +51,7 @@ describe('TaskToolsModal', () => {
       expect(queryByText('Loading tools...')).toBeNull();
     });
 
-    expect(getByText('Space coordination')).toBeTruthy();
+    expect(getByText('Space actions')).toBeTruthy();
     expect(container.textContent).toContain('custom-tool');
     expect(mockListRuntimeMcpServers).toHaveBeenCalledWith('sess-123');
   });

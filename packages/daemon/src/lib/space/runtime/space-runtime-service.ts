@@ -1955,6 +1955,10 @@ export class SpaceRuntimeService {
     return updated;
   }
 
+  getSpaceRuntime(): SpaceRuntime {
+    return this.runtime;
+  }
+
   isWorkflowRunActive(runId: string): boolean {
     const run = this.config.workflowRunRepo.getRun(runId);
     return !!run && canTransitionRunStatus(run.status, 'cancelled');

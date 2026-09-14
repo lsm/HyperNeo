@@ -104,7 +104,7 @@ SDK messages reach the web through LiveQuery `messages.bySession`; `SessionStore
 
 Skills flow from the SQLite registry through `SkillsManager` into `QueryOptionsBuilder.build()`. Per-room overrides may disable globally enabled skills but do not independently enable them. See `docs/features/skills.md`.
 
-Sessions with `session.context.spaceId` receive `space-agent-tools` through `SpaceRuntimeService.attachSpaceToolsToMemberSession`; `space_chat` and `space_task_agent` attach elsewhere. Use `mergeRuntimeMcpServers` so existing runtime MCPs survive. Authorization and autonomy gates belong in tool handlers.
+Sessions with `session.context.spaceId` receive the `space-actions` dispatcher (`call_action`) through `SpaceRuntimeService.attachSpaceToolsToMemberSession`; `space_chat` and `space_task_agent` attach elsewhere. Use `mergeRuntimeMcpServers` so existing runtime MCPs survive. Authorization and autonomy gates belong in tool handlers.
 
 ### Space runtime
 

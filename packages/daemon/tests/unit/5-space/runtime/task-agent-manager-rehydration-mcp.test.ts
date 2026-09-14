@@ -163,6 +163,17 @@ function makeManager(): {
     },
     workflowRunRepo: { getRun: () => ({ id: RUN_ID, status: 'in_progress' }) },
     spaceManager: { getSpace: async () => ({ id: SPACE_ID, workspacePath: '/tmp/ws' }) },
+    spaceRuntimeService: {
+      getSpaceRuntime: () =>
+        ({}) as unknown as import('../../../../src/lib/space/runtime/space-runtime.ts').SpaceRuntime,
+      isWorkflowRunActive: () => true,
+      activateWorkflowNode: async () => [],
+      ensureToolTargetSession: async () =>
+        ({
+          kind: 'unresolved',
+          reason: 'test',
+        }) as import('../../../../src/lib/session-resolution/target.ts').EnsureSessionOutcome,
+    },
   } as unknown as TaskAgentManagerConfig);
   return { tam, registered, unregistered };
 }
