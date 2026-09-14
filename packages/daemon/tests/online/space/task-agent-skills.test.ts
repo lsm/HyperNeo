@@ -231,7 +231,7 @@ describe('Task Agent Skills — Online Tests (G1+G2+G3)', () => {
       expect(nodeAgentSessionId).toContain(`exec:${executionId}`);
 
       const mcpServerKeys = Object.keys(sessionResult.session.config?.mcpServers ?? {});
-      expect(mcpServerKeys).toContain('node-agent');
+      expect(mcpServerKeys).toContain('space-actions');
       expect(mcpServerKeys).toContain('agent-memory');
       expect(mcpServerKeys).not.toContain('test-skills-mcp');
     },
