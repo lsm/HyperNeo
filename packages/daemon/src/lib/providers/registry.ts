@@ -75,7 +75,8 @@ export async function resolveAvailableQueryProvider(
       if (await owner.isAvailable()) return { provider: owner, available: true };
     } catch {}
   }
-  return { provider: warmOwners[0] ?? registry.get('anthropic'), available: false };
+  if (warmOwners.length > 0) return { provider: warmOwners[0], available: false };
+  return { provider: registry.get('anthropic'), available: null };
 }
 
 export class ProviderRegistry {
@@ -254,6 +255,7 @@ export function resetProviderRegistry(): void {
 export async function inferAvailableSpawnProviderForModel(
   modelId: string
 ): Promise<string | undefined> {
+  if (inferProviderForModel(modelId) === 'acp') return 'acp';
   const resolved = await resolveAvailableQueryProvider(getProviderRegistry(), modelId, undefined);
   return resolved.provider?.id;
 }

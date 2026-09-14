@@ -8,6 +8,7 @@ import {
   resolveQueryProvider,
   type QueryRunnerContext,
 } from '../../../../src/lib/agent/query-runner';
+import { inferAvailableSpawnProviderForModel } from '../../../../src/lib/providers/registry';
 import { resetSdkStartupGateForTests } from '../../../../src/lib/agent/sdk-startup-gate';
 import type { LimitRetryHint } from '../../../../src/lib/agent/limit-error-classifier';
 import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session';
@@ -450,6 +451,12 @@ describe('QueryRunner', () => {
     });
   });
 
+  describe('inferAvailableSpawnProviderForModel', () => {
+    it('returns acp for providerless ACP models ahead of registry filtering', async () => {
+      expect(await inferAvailableSpawnProviderForModel('acp-coder')).toBe('acp');
+    });
+  });
+
   describe('resolveAvailableQueryProvider', () => {
     const makeRegistry = makeRegistryForResolver;
     const anthropicCatchAll = (_modelId: string) => true;
@@ -481,13 +488,23 @@ describe('QueryRunner', () => {
       expect(picked.provider?.id).toBe('anthropic-codex');
     });
 
-    it('skips an unavailable cold-catalog candidate and falls back to anthropic', async () => {
+    it('skips an unavailable cold-catalog candidate and falls back to anthropic unprobed', async () => {
       const registry = makeRegistryForResolver([
         { id: 'anthropic', owns: anthropicCatchAll },
         { id: 'anthropic-copilot', owns: () => false, cold: true, available: false },
       ]);
       const picked = await resolveAvailableQueryProvider(registry, 'copilot-only-model', undefined);
       expect(picked.provider?.id).toBe('anthropic');
+      expect(picked.available).toBeNull();
+    });
+
+    it('marks an exhausted warm owner unavailable without touching the anthropic fallback', async () => {
+      const registry = makeRegistryForResolver([
+        { id: 'glm', owns: (m) => m === 'glm-4.7', available: false },
+      ]);
+      const picked = await resolveAvailableQueryProvider(registry, 'glm-4.7', undefined);
+      expect(picked.provider?.id).toBe('glm');
+      expect(picked.available).toBe(false);
     });
 
     it('keeps the known owner when it is unavailable and only a cold candidate remains', async () => {
@@ -657,6 +674,32 @@ describe('QueryRunner', () => {
           })
         );
       });
+    });
+
+    it('does not persist an inferred pin when the fallback provider is unavailable', async () => {
+      const savedApiKey = process.env.ANTHROPIC_API_KEY;
+      delete process.env.ANTHROPIC_API_KEY;
+      try {
+        const blankSession: Session = {
+          ...mockSession,
+          config: { ...mockSession.config, model: 'custom-only-model', provider: '   ' },
+        };
+        const ctx = createContext({ session: blankSession });
+        runner = new QueryRunner(ctx);
+
+        await runner.start();
+        await ctx.queryPromise?.catch(() => {});
+
+        expect(blankSession.config.provider).not.toBe('anthropic');
+        expect(updateSessionSpy).not.toHaveBeenCalledWith(
+          'test-session-id',
+          expect.objectContaining({
+            config: expect.objectContaining({ provider: 'anthropic' }),
+          })
+        );
+      } finally {
+        if (savedApiKey !== undefined) process.env.ANTHROPIC_API_KEY = savedApiKey;
+      }
     });
 
     it('normalizes a padded explicit session provider and persists the trimmed pin', async () => {

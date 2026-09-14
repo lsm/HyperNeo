@@ -689,12 +689,19 @@ export class QueryRunner {
         explicitProviderId
       );
       let provider = resolvedProvider.provider;
-      const resolvedProviderAvailable = resolvedProvider.available;
       const normalizedProviderId = explicitProviderId ?? provider?.id;
+      let providerAvailable = resolvedProvider.available;
+      if (provider?.isAvailable && providerAvailable === null) {
+        try {
+          providerAvailable = await provider.isAvailable();
+        } catch {
+          providerAvailable = false;
+        }
+      }
+      const explicitPin = rawProviderId != null && explicitProviderId !== undefined;
       if (
         normalizedProviderId !== undefined &&
-        resolvedProviderAvailable !== false &&
-        (rawProviderId == null || rawProviderId !== normalizedProviderId)
+        (explicitPin ? rawProviderId !== normalizedProviderId : providerAvailable !== false)
       ) {
         session.config.provider = normalizedProviderId as Session['config']['provider'];
         try {
@@ -709,14 +716,6 @@ export class QueryRunner {
         }
       }
 
-      let providerAvailable = resolvedProviderAvailable;
-      if (provider?.isAvailable && providerAvailable === null) {
-        try {
-          providerAvailable = await provider.isAvailable();
-        } catch {
-          providerAvailable = false;
-        }
-      }
       if (provider && providerAvailable === false) {
         const authStatus = provider.getAuthStatus ? await provider.getAuthStatus() : null;
         const errorMsg = authStatus?.error || 'Please configure credentials.';
