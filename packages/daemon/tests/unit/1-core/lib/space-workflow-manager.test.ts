@@ -151,13 +151,13 @@ describe('SpaceWorkflowManager', () => {
           {
             id: 'node-1',
             name: 'Step One',
-            agents: [{ agentId: '', templateKey: 'coordinator.default', name: 'coordinator' }],
+            agents: [{ agentId: '', templateKey: 'task-manager.default', name: 'task-manager' }],
           },
         ],
         completionAutonomyLevel: 3,
       });
 
-      expect(result.nodes[0].agents[0].templateKey).toBe('coordinator.default');
+      expect(result.nodes[0].agents[0].templateKey).toBe('task-manager.default');
     });
 
     it('rejects an unknown template key', () => {
@@ -169,7 +169,7 @@ describe('SpaceWorkflowManager', () => {
             {
               id: 'node-1',
               name: 'Step One',
-              agents: [{ agentId: '', templateKey: 'missing', name: 'coordinator' }],
+              agents: [{ agentId: '', templateKey: 'missing', name: 'task-manager' }],
             },
           ],
           completionAutonomyLevel: 3,
@@ -186,7 +186,7 @@ describe('SpaceWorkflowManager', () => {
             id: 'node-1',
             name: 'Step One',
             agents: [
-              { agentId: 'agent-stale', templateKey: 'coordinator.default', name: 'coordinator' },
+              { agentId: 'agent-stale', templateKey: 'task-manager.default', name: 'task-manager' },
             ],
           },
         ],
@@ -194,7 +194,7 @@ describe('SpaceWorkflowManager', () => {
       });
 
       expect(result.nodes[0].agents[0].agentId).toBe('');
-      expect(result.nodes[0].agents[0].templateKey).toBe('coordinator.default');
+      expect(result.nodes[0].agents[0].templateKey).toBe('task-manager.default');
     });
 
     it('accepts a templateKey stored in the agent template library and keeps the agentId fallback', () => {

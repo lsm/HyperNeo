@@ -75,7 +75,7 @@ describe('resolveRoleHotActionView', () => {
 
   test('falls back to the general hot list labeled by session role', () => {
     expect(resolveRoleHotActionView('ad_hoc_member', null)).toEqual({
-      label: 'Coordinator',
+      label: 'Ad Hoc Member',
       hotActions: GENERAL_HOT_ACTIONS,
     });
     expect(resolveRoleHotActionView('workflow_worker', 'custom-agent')).toEqual({

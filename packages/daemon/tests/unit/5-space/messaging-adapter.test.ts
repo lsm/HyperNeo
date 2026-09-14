@@ -57,12 +57,7 @@ describe('Space messaging adapter', () => {
     spaceId = space.id;
     const agent = { id: 'worker-agent' };
     seedWorkerMirror(db, { id: agent.id, spaceId, name: 'Worker Agent' });
-    longHorizonAgentRepo.create({
-      id: 'lh-manager',
-      spaceId,
-      handle: 'manager',
-      displayName: 'Manager',
-    });
+    seedWorkerMirror(db, { id: 'lh-manager', spaceId, name: 'Manager', handle: 'manager' });
     const workflow = workflowRepo.createWorkflow({
       spaceId,
       name: 'Coding Workflow',

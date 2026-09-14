@@ -597,7 +597,7 @@ describe('gate order and rejection taxonomy', () => {
     });
 
     test('generates a suffixed handle instead of failing on a reserved word', async () => {
-      const agent = await expectAgent(h, baseInput({ displayName: 'Coordinator' }));
+      const agent = await expectAgent(h, baseInput({ displayName: 'System Runtime' }));
       expect(agent.handle).not.toBe('system-runtime');
       expect(agent.handle.startsWith('system-runtime')).toBe(true);
     });
