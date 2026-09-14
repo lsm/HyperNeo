@@ -63,23 +63,21 @@ describe('MarkdownRenderer', () => {
       (copyToClipboard as ReturnType<typeof vi.fn>).mockResolvedValue(true);
     });
 
-    it('should render a copy button for markdown content', async () => {
+    it('should not render any copy button for markdown without code blocks', async () => {
       const { container } = render(<MarkdownRenderer content="**bold** text" />);
       await waitFor(() => {
         expect(container.querySelector('.prose')?.textContent).toContain('bold');
       });
-      const button = container.querySelector('button');
-      expect(button).toBeTruthy();
-      expect(button?.getAttribute('title')).toBe('Copy markdown');
-    });
-
-    it('should not render a copy button before the first render commits', () => {
-      const { container } = render(<MarkdownRenderer content="**bold** text" />);
-      expect(container.querySelector('.prose')?.textContent).not.toContain('bold');
       expect(container.querySelector('button')).toBeFalsy();
     });
 
-    it('should not render a copy button for empty content', async () => {
+    it('should not render a copy button before the first render commits', () => {
+      const { container } = render(<MarkdownRenderer content={'```js\nconst x = 1;\n```'} />);
+      expect(container.querySelector('.prose')?.textContent).not.toContain('const x = 1');
+      expect(container.querySelector('button')).toBeFalsy();
+    });
+
+    it('should not render a copy button for empty or plain streamed content', async () => {
       const { container, rerender } = render(<MarkdownRenderer content="   " />);
       await new Promise((resolve) => setTimeout(resolve, 50));
       expect(container.querySelector('button')).toBeFalsy();
@@ -90,61 +88,87 @@ describe('MarkdownRenderer', () => {
       await waitFor(() => {
         expect(container.querySelector('.prose')?.textContent).toContain('streamed');
       });
-      expect(container.querySelector('button')).toBeTruthy();
+      expect(container.querySelector('button')).toBeFalsy();
     });
 
-    it('should copy the raw markdown source on click', async () => {
-      const { container } = render(<MarkdownRenderer content="**bold** text" />);
+    it('should render a copy button for each fenced code block', async () => {
+      const { container } = render(
+        <MarkdownRenderer
+          content={'Intro\n\n```js\nconst a = 1;\n```\n\nBetween\n\n```bash\necho hi\n```'}
+        />
+      );
       await waitFor(() => {
-        expect(container.querySelector('.prose')?.textContent).toContain('bold');
+        expect(container.querySelectorAll('button')).toHaveLength(2);
       });
-      const button = container.querySelector('button');
-      button?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      const titles = Array.from(container.querySelectorAll('button')).map((button) =>
+        button.getAttribute('title')
+      );
+      expect(titles).toEqual(['Copy code', 'Copy code']);
+    });
 
+    it('should copy only the code block content on click', async () => {
+      const { container } = render(
+        <MarkdownRenderer
+          content={'Intro\n\n```js\nconst a = 1;\n```\n\nBetween\n\n```bash\necho hi\n```'}
+        />
+      );
       await waitFor(() => {
-        expect(copyToClipboard).toHaveBeenCalledWith('**bold** text');
+        expect(container.querySelectorAll('button')).toHaveLength(2);
+      });
+      const [firstButton, secondButton] = Array.from(container.querySelectorAll('button'));
+
+      firstButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await waitFor(() => {
+        expect(copyToClipboard).toHaveBeenCalledWith('const a = 1;\n');
+      });
+      expect(copyToClipboard).not.toHaveBeenCalledWith(
+        'Intro\n\n```js\nconst a = 1;\n```\n\nBetween\n\n```bash\necho hi\n```'
+      );
+
+      secondButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await waitFor(() => {
+        expect(copyToClipboard).toHaveBeenCalledWith('echo hi\n');
       });
     });
 
-    it('should copy the source matching the rendered html during streaming updates', async () => {
-      const { container, rerender } = render(<MarkdownRenderer content="first" />);
+    it('should not add a copy button to inline code spans', async () => {
+      const { container } = render(<MarkdownRenderer content="Use `npm install` today" />);
+      await waitFor(() => {
+        expect(container.querySelector('p code')?.textContent).toBe('npm install');
+      });
+      expect(container.querySelector('button')).toBeFalsy();
+    });
+
+    it('should copy the current block content after streaming updates', async () => {
+      const { container, rerender } = render(<MarkdownRenderer content={'```js\nfirst\n```'} />);
       await waitFor(() => {
         expect(container.querySelector('.prose')?.textContent).toContain('first');
       });
-
-      rerender(<MarkdownRenderer content="second" />);
-      const button = container.querySelector('button');
-      button?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      const firstButton = container.querySelector('button');
+      firstButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 
       await waitFor(() => {
-        expect(copyToClipboard).toHaveBeenCalledTimes(1);
+        expect(copyToClipboard).toHaveBeenCalledWith('first\n');
       });
-      expect(copyToClipboard).toHaveBeenCalledWith('first');
 
+      rerender(<MarkdownRenderer content={'```js\nsecond\n```'} />);
       await waitFor(() => {
         expect(container.querySelector('.prose')?.textContent).toContain('second');
       });
 
       (copyToClipboard as ReturnType<typeof vi.fn>).mockClear();
-      button?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      const secondButton = container.querySelector('button');
+      secondButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 
       await waitFor(() => {
-        expect(copyToClipboard).toHaveBeenCalledWith('second');
+        expect(copyToClipboard).toHaveBeenCalledWith('second\n');
       });
-    });
-
-    it('should not affect rendered markdown content placement', async () => {
-      const { container } = render(<MarkdownRenderer content="Hello World" />);
-      await waitFor(() => {
-        expect(container.querySelector('.prose')?.textContent).toContain('Hello World');
-      });
-      expect(container.querySelector('.prose button')).toBeFalsy();
     });
 
     it('should show copied confirmation then revert', async () => {
-      const { container } = render(<MarkdownRenderer content="**bold** text" />);
+      const { container } = render(<MarkdownRenderer content={'```js\nconst x = 1;\n```'} />);
       await waitFor(() => {
-        expect(container.querySelector('.prose')?.textContent).toContain('bold');
+        expect(container.querySelector('button')).toBeTruthy();
       });
 
       vi.useFakeTimers();
@@ -161,47 +185,33 @@ describe('MarkdownRenderer', () => {
 
         await vi.advanceTimersByTimeAsync(2000);
 
-        expect(button?.getAttribute('title')).toBe('Copy markdown');
+        expect(button?.getAttribute('title')).toBe('Copy code');
         expect(button?.classList.contains('text-success')).toBe(false);
       } finally {
         vi.useRealTimers();
       }
     });
 
-    it('should reserve a right gutter for the copy button on touch devices', () => {
-      const { container } = render(<MarkdownRenderer content="Test" />);
-      const prose = container.querySelector('.prose');
-      expect(prose?.className).toContain('[@media(hover:none)]:pr-7');
-    });
-
-    it('should stay visible when focused on hover-capable devices', async () => {
-      const { container } = render(<MarkdownRenderer content="Test" />);
+    it('should keep copy buttons always visible', async () => {
+      const { container } = render(<MarkdownRenderer content={'```js\nconst x = 1;\n```'} />);
       await waitFor(() => {
         expect(container.querySelector('button')).toBeTruthy();
       });
-      const wrapper = container.querySelector('button')?.parentElement;
-      expect(wrapper?.className).toContain('[@media(hover:hover)]:focus-within:opacity-100');
+      const mount = container.querySelector('button')?.parentElement;
+      expect(mount?.className).not.toContain('opacity-0');
+      expect(mount?.className).not.toContain('group-hover');
     });
 
-    it('should reset the copied confirmation when content changes', async () => {
-      const { container, rerender } = render(<MarkdownRenderer content="first" />);
+    it('should place each copy button inside a wrapper around its code block', async () => {
+      const { container } = render(<MarkdownRenderer content={'```js\nconst x = 1;\n```'} />);
       await waitFor(() => {
-        expect(container.querySelector('.prose')?.textContent).toContain('first');
+        expect(container.querySelector('button')).toBeTruthy();
       });
-
       const button = container.querySelector('button');
-      button?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-
-      await waitFor(() => {
-        expect(button?.getAttribute('title')).toBe('Copied!');
-      });
-
-      rerender(<MarkdownRenderer content="second **streamed**" />);
-
-      await waitFor(() => {
-        expect(container.querySelector('.prose')?.textContent).toContain('streamed');
-        expect(button?.getAttribute('title')).toBe('Copy markdown');
-      });
+      const wrapper = button?.closest('.code-block-wrapper');
+      expect(wrapper).toBeTruthy();
+      expect(wrapper?.querySelector('pre code')?.textContent).toBe('const x = 1;\n');
+      expect(container.querySelector('pre button')).toBeFalsy();
     });
   });
 
@@ -1124,7 +1134,10 @@ describe('MarkdownRenderer', () => {
         const codes = container.querySelectorAll('blockquote pre code.language-html');
         expect(codes).toHaveLength(1);
         expect(codes[0]?.textContent).toBe('<Button\n  label="Save"\n/>\n');
-        expect(container.querySelector('.prose button')).toBeFalsy();
+        const buttons = container.querySelectorAll('.prose button');
+        buttons.forEach((button) => {
+          expect(button.closest('.code-block-wrapper')).toBeTruthy();
+        });
       });
     });
 

@@ -1,3 +1,4 @@
+import { render } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { resolvedTheme } from '../../lib/theme.ts';
 import { CopyButton } from '../ui/CopyButton.tsx';
@@ -910,6 +911,23 @@ async function renderMermaidBlocks(container: HTMLElement, isCancelled?: () => b
   );
 }
 
+function attachCodeBlockCopyButtons(container: HTMLElement) {
+  const mounts: Array<HTMLElement> = [];
+  container.querySelectorAll('pre').forEach((pre) => {
+    const code = pre.querySelector('code');
+    const wrapper = document.createElement('div');
+    wrapper.className = 'code-block-wrapper relative';
+    pre.parentNode?.insertBefore(wrapper, pre);
+    wrapper.appendChild(pre);
+    const mount = document.createElement('div');
+    mount.className = 'absolute top-2 right-2';
+    wrapper.appendChild(mount);
+    render(<CopyButton text={code?.textContent || ''} label="Copy code" />, mount);
+    mounts.push(mount);
+  });
+  return mounts;
+}
+
 async function renderMarkdown(content: string) {
   const modules = await getMarkdownModules();
   const escapedContent = escapeRawHtmlBlocks(content);
@@ -946,7 +964,6 @@ async function renderMarkdown(content: string) {
 export default function MarkdownRenderer({ content, class: className }: MarkdownRendererProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [html, setHtml] = useState<string | null>(null);
-  const [renderedSource, setRenderedSource] = useState('');
   const theme = resolvedTheme.value;
 
   useEffect(() => {
@@ -956,13 +973,11 @@ export default function MarkdownRenderer({ content, class: className }: Markdown
         .then((renderedHtml) => {
           if (!cancelled) {
             setHtml(renderedHtml);
-            setRenderedSource(content);
           }
         })
         .catch(() => {
           if (!cancelled) {
             setHtml(renderPlainText(content));
-            setRenderedSource(content);
           }
         });
     });
@@ -975,6 +990,8 @@ export default function MarkdownRenderer({ content, class: className }: Markdown
   useLayoutEffect(() => {
     if (html == null || !containerRef.current) return;
     containerRef.current.innerHTML = html;
+
+    const copyMounts = attachCodeBlockCopyButtons(containerRef.current);
 
     let mermaidCancelled = false;
     renderMermaidBlocks(containerRef.current, () => mermaidCancelled).catch(() => undefined);
@@ -998,18 +1015,12 @@ export default function MarkdownRenderer({ content, class: className }: Markdown
     }
 
     return () => {
+      copyMounts.forEach((mount) => {
+        render(null, mount);
+      });
       mermaidCancelled = true;
     };
   }, [html, theme]);
 
-  return (
-    <div class="group relative">
-      <div ref={containerRef} class={`prose [@media(hover:none)]:pr-7 ${className || ''}`} />
-      {renderedSource.trim() ? (
-        <div class="absolute top-0 right-0 transition-opacity [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:pointer-events-none [@media(hover:hover)]:focus-within:opacity-100 [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:group-hover:pointer-events-auto">
-          <CopyButton text={renderedSource} label="Copy markdown" />
-        </div>
-      ) : null}
-    </div>
-  );
+  return <div ref={containerRef} class={`prose ${className || ''}`} />;
 }
