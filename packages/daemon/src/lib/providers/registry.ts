@@ -61,10 +61,9 @@ export async function resolveAvailableQueryProvider(
     return registry.get(explicitProviderId);
   }
   const { warmOwners, coldCatalogCandidates } = orderedOwnerCandidates(registry, modelId);
-  if (warmOwners.length === 0 && coldCatalogCandidates.length === 0) {
-    return registry.get('anthropic');
-  }
-  for (const owner of [...warmOwners, ...coldCatalogCandidates]) {
+  const candidates = warmOwners.length > 0 ? warmOwners : coldCatalogCandidates;
+  if (candidates.length === 0) return registry.get('anthropic');
+  for (const owner of candidates) {
     if (typeof owner.isAvailable !== 'function') return owner;
     try {
       if (await owner.isAvailable()) return owner;

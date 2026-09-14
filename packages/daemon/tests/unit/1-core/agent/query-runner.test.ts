@@ -481,6 +481,15 @@ describe('QueryRunner', () => {
       const picked = await resolveAvailableQueryProvider(registry, 'copilot-only-model', undefined);
       expect(picked?.id).toBe('anthropic');
     });
+
+    it('keeps the known owner when it is unavailable and only a cold candidate remains', async () => {
+      const registry = makeRegistryForResolver([
+        { id: 'glm', owns: (m) => m === 'glm-4.7', available: false },
+        { id: 'anthropic-copilot', owns: () => false, cold: true, available: true },
+      ]);
+      const picked = await resolveAvailableQueryProvider(registry, 'glm-4.7', undefined);
+      expect(picked?.id).toBe('glm');
+    });
   });
 
   describe('resolveRetryUserMessage', () => {
