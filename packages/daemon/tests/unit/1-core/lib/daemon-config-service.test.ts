@@ -360,10 +360,10 @@ describe('DaemonConfigService', () => {
   test('an empty legacy boolean env value passes through the resolver as disabled', () => {
     const db = createDb();
     const service = new DaemonConfigService(db);
-    const seeded = service.seedFromLegacyEnv({ HYPERNEO_TASK_AGENT_POST_APPROVAL_ROUTING: '' });
+    const seeded = service.seedFromLegacyEnv({ HYPERNEO_DISABLE_GOAL_PROCESSING: '' });
     expect(seeded).toBe(true);
-    expect(readConfigRow(db)?.config_json).toBe('{"flags":{"taskAgentPostApprovalRouting":false}}');
-    expect(service.getConfig().flags?.taskAgentPostApprovalRouting).toBe(false);
+    expect(readConfigRow(db)?.config_json).toBe('{"startup":{"disableGoalProcessing":false}}');
+    expect(service.getConfig().startup?.disableGoalProcessing).toBe(false);
     db.close();
   });
 
