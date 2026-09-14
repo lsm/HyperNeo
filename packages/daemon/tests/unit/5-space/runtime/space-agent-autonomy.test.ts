@@ -1,7 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 
-import { buildSpaceChatSystemPrompt } from '../../../../src/lib/space/agents/space-chat-agent';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
@@ -106,144 +105,6 @@ function makeHandlers(ctx: TestCtx) {
     taskManager: ctx.taskManager,
   });
 }
-
-describe('buildSpaceChatSystemPrompt — level 1 (supervised) autonomy', () => {
-  test('explicitly labels the space at autonomy level 1', () => {
-    const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 1 });
-    expect(prompt).toContain('autonomy level **1**');
-  });
-
-  test('instructs agent to notify human of every TASK_EVENT', () => {
-    const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 1 });
-    expect(prompt).toContain('Do not retry');
-    expect(prompt).toContain('without explicit human instruction');
-    expect(prompt).toContain('[TASK_EVENT]');
-  });
-
-  test('instructs agent to wait for human approval before acting', () => {
-    const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 1 });
-    expect(prompt).toContain('Provide recommendation and wait');
-  });
-
-  test('instructs agent NOT to call retry without explicit instruction', () => {
-    const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 1 });
-    expect(prompt).toContain('retry');
-    expect(prompt).toContain('without explicit human instruction');
-  });
-
-  test('instructs agent NOT to reassign or cancel without explicit instruction', () => {
-    const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 1 });
-    expect(prompt).toContain('reassign');
-    expect(prompt).toContain('cancel');
-  });
-
-  test('does NOT include level >= 3 autonomous-action instructions', () => {
-    const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 1 });
-    expect(prompt).not.toContain('act without human approval');
-  });
-});
-
-describe('buildSpaceChatSystemPrompt — level 3 (semi-autonomous) autonomy', () => {
-  test('explicitly labels the space at autonomy level 3', () => {
-    const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 3 });
-    expect(prompt).toContain('autonomy level **3**');
-  });
-
-  test('allows retrying a failed task once without human approval', () => {
-    const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 3 });
-    expect(prompt).toContain('retry a failed task once');
-    expect(prompt).toContain('retry');
-  });
-
-  test('allows reassigning a task without human approval', () => {
-    const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 3 });
-    expect(prompt).toContain('reassign');
-  });
-
-  test('instructs agent to escalate after one failed retry', () => {
-    const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 3 });
-    expect(prompt).toContain('one failed retry');
-    expect(prompt).toMatch(/escalate/i);
-  });
-
-  test('workflow gates above configured level still require human approval', () => {
-    const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 3 });
-    expect(prompt).toContain('Never bypass gates');
-  });
-
-  test('does NOT include the level 1 "wait for human approval" restriction for all events', () => {
-    const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 3 });
-    expect(prompt).not.toContain('wait for human approval');
-  });
-});
-
-describe('buildSpaceChatSystemPrompt — level 4 (act-first) autonomy', () => {
-  test('explicitly labels the space at autonomy level 4', () => {
-    const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 4 });
-    expect(prompt).toContain('autonomy level **4**');
-  });
-
-  test('defaults to acting then reporting on reversible decisions', () => {
-    const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 4 });
-    expect(prompt).toContain('Default to acting');
-    expect(prompt).toContain('do not ask permission first');
-  });
-
-  test('escalates only on irreversibility, not on plain uncertainty', () => {
-    const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 4 });
-    expect(prompt).not.toContain('or uncertainty');
-    expect(prompt).toMatch(/irreversible/i);
-  });
-
-  test('graduates distinctly from level 3 and level 5', () => {
-    const l3 = buildSpaceChatSystemPrompt({ autonomyLevel: 3 });
-    const l4 = buildSpaceChatSystemPrompt({ autonomyLevel: 4 });
-    const l5 = buildSpaceChatSystemPrompt({ autonomyLevel: 5 });
-    expect(l4).not.toEqual(l3);
-    expect(l4).not.toEqual(l5);
-  });
-
-  test('workflow gates above configured level still require human approval', () => {
-    const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 4 });
-    expect(prompt).toContain('Never bypass gates');
-  });
-
-  test('escalation at L4 does not hard-code a question into every escalation', () => {
-    const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 4 });
-    const escalation = prompt.split('## Escalation')[1]?.split('##')[0] ?? '';
-    expect(escalation).toContain('Prefer acting and reporting');
-    expect(escalation).not.toContain('and one direct question');
-  });
-});
-
-describe('buildSpaceChatSystemPrompt — default autonomy level (level 1 fallback)', () => {
-  test('omitting autonomyLevel defaults to level 1', () => {
-    const prompt = buildSpaceChatSystemPrompt({});
-    expect(prompt).toContain('autonomy level **1**');
-  });
-
-  test('calling with no arguments defaults to level 1', () => {
-    const prompt = buildSpaceChatSystemPrompt();
-    expect(prompt).toContain('autonomy level **1**');
-  });
-
-  test('no-arg prompt includes notify-human instruction', () => {
-    const prompt = buildSpaceChatSystemPrompt();
-    expect(prompt).toContain('Do not retry');
-    expect(prompt).toContain('wait');
-  });
-
-  test('no-arg prompt does not include level >= 3 retry-autonomously instruction', () => {
-    const prompt = buildSpaceChatSystemPrompt();
-    expect(prompt).not.toContain('act without human approval');
-  });
-
-  test('default prompt and explicit level 1 prompt are identical', () => {
-    const defaultPrompt = buildSpaceChatSystemPrompt();
-    const level1Prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 1 });
-    expect(defaultPrompt).toBe(level1Prompt);
-  });
-});
 
 describe('retry_task tool — autonomy level does not affect tool behavior', () => {
   let ctx: TestCtx;
@@ -391,33 +252,4 @@ describe('space-agent-tools approve_task — completion autonomy', () => {
     expect(parsed.task.status).toBe('done');
     expect(parsed.task.approvalSource).toBe('agent');
   });
-});
-
-describe('buildSpaceChatSystemPrompt — sections always present regardless of autonomy level', () => {
-  const levels: Array<SpaceAutonomyLevel | undefined> = [1, 3, 4, 5, undefined];
-
-  for (const level of levels) {
-    const label = level ?? 'undefined (default)';
-
-    test(`Event Handling section is always present [autonomyLevel=${label}]`, () => {
-      const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: level });
-      expect(prompt).toContain('## Event Handling');
-      expect(prompt).toContain('[TASK_EVENT]');
-    });
-
-    test(`Escalation section is always present [autonomyLevel=${label}]`, () => {
-      const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: level });
-      expect(prompt).toContain('## Escalation');
-    });
-
-    test(`Coordination Invariants section is always present [autonomyLevel=${label}]`, () => {
-      const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: level });
-      expect(prompt).toContain('## Coordination Invariants');
-    });
-
-    test(`Autonomy Level section is always present [autonomyLevel=${label}]`, () => {
-      const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: level });
-      expect(prompt).toContain('## Autonomy Level');
-    });
-  }
 });

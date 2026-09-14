@@ -912,7 +912,7 @@ describe('createSpaceAgentToolHandlers — create_agent_template', () => {
   test('rejects a key reserved for a built-in template', async () => {
     const handlers = makeTemplateHandlers();
     const result = parseResult(
-      await handlers.create_agent_template({ key: 'coordinator.default', handle: 'coordinator' })
+      await handlers.create_agent_template({ key: 'task-manager.default', handle: 'task-manager' })
     );
     expect(result.success).toBe(false);
     expect(result.error).toContain('reserved');
@@ -3055,21 +3055,6 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     expect(result.skipped_subscriptions).toEqual([]);
     expect(result.seeded_reminders).toEqual([]);
     expect(result.skipped_reminders).toEqual([]);
-  });
-
-  test('rejects the reserved coordinator singleton instead of creating a duplicate', async () => {
-    const handlers = makeHandlers(ctx);
-    const result = JSON.parse(
-      (await handlers.create_agent_from_template({ template_name: 'coordinator.default' }))
-        .content[0].text
-    );
-    expect(result.success).toBe(false);
-    expect(result.error).toContain('reserved');
-    expect(result.error).toContain('coordinator');
-    const agents = JSON.parse((await handlers.list_agents({})).content[0].text);
-    const handles = agents.agents.map((agent: { handle: string }) => agent.handle);
-    expect(handles).not.toContain('coordinator-2');
-    expect(handles).not.toContain('coordinator');
   });
 
   test('list_agent_templates merges built-in and user templates with labels and builtin flag', async () => {
@@ -7533,12 +7518,13 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
     expect(parsed.task.status).toBe('approved');
   });
 
-  test('coordinator below the required autonomy level is denied by the raw tool', async () => {
+  test('a long-horizon caller below the required autonomy level is denied by the raw tool', async () => {
     const taskId = await createReviewTask();
     const dispatchSpy = spyOn(ctx.runtime, 'dispatchPostApproval');
 
     const result = await makeApproveHandlers({
-      callerRole: 'ad_hoc_member',
+      callerRole: 'long_term_agent',
+      myAgentId: 'coord-1',
       getSpaceAutonomyLevel: async () => 4,
     }).approve_pending_completion({ task_id: taskId, approved: true });
     dispatchSpy.mockRestore();
@@ -7549,12 +7535,12 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
     expect(dispatchSpy).not.toHaveBeenCalled();
   });
 
-  test('coordinator caller is denied by the raw tool when the backing agent is paused', async () => {
+  test('a long-horizon caller is denied by the raw tool when the backing agent is paused', async () => {
     const taskId = await createReviewTask();
     const dispatchSpy = spyOn(ctx.runtime, 'dispatchPostApproval');
 
     const result = await makeHandlers(ctx, {
-      callerRole: 'ad_hoc_member',
+      callerRole: 'long_term_agent',
       getSpaceAutonomyLevel: async () => 5,
       myAgentId: 'coord-1',
       longHorizonAgentRepo: {
@@ -7575,7 +7561,7 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
     expect(ctx.taskRepo.getTask(taskId)?.status).toBe('review');
   });
 
-  test('coordinator caller is admitted by the raw tool when the backing agent is active', async () => {
+  test('a long-horizon caller is admitted by the raw tool when the backing agent is active', async () => {
     const taskId = await createReviewTask();
     const dispatchSpy = spyOn(ctx.runtime, 'dispatchPostApproval').mockImplementation(
       async (id: string) => {
@@ -7584,7 +7570,7 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
     );
 
     const result = await makeHandlers(ctx, {
-      callerRole: 'ad_hoc_member',
+      callerRole: 'long_term_agent',
       getSpaceAutonomyLevel: async () => 5,
       myAgentId: 'coord-1',
       longHorizonAgentRepo: {
@@ -7895,81 +7881,6 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
     expect(tam.subSessionInjects[0]?.message).toContain(
       'To reply, use: send_message with target "@session:member-session-42"'
     );
-  });
-
-  test('a space-agent sender with no alias names the routable space-agent reply target', async () => {
-    const wf = buildSingleStepWorkflow(
-      ctx.spaceId,
-      ctx.workflowManager,
-      ctx.agentId,
-      'WF Coordinator'
-    );
-    const { tasks } = await ctx.runtime.startWorkflowRun(ctx.spaceId, wf.id, 'Coordinator target');
-    const task = tasks[0];
-    ctx.nodeExecutionRepo.createOrIgnore({
-      workflowRunId: task.workflowRunId,
-      workflowNodeId: wf.startNodeId,
-      agentName: 'coder',
-      agentSessionId: 'coder-session-live',
-      status: 'idle',
-    });
-
-    const tam = makeFakeTaskAgentManager(ctx);
-    const handlers = makeHandlersWith(tam, {
-      activateNode: async () => {},
-      myAgentName: 'space-agent',
-      callerRole: 'long_term_agent',
-    });
-
-    await handlers.send_message_to_task({
-      task_id: task.id,
-      node_id: 'coder',
-      message: 'check coordinator fallback',
-    });
-
-    expect(tam.subSessionInjects[0]?.message).toContain('─── Message from space-agent ───');
-    expect(tam.subSessionInjects[0]?.message).toContain(
-      'To reply, use: send_message with target "space-agent"'
-    );
-    expect(tam.subSessionInjects[0]?.message).not.toContain('@space-manager');
-  });
-
-  test('an aliased space-manager sender also names the routable space-agent reply target', async () => {
-    const wf = buildSingleStepWorkflow(
-      ctx.spaceId,
-      ctx.workflowManager,
-      ctx.agentId,
-      'WF Coordinator'
-    );
-    const { tasks } = await ctx.runtime.startWorkflowRun(ctx.spaceId, wf.id, 'Coordinator target');
-    const task = tasks[0];
-    ctx.nodeExecutionRepo.createOrIgnore({
-      workflowRunId: task.workflowRunId,
-      workflowNodeId: wf.startNodeId,
-      agentName: 'coder',
-      agentSessionId: 'coder-session-live',
-      status: 'idle',
-    });
-
-    const tam = makeFakeTaskAgentManager(ctx);
-    const handlers = makeHandlersWith(tam, {
-      activateNode: async () => {},
-      myAgentName: 'space-agent',
-      myAgentNameAliases: ['space-manager'],
-      callerRole: 'long_term_agent',
-    });
-
-    await handlers.send_message_to_task({
-      task_id: task.id,
-      node_id: 'coder',
-      message: 'check coordinator fallback',
-    });
-
-    expect(tam.subSessionInjects[0]?.message).toContain('─── Message from space-agent ───');
-    expect(tam.subSessionInjects[0]?.message).toContain(
-      'To reply, use: send_message with target "space-agent"'
-    );
-    expect(tam.subSessionInjects[0]?.message).not.toContain('@space-manager');
   });
 
   test('long-horizon sender uses canonical handle alias without double prefix', async () => {

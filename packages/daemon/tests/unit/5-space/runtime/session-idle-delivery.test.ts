@@ -177,7 +177,7 @@ interface IdleCoordinatorHarness {
   ) => Promise<SessionInjectionOutcome>;
 }
 
-async function makeIdleCoordinatorHarness(): Promise<IdleCoordinatorHarness> {
+async function makeIdleSessionHarness(): Promise<IdleCoordinatorHarness> {
   const db = await createTestDb();
   const workspacePath = mkdtempSync(join(tmpdir(), 'idle-coordinator-'));
   const session = createTestSession(SESSION_ID);
@@ -267,7 +267,7 @@ async function makeIdleCoordinatorHarness(): Promise<IdleCoordinatorHarness> {
   };
 }
 
-describe('idle coordinator message consumption (issue #2963)', () => {
+describe('idle session message consumption (issue #2963)', () => {
   let savedApiKey: string | undefined;
   let harnesses: IdleCoordinatorHarness[];
   let workspaces: string[];
@@ -323,8 +323,8 @@ describe('idle coordinator message consumption (issue #2963)', () => {
     return harness;
   }
 
-  it('wakes an idle coordinator session: escalation drives a turn and is consumed', async () => {
-    const harness = await makeIdleCoordinatorHarness();
+  it('wakes an idle session: escalation drives a turn and is consumed', async () => {
+    const harness = await makeIdleSessionHarness();
     track(harness, harness.agentSession.getSessionData().workspacePath);
     const { db, agentSession } = harness;
     expect(agentSession.getProcessingState().status).toBe('idle');
@@ -345,13 +345,16 @@ describe('idle coordinator message consumption (issue #2963)', () => {
     await completeTurn(db, agentSession, 'msg-wake-1');
   });
 
-  describe('when the idle coordinator does not consume before the handoff returns', () => {
+  describe('when the idle session does not consume before the handoff returns', () => {
     it('acks accepted without waiting for consumption, keeps the row enqueued, and consumes it on activation', async () => {
-      const harness = await makeIdleCoordinatorHarness();
+      const harness = await makeIdleSessionHarness();
       track(harness, harness.agentSession.getSessionData().workspacePath);
       const { db, agentSession } = harness;
 
-      const outcome = await harness.escalate('msg-queued-1', 'escalation while coordinator idle');
+      const outcome = await harness.escalate(
+        'msg-queued-1',
+        'escalation while the session is idle'
+      );
       expect(outcome).toEqual({
         state: 'accepted',
         messageId: 'msg-queued-1',
@@ -374,7 +377,7 @@ describe('idle coordinator message consumption (issue #2963)', () => {
     });
 
     it('reports a truthful queued ack to the escalating worker via send_message routing', async () => {
-      const harness = await makeIdleCoordinatorHarness();
+      const harness = await makeIdleSessionHarness();
       track(harness, harness.agentSession.getSessionData().workspacePath);
       const { db, agentSession, escalate } = harness;
 
@@ -394,7 +397,7 @@ describe('idle coordinator message consumption (issue #2963)', () => {
       const result = await router.deliverMessage({
         fromAgentName: 'coder',
         fromSessionId: 'sess-coder',
-        target: 'space-agent',
+        target: `@session:${SESSION_ID}`,
         message: 'Blocked-task escalation: strict base-OID rule withheld mark_complete',
       });
 
@@ -402,7 +405,7 @@ describe('idle coordinator message consumption (issue #2963)', () => {
       expect(result.delivered).toEqual([]);
       expect(result.failed).toEqual([]);
       expect(result.queued).toHaveLength(1);
-      expect(result.queued?.[0].agentName).toBe('space-agent');
+      expect(result.queued?.[0].agentName).toBe(`@session:${SESSION_ID}`);
       const queuedMessageId = result.queued?.[0].messageId as string;
       expect(typeof queuedMessageId).toBe('string');
       await waitFor(
@@ -422,7 +425,7 @@ describe('idle coordinator message consumption (issue #2963)', () => {
     });
 
     it('settles an accepted escalation through the delayed-consumption hook', async () => {
-      const harness = await makeIdleCoordinatorHarness();
+      const harness = await makeIdleSessionHarness();
       track(harness, harness.agentSession.getSessionData().workspacePath);
       const { db, agentSession } = harness;
       let settled = false;

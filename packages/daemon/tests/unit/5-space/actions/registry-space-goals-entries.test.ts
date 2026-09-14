@@ -87,7 +87,7 @@ function makeCtx(overrides: Partial<SpaceAgentToolsConfig> = {}): GoalsCtx {
     taskManager: new SpaceTaskManager(db, SPACE_ID),
     taskAgentManager: stubTaskAgentManager,
     goalService,
-    callerRole: 'ad_hoc_member',
+    callerRole: 'long_term_agent',
     ...overrides,
   };
   return { db, config };

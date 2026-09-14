@@ -101,20 +101,18 @@ function invoke(
   );
 }
 
-test.each(['chat', 'legacy-chat', 'default-agent', 'legacy-task'] as const)(
+test.each(['default-agent', 'legacy-task'] as const)(
   'admits persisted %s and preserves result and audit',
   async (kind) => {
     const session =
-      kind === 'chat' || kind === 'legacy-chat'
-        ? persist('space_chat', `space:chat:${spaceId}`, kind === 'legacy-chat' ? null : spaceId)
-        : kind === 'default-agent'
-          ? persist(
-              'worker',
-              longTermAgentSessionId(spaceId, coordinator.id),
-              spaceId,
-              coordinator.id
-            )
-          : persist('space_task_agent');
+      kind === 'default-agent'
+        ? persist(
+            'worker',
+            longTermAgentSessionId(spaceId, coordinator.id),
+            spaceId,
+            coordinator.id
+          )
+        : persist('space_task_agent');
     const outcome = await invoke(session.id, {
       taskId: task.id,
       approved: true,

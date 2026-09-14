@@ -338,7 +338,7 @@ describe('AgentMessageRouter: single-target delivery door', () => {
     ]);
   });
 
-  test('routes authorized session targets through the door and no longer routes @coordinator', async () => {
+  test('routes authorized session targets through the door and no longer routes bare handles', async () => {
     const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, []);
     seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
     const targets: SessionTarget[] = [];
@@ -1429,13 +1429,13 @@ describe('AgentMessageRouter: generic address targets', () => {
       failed: [],
       reason: "Session target @session:other-session is not an authorized reply route for 'coder'.",
       unauthorizedAgentNames: ['@session:other-session'],
-      queued: [{ agentName: 'space-agent', messageId: 'msg-1' }],
+      queued: [{ agentName: '@session:session-origin', messageId: 'msg-1' }],
       notFoundAgentNames: undefined,
     });
     expect(injected).toEqual(['session-origin']);
   });
 
-  test('counts a queued coordinator delivery as partial when a later @worker target is invalid', async () => {
+  test('counts a queued session delivery as partial when a later @worker target is invalid', async () => {
     const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, []);
     seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
     const router = makeRouter(ctx, workflowRunId, [], [], {
@@ -1459,12 +1459,12 @@ describe('AgentMessageRouter: generic address targets', () => {
     expect(result.delivered).toEqual([]);
     expect(result.failed).toEqual([]);
     expect(result.queued).toEqual([
-      { agentName: 'space-agent', messageId: 'msg-queued-coordinator' },
+      { agentName: '@session:session-origin', messageId: 'msg-queued-coordinator' },
     ]);
     expect(result.reason).toContain("Channel topology does not permit 'coder' to send to");
   });
 
-  test('classifies queued coordinator plus unknown worker as partial instead of failure', async () => {
+  test('classifies a queued session delivery plus unknown worker as partial instead of failure', async () => {
     const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, []);
     seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
     const router = makeRouter(ctx, workflowRunId, [], [], {
@@ -1481,17 +1481,17 @@ describe('AgentMessageRouter: generic address targets', () => {
       fromAgentName: 'coder',
       fromSessionId: ctx.coderSessionId,
       target: ['@session:session-origin', '@worker:ghost/ghost'],
-      message: 'queued coordinator plus unknown worker',
+      message: 'queued session delivery plus unknown worker',
     });
 
     expect(result.success).toBe('partial');
     expect(result.queued).toEqual([
-      { agentName: 'space-agent', messageId: 'msg-queued-coordinator' },
+      { agentName: '@session:session-origin', messageId: 'msg-queued-coordinator' },
     ]);
     expect(JSON.stringify(result)).toContain('ghost');
   });
 
-  test('preserves queued coordinator delivery when facade resolution rejects', async () => {
+  test('preserves a queued session delivery when facade resolution rejects', async () => {
     const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, []);
     seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
     const router = makeRouter(ctx, workflowRunId, [], [], {
@@ -1514,14 +1514,14 @@ describe('AgentMessageRouter: generic address targets', () => {
       fromAgentName: 'coder',
       fromSessionId: ctx.coderSessionId,
       target: ['@session:session-origin', '@role:reviewer'],
-      message: 'queued coordinator plus failing resolver',
+      message: 'queued session delivery plus failing resolver',
     });
 
     expect(result.success).toBe('partial');
     expect(result.delivered).toEqual([]);
     expect(result.failed).toEqual([]);
     expect(result.queued).toEqual([
-      { agentName: 'space-agent', messageId: 'msg-queued-coordinator' },
+      { agentName: '@session:session-origin', messageId: 'msg-queued-coordinator' },
     ]);
     expect(result.reason).toBe('resolver down');
   });
@@ -1549,12 +1549,12 @@ describe('AgentMessageRouter: generic address targets', () => {
     expect(result.success).toBe('partial');
     expect(result.delivered).toEqual([]);
     expect(result.queued).toEqual([
-      { agentName: 'space-agent', messageId: 'msg-live-coordinator' },
+      { agentName: '@session:session-origin', messageId: 'msg-live-coordinator' },
     ]);
     expect(result.reason).toContain("Channel topology does not permit 'coder' to send to");
   });
 
-  test('reports injector failure to the sender when an idle-coordinator delivery dead-letters', async () => {
+  test('reports injector failure to the sender when an idle-session delivery dead-letters', async () => {
     const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, []);
     seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
     const router = makeRouter(ctx, workflowRunId, [], [], {
@@ -1580,7 +1580,7 @@ describe('AgentMessageRouter: generic address targets', () => {
       delivered: [],
       failed: [
         {
-          agentName: 'space-agent',
+          agentName: '@session:session-origin',
           sessionId: `space:chat:${ctx.spaceId}`,
           error: 'delivery dead-lettered while awaiting consumption',
         },
@@ -1590,7 +1590,7 @@ describe('AgentMessageRouter: generic address targets', () => {
     });
   });
 
-  test('counts a queued coordinator delivery as partial when a later @session target is unauthorized', async () => {
+  test('counts a queued session delivery as partial when a later @session target is unauthorized', async () => {
     const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, []);
     seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
     const router = makeRouter(ctx, workflowRunId, [], [], {
@@ -1616,7 +1616,7 @@ describe('AgentMessageRouter: generic address targets', () => {
       failed: [],
       reason: "Session target @session:other-session is not an authorized reply route for 'coder'.",
       unauthorizedAgentNames: ['@session:other-session'],
-      queued: [{ agentName: 'space-agent', messageId: 'msg-queued-coordinator' }],
+      queued: [{ agentName: '@session:session-origin', messageId: 'msg-queued-coordinator' }],
       notFoundAgentNames: undefined,
     });
   });
