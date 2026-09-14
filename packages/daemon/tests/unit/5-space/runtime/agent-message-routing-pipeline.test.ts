@@ -18,7 +18,7 @@ import {
 const noPermittedReason = `No permitted targets for agent 'coder' in the declared channel topology.`;
 const unknownGhostReason =
   `Unknown target 'ghost': no agent or node found with this name. ` +
-  `Reachable targets: reviewer, space-agent.`;
+  `Reachable targets: reviewer.`;
 const unauthorizedReason =
   `Channel topology does not permit 'coder' to send to: security. ` +
   `Permitted targets: reviewer.`;
@@ -31,7 +31,7 @@ function unknownGhostOutcome(): ResolveNodeAgentTargetsOutcome {
   return {
     status: 'unknownTarget',
     target: 'ghost',
-    allTargets: ['reviewer', 'space-agent'],
+    allTargets: ['reviewer'],
     reason: unknownGhostReason,
   };
 }
@@ -85,30 +85,7 @@ describe('agent message routing decision pipeline', () => {
       { target: '*', requestedTargets: ['*'] },
       { action: 'routeTargets', targetAgentNames: ['reviewer'] },
     ],
-    [
-      'empty topology without space-agent fails',
-      { topologyEmpty: true },
-      { action: 'failNoTopology' },
-    ],
-    [
-      'empty topology with an available space-agent proceeds',
-      {
-        target: 'space-agent',
-        requestedTargets: ['space-agent'],
-        topologyEmpty: true,
-        resolution: resolvedOutcome(['space-agent']),
-      },
-      { action: 'routeTargets', targetAgentNames: ['space-agent'] },
-    ],
-    [
-      'empty topology still fails when space-agent is wanted but unavailable',
-      {
-        target: 'space-agent',
-        requestedTargets: ['space-agent'],
-        topologyEmpty: true,
-      },
-      { action: 'failNoTopology' },
-    ],
+    ['empty topology fails', { topologyEmpty: true }, { action: 'failNoTopology' }],
     [
       'unknown targets fail with the resolution reason',
       { resolution: unknownGhostOutcome() },
@@ -230,14 +207,6 @@ describe('agent message routing decision pipeline', () => {
         [applyGenericAddressDispatchGate, { target: 'reviewer', requestedTargets: ['reviewer'] }],
         [applyGenericAddressDispatchGate, { target: [], requestedTargets: [] }],
         [applyEmptyTopologyGate, { topologyEmpty: false }],
-        [
-          applyEmptyTopologyGate,
-          {
-            target: 'space-agent',
-            requestedTargets: ['space-agent'],
-            topologyEmpty: true,
-          },
-        ],
         [applyTargetResolutionGate, { resolution: resolvedOutcome(['reviewer']) }],
         [
           applyTargetResolutionGate,

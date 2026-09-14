@@ -820,22 +820,6 @@ describe('WorkflowHookEngine', () => {
     expect(outcome.decision).toBe('allow');
   });
 
-  test('space-agent multicast keeps workflow target hooks active', async () => {
-    const { engine, mockExecutor } = makeEngine([
-      makeHook({ id: 'hook-1', targetNode: 'Review', method: 'send_message' }),
-    ]);
-    mockExecutor.setResult('hook-1', { type: 'allow' });
-
-    const outcome = await engine.executeAction(
-      'send_message',
-      { target: ['Review', 'space-agent'], message: 'hi' },
-      defaultMeta
-    );
-
-    expect(outcome.executionLog).toHaveLength(1);
-    expect(outcome.executionLog[0].hookId).toBe('hook-1');
-  });
-
   test('invalid generic worker target skips target-specific hooks', async () => {
     const { engine, mockExecutor } = makeEngine([
       makeHook({ id: 'hook-1', targetNode: 'Review', method: 'send_message' }),

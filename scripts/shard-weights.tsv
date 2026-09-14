@@ -111,7 +111,6 @@
 698	packages/daemon/tests/unit/5-space/runtime/space-agent-autonomy.test.ts
 1052	packages/daemon/tests/unit/5-space/runtime/space-agent-task-creation-flow.test.ts
 36990	packages/daemon/tests/unit/5-space/runtime/space-agent-tools.test.ts
-14	packages/daemon/tests/unit/5-space/runtime/space-chat-agent.test.ts
 8	packages/daemon/tests/unit/5-space/runtime/space-mcp-session-policy.test.ts
 5696	packages/daemon/tests/unit/5-space/runtime/space-runtime-completion.test.ts
 591	packages/daemon/tests/unit/5-space/runtime/space-runtime-disabled-workflow.test.ts
