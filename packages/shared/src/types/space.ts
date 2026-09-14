@@ -1100,6 +1100,7 @@ export interface WorkflowNodeAgent {
   templateKey?: string | null;
   name: string;
   model?: string;
+  provider?: string;
   thinkingLevel?: ThinkingLevel;
   customPrompt?: WorkflowNodeAgentOverride;
   replaceAgentPrompt?: boolean;
@@ -1259,6 +1260,7 @@ export interface ExportedWorkflowNodeAgent {
   templateKey?: string;
   name: string;
   model?: string;
+  provider?: string;
   thinkingLevel?: ThinkingLevel;
   systemPrompt?: WorkflowNodeAgentOverride | string;
   replaceAgentPrompt?: boolean;
@@ -1287,7 +1289,7 @@ export interface ExportedWorkflowNode {
 }
 
 export interface ExportedSpaceAgent {
-  version: 1 | 2 | 3 | 4 | 5 | 6;
+  version: 1 | 2 | 3 | 4 | 5 | 6 | 7;
   type: 'agent';
   name: string;
   handle?: string;
@@ -1303,7 +1305,7 @@ export interface ExportedSpaceAgent {
 }
 
 export interface ExportedSpaceWorkflow {
-  version: 1 | 2 | 3 | 4 | 5 | 6;
+  version: 1 | 2 | 3 | 4 | 5 | 6 | 7;
   type: 'workflow';
   name: string;
   description?: string;
@@ -1320,7 +1322,7 @@ export interface ExportedSpaceWorkflow {
 }
 
 export interface SpaceExportBundle {
-  version: 1 | 2 | 3 | 4 | 5 | 6;
+  version: 1 | 2 | 3 | 4 | 5 | 6 | 7;
   type: 'bundle';
   name: string;
   description?: string;

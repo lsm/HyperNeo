@@ -14,7 +14,7 @@ import type { NodeDraft } from '../WorkflowNodeCard';
 import { buildOverride, extractOverrideValue, isMultiAgentNode } from '../WorkflowNodeCard';
 import { ChannelRelationConfigPanel } from './ChannelRelationConfigPanel';
 import { HookEditorPanel } from './HookEditorPanel';
-import { WorkflowModelSelect } from './WorkflowModelSelect';
+import { WorkflowModelSelect, type WorkflowModelSelection } from './WorkflowModelSelect';
 
 function isLongHorizonTemplate(template: SpaceLongHorizonAgentTemplate): boolean {
   return template.labels?.includes('long-horizon') ?? false;
@@ -196,6 +196,7 @@ function AgentsSection({
   const selectedSingleTemplateKey = singleSlot?.templateKey ?? step.templateKey;
   const selectedSingleAgentId = singleSlot?.agentId ?? step.agentId;
   const selectedSingleModel = singleSlot?.model ?? step.model;
+  const selectedSingleProvider = singleSlot?.provider ?? step.provider;
   const selectedSingleThinkingLevel = safeNodeThinkingLevel(
     singleSlot?.thinkingLevel ?? step.thinkingLevel
   );
@@ -232,6 +233,7 @@ function AgentsSection({
         agents: undefined,
         agentId: survivor?.agentId ?? '',
         model: survivor?.model,
+        provider: survivor?.provider,
         thinkingLevel: survivor?.thinkingLevel,
         customPrompt: survivor?.customPrompt,
         replaceAgentPrompt: survivor?.replaceAgentPrompt,
@@ -263,9 +265,11 @@ function AgentsSection({
     );
   }
 
-  function updateAgentModel(role: string, model: string | undefined) {
+  function updateAgentModel(role: string, model: string | undefined, provider?: string) {
     updateAgents(
-      nodeAgents.map((a) => (a.name === role ? { ...a, model: model || undefined } : a))
+      nodeAgents.map((a) =>
+        a.name === role ? { ...a, model: model || undefined, provider: provider || undefined } : a
+      )
     );
   }
 
@@ -299,12 +303,12 @@ function AgentsSection({
   );
 
   const updateSingleModel = useCallback(
-    (model: string | undefined) => {
+    (model: string | undefined, selection?: WorkflowModelSelection) => {
       if (singleSlot) {
-        updateAgentModel(singleSlot.name, model);
+        updateAgentModel(singleSlot.name, model, selection?.provider);
         return;
       }
-      onUpdate({ ...step, model });
+      onUpdate({ ...step, model, provider: selection?.provider || undefined });
     },
     [singleSlot, step, onUpdate]
   );
@@ -367,6 +371,7 @@ function AgentsSection({
                 agentId: primaryTemplateKey ? '' : primaryAgentId,
                 name: buildUniqueRole(primaryBaseRole),
                 model: selectedSingleModel,
+                provider: selectedSingleProvider,
                 thinkingLevel: selectedSingleThinkingLevel,
                 customPrompt: selectedSingleCustomPrompt,
                 replaceAgentPrompt: selectedSingleReplaceAgentPrompt,
@@ -435,6 +440,7 @@ function AgentsSection({
           <WorkflowModelSelect
             testId="single-agent-model-input"
             value={selectedSingleModel}
+            provider={selectedSingleProvider}
             onChange={updateSingleModel}
           />
         </div>
@@ -478,6 +484,7 @@ function AgentsSection({
                     templateKey: selectedSingleTemplateKey,
                     name: step.name || 'agent',
                     model: selectedSingleModel,
+                    provider: selectedSingleProvider,
                     thinkingLevel: selectedSingleThinkingLevel,
                     customPrompt: selectedSingleCustomPrompt,
                     replaceAgentPrompt: selectedSingleReplaceAgentPrompt,
@@ -487,6 +494,7 @@ function AgentsSection({
                 ],
                 agentId: '',
                 model: undefined,
+                provider: undefined,
                 thinkingLevel: undefined,
                 customPrompt: undefined,
                 replaceAgentPrompt: undefined,
@@ -620,7 +628,10 @@ function AgentsSection({
                 <WorkflowModelSelect
                   testId="agent-slot-model-input"
                   value={sa.model}
-                  onChange={(model) => updateAgentModel(sa.name, model)}
+                  provider={sa.provider}
+                  onChange={(model, selection) =>
+                    updateAgentModel(sa.name, model, selection?.provider)
+                  }
                 />
               </div>
               <div class="space-y-1">
@@ -1129,7 +1140,14 @@ export function NodeConfigPanel({
             <WorkflowModelSelect
               testId="slot-prompts-model-input"
               value={slot.model}
-              onChange={(model) => updateSlot({ ...slot, model: model || undefined })}
+              provider={slot.provider}
+              onChange={(model, selection) =>
+                updateSlot({
+                  ...slot,
+                  model: model || undefined,
+                  provider: selection?.provider || undefined,
+                })
+              }
             />
           </div>
           <div class="space-y-1">

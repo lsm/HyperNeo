@@ -11,6 +11,7 @@ import type {
   WorkflowNodeInput,
 } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
+import { getProviderRegistry } from '../providers/registry.js';
 import { SpaceAgentTemplateRepository } from '../../storage/repositories/space-agent-template-repository.ts';
 import { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
@@ -399,6 +400,7 @@ export function buildWorkflowCreateParams(
         templateKey?: string;
         name: string;
         model?: string;
+        provider?: string;
         thinkingLevel?: import('@hyperneo/shared').ThinkingLevel;
         customPrompt?: import('@hyperneo/shared').WorkflowNodeAgentOverride;
         replaceAgentPrompt?: boolean;
@@ -449,6 +451,19 @@ export function buildWorkflowCreateParams(
         entry.agentId = agentId ?? '';
       }
       if (typeof a.model === 'string' && a.model.trim()) entry.model = a.model.trim();
+      if (typeof a.provider === 'string' && a.provider.trim()) entry.provider = a.provider.trim();
+      if (entry.provider) {
+        const provider = getProviderRegistry().get(entry.provider);
+        const effectiveModel = entry.model;
+        if (provider && effectiveModel && !provider.ownsModel(effectiveModel)) {
+          warnings.push(
+            `node "${exportedNode.name}" slot "${entry.name}" pins provider ` +
+              `"${entry.provider}" which does not offer model "${effectiveModel}"; ` +
+              'the slot will be imported without the provider pin'
+          );
+          entry.provider = undefined;
+        }
+      }
       if (a.thinkingLevel !== undefined) entry.thinkingLevel = a.thinkingLevel;
       const normalizedSP = normalizeOverride(a.systemPrompt);
       const normalizedInst = normalizeOverride(a.instructions);

@@ -127,6 +127,7 @@ export async function syncProviderToRegistry(
     try {
       const provider = new CustomEndpointProvider(config);
       registry.register(provider);
+      provider.prewarmBridges();
       logger.info(`Registered custom endpoint provider ${providerId}`);
     } catch (err) {
       logger.warn(`Failed to register custom endpoint provider ${providerId}:`, err);

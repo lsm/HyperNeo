@@ -1,8 +1,37 @@
 import { createLogger } from '@hyperneo/shared/logger';
 import type { CuratedModel, Provider, ProviderId, ProviderInfo } from '@hyperneo/shared/provider';
 import type { Provider as ProviderIdStr } from '@hyperneo/shared';
+import { isAnthropicSdkModelId } from './anthropic-sdk-models.js';
 
 const log = createLogger('hyperneo:providers:registry', { consoleDeltas: true });
+
+export function resolveQueryProvider(
+  registry: Pick<ProviderRegistry, 'get' | 'getAll'>,
+  modelId: string,
+  explicitProviderId: string | undefined
+): Provider | undefined {
+  if (explicitProviderId) {
+    return registry.get(explicitProviderId);
+  }
+  const anthropicFamily = isAnthropicSdkModelId(modelId);
+  const all = registry.getAll();
+  const ordered = [
+    ...all.filter((provider) => provider.id.startsWith('custom:')),
+    ...all.filter((provider) => !provider.id.startsWith('custom:')),
+  ];
+  for (const provider of ordered) {
+    if (provider.id === 'anthropic' || provider.id === 'acp') continue;
+    if (
+      anthropicFamily &&
+      (provider.id === 'anthropic-copilot' || provider.id.startsWith('custom:'))
+    ) {
+      continue;
+    }
+    if (typeof provider.ownsModel !== 'function' || !provider.ownsModel(modelId)) continue;
+    return provider;
+  }
+  return registry.get('anthropic');
+}
 
 export class ProviderRegistry {
   private providers = new Map<ProviderId, Provider>();

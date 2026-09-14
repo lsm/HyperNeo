@@ -233,6 +233,114 @@ describe('NodeConfigPanel', () => {
       );
     });
 
+    it('stores the selected model provider alongside the model', async () => {
+      const onUpdate = vi.fn();
+      const { getByTestId } = render(<NodeConfigPanel {...makeProps({ onUpdate })} />);
+      const input = getByTestId('single-agent-model-input') as HTMLSelectElement;
+      await waitFor(() => expect(input.options.length).toBeGreaterThan(1));
+      input.value = '%5B%22custom%3Aendpoint-1%22%2C%22custom%2Fmodel%3Awith%3Acolon%22%5D';
+      fireEvent.change(input);
+      expect(onUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          model: 'custom/model:with:colon',
+          provider: 'custom:endpoint-1',
+        })
+      );
+    });
+
+    it('stores the provider on an existing single slot when the model changes', async () => {
+      const onUpdate = vi.fn();
+      const step = makeStep({
+        agents: [
+          {
+            agentId: 'agent-1',
+            templateKey: 'coder-v1',
+            name: 'coder',
+            model: 'claude-sonnet-4-6',
+            provider: 'anthropic',
+          },
+        ],
+      });
+      const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
+      const input = getByTestId('single-agent-model-input') as HTMLSelectElement;
+      await waitFor(() => expect(input.options.length).toBeGreaterThan(1));
+      input.value = '%5B%22custom%3Aendpoint-2%22%2C%22gpt-5.4%22%5D';
+      fireEvent.change(input);
+      expect(onUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          agents: [
+            expect.objectContaining({
+              name: 'coder',
+              model: 'gpt-5.4',
+              provider: 'custom:endpoint-2',
+            }),
+          ],
+        })
+      );
+    });
+
+    it('clears the slot provider when the model override is cleared', async () => {
+      const onUpdate = vi.fn();
+      const step = makeStep({
+        agents: [
+          {
+            agentId: 'agent-1',
+            templateKey: 'coder-v1',
+            name: 'coder',
+            model: 'claude-sonnet-4-6',
+            provider: 'anthropic',
+          },
+        ],
+      });
+      const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
+      const input = getByTestId('single-agent-model-input') as HTMLSelectElement;
+      await waitFor(() => expect(input.options.length).toBeGreaterThan(1));
+      input.value = '';
+      fireEvent.change(input);
+      expect(onUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          agents: [
+            expect.objectContaining({ name: 'coder', model: undefined, provider: undefined }),
+          ],
+        })
+      );
+    });
+
+    it('carries the provider into the slot materialized by the skills toggle', async () => {
+      const skill: AppSkill = {
+        id: 's1',
+        name: 's1',
+        displayName: 'Skill One',
+        description: '',
+        sourceType: 'builtin',
+        config: { type: 'builtin', commandName: 's1' },
+        enabled: true,
+        builtIn: true,
+        validationStatus: 'unknown',
+        createdAt: 0,
+      };
+      skillsStore.skills.value = [skill];
+      const onUpdate = vi.fn();
+      try {
+        const { container } = render(
+          <NodeConfigPanel
+            {...makeProps({
+              step: makeStep({ agentId: 'agent-1', model: 'swe-2-high', provider: 'custom:ai0' }),
+              onUpdate,
+            })}
+          />
+        );
+        await waitFor(() => expect(container.querySelector('input[type="checkbox"]')).toBeTruthy());
+        fireEvent.click(container.querySelector('input[type="checkbox"]')!);
+        const materialized = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
+        expect(materialized.agents[0].model).toBe('swe-2-high');
+        expect(materialized.agents[0].provider).toBe('custom:ai0');
+        expect(materialized.provider).toBeUndefined();
+      } finally {
+        skillsStore.skills.value = [];
+      }
+    });
+
     it('preserves raw colon IDs in out-of-list current selections', async () => {
       const onChange = vi.fn();
       const { getByTestId } = render(

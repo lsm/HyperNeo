@@ -11,17 +11,79 @@ const entries = [
 ];
 
 test('modelPoolEntryKey is the model id', () => {
-  expect(modelPoolEntryKey({ model: 'sonnet' })).toBe('sonnet');
+  expect(modelPoolEntryKey({ model: 'sonnet' })).toBe('[null,"sonnet"]');
+});
+
+test('modelPoolEntryKey separates the same model across providers', () => {
+  expect(modelPoolEntryKey({ model: 'gpt-5.4', provider: 'custom:endpoint-2' })).toBe(
+    '["custom:endpoint-2","gpt-5.4"]'
+  );
+  expect(modelPoolEntryKey({ model: 'gpt-5.4', provider: 'openai' })).toBe('["openai","gpt-5.4"]');
+  expect(modelPoolEntryKey({ model: 'gpt-5.4' })).toBe('[null,"gpt-5.4"]');
+});
+
+test('modelPoolEntryKey cannot collide across qualified and unqualified entries', () => {
+  expect(modelPoolEntryKey({ model: 'b', provider: 'custom:a' })).not.toBe(
+    modelPoolEntryKey({ model: 'custom:a::b' })
+  );
+  expect(modelPoolEntryKey({ model: 'b', provider: 'custom:a' })).not.toBe(
+    modelPoolEntryKey({ model: '["custom:a","b"]' })
+  );
+});
+
+test('blank providers key identically to providerless entries', () => {
+  expect(modelPoolEntryKey({ model: 'sonnet', provider: '' })).toBe(
+    modelPoolEntryKey({ model: 'sonnet' })
+  );
+  expect(modelPoolEntryKey({ model: 'sonnet', provider: '   ' })).toBe(
+    modelPoolEntryKey({ model: 'sonnet' })
+  );
+  expect(modelPoolEntryKey({ model: 'sonnet', provider: ' glm ' })).toBe(
+    modelPoolEntryKey({ model: 'sonnet', provider: 'glm' })
+  );
+});
+
+test('padded provider entries score under their trimmed bucket', () => {
+  const entries = [{ model: 'sonnet', provider: ' glm ', maxConcurrent: 1, weight: 50 }];
+  const scored = scoreModelPoolEntries(entries, { '["glm","sonnet"]': 1 });
+  expect(scored[0]).toMatchObject({ running: 1, left: 0 });
+});
+
+test('provider-qualified entries only count against their own provider bucket', () => {
+  const entries = [
+    { model: 'gpt-5.4', provider: 'openai', maxConcurrent: 1, weight: 50 },
+    { model: 'gpt-5.4', provider: 'custom:endpoint-2', maxConcurrent: 1, weight: 50 },
+  ];
+  const scored = scoreModelPoolEntries(entries, { '["openai","gpt-5.4"]': 1 });
+  expect(scored[0]).toMatchObject({ left: 0 });
+  expect(scored[1]).toMatchObject({ left: 1 });
+  const picked = pickModelPoolEntry(entries, { '["openai","gpt-5.4"]': 1 }, () => 0.99);
+  expect(picked?.provider).toBe('custom:endpoint-2');
+});
+
+test('providerless entries count qualified runs against their model-wide cap', () => {
+  const entries = [{ model: 'sonnet', maxConcurrent: 2, weight: 50 }];
+  const scored = scoreModelPoolEntries(entries, { '["glm","sonnet"]': 1, '[null,"sonnet"]': 1 });
+  expect(scored[0]).toMatchObject({ running: 2, left: 0 });
+  expect(
+    pickModelPoolEntry(entries, { '["glm","sonnet"]': 1, '[null,"sonnet"]': 1 }, () => 0.5)
+  ).toBeNull();
+});
+
+test('provider-qualified entries only count their own bucket, not unqualified runs', () => {
+  const entries = [{ model: 'sonnet', provider: 'glm', maxConcurrent: 1, weight: 50 }];
+  const scored = scoreModelPoolEntries(entries, { '[null,"sonnet"]': 1 });
+  expect(scored[0]).toMatchObject({ running: 0, left: 1 });
 });
 
 test('scoring multiplies remaining capacity by weight', () => {
-  const scored = scoreModelPoolEntries(entries, { sonnet: 6, 'glm-5': 1 });
+  const scored = scoreModelPoolEntries(entries, { '[null,"sonnet"]': 6, '[null,"glm-5"]': 1 });
   expect(scored[0]).toMatchObject({ left: 2, score: 100 });
   expect(scored[1]).toMatchObject({ left: 2, score: 100 });
 });
 
 test('pick distributes proportionally to remaining times weight', () => {
-  const counts = { sonnet: 6, 'glm-5': 0 };
+  const counts = { '[null,"sonnet"]': 6, '[null,"glm-5"]': 0 };
   const picked = [0.1, 0.45, 0.6, 0.9].map(
     (roll) => pickModelPoolEntry(entries, counts, () => roll)?.model
   );
@@ -29,12 +91,18 @@ test('pick distributes proportionally to remaining times weight', () => {
 });
 
 test('entries at capacity are excluded while any capacity remains', () => {
-  const picked = pickModelPoolEntry(entries, { sonnet: 8, 'glm-5': 1 }, () => 0.99);
+  const picked = pickModelPoolEntry(
+    entries,
+    { '[null,"sonnet"]': 8, '[null,"glm-5"]': 1 },
+    () => 0.99
+  );
   expect(picked?.model).toBe('glm-5');
 });
 
 test('all entries at capacity returns null so the spawn defers', () => {
-  expect(pickModelPoolEntry(entries, { sonnet: 8, 'glm-5': 3 }, () => 0.5)).toBeNull();
+  expect(
+    pickModelPoolEntry(entries, { '[null,"sonnet"]': 8, '[null,"glm-5"]': 3 }, () => 0.5)
+  ).toBeNull();
 });
 
 test('zero weights with capacity left never win a slot', () => {

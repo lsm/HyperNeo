@@ -2334,6 +2334,7 @@ function stripRetiredPostApproval({
       mergerAgents.length === 1 &&
       (node.agents?.length ?? 0) === 1 &&
       mergerAgents[0].model === undefined &&
+      mergerAgents[0].provider === undefined &&
       mergerAgents[0].thinkingLevel === undefined &&
       mergerAgents[0].replaceAgentPrompt !== true &&
       mergerAgents[0].disabledSkillIds === undefined &&
@@ -2648,6 +2649,7 @@ export function seedBuiltInWorkflows(
             !merger ||
             merger.customPrompt?.value !== RETIRED_PR_MERGER_SLOT_PROMPT ||
             merger.model !== undefined ||
+            merger.provider !== undefined ||
             merger.thinkingLevel !== undefined ||
             merger.replaceAgentPrompt === true ||
             merger.disabledSkillIds !== undefined ||

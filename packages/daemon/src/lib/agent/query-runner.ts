@@ -19,6 +19,7 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event
 import type { Logger } from '../logger.ts';
 import type { OriginalEnvVars, ProviderEnvVars } from '../provider-service.ts';
 import { NON_ANTHROPIC_PREFIX_PROVIDER_VARS } from '../provider-service.ts';
+import { resolveQueryProvider } from '../providers/registry.js';
 import { isSpaceActionsDispatcherEnabled } from '../space/actions/dispatcher-flag.ts';
 import {
   FAIL_CLOSED_LONG_HORIZON_AGENT_REPO,
@@ -140,6 +141,8 @@ export const PROVIDER_MANAGED_ENV_VARS = new Set([
 function isRealAnthropicAuthToken(token: string | undefined): boolean {
   return typeof token === 'string' && token.startsWith('sk-ant-oat');
 }
+
+export { resolveQueryProvider } from '../providers/registry.js';
 
 export function refreshQueryEnvFromProcess(
   queryEnv: Record<string, string | undefined> | undefined,
@@ -678,10 +681,22 @@ export class QueryRunner {
       const providerRegistry = initializeProviders();
       await waitForOptionalProviderRegistration();
       const modelId = session.config.model || 'sonnet';
-      const explicitProviderId = session.config.provider as string | undefined;
-      const provider = explicitProviderId
-        ? providerRegistry.detectProviderForModel(modelId, explicitProviderId)
-        : providerRegistry.get('anthropic');
+      const rawProviderId = session.config.provider as string | undefined;
+      const explicitProviderId = rawProviderId?.trim() || undefined;
+      let provider = resolveQueryProvider(providerRegistry, modelId, explicitProviderId);
+      if (!explicitProviderId && provider) {
+        session.config.provider = provider.id as Session['config']['provider'];
+        try {
+          this.ctx.db.updateSession(session.id, {
+            config: { ...session.config },
+          });
+        } catch (err) {
+          logger.warn(
+            `Failed to persist inferred provider '${provider.id}' for session ${session.id}: ` +
+              `${err instanceof Error ? err.message : String(err)}`
+          );
+        }
+      }
 
       if (provider?.isAvailable && !(await provider.isAvailable())) {
         const authStatus = provider.getAuthStatus ? await provider.getAuthStatus() : null;
@@ -736,6 +751,21 @@ export class QueryRunner {
       if (session.workspacePath) {
         const fs = await import('fs/promises');
         await fs.mkdir(session.workspacePath, { recursive: true });
+      }
+
+      const resolvedProviderId = explicitProviderId ?? provider?.id ?? 'anthropic';
+      const providerSession = {
+        ...session,
+        config: {
+          ...session.config,
+          model: modelId,
+          provider: resolvedProviderId as Session['config']['provider'],
+        },
+      };
+      {
+        const { getProviderService } = await import('../provider-service.ts');
+        await getProviderService().resolveSessionProviderEnvVars(providerSession);
+        provider = providerRegistry.get(resolvedProviderId) ?? provider;
       }
 
       let queryOptions = await optionsBuilder.build({
@@ -869,39 +899,6 @@ export class QueryRunner {
       queryOptions = await this.ensureMemberSpaceMcpInvariant(queryOptions, attemptHook);
       queryOptions = await this.ensureUniversalReadMcpInvariant(queryOptions);
 
-      const resolvedProviderId = explicitProviderId ?? provider?.id ?? 'anthropic';
-      const refreshAutoCompactWindow = true;
-      let extraProviderManagedEnvVars: string[] = [];
-      {
-        const { getProviderService } = await import('../provider-service.ts');
-        const providerService = getProviderService();
-        const providerSession = {
-          ...session,
-          config: {
-            ...session.config,
-            model: modelId,
-            provider: resolvedProviderId as Session['config']['provider'],
-          },
-        };
-        await providerService.ensureSessionProviderBridges(providerSession);
-        const providerEnvVars = providerService.getProviderEnvVars(providerSession);
-        extraProviderManagedEnvVars = NON_ANTHROPIC_PREFIX_PROVIDER_VARS.filter(
-          (key) => providerEnvVars[key] !== undefined
-        );
-        applyProviderEnvToFlagSettings(queryOptions, providerEnvVars);
-        const originalEnvVars = providerService.applyEnvVarsToProcessForSession(providerSession);
-        this.ctx.originalEnvVars = originalEnvVars;
-      }
-
-      queryOptions.env = refreshQueryEnvFromProcess(queryOptions.env, process.env, {
-        refreshAutoCompactWindow,
-        clearProviderManaged: true,
-        preserveAnthropicAuthToken: resolvedProviderId === 'anthropic',
-        preserveAnthropicOAuthToken: resolvedProviderId === 'anthropic',
-        skipAmbientAnthropicApiKey: resolvedProviderId !== 'anthropic',
-        extraProviderManagedEnvVars,
-      }) as Record<string, string>;
-
       let resolveProcessExit: (() => void) | null = null;
       const processExitPromise = new Promise<void>((resolve) => {
         resolveProcessExit = resolve;
@@ -957,6 +954,50 @@ export class QueryRunner {
         const gateAbort = new Error('SDK startup gate: query aborted while awaiting admission');
         gateAbort.name = 'AbortError';
         throw gateAbort;
+      }
+
+      {
+        const { getProviderService } = await import('../provider-service.ts');
+        const providerService = getProviderService();
+        let providerEnvVars = await providerService.resolveSessionProviderEnvVars(providerSession);
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const liveProvider = providerRegistry.get(resolvedProviderId);
+          if (!liveProvider) {
+            throw new Error(
+              `Provider '${resolvedProviderId}' was removed while preparing to spawn ` +
+                `(session '${session.id}'); refusing to apply its environment`
+            );
+          }
+          if (liveProvider === provider) break;
+          if (attempt === 2) {
+            throw new Error(
+              `Provider '${resolvedProviderId}' kept changing while preparing to spawn ` +
+                `(session '${session.id}'); refusing to apply an unstable environment`
+            );
+          }
+          provider = liveProvider;
+          providerEnvVars = await providerService.resolveSessionProviderEnvVars(providerSession);
+        }
+        provider?.setSessionThinkingConfig?.(
+          session.id,
+          optionsBuilder.getEffectiveThinkingLevel()
+        );
+        const extraProviderManagedEnvVars = NON_ANTHROPIC_PREFIX_PROVIDER_VARS.filter(
+          (key) => providerEnvVars[key] !== undefined
+        );
+        applyProviderEnvToFlagSettings(queryOptions, providerEnvVars);
+        this.ctx.originalEnvVars = providerService.applyResolvedProviderEnvVarsToProcess(
+          providerSession,
+          providerEnvVars
+        );
+        queryOptions.env = refreshQueryEnvFromProcess(queryOptions.env, process.env, {
+          refreshAutoCompactWindow: true,
+          clearProviderManaged: true,
+          preserveAnthropicAuthToken: resolvedProviderId === 'anthropic',
+          preserveAnthropicOAuthToken: resolvedProviderId === 'anthropic',
+          skipAmbientAnthropicApiKey: resolvedProviderId !== 'anthropic',
+          extraProviderManagedEnvVars,
+        }) as Record<string, string>;
       }
 
       recoveryState.startGuard?.();

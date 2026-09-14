@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { validateGlobPattern } from '../external-events/topic-validator.ts';
-import { MAX_NODE_HANDOFF_TRANSITIONS } from '@hyperneo/shared';
+import { MAX_NODE_HANDOFF_TRANSITIONS, modelPoolEntryKey } from '@hyperneo/shared';
 import type {
   SpaceLongHorizonAgent,
   SpaceWorkflow,
@@ -86,6 +86,7 @@ const exportedWorkflowNodeAgentSchema = z
     templateKey: z.string().optional(),
     name: z.string().min(1),
     model: z.string().min(1).optional(),
+    provider: z.string().min(1).optional(),
     thinkingLevel: thinkingLevelSchema.optional(),
     systemPrompt: overrideOrStringSchema.optional(),
     replaceAgentPrompt: z.boolean().optional(),
@@ -203,9 +204,9 @@ const exportedWorkflowNodeSchema = z.object({
     .optional(),
 });
 
-export const CURRENT_EXPORT_VERSION = 6 as const;
-const SUPPORTED_EXPORT_VERSIONS: ReadonlySet<number> = new Set<number>([1, 2, 3, 4, 5, 6]);
-export type ExportVersion = 1 | 2 | 3 | 4 | 5 | 6;
+export const CURRENT_EXPORT_VERSION = 7 as const;
+const SUPPORTED_EXPORT_VERSIONS: ReadonlySet<number> = new Set<number>([1, 2, 3, 4, 5, 6, 7]);
+export type ExportVersion = 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
 function asSupportedVersion(version: unknown): ExportVersion {
   return version as ExportVersion;
@@ -249,8 +250,8 @@ const exportedAgentBaseSchema = z.object({
         thinkingLevel: thinkingLevelSchema.nullish(),
       })
     )
-    .refine((pool) => new Set(pool.map((entry) => entry.model)).size === pool.length, {
-      message: 'modelPool contains duplicate entries for the same model',
+    .refine((pool) => new Set(pool.map((entry) => modelPoolEntryKey(entry))).size === pool.length, {
+      message: 'modelPool contains duplicate entries for the same model on the same provider',
     })
     .optional(),
 });
@@ -346,6 +347,8 @@ export function exportWorkflow(
         entry.agentRef = agentIdToName.get(a.agentId) ?? a.agentId;
       }
       if (a.model !== undefined) entry.model = a.model;
+      const slotProvider = a.provider?.trim();
+      if (slotProvider) entry.provider = slotProvider;
       if (a.thinkingLevel !== undefined) entry.thinkingLevel = a.thinkingLevel;
       if (a.customPrompt !== undefined) entry.systemPrompt = a.customPrompt;
       if (a.replaceAgentPrompt !== undefined) entry.replaceAgentPrompt = a.replaceAgentPrompt;
@@ -630,6 +633,22 @@ export function validateExportedWorkflow(data: unknown): ValidationResult<Export
             error:
               `invalid: nodes[${n}].agents[${a}] uses templateKey, ` +
               `which requires version 5 (this workflow declares version ${version})`,
+          };
+        }
+      }
+    }
+  }
+
+  if (version < 7) {
+    for (let n = 0; n < result.data.nodes.length; n++) {
+      const agents = result.data.nodes[n].agents;
+      for (let a = 0; a < agents.length; a++) {
+        if (agents[a].provider !== undefined) {
+          return {
+            ok: false,
+            error:
+              `invalid: nodes[${n}].agents[${a}] uses provider, ` +
+              `which requires version 7 (this workflow declares version ${version})`,
           };
         }
       }

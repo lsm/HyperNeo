@@ -4,6 +4,7 @@ import {
   QueryRunner,
   looksLikeRateLimit429,
   refreshQueryEnvFromProcess,
+  resolveQueryProvider,
   type QueryRunnerContext,
 } from '../../../../src/lib/agent/query-runner';
 import { resetSdkStartupGateForTests } from '../../../../src/lib/agent/sdk-startup-gate';
@@ -294,6 +295,118 @@ describe('QueryRunner', () => {
     });
   });
 
+  describe('resolveQueryProvider', () => {
+    function makeRegistry(providers: Array<{ id: string; owns: (modelId: string) => boolean }>) {
+      const asProvider = (id: string, owns?: (modelId: string) => boolean) =>
+        ({
+          id,
+          displayName: id,
+          ...(owns ? { ownsModel: owns } : {}),
+        }) as unknown as import('@hyperneo/shared/provider').Provider;
+      return {
+        get: (id: string) => {
+          const match = providers.find((p) => p.id === id);
+          return match ? asProvider(match.id, match.owns) : undefined;
+        },
+        getAll: () => providers.map((p) => asProvider(p.id, p.owns)),
+      };
+    }
+
+    const anthropicCatchAll = (_modelId: string) => true;
+
+    it('returns the explicitly requested provider when set', () => {
+      const registry = makeRegistry([
+        { id: 'anthropic', owns: anthropicCatchAll },
+        { id: 'custom:ai0', owns: () => false },
+      ]);
+      expect(resolveQueryProvider(registry, 'swe-2-high', 'custom:ai0')?.id).toBe('custom:ai0');
+    });
+
+    it('returns undefined for an explicit provider id that is not registered', () => {
+      const registry = makeRegistry([{ id: 'anthropic', owns: anthropicCatchAll }]);
+      expect(resolveQueryProvider(registry, 'swe-2-high', 'custom:gone')).toBeUndefined();
+    });
+
+    it('binds a specific non-anthropic owner even when anthropic claims the model as a catch-all', () => {
+      const registry = makeRegistry([
+        { id: 'anthropic', owns: anthropicCatchAll },
+        { id: 'custom:ai0', owns: (modelId) => modelId === 'swe-2-high' },
+      ]);
+      expect(resolveQueryProvider(registry, 'swe-2-high', undefined)?.id).toBe('custom:ai0');
+    });
+
+    it('keeps ambiguous claude-family ids on anthropic when copilot also claims them', () => {
+      const registry = makeRegistry([
+        { id: 'anthropic', owns: (modelId) => modelId.startsWith('claude-') },
+        {
+          id: 'anthropic-copilot',
+          owns: (modelId) => modelId.startsWith('claude-') || modelId.startsWith('copilot-'),
+        },
+      ]);
+      expect(resolveQueryProvider(registry, 'claude-sonnet-4.6', undefined)?.id).toBe('anthropic');
+    });
+
+    it('still infers copilot for copilot-only aliases anthropic does not claim', () => {
+      const registry = makeRegistry([
+        { id: 'anthropic', owns: (modelId) => modelId.startsWith('claude-') },
+        {
+          id: 'anthropic-copilot',
+          owns: (modelId) => modelId.startsWith('claude-') || modelId.startsWith('copilot-'),
+        },
+      ]);
+      expect(resolveQueryProvider(registry, 'copilot-anthropic-sonnet', undefined)?.id).toBe(
+        'anthropic-copilot'
+      );
+    });
+
+    it('still infers copilot for non-claude catalog ids despite the anthropic catch-all', () => {
+      const registry = makeRegistry([
+        { id: 'anthropic', owns: anthropicCatchAll },
+        {
+          id: 'anthropic-copilot',
+          owns: (modelId) => modelId.startsWith('copilot-') || modelId.startsWith('gemini-'),
+        },
+      ]);
+      expect(resolveQueryProvider(registry, 'gemini-3.1-pro-preview', undefined)?.id).toBe(
+        'anthropic-copilot'
+      );
+    });
+
+    it('prefers a custom owner over a built-in that also claims the same model id', () => {
+      const registry = makeRegistry([
+        { id: 'anthropic', owns: anthropicCatchAll },
+        { id: 'glm', owns: (modelId) => modelId.startsWith('glm-') },
+        { id: 'custom:ai0', owns: (modelId) => modelId === 'glm-4.7' },
+      ]);
+      expect(resolveQueryProvider(registry, 'glm-4.7', undefined)?.id).toBe('custom:ai0');
+    });
+
+    it('keeps claude-family ids on anthropic even when a custom endpoint lists them', () => {
+      const registry = makeRegistry([
+        { id: 'anthropic', owns: anthropicCatchAll },
+        { id: 'custom:ai0', owns: () => true },
+      ]);
+      expect(resolveQueryProvider(registry, 'claude-sonnet-4.6', undefined)?.id).toBe('anthropic');
+      expect(resolveQueryProvider(registry, 'sonnet', undefined)?.id).toBe('anthropic');
+      expect(resolveQueryProvider(registry, 'sonnet[1m]', undefined)?.id).toBe('anthropic');
+      expect(resolveQueryProvider(registry, 'Sonnet', undefined)?.id).toBe('anthropic');
+      expect(resolveQueryProvider(registry, 'SONNET[1M]', undefined)?.id).toBe('anthropic');
+    });
+
+    it('falls back to anthropic when only the anthropic catch-all claims the model', () => {
+      const registry = makeRegistry([{ id: 'anthropic', owns: anthropicCatchAll }]);
+      expect(resolveQueryProvider(registry, 'swe-2-high', undefined)?.id).toBe('anthropic');
+    });
+
+    it('falls back to anthropic for claude-family models regardless of registration order', () => {
+      const registry = makeRegistry([
+        { id: 'anthropic', owns: anthropicCatchAll },
+        { id: 'glm', owns: (modelId) => modelId.startsWith('glm-') },
+      ]);
+      expect(resolveQueryProvider(registry, 'claude-opus-5', undefined)?.id).toBe('anthropic');
+    });
+  });
+
   describe('resolveRetryUserMessage', () => {
     it('prefers the message identified by the result uuid and never guesses on a miss', async () => {
       async function* generator() {
@@ -430,6 +543,28 @@ describe('QueryRunner', () => {
         }
       }
     }
+
+    it('normalizes a blank session provider and persists the inferred provider pin', async () => {
+      await withAnthropicApiKey(async () => {
+        const blankSession: Session = {
+          ...mockSession,
+          config: { ...mockSession.config, provider: '   ' },
+        };
+        const ctx = createContext({ session: blankSession });
+        runner = new QueryRunner(ctx);
+
+        await runner.start();
+        await ctx.queryPromise?.catch(() => {});
+
+        expect(blankSession.config.provider).toBe('anthropic');
+        expect(updateSessionSpy).toHaveBeenCalledWith(
+          'test-session-id',
+          expect.objectContaining({
+            config: expect.objectContaining({ provider: 'anthropic' }),
+          })
+        );
+      });
+    });
 
     it('should skip start if query already running', async () => {
       isRunningSpy.mockReturnValue(true);
@@ -1098,6 +1233,7 @@ describe('QueryRunner', () => {
         isAvailable: mock(async () => true),
         getAuthStatus: mock(async () => ({ isAuthenticated: true, method: 'api_key' })),
         setSessionThinkingConfig: setSessionThinkingConfigSpy,
+        buildSdkConfig: mock(() => ({ envVars: {}, isAnthropicCompatible: true })),
       } as unknown as Provider);
       try {
         mockSession.workspacePath = tmpdir();
@@ -1109,7 +1245,7 @@ describe('QueryRunner', () => {
         runner.start();
         await ctx.queryPromise?.catch(() => {});
 
-        expect(setSessionThinkingConfigSpy).toHaveBeenCalledTimes(1);
+        expect(setSessionThinkingConfigSpy).toHaveBeenCalledTimes(2);
         expect(setSessionThinkingConfigSpy).toHaveBeenCalledWith(mockSession.id, 'think8k');
       } finally {
         registry.unregister('custom:thinking-sync-test');
@@ -1125,6 +1261,7 @@ describe('QueryRunner', () => {
         isAvailable: mock(async () => true),
         getAuthStatus: mock(async () => ({ isAuthenticated: true, method: 'api_key' })),
         setSessionThinkingConfig: setSessionThinkingConfigSpy,
+        buildSdkConfig: mock(() => ({ envVars: {}, isAnthropicCompatible: true })),
       } as unknown as Provider);
       try {
         mockSession.workspacePath = tmpdir();
@@ -6096,6 +6233,7 @@ describe('QueryRunner', () => {
           restoreEnvVars: mock((_original: Record<string, unknown>) => {
             onRestore?.();
           }),
+          resolveSessionProviderEnvVars: mock(async () => ({})),
         };
       });
 

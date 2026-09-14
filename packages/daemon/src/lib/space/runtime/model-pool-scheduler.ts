@@ -13,6 +13,7 @@ export interface ModelPoolAssignment {
   spaceId: string;
   taskId: string;
   model: string;
+  provider?: string;
   assignedAt: number;
   pending?: boolean;
 }
@@ -89,14 +90,16 @@ export function applyModelPoolToSlot(input: {
   if (!entry) {
     return { deferred: true };
   }
+  const entryProvider = entry.provider?.trim() || undefined;
   return {
     slot: {
       ...input.slot,
       model: entry.model,
+      provider: entryProvider,
       thinkingLevel: input.slot.thinkingLevel ?? entry.thinkingLevel ?? undefined,
     },
     model: entry.model,
-    provider: entry.provider,
+    provider: entryProvider,
   };
 }
 

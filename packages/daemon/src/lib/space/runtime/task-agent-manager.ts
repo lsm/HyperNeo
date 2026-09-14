@@ -20,6 +20,7 @@ import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { UUID } from 'crypto';
 import { createDefaultSessionResolutionDeps } from '../../session-resolution/default-deps.ts';
 import { ensureSession } from '../../session-resolution/ensure-session.ts';
+import { inferProviderForModel } from '../../providers/registry.js';
 import type { ActorResolver } from '../../../../../messaging/src/contracts.ts';
 import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types.ts';
 import type { AgentSessionInit } from '../../../lib/agent/agent-session.ts';
@@ -906,6 +907,7 @@ export class TaskAgentManager {
           null;
         let slot = request.slot;
         let poolProvider: string | undefined;
+        let poolApplied = false;
         if (customAgent) {
           const poolApplication = applyModelPoolToSlot({
             slot: request.slot,
@@ -923,9 +925,14 @@ export class TaskAgentManager {
           }
           slot = poolApplication.slot;
           poolProvider = poolApplication.provider;
+          poolApplied = 'provider' in poolApplication;
         }
         spawnState.appliedSlot = slot;
+        const taskModelOverride = request.node
+          ? request.task.workflowModelOverrides?.[`${request.node.id}:${slot.name}`]
+          : undefined;
         const assignedModel =
+          taskModelOverride ??
           slot.model ??
           customAgent?.model ??
           request.space.defaultModel ??
@@ -934,6 +941,14 @@ export class TaskAgentManager {
           spaceId: request.space.id,
           taskId: request.task.id,
           model: assignedModel,
+          provider: taskModelOverride
+            ? inferProviderForModel(taskModelOverride)
+            : poolApplied
+              ? (poolProvider ?? inferProviderForModel(assignedModel))
+              : slot.model !== undefined
+                ? ((slot.provider?.trim() || undefined) ?? inferProviderForModel(assignedModel))
+                : ((customAgent?.provider?.trim() || undefined) ??
+                  inferProviderForModel(assignedModel)),
         };
         reserveModelPoolSlot(this.modelPoolAssignments, request.execution, assignment);
 
@@ -3390,6 +3405,7 @@ export class TaskAgentManager {
           {
             name: slot.name,
             model: slot.model,
+            provider: slot.provider?.trim() || undefined,
             thinkingLevel: slot.thinkingLevel,
           },
           []
@@ -3405,6 +3421,7 @@ export class TaskAgentManager {
         agentId: slot.agentId,
         name: slot.name,
         model: slot.model,
+        provider: slot.provider?.trim() || undefined,
         thinkingLevel: slot.thinkingLevel,
       },
       registryAgent ? [registryAgent] : []
@@ -5552,6 +5569,7 @@ export class TaskAgentManager {
     const poolAgent = spawnConfig?.agent ?? null;
     let slot = matchedSlot;
     let poolProvider: string | undefined;
+    let poolApplied = false;
     if (poolAgent) {
       const poolApplication = applyModelPoolToSlot({
         slot: matchedSlot,
@@ -5569,11 +5587,30 @@ export class TaskAgentManager {
       }
       slot = poolApplication.slot;
       poolProvider = poolApplication.provider;
+      poolApplied = 'provider' in poolApplication;
     }
+    const postApprovalModelOverride = matchedNodeId
+      ? task.workflowModelOverrides?.[`${matchedNodeId}:${slot.name}`]
+      : undefined;
     const assignedModel =
-      slot.model ?? poolAgent?.model ?? space.defaultModel ?? DEFAULT_CUSTOM_AGENT_MODEL;
+      postApprovalModelOverride ??
+      slot.model ??
+      poolAgent?.model ??
+      space.defaultModel ??
+      DEFAULT_CUSTOM_AGENT_MODEL;
     const reservationKey = { id: `post-approval:${taskId}:${slot.name}:${generateUUID()}` };
-    const assignment = { spaceId, taskId, model: assignedModel };
+    const assignment = {
+      spaceId,
+      taskId,
+      model: assignedModel,
+      provider: postApprovalModelOverride
+        ? inferProviderForModel(postApprovalModelOverride)
+        : poolApplied
+          ? (poolProvider ?? inferProviderForModel(assignedModel))
+          : slot.model !== undefined
+            ? ((slot.provider?.trim() || undefined) ?? inferProviderForModel(assignedModel))
+            : ((poolAgent?.provider?.trim() || undefined) ?? inferProviderForModel(assignedModel)),
+    };
     reserveModelPoolSlot(this.modelPoolAssignments, reservationKey, assignment);
 
     try {

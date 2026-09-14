@@ -210,6 +210,42 @@ describe('workflowToTemplate', () => {
     expect(template.endStepName).toBe('Code');
   });
 
+  it('preserves slot providers through template conversion and node rebuild', () => {
+    const wf = makeWorkflow({
+      nodes: [
+        {
+          id: 'step-1',
+          name: 'Plan',
+          agents: [
+            { agentId: 'agent-1', name: 'planner', model: 'swe-2-high', provider: 'custom:ai0' },
+          ],
+        },
+        {
+          id: 'step-2',
+          name: 'Code',
+          agents: [
+            { agentId: 'agent-1', name: 'coder', model: 'swe-2-high', provider: 'custom:ai0' },
+            {
+              agentId: 'agent-2',
+              name: 'reviewer',
+              model: 'gpt-5.4',
+              provider: 'custom:endpoint-2',
+            },
+          ],
+        },
+      ],
+    });
+    const template = workflowToTemplate(wf);
+    expect(template.steps![0].provider).toBe('custom:ai0');
+    expect(template.steps![1].agentSlots![1].provider).toBe('custom:endpoint-2');
+
+    const agents = [makeAgent('agent-1', 'planner'), makeAgent('agent-2', 'coder')];
+    const nodes = buildTemplateNodes(template, agents);
+    expect(nodes[0].agents![0].provider).toBe('custom:ai0');
+    expect(nodes[1].agents![1].provider).toBe('custom:endpoint-2');
+    expect(nodes[0].provider).toBeUndefined();
+  });
+
   it('preserves tags', () => {
     const wf = makeWorkflow({ tags: ['coding', 'review'] });
     const template = workflowToTemplate(wf);

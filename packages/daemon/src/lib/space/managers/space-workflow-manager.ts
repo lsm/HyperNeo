@@ -16,6 +16,7 @@ import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositor
 import type { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository.ts';
 import { validateGlobPattern } from '../../external-events/topic-validator.ts';
 import { Logger } from '../../logger.ts';
+import { getProviderRegistry } from '../../providers/registry.js';
 import { getLongHorizonAgentTemplate } from '../agents/long-horizon-agent-templates.ts';
 import { isRunnableUnifiedAgent } from '../agents/worker-long-horizon-mapper.ts';
 import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../export-format.ts';
@@ -479,6 +480,21 @@ export class SpaceWorkflowManager {
       const node = nodes[i];
       this.validateNodeAgentRef(spaceId, node, i);
       this.validateEventInterests(node, i);
+      for (let j = 0; j < (node.agents?.length ?? 0); j++) {
+        const entry = node.agents[j];
+        const trimmedModel = entry.model?.trim();
+        if (trimmedModel) entry.model = trimmedModel;
+        const trimmedProvider = entry.provider?.trim();
+        entry.provider = trimmedProvider || undefined;
+        if (!trimmedProvider || !trimmedModel) continue;
+        const provider = getProviderRegistry().get(trimmedProvider);
+        if (provider && !provider.ownsModel(trimmedModel)) {
+          throw new WorkflowValidationError(
+            `node[${i}].agents[${j}]: provider "${trimmedProvider}" does not offer model ` +
+              `"${trimmedModel}"`
+          );
+        }
+      }
     }
   }
 

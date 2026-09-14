@@ -558,6 +558,10 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
     this.serverStarting = restart;
   }
 
+  async ensureBridgeStarted(_modelId?: string): Promise<void> {
+    await this.ensureServerStarted();
+  }
+
   async ensureServerStarted(): Promise<string> {
     if (this.shuttingDown) {
       throw new Error('GitHub Copilot provider is shutting down');

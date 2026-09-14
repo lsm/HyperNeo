@@ -186,7 +186,11 @@ export async function syncCustomEndpointProviders(
       registry.unregister(providerId);
     }
     try {
-      registerIfMissing(registry, new CustomEndpointProvider(config));
+      const provider = new CustomEndpointProvider(config);
+      if (!registry.has(provider.id)) {
+        registry.register(provider);
+        provider.prewarmBridges();
+      }
       lastSyncedConfigByProviderId.set(providerId, fingerprint);
     } catch (err) {
       logger.warn(`Skipping invalid custom endpoint '${config.id}': ${err}`);

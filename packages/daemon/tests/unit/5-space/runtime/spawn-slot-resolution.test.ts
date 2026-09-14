@@ -12,6 +12,7 @@ import { buildExecutionBaseSessionId } from '../../../../src/lib/session/sub-ses
 import type { NodeAgentTemplateSource } from '../../../../src/lib/space/runtime/spawn-slot-resolution';
 import {
   assembleNodeAgentSessionInit,
+  buildSlotOverrides,
   findAvailableSessionId,
   resolveNodeAgentConfig,
   resolveSlotCustomPrompt,
@@ -167,6 +168,86 @@ describe('resolveTaskWorkspace', () => {
         workspacePath: '/repos/project ',
       } as SpaceTask)
     ).toBe('/repos/project ');
+  });
+});
+
+describe('buildSlotOverrides', () => {
+  test('carries the slot model and provider into the overrides', () => {
+    const overrides = buildSlotOverrides({
+      agentId: '',
+      templateKey: 'coder.default',
+      name: 'coder',
+      model: 'swe-2-high',
+      provider: 'custom:ai0',
+    });
+
+    expect(overrides.model).toBe('swe-2-high');
+    expect(overrides.provider).toBe('custom:ai0');
+  });
+
+  test('drops the slot provider when a task-level model override swaps the model', () => {
+    const overrides = buildSlotOverrides(
+      {
+        agentId: '',
+        templateKey: 'coder.default',
+        name: 'coder',
+        model: 'swe-2-high',
+        provider: 'custom:ai0',
+      },
+      {
+        task: {
+          workflowModelOverrides: { 'node-coder:coder': 'claude-fable-5' },
+        } as Pick<SpaceTask, 'workflowModelOverrides'>,
+        node: { id: 'node-coder', name: 'coder' },
+      }
+    );
+
+    expect(overrides.model).toBe('claude-fable-5');
+    expect(overrides.provider).toBeUndefined();
+  });
+
+  test('keeps the slot provider when no task-level model override applies', () => {
+    const overrides = buildSlotOverrides(
+      {
+        agentId: '',
+        templateKey: 'coder.default',
+        name: 'coder',
+        model: 'swe-2-high',
+        provider: 'custom:ai0',
+      },
+      {
+        task: {
+          workflowModelOverrides: { 'node-other:coder': 'claude-fable-5' },
+        } as Pick<SpaceTask, 'workflowModelOverrides'>,
+        node: { id: 'node-coder', name: 'coder' },
+      }
+    );
+
+    expect(overrides.model).toBe('swe-2-high');
+    expect(overrides.provider).toBe('custom:ai0');
+  });
+
+  test('survives the round trip through resolveNodeAgentConfig', () => {
+    const slot = {
+      agentId: '',
+      templateKey: 'coder.default',
+      name: 'coder',
+      model: 'swe-2-high',
+      provider: 'custom:ai0',
+    };
+    const overrides = buildSlotOverrides(slot);
+    const config = resolveNodeAgentConfig(
+      makeTemplate({ model: 'template-model', provider: 'anthropic' }),
+      {
+        name: slot.name,
+        model: overrides.model,
+        provider: overrides.provider,
+      },
+      []
+    );
+
+    expect(config?.agent.model).toBe('swe-2-high');
+    expect(config?.agent.provider).toBe('custom:ai0');
   });
 });
 
@@ -376,6 +457,27 @@ describe('resolveNodeAgentConfig: template source', () => {
     expect(config?.agent.thinkingLevel).toBe('think32k');
   });
 
+  test('per-node provider overrides the template provider', () => {
+    const config = resolveNodeAgentConfig(
+      makeTemplate({ model: 'template-model', provider: 'anthropic' }),
+      { name: 'coder', model: 'swe-2-high', provider: 'custom:ai0' },
+      []
+    );
+
+    expect(config?.agent.model).toBe('swe-2-high');
+    expect(config?.agent.provider).toBe('custom:ai0');
+  });
+
+  test('falls back to the template provider when the node override sets none', () => {
+    const config = resolveNodeAgentConfig(
+      makeTemplate({ provider: 'custom:ai0' }),
+      { name: 'coder', model: 'swe-2-high' },
+      []
+    );
+
+    expect(config?.agent.provider).toBe('custom:ai0');
+  });
+
   test('keeps template model, provider, thinking level, and setting sources when unoverridden', () => {
     const config = resolveNodeAgentConfig(
       makeTemplate({
@@ -446,6 +548,29 @@ describe('resolveNodeAgentConfig: legacy agentId fallback', () => {
     expect(config?.agent.displayName).toBe('coder');
     expect(config?.agent.model).toBe('override-model');
     expect(config?.agent.thinkingLevel).toBe('think16k');
+  });
+
+  test('applies the per-node provider over the registry agent provider', () => {
+    const config = resolveNodeAgentConfig(
+      undefined,
+      {
+        agentId: 'agent-1',
+        name: 'coder',
+        model: 'swe-2-high',
+        provider: 'custom:ai0',
+      },
+      [makeAgent({ model: 'agent-model', provider: 'anthropic' })]
+    );
+
+    expect(config?.agent.provider).toBe('custom:ai0');
+  });
+
+  test('keeps the registry agent provider when the node sets none', () => {
+    const config = resolveNodeAgentConfig(undefined, { agentId: 'agent-1', model: 'agent-model' }, [
+      makeAgent({ provider: 'custom:ai0' }),
+    ]);
+
+    expect(config?.agent.provider).toBe('custom:ai0');
   });
 
   test('keeps the registry agent own model and thinking level when the node sets none', () => {

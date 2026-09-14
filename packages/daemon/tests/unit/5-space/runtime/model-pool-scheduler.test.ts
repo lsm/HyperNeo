@@ -102,7 +102,7 @@ test('countRunningModels purges dead sessions and groups by model', () => {
       sessionId === 'dead' || sessionId === 's4' ? 'idle' : 'processing',
     now: NOW,
   });
-  expect(counts).toEqual({ sonnet: 2, 'glm-5': 1 });
+  expect(counts).toEqual({ '[null,"sonnet"]': 2, '[null,"glm-5"]': 1 });
   expect(assignments.has('dead')).toBe(false);
   expect(assignments.has('s4')).toBe(true);
 });
@@ -111,13 +111,43 @@ test('pool picks a model with capacity and stamps it on the slot', () => {
   expect(apply()).toEqual({ slot: { ...slot, model: 'sonnet' }, model: 'sonnet' });
 });
 
+test('provider-bearing assignments count into provider-qualified buckets', () => {
+  const assignments = new Map<string, ModelPoolAssignment>([
+    ['s1', makeAssignment({ model: 'gpt-5.4', provider: 'openai' })],
+    ['s2', makeAssignment({ model: 'gpt-5.4', provider: 'custom:endpoint-2' })],
+  ]);
+  const counts = countRunningModels({
+    assignments,
+    spaceId: 'space-1',
+    getSessionStatus: () => 'processing',
+    now: NOW,
+  });
+  expect(counts).toEqual({ '["openai","gpt-5.4"]': 1, '["custom:endpoint-2","gpt-5.4"]': 1 });
+});
+
 test('pool preserves the provider captured per entry', () => {
   const withProvider = [{ model: 'sonnet', provider: 'copilot', maxConcurrent: 2, weight: 10 }];
   expect(apply({ agent: makeAgent(withProvider) })).toEqual({
-    slot: { ...slot, model: 'sonnet' },
+    slot: { ...slot, model: 'sonnet', provider: 'copilot' },
     model: 'sonnet',
     provider: 'copilot',
   });
+});
+
+test('empty pool provider strings are treated as unqualified', () => {
+  const withEmpty = [{ model: 'sonnet', provider: '', maxConcurrent: 2, weight: 10 }];
+  expect(apply({ agent: makeAgent(withEmpty) })).toEqual({
+    slot: { ...slot, model: 'sonnet' },
+    model: 'sonnet',
+  });
+});
+
+test('pool application resets a stale slot provider pin', () => {
+  const result = apply({ slot: { ...slot, provider: 'custom:old' } });
+  expect(result).toEqual({ slot: { ...slot, model: 'sonnet' }, model: 'sonnet' });
+  if ('slot' in result) {
+    expect(result.slot.provider).toBeUndefined();
+  }
 });
 
 test('slot model override skips the pool entirely', () => {
@@ -197,7 +227,7 @@ describe('reservation lifecycle', () => {
       getSessionStatus: () => undefined,
       now: NOW + 60_000,
     });
-    expect(counts).toEqual({ sonnet: 1 });
+    expect(counts).toEqual({ '[null,"sonnet"]': 1 });
   });
 
   test('pending reservations hold capacity against concurrent spawns', () => {
@@ -213,7 +243,7 @@ describe('reservation lifecycle', () => {
       getSessionStatus: () => undefined,
       now: NOW,
     });
-    expect(counts).toEqual({ sonnet: 1 });
+    expect(counts).toEqual({ '[null,"sonnet"]': 1 });
     const capped = [{ model: 'sonnet', maxConcurrent: 1, weight: 100 }];
     expect(apply({ assignments, agent: makeAgent(capped) })).toEqual({ deferred: true });
   });
@@ -238,7 +268,7 @@ describe('reservation lifecycle', () => {
       getSessionStatus: () => undefined,
       now: NOW,
     });
-    expect(counts).toEqual({ sonnet: 2 });
+    expect(counts).toEqual({ '[null,"sonnet"]': 2 });
 
     releaseModelPoolReservation(assignments, first);
     expect(assignments.has(modelPoolReservationKey(second.id))).toBe(true);

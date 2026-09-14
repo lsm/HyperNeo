@@ -1,10 +1,11 @@
-import { KNOWN_TOOLS, isKnownToolEntry } from '@hyperneo/shared';
+import { KNOWN_TOOLS, isKnownToolEntry, modelPoolEntryKey } from '@hyperneo/shared';
 import {
   getAvailableModels,
   getModelsCache,
   getModelInfoUnfiltered,
   isValidModel,
 } from '../../model-service.ts';
+import { getProviderRegistry } from '../../providers/registry.js';
 import { isValidThinkingLevel } from './agent-field-validation.ts';
 
 export type SpaceAgentResult<T> =
@@ -21,12 +22,20 @@ export async function validateAgentModel(
   model: string,
   provider?: string | null
 ): Promise<string | null> {
+  const trimmedProvider = provider?.trim() || undefined;
+  if (trimmedProvider) {
+    const registered = getProviderRegistry().get(trimmedProvider);
+    if (registered && !registered.ownsModel(model)) {
+      return `Unrecognized model "${model}" for provider "${trimmedProvider}"`;
+    }
+  }
+
   const available = getAvailableModels('global');
   if (available.length === 0 && !getModelsCache().has('global')) return null;
 
-  if (provider) {
-    const valid = await isValidModel(model, 'global', provider);
-    return valid ? null : `Unrecognized model "${model}" for provider "${provider}"`;
+  if (trimmedProvider) {
+    const valid = await isValidModel(model, 'global', trimmedProvider);
+    return valid ? null : `Unrecognized model "${model}" for provider "${trimmedProvider}"`;
   }
 
   const info = await getModelInfoUnfiltered(model, 'global');
@@ -36,6 +45,7 @@ export async function validateAgentModel(
 export async function validateAgentModelPool(
   pool: {
     model: string;
+    provider?: string | null;
     maxConcurrent: number;
     weight: number;
     thinkingLevel?: string | null;
@@ -44,10 +54,17 @@ export async function validateAgentModelPool(
   const seen = new Set<string>();
   for (const entry of pool) {
     if (!entry.model) return 'Model pool entries must specify a model';
-    if (seen.has(entry.model)) {
-      return `Model pool contains duplicate entries for "${entry.model}"`;
+    const entryKey = modelPoolEntryKey({
+      model: entry.model,
+      provider: entry.provider ?? undefined,
+    });
+    if (seen.has(entryKey)) {
+      return (
+        `Model pool contains duplicate entries for "${entry.model}"` +
+        (entry.provider ? ` on provider "${entry.provider}"` : '')
+      );
     }
-    seen.add(entry.model);
+    seen.add(entryKey);
     if (!Number.isInteger(entry.maxConcurrent) || entry.maxConcurrent < 1) {
       return `Model pool entry for "${entry.model}" must have an integer maxConcurrent >= 1`;
     }
@@ -61,7 +78,7 @@ export async function validateAgentModelPool(
     ) {
       return `Model pool entry for "${entry.model}" has an invalid thinkingLevel: ${String(entry.thinkingLevel)}`;
     }
-    const modelError = await validateAgentModel(entry.model);
+    const modelError = await validateAgentModel(entry.model, entry.provider ?? null);
     if (modelError) return modelError;
   }
   if (!pool.some((entry) => entry.weight > 0)) {

@@ -115,7 +115,7 @@ describe('exportAgent', () => {
     const agent = makeAgent();
     const exported = exportAgent(agent);
 
-    expect(exported.version).toBe(6);
+    expect(exported.version).toBe(7);
     expect(exported.type).toBe('agent');
     expect(exported.name).toBe('My Coder');
     expect((exported as Record<string, unknown>).role).toBeUndefined();
@@ -253,6 +253,29 @@ describe('exportWorkflow', () => {
     expect(exported.nodes[0].agents[0].templateKey).toBe('coder.default');
   });
 
+  test('exports the slot provider alongside the model', () => {
+    const workflow = makeWorkflow({
+      nodes: [
+        {
+          id: 'n1',
+          name: 'Code step',
+          agents: [
+            {
+              agentId: '',
+              templateKey: 'coder.default',
+              name: 'coder',
+              model: 'swe-2-high',
+              provider: 'custom:ai0',
+            },
+          ],
+        },
+      ],
+    });
+    const exported = exportWorkflow(workflow, []);
+    expect(exported.nodes[0].agents[0].model).toBe('swe-2-high');
+    expect(exported.nodes[0].agents[0].provider).toBe('custom:ai0');
+  });
+
   test('exports the agentRef fallback alongside templateKey for migrated slots', () => {
     const workflow = makeWorkflow({
       nodes: [
@@ -332,7 +355,7 @@ describe('exportWorkflow', () => {
 
   test('has version 1 and type workflow', () => {
     const exported = exportWorkflow(makeWorkflow(), []);
-    expect(exported.version).toBe(6);
+    expect(exported.version).toBe(7);
     expect(exported.type).toBe('workflow');
   });
 });
@@ -346,7 +369,7 @@ describe('exportBundle', () => {
       exportedFrom: '/workspace/foo',
     });
 
-    expect(bundle.version).toBe(6);
+    expect(bundle.version).toBe(7);
     expect(bundle.type).toBe('bundle');
     expect(bundle.name).toBe('My Bundle');
     expect(bundle.description).toBe('A test bundle');
@@ -378,7 +401,7 @@ describe('validateExportedAgent', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value.name).toBe('My Coder');
-      expect(result.value.version).toBe(6);
+      expect(result.value.version).toBe(7);
     }
   });
 
@@ -499,13 +522,13 @@ describe('validateExportedAgent', () => {
     }
   });
 
-  test('rejects version > 6 with "requires newer version" message', () => {
-    const data = { version: 7, type: 'agent', name: 'Bot', role: 'general' };
+  test('rejects version > 7 with "requires newer version" message', () => {
+    const data = { version: 8, type: 'agent', name: 'Bot', role: 'general' };
     const result = validateExportedAgent(data);
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error).toContain('requires newer version');
-      expect(result.error).toContain('version 6');
+      expect(result.error).toContain('version 7');
     }
   });
 
@@ -555,7 +578,7 @@ describe('validateExportedWorkflow', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value.name).toBe('CI Workflow');
-      expect(result.value.version).toBe(6);
+      expect(result.value.version).toBe(7);
       expect(result.value.startNode).toBe('Code step');
     }
   });
@@ -681,9 +704,9 @@ describe('validateExportedWorkflow', () => {
     }
   });
 
-  test('rejects version > 6 with "requires newer version"', () => {
+  test('rejects version > 7 with "requires newer version"', () => {
     const data = {
-      version: 7,
+      version: 8,
       type: 'workflow',
       name: 'Simple',
       nodes: [],
@@ -776,6 +799,22 @@ describe('validateExportedWorkflow — eventInterest topic/topicFrom', () => {
     }
   });
 
+  test('rejects a slot provider in a version-6 workflow (provider is v7-only)', () => {
+    const result = validateExportedWorkflow({
+      version: 6,
+      type: 'workflow',
+      name: 'Provider Workflow',
+      nodes: [{ name: 'Code', agents: [{ agentRef: 'a', name: 'coder', provider: 'custom:ai0' }] }],
+      startNode: 'Code',
+      tags: [],
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('provider');
+      expect(result.error).toContain('requires version 7');
+    }
+  });
+
   test('rejects an interest with both topic and topicFrom set', () => {
     const result = validateExportedWorkflow(
       makeWorkflowWithInterests([
@@ -840,14 +879,14 @@ describe('validateExportBundle', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value.name).toBe('Bundle');
-      expect(result.value.version).toBe(6);
+      expect(result.value.version).toBe(7);
       expect(result.value.agents).toHaveLength(3);
       expect(result.value.workflows).toHaveLength(1);
     }
   });
 
   test('rejects version > 1', () => {
-    const bundle = { ...exportBundle([], [], 'B'), version: 7 };
+    const bundle = { ...exportBundle([], [], 'B'), version: 8 };
     const result = validateExportBundle(bundle);
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -867,10 +906,10 @@ describe('validateExportBundle', () => {
     expect(validateExportBundle([]).ok).toBe(false);
   });
 
-  test('rejects bundle whose nested agent has version > 6', () => {
+  test('rejects bundle whose nested agent has version > 7', () => {
     const bundle = exportBundle([makeAgent()], [], 'B') as Record<string, unknown>;
     const agents = bundle.agents as Array<Record<string, unknown>>;
-    agents[0] = { ...agents[0], version: 7 };
+    agents[0] = { ...agents[0], version: 8 };
     const result = validateExportBundle(bundle);
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -879,10 +918,10 @@ describe('validateExportBundle', () => {
     }
   });
 
-  test('rejects bundle whose nested workflow has version > 6', () => {
+  test('rejects bundle whose nested workflow has version > 7', () => {
     const bundle = exportBundle([], [makeWorkflow()], 'B') as Record<string, unknown>;
     const workflows = bundle.workflows as Array<Record<string, unknown>>;
-    workflows[0] = { ...workflows[0], version: 7 };
+    workflows[0] = { ...workflows[0], version: 8 };
     const result = validateExportBundle(bundle);
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -962,6 +1001,63 @@ describe('round-trip: export → JSON → validate', () => {
     }
   });
 
+  test('slot provider round-trips through export → JSON → validate', () => {
+    const workflow = makeWorkflow({
+      nodes: [
+        {
+          id: 'n1',
+          name: 'Code step',
+          agents: [
+            {
+              agentId: '',
+              templateKey: 'coder.default',
+              name: 'coder',
+              model: 'swe-2-high',
+              provider: 'custom:ai0',
+            },
+          ],
+        },
+      ],
+      startNodeId: 'n1',
+      endNodeId: 'n1',
+    });
+    const exported = exportWorkflow(workflow, []);
+    const parsed = JSON.parse(JSON.stringify(exported)) as unknown;
+    const result = validateExportedWorkflow(parsed);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.nodes[0].agents[0].model).toBe('swe-2-high');
+      expect(result.value.nodes[0].agents[0].provider).toBe('custom:ai0');
+    }
+  });
+
+  test('blank slot providers are omitted so the export still validates', () => {
+    const workflow = makeWorkflow({
+      nodes: [
+        {
+          id: 'n1',
+          name: 'Code step',
+          agents: [
+            {
+              agentId: '',
+              templateKey: 'coder.default',
+              name: 'coder',
+              model: 'swe-2-high',
+              provider: '   ',
+            },
+          ],
+        },
+      ],
+      startNodeId: 'n1',
+      endNodeId: 'n1',
+    });
+    const exported = exportWorkflow(workflow, []);
+    expect('provider' in exported.nodes[0].agents[0]).toBe(false);
+    const parsed = JSON.parse(JSON.stringify(exported)) as unknown;
+    const result = validateExportedWorkflow(parsed);
+    expect(result.ok).toBe(true);
+  });
+
   test('topicFrom interest round-trips through export/import (v2)', () => {
     const workflow: SpaceWorkflow = {
       id: 'wf-topicfrom',
@@ -995,11 +1091,11 @@ describe('round-trip: export → JSON → validate', () => {
     const agents = [makeAgent()];
 
     const exported = exportWorkflow(workflow, agents);
-    expect(exported.version).toBe(6);
+    expect(exported.version).toBe(7);
     const result = validateExportedWorkflow(JSON.parse(JSON.stringify(exported)) as unknown);
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.value.version).toBe(6);
+      expect(result.value.version).toBe(7);
       expect(result.value.nodes[0].agents[0].eventInterests?.[0]?.topicFrom).toEqual({
         source: 'primaryLink',
         pattern: 'github/{owner}/{repo}/pull_request/{number}.*',
@@ -1010,7 +1106,7 @@ describe('round-trip: export → JSON → validate', () => {
     const bundleResult = validateExportBundle(JSON.parse(JSON.stringify(bundle)) as unknown);
     expect(bundleResult.ok).toBe(true);
     if (bundleResult.ok) {
-      expect(bundleResult.value.version).toBe(6);
+      expect(bundleResult.value.version).toBe(7);
       expect(
         bundleResult.value.workflows[0].nodes[0].agents[0].eventInterests?.[0]?.topicFrom
       ).toBeDefined();

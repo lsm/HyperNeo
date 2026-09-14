@@ -3643,9 +3643,9 @@ describe('full export→import round-trip', () => {
     };
 
     const bundle = exportBundle([workerAgent], [workflow], 'V4 Export');
-    expect(bundle.version).toBe(6);
+    expect(bundle.version).toBe(7);
     expect(bundle.agents[0]).toMatchObject({
-      version: 6,
+      version: 7,
       type: 'agent',
       name: 'V4 Worker',
       handle: 'legacy-handle',

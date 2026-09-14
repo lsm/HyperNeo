@@ -212,8 +212,15 @@ export class CustomEndpointProvider implements Provider {
 
   async getModels(): Promise<ModelInfo[]> {
     await this.probeEndpoint();
-    void this.ensureBridgeStarted(this.getModelForTier('default') ?? 'default').catch(() => {});
+    this.prewarmBridges();
     return this.config.models.map((model) => this.toModelInfo(model));
+  }
+
+  prewarmBridges(): void {
+    const defaultModelId = this.getModelForTier('default');
+    if (defaultModelId) {
+      void this.ensureBridgeStarted(defaultModelId).catch(() => {});
+    }
   }
 
   getCachedModels(): ModelInfo[] | null {

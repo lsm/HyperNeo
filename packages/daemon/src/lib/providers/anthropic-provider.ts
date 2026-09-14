@@ -13,13 +13,7 @@ import { resolveSDKCliPath, isRunningUnderBun } from '../agent/sdk-cli-resolver.
 import { withSdkTranscriptRetention } from '../agent/sdk-transcript-retention.ts';
 import { applyRecordedFailureToAuthStatus } from './provider-failure-store.js';
 import { providerEnvCoordinator } from './provider-env-enrollment.ts';
-
-const CANONICAL_SDK_IDS = new Set(['default', 'sonnet', 'opus', 'haiku', 'fable', 'sonnet[1m]']);
-
-function isAnthropicSdkModelId(modelId: string): boolean {
-  if (CANONICAL_SDK_IDS.has(modelId)) return true;
-  return modelId.toLowerCase().startsWith('claude-');
-}
+import { canonicalAnthropicSdkAlias, isAnthropicSdkModelId } from './anthropic-sdk-models.js';
 
 function isFullVersionId(modelId: string): boolean {
   return /^claude-(sonnet|opus|haiku|fable)-[\d-]+$/.test(modelId);
@@ -208,18 +202,19 @@ export class AnthropicProvider implements Provider {
     const canonicalIdsByFamily = new Map<string, string>();
 
     for (const sdkModel of sdkModels) {
-      if (CANONICAL_SDK_IDS.has(sdkModel.value)) {
-        const parsed = parseModelId(sdkModel.value, sdkModel.description);
+      const alias = canonicalAnthropicSdkAlias(sdkModel.value);
+      if (alias) {
+        const parsed = parseModelId(alias, sdkModel.description);
         if (parsed && parsed.version) {
           const key = `${parsed.family}-${parsed.version}`;
-          canonicalIdsByFamily.set(key, sdkModel.value);
+          canonicalIdsByFamily.set(key, alias);
         }
       }
     }
 
     return sdkModels
       .filter((sdkModel) => {
-        if (CANONICAL_SDK_IDS.has(sdkModel.value)) {
+        if (canonicalAnthropicSdkAlias(sdkModel.value)) {
           return true;
         }
 
@@ -238,7 +233,8 @@ export class AnthropicProvider implements Provider {
         return true;
       })
       .map((sdkModel) => {
-        const modelId = sdkModel.value === 'default' ? 'sonnet' : sdkModel.value;
+        const alias = canonicalAnthropicSdkAlias(sdkModel.value);
+        const modelId = alias === 'default' ? 'sonnet' : (alias ?? sdkModel.value);
 
         const description = sdkModel.description || '';
         const separatorIndex = description.indexOf(' · ');

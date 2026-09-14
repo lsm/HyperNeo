@@ -1,11 +1,16 @@
 import type { Provider, ProviderInfo, Session } from '@hyperneo/shared';
 import type {
+  Provider as SdkProvider,
   ProviderInfo as NewProviderInfo,
   ProviderSdkConfig,
   ProviderSessionConfig,
 } from '@hyperneo/shared/provider';
 import { Logger } from './logger.js';
 import { initializeProviders, waitForOptionalProviderRegistration } from './providers/factory.js';
+import {
+  makeSessionProviderEnvStages,
+  runSessionProviderEnvPipeline,
+} from './providers/session-provider-env-pipeline.js';
 import { providerSessionConfigForSession } from './providers/session-config.js';
 import { selectTitleGenerationModel } from './title-model-selection.js';
 
@@ -105,19 +110,6 @@ export class ProviderService {
     try {
       await provider?.ensureBridgeStarted?.(modelId, sessionConfig);
     } catch {}
-  }
-
-  async ensureSessionProviderBridges(session: Session): Promise<void> {
-    await this.getReadyRegistry();
-    const registry = this.getRegistry();
-    const providerId = session.config.provider || 'anthropic';
-    const provider = registry.get(providerId);
-    if (!provider) return;
-    await this.ensureProviderBridges(
-      provider,
-      session.config.model || 'default',
-      providerSessionConfigForSession(session)
-    );
   }
 
   private getRegistry() {
@@ -397,21 +389,62 @@ export class ProviderService {
 
     const modelId = session.config.model || 'default';
     try {
-      const sdkConfig = provider.buildSdkConfig(modelId, sessionConfig);
-      if (provider.id === 'anthropic' && process.env.HYPERNEO_USE_DEV_PROXY === '1') {
-        sdkConfig.envVars = {
-          ...sdkConfig.envVars,
-          ANTHROPIC_BASE_URL: 'http://127.0.0.1:8000',
-        };
-      }
-      return sdkConfigToEnvVars(sdkConfig);
+      return this.buildSessionEnvVars(provider, modelId, sessionConfig);
     } catch {
       return {};
     }
   }
 
+  async resolveSessionProviderEnvVars(session: Session): Promise<ProviderEnvVars> {
+    const registry = await this.getReadyRegistry();
+    const providerId = session.config.provider || 'anthropic';
+
+    return runSessionProviderEnvPipeline(
+      makeSessionProviderEnvStages({
+        getProvider: (id) => registry.get(id),
+        ensureBridgeBestEffort: async (provider, modelId, sessionConfig) => {
+          await this.ensureProviderBridges(provider, modelId, sessionConfig);
+        },
+        retryBridgeStart: async (provider, modelId, sessionConfig) => {
+          await provider.ensureBridgeStarted?.(modelId, sessionConfig);
+        },
+        buildEnvVars: (provider, modelId, sessionConfig) =>
+          this.buildSessionEnvVars(provider, modelId, sessionConfig),
+      }),
+      {
+        providerId,
+        modelId: session.config.model || 'default',
+        sessionConfig: providerSessionConfigForSession(session),
+        sessionId: session.id,
+        provider: registry.get(providerId) ?? null,
+      }
+    );
+  }
+
+  private buildSessionEnvVars(
+    provider: Pick<SdkProvider, 'id' | 'buildSdkConfig'>,
+    modelId: string,
+    sessionConfig: ProviderSessionConfig
+  ): ProviderEnvVars {
+    const sdkConfig = provider.buildSdkConfig(modelId, sessionConfig);
+    if (provider.id === 'anthropic' && process.env.HYPERNEO_USE_DEV_PROXY === '1') {
+      sdkConfig.envVars = {
+        ...sdkConfig.envVars,
+        ANTHROPIC_BASE_URL: 'http://127.0.0.1:8000',
+      };
+    }
+    return sdkConfigToEnvVars(sdkConfig);
+  }
+
   applyEnvVarsToProcessForSession(session: Session): OriginalEnvVars {
     const envVars = this.getProviderEnvVars(session);
+    return this.applyResolvedProviderEnvVarsToProcess(session, envVars);
+  }
+
+  applyResolvedProviderEnvVarsToProcess(
+    session: Session,
+    envVars: ProviderEnvVars
+  ): OriginalEnvVars {
     const cleared = this.clearProviderRoutingEnvVars({
       preserveUserSettings: session.config.provider === 'anthropic',
     });
