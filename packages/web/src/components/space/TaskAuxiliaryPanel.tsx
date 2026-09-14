@@ -82,6 +82,7 @@ export function TaskAuxiliaryPanel({
   const resolvedTask = useResolvedSpaceTask(task);
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const taskIdRef = useRef(taskId);
   const [scopeName, setScopeName] = useState<string | null>(null);
   const [savingWorkflow, setSavingWorkflow] = useState(false);
   const [workflowError, setWorkflowError] = useState<string | null>(null);
@@ -93,6 +94,12 @@ export function TaskAuxiliaryPanel({
   useEffect(() => {
     spaceStore.ensureConfigData().catch(() => {});
   }, [spaceId]);
+
+  useEffect(() => {
+    taskIdRef.current = taskId;
+    setWorkflowError(null);
+    setSavingWorkflow(false);
+  }, [taskId]);
 
   useEffect(() => {
     setDescriptionDraft(resolvedTask?.description ?? '');
@@ -177,14 +184,16 @@ export function TaskAuxiliaryPanel({
   };
 
   const handleWorkflowChange = async (nextWorkflowId: string | null) => {
+    const requestedTaskId = task.id;
     try {
       setSavingWorkflow(true);
       setWorkflowError(null);
-      await spaceStore.setPreferredWorkflow(task.id, nextWorkflowId);
+      await spaceStore.setPreferredWorkflow(requestedTaskId, nextWorkflowId);
     } catch (err) {
+      if (taskIdRef.current !== requestedTaskId) return;
       setWorkflowError(err instanceof Error ? err.message : 'Failed to change the workflow');
     } finally {
-      setSavingWorkflow(false);
+      if (taskIdRef.current === requestedTaskId) setSavingWorkflow(false);
     }
   };
 

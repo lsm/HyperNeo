@@ -155,6 +155,25 @@ test('a workflow-backed stop carries the block reason into the runtime params', 
   );
 });
 
+test('the workflow stop path receives the block reason in one status write', async () => {
+  const run = createWorkflowRun();
+  const task = tasks.createTask({ spaceId, title: 'T', description: '' });
+  tasks.updateTask(task.id, { workflowRunId: run.id, status: 'in_progress' });
+  const stopForStatus = mock(async (_s: string, id: string, params: Record<string, unknown>) => {
+    const manager = new SpaceTaskManager(db, spaceId);
+    return manager.setTaskStatus(id, 'blocked', {
+      blockReason: params.blockReason as 'human_input_requested',
+    });
+  });
+
+  await invoke({ taskId: task.id, status: 'blocked', blockReason: 'human_input_requested' }, rpc, {
+    isWorkflowRunActive: () => true,
+    stopForStatus,
+  });
+
+  expect(tasks.getTask(task.id)?.blockReason).toBe('human_input_requested');
+});
+
 test('a standalone task rejects a block reason instead of dropping it', async () => {
   const task = createStandaloneTask(db, { title: 'Solo' }, undefined, () => {});
 

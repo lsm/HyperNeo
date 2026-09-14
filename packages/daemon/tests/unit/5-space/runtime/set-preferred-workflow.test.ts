@@ -168,6 +168,23 @@ test('a start landing between the check and the write loses to the guard', async
   expect(tasks.getTask(task.id)?.preferredWorkflowId ?? null).toBeNull();
 });
 
+test('a workflow disabled between the check and the write loses to the guard', async () => {
+  const workflow = makeWorkflow();
+  const task = tasks.createTask({ spaceId, title: 'T', description: '' });
+  let reads = 0;
+  const getWorkflow = (workflowId: string) => {
+    reads += 1;
+    const found = workflows.getWorkflow(workflowId);
+    return found && reads > 1 ? { ...found, disabled: true } : found;
+  };
+
+  expect(await invoke({ taskId: task.id, workflowId: workflow.id }, rpc, { getWorkflow })).toEqual({
+    kind: 'completed',
+    value: 'workflow_disabled',
+  });
+  expect(tasks.getTask(task.id)?.preferredWorkflowId ?? null).toBeNull();
+});
+
 test('an unknown workflow rejects with workflow_not_found', async () => {
   const task = tasks.createTask({ spaceId, title: 'T', description: '' });
   expect(await invoke({ taskId: task.id, workflowId: 'missing' })).toEqual({

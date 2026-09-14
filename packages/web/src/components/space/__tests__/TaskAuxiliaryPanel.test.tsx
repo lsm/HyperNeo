@@ -330,6 +330,21 @@ describe('TaskAuxiliaryPanel', () => {
     await waitFor(() => expect(mockSetPreferredWorkflow).toHaveBeenCalledWith('task-1', null));
   });
 
+  it('drops a stale workflow rejection when the panel switches tasks', async () => {
+    mockTasks.value = [makeTask(), makeTask({ id: 'task-2', taskNumber: 2 })];
+    mockSetPreferredWorkflow.mockRejectedValueOnce(new Error('Cannot change the workflow'));
+    const { getByTestId, queryByTestId, rerender } = render(
+      <TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" />
+    );
+
+    fireEvent.change(getByTestId('task-workflow-select'), { target: { value: 'workflow-1' } });
+    await waitFor(() => expect(getByTestId('task-workflow-error')).toBeTruthy());
+
+    rerender(<TaskAuxiliaryPanel spaceId="space-1" taskId="task-2" />);
+
+    await waitFor(() => expect(queryByTestId('task-workflow-error')).toBeNull());
+  });
+
   it('shows why a workflow change was rejected', async () => {
     mockSetPreferredWorkflow.mockRejectedValueOnce(
       new Error('Cannot change the workflow for task task-1: the task has already started')

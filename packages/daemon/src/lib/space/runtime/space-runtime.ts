@@ -3237,6 +3237,7 @@ export class SpaceRuntime {
       }
       let updated = await taskManager.setTaskStatus(taskId, nextStatus, {
         result: params.result ?? undefined,
+        blockReason: params.blockReason ?? undefined,
         approvalSource: params.approvalSource ?? undefined,
         approvalReason:
           nextStatus === 'cancelled'
@@ -3250,6 +3251,7 @@ export class SpaceRuntime {
       const {
         status: _status,
         result: _result,
+        blockReason: _blockReason,
         approvalReason: _approvalReason,
         cancelReason: _cancelReason,
         ...otherFields

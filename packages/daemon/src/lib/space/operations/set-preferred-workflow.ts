@@ -70,34 +70,51 @@ export function requireUnstarted(owned: OwnedTask): Gate<OwnedTask> {
   return hasStarted(owned.task) ? { reason: 'workflow_locked' } : { value: owned };
 }
 
+export function validateWorkflowSelection(
+  workflowId: string | null,
+  spaceId: string,
+  deps: Pick<Deps, 'getWorkflow'>
+): SetPreferredWorkflowRejection | undefined {
+  if (workflowId === null) return undefined;
+  const workflow = deps.getWorkflow(workflowId);
+  if (!workflow || workflow.spaceId !== spaceId) return 'workflow_not_found';
+  if (workflow.disabled) return 'workflow_disabled';
+  return undefined;
+}
+
 export function requireSelectableWorkflow(
   owned: OwnedTask,
   input: In,
   deps: Deps
 ): Gate<OwnedTask> {
-  if (input.workflowId === null) return { value: owned };
-  const workflow = deps.getWorkflow(input.workflowId);
-  if (!workflow || workflow.spaceId !== owned.spaceId) return { reason: 'workflow_not_found' };
-  if (workflow.disabled) return { reason: 'workflow_disabled' };
-  return { value: owned };
+  const rejection = validateWorkflowSelection(input.workflowId, owned.spaceId, deps);
+  return rejection ? { reason: rejection } : { value: owned };
 }
 
 export async function writeSelection(owned: OwnedTask, input: In, deps: Deps): Promise<Result> {
   const { spaceId } = owned;
+  let guardRejection: SetPreferredWorkflowRejection | undefined;
   try {
-    const updated = await deps
-      .getTaskManager(spaceId)
-      .updateTask(
-        input.taskId,
-        { preferredWorkflowId: input.workflowId, workflowModelOverrides: null },
-        { guardWrite: (current) => (hasStarted(current) ? 'task_started' : undefined) }
-      );
+    const updated = await deps.getTaskManager(spaceId).updateTask(
+      input.taskId,
+      { preferredWorkflowId: input.workflowId, workflowModelOverrides: null },
+      {
+        guardWrite: (current) => {
+          if (hasStarted(current)) {
+            guardRejection = 'workflow_locked';
+            return 'task_started';
+          }
+          guardRejection = validateWorkflowSelection(input.workflowId, spaceId, deps);
+          return guardRejection;
+        },
+      }
+    );
     await deps
       .emitTaskUpdated(spaceId, updated)
       .catch((error: unknown) => log.warn('Failed to emit space.task.updated:', error));
     return updated;
   } catch (error) {
-    if (error instanceof StaleTaskGuardError) return 'workflow_locked';
+    if (error instanceof StaleTaskGuardError) return guardRejection ?? 'workflow_locked';
     throw error;
   }
 }
