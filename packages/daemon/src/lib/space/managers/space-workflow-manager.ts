@@ -486,7 +486,14 @@ export class SpaceWorkflowManager {
         entry.model = trimmedModel;
         const trimmedProvider = entry.provider?.trim() || undefined;
         entry.provider = trimmedProvider;
-        if (!trimmedProvider || !trimmedModel) continue;
+        if (!trimmedProvider || !trimmedModel) {
+          if (trimmedProvider && !getProviderRegistry().get(trimmedProvider)) {
+            throw new WorkflowValidationError(
+              `node[${i}].agents[${j}]: provider "${trimmedProvider}" is not registered`
+            );
+          }
+          continue;
+        }
         const provider = getProviderRegistry().get(trimmedProvider);
         if (provider && !providerMayOfferModel(provider, trimmedModel)) {
           throw new WorkflowValidationError(

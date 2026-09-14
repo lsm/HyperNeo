@@ -673,6 +673,34 @@ describe('QueryRunner', () => {
       });
     });
 
+    it('does not pin an inferred provider while it is unavailable', async () => {
+      const registry = initializeProviders();
+      registry.register({
+        id: 'custom:unavailable-pin-test',
+        displayName: 'Unavailable Pin Test',
+        isAvailable: mock(async () => false),
+        ownsModel: (m: string) => m === 'unavailable-pin-model',
+        getModels: mock(async () => []),
+        getAuthStatus: mock(async () => ({ isAuthenticated: false })),
+        buildSdkConfig: mock(() => ({ envVars: {}, isAnthropicCompatible: true })),
+      } as unknown as Provider);
+      try {
+        const blankSession: Session = {
+          ...mockSession,
+          config: { ...mockSession.config, model: 'unavailable-pin-model', provider: '   ' },
+        };
+        const ctx = createContext({ session: blankSession });
+        runner = new QueryRunner(ctx);
+
+        await runner.start();
+        await ctx.queryPromise?.catch(() => {});
+
+        expect(blankSession.config.provider).toBe('   ');
+      } finally {
+        registry.unregister('custom:unavailable-pin-test');
+      }
+    });
+
     it('should skip start if query already running', async () => {
       isRunningSpy.mockReturnValue(true);
       runner = createRunner({ queryPromise: new Promise<void>(() => {}) });
@@ -1352,7 +1380,7 @@ describe('QueryRunner', () => {
         runner.start();
         await ctx.queryPromise?.catch(() => {});
 
-        expect(setSessionThinkingConfigSpy).toHaveBeenCalledTimes(2);
+        expect(setSessionThinkingConfigSpy).toHaveBeenCalledTimes(1);
         expect(setSessionThinkingConfigSpy).toHaveBeenCalledWith(mockSession.id, 'think8k');
       } finally {
         registry.unregister('custom:thinking-sync-test');

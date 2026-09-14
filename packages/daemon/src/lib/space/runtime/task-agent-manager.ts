@@ -937,9 +937,9 @@ export class TaskAgentManager {
           customAgent?.model ??
           request.space.defaultModel ??
           DEFAULT_CUSTOM_AGENT_MODEL;
-        const routedSpawnProvider = await inferSpawnProviderForModel(assignedModel);
+        const routedSpawnProvider = inferSpawnProviderForModel(assignedModel);
         const routedOverrideProvider = taskModelOverride
-          ? await inferSpawnProviderForModel(taskModelOverride)
+          ? inferSpawnProviderForModel(taskModelOverride)
           : undefined;
         const assignment = {
           spaceId: request.space.id,
@@ -5601,9 +5601,9 @@ export class TaskAgentManager {
       poolAgent?.model ??
       space.defaultModel ??
       DEFAULT_CUSTOM_AGENT_MODEL;
-    const routedSpawnProvider = await inferSpawnProviderForModel(assignedModel);
+    const routedSpawnProvider = inferSpawnProviderForModel(assignedModel);
     const routedOverrideProvider = postApprovalModelOverride
-      ? await inferSpawnProviderForModel(postApprovalModelOverride)
+      ? inferSpawnProviderForModel(postApprovalModelOverride)
       : undefined;
     const reservationKey = { id: `post-approval:${taskId}:${slot.name}:${generateUUID()}` };
     const assignment = {

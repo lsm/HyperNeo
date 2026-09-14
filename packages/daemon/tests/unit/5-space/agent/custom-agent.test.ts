@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'bun:test';
+import { beforeAll, describe, expect, it } from 'bun:test';
 import type {
   EvolutionLesson,
   Space,
@@ -8,6 +8,7 @@ import type {
   SpaceWorkflow,
   SpaceWorkflowRun,
 } from '@hyperneo/shared';
+import { initializeProviders } from '../../../../src/lib/providers/factory';
 import {
   buildCustomAgentSystemPrompt,
   buildCustomAgentTaskMessage,
@@ -226,6 +227,10 @@ function makeConfig(overrides?: Partial<CustomAgentConfig>): CustomAgentConfig {
     ...overrides,
   };
 }
+
+beforeAll(() => {
+  initializeProviders();
+});
 
 describe('buildCustomAgentSystemPrompt', () => {
   it('returns only trimmed visible prompt text', () => {

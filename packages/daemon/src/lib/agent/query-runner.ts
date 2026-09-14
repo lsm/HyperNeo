@@ -689,8 +689,17 @@ export class QueryRunner {
         explicitProviderId
       );
       const normalizedProviderId = explicitProviderId ?? provider?.id;
+      let inferredPinAllowed = true;
+      if (!explicitProviderId && provider?.isAvailable) {
+        try {
+          inferredPinAllowed = await provider.isAvailable();
+        } catch {
+          inferredPinAllowed = false;
+        }
+      }
       if (
         normalizedProviderId !== undefined &&
+        inferredPinAllowed &&
         (rawProviderId == null || rawProviderId !== normalizedProviderId)
       ) {
         session.config.provider = normalizedProviderId as Session['config']['provider'];
@@ -780,11 +789,6 @@ export class QueryRunner {
         askUserQuestionHook: attemptHook,
         canUseTool: this.createAttemptBoundCanUseTool(attemptToken),
       });
-
-      if (provider?.setSessionThinkingConfig) {
-        const effectiveThinkingLevel = optionsBuilder.getEffectiveThinkingLevel();
-        provider.setSessionThinkingConfig(session.id, effectiveThinkingLevel);
-      }
 
       queryOptions = optionsBuilder.addSessionStateOptions(queryOptions);
 
