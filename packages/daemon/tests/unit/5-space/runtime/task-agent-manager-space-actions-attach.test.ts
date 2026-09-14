@@ -41,6 +41,17 @@ function makeManager(): TaskAgentManager {
     nodeExecutionRepo: { listByWorkflowRun: () => [execution] },
     workflowRunRepo: { getRun: () => null },
     spaceManager: { getSpace: async () => ({ id: SPACE_ID, autonomyLevel: 3 }) },
+    spaceRuntimeService: {
+      getSpaceRuntime: () =>
+        ({}) as unknown as import('../../../../src/lib/space/runtime/space-runtime.ts').SpaceRuntime,
+      isWorkflowRunActive: () => true,
+      activateWorkflowNode: async () => [],
+      ensureToolTargetSession: async () =>
+        ({
+          kind: 'unresolved',
+          reason: 'test',
+        }) as import('../../../../src/lib/session-resolution/target.ts').EnsureSessionOutcome,
+    },
   } as unknown as TaskAgentManagerConfig);
 }
 
@@ -268,6 +279,17 @@ describe('TaskAgentManager — space-actions create_standalone_task default-work
       nodeExecutionRepo: { listByWorkflowRun: () => [execution] },
       workflowRunRepo: { getRun: () => null },
       spaceManager: new SpaceManager(db),
+      spaceRuntimeService: {
+        getSpaceRuntime: () =>
+          ({}) as unknown as import('../../../../src/lib/space/runtime/space-runtime.ts').SpaceRuntime,
+        isWorkflowRunActive: () => true,
+        activateWorkflowNode: async () => [],
+        ensureToolTargetSession: async () =>
+          ({
+            kind: 'unresolved',
+            reason: 'test',
+          }) as import('../../../../src/lib/session-resolution/target.ts').EnsureSessionOutcome,
+      },
     } as unknown as TaskAgentManagerConfig);
   }
 

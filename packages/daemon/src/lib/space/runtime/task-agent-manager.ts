@@ -54,6 +54,7 @@ import { getLongHorizonAgentTemplate } from '../agents/long-horizon-agent-templa
 import { isRunnableUnifiedAgent } from '../agents/worker-long-horizon-mapper.ts';
 import type { SpaceManager } from '../managers/space-manager.ts';
 import { SpaceTaskManager } from '../managers/space-task-manager.ts';
+import { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository.ts';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager.ts';
 import {
   type SpaceWorktreeManager,
@@ -103,6 +104,7 @@ import {
   taskIdFromSubSessionIdentity,
 } from '../../session/sub-session-identity.ts';
 import type { NodeAgentToolsConfig } from '../actions/node-handlers.ts';
+import type { SpaceAgentToolsConfig } from '../actions/space-handlers.ts';
 import {
   buildWorkerDispatcherContractTools,
   createSpaceActionsMcpServer,
@@ -5326,11 +5328,23 @@ export class TaskAgentManager {
       },
       hookEngine,
     };
-    const spaceActions = this.buildSpaceActionsDispatcherServer(nodeConfig);
+    const spaceConfig = this.buildWorkerSpaceToolsConfig({
+      spaceId,
+      taskId,
+      workflowRunId,
+      workflowNodeId,
+      agentName,
+      agentNameAliases,
+      subSessionId,
+    });
+    const spaceActions = this.buildSpaceActionsDispatcherServer(nodeConfig, spaceConfig);
     return { 'space-actions': spaceActions };
   }
 
-  buildSpaceActionsDispatcherServer(nodeConfig: NodeAgentToolsConfig): McpServerConfig {
+  buildSpaceActionsDispatcherServer(
+    nodeConfig: NodeAgentToolsConfig,
+    spaceConfig?: SpaceAgentToolsConfig
+  ): McpServerConfig {
     const server = createSpaceActionsMcpServer({
       role: 'workflow_worker',
       nodeRole: nodeConfig.myAgentName,
@@ -5340,6 +5354,7 @@ export class TaskAgentManager {
       agentName: nodeConfig.myAgentName,
       sessionId: nodeConfig.mySessionId,
       nodeConfig,
+      spaceConfig,
       dispatchDeps: {
         getSpaceAutonomyLevel: async (spaceId) =>
           (await this.config.spaceManager.getSpace(spaceId))?.autonomyLevel ?? 1,
@@ -5347,6 +5362,72 @@ export class TaskAgentManager {
       operationRegistry: () => this.config.sessionManager.getOperationRegistry(),
     }) as unknown as McpServerConfig;
     return server;
+  }
+
+  private buildWorkerSpaceToolsConfig(ctx: {
+    spaceId: string;
+    taskId: string;
+    workflowRunId: string;
+    workflowNodeId: string;
+    agentName: string;
+    agentNameAliases: string[] | undefined;
+    subSessionId: string;
+  }): SpaceAgentToolsConfig {
+    const { spaceId, workflowRunId, workflowNodeId, agentName, agentNameAliases, subSessionId } =
+      ctx;
+    const taskManager = new SpaceTaskManager(
+      this.config.db.getDatabase(),
+      spaceId,
+      this.config.reactiveDb,
+      this.config.evolutionScopeService,
+      (tid) => this.config.goalService?.supersedeOutcomeNotificationsForTask(tid),
+      (tid, fromStatus) =>
+        this.config.goalService?.handleTaskTerminal(tid, {
+          fromStatus,
+          deferPostCommitEffects: true,
+        }),
+      (rawPath) => this.config.spaceManager.resolveRegisteredWorkspacePath(spaceId, rawPath)
+    );
+    return {
+      spaceId,
+      db: this.config.db.getDatabase(),
+      longHorizonAgentRepo: this.config.longHorizonAgentRepo,
+      runtime: this.config.spaceRuntimeService.getSpaceRuntime(),
+      workflowManager: this.config.spaceWorkflowManager,
+      spaceManager: this.config.spaceManager,
+      taskRepo: this.config.taskRepo,
+      nodeExecutionRepo: this.config.nodeExecutionRepo,
+      workflowRunRepo: this.config.workflowRunRepo,
+      isWorkflowRunActive: (runId) => this.config.spaceRuntimeService.isWorkflowRunActive(runId),
+      taskManager,
+      sessionManager: this.config.sessionManager,
+      getRuntimeSession: (sid) => this.getCachedAgentSessionById(sid) ?? undefined,
+      taskAgentManager: this,
+      internalEventBus: this.config.internalEventBus,
+      activateNode: async (runId, nodeId) => {
+        await this.config.spaceRuntimeService.activateWorkflowNode(runId, nodeId);
+      },
+      ensureTargetSession: (target) =>
+        this.config.spaceRuntimeService.ensureToolTargetSession(target),
+      getSpaceAutonomyLevel: async (sid) =>
+        (await this.config.spaceManager.getSpace(sid))?.autonomyLevel ?? 1,
+      myAgentName: agentName,
+      myAgentNameAliases: agentNameAliases,
+      mySessionId: subSessionId,
+      callerRole: 'workflow_worker',
+      auditLogRepo: this.auditLogRepo,
+      scheduleService: this.config.scheduleService,
+      goalService: this.config.goalService,
+      evolutionScopeService: this.config.evolutionScopeService,
+      goalRepo: new SpaceGoalRepository(this.config.db.getDatabase()),
+      replyRoutingRegistry: this.config.replyRoutingRegistry,
+      messageResolver: this.config.messageResolverFactory?.(spaceId, {
+        workflowRunId,
+        nodeId: workflowNodeId,
+        agentName,
+      }),
+      externalEventStore: this.config.externalEventStore,
+    };
   }
 
   async spawnPostApprovalSubSession(args: {

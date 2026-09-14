@@ -18,21 +18,17 @@ import { skillsStore } from '../lib/skills-store.ts';
 import { globalSettings } from '../lib/state.ts';
 
 const RUNTIME_MCP_LABELS: Record<string, { title: string; description: string }> = {
-  'space-agent-tools': {
-    title: 'Space coordination',
-    description: 'send_message_to_agent, list_peers, gate I/O, task management',
+  'space-actions': {
+    title: 'Space actions',
+    description: 'call_action dispatcher for Space tasks, workflows, and messages',
+  },
+  'agent-memory': {
+    title: 'Agent memory',
+    description: 'Persistent Space memory read/write/search',
   },
   'db-query': {
     title: 'Database queries',
     description: 'Read-only SQLite access scoped to this space',
-  },
-  'task-agent': {
-    title: 'Task agent',
-    description: 'Workflow execution, node activation, sub-agent spawning',
-  },
-  'node-agent': {
-    title: 'Node agent',
-    description: 'Workflow node tools: peers, channels, gates',
   },
 };
 import {
