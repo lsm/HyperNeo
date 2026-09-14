@@ -1,4 +1,4 @@
-import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
+import { type ChildProcess, spawn as nodeSpawn } from 'node:child_process';
 import type {
   CanUseTool,
   HookCallback,
@@ -12,8 +12,8 @@ import type { MessageContent, MessageHub, Session } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { UUID } from 'crypto';
-import type { Database } from '../../storage/database.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import type { Database } from '../../storage/database.ts';
 import { ErrorCategory, type ErrorManager } from '../error-manager.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { Logger } from '../logger.ts';
@@ -24,8 +24,8 @@ import {
   FAIL_CLOSED_LONG_HORIZON_AGENT_REPO,
   missingMcpServers,
   resolveSpaceMcpSessionPolicy,
-  SPACE_AD_HOC_MEMBER_REQUIRED_MCP_SERVERS,
-  SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS,
+  spaceAdHocMemberRequiredMcpServers,
+  spaceWorkflowWorkerRequiredMcpServers,
 } from '../space/runtime/space-mcp-session-policy.ts';
 import type { AgentSession } from './agent-session.ts';
 import type { AskUserQuestionHandler } from './ask-user-question-handler.ts';
@@ -280,7 +280,7 @@ function applyProviderEnvToFlagSettings(queryOptions: Options, envVars: Provider
   };
 }
 
-const REQUIRED_SPACE_CHAT_MCP_SERVERS = SPACE_AD_HOC_MEMBER_REQUIRED_MCP_SERVERS;
+const requiredSpaceChatMcpServers = () => spaceAdHocMemberRequiredMcpServers();
 const REQUIRED_SPACE_CHAT_COORDINATION_TOOLS = [
   'create_standalone_task',
   'get_task_detail',
@@ -779,7 +779,7 @@ export class QueryRunner {
 
       queryOptions = await this.ensureSpaceChatMcpInvariant(queryOptions, attemptHook);
       if (isWorkflowSubSession) {
-        const requiredServers = SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS;
+        const requiredServers = spaceWorkflowWorkerRequiredMcpServers();
         const missingServers = missingMcpServers(
           queryOptions.mcpServers as Record<string, unknown> | undefined,
           requiredServers
@@ -1713,9 +1713,8 @@ export class QueryRunner {
           `Present: [${serverNames.join(', ')}].`
       );
     }
-    const missingServers = REQUIRED_SPACE_CHAT_MCP_SERVERS.filter(
-      (name) => !serverNames.includes(name)
-    );
+    const requiredServers = requiredSpaceChatMcpServers();
+    const missingServers = requiredServers.filter((name) => !serverNames.includes(name));
     if (missingServers.length === 0) return queryOptions;
 
     const payload = {
@@ -1723,7 +1722,7 @@ export class QueryRunner {
       sessionId: session.id,
       spaceId: session.context?.spaceId,
       sessionType: session.type,
-      requiredServers: REQUIRED_SPACE_CHAT_MCP_SERVERS,
+      requiredServers,
       requiredTools: REQUIRED_SPACE_CHAT_COORDINATION_TOOLS,
       missingServers,
       presentServers: serverNames,
@@ -1745,9 +1744,7 @@ export class QueryRunner {
       });
       const repairedOptions = this.ctx.optionsBuilder.addSessionStateOptions(rebuilt);
       const repairedServerNames = Object.keys(repairedOptions.mcpServers ?? {});
-      const stillMissing = REQUIRED_SPACE_CHAT_MCP_SERVERS.filter(
-        (name) => !repairedServerNames.includes(name)
-      );
+      const stillMissing = requiredServers.filter((name) => !repairedServerNames.includes(name));
       if (stillMissing.length > 0) {
         throw new Error(
           `[MCP invariant] Space chat session ${session.id} still missing required MCP servers ` +

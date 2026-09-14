@@ -548,9 +548,9 @@ describe('QueryRunner', () => {
         mockSession.config.mcpServers = {};
 
         const repairedServers = {
-          'node-agent': {
+          'space-actions': {
             type: 'sdk',
-            name: 'node-agent',
+            name: 'space-actions',
             instance: {},
           },
         };
@@ -571,7 +571,7 @@ describe('QueryRunner', () => {
         runner.start();
         await ctx.queryPromise?.catch(() => {});
 
-        expect(onMissingWorkflowMcpServers).toHaveBeenCalledWith(ctx, ['node-agent']);
+        expect(onMissingWorkflowMcpServers).toHaveBeenCalledWith(ctx, ['space-actions']);
         expect(onMissingWorkflowMcpServers.mock.calls[0][0].session.id).toBe(
           'space:s1:task:t1:exec:e1'
         );
@@ -589,9 +589,9 @@ describe('QueryRunner', () => {
         mockSession.config.mcpServers = {};
 
         const repairedServers = {
-          'space-agent-tools': {
+          'space-actions': {
             type: 'sdk',
-            name: 'space-agent-tools',
+            name: 'space-actions',
             instance: {},
           },
         };
@@ -618,7 +618,7 @@ describe('QueryRunner', () => {
         await ctx.queryPromise?.catch(() => {});
 
         expect(onMissingSpaceChatMcpServers).toHaveBeenCalledWith('space:chat:s1', [
-          'space-agent-tools',
+          'space-actions',
         ]);
         expect(buildSpy).toHaveBeenCalledTimes(2);
         expect(addSessionStateOptionsSpy).toHaveBeenCalledTimes(2);
@@ -649,7 +649,7 @@ describe('QueryRunner', () => {
         expect(handleErrorSpy).toHaveBeenCalled();
         const error = handleErrorSpy.mock.calls[0][1] as Error;
         expect(error.message).toContain('[MCP invariant]');
-        expect(error.message).toContain('space-agent-tools');
+        expect(error.message).toContain('space-actions');
       });
     });
 
@@ -660,9 +660,9 @@ describe('QueryRunner', () => {
         mockSession.type = 'space_chat';
         mockSession.context = { spaceId: 's1' };
         const servers = {
-          'space-agent-tools': {
+          'space-actions': {
             type: 'sdk',
-            name: 'space-agent-tools',
+            name: 'space-actions',
             instance: {},
           },
         };
@@ -693,9 +693,9 @@ describe('QueryRunner', () => {
         mockSession.config.mcpServers = {};
 
         const repairedServers = {
-          'space-agent-tools': {
+          'space-actions': {
             type: 'sdk',
-            name: 'space-agent-tools',
+            name: 'space-actions',
             instance: {},
           },
         };
@@ -717,7 +717,7 @@ describe('QueryRunner', () => {
         await ctx.queryPromise?.catch(() => {});
 
         expect(onMissingMemberSpaceMcpServers).toHaveBeenCalledWith('worker-session-1', [
-          'space-agent-tools',
+          'space-actions',
         ]);
         expect(buildSpy).toHaveBeenCalledTimes(2);
         expect(addSessionStateOptionsSpy).toHaveBeenCalledTimes(2);
@@ -743,7 +743,7 @@ describe('QueryRunner', () => {
         expect(handleErrorSpy).toHaveBeenCalled();
         const error = handleErrorSpy.mock.calls[0][1] as Error;
         expect(error.message).toContain('[MCP invariant]');
-        expect(error.message).toContain('space-agent-tools');
+        expect(error.message).toContain('space-actions');
         expect(error.message).toContain('member session');
       });
     });
@@ -755,9 +755,9 @@ describe('QueryRunner', () => {
         mockSession.type = 'worker';
         mockSession.context = { spaceId: 's1' };
         const servers = {
-          'space-agent-tools': {
+          'space-actions': {
             type: 'sdk',
-            name: 'space-agent-tools',
+            name: 'space-actions',
             instance: {},
           },
         };
@@ -779,7 +779,7 @@ describe('QueryRunner', () => {
       });
     });
 
-    it('warns log-only when the dispatcher flag is on but space-actions is missing (member)', async () => {
+    it('warns and self-heals when the dispatcher flag is on and space-actions is missing (member)', async () => {
       await withAnthropicApiKey(async () => {
         const previous = process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER;
         process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER = '1';
@@ -788,27 +788,37 @@ describe('QueryRunner', () => {
           mockSession.workspacePath = tmpdir();
           mockSession.type = 'worker';
           mockSession.context = { spaceId: 's1' };
-          const servers = {
-            'space-agent-tools': {
+          mockSession.config.mcpServers = {};
+
+          const repairedServers = {
+            'space-actions': {
               type: 'sdk',
-              name: 'space-agent-tools',
+              name: 'space-actions',
               instance: {},
             },
           };
-          mockSession.config.mcpServers = servers as unknown as Session['config']['mcpServers'];
-          buildSpy.mockResolvedValueOnce({
-            model: 'claude-sonnet-4-20250514',
-            mcpServers: servers,
+          buildSpy
+            .mockResolvedValueOnce({ model: 'claude-sonnet-4-20250514', mcpServers: {} })
+            .mockResolvedValueOnce({
+              model: 'claude-sonnet-4-20250514',
+              mcpServers: repairedServers,
+            });
+          stopAfterRebuiltOptions();
+          const onMissingMemberSpaceMcpServers = mock(async () => {
+            mockSession.config.mcpServers =
+              repairedServers as unknown as Session['config']['mcpServers'];
           });
-          const onMissingMemberSpaceMcpServers = mock(async () => {});
 
           const ctx = createContext({ onMissingMemberSpaceMcpServers });
           runner = new QueryRunner(ctx);
           runner.start();
           await ctx.queryPromise?.catch(() => {});
 
-          expect(onMissingMemberSpaceMcpServers).not.toHaveBeenCalled();
           expect(mockLogger.warn).toHaveBeenCalledWith(expect.stringContaining('space-actions'));
+          expect(onMissingMemberSpaceMcpServers).toHaveBeenCalledWith('worker-session-1', [
+            'space-actions',
+          ]);
+          expect(buildSpy).toHaveBeenCalledTimes(2);
         } finally {
           if (previous === undefined) delete process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER;
           else process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER = previous;
@@ -816,7 +826,7 @@ describe('QueryRunner', () => {
       });
     });
 
-    it('warns log-only when the dispatcher flag is on but space-actions is missing (space chat)', async () => {
+    it('warns and self-heals when the dispatcher flag is on and space-actions is missing (space chat)', async () => {
       await withAnthropicApiKey(async () => {
         const previous = process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER;
         process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER = '1';
@@ -825,27 +835,37 @@ describe('QueryRunner', () => {
           mockSession.workspacePath = tmpdir();
           mockSession.type = 'space_chat';
           mockSession.context = { spaceId: 's1' };
-          const servers = {
-            'space-agent-tools': {
+          mockSession.config.mcpServers = {};
+
+          const repairedServers = {
+            'space-actions': {
               type: 'sdk',
-              name: 'space-agent-tools',
+              name: 'space-actions',
               instance: {},
             },
           };
-          mockSession.config.mcpServers = servers as unknown as Session['config']['mcpServers'];
-          buildSpy.mockResolvedValueOnce({
-            model: 'claude-sonnet-4-20250514',
-            mcpServers: servers,
+          buildSpy
+            .mockResolvedValueOnce({ model: 'claude-sonnet-4-20250514', mcpServers: {} })
+            .mockResolvedValueOnce({
+              model: 'claude-sonnet-4-20250514',
+              mcpServers: repairedServers,
+            });
+          stopAfterRebuiltOptions();
+          const onMissingSpaceChatMcpServers = mock(async () => {
+            mockSession.config.mcpServers =
+              repairedServers as unknown as Session['config']['mcpServers'];
           });
-          const onMissingSpaceChatMcpServers = mock(async () => {});
 
           const ctx = createContext({ onMissingSpaceChatMcpServers });
           runner = new QueryRunner(ctx);
           runner.start();
           await ctx.queryPromise?.catch(() => {});
 
-          expect(onMissingSpaceChatMcpServers).not.toHaveBeenCalled();
           expect(mockLogger.warn).toHaveBeenCalledWith(expect.stringContaining('space-actions'));
+          expect(onMissingSpaceChatMcpServers).toHaveBeenCalledWith('space:chat:s1', [
+            'space-actions',
+          ]);
+          expect(buildSpy).toHaveBeenCalledTimes(2);
         } finally {
           if (previous === undefined) delete process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER;
           else process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER = previous;
@@ -875,7 +895,7 @@ describe('QueryRunner', () => {
         await ctx.queryPromise?.catch(() => {});
 
         expect(onMissingMemberSpaceMcpServers).toHaveBeenCalledWith('worker-session-1', [
-          'space-agent-tools',
+          'space-actions',
         ]);
         expect(buildSpy).toHaveBeenCalledTimes(2);
         expect(handleErrorSpy).toHaveBeenCalled();
@@ -955,9 +975,9 @@ describe('QueryRunner', () => {
         mockSession.config.mcpServers = {};
 
         const repairedServers = {
-          'space-agent-tools': {
+          'space-actions': {
             type: 'sdk',
-            name: 'space-agent-tools',
+            name: 'space-actions',
             instance: {},
           },
         };
@@ -979,7 +999,7 @@ describe('QueryRunner', () => {
         await ctx.queryPromise?.catch(() => {});
 
         expect(onMissingMemberSpaceMcpServers).toHaveBeenCalledWith(mockSession.id, [
-          'space-agent-tools',
+          'space-actions',
         ]);
         expect(buildSpy).toHaveBeenCalledTimes(2);
         expect(addSessionStateOptionsSpy).toHaveBeenCalledTimes(2);
@@ -1006,9 +1026,9 @@ describe('QueryRunner', () => {
         });
 
         const repairedServers = {
-          'space-agent-tools': {
+          'space-actions': {
             type: 'sdk',
-            name: 'space-agent-tools',
+            name: 'space-actions',
             instance: {},
           },
         };
@@ -1044,27 +1064,22 @@ describe('QueryRunner', () => {
         mockSession.workspacePath = tmpdir();
         mockSession.type = 'worker';
         mockSession.context = { spaceId: 's1', taskId: 't1' };
-        const nodeAgentServer = {
+        const spaceActionsServer = {
           type: 'sdk',
-          name: 'node-agent',
+          name: 'space-actions',
           instance: {},
         };
         mockSession.config.mcpServers = {
-          'node-agent': nodeAgentServer,
+          'space-actions': spaceActionsServer,
         } as unknown as Session['config']['mcpServers'];
 
         const repairedServers = {
-          'node-agent': nodeAgentServer,
-          'space-agent-tools': {
-            type: 'sdk',
-            name: 'space-agent-tools',
-            instance: {},
-          },
+          'space-actions': spaceActionsServer,
         };
         buildSpy
           .mockResolvedValueOnce({
             model: 'claude-sonnet-4-20250514',
-            mcpServers: { 'node-agent': nodeAgentServer },
+            mcpServers: { 'space-actions': spaceActionsServer },
           })
           .mockResolvedValueOnce({
             model: 'claude-sonnet-4-20250514',

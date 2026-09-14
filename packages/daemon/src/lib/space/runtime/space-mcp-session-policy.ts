@@ -2,6 +2,7 @@ import type { Session } from '@hyperneo/shared';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
+import { isSpaceActionsDispatcherEnabled } from '../actions/dispatcher-flag.ts';
 import { longTermAgentSessionId } from '../long-term-agent-session.ts';
 import type { DirectTaskWorkerIdentity } from './direct-task-worker-identity.ts';
 
@@ -37,8 +38,13 @@ export interface SpaceMcpSessionPolicy {
   readonly isWorkflowWorker: boolean;
 }
 
-export const SPACE_AD_HOC_MEMBER_REQUIRED_MCP_SERVERS = ['space-agent-tools'] as const;
-export const SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS = ['node-agent'] as const;
+export function spaceAdHocMemberRequiredMcpServers(): readonly string[] {
+  return isSpaceActionsDispatcherEnabled() ? ['space-actions'] : ['space-agent-tools'];
+}
+
+export function spaceWorkflowWorkerRequiredMcpServers(): readonly string[] {
+  return isSpaceActionsDispatcherEnabled() ? ['space-actions'] : ['node-agent'];
+}
 
 export const FAIL_CLOSED_LONG_HORIZON_AGENT_REPO: SpaceMcpSessionPolicyContext['longHorizonAgentRepo'] =
   {
@@ -87,7 +93,7 @@ export function resolveSpaceMcpSessionPolicy(
       role: 'ad_hoc_member',
       spaceId,
       owner: 'space-runtime',
-      requiredServers: SPACE_AD_HOC_MEMBER_REQUIRED_MCP_SERVERS,
+      requiredServers: spaceAdHocMemberRequiredMcpServers(),
       attachGenericSpaceTools: false,
       attachSpaceChatTools: true,
       attachLongTermAgentTools: false,
@@ -104,7 +110,7 @@ export function resolveSpaceMcpSessionPolicy(
       role: 'workflow_worker',
       spaceId: resolvedSpaceId,
       owner: 'task-agent-manager',
-      requiredServers: SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS,
+      requiredServers: spaceWorkflowWorkerRequiredMcpServers(),
       attachGenericSpaceTools: false,
       attachSpaceChatTools: false,
       attachLongTermAgentTools: false,
@@ -130,7 +136,7 @@ export function resolveSpaceMcpSessionPolicy(
       role: 'long_term_agent',
       spaceId,
       owner: 'space-runtime',
-      requiredServers: ['space-agent-tools'],
+      requiredServers: spaceAdHocMemberRequiredMcpServers(),
       attachGenericSpaceTools: false,
       attachSpaceChatTools: false,
       attachLongTermAgentTools: true,
@@ -142,7 +148,7 @@ export function resolveSpaceMcpSessionPolicy(
     role: 'ad_hoc_member',
     spaceId,
     owner: 'space-runtime',
-    requiredServers: SPACE_AD_HOC_MEMBER_REQUIRED_MCP_SERVERS,
+    requiredServers: spaceAdHocMemberRequiredMcpServers(),
     attachGenericSpaceTools: true,
     attachSpaceChatTools: false,
     attachLongTermAgentTools: false,

@@ -1,4 +1,4 @@
-import { describe, test, expect } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import type { McpServerConfig } from '@hyperneo/shared';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 
@@ -45,9 +45,9 @@ describe('TaskAgentManager agent-memory MCP wiring', () => {
   });
 
   test('requires agent-memory only when memory repo is configured', () => {
-    expect(makeManager().requiredWorkflowSubSessionMcpServers()).toEqual(['node-agent']);
+    expect(makeManager().requiredWorkflowSubSessionMcpServers()).toEqual(['space-actions']);
     expect(makeManager({}).requiredWorkflowSubSessionMcpServers()).toEqual([
-      'node-agent',
+      'space-actions',
       'agent-memory',
     ]);
   });
@@ -56,6 +56,7 @@ describe('TaskAgentManager agent-memory MCP wiring', () => {
     const manager = makeManager({});
     const session = makeSession({
       'node-agent': { type: 'sdk' } as McpServerConfig,
+      'space-actions': { type: 'sdk' } as McpServerConfig,
     });
 
     await manager.ensureNodeAgentAttached(session as never, {
@@ -72,6 +73,7 @@ describe('TaskAgentManager agent-memory MCP wiring', () => {
     expect(Object.keys(session.session.config.mcpServers).sort()).toEqual([
       'agent-memory',
       'node-agent',
+      'space-actions',
     ]);
     expect(session.restartCount).toBe(1);
   });
