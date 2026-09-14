@@ -5,20 +5,17 @@ import { isAnthropicSdkModelId } from './anthropic-sdk-models.js';
 
 const log = createLogger('hyperneo:providers:registry', { consoleDeltas: true });
 
-export function resolveQueryProvider(
+function orderedOwnerCandidates(
   registry: Pick<ProviderRegistry, 'get' | 'getAll'>,
-  modelId: string,
-  explicitProviderId: string | undefined
-): Provider | undefined {
-  if (explicitProviderId) {
-    return registry.get(explicitProviderId);
-  }
+  modelId: string
+): Provider[] {
   const anthropicFamily = isAnthropicSdkModelId(modelId);
   const all = registry.getAll();
   const ordered = [
     ...all.filter((provider) => provider.id.startsWith('custom:')),
     ...all.filter((provider) => !provider.id.startsWith('custom:')),
   ];
+  const owners: Provider[] = [];
   for (const provider of ordered) {
     if (provider.id === 'anthropic' || provider.id === 'acp') continue;
     if (
@@ -28,9 +25,39 @@ export function resolveQueryProvider(
       continue;
     }
     if (typeof provider.ownsModel !== 'function' || !provider.ownsModel(modelId)) continue;
-    return provider;
+    owners.push(provider);
   }
-  return registry.get('anthropic');
+  return owners;
+}
+
+export function resolveQueryProvider(
+  registry: Pick<ProviderRegistry, 'get' | 'getAll'>,
+  modelId: string,
+  explicitProviderId: string | undefined
+): Provider | undefined {
+  if (explicitProviderId) {
+    return registry.get(explicitProviderId);
+  }
+  return orderedOwnerCandidates(registry, modelId)[0] ?? registry.get('anthropic');
+}
+
+export async function resolveAvailableQueryProvider(
+  registry: Pick<ProviderRegistry, 'get' | 'getAll'>,
+  modelId: string,
+  explicitProviderId: string | undefined
+): Promise<Provider | undefined> {
+  if (explicitProviderId) {
+    return registry.get(explicitProviderId);
+  }
+  const owners = orderedOwnerCandidates(registry, modelId);
+  if (owners.length === 0) return registry.get('anthropic');
+  for (const owner of owners) {
+    if (typeof owner.isAvailable !== 'function') return owner;
+    try {
+      if (await owner.isAvailable()) return owner;
+    } catch {}
+  }
+  return owners[0];
 }
 
 export class ProviderRegistry {

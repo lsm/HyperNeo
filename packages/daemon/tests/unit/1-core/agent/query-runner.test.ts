@@ -4,6 +4,7 @@ import {
   QueryRunner,
   looksLikeRateLimit429,
   refreshQueryEnvFromProcess,
+  resolveAvailableQueryProvider,
   resolveQueryProvider,
   type QueryRunnerContext,
 } from '../../../../src/lib/agent/query-runner';
@@ -295,22 +296,31 @@ describe('QueryRunner', () => {
     });
   });
 
+  function makeRegistryForResolver(
+    providers: Array<{
+      id: string;
+      owns: (modelId: string) => boolean;
+      available?: boolean;
+    }>
+  ) {
+    const asProvider = (id: string, owns?: (modelId: string) => boolean, available?: boolean) =>
+      ({
+        id,
+        displayName: id,
+        ...(owns ? { ownsModel: owns } : {}),
+        ...(available !== undefined ? { isAvailable: () => available } : {}),
+      }) as unknown as import('@hyperneo/shared/provider').Provider;
+    return {
+      get: (id: string) => {
+        const match = providers.find((p) => p.id === id);
+        return match ? asProvider(match.id, match.owns, match.available) : undefined;
+      },
+      getAll: () => providers.map((p) => asProvider(p.id, p.owns, p.available)),
+    };
+  }
+
   describe('resolveQueryProvider', () => {
-    function makeRegistry(providers: Array<{ id: string; owns: (modelId: string) => boolean }>) {
-      const asProvider = (id: string, owns?: (modelId: string) => boolean) =>
-        ({
-          id,
-          displayName: id,
-          ...(owns ? { ownsModel: owns } : {}),
-        }) as unknown as import('@hyperneo/shared/provider').Provider;
-      return {
-        get: (id: string) => {
-          const match = providers.find((p) => p.id === id);
-          return match ? asProvider(match.id, match.owns) : undefined;
-        },
-        getAll: () => providers.map((p) => asProvider(p.id, p.owns)),
-      };
-    }
+    const makeRegistry = makeRegistryForResolver;
 
     const anthropicCatchAll = (_modelId: string) => true;
 
@@ -404,6 +414,37 @@ describe('QueryRunner', () => {
         { id: 'glm', owns: (modelId) => modelId.startsWith('glm-') },
       ]);
       expect(resolveQueryProvider(registry, 'claude-opus-5', undefined)?.id).toBe('anthropic');
+    });
+  });
+
+  describe('resolveAvailableQueryProvider', () => {
+    const makeRegistry = makeRegistryForResolver;
+
+    it('prefers the first available owner when an earlier owner is unavailable', async () => {
+      const registry = makeRegistry([
+        { id: 'anthropic-codex', owns: (m) => m === 'gpt-5.4', available: false },
+        { id: 'anthropic-copilot', owns: (m) => m === 'gpt-5.4', available: true },
+      ]);
+      const picked = await resolveAvailableQueryProvider(registry, 'gpt-5.4', undefined);
+      expect(picked?.id).toBe('anthropic-copilot');
+    });
+
+    it('falls back to the first owner when every owner is unavailable', async () => {
+      const registry = makeRegistry([
+        { id: 'anthropic-codex', owns: (m) => m === 'gpt-5.4', available: false },
+        { id: 'anthropic-copilot', owns: (m) => m === 'gpt-5.4', available: false },
+      ]);
+      const picked = await resolveAvailableQueryProvider(registry, 'gpt-5.4', undefined);
+      expect(picked?.id).toBe('anthropic-codex');
+    });
+
+    it('returns the explicit provider without availability filtering', async () => {
+      const registry = makeRegistry([
+        { id: 'anthropic-codex', owns: (m) => m === 'gpt-5.4', available: false },
+        { id: 'anthropic-copilot', owns: (m) => m === 'gpt-5.4', available: true },
+      ]);
+      const picked = await resolveAvailableQueryProvider(registry, 'gpt-5.4', 'anthropic-codex');
+      expect(picked?.id).toBe('anthropic-codex');
     });
   });
 
@@ -557,6 +598,28 @@ describe('QueryRunner', () => {
         await ctx.queryPromise?.catch(() => {});
 
         expect(blankSession.config.provider).toBe('anthropic');
+        expect(updateSessionSpy).toHaveBeenCalledWith(
+          'test-session-id',
+          expect.objectContaining({
+            config: expect.objectContaining({ provider: 'anthropic' }),
+          })
+        );
+      });
+    });
+
+    it('normalizes a padded explicit session provider and persists the trimmed pin', async () => {
+      await withAnthropicApiKey(async () => {
+        const paddedSession: Session = {
+          ...mockSession,
+          config: { ...mockSession.config, provider: ' anthropic ' },
+        };
+        const ctx = createContext({ session: paddedSession });
+        runner = new QueryRunner(ctx);
+
+        await runner.start();
+        await ctx.queryPromise?.catch(() => {});
+
+        expect(paddedSession.config.provider).toBe('anthropic');
         expect(updateSessionSpy).toHaveBeenCalledWith(
           'test-session-id',
           expect.objectContaining({

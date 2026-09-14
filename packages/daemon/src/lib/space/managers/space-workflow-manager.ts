@@ -482,10 +482,10 @@ export class SpaceWorkflowManager {
       this.validateEventInterests(node, i);
       for (let j = 0; j < (node.agents?.length ?? 0); j++) {
         const entry = node.agents[j];
-        const trimmedModel = entry.model?.trim();
-        if (trimmedModel) entry.model = trimmedModel;
-        const trimmedProvider = entry.provider?.trim();
-        entry.provider = trimmedProvider || undefined;
+        const trimmedModel = entry.model?.trim() || undefined;
+        entry.model = trimmedModel;
+        const trimmedProvider = entry.provider?.trim() || undefined;
+        entry.provider = trimmedProvider;
         if (!trimmedProvider || !trimmedModel) continue;
         const provider = getProviderRegistry().get(trimmedProvider);
         if (provider && !provider.ownsModel(trimmedModel)) {

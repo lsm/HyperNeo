@@ -19,7 +19,7 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event
 import type { Logger } from '../logger.ts';
 import type { OriginalEnvVars, ProviderEnvVars } from '../provider-service.ts';
 import { NON_ANTHROPIC_PREFIX_PROVIDER_VARS } from '../provider-service.ts';
-import { resolveQueryProvider } from '../providers/registry.js';
+import { resolveAvailableQueryProvider } from '../providers/registry.js';
 import { isSpaceActionsDispatcherEnabled } from '../space/actions/dispatcher-flag.ts';
 import {
   FAIL_CLOSED_LONG_HORIZON_AGENT_REPO,
@@ -142,7 +142,7 @@ function isRealAnthropicAuthToken(token: string | undefined): boolean {
   return typeof token === 'string' && token.startsWith('sk-ant-oat');
 }
 
-export { resolveQueryProvider } from '../providers/registry.js';
+export { resolveAvailableQueryProvider, resolveQueryProvider } from '../providers/registry.js';
 
 export function refreshQueryEnvFromProcess(
   queryEnv: Record<string, string | undefined> | undefined,
@@ -683,17 +683,25 @@ export class QueryRunner {
       const modelId = session.config.model || 'sonnet';
       const rawProviderId = session.config.provider as string | undefined;
       const explicitProviderId = rawProviderId?.trim() || undefined;
-      let provider = resolveQueryProvider(providerRegistry, modelId, explicitProviderId);
-      if (!explicitProviderId && provider) {
-        session.config.provider = provider.id as Session['config']['provider'];
+      let provider = await resolveAvailableQueryProvider(
+        providerRegistry,
+        modelId,
+        explicitProviderId
+      );
+      const normalizedProviderId = explicitProviderId ?? provider?.id;
+      if (
+        normalizedProviderId !== undefined &&
+        (rawProviderId == null || rawProviderId !== normalizedProviderId)
+      ) {
+        session.config.provider = normalizedProviderId as Session['config']['provider'];
         try {
           this.ctx.db.updateSession(session.id, {
             config: { ...session.config },
           });
         } catch (err) {
           logger.warn(
-            `Failed to persist inferred provider '${provider.id}' for session ${session.id}: ` +
-              `${err instanceof Error ? err.message : String(err)}`
+            `Failed to persist normalized provider '${normalizedProviderId}' for session ` +
+              `${session.id}: ${err instanceof Error ? err.message : String(err)}`
           );
         }
       }

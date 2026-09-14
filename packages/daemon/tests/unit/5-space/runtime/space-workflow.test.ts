@@ -1290,6 +1290,24 @@ describe('SpaceWorkflowManager slot model/provider normalization', () => {
     expect('provider' in wf.nodes[0].agents![0]).toBe(false);
   });
 
+  test('drops whitespace-only slot models instead of storing them', () => {
+    const manager = makeManager();
+    const wf = manager.createWorkflow({
+      spaceId: 'space-1',
+      name: 'Blank model',
+      nodes: [
+        {
+          id: 'node-1',
+          name: 'Code',
+          agentId: 'agent-coder',
+          agents: [{ agentId: 'agent-coder', name: 'Code', model: '   ', provider: stubId }],
+        },
+      ],
+      completionAutonomyLevel: 3,
+    });
+    expect(wf.nodes[0].agents![0].model).toBeUndefined();
+  });
+
   test('rejects a registered provider that does not offer the trimmed model', () => {
     const manager = makeManager();
     expect(() =>
