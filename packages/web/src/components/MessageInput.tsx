@@ -265,7 +265,7 @@ export default function MessageInput({
     openFilePicker,
     getImagesForSend,
     handlePaste,
-  } = useFileAttachments();
+  } = useFileAttachments(sessionId);
   const { handleInterrupt } = useInterrupt({ sessionId });
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [resendingVoiceRecordId, setResendingVoiceRecordId] = useState<string | null>(null);

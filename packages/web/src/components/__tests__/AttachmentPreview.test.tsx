@@ -2,7 +2,7 @@
 
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import type { MessageImage } from '@hyperneo/shared/types';
-import { AttachmentPreview } from '../AttachmentPreview';
+import { AttachmentPreview, ATTACHMENT_LIGHTBOX_TEST_ID } from '../AttachmentPreview';
 
 type AttachmentWithMeta = MessageImage & { name: string; size: number };
 
@@ -389,6 +389,77 @@ describe('AttachmentPreview', () => {
 
       const img = container.querySelector('img');
       expect(img?.src).toContain('image/webp');
+    });
+  });
+
+  describe('Click to Enlarge', () => {
+    it('should not render the lightbox initially', () => {
+      render(<AttachmentPreview attachments={[mockAttachments[0]]} onRemove={mockOnRemove} />);
+
+      expect(document.querySelector(`[data-testid="${ATTACHMENT_LIGHTBOX_TEST_ID}"]`)).toBeNull();
+    });
+
+    it('should open a full-size overlay when a thumbnail is clicked', () => {
+      const { container } = render(
+        <AttachmentPreview attachments={[mockAttachments[0]]} onRemove={mockOnRemove} />
+      );
+
+      fireEvent.click(container.querySelector('.group'));
+
+      const lightbox = document.querySelector(`[data-testid="${ATTACHMENT_LIGHTBOX_TEST_ID}"]`);
+      expect(lightbox).toBeTruthy();
+      expect(lightbox?.getAttribute('role')).toBe('dialog');
+      expect(lightbox?.getAttribute('aria-modal')).toBe('true');
+
+      const fullImage = lightbox?.querySelector('img');
+      expect(fullImage?.src).toBe(`data:image/png;base64,${minimalPngBase64}`);
+      expect(fullImage?.alt).toBe('screenshot.png');
+    });
+
+    it('should close the overlay when the backdrop is clicked', () => {
+      const { container } = render(
+        <AttachmentPreview attachments={[mockAttachments[0]]} onRemove={mockOnRemove} />
+      );
+
+      fireEvent.click(container.querySelector('.group'));
+      const lightbox = document.querySelector(`[data-testid="${ATTACHMENT_LIGHTBOX_TEST_ID}"]`);
+      expect(lightbox).toBeTruthy();
+
+      fireEvent.click(lightbox);
+
+      expect(document.querySelector(`[data-testid="${ATTACHMENT_LIGHTBOX_TEST_ID}"]`)).toBeNull();
+    });
+
+    it('should close the overlay on Escape', () => {
+      const { container } = render(
+        <AttachmentPreview attachments={[mockAttachments[0]]} onRemove={mockOnRemove} />
+      );
+
+      fireEvent.click(container.querySelector('.group'));
+      expect(document.querySelector(`[data-testid="${ATTACHMENT_LIGHTBOX_TEST_ID}"]`)).toBeTruthy();
+
+      fireEvent.keyDown(document, { key: 'Escape' });
+
+      expect(document.querySelector(`[data-testid="${ATTACHMENT_LIGHTBOX_TEST_ID}"]`)).toBeNull();
+    });
+
+    it('should not open the overlay when the remove button is clicked', () => {
+      const { container } = render(
+        <AttachmentPreview attachments={[mockAttachments[0]]} onRemove={mockOnRemove} />
+      );
+
+      fireEvent.click(container.querySelector('[aria-label="Remove attachment"]'));
+
+      expect(mockOnRemove).toHaveBeenCalledWith(0);
+      expect(document.querySelector(`[data-testid="${ATTACHMENT_LIGHTBOX_TEST_ID}"]`)).toBeNull();
+    });
+
+    it('should show zoom cursor affordance on thumbnails', () => {
+      const { container } = render(
+        <AttachmentPreview attachments={[mockAttachments[0]]} onRemove={mockOnRemove} />
+      );
+
+      expect(container.querySelector('.group')?.className).toContain('cursor-zoom-in');
     });
   });
 });

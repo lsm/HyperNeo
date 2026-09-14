@@ -1,8 +1,15 @@
 import type { RefObject } from 'preact';
-import { useState, useCallback, useRef } from 'preact/hooks';
+import { useCallback, useRef } from 'preact/hooks';
+import { useSignal } from '@preact/signals';
 import type { MessageImage } from '@hyperneo/shared';
 import { toast } from '../lib/toast.ts';
 import { fileToBase64, validateImageFile, extractImagesFromClipboard } from '../lib/file-utils.ts';
+import {
+  composerAttachmentsSignal,
+  EMPTY_ATTACHMENTS,
+  readPendingComposerAttachments,
+  writePendingComposerAttachments,
+} from '../lib/composer-attachment-store.ts';
 
 export interface AttachmentWithMetadata extends MessageImage {
   name: string;
@@ -22,35 +29,57 @@ export interface UseFileAttachmentsResult {
   handlePaste: (e: ClipboardEvent) => void;
 }
 
-export function useFileAttachments(): UseFileAttachmentsResult {
-  const [attachments, setAttachments] = useState<AttachmentWithMetadata[]>([]);
+export function useFileAttachments(sessionId?: string): UseFileAttachmentsResult {
+  const ephemeralAttachments = useSignal<AttachmentWithMetadata[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const processFiles = useCallback(async (files: FileList | File[]) => {
-    for (const file of Array.from(files)) {
-      const error = validateImageFile(file);
-      if (error) {
-        toast.error(error);
-        continue;
-      }
+  const attachments = sessionId
+    ? (composerAttachmentsSignal.value[sessionId] ?? EMPTY_ATTACHMENTS)
+    : ephemeralAttachments.value;
 
-      try {
-        const base64Data = await fileToBase64(file);
-        setAttachments((prev) => [
-          ...prev,
-          {
-            data: base64Data,
-            media_type: file.type as MessageImage['media_type'],
-            name: file.name,
-            size: file.size,
-          },
-        ]);
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : `Failed to read ${file.name}`;
-        toast.error(errorMessage);
+  const setAttachments = useCallback(
+    (update: (prev: AttachmentWithMetadata[]) => AttachmentWithMetadata[]) => {
+      if (sessionId) {
+        writePendingComposerAttachments(
+          sessionId,
+          update(readPendingComposerAttachments(sessionId))
+        );
+      } else {
+        ephemeralAttachments.value = update(ephemeralAttachments.value);
       }
-    }
-  }, []);
+    },
+    [sessionId, ephemeralAttachments]
+  );
+
+  const processFiles = useCallback(
+    async (files: FileList | File[]) => {
+      for (const file of Array.from(files)) {
+        const error = validateImageFile(file);
+        if (error) {
+          toast.error(error);
+          continue;
+        }
+
+        try {
+          const base64Data = await fileToBase64(file);
+          setAttachments((prev) => [
+            ...prev,
+            {
+              data: base64Data,
+              media_type: file.type as MessageImage['media_type'],
+              name: file.name,
+              size: file.size,
+            },
+          ]);
+        } catch (error) {
+          const errorMessage =
+            error instanceof Error ? error.message : `Failed to read ${file.name}`;
+          toast.error(errorMessage);
+        }
+      }
+    },
+    [setAttachments]
+  );
 
   const handleFileSelect = useCallback(
     async (e: Event) => {
@@ -84,17 +113,23 @@ export function useFileAttachments(): UseFileAttachmentsResult {
     [processFiles]
   );
 
-  const handleRemove = useCallback((index: number) => {
-    setAttachments((prev) => prev.filter((_, i) => i !== index));
-  }, []);
+  const handleRemove = useCallback(
+    (index: number) => {
+      setAttachments((prev) => prev.filter((_, i) => i !== index));
+    },
+    [setAttachments]
+  );
 
   const clear = useCallback(() => {
-    setAttachments([]);
-  }, []);
+    setAttachments(() => []);
+  }, [setAttachments]);
 
-  const restore = useCallback((items: AttachmentWithMetadata[]) => {
-    setAttachments(items);
-  }, []);
+  const restore = useCallback(
+    (items: AttachmentWithMetadata[]) => {
+      setAttachments(() => items);
+    },
+    [setAttachments]
+  );
 
   const openFilePicker = useCallback(() => {
     fileInputRef.current?.click();
