@@ -8,12 +8,12 @@ const REPLY_PROTOCOL =
   'Messaging protocol: if this message requests work or information from you, reply to the sender with the outcome when done — or promptly if you cannot do it. Do not leave the sender waiting.';
 
 describe('formatAgentMessage', () => {
-  test('formats node to space-agent messages with task context and reply instructions', () => {
+  test('formats node to long-horizon-agent messages with task context and reply instructions', () => {
     expect(
       formatAgentMessage({
         fromLevel: 'node-agent',
         fromAgentName: 'coder',
-        toLevel: 'space-agent',
+        toLevel: 'long-horizon-agent',
         body: 'Need a decision',
         taskId: 'task-123',
         taskNumber: 236,
@@ -32,7 +32,7 @@ describe('formatAgentMessage', () => {
   test('formats long-horizon agent messages with dynamic reply instructions', () => {
     expect(
       formatAgentMessage({
-        fromLevel: 'space-agent',
+        fromLevel: 'long-horizon-agent',
         fromAgentName: 'coordinator',
         toLevel: 'node-agent',
         body: 'Proceed with option A',
@@ -45,24 +45,6 @@ describe('formatAgentMessage', () => {
         REPLY_PROTOCOL +
         '\n' +
         'To reply, use: send_message with target "@coordinator"'
-    );
-  });
-
-  test('defaults the space-agent reply target to the routable space-agent target', () => {
-    expect(
-      formatAgentMessage({
-        fromLevel: 'space-agent',
-        fromAgentName: 'space-agent',
-        toLevel: 'node-agent',
-        body: 'Legacy queued follow-up',
-      })
-    ).toBe(
-      '─── Message from space-agent ───\n\n' +
-        'Legacy queued follow-up\n\n' +
-        '─── Reply ───\n' +
-        REPLY_PROTOCOL +
-        '\n' +
-        'To reply, use: send_message with target "space-agent"'
     );
   });
 
@@ -119,9 +101,9 @@ describe('formatAgentMessage', () => {
     expect(extractReplyToSessionId(message)).toBe('session-post-approval-7');
   });
 
-  test('appends reply-routing XML footer when replyToSessionId is set (space-agent → node-agent)', () => {
+  test('appends reply-routing XML footer when replyToSessionId is set (long-horizon-agent → node-agent)', () => {
     const result = formatAgentMessage({
-      fromLevel: 'space-agent',
+      fromLevel: 'long-horizon-agent',
       fromAgentName: 'coordinator',
       toLevel: 'node-agent',
       body: 'Proceed with option A',
@@ -131,9 +113,9 @@ describe('formatAgentMessage', () => {
     expect(result).toContain('Proceed with option A');
   });
 
-  test('appends reply-routing XML footer when replyToSessionId is set (space-agent → task-agent)', () => {
+  test('appends reply-routing XML footer when replyToSessionId is set (long-horizon-agent → task-agent)', () => {
     const result = formatAgentMessage({
-      fromLevel: 'space-agent',
+      fromLevel: 'long-horizon-agent',
       fromAgentName: 'coordinator',
       toLevel: 'task-agent',
       body: 'Do the thing',
@@ -158,7 +140,7 @@ describe('formatAgentMessage', () => {
 
   test('does not append reply-routing footer when replyToSessionId is null or undefined', () => {
     const result1 = formatAgentMessage({
-      fromLevel: 'space-agent',
+      fromLevel: 'long-horizon-agent',
       fromAgentName: 'coordinator',
       toLevel: 'node-agent',
       body: 'No reply routing',
@@ -167,7 +149,7 @@ describe('formatAgentMessage', () => {
     expect(result1).not.toContain('<reply-routing');
 
     const result2 = formatAgentMessage({
-      fromLevel: 'space-agent',
+      fromLevel: 'long-horizon-agent',
       fromAgentName: 'coordinator',
       toLevel: 'node-agent',
       body: 'No reply routing',
@@ -181,7 +163,7 @@ describe('extractReplyToSessionId', () => {
     const message = formatAgentMessage({
       fromLevel: 'task-agent',
       fromAgentName: 'task-agent',
-      toLevel: 'space-agent',
+      toLevel: 'long-horizon-agent',
       body: 'Queued message',
       taskId: 'task-123',
       taskNumber: 5,
