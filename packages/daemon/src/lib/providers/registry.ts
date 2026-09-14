@@ -8,14 +8,15 @@ const log = createLogger('hyperneo:providers:registry', { consoleDeltas: true })
 function orderedOwnerCandidates(
   registry: Pick<ProviderRegistry, 'get' | 'getAll'>,
   modelId: string
-): Provider[] {
+): { warmOwners: Provider[]; coldCatalogCandidates: Provider[] } {
   const anthropicFamily = isAnthropicSdkModelId(modelId);
   const all = registry.getAll();
   const ordered = [
     ...all.filter((provider) => provider.id.startsWith('custom:')),
     ...all.filter((provider) => !provider.id.startsWith('custom:')),
   ];
-  const owners: Provider[] = [];
+  const warmOwners: Provider[] = [];
+  const coldCatalogCandidates: Provider[] = [];
   for (const provider of ordered) {
     if (provider.id === 'anthropic' || provider.id === 'acp') continue;
     if (
@@ -24,10 +25,14 @@ function orderedOwnerCandidates(
     ) {
       continue;
     }
-    if (typeof provider.ownsModel !== 'function' || !provider.ownsModel(modelId)) continue;
-    owners.push(provider);
+    if (typeof provider.ownsModel !== 'function') continue;
+    if (provider.ownsModel(modelId)) {
+      warmOwners.push(provider);
+    } else if (provider.hasCuratedModelList?.() === false) {
+      coldCatalogCandidates.push(provider);
+    }
   }
-  return owners;
+  return { warmOwners, coldCatalogCandidates };
 }
 
 export function providerMayOfferModel(provider: Provider, modelId: string): boolean {
@@ -43,7 +48,8 @@ export function resolveQueryProvider(
   if (explicitProviderId) {
     return registry.get(explicitProviderId);
   }
-  return orderedOwnerCandidates(registry, modelId)[0] ?? registry.get('anthropic');
+  const { warmOwners, coldCatalogCandidates } = orderedOwnerCandidates(registry, modelId);
+  return warmOwners[0] ?? coldCatalogCandidates[0] ?? registry.get('anthropic');
 }
 
 export async function resolveAvailableQueryProvider(
@@ -54,15 +60,17 @@ export async function resolveAvailableQueryProvider(
   if (explicitProviderId) {
     return registry.get(explicitProviderId);
   }
-  const owners = orderedOwnerCandidates(registry, modelId);
-  if (owners.length === 0) return registry.get('anthropic');
-  for (const owner of owners) {
+  const { warmOwners, coldCatalogCandidates } = orderedOwnerCandidates(registry, modelId);
+  if (warmOwners.length === 0 && coldCatalogCandidates.length === 0) {
+    return registry.get('anthropic');
+  }
+  for (const owner of [...warmOwners, ...coldCatalogCandidates]) {
     if (typeof owner.isAvailable !== 'function') return owner;
     try {
       if (await owner.isAvailable()) return owner;
     } catch {}
   }
-  return owners[0];
+  return warmOwners[0] ?? registry.get('anthropic');
 }
 
 export class ProviderRegistry {

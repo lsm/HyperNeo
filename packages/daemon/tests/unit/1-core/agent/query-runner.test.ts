@@ -301,21 +301,28 @@ describe('QueryRunner', () => {
       id: string;
       owns: (modelId: string) => boolean;
       available?: boolean;
+      cold?: boolean;
     }>
   ) {
-    const asProvider = (id: string, owns?: (modelId: string) => boolean, available?: boolean) =>
+    const asProvider = (
+      id: string,
+      owns?: (modelId: string) => boolean,
+      available?: boolean,
+      cold?: boolean
+    ) =>
       ({
         id,
         displayName: id,
         ...(owns ? { ownsModel: owns } : {}),
         ...(available !== undefined ? { isAvailable: () => available } : {}),
+        ...(cold !== undefined ? { hasCuratedModelList: () => !cold } : {}),
       }) as unknown as import('@hyperneo/shared/provider').Provider;
     return {
       get: (id: string) => {
         const match = providers.find((p) => p.id === id);
-        return match ? asProvider(match.id, match.owns, match.available) : undefined;
+        return match ? asProvider(match.id, match.owns, match.available, match.cold) : undefined;
       },
-      getAll: () => providers.map((p) => asProvider(p.id, p.owns, p.available)),
+      getAll: () => providers.map((p) => asProvider(p.id, p.owns, p.available, p.cold)),
     };
   }
 
@@ -408,6 +415,24 @@ describe('QueryRunner', () => {
       expect(resolveQueryProvider(registry, 'swe-2-high', undefined)?.id).toBe('anthropic');
     });
 
+    it('retains a cold-catalog provider as a fallback owner ahead of anthropic', () => {
+      const registry = makeRegistry([
+        { id: 'anthropic', owns: anthropicCatchAll },
+        { id: 'anthropic-copilot', owns: () => false, cold: true },
+      ]);
+      expect(resolveQueryProvider(registry, 'copilot-only-model', undefined)?.id).toBe(
+        'anthropic-copilot'
+      );
+    });
+
+    it('prefers a warm owner over a cold-catalog candidate', () => {
+      const registry = makeRegistry([
+        { id: 'anthropic-copilot', owns: () => false, cold: true },
+        { id: 'glm', owns: (m) => m === 'glm-4.7' },
+      ]);
+      expect(resolveQueryProvider(registry, 'glm-4.7', undefined)?.id).toBe('glm');
+    });
+
     it('falls back to anthropic for claude-family models regardless of registration order', () => {
       const registry = makeRegistry([
         { id: 'anthropic', owns: anthropicCatchAll },
@@ -419,6 +444,7 @@ describe('QueryRunner', () => {
 
   describe('resolveAvailableQueryProvider', () => {
     const makeRegistry = makeRegistryForResolver;
+    const anthropicCatchAll = (_modelId: string) => true;
 
     it('prefers the first available owner when an earlier owner is unavailable', async () => {
       const registry = makeRegistry([
@@ -445,6 +471,15 @@ describe('QueryRunner', () => {
       ]);
       const picked = await resolveAvailableQueryProvider(registry, 'gpt-5.4', 'anthropic-codex');
       expect(picked?.id).toBe('anthropic-codex');
+    });
+
+    it('skips an unavailable cold-catalog candidate and falls back to anthropic', async () => {
+      const registry = makeRegistryForResolver([
+        { id: 'anthropic', owns: anthropicCatchAll },
+        { id: 'anthropic-copilot', owns: () => false, cold: true, available: false },
+      ]);
+      const picked = await resolveAvailableQueryProvider(registry, 'copilot-only-model', undefined);
+      expect(picked?.id).toBe('anthropic');
     });
   });
 
