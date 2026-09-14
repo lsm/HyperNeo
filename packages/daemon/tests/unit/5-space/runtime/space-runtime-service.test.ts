@@ -908,7 +908,7 @@ describe('SpaceRuntimeService', () => {
       };
     }
 
-    test('attaches MCP server and system prompt to the space:chat session (merge, not replace)', async () => {
+    test('attaches the MCP server to the space:chat session (merge, not replace)', async () => {
       const session = makeSession();
       const sessionManager = makeSessionManager(session);
       const svc = new SpaceRuntimeService(buildConfigWithSession(sessionManager));
@@ -923,13 +923,6 @@ describe('SpaceRuntimeService', () => {
       ).mock.calls[0];
       expect(mcpArg).toHaveProperty('space-agent-tools');
       expect(typeof session.onMissingSpaceChatMcpServers).toBe('function');
-
-      expect(session.setRuntimeSystemPrompt).toHaveBeenCalledTimes(1);
-      const [promptArg] = (
-        session.setRuntimeSystemPrompt as Mock<typeof session.setRuntimeSystemPrompt>
-      ).mock.calls[0];
-      expect(typeof promptArg).toBe('string');
-      expect(promptArg.length).toBeGreaterThan(0);
     });
 
     describe('space-actions dispatcher attach (HYPERNEO_SPACE_ACTIONS_DISPATCHER)', () => {
@@ -1111,7 +1104,6 @@ describe('SpaceRuntimeService', () => {
       ).mock.calls.at(-1)!;
       expect(mcpArg).toHaveProperty('space-agent-tools');
       expect(typeof session.onMissingSpaceChatMcpServers).toBe('function');
-      expect(session.setRuntimeSystemPrompt).toHaveBeenCalled();
 
       await svc.stop();
     });

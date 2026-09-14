@@ -14,13 +14,11 @@ import { verifierAgent } from '../../../../src/lib/agent/coordinator/verifier.ts
 import { SECURITY_AGENT_SYSTEM_PROMPT } from '../../../../src/lib/github/prompts/security-prompt.ts';
 import { buildTitleGenerationPrompt } from '../../../../src/lib/session/session-lifecycle.ts';
 import { NON_DELEGATING_GENERAL_AGENT } from '../../../../src/lib/space/agents/custom-agent.ts';
-import { getLongHorizonAgentTemplates } from '../../../../src/lib/space/agents/long-horizon-agent-templates.ts';
 import { LONG_HORIZON_SCHEDULING_GUARDRAIL } from '../../../../src/lib/space/agents/long-horizon-agent-tools.ts';
 import {
   getPresetAgentTemplates,
   LEGACY_REVIEWER_PROMPT,
 } from '../../../../src/lib/space/agents/seed-agents.ts';
-import { buildSpaceChatSystemPrompt } from '../../../../src/lib/space/agents/space-chat-agent.ts';
 import {
   QA_SYSTEM_CONTRACT,
   REVIEWER_SYSTEM_CONTRACT,
@@ -85,7 +83,6 @@ const GOLDEN: Record<string, string> = {
   REVIEW_THREAD_RESOLUTION_GUIDANCE:
     '48b32262a1df32c43b4f87933592e1e222c8c7f6b731dac27eede79b61c14ee9',
   LEGACY_REVIEWER_PROMPT: '3d62ec5b500028f9513df1c9d4cd6dad24a8e956026a12969fc59c7117c76d8d',
-  LH_COORDINATOR_INSTRUCTIONS: '29cf940690b00415ebe6ee8ab07a18c1f4adc8a928d46348230a091e2efcaa56',
   LONG_HORIZON_SCHEDULING_GUARDRAIL:
     '6d2a817133c3451c479e65394941c4b3886757ba7d0d6cfb6952b5063b4860e0',
   NON_DELEGATING_GENERAL_PROMPT: '5543aeae7a2a3aac9c5a4f9b489e3849c0998cb5e1d82b20e383da876fc5ae89',
@@ -110,13 +107,6 @@ const GOLDEN: Record<string, string> = {
 };
 
 const byPreset = new Map(getPresetAgentTemplates().map((p) => [p.handle, p.customPrompt]));
-const lhInstructions = new Map(
-  getLongHorizonAgentTemplates().map((t) => [
-    `LH_${t.key.replace('.default', '').toUpperCase().replace(/-/g, '_')}_INSTRUCTIONS`,
-    t.instructions,
-  ])
-);
-
 const VALUES: Record<string, string> = {
   WORKFLOW_SELECTOR_INSTRUCTIONS: (() => {
     const full = buildSelectionPrompt(
@@ -151,7 +141,6 @@ const VALUES: Record<string, string> = {
   QA_SYSTEM_CONTRACT,
   REVIEWER_SYSTEM_CONTRACT,
   LEGACY_REVIEWER_PROMPT,
-  LH_COORDINATOR_INSTRUCTIONS: lhInstructions.get('LH_COORDINATOR_INSTRUCTIONS')!,
   LONG_HORIZON_SCHEDULING_GUARDRAIL,
   NON_DELEGATING_GENERAL_PROMPT: NON_DELEGATING_GENERAL_AGENT.prompt,
   PRESET_CODER_PROMPT: byPreset.get('swe')!,
@@ -219,37 +208,6 @@ describe('workflow prompts prefer call_action with named-action fallback', () =>
       );
       expect(usedBy.length, name).toBeGreaterThan(0);
     }
-  });
-});
-
-const SPACE_CHAT_FIXTURE = {
-  background: 'FIXTURE_BACKGROUND',
-  instructions: 'FIXTURE_INSTRUCTIONS',
-  workflows: [{ name: 'FIX WF', id: 'fix-wf', nodeCount: 2, tags: ['coding'] }],
-  agents: [{ name: 'FIX AG', description: 'fixture agent' }],
-};
-
-const ASSEMBLED_GOLDEN: Record<string, string> = {
-  SPACE_CHAT_ASSEMBLED_EMPTY: '9b2c54680fa9191a15fdbc52faae9d29871ce373d153c7fd08ad4c39c46fe753',
-  SPACE_CHAT_ASSEMBLED_L1: '38274820e7c011d6be3580f4ea3a35b8774e1c72af1211abba0595d9dfae6ed4',
-  SPACE_CHAT_ASSEMBLED_L2: 'b84075e20ac1512681395324e7aecb3dd434250e1d508a11f7389d0c14ba463b',
-  SPACE_CHAT_ASSEMBLED_L3: '285a0e1b923f3bdc5305195c21564e8031b785cc84b819a6c4702d883e04e5b1',
-  SPACE_CHAT_ASSEMBLED_L4: 'c03d062b92eeef5245b63465324fab1cf4a071c0ad9d430ca7d4cb988b1c78bd',
-  SPACE_CHAT_ASSEMBLED_L5: '9e7d8ff34d99c07d6ac65b6896384f4ccb1ea8c4b46975c33db6238dcf54e946',
-};
-
-describe('space-chat system prompt assembly', () => {
-  test('assembled prompts are byte-identical across all autonomy levels', () => {
-    for (const level of [1, 2, 3, 4, 5]) {
-      const actual = createHash('sha256')
-        .update(
-          buildSpaceChatSystemPrompt({ ...SPACE_CHAT_FIXTURE, autonomyLevel: level } as never)
-        )
-        .digest('hex');
-      expect(actual, `level ${level}`).toBe(ASSEMBLED_GOLDEN[`SPACE_CHAT_ASSEMBLED_L${level}`]!);
-    }
-    const empty = createHash('sha256').update(buildSpaceChatSystemPrompt({})).digest('hex');
-    expect(empty).toBe(ASSEMBLED_GOLDEN['SPACE_CHAT_ASSEMBLED_EMPTY']!);
   });
 });
 

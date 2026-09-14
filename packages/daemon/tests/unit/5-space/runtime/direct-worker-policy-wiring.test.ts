@@ -55,6 +55,7 @@ test('reserved and running identities never inherit legacy or member tools', () 
       isWorkflowWorker: false,
       requiredServers: [],
       attachGenericSpaceTools: false,
+      attachSpaceChatTools: false,
       attachLongTermAgentTools: false,
     });
   }

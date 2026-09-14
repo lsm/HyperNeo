@@ -2006,7 +2006,7 @@ describe('createSpaceAgentToolHandlers — session management tools', () => {
     expect(String(parsed.error)).toContain('space autonomy level 3 < required level 4');
   });
 
-  test('send_session_message cross-session gates named non-coordinator agents', async () => {
+  test('send_session_message cross-session gates named agents', async () => {
     seedSession('other-member-named-agent', ctx.spaceId, { status: 'idle' });
     const handlers = makeHandlers(ctx, {
       myAgentName: 'scout',
@@ -2027,9 +2027,9 @@ describe('createSpaceAgentToolHandlers — session management tools', () => {
   });
 
   test('send_session_message gates a long-term agent with a real backing identity too', async () => {
-    seedSession('other-member-coordinator', ctx.spaceId, { status: 'idle' });
+    seedSession('other-member-named-agent2', ctx.spaceId, { status: 'idle' });
     const handlers = makeHandlers(ctx, {
-      myAgentName: 'space-agent',
+      myAgentName: 'planner',
       callerRole: 'long_term_agent',
       myAgentId: ctx.agentId,
       mySessionId: 'caller-session',
@@ -2039,7 +2039,7 @@ describe('createSpaceAgentToolHandlers — session management tools', () => {
 
     const parsed = parseResult(
       await handlers.send_session_message({
-        session_id: 'other-member-coordinator',
+        session_id: 'other-member-named-agent2',
         message: 'Proceed',
       })
     );
@@ -2330,12 +2330,12 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
 
   test('update_agent edits a space-manager-handle agent like any other', async () => {
     const handlers = makeHandlers(ctx);
-    const coordinator = seedLongHorizonAgent(ctx.longHorizonAgentRepo, ctx.spaceId);
+    const lhAgent = seedLongHorizonAgent(ctx.longHorizonAgentRepo, ctx.spaceId);
 
     const updated = JSON.parse(
       (
         await handlers.update_agent({
-          agent_id: coordinator.id,
+          agent_id: lhAgent.id,
           custom_prompt: 'Coordinate long-horizon Space activity.',
           model: null,
         })
@@ -3069,10 +3069,10 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
       labels: ['docs'],
     });
     templateRepo.createOwned('space-tools-test', {
-      key: 'custom.coordinator',
-      handle: 'coordinator',
-      displayName: 'Custom Coord',
-      instructions: 'Custom coordination duties.',
+      key: 'custom.planner',
+      handle: 'planner',
+      displayName: 'Custom Planner',
+      instructions: 'Custom planning duties.',
     });
     const handlers = makeHandlers(ctx);
     const listed = JSON.parse((await handlers.list_agent_templates()).content[0].text);
@@ -3083,8 +3083,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     );
     expect(lhKeys).toContain('worker.research');
     expect(lhKeys).toContain('user.release-notes');
-    expect(lhKeys).toContain('custom.coordinator');
-    expect(lhKeys).not.toContain('coordinator.default');
+    expect(lhKeys).toContain('custom.planner');
     const research = listed.long_horizon_templates.find(
       (t: { template_name: string }) => t.template_name === 'worker.research'
     );
@@ -3098,10 +3097,10 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     expect(releaseNotes.handle).toBe('release-notes');
     expect(releaseNotes.builtin).toBe(false);
     expect(releaseNotes.labels).toEqual(['docs']);
-    const customCoordinator = listed.long_horizon_templates.find(
-      (t: { template_name: string }) => t.template_name === 'custom.coordinator'
+    const customPlanner = listed.long_horizon_templates.find(
+      (t: { template_name: string }) => t.template_name === 'custom.planner'
     );
-    expect(customCoordinator.builtin).toBe(false);
+    expect(customPlanner.builtin).toBe(false);
   });
 
   test('list_agent_templates falls back to built-in templates without database access', async () => {
@@ -3119,7 +3118,6 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     );
     expect(lhKeys).toContain('worker.research');
     expect(lhKeys).not.toContain('user.release-notes');
-    expect(lhKeys).not.toContain('coordinator.default');
     expect(listed.long_horizon_templates.every((t: { builtin: boolean }) => t.builtin)).toBe(true);
   });
 
@@ -7463,10 +7461,10 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
       callerRole: 'long_term_agent',
       getSpaceAutonomyLevel: async () => 5,
       spaceId: 'other-space',
-      myAgentId: 'other-space-agent',
+      myAgentId: 'other-agent',
       longHorizonAgentRepo: {
         getById: (id: string) =>
-          id === 'other-space-agent'
+          id === 'other-agent'
             ? ({
                 id,
                 spaceId: 'other-space',
@@ -7524,7 +7522,6 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
 
     const result = await makeApproveHandlers({
       callerRole: 'long_term_agent',
-      myAgentId: 'coord-1',
       getSpaceAutonomyLevel: async () => 4,
     }).approve_pending_completion({ task_id: taskId, approved: true });
     dispatchSpy.mockRestore();
@@ -7542,10 +7539,10 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
     const result = await makeHandlers(ctx, {
       callerRole: 'long_term_agent',
       getSpaceAutonomyLevel: async () => 5,
-      myAgentId: 'coord-1',
+      myAgentId: 'lh-1',
       longHorizonAgentRepo: {
         getById: (id: string) =>
-          id === 'coord-1'
+          id === 'lh-1'
             ? ({ id, spaceId: ctx.spaceId, status: 'paused' } as unknown as SpaceLongHorizonAgent)
             : null,
       } as unknown as SpaceLongHorizonAgentRepository,
@@ -7572,10 +7569,10 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
     const result = await makeHandlers(ctx, {
       callerRole: 'long_term_agent',
       getSpaceAutonomyLevel: async () => 5,
-      myAgentId: 'coord-1',
+      myAgentId: 'lh-1',
       longHorizonAgentRepo: {
         getById: (id: string) =>
-          id === 'coord-1'
+          id === 'lh-1'
             ? ({ id, spaceId: ctx.spaceId, status: 'active' } as unknown as SpaceLongHorizonAgent)
             : null,
       } as unknown as SpaceLongHorizonAgentRepository,
@@ -7690,8 +7687,8 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
     nodeId?: string | null
   ): string {
     return formatAgentMessage({
-      fromLevel: 'space-agent',
-      fromAgentName: 'space-agent',
+      fromLevel: 'session-agent',
+      fromAgentName: 'space-member',
       toLevel: 'node-agent',
       body: message,
       taskId: task.id,
@@ -8069,7 +8066,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
     expect(auditSummaries[0]).toMatchObject({
       task_id: task.id,
       outcome: 'delivered',
-      target: 'space-agent',
+      target: 'agent',
       agent_name: '@coder',
     });
   });
@@ -8781,58 +8778,65 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
     expect(countSdkMessages()).toBe(before);
   });
 
-  test('@coordinator does not route to a workflow worker named coordinator', async () => {
+  test('a long-horizon handle does not route to a workflow worker of the same name', async () => {
     const wf = buildSingleStepWorkflow(
       ctx.spaceId,
       ctx.workflowManager,
       ctx.agentId,
-      'WF Coordinator Worker'
+      'WF Planner Worker'
     );
     const { run, tasks } = await ctx.runtime.startWorkflowRun(
       ctx.spaceId,
       wf.id,
-      'Coordinator worker collision'
+      'Planner worker collision'
     );
     const task = tasks[0];
     ctx.nodeExecutionRepo.createOrIgnore({
       workflowRunId: run.id,
       workflowNodeId: wf.startNodeId,
-      agentName: 'coordinator',
-      agentSessionId: 'coordinator-worker-session',
+      agentName: 'planner',
+      agentSessionId: 'planner-worker-session',
       status: 'in_progress',
     });
     const before = countSdkMessages();
 
+    ctx.longHorizonAgentRepo.create({
+      id: 'lh-planner-collide',
+      spaceId: ctx.spaceId,
+      handle: 'planner',
+      displayName: 'Planner',
+    });
+
     const tam = makeFakeTaskAgentManager(ctx);
     const result = await makeHandlersWith(tam, {
       messageResolver: resolverForActors([
-        { actorId: `agent:coordinator:${ctx.spaceId}`, handle: '@coordinator' },
+        { actorId: 'agent:lh-planner-collide', handle: '@planner' },
       ]),
     }).send_message_to_task({
       task_id: task.id,
-      target: '@coordinator',
-      message: 'hello coordinator',
+      target: '@planner',
+      message: 'hello planner',
     });
     const parsed = JSON.parse(result.content[0].text);
 
     expect(parsed.success).toBe(false);
     expect(parsed.error).toContain('Ambiguous target');
-    expect(parsed.error).toContain('@coordinator');
-    expect(parsed.error).toContain('workflow node "coordinator"');
+    expect(parsed.error).toContain('@planner');
+    expect(parsed.error).toContain('workflow node "planner"');
     expect(countSdkMessages()).toBe(before);
   });
 
-  test('@coordinator routes to the Space coordinator when no workflow worker collides', async () => {
+  test('a bare handle with no long-horizon backing is delivered through the messaging facade', async () => {
     const wf = buildSingleStepWorkflow(
       ctx.spaceId,
       ctx.workflowManager,
       ctx.agentId,
-      'WF Coordinator No Collision'
+      'WF Planner No Collision'
     );
     const { tasks } = await ctx.runtime.startWorkflowRun(
       ctx.spaceId,
       wf.id,
-      'Coordinator no collision'
+      'Planner no collision'
     );
     const task = tasks[0];
     const auditLogRepo = new McpAuditLogRepository(ctx.db);
@@ -8847,12 +8851,12 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
             resolved: [
               {
                 targetRef: message.targets[0],
-                address: { kind: 'handle', handle: 'coordinator' },
+                address: { kind: 'handle', handle: 'planner' },
                 actor: {
-                  actorId: `agent:coordinator:${ctx.spaceId}`,
+                  actorId: 'agent:lh-planner-solo',
                   kind: 'agent',
                   spaceId: ctx.spaceId,
-                  handle: '@coordinator',
+                  handle: '@planner',
                   status: 'active',
                 },
               },
@@ -8862,13 +8866,13 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
         },
       },
       longTermAgentDelivery: {
-        deliverToSession: async () => 'coordinator-session',
+        deliverToSession: async () => 'planner-session',
         queueForActivation: async () => null,
       },
     }).send_message_to_task({
       task_id: task.id,
-      target: '@coordinator',
-      message: 'hello coordinator',
+      target: '@planner',
+      message: 'hello planner',
     });
     const parsed = JSON.parse(result.content[0].text);
     const auditSummaries = parseAuditSummaries(auditLogRepo, task.id);
@@ -8878,8 +8882,56 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
     expect(auditSummaries[0]).toMatchObject({
       task_id: task.id,
       outcome: 'delivered',
-      target: 'space-agent',
-      agent_name: '@coordinator',
+      target: 'agent',
+      agent_name: '@planner',
+    });
+  });
+
+  test('a registered long-horizon handle is rejected rather than routed through a task', async () => {
+    const wf = buildSingleStepWorkflow(
+      ctx.spaceId,
+      ctx.workflowManager,
+      ctx.agentId,
+      'WF Planner Registered'
+    );
+    const { tasks } = await ctx.runtime.startWorkflowRun(ctx.spaceId, wf.id, 'Planner registered');
+    const task = tasks[0];
+    ctx.longHorizonAgentRepo.create({
+      id: 'lh-planner-registered',
+      spaceId: ctx.spaceId,
+      handle: 'planner',
+      displayName: 'Planner',
+    });
+    const auditLogRepo = new McpAuditLogRepository(ctx.db);
+    const deliveries: string[] = [];
+
+    const tam = makeFakeTaskAgentManager(ctx);
+    const result = await makeHandlersWith(tam, {
+      auditLogRepo,
+      messageResolver: resolverForActors([
+        { actorId: 'agent:lh-planner-registered', handle: '@planner' },
+      ]),
+      longTermAgentDelivery: {
+        deliverToSession: async () => {
+          deliveries.push('delivered');
+          return 'planner-session';
+        },
+        queueForActivation: async () => null,
+      },
+    }).send_message_to_task({
+      task_id: task.id,
+      target: '@planner',
+      message: 'hello planner',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('Ambiguous target');
+    expect(parsed.error).toContain('long-horizon agent "planner"');
+    expect(parsed.error).toContain('send_session_message');
+    expect(deliveries).toHaveLength(0);
+    expect(parseAuditSummaries(auditLogRepo, task.id)[0]).toMatchObject({
+      reason: 'ambiguous_long_horizon_target',
     });
   });
 
@@ -10097,8 +10149,8 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       expect(audit[0].sdk_message_id).toBe(parsed.sdk_message_id);
     });
 
-    test('space-coordinator handle delivery echoes matching delivered_session_id in response and audit', async () => {
-      const { task } = await makeTracedTask('Trace coordinator');
+    test('facade-delivered handle echoes matching delivered_session_id in response and audit', async () => {
+      const { task } = await makeTracedTask('Trace handle');
       const auditLogRepo = new McpAuditLogRepository(ctx.db);
       const tam = makeFakeTaskAgentManager(ctx);
       const handlers = makeHandlersWith(tam, {
@@ -10110,12 +10162,12 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
               resolved: [
                 {
                   targetRef: message.targets[0],
-                  address: { kind: 'handle', handle: 'coordinator' },
+                  address: { kind: 'handle', handle: 'planner' },
                   actor: {
-                    actorId: `agent:coordinator:${ctx.spaceId}`,
+                    actorId: 'agent:lh-planner-trace',
                     kind: 'agent',
                     spaceId: ctx.spaceId,
-                    handle: '@coordinator',
+                    handle: '@planner',
                     status: 'active',
                   },
                 },
@@ -10125,25 +10177,25 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
           },
         },
         longTermAgentDelivery: {
-          deliverToSession: async () => 'coordinator-trace-session',
+          deliverToSession: async () => 'planner-trace-session',
           queueForActivation: async () => null,
         },
       });
 
       const result = await handlers.send_message_to_task({
         task_id: task.id,
-        target: '@coordinator',
-        message: 'trace coordinator',
+        target: '@planner',
+        message: 'trace planner',
       });
       const parsed = JSON.parse(result.content[0].text);
       const audit = parseAuditSummaries(auditLogRepo, task.id);
 
       expect(parsed.success).toBe(true);
-      expect(parsed.target).toBe('space-agent');
-      expect(parsed.delivered_session_id).toBe('coordinator-trace-session');
+      expect(parsed.target).toBe('agent');
+      expect(parsed.delivered_session_id).toBe('planner-trace-session');
       expect(parsed.sdk_message_id).toBeUndefined();
       expect(audit).toHaveLength(1);
-      expect(audit[0]).toMatchObject({ outcome: 'delivered', target: 'space-agent' });
+      expect(audit[0]).toMatchObject({ outcome: 'delivered', target: 'agent' });
       expect(audit[0].delivered_session_id).toBe(parsed.delivered_session_id);
       expect(audit[0].sdk_message_id).toBeUndefined();
     });
@@ -11993,13 +12045,13 @@ describe('createSpaceAgentToolHandlers — agent-level autonomy ceiling', () => 
     expect(summary.agentLevel).toBe(1);
   });
 
-  test('send_session_message: a level-1 agent named "space-agent" is still ceiling-gated', async () => {
+  test('send_session_message: a level-1 agent is still ceiling-gated', async () => {
     await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
     const agentId = seedLongHorizonAgent(1);
-    seedTargetSession('ceiling-target-coordinator-name');
+    seedTargetSession('ceiling-target-named-agent');
     const handlers = makeHandlers(ctx, {
       myAgentId: agentId,
-      myAgentName: 'space-agent',
+      myAgentName: 'planner',
       mySessionId: 'caller-session',
       getSpaceAutonomyLevel: async () => 5,
       getRuntimeSession: () => ({ startQueryAndEnqueue: async () => {} }) as never,
@@ -12007,7 +12059,7 @@ describe('createSpaceAgentToolHandlers — agent-level autonomy ceiling', () => 
 
     const parsed = parseResult(
       await handlers.send_session_message({
-        session_id: 'ceiling-target-coordinator-name',
+        session_id: 'ceiling-target-named-agent',
         message: 'proceed',
       })
     );
