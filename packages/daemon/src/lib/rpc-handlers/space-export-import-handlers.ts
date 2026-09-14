@@ -10,7 +10,8 @@ import type {
   SpaceWorkflow,
   WorkflowNodeInput,
 } from '@hyperneo/shared';
-import { generateUUID } from '@hyperneo/shared';
+import { generateUUID, modelPoolEntryKey } from '@hyperneo/shared';
+import { getProviderRegistry, providerMayOfferModel } from '../providers/registry.js';
 import { SpaceAgentTemplateRepository } from '../../storage/repositories/space-agent-template-repository.ts';
 import { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
@@ -377,8 +378,14 @@ export function buildWorkflowCreateParams(
   existingAgentNameToId: Map<string, string>,
   usedWorkflowHandles?: Set<string>,
   relocatedTemplateKey?: (fromKey: string) => string | null
-): { params: CreateSpaceWorkflowParams; nodeNameToId: Map<string, string>; warnings: string[] } {
+): {
+  params: CreateSpaceWorkflowParams;
+  nodeNameToId: Map<string, string>;
+  warnings: string[];
+  recoveries: string[];
+} {
   const warnings: string[] = [];
+  const recoveries: string[] = [];
 
   const normalizedImportedAgentNameToId = new Map(
     [...importedAgentNameToId].map(([n, id]) => [nameKey(n), id])
@@ -399,6 +406,7 @@ export function buildWorkflowCreateParams(
         templateKey?: string;
         name: string;
         model?: string;
+        provider?: string;
         thinkingLevel?: import('@hyperneo/shared').ThinkingLevel;
         customPrompt?: import('@hyperneo/shared').WorkflowNodeAgentOverride;
         replaceAgentPrompt?: boolean;
@@ -449,6 +457,32 @@ export function buildWorkflowCreateParams(
         entry.agentId = agentId ?? '';
       }
       if (typeof a.model === 'string' && a.model.trim()) entry.model = a.model.trim();
+      if (typeof a.provider === 'string' && a.provider.trim()) entry.provider = a.provider.trim();
+      if (entry.provider) {
+        const provider = getProviderRegistry().get(entry.provider);
+        const effectiveModel = entry.model;
+        if (!effectiveModel) {
+          recoveries.push(
+            `node "${exportedNode.name}" slot "${entry.name}" pins a provider without a model; ` +
+              'the slot was imported without the provider pin'
+          );
+          entry.provider = undefined;
+        } else if (!provider) {
+          recoveries.push(
+            `node "${exportedNode.name}" slot "${entry.name}" pins provider ` +
+              `"${entry.provider}" which is not registered here; ` +
+              'the slot was imported without the provider pin'
+          );
+          entry.provider = undefined;
+        } else if (effectiveModel && !providerMayOfferModel(provider, effectiveModel)) {
+          recoveries.push(
+            `node "${exportedNode.name}" slot "${entry.name}" pins provider ` +
+              `"${entry.provider}" which does not offer model "${effectiveModel}"; ` +
+              'the slot was imported without the provider pin'
+          );
+          entry.provider = undefined;
+        }
+      }
       if (a.thinkingLevel !== undefined) entry.thinkingLevel = a.thinkingLevel;
       const normalizedSP = normalizeOverride(a.systemPrompt);
       const normalizedInst = normalizeOverride(a.instructions);
@@ -520,7 +554,7 @@ export function buildWorkflowCreateParams(
     params.handle = exported.handle;
   }
 
-  return { params, nodeNameToId, warnings };
+  return { params, nodeNameToId, warnings, recoveries };
 }
 
 function referencedStoredTemplateKeys(
@@ -1030,6 +1064,61 @@ export function setupSpaceExportImportHandlers(
         const allWarnings: string[] = [];
 
         for (const exportedAgent of bundle.agents) {
+          if (exportedAgent.modelPool?.some((entry) => entry.provider !== undefined)) {
+            let droppedPins = false;
+            const sanitized = exportedAgent.modelPool.map((entry) => {
+              if (entry.provider === undefined) return entry;
+              if (typeof bundle.version === 'number' && bundle.version < 7) {
+                droppedPins = true;
+                return { ...entry, provider: undefined };
+              }
+              const normalizedProvider = entry.provider.trim();
+              const provider = getProviderRegistry().get(normalizedProvider);
+              if (!provider || !providerMayOfferModel(provider, entry.model)) {
+                droppedPins = true;
+                allWarnings.push(
+                  `Agent "${exportedAgent.name}": modelPool entry "${entry.model}" pins provider ` +
+                    `"${entry.provider}" which is not usable here; the pin was dropped on import`
+                );
+                return { ...entry, provider: undefined };
+              }
+              return { ...entry, provider: normalizedProvider };
+            });
+            const mergedByPoolKey = new Map<string, (typeof sanitized)[number]>();
+            for (const entry of sanitized) {
+              const key = modelPoolEntryKey(entry);
+              const prev = mergedByPoolKey.get(key);
+              if (!prev) {
+                mergedByPoolKey.set(key, entry);
+                continue;
+              }
+              mergedByPoolKey.set(key, {
+                ...prev,
+                weight: Math.max(prev.weight, entry.weight),
+                maxConcurrent: Math.max(prev.maxConcurrent, entry.maxConcurrent),
+              });
+            }
+            const deduped = [...mergedByPoolKey.values()];
+            if (droppedPins || deduped.length < sanitized.length) {
+              if (
+                typeof bundle.version === 'number' &&
+                bundle.version < 7 &&
+                exportedAgent.modelPool.some((entry) => entry.provider !== undefined)
+              ) {
+                allWarnings.push(
+                  `Agent "${exportedAgent.name}": modelPool provider pins require export ` +
+                    'version 7; the pins were dropped on import'
+                );
+              }
+              if (deduped.length < sanitized.length) {
+                allWarnings.push(
+                  `Agent "${exportedAgent.name}": modelPool contained duplicate entries after ` +
+                    'pin handling; their weights and capacities were merged on import'
+                );
+              }
+            }
+            exportedAgent.modelPool = deduped;
+          }
           const existing = existingAgentByName.get(nameKey(exportedAgent.name));
 
           if (!existing) {
@@ -1198,7 +1287,11 @@ export function setupSpaceExportImportHandlers(
 
           usedWorkflowNames.add(finalName);
 
-          const { params: createParams, warnings } = buildWorkflowCreateParams(
+          const {
+            params: createParams,
+            warnings,
+            recoveries,
+          } = buildWorkflowCreateParams(
             spaceId,
             finalName,
             exportedWorkflow,
@@ -1214,6 +1307,10 @@ export function setupSpaceExportImportHandlers(
             allWarnings.push(
               `Workflow "${finalName}": exported handle "${exportedHandle}" already exists in the target space; a new handle was auto-generated`
             );
+          }
+
+          for (const recovery of recoveries) {
+            allWarnings.push(`Workflow "${finalName}": ${recovery}`);
           }
 
           if (warnings.length > 0) {

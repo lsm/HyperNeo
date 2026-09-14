@@ -3643,9 +3643,9 @@ describe('full export→import round-trip', () => {
     };
 
     const bundle = exportBundle([workerAgent], [workflow], 'V4 Export');
-    expect(bundle.version).toBe(6);
+    expect(bundle.version).toBe(7);
     expect(bundle.agents[0]).toMatchObject({
-      version: 6,
+      version: 7,
       type: 'agent',
       name: 'V4 Worker',
       handle: 'legacy-handle',
@@ -3680,6 +3680,59 @@ describe('full export→import round-trip', () => {
     });
     const importedWf = workflowRepo.getWorkflow(result.workflows[0].id)!;
     expect(importedWf.nodes[0].agents![0].agentId).toBe(imported.id);
+  });
+
+  it('soft-drops a slot provider pin the target registry cannot serve instead of aborting', async () => {
+    seedAgent({ spaceId: SPACE_ID, name: 'Coder', handle: 'coder' });
+    const workflow: SpaceWorkflow = {
+      id: 'src-wf-pin',
+      spaceId: 'other-space',
+      name: 'Pin Pipe',
+      nodes: [
+        {
+          id: 'src-pin-step',
+          name: 'Build',
+          agents: [
+            {
+              agentId: 'src-pin-agent',
+              name: 'builder',
+              model: 'pinned-model',
+              provider: 'ghost-provider',
+            },
+          ],
+        },
+      ],
+      startNodeId: 'src-pin-step',
+      tags: [],
+      completionAutonomyLevel: 3,
+      createdAt: 1000,
+      updatedAt: 2000,
+    };
+    const bundle = exportBundle(
+      [
+        {
+          id: 'src-pin-agent',
+          spaceId: 'other-space',
+          displayName: 'Pin Coder',
+          toolPermissions: { tools: [] },
+          createdAt: 1000,
+          updatedAt: 2000,
+        } as SpaceLongHorizonAgent,
+      ],
+      [workflow],
+      'Pin Export'
+    );
+    expect(bundle.workflows[0].nodes[0].agents![0].provider).toBe('ghost-provider');
+
+    const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+      spaceId: SPACE_ID,
+      bundle,
+    });
+
+    expect(result.workflows[0].action).toBe('created');
+    const importedWf = workflowRepo.getWorkflow(result.workflows[0].id)!;
+    expect(importedWf.nodes[0].agents![0].provider).toBeUndefined();
+    expect(result.warnings.some((w) => w.includes('not registered here'))).toBe(true);
   });
 
   it('import creates and replaces agents in the unified table (production path)', async () => {

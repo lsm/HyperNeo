@@ -7,6 +7,7 @@ import {
   WorkflowDeletionBlockedError,
   WorkflowValidationError,
 } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
+import { getProviderRegistry } from '../../../../src/lib/providers/registry';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -1215,6 +1216,193 @@ describe('SpaceWorkflowManager', () => {
     expect(node.agents).toHaveLength(2);
     expect(node.agents![0].name).toBe('agent-old-1');
     expect(node.agents![1].name).toBe('agent-old-2');
+  });
+});
+
+describe('SpaceWorkflowManager slot model/provider normalization', () => {
+  const stubId = 'wf-stub-provider';
+  type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+  let db: BunDatabase;
+
+  beforeEach(() => {
+    db = makeDb();
+    seedSpace(db);
+    getProviderRegistry().register({
+      id: stubId,
+      ownsModel: (model: string) => model === 'stub-model',
+      getModels: async () => [],
+      isAvailable: async () => true,
+    } as ProviderLike);
+  });
+
+  afterEach(() => {
+    getProviderRegistry().unregister(stubId);
+    try {
+      db.close();
+    } catch {}
+  });
+
+  function makeManager(): SpaceWorkflowManager {
+    return new SpaceWorkflowManager(new SpaceWorkflowRepository(db), null);
+  }
+
+  test('trims padded slot models and providers before storing them', () => {
+    const manager = makeManager();
+    const wf = manager.createWorkflow({
+      spaceId: 'space-1',
+      name: 'Padded slots',
+      nodes: [
+        {
+          id: 'node-1',
+          name: 'Code',
+          agentId: 'agent-coder',
+          agents: [
+            {
+              agentId: 'agent-coder',
+              name: 'Code',
+              model: ' stub-model ',
+              provider: ` ${stubId} `,
+            },
+          ],
+        },
+      ],
+      completionAutonomyLevel: 3,
+    });
+    expect(wf.nodes[0].agents![0].model).toBe('stub-model');
+    expect(wf.nodes[0].agents![0].provider).toBe(stubId);
+  });
+
+  test('drops whitespace-only slot providers instead of storing them', () => {
+    const manager = makeManager();
+    const wf = manager.createWorkflow({
+      spaceId: 'space-1',
+      name: 'Blank provider',
+      nodes: [
+        {
+          id: 'node-1',
+          name: 'Code',
+          agentId: 'agent-coder',
+          agents: [{ agentId: 'agent-coder', name: 'Code', model: 'stub-model', provider: '   ' }],
+        },
+      ],
+      completionAutonomyLevel: 3,
+    });
+    expect('provider' in wf.nodes[0].agents![0]).toBe(false);
+  });
+
+  test('drops whitespace-only slot models instead of storing them', () => {
+    const manager = makeManager();
+    const wf = manager.createWorkflow({
+      spaceId: 'space-1',
+      name: 'Blank model',
+      nodes: [
+        {
+          id: 'node-1',
+          name: 'Code',
+          agentId: 'agent-coder',
+          agents: [{ agentId: 'agent-coder', name: 'Code', model: '   ' }],
+        },
+      ],
+      completionAutonomyLevel: 3,
+    });
+    expect(wf.nodes[0].agents![0].model).toBeUndefined();
+  });
+
+  test('rejects a slot provider pin without a model', () => {
+    const manager = makeManager();
+    expect(() =>
+      manager.createWorkflow({
+        spaceId: 'space-1',
+        name: 'Pin without model',
+        nodes: [
+          {
+            id: 'node-1',
+            name: 'Code',
+            agentId: 'agent-coder',
+            agents: [{ agentId: 'agent-coder', name: 'Code', provider: stubId }],
+          },
+        ],
+        completionAutonomyLevel: 3,
+      })
+    ).toThrow(/requires a model/);
+  });
+
+  test('rejects a modelled slot pin naming an unregistered provider', () => {
+    const manager = makeManager();
+    expect(() =>
+      manager.createWorkflow({
+        spaceId: 'space-1',
+        name: 'Ghost modelled pin',
+        nodes: [
+          {
+            id: 'node-1',
+            name: 'Code',
+            agentId: 'agent-coder',
+            agents: [
+              { agentId: 'agent-coder', name: 'Code', model: 'stub-model', provider: 'ghost' },
+            ],
+          },
+        ],
+        completionAutonomyLevel: 3,
+      })
+    ).toThrow(/is not registered/);
+  });
+
+  test('rejects a registered provider that does not offer the trimmed model', () => {
+    const manager = makeManager();
+    expect(() =>
+      manager.createWorkflow({
+        spaceId: 'space-1',
+        name: 'Wrong model',
+        nodes: [
+          {
+            id: 'node-1',
+            name: 'Code',
+            agentId: 'agent-coder',
+            agents: [
+              { agentId: 'agent-coder', name: 'Code', model: 'other-model', provider: stubId },
+            ],
+          },
+        ],
+        completionAutonomyLevel: 3,
+      })
+    ).toThrow(/does not offer model/);
+  });
+
+  test('defers rejecting unlisted models while the provider catalog is cold', () => {
+    getProviderRegistry().register({
+      id: 'wf-cold-provider',
+      ownsModel: () => false,
+      hasCuratedModelList: () => false,
+      getModels: async () => [],
+      isAvailable: async () => true,
+    } as ProviderLike);
+    try {
+      const manager = makeManager();
+      const wf = manager.createWorkflow({
+        spaceId: 'space-1',
+        name: 'Cold catalog',
+        nodes: [
+          {
+            id: 'node-1',
+            name: 'Code',
+            agentId: 'agent-coder',
+            agents: [
+              {
+                agentId: 'agent-coder',
+                name: 'Code',
+                model: 'dynamic-model',
+                provider: 'wf-cold-provider',
+              },
+            ],
+          },
+        ],
+        completionAutonomyLevel: 3,
+      });
+      expect(wf.nodes[0].agents![0].model).toBe('dynamic-model');
+    } finally {
+      getProviderRegistry().unregister('wf-cold-provider');
+    }
   });
 });
 

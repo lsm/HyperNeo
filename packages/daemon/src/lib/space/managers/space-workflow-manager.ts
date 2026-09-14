@@ -16,6 +16,7 @@ import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositor
 import type { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository.ts';
 import { validateGlobPattern } from '../../external-events/topic-validator.ts';
 import { Logger } from '../../logger.ts';
+import { getProviderRegistry, providerMayOfferModel } from '../../providers/registry.js';
 import { getLongHorizonAgentTemplate } from '../agents/long-horizon-agent-templates.ts';
 import { isRunnableUnifiedAgent } from '../agents/worker-long-horizon-mapper.ts';
 import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../export-format.ts';
@@ -479,6 +480,32 @@ export class SpaceWorkflowManager {
       const node = nodes[i];
       this.validateNodeAgentRef(spaceId, node, i);
       this.validateEventInterests(node, i);
+      for (let j = 0; j < (node.agents?.length ?? 0); j++) {
+        const entry = node.agents[j];
+        const trimmedModel = entry.model?.trim() || undefined;
+        entry.model = trimmedModel;
+        const trimmedProvider = entry.provider?.trim() || undefined;
+        entry.provider = trimmedProvider;
+        if (!trimmedProvider) continue;
+        if (!trimmedModel) {
+          throw new WorkflowValidationError(
+            `node[${i}].agents[${j}]: provider "${trimmedProvider}" requires a model — ` +
+              'pin a provider alongside the model it should serve'
+          );
+        }
+        const provider = getProviderRegistry().get(trimmedProvider);
+        if (!provider) {
+          throw new WorkflowValidationError(
+            `node[${i}].agents[${j}]: provider "${trimmedProvider}" is not registered`
+          );
+        }
+        if (!providerMayOfferModel(provider, trimmedModel)) {
+          throw new WorkflowValidationError(
+            `node[${i}].agents[${j}]: provider "${trimmedProvider}" does not offer model ` +
+              `"${trimmedModel}"`
+          );
+        }
+      }
     }
   }
 

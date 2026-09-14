@@ -25,8 +25,10 @@ export function resolveNodeAgents(node: WorkflowNode): WorkflowNodeAgent[] {
   );
 }
 
-export function modelPoolEntryKey(entry: Pick<AgentModelPoolEntry, 'model'>): string {
-  return entry.model;
+export function modelPoolEntryKey(
+  entry: Pick<AgentModelPoolEntry, 'model'> & { provider?: string }
+): string {
+  return JSON.stringify([entry.provider?.trim() || null, entry.model]);
 }
 
 export interface ModelPoolPickInput {
@@ -41,9 +43,29 @@ export function scoreModelPoolEntries(
   entries: AgentModelPoolEntry[],
   runningCounts: Readonly<Record<string, number>>
 ): ModelPoolPickInput[] {
-  return entries.map((entry) => {
+  const modelTotals = new Map<string, number>();
+  for (const [key, count] of Object.entries(runningCounts)) {
+    try {
+      const parsed = JSON.parse(key) as [string | null, string];
+      if (Array.isArray(parsed) && typeof parsed[1] === 'string') {
+        modelTotals.set(parsed[1], (modelTotals.get(parsed[1]) ?? 0) + count);
+      }
+    } catch {}
+  }
+  return entries.map((rawEntry) => {
+    const entry = rawEntry.provider?.trim()
+      ? { ...rawEntry, provider: rawEntry.provider?.trim() }
+      : { ...rawEntry, provider: undefined };
     const cap = Math.max(1, Math.floor(Number(entry.maxConcurrent) || 1));
-    const running = Math.max(0, Math.floor(runningCounts[modelPoolEntryKey(entry)] ?? 0));
+    const running = Math.max(
+      0,
+      Math.floor(
+        entry.provider
+          ? (runningCounts[modelPoolEntryKey(entry)] ?? 0) +
+              (runningCounts[modelPoolEntryKey({ model: entry.model })] ?? 0)
+          : (modelTotals.get(entry.model) ?? 0)
+      )
+    );
     const left = Math.max(0, cap - running);
     const weight = Number.isFinite(entry.weight) && entry.weight > 0 ? entry.weight : 0;
     const score = Math.min(left * weight, Number.MAX_SAFE_INTEGER);

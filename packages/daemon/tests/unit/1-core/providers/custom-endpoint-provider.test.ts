@@ -292,6 +292,51 @@ describe('CustomEndpointProvider', () => {
     });
   });
 
+  it('pre-warms only the default model bridge; other models start on demand', async () => {
+    const fetchImpl = mock(
+      async () => new Response('[]', { status: 200 })
+    ) as unknown as typeof fetch;
+    const fake = makeFakeBridge();
+    const p = new CustomEndpointProvider(baseConfig, {
+      bridgeFactory: fake.factory,
+      bridgeFetchImpl: fetchImpl,
+    });
+
+    await p.getModels();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(fake.configs).toHaveLength(1);
+    expect(p.buildSdkConfig('qwen2.5-7b').envVars.ANTHROPIC_BASE_URL).toMatch(
+      /^http:\/\/127\.0\.0\.1:\d+$/
+    );
+    expect(() => p.buildSdkConfig('qwen2.5-vl-7b')).toThrow(/bridge not started/);
+
+    await p.ensureBridgeStarted('qwen2.5-vl-7b');
+    expect(p.buildSdkConfig('qwen2.5-vl-7b').envVars.ANTHROPIC_BASE_URL).toMatch(
+      /^http:\/\/127\.0\.0\.1:\d+$/
+    );
+  });
+
+  it('prewarmBridges starts only the default model bridge without probing the endpoint', async () => {
+    const fetchImpl = mock(async () => {
+      throw new Error('probe must not run');
+    }) as unknown as typeof fetch;
+    const fake = makeFakeBridge();
+    const p = new CustomEndpointProvider(baseConfig, {
+      bridgeFactory: fake.factory,
+      bridgeFetchImpl: fetchImpl,
+    });
+
+    p.prewarmBridges();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(fake.configs).toHaveLength(1);
+    expect(p.buildSdkConfig('qwen2.5-7b').envVars.ANTHROPIC_BASE_URL).toMatch(
+      /^http:\/\/127\.0\.0\.1:\d+$/
+    );
+  });
+
   it('arms CLAUDE_CODE_AUTO_COMPACT_WINDOW from model context window and autoCompactPercent', async () => {
     const fake = makeFakeBridge();
     const p = new CustomEndpointProvider(baseConfig, { bridgeFactory: fake.factory });

@@ -30,6 +30,7 @@ export interface WorkflowTemplateStep {
   agentSlots?: WorkflowTemplateAgentSlot[];
   systemPrompt?: string;
   model?: string;
+  provider?: string;
   thinkingLevel?: import('@hyperneo/shared').ThinkingLevel;
   instructions?: string;
   resetContextPerTurn?: boolean;
@@ -43,6 +44,7 @@ export interface WorkflowTemplateAgentSlot {
   role: string;
   agentId?: string;
   model?: string;
+  provider?: string;
   thinkingLevel?: import('@hyperneo/shared').ThinkingLevel;
   systemPrompt?: string;
   instructions?: string;
@@ -152,6 +154,7 @@ export function workflowToTemplate(workflow: SpaceWorkflow): WorkflowTemplate {
           role: agent.name || agent.agentId,
           agentId: agent.agentId,
           model: agent.model,
+          provider: agent.provider,
           systemPrompt: extractInstructionText(agent.customPrompt),
           resetContextPerTurn: agent.resetContextPerTurn,
           toolGuards: agent.toolGuards?.map((guard) => ({ ...guard })),
@@ -169,6 +172,7 @@ export function workflowToTemplate(workflow: SpaceWorkflow): WorkflowTemplate {
       role: primary?.name ?? primary?.agentId ?? '',
       agentId: primary?.agentId,
       model: primary?.model,
+      provider: primary?.provider,
       systemPrompt: extractInstructionText(primary?.customPrompt),
       resetContextPerTurn: primary?.resetContextPerTurn,
       toolGuards: primary?.toolGuards?.map((guard) => ({ ...guard })),
@@ -225,6 +229,7 @@ export function buildTemplateNodes(
           agentId: assigned?.id ?? '',
           name: slot.name?.trim() || `${capitalizeRole(slot.role)} ${slotIndex + 1}`,
           model: slot.model?.trim() || undefined,
+          provider: slot.provider?.trim() || undefined,
           thinkingLevel: slot.thinkingLevel,
           customPrompt: slot.systemPrompt?.trim() ? { value: slot.systemPrompt.trim() } : undefined,
           ...(slot.resetContextPerTurn ? { resetContextPerTurn: true } : {}),
@@ -272,6 +277,7 @@ export function buildTemplateNodes(
           agentId: assigned?.id ?? '',
           name: resolvedRoleName,
           model: step.model?.trim() || undefined,
+          provider: step.provider?.trim() || undefined,
           thinkingLevel: step.thinkingLevel,
           customPrompt: resolvedCustomPrompt,
           ...(step.resetContextPerTurn ? { resetContextPerTurn: true } : {}),
@@ -281,6 +287,7 @@ export function buildTemplateNodes(
         },
       ],
       model: undefined,
+      provider: undefined,
       thinkingLevel: undefined,
       customPrompt: undefined,
       postApproval: step.postApproval ? { ...step.postApproval } : undefined,

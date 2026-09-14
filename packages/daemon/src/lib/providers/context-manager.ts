@@ -1,6 +1,6 @@
 import type { Provider, ProviderContext } from '@hyperneo/shared/provider';
 import type { Session, ProviderId } from '@hyperneo/shared';
-import type { ProviderRegistry } from './registry.js';
+import { resolveQueryProvider, type ProviderRegistry } from './registry.js';
 import { providerSessionConfigForSession } from './session-config.js';
 
 class ContextImpl implements ProviderContext {
@@ -82,9 +82,13 @@ export class ProviderContextManager {
       return provider;
     }
 
-    const anthropic = this.registry.get('anthropic');
-    if (anthropic) {
-      return anthropic;
+    const inferred = resolveQueryProvider(
+      this.registry,
+      session.config.model || 'default',
+      undefined
+    );
+    if (inferred) {
+      return inferred;
     }
 
     throw new Error(

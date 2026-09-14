@@ -21,8 +21,8 @@ import type {
   AgentMemoryCoreEntry,
   AgentMemorySearchResult,
 } from '../../../storage/repositories/agent-memory-repository.ts';
-import { inferProviderForModel } from '../../providers/registry.ts';
 import { Logger } from '../../logger.ts';
+import { inferProviderForModel } from '../../providers/registry.js';
 import { SUB_SESSION_FEATURES } from './seed-agents.ts';
 import { deriveWorkerDisallowedTools } from './tool-policy.ts';
 import { createHash } from 'node:crypto';
@@ -476,9 +476,10 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
   const model =
     slotOverrides?.model ?? customAgent.model ?? space.defaultModel ?? DEFAULT_CUSTOM_AGENT_MODEL;
   const thinkingLevel = slotOverrides?.thinkingLevel ?? customAgent.thinkingLevel ?? undefined;
+  const acpProviderId = inferProviderForModel(model) === 'acp' ? 'acp' : undefined;
   const provider = slotOverrides?.model
-    ? (slotOverrides?.provider ?? inferProviderForModel(model))
-    : (customAgent.provider ?? inferProviderForModel(model));
+    ? (slotOverrides?.provider ?? acpProviderId)
+    : (slotOverrides?.provider ?? customAgent.provider ?? acpProviderId);
 
   const resolvedPrompt = resolveCustomAgentPrompt(customAgent, slotOverrides);
   const visiblePrompt = resolvedPrompt.value;

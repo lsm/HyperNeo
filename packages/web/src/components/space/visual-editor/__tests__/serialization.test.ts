@@ -279,6 +279,64 @@ describe('visualStateToCreateParams', () => {
     ]);
   });
 
+  it('serializes the shorthand provider alongside the model', () => {
+    const params = visualStateToCreateParams(
+      makeState({
+        nodes: [
+          {
+            step: {
+              localId: 'local-1',
+              id: 's1',
+              name: 'Step 1',
+              agentId: 'a1',
+              model: 'swe-2-high',
+              provider: 'custom:ai0',
+            },
+            position: { x: 50, y: 50 },
+          },
+        ],
+      }),
+      'space-1',
+      'My Workflow'
+    );
+    expect(params.nodes![0].agents[0]).toMatchObject({
+      model: 'swe-2-high',
+      provider: 'custom:ai0',
+    });
+  });
+
+  it('keeps the provider on multi-agent slots through serialization', () => {
+    const params = visualStateToCreateParams(
+      makeState({
+        nodes: [
+          {
+            step: {
+              localId: 'local-1',
+              id: 's1',
+              name: 'Step 1',
+              agentId: '',
+              agents: [
+                {
+                  agentId: 'a1',
+                  name: 'coder',
+                  model: 'swe-2-high',
+                  provider: 'custom:ai0',
+                },
+              ],
+            },
+            position: { x: 50, y: 50 },
+          },
+        ],
+      }),
+      'space-1',
+      'My Workflow'
+    );
+    expect(params.nodes![0].agents[0]).toMatchObject({
+      model: 'swe-2-high',
+      provider: 'custom:ai0',
+    });
+  });
+
   it('serializes single-agent resetContextPerTurn shorthand onto the agent slot', () => {
     const params = visualStateToCreateParams(
       makeState({

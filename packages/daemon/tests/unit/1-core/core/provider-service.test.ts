@@ -253,6 +253,45 @@ class SessionAwareBridgeMockProvider extends MockProvider {
   }
 }
 
+class BridgeStateMockProvider extends MockProvider {
+  bridgeUp = false;
+  ensureCalls = 0;
+  startAlwaysFails = false;
+  buildAlwaysFails = false;
+  failFirstEnsure = true;
+
+  constructor() {
+    super('bridgey', 'Bridgey Provider', true, 'bridgey-');
+  }
+
+  ownsModel(modelId: string): boolean {
+    return modelId.toLowerCase().startsWith('bridgey-');
+  }
+
+  ensureBridgeStarted(): Promise<void> {
+    this.ensureCalls++;
+    if (this.startAlwaysFails || (this.failFirstEnsure && this.ensureCalls === 1)) {
+      return Promise.reject(new Error('bridge start raced a provider re-instantiation'));
+    }
+    this.bridgeUp = true;
+    return Promise.resolve();
+  }
+
+  buildSdkConfig(): ProviderSdkConfig {
+    if (!this.bridgeUp || this.buildAlwaysFails) {
+      throw new Error('bridge not started. Await ensureBridgeStarted() before buildSdkConfig()');
+    }
+    return {
+      envVars: {
+        ANTHROPIC_BASE_URL: 'http://127.0.0.1:60001',
+        ANTHROPIC_AUTH_TOKEN: 'bridgey-token',
+      },
+      isAnthropicCompatible: true,
+      apiVersion: 'v1',
+    };
+  }
+}
+
 class AnthropicMockProvider extends MockProvider {
   readonly id = 'anthropic' as const;
   readonly displayName = 'Anthropic';
@@ -1775,6 +1814,109 @@ describe('ProviderService', () => {
         sessionId: 'neo-session-123',
         workspacePath: '/repo/worktrees/neo-session-123',
       });
+    });
+  });
+
+  describe('resolveSessionProviderEnvVars', () => {
+    function makeBridgeySession(model = 'bridgey-1'): Session {
+      return {
+        id: 'sub-session-1',
+        title: 'Sub',
+        workspacePath: '/test',
+        createdAt: new Date().toISOString(),
+        lastActiveAt: new Date().toISOString(),
+        status: 'active',
+        config: {
+          model,
+          maxTokens: 8192,
+          temperature: 1.0,
+          provider: 'bridgey' as unknown as import('@hyperneo/shared/provider').ProviderId,
+        },
+        metadata: {
+          messageCount: 0,
+          totalTokens: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          totalCost: 0,
+          toolCallCount: 0,
+        },
+      };
+    }
+
+    it('retries ensureBridgeStarted once and returns env vars when the bridge comes up', async () => {
+      const provider = new BridgeStateMockProvider();
+      registry.register(provider);
+
+      const envVars = await service.resolveSessionProviderEnvVars(makeBridgeySession());
+
+      expect(provider.ensureCalls).toBe(2);
+      expect(envVars.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:60001');
+      expect(envVars.ANTHROPIC_AUTH_TOKEN).toBe('bridgey-token');
+    });
+
+    it('fails loudly naming model, provider, and session when the bridge cannot start', async () => {
+      const provider = new BridgeStateMockProvider();
+      provider.startAlwaysFails = true;
+      registry.register(provider);
+
+      await expect(service.resolveSessionProviderEnvVars(makeBridgeySession())).rejects.toThrow(
+        /Provider 'bridgey' failed to start its bridge for model 'bridgey-1' \(session 'sub-session-1'\): bridge start raced a provider re-instantiation/
+      );
+    });
+
+    it('fails loudly when buildSdkConfig keeps throwing after a successful bridge start', async () => {
+      const provider = new BridgeStateMockProvider();
+      provider.buildAlwaysFails = true;
+      registry.register(provider);
+
+      await expect(service.resolveSessionProviderEnvVars(makeBridgeySession())).rejects.toThrow(
+        /Provider 'bridgey' environment could not be built for model 'bridgey-1' \(session 'sub-session-1'\): bridge not started/
+      );
+    });
+
+    it('fails loudly when the session provider is not registered', async () => {
+      await expect(
+        service.resolveSessionProviderEnvVars(makeBridgeySession('bridgey-1'))
+      ).rejects.toThrow(
+        /Provider 'bridgey' is not registered; cannot prepare environment for session 'sub-session-1'/
+      );
+    });
+
+    it('re-reads the registry before retrying so a sync-swapped provider instance recovers', async () => {
+      const stale = new BridgeStateMockProvider();
+      stale.startAlwaysFails = true;
+      registry.register(stale);
+      const replacement = new BridgeStateMockProvider();
+      replacement.failFirstEnsure = false;
+      stale.buildSdkConfig = () => {
+        registry.unregister('bridgey');
+        registry.register(replacement);
+        throw new Error('bridge not started (stale instance was shut down by providers:sync)');
+      };
+
+      const envVars = await service.resolveSessionProviderEnvVars(makeBridgeySession());
+
+      expect(replacement.ensureCalls).toBe(1);
+      expect(envVars.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:60001');
+      expect(envVars.ANTHROPIC_AUTH_TOKEN).toBe('bridgey-token');
+    });
+
+    it('labels build failures as environment errors for providers without a bridge', async () => {
+      registry.register(new ThrowingMockProvider());
+      const session = makeBridgeySession('throwing-1');
+      session.config.provider =
+        'throwing' as unknown as import('@hyperneo/shared/provider').ProviderId;
+
+      await expect(service.resolveSessionProviderEnvVars(session)).rejects.toThrow(
+        /Provider 'throwing' environment could not be built for model 'throwing-1' \(session 'sub-session-1'\): embedded server not started/
+      );
+    });
+
+    it('returns anthropic env vars unchanged for the first-party provider', async () => {
+      const session = makeBridgeySession('claude-3-opus');
+      session.config.provider = 'anthropic';
+      const envVars = await service.resolveSessionProviderEnvVars(session);
+      expect(envVars).toEqual({});
     });
   });
 

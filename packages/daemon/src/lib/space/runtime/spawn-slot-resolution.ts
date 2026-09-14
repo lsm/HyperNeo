@@ -74,8 +74,10 @@ export function buildSlotOverrides(
     ? context?.task?.workflowModelOverrides?.[modelOverrideKey]
     : undefined;
   const effectiveGuards = slot.toolGuards;
+  const slotProvider = slot.provider?.trim() ? slot.provider?.trim() : undefined;
   return {
     model: taskModelOverride ?? slot.model,
+    provider: taskModelOverride ? undefined : slotProvider,
     thinkingLevel: slot.thinkingLevel,
     customPrompt: slotCustomPrompt,
     replaceAgentPrompt: slot.replaceAgentPrompt,
@@ -127,6 +129,7 @@ export interface NodeAgentOverrides {
   agentId?: string;
   name?: string;
   model?: string;
+  provider?: string;
   thinkingLevel?: ThinkingLevel;
 }
 
@@ -157,7 +160,7 @@ export function resolveNodeAgentConfig(
         autonomyLevel: null,
         model: overrides.model ?? template.model ?? null,
         thinkingLevel: overrides.thinkingLevel ?? template.thinkingLevel ?? null,
-        provider: template.provider ?? null,
+        provider: overrides.provider ?? template.provider ?? null,
         settingSources: template.settingSources ?? null,
         toolPermissions: template.toolPermissions,
         description: template.description,
@@ -179,6 +182,7 @@ export function resolveNodeAgentConfig(
       ...agent,
       displayName: overrides.name ?? agent.displayName,
       model: overrides.model ?? agent.model,
+      provider: overrides.provider ?? agent.provider,
       thinkingLevel: overrides.thinkingLevel ?? agent.thinkingLevel,
     },
     source: 'agent',

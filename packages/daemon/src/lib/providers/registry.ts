@@ -1,8 +1,96 @@
 import { createLogger } from '@hyperneo/shared/logger';
 import type { CuratedModel, Provider, ProviderId, ProviderInfo } from '@hyperneo/shared/provider';
 import type { Provider as ProviderIdStr } from '@hyperneo/shared';
+import { isAnthropicSdkModelId } from './anthropic-sdk-models.js';
 
 const log = createLogger('hyperneo:providers:registry', { consoleDeltas: true });
+
+function orderedOwnerCandidates(
+  registry: Pick<ProviderRegistry, 'get' | 'getAll'>,
+  modelId: string
+): { warmOwners: Provider[]; coldCatalogCandidates: Provider[] } {
+  const anthropicFamily = isAnthropicSdkModelId(modelId);
+  const all = registry.getAll();
+  const ordered = [
+    ...all.filter((provider) => provider.id.startsWith('custom:')),
+    ...all.filter((provider) => !provider.id.startsWith('custom:')),
+  ];
+  const warmOwners: Provider[] = [];
+  const coldCatalogCandidates: Provider[] = [];
+  const shorthandOwnerId = inferProviderForModel(modelId);
+  for (const provider of ordered) {
+    if (provider.id === 'anthropic' || provider.id === 'acp') continue;
+    if (
+      anthropicFamily &&
+      (provider.id === 'anthropic-copilot' || provider.id.startsWith('custom:'))
+    ) {
+      continue;
+    }
+    if (typeof provider.ownsModel !== 'function') continue;
+    if (provider.ownsModel(modelId) || provider.id === shorthandOwnerId) {
+      warmOwners.push(provider);
+    } else if (provider.hasCuratedModelList?.() === false) {
+      coldCatalogCandidates.push(provider);
+    }
+  }
+  return { warmOwners, coldCatalogCandidates };
+}
+
+export function providerMayOfferModel(provider: Provider, modelId: string): boolean {
+  if (provider.ownsModel(modelId)) return true;
+  return provider.hasCuratedModelList?.() === false;
+}
+
+export function resolveQueryProvider(
+  registry: Pick<ProviderRegistry, 'get' | 'getAll'>,
+  modelId: string,
+  explicitProviderId: string | undefined
+): Provider | undefined {
+  if (explicitProviderId) {
+    return registry.get(explicitProviderId);
+  }
+  const { warmOwners, coldCatalogCandidates } = orderedOwnerCandidates(registry, modelId);
+  return warmOwners[0] ?? coldCatalogCandidates[0] ?? registry.get('anthropic');
+}
+
+export interface ResolvedAvailableProvider {
+  provider: Provider | undefined;
+  available: boolean | null;
+  fallback: boolean;
+}
+
+export async function resolveAvailableQueryProvider(
+  registry: Pick<ProviderRegistry, 'get' | 'getAll'>,
+  modelId: string,
+  explicitProviderId: string | undefined
+): Promise<ResolvedAvailableProvider> {
+  if (explicitProviderId) {
+    return { provider: registry.get(explicitProviderId), available: null, fallback: false };
+  }
+  const { warmOwners, coldCatalogCandidates } = orderedOwnerCandidates(registry, modelId);
+  const candidates = warmOwners.length > 0 ? warmOwners : coldCatalogCandidates;
+  if (candidates.length === 0) {
+    return {
+      provider: registry.get('anthropic'),
+      available: null,
+      fallback: !isAnthropicSdkModelId(modelId),
+    };
+  }
+  for (const owner of candidates) {
+    if (typeof owner.isAvailable !== 'function') {
+      return { provider: owner, available: null, fallback: false };
+    }
+    try {
+      if (await owner.isAvailable()) return { provider: owner, available: true, fallback: false };
+    } catch {}
+  }
+  if (warmOwners.length > 0) return { provider: warmOwners[0], available: false, fallback: false };
+  return {
+    provider: registry.get('anthropic'),
+    available: null,
+    fallback: !isAnthropicSdkModelId(modelId),
+  };
+}
 
 export class ProviderRegistry {
   private providers = new Map<ProviderId, Provider>();
@@ -175,6 +263,17 @@ export function getProviderRegistry(): ProviderRegistry {
 /** @public */
 export function resetProviderRegistry(): void {
   registryInstance = null;
+}
+
+export interface SpawnRouteDecision {
+  provider: string | undefined;
+  fallback: boolean;
+}
+
+export async function inferAvailableSpawnRoute(modelId: string): Promise<SpawnRouteDecision> {
+  if (inferProviderForModel(modelId) === 'acp') return { provider: 'acp', fallback: false };
+  const resolved = await resolveAvailableQueryProvider(getProviderRegistry(), modelId, undefined);
+  return { provider: resolved.provider?.id, fallback: resolved.fallback };
 }
 
 export function inferProviderForModel(modelId: string): ProviderIdStr {

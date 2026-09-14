@@ -776,6 +776,14 @@ export class AgentSession
       );
     }
     const startGuard = createDirectQueryStartGuard(this.db.getDatabase(), () => this.session);
+    const rawProviderId = this.session.config.provider as string | undefined;
+    const normalizedProviderId = rawProviderId?.trim() || undefined;
+    if (rawProviderId !== normalizedProviderId) {
+      this.session.config.provider = normalizedProviderId as Session['config']['provider'];
+      try {
+        this.db.updateSession(this.session.id, { config: { ...this.session.config } });
+      } catch {}
+    }
     const wantsAcp = this.session.config.provider === 'acp';
     const hasAcpRunner = this.queryRunner instanceof AcpQueryRunner;
     if (wantsAcp !== hasAcpRunner) {

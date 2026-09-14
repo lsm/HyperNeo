@@ -4,8 +4,11 @@ import {
   QueryRunner,
   looksLikeRateLimit429,
   refreshQueryEnvFromProcess,
+  resolveAvailableQueryProvider,
+  resolveQueryProvider,
   type QueryRunnerContext,
 } from '../../../../src/lib/agent/query-runner';
+import { inferAvailableSpawnRoute } from '../../../../src/lib/providers/registry';
 import { resetSdkStartupGateForTests } from '../../../../src/lib/agent/sdk-startup-gate';
 import type { LimitRetryHint } from '../../../../src/lib/agent/limit-error-classifier';
 import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session';
@@ -294,6 +297,228 @@ describe('QueryRunner', () => {
     });
   });
 
+  function makeRegistryForResolver(
+    providers: Array<{
+      id: string;
+      owns: (modelId: string) => boolean;
+      available?: boolean;
+      cold?: boolean;
+    }>
+  ) {
+    const asProvider = (
+      id: string,
+      owns?: (modelId: string) => boolean,
+      available?: boolean,
+      cold?: boolean
+    ) =>
+      ({
+        id,
+        displayName: id,
+        ...(owns ? { ownsModel: owns } : {}),
+        ...(available !== undefined ? { isAvailable: () => available } : {}),
+        ...(cold !== undefined ? { hasCuratedModelList: () => !cold } : {}),
+      }) as unknown as import('@hyperneo/shared/provider').Provider;
+    return {
+      get: (id: string) => {
+        const match = providers.find((p) => p.id === id);
+        return match ? asProvider(match.id, match.owns, match.available, match.cold) : undefined;
+      },
+      getAll: () => providers.map((p) => asProvider(p.id, p.owns, p.available, p.cold)),
+    };
+  }
+
+  describe('resolveQueryProvider', () => {
+    const makeRegistry = makeRegistryForResolver;
+
+    const anthropicCatchAll = (_modelId: string) => true;
+
+    it('returns the explicitly requested provider when set', () => {
+      const registry = makeRegistry([
+        { id: 'anthropic', owns: anthropicCatchAll },
+        { id: 'custom:ai0', owns: () => false },
+      ]);
+      expect(resolveQueryProvider(registry, 'swe-2-high', 'custom:ai0')?.id).toBe('custom:ai0');
+    });
+
+    it('returns undefined for an explicit provider id that is not registered', () => {
+      const registry = makeRegistry([{ id: 'anthropic', owns: anthropicCatchAll }]);
+      expect(resolveQueryProvider(registry, 'swe-2-high', 'custom:gone')).toBeUndefined();
+    });
+
+    it('binds a specific non-anthropic owner even when anthropic claims the model as a catch-all', () => {
+      const registry = makeRegistry([
+        { id: 'anthropic', owns: anthropicCatchAll },
+        { id: 'custom:ai0', owns: (modelId) => modelId === 'swe-2-high' },
+      ]);
+      expect(resolveQueryProvider(registry, 'swe-2-high', undefined)?.id).toBe('custom:ai0');
+    });
+
+    it('keeps ambiguous claude-family ids on anthropic when copilot also claims them', () => {
+      const registry = makeRegistry([
+        { id: 'anthropic', owns: (modelId) => modelId.startsWith('claude-') },
+        {
+          id: 'anthropic-copilot',
+          owns: (modelId) => modelId.startsWith('claude-') || modelId.startsWith('copilot-'),
+        },
+      ]);
+      expect(resolveQueryProvider(registry, 'claude-sonnet-4.6', undefined)?.id).toBe('anthropic');
+    });
+
+    it('still infers copilot for copilot-only aliases anthropic does not claim', () => {
+      const registry = makeRegistry([
+        { id: 'anthropic', owns: (modelId) => modelId.startsWith('claude-') },
+        {
+          id: 'anthropic-copilot',
+          owns: (modelId) => modelId.startsWith('claude-') || modelId.startsWith('copilot-'),
+        },
+      ]);
+      expect(resolveQueryProvider(registry, 'copilot-anthropic-sonnet', undefined)?.id).toBe(
+        'anthropic-copilot'
+      );
+    });
+
+    it('still infers copilot for non-claude catalog ids despite the anthropic catch-all', () => {
+      const registry = makeRegistry([
+        { id: 'anthropic', owns: anthropicCatchAll },
+        {
+          id: 'anthropic-copilot',
+          owns: (modelId) => modelId.startsWith('copilot-') || modelId.startsWith('gemini-'),
+        },
+      ]);
+      expect(resolveQueryProvider(registry, 'gemini-3.1-pro-preview', undefined)?.id).toBe(
+        'anthropic-copilot'
+      );
+    });
+
+    it('prefers a custom owner over a built-in that also claims the same model id', () => {
+      const registry = makeRegistry([
+        { id: 'anthropic', owns: anthropicCatchAll },
+        { id: 'glm', owns: (modelId) => modelId.startsWith('glm-') },
+        { id: 'custom:ai0', owns: (modelId) => modelId === 'glm-4.7' },
+      ]);
+      expect(resolveQueryProvider(registry, 'glm-4.7', undefined)?.id).toBe('custom:ai0');
+    });
+
+    it('keeps claude-family ids on anthropic even when a custom endpoint lists them', () => {
+      const registry = makeRegistry([
+        { id: 'anthropic', owns: anthropicCatchAll },
+        { id: 'custom:ai0', owns: () => true },
+      ]);
+      expect(resolveQueryProvider(registry, 'claude-sonnet-4.6', undefined)?.id).toBe('anthropic');
+      expect(resolveQueryProvider(registry, 'sonnet', undefined)?.id).toBe('anthropic');
+      expect(resolveQueryProvider(registry, 'sonnet[1m]', undefined)?.id).toBe('anthropic');
+      expect(resolveQueryProvider(registry, 'Sonnet', undefined)?.id).toBe('anthropic');
+      expect(resolveQueryProvider(registry, 'SONNET[1M]', undefined)?.id).toBe('anthropic');
+    });
+
+    it('falls back to anthropic when only the anthropic catch-all claims the model', () => {
+      const registry = makeRegistry([{ id: 'anthropic', owns: anthropicCatchAll }]);
+      expect(resolveQueryProvider(registry, 'swe-2-high', undefined)?.id).toBe('anthropic');
+    });
+
+    it('retains a cold-catalog provider as a fallback owner ahead of anthropic', () => {
+      const registry = makeRegistry([
+        { id: 'anthropic', owns: anthropicCatchAll },
+        { id: 'anthropic-copilot', owns: () => false, cold: true },
+      ]);
+      expect(resolveQueryProvider(registry, 'copilot-only-model', undefined)?.id).toBe(
+        'anthropic-copilot'
+      );
+    });
+
+    it('routes bare shorthand aliases through their legacy provider', () => {
+      const registry = makeRegistry([
+        { id: 'anthropic', owns: anthropicCatchAll },
+        { id: 'glm', owns: (m) => m.startsWith('glm-') },
+      ]);
+      expect(resolveQueryProvider(registry, 'glm', undefined)?.id).toBe('glm');
+    });
+
+    it('prefers a warm owner over a cold-catalog candidate', () => {
+      const registry = makeRegistry([
+        { id: 'anthropic-copilot', owns: () => false, cold: true },
+        { id: 'glm', owns: (m) => m === 'glm-4.7' },
+      ]);
+      expect(resolveQueryProvider(registry, 'glm-4.7', undefined)?.id).toBe('glm');
+    });
+
+    it('falls back to anthropic for claude-family models regardless of registration order', () => {
+      const registry = makeRegistry([
+        { id: 'anthropic', owns: anthropicCatchAll },
+        { id: 'glm', owns: (modelId) => modelId.startsWith('glm-') },
+      ]);
+      expect(resolveQueryProvider(registry, 'claude-opus-5', undefined)?.id).toBe('anthropic');
+    });
+  });
+
+  describe('inferAvailableSpawnRoute', () => {
+    it('returns acp for providerless ACP models ahead of registry filtering', async () => {
+      const route = await inferAvailableSpawnRoute('acp-coder');
+      expect(route.provider).toBe('acp');
+      expect(route.fallback).toBe(false);
+    });
+  });
+
+  describe('resolveAvailableQueryProvider', () => {
+    const makeRegistry = makeRegistryForResolver;
+    const anthropicCatchAll = (_modelId: string) => true;
+
+    it('prefers the first available owner when an earlier owner is unavailable', async () => {
+      const registry = makeRegistry([
+        { id: 'anthropic-codex', owns: (m) => m === 'gpt-5.4', available: false },
+        { id: 'anthropic-copilot', owns: (m) => m === 'gpt-5.4', available: true },
+      ]);
+      const picked = await resolveAvailableQueryProvider(registry, 'gpt-5.4', undefined);
+      expect(picked.provider?.id).toBe('anthropic-copilot');
+    });
+
+    it('falls back to the first owner when every owner is unavailable', async () => {
+      const registry = makeRegistry([
+        { id: 'anthropic-codex', owns: (m) => m === 'gpt-5.4', available: false },
+        { id: 'anthropic-copilot', owns: (m) => m === 'gpt-5.4', available: false },
+      ]);
+      const picked = await resolveAvailableQueryProvider(registry, 'gpt-5.4', undefined);
+      expect(picked.provider?.id).toBe('anthropic-codex');
+    });
+
+    it('returns the explicit provider without availability filtering', async () => {
+      const registry = makeRegistry([
+        { id: 'anthropic-codex', owns: (m) => m === 'gpt-5.4', available: false },
+        { id: 'anthropic-copilot', owns: (m) => m === 'gpt-5.4', available: true },
+      ]);
+      const picked = await resolveAvailableQueryProvider(registry, 'gpt-5.4', 'anthropic-codex');
+      expect(picked.provider?.id).toBe('anthropic-codex');
+    });
+
+    it('skips an unavailable cold-catalog candidate and falls back to anthropic unprobed', async () => {
+      const registry = makeRegistryForResolver([
+        { id: 'anthropic', owns: anthropicCatchAll },
+        { id: 'anthropic-copilot', owns: () => false, cold: true, available: false },
+      ]);
+      const picked = await resolveAvailableQueryProvider(registry, 'copilot-only-model', undefined);
+      expect(picked.provider?.id).toBe('anthropic');
+      expect(picked.available).toBeNull();
+    });
+
+    it('marks an exhausted warm owner unavailable without touching the anthropic fallback', async () => {
+      const registry = makeRegistryForResolver([
+        { id: 'glm', owns: (m) => m === 'glm-4.7', available: false },
+      ]);
+      const picked = await resolveAvailableQueryProvider(registry, 'glm-4.7', undefined);
+      expect(picked.provider?.id).toBe('glm');
+      expect(picked.available).toBe(false);
+    });
+
+    it('keeps the known owner when it is unavailable and only a cold candidate remains', async () => {
+      const registry = makeRegistryForResolver([
+        { id: 'glm', owns: (m) => m === 'glm-4.7', available: false },
+        { id: 'anthropic-copilot', owns: () => false, cold: true, available: true },
+      ]);
+      const picked = await resolveAvailableQueryProvider(registry, 'glm-4.7', undefined);
+      expect(picked.provider?.id).toBe('glm');
+    });
+  });
+
   describe('resolveRetryUserMessage', () => {
     it('prefers the message identified by the result uuid and never guesses on a miss', async () => {
       async function* generator() {
@@ -430,6 +655,137 @@ describe('QueryRunner', () => {
         }
       }
     }
+
+    it('keeps a blank non-anthropic-family session providerless on the zero-candidate fallback', async () => {
+      await withAnthropicApiKey(async () => {
+        const blankSession: Session = {
+          ...mockSession,
+          config: { ...mockSession.config, model: 'custom-only-model', provider: '   ' },
+        };
+        const ctx = createContext({ session: blankSession });
+        runner = new QueryRunner(ctx);
+
+        await runner.start();
+        await ctx.queryPromise?.catch(() => {});
+
+        expect(blankSession.config.provider).not.toBe('anthropic');
+        expect(updateSessionSpy).not.toHaveBeenCalledWith(
+          'test-session-id',
+          expect.objectContaining({
+            config: expect.objectContaining({ provider: 'anthropic' }),
+          })
+        );
+      });
+    });
+
+    it('persists the inferred pin when a warm owner owns the model', async () => {
+      const registry = initializeProviders();
+      registry.register({
+        id: 'custom:pin-owner-test',
+        displayName: 'Pin Owner Test',
+        isAvailable: mock(async () => true),
+        getAuthStatus: mock(async () => ({ isAuthenticated: true, method: 'api_key' })),
+        ownsModel: (m: string) => m === 'pin-owned-model',
+        buildSdkConfig: mock(() => ({ envVars: {}, isAnthropicCompatible: true })),
+      } as unknown as Provider);
+      try {
+        const blankSession: Session = {
+          ...mockSession,
+          config: { ...mockSession.config, model: 'pin-owned-model', provider: '   ' },
+        };
+        const ctx = createContext({ session: blankSession });
+        runner = new QueryRunner(ctx);
+
+        await runner.start();
+        await ctx.queryPromise?.catch(() => {});
+
+        expect(blankSession.config.provider).toBe('custom:pin-owner-test');
+        expect(updateSessionSpy).toHaveBeenCalledWith(
+          'test-session-id',
+          expect.objectContaining({
+            config: expect.objectContaining({ provider: 'custom:pin-owner-test' }),
+          })
+        );
+      } finally {
+        registry.unregister('custom:pin-owner-test');
+      }
+    });
+
+    it('does not persist an inferred pin when the fallback provider is unavailable', async () => {
+      const savedApiKey = process.env.ANTHROPIC_API_KEY;
+      delete process.env.ANTHROPIC_API_KEY;
+      try {
+        const blankSession: Session = {
+          ...mockSession,
+          config: { ...mockSession.config, model: 'custom-only-model', provider: '   ' },
+        };
+        const ctx = createContext({ session: blankSession });
+        runner = new QueryRunner(ctx);
+
+        await runner.start();
+        await ctx.queryPromise?.catch(() => {});
+
+        expect(blankSession.config.provider).not.toBe('anthropic');
+        expect(updateSessionSpy).not.toHaveBeenCalledWith(
+          'test-session-id',
+          expect.objectContaining({
+            config: expect.objectContaining({ provider: 'anthropic' }),
+          })
+        );
+      } finally {
+        if (savedApiKey !== undefined) process.env.ANTHROPIC_API_KEY = savedApiKey;
+      }
+    });
+
+    it('normalizes a padded explicit session provider and persists the trimmed pin', async () => {
+      await withAnthropicApiKey(async () => {
+        const paddedSession: Session = {
+          ...mockSession,
+          config: { ...mockSession.config, provider: ' anthropic ' },
+        };
+        const ctx = createContext({ session: paddedSession });
+        runner = new QueryRunner(ctx);
+
+        await runner.start();
+        await ctx.queryPromise?.catch(() => {});
+
+        expect(paddedSession.config.provider).toBe('anthropic');
+        expect(updateSessionSpy).toHaveBeenCalledWith(
+          'test-session-id',
+          expect.objectContaining({
+            config: expect.objectContaining({ provider: 'anthropic' }),
+          })
+        );
+      });
+    });
+
+    it('does not pin an inferred provider while it is unavailable', async () => {
+      const registry = initializeProviders();
+      registry.register({
+        id: 'custom:unavailable-pin-test',
+        displayName: 'Unavailable Pin Test',
+        isAvailable: mock(async () => false),
+        ownsModel: (m: string) => m === 'unavailable-pin-model',
+        getModels: mock(async () => []),
+        getAuthStatus: mock(async () => ({ isAuthenticated: false })),
+        buildSdkConfig: mock(() => ({ envVars: {}, isAnthropicCompatible: true })),
+      } as unknown as Provider);
+      try {
+        const blankSession: Session = {
+          ...mockSession,
+          config: { ...mockSession.config, model: 'unavailable-pin-model', provider: '   ' },
+        };
+        const ctx = createContext({ session: blankSession });
+        runner = new QueryRunner(ctx);
+
+        await runner.start();
+        await ctx.queryPromise?.catch(() => {});
+
+        expect(blankSession.config.provider).toBe('   ');
+      } finally {
+        registry.unregister('custom:unavailable-pin-test');
+      }
+    });
 
     it('should skip start if query already running', async () => {
       isRunningSpy.mockReturnValue(true);
@@ -1089,6 +1445,7 @@ describe('QueryRunner', () => {
         isAvailable: mock(async () => true),
         getAuthStatus: mock(async () => ({ isAuthenticated: true, method: 'api_key' })),
         setSessionThinkingConfig: setSessionThinkingConfigSpy,
+        buildSdkConfig: mock(() => ({ envVars: {}, isAnthropicCompatible: true })),
       } as unknown as Provider);
       try {
         mockSession.workspacePath = tmpdir();
@@ -1116,6 +1473,7 @@ describe('QueryRunner', () => {
         isAvailable: mock(async () => true),
         getAuthStatus: mock(async () => ({ isAuthenticated: true, method: 'api_key' })),
         setSessionThinkingConfig: setSessionThinkingConfigSpy,
+        buildSdkConfig: mock(() => ({ envVars: {}, isAnthropicCompatible: true })),
       } as unknown as Provider);
       try {
         mockSession.workspacePath = tmpdir();
@@ -6087,6 +6445,7 @@ describe('QueryRunner', () => {
           restoreEnvVars: mock((_original: Record<string, unknown>) => {
             onRestore?.();
           }),
+          resolveSessionProviderEnvVars: mock(async () => ({})),
         };
       });
 

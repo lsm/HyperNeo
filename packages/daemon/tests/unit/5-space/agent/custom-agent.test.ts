@@ -1093,7 +1093,35 @@ describe('createCustomAgentInit', () => {
     );
 
     expect(slotOverride.model).toBe('claude-sonnet-4-6');
-    expect(slotOverride.provider).toBe('anthropic');
+    expect(slotOverride.provider).toBeUndefined();
+  });
+
+  it('leaves the provider unset for inferred models so spawn-time routing decides', () => {
+    const inferred = createCustomAgentInit(
+      makeConfig({
+        customAgent: makeAgent({ model: null, provider: null }),
+      })
+    );
+
+    expect(inferred.provider).toBeUndefined();
+  });
+
+  it('preserves the acp pin for providerless ACP models', () => {
+    const slotAcp = createCustomAgentInit(
+      makeConfig({
+        customAgent: makeAgent({ model: null, provider: null }),
+        slotOverrides: { model: 'acp-coder' },
+      })
+    );
+    expect(slotAcp.model).toBe('acp-coder');
+    expect(slotAcp.provider).toBe('acp');
+
+    const agentAcp = createCustomAgentInit(
+      makeConfig({
+        customAgent: makeAgent({ model: 'acp-coder', provider: null }),
+      })
+    );
+    expect(agentAcp.provider).toBe('acp');
   });
 
   it('applies thinking level precedence slot > agent > app default', () => {
