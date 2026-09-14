@@ -1057,7 +1057,7 @@ export function SpaceTaskPane({
     try {
       setEditTaskBusy(true);
       setEditTaskError(null);
-      await spaceStore.updateTask(savedTaskId, updates);
+      await spaceStore.editTaskMetadata(savedTaskId, updates);
       if (currentTaskIdRef.current === savedTaskId) {
         setShowEditTaskModal(false);
       }

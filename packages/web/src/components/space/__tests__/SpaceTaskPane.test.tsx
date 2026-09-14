@@ -104,6 +104,7 @@ let mockNodeExecutionsByNodeId: ReturnType<typeof signal<Map<string, unknown[]>>
 const mockWorkspaces = signal<unknown[]>([]);
 
 const mockUpdateTask = vi.fn().mockResolvedValue(undefined);
+const mockEditTaskMetadata = vi.fn().mockResolvedValue(undefined);
 const mockRunTaskDirectly = vi.fn().mockResolvedValue({ accepted: true, jobId: 'job-1' });
 const mockCancelTask = vi.fn().mockResolvedValue({ accepted: true, jobId: null });
 const mockRecoverWorkflowTask = vi.fn().mockResolvedValue(undefined);
@@ -132,6 +133,7 @@ vi.mock('../../../lib/space-store', () => ({
       nodeExecutionsByNodeId: mockNodeExecutionsByNodeId,
       workspaces: mockWorkspaces,
       updateTask: mockUpdateTask,
+      editTaskMetadata: mockEditTaskMetadata,
       runTaskDirectly: mockRunTaskDirectly,
       cancelTask: mockCancelTask,
       recoverWorkflowTask: mockRecoverWorkflowTask,
@@ -320,6 +322,8 @@ describe('SpaceTaskPane', () => {
     mockNodeExecutions.value = [];
     mockWorkspaces.value = [];
     mockUpdateTask.mockClear();
+    mockEditTaskMetadata.mockClear();
+    mockEditTaskMetadata.mockResolvedValue(undefined);
     mockCancelTask.mockClear();
     mockRecoverWorkflowTask.mockClear();
     mockEnsureTaskAgentSession.mockReset();
@@ -1428,9 +1432,11 @@ describe('SpaceTaskPane — canvas toggle', () => {
       expect(getByTestId('edit-task-modal-content')).toBeTruthy();
     });
 
-    it('calls spaceStore.updateTask when edit is confirmed', async () => {
+    it('calls spaceStore.editTaskMetadata when edit is confirmed', async () => {
       mockTasks.value = [makeTask({ status: 'in_progress', title: 'Old Title' })];
-      mockUpdateTask.mockResolvedValueOnce(makeTask({ status: 'in_progress', title: 'New Title' }));
+      mockEditTaskMetadata.mockResolvedValueOnce(
+        makeTask({ status: 'in_progress', title: 'New Title' })
+      );
       const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" />);
       fireEvent.click(getByTestId('task-actions-menu-trigger'));
       fireEvent.click(getByText('Edit title, description, or priority'));
@@ -1441,15 +1447,15 @@ describe('SpaceTaskPane — canvas toggle', () => {
       fireEvent.click(getByTestId('edit-task-confirm'));
 
       await waitFor(() => {
-        expect(mockUpdateTask).toHaveBeenCalledWith('task-1', {
+        expect(mockEditTaskMetadata).toHaveBeenCalledWith('task-1', {
           title: 'New Title',
         });
       });
     });
 
-    it('shows inline error when updateTask fails', async () => {
+    it('shows inline error when editTaskMetadata fails', async () => {
       mockTasks.value = [makeTask({ status: 'in_progress', title: 'Old Title' })];
-      mockUpdateTask.mockRejectedValueOnce(new Error('Server error'));
+      mockEditTaskMetadata.mockRejectedValueOnce(new Error('Server error'));
 
       const { getByTestId, getByText, findByTestId } = render(<SpaceTaskPane taskId="task-1" />);
       fireEvent.click(getByTestId('task-actions-menu-trigger'));
