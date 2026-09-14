@@ -54,23 +54,6 @@ export async function createSpaceTaskViaRpc(
   return id;
 }
 
-export async function updateSpaceTaskStatusViaRpc(
-  page: Page,
-  spaceId: string,
-  taskId: string,
-  status: string,
-  result?: string
-): Promise<void> {
-  await page.evaluate(
-    async ({ spaceId, taskId, status, result }) => {
-      const hub = window.__messageHub || window.appState?.messageHub;
-      if (!hub?.request) throw new Error('MessageHub not available');
-      await hub.request('spaceTask.update', { spaceId, taskId, status, result });
-    },
-    { spaceId, taskId, status, result }
-  );
-}
-
 export async function deleteSpaceWorkflowsViaRpc(page: Page, spaceId: string): Promise<void> {
   if (!spaceId) return;
   try {

@@ -304,7 +304,6 @@ function makeMockHub() {
         const input = (params?.input ?? {}) as Record<string, unknown>;
         return makeTask(input.taskId as string, input.approved ? 'approved' : 'in_progress');
       }
-      if (method === 'spaceTask.update') return makeTask('t1', 'in_progress');
       if (method === 'operation.invoke' && params?.name === 'task.update') {
         if (taskUpdateResult !== undefined) return taskUpdateResult;
         const input = (params?.input ?? {}) as Record<string, unknown>;
@@ -1795,16 +1794,26 @@ describe('SpaceStore — CRUD methods', () => {
     expect(workspaces[0].isPrimary).toBe(true);
   });
 
-  it('updateTask calls spaceTask.update RPC with taskId (not id)', async () => {
+  it('setTaskStatus moves the task through the task.transition operation', async () => {
     await spaceStore.selectSpace('space-1');
-    const task = await spaceStore.updateTask('t1', { status: 'in_progress' });
+    mockHub.request.mockClear();
 
-    expect(mockHub.request).toHaveBeenCalledWith('spaceTask.update', {
-      taskId: 't1',
-      spaceId: 'space-1',
-      status: 'in_progress',
+    const task = await spaceStore.setTaskStatus('t1', 'in_progress');
+
+    expect(mockHub.request).toHaveBeenCalledWith('operation.invoke', {
+      name: 'task.transition',
+      input: { taskId: 't1', status: 'in_progress' },
     });
     expect(task.status).toBe('in_progress');
+  });
+
+  it('setTaskStatus surfaces a transition rejection', async () => {
+    await spaceStore.selectSpace('space-1');
+    transitionResult = 'invalid_transition';
+
+    await expect(spaceStore.setTaskStatus('t1', 'done')).rejects.toThrow(
+      'Cannot move task t1 to done: invalid_transition'
+    );
   });
 
   it('editTaskMetadata edits fields through the task.update operation', async () => {

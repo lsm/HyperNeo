@@ -193,13 +193,15 @@ test.describe('Space Happy Path Pipeline (Task-First)', () => {
           input: { taskId: tid },
         })) as { status: string };
         if (current.status === 'pending') {
-          await hub.request('spaceTask.update', {
-            spaceId: sid,
-            taskId: tid,
-            status: 'in_progress',
+          await hub.request('operation.invoke', {
+            name: 'task.transition',
+            input: { taskId: tid, status: 'in_progress' },
           });
         }
-        await hub.request('spaceTask.update', { spaceId: sid, taskId: tid, status: 'done' });
+        await hub.request('operation.invoke', {
+          name: 'task.transition',
+          input: { taskId: tid, status: 'done' },
+        });
       },
       { sid: spaceId, tid: taskId }
     );

@@ -3,10 +3,10 @@ import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vite
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/preact';
 import type { SpaceTask } from '@hyperneo/shared';
 
-const updateTaskMock: Mock = vi.fn();
+const setTaskStatusMock: Mock = vi.fn();
 vi.mock('../../../lib/space-store', () => ({
   spaceStore: {
-    updateTask: (...args: unknown[]) => updateTaskMock(...args),
+    setTaskStatus: (...args: unknown[]) => setTaskStatusMock(...args),
   },
 }));
 
@@ -32,8 +32,8 @@ function makeTask(overrides: Partial<SpaceTask> = {}): SpaceTask {
 describe('PendingPostApprovalBanner', () => {
   beforeEach(() => {
     cleanup();
-    updateTaskMock.mockReset();
-    updateTaskMock.mockResolvedValue(undefined);
+    setTaskStatusMock.mockReset();
+    setTaskStatusMock.mockResolvedValue(undefined);
   });
   afterEach(() => {
     cleanup();
@@ -66,7 +66,7 @@ describe('PendingPostApprovalBanner', () => {
     expect(queryByTestId('pending-post-approval-view-session-btn')).toBeNull();
   });
 
-  it('Send back calls updateTask with status=in_progress', async () => {
+  it('Send back transitions the task to in_progress', async () => {
     const task = makeTask({
       status: 'approved',
       postApprovalBlockedReason: 'spawn failed',
@@ -74,15 +74,12 @@ describe('PendingPostApprovalBanner', () => {
     const { getByTestId } = render(<PendingPostApprovalBanner task={task} spaceId="space-1" />);
     fireEvent.click(getByTestId('pending-post-approval-send-back-btn'));
     await waitFor(() => {
-      expect(updateTaskMock).toHaveBeenCalledTimes(1);
+      expect(setTaskStatusMock).toHaveBeenCalledTimes(1);
     });
-    expect(updateTaskMock).toHaveBeenCalledWith(
-      'task-1',
-      expect.objectContaining({ status: 'in_progress', postApprovalBlockedReason: null })
-    );
+    expect(setTaskStatusMock).toHaveBeenCalledWith('task-1', 'in_progress');
   });
 
-  it('Mark done calls updateTask with status=done and clears post-approval fields', async () => {
+  it('Mark done transitions the task to done and lets the daemon clear post-approval fields', async () => {
     const task = makeTask({
       status: 'approved',
       postApprovalBlockedReason: 'stuck',
@@ -90,17 +87,9 @@ describe('PendingPostApprovalBanner', () => {
     const { getByTestId } = render(<PendingPostApprovalBanner task={task} spaceId="space-1" />);
     fireEvent.click(getByTestId('pending-post-approval-mark-done-btn'));
     await waitFor(() => {
-      expect(updateTaskMock).toHaveBeenCalledTimes(1);
+      expect(setTaskStatusMock).toHaveBeenCalledTimes(1);
     });
-    expect(updateTaskMock).toHaveBeenCalledWith(
-      'task-1',
-      expect.objectContaining({
-        status: 'done',
-        postApprovalSessionId: null,
-        postApprovalStartedAt: null,
-        postApprovalBlockedReason: null,
-      })
-    );
+    expect(setTaskStatusMock).toHaveBeenCalledWith('task-1', 'done');
   });
 
   it('View session appears when sessionId + handler present', () => {
@@ -118,8 +107,8 @@ describe('PendingPostApprovalBanner', () => {
     expect(onViewSession).toHaveBeenCalledWith('session-xyz');
   });
 
-  it('surfaces error when updateTask rejects', async () => {
-    updateTaskMock.mockRejectedValueOnce(new Error('rpc exploded'));
+  it('surfaces error when the transition rejects', async () => {
+    setTaskStatusMock.mockRejectedValueOnce(new Error('rpc exploded'));
     const task = makeTask({
       status: 'approved',
       postApprovalBlockedReason: 'stuck',

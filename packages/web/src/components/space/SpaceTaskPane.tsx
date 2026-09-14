@@ -24,7 +24,7 @@ import {
   currentSpaceTaskViewTabSignal,
   rightPanelTargetSignal,
 } from '../../lib/signals';
-import { buildMarkDonePayload, getTaskWorkspaceLabel } from '../../lib/space-task-helpers';
+import { getTaskWorkspaceLabel } from '../../lib/space-task-helpers';
 import { spaceStore } from '../../lib/space-store';
 import { resolveActiveTaskBanner } from '../../lib/task-banner.ts';
 import { cn } from '../../lib/utils';
@@ -1008,8 +1008,7 @@ export function SpaceTaskPane({
       } else if (task.workflowRunId && isWorkflowRecoveryTransition(task.status, newStatus)) {
         await spaceStore.recoverWorkflowTask(task.id, newStatus);
       } else {
-        const payload = newStatus === 'done' ? buildMarkDonePayload(task) : { status: newStatus };
-        await spaceStore.updateTask(task.id, payload);
+        await spaceStore.setTaskStatus(task.id, newStatus);
       }
     } catch (err) {
       setThreadSendError(formatTaskThreadError(err));

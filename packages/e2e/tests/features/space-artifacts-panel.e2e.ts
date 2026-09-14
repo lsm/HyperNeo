@@ -82,7 +82,10 @@ async function createSpaceWithRunAndChanges(
       }
       const taskId = taskRes.id;
 
-      await hub.request('spaceTask.update', { spaceId, taskId, status: 'done' });
+      await hub.request('operation.invoke', {
+        name: 'task.transition',
+        input: { taskId, status: 'done' },
+      });
 
       return { spaceId, taskId };
     },

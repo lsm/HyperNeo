@@ -41,7 +41,6 @@ import { Logger } from '../logger.ts';
 import { setupDialogHandlers } from './dialog-handlers.ts';
 import { setupQuestionHandlers } from './question-handlers.ts';
 import { setupSpaceHandlers } from './space-handlers.ts';
-import { setupSpaceTaskHandlers, type SpaceTaskManagerFactory } from './space-task-handlers.ts';
 import { setupSpaceTaskMessageHandlers } from './space-task-message-handlers.ts';
 import { createDefaultSessionResolutionDeps } from '../session-resolution/default-deps.ts';
 import { ensureSession } from '../session-resolution/ensure-session.ts';
@@ -589,7 +588,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       spaceGoalService.handleTaskTerminal(taskId, { fromStatus, deferPostCommitEffects: true }),
   });
 
-  const spaceTaskManagerFactory: SpaceTaskManagerFactory = (spaceId: string) => {
+  const spaceTaskManagerFactory = (spaceId: string): SpaceTaskManager => {
     return new SpaceTaskManager(
       deps.db.getDatabase(),
       spaceId,
@@ -1206,15 +1205,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.spaceManager,
     spaceRuntimeService,
     { ensureSession: (target) => ensureSession(target, sessionResolutionDeps) }
-  );
-
-  setupSpaceTaskHandlers(
-    deps.messageHub,
-    deps.spaceManager,
-    spaceWorkflowManager,
-    spaceTaskManagerFactory,
-    deps.internalEventBus,
-    spaceRuntimeService
   );
 
   setupTaskScheduleHandlers(deps.messageHub, {
