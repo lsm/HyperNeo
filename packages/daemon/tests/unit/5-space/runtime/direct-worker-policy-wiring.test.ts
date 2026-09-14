@@ -129,7 +129,7 @@ test.each([
     startQuery: true,
     replayPendingMessages: true,
   });
-  await provisioner.reattachWorkflowMcpServers(agent, ['node-agent']);
+  await provisioner.reattachWorkflowMcpServers(agent, ['space-actions']);
   expect(provisionWorkflowSession).not.toHaveBeenCalled();
   expect(mcpSelfHeal).not.toHaveBeenCalled();
   expect(getSpace).not.toHaveBeenCalled();

@@ -2736,7 +2736,7 @@ export class TaskAgentManager {
     if (!this.isSessionAlive(sessionId)) return false;
     const session = this.getAgentSessionById(sessionId);
     if (!session) return false;
-    await this.mcpSelfHeal(session, ['node-agent']);
+    await this.mcpSelfHeal(session, ['node-agent', 'space-actions']);
     await this.startRestoredWorkerForResume(session);
     return true;
   }
@@ -4591,12 +4591,9 @@ export class TaskAgentManager {
     );
   }
 
-  private static readonly REQUIRED_WORKFLOW_SUBSESSION_MCP_SERVERS = ['node-agent'] as const;
-
   requiredWorkflowSubSessionMcpServers(): string[] {
-    return this.config.memoryRepo
-      ? [...TaskAgentManager.REQUIRED_WORKFLOW_SUBSESSION_MCP_SERVERS, 'agent-memory']
-      : [...TaskAgentManager.REQUIRED_WORKFLOW_SUBSESSION_MCP_SERVERS];
+    const required = isSpaceActionsDispatcherEnabled() ? ['space-actions'] : ['node-agent'];
+    return this.config.memoryRepo ? [...required, 'agent-memory'] : required;
   }
 
   async ensureNodeAgentAttached(
@@ -4633,12 +4630,11 @@ export class TaskAgentManager {
         `Self-healing by re-injecting before first turn — but this indicates a regression in the spawn/rehydrate merge logic.`
     );
 
-    for (const name of missing) {
-      if (name === 'node-agent') {
-        await this.reinjectNodeAgentMcpServer(session, ctx);
-      } else if (name === 'agent-memory') {
-        await this.reinjectAgentMemoryMcpServer(session, ctx);
-      }
+    if (missing.includes('node-agent') || missing.includes('space-actions')) {
+      await this.reinjectNodeAgentMcpServer(session, ctx);
+    }
+    if (missing.includes('agent-memory')) {
+      await this.reinjectAgentMemoryMcpServer(session, ctx);
     }
 
     const verifyMcpServers =

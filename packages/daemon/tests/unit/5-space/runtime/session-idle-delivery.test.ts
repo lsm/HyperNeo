@@ -198,7 +198,7 @@ async function makeIdleSessionHarness(): Promise<IdleCoordinatorHarness> {
     { autoReplayPendingMessages: false }
   ) as AgentSessionType;
   agentSession.mergeRuntimeMcpServers({
-    'space-agent-tools': { type: 'stdio', command: 'stub-space-agent-tools' },
+    'space-actions': { type: 'stdio', command: 'stub-space-actions' },
   });
 
   const jobQueue = db.getJobQueueRepo();

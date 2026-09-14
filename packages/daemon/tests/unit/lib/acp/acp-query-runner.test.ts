@@ -3886,12 +3886,13 @@ describe('AcpQueryRunner', () => {
       queryOptions: {
         cwd: '/tmp/acp-session',
         mcpServers: {
-          'space-agent-tools': {
+          'space-actions': {
             type: 'sdk',
+            name: 'space-actions',
             instance: {
               _registeredTools: {
-                create_standalone_task: {
-                  description: 'Create a task',
+                call_action: {
+                  description: 'Dispatch a Space action',
                   inputSchema: undefined,
                   handler: mock(async () => ({ content: [{ type: 'text', text: 'ok' }] })),
                 },
