@@ -65,7 +65,10 @@ async function runRuntimeExecutor(
     return typeof recovered === 'string' ? 'invalid_transition' : recovered;
   }
   if (!deps.stopForStatus) throw new Error(`Space runtime executor unavailable: ${executor}`);
-  const stopped = await deps.stopForStatus(spaceId, task.id, { status: input.status });
+  const stopped = await deps.stopForStatus(spaceId, task.id, {
+    status: input.status,
+    result: input.result,
+  });
   return stopped ?? 'invalid_transition';
 }
 

@@ -898,6 +898,28 @@ describe('space-task-handlers', () => {
       expect(taskManager.setTaskStatus).not.toHaveBeenCalled();
     });
 
+    it('keeps the human approval stamp when review → done goes through the stop path', async () => {
+      const reviewTask = {
+        ...mockTask,
+        status: 'review' as const,
+        workflowRunId: 'run-1',
+        taskAgentSessionId: 'task-session-1',
+      };
+      const doneTask = { ...reviewTask, status: 'done' as const };
+      const runtime = {
+        stopWorkflowBackedTaskForStatus: mock(async () => doneTask),
+        isWorkflowRunActive: mock(() => true),
+      } as unknown as SpaceRuntimeService;
+      setup(mockSpace, reviewTask, runtime);
+
+      await call('spaceTask.update', { spaceId: 'space-1', taskId: 'task-1', status: 'done' });
+
+      expect(runtime.stopWorkflowBackedTaskForStatus).toHaveBeenCalledWith('space-1', 'task-1', {
+        status: 'done',
+        approvalSource: 'human',
+      });
+    });
+
     it('writes done directly when the workflow run is no longer active', async () => {
       const runningTask = {
         ...mockTask,

@@ -165,6 +165,12 @@ export function createSpaceRegistryEntries(
       if (params.status === 'stopped') return DESTRUCTIVE_ACTION_AUTONOMY_LEVEL;
       const toStopped = params.status === 'open' || params.status === 'cancelled';
       const toBlockedFromPaused = params.status === 'blocked' && isRateOrUsageLimited(task.status);
+      const tearsDownLiveSessions =
+        (params.status === 'done' || params.status === 'blocked') &&
+        (!!task.taskAgentSessionId ||
+          !!task.postApprovalSessionId ||
+          runHasLiveSessions(task.workflowRunId));
+      if (tearsDownLiveSessions) return DESTRUCTIVE_ACTION_AUTONOMY_LEVEL;
       if (
         (toStopped || toBlockedFromPaused) &&
         routeCancelsActiveWorkflowRun(task.status) &&

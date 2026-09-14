@@ -3237,10 +3237,14 @@ export class SpaceRuntime {
       }
       let updated = await taskManager.setTaskStatus(taskId, nextStatus, {
         result: params.result ?? undefined,
+        approvalSource: params.approvalSource ?? undefined,
         approvalReason:
           nextStatus === 'cancelled'
             ? (params.cancelReason ?? params.approvalReason ?? undefined)
             : (params.approvalReason ?? undefined),
+        onCascadedTasks: async (cascaded) => {
+          for (const cascadedTask of cascaded) await this.safeOnTaskUpdated(spaceId, cascadedTask);
+        },
       });
 
       const {

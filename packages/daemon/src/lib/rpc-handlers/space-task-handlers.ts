@@ -287,8 +287,12 @@ export function setupSpaceTaskHandlers(
                 `Cannot stop workflow-backed task ${taskId}: SpaceRuntimeService is unavailable.`
               );
             }
+            const stoppingParams =
+              currentTask.status === 'review' && updateParams.status === 'done'
+                ? { ...updateParams, approvalSource: 'human' as const }
+                : updateParams;
             const stopped = await stopTaskExecution(
-              createWorkflowTaskStoppingExecutor(spaceId, spaceRuntimeService, updateParams),
+              createWorkflowTaskStoppingExecutor(spaceId, spaceRuntimeService, stoppingParams),
               taskId,
               updateParams.status
             );

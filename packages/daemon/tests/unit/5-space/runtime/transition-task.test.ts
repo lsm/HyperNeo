@@ -464,6 +464,22 @@ describe('decide', () => {
     expect(result).toEqual({ reason: 'invalid_transition' });
   });
 
+  test('stop_for_status forwards the completion result to the runtime', async () => {
+    const owned = createOwned('in_progress', createWorkflowRun().id);
+    const stopped = { ...owned.task, status: 'done' as const };
+    const stopForStatus = mock(async () => stopped);
+    await decide(
+      owned,
+      { taskId: owned.task.id, status: 'done', result: 'shipped it' },
+      rpc,
+      deps({ stopForStatus, isWorkflowRunActive: () => true })
+    );
+    expect(stopForStatus).toHaveBeenCalledWith(spaceId, owned.task.id, {
+      status: 'done',
+      result: 'shipped it',
+    });
+  });
+
   test('stop_for_status calls the bound executor and completes the transition', async () => {
     const owned = createOwned('in_progress', createWorkflowRun().id);
     const stopped = { ...owned.task, status: 'open' as const };
