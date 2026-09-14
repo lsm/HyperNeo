@@ -915,17 +915,22 @@ export class TaskAgentManager {
           ? request.task.workflowModelOverrides?.[`${request.node.id}:${request.slot.name}`]
           : undefined;
         const routingCandidates = new Set<string>();
-        if (taskModelOverride) routingCandidates.add(taskModelOverride);
-        for (const entry of customAgent?.modelPool ?? []) {
-          if (entry.model) routingCandidates.add(entry.model);
+        if (taskModelOverride || request.slot.model || customAgent?.model) {
+          const fixedModel =
+            taskModelOverride ?? request.slot.model ?? customAgent?.model ?? undefined;
+          if (fixedModel) routingCandidates.add(fixedModel);
+        } else {
+          for (const entry of customAgent?.modelPool ?? []) {
+            if (entry.model) routingCandidates.add(entry.model);
+          }
+          if (request.space.defaultModel) routingCandidates.add(request.space.defaultModel);
         }
-        if (request.slot.model) routingCandidates.add(request.slot.model);
-        if (customAgent?.model) routingCandidates.add(customAgent.model);
-        if (request.space.defaultModel) routingCandidates.add(request.space.defaultModel);
         const routedByModel = new Map<string, string | undefined>();
-        for (const candidate of routingCandidates) {
-          routedByModel.set(candidate, await inferAvailableSpawnProviderForModel(candidate));
-        }
+        await Promise.all(
+          [...routingCandidates].map(async (candidate) => {
+            routedByModel.set(candidate, await inferAvailableSpawnProviderForModel(candidate));
+          })
+        );
         let slot = request.slot;
         let poolProvider: string | undefined;
         let poolApplied = false;
@@ -5586,17 +5591,22 @@ export class TaskAgentManager {
       ? task.workflowModelOverrides?.[`${matchedNodeId}:${matchedSlot.name}`]
       : undefined;
     const routingCandidates = new Set<string>();
-    if (postApprovalModelOverride) routingCandidates.add(postApprovalModelOverride);
-    for (const entry of poolAgent?.modelPool ?? []) {
-      if (entry.model) routingCandidates.add(entry.model);
+    if (postApprovalModelOverride || matchedSlot.model || poolAgent?.model) {
+      const fixedModel =
+        postApprovalModelOverride ?? matchedSlot.model ?? poolAgent?.model ?? undefined;
+      if (fixedModel) routingCandidates.add(fixedModel);
+    } else {
+      for (const entry of poolAgent?.modelPool ?? []) {
+        if (entry.model) routingCandidates.add(entry.model);
+      }
+      if (space.defaultModel) routingCandidates.add(space.defaultModel);
     }
-    if (matchedSlot.model) routingCandidates.add(matchedSlot.model);
-    if (poolAgent?.model) routingCandidates.add(poolAgent.model);
-    if (space.defaultModel) routingCandidates.add(space.defaultModel);
     const routedByModel = new Map<string, string | undefined>();
-    for (const candidate of routingCandidates) {
-      routedByModel.set(candidate, await inferAvailableSpawnProviderForModel(candidate));
-    }
+    await Promise.all(
+      [...routingCandidates].map(async (candidate) => {
+        routedByModel.set(candidate, await inferAvailableSpawnProviderForModel(candidate));
+      })
+    );
     let slot = matchedSlot;
     let poolProvider: string | undefined;
     let poolApplied = false;
