@@ -15,6 +15,7 @@ const {
   mockEnsureConfigData,
   mockFetchEvolutionScope,
   mockUpdateTask,
+  mockEditTaskMetadata,
   mockCancelTask,
   mockSubmitForReview,
   mockPublishTask,
@@ -37,6 +38,7 @@ const {
     mockEnsureConfigData: vi.fn().mockResolvedValue(undefined),
     mockFetchEvolutionScope: vi.fn().mockResolvedValue({ id: 'scope-1', name: 'Launch Scope' }),
     mockUpdateTask: vi.fn().mockResolvedValue(undefined),
+    mockEditTaskMetadata: vi.fn().mockResolvedValue(undefined),
     mockCancelTask: vi.fn().mockResolvedValue({ accepted: true, jobId: null }),
     mockSubmitForReview: vi.fn().mockResolvedValue(undefined),
     mockPublishTask: vi.fn().mockResolvedValue(undefined),
@@ -86,6 +88,7 @@ vi.mock('../../../lib/space-store', () => ({
     ensureConfigData: mockEnsureConfigData,
     fetchEvolutionScope: mockFetchEvolutionScope,
     updateTask: mockUpdateTask,
+    editTaskMetadata: mockEditTaskMetadata,
     cancelTask: mockCancelTask,
     submitForReview: mockSubmitForReview,
     publishTask: mockPublishTask,
@@ -198,6 +201,8 @@ describe('TaskAuxiliaryPanel', () => {
     mockFetchEvolutionScope.mockClear();
     mockUpdateTask.mockClear();
     mockUpdateTask.mockResolvedValue(undefined);
+    mockEditTaskMetadata.mockClear();
+    mockEditTaskMetadata.mockResolvedValue(undefined);
     mockCancelTask.mockClear();
     mockCancelTask.mockResolvedValue({ accepted: true, jobId: null });
     mockSubmitForReview.mockClear();
@@ -270,7 +275,9 @@ describe('TaskAuxiliaryPanel', () => {
     fireEvent.blur(textarea);
 
     await waitFor(() =>
-      expect(mockUpdateTask).toHaveBeenCalledWith('task-1', { description: 'Updated description' })
+      expect(mockEditTaskMetadata).toHaveBeenCalledWith('task-1', {
+        description: 'Updated description',
+      })
     );
   });
 

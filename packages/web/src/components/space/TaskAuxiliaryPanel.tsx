@@ -167,7 +167,7 @@ export function TaskAuxiliaryPanel({
     if (descriptionDraft === current) return;
     try {
       setSavingDescription(true);
-      await spaceStore.updateTask(task.id, { description: descriptionDraft });
+      await spaceStore.editTaskMetadata(task.id, { description: descriptionDraft });
     } catch {
       setDescriptionDraft(current);
     } finally {

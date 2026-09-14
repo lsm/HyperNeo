@@ -23,6 +23,7 @@ let mockEventHandlerSets: Map<string, Set<(event: unknown) => void>>;
 let mockHub: ReturnType<typeof makeMockHub>;
 let taskDetailResult: SpaceTask | null = null;
 let transitionResult: SpaceTask | string | null | undefined;
+let taskUpdateResult: SpaceTask | null | undefined;
 let templateListResult: SpaceAgentTemplate[] | null = null;
 let updateTemplateResult: SpaceAgentTemplate | null | undefined;
 
@@ -303,6 +304,11 @@ function makeMockHub() {
         return makeTask(input.taskId as string, input.approved ? 'approved' : 'in_progress');
       }
       if (method === 'spaceTask.update') return makeTask('t1', 'in_progress');
+      if (method === 'operation.invoke' && params?.name === 'task.update') {
+        if (taskUpdateResult !== undefined) return taskUpdateResult;
+        const input = (params?.input ?? {}) as Record<string, unknown>;
+        return { ...makeTask(input.taskId as string), ...input };
+      }
       if (method === 'operation.invoke' && params?.name === 'task.list') {
         return { tasks: [makeTask('t1'), makeTask('t2')], total: 7, nextCursor: null };
       }
@@ -1721,6 +1727,7 @@ describe('SpaceStore — task visibility after real-time events', () => {
 describe('SpaceStore — CRUD methods', () => {
   beforeEach(async () => {
     transitionResult = undefined;
+    taskUpdateResult = undefined;
     await resetStore();
   });
   afterEach(() => vi.clearAllMocks());
@@ -1791,6 +1798,31 @@ describe('SpaceStore — CRUD methods', () => {
       status: 'in_progress',
     });
     expect(task.status).toBe('in_progress');
+  });
+
+  it('editTaskMetadata edits fields through the task.update operation', async () => {
+    await spaceStore.selectSpace('space-1');
+    mockHub.request.mockClear();
+
+    const task = await spaceStore.editTaskMetadata('t1', {
+      title: 'New Title',
+      description: 'New body',
+    });
+
+    expect(mockHub.request).toHaveBeenCalledWith('operation.invoke', {
+      name: 'task.update',
+      input: { taskId: 't1', title: 'New Title', description: 'New body' },
+    });
+    expect(task.title).toBe('New Title');
+  });
+
+  it('editTaskMetadata throws when the operation reports the task unavailable', async () => {
+    await spaceStore.selectSpace('space-1');
+    taskUpdateResult = null;
+
+    await expect(spaceStore.editTaskMetadata('t1', { description: 'x' })).rejects.toThrow(
+      'Task t1 is unavailable'
+    );
   });
 
   it('publishTask transitions draft to open with an expectedStatus guard', async () => {
