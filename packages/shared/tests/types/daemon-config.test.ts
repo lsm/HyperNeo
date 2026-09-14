@@ -51,11 +51,7 @@ const EXPECTED_ENV_BY_FAMILY: Record<string, string[]> = {
     'HYPERNEO_SQL_QUERY_MAX_QUERY_GROUPS',
     'HYPERNEO_SQL_QUERY_SUMMARY_LIMIT',
   ],
-  flags: [
-    'HYPERNEO_SPACE_ACTIONS_DISPATCHER',
-    'HYPERNEO_WORKFLOW_CONNECTORS',
-    'HYPERNEO_TASK_AGENT_POST_APPROVAL_ROUTING',
-  ],
+  flags: ['HYPERNEO_WORKFLOW_CONNECTORS', 'HYPERNEO_TASK_AGENT_POST_APPROVAL_ROUTING'],
 };
 
 const EXPECTED_RESTART_KEYS = [
@@ -72,7 +68,6 @@ const EXPECTED_RESTART_KEYS = [
   'sqlQuerySummaryIntervalMs',
   'sqlQueryMaxQueryGroups',
   'sqlQuerySummaryLimit',
-  'spaceActionsDispatcher',
   'workflowConnectors',
   'taskAgentPostApprovalRouting',
 ];
@@ -95,9 +90,9 @@ describe('DAEMON_CONFIG_KEY_CATALOG', () => {
       providersMisc: 5,
       spaceEvents: 4,
       startup: 11,
-      flags: 3,
+      flags: 2,
     });
-    expect(DAEMON_CONFIG_KEY_CATALOG).toHaveLength(35);
+    expect(DAEMON_CONFIG_KEY_CATALOG).toHaveLength(34);
   });
 
   it('has globally unique keys and legacy env names', () => {
@@ -152,7 +147,6 @@ describe('DEFAULT_DAEMON_CONFIG', () => {
       jobQueueMaxConcurrent: 5,
     });
     expect(DEFAULT_DAEMON_CONFIG.flags).toEqual({
-      spaceActionsDispatcher: true,
       workflowConnectors: true,
       taskAgentPostApprovalRouting: true,
     });
@@ -259,7 +253,6 @@ describe('resolveDaemonConfig', () => {
       flags: {
         taskAgentPostApprovalRouting: 'off' as unknown as boolean,
         workflowConnectors: 'off' as unknown as boolean,
-        spaceActionsDispatcher: 'yes' as unknown as boolean,
       },
       startup: {
         sqlQueryObservability: 'no' as unknown as boolean,
@@ -268,7 +261,6 @@ describe('resolveDaemonConfig', () => {
     });
     expect(perKey.flags?.taskAgentPostApprovalRouting).toBe(false);
     expect(perKey.flags?.workflowConnectors).toBe(true);
-    expect(perKey.flags?.spaceActionsDispatcher).toBe(false);
     expect(perKey.startup?.sqlQueryObservability).toBe(true);
     expect(perKey.startup?.disableWorktrees).toBe(false);
     const recognizedFalse = resolveDaemonConfig({
@@ -279,13 +271,11 @@ describe('resolveDaemonConfig', () => {
     expect(recognizedFalse.startup?.sqlQueryObservability).toBe(false);
     const exactMatch = resolveDaemonConfig({
       flags: {
-        spaceActionsDispatcher: 'TRUE' as unknown as boolean,
         workflowConnectors: ' 0 ' as unknown as boolean,
         taskAgentPostApprovalRouting: ' NO ' as unknown as boolean,
       },
       startup: { sqlQueryObservability: ' OFF ' as unknown as boolean },
     });
-    expect(exactMatch.flags?.spaceActionsDispatcher).toBe(false);
     expect(exactMatch.flags?.workflowConnectors).toBe(true);
     expect(exactMatch.flags?.taskAgentPostApprovalRouting).toBe(false);
     expect(exactMatch.startup?.sqlQueryObservability).toBe(false);

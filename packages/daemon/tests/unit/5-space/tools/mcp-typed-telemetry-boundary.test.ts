@@ -120,7 +120,7 @@ describe('instrumentTypedTelemetryAtMcpBoundary', () => {
     ).toBeTypeOf('function');
 
     const proxy = new AcpMcpProxyBridge({
-      'node-agent': { type: 'sdk', instance: mcpServer } as unknown as McpServerConfig,
+      'space-actions': { type: 'sdk', instance: mcpServer } as unknown as McpServerConfig,
     });
 
     const { events, unsubscribe } = collectStructuredLogEvents();
@@ -128,7 +128,7 @@ describe('instrumentTypedTelemetryAtMcpBoundary', () => {
       const result = await proxy.handleLineForTest(
         JSON.stringify({
           token: proxy.token,
-          serverName: 'node-agent',
+          serverName: 'space-actions',
           toolName: 'ping',
           arguments: { value: 'acp' },
         })
@@ -151,7 +151,7 @@ describe('instrumentTypedTelemetryAtMcpBoundary', () => {
     instrumentTypedTelemetryAtMcpBoundary({ instance: mcpServer }, telemetryConfig);
 
     const proxy = new AcpMcpProxyBridge({
-      'node-agent': { type: 'sdk', instance: mcpServer } as unknown as McpServerConfig,
+      'space-actions': { type: 'sdk', instance: mcpServer } as unknown as McpServerConfig,
     });
 
     const { events, unsubscribe } = collectStructuredLogEvents();
@@ -159,7 +159,7 @@ describe('instrumentTypedTelemetryAtMcpBoundary', () => {
       const result = await proxy.handleLineForTest(
         JSON.stringify({
           token: proxy.token,
-          serverName: 'node-agent',
+          serverName: 'space-actions',
           toolName: 'ping',
           arguments: { value: 123 },
         })

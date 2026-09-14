@@ -360,10 +360,10 @@ describe('DaemonConfigService', () => {
   test('an empty legacy boolean env value passes through the resolver as disabled', () => {
     const db = createDb();
     const service = new DaemonConfigService(db);
-    const seeded = service.seedFromLegacyEnv({ HYPERNEO_SPACE_ACTIONS_DISPATCHER: '' });
+    const seeded = service.seedFromLegacyEnv({ HYPERNEO_TASK_AGENT_POST_APPROVAL_ROUTING: '' });
     expect(seeded).toBe(true);
-    expect(readConfigRow(db)?.config_json).toBe('{"flags":{"spaceActionsDispatcher":false}}');
-    expect(service.getConfig().flags?.spaceActionsDispatcher).toBe(false);
+    expect(readConfigRow(db)?.config_json).toBe('{"flags":{"taskAgentPostApprovalRouting":false}}');
+    expect(service.getConfig().flags?.taskAgentPostApprovalRouting).toBe(false);
     db.close();
   });
 

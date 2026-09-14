@@ -69,8 +69,6 @@ export type {
 export { WorkflowExecutor } from './runtime/workflow-executor.ts';
 export type { WorkflowSelectionContext } from './runtime/workflow-selector.ts';
 export { selectWorkflow } from './runtime/workflow-selector.ts';
-export type { SpaceAgentMcpServer } from './tools/space-agent-tools.ts';
-export { createSpaceAgentMcpServer } from './tools/space-agent-tools.ts';
 export { WorkflowHookRuntimeService } from './workflow-hook-runtime-service.ts';
 export { validateWorkflowHooks } from './workflow-hook-validation.ts';
 export {

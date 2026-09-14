@@ -779,97 +779,83 @@ describe('QueryRunner', () => {
       });
     });
 
-    it('warns and self-heals when the dispatcher flag is on and space-actions is missing (member)', async () => {
+    it('warns and self-heals when space-actions is missing (member)', async () => {
       await withAnthropicApiKey(async () => {
-        const previous = process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER;
-        process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER = '1';
-        try {
-          mockSession.id = 'worker-session-1';
-          mockSession.workspacePath = tmpdir();
-          mockSession.type = 'worker';
-          mockSession.context = { spaceId: 's1' };
-          mockSession.config.mcpServers = {};
+        mockSession.id = 'worker-session-1';
+        mockSession.workspacePath = tmpdir();
+        mockSession.type = 'worker';
+        mockSession.context = { spaceId: 's1' };
+        mockSession.config.mcpServers = {};
 
-          const repairedServers = {
-            'space-actions': {
-              type: 'sdk',
-              name: 'space-actions',
-              instance: {},
-            },
-          };
-          buildSpy
-            .mockResolvedValueOnce({ model: 'claude-sonnet-4-20250514', mcpServers: {} })
-            .mockResolvedValueOnce({
-              model: 'claude-sonnet-4-20250514',
-              mcpServers: repairedServers,
-            });
-          stopAfterRebuiltOptions();
-          const onMissingMemberSpaceMcpServers = mock(async () => {
-            mockSession.config.mcpServers =
-              repairedServers as unknown as Session['config']['mcpServers'];
+        const repairedServers = {
+          'space-actions': {
+            type: 'sdk',
+            name: 'space-actions',
+            instance: {},
+          },
+        };
+        buildSpy
+          .mockResolvedValueOnce({ model: 'claude-sonnet-4-20250514', mcpServers: {} })
+          .mockResolvedValueOnce({
+            model: 'claude-sonnet-4-20250514',
+            mcpServers: repairedServers,
           });
+        stopAfterRebuiltOptions();
+        const onMissingMemberSpaceMcpServers = mock(async () => {
+          mockSession.config.mcpServers =
+            repairedServers as unknown as Session['config']['mcpServers'];
+        });
 
-          const ctx = createContext({ onMissingMemberSpaceMcpServers });
-          runner = new QueryRunner(ctx);
-          runner.start();
-          await ctx.queryPromise?.catch(() => {});
+        const ctx = createContext({ onMissingMemberSpaceMcpServers });
+        runner = new QueryRunner(ctx);
+        runner.start();
+        await ctx.queryPromise?.catch(() => {});
 
-          expect(mockLogger.warn).toHaveBeenCalledWith(expect.stringContaining('space-actions'));
-          expect(onMissingMemberSpaceMcpServers).toHaveBeenCalledWith('worker-session-1', [
-            'space-actions',
-          ]);
-          expect(buildSpy).toHaveBeenCalledTimes(2);
-        } finally {
-          if (previous === undefined) delete process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER;
-          else process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER = previous;
-        }
+        expect(mockLogger.warn).toHaveBeenCalledWith(expect.stringContaining('space-actions'));
+        expect(onMissingMemberSpaceMcpServers).toHaveBeenCalledWith('worker-session-1', [
+          'space-actions',
+        ]);
+        expect(buildSpy).toHaveBeenCalledTimes(2);
       });
     });
 
-    it('warns and self-heals when the dispatcher flag is on and space-actions is missing (space chat)', async () => {
+    it('warns and self-heals when space-actions is missing (space chat)', async () => {
       await withAnthropicApiKey(async () => {
-        const previous = process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER;
-        process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER = '1';
-        try {
-          mockSession.id = 'space:chat:s1';
-          mockSession.workspacePath = tmpdir();
-          mockSession.type = 'space_chat';
-          mockSession.context = { spaceId: 's1' };
-          mockSession.config.mcpServers = {};
+        mockSession.id = 'space:chat:s1';
+        mockSession.workspacePath = tmpdir();
+        mockSession.type = 'space_chat';
+        mockSession.context = { spaceId: 's1' };
+        mockSession.config.mcpServers = {};
 
-          const repairedServers = {
-            'space-actions': {
-              type: 'sdk',
-              name: 'space-actions',
-              instance: {},
-            },
-          };
-          buildSpy
-            .mockResolvedValueOnce({ model: 'claude-sonnet-4-20250514', mcpServers: {} })
-            .mockResolvedValueOnce({
-              model: 'claude-sonnet-4-20250514',
-              mcpServers: repairedServers,
-            });
-          stopAfterRebuiltOptions();
-          const onMissingSpaceChatMcpServers = mock(async () => {
-            mockSession.config.mcpServers =
-              repairedServers as unknown as Session['config']['mcpServers'];
+        const repairedServers = {
+          'space-actions': {
+            type: 'sdk',
+            name: 'space-actions',
+            instance: {},
+          },
+        };
+        buildSpy
+          .mockResolvedValueOnce({ model: 'claude-sonnet-4-20250514', mcpServers: {} })
+          .mockResolvedValueOnce({
+            model: 'claude-sonnet-4-20250514',
+            mcpServers: repairedServers,
           });
+        stopAfterRebuiltOptions();
+        const onMissingSpaceChatMcpServers = mock(async () => {
+          mockSession.config.mcpServers =
+            repairedServers as unknown as Session['config']['mcpServers'];
+        });
 
-          const ctx = createContext({ onMissingSpaceChatMcpServers });
-          runner = new QueryRunner(ctx);
-          runner.start();
-          await ctx.queryPromise?.catch(() => {});
+        const ctx = createContext({ onMissingSpaceChatMcpServers });
+        runner = new QueryRunner(ctx);
+        runner.start();
+        await ctx.queryPromise?.catch(() => {});
 
-          expect(mockLogger.warn).toHaveBeenCalledWith(expect.stringContaining('space-actions'));
-          expect(onMissingSpaceChatMcpServers).toHaveBeenCalledWith('space:chat:s1', [
-            'space-actions',
-          ]);
-          expect(buildSpy).toHaveBeenCalledTimes(2);
-        } finally {
-          if (previous === undefined) delete process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER;
-          else process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER = previous;
-        }
+        expect(mockLogger.warn).toHaveBeenCalledWith(expect.stringContaining('space-actions'));
+        expect(onMissingSpaceChatMcpServers).toHaveBeenCalledWith('space:chat:s1', [
+          'space-actions',
+        ]);
+        expect(buildSpy).toHaveBeenCalledTimes(2);
       });
     });
 
@@ -932,31 +918,21 @@ describe('QueryRunner', () => {
 
     it('logs info when a non-space session is missing the space-actions dispatcher', async () => {
       await withAnthropicApiKey(async () => {
-        const previous = process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER;
-        process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER = '1';
-        try {
-          mockSession.id = 'plain-worker-1';
-          mockSession.workspacePath = tmpdir();
-          mockSession.type = 'worker';
-          mockSession.context = {};
-          mockSession.config.mcpServers = {};
-          buildSpy.mockResolvedValueOnce({ model: 'claude-sonnet-4-20250514', mcpServers: {} });
+        mockSession.id = 'plain-worker-1';
+        mockSession.workspacePath = tmpdir();
+        mockSession.type = 'worker';
+        mockSession.context = {};
+        mockSession.config.mcpServers = {};
+        buildSpy.mockResolvedValueOnce({ model: 'claude-sonnet-4-20250514', mcpServers: {} });
 
-          const ctx = createContext();
-          runner = new QueryRunner(ctx);
-          runner.start();
-          await ctx.queryPromise?.catch(() => {});
+        const ctx = createContext();
+        runner = new QueryRunner(ctx);
+        runner.start();
+        await ctx.queryPromise?.catch(() => {});
 
-          expect(mockLogger.info).toHaveBeenCalledWith(expect.stringContaining('space-actions'));
-          expect(buildSpy).toHaveBeenCalledTimes(1);
-          expect(addSessionStateOptionsSpy).toHaveBeenCalledTimes(1);
-        } finally {
-          if (previous === undefined) {
-            delete process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER;
-          } else {
-            process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER = previous;
-          }
-        }
+        expect(mockLogger.info).toHaveBeenCalledWith(expect.stringContaining('space-actions'));
+        expect(buildSpy).toHaveBeenCalledTimes(1);
+        expect(addSessionStateOptionsSpy).toHaveBeenCalledTimes(1);
       });
     });
 

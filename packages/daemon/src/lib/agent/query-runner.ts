@@ -19,7 +19,6 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event
 import type { Logger } from '../logger.ts';
 import type { OriginalEnvVars, ProviderEnvVars } from '../provider-service.ts';
 import { NON_ANTHROPIC_PREFIX_PROVIDER_VARS } from '../provider-service.ts';
-import { isSpaceActionsDispatcherEnabled } from '../space/actions/dispatcher-flag.ts';
 import {
   FAIL_CLOSED_LONG_HORIZON_AGENT_REPO,
   missingMcpServers,
@@ -1705,10 +1704,10 @@ export class QueryRunner {
     if (session.type !== 'space_chat') return queryOptions;
 
     const serverNames = Object.keys(queryOptions.mcpServers ?? {}).sort();
-    if (isSpaceActionsDispatcherEnabled() && !serverNames.includes('space-actions')) {
+    if (!serverNames.includes('space-actions')) {
       logger.warn(
         `[MCP invariant, soft] Space chat session ${session.id} is missing the space-actions ` +
-          `dispatcher server while HYPERNEO_SPACE_ACTIONS_DISPATCHER is enabled; proceeding ` +
+          `dispatcher server; proceeding ` +
           `log-only — the typed tool surface remains authoritative. ` +
           `Present: [${serverNames.join(', ')}].`
       );
@@ -1776,11 +1775,11 @@ export class QueryRunner {
     if (!policy.attachGenericSpaceTools && !policy.attachLongTermAgentTools) return queryOptions;
 
     const serverNames = Object.keys(queryOptions.mcpServers ?? {}).sort();
-    if (isSpaceActionsDispatcherEnabled() && !serverNames.includes('space-actions')) {
+    if (!serverNames.includes('space-actions')) {
       logger.warn(
         `[MCP invariant, soft] Space member session ${session.id} (role ${policy.role}) is ` +
-          `missing the space-actions dispatcher server while HYPERNEO_SPACE_ACTIONS_DISPATCHER ` +
-          `is enabled; proceeding log-only — the typed tool surface remains authoritative. ` +
+          `missing the space-actions dispatcher server; proceeding log-only — ` +
+          `the typed tool surface remains authoritative. ` +
           `Present: [${serverNames.join(', ')}].`
       );
     }
@@ -1848,12 +1847,11 @@ export class QueryRunner {
     if (policy.role !== 'universal_read') return queryOptions;
 
     const serverNames = Object.keys(queryOptions.mcpServers ?? {}).sort();
-    if (isSpaceActionsDispatcherEnabled() && !serverNames.includes('space-actions')) {
+    if (!serverNames.includes('space-actions')) {
       logger.info(
         `[MCP invariant, soft] Non-space session ${session.id} is missing the space-actions ` +
-          `dispatcher server while HYPERNEO_SPACE_ACTIONS_DISPATCHER is enabled; ` +
-          `the server will be injected in a follow-up slice. Proceeding log-only. ` +
-          `Present: [${serverNames.join(', ')}].`
+          `dispatcher server; the server will be injected in a follow-up slice. ` +
+          `Proceeding log-only. Present: [${serverNames.join(', ')}].`
       );
     }
     return queryOptions;

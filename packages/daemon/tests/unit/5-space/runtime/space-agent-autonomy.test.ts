@@ -11,7 +11,7 @@ import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-w
 import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
-import { createSpaceAgentToolHandlers } from '../../../../src/lib/space/tools/space-agent-tools.ts';
+import { createSpaceAgentToolHandlers } from '../../../../src/lib/space/actions/space-handlers.ts';
 import type { SpaceAutonomyLevel } from '@hyperneo/shared/types/space';
 import { seedWorkerMirror } from '../../helpers/seed-worker-mirror';
 

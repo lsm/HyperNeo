@@ -53,7 +53,7 @@ describe('Daemon app mailbox registration', () => {
     return {
       getSessionData: () => ({
         status,
-        config: { mcpServers: tools ? { 'node-agent': { type: 'sdk' } } : {} },
+        config: { mcpServers: tools ? { 'space-actions': { type: 'sdk' } } : {} },
       }),
     } as unknown as NonNullable<ReturnType<SessionManager['getCachedSession']>>;
   }

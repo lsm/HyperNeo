@@ -231,8 +231,8 @@ describe('SessionConfigHandler', () => {
       mockSession.config = {
         model: 'default',
         mcpServers: {
-          'node-agent': { type: 'sdk' } as unknown,
-          'space-agent-tools': { type: 'sdk' } as unknown,
+          'space-actions': { type: 'sdk' } as unknown,
+          'agent-memory': { type: 'sdk' } as unknown,
           'my-user-tool': { type: 'stdio', command: 'some-cmd', args: [] },
         },
       } as unknown as Session['config'];
@@ -242,8 +242,8 @@ describe('SessionConfigHandler', () => {
       });
 
       const servers = mockSession.config.mcpServers as Record<string, unknown>;
-      expect(servers['node-agent']).toEqual({ type: 'sdk' });
-      expect(servers['space-agent-tools']).toEqual({ type: 'sdk' });
+      expect(servers['space-actions']).toEqual({ type: 'sdk' });
+      expect(servers['agent-memory']).toEqual({ type: 'sdk' });
       expect(servers['my-user-tool']).toMatchObject({ command: 'some-cmd' });
     });
 
@@ -251,16 +251,16 @@ describe('SessionConfigHandler', () => {
       mockSession.config = {
         model: 'default',
         mcpServers: {
-          'node-agent': { type: 'sdk', secret: 'closure-value' } as unknown,
+          'space-actions': { type: 'sdk', secret: 'closure-value' } as unknown,
         },
       } as unknown as Session['config'];
 
       await handler.updateUserMcpServers({
-        'node-agent': { type: 'stdio', command: 'evil', args: [] },
+        'space-actions': { type: 'stdio', command: 'evil', args: [] },
       });
 
       const servers = mockSession.config.mcpServers as Record<string, unknown>;
-      expect((servers['node-agent'] as { type: string }).type).toBe('sdk');
+      expect((servers['space-actions'] as { type: string }).type).toBe('sdk');
     });
 
     it('should persist merged config to database', async () => {

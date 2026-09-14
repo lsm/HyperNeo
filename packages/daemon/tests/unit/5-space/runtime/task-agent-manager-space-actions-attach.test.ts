@@ -10,6 +10,7 @@ import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/t
 import type { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
 import type { McpServerConfig } from '@hyperneo/shared';
 import type { SpaceActionsMcpServer } from '../../../../src/lib/space/actions/space-actions-server.ts';
+import type { ToolResult } from '../../../../src/lib/space/tools/tool-result.ts';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 
 const SPACE_ID = 'space-actions-attach';
@@ -17,7 +18,6 @@ const RUN_ID = 'run-actions-attach';
 const TASK_ID = 'task-actions-attach';
 const EXEC_ID = 'exec-actions-attach';
 const SUB_SESSION_ID = `space:${SPACE_ID}:task:${TASK_ID}:exec:${EXEC_ID}`;
-const FLAG = 'HYPERNEO_SPACE_ACTIONS_DISPATCHER';
 
 function makeManager(): TaskAgentManager {
   const execution = {
@@ -120,33 +120,10 @@ function registryNamesOf(server: SpaceActionsMcpServer): ReadonlySet<string> {
   return new Set(server.registry.entries.map((entry) => entry.name));
 }
 
-describe('TaskAgentManager — space-actions dispatcher attach (flag-gated)', () => {
-  const previousFlag = process.env[FLAG];
-
-  beforeEach(() => {
-    process.env[FLAG] = '0';
-  });
-
-  afterEach(() => {
-    if (previousFlag === undefined) delete process.env[FLAG];
-    else process.env[FLAG] = previousFlag;
-  });
-
-  test('flag off: worker servers contain only node-agent', () => {
+describe('TaskAgentManager — space-actions dispatcher attach', () => {
+  test('worker servers contain only space-actions', () => {
     const servers = buildServers(makeManager());
-    expect(Object.keys(servers)).toEqual(['node-agent']);
-  });
-
-  test('flag unset: worker servers attach space-actions alongside node-agent', () => {
-    delete process.env[FLAG];
-    const servers = buildServers(makeManager());
-    expect(Object.keys(servers).sort()).toEqual(['node-agent', 'space-actions']);
-  });
-
-  test('flag on: worker servers attach space-actions alongside node-agent', () => {
-    process.env[FLAG] = '1';
-    const servers = buildServers(makeManager());
-    expect(Object.keys(servers).sort()).toEqual(['node-agent', 'space-actions']);
+    expect(Object.keys(servers)).toEqual(['space-actions']);
     const spaceActions = servers['space-actions'] as unknown as SpaceActionsMcpServer;
     expect(spaceActions.tools.map((entry) => entry.name)).toEqual(['call_action']);
     expect(spaceActions.registry.get('list_peers')?.family).toBe('node');
@@ -154,8 +131,7 @@ describe('TaskAgentManager — space-actions dispatcher attach (flag-gated)', ()
     expect(spaceActions.registry.get('approve_pending_completion')).toBeUndefined();
   });
 
-  test('flag on: reinject (self-heal rebuild path) merges both servers and restarts the query', async () => {
-    process.env[FLAG] = '1';
+  test('reinject (self-heal rebuild path) merges the dispatcher and restarts the query', async () => {
     const tam = makeManager();
     const fake = makeFakeSession();
     await tam.reinjectNodeAgentMcpServer(fake.agentSession, {
@@ -168,12 +144,12 @@ describe('TaskAgentManager — space-actions dispatcher attach (flag-gated)', ()
       workflowNodeId: 'node-coder',
     });
     const merged = fake.state.merged.at(-1)!;
-    expect(Object.keys(merged).sort()).toEqual(['node-agent', 'space-actions']);
+    expect(Object.keys(merged)).toEqual(['space-actions']);
     expect(fake.state.session.config.mcpServers?.['space-actions']).toBeDefined();
     expect(fake.state.restarted).toBe(1);
   });
 
-  test('flag off: reinject detaches a flag-built dispatcher but not a user-provided space-actions server', async () => {
+  test('reinject replaces a pre-existing space-actions server entry', async () => {
     const tam = makeManager();
     const ctx = {
       taskId: TASK_ID,
@@ -184,41 +160,27 @@ describe('TaskAgentManager — space-actions dispatcher attach (flag-gated)', ()
       workspacePath: '/tmp/ws',
       workflowNodeId: 'node-coder',
     };
-    process.env[FLAG] = '1';
-    const built = buildServers(tam);
-    process.env[FLAG] = '0';
 
     const userProvided = makeFakeSession();
     userProvided.agentSession.mergeRuntimeMcpServers({
       'space-actions': { __userProvided: true } as unknown as McpServerConfig,
     });
     await tam.reinjectNodeAgentMcpServer(userProvided.agentSession, ctx);
-    expect(userProvided.state.session.config.mcpServers?.['space-actions']).toEqual({
-      __userProvided: true,
-    });
-    expect(userProvided.state.calls).not.toContain('detachRuntimeMcpServer:space-actions');
-
-    const flagEra = makeFakeSession();
-    flagEra.agentSession.mergeRuntimeMcpServers({ 'space-actions': built['space-actions'] });
-    await tam.reinjectNodeAgentMcpServer(flagEra.agentSession, ctx);
-    expect(flagEra.state.session.config.mcpServers?.['node-agent']).toBeDefined();
-    expect(flagEra.state.session.config.mcpServers?.['space-actions']).toBeUndefined();
-    expect(flagEra.state.calls).toContain('detachRuntimeMcpServer:space-actions');
+    const merged = userProvided.state.merged.at(-1)!;
+    expect(Object.keys(merged)).toEqual(['space-actions']);
+    const reattached = userProvided.state.session.config.mcpServers?.['space-actions'];
+    expect(reattached).toBeDefined();
+    expect(reattached).not.toEqual({ __userProvided: true });
+    expect((reattached as unknown as SpaceActionsMcpServer).registry).toBeDefined();
+    expect(userProvided.state.restarted).toBe(1);
   });
 
-  test('flag off: contract keeps the typed tool list', () => {
-    const contract = contractOf(makeManager());
-    expect(contract).toContain('Tools available:');
-    expect(contract).toContain('send_message({ target, message, data? })');
-    expect(contract).not.toContain('call_action');
-  });
-
-  test('flag on: contract renders dispatcher guidance with registry-filtered availability above the typed fallback', () => {
-    process.env[FLAG] = '1';
+  test('contract renders dispatcher guidance with registry-filtered availability', () => {
     const tam = makeManager();
     const servers = buildServers(tam);
     const names = registryNamesOf(servers['space-actions'] as unknown as SpaceActionsMcpServer);
     const contract = contractOf(tam, 'coder', names);
+    expect(contract).toContain('Tools available:');
     expect(contract).toContain(
       'call_action({ name, params? }) on the space-actions server — one dispatcher for every action available to the Coder role'
     );
@@ -226,13 +188,11 @@ describe('TaskAgentManager — space-actions dispatcher attach (flag-gated)', ()
     expect(contract).toContain('call_action(name="restore_node_agent")');
     expect(contract).toContain('call_action(name="create_standalone_task")');
     expect(contract).not.toContain('call_action(name="update_task")');
-    expect(contract).toContain('send_message({ target, message, data? })');
-    expect(contract).toContain('restore_node_agent({ reason? })');
+    expect(contract).not.toContain('send_message({ target, message, data? })');
     expect(contract).not.toContain('Escalation: send_message');
   });
 
-  test('flag on: every suggested contract action resolves through the attached worker registry', () => {
-    process.env[FLAG] = '1';
+  test('every suggested contract action resolves through the attached worker registry', () => {
     for (const agentName of ['coder', 'reviewer']) {
       const tam = makeManager();
       const servers = buildServers(tam, agentName);
@@ -249,8 +209,7 @@ describe('TaskAgentManager — space-actions dispatcher attach (flag-gated)', ()
     }
   });
 
-  test('flag on without registry names: contract omits suggestions instead of guessing', () => {
-    process.env[FLAG] = '1';
+  test('without registry names the contract omits suggestions instead of guessing', () => {
     const contract = contractOf(makeManager(), 'coder', undefined);
     expect(contract).toContain(
       'call_action({ name, params? }) on the space-actions server — one dispatcher for every action available to the Coder role'
@@ -260,7 +219,7 @@ describe('TaskAgentManager — space-actions dispatcher attach (flag-gated)', ()
   });
 });
 
-describe('TaskAgentManager — node-agent create_standalone_task default-workspace gate (#3589)', () => {
+describe('TaskAgentManager — space-actions create_standalone_task default-workspace gate (#3589)', () => {
   const NON_GIT_PRIMARY = '/nonexistent/hyperneo-non-git-primary';
   let db: BunDatabase;
   let secondaryDir: string;
@@ -316,17 +275,10 @@ describe('TaskAgentManager — node-agent create_standalone_task default-workspa
     args: Record<string, unknown>
   ): Promise<Record<string, unknown>> {
     const servers = buildServers(makeMigratedManager());
-    const nodeAgent = servers['node-agent'] as unknown as {
-      instance: {
-        _registeredTools: Record<
-          string,
-          { handler: (a: unknown, e: unknown) => Promise<{ content: Array<{ text: string }> }> }
-        >;
-      };
-    };
-    const registered = nodeAgent.instance._registeredTools['create_standalone_task'];
-    expect(registered).toBeDefined();
-    const result = await registered.handler(args, { signal: undefined, requestId: 'test' });
+    const spaceActions = servers['space-actions'] as unknown as SpaceActionsMcpServer;
+    const action = spaceActions.registry.get('create_standalone_task');
+    expect(action).toBeDefined();
+    const result = (await action!.handler(args)) as ToolResult;
     return JSON.parse(result.content[0].text) as Record<string, unknown>;
   }
 

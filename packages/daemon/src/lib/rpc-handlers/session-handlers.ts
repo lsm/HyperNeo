@@ -36,7 +36,6 @@ import {
   isWorkflowSubSessionIdentity,
 } from '../session/sub-session-identity.ts';
 import type { SessionManager } from '../session-manager.ts';
-import { isSpaceActionsDispatcherEnabled } from '../space/actions/dispatcher-flag.ts';
 import type { SpaceManager } from '../space/managers/space-manager.ts';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
 import type { EnsureSessionOutcome, SessionTarget } from '../session-resolution/target.ts';
@@ -174,13 +173,7 @@ export function setupSessionHandlers(
       }
     }
 
-    if (
-      session &&
-      !session.context?.spaceId &&
-      spaceRuntimeService &&
-      agentSession &&
-      isSpaceActionsDispatcherEnabled()
-    ) {
+    if (session && !session.context?.spaceId && spaceRuntimeService && agentSession) {
       try {
         agentSession.mergeRuntimeMcpServers({
           'space-actions':

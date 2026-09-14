@@ -49,7 +49,6 @@ import {
   type QueryRunnerContext,
   type TrackedAgentProcess,
 } from '../agent/query-runner.ts';
-import { isSpaceActionsDispatcherEnabled } from '../space/actions/dispatcher-flag.ts';
 import {
   FAIL_CLOSED_LONG_HORIZON_AGENT_REPO,
   missingMcpServers,
@@ -1474,11 +1473,11 @@ export class AcpQueryRunner {
 
     if (policy.owner === 'none') {
       const presentServers = Object.keys(queryOptions.mcpServers ?? {}).sort();
-      if (isSpaceActionsDispatcherEnabled() && !presentServers.includes('space-actions')) {
+      if (!presentServers.includes('space-actions')) {
         logger.info(
           `[MCP invariant, soft] ACP session ${session.id} (role ${policy.role}) is missing ` +
-            `the space-actions dispatcher server while HYPERNEO_SPACE_ACTIONS_DISPATCHER is ` +
-            `enabled; the server will be injected in a follow-up slice. Proceeding log-only. ` +
+            `the space-actions dispatcher server; the server will be injected in a ` +
+            `follow-up slice. Proceeding log-only. ` +
             `Present: [${presentServers.join(', ')}].`
         );
       }

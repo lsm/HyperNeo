@@ -40,7 +40,6 @@
 4	packages/daemon/tests/unit/5-space/agent/custom-agent-memory.test.ts
 18	packages/daemon/tests/unit/5-space/agent/custom-agent.test.ts
 3393	packages/daemon/tests/unit/5-space/agent/end-node-handlers.test.ts
-12025	packages/daemon/tests/unit/5-space/agent/node-agent-tools.test.ts
 4	packages/daemon/tests/unit/5-space/agent/slot-overrides.test.ts
 18	packages/daemon/tests/unit/5-space/agent/task-agent-manager-cancel.test.ts
 18	packages/daemon/tests/unit/5-space/agent/task-agent-manager-post-approval-fresh-session.test.ts
@@ -110,7 +109,6 @@
 10	packages/daemon/tests/unit/5-space/runtime/run-tick-admission-gates.test.ts
 698	packages/daemon/tests/unit/5-space/runtime/space-agent-autonomy.test.ts
 1052	packages/daemon/tests/unit/5-space/runtime/space-agent-task-creation-flow.test.ts
-36990	packages/daemon/tests/unit/5-space/runtime/space-agent-tools.test.ts
 8	packages/daemon/tests/unit/5-space/runtime/space-mcp-session-policy.test.ts
 5696	packages/daemon/tests/unit/5-space/runtime/space-runtime-completion.test.ts
 591	packages/daemon/tests/unit/5-space/runtime/space-runtime-disabled-workflow.test.ts

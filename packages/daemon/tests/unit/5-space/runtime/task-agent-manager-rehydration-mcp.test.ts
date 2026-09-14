@@ -208,7 +208,7 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     expect(tam.isSessionAlive(SUB_SESSION_ID)).toBe(false);
   });
 
-  test('rehydrated sub-session starts with node-agent merged and the self-heal callback wired', async () => {
+  test('rehydrated sub-session starts with space-actions merged and the self-heal callback wired', async () => {
     const { tam, registered } = makeManager();
     const fake = makeFakeAgentSession(SUB_SESSION_ID);
     restoreSpy = spyOn(AgentSession, 'restore').mockImplementation(
@@ -220,7 +220,7 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     expect(rehydrated).toBe(fake.agentSession);
     expect(restoreSpy).toHaveBeenCalledTimes(1);
     expect(restoreSpy.mock.calls[0]?.[0]).toBe(SUB_SESSION_ID);
-    expect(fake.state.session.config.mcpServers?.['node-agent']).toBeDefined();
+    expect(fake.state.session.config.mcpServers?.['space-actions']).toBeDefined();
     expect(typeof fake.state.onMissingWorkflowMcpServers).toBe('function');
     expect(fake.state.calls).toEqual([
       'mergeRuntimeMcpServers',
@@ -248,7 +248,7 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     const rehydrated = await rehydrateOf(tam)(SUB_SESSION_ID);
 
     expect(rehydrated).toBe(fake.agentSession);
-    expect(fake.state.session.config.mcpServers?.['node-agent']).toBeDefined();
+    expect(fake.state.session.config.mcpServers?.['space-actions']).toBeDefined();
     expect(fake.state.calls).toEqual(['mergeRuntimeMcpServers']);
     const index = (tam as unknown as { agentSessionIndex: Map<string, AgentSessionType> })
       .agentSessionIndex;
@@ -268,7 +268,7 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
 
     await expect(tam.prepareSubSessionForWorkflowResume(SUB_SESSION_ID)).resolves.toBe(true);
 
-    expect(fake.state.session.config.mcpServers?.['node-agent']).toBeDefined();
+    expect(fake.state.session.config.mcpServers?.['space-actions']).toBeDefined();
     expect(fake.state.calls).toEqual([
       'mergeRuntimeMcpServers',
       'restartQuery',
@@ -343,7 +343,7 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     );
   });
 
-  test('provisioning with startQuery:false attaches node-agent without starting the query', async () => {
+  test('provisioning with startQuery:false attaches space-actions without starting the query', async () => {
     const { tam } = makeManager();
     (
       tam as unknown as { config: { workflowRunRepo: { getRun: () => unknown } } }
@@ -355,7 +355,7 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
 
     await tam.provisionWorkflowSession(fake.agentSession, { startQuery: false });
 
-    expect(fake.state.session.config.mcpServers?.['node-agent']).toBeDefined();
+    expect(fake.state.session.config.mcpServers?.['space-actions']).toBeDefined();
     expect(fake.state.calls).toEqual(['mergeRuntimeMcpServers']);
     expect(restoreSpy).toHaveBeenCalledTimes(0);
   });
@@ -377,7 +377,7 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
 
     await tam.provisionWorkflowSession(fake.agentSession, {});
 
-    expect(fake.state.session.config.mcpServers?.['node-agent']).toBeDefined();
+    expect(fake.state.session.config.mcpServers?.['space-actions']).toBeDefined();
     expect(fake.state.calls).not.toContain('startStreamingQuery');
     expect(fake.state.calls).not.toContain('replayPendingMessagesForImmediateMode');
   });
@@ -436,7 +436,7 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
 
     await tam.provisionWorkflowSession(fake.agentSession, { replayPendingMessages: false });
 
-    expect(fake.state.session.config.mcpServers?.['node-agent']).toBeDefined();
+    expect(fake.state.session.config.mcpServers?.['space-actions']).toBeDefined();
     expect(fake.state.calls).toEqual(['mergeRuntimeMcpServers', 'startStreamingQuery']);
     expect(fake.state.calls).not.toContain('replayPendingMessagesForImmediateMode');
   });
@@ -458,7 +458,7 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
 
     expect(rehydrated).toBe(cachedFake.agentSession);
     expect(restoreSpy).toHaveBeenCalledTimes(0);
-    expect(cachedFake.state.session.config.mcpServers?.['node-agent']).toBeDefined();
+    expect(cachedFake.state.session.config.mcpServers?.['space-actions']).toBeDefined();
     expect(typeof cachedFake.state.onMissingWorkflowMcpServers).toBe('function');
     expect(cachedFake.state.calls).toContain('startStreamingQuery');
     expect(registered.get(SUB_SESSION_ID)).toBe(cachedFake.agentSession);
@@ -518,9 +518,9 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
       .agentSessionIndex;
     index.set(SUB_SESSION_ID, stale.agentSession);
 
-    await tam.mcpSelfHeal(started.agentSession, ['node-agent']);
+    await tam.mcpSelfHeal(started.agentSession, ['space-actions']);
 
-    expect(started.state.session.config.mcpServers?.['node-agent']).toBeDefined();
+    expect(started.state.session.config.mcpServers?.['space-actions']).toBeDefined();
     expect(index.get(SUB_SESSION_ID)).toBe(started.agentSession);
     expect(registered.get(SUB_SESSION_ID)).toBe(started.agentSession);
     expect(started.state.calls).toContain('restartQuery');
@@ -533,7 +533,7 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     expect(completionCallbacks.get(SUB_SESSION_ID)).toHaveLength(1);
   });
 
-  test('the wired self-heal callback restores node-agent on the session it was invoked with', async () => {
+  test('the wired self-heal callback restores space-actions on the session it was invoked with', async () => {
     const { tam } = makeManager();
     const fake = makeFakeAgentSession(SUB_SESSION_ID);
     restoreSpy = spyOn(AgentSession, 'restore').mockImplementation(
@@ -544,9 +544,9 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     expect(callback).toBeTypeOf('function');
 
     fake.state.session.config.mcpServers = {};
-    await callback!(fake.agentSession, ['node-agent']);
+    await callback!(fake.agentSession, ['space-actions']);
 
-    expect(fake.state.session.config.mcpServers?.['node-agent']).toBeDefined();
+    expect(fake.state.session.config.mcpServers?.['space-actions']).toBeDefined();
   });
 
   test('a peer message to a parked blocked worker defers instead of starting work (#3823)', async () => {
@@ -955,7 +955,7 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
       workspacePath: '/task/heal-late',
     });
 
-    await tam.mcpSelfHeal(fake.agentSession, ['node-agent']);
+    await tam.mcpSelfHeal(fake.agentSession, ['space-actions']);
 
     expect(fake.state.metadataUpdates).toContainEqual({ workspacePath: '/task/heal-late' });
     expect(fake.state.session.workspacePath).toBe('/task/heal-late');
@@ -975,14 +975,14 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
       workspacePath: '/task/heal-late',
     });
 
-    await expect(tam.mcpSelfHeal(fake.agentSession, ['node-agent'])).rejects.toThrow(
+    await expect(tam.mcpSelfHeal(fake.agentSession, ['space-actions'])).rejects.toThrow(
       'no longer belongs to workflow run'
     );
 
     expect(fake.state.metadataUpdates).toEqual([]);
   });
 
-  test('self-heal rollback detaches the node-agent server when none existed before (WS10)', async () => {
+  test('self-heal rollback detaches the space-actions server when none existed before (WS10)', async () => {
     const { tam } = makeManager();
     const fake = makeFakeAgentSession(SUB_SESSION_ID);
     fake.state.session.workspacePath = '/old/workspace';
@@ -1001,55 +1001,49 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
       throw new Error('heal boom');
     };
 
-    await expect(tam.mcpSelfHeal(fake.agentSession, ['node-agent'])).rejects.toThrow('heal boom');
+    await expect(tam.mcpSelfHeal(fake.agentSession, ['space-actions'])).rejects.toThrow(
+      'heal boom'
+    );
 
     expect(fake.state.metadataUpdates).toEqual([
       { workspacePath: '/task/heal-late' },
       { workspacePath: '/old/workspace' },
     ]);
-    expect(fake.state.calls).toContain('detachRuntimeMcpServer:node-agent');
-    expect(fake.state.session.config.mcpServers?.['node-agent']).toBeUndefined();
+    expect(fake.state.calls).toContain('detachRuntimeMcpServer:space-actions');
+    expect(fake.state.session.config.mcpServers?.['space-actions']).toBeUndefined();
   });
 
   test('self-heal rollback restores the previous space-actions dispatcher server too', async () => {
-    const previousFlag = process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER;
-    process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER = '1';
-    try {
-      const { tam } = makeManager();
-      const fake = makeFakeAgentSession(SUB_SESSION_ID);
-      fake.state.session.workspacePath = '/old/workspace';
-      const previousSpaceActions = { __previous: 'space-actions' } as unknown as McpServerConfig;
-      fake.state.session.config = {
-        mcpServers: {
-          'node-agent': { __old: true } as unknown as McpServerConfig,
-          'space-actions': previousSpaceActions,
-        },
-      };
-      fake.agentSession.restartQuery = async () => {
-        throw new Error('restart boom');
-      };
-      const repo = (tam.config as unknown as { taskRepo: Record<string, unknown> }).taskRepo;
-      repo.getTask = () => ({
-        id: TASK_ID,
-        spaceId: SPACE_ID,
-        workflowRunId: RUN_ID,
-        status: 'in_progress',
-        title: 'Rehydrate MCP task',
-        workspacePath: '/task/heal-late',
-      });
+    const { tam } = makeManager();
+    const fake = makeFakeAgentSession(SUB_SESSION_ID);
+    fake.state.session.workspacePath = '/old/workspace';
+    const previousSpaceActions = { __previous: 'space-actions' } as unknown as McpServerConfig;
+    fake.state.session.config = {
+      mcpServers: {
+        'space-actions': previousSpaceActions,
+      },
+    };
+    fake.agentSession.restartQuery = async () => {
+      throw new Error('restart boom');
+    };
+    const repo = (tam.config as unknown as { taskRepo: Record<string, unknown> }).taskRepo;
+    repo.getTask = () => ({
+      id: TASK_ID,
+      spaceId: SPACE_ID,
+      workflowRunId: RUN_ID,
+      status: 'in_progress',
+      title: 'Rehydrate MCP task',
+      workspacePath: '/task/heal-late',
+    });
 
-      await expect(tam.mcpSelfHeal(fake.agentSession, ['node-agent'])).rejects.toThrow(
-        'restart boom'
-      );
+    await expect(tam.mcpSelfHeal(fake.agentSession, ['space-actions'])).rejects.toThrow(
+      'restart boom'
+    );
 
-      expect(fake.state.session.config.mcpServers?.['space-actions']).toBe(previousSpaceActions);
-      expect(fake.state.metadataUpdates).toEqual([
-        { workspacePath: '/task/heal-late' },
-        { workspacePath: '/old/workspace' },
-      ]);
-    } finally {
-      if (previousFlag === undefined) delete process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER;
-      else process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER = previousFlag;
-    }
+    expect(fake.state.session.config.mcpServers?.['space-actions']).toBe(previousSpaceActions);
+    expect(fake.state.metadataUpdates).toEqual([
+      { workspacePath: '/task/heal-late' },
+      { workspacePath: '/old/workspace' },
+    ]);
   });
 });

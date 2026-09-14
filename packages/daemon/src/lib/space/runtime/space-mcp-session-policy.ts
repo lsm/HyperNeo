@@ -2,7 +2,6 @@ import type { Session } from '@hyperneo/shared';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
-import { isSpaceActionsDispatcherEnabled } from '../actions/dispatcher-flag.ts';
 import { longTermAgentSessionId } from '../long-term-agent-session.ts';
 import type { DirectTaskWorkerIdentity } from './direct-task-worker-identity.ts';
 
@@ -39,11 +38,11 @@ export interface SpaceMcpSessionPolicy {
 }
 
 export function spaceAdHocMemberRequiredMcpServers(): readonly string[] {
-  return isSpaceActionsDispatcherEnabled() ? ['space-actions'] : ['space-agent-tools'];
+  return ['space-actions'];
 }
 
 export function spaceWorkflowWorkerRequiredMcpServers(): readonly string[] {
-  return isSpaceActionsDispatcherEnabled() ? ['space-actions'] : ['node-agent'];
+  return ['space-actions'];
 }
 
 export const FAIL_CLOSED_LONG_HORIZON_AGENT_REPO: SpaceMcpSessionPolicyContext['longHorizonAgentRepo'] =
