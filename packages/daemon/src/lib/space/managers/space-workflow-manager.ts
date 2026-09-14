@@ -16,7 +16,7 @@ import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositor
 import type { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository.ts';
 import { validateGlobPattern } from '../../external-events/topic-validator.ts';
 import { Logger } from '../../logger.ts';
-import { getProviderRegistry } from '../../providers/registry.js';
+import { getProviderRegistry, providerMayOfferModel } from '../../providers/registry.js';
 import { getLongHorizonAgentTemplate } from '../agents/long-horizon-agent-templates.ts';
 import { isRunnableUnifiedAgent } from '../agents/worker-long-horizon-mapper.ts';
 import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../export-format.ts';
@@ -488,7 +488,7 @@ export class SpaceWorkflowManager {
         entry.provider = trimmedProvider;
         if (!trimmedProvider || !trimmedModel) continue;
         const provider = getProviderRegistry().get(trimmedProvider);
-        if (provider && !provider.ownsModel(trimmedModel)) {
+        if (provider && !providerMayOfferModel(provider, trimmedModel)) {
           throw new WorkflowValidationError(
             `node[${i}].agents[${j}]: provider "${trimmedProvider}" does not offer model ` +
               `"${trimmedModel}"`

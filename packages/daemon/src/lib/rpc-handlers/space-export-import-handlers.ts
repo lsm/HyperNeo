@@ -11,7 +11,7 @@ import type {
   WorkflowNodeInput,
 } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
-import { getProviderRegistry } from '../providers/registry.js';
+import { getProviderRegistry, providerMayOfferModel } from '../providers/registry.js';
 import { SpaceAgentTemplateRepository } from '../../storage/repositories/space-agent-template-repository.ts';
 import { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
@@ -455,7 +455,7 @@ export function buildWorkflowCreateParams(
       if (entry.provider) {
         const provider = getProviderRegistry().get(entry.provider);
         const effectiveModel = entry.model;
-        if (provider && effectiveModel && !provider.ownsModel(effectiveModel)) {
+        if (provider && effectiveModel && !providerMayOfferModel(provider, effectiveModel)) {
           warnings.push(
             `node "${exportedNode.name}" slot "${entry.name}" pins provider ` +
               `"${entry.provider}" which does not offer model "${effectiveModel}"; ` +

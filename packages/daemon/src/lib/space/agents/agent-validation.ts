@@ -5,7 +5,7 @@ import {
   getModelInfoUnfiltered,
   isValidModel,
 } from '../../model-service.ts';
-import { getProviderRegistry } from '../../providers/registry.js';
+import { getProviderRegistry, providerMayOfferModel } from '../../providers/registry.js';
 import { isValidThinkingLevel } from './agent-field-validation.ts';
 
 export type SpaceAgentResult<T> =
@@ -25,7 +25,7 @@ export async function validateAgentModel(
   const trimmedProvider = provider?.trim() || undefined;
   if (trimmedProvider) {
     const registered = getProviderRegistry().get(trimmedProvider);
-    if (registered && !registered.ownsModel(model)) {
+    if (registered && !providerMayOfferModel(registered, model)) {
       return `Unrecognized model "${model}" for provider "${trimmedProvider}"`;
     }
   }

@@ -30,6 +30,11 @@ function orderedOwnerCandidates(
   return owners;
 }
 
+export function providerMayOfferModel(provider: Provider, modelId: string): boolean {
+  if (provider.ownsModel(modelId)) return true;
+  return provider.hasCuratedModelList?.() === false;
+}
+
 export function resolveQueryProvider(
   registry: Pick<ProviderRegistry, 'get' | 'getAll'>,
   modelId: string,

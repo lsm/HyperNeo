@@ -1328,6 +1328,42 @@ describe('SpaceWorkflowManager slot model/provider normalization', () => {
       })
     ).toThrow(/does not offer model/);
   });
+
+  test('defers rejecting unlisted models while the provider catalog is cold', () => {
+    getProviderRegistry().register({
+      id: 'wf-cold-provider',
+      ownsModel: () => false,
+      hasCuratedModelList: () => false,
+      getModels: async () => [],
+      isAvailable: async () => true,
+    } as ProviderLike);
+    try {
+      const manager = makeManager();
+      const wf = manager.createWorkflow({
+        spaceId: 'space-1',
+        name: 'Cold catalog',
+        nodes: [
+          {
+            id: 'node-1',
+            name: 'Code',
+            agentId: 'agent-coder',
+            agents: [
+              {
+                agentId: 'agent-coder',
+                name: 'Code',
+                model: 'dynamic-model',
+                provider: 'wf-cold-provider',
+              },
+            ],
+          },
+        ],
+        completionAutonomyLevel: 3,
+      });
+      expect(wf.nodes[0].agents![0].model).toBe('dynamic-model');
+    } finally {
+      getProviderRegistry().unregister('wf-cold-provider');
+    }
+  });
 });
 
 describe('createSpaceAgentLookup — runtime-shaped resolution', () => {
