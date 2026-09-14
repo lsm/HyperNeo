@@ -372,6 +372,101 @@ describe('routeTaskUpdate precedence', () => {
   });
 });
 
+describe('routeTaskUpdate terminal writes under an active run', () => {
+  const STOP = {
+    action: 'stop_for_status',
+    auditParamsShape: 'transition',
+    emitTaskUpdated: 'never',
+  };
+  const SET = {
+    action: 'set_status',
+    auditParamsShape: 'transition',
+    emitTaskUpdated: 'always',
+  };
+
+  test('done and blocked stop the run first while it is active', () => {
+    for (const requestedStatus of ['done', 'blocked'] as const) {
+      expect(
+        routeTaskUpdate(
+          baseInput({
+            currentStatus: 'in_progress',
+            requestedStatus,
+            hasWorkflowRun: true,
+            runActive: true,
+          })
+        )
+      ).toEqual(STOP);
+    }
+  });
+
+  test('done stops the run from approved too, which the post-approval banner writes', () => {
+    expect(
+      routeTaskUpdate(
+        baseInput({
+          currentStatus: 'approved',
+          requestedStatus: 'done',
+          hasWorkflowRun: true,
+          runActive: true,
+        })
+      )
+    ).toEqual(STOP);
+  });
+
+  test('an inactive run leaves the write direct — there are no agents to tear down', () => {
+    for (const requestedStatus of ['done', 'blocked'] as const) {
+      expect(
+        routeTaskUpdate(
+          baseInput({
+            currentStatus: 'in_progress',
+            requestedStatus,
+            hasWorkflowRun: true,
+            runActive: false,
+          })
+        )
+      ).toEqual(SET);
+    }
+  });
+
+  test('a task with no workflow run is unaffected', () => {
+    expect(
+      routeTaskUpdate(
+        baseInput({
+          currentStatus: 'in_progress',
+          requestedStatus: 'done',
+          hasWorkflowRun: false,
+          runActive: true,
+        })
+      )
+    ).toEqual(SET);
+  });
+
+  test('review to done still rejects ahead of the stop routing', () => {
+    const routing = routeTaskUpdate(
+      baseInput({
+        currentStatus: 'review',
+        requestedStatus: 'done',
+        hasWorkflowRun: true,
+        runActive: true,
+      })
+    );
+    expect(routing.action).toBe('reject');
+    expect(routing).toMatchObject({ reason: 'review_to_done' });
+  });
+
+  test('archived still rejects rather than stopping the run', () => {
+    const routing = routeTaskUpdate(
+      baseInput({
+        currentStatus: 'in_progress',
+        requestedStatus: 'archived',
+        hasWorkflowRun: true,
+        runActive: true,
+      })
+    );
+    expect(routing.action).toBe('reject');
+    expect(routing).toMatchObject({ reason: 'archive_active_run' });
+  });
+});
+
 describe('routeTaskUpdate fromActivePaused boundaries', () => {
   test('every active-or-paused status stops for status when cancelled', () => {
     for (const currentStatus of [

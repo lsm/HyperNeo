@@ -1,7 +1,7 @@
 import type { TaskCore } from '@hyperneo/shared/types/task-core';
 import superpipe, { type PipelineAPI } from 'superpipe';
 
-export type TaskStopTarget = 'open' | 'cancelled' | 'blocked';
+export type TaskStopTarget = 'open' | 'cancelled' | 'blocked' | 'done';
 
 export interface TaskStoppingExecutor<TTask extends TaskCore = TaskCore> {
   stopForStatus(taskId: string, targetStatus: TaskStopTarget): Promise<TTask | null>;
@@ -12,7 +12,10 @@ export function requireStoppingExecutor(executor: TaskStoppingExecutor | undefin
 }
 
 export function requireStopTarget(targetStatus: string) {
-  return targetStatus === 'open' || targetStatus === 'cancelled' || targetStatus === 'blocked'
+  return targetStatus === 'open' ||
+    targetStatus === 'cancelled' ||
+    targetStatus === 'blocked' ||
+    targetStatus === 'done'
     ? { value: targetStatus }
     : { reason: 'invalid_stop_status' as const };
 }
