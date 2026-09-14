@@ -97,7 +97,7 @@ function makeTask(overrides: Partial<SpaceTask> = {}): SpaceTask {
 }
 
 describe('resolveSpaceMcpSessionPolicy', () => {
-  test('routes space_chat sessions to the ordinary member policy', () => {
+  test('space_chat sessions carry the member role but leave tool attachment to setupSpaceAgentSession', () => {
     const policy = resolveSpaceMcpSessionPolicy(
       makeSession({ id: 'space:chat:space-1', type: 'space_chat', context: { spaceId: 'space-1' } })
     );
@@ -106,7 +106,7 @@ describe('resolveSpaceMcpSessionPolicy', () => {
       role: 'ad_hoc_member',
       spaceId: 'space-1',
       owner: 'space-runtime',
-      attachGenericSpaceTools: true,
+      attachGenericSpaceTools: false,
       isWorkflowWorker: false,
     });
     expect(policy.requiredServers).toBe(SPACE_AD_HOC_MEMBER_REQUIRED_MCP_SERVERS);
