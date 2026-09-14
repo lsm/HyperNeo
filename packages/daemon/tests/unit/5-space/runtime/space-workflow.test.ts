@@ -1327,6 +1327,27 @@ describe('SpaceWorkflowManager slot model/provider normalization', () => {
     ).toThrow(/is not registered/);
   });
 
+  test('rejects a modelled slot pin naming an unregistered provider', () => {
+    const manager = makeManager();
+    expect(() =>
+      manager.createWorkflow({
+        spaceId: 'space-1',
+        name: 'Ghost modelled pin',
+        nodes: [
+          {
+            id: 'node-1',
+            name: 'Code',
+            agentId: 'agent-coder',
+            agents: [
+              { agentId: 'agent-coder', name: 'Code', model: 'stub-model', provider: 'ghost' },
+            ],
+          },
+        ],
+        completionAutonomyLevel: 3,
+      })
+    ).toThrow(/is not registered/);
+  });
+
   test('keeps an unmodelled slot pin that names a registered provider', () => {
     const manager = makeManager();
     const wf = manager.createWorkflow({

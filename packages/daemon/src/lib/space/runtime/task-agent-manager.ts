@@ -63,6 +63,7 @@ import {
 import {
   activateModelPoolReservation,
   applyModelPoolToSlot,
+  correctModelPoolReservationProvider,
   type ModelPoolAssignmentMap,
   raiseModelPoolDeferred,
   releaseModelPoolReservation,
@@ -908,13 +909,13 @@ export class TaskAgentManager {
         const taskModelOverride = request.node
           ? request.task.workflowModelOverrides?.[`${request.node.id}:${request.slot.name}`]
           : undefined;
-        const routedSpawnProvider = await inferAvailableSpawnProviderForModel(
+        const prePoolModel =
           taskModelOverride ??
-            request.slot.model ??
-            customAgent?.model ??
-            request.space.defaultModel ??
-            DEFAULT_CUSTOM_AGENT_MODEL
-        );
+          request.slot.model ??
+          customAgent?.model ??
+          request.space.defaultModel ??
+          DEFAULT_CUSTOM_AGENT_MODEL;
+        const routedSpawnProvider = await inferAvailableSpawnProviderForModel(prePoolModel);
         let slot = request.slot;
         let poolProvider: string | undefined;
         let poolApplied = false;
@@ -957,6 +958,14 @@ export class TaskAgentManager {
                 : ((customAgent?.provider?.trim() || undefined) ?? routedSpawnProvider),
         };
         reserveModelPoolSlot(this.modelPoolAssignments, request.execution, assignment);
+        if (poolApplied && !poolProvider && assignedModel !== prePoolModel) {
+          const correctedProvider = await inferAvailableSpawnProviderForModel(assignedModel);
+          correctModelPoolReservationProvider(
+            this.modelPoolAssignments,
+            request.execution,
+            correctedProvider
+          );
+        }
 
         try {
           const slotOverrides = {
@@ -5576,13 +5585,13 @@ export class TaskAgentManager {
     const postApprovalModelOverride = matchedNodeId
       ? task.workflowModelOverrides?.[`${matchedNodeId}:${matchedSlot.name}`]
       : undefined;
-    const routedSpawnProvider = await inferAvailableSpawnProviderForModel(
+    const prePoolModel =
       postApprovalModelOverride ??
-        matchedSlot.model ??
-        poolAgent?.model ??
-        space.defaultModel ??
-        DEFAULT_CUSTOM_AGENT_MODEL
-    );
+      matchedSlot.model ??
+      poolAgent?.model ??
+      space.defaultModel ??
+      DEFAULT_CUSTOM_AGENT_MODEL;
+    const routedSpawnProvider = await inferAvailableSpawnProviderForModel(prePoolModel);
     let slot = matchedSlot;
     let poolProvider: string | undefined;
     let poolApplied = false;
@@ -5625,6 +5634,14 @@ export class TaskAgentManager {
             : ((poolAgent?.provider?.trim() || undefined) ?? routedSpawnProvider),
     };
     reserveModelPoolSlot(this.modelPoolAssignments, reservationKey, assignment);
+    if (poolApplied && !poolProvider && assignedModel !== prePoolModel) {
+      const correctedProvider = await inferAvailableSpawnProviderForModel(assignedModel);
+      correctModelPoolReservationProvider(
+        this.modelPoolAssignments,
+        reservationKey,
+        correctedProvider
+      );
+    }
 
     try {
       const slotOverrides = {
