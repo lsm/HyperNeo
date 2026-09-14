@@ -2728,6 +2728,50 @@ describe('Space Export/Import RPC Handlers', () => {
         expect(agent.thinkingLevel).toBe('think16k');
       });
 
+      it('merges stripped pre-v7 pool pins preserving the pinned entry thinkingLevel', async () => {
+        const bundle = {
+          version: 6,
+          type: 'bundle',
+          name: 'Test Bundle',
+          exportedAt: 1000,
+          agents: [
+            {
+              version: 6,
+              type: 'agent',
+              name: 'Pool Coder',
+              modelPool: [
+                {
+                  model: 'kimi-for-coding',
+                  provider: 'openrouter',
+                  maxConcurrent: 2,
+                  weight: 3,
+                  thinkingLevel: 'think16k',
+                },
+                { model: 'kimi-for-coding', maxConcurrent: 5, weight: 1 },
+              ],
+            },
+          ],
+          workflows: [],
+        };
+
+        const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+          spaceId: SPACE_ID,
+          bundle,
+        });
+        expect(result.agents[0]?.name).toBe('Pool Coder');
+
+        const agent = longHorizonAgentRepo
+          .listBySpaceId(SPACE_ID)
+          .find((a) => a.displayName === 'Pool Coder')!;
+        expect(agent.modelPool).toHaveLength(1);
+        expect(agent.modelPool![0]).toMatchObject({
+          model: 'kimi-for-coding',
+          weight: 3,
+          maxConcurrent: 5,
+          thinkingLevel: 'think16k',
+        });
+      });
+
       it('clears thinkingLevel when not present in exported agent', async () => {
         const existing = seedAgent({
           spaceId: SPACE_ID,

@@ -1096,6 +1096,7 @@ export function setupSpaceExportImportHandlers(
                 ...prev,
                 weight: Math.max(prev.weight, entry.weight),
                 maxConcurrent: Math.max(prev.maxConcurrent, entry.maxConcurrent),
+                thinkingLevel: entry.thinkingLevel ?? prev.thinkingLevel,
               });
             }
             const deduped = [...mergedByPoolKey.values()];
