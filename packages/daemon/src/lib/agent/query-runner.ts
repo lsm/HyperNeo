@@ -1026,6 +1026,15 @@ export class QueryRunner {
         }) as Record<string, string>;
       }
 
+      if (runAbortController.signal.aborted || !attemptToken.isLive()) {
+        releaseStartupPermit('aborted_after_provider_env');
+        const envAbort = new Error(
+          'SDK startup gate: query aborted while preparing provider environment'
+        );
+        envAbort.name = 'AbortError';
+        throw envAbort;
+      }
+
       recoveryState.startGuard?.();
       const queryObject = query({
         prompt: this.createMessageGeneratorWrapper(queryGeneration, recoveryState.startGuard),

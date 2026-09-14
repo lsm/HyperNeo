@@ -1064,26 +1064,58 @@ export function setupSpaceExportImportHandlers(
         const allWarnings: string[] = [];
 
         for (const exportedAgent of bundle.agents) {
-          if (
-            typeof bundle.version === 'number' &&
-            bundle.version < 7 &&
-            exportedAgent.modelPool?.some((entry) => entry.provider !== undefined)
-          ) {
-            const stripped = exportedAgent.modelPool.map((entry) =>
-              entry.provider !== undefined ? { ...entry, provider: undefined } : entry
-            );
-            const seenPoolKeys = new Set<string>();
-            const deduped = stripped.filter((entry) => {
-              const key = modelPoolEntryKey(entry);
-              if (seenPoolKeys.has(key)) return false;
-              seenPoolKeys.add(key);
-              return true;
+          if (exportedAgent.modelPool?.some((entry) => entry.provider !== undefined)) {
+            let droppedPins = false;
+            const sanitized = exportedAgent.modelPool.map((entry) => {
+              if (entry.provider === undefined) return entry;
+              if (typeof bundle.version === 'number' && bundle.version < 7) {
+                droppedPins = true;
+                return { ...entry, provider: undefined };
+              }
+              const provider = getProviderRegistry().get(entry.provider);
+              if (!provider || !providerMayOfferModel(provider, entry.model)) {
+                droppedPins = true;
+                allWarnings.push(
+                  `Agent "${exportedAgent.name}": modelPool entry "${entry.model}" pins provider ` +
+                    `"${entry.provider}" which is not usable here; the pin was dropped on import`
+                );
+                return { ...entry, provider: undefined };
+              }
+              return entry;
             });
-            allWarnings.push(
-              `Agent "${exportedAgent.name}": modelPool provider pins require export version 7; ` +
-                'the pins were dropped on import' +
-                (deduped.length < stripped.length ? ' and duplicate entries merged' : '')
-            );
+            const mergedByPoolKey = new Map<string, (typeof sanitized)[number]>();
+            for (const entry of sanitized) {
+              const key = modelPoolEntryKey(entry);
+              const prev = mergedByPoolKey.get(key);
+              if (!prev) {
+                mergedByPoolKey.set(key, entry);
+                continue;
+              }
+              mergedByPoolKey.set(key, {
+                ...prev,
+                weight: Math.max(prev.weight, entry.weight),
+                maxConcurrent: Math.max(prev.maxConcurrent, entry.maxConcurrent),
+              });
+            }
+            const deduped = [...mergedByPoolKey.values()];
+            if (droppedPins || deduped.length < sanitized.length) {
+              if (
+                typeof bundle.version === 'number' &&
+                bundle.version < 7 &&
+                exportedAgent.modelPool.some((entry) => entry.provider !== undefined)
+              ) {
+                allWarnings.push(
+                  `Agent "${exportedAgent.name}": modelPool provider pins require export ` +
+                    'version 7; the pins were dropped on import'
+                );
+              }
+              if (deduped.length < sanitized.length) {
+                allWarnings.push(
+                  `Agent "${exportedAgent.name}": modelPool contained duplicate entries after ` +
+                    'pin handling; their weights and capacities were merged on import'
+                );
+              }
+            }
             exportedAgent.modelPool = deduped;
           }
           const existing = existingAgentByName.get(nameKey(exportedAgent.name));

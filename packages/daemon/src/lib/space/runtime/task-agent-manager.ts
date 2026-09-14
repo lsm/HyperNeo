@@ -922,6 +922,7 @@ export class TaskAgentManager {
             if (entry.model) routingCandidates.add(entry.model);
           }
           if (request.space.defaultModel) routingCandidates.add(request.space.defaultModel);
+          routingCandidates.add(DEFAULT_CUSTOM_AGENT_MODEL);
         }
         const routedByModel = new Map<string, SpawnRouteDecision>();
         await Promise.all(
@@ -959,7 +960,10 @@ export class TaskAgentManager {
           request.space.defaultModel ??
           DEFAULT_CUSTOM_AGENT_MODEL;
         const spawnRoute = routedByModel.get(assignedModel);
-        const routedSpawnProvider = spawnRoute?.provider ?? inferProviderForModel(assignedModel);
+        const routedSpawnProvider =
+          spawnRoute && !spawnRoute.fallback
+            ? (spawnRoute.provider ?? inferProviderForModel(assignedModel))
+            : undefined;
         const assignment = {
           spaceId: request.space.id,
           taskId: request.task.id,
@@ -5550,6 +5554,7 @@ export class TaskAgentManager {
         if (entry.model) routingCandidates.add(entry.model);
       }
       if (space.defaultModel) routingCandidates.add(space.defaultModel);
+      routingCandidates.add(DEFAULT_CUSTOM_AGENT_MODEL);
     }
     const routedByModel = new Map<string, SpawnRouteDecision>();
     await Promise.all(
@@ -5586,7 +5591,10 @@ export class TaskAgentManager {
       space.defaultModel ??
       DEFAULT_CUSTOM_AGENT_MODEL;
     const spawnRoute = routedByModel.get(assignedModel);
-    const routedSpawnProvider = spawnRoute?.provider ?? inferProviderForModel(assignedModel);
+    const routedSpawnProvider =
+      spawnRoute && !spawnRoute.fallback
+        ? (spawnRoute.provider ?? inferProviderForModel(assignedModel))
+        : undefined;
     const reservationKey = { id: `post-approval:${taskId}:${slot.name}:${generateUUID()}` };
     const assignment = {
       spaceId,
