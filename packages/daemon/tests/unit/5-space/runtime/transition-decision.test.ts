@@ -3,6 +3,7 @@ import {
   classifyRequest,
   decideSpaceTaskTransition,
   rejectUnsupportedRequest,
+  requireBlockReasonOnlyWithBlocked,
   requireResultOnlyWithDone,
   requireTableTransition,
   routeRuntimeAction,
@@ -14,9 +15,37 @@ import type { TaskUpdateRouting } from '../../../../src/lib/space/tools/task-tra
 
 type Case = [string, SpaceTaskTransitionDecisionInput, SpaceTaskTransitionDecision];
 
-const base = { taskId: 't1', hasResult: false, workflowRunId: null, runActive: false };
+const base = {
+  taskId: 't1',
+  hasResult: false,
+  hasBlockReason: false,
+  workflowRunId: null,
+  runActive: false,
+};
 
 const cases: Case[] = [
+  [
+    'a block reason accompanying a move to blocked is accepted',
+    {
+      ...base,
+      hasBlockReason: true,
+      currentStatus: 'in_progress',
+      requestedStatus: 'blocked',
+      callerSource: 'rpc',
+    },
+    { action: 'write', approvalSource: undefined },
+  ],
+  [
+    'a block reason accompanying any other status is rejected',
+    {
+      ...base,
+      hasBlockReason: true,
+      currentStatus: 'open',
+      requestedStatus: 'in_progress',
+      callerSource: 'rpc',
+    },
+    { action: 'reject', result: 'block_reason_requires_blocked' },
+  ],
   [
     'review to done via rpc caller writes with human approval',
     { ...base, currentStatus: 'review', requestedStatus: 'done', callerSource: 'rpc' },
@@ -276,6 +305,27 @@ describe('requireResultOnlyWithDone', () => {
       expected === 'value'
         ? { value: setStatus }
         : { reason: { action: 'reject', result: 'result_requires_done' } }
+    );
+  });
+});
+
+describe('requireBlockReasonOnlyWithBlocked', () => {
+  test.each([
+    ['a block reason with a non-blocked status is rejected', true, 'in_progress', 'reason'],
+    ['a block reason with a blocked status passes through', true, 'blocked', 'value'],
+    ['no block reason passes through', false, 'in_progress', 'value'],
+  ] as const)('%s', (_name, hasBlockReason, requestedStatus, expected) => {
+    const gate = requireBlockReasonOnlyWithBlocked(setStatus, {
+      ...base,
+      currentStatus: 'open',
+      requestedStatus,
+      hasBlockReason,
+      callerSource: 'rpc',
+    });
+    expect(gate).toEqual(
+      expected === 'value'
+        ? { value: setStatus }
+        : { reason: { action: 'reject', result: 'block_reason_requires_blocked' } }
     );
   });
 });

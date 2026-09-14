@@ -24,6 +24,7 @@ let mockHub: ReturnType<typeof makeMockHub>;
 let taskDetailResult: SpaceTask | null = null;
 let transitionResult: SpaceTask | string | null | undefined;
 let taskUpdateResult: SpaceTask | null | undefined;
+let preferredWorkflowResult: SpaceTask | string | null | undefined;
 let templateListResult: SpaceAgentTemplate[] | null = null;
 let updateTemplateResult: SpaceAgentTemplate | null | undefined;
 
@@ -308,6 +309,11 @@ function makeMockHub() {
         if (taskUpdateResult !== undefined) return taskUpdateResult;
         const input = (params?.input ?? {}) as Record<string, unknown>;
         return { ...makeTask(input.taskId as string), ...input };
+      }
+      if (method === 'operation.invoke' && params?.name === 'task.setPreferredWorkflow') {
+        if (preferredWorkflowResult !== undefined) return preferredWorkflowResult;
+        const input = (params?.input ?? {}) as Record<string, unknown>;
+        return { ...makeTask(input.taskId as string), preferredWorkflowId: input.workflowId };
       }
       if (method === 'operation.invoke' && params?.name === 'task.list') {
         return { tasks: [makeTask('t1'), makeTask('t2')], total: 7, nextCursor: null };
@@ -1728,6 +1734,7 @@ describe('SpaceStore — CRUD methods', () => {
   beforeEach(async () => {
     transitionResult = undefined;
     taskUpdateResult = undefined;
+    preferredWorkflowResult = undefined;
     await resetStore();
   });
   afterEach(() => vi.clearAllMocks());
@@ -1821,6 +1828,37 @@ describe('SpaceStore — CRUD methods', () => {
     taskUpdateResult = null;
 
     await expect(spaceStore.editTaskMetadata('t1', { description: 'x' })).rejects.toThrow(
+      'Task t1 is unavailable'
+    );
+  });
+
+  it('setPreferredWorkflow selects a workflow through its own operation', async () => {
+    await spaceStore.selectSpace('space-1');
+    mockHub.request.mockClear();
+
+    const task = await spaceStore.setPreferredWorkflow('t1', 'workflow-1');
+
+    expect(mockHub.request).toHaveBeenCalledWith('operation.invoke', {
+      name: 'task.setPreferredWorkflow',
+      input: { taskId: 't1', workflowId: 'workflow-1' },
+    });
+    expect(task.preferredWorkflowId).toBe('workflow-1');
+  });
+
+  it('setPreferredWorkflow explains a rejection in terms the picker can show', async () => {
+    await spaceStore.selectSpace('space-1');
+    preferredWorkflowResult = 'workflow_locked';
+
+    await expect(spaceStore.setPreferredWorkflow('t1', 'workflow-1')).rejects.toThrow(
+      'Cannot change the workflow for task t1: the task has already started'
+    );
+  });
+
+  it('setPreferredWorkflow throws when the operation reports the task unavailable', async () => {
+    await spaceStore.selectSpace('space-1');
+    preferredWorkflowResult = null;
+
+    await expect(spaceStore.setPreferredWorkflow('t1', null)).rejects.toThrow(
       'Task t1 is unavailable'
     );
   });

@@ -14,6 +14,7 @@ const {
   mockSchedules,
   mockEnsureConfigData,
   mockFetchEvolutionScope,
+  mockSetPreferredWorkflow,
   mockUpdateTask,
   mockEditTaskMetadata,
   mockCancelTask,
@@ -38,6 +39,7 @@ const {
     mockEnsureConfigData: vi.fn().mockResolvedValue(undefined),
     mockFetchEvolutionScope: vi.fn().mockResolvedValue({ id: 'scope-1', name: 'Launch Scope' }),
     mockUpdateTask: vi.fn().mockResolvedValue(undefined),
+    mockSetPreferredWorkflow: vi.fn().mockResolvedValue(undefined),
     mockEditTaskMetadata: vi.fn().mockResolvedValue(undefined),
     mockCancelTask: vi.fn().mockResolvedValue({ accepted: true, jobId: null }),
     mockSubmitForReview: vi.fn().mockResolvedValue(undefined),
@@ -88,6 +90,7 @@ vi.mock('../../../lib/space-store', () => ({
     ensureConfigData: mockEnsureConfigData,
     fetchEvolutionScope: mockFetchEvolutionScope,
     updateTask: mockUpdateTask,
+    setPreferredWorkflow: mockSetPreferredWorkflow,
     editTaskMetadata: mockEditTaskMetadata,
     cancelTask: mockCancelTask,
     submitForReview: mockSubmitForReview,
@@ -201,6 +204,8 @@ describe('TaskAuxiliaryPanel', () => {
     mockFetchEvolutionScope.mockClear();
     mockUpdateTask.mockClear();
     mockUpdateTask.mockResolvedValue(undefined);
+    mockSetPreferredWorkflow.mockClear();
+    mockSetPreferredWorkflow.mockResolvedValue(undefined);
     mockEditTaskMetadata.mockClear();
     mockEditTaskMetadata.mockResolvedValue(undefined);
     mockCancelTask.mockClear();
@@ -312,7 +317,7 @@ describe('TaskAuxiliaryPanel', () => {
     fireEvent.change(select, { target: { value: 'workflow-1' } });
 
     await waitFor(() =>
-      expect(mockUpdateTask).toHaveBeenCalledWith('task-1', { preferredWorkflowId: 'workflow-1' })
+      expect(mockSetPreferredWorkflow).toHaveBeenCalledWith('task-1', 'workflow-1')
     );
   });
 
@@ -322,8 +327,36 @@ describe('TaskAuxiliaryPanel', () => {
     const select = getByTestId('task-workflow-select') as HTMLSelectElement;
     fireEvent.change(select, { target: { value: '' } });
 
+    await waitFor(() => expect(mockSetPreferredWorkflow).toHaveBeenCalledWith('task-1', null));
+  });
+
+  it('drops a stale workflow rejection when the panel switches tasks', async () => {
+    mockTasks.value = [makeTask(), makeTask({ id: 'task-2', taskNumber: 2 })];
+    mockSetPreferredWorkflow.mockRejectedValueOnce(new Error('Cannot change the workflow'));
+    const { getByTestId, queryByTestId, rerender } = render(
+      <TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" />
+    );
+
+    fireEvent.change(getByTestId('task-workflow-select'), { target: { value: 'workflow-1' } });
+    await waitFor(() => expect(getByTestId('task-workflow-error')).toBeTruthy());
+
+    rerender(<TaskAuxiliaryPanel spaceId="space-1" taskId="task-2" />);
+
+    await waitFor(() => expect(queryByTestId('task-workflow-error')).toBeNull());
+  });
+
+  it('shows why a workflow change was rejected', async () => {
+    mockSetPreferredWorkflow.mockRejectedValueOnce(
+      new Error('Cannot change the workflow for task task-1: the task has already started')
+    );
+    const { getByTestId } = render(<TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" />);
+
+    fireEvent.change(getByTestId('task-workflow-select'), { target: { value: 'workflow-1' } });
+
     await waitFor(() =>
-      expect(mockUpdateTask).toHaveBeenCalledWith('task-1', { preferredWorkflowId: null })
+      expect(getByTestId('task-workflow-error').textContent).toContain(
+        'the task has already started'
+      )
     );
   });
 

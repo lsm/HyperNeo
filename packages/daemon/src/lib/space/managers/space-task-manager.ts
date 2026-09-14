@@ -481,6 +481,7 @@ export class SpaceTaskManager {
         current: Readonly<SpaceTask>,
         requested: Readonly<TaskExecutionPointers>
       ) => TaskExecutionPointers;
+      guardWrite?: (current: Readonly<SpaceTask>) => string | undefined;
       onCascadedTasks?: (cascaded: SpaceTask[]) => Promise<void>;
     }
   ): Promise<SpaceTask> {
@@ -519,6 +520,19 @@ export class SpaceTaskManager {
       }, 'immediate')();
       task = written.previous;
       updated = written.updated;
+      this.reactiveDb?.notifyChange('space_tasks');
+    } else if (options?.guardWrite) {
+      const guardWrite = options.guardWrite;
+      const quietRepo = new SpaceTaskRepository(this.db);
+      updated = this.db.transaction(() => {
+        const current = quietRepo.getTask(taskId);
+        if (!current || current.spaceId !== this.spaceId)
+          throw new Error(`Task not found: ${taskId}`);
+        const rejectionReason = guardWrite(current);
+        if (rejectionReason)
+          throw new StaleTaskGuardError(`Task ${taskId} rejected: ${rejectionReason}`);
+        return quietRepo.updateTask(taskId, repoParams);
+      }, 'immediate')();
       this.reactiveDb?.notifyChange('space_tasks');
     } else {
       updated = this.taskRepo.updateTask(taskId, repoParams);

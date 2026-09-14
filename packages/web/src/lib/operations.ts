@@ -35,3 +35,26 @@ export async function editTaskMetadata(
   if (result === null) throw new Error(`Task ${input.taskId} is unavailable`);
   return result;
 }
+
+const PREFERRED_WORKFLOW_REJECTIONS: Record<string, string> = {
+  workflow_locked: 'the task has already started',
+  workflow_not_found: 'that workflow is not available in this space',
+  workflow_disabled: 'that workflow is disabled',
+};
+
+export async function setPreferredWorkflow(
+  hub: MessageHub,
+  input: { taskId: string; workflowId: string | null }
+): Promise<SpaceTask> {
+  const result = await invokeOperation<SpaceTask | string | null>(
+    hub,
+    'task.setPreferredWorkflow',
+    input
+  );
+  if (result === null) throw new Error(`Task ${input.taskId} is unavailable`);
+  if (typeof result === 'string') {
+    const detail = PREFERRED_WORKFLOW_REJECTIONS[result] ?? result;
+    throw new Error(`Cannot change the workflow for task ${input.taskId}: ${detail}`);
+  }
+  return result;
+}

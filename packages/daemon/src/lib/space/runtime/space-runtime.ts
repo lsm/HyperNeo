@@ -3251,6 +3251,7 @@ export class SpaceRuntime {
         reportedSummary: Object.hasOwn(params, 'reportedSummary')
           ? params.reportedSummary
           : undefined,
+        blockReason: params.blockReason ?? undefined,
         approvalSource: params.approvalSource ?? undefined,
         approvalReason:
           nextStatus === 'cancelled'
@@ -3264,6 +3265,7 @@ export class SpaceRuntime {
       const {
         status: _status,
         result: _result,
+        blockReason: _blockReason,
         approvalReason: _approvalReason,
         cancelReason: _cancelReason,
         ...otherFields

@@ -22,6 +22,7 @@ export interface TaskOperationDependencies {
   cancel?: OperationDefinition;
   complete?: OperationDefinition;
   start?: OperationDefinition;
+  setPreferredWorkflow?: OperationDefinition;
   create?: OperationDefinition;
   transition?: OperationDefinition;
   archive?: OperationDefinition;
@@ -55,6 +56,7 @@ export function createDaemonOperationCatalog(
     ...(tasks.cancel ? [tasks.cancel] : []),
     ...(tasks.complete ? [tasks.complete] : []),
     ...(tasks.start ? [tasks.start] : []),
+    ...(tasks.setPreferredWorkflow ? [tasks.setPreferredWorkflow] : []),
     ...createDiscoveryOperations(() => registry),
   ]);
   return registry;

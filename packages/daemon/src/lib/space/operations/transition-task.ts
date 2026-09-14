@@ -23,7 +23,11 @@ import {
 const log = new Logger('SpaceTransitionTask');
 type In = SpaceTransitionTaskInput;
 type Caller = OperationCaller;
-type Rejection = 'unsupported_status' | 'invalid_transition' | 'result_requires_done';
+type Rejection =
+  | 'unsupported_status'
+  | 'invalid_transition'
+  | 'result_requires_done'
+  | 'block_reason_requires_blocked';
 type Result = TaskCore | Rejection | null;
 export interface SpaceTransitionTaskDependencies extends SpaceTransitionAdmissionDependencies {
   getTaskManager: (spaceId: string) => Pick<SpaceTaskManager, 'getTask' | 'setTaskStatus'>;
@@ -68,6 +72,7 @@ async function runRuntimeExecutor(
   const stopped = await deps.stopForStatus(spaceId, task.id, {
     status: input.status,
     result: input.result,
+    blockReason: input.blockReason,
   });
   return stopped ?? 'invalid_transition';
 }
@@ -93,6 +98,7 @@ export async function decide(
     currentStatus: task.status,
     requestedStatus: input.status,
     hasResult: input.result !== undefined,
+    hasBlockReason: input.blockReason !== undefined,
     workflowRunId: task.workflowRunId ?? null,
     runActive: task.workflowRunId ? deps.isWorkflowRunActive(task.workflowRunId) : false,
     callerSource: caller.source,
@@ -125,6 +131,7 @@ export async function writeStatus(decided: DecidedTask, input: In, deps: Deps): 
   try {
     const updated = await deps.getTaskManager(spaceId).setTaskStatus(task.id, input.status, {
       result: input.result,
+      blockReason: input.blockReason,
       approvalSource,
       expectedStatus: task.status,
       expectedWorkflowRunId: task.workflowRunId ?? null,
@@ -143,7 +150,7 @@ export async function writeStatus(decided: DecidedTask, input: In, deps: Deps): 
   }
 }
 const SPACE_TRANSITION_TASK_DESCRIPTION =
-  'Space-scoped callers change the lifecycle state of a task in their Space; review and approved are entered only through the submit-for-review and approval operations, and rate_limited/usage_limited are runtime-owned. Tasks with an active direct-execution attempt are managed by the durable start/cancel/complete operations, and result may accompany only a transition to done. Supply expectedStatus to reject with invalid_transition unless the task is still in that state; it is applied as a compare-and-set on a direct write, and as a pre-dispatch check for transitions handed to the workflow runtime. Returns core task data, null for absent or unavailable tasks, or unsupported_status, invalid_transition, or result_requires_done when rejected.';
+  'Space-scoped callers change the lifecycle state of a task in their Space; review and approved are entered only through the submit-for-review and approval operations, and rate_limited/usage_limited are runtime-owned. Tasks with an active direct-execution attempt are managed by the durable start/cancel/complete operations, and result may accompany only a transition to done, and blockReason only a transition to blocked, where human_input_requested is the single caller-settable value because every other block reason is stamped by the runtime that observed it. Supply expectedStatus to reject with invalid_transition unless the task is still in that state; it is applied as a compare-and-set on a direct write, and as a pre-dispatch check for transitions handed to the workflow runtime. Returns core task data, null for absent or unavailable tasks, or unsupported_status, invalid_transition, result_requires_done, or block_reason_requires_blocked when rejected.';
 export function createSpaceTransitionTaskOperation(deps: Deps) {
   const transition = (superpipe({ deps })('transition-space-task') as PipelineAPI)
     .input(['input', 'caller'])

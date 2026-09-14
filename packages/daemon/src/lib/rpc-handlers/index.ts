@@ -677,6 +677,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
         spaceRuntimeService.stopWorkflowBackedTaskForStatus(spaceId, taskId, params),
       getSession: (sessionId) => deps.db.getSession(sessionId),
       getTaskManager: spaceTaskManagerFactory,
+      getWorkflow: (workflowId) => spaceWorkflowManager.getWorkflow(workflowId),
       isWorkflowRunActive: (workflowRunId) =>
         spaceRuntimeService.isWorkflowRunActive(workflowRunId),
       taskRepo: spaceTaskRepo,

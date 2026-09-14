@@ -112,6 +112,91 @@ test('a standalone task passes through to the plain status writer', async () => 
   expect(notifyStandalone).toHaveBeenCalledTimes(1);
 });
 
+test('a block reason accompanies a move to blocked and is persisted', async () => {
+  const task = tasks.createTask({ spaceId, title: 'T', description: '' });
+  await invoke({ taskId: task.id, status: 'in_progress' }, rpc);
+
+  const result = await invoke(
+    { taskId: task.id, status: 'blocked', blockReason: 'human_input_requested' },
+    rpc
+  );
+
+  expect(result).toMatchObject({ kind: 'completed', value: { id: task.id, status: 'blocked' } });
+  expect(tasks.getTask(task.id)?.blockReason).toBe('human_input_requested');
+});
+
+test('a block reason on any other status is rejected and makes no write', async () => {
+  const task = tasks.createTask({ spaceId, title: 'T', description: '' });
+
+  const result = await invoke(
+    { taskId: task.id, status: 'in_progress', blockReason: 'human_input_requested' },
+    rpc
+  );
+
+  expect(result).toEqual({ kind: 'completed', value: 'block_reason_requires_blocked' });
+  expect(tasks.getTask(task.id)?.status).toBe('open');
+});
+
+test('a workflow-backed stop carries the block reason into the runtime params', async () => {
+  const run = createWorkflowRun();
+  const task = tasks.createTask({ spaceId, title: 'T', description: '' });
+  tasks.updateTask(task.id, { workflowRunId: run.id, status: 'in_progress' });
+  const stopForStatus = mock(async () => tasks.getTask(task.id));
+
+  await invoke({ taskId: task.id, status: 'blocked', blockReason: 'human_input_requested' }, rpc, {
+    isWorkflowRunActive: () => true,
+    stopForStatus,
+  });
+
+  expect(stopForStatus).toHaveBeenCalledWith(
+    spaceId,
+    task.id,
+    expect.objectContaining({ status: 'blocked', blockReason: 'human_input_requested' })
+  );
+});
+
+test('the workflow stop path receives the block reason in one status write', async () => {
+  const run = createWorkflowRun();
+  const task = tasks.createTask({ spaceId, title: 'T', description: '' });
+  tasks.updateTask(task.id, { workflowRunId: run.id, status: 'in_progress' });
+  const stopForStatus = mock(async (_s: string, id: string, params: Record<string, unknown>) => {
+    const manager = new SpaceTaskManager(db, spaceId);
+    return manager.setTaskStatus(id, 'blocked', {
+      blockReason: params.blockReason as 'human_input_requested',
+    });
+  });
+
+  await invoke({ taskId: task.id, status: 'blocked', blockReason: 'human_input_requested' }, rpc, {
+    isWorkflowRunActive: () => true,
+    stopForStatus,
+  });
+
+  expect(tasks.getTask(task.id)?.blockReason).toBe('human_input_requested');
+});
+
+test('a standalone task rejects a block reason instead of dropping it', async () => {
+  const task = createStandaloneTask(db, { title: 'Solo' }, undefined, () => {});
+
+  const result = await invoke(
+    { taskId: task.id, status: 'blocked', blockReason: 'human_input_requested' },
+    rpc
+  );
+
+  expect(result).toEqual({ kind: 'completed', value: 'unsupported_status' });
+  expect(readStandaloneStatus(task.id)).toBe('open');
+});
+
+test('a runtime-owned block reason is rejected by the schema', async () => {
+  const task = tasks.createTask({ spaceId, title: 'T', description: '' });
+
+  const result = await invoke(
+    { taskId: task.id, status: 'blocked', blockReason: 'agent_crashed' },
+    rpc
+  );
+
+  expect(result).toMatchObject({ kind: 'failed', code: 'invalid_input' });
+});
+
 test('a missing task resolves to null', async () => {
   expect(await invoke({ taskId: 'missing', status: 'open' }, rpc)).toEqual({
     kind: 'completed',

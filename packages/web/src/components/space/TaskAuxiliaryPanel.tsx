@@ -82,8 +82,10 @@ export function TaskAuxiliaryPanel({
   const resolvedTask = useResolvedSpaceTask(task);
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const taskIdRef = useRef(taskId);
   const [scopeName, setScopeName] = useState<string | null>(null);
   const [savingWorkflow, setSavingWorkflow] = useState(false);
+  const [workflowError, setWorkflowError] = useState<string | null>(null);
   const [statusTransitioning, setStatusTransitioning] = useState(false);
   const [transitionError, setTransitionError] = useState<string | null>(null);
   const [descriptionDraft, setDescriptionDraft] = useState(resolvedTask?.description ?? '');
@@ -92,6 +94,12 @@ export function TaskAuxiliaryPanel({
   useEffect(() => {
     spaceStore.ensureConfigData().catch(() => {});
   }, [spaceId]);
+
+  useEffect(() => {
+    taskIdRef.current = taskId;
+    setWorkflowError(null);
+    setSavingWorkflow(false);
+  }, [taskId]);
 
   useEffect(() => {
     setDescriptionDraft(resolvedTask?.description ?? '');
@@ -176,12 +184,16 @@ export function TaskAuxiliaryPanel({
   };
 
   const handleWorkflowChange = async (nextWorkflowId: string | null) => {
+    const requestedTaskId = task.id;
     try {
       setSavingWorkflow(true);
-      await spaceStore.updateTask(task.id, { preferredWorkflowId: nextWorkflowId });
-    } catch {
+      setWorkflowError(null);
+      await spaceStore.setPreferredWorkflow(requestedTaskId, nextWorkflowId);
+    } catch (err) {
+      if (taskIdRef.current !== requestedTaskId) return;
+      setWorkflowError(err instanceof Error ? err.message : 'Failed to change the workflow');
     } finally {
-      setSavingWorkflow(false);
+      if (taskIdRef.current === requestedTaskId) setSavingWorkflow(false);
     }
   };
 
@@ -324,6 +336,11 @@ export function TaskAuxiliaryPanel({
           ))}
         </select>
         {savingWorkflow && <p class="mt-1 text-[11px] text-fg-muted">Saving…</p>}
+        {!savingWorkflow && workflowError && (
+          <p class="mt-1 text-[11px] text-danger" data-testid="task-workflow-error">
+            {workflowError}
+          </p>
+        )}
       </div>
       {task.dependsOn.length > 0 && (
         <div>
