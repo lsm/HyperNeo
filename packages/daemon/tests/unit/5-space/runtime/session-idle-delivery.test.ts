@@ -91,8 +91,8 @@ const { getProviderRegistry, resetProviderRegistry } = await import(
 const { resetProviderFactory } = await import('../../../../src/lib/providers/factory.js');
 const { AnthropicProvider } = await import('../../../../src/lib/providers/anthropic-provider.js');
 const { resetProviderServiceInstance } = await import('../../../../src/lib/provider-service');
-const { deliverSpaceAgentMessage, SpaceAgentLateSettlements } = await import(
-  '../../../../src/lib/space/runtime/space-agent-message-delivery'
+const { deliverSpaceAgentMessage, SessionLateSettlements } = await import(
+  '../../../../src/lib/space/runtime/session-message-delivery'
 );
 const { AgentMessageRouter } = await import(
   '../../../../src/lib/space/runtime/agent-message-router.ts'
@@ -113,7 +113,7 @@ import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus';
 import type { AgentSession as AgentSessionType } from '../../../../src/lib/agent/agent-session';
 import type { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
-import type { SpaceAgentInjectionOutcome } from '../../../../src/lib/space/runtime/space-agent-message-delivery';
+import type { SessionInjectionOutcome } from '../../../../src/lib/space/runtime/session-message-delivery';
 
 const SPACE_ID = 'sp-idle-coordinator';
 const SESSION_ID = `space:chat:${SPACE_ID}`;
@@ -169,12 +169,12 @@ interface IdleCoordinatorHarness {
   db: Database;
   agentSession: AgentSessionType;
   processor: InstanceType<typeof JobQueueProcessor>;
-  lateSettlements: InstanceType<typeof SpaceAgentLateSettlements>;
+  lateSettlements: InstanceType<typeof SessionLateSettlements>;
   escalate: (
     messageId: string,
     text: string,
     depsOverride?: { onConsumed?: (settledSessionId: string) => void }
-  ) => Promise<SpaceAgentInjectionOutcome>;
+  ) => Promise<SessionInjectionOutcome>;
 }
 
 async function makeIdleCoordinatorHarness(): Promise<IdleCoordinatorHarness> {
@@ -229,7 +229,7 @@ async function makeIdleCoordinatorHarness(): Promise<IdleCoordinatorHarness> {
   );
   processor.start();
 
-  const lateSettlements = new SpaceAgentLateSettlements();
+  const lateSettlements = new SessionLateSettlements();
   const escalate = (
     messageId: string,
     text: string,
@@ -386,7 +386,7 @@ describe('idle coordinator message consumption (issue #2963)', () => {
         workflowChannels: [],
         messageInjector: async () => {},
         spaceId: SPACE_ID,
-        spaceAgentInjector: async (_spaceId, message, _replyTo, explicitMessageId) =>
+        sessionMessageInjector: async (_spaceId, message, _replyTo, explicitMessageId) =>
           escalate(explicitMessageId ?? `msg-router-${Date.now()}`, message),
         replyRoutingLookup: () => SESSION_ID,
       });

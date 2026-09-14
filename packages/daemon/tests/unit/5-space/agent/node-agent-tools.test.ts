@@ -485,7 +485,7 @@ describe('node-agent-tools: send_message', () => {
       spaceId: ctx.spaceId,
       taskId: ctx.parentTaskId,
       taskNumber: 42,
-      spaceAgentInjector: async (spaceId, message) => {
+      sessionMessageInjector: async (spaceId, message) => {
         spaceMessages.push({ spaceId, message });
         return {
           state: 'accepted',

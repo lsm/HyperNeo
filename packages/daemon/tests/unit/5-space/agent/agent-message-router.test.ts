@@ -172,7 +172,7 @@ function makeRouter(
     ...overrides,
     deliverToTarget:
       overrides.deliverToTarget ??
-      (overrides.messageInjector || overrides.spaceAgentInjector ? undefined : deliverToTarget),
+      (overrides.messageInjector || overrides.sessionMessageInjector ? undefined : deliverToTarget),
     taskId: overrides.taskId === null ? undefined : (overrides.taskId ?? 'task-test'),
   });
 }
@@ -1368,7 +1368,7 @@ describe('AgentMessageRouter: generic address targets', () => {
     const spaceMessages: string[] = [];
     const router = makeRouter(ctx, workflowRunId, injected, [makeChannel('coder', 'reviewer')], {
       spaceId: ctx.spaceId,
-      spaceAgentInjector: async (_spaceId, message) => {
+      sessionMessageInjector: async (_spaceId, message) => {
         spaceMessages.push(message);
         return {
           state: 'accepted',
@@ -1405,7 +1405,7 @@ describe('AgentMessageRouter: generic address targets', () => {
     const injected: Array<string | null> = [];
     const router = makeRouter(ctx, workflowRunId, [], [], {
       spaceId: ctx.spaceId,
-      spaceAgentInjector: async (spaceId, _message, replyToSessionId) => {
+      sessionMessageInjector: async (spaceId, _message, replyToSessionId) => {
         injected.push(replyToSessionId);
         return {
           state: 'accepted',
@@ -1441,7 +1441,7 @@ describe('AgentMessageRouter: generic address targets', () => {
     const router = makeRouter(ctx, workflowRunId, [], [], {
       spaceId: ctx.spaceId,
       replyRoutingLookup: () => 'session-origin',
-      spaceAgentInjector: async () => ({
+      sessionMessageInjector: async () => ({
         state: 'accepted',
         messageId: 'msg-queued-coordinator',
         sessionId: 'sess-stub',
@@ -1470,7 +1470,7 @@ describe('AgentMessageRouter: generic address targets', () => {
     const router = makeRouter(ctx, workflowRunId, [], [], {
       spaceId: ctx.spaceId,
       replyRoutingLookup: () => 'session-origin',
-      spaceAgentInjector: async () => ({
+      sessionMessageInjector: async () => ({
         state: 'accepted',
         messageId: 'msg-queued-coordinator',
         sessionId: 'sess-stub',
@@ -1497,7 +1497,7 @@ describe('AgentMessageRouter: generic address targets', () => {
     const router = makeRouter(ctx, workflowRunId, [], [], {
       spaceId: ctx.spaceId,
       replyRoutingLookup: () => 'session-origin',
-      spaceAgentInjector: async () => ({
+      sessionMessageInjector: async () => ({
         state: 'accepted',
         messageId: 'msg-queued-coordinator',
         sessionId: 'sess-stub',
@@ -1532,7 +1532,7 @@ describe('AgentMessageRouter: generic address targets', () => {
     const router = makeRouter(ctx, workflowRunId, [], [], {
       spaceId: ctx.spaceId,
       replyRoutingLookup: () => 'session-origin',
-      spaceAgentInjector: async () => ({
+      sessionMessageInjector: async () => ({
         state: 'accepted',
         messageId: 'msg-live-coordinator',
         sessionId: `space:chat:${ctx.spaceId}`,
@@ -1560,7 +1560,7 @@ describe('AgentMessageRouter: generic address targets', () => {
     const router = makeRouter(ctx, workflowRunId, [], [], {
       spaceId: ctx.spaceId,
       replyRoutingLookup: () => 'session-origin',
-      spaceAgentInjector: async () => ({
+      sessionMessageInjector: async () => ({
         state: 'failed' as const,
         messageId: 'msg-dead-lettered',
         sessionId: `space:chat:${ctx.spaceId}`,
@@ -1595,7 +1595,7 @@ describe('AgentMessageRouter: generic address targets', () => {
     seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
     const router = makeRouter(ctx, workflowRunId, [], [], {
       spaceId: ctx.spaceId,
-      spaceAgentInjector: async () => ({
+      sessionMessageInjector: async () => ({
         state: 'accepted',
         messageId: 'msg-queued-coordinator',
         sessionId: 'sess-stub',
@@ -1626,7 +1626,7 @@ describe('AgentMessageRouter: generic address targets', () => {
     seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
     const router = makeRouter(ctx, workflowRunId, [], [], {
       spaceId: ctx.spaceId,
-      spaceAgentInjector: async () => ({
+      sessionMessageInjector: async () => ({
         state: 'accepted',
         messageId: 'msg-space-agent',
         sessionId: 'sess-stub',
@@ -1658,7 +1658,7 @@ describe('AgentMessageRouter: generic address targets', () => {
     const injected: string[] = [];
     const router = makeRouter(ctx, workflowRunId, [], [], {
       spaceId: ctx.spaceId,
-      spaceAgentInjector: async (_spaceId, _message, replyToSessionId) => {
+      sessionMessageInjector: async (_spaceId, _message, replyToSessionId) => {
         injected.push(replyToSessionId ?? 'default');
         return { state: 'accepted', messageId: `msg-${injected.length}`, sessionId: 'sess-stub' };
       },

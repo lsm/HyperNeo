@@ -29,21 +29,21 @@ export interface LateSettlementRequest {
   getSendStatus?: () => string | null | undefined;
 }
 
-export interface SpaceAgentLateSettlementHandle {
+export interface SessionLateSettlementHandle {
   cancel(): void;
 }
 
-export interface SpaceAgentLateSettlementOwner {
-  arm(request: LateSettlementRequest): SpaceAgentLateSettlementHandle;
+export interface SessionLateSettlementOwner {
+  arm(request: LateSettlementRequest): SessionLateSettlementHandle;
 }
 
 export const LATE_SETTLE_HORIZON_MS = 12 * 60_000;
 
-export class SpaceAgentLateSettlements implements SpaceAgentLateSettlementOwner {
+export class SessionLateSettlements implements SessionLateSettlementOwner {
   private readonly timers = new Set<ReturnType<typeof setTimeout>>();
   private readonly waiters = new Map<
     string,
-    { handle: SpaceAgentLateSettlementHandle; release: () => void }
+    { handle: SessionLateSettlementHandle; release: () => void }
   >();
   private disposed = false;
 
@@ -53,7 +53,7 @@ export class SpaceAgentLateSettlements implements SpaceAgentLateSettlementOwner 
     onConsumed,
     onFailed,
     getSendStatus,
-  }: LateSettlementRequest): SpaceAgentLateSettlementHandle {
+  }: LateSettlementRequest): SessionLateSettlementHandle {
     const key = `${sessionId}\u0000${messageId}`;
     this.waiters.get(key)?.release();
     if (this.disposed) return { cancel: () => {} };
@@ -91,7 +91,7 @@ export class SpaceAgentLateSettlements implements SpaceAgentLateSettlementOwner 
       }
     };
 
-    const handle: SpaceAgentLateSettlementHandle = {
+    const handle: SessionLateSettlementHandle = {
       cancel: () => {
         if (fired) return;
         fired = true;
@@ -138,11 +138,11 @@ export class SpaceAgentLateSettlements implements SpaceAgentLateSettlementOwner 
   }
 }
 
-export type SpaceAgentInjectionOutcome =
+export type SessionInjectionOutcome =
   | { state: 'accepted'; messageId: string; sessionId: string }
   | { state: 'failed'; messageId: string; sessionId: string; error: string };
 
-export interface SpaceAgentDeliveryDeps {
+export interface SessionDeliveryDeps {
   db: BunDatabase;
   sdkMessageRepo: SDKMessageRepository;
   jobQueue: JobQueueRepository;
@@ -150,31 +150,31 @@ export interface SpaceAgentDeliveryDeps {
   stateManager?: { setQueuedIfIdle(messageId: string): Promise<boolean> };
   onConsumed?: (settledSessionId: string) => void;
   onLateFailure?: () => void;
-  lateSettlement?: SpaceAgentLateSettlementOwner;
+  lateSettlement?: SessionLateSettlementOwner;
 }
 
-export interface SpaceAgentDeliveryInput {
+export interface SessionDeliveryInput {
   sessionId: string;
   messageId: string;
   sdkUserMessage: SDKUserMessage;
   origin?: MessageDeliveryOrigin;
 }
 
-interface SpaceAgentDeliveryCtx extends SpaceAgentDeliveryInput {
-  deps: SpaceAgentDeliveryDeps;
+interface SessionDeliveryCtx extends SessionDeliveryInput {
+  deps: SessionDeliveryDeps;
   existing?: { sendStatus: string } | null;
-  handoff?: SpaceAgentMailboxAdmission;
-  outcome?: SpaceAgentInjectionOutcome;
+  handoff?: SessionMailboxAdmission;
+  outcome?: SessionInjectionOutcome;
 }
 
-function loadExistingRow(ctx: SpaceAgentDeliveryCtx): SpaceAgentDeliveryCtx {
+function loadExistingRow(ctx: SessionDeliveryCtx): SessionDeliveryCtx {
   return {
     ...ctx,
     existing: ctx.deps.sdkMessageRepo.getDeliveryContent(ctx.sessionId, ctx.messageId),
   };
 }
 
-function notifyConsumed(ctx: SpaceAgentDeliveryCtx): void {
+function notifyConsumed(ctx: SessionDeliveryCtx): void {
   if (!ctx.deps.onConsumed) return;
   try {
     ctx.deps.onConsumed(ctx.sessionId);
@@ -195,7 +195,7 @@ function hasSettledDeliveryRow(
   return sdkMessageRepo.getSettledDeliveryMessageId(sessionId, messageId) !== null;
 }
 
-function shortCircuitConsumed(ctx: SpaceAgentDeliveryCtx): SpaceAgentDeliveryCtx {
+function shortCircuitConsumed(ctx: SessionDeliveryCtx): SessionDeliveryCtx {
   if (!hasSettledDeliveryRow(ctx.deps.sdkMessageRepo, ctx.sessionId, ctx.messageId)) return ctx;
   verifyPromptContent({
     db: ctx.deps.db,
@@ -210,7 +210,7 @@ function shortCircuitConsumed(ctx: SpaceAgentDeliveryCtx): SpaceAgentDeliveryCtx
   };
 }
 
-function projectMailboxPrompt(ctx: SpaceAgentDeliveryCtx) {
+function projectMailboxPrompt(ctx: SessionDeliveryCtx) {
   return {
     type: 'user' as const,
     parent_tool_use_id: null,
@@ -247,7 +247,7 @@ function listSessionMailboxAdmissions(
   });
 }
 
-function assertNoConflictingPendingAdmission(ctx: SpaceAgentDeliveryCtx): void {
+function assertNoConflictingPendingAdmission(ctx: SessionDeliveryCtx): void {
   const ours = admissionIdentity(projectMailboxPrompt(ctx));
   for (const job of listSessionMailboxAdmissions(ctx.deps.jobQueue, ctx.sessionId, ctx.messageId)) {
     const entry = job.payload as { message?: PendingAdmissionMessage };
@@ -260,9 +260,9 @@ function assertNoConflictingPendingAdmission(ctx: SpaceAgentDeliveryCtx): void {
   }
 }
 
-type SpaceAgentMailboxAdmission = MailboxHandoffOutcome | { kind: 'settled' };
+type SessionMailboxAdmission = MailboxHandoffOutcome | { kind: 'settled' };
 
-function admitMailboxPrompt(ctx: SpaceAgentDeliveryCtx): SpaceAgentMailboxAdmission {
+function admitMailboxPrompt(ctx: SessionDeliveryCtx): SessionMailboxAdmission {
   let entry: MailboxEntry;
   try {
     entry = createMailboxEntry({
@@ -291,12 +291,12 @@ function admitMailboxPrompt(ctx: SpaceAgentDeliveryCtx): SpaceAgentMailboxAdmiss
   return admit();
 }
 
-async function enqueuePrompt(ctx: SpaceAgentDeliveryCtx): Promise<SpaceAgentDeliveryCtx> {
+async function enqueuePrompt(ctx: SessionDeliveryCtx): Promise<SessionDeliveryCtx> {
   const handoff = await withSessionLock(ctx.sessionId, async () => admitMailboxPrompt(ctx));
   return { ...ctx, handoff };
 }
 
-async function markQueuedIfIdle(ctx: SpaceAgentDeliveryCtx): Promise<void> {
+async function markQueuedIfIdle(ctx: SessionDeliveryCtx): Promise<void> {
   const stateManager = ctx.deps.stateManager;
   if (!stateManager) return;
   if (hasSettledDeliveryRow(ctx.deps.sdkMessageRepo, ctx.sessionId, ctx.messageId)) return;
@@ -309,7 +309,7 @@ async function markQueuedIfIdle(ctx: SpaceAgentDeliveryCtx): Promise<void> {
   } catch {}
 }
 
-async function acceptOutcome(ctx: SpaceAgentDeliveryCtx): Promise<SpaceAgentDeliveryCtx> {
+async function acceptOutcome(ctx: SessionDeliveryCtx): Promise<SessionDeliveryCtx> {
   const { sessionId, messageId } = ctx;
   const handoff = ctx.handoff ?? null;
   if (handoff === null || handoff.kind === 'rejected') {
@@ -348,7 +348,7 @@ async function acceptOutcome(ctx: SpaceAgentDeliveryCtx): Promise<SpaceAgentDeli
   return { ...ctx, outcome: { state: 'accepted', messageId, sessionId } };
 }
 
-async function failDelivery(ctx: SpaceAgentDeliveryCtx, error: unknown): Promise<void> {
+async function failDelivery(ctx: SessionDeliveryCtx, error: unknown): Promise<void> {
   if (error instanceof PromptContentConflictError) return;
   const failedDbId = ctx.deps.sdkMessageRepo.markDeliveryFailedByUuid(ctx.sessionId, ctx.messageId);
   if (failedDbId) {
@@ -356,12 +356,12 @@ async function failDelivery(ctx: SpaceAgentDeliveryCtx, error: unknown): Promise
   }
 }
 
-function hasOutcome(ctx: SpaceAgentDeliveryCtx): boolean {
+function hasOutcome(ctx: SessionDeliveryCtx): boolean {
   return ctx.outcome !== undefined;
 }
 
 const run = (
-  superpipe<{ hasOutcome: (ctx: SpaceAgentDeliveryCtx) => boolean }>({
+  superpipe<{ hasOutcome: (ctx: SessionDeliveryCtx) => boolean }>({
     hasOutcome,
   })('space-agent-delivery') as PipelineAPI
 )
@@ -372,12 +372,12 @@ const run = (
   .pipe(enqueuePrompt, 'ctx', 'ctx')
   .pipe(acceptOutcome, 'ctx', 'ctx')
   .error(failDelivery, ['ctx', 'error'])
-  .endAsync('ctx') as (input: SpaceAgentDeliveryCtx) => Promise<SpaceAgentDeliveryCtx>;
+  .endAsync('ctx') as (input: SessionDeliveryCtx) => Promise<SessionDeliveryCtx>;
 
 export async function deliverSpaceAgentMessage(
-  deps: SpaceAgentDeliveryDeps,
-  args: SpaceAgentDeliveryInput
-): Promise<SpaceAgentInjectionOutcome> {
+  deps: SessionDeliveryDeps,
+  args: SessionDeliveryInput
+): Promise<SessionInjectionOutcome> {
   const ctx = await run({ ...args, deps });
   return (
     ctx.outcome ?? {

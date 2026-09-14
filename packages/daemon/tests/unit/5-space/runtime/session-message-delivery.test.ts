@@ -13,8 +13,8 @@ import { MAILBOX_LANE } from '../../../../src/lib/mailbox/enqueue';
 import {
   deliverSpaceAgentMessage,
   type LateSettlementRequest,
-  SpaceAgentLateSettlements,
-} from '../../../../src/lib/space/runtime/space-agent-message-delivery';
+  SessionLateSettlements,
+} from '../../../../src/lib/space/runtime/session-message-delivery';
 import { JobQueueProcessor } from '../../../../src/storage/job-queue-processor';
 import { createOutboxTestDb, type OutboxTestDb } from '../../../helpers/outbox-test-db';
 
@@ -317,7 +317,7 @@ describe('deliverSpaceAgentMessage', () => {
     });
     h.completeDeliveryJobs(SESSION_ID, MESSAGE_ID);
     h.sdkRepo.updateMessageStatus([persisted.dbMessageId], 'failed');
-    const lateSettlements = new SpaceAgentLateSettlements();
+    const lateSettlements = new SessionLateSettlements();
     let consumed = false;
     const onLateFailure = mock(() => {});
 

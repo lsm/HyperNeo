@@ -5,7 +5,7 @@ import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types
 import type { SessionTarget } from '../../session-resolution/target.ts';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
 import { formatAgentMessage } from '../agent-message-envelope.ts';
-import type { SpaceAgentInjectionOutcome } from './space-agent-message-delivery.ts';
+import type { SessionInjectionOutcome } from './session-message-delivery.ts';
 import { SpaceDeliveryFacade } from '../messaging-adapter.ts';
 import {
   type AgentMessageResult,
@@ -41,7 +41,7 @@ export interface AgentMessageRouterConfig {
   messageInjector?: (sessionId: string, message: string) => Promise<void>;
   channelRouter?: ChannelRouter;
   nodeGroups?: Record<string, string[]>;
-  spaceAgentInjector?: (
+  sessionMessageInjector?: (
     spaceId: string,
     message: string,
     replyToSessionId?: string | null,
@@ -51,7 +51,7 @@ export interface AgentMessageRouterConfig {
       onLateFailure?: () => void;
       disposeSignal?: AbortSignal;
     }
-  ) => Promise<SpaceAgentInjectionOutcome>;
+  ) => Promise<SessionInjectionOutcome>;
   taskNumber?: number | null;
   spaceId?: string;
   taskId?: string;
@@ -205,8 +205,8 @@ export class AgentMessageRouter {
       return this.config.deliverToTarget(target, message, messageId, sessionIdHint);
     }
     if (target.kind === 'session') {
-      if (this.config.spaceAgentInjector && this.config.spaceId) {
-        const outcome = await this.config.spaceAgentInjector(
+      if (this.config.sessionMessageInjector && this.config.spaceId) {
+        const outcome = await this.config.sessionMessageInjector(
           this.config.spaceId,
           message,
           target.sessionId
@@ -246,7 +246,7 @@ export class AgentMessageRouter {
       workflowRunId,
       workflowChannels,
       channelRouter,
-      spaceAgentInjector,
+      sessionMessageInjector,
       spaceId,
       taskId,
       taskNumber,
@@ -296,7 +296,7 @@ export class AgentMessageRouter {
       });
 
     const sessionDeliveryAvailable = Boolean(
-      (this.config.deliverToTarget || spaceAgentInjector) && spaceId
+      (this.config.deliverToTarget || sessionMessageInjector) && spaceId
     );
     const messagingFacadeAvailable = Boolean(messageResolver && longTermAgentDelivery && spaceId);
 
