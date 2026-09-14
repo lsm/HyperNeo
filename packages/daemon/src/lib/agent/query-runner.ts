@@ -699,15 +699,15 @@ export class QueryRunner {
         }
       }
       const explicitPin = rawProviderId != null && explicitProviderId !== undefined;
-      const inferredRunEligible = providerAvailable !== false && !resolvedProvider.fallback;
-      const persistPin = explicitPin ? rawProviderId !== normalizedProviderId : inferredRunEligible;
-      const applyInMemory =
+      const persistPin =
         normalizedProviderId !== undefined &&
-        (persistPin || (!explicitPin && providerAvailable !== false));
-      if (applyInMemory) {
+        (explicitPin
+          ? rawProviderId !== normalizedProviderId
+          : providerAvailable !== false && !resolvedProvider.fallback);
+      if (persistPin) {
         session.config.provider = normalizedProviderId as Session['config']['provider'];
       }
-      if (normalizedProviderId !== undefined && persistPin) {
+      if (persistPin) {
         try {
           this.ctx.db.updateSession(session.id, {
             config: { ...session.config },
@@ -719,12 +719,6 @@ export class QueryRunner {
           );
         }
       }
-
-      this.ctx.internalEventBus?.publishAsync?.('session.providerRouted', {
-        sessionId: session.id,
-        model: modelId,
-        ...(normalizedProviderId ? { provider: normalizedProviderId } : {}),
-      });
 
       if (provider && providerAvailable === false) {
         const authStatus = provider.getAuthStatus ? await provider.getAuthStatus() : null;
@@ -799,6 +793,7 @@ export class QueryRunner {
       let queryOptions = await optionsBuilder.build({
         askUserQuestionHook: attemptHook,
         canUseTool: this.createAttemptBoundCanUseTool(attemptToken),
+        session: providerSession,
       });
 
       queryOptions = optionsBuilder.addSessionStateOptions(queryOptions);
@@ -901,6 +896,7 @@ export class QueryRunner {
           queryOptions = await optionsBuilder.build({
             askUserQuestionHook: attemptHook,
             canUseTool: queryOptions.canUseTool,
+            session: providerSession,
           });
           queryOptions = optionsBuilder.addSessionStateOptions(queryOptions);
           const repairedServerNames = Object.keys(queryOptions.mcpServers ?? {}).sort();
@@ -1022,6 +1018,12 @@ export class QueryRunner {
           extraProviderManagedEnvVars,
         }) as Record<string, string>;
       }
+
+      this.ctx.internalEventBus?.publishAsync?.('session.providerRouted', {
+        sessionId: session.id,
+        model: modelId,
+        ...(resolvedProviderId ? { provider: resolvedProviderId } : {}),
+      });
 
       recoveryState.startGuard?.();
       const queryObject = query({

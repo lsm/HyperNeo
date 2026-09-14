@@ -666,7 +666,7 @@ describe('QueryRunner', () => {
         await runner.start();
         await ctx.queryPromise?.catch(() => {});
 
-        expect(blankSession.config.provider).toBe('anthropic');
+        expect(blankSession.config.provider).not.toBe('anthropic');
         expect(updateSessionSpy).not.toHaveBeenCalledWith(
           'test-session-id',
           expect.objectContaining({

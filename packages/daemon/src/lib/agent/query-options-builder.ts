@@ -313,8 +313,10 @@ export class QueryOptionsBuilder {
   async build(overrides?: {
     askUserQuestionHook?: HookCallback;
     canUseTool?: CanUseTool;
+    session?: import('@hyperneo/shared').Session;
   }): Promise<Options> {
-    const config = this.ctx.session.config;
+    const session = overrides?.session ?? this.ctx.session;
+    const config = session.config;
 
     await this.ctx.settingsManager.prepareSDKOptions();
 
@@ -322,10 +324,10 @@ export class QueryOptionsBuilder {
     await waitForOptionalProviderRegistration();
 
     const contextManager = getProviderContextManager();
-    await contextManager.ensureContextReady(this.ctx.session);
-    const providerContext = contextManager.createContext(this.ctx.session);
+    await contextManager.ensureContextReady(session);
+    const providerContext = contextManager.createContext(session);
     const providerId = providerContext.provider.id;
-    const modelInfo = await getSessionModelInfo(this.ctx.session);
+    const modelInfo = await getSessionModelInfo(session);
     const sdkModelId = providerContext.getSdkModelId();
     let sdkFallbackModel: string | undefined;
     const providerEpoch = getProviderCatalogEpoch(providerId);

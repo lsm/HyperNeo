@@ -65,6 +65,34 @@ describe('TaskAgentManager session.providerRouted reconciliation', () => {
     expect(assignments.has('session-missing')).toBe(false);
   });
 
+  test('applies a route buffered before activation when the assignment activates', async () => {
+    const { manager, bus } = makeManagerWithBus();
+    const assignments = (manager as unknown as { modelPoolAssignments: Map<string, unknown> })
+      .modelPoolAssignments;
+    await bus.publish('session.providerRouted', {
+      sessionId: 'session-4',
+      model: 'glm-5',
+      provider: 'glm',
+    });
+    assignments.set('pending:exec-4', {
+      spaceId: 'space-1',
+      taskId: 'task-1',
+      model: 'glm-5',
+      provider: 'anthropic',
+      assignedAt: 1000,
+      pending: true,
+    });
+
+    (
+      manager as unknown as {
+        activatePoolAssignment: (execution: { id: string }, sessionId: string) => void;
+      }
+    ).activatePoolAssignment({ id: 'exec-4' }, 'session-4');
+
+    expect(assignments.get('session-4')).toMatchObject({ model: 'glm-5', provider: 'glm' });
+    expect(assignments.has('pending:exec-4')).toBe(false);
+  });
+
   test('does not rekey an assignment when the session switched to a different model', async () => {
     const { manager, bus } = makeManagerWithBus();
     const assignments = (manager as unknown as { modelPoolAssignments: Map<string, unknown> })

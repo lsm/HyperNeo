@@ -379,6 +379,8 @@ export class TaskAgentManager {
   private activityListenerUnsubs: Array<() => void> = [];
   private limitedSessionsByTask = new Map<string, Map<string, RateLimitSessionEntry>>();
 
+  private routedProviderBuffer = new Map<string, { model: string; provider: string }>();
+
   constructor(private readonly config: TaskAgentManagerConfig) {
     this.auditLogRepo = new McpAuditLogRepository(this.config.db.getDatabase());
     this.subscribeToTaskArchiveEvents();
@@ -392,12 +394,33 @@ export class TaskAgentManager {
       'session.providerRouted',
       (event) => {
         if (!event.provider) return;
-        const active = this.modelPoolAssignments.get(event.sessionId);
-        if (!active || active.model !== event.model || active.provider === event.provider) return;
-        this.modelPoolAssignments.set(event.sessionId, { ...active, provider: event.provider });
+        if (this.routedProviderBuffer.size > 512) {
+          const oldest = this.routedProviderBuffer.keys().next().value;
+          if (oldest !== undefined) this.routedProviderBuffer.delete(oldest);
+        }
+        this.routedProviderBuffer.set(event.sessionId, {
+          model: event.model,
+          provider: event.provider,
+        });
+        this.reconcileRoutedProvider(event.sessionId, event.model, event.provider);
       },
       { subscriberName: 'TaskAgentManager.providerRouted' }
     );
+  }
+
+  private reconcileRoutedProvider(sessionId: string, model: string, provider: string): void {
+    const active = this.modelPoolAssignments.get(sessionId);
+    if (!active || active.model !== model || active.provider === provider) return;
+    this.modelPoolAssignments.set(sessionId, { ...active, provider });
+  }
+
+  private activatePoolAssignment(execution: Pick<NodeExecution, 'id'>, sessionId: string): void {
+    activateModelPoolReservation(this.modelPoolAssignments, execution, sessionId);
+    const buffered = this.routedProviderBuffer.get(sessionId);
+    if (buffered) {
+      this.reconcileRoutedProvider(sessionId, buffered.model, buffered.provider);
+      this.routedProviderBuffer.delete(sessionId);
+    }
   }
 
   *getTrackedAgentRootPids(): Iterable<number> {
@@ -1186,7 +1209,7 @@ export class TaskAgentManager {
         }
       },
       activateSpawnedSessionPoolAssignment: (executionId, sessionId) => {
-        activateModelPoolReservation(this.modelPoolAssignments, { id: executionId }, sessionId);
+        this.activatePoolAssignment({ id: executionId }, sessionId);
       },
     };
   }
@@ -5761,7 +5784,7 @@ export class TaskAgentManager {
       log.info(
         `TaskAgentManager.spawnPostApprovalSubSession: spawned session ${actualSessionId} for agent "${slot.name}" (task ${taskId}, node ${matchedNodeId})`
       );
-      activateModelPoolReservation(this.modelPoolAssignments, reservationKey, actualSessionId);
+      this.activatePoolAssignment(reservationKey, actualSessionId);
       return { sessionId: actualSessionId };
     } catch (err) {
       releaseModelPoolReservation(this.modelPoolAssignments, reservationKey);
