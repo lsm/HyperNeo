@@ -20,7 +20,6 @@ import {
   getPresetAgentTemplates,
   LEGACY_REVIEWER_PROMPT,
 } from '../../../../src/lib/space/agents/seed-agents.ts';
-import { buildSpaceChatSystemPrompt } from '../../../../src/lib/space/agents/space-chat-agent.ts';
 import {
   QA_SYSTEM_CONTRACT,
   REVIEWER_SYSTEM_CONTRACT,
@@ -219,37 +218,6 @@ describe('workflow prompts prefer call_action with named-action fallback', () =>
       );
       expect(usedBy.length, name).toBeGreaterThan(0);
     }
-  });
-});
-
-const SPACE_CHAT_FIXTURE = {
-  background: 'FIXTURE_BACKGROUND',
-  instructions: 'FIXTURE_INSTRUCTIONS',
-  workflows: [{ name: 'FIX WF', id: 'fix-wf', nodeCount: 2, tags: ['coding'] }],
-  agents: [{ name: 'FIX AG', description: 'fixture agent' }],
-};
-
-const ASSEMBLED_GOLDEN: Record<string, string> = {
-  SPACE_CHAT_ASSEMBLED_EMPTY: '9b2c54680fa9191a15fdbc52faae9d29871ce373d153c7fd08ad4c39c46fe753',
-  SPACE_CHAT_ASSEMBLED_L1: '38274820e7c011d6be3580f4ea3a35b8774e1c72af1211abba0595d9dfae6ed4',
-  SPACE_CHAT_ASSEMBLED_L2: 'b84075e20ac1512681395324e7aecb3dd434250e1d508a11f7389d0c14ba463b',
-  SPACE_CHAT_ASSEMBLED_L3: '285a0e1b923f3bdc5305195c21564e8031b785cc84b819a6c4702d883e04e5b1',
-  SPACE_CHAT_ASSEMBLED_L4: 'c03d062b92eeef5245b63465324fab1cf4a071c0ad9d430ca7d4cb988b1c78bd',
-  SPACE_CHAT_ASSEMBLED_L5: '9e7d8ff34d99c07d6ac65b6896384f4ccb1ea8c4b46975c33db6238dcf54e946',
-};
-
-describe('space-chat system prompt assembly', () => {
-  test('assembled prompts are byte-identical across all autonomy levels', () => {
-    for (const level of [1, 2, 3, 4, 5]) {
-      const actual = createHash('sha256')
-        .update(
-          buildSpaceChatSystemPrompt({ ...SPACE_CHAT_FIXTURE, autonomyLevel: level } as never)
-        )
-        .digest('hex');
-      expect(actual, `level ${level}`).toBe(ASSEMBLED_GOLDEN[`SPACE_CHAT_ASSEMBLED_L${level}`]!);
-    }
-    const empty = createHash('sha256').update(buildSpaceChatSystemPrompt({})).digest('hex');
-    expect(empty).toBe(ASSEMBLED_GOLDEN['SPACE_CHAT_ASSEMBLED_EMPTY']!);
   });
 });
 

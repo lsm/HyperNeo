@@ -142,19 +142,21 @@ describe('SpaceAgentTemplateManager', () => {
     test('hides reserved built-ins but keeps custom templates with reserved handles (ATC-3)', () => {
       const withReserved = new SpaceAgentTemplateManager(repo, () => [
         ...BUILT_INS,
-        { ...BUILT_INS[0], key: 'task-manager.default', handle: 'task-manager' },
+        { ...BUILT_INS[0], key: 'system-runtime.default', handle: 'system-runtime' },
       ]);
       repo.createOwned(OWNER, {
-        key: 'custom.task-manager',
-        handle: 'task-manager',
-        displayName: 'Custom TM',
+        key: 'custom.system-runtime',
+        handle: 'system-runtime',
+        displayName: 'Custom Runtime',
       });
 
       const keys = withReserved.listIn(OWNER).map((template) => template.key);
 
-      expect(keys).not.toContain('task-manager.default');
-      expect(keys).toContain('custom.task-manager');
-      expect(withReserved.getIn(OWNER, 'task-manager.default')?.key).toBe('task-manager.default');
+      expect(keys).not.toContain('system-runtime.default');
+      expect(keys).toContain('custom.system-runtime');
+      expect(withReserved.getIn(OWNER, 'system-runtime.default')?.key).toBe(
+        'system-runtime.default'
+      );
     });
   });
 

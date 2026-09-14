@@ -79,6 +79,18 @@ export function resolveSpaceMcpSessionPolicy(
     };
   }
 
+  if (session.type === 'space_chat' && spaceId) {
+    return {
+      role: 'ad_hoc_member',
+      spaceId,
+      owner: 'space-runtime',
+      requiredServers: SPACE_AD_HOC_MEMBER_REQUIRED_MCP_SERVERS,
+      attachGenericSpaceTools: false,
+      attachLongTermAgentTools: false,
+      isWorkflowWorker: false,
+    };
+  }
+
   const workflowExecution = resolveWorkflowExecution(session, context.nodeExecutionRepo);
   if (workflowExecution) {
     const taskId = session.context?.taskId;

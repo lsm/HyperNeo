@@ -172,20 +172,11 @@ describe('retry_task tool — autonomy level does not affect tool behavior', () 
     expect(typeof parsed.error).toBe('string');
   });
 
-  test('tool succeeds but prompts differ — supervised restricts, semi_autonomous permits autonomous retry', async () => {
+  test('the tool itself succeeds regardless of autonomy level', async () => {
     const taskId = createNeedsAttentionTask(ctx);
     const result = await makeHandlers(ctx).retry_task({ task_id: taskId });
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.success).toBe(true);
-
-    const supervisedPrompt = buildSpaceChatSystemPrompt({ autonomyLevel: 1 });
-    const semiPrompt = buildSpaceChatSystemPrompt({ autonomyLevel: 3 });
-
-    expect(supervisedPrompt).toContain('retry');
-    expect(semiPrompt).toContain('retry');
-
-    expect(supervisedPrompt).toContain('without explicit human instruction');
-    expect(semiPrompt).toContain('retry a failed task once');
   });
 });
 

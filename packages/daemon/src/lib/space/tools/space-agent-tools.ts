@@ -825,7 +825,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
   } = config;
   const callerHasSpaceAuthority = hasSpaceAuthority(callerRole);
 
-  const outboundSenderName = myAgentName ?? (mySessionId ? 'space-member' : 'space-agent');
+  const outboundSenderName = myAgentName ?? 'space-member';
   const outboundSenderLevel =
     outboundSenderName === 'task-agent'
       ? 'task-agent'
@@ -3314,7 +3314,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         if (address.kind === 'handle' || address.kind === 'role') {
           if (!messageResolver || !longTermAgentDelivery) {
             audit('failed', {
-              target: 'space-agent',
+              target: 'agent',
               reason: 'long_term_agent_messaging_unavailable',
             });
             return jsonResult({
@@ -3359,7 +3359,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
               ? 'queued'
               : 'failed';
           audit(routedOutcome, {
-            target: 'space-agent',
+            target: 'agent',
             agent_name: genericTarget,
             delivered_session_id: firstDelivered?.deliveredSessionId ?? null,
             reason: deliveredOrQueued ? undefined : 'no_delivery_or_queue',
@@ -3367,7 +3367,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           return jsonResult({
             success: deliveredOrQueued,
             task_id: task.id,
-            target: 'space-agent',
+            target: 'agent',
             deliveries: routed.deliveries,
             delivered_session_id: firstDelivered?.deliveredSessionId ?? null,
           });
