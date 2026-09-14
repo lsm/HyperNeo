@@ -5,7 +5,6 @@ import {
   resolveAgentRecord,
   type ResolveAgentRecordDeps,
 } from '../../../../src/lib/session-resolution/resolve-agent-record';
-import { coordinatorSessionId } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 
 function makeAgent(
   id: string,

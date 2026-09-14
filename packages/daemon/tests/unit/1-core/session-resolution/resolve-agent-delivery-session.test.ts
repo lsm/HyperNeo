@@ -2,10 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import type { SessionResolutionDeps } from '../../../../src/lib/session-resolution/deps';
 import { resolveAgentDeliverySession } from '../../../../src/lib/session-resolution/resolve-agent-delivery-session';
 import { agentSessionIdOf } from '../../../../src/lib/session-resolution/target';
-import {
-  coordinatorLongHorizonAgentId,
-  coordinatorSessionId,
-} from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
+import {} from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 
 interface TestSession {
   id: string;

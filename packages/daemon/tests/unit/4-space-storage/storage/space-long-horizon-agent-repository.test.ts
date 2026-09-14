@@ -1,12 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import {
-  coordinatorLongHorizonAgentId,
-  coordinatorSessionId,
-  SpaceLongHorizonAgentRepository,
-} from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
+import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { createSpaceTables } from '../../helpers/space-test-db';
-import { seedSpaceManagerAgent } from '../../helpers/seed-space-manager';
+import { seedLongHorizonAgent } from '../../helpers/seed-long-horizon-agent';
 
 describe('SpaceLongHorizonAgentRepository', () => {
   let db: BunDatabase;
@@ -29,33 +25,20 @@ describe('SpaceLongHorizonAgentRepository', () => {
     db.close();
   });
 
-  test('resolves legacy coordinator-handle rows via getCoordinator', () => {
-    const legacy = repo.create({
-      id: coordinatorLongHorizonAgentId('space-1'),
-      spaceId: 'space-1',
-      handle: 'coordinator',
-      displayName: 'Coordinator',
-      status: 'active',
-    });
-
-    expect(repo.getCoordinator('space-1')?.id).toBe(legacy.id);
-    expect(repo.getCoordinatorRecord('space-1')?.id).toBe(legacy.id);
-  });
-
   test('ignores archived rows when fetching by handle', () => {
     const archived = repo.create({
       spaceId: 'space-1',
-      handle: 'coordinator',
-      displayName: 'Archived Coordinator',
+      handle: 'seeded-agent',
+      displayName: 'Archived Agent',
       status: 'archived',
     });
 
-    const coordinator = seedSpaceManagerAgent(repo, 'space-1');
+    const active = seedLongHorizonAgent(repo, 'space-1');
 
     expect(archived.status).toBe('archived');
-    expect(coordinator.id).toBe(coordinatorLongHorizonAgentId('space-1'));
-    expect(coordinator.status).toBe('active');
-    expect(repo.getByHandle('space-1', 'space-manager')?.id).toBe(coordinator.id);
+    expect(active.id).toBe('space-lh-agent:seeded:space-1');
+    expect(active.status).toBe('active');
+    expect(repo.getByHandle('space-1', 'seeded-agent')?.id).toBe(active.id);
     expect(repo.listBySpaceId('space-1')).toHaveLength(2);
   });
 
@@ -112,7 +95,7 @@ describe('SpaceLongHorizonAgentRepository', () => {
 				max_concurrent_tasks, created_at, updated_at
 			) VALUES (?, ?, ?, ?, '', '', '', '[]', '[]', 'active', 0, 0, 1, 1, ?, ?)`
     ).run('space-2', 'space-2', '/tmp/space-2', 'Space 2', 1, 1);
-    const agent = seedSpaceManagerAgent(repo, 'space-1');
+    const agent = seedLongHorizonAgent(repo, 'space-1');
     db.prepare(
       `INSERT INTO space_goals (
 				id, space_id, title, description, status, type, priority, labels, metrics,
@@ -150,7 +133,7 @@ describe('SpaceLongHorizonAgentRepository', () => {
   });
 
   test('persists managed goals, Forge scopes, reminders, and event subscriptions', () => {
-    const agent = seedSpaceManagerAgent(repo, 'space-1');
+    const agent = seedLongHorizonAgent(repo, 'space-1');
     db.prepare(
       `INSERT INTO space_goals (
 				id, space_id, title, description, status, type, priority, labels, metrics,
@@ -205,7 +188,7 @@ describe('SpaceLongHorizonAgentRepository', () => {
   });
 
   test('lists goal assignments by goal and deletes a single relationship', () => {
-    const agent = seedSpaceManagerAgent(repo, 'space-1');
+    const agent = seedLongHorizonAgent(repo, 'space-1');
     db.prepare(
       `INSERT INTO space_goals (
 				id, space_id, title, description, status, type, priority, labels, metrics,
@@ -238,7 +221,7 @@ describe('SpaceLongHorizonAgentRepository', () => {
       displayName: 'Task Manager',
       status: 'active',
     });
-    seedSpaceManagerAgent(repo, 'space-1');
+    seedLongHorizonAgent(repo, 'space-1');
     db.prepare(
       `INSERT INTO space_goals (
 				id, space_id, title, description, status, type, priority, labels, metrics,
@@ -250,7 +233,7 @@ describe('SpaceLongHorizonAgentRepository', () => {
   });
 
   test('resolves the primary goal owner once an owner row exists', () => {
-    const coordinator = seedSpaceManagerAgent(repo, 'space-1');
+    const coordinator = seedLongHorizonAgent(repo, 'space-1');
     db.prepare(
       `INSERT INTO space_goals (
 				id, space_id, title, description, status, type, priority, labels, metrics,
@@ -269,7 +252,7 @@ describe('SpaceLongHorizonAgentRepository', () => {
   });
 
   test('resolves a degraded owner when the agent is paused', () => {
-    const agent = seedSpaceManagerAgent(repo, 'space-1');
+    const agent = seedLongHorizonAgent(repo, 'space-1');
     db.prepare(
       `INSERT INTO space_goals (
 				id, space_id, title, description, status, type, priority, labels, metrics,
@@ -288,7 +271,7 @@ describe('SpaceLongHorizonAgentRepository', () => {
   });
 
   test('assigning a new owner replaces the existing owner atomically', () => {
-    const coordinator = seedSpaceManagerAgent(repo, 'space-1');
+    const coordinator = seedLongHorizonAgent(repo, 'space-1');
     const newOwner = repo.create({
       spaceId: 'space-1',
       handle: 'new-owner',
@@ -315,7 +298,7 @@ describe('SpaceLongHorizonAgentRepository', () => {
   });
 
   test('upserts, lists active, and deletes event subscriptions by route', () => {
-    const agent = seedSpaceManagerAgent(repo, 'space-1');
+    const agent = seedLongHorizonAgent(repo, 'space-1');
 
     const created = repo.upsertSubscription({
       spaceId: 'space-1',
@@ -492,7 +475,7 @@ describe('SpaceLongHorizonAgentRepository', () => {
 
   test('listDueReminders pages past excluded ids so poison batches cannot starve later rows', () => {
     const now = 40_000_000;
-    const agent = seedSpaceManagerAgent(repo, 'space-1');
+    const agent = seedLongHorizonAgent(repo, 'space-1');
     const ids: string[] = [];
     for (let i = 0; i < 3; i++) {
       const r = repo.createReminder({
@@ -518,7 +501,7 @@ describe('SpaceLongHorizonAgentRepository', () => {
 
   test('advanceReminderAfterFire advances cron, fires one-shot, and honors the CAS', () => {
     const now = 20_000_000;
-    const agent = seedSpaceManagerAgent(repo, 'space-1');
+    const agent = seedLongHorizonAgent(repo, 'space-1');
 
     const cron = repo.createReminder({
       spaceId: 'space-1',
@@ -622,7 +605,7 @@ describe('SpaceLongHorizonAgentRepository', () => {
   });
 
   test('coordinator row stays repository-mutable — the C-2 lock guards update paths, not the repo', () => {
-    const coordinator = seedSpaceManagerAgent(repo, 'space-1');
+    const coordinator = seedLongHorizonAgent(repo, 'space-1');
 
     const renamed = repo.update(coordinator.id, { displayName: 'Renamed Coordinator' });
     expect(renamed?.displayName).toBe('Renamed Coordinator');

@@ -10,7 +10,7 @@ import {
   createSpaceAgentSchema,
   insertSpace,
 } from '../../../helpers/space-agent-schema.ts';
-import { seedSpaceManagerAgent } from '../../../helpers/seed-space-manager';
+import { seedLongHorizonAgent } from '../../../helpers/seed-long-horizon-agent';
 
 interface WorkerSeed {
   id: string;
@@ -421,7 +421,7 @@ describe('migration 223 — handle collisions', () => {
     const db = makeOverlayDb();
     insertSpace(db, 'space-a');
     const repo = new SpaceLongHorizonAgentRepository(db);
-    seedSpaceManagerAgent(repo, 'space-a');
+    seedLongHorizonAgent(repo, 'space-a');
     seedWorker(db, {
       id: 'w-coordinator',
       spaceId: 'space-a',

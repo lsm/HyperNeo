@@ -6,7 +6,6 @@ import {
   SpaceActorRegistryAdapter,
 } from '../../../src/lib/space/actor-registry';
 import { longTermAgentSessionId } from '../../../src/lib/space/long-term-agent-session';
-import { coordinatorLongHorizonAgentId } from '../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { NodeExecutionRepository } from '../../../src/storage/repositories/node-execution-repository';
 import { SessionRepository } from '../../../src/storage/repositories/session-repository';
 import { SpaceLongHorizonAgentRepository } from '../../../src/storage/repositories/space-long-horizon-agent-repository';
@@ -16,7 +15,7 @@ import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/sp
 import type { Session } from '@hyperneo/shared';
 import { createSpaceTables } from '../helpers/space-test-db';
 import { seedWorkerMirror } from '../helpers/seed-worker-mirror';
-import { seedSpaceManagerAgent } from '../helpers/seed-space-manager';
+import { seedLongHorizonAgent } from '../helpers/seed-long-horizon-agent';
 
 function makeSession(id: string, overrides: Partial<Session> = {}): Session {
   return {
@@ -510,7 +509,7 @@ describe('SpaceActorRegistryAdapter', () => {
       slug: 'project',
       name: 'Project',
     });
-    seedSpaceManagerAgent(longHorizonAgentRepo, space.id);
+    seedLongHorizonAgent(longHorizonAgentRepo, space.id);
 
     const actors = registry.listActors(space.id);
 
@@ -525,7 +524,7 @@ describe('SpaceActorRegistryAdapter', () => {
     expect(
       actors.some(
         (actor) =>
-          actor.actorId === `agent:${encodeURIComponent(coordinatorLongHorizonAgentId(space.id))}`
+          actor.actorId === `agent:${encodeURIComponent(`space-lh-agent:coordinator:${space.id}`)}`
       )
     ).toBe(false);
     expect(actors.filter((actor) => actor.handle === '@space-manager')).toHaveLength(1);
@@ -538,7 +537,7 @@ describe('SpaceActorRegistryAdapter', () => {
       name: 'Project',
     });
     longHorizonAgentRepo.create({
-      id: coordinatorLongHorizonAgentId(space.id),
+      id: `space-lh-agent:coordinator:${space.id}`,
       spaceId: space.id,
       handle: 'renamed',
       displayName: 'Renamed Row',
@@ -549,7 +548,7 @@ describe('SpaceActorRegistryAdapter', () => {
 
     const renamedActor = actors.find((actor) => actor.handle === '@renamed');
     expect(renamedActor).toMatchObject({
-      actorId: `agent:${encodeURIComponent(coordinatorLongHorizonAgentId(space.id))}`,
+      actorId: `agent:${encodeURIComponent(`space-lh-agent:coordinator:${space.id}`)}`,
       kind: 'agent',
       spaceId: space.id,
       status: 'active',

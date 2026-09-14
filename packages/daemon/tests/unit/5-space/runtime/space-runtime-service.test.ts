@@ -51,10 +51,7 @@ import type { NodeExecutionRepository } from '../../../../src/storage/repositori
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository.ts';
 import type { SpaceGoalOutcomeNotificationRepository } from '../../../../src/storage/repositories/space-goal-outcome-notification-repository.ts';
-import {
-  coordinatorLongHorizonAgentId,
-  SpaceLongHorizonAgentRepository,
-} from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
+import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import type { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceTaskRepository as SpaceTaskRepo } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
@@ -64,7 +61,7 @@ import { createTables, runMigrations } from '../../../../src/storage/schema/inde
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { createTestInternalEventBus } from '../../../helpers/database.ts';
 import { seedUnifiedAgentMirror } from '../../helpers/seed-unified-agent';
-import { seedSpaceManagerAgent } from '../../helpers/seed-space-manager';
+import { seedLongHorizonAgent } from '../../helpers/seed-long-horizon-agent';
 
 const NOW = Date.now();
 

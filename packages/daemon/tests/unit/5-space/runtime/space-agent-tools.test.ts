@@ -66,7 +66,7 @@ import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositor
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { seedUnifiedAgentMirror } from '../../helpers/seed-unified-agent';
-import { seedSpaceManagerAgent } from '../../helpers/seed-space-manager';
+import { seedLongHorizonAgent } from '../../helpers/seed-long-horizon-agent';
 
 function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
@@ -2330,7 +2330,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
 
   test('update_agent edits a space-manager-handle agent like any other', async () => {
     const handlers = makeHandlers(ctx);
-    const coordinator = seedSpaceManagerAgent(ctx.longHorizonAgentRepo, ctx.spaceId);
+    const coordinator = seedLongHorizonAgent(ctx.longHorizonAgentRepo, ctx.spaceId);
 
     const updated = JSON.parse(
       (
@@ -2691,7 +2691,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
       recoverPendingOutcomeNotificationsForGoal,
     });
     const handlers = makeHandlers(ctx, { internalEventBus });
-    const agent = seedSpaceManagerAgent(ctx.longHorizonAgentRepo, ctx.spaceId);
+    const agent = seedLongHorizonAgent(ctx.longHorizonAgentRepo, ctx.spaceId);
     const goal = ctx.goalService.createGoal({ spaceId: ctx.spaceId, title: 'Stranded goal' });
 
     const assigned = JSON.parse(
@@ -2709,7 +2709,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
       mySessionId: 'worker-session',
       myAgentName: 'worker',
     });
-    const agent = seedSpaceManagerAgent(ctx.longHorizonAgentRepo, ctx.spaceId);
+    const agent = seedLongHorizonAgent(ctx.longHorizonAgentRepo, ctx.spaceId);
     const goal = ctx.goalService.createGoal({ spaceId: ctx.spaceId, title: 'Gated goal' });
 
     const assign = JSON.parse(
@@ -2729,7 +2729,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
 
   test('create_goal leaves the goal unowned when the caller has no agent identity', async () => {
     const handlers = makeHandlers(ctx);
-    seedSpaceManagerAgent(ctx.longHorizonAgentRepo, ctx.spaceId);
+    seedLongHorizonAgent(ctx.longHorizonAgentRepo, ctx.spaceId);
 
     const created = JSON.parse(
       (await handlers.create_goal({ title: 'Unowned goal', type: 'one_shot' })).content[0].text
@@ -2742,7 +2742,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
 
   test('create_goal honors an explicit owner_agent_id', async () => {
     const handlers = makeHandlers(ctx);
-    const agent = seedSpaceManagerAgent(ctx.longHorizonAgentRepo, ctx.spaceId);
+    const agent = seedLongHorizonAgent(ctx.longHorizonAgentRepo, ctx.spaceId);
 
     const created = JSON.parse(
       (
@@ -2778,7 +2778,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     }
 
     test('assign_agent_to_goal denies a paused caller and admits an active one', async () => {
-      const target = seedSpaceManagerAgent(ctx.longHorizonAgentRepo, ctx.spaceId);
+      const target = seedLongHorizonAgent(ctx.longHorizonAgentRepo, ctx.spaceId);
       const goal = ctx.goalService.createGoal({ spaceId: ctx.spaceId, title: 'Ownership goal' });
 
       const denied = JSON.parse(
@@ -2807,7 +2807,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     });
 
     test('unassign_agent_from_goal denies a paused caller and admits an active one', async () => {
-      const target = seedSpaceManagerAgent(ctx.longHorizonAgentRepo, ctx.spaceId);
+      const target = seedLongHorizonAgent(ctx.longHorizonAgentRepo, ctx.spaceId);
       const goal = ctx.goalService.createGoal({ spaceId: ctx.spaceId, title: 'Ownership goal' });
       await makeHandlers(ctx).assign_agent_to_goal({ agent_id: target.id, goal_id: goal.id });
 
@@ -2837,7 +2837,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     });
 
     test('create_goal with an explicit non-self owner denies a paused caller and admits an active one', async () => {
-      const owner = seedSpaceManagerAgent(ctx.longHorizonAgentRepo, ctx.spaceId);
+      const owner = seedLongHorizonAgent(ctx.longHorizonAgentRepo, ctx.spaceId);
 
       const denied = JSON.parse(
         (
