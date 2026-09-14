@@ -1,9 +1,9 @@
-import { hasSpaceAuthority } from '../runtime/space-mcp-session-policy.ts';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
+import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
 import type { OperationRegistrySource } from '../../operations/registry.ts';
 import type { SpaceMcpSessionRole } from '../runtime/space-mcp-session-policy.ts';
-import type { NodeAgentToolsConfig } from '../tools/node-agent-tools.ts';
+import { hasSpaceAuthority } from '../runtime/space-mcp-session-policy.ts';
 import type { SpaceAgentToolsConfig } from '../tools/space-agent-tools.ts';
 import { jsonResult } from '../tools/tool-result.ts';
 import {
@@ -12,25 +12,25 @@ import {
   ROLE_HOT_ACTIONS,
 } from './description-generator.ts';
 import {
-  runDispatchAction,
-  type DispatchActionDeps,
-  type DispatchActionInput,
-} from './dispatcher-pipeline.ts';
-import {
   createRateAdmission,
   emitActionDispatchedEvent,
   resolveRateAdmissionOptions,
 } from './dispatch-telemetry.ts';
-import { composeRoleActionEntries, createNodeRegistryEntries } from './registry-node.ts';
-import { createSpaceRegistryEntries } from './registry-space.ts';
-import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
 import {
-  createActionRegistry,
-  defineAction,
+  type DispatchActionDeps,
+  type DispatchActionInput,
+  runDispatchAction,
+} from './dispatcher-pipeline.ts';
+import type { NodeAgentToolsConfig } from './node-handlers.ts';
+import {
   type ActionDefinition,
   type ActionRegistry,
+  createActionRegistry,
+  defineAction,
   type RegisteredAction,
 } from './registry.ts';
+import { composeRoleActionEntries, createNodeRegistryEntries } from './registry-node.ts';
+import { createSpaceRegistryEntries } from './registry-space.ts';
 
 const CallActionParamsSchema = z.object({
   name: z.string(),
