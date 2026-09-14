@@ -380,36 +380,6 @@ describe('resolveSpaceMcpSessionPolicy', () => {
     expect(policy.spaceId).toBeUndefined();
     expect(policy.requiredServers).toEqual(['space-actions']);
   });
-
-  test('falls back to the legacy typed servers when the dispatcher flag is off', () => {
-    const previous = process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER;
-    process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER = '0';
-    try {
-      const member = resolveSpaceMcpSessionPolicy(
-        makeSession({ id: 'ad-hoc-1', type: 'worker', context: { spaceId: 'space-1' } })
-      );
-      expect(member.requiredServers).toEqual(['space-agent-tools']);
-
-      const worker = resolveSpaceMcpSessionPolicy(
-        makeSession({
-          id: 'space:space-1:task:task-1:exec:exec-1',
-          type: 'worker',
-          context: { spaceId: 'space-1', taskId: 'task-1' },
-        }),
-        {
-          nodeExecutionRepo: {
-            getByAgentSessionId: () => makeNodeExecution(),
-            getById: () => null,
-          },
-          taskRepo: { getTask: () => makeTask({ id: 'task-1', spaceId: 'space-1' }) },
-        }
-      );
-      expect(worker.requiredServers).toEqual(['node-agent']);
-    } finally {
-      if (previous === undefined) delete process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER;
-      else process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER = previous;
-    }
-  });
 });
 
 describe('SpaceMcpSessionRole', () => {

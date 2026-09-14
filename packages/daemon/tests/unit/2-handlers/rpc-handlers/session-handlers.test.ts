@@ -2393,18 +2393,7 @@ describe('Session RPC Handlers — client.interrupt', () => {
 });
 
 describe('Session RPC Handlers — session.create universal-read dispatcher injection', () => {
-  const FLAG = 'HYPERNEO_SPACE_ACTIONS_DISPATCHER';
-  const previousFlag = process.env[FLAG];
   let messageHubData: ReturnType<typeof createMockMessageHub>;
-
-  beforeEach(() => {
-    process.env[FLAG] = '1';
-  });
-
-  afterEach(() => {
-    if (previousFlag === undefined) delete process.env[FLAG];
-    else process.env[FLAG] = previousFlag;
-  });
 
   function makeSessionFixture(sessionData: Record<string, unknown>) {
     const session = {
@@ -2503,22 +2492,6 @@ describe('Session RPC Handlers — session.create universal-read dispatcher inje
       name: string;
     }>;
     expect(catalog.map((entry) => entry.name).sort()).toEqual(['describe_action', 'list_actions']);
-  });
-
-  it('does not inject the dispatcher when the space-actions dispatcher flag is off', async () => {
-    process.env[FLAG] = '0';
-    const fixture = makeSessionFixture({});
-    const buildUniversalReadDispatcherServer = mock(() => {
-      throw new Error('buildUniversalReadDispatcherServer must not be called');
-    });
-    await setupWith(fixture.sessionManager, { buildUniversalReadDispatcherServer });
-
-    const handler = messageHubData.handlers.get('session.create');
-    expect(handler).toBeDefined();
-    await handler!({ workspacePath: '/tmp/hyperneo-ws' }, {});
-
-    expect(buildUniversalReadDispatcherServer).not.toHaveBeenCalled();
-    expect(fixture.mergeRuntimeMcpServers).not.toHaveBeenCalled();
   });
 
   it('routes space sessions through attachSpaceToolsToMemberSession instead of the universal dispatcher', async () => {

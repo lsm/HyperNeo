@@ -14,8 +14,8 @@ import {
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import type { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-runtime-service.ts';
-import type { NodeAgentToolsConfig } from '../../../../src/lib/space/tools/node-agent-tools.ts';
-import type { SpaceAgentToolsConfig } from '../../../../src/lib/space/tools/space-agent-tools.ts';
+import type { NodeAgentToolsConfig } from '../../../../src/lib/space/actions/node-handlers.ts';
+import type { SpaceAgentToolsConfig } from '../../../../src/lib/space/actions/space-handlers.ts';
 import type { CreateMcpAuditLogParams } from '../../../../src/storage/repositories/mcp-audit-log-repository.ts';
 import type { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';

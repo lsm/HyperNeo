@@ -32,14 +32,16 @@ describe('sub-session identity', () => {
 });
 
 describe('hasRuntimeNodeAgentServer', () => {
-  it('accepts the runtime SDK node-agent server', () => {
-    expect(hasRuntimeNodeAgentServer({ mcpServers: { 'node-agent': { type: 'sdk' } } })).toBe(true);
+  it('accepts the runtime SDK space-actions server', () => {
+    expect(hasRuntimeNodeAgentServer({ mcpServers: { 'space-actions': { type: 'sdk' } } })).toBe(
+      true
+    );
   });
 
-  it('rejects a user-configured server named node-agent', () => {
+  it('rejects a user-configured server named space-actions', () => {
     expect(
       hasRuntimeNodeAgentServer({
-        mcpServers: { 'node-agent': { type: 'stdio', command: 'npx' } },
+        mcpServers: { 'space-actions': { type: 'stdio', command: 'npx' } },
       })
     ).toBe(false);
     expect(hasRuntimeNodeAgentServer({ mcpServers: {} })).toBe(false);

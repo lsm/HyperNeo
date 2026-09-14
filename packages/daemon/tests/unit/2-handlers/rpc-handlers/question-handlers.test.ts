@@ -228,7 +228,7 @@ describe('question handlers — workflow provisioning gate', () => {
     const sessionManager = createMockSessionManager({
       getSessionData: () => ({
         id: 'space:s1:task:t1:exec:e1',
-        config: { mcpServers: { 'node-agent': { type: 'sdk' } } },
+        config: { mcpServers: { 'space-actions': { type: 'sdk' } } },
       }),
       handleQuestionResponse,
     } as unknown as AgentSession);

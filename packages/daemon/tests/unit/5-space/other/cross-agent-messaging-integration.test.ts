@@ -7,7 +7,7 @@ import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories
 import {
   createNodeAgentToolHandlers,
   type NodeAgentToolsConfig,
-} from '../../../../src/lib/space/tools/node-agent-tools.ts';
+} from '../../../../src/lib/space/actions/node-handlers.ts';
 import { AgentMessageRouter } from '../../../../src/lib/space/runtime/agent-message-router.ts';
 import { ChannelResolver } from '../../../../src/lib/space/runtime/channel-resolver.ts';
 import type { WorkflowChannel } from '@hyperneo/shared';

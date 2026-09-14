@@ -107,7 +107,6 @@ import {
   sanitizeAgentNameForId,
   taskIdFromSubSessionIdentity,
 } from '../../session/sub-session-identity.ts';
-import { isSpaceActionsDispatcherEnabled } from '../actions/dispatcher-flag.ts';
 import type { NodeAgentToolsConfig } from '../actions/node-handlers.ts';
 import {
   buildWorkerDispatcherContractTools,
@@ -126,8 +125,7 @@ import {
   createEndNodeHandlers,
   createMarkCompleteHandler,
   createPrMergedGate,
-} from '../tools/end-node-handlers.ts';
-import { createNodeAgentMcpServer } from '../tools/node-agent-tools.ts';
+} from '../operations/end-node-handlers.ts';
 import { jsonResult } from '../tools/tool-result.ts';
 import { POST_APPROVAL_TASK_AGENT_TARGET } from '../workflows/post-approval-validator.ts';
 import { runTemplateSnapshotRecord } from '../workflows/run-template-snapshot.ts';
@@ -310,7 +308,7 @@ interface RateLimitSessionEntry {
 
 const RATE_LIMIT_FALLBACK_RESET_AT_MS = 60 * 60 * 1000;
 
-const WORKER_REINJECTABLE_MCP_SERVERS = ['node-agent', 'space-actions'] as const;
+const WORKER_REINJECTABLE_MCP_SERVERS = ['space-actions'] as const;
 
 const VERIFIED_STOP_PROCESS_EXIT_SETTLE_MS = 500;
 
@@ -373,7 +371,6 @@ export class TaskAgentManager {
   private taskWorktreePaths = new Map<string, string>();
 
   private readonly auditLogRepo: McpAuditLogRepository;
-  private readonly flagManagedDispatcherServers = new WeakSet<object>();
 
   private taskArchiveListenerUnsub: (() => void) | null = null;
   private rateLimitListenerUnsubs: Array<() => void> = [];
@@ -2302,10 +2299,6 @@ export class TaskAgentManager {
     const mergedMcpServers: Record<string, McpServerConfig> = {
       ...slotInit?.mcpServers,
       ...nodeAgentMcpServers,
-      'space-agent-tools': this.config.spaceRuntimeService.buildMemberSpaceToolsMcpServer(
-        space,
-        sessionId
-      ),
       ...this.buildAgentMemoryMcpServers(task.spaceId, sessionId),
     };
     agentSession.mergeRuntimeMcpServers(mergedMcpServers);
@@ -2775,7 +2768,7 @@ export class TaskAgentManager {
     if (!this.isSessionAlive(sessionId)) return false;
     const session = this.getAgentSessionById(sessionId);
     if (!session) return false;
-    await this.mcpSelfHeal(session, ['node-agent', 'space-actions']);
+    await this.mcpSelfHeal(session, ['space-actions']);
     await this.startRestoredWorkerForResume(session);
     return true;
   }
@@ -3278,42 +3271,17 @@ export class TaskAgentManager {
     const requiredLevel = workflow?.completionAutonomyLevel ?? 5;
     const approveUnlocked = spaceLevel >= requiredLevel;
 
-    const endNodeContractLines = (indent: string): string[] => {
-      if (!isEndNode) return [];
-      const lines: string[] = [];
-      if (approveUnlocked) {
-        lines.push(
-          `${indent}- approve_task({}) — Close this task as done (self-approval). Unlocked for this space (autonomy ${spaceLevel} >= required ${requiredLevel}). Use as your FINAL action when you are satisfied the work is complete.`
-        );
-      } else {
-        lines.push(
-          `${indent}- approve_task({}) — NOT AVAILABLE: space autonomy ${spaceLevel} < workflow completionAutonomyLevel ${requiredLevel}. Do NOT call this tool; use submit_for_approval instead.`
-        );
-      }
-      lines.push(
-        `${indent}- submit_for_approval({ reason? }) — Request human sign-off. Always available to end-node agents. Use when autonomy blocks self-close OR the outcome is risky enough to escalate.`
-      );
-      return lines;
-    };
-
-    const dispatcherTools = isSpaceActionsDispatcherEnabled()
-      ? buildWorkerDispatcherContractTools(execution.agentName, dispatcherActionNames)
-      : null;
-    const typedTools = [
-      '  - send_message({ target, message, data? }) — communicate with peers; `data` is passed through to the target agent',
-      '  - save_artifact({ shape, kind?, key?, summary?, data? }) — persist a STRUCTURED FACT as a generic shape (link/commit_set/check/metric/decision/note) with a freeform `kind` hint. Use shape="note" for rolling status, shape="decision" for verdicts/outcomes. Do not re-narrate the chat thread into artifacts.',
-      ...endNodeContractLines('  '),
-      '  - list_artifacts({ nodeId?, type? }) — list artifacts for the current workflow run',
-      '  - restore_node_agent({ reason? }) — self-heal fallback: if a previous mcp__node-agent__* call returned "No such tool available", call this once and then retry the original tool',
-    ];
+    const dispatcherTools = buildWorkerDispatcherContractTools(
+      execution.agentName,
+      dispatcherActionNames
+    );
 
     const fallback = [
       '## Runtime Execution Contract',
       `Role: "${execution.agentName}"`,
       'Tools available:',
-      ...(dispatcherTools ?? []),
-      ...typedTools,
-      'If you hit a hard blocker: record it with save_artifact({ shape: "note", kind: "blocked", summary: "<what blocks you>" }) and stop. Do NOT wait for a reply — there is no Space-level recipient, and the unfinished task carrying that artifact is the signal a human acts on.',
+      ...dispatcherTools,
+      'If you hit a hard blocker: record it via call_action(name="save_artifact", params={ shape: "note", kind: "blocked", summary: "<what blocks you>" }) and stop. Do NOT wait for a reply — there is no Space-level recipient, and the unfinished task carrying that artifact is the signal a human acts on.',
     ].join('\n');
 
     if (!workflow) {
@@ -3330,25 +3298,20 @@ export class TaskAgentManager {
       `Node: "${node.name}" (${node.id})`,
       `Agent: "${execution.agentName}"`,
       'Tools available:',
-      ...(dispatcherTools ?? []),
-      '  - send_message({ target, message, data? }) — communicate with peers; `data` is passed through to the target agent',
-      '  - save_artifact({ shape, kind?, key?, summary?, data? }) — persist a STRUCTURED FACT as a generic shape (link/commit_set/check/metric/decision/note) with a freeform `kind` hint. Use shape="note" for rolling status, shape="decision" for verdicts/outcomes.',
-      '  - list_artifacts ({ nodeId?, type? }) — list artifacts for the current workflow run',
-      '  - list_peers / list_reachable_agents — discovery',
-      '  - restore_node_agent({ reason? }) — self-heal fallback: if a previous mcp__node-agent__* call ever returned "No such tool available", call this once and then retry the original tool',
+      ...dispatcherTools,
     ];
 
     lines.push(
-      'If you hit a hard blocker: record it with save_artifact({ shape: "note", kind: "blocked", summary: "<what blocks you>" }) and stop. Do NOT wait for a reply — there is no Space-level recipient, and the unfinished task carrying that artifact is the signal a human acts on.'
+      'If you hit a hard blocker: record it via call_action(name="save_artifact", params={ shape: "note", kind: "blocked", summary: "<what blocks you>" }) and stop. Do NOT wait for a reply — there is no Space-level recipient, and the unfinished task carrying that artifact is the signal a human acts on.'
     );
     if (isEndNode) {
       if (approveUnlocked) {
         lines.push(
-          'When your work is complete: (1) call save_artifact({ shape: "decision", key: "outcome", summary: "...", data: { recommendation: "completed" } }) to record the outcome, then (2) call approve_task({}) as your FINAL action to close the task. The runtime — not your artifact — decides the terminal status via completion actions.'
+          'When your work is complete: (1) call call_action(name="save_artifact", params={ shape: "decision", key: "outcome", summary: "...", data: { recommendation: "completed" } }) to record the outcome, then (2) call call_action(name="approve_task") as your FINAL action to close the task. The runtime — not your artifact — decides the terminal status via completion actions.'
         );
       } else {
         lines.push(
-          'When your work is complete: (1) call save_artifact({ shape: "decision", key: "outcome", summary: "...", data: { recommendation: "completed" } }) to record the outcome, then (2) call submit_for_approval({ reason: "..." }) as your FINAL action. approve_task is NOT available at this autonomy level; only a human can finalize.'
+          'When your work is complete: (1) call call_action(name="save_artifact", params={ shape: "decision", key: "outcome", summary: "...", data: { recommendation: "completed" } }) to record the outcome, then (2) call call_action(name="submit_for_approval", params={ reason: "..." }) as your FINAL action. approve_task is NOT available at this autonomy level; only a human can finalize.'
         );
       }
     }
@@ -4633,7 +4596,7 @@ export class TaskAgentManager {
   }
 
   requiredWorkflowSubSessionMcpServers(): string[] {
-    const required = isSpaceActionsDispatcherEnabled() ? ['space-actions'] : ['node-agent'];
+    const required = ['space-actions'];
     return this.config.memoryRepo ? [...required, 'agent-memory'] : required;
   }
 
@@ -4671,7 +4634,7 @@ export class TaskAgentManager {
         `Self-healing by re-injecting before first turn — but this indicates a regression in the spawn/rehydrate merge logic.`
     );
 
-    if (missing.includes('node-agent') || missing.includes('space-actions')) {
+    if (missing.includes('space-actions')) {
       await this.reinjectNodeAgentMcpServer(session, ctx);
     }
     if (missing.includes('agent-memory')) {
@@ -4872,16 +4835,6 @@ export class TaskAgentManager {
       ctx.workflowNodeId
     );
     session.mergeRuntimeMcpServers(rebuilt);
-    const attachedDispatcher = (
-      session.session.config?.mcpServers as Record<string, McpServerConfig> | undefined
-    )?.['space-actions'];
-    if (
-      !rebuilt['space-actions'] &&
-      attachedDispatcher !== undefined &&
-      this.flagManagedDispatcherServers.has(attachedDispatcher)
-    ) {
-      session.detachRuntimeMcpServer('space-actions');
-    }
 
     await session.restartQuery();
   }
@@ -5414,16 +5367,11 @@ export class TaskAgentManager {
       },
       hookEngine,
     };
-    const nodeAgent = createNodeAgentMcpServer(nodeConfig) as unknown as McpServerConfig;
     const spaceActions = this.buildSpaceActionsDispatcherServer(nodeConfig);
-    return {
-      'node-agent': nodeAgent,
-      ...(spaceActions ? { 'space-actions': spaceActions } : {}),
-    };
+    return { 'space-actions': spaceActions };
   }
 
-  buildSpaceActionsDispatcherServer(nodeConfig: NodeAgentToolsConfig): McpServerConfig | null {
-    if (!isSpaceActionsDispatcherEnabled()) return null;
+  buildSpaceActionsDispatcherServer(nodeConfig: NodeAgentToolsConfig): McpServerConfig {
     const server = createSpaceActionsMcpServer({
       role: 'workflow_worker',
       nodeRole: nodeConfig.myAgentName,
@@ -5439,7 +5387,6 @@ export class TaskAgentManager {
       },
       operationRegistry: () => this.config.sessionManager.getOperationRegistry(),
     }) as unknown as McpServerConfig;
-    this.flagManagedDispatcherServers.add(server);
     return server;
   }
 
@@ -5700,10 +5647,6 @@ export class TaskAgentManager {
         mcpServers: {
           ...init.mcpServers,
           ...nodeAgentMcpServers,
-          'space-agent-tools': this.config.spaceRuntimeService.buildMemberSpaceToolsMcpServer(
-            space,
-            sessionId
-          ),
           ...this.buildAgentMemoryMcpServers(spaceId, sessionId),
         },
       };

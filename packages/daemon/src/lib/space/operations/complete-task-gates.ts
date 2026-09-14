@@ -1,5 +1,5 @@
 import type { SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
-import { createPrMergedGate } from '../tools/end-node-handlers.ts';
+import { createPrMergedGate } from './end-node-handlers.ts';
 import type { CompleteTaskDependencies } from './complete-task.ts';
 
 export function createCompletionGateBindings(deps: {

@@ -12,7 +12,7 @@ import {
   ReviewGoalOutcomeSchema,
   SPACE_GOAL_TOOL_SCHEMAS,
 } from '../../../../src/lib/space/actions/space-agent-schemas.ts';
-import type { SpaceAgentToolsConfig } from '../../../../src/lib/space/tools/space-agent-tools.ts';
+import type { SpaceAgentToolsConfig } from '../../../../src/lib/space/actions/space-handlers.ts';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import { SpaceGoalEventRepository } from '../../../../src/storage/repositories/space-goal-event-repository.ts';

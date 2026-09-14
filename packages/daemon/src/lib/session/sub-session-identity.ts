@@ -49,7 +49,7 @@ export function hasRuntimeNodeAgentServer(
       }
     | undefined
 ): boolean {
-  const server = config?.mcpServers?.['node-agent'];
+  const server = config?.mcpServers?.['space-actions'];
   return (
     typeof server === 'object' && server !== null && (server as { type?: unknown }).type === 'sdk'
   );

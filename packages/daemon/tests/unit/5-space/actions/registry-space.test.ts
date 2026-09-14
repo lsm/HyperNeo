@@ -25,7 +25,7 @@ import {
   type SpaceAgentToolName,
   UpdateSessionStateSchema,
 } from '../../../../src/lib/space/actions/space-agent-schemas.ts';
-import type { SpaceAgentToolsConfig } from '../../../../src/lib/space/tools/space-agent-tools.ts';
+import type { SpaceAgentToolsConfig } from '../../../../src/lib/space/actions/space-handlers.ts';
 import { SESSION_WRITE_AUTONOMY_LEVEL } from '../../../../src/lib/space/tools/tool-admission-gates.ts';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import type { McpAuditLogRepository } from '../../../../src/storage/repositories/mcp-audit-log-repository.ts';
