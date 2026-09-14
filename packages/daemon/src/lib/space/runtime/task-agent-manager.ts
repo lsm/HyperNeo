@@ -20,7 +20,7 @@ import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { UUID } from 'crypto';
 import { createDefaultSessionResolutionDeps } from '../../session-resolution/default-deps.ts';
 import { ensureSession } from '../../session-resolution/ensure-session.ts';
-import { inferSpawnProviderForModel } from '../../providers/registry.js';
+import { inferAvailableSpawnProviderForModel } from '../../providers/registry.js';
 import type { ActorResolver } from '../../../../../messaging/src/contracts.ts';
 import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types.ts';
 import type { AgentSessionInit } from '../../../lib/agent/agent-session.ts';
@@ -905,6 +905,16 @@ export class TaskAgentManager {
         const customAgent =
           this.resolveSlotSpawnConfig(request.space.id, request.slot, request.workflowRun)?.agent ??
           null;
+        const taskModelOverride = request.node
+          ? request.task.workflowModelOverrides?.[`${request.node.id}:${request.slot.name}`]
+          : undefined;
+        const routedSpawnProvider = await inferAvailableSpawnProviderForModel(
+          taskModelOverride ??
+            request.slot.model ??
+            customAgent?.model ??
+            request.space.defaultModel ??
+            DEFAULT_CUSTOM_AGENT_MODEL
+        );
         let slot = request.slot;
         let poolProvider: string | undefined;
         let poolApplied = false;
@@ -928,25 +938,18 @@ export class TaskAgentManager {
           poolApplied = 'provider' in poolApplication;
         }
         spawnState.appliedSlot = slot;
-        const taskModelOverride = request.node
-          ? request.task.workflowModelOverrides?.[`${request.node.id}:${slot.name}`]
-          : undefined;
         const assignedModel =
           taskModelOverride ??
           slot.model ??
           customAgent?.model ??
           request.space.defaultModel ??
           DEFAULT_CUSTOM_AGENT_MODEL;
-        const routedSpawnProvider = inferSpawnProviderForModel(assignedModel);
-        const routedOverrideProvider = taskModelOverride
-          ? inferSpawnProviderForModel(taskModelOverride)
-          : undefined;
         const assignment = {
           spaceId: request.space.id,
           taskId: request.task.id,
           model: assignedModel,
           provider: taskModelOverride
-            ? routedOverrideProvider
+            ? routedSpawnProvider
             : poolApplied
               ? (poolProvider ?? routedSpawnProvider)
               : slot.model !== undefined
@@ -5570,6 +5573,16 @@ export class TaskAgentManager {
       );
     }
     const poolAgent = spawnConfig?.agent ?? null;
+    const postApprovalModelOverride = matchedNodeId
+      ? task.workflowModelOverrides?.[`${matchedNodeId}:${matchedSlot.name}`]
+      : undefined;
+    const routedSpawnProvider = await inferAvailableSpawnProviderForModel(
+      postApprovalModelOverride ??
+        matchedSlot.model ??
+        poolAgent?.model ??
+        space.defaultModel ??
+        DEFAULT_CUSTOM_AGENT_MODEL
+    );
     let slot = matchedSlot;
     let poolProvider: string | undefined;
     let poolApplied = false;
@@ -5592,26 +5605,19 @@ export class TaskAgentManager {
       poolProvider = poolApplication.provider;
       poolApplied = 'provider' in poolApplication;
     }
-    const postApprovalModelOverride = matchedNodeId
-      ? task.workflowModelOverrides?.[`${matchedNodeId}:${slot.name}`]
-      : undefined;
     const assignedModel =
       postApprovalModelOverride ??
       slot.model ??
       poolAgent?.model ??
       space.defaultModel ??
       DEFAULT_CUSTOM_AGENT_MODEL;
-    const routedSpawnProvider = inferSpawnProviderForModel(assignedModel);
-    const routedOverrideProvider = postApprovalModelOverride
-      ? inferSpawnProviderForModel(postApprovalModelOverride)
-      : undefined;
     const reservationKey = { id: `post-approval:${taskId}:${slot.name}:${generateUUID()}` };
     const assignment = {
       spaceId,
       taskId,
       model: assignedModel,
       provider: postApprovalModelOverride
-        ? routedOverrideProvider
+        ? routedSpawnProvider
         : poolApplied
           ? (poolProvider ?? routedSpawnProvider)
           : slot.model !== undefined

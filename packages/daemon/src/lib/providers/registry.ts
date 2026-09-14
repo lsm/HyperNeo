@@ -245,8 +245,11 @@ export function resetProviderRegistry(): void {
   registryInstance = null;
 }
 
-export function inferSpawnProviderForModel(modelId: string): string | undefined {
-  return resolveQueryProvider(getProviderRegistry(), modelId, undefined)?.id;
+export async function inferAvailableSpawnProviderForModel(
+  modelId: string
+): Promise<string | undefined> {
+  const provider = await resolveAvailableQueryProvider(getProviderRegistry(), modelId, undefined);
+  return provider?.id;
 }
 
 export function inferProviderForModel(modelId: string): ProviderIdStr {
