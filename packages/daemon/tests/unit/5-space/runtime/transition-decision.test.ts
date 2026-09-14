@@ -234,6 +234,12 @@ const parkStopped: TaskUpdateRouting = {
   emitTaskUpdated: 'only_with_field_updates',
 };
 
+const stopForStatus: TaskUpdateRouting = {
+  action: 'stop_for_status',
+  auditParamsShape: 'transition',
+  emitTaskUpdated: 'never',
+};
+
 describe('classifyRequest', () => {
   test.each([
     ['open to in_progress classifies as set_status', 'open', 'in_progress', 'set_status'],
@@ -271,20 +277,14 @@ describe('rejectUnsupportedRequest', () => {
       { reason: { action: 'reject', result: 'invalid_transition' } },
     ],
     [
-      'review_to_done via rpc passes through',
+      'review_to_done via rpc is invalid_transition once routing has allowed it',
       rejectReviewToDone,
       'rpc',
-      { value: rejectReviewToDone },
+      { reason: { action: 'reject', result: 'invalid_transition' } },
     ],
     ['a non-reject routing passes through', setStatus, 'rpc', { value: setStatus }],
-  ] as const)('%s', (_name, routing, callerSource, expected) => {
-    const gate = rejectUnsupportedRequest(routing, {
-      ...base,
-      currentStatus: 'open',
-      requestedStatus: 'open',
-      callerSource,
-    });
-    expect(gate).toEqual(expected);
+  ] as const)('%s', (_name, routing, _callerSource, expected) => {
+    expect(rejectUnsupportedRequest(routing)).toEqual(expected);
   });
 });
 
@@ -351,12 +351,31 @@ describe('requireTableTransition', () => {
 
 describe('routeRuntimeAction', () => {
   test('a runtime action becomes the runtime decision', () => {
-    expect(routeRuntimeAction(parkStopped)).toEqual({
-      reason: { action: 'runtime', executor: 'park_stopped' },
+    expect(
+      routeRuntimeAction(parkStopped, {
+        ...base,
+        currentStatus: 'open',
+        requestedStatus: 'stopped',
+      })
+    ).toEqual({
+      reason: { action: 'runtime', executor: 'park_stopped', approvalSource: undefined },
+    });
+  });
+  test('a runtime action out of review into done stamps human approval', () => {
+    expect(
+      routeRuntimeAction(stopForStatus, {
+        ...base,
+        currentStatus: 'review',
+        requestedStatus: 'done',
+      })
+    ).toEqual({
+      reason: { action: 'runtime', executor: 'stop_for_status', approvalSource: 'human' },
     });
   });
   test('a non-runtime action passes through', () => {
-    expect(routeRuntimeAction(setStatus)).toEqual({ value: setStatus });
+    expect(
+      routeRuntimeAction(setStatus, { ...base, currentStatus: 'open', requestedStatus: 'done' })
+    ).toEqual({ value: setStatus });
   });
 });
 

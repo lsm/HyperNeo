@@ -56,7 +56,8 @@ async function runRuntimeExecutor(
   executor: RuntimeExecutor,
   { spaceId, task }: OwnedTask,
   input: In,
-  deps: Deps
+  deps: Deps,
+  approvalSource: 'human' | undefined
 ): Promise<Result> {
   if (executor === 'park_stopped') {
     if (!deps.parkStopped) throw new Error(`Space runtime executor unavailable: ${executor}`);
@@ -76,6 +77,7 @@ async function runRuntimeExecutor(
     status: input.status,
     result: input.result,
     blockReason: input.blockReason,
+    approvalSource,
   });
   return stopped ?? 'invalid_transition';
 }
@@ -110,7 +112,15 @@ export async function decide(
   if (decision.action === 'reject') return { reason: decision.result };
   if (decision.action === 'runtime') {
     if (!(await snapshotStillCurrent(owned, deps))) return { reason: 'invalid_transition' };
-    return { reason: await runRuntimeExecutor(decision.executor, owned, input, deps) };
+    return {
+      reason: await runRuntimeExecutor(
+        decision.executor,
+        owned,
+        input,
+        deps,
+        decision.approvalSource
+      ),
+    };
   }
   return {
     value: { ...owned, approvalSource: decision.approvalSource, runActiveAtDecision: runActive },

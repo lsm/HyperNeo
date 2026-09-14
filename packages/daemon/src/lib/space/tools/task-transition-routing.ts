@@ -17,6 +17,7 @@ export interface TaskUpdateRoutingInput {
   hasFieldUpdates: boolean;
   taskId: string;
   workflowRunId?: string;
+  allowReviewToDone?: boolean;
 }
 
 export type TaskUpdateRejectReason =
@@ -143,6 +144,7 @@ export function routeTaskUpdate(input: TaskUpdateRoutingInput): TaskUpdateRoutin
     isRecoveryTransition,
     taskId,
     workflowRunId,
+    allowReviewToDone,
   } = input;
   if (!hasChanges) {
     return {
@@ -196,7 +198,7 @@ export function routeTaskUpdate(input: TaskUpdateRoutingInput): TaskUpdateRoutin
         emitTaskUpdated: 'only_with_field_updates',
       };
     }
-    if (requestedStatus === 'done' && currentStatus === 'review') {
+    if (requestedStatus === 'done' && currentStatus === 'review' && !allowReviewToDone) {
       return {
         action: 'reject',
         reason: 'review_to_done',

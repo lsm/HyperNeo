@@ -567,6 +567,36 @@ describe('decide', () => {
     });
   });
 
+  test('an rpc review to done with a live run stops the workflow and stamps approval', async () => {
+    const owned = createOwned('review', createWorkflowRun().id);
+    const stopped = { ...owned.task, status: 'done' as const };
+    const stopForStatus = mock(async () => stopped);
+    const result = await decide(
+      owned,
+      { taskId: owned.task.id, status: 'done' },
+      rpc,
+      deps({ stopForStatus, isWorkflowRunActive: () => true })
+    );
+    expect(stopForStatus).toHaveBeenCalledWith(spaceId, owned.task.id, {
+      status: 'done',
+      approvalSource: 'human',
+    });
+    expect(result).toEqual({ reason: stopped });
+  });
+
+  test('a non-rpc review to done is still refused', async () => {
+    const owned = createOwned('review', createWorkflowRun().id);
+    const stopForStatus = mock(async () => owned.task);
+    const result = await decide(
+      owned,
+      { taskId: owned.task.id, status: 'done' },
+      { source: 'mcp', sessionId: 'session-1' },
+      deps({ stopForStatus, isWorkflowRunActive: () => true })
+    );
+    expect(result).toEqual({ reason: 'invalid_transition' });
+    expect(stopForStatus).not.toHaveBeenCalled();
+  });
+
   test('stop_for_status calls the bound executor and completes the transition', async () => {
     const owned = createOwned('in_progress', createWorkflowRun().id);
     const stopped = { ...owned.task, status: 'open' as const };
