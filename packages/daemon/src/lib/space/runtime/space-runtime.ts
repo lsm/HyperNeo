@@ -3308,13 +3308,10 @@ export class SpaceRuntime {
       } else if (previous.status === 'stopped') {
         await this.recoverPendingDeliveries(this.pausedSpaceIds, previous.workflowRunId);
       }
-      if (
-        Object.hasOwn(params, 'workflowRunId') &&
-        params.workflowRunId !== updated.workflowRunId
-      ) {
+      if (params.workflowRunId !== undefined && params.workflowRunId !== updated.workflowRunId) {
         updated =
           this.config.taskRepo.updateTask(taskId, {
-            workflowRunId: params.workflowRunId ?? null,
+            workflowRunId: params.workflowRunId,
           }) ?? updated;
         await this.safeOnTaskUpdated(spaceId, updated);
       }
