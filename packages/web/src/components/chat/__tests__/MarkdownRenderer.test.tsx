@@ -492,7 +492,9 @@ describe('MarkdownRenderer', () => {
         const code = container.querySelector('blockquote pre code');
         expect(code?.textContent).toBe('<div />\n');
         expect(code?.querySelector('code')).toBeFalsy();
-        expect(container.querySelector('.prose div:not(.code-block-wrapper)')).toBeFalsy();
+        container.querySelectorAll('.prose div').forEach((div) => {
+          expect(div.closest('.code-block-wrapper')).toBeTruthy();
+        });
       });
     });
 
