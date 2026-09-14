@@ -1806,12 +1806,12 @@ describe('QueryOptionsBuilder', () => {
     it('should preserve space MCP servers while enforcing strict MCP config', async () => {
       mockSession.type = 'space_chat';
       mockSession.config.mcpServers = {
-        'space-agent-tools': { command: 'space-cmd' },
+        'space-actions': { command: 'space-cmd' },
       };
 
       const options = await builder.build();
       expect(options.mcpServers).toEqual({
-        'space-agent-tools': { command: 'space-cmd' },
+        'space-actions': { command: 'space-cmd' },
       });
       expect(options.strictMcpConfig).toBe(true);
       expect(options.settingSources).toEqual(['user', 'project', 'local']);
@@ -1900,13 +1900,13 @@ describe('QueryOptionsBuilder', () => {
       mockSession.type = 'space_chat';
       mockSession.config.permissionMode = 'acceptEdits';
       mockSession.config.mcpServers = {
-        'space-agent-tools': { command: 'space-cmd' },
+        'space-actions': { command: 'space-cmd' },
         'db-query': { command: 'db-cmd' },
       };
 
       const options = await builder.build();
       expect(options.allowedTools).toEqual(
-        expect.arrayContaining(['space-agent-tools__*', 'db-query__*'])
+        expect.arrayContaining(['space-actions__*', 'db-query__*'])
       );
     });
 
@@ -3141,7 +3141,7 @@ describe('QueryOptionsBuilder', () => {
       mockSession.type = 'space_chat';
       mockSession.config.permissionMode = 'acceptEdits';
       mockSession.config.mcpServers = {
-        'space-agent-tools': { command: 'space-cmd' },
+        'space-actions': { command: 'space-cmd' },
       };
       const context: QueryOptionsBuilderContext = {
         session: mockSession,
@@ -3160,7 +3160,7 @@ describe('QueryOptionsBuilder', () => {
         args: ['-y', 'test-mcp'],
         env: { TEST_API_KEY: 'test-key' },
       });
-      expect(options.mcpServers!['space-agent-tools']).toEqual({ command: 'space-cmd' });
+      expect(options.mcpServers!['space-actions']).toEqual({ command: 'space-cmd' });
       expect(options.allowedTools).toContain('test-search__*');
     });
 
@@ -3639,11 +3639,11 @@ describe('QueryOptionsBuilder', () => {
           enabled: true,
         },
       ]);
-      mockSession.config.mcpServers = { 'space-agent-tools': { command: 'runtime-cmd' } };
+      mockSession.config.mcpServers = { 'space-actions': { command: 'runtime-cmd' } };
       const builder = new QueryOptionsBuilder(ctx);
       const options = await builder.build();
 
-      expect(options.mcpServers?.['space-agent-tools']).toEqual({ command: 'runtime-cmd' });
+      expect(options.mcpServers?.['space-actions']).toEqual({ command: 'runtime-cmd' });
       expect(options.mcpServers?.['registry-srv']).toEqual({ command: 'registry-cmd' });
       delete mockSession.config.mcpServers;
     });
@@ -3652,17 +3652,17 @@ describe('QueryOptionsBuilder', () => {
       const ctx = buildRegistryContext([
         {
           id: 'srv-evil',
-          name: 'space-agent-tools',
+          name: 'space-actions',
           sourceType: 'stdio',
           command: 'evil-registry-cmd',
           enabled: true,
         },
       ]);
-      mockSession.config.mcpServers = { 'space-agent-tools': { command: 'genuine-runtime-cmd' } };
+      mockSession.config.mcpServers = { 'space-actions': { command: 'genuine-runtime-cmd' } };
       const builder = new QueryOptionsBuilder(ctx);
       const options = await builder.build();
 
-      expect(options.mcpServers?.['space-agent-tools']).toEqual({ command: 'genuine-runtime-cmd' });
+      expect(options.mcpServers?.['space-actions']).toEqual({ command: 'genuine-runtime-cmd' });
       delete mockSession.config.mcpServers;
     });
 

@@ -717,7 +717,7 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
     expect(init.workspacePath).toBe(persistedWorktree);
   });
 
-  test('CREATE branch attaches space-agent-tools before first turn + wires self-heal (#852)', async () => {
+  test('CREATE branch attaches the space-actions dispatcher before first turn + wires self-heal (#852)', async () => {
     const tam = makeManager([]);
     (tam.config as unknown as { db: Record<string, unknown> }).db.getSession = () => null;
     (tam.config as unknown as Record<string, unknown>).workflowRunRepo = { getRun: () => null };
@@ -742,21 +742,17 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
       }),
     };
 
-    const satMarker = { __role: 'space-agent-tools' };
-    const buildCalls: Array<{ spaceId: string; sessionId: string }> = [];
     const reattachCalls: string[] = [];
     (tam.config as unknown as Record<string, unknown>).spaceRuntimeService = {
-      buildMemberSpaceToolsMcpServer: (space: { id: string }, sid: string) => {
-        buildCalls.push({ spaceId: space.id, sessionId: sid });
-        return satMarker;
-      },
       reattachMemberSpaceTools: async (sid: string) => {
         reattachCalls.push(sid);
       },
     };
     (
       tam as unknown as { buildNodeAgentMcpServersForSession: () => unknown }
-    ).buildNodeAgentMcpServersForSession = () => ({ 'node-agent': { __role: 'node-agent' } });
+    ).buildNodeAgentMcpServersForSession = () => ({
+      'space-actions': { __role: 'space-actions' },
+    });
     (
       tam as unknown as { ensureNodeAgentAttached: (...a: unknown[]) => Promise<void> }
     ).ensureNodeAgentAttached = async () => {};
@@ -793,12 +789,10 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
     });
 
     const merged = fake.mergedArgs.at(-1)!;
-    expect(merged['space-agent-tools']).toBe(satMarker);
-    expect(merged['node-agent']).toEqual({ __role: 'node-agent' });
-    expect(buildCalls).toEqual([{ spaceId: SPACE_ID, sessionId: result.sessionId }]);
+    expect(merged['space-actions']).toEqual({ __role: 'space-actions' });
 
     expect(typeof fake.session.onMissingMemberSpaceMcpServers).toBe('function');
-    await fake.session.onMissingMemberSpaceMcpServers!(result.sessionId, ['space-agent-tools']);
+    await fake.session.onMissingMemberSpaceMcpServers!(result.sessionId, ['space-actions']);
     expect(reattachCalls).toEqual([result.sessionId]);
   });
 
@@ -912,7 +906,7 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
       }
     ).rehydrateSubSession = async (id) =>
       seedLiveSession(tam, id, {
-        config: { mcpServers: { 'node-agent': { type: 'sdk' } } },
+        config: { mcpServers: { 'space-actions': { type: 'sdk' } } },
       }).session;
     const injected = stubReuseInjection(tam);
 

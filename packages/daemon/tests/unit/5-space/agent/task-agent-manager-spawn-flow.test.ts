@@ -330,7 +330,7 @@ function bindLiveSessionForSync(tam: TaskAgentManager, failReinjectWith?: Error)
   const live = {
     session: {
       id: 'live-session',
-      config: { mcpServers: { 'node-agent': { __role: 'old-node-agent' } } },
+      config: { mcpServers: { 'space-actions': { __role: 'old-node-agent' } } },
     },
     getProcessingState: () => ({ status: 'idle' }),
     getSessionData: () => state,
@@ -488,7 +488,7 @@ describe('spawnWorkflowNodeAgentForExecution — staged spawn interpreter', () =
       { workspacePath: '/old/ws' },
     ]);
     expect(probe.state.workspacePath).toBe('/old/ws');
-    expect(probe.serverRestores).toEqual([{ 'node-agent': { __role: 'old-node-agent' } }]);
+    expect(probe.serverRestores).toEqual([{ 'space-actions': { __role: 'old-node-agent' } }]);
     expect(h.casCalls[1]).toEqual({
       id: 'exec-1',
       expected: ['in_progress'],

@@ -295,7 +295,7 @@ describe('SessionManager', () => {
             session: AgentSession,
             options?: { onReplaySettled?: (succeeded: boolean) => void }
           ) => {
-            session.mergeRuntimeMcpServers({ 'node-agent': { type: 'sdk' } as never });
+            session.mergeRuntimeMcpServers({ 'space-actions': { type: 'sdk' } as never });
             options?.onReplaySettled?.(true);
           }
         ),
@@ -308,7 +308,7 @@ describe('SessionManager', () => {
         session,
         expect.objectContaining({ onReplaySettled: expect.any(Function) })
       );
-      expect(session!.getSessionData().config.mcpServers).toHaveProperty('node-agent');
+      expect(session!.getSessionData().config.mcpServers).toHaveProperty('space-actions');
     });
 
     it('shares in-flight workflow provisioning across concurrent restores', async () => {
@@ -334,7 +334,7 @@ describe('SessionManager', () => {
             new Promise<void>((resolve) => {
               signalProvisioningStarted!();
               releaseProvisioning = () => {
-                session.mergeRuntimeMcpServers({ 'node-agent': { type: 'sdk' } as never });
+                session.mergeRuntimeMcpServers({ 'space-actions': { type: 'sdk' } as never });
                 resolve();
               };
             })
@@ -371,7 +371,7 @@ describe('SessionManager', () => {
             session: AgentSession,
             options?: { onReplaySettled?: (succeeded: boolean) => void }
           ) => {
-            session.mergeRuntimeMcpServers({ 'node-agent': { type: 'sdk' } as never });
+            session.mergeRuntimeMcpServers({ 'space-actions': { type: 'sdk' } as never });
             options?.onReplaySettled?.(true);
           }
         ),
@@ -384,7 +384,7 @@ describe('SessionManager', () => {
         session,
         expect.objectContaining({ startQuery: false })
       );
-      expect(session!.getSessionData().config.mcpServers).toHaveProperty('node-agent');
+      expect(session!.getSessionData().config.mcpServers).toHaveProperty('space-actions');
     });
 
     it('forwards replayPendingMessages:false to the workflow provisioning provider', async () => {
@@ -406,7 +406,7 @@ describe('SessionManager', () => {
             session: AgentSession,
             options?: { onReplaySettled?: (succeeded: boolean) => void }
           ) => {
-            session.mergeRuntimeMcpServers({ 'node-agent': { type: 'sdk' } as never });
+            session.mergeRuntimeMcpServers({ 'space-actions': { type: 'sdk' } as never });
             options?.onReplaySettled?.(true);
           }
         ),
@@ -421,7 +421,7 @@ describe('SessionManager', () => {
         session,
         expect.objectContaining({ replayPendingMessages: false })
       );
-      expect(session!.getSessionData().config.mcpServers).toHaveProperty('node-agent');
+      expect(session!.getSessionData().config.mcpServers).toHaveProperty('space-actions');
     });
 
     const makeWorkerFake = (id: string) => {
@@ -463,7 +463,7 @@ describe('SessionManager', () => {
             session: AgentSession,
             options?: { onReplaySettled?: (succeeded: boolean) => void }
           ) => {
-            session.mergeRuntimeMcpServers({ 'node-agent': { type: 'sdk' } as never });
+            session.mergeRuntimeMcpServers({ 'space-actions': { type: 'sdk' } as never });
             options?.onReplaySettled?.(true);
           }
         ),
@@ -489,7 +489,7 @@ describe('SessionManager', () => {
             session: AgentSession,
             options?: { onReplaySettled?: (succeeded: boolean) => void }
           ) => {
-            session.mergeRuntimeMcpServers({ 'node-agent': { type: 'sdk' } as never });
+            session.mergeRuntimeMcpServers({ 'space-actions': { type: 'sdk' } as never });
             options?.onReplaySettled?.(true);
           }
         ),
@@ -523,7 +523,7 @@ describe('SessionManager', () => {
             session: AgentSession,
             options?: { onReplaySettled?: (succeeded: boolean) => void }
           ) => {
-            session.mergeRuntimeMcpServers({ 'node-agent': { type: 'sdk' } as never });
+            session.mergeRuntimeMcpServers({ 'space-actions': { type: 'sdk' } as never });
             replayAttempts += 1;
             options?.onReplaySettled?.(replayAttempts > 1);
           }
@@ -557,7 +557,7 @@ describe('SessionManager', () => {
             session: AgentSession,
             options?: { onReplaySettled?: (succeeded: boolean) => void }
           ) => {
-            session.mergeRuntimeMcpServers({ 'node-agent': { type: 'sdk' } as never });
+            session.mergeRuntimeMcpServers({ 'space-actions': { type: 'sdk' } as never });
             options?.onReplaySettled?.(true);
           }
         ),
@@ -596,7 +596,7 @@ describe('SessionManager', () => {
             session: AgentSession,
             options?: { onReplaySettled?: (succeeded: boolean) => void }
           ) => {
-            session.mergeRuntimeMcpServers({ 'node-agent': { type: 'sdk' } as never });
+            session.mergeRuntimeMcpServers({ 'space-actions': { type: 'sdk' } as never });
             options?.onReplaySettled?.(true);
           }
         ),
@@ -637,7 +637,7 @@ describe('SessionManager', () => {
                 releaseProvisioning = resolve;
                 return;
               }
-              session.mergeRuntimeMcpServers({ 'node-agent': { type: 'sdk' } as never });
+              session.mergeRuntimeMcpServers({ 'space-actions': { type: 'sdk' } as never });
               resolve();
             })
         ),
@@ -658,7 +658,7 @@ describe('SessionManager', () => {
         instanceB,
         expect.objectContaining({ onReplaySettled: expect.any(Function) })
       );
-      expect(instanceB.getSessionData().config.mcpServers).toHaveProperty('node-agent');
+      expect(instanceB.getSessionData().config.mcpServers).toHaveProperty('space-actions');
       expect(firstSession).toBe(instanceB);
     });
 
@@ -686,7 +686,7 @@ describe('SessionManager', () => {
                 releaseFirst = resolve;
                 return;
               }
-              session.mergeRuntimeMcpServers({ 'node-agent': { type: 'sdk' } as never });
+              session.mergeRuntimeMcpServers({ 'space-actions': { type: 'sdk' } as never });
               options?.onReplaySettled?.(true);
               if (providerCalls === 2) {
                 releaseSecond = resolve;
@@ -745,7 +745,7 @@ describe('SessionManager', () => {
                 releaseProvisioning = resolve;
                 return;
               }
-              session.mergeRuntimeMcpServers({ 'node-agent': { type: 'sdk' } as never });
+              session.mergeRuntimeMcpServers({ 'space-actions': { type: 'sdk' } as never });
               resolve();
             })
         ),
@@ -766,8 +766,8 @@ describe('SessionManager', () => {
         instanceC,
         expect.objectContaining({ onReplaySettled: expect.any(Function) })
       );
-      expect(instanceC.getSessionData().config.mcpServers).toHaveProperty('node-agent');
-      expect(instanceB.getSessionData().config.mcpServers?.['node-agent']).toBeUndefined();
+      expect(instanceC.getSessionData().config.mcpServers).toHaveProperty('space-actions');
+      expect(instanceB.getSessionData().config.mcpServers?.['space-actions']).toBeUndefined();
     });
 
     it('marks a displaced in-flight provisioning owner archived before awaiting it', async () => {
@@ -800,7 +800,7 @@ describe('SessionManager', () => {
               releaseFirstCall = resolve;
             });
           }
-          session.mergeRuntimeMcpServers({ 'node-agent': { type: 'sdk' } as never });
+          session.mergeRuntimeMcpServers({ 'space-actions': { type: 'sdk' } as never });
           return Promise.resolve();
         }),
       };
@@ -842,12 +842,12 @@ describe('SessionManager', () => {
             return new Promise<void>((resolve) => {
               signalProvisioningStarted!();
               releaseFirstCall = () => {
-                session.mergeRuntimeMcpServers({ 'node-agent': { type: 'sdk' } as never });
+                session.mergeRuntimeMcpServers({ 'space-actions': { type: 'sdk' } as never });
                 resolve();
               };
             });
           }
-          session.mergeRuntimeMcpServers({ 'node-agent': { type: 'sdk' } as never });
+          session.mergeRuntimeMcpServers({ 'space-actions': { type: 'sdk' } as never });
           return Promise.resolve();
         }),
       };
@@ -871,7 +871,7 @@ describe('SessionManager', () => {
         instanceB,
         expect.objectContaining({ onReplaySettled: expect.any(Function) })
       );
-      expect(instanceB.getSessionData().config.mcpServers).toHaveProperty('node-agent');
+      expect(instanceB.getSessionData().config.mcpServers).toHaveProperty('space-actions');
     });
   });
 
@@ -911,7 +911,7 @@ describe('SessionManager', () => {
       sessionManager.setSpaceRuntimeMcpProvider(provider);
 
       const session = sessionManager.getSession('member-session-1');
-      await session!.onMissingMemberSpaceMcpServers!('member-session-1', ['space-agent-tools']);
+      await session!.onMissingMemberSpaceMcpServers!('member-session-1', ['space-actions']);
 
       expect(provider.reattachMemberSpaceTools).toHaveBeenCalledTimes(1);
       expect(provider.reattachMemberSpaceTools).toHaveBeenCalledWith('member-session-1');
@@ -956,10 +956,10 @@ describe('SessionManager', () => {
 
       expect(session).not.toBeNull();
       expect(typeof session!.onMissingWorkflowMcpServers).toBe('function');
-      await session!.onMissingWorkflowMcpServers!(session!, ['node-agent']);
+      await session!.onMissingWorkflowMcpServers!(session!, ['space-actions']);
 
       expect(provider.reattachWorkflowMcpServers).toHaveBeenCalledTimes(1);
-      expect(provider.reattachWorkflowMcpServers).toHaveBeenCalledWith(session, ['node-agent']);
+      expect(provider.reattachWorkflowMcpServers).toHaveBeenCalledWith(session, ['space-actions']);
     });
 
     it('leaves onMissingWorkflowMcpServers undefined when the provider does not implement it', () => {

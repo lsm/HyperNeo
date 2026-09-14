@@ -10,7 +10,7 @@ import {
 } from '../../../../src/lib/space/runtime/post-approval-router.ts';
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
-import { createMarkCompleteHandler } from '../../../../src/lib/space/tools/end-node-handlers.ts';
+import { createMarkCompleteHandler } from '../../../../src/lib/space/operations/end-node-handlers.ts';
 import {
   CODING_WORKFLOW,
   REVIEW_ONLY_WORKFLOW,

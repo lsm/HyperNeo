@@ -80,11 +80,11 @@ strongly-typed in-process dispatch, not a generic remote-procedure gateway.
    `actions/space-agent-schemas.ts` and registry sources so the registry can
    validate `params` and generate `describe_action` output. Tool names are stable
    slugs.
-10. **Coexistence rollout.** `HYPERNEO_SPACE_ACTIONS_DISPATCHER` gates the server.
-    Initial default off (additive dead code); wires attach it alongside existing
-    servers (invariants unchanged); prompts prefer `call_action` with a typed
-    fallback; default flips to ON for a soak window; CD 17 removes the typed
-    surface and flips `requiredServers` invariants to `space-actions`.
+10. **Rollout (completed).** The dispatcher shipped behind
+    `HYPERNEO_SPACE_ACTIONS_DISPATCHER` for a soak window; CD 17 then removed the
+    typed `node-agent`/`space-agent-tools` servers and the flag, flipping
+    `requiredServers` invariants to `space-actions` as the only space MCP
+    surface.
 
 ### Module layout
 

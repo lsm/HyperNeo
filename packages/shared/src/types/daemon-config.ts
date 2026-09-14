@@ -69,7 +69,6 @@ export interface DaemonBehaviorConfig {
     sqlQuerySummaryLimit?: number;
   };
   flags?: {
-    spaceActionsDispatcher?: boolean;
     workflowConnectors?: boolean;
     taskAgentPostApprovalRouting?: boolean;
   };
@@ -127,7 +126,6 @@ const FAMILY_ROWS: FamilyRows = {
     sqlQuerySummaryLimit: [10, 'row limit for SQL query summary logs'],
   },
   flags: {
-    spaceActionsDispatcher: [true, 'enable the space-actions dispatcher server'],
     workflowConnectors: [true, 'enable workflow runtime connectors'],
     taskAgentPostApprovalRouting: [true, 'enable post-approval routing to sub-sessions'],
   },
@@ -148,7 +146,6 @@ const RANGE_OVERRIDES: Record<string, { min?: number; max?: number }> = {
 const BOOLEAN_LEGACY_STRINGS: Record<string, readonly [readonly string[], boolean, boolean?]> = {
   sqlQueryObservability: [['0', 'false', 'off'], false, true],
   workflowConnectors: [['0'], false],
-  spaceActionsDispatcher: [['1', 'true'], true],
   disableWorktrees: [['1'], true],
   disableGoalProcessing: [['1'], true],
   taskAgentPostApprovalRouting: [['0', 'false', 'no', 'off'], false, true],

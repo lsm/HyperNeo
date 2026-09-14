@@ -11,7 +11,7 @@ import { ScheduleService } from '../../../../src/lib/space/schedule/schedule-ser
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import { SPACE_FORGE_TOOL_SCHEMAS } from '../../../../src/lib/space/actions/space-agent-schemas.ts';
-import type { SpaceAgentToolsConfig } from '../../../../src/lib/space/tools/space-agent-tools.ts';
+import type { SpaceAgentToolsConfig } from '../../../../src/lib/space/actions/space-handlers.ts';
 import { SESSION_WRITE_AUTONOMY_LEVEL } from '../../../../src/lib/space/tools/tool-admission-gates.ts';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import { EvolutionRepository } from '../../../../src/storage/repositories/evolution-repository.ts';

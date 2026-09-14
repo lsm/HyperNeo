@@ -921,38 +921,22 @@ describe('SpaceRuntimeService', () => {
       const [mcpArg] = (
         session.mergeRuntimeMcpServers as Mock<typeof session.mergeRuntimeMcpServers>
       ).mock.calls[0];
-      expect(mcpArg).toHaveProperty('space-agent-tools');
+      expect(mcpArg).toHaveProperty('space-actions');
       expect(typeof session.onMissingSpaceChatMcpServers).toBe('function');
     });
 
-    describe('space-actions dispatcher attach (HYPERNEO_SPACE_ACTIONS_DISPATCHER)', () => {
-      const FLAG = 'HYPERNEO_SPACE_ACTIONS_DISPATCHER';
-      const previous = process.env[FLAG];
-      afterEach(() => {
-        if (previous === undefined) delete process.env[FLAG];
-        else process.env[FLAG] = previous;
-      });
+    test('space chat: attaches the space-actions dispatcher server', async () => {
+      const session = makeSession();
+      const sessionManager = makeSessionManager(session);
+      const svc = new SpaceRuntimeService(buildConfigWithSession(sessionManager));
 
-      test('space chat: attaches space-actions by default; omits it when the flag is off', async () => {
-        const session = makeSession();
-        const sessionManager = makeSessionManager(session);
-        const svc = new SpaceRuntimeService(buildConfigWithSession(sessionManager));
+      await svc.setupSpaceAgentSession(mockSpace);
 
-        process.env[FLAG] = '0';
-        await svc.setupSpaceAgentSession(mockSpace);
-        delete process.env[FLAG];
-        await svc.setupSpaceAgentSession(mockSpace);
-
-        const mergeMock = session.mergeRuntimeMcpServers as Mock<
-          typeof session.mergeRuntimeMcpServers
-        >;
-        const [firstArg] = mergeMock.mock.calls[0];
-        expect(firstArg).toHaveProperty('space-agent-tools');
-        expect(firstArg).not.toHaveProperty('space-actions');
-        const [secondArg] = mergeMock.mock.calls[1];
-        expect(secondArg).toHaveProperty('space-agent-tools');
-        expect(secondArg).toHaveProperty('space-actions');
-      });
+      const mergeMock = session.mergeRuntimeMcpServers as Mock<
+        typeof session.mergeRuntimeMcpServers
+      >;
+      const [firstArg] = mergeMock.mock.calls[0];
+      expect(firstArg).toHaveProperty('space-actions');
     });
 
     test('provisions the space:chat session with the 24-tool sdkToolsPreset (Task #794)', async () => {
@@ -993,14 +977,14 @@ describe('SpaceRuntimeService', () => {
       expect(session.mergeRuntimeMcpServers).toHaveBeenCalledTimes(1);
       expect(typeof session.onMissingSpaceChatMcpServers).toBe('function');
 
-      await session.onMissingSpaceChatMcpServers?.('space:chat:space-1', ['space-agent-tools']);
+      await session.onMissingSpaceChatMcpServers?.('space:chat:space-1', ['space-actions']);
 
       expect(sessionManager.getSessionAsync).toHaveBeenCalledTimes(2);
       expect(session.mergeRuntimeMcpServers).toHaveBeenCalledTimes(2);
       const [repairedMcpArg] = (
         session.mergeRuntimeMcpServers as Mock<typeof session.mergeRuntimeMcpServers>
       ).mock.calls[1];
-      expect(repairedMcpArg).toHaveProperty('space-agent-tools');
+      expect(repairedMcpArg).toHaveProperty('space-actions');
     });
 
     test('no-op when session does not exist in DB', async () => {
@@ -1102,7 +1086,7 @@ describe('SpaceRuntimeService', () => {
       const [mcpArg] = (
         session.mergeRuntimeMcpServers as Mock<typeof session.mergeRuntimeMcpServers>
       ).mock.calls.at(-1)!;
-      expect(mcpArg).toHaveProperty('space-agent-tools');
+      expect(mcpArg).toHaveProperty('space-actions');
       expect(typeof session.onMissingSpaceChatMcpServers).toBe('function');
 
       await svc.stop();
@@ -2070,7 +2054,7 @@ describe('SpaceRuntimeService', () => {
       const [mcpArg] = (
         agentSession.mergeRuntimeMcpServers as Mock<typeof agentSession.mergeRuntimeMcpServers>
       ).mock.calls.at(-1)!;
-      expect(mcpArg).toHaveProperty('space-agent-tools');
+      expect(mcpArg).toHaveProperty('space-actions');
       expect(typeof agentSession.onMissingMemberSpaceMcpServers).toBe('function');
 
       await svc.stop();
@@ -2598,7 +2582,7 @@ describe('SpaceRuntimeService', () => {
       } as unknown as Session;
     }
 
-    test('attaches space-agent-tools to an ad-hoc Space member session', async () => {
+    test('attaches space-actions to an ad-hoc Space member session', async () => {
       const agent = makeMemberAgentSession();
       const sessionManager = makeSessionManager(agent);
       const svc = new SpaceRuntimeService(buildMemberConfig({ sessionManager }));
@@ -2608,69 +2592,39 @@ describe('SpaceRuntimeService', () => {
       const mergeMock = agent.mergeRuntimeMcpServers as Mock<typeof agent.mergeRuntimeMcpServers>;
       expect(mergeMock).toHaveBeenCalledTimes(1);
       const [additional] = mergeMock.mock.calls[0];
-      expect(additional).toHaveProperty('space-agent-tools');
+      expect(additional).toHaveProperty('space-actions');
       expect(additional).not.toHaveProperty('db-query');
       expect(agent.setRuntimeSystemPrompt).not.toHaveBeenCalled();
     });
 
-    describe('space-actions dispatcher attach (HYPERNEO_SPACE_ACTIONS_DISPATCHER)', () => {
-      const FLAG = 'HYPERNEO_SPACE_ACTIONS_DISPATCHER';
-      const previous = process.env[FLAG];
-      afterEach(() => {
-        if (previous === undefined) delete process.env[FLAG];
-        else process.env[FLAG] = previous;
-      });
-
-      test('member session: attaches space-actions by default; omits it when the flag is off', async () => {
-        const agent = makeMemberAgentSession();
-        const sessionManager = makeSessionManager(agent);
-        const svc = new SpaceRuntimeService(buildMemberConfig({ sessionManager }));
-
-        process.env[FLAG] = '0';
-        await svc.attachSpaceToolsToMemberSession(makeMemberSession());
-        delete process.env[FLAG];
-        await svc.attachSpaceToolsToMemberSession(makeMemberSession());
-
-        const mergeMock = agent.mergeRuntimeMcpServers as Mock<typeof agent.mergeRuntimeMcpServers>;
-        const [firstArg] = mergeMock.mock.calls[0];
-        expect(firstArg).toHaveProperty('space-agent-tools');
-        expect(firstArg).not.toHaveProperty('space-actions');
-        const [secondArg] = mergeMock.mock.calls[1];
-        expect(secondArg).toHaveProperty('space-agent-tools');
-        expect(secondArg).toHaveProperty('space-actions');
-      });
-
-      test('long-term agent session: attaches space-actions alongside when the flag is on', async () => {
-        process.env[FLAG] = '1';
-        const agent = makeMemberAgentSession({
-          id: longTermAgentSessionId(mockSpace.id, 'agent-1'),
-          metadata: {
-            promptProvenance: {
-              source: 'test',
-              hash: 'hash',
-              agentId: 'agent-1',
-              agentName: 'Long Term',
-            },
+    test('long-term agent session: attaches the space-actions dispatcher server', async () => {
+      const agent = makeMemberAgentSession({
+        id: longTermAgentSessionId(mockSpace.id, 'agent-1'),
+        metadata: {
+          promptProvenance: {
+            source: 'test',
+            hash: 'hash',
+            agentId: 'agent-1',
+            agentName: 'Long Term',
           },
-        });
-        const sessionManager = makeSessionManager(agent);
-        const svc = new SpaceRuntimeService(
-          buildMemberConfig({ sessionManager, longHorizonAgentRepo: makeActiveLhAgentRepo() })
-        );
-
-        await (
-          svc as unknown as {
-            attachLongTermAgentMcpServersForSession(session: Session): Promise<void>;
-          }
-        ).attachLongTermAgentMcpServersForSession(agent.getSessionData());
-
-        const serverNames = Object.keys(agent.getSessionData().config.mcpServers ?? {});
-        expect(serverNames).toContain('space-agent-tools');
-        expect(serverNames).toContain('space-actions');
+        },
       });
+      const sessionManager = makeSessionManager(agent);
+      const svc = new SpaceRuntimeService(
+        buildMemberConfig({ sessionManager, longHorizonAgentRepo: makeActiveLhAgentRepo() })
+      );
+
+      await (
+        svc as unknown as {
+          attachLongTermAgentMcpServersForSession(session: Session): Promise<void>;
+        }
+      ).attachLongTermAgentMcpServersForSession(agent.getSessionData());
+
+      const serverNames = Object.keys(agent.getSessionData().config.mcpServers ?? {});
+      expect(serverNames).toContain('space-actions');
     });
 
-    test('long-term agent session: withholds space-agent-tools when the backing agent is paused', async () => {
+    test('long-term agent session: withholds the space-actions dispatcher when the backing agent is paused', async () => {
       const agent = makeMemberAgentSession({
         id: longTermAgentSessionId(mockSpace.id, 'agent-1'),
         metadata: {
@@ -2702,7 +2656,7 @@ describe('SpaceRuntimeService', () => {
 
       expect(agent.mergeRuntimeMcpServers).not.toHaveBeenCalled();
       const serverNames = Object.keys(agent.getSessionData().config.mcpServers ?? {});
-      expect(serverNames).not.toContain('space-agent-tools');
+      expect(serverNames).not.toContain('space-actions');
     });
 
     test('re-attaches the slot context reset policy onto the fresh session instance', async () => {
@@ -2743,7 +2697,7 @@ describe('SpaceRuntimeService', () => {
         const mergeMock = agent.mergeRuntimeMcpServers as Mock<typeof agent.mergeRuntimeMcpServers>;
         expect(mergeMock).toHaveBeenCalledTimes(1);
         const [additional] = mergeMock.mock.calls[0];
-        expect(additional).toHaveProperty('space-agent-tools');
+        expect(additional).toHaveProperty('space-actions');
         expect(additional).toHaveProperty('db-query');
 
         await svc.stop();
@@ -2853,7 +2807,7 @@ describe('SpaceRuntimeService', () => {
 
       const mergeMock = agent.mergeRuntimeMcpServers as Mock<typeof agent.mergeRuntimeMcpServers>;
       expect(mergeMock).toHaveBeenCalledTimes(3);
-      expect(mergeMock.mock.calls[2][0]).toHaveProperty('space-agent-tools');
+      expect(mergeMock.mock.calls[2][0]).toHaveProperty('space-actions');
 
       await svc.stop();
     });
@@ -2863,7 +2817,7 @@ describe('SpaceRuntimeService', () => {
         config: {
           tools: {},
           mcpServers: {
-            'space-agent-tools': {} as McpServerConfig,
+            'space-actions': {} as McpServerConfig,
           },
         },
       });
@@ -2957,7 +2911,7 @@ describe('SpaceRuntimeService', () => {
         includeSpaceSessions: true,
       });
       expect(agent.mergeRuntimeMcpServers).toHaveBeenCalledTimes(1);
-      expect(agent.getSessionData().config.mcpServers).toHaveProperty('space-agent-tools');
+      expect(agent.getSessionData().config.mcpServers).toHaveProperty('space-actions');
 
       await svc.stop();
     });
@@ -2998,7 +2952,7 @@ describe('SpaceRuntimeService', () => {
       expect(agent.mergeRuntimeMcpServers).toHaveBeenCalledTimes(1);
       const [mcpArg] = (agent.mergeRuntimeMcpServers as Mock<typeof agent.mergeRuntimeMcpServers>)
         .mock.calls[0];
-      expect(mcpArg).toHaveProperty('space-agent-tools');
+      expect(mcpArg).toHaveProperty('space-actions');
 
       await svc.stop();
     });
@@ -3036,53 +2990,44 @@ describe('SpaceRuntimeService', () => {
     });
 
     test('long-term agent reattach preserves existing runtime MCP servers and avoids duplicate server names', async () => {
-      const previous = process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER;
-      process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER = '0';
-      try {
-        const preservedServer = { type: 'sdk', name: 'external-runtime' } as McpServerConfig;
-        const agent = makeMemberAgentSession({
-          id: longTermAgentSessionId(mockSpace.id, 'agent-1'),
-          config: {
-            tools: {},
-            mcpServers: {
-              'external-runtime': preservedServer,
-            },
+      const preservedServer = { type: 'sdk', name: 'external-runtime' } as McpServerConfig;
+      const agent = makeMemberAgentSession({
+        id: longTermAgentSessionId(mockSpace.id, 'agent-1'),
+        config: {
+          tools: {},
+          mcpServers: {
+            'external-runtime': preservedServer,
           },
-          metadata: {
-            promptProvenance: {
-              source: 'test',
-              hash: 'hash',
-              agentId: 'agent-1',
-              agentName: 'Long Term',
-            },
+        },
+        metadata: {
+          promptProvenance: {
+            source: 'test',
+            hash: 'hash',
+            agentId: 'agent-1',
+            agentName: 'Long Term',
           },
-        });
-        const sessionManager = makeSessionManager(agent);
-        const svc = new SpaceRuntimeService(
-          buildMemberConfig({ sessionManager, longHorizonAgentRepo: makeActiveLhAgentRepo() })
-        );
+        },
+      });
+      const sessionManager = makeSessionManager(agent);
+      const svc = new SpaceRuntimeService(
+        buildMemberConfig({ sessionManager, longHorizonAgentRepo: makeActiveLhAgentRepo() })
+      );
 
-        await (
-          svc as unknown as {
-            attachLongTermAgentMcpServersForSession(session: Session): Promise<void>;
-          }
-        ).attachLongTermAgentMcpServersForSession(agent.getSessionData());
-        await (
-          svc as unknown as {
-            attachLongTermAgentMcpServersForSession(session: Session): Promise<void>;
-          }
-        ).attachLongTermAgentMcpServersForSession(agent.getSessionData());
+      await (
+        svc as unknown as {
+          attachLongTermAgentMcpServersForSession(session: Session): Promise<void>;
+        }
+      ).attachLongTermAgentMcpServersForSession(agent.getSessionData());
+      await (
+        svc as unknown as {
+          attachLongTermAgentMcpServersForSession(session: Session): Promise<void>;
+        }
+      ).attachLongTermAgentMcpServersForSession(agent.getSessionData());
 
-        expect(agent.mergeRuntimeMcpServers).toHaveBeenCalledTimes(2);
-        const serverNames = Object.keys(agent.getSessionData().config.mcpServers ?? {});
-        expect(serverNames.sort()).toEqual(['external-runtime', 'space-agent-tools']);
-        expect(agent.getSessionData().config.mcpServers?.['external-runtime']).toBe(
-          preservedServer
-        );
-      } finally {
-        if (previous === undefined) delete process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER;
-        else process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER = previous;
-      }
+      expect(agent.mergeRuntimeMcpServers).toHaveBeenCalledTimes(2);
+      const serverNames = Object.keys(agent.getSessionData().config.mcpServers ?? {});
+      expect(serverNames.sort()).toEqual(['external-runtime', 'space-actions']);
+      expect(agent.getSessionData().config.mcpServers?.['external-runtime']).toBe(preservedServer);
     });
 
     test('long-term agent reactivation resolves the LH handle alias so @handle delegation survives restart', async () => {
@@ -3125,7 +3070,7 @@ describe('SpaceRuntimeService', () => {
       expect(longHorizonAgentRepo.getById).toHaveBeenCalledWith('agent-lh');
       const mergeMock = agent.mergeRuntimeMcpServers as Mock<typeof agent.mergeRuntimeMcpServers>;
       expect(mergeMock).toHaveBeenCalledTimes(1);
-      expect(mergeMock.mock.calls[0][0]).toHaveProperty('space-agent-tools');
+      expect(mergeMock.mock.calls[0][0]).toHaveProperty('space-actions');
     });
 
     test('long-term agent deleted sessions release db-query runtime server handles', async () => {
@@ -3211,7 +3156,7 @@ describe('SpaceRuntimeService', () => {
       } as unknown as Session;
     }
 
-    test('attaches space-agent-tools when internalEventBus emits session.created with a UUID sessionId', async () => {
+    test('attaches space-actions when internalEventBus emits session.created with a UUID sessionId', async () => {
       const agent = makeMemberAgentSession();
       const sessionManager = {
         getSessionAsync: mock(async () => agent),
@@ -3240,7 +3185,7 @@ describe('SpaceRuntimeService', () => {
       const mergeMock = agent.mergeRuntimeMcpServers as Mock<typeof agent.mergeRuntimeMcpServers>;
       expect(mergeMock).toHaveBeenCalledTimes(1);
       const [additional] = mergeMock.mock.calls[0];
-      expect(additional).toHaveProperty('space-agent-tools');
+      expect(additional).toHaveProperty('space-actions');
 
       await svc.stop();
     });

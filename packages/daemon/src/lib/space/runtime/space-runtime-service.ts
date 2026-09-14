@@ -67,7 +67,6 @@ import { ensureSession } from '../../session-resolution/ensure-session.ts';
 import { resolveAgentDeliverySession } from '../../session-resolution/resolve-agent-delivery-session.ts';
 import type { ResolveAgentRecordDeps } from '../../session-resolution/resolve-agent-record.ts';
 import type { EnsureSessionOutcome, SessionTarget } from '../../session-resolution/target.ts';
-import { isSpaceActionsDispatcherEnabled } from '../actions/dispatcher-flag.ts';
 import {
   createSpaceActionsMcpServer,
   type SpaceActionsMcpServer,
@@ -85,7 +84,6 @@ import { SpaceTaskManager } from '../managers/space-task-manager.ts';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager.ts';
 import { SpaceMessageResolver } from '../messaging-adapter.ts';
 import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools.ts';
-import { createSpaceAgentMcpServer } from '../tools/space-agent-tools.ts';
 import type { WorkflowArtifactProfile } from './artifact-profile.ts';
 import { ChannelRouter } from './channel-router.ts';
 import { createDatabaseDirectTaskWorkerResolver } from './direct-task-worker-identity.ts';
@@ -818,7 +816,7 @@ export class SpaceRuntimeService {
     );
     agentSession.onMissingMemberSpaceMcpServers = async (_sessionId, missing) => {
       log.warn(
-        `Long-term Space agent session ${session.id} missing MCP servers [${missing.join(', ')}]; re-attaching space-agent-tools before query start`
+        `Long-term Space agent session ${session.id} missing MCP servers [${missing.join(', ')}]; re-attaching space-actions before query start`
       );
       await this.attachLongTermAgentMcpServersForSession(session, {
         replayPendingMessages: false,
@@ -848,11 +846,7 @@ export class SpaceRuntimeService {
       agentId,
       agentHandleAliases
     );
-    const mcpServers: Record<string, McpServerConfig> = {
-      'space-agent-tools': createSpaceAgentMcpServer(
-        spaceToolsConfig
-      ) as unknown as McpServerConfig,
-    };
+    const mcpServers: Record<string, McpServerConfig> = {};
     this.attachSpaceActionsMcpServer(mcpServers, () => ({
       role: 'long_term_agent',
       spaceId: space.id,
@@ -882,7 +876,6 @@ export class SpaceRuntimeService {
     mcpServers: Record<string, McpServerConfig>,
     buildConfig: () => SpaceActionsServerConfig
   ): void {
-    if (!isSpaceActionsDispatcherEnabled()) return;
     const sessionManager = this.config.sessionManager;
     mcpServers['space-actions'] = createSpaceActionsMcpServer({
       ...buildConfig(),
@@ -891,12 +884,6 @@ export class SpaceRuntimeService {
   }
 
   buildUniversalReadDispatcherServer(): SpaceActionsMcpServer {
-    if (!isSpaceActionsDispatcherEnabled()) {
-      throw new Error(
-        'buildUniversalReadDispatcherServer requires the space-actions dispatcher to be enabled ' +
-          '(set HYPERNEO_SPACE_ACTIONS_DISPATCHER=1)'
-      );
-    }
     return createSpaceActionsMcpServer({
       role: 'universal_read',
       spaceId: '',
@@ -1492,12 +1479,6 @@ export class SpaceRuntimeService {
     return repo.listBySpaceId(spaceId).some((agent) => agent.sessionId === sessionId);
   }
 
-  buildMemberSpaceToolsMcpServer(space: Space, sessionId: string): McpServerConfig {
-    return createSpaceAgentMcpServer(
-      this.buildMemberSpaceToolsConfig(space, sessionId)
-    ) as unknown as McpServerConfig;
-  }
-
   private buildMemberSpaceToolsConfig(space: Space, sessionId: string): SpaceAgentToolsConfig {
     const spaceManagerForApproval = this.config.spaceManager;
     return {
@@ -1584,11 +1565,7 @@ export class SpaceRuntimeService {
 
     this.taskAgentManager?.reattachSlotContextReset(agentSession);
 
-    const mcpServer = this.buildMemberSpaceToolsMcpServer(space, session.id);
-
-    const additional: Record<string, McpServerConfig> = {
-      'space-agent-tools': mcpServer,
-    };
+    const additional: Record<string, McpServerConfig> = {};
     if (this.config.memoryRepo) {
       additional['agent-memory'] = createAgentMemoryMcpServer({
         spaceId: space.id,
@@ -1618,7 +1595,7 @@ export class SpaceRuntimeService {
 
     agentSession.onMissingMemberSpaceMcpServers = async (_sessionId, missing) => {
       log.warn(
-        `Space member session ${session.id} missing MCP servers [${missing.join(', ')}]; re-attaching space-agent-tools before query start`
+        `Space member session ${session.id} missing MCP servers [${missing.join(', ')}]; re-attaching space-actions before query start`
       );
       await this.attachSpaceToolsToMemberSession(session, { replayPendingMessages: false });
     };
@@ -1628,7 +1605,7 @@ export class SpaceRuntimeService {
     }
 
     log.info(
-      `Attached space-agent-tools to member session ${session.id} (space ${space.id}, role ${policy.role}, type ${session.type ?? 'worker'})`
+      `Attached space-actions to member session ${session.id} (space ${space.id}, role ${policy.role}, type ${session.type ?? 'worker'})`
     );
   }
 
@@ -1751,8 +1728,6 @@ export class SpaceRuntimeService {
       externalEventStore: this.config.externalEventStore,
       templateManager: this.templateManager,
     };
-    const mcpServer = createSpaceAgentMcpServer(spaceToolsConfig);
-
     const existingDbQueryServer = this.spaceDbQueryServers.get(space.id);
     if (existingDbQueryServer) {
       try {
@@ -1762,9 +1737,7 @@ export class SpaceRuntimeService {
       }
     }
 
-    const mcpServers: Record<string, McpServerConfig> = {
-      'space-agent-tools': mcpServer as unknown as McpServerConfig,
-    };
+    const mcpServers: Record<string, McpServerConfig> = {};
     if (this.config.memoryRepo) {
       mcpServers['agent-memory'] = createAgentMemoryMcpServer({
         spaceId: space.id,
@@ -1790,7 +1763,7 @@ export class SpaceRuntimeService {
     session.mergeRuntimeMcpServers(mcpServers);
     session.onMissingSpaceChatMcpServers = async (_sessionId, missing) => {
       log.warn(
-        `Space chat session ${spaceChatSessionId} missing MCP servers [${missing.join(', ')}]; re-attaching space-agent-tools before query start`
+        `Space chat session ${spaceChatSessionId} missing MCP servers [${missing.join(', ')}]; re-attaching space-actions before query start`
       );
       await this.setupSpaceAgentSession(space);
     };

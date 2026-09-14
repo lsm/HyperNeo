@@ -11,8 +11,8 @@ import type { SpaceGoalService } from '../goals/goal-service.ts';
 import type { SpaceManager } from '../managers/space-manager.ts';
 import type { SpaceTaskManager } from '../managers/space-task-manager.ts';
 import { normalizeMeaningfulTaskResult } from '../task-result-utils.ts';
-import type { ToolResult } from './tool-result.ts';
-import { jsonResult } from './tool-result.ts';
+import type { ToolResult } from '../tools/tool-result.ts';
+import { jsonResult } from '../tools/tool-result.ts';
 
 const log = new Logger('end-node-handlers');
 
