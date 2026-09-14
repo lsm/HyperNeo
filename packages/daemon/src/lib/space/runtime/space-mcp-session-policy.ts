@@ -32,6 +32,7 @@ export interface SpaceMcpSessionPolicy {
   readonly owner: 'space-runtime' | 'task-agent-manager' | 'direct-task-executor' | 'none';
   readonly requiredServers: readonly string[];
   readonly attachGenericSpaceTools: boolean;
+  readonly attachSpaceChatTools: boolean;
   readonly attachLongTermAgentTools: boolean;
   readonly isWorkflowWorker: boolean;
 }
@@ -62,6 +63,7 @@ export function resolveSpaceMcpSessionPolicy(
       owner: directWorker ? 'direct-task-executor' : 'none',
       requiredServers: [],
       attachGenericSpaceTools: false,
+      attachSpaceChatTools: false,
       attachLongTermAgentTools: false,
       isWorkflowWorker: false,
     };
@@ -74,6 +76,7 @@ export function resolveSpaceMcpSessionPolicy(
       owner: 'none',
       requiredServers: [],
       attachGenericSpaceTools: false,
+      attachSpaceChatTools: false,
       attachLongTermAgentTools: false,
       isWorkflowWorker: false,
     };
@@ -86,6 +89,7 @@ export function resolveSpaceMcpSessionPolicy(
       owner: 'space-runtime',
       requiredServers: SPACE_AD_HOC_MEMBER_REQUIRED_MCP_SERVERS,
       attachGenericSpaceTools: false,
+      attachSpaceChatTools: true,
       attachLongTermAgentTools: false,
       isWorkflowWorker: false,
     };
@@ -102,6 +106,7 @@ export function resolveSpaceMcpSessionPolicy(
       owner: 'task-agent-manager',
       requiredServers: SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS,
       attachGenericSpaceTools: false,
+      attachSpaceChatTools: false,
       attachLongTermAgentTools: false,
       isWorkflowWorker: true,
     };
@@ -114,6 +119,7 @@ export function resolveSpaceMcpSessionPolicy(
       owner: 'none',
       requiredServers: ['space-actions'],
       attachGenericSpaceTools: false,
+      attachSpaceChatTools: false,
       attachLongTermAgentTools: false,
       isWorkflowWorker: false,
     };
@@ -126,6 +132,7 @@ export function resolveSpaceMcpSessionPolicy(
       owner: 'space-runtime',
       requiredServers: ['space-agent-tools'],
       attachGenericSpaceTools: false,
+      attachSpaceChatTools: false,
       attachLongTermAgentTools: true,
       isWorkflowWorker: false,
     };
@@ -137,6 +144,7 @@ export function resolveSpaceMcpSessionPolicy(
     owner: 'space-runtime',
     requiredServers: SPACE_AD_HOC_MEMBER_REQUIRED_MCP_SERVERS,
     attachGenericSpaceTools: true,
+    attachSpaceChatTools: false,
     attachLongTermAgentTools: false,
     isWorkflowWorker: false,
   };
