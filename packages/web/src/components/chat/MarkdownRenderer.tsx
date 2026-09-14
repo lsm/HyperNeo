@@ -955,6 +955,7 @@ function transformMarkdownImageNodes(node: MarkdownImageNode) {
       if (!child.properties) child.properties = {};
       const properties = child.properties;
       const src = typeof properties.src === 'string' ? properties.src : '';
+      const alt = typeof properties.alt === 'string' ? properties.alt : '';
       if (src && isAllowedImageSrc(src)) {
         properties.loading = 'lazy';
         properties.referrerpolicy = 'no-referrer';
@@ -967,13 +968,13 @@ function transformMarkdownImageNodes(node: MarkdownImageNode) {
               href: src,
               target: '_blank',
               rel: 'noopener noreferrer',
+              ariaLabel: alt || 'Open image',
             },
             children: [child],
           };
         }
         continue;
       }
-      const alt = typeof properties.alt === 'string' ? properties.alt : '';
       const title = typeof properties.title === 'string' ? ` "${properties.title}"` : '';
       children[index] = { type: 'text', value: `![${alt}](${src}${title})` };
       continue;
@@ -988,6 +989,30 @@ function rehypeMarkdownImages() {
   };
 }
 
+function isNavigatableHref(href: string) {
+  const schemeMatch = uriSchemePattern.exec(href.replace(/[\t\n\r]+/g, '').trim());
+  if (!schemeMatch) return true;
+  const scheme = schemeMatch[1].toLowerCase();
+  return scheme === 'http' || scheme === 'https';
+}
+
+function showImageOverlay(src: string) {
+  document.querySelector('.markdown-image-overlay')?.remove();
+  const overlay = document.createElement('div');
+  overlay.className = 'markdown-image-overlay';
+  overlay.tabIndex = -1;
+  const img = document.createElement('img');
+  img.alt = '';
+  img.src = src;
+  overlay.appendChild(img);
+  overlay.addEventListener('click', () => overlay.remove());
+  overlay.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') overlay.remove();
+  });
+  document.body.appendChild(overlay);
+  overlay.focus();
+}
+
 function openImageAtFullSize(src: string) {
   const dataImageMatch = /^data:(image\/[a-z0-9.+-]+)/i.exec(src);
   if (dataImageMatch && !dataImageMatch[1].toLowerCase().includes('svg')) {
@@ -999,6 +1024,10 @@ function openImageAtFullSize(src: string) {
         setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
       })
       .catch(() => undefined);
+    return;
+  }
+  if (dataImageMatch) {
+    showImageOverlay(src);
     return;
   }
   window.open(src, '_blank', 'noopener,noreferrer');
@@ -1069,16 +1098,36 @@ export default function MarkdownRenderer({ content, class: className }: Markdown
     const container = containerRef.current;
     container.innerHTML = html;
 
-    const handleImageClick = (event: Event) => {
-      if (!(event.target instanceof HTMLImageElement)) return;
-      const src = event.target.getAttribute('src') || '';
-      if (!src || !/^data:image\//i.test(src)) return;
-      const href = event.target.closest('a')?.getAttribute('href');
-      if (href && href !== src) return;
-      event.preventDefault();
-      openImageAtFullSize(src);
+    const resolveZoomImage = (target: EventTarget | null): HTMLImageElement | null => {
+      if (target instanceof HTMLImageElement) return target;
+      if (target instanceof HTMLAnchorElement) {
+        const img = target.querySelector('img');
+        if (img && target.textContent?.trim() === '') return img;
+      }
+      return null;
     };
-    container.addEventListener('click', handleImageClick);
+
+    const handleImageActivate = (event: Event) => {
+      if (event instanceof MouseEvent && event.type === 'auxclick' && event.button !== 1) return;
+      const img = resolveZoomImage(event.target);
+      if (!img) return;
+      const src = img.getAttribute('src') || '';
+      if (!src) return;
+      const href = img.closest('a')?.getAttribute('href') || '';
+      if (href && href !== src) {
+        if (!isNavigatableHref(href)) {
+          event.preventDefault();
+          openImageAtFullSize(src);
+        }
+        return;
+      }
+      if (/^data:image\//i.test(src)) {
+        event.preventDefault();
+        openImageAtFullSize(src);
+      }
+    };
+    container.addEventListener('click', handleImageActivate);
+    container.addEventListener('auxclick', handleImageActivate);
 
     const copyMounts = attachCodeBlockCopyButtons(containerRef.current);
 
@@ -1107,7 +1156,8 @@ export default function MarkdownRenderer({ content, class: className }: Markdown
     }
 
     return () => {
-      container.removeEventListener('click', handleImageClick);
+      container.removeEventListener('click', handleImageActivate);
+      container.removeEventListener('auxclick', handleImageActivate);
       copyMounts.forEach((mount) => {
         render(null, mount);
       });
