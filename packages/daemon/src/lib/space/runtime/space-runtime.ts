@@ -3236,8 +3236,10 @@ export class SpaceRuntime {
         delete (params as Record<string, unknown>).workspacePath;
       }
       let updated = await taskManager.setTaskStatus(taskId, nextStatus, {
-        result: params.result ?? undefined,
-        reportedSummary: params.reportedSummary ?? undefined,
+        result: Object.hasOwn(params, 'result') ? params.result : undefined,
+        reportedSummary: Object.hasOwn(params, 'reportedSummary')
+          ? params.reportedSummary
+          : undefined,
         approvalSource: params.approvalSource ?? undefined,
         approvalReason:
           nextStatus === 'cancelled'
@@ -3284,15 +3286,6 @@ export class SpaceRuntime {
       );
       await this.safeOnTaskUpdated(spaceId, updated);
 
-      if (
-        Object.hasOwn(params, 'workflowRunId') &&
-        params.workflowRunId !== updated.workflowRunId
-      ) {
-        updated =
-          this.config.taskRepo.updateTask(taskId, {
-            workflowRunId: params.workflowRunId ?? null,
-          }) ?? updated;
-      }
       if (nextStatus === 'blocked') {
         const run = this.config.workflowRunRepo.getRun(previous.workflowRunId);
         if (run && canTransitionRunStatus(run.status, 'blocked')) {
@@ -3314,6 +3307,16 @@ export class SpaceRuntime {
         }
       } else if (previous.status === 'stopped') {
         await this.recoverPendingDeliveries(this.pausedSpaceIds, previous.workflowRunId);
+      }
+      if (
+        Object.hasOwn(params, 'workflowRunId') &&
+        params.workflowRunId !== updated.workflowRunId
+      ) {
+        updated =
+          this.config.taskRepo.updateTask(taskId, {
+            workflowRunId: params.workflowRunId ?? null,
+          }) ?? updated;
+        await this.safeOnTaskUpdated(spaceId, updated);
       }
       return updated;
     }

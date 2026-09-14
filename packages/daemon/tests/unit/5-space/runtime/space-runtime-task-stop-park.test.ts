@@ -639,6 +639,59 @@ describe('SpaceRuntime — task-level stop parks the run', () => {
       expect(taskRepo.getTask(task.id)?.workflowRunId).toBeFalsy();
     });
 
+    test('a requested workflowRunId detach on cancel survives the second teardown and emits', async () => {
+      const { workflow, stepA } = buildWorkflow(SPACE_ID);
+      const run = createRun(SPACE_ID, workflow.id, 'Cancel Detach Run');
+      const task = seedTask(run.id, { taskAgentSessionId: 'session-task-agent' });
+      seedExec(run.id, stepA, 'Step A', 'in_progress', { agentSessionId: 'session-in-flight' });
+      const emitted: SpaceTask[] = [];
+      const rt = buildRuntime(
+        makeParkTam(nodeExecutionRepo, {
+          liveSessionIds: ['session-in-flight', 'session-task-agent'],
+        }),
+        {
+          onTaskUpdated: ({ task: updated }) => {
+            emitted.push(updated);
+          },
+        }
+      );
+
+      const cancelled = await rt.stopWorkflowBackedTaskForStatus(SPACE_ID, task.id, {
+        status: 'cancelled',
+        workflowRunId: null,
+      });
+
+      expect(cancelled?.status).toBe('cancelled');
+      expect(cancelled?.workflowRunId).toBeFalsy();
+      expect(taskRepo.getTask(task.id)?.workflowRunId).toBeFalsy();
+      expect(emitted.at(-1)?.id).toBe(task.id);
+      expect(emitted.at(-1)?.workflowRunId).toBeFalsy();
+    });
+
+    test('an explicit null reportedSummary is preserved instead of promoted into result', async () => {
+      const { workflow, stepA } = buildWorkflow(SPACE_ID);
+      const run = createRun(SPACE_ID, workflow.id, 'Clear Summary Run');
+      const task = seedTask(run.id, {
+        taskAgentSessionId: 'session-task-agent',
+        reportedSummary: 'partial summary so far',
+      });
+      seedExec(run.id, stepA, 'Step A', 'in_progress', { agentSessionId: 'session-in-flight' });
+      const rt = buildRuntime(
+        makeParkTam(nodeExecutionRepo, {
+          liveSessionIds: ['session-in-flight', 'session-task-agent'],
+        })
+      );
+
+      const done = await rt.stopWorkflowBackedTaskForStatus(SPACE_ID, task.id, {
+        status: 'done',
+        reportedSummary: null,
+      });
+
+      expect(done?.status).toBe('done');
+      expect(done?.reportedSummary).toBeNull();
+      expect(done?.result).toBeNull();
+    });
+
     test('a stopped review task on a done run does not break the tick', async () => {
       const { workflow, stepA } = buildWorkflow(SPACE_ID);
       const run = createRun(SPACE_ID, workflow.id, 'Review Park Run');
