@@ -699,13 +699,15 @@ export class QueryRunner {
         }
       }
       const explicitPin = rawProviderId != null && explicitProviderId !== undefined;
-      if (
+      const inferredRunEligible = providerAvailable !== false && !resolvedProvider.fallback;
+      const persistPin = explicitPin ? rawProviderId !== normalizedProviderId : inferredRunEligible;
+      const applyInMemory =
         normalizedProviderId !== undefined &&
-        (explicitPin
-          ? rawProviderId !== normalizedProviderId
-          : providerAvailable !== false && !resolvedProvider.fallback)
-      ) {
+        (persistPin || (!explicitPin && providerAvailable !== false));
+      if (applyInMemory) {
         session.config.provider = normalizedProviderId as Session['config']['provider'];
+      }
+      if (normalizedProviderId !== undefined && persistPin) {
         try {
           this.ctx.db.updateSession(session.id, {
             config: { ...session.config },
@@ -718,7 +720,7 @@ export class QueryRunner {
         }
       }
 
-      this.ctx.internalEventBus?.publishAsync('session.providerRouted', {
+      this.ctx.internalEventBus?.publishAsync?.('session.providerRouted', {
         sessionId: session.id,
         model: modelId,
         ...(normalizedProviderId ? { provider: normalizedProviderId } : {}),

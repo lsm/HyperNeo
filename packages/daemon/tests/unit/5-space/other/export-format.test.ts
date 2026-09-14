@@ -484,6 +484,32 @@ describe('validateExportedAgent', () => {
     }
   });
 
+  test('rejects a modelPool provider before version 7', () => {
+    const data = {
+      version: 6,
+      type: 'agent',
+      name: 'Bot',
+      role: 'general',
+      modelPool: [{ model: 'sonnet', provider: 'glm', maxConcurrent: 2, weight: 50 }],
+    };
+    const result = validateExportedAgent(data);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('modelPool provider requires export version 7');
+    }
+  });
+
+  test('accepts a modelPool provider at version 7', () => {
+    const data = {
+      version: 7,
+      type: 'agent',
+      name: 'Bot',
+      role: 'general',
+      modelPool: [{ model: 'sonnet', provider: 'glm', maxConcurrent: 2, weight: 50 }],
+    };
+    expect(validateExportedAgent(data).ok).toBe(true);
+  });
+
   test('accepts a version 5 modelPool that omits thinkingLevel', () => {
     const data = {
       version: 5,

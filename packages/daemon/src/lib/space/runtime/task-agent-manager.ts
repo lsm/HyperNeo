@@ -67,7 +67,6 @@ import {
   activateModelPoolReservation,
   applyModelPoolToSlot,
   type ModelPoolAssignmentMap,
-  modelPoolReservationKey,
   raiseModelPoolDeferred,
   releaseModelPoolReservation,
   reserveModelPoolSlot,
@@ -394,7 +393,7 @@ export class TaskAgentManager {
       (event) => {
         if (!event.provider) return;
         const active = this.modelPoolAssignments.get(event.sessionId);
-        if (!active || active.provider === event.provider) return;
+        if (!active || active.model !== event.model || active.provider === event.provider) return;
         this.modelPoolAssignments.set(event.sessionId, { ...active, provider: event.provider });
       },
       { subscriberName: 'TaskAgentManager.providerRouted' }
@@ -1186,13 +1185,7 @@ export class TaskAgentManager {
           });
         }
       },
-      activateSpawnedSessionPoolAssignment: async (executionId, sessionId) => {
-        const pendingKey = modelPoolReservationKey(executionId);
-        const pending = this.modelPoolAssignments.get(pendingKey);
-        if (pending) {
-          const routed = await inferAvailableSpawnProviderForModel(pending.model);
-          if (routed) this.modelPoolAssignments.set(pendingKey, { ...pending, provider: routed });
-        }
+      activateSpawnedSessionPoolAssignment: (executionId, sessionId) => {
         activateModelPoolReservation(this.modelPoolAssignments, { id: executionId }, sessionId);
       },
     };
@@ -5768,19 +5761,6 @@ export class TaskAgentManager {
       log.info(
         `TaskAgentManager.spawnPostApprovalSubSession: spawned session ${actualSessionId} for agent "${slot.name}" (task ${taskId}, node ${matchedNodeId})`
       );
-      const pendingPostApprovalKey = modelPoolReservationKey(reservationKey.id);
-      const pendingPostApproval = this.modelPoolAssignments.get(pendingPostApprovalKey);
-      if (pendingPostApproval) {
-        const routedPostApproval = await inferAvailableSpawnProviderForModel(
-          pendingPostApproval.model
-        );
-        if (routedPostApproval) {
-          this.modelPoolAssignments.set(pendingPostApprovalKey, {
-            ...pendingPostApproval,
-            provider: routedPostApproval,
-          });
-        }
-      }
       activateModelPoolReservation(this.modelPoolAssignments, reservationKey, actualSessionId);
       return { sessionId: actualSessionId };
     } catch (err) {

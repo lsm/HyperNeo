@@ -64,4 +64,25 @@ describe('TaskAgentManager session.providerRouted reconciliation', () => {
     expect(assignments.get('session-2')).toMatchObject({ provider: 'glm' });
     expect(assignments.has('session-missing')).toBe(false);
   });
+
+  test('does not rekey an assignment when the session switched to a different model', async () => {
+    const { manager, bus } = makeManagerWithBus();
+    const assignments = (manager as unknown as { modelPoolAssignments: Map<string, unknown> })
+      .modelPoolAssignments;
+    assignments.set('session-3', {
+      spaceId: 'space-1',
+      taskId: 'task-1',
+      model: 'model-a',
+      provider: 'anthropic',
+      assignedAt: 1000,
+    });
+
+    await bus.publish('session.providerRouted', {
+      sessionId: 'session-3',
+      model: 'model-b',
+      provider: 'glm',
+    });
+
+    expect(assignments.get('session-3')).toMatchObject({ model: 'model-a', provider: 'anthropic' });
+  });
 });

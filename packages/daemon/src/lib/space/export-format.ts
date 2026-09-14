@@ -458,6 +458,12 @@ export function validateExportedAgent(data: unknown): ValidationResult<ExportedS
       error: 'invalid: modelPool thinkingLevel requires export version 6 or newer',
     };
   }
+  if (version < 7 && result.data.modelPool?.some((entry) => entry.provider !== undefined)) {
+    return {
+      ok: false,
+      error: 'invalid: modelPool provider requires export version 7 or newer',
+    };
+  }
   return { ok: true, value: { version, ...result.data } };
 }
 
