@@ -619,55 +619,6 @@ describe('SpaceRuntime — task-level stop parks the run', () => {
       expect(done?.result).toBe('agent wrote this summary');
     });
 
-    test('a requested workflowRunId detach survives the teardown write-back', async () => {
-      const { workflow, stepA } = buildWorkflow(SPACE_ID);
-      const run = createRun(SPACE_ID, workflow.id, 'Detach Run');
-      const task = seedTask(run.id, { taskAgentSessionId: 'session-task-agent' });
-      seedExec(run.id, stepA, 'Step A', 'in_progress', { agentSessionId: 'session-in-flight' });
-      const rt = buildRuntime(
-        makeParkTam(nodeExecutionRepo, {
-          liveSessionIds: ['session-in-flight', 'session-task-agent'],
-        })
-      );
-
-      const detached = await rt.stopWorkflowBackedTaskForStatus(SPACE_ID, task.id, {
-        status: 'done',
-        workflowRunId: null,
-      });
-
-      expect(detached?.status).toBe('done');
-      expect(taskRepo.getTask(task.id)?.workflowRunId).toBeFalsy();
-    });
-
-    test('a requested workflowRunId detach on cancel survives the second teardown and emits', async () => {
-      const { workflow, stepA } = buildWorkflow(SPACE_ID);
-      const run = createRun(SPACE_ID, workflow.id, 'Cancel Detach Run');
-      const task = seedTask(run.id, { taskAgentSessionId: 'session-task-agent' });
-      seedExec(run.id, stepA, 'Step A', 'in_progress', { agentSessionId: 'session-in-flight' });
-      const emitted: SpaceTask[] = [];
-      const rt = buildRuntime(
-        makeParkTam(nodeExecutionRepo, {
-          liveSessionIds: ['session-in-flight', 'session-task-agent'],
-        }),
-        {
-          onTaskUpdated: ({ task: updated }) => {
-            emitted.push(updated);
-          },
-        }
-      );
-
-      const cancelled = await rt.stopWorkflowBackedTaskForStatus(SPACE_ID, task.id, {
-        status: 'cancelled',
-        workflowRunId: null,
-      });
-
-      expect(cancelled?.status).toBe('cancelled');
-      expect(cancelled?.workflowRunId).toBeFalsy();
-      expect(taskRepo.getTask(task.id)?.workflowRunId).toBeFalsy();
-      expect(emitted.at(-1)?.id).toBe(task.id);
-      expect(emitted.at(-1)?.workflowRunId).toBeFalsy();
-    });
-
     test('an explicit null reportedSummary is preserved instead of promoted into result', async () => {
       const { workflow, stepA } = buildWorkflow(SPACE_ID);
       const run = createRun(SPACE_ID, workflow.id, 'Clear Summary Run');
@@ -692,9 +643,9 @@ describe('SpaceRuntime — task-level stop parks the run', () => {
       expect(done?.result).toBeNull();
     });
 
-    test('a concurrent reattach supersedes the detach instead of being clobbered', async () => {
+    test('reassigning the run during a terminal transition is rejected, not silently dropped', async () => {
       const { workflow, stepA } = buildWorkflow(SPACE_ID);
-      const run = createRun(SPACE_ID, workflow.id, 'Superseded Detach Run');
+      const run = createRun(SPACE_ID, workflow.id, 'Reassign Reject Run');
       const task = seedTask(run.id, { taskAgentSessionId: 'session-task-agent' });
       seedExec(run.id, stepA, 'Step A', 'in_progress', { agentSessionId: 'session-in-flight' });
       const rt = buildRuntime(
@@ -702,31 +653,16 @@ describe('SpaceRuntime — task-level stop parks the run', () => {
           liveSessionIds: ['session-in-flight', 'session-task-agent'],
         })
       );
-      const otherRun = createRun(SPACE_ID, workflow.id, 'Recovered Run');
-      const original = taskRepo.updateTask.bind(taskRepo);
-      let reattached = false;
-      (taskRepo as unknown as { updateTask: typeof taskRepo.updateTask }).updateTask = ((
-        id: string,
-        fields: Parameters<typeof taskRepo.updateTask>[1]
-      ) => {
-        const result = original(id, fields);
-        if (!reattached && id === task.id && fields.taskAgentSessionId === null) {
-          reattached = true;
-          original(id, { workflowRunId: otherRun.id });
-        }
-        return result;
-      }) as typeof taskRepo.updateTask;
 
-      try {
-        await rt.stopWorkflowBackedTaskForStatus(SPACE_ID, task.id, {
+      await expect(
+        rt.stopWorkflowBackedTaskForStatus(SPACE_ID, task.id, {
           status: 'done',
           workflowRunId: null,
-        });
-      } finally {
-        (taskRepo as unknown as { updateTask: typeof taskRepo.updateTask }).updateTask = original;
-      }
+        })
+      ).rejects.toThrow(/Cannot change workflowRunId while transitioning/);
 
-      expect(taskRepo.getTask(task.id)?.workflowRunId).toBe(otherRun.id);
+      expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
+      expect(taskRepo.getTask(task.id)?.workflowRunId).toBe(run.id);
     });
 
     test('a stopped review task on a done run does not break the tick', async () => {

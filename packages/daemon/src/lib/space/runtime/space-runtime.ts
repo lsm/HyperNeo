@@ -3224,6 +3224,17 @@ export class SpaceRuntime {
     const nextStatus = params.status;
     if (nextStatus && previous.status !== nextStatus) {
       assertValidSpaceTaskTransition(previous.status, nextStatus);
+      if (
+        params.workflowRunId !== undefined &&
+        params.workflowRunId !== previous.workflowRunId &&
+        previous.workflowRunId
+      ) {
+        throw new Error(
+          `Cannot change workflowRunId while transitioning task ${taskId} to '${nextStatus}': ` +
+            `the transition tears down run ${previous.workflowRunId}. ` +
+            `Transition the task first, then reassign it.`
+        );
+      }
       const taskManager = this.getOrCreateTaskManager(spaceId);
       if (Object.hasOwn(params, 'workspacePath')) {
         await taskManager.updateTask(
@@ -3287,7 +3298,12 @@ export class SpaceRuntime {
       await this.safeOnTaskUpdated(spaceId, updated);
 
       if (nextStatus === 'blocked') {
-        const run = this.config.workflowRunRepo.getRun(previous.workflowRunId);
+        const latest = this.config.taskRepo.getTask(taskId);
+        const stillBlockedOnRun =
+          latest?.status === 'blocked' && latest.workflowRunId === previous.workflowRunId;
+        const run = stillBlockedOnRun
+          ? this.config.workflowRunRepo.getRun(previous.workflowRunId)
+          : null;
         if (run && canTransitionRunStatus(run.status, 'blocked')) {
           await this.transitionRunStatusAndEmit(previous.workflowRunId, 'blocked');
         }
@@ -3307,20 +3323,6 @@ export class SpaceRuntime {
         }
       } else if (previous.status === 'stopped') {
         await this.recoverPendingDeliveries(this.pausedSpaceIds, previous.workflowRunId);
-      }
-      if (params.workflowRunId !== undefined && params.workflowRunId !== updated.workflowRunId) {
-        const latest = this.config.taskRepo.getTask(taskId);
-        const superseded =
-          !latest ||
-          latest.status !== nextStatus ||
-          (latest.workflowRunId ?? null) !== (updated.workflowRunId ?? null);
-        if (!superseded) {
-          updated =
-            this.config.taskRepo.updateTask(taskId, {
-              workflowRunId: params.workflowRunId,
-            }) ?? updated;
-          await this.safeOnTaskUpdated(spaceId, updated);
-        }
       }
       return updated;
     }
