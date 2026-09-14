@@ -701,7 +701,9 @@ export class QueryRunner {
       const explicitPin = rawProviderId != null && explicitProviderId !== undefined;
       if (
         normalizedProviderId !== undefined &&
-        (explicitPin ? rawProviderId !== normalizedProviderId : providerAvailable !== false)
+        (explicitPin
+          ? rawProviderId !== normalizedProviderId
+          : providerAvailable !== false && !resolvedProvider.fallback)
       ) {
         session.config.provider = normalizedProviderId as Session['config']['provider'];
         try {
@@ -715,6 +717,12 @@ export class QueryRunner {
           );
         }
       }
+
+      this.ctx.internalEventBus?.publishAsync('session.providerRouted', {
+        sessionId: session.id,
+        model: modelId,
+        ...(normalizedProviderId ? { provider: normalizedProviderId } : {}),
+      });
 
       if (provider && providerAvailable === false) {
         const authStatus = provider.getAuthStatus ? await provider.getAuthStatus() : null;

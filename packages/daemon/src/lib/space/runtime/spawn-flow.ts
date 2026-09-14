@@ -92,7 +92,7 @@ export interface SpawnExecutionFlowDeps {
   registerSpawnCompletionCallback(taskId: string, workflowNodeId: string, sessionId: string): void;
   buildKickoffMessage(request: KickoffMessageRequest): Promise<string>;
   injectKickoffMessage(sessionId: string, message: string, executionId: string): Promise<void>;
-  activateSpawnedSessionPoolAssignment(executionId: string, sessionId: string): void;
+  activateSpawnedSessionPoolAssignment(executionId: string, sessionId: string): Promise<void>;
 }
 
 export interface SpawnExecutionFlowInput {
@@ -420,8 +420,8 @@ export function runSpawnExecutionFlow(
         when: 'proceedFresh',
         reads: ['execution', 'spawnedSessionId'],
         writes: [],
-        run: (view) => {
-          deps.activateSpawnedSessionPoolAssignment(view.execution.id, view.spawnedSessionId);
+        run: async (view) => {
+          await deps.activateSpawnedSessionPoolAssignment(view.execution.id, view.spawnedSessionId);
         },
       }),
       s.halt({

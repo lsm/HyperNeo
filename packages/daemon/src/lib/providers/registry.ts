@@ -56,6 +56,7 @@ export function resolveQueryProvider(
 export interface ResolvedAvailableProvider {
   provider: Provider | undefined;
   available: boolean | null;
+  fallback: boolean;
 }
 
 export async function resolveAvailableQueryProvider(
@@ -64,19 +65,23 @@ export async function resolveAvailableQueryProvider(
   explicitProviderId: string | undefined
 ): Promise<ResolvedAvailableProvider> {
   if (explicitProviderId) {
-    return { provider: registry.get(explicitProviderId), available: null };
+    return { provider: registry.get(explicitProviderId), available: null, fallback: false };
   }
   const { warmOwners, coldCatalogCandidates } = orderedOwnerCandidates(registry, modelId);
   const candidates = warmOwners.length > 0 ? warmOwners : coldCatalogCandidates;
-  if (candidates.length === 0) return { provider: registry.get('anthropic'), available: null };
+  if (candidates.length === 0) {
+    return { provider: registry.get('anthropic'), available: null, fallback: true };
+  }
   for (const owner of candidates) {
-    if (typeof owner.isAvailable !== 'function') return { provider: owner, available: null };
+    if (typeof owner.isAvailable !== 'function') {
+      return { provider: owner, available: null, fallback: false };
+    }
     try {
-      if (await owner.isAvailable()) return { provider: owner, available: true };
+      if (await owner.isAvailable()) return { provider: owner, available: true, fallback: false };
     } catch {}
   }
-  if (warmOwners.length > 0) return { provider: warmOwners[0], available: false };
-  return { provider: registry.get('anthropic'), available: null };
+  if (warmOwners.length > 0) return { provider: warmOwners[0], available: false, fallback: false };
+  return { provider: registry.get('anthropic'), available: null, fallback: true };
 }
 
 export class ProviderRegistry {

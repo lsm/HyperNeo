@@ -654,7 +654,7 @@ describe('QueryRunner', () => {
       }
     }
 
-    it('normalizes a blank session provider and persists the inferred provider pin', async () => {
+    it('keeps a blank session providerless when routing reaches the zero-candidate fallback', async () => {
       await withAnthropicApiKey(async () => {
         const blankSession: Session = {
           ...mockSession,
@@ -666,14 +666,41 @@ describe('QueryRunner', () => {
         await runner.start();
         await ctx.queryPromise?.catch(() => {});
 
-        expect(blankSession.config.provider).toBe('anthropic');
+        expect(blankSession.config.provider).not.toBe('anthropic');
+      });
+    });
+
+    it('persists the inferred pin when a warm owner owns the model', async () => {
+      const registry = initializeProviders();
+      registry.register({
+        id: 'custom:pin-owner-test',
+        displayName: 'Pin Owner Test',
+        isAvailable: mock(async () => true),
+        getAuthStatus: mock(async () => ({ isAuthenticated: true, method: 'api_key' })),
+        ownsModel: (m: string) => m === 'pin-owned-model',
+        buildSdkConfig: mock(() => ({ envVars: {}, isAnthropicCompatible: true })),
+      } as unknown as Provider);
+      try {
+        const blankSession: Session = {
+          ...mockSession,
+          config: { ...mockSession.config, model: 'pin-owned-model', provider: '   ' },
+        };
+        const ctx = createContext({ session: blankSession });
+        runner = new QueryRunner(ctx);
+
+        await runner.start();
+        await ctx.queryPromise?.catch(() => {});
+
+        expect(blankSession.config.provider).toBe('custom:pin-owner-test');
         expect(updateSessionSpy).toHaveBeenCalledWith(
           'test-session-id',
           expect.objectContaining({
-            config: expect.objectContaining({ provider: 'anthropic' }),
+            config: expect.objectContaining({ provider: 'custom:pin-owner-test' }),
           })
         );
-      });
+      } finally {
+        registry.unregister('custom:pin-owner-test');
+      }
     });
 
     it('does not persist an inferred pin when the fallback provider is unavailable', async () => {
