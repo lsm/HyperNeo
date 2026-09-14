@@ -15,7 +15,7 @@ import { SectionCard } from '../ui/SectionCard';
 import { StatusBadge } from '../ui/StatusBadge';
 import { TaskArtifactsPanel } from './TaskArtifactsPanel';
 import { TaskTimelineFeed } from './TaskTimelineFeed';
-import { getTransitionActions } from './TaskStatusActions';
+import { filterDirectAttemptTargets, getTransitionActions } from './TaskStatusActions';
 
 interface TaskAuxiliaryPanelProps {
   spaceId: string;
@@ -225,9 +225,10 @@ export function TaskAuxiliaryPanel({
     </div>
   );
 
-  const transitionActions = getTransitionActions(task.status).filter(
-    ({ target }) => !(task.status === 'review' && target === 'cancelled')
-  );
+  const transitionActions = filterDirectAttemptTargets(
+    getTransitionActions(task.status),
+    task
+  ).filter(({ target }) => !(task.status === 'review' && target === 'cancelled'));
   const taskMenuItems: DropdownMenuItem[] = transitionActions.map(({ target, label }) => ({
     label,
     onClick: () => handleStatusTransition(target),

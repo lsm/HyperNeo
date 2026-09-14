@@ -6,6 +6,8 @@ import type { SpaceTaskStatus } from '@hyperneo/shared';
 import {
   TaskStatusActions,
   getTransitionActions,
+  filterDirectAttemptTargets,
+  hasLiveDirectAttempt,
   VALID_TASK_TRANSITIONS,
   TRANSITION_LABELS,
 } from '../TaskStatusActions';
@@ -337,5 +339,34 @@ describe('TaskStatusActions component', () => {
       expect(getByTestId('task-action-in_progress')).toBeTruthy();
       expect(getByTestId('task-action-archived')).toBeTruthy();
     });
+  });
+});
+
+describe('filterDirectAttemptTargets', () => {
+  const direct = {
+    status: 'in_progress' as SpaceTaskStatus,
+    workflowRunId: null,
+    taskAgentSessionId: 'session-1',
+  };
+
+  it('detects a live direct attempt only for a running non-workflow task', () => {
+    expect(hasLiveDirectAttempt(direct)).toBe(true);
+    expect(hasLiveDirectAttempt({ ...direct, workflowRunId: 'run-1' })).toBe(false);
+    expect(hasLiveDirectAttempt({ ...direct, taskAgentSessionId: null })).toBe(false);
+    expect(hasLiveDirectAttempt({ ...direct, status: 'open' })).toBe(false);
+  });
+
+  it('hides the targets task.transition refuses while an attempt is live', () => {
+    const targets = filterDirectAttemptTargets(getTransitionActions('in_progress'), direct).map(
+      ({ target }) => target
+    );
+    expect(targets).toEqual(['review', 'cancelled']);
+  });
+
+  it('leaves the actions untouched without a live attempt', () => {
+    const task = { ...direct, taskAgentSessionId: null };
+    expect(filterDirectAttemptTargets(getTransitionActions('in_progress'), task)).toEqual(
+      getTransitionActions('in_progress')
+    );
   });
 });

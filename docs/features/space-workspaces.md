@@ -245,6 +245,8 @@ worktrees are deliberately **not** registered workspaces.
   `space.create` takes `additionalWorkspaces`; `operation.invoke` with `task.create` and
   `spaceGoal.create` / `spaceGoal.update` take `workspacePath`. No operation rebinds an
   existing task's pin — `spaceTask.update` was the only such door and it is retired.
+  The same retirement removed the only write path for `space_tasks.workflow_model_overrides`;
+  the runtime still reads the column, but nothing sets it.
 - **SpaceCreateDialog** — optional "Additional Workspaces" rows (path + label, folder
   picker, at most 7) submitted with the create; an invalid extra path rejects the whole
   creation atomically.
