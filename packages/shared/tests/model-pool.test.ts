@@ -49,16 +49,14 @@ test('padded provider entries score under their trimmed bucket', () => {
   expect(scored[0]).toMatchObject({ running: 1, left: 0 });
 });
 
-test('provider-qualified entries only count against their own provider bucket', () => {
+test('provider-qualified entries share the model-wide run count', () => {
   const entries = [
-    { model: 'gpt-5.4', provider: 'openai', maxConcurrent: 1, weight: 50 },
-    { model: 'gpt-5.4', provider: 'custom:endpoint-2', maxConcurrent: 1, weight: 50 },
+    { model: 'gpt-5.4', provider: 'openai', maxConcurrent: 2, weight: 50 },
+    { model: 'gpt-5.4', provider: 'custom:endpoint-2', maxConcurrent: 2, weight: 50 },
   ];
   const scored = scoreModelPoolEntries(entries, { '["openai","gpt-5.4"]': 1 });
-  expect(scored[0]).toMatchObject({ left: 0 });
+  expect(scored[0]).toMatchObject({ left: 1 });
   expect(scored[1]).toMatchObject({ left: 1 });
-  const picked = pickModelPoolEntry(entries, { '["openai","gpt-5.4"]': 1 }, () => 0.99);
-  expect(picked?.provider).toBe('custom:endpoint-2');
 });
 
 test('providerless entries count qualified runs against their model-wide cap', () => {
@@ -70,10 +68,10 @@ test('providerless entries count qualified runs against their model-wide cap', (
   ).toBeNull();
 });
 
-test('provider-qualified entries only count their own bucket, not unqualified runs', () => {
+test('provider-qualified entries count model-wide runs against their capacity', () => {
   const entries = [{ model: 'sonnet', provider: 'glm', maxConcurrent: 1, weight: 50 }];
   const scored = scoreModelPoolEntries(entries, { '[null,"sonnet"]': 1 });
-  expect(scored[0]).toMatchObject({ running: 0, left: 1 });
+  expect(scored[0]).toMatchObject({ running: 1, left: 0 });
 });
 
 test('scoring multiplies remaining capacity by weight', () => {

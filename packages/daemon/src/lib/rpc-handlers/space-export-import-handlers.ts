@@ -1072,7 +1072,8 @@ export function setupSpaceExportImportHandlers(
                 droppedPins = true;
                 return { ...entry, provider: undefined };
               }
-              const provider = getProviderRegistry().get(entry.provider);
+              const normalizedProvider = entry.provider.trim();
+              const provider = getProviderRegistry().get(normalizedProvider);
               if (!provider || !providerMayOfferModel(provider, entry.model)) {
                 droppedPins = true;
                 allWarnings.push(
@@ -1081,7 +1082,7 @@ export function setupSpaceExportImportHandlers(
                 );
                 return { ...entry, provider: undefined };
               }
-              return entry;
+              return { ...entry, provider: normalizedProvider };
             });
             const mergedByPoolKey = new Map<string, (typeof sanitized)[number]>();
             for (const entry of sanitized) {
