@@ -183,7 +183,7 @@ describe('updateSpaceAgent', () => {
 
     test('rejects a reserved handle', async () => {
       expectKind(
-        await run(h, { id: 'agent-1', handle: 'coordinator' }),
+        await run(h, { id: 'agent-1', handle: 'system-runtime' }),
         'invalid_identity',
         'is reserved'
       );
@@ -290,7 +290,7 @@ describe('updateSpaceAgent', () => {
     });
 
     test('does not apply or publish when a gate rejects', async () => {
-      await run(h, { id: 'agent-1', handle: 'coordinator' });
+      await run(h, { id: 'agent-1', handle: 'system-runtime' });
       expect(h.applied).toHaveLength(0);
       expect(h.published).toHaveLength(0);
     });
@@ -329,22 +329,6 @@ describe('updateSpaceAgent', () => {
       };
       await run(h, { id: 'agent-1', instructions: 'x' });
       expect(called).toBe(false);
-    });
-
-    test('locks the Space Manager handle', async () => {
-      h = makeHarness(makeAgent({ handle: 'space-manager' }));
-      expectKind(await run(h, { id: 'agent-1', handle: 'renamed' }), 'invalid_identity', 'locked');
-    });
-
-    test('refuses to archive the Space Manager', async () => {
-      h = makeHarness(makeAgent({ handle: 'space-manager' }));
-      expectKind(await run(h, { id: 'agent-1', status: 'archived' }), 'invalid_request');
-    });
-
-    test('still allows editing the Space Manager instructions', async () => {
-      h = makeHarness(makeAgent({ handle: 'space-manager' }));
-      const outcome = await run(h, { id: 'agent-1', instructions: 'Coordinate.' });
-      expect(isRejection(outcome)).toBe(false);
     });
 
     test('rechecks the display name when unarchiving', async () => {

@@ -74,11 +74,6 @@ describe('resolveCreatedBy', () => {
     expect(resolveCreatedBy(null)).toBeNull();
   });
 
-  test('space_chat session yields space-agent regardless of provenance', () => {
-    const session = { ...createTestSession('s1'), type: 'space_chat' as const };
-    expect(resolveCreatedBy(session)).toBe('space-agent');
-  });
-
   test('session with provenance yields the agent name', () => {
     const base = createTestSession('s2');
     const session = {

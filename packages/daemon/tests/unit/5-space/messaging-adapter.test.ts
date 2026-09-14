@@ -57,6 +57,12 @@ describe('Space messaging adapter', () => {
     spaceId = space.id;
     const agent = { id: 'worker-agent' };
     seedWorkerMirror(db, { id: agent.id, spaceId, name: 'Worker Agent' });
+    longHorizonAgentRepo.create({
+      id: 'lh-manager',
+      spaceId,
+      handle: 'manager',
+      displayName: 'Manager',
+    });
     const workflow = workflowRepo.createWorkflow({
       spaceId,
       name: 'Coding Workflow',
@@ -149,12 +155,12 @@ describe('Space messaging adapter', () => {
     );
     const result = await resolver.resolveTargets({
       ...message,
-      targets: ['@coordinator', '@role:reviewer', '@worker:node-review/reviewer'],
+      targets: ['@manager', '@role:reviewer', '@worker:node-review/reviewer'],
     });
 
     expect(result.unresolved).toEqual([]);
     expect(result.resolved.map((target) => target.actor.actorId)).toEqual([
-      `agent:coordinator:${spaceId}`,
+      'agent:lh-manager',
       `worker:${encodeURIComponent(runId)}:node-review:reviewer`,
       `worker:${encodeURIComponent(runId)}:node-review:reviewer`,
     ]);
@@ -245,7 +251,7 @@ describe('Space messaging adapter', () => {
     const spaceMismatch = await resolver.resolveTargets({
       ...message,
       spaceId: 'other-space',
-      targets: ['@coordinator'],
+      targets: ['@manager'],
     });
     expect(spaceMismatch.resolved).toEqual([]);
     expect(spaceMismatch.unresolved.map((target) => target.reason)).toEqual([
@@ -309,14 +315,14 @@ describe('Space messaging adapter', () => {
     const result = await facade.routeMessage({
       ...message,
       workflowRunId: undefined,
-      targets: ['@coordinator'],
+      targets: ['@manager'],
     });
 
-    expect(queued).toEqual([`agent:coordinator:${spaceId}`]);
+    expect(queued).toEqual(['agent:lh-manager']);
     expect(result.deliveries).toHaveLength(1);
     expect(result.deliveries[0]).toMatchObject({
-      targetActorId: `agent:coordinator:${spaceId}`,
-      targetRef: '@coordinator',
+      targetActorId: 'agent:lh-manager',
+      targetRef: '@manager',
       state: 'delivered',
       deliveredSessionId: 'inbox-1',
     });
@@ -335,13 +341,13 @@ describe('Space messaging adapter', () => {
     const result = await facade.routeMessage({
       ...message,
       workflowRunId: undefined,
-      targets: ['@coordinator'],
+      targets: ['@manager'],
     });
 
     expect(result.deliveries).toHaveLength(1);
     expect(result.deliveries[0]).toMatchObject({
-      targetActorId: `agent:coordinator:${spaceId}`,
-      targetRef: '@coordinator',
+      targetActorId: 'agent:lh-manager',
+      targetRef: '@manager',
       state: 'failed',
       lastError: 'Activation delivery returned no delivered session',
     });
@@ -417,27 +423,6 @@ describe('Space messaging adapter', () => {
       state: 'queued',
       attemptCount: 0,
     });
-  });
-
-  it('routes space-agent to the authorized reply session, and refuses it without one', () => {
-    const base = {
-      spaceId,
-      workflowRunId: runId,
-      workflowNodeId: 'node-coding',
-      agentName: 'coder',
-      workflow: workflowRepo.getWorkflow(workflowRunRepo.getRun(runId)!.workflowId),
-    };
-
-    expect(
-      translateLegacyNodeTargets('space-agent', {
-        ...base,
-        replyRoutingLookup: () => 'session-origin',
-      })
-    ).toEqual(['@session:session-origin']);
-
-    expect(() => translateLegacyNodeTargets('space-agent', base)).toThrow(
-      'Unknown target "space-agent"'
-    );
   });
 
   it('translates legacy node-agent targets to generic worker targets', () => {

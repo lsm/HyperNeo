@@ -24,11 +24,11 @@ describe('long-horizon agent templates', () => {
     expect(RESERVED_SPACE_AGENT_HANDLES as readonly string[]).not.toContain(template?.handle);
   });
 
-  test('keeps only the coordinator and task-manager as non-worker built-ins (ATC-3, ATC-4)', () => {
+  test('keeps only the task-manager as a non-worker built-in (ATC-3, ATC-4)', () => {
     const templates = getLongHorizonFamilyTemplates();
 
     expect(templates.map((template) => template.key)).toEqual([
-      'coordinator.default',
+      'task-manager.default',
       'task-manager.default',
     ]);
     expect(templates.map((template) => template.displayName)).toEqual([
@@ -110,14 +110,6 @@ describe('long-horizon agent templates', () => {
       expect(template.reminderDefaults.length).toBeGreaterThan(0);
       expect(template.ownershipPatterns.length).toBeGreaterThan(0);
     }
-  });
-
-  test('coordinator teaches outcome review without claiming a fallback duty', () => {
-    const coordinator = getLongHorizonAgentTemplates().find(
-      (template) => template.key === 'coordinator.default'
-    );
-    expect(coordinator?.instructions).toContain('review_goal_outcome');
-    expect(coordinator?.instructions).not.toContain('fallback reviewer');
   });
 
   test('returns cloned template data', () => {

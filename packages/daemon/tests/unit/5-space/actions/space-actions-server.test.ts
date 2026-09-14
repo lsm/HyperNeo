@@ -68,13 +68,13 @@ describe('resolveRoleHotActionView', () => {
     expect(resolveRoleHotActionView('workflow_worker', ' Coder ').hotActions).toBe(
       ROLE_HOT_ACTIONS.coder
     );
-    expect(resolveRoleHotActionView('coordinator', 'reviewer').hotActions).toBe(
+    expect(resolveRoleHotActionView('ad_hoc_member', 'reviewer').hotActions).toBe(
       ROLE_HOT_ACTIONS.reviewer
     );
   });
 
   test('falls back to the general hot list labeled by session role', () => {
-    expect(resolveRoleHotActionView('coordinator', null)).toEqual({
+    expect(resolveRoleHotActionView('ad_hoc_member', null)).toEqual({
       label: 'Coordinator',
       hotActions: GENERAL_HOT_ACTIONS,
     });
@@ -92,7 +92,7 @@ describe('createSpaceActionsMcpServer — tool and registry composition', () => 
     expect(server.tools.map((entry) => entry.name)).toEqual(['call_action']);
   });
 
-  test('composes space entries plus registry meta entries for the coordinator', () => {
+  test('composes space entries plus registry meta entries for a space member', () => {
     const server = makeServer();
     expect(server.registry.get('list_sessions')?.family).toBe('space');
     expect(server.registry.get('list_actions')).toMatchObject({
@@ -340,7 +340,7 @@ describe('createSpaceActionsMcpServer — call_action dispatch', () => {
   });
 
   test('admits Space-authority-only actions for every Space agent role', () => {
-    for (const role of ['coordinator', 'long_term_agent'] as const) {
+    for (const role of ['long_term_agent'] as const) {
       expect(makeServer({ role }).registry.get('approve_pending_completion')).toBeDefined();
     }
   });
@@ -634,7 +634,7 @@ describe('createSpaceActionsMcpServer — call_action dispatch', () => {
     expect(entries[0]).toMatchObject({ toolName: 'list_actions', spaceId: SPACE_ID });
   });
 
-  test('applies the coordinator agent ceiling like any identified agent', async () => {
+  test('applies the agent ceiling like any identified agent', async () => {
     const server = makeServer({
       spaceLevel: 5,
       spaceConfig: {

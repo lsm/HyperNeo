@@ -77,7 +77,6 @@
 135	packages/daemon/tests/unit/5-space/other/seed-agents.test.ts
 1430	packages/daemon/tests/unit/5-space/other/send-message-unified.test.ts
 8	packages/daemon/tests/unit/5-space/other/slug.test.ts
-13	packages/daemon/tests/unit/5-space/other/space-agent-notification-service.test.ts
 7	packages/daemon/tests/unit/5-space/other/worktree-slug.test.ts
 8	packages/daemon/tests/unit/5-space/runtime/activation-routing.test.ts
 15	packages/daemon/tests/unit/5-space/runtime/agent-message-routing-gates.test.ts
