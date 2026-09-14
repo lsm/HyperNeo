@@ -915,6 +915,7 @@ function attachCodeBlockCopyButtons(container: HTMLElement) {
   const mounts: Array<HTMLElement> = [];
   container.querySelectorAll('pre').forEach((pre) => {
     const code = pre.querySelector('code');
+    pre.style.paddingRight = '2.5rem';
     const wrapper = document.createElement('div');
     wrapper.className = 'code-block-wrapper relative';
     pre.parentNode?.insertBefore(wrapper, pre);

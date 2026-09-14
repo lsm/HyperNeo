@@ -213,6 +213,19 @@ describe('MarkdownRenderer', () => {
       expect(wrapper?.querySelector('pre code')?.textContent).toBe('const x = 1;\n');
       expect(container.querySelector('pre button')).toBeFalsy();
     });
+
+    it('should reserve right padding on wrapped code blocks for the copy button', async () => {
+      const { container } = render(
+        <MarkdownRenderer
+          content={'```js\nconst someVeryLongIdentifier = aLongFunctionCall();\n```'}
+        />
+      );
+      await waitFor(() => {
+        expect(container.querySelector('button')).toBeTruthy();
+      });
+      const pre = container.querySelector('.code-block-wrapper pre');
+      expect(pre?.style.paddingRight).toBe('2.5rem');
+    });
   });
 
   describe('Markdown Parsing', () => {
@@ -479,7 +492,7 @@ describe('MarkdownRenderer', () => {
         const code = container.querySelector('blockquote pre code');
         expect(code?.textContent).toBe('<div />\n');
         expect(code?.querySelector('code')).toBeFalsy();
-        expect(container.querySelector('.prose div')).toBeFalsy();
+        expect(container.querySelector('.prose div:not(.code-block-wrapper)')).toBeFalsy();
       });
     });
 
@@ -665,7 +678,7 @@ describe('MarkdownRenderer', () => {
         const code = container.querySelector('pre code.language-html');
         expect(code?.textContent).toContain('<div>hello</div>');
         expect(code?.querySelector('.hljs-tag')).toBeTruthy();
-        expect(container.querySelector('.prose > div')).toBeFalsy();
+        expect(container.querySelector('.prose > div:not(.code-block-wrapper)')).toBeFalsy();
       });
     });
 
@@ -676,7 +689,7 @@ describe('MarkdownRenderer', () => {
       await waitFor(() => {
         const code = container.querySelector('pre code.language-html');
         expect(code?.textContent).toContain('<div><span>hello</span></div>');
-        expect(container.querySelector('.prose > div')).toBeFalsy();
+        expect(container.querySelector('.prose > div:not(.code-block-wrapper)')).toBeFalsy();
       });
     });
 
@@ -738,7 +751,7 @@ describe('MarkdownRenderer', () => {
       await waitFor(() => {
         const code = container.querySelector('pre code.language-html');
         expect(code?.textContent).toBe('<div>\n  hello\n</div>\n');
-        expect(container.querySelector('.prose > div')).toBeFalsy();
+        expect(container.querySelector('.prose > div:not(.code-block-wrapper)')).toBeFalsy();
       });
     });
 
@@ -795,7 +808,7 @@ describe('MarkdownRenderer', () => {
         const codes = container.querySelectorAll('pre code.language-html');
         expect(codes).toHaveLength(1);
         expect(codes[0]?.textContent).toBe('<div>Hello\n</div>\n');
-        expect(container.querySelector('.prose > div')).toBeFalsy();
+        expect(container.querySelector('.prose > div:not(.code-block-wrapper)')).toBeFalsy();
       });
     });
 
@@ -807,7 +820,7 @@ describe('MarkdownRenderer', () => {
         const codes = container.querySelectorAll('pre code.language-html');
         expect(codes).toHaveLength(1);
         expect(codes[0]?.textContent).toBe('<div\n  class="card"\n>\n  hi\n</div>\n');
-        expect(container.querySelector('.prose > div')).toBeFalsy();
+        expect(container.querySelector('.prose > div:not(.code-block-wrapper)')).toBeFalsy();
       });
     });
 
@@ -817,7 +830,7 @@ describe('MarkdownRenderer', () => {
         const codes = container.querySelectorAll('pre code.language-html');
         expect(codes).toHaveLength(1);
         expect(codes[0]?.textContent).toBe('<div\n></div>\n');
-        expect(container.querySelector('.prose > div')).toBeFalsy();
+        expect(container.querySelector('.prose > div:not(.code-block-wrapper)')).toBeFalsy();
       });
     });
 
@@ -829,7 +842,7 @@ describe('MarkdownRenderer', () => {
         const codes = container.querySelectorAll('pre code.language-html');
         expect(codes).toHaveLength(1);
         expect(codes[0]?.textContent).toBe('<div>\n  <div>\n    child\n  </div>\n</div>\n');
-        expect(container.querySelector('.prose > div')).toBeFalsy();
+        expect(container.querySelector('.prose > div:not(.code-block-wrapper)')).toBeFalsy();
       });
     });
 
@@ -841,7 +854,7 @@ describe('MarkdownRenderer', () => {
         const codes = container.querySelectorAll('pre code.language-html');
         expect(codes).toHaveLength(1);
         expect(codes[0]?.textContent).toBe('<div>\n  <div>child</div>\n</div>\n');
-        expect(container.querySelector('.prose > div')).toBeFalsy();
+        expect(container.querySelector('.prose > div:not(.code-block-wrapper)')).toBeFalsy();
       });
     });
 
@@ -853,7 +866,7 @@ describe('MarkdownRenderer', () => {
         const codes = container.querySelectorAll('pre code.language-html');
         expect(codes).toHaveLength(1);
         expect(codes[0]?.textContent).toBe('<div><span>hi</span>\n</div>\n');
-        expect(container.querySelector('.prose > div')).toBeFalsy();
+        expect(container.querySelector('.prose > div:not(.code-block-wrapper)')).toBeFalsy();
       });
     });
 
@@ -865,7 +878,7 @@ describe('MarkdownRenderer', () => {
         const codes = container.querySelectorAll('pre code.language-html');
         expect(codes).toHaveLength(1);
         expect(codes[0]?.textContent).toBe('<div><div>child</div>\n</div>\n');
-        expect(container.querySelector('.prose > div')).toBeFalsy();
+        expect(container.querySelector('.prose > div:not(.code-block-wrapper)')).toBeFalsy();
       });
     });
 
@@ -877,7 +890,7 @@ describe('MarkdownRenderer', () => {
         const codes = container.querySelectorAll('pre code.language-html');
         expect(codes).toHaveLength(1);
         expect(codes[0]?.textContent).toBe('<div><div>\nchild\n</div>\n</div>\n');
-        expect(container.querySelector('.prose > div')).toBeFalsy();
+        expect(container.querySelector('.prose > div:not(.code-block-wrapper)')).toBeFalsy();
       });
     });
 
@@ -889,7 +902,7 @@ describe('MarkdownRenderer', () => {
         const codes = container.querySelectorAll('pre code.language-html');
         expect(codes).toHaveLength(1);
         expect(codes[0]?.textContent).toBe('<div><img />\n</div>\n');
-        expect(container.querySelector('.prose > div')).toBeFalsy();
+        expect(container.querySelector('.prose > div:not(.code-block-wrapper)')).toBeFalsy();
       });
     });
 
@@ -901,7 +914,7 @@ describe('MarkdownRenderer', () => {
         const codes = container.querySelectorAll('pre code.language-html');
         expect(codes).toHaveLength(1);
         expect(codes[0]?.textContent).toBe('<div>\n  <img />\n</div>\n');
-        expect(container.querySelector('.prose > div')).toBeFalsy();
+        expect(container.querySelector('.prose > div:not(.code-block-wrapper)')).toBeFalsy();
       });
     });
 
@@ -913,7 +926,7 @@ describe('MarkdownRenderer', () => {
         const codes = container.querySelectorAll('pre code.language-html');
         expect(codes).toHaveLength(1);
         expect(codes[0]?.textContent).toBe('<div>\n  <span title="</div>"></span>\n</div>\n');
-        expect(container.querySelector('.prose > div')).toBeFalsy();
+        expect(container.querySelector('.prose > div:not(.code-block-wrapper)')).toBeFalsy();
       });
     });
 
@@ -926,7 +939,7 @@ describe('MarkdownRenderer', () => {
         expect(codes).toHaveLength(1);
         expect(codes[0]?.textContent).toContain('<!-- <div>');
         expect(codes[0]?.textContent).toContain('</div>\n');
-        expect(container.querySelector('.prose > div')).toBeFalsy();
+        expect(container.querySelector('.prose > div:not(.code-block-wrapper)')).toBeFalsy();
       });
     });
 
@@ -939,7 +952,7 @@ describe('MarkdownRenderer', () => {
         expect(codes).toHaveLength(1);
         expect(codes[0]?.textContent).toContain('<div>\n<!--\n<div>');
         expect(codes[0]?.textContent).toContain('-->\n</div>\n');
-        expect(container.querySelector('.prose > div')).toBeFalsy();
+        expect(container.querySelector('.prose > div:not(.code-block-wrapper)')).toBeFalsy();
       });
     });
 
@@ -952,7 +965,7 @@ describe('MarkdownRenderer', () => {
         expect(codes).toHaveLength(1);
         expect(codes[0]?.textContent).toContain('<div>\n<!--\nnote');
         expect(codes[0]?.textContent).toContain('--> </div>\n');
-        expect(container.querySelector('.prose > div')).toBeFalsy();
+        expect(container.querySelector('.prose > div:not(.code-block-wrapper)')).toBeFalsy();
       });
     });
 
@@ -965,7 +978,7 @@ describe('MarkdownRenderer', () => {
         expect(codes).toHaveLength(1);
         expect(codes[0]?.textContent).toContain('<!--\nnote');
         expect(codes[0]?.textContent).toContain('--> <div>hi</div>\n');
-        expect(container.querySelector('.prose > div')).toBeFalsy();
+        expect(container.querySelector('.prose > div:not(.code-block-wrapper)')).toBeFalsy();
       });
     });
 
@@ -977,7 +990,7 @@ describe('MarkdownRenderer', () => {
         const codes = container.querySelectorAll('pre code.language-html');
         expect(codes).toHaveLength(1);
         expect(codes[0]?.textContent).toBe('<div></div><span>\ntext\n</span>\n');
-        expect(container.querySelector('.prose > div')).toBeFalsy();
+        expect(container.querySelector('.prose > div:not(.code-block-wrapper)')).toBeFalsy();
       });
     });
 
@@ -989,7 +1002,7 @@ describe('MarkdownRenderer', () => {
         const codes = container.querySelectorAll('pre code.language-html');
         expect(codes).toHaveLength(1);
         expect(codes[0]?.textContent).toBe('<Button value={a>b} /><div>\ntext\n</div>\n');
-        expect(container.querySelector('.prose > div')).toBeFalsy();
+        expect(container.querySelector('.prose > div:not(.code-block-wrapper)')).toBeFalsy();
       });
     });
 
@@ -1057,7 +1070,7 @@ describe('MarkdownRenderer', () => {
         expect(codes).toHaveLength(2);
         expect(codes[0]?.textContent).toBe('<div>inside</div>\n');
         expect(codes[1]?.textContent).toBe('<div>outside</div>\n');
-        expect(container.querySelector('.prose > div')).toBeFalsy();
+        expect(container.querySelector('.prose > div:not(.code-block-wrapper)')).toBeFalsy();
       });
     });
 
@@ -1067,7 +1080,7 @@ describe('MarkdownRenderer', () => {
         const codes = container.querySelectorAll('li pre code.language-html');
         expect(codes).toHaveLength(1);
         expect(codes[0]?.textContent).toBe('<div>hi</div>\n');
-        expect(container.querySelector('.prose > div')).toBeFalsy();
+        expect(container.querySelector('.prose > div:not(.code-block-wrapper)')).toBeFalsy();
       });
     });
 
@@ -1077,7 +1090,7 @@ describe('MarkdownRenderer', () => {
         const codes = container.querySelectorAll('li pre code.language-html');
         expect(codes).toHaveLength(1);
         expect(codes[0]?.textContent).toBe('<div>\nhi\n</div>\n');
-        expect(container.querySelector('.prose > div')).toBeFalsy();
+        expect(container.querySelector('.prose > div:not(.code-block-wrapper)')).toBeFalsy();
       });
     });
 
@@ -1089,7 +1102,7 @@ describe('MarkdownRenderer', () => {
         const codes = container.querySelectorAll('li pre code.language-html');
         expect(codes).toHaveLength(1);
         expect(codes[0]?.textContent).toBe('<div>\nhi\n</div>\n');
-        expect(container.querySelector('.prose > div')).toBeFalsy();
+        expect(container.querySelector('.prose > div:not(.code-block-wrapper)')).toBeFalsy();
       });
     });
 
@@ -1099,7 +1112,7 @@ describe('MarkdownRenderer', () => {
         const codes = container.querySelectorAll('blockquote li pre code.language-html');
         expect(codes).toHaveLength(1);
         expect(codes[0]?.textContent).toBe('<div>\nhi\n</div>\n');
-        expect(container.querySelector('.prose > div')).toBeFalsy();
+        expect(container.querySelector('.prose > div:not(.code-block-wrapper)')).toBeFalsy();
       });
     });
 
@@ -1109,7 +1122,7 @@ describe('MarkdownRenderer', () => {
         const codes = container.querySelectorAll('blockquote pre code.language-html');
         expect(codes).toHaveLength(1);
         expect(codes[0]?.textContent).toBe('<div>hi</div>\n');
-        expect(container.querySelector('.prose > div')).toBeFalsy();
+        expect(container.querySelector('.prose > div:not(.code-block-wrapper)')).toBeFalsy();
       });
     });
 
@@ -1122,7 +1135,7 @@ describe('MarkdownRenderer', () => {
         expect(codes).toHaveLength(1);
         expect(codes[0]?.textContent).toContain('<div>\n<!--\n<div>');
         expect(codes[0]?.textContent).toContain('-->\n</div>\n');
-        expect(container.querySelector('.prose > div')).toBeFalsy();
+        expect(container.querySelector('.prose > div:not(.code-block-wrapper)')).toBeFalsy();
       });
     });
 
@@ -1479,7 +1492,7 @@ describe('MarkdownRenderer', () => {
       await waitFor(() => {
         const code = container.querySelector('pre code.language-html');
         expect(code?.textContent).toBe('<Dialog.Root>\ncontent\n</Dialog.Root>\n');
-        expect(container.querySelector('.prose > div')).toBeFalsy();
+        expect(container.querySelector('.prose > div:not(.code-block-wrapper)')).toBeFalsy();
       });
     });
 
@@ -1716,7 +1729,7 @@ describe('MarkdownRenderer', () => {
       await waitFor(() => {
         const code = container.querySelector('pre code.language-html');
         expect(code?.textContent).toBe('<div>\n');
-        expect(container.querySelector('.prose > div')).toBeFalsy();
+        expect(container.querySelector('.prose > div:not(.code-block-wrapper)')).toBeFalsy();
       });
     });
 
@@ -1775,7 +1788,7 @@ describe('MarkdownRenderer', () => {
         <MarkdownRenderer content={'<div onclick="alert(1)">click</div>'} />
       );
       await waitFor(() => {
-        expect(container.querySelector('.prose > div')).toBeFalsy();
+        expect(container.querySelector('.prose > div:not(.code-block-wrapper)')).toBeFalsy();
         expect(container.textContent).toContain('click');
       });
     });
