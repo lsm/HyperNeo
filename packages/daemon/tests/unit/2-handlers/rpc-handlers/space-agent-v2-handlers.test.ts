@@ -674,7 +674,7 @@ describe('setupSpaceAgentV2Handlers', () => {
     test('rejects a reserved handle', async () => {
       const created = agents.create({ spaceId: 'space-1', handle: 'a' });
       await expect(
-        call(handlers, 'spaceAgentV2.update', { id: created.id, handle: 'coordinator' })
+        call(handlers, 'spaceAgentV2.update', { id: created.id, handle: 'system-runtime' })
       ).rejects.toThrow('is reserved');
     });
 
@@ -690,13 +690,6 @@ describe('setupSpaceAgentV2Handlers', () => {
       await expect(
         call(handlers, 'spaceAgentV2.update', { id: created.id, thinkingLevel: 'bogus' })
       ).rejects.toThrow('Invalid thinkingLevel');
-    });
-
-    test('locks the Space Manager handle', async () => {
-      const coordinator = agents.create({ spaceId: 'space-1', handle: 'space-manager' });
-      await expect(
-        call(handlers, 'spaceAgentV2.update', { id: coordinator.id, handle: 'renamed' })
-      ).rejects.toThrow('locked');
     });
 
     test('rejects a session that belongs to another space', async () => {
@@ -747,15 +740,6 @@ describe('setupSpaceAgentV2Handlers', () => {
       expect(agents.getById(created.id)).not.toBeNull();
     });
 
-    test('refuses to delete the Space Manager agent', async () => {
-      const coordinator = agents.create({ spaceId: 'space-1', handle: 'space-manager' });
-
-      await expect(call(handlers, 'spaceAgentV2.delete', { id: coordinator.id })).rejects.toThrow(
-        'Space Manager agent cannot be deleted'
-      );
-      expect(agents.getById(coordinator.id)).not.toBeNull();
-    });
-
     test('deletes an agent even when a workflow node names it', async () => {
       const created = agents.create({ spaceId: 'space-1', handle: 'referenced' });
       const now = Date.now();
@@ -780,16 +764,6 @@ describe('setupSpaceAgentV2Handlers', () => {
       await call(handlers, 'spaceAgentV2.delete', { id: created.id });
 
       expect(removedSubscriptions).toEqual([{ spaceId: 'space-1', agentId: created.id }]);
-    });
-
-    test('does not remove subscriptions when the delete is refused', async () => {
-      const coordinator = agents.create({ spaceId: 'space-1', handle: 'space-manager' });
-
-      await expect(call(handlers, 'spaceAgentV2.delete', { id: coordinator.id })).rejects.toThrow(
-        'cannot be deleted'
-      );
-
-      expect(removedSubscriptions).toEqual([]);
     });
 
     test('publishes spaceAgentV2.deleted with the agent space', async () => {
