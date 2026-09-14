@@ -104,7 +104,7 @@ describe('resolveSpaceMcpSessionPolicy', () => {
     );
 
     expect(policy).toMatchObject({
-      role: 'coordinator',
+      role: 'ad_hoc_member',
       spaceId: 'space-1',
       owner: 'space-runtime',
       attachCoordinatorTools: true,

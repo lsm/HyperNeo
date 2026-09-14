@@ -243,7 +243,7 @@ describe('operation-backed action dispatch', () => {
     const outcome = await runDispatchAction(deps, {
       actionName: 'operation_example',
       params: { text: 'hi' },
-      role: 'coordinator',
+      role: 'ad_hoc_member',
       spaceId: 'space-1',
     });
     if (outcome.action !== 'dispatched') throw new Error('Expected dispatched outcome');

@@ -33,7 +33,7 @@ const stubNodeConfig = { spaceId: SPACE_ID } as unknown as NodeAgentToolsConfig;
 
 function makeServer(overrides: Partial<SpaceActionsServerConfig> = {}): SpaceActionsMcpServer {
   return createSpaceActionsMcpServer({
-    role: 'coordinator',
+    role: 'ad_hoc_member',
     spaceId: SPACE_ID,
     spaceConfig: stubSpaceConfig,
     ...overrides,
@@ -1212,7 +1212,7 @@ describe('createSpaceActionsMcpServer — call_action dispatch', () => {
     expect(events[0]).toMatchObject({
       actionName: 'list_actions',
       outcome: 'dispatched',
-      role: 'coordinator',
+      role: 'ad_hoc_member',
       spaceId: SPACE_ID,
       taskId: 'task-1',
       agentName: 'coder-1',

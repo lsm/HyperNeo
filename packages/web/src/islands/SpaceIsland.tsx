@@ -257,7 +257,6 @@ export default function SpaceIsland({
           <ChatContainer
             key={sessionViewId}
             sessionId={sessionViewId}
-            titleOverride={isSpaceAgentSession ? 'Space Manager' : undefined}
             onBack={handleSessionBack}
             agentLabel={isSpaceAgentSession ? 'space' : undefined}
             onRefreshAgent={isAgentSession ? handleRefreshAgentRecord : undefined}

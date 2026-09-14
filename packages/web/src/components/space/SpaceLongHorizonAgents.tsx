@@ -29,12 +29,6 @@ const THINKING_LEVEL_OPTIONS: Array<{ value: '' | ThinkingLevel; label: string }
   { value: 'think32k', label: 'Think 32k' },
 ];
 
-const COORDINATOR_AGENT_HANDLES = new Set(['coordinator', 'space-manager']);
-
-function isCoordinator(agent: SpaceLongHorizonAgent): boolean {
-  return COORDINATOR_AGENT_HANDLES.has(agent.handle);
-}
-
 function agentToolsList(agent: SpaceLongHorizonAgent): string[] {
   return toolPermissionsToolsList(agent);
 }
@@ -492,22 +486,13 @@ function AgentEditor({
 
 interface AgentCardProps {
   agent: SpaceLongHorizonAgent;
-  spaceId: string;
   navigationSpaceId: string;
   reminderCount: number;
   onEdit: () => void;
   onDelete: () => void;
 }
 
-function AgentCard({
-  agent,
-  spaceId,
-  navigationSpaceId,
-  reminderCount,
-  onEdit,
-  onDelete,
-}: AgentCardProps) {
-  const coordinator = isCoordinator(agent);
+function AgentCard({ agent, navigationSpaceId, reminderCount, onEdit, onDelete }: AgentCardProps) {
   const statusColors: Record<string, string> = {
     active: 'bg-success',
     paused: 'bg-warning',
@@ -515,7 +500,7 @@ function AgentCard({
     archived: 'bg-fill-strong',
   };
 
-  const sessionId = agent.sessionId ?? (coordinator ? `space:chat:${spaceId}` : null);
+  const sessionId = agent.sessionId ?? null;
 
   return (
     <div
@@ -542,11 +527,6 @@ function AgentCard({
               <span class="truncate text-base font-semibold tracking-tight text-fg">
                 {agent.displayName}
               </span>
-              {coordinator && (
-                <span class="flex-shrink-0 rounded-full border border-purple-400/20 bg-cat-purple/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-cat-purple">
-                  Space Manager
-                </span>
-              )}
             </div>
             <div class="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-fg-muted">
               <span
@@ -594,27 +574,25 @@ function AgentCard({
               />
             </svg>
           </button>
-          {!coordinator && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onDelete();
-              }}
-              class="rounded-md p-1.5 text-fg-faint transition-colors hover:bg-fill-soft hover:text-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger/60"
-              title="Delete"
-              aria-label={`Delete ${agent.displayName}`}
-            >
-              <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width={2}
-                  d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                />
-              </svg>
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete();
+            }}
+            class="rounded-md p-1.5 text-fg-faint transition-colors hover:bg-fill-soft hover:text-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger/60"
+            title="Delete"
+            aria-label={`Delete ${agent.displayName}`}
+          >
+            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width={2}
+                d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+              />
+            </svg>
+          </button>
         </div>
       </div>
       {agent.instructions && (
@@ -694,15 +672,9 @@ export function SpaceLongHorizonAgents({
     }
   };
 
-  const coordinator = agents.find(isCoordinator);
-  const others = agents.filter((a) => !isCoordinator(a) && a.status !== 'archived');
-  const sortedAgents = coordinator ? [coordinator, ...others] : others;
+  const sortedAgents = agents.filter((a) => a.status !== 'archived');
   const selectedAgent = selectedHandle
-    ? (agents.find(
-        (agent) =>
-          agent.handle === selectedHandle ||
-          (isCoordinator(agent) && selectedHandle === 'coordinator')
-      ) ?? null)
+    ? (agents.find((agent) => agent.handle === selectedHandle) ?? null)
     : null;
   const existingHandles = new Set(agents.map((a) => a.handle));
   const existingNames = new Set(agents.map((a) => a.displayName));
@@ -779,7 +751,6 @@ export function SpaceLongHorizonAgents({
                   </p>
                 )}
                 <div class="mt-3 flex flex-wrap gap-2 text-xs text-fg-muted">
-                  {isCoordinator(selectedAgent) && <span>Space Manager</span>}
                   {selectedAgent.autonomyLevel && (
                     <span>
                       L{selectedAgent.autonomyLevel} {AUTONOMY_LABELS[selectedAgent.autonomyLevel]}
@@ -836,7 +807,6 @@ export function SpaceLongHorizonAgents({
                 <AgentCard
                   key={agent.id}
                   agent={agent}
-                  spaceId={spaceId}
                   navigationSpaceId={routeSpaceId}
                   reminderCount={reminderCounts[agent.id] ?? 0}
                   onEdit={() => {

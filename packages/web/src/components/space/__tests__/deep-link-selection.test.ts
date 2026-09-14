@@ -40,10 +40,6 @@ describe('matchesSelectedHandle', () => {
     expect(matchesSelectedHandle(agent('a1', 'alpha'), 'alpha')).toBe(true);
   });
 
-  it('treats coordinator as an alias for the space manager', () => {
-    expect(matchesSelectedHandle(agent('m', 'space-manager'), 'coordinator')).toBe(true);
-  });
-
   it('does not alias an unrelated handle', () => {
     expect(matchesSelectedHandle(agent('a1', 'alpha'), 'coordinator')).toBe(false);
   });

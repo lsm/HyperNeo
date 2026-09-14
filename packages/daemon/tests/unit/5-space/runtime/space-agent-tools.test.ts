@@ -2051,7 +2051,7 @@ describe('createSpaceAgentToolHandlers — session management tools', () => {
   test('send_session_message: Space authority without a backing agent record still requires autonomy', async () => {
     seedSession('other-member-no-agent-record', ctx.spaceId, { status: 'idle' });
     const handlers = makeHandlers(ctx, {
-      callerRole: 'coordinator',
+      callerRole: 'ad_hoc_member',
       mySessionId: 'caller-session',
       getSpaceAutonomyLevel: async () => 3,
       getRuntimeSession: () => ({ startQueryAndEnqueue: async () => {} }) as never,
@@ -7538,7 +7538,7 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
     const dispatchSpy = spyOn(ctx.runtime, 'dispatchPostApproval');
 
     const result = await makeApproveHandlers({
-      callerRole: 'coordinator',
+      callerRole: 'ad_hoc_member',
       getSpaceAutonomyLevel: async () => 4,
     }).approve_pending_completion({ task_id: taskId, approved: true });
     dispatchSpy.mockRestore();
@@ -7554,7 +7554,7 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
     const dispatchSpy = spyOn(ctx.runtime, 'dispatchPostApproval');
 
     const result = await makeHandlers(ctx, {
-      callerRole: 'coordinator',
+      callerRole: 'ad_hoc_member',
       getSpaceAutonomyLevel: async () => 5,
       myAgentId: 'coord-1',
       longHorizonAgentRepo: {
@@ -7584,7 +7584,7 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
     );
 
     const result = await makeHandlers(ctx, {
-      callerRole: 'coordinator',
+      callerRole: 'ad_hoc_member',
       getSpaceAutonomyLevel: async () => 5,
       myAgentId: 'coord-1',
       longHorizonAgentRepo: {

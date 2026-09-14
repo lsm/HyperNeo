@@ -119,7 +119,7 @@ describe('aggregateActionDispatchedTelemetry', () => {
       {
         message: 'action.typed',
         module: 'hyperneo:daemon:space-actions.typed',
-        metadata: { role: 'coordinator' },
+        metadata: { role: 'ad_hoc_member' },
       },
       {
         message: 'action.dispatched',

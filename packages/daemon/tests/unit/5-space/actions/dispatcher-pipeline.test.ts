@@ -94,7 +94,7 @@ function baseInput(overrides: Partial<DispatchActionInput> = {}): DispatchAction
   return {
     actionName: 'list_tasks',
     params: {},
-    role: 'coordinator',
+    role: 'ad_hoc_member',
     spaceId: SPACE_ID,
     ...overrides,
   };
@@ -1947,7 +1947,7 @@ describe('runDispatchAction', () => {
           telemetry.push(event);
         },
       }),
-      baseInput({ actionName: 'send_message', role: 'coordinator' })
+      baseInput({ actionName: 'send_message', role: 'ad_hoc_member' })
     );
     assertDenied(outcome);
     expect(outcome.reason).toBe('role_denied');

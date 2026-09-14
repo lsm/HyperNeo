@@ -143,7 +143,7 @@ function makeCtx(overrides: Partial<SpaceAgentToolsConfig> = {}): ForgeCtx {
     goalRepo,
     evolutionScopeService,
     evolutionEpisodeService,
-    callerRole: 'coordinator',
+    callerRole: 'ad_hoc_member',
     ...overrides,
   };
   return { db, config, workflowManager, workflowRunRepo, taskRepo, goalRepo, evolutionRepo };

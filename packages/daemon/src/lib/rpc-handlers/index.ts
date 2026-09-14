@@ -488,6 +488,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     scheduleService,
     db: deps.db.getDatabase(),
     goalScopeRepo: spaceAgentGoalScopeRepo,
+    agentRepo: spaceAgentRepo,
     outcomeNotificationRepo,
     evolutionScopeService,
     reactiveDb: deps.reactiveDb,
