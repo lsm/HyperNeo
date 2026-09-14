@@ -7,6 +7,7 @@ import type { z } from 'zod';
 import type { OperationRegistrySource } from '../../operations/registry.ts';
 import { hasSpaceAuthority } from '../runtime/space-mcp-session-policy.ts';
 import { canTransition as canTransitionRunStatus } from '../runtime/workflow-run-status-machine.ts';
+import { RestoreNodeAgentSchema } from '../tools/node-agent-tool-schemas.ts';
 import {
   AddForgeManualNoteSchema,
   AddForgeMetricSnapshotSchema,
@@ -98,12 +99,6 @@ import {
   UpdateTaskSchema,
 } from '../tools/space-agent-tool-schemas.ts';
 import {
-  createSpaceAgentToolHandlers,
-  DEFAULT_INACTIVITY_THRESHOLD_MS,
-  type SpaceAgentToolsConfig,
-} from '../tools/space-agent-tools.ts';
-import { RestoreNodeAgentSchema } from '../tools/node-agent-tool-schemas.ts';
-import {
   HUMAN_ONLY_AUTONOMY_LEVEL,
   SESSION_WRITE_AUTONOMY_LEVEL,
 } from '../tools/tool-admission-gates.ts';
@@ -111,6 +106,11 @@ import { jsonResult } from '../tools/tool-result.ts';
 import { type CreateStandaloneTaskParams, mapCreateTaskParams } from './create-task-params.ts';
 import { createOperationActionHandler } from './operation-action.ts';
 import { type ActionDefinition, defineAction } from './registry.ts';
+import {
+  createSpaceAgentToolHandlers,
+  DEFAULT_INACTIVITY_THRESHOLD_MS,
+  type SpaceAgentToolsConfig,
+} from './space-handlers.ts';
 
 const DEFAULT_COMPLETION_AUTONOMY_LEVEL = 5;
 
