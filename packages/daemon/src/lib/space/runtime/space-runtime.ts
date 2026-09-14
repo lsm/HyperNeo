@@ -3309,11 +3309,18 @@ export class SpaceRuntime {
         await this.recoverPendingDeliveries(this.pausedSpaceIds, previous.workflowRunId);
       }
       if (params.workflowRunId !== undefined && params.workflowRunId !== updated.workflowRunId) {
-        updated =
-          this.config.taskRepo.updateTask(taskId, {
-            workflowRunId: params.workflowRunId,
-          }) ?? updated;
-        await this.safeOnTaskUpdated(spaceId, updated);
+        const latest = this.config.taskRepo.getTask(taskId);
+        const superseded =
+          !latest ||
+          latest.status !== nextStatus ||
+          (latest.workflowRunId ?? null) !== (updated.workflowRunId ?? null);
+        if (!superseded) {
+          updated =
+            this.config.taskRepo.updateTask(taskId, {
+              workflowRunId: params.workflowRunId,
+            }) ?? updated;
+          await this.safeOnTaskUpdated(spaceId, updated);
+        }
       }
       return updated;
     }

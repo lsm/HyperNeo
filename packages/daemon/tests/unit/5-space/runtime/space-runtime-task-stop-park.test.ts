@@ -692,6 +692,43 @@ describe('SpaceRuntime — task-level stop parks the run', () => {
       expect(done?.result).toBeNull();
     });
 
+    test('a concurrent reattach supersedes the detach instead of being clobbered', async () => {
+      const { workflow, stepA } = buildWorkflow(SPACE_ID);
+      const run = createRun(SPACE_ID, workflow.id, 'Superseded Detach Run');
+      const task = seedTask(run.id, { taskAgentSessionId: 'session-task-agent' });
+      seedExec(run.id, stepA, 'Step A', 'in_progress', { agentSessionId: 'session-in-flight' });
+      const rt = buildRuntime(
+        makeParkTam(nodeExecutionRepo, {
+          liveSessionIds: ['session-in-flight', 'session-task-agent'],
+        })
+      );
+      const otherRun = createRun(SPACE_ID, workflow.id, 'Recovered Run');
+      const original = taskRepo.updateTask.bind(taskRepo);
+      let reattached = false;
+      (taskRepo as unknown as { updateTask: typeof taskRepo.updateTask }).updateTask = ((
+        id: string,
+        fields: Parameters<typeof taskRepo.updateTask>[1]
+      ) => {
+        const result = original(id, fields);
+        if (!reattached && id === task.id && fields.taskAgentSessionId === null) {
+          reattached = true;
+          original(id, { workflowRunId: otherRun.id });
+        }
+        return result;
+      }) as typeof taskRepo.updateTask;
+
+      try {
+        await rt.stopWorkflowBackedTaskForStatus(SPACE_ID, task.id, {
+          status: 'done',
+          workflowRunId: null,
+        });
+      } finally {
+        (taskRepo as unknown as { updateTask: typeof taskRepo.updateTask }).updateTask = original;
+      }
+
+      expect(taskRepo.getTask(task.id)?.workflowRunId).toBe(otherRun.id);
+    });
+
     test('a stopped review task on a done run does not break the tick', async () => {
       const { workflow, stepA } = buildWorkflow(SPACE_ID);
       const run = createRun(SPACE_ID, workflow.id, 'Review Park Run');
