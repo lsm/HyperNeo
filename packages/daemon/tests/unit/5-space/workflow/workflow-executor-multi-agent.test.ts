@@ -518,7 +518,7 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
     const reservedNode = {
       id: STEP_A,
       name: 'Reserved Names',
-      agents: [{ agentId: AGENT_CODER, name: ' Space-Agent ' }],
+      agents: [{ agentId: AGENT_CODER, name: ' Task-Agent ' }],
     };
 
     expect(() =>
