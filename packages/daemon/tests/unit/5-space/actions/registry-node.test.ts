@@ -14,13 +14,13 @@ import {
   defineOperation,
 } from '../../../../src/lib/operations/registry.ts';
 import type { NodeAgentToolsConfig } from '../../../../src/lib/space/tools/node-agent-tools.ts';
-import { NODE_AGENT_TOOL_SCHEMAS } from '../../../../src/lib/space/tools/node-agent-tool-schemas.ts';
+import { NODE_AGENT_TOOL_SCHEMAS } from '../../../../src/lib/space/actions/node-agent-schemas.ts';
 import {
   ApproveTaskSchema,
   MarkCompleteSchema,
   SubmitForApprovalSchema,
   TASK_AGENT_TOOL_SCHEMAS,
-} from '../../../../src/lib/space/tools/task-agent-tool-schemas.ts';
+} from '../../../../src/lib/space/actions/task-agent-schemas.ts';
 import type { SpaceWorkflow } from '@hyperneo/shared';
 import { jsonResult } from '../../../../src/lib/space/tools/tool-result.ts';
 import {

@@ -10,7 +10,7 @@ import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-w
 import { ScheduleService } from '../../../../src/lib/space/schedule/schedule-service.ts';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
-import { SPACE_FORGE_TOOL_SCHEMAS } from '../../../../src/lib/space/tools/space-agent-tool-schemas.ts';
+import { SPACE_FORGE_TOOL_SCHEMAS } from '../../../../src/lib/space/actions/space-agent-schemas.ts';
 import type { SpaceAgentToolsConfig } from '../../../../src/lib/space/tools/space-agent-tools.ts';
 import { SESSION_WRITE_AUTONOMY_LEVEL } from '../../../../src/lib/space/tools/tool-admission-gates.ts';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';

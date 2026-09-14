@@ -2,14 +2,6 @@ import type { SdkMcpToolDefinition } from '@anthropic-ai/claude-agent-sdk';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import {
-  createSpaceAgentToolHandlers,
-  DEFAULT_INACTIVITY_THRESHOLD_MS,
-  type SpaceAgentToolsConfig,
-  validateTemplateReminder,
-} from '../actions/space-handlers.ts';
-import { hasSpaceAuthority } from '../runtime/space-mcp-session-policy.ts';
-import { instrumentTypedTelemetryAtMcpBoundary } from './mcp-typed-telemetry-boundary.ts';
-import {
   AddForgeManualNoteSchema,
   AddForgeMetricSnapshotSchema,
   ApplyForgeRollupSchema,
@@ -98,7 +90,15 @@ import {
   UpdateGoalSchema,
   UpdateSessionStateSchema,
   UpdateTaskSchema,
-} from './space-agent-tool-schemas.ts';
+} from '../actions/space-agent-schemas.ts';
+import {
+  createSpaceAgentToolHandlers,
+  DEFAULT_INACTIVITY_THRESHOLD_MS,
+  type SpaceAgentToolsConfig,
+  validateTemplateReminder,
+} from '../actions/space-handlers.ts';
+import { hasSpaceAuthority } from '../runtime/space-mcp-session-policy.ts';
+import { instrumentTypedTelemetryAtMcpBoundary } from './mcp-typed-telemetry-boundary.ts';
 
 export type { SpaceAgentToolsConfig };
 export { createSpaceAgentToolHandlers, DEFAULT_INACTIVITY_THRESHOLD_MS, validateTemplateReminder };

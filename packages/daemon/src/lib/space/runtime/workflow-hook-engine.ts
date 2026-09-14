@@ -21,12 +21,12 @@ import {
   SendMessageSchema,
   SaveArtifactSchema,
   CreateStandaloneTaskSchema,
-} from '../tools/node-agent-tool-schemas.ts';
+} from '../actions/node-agent-schemas.ts';
 import {
   ApproveTaskSchema,
   SubmitForApprovalSchema,
   MarkCompleteSchema,
-} from '../tools/task-agent-tool-schemas.ts';
+} from '../actions/task-agent-schemas.ts';
 
 export interface HookActionMeta {
   sessionId: string;
