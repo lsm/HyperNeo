@@ -1300,7 +1300,7 @@ describe('SpaceWorkflowManager slot model/provider normalization', () => {
           id: 'node-1',
           name: 'Code',
           agentId: 'agent-coder',
-          agents: [{ agentId: 'agent-coder', name: 'Code', model: '   ', provider: stubId }],
+          agents: [{ agentId: 'agent-coder', name: 'Code', model: '   ' }],
         },
       ],
       completionAutonomyLevel: 3,
@@ -1308,23 +1308,23 @@ describe('SpaceWorkflowManager slot model/provider normalization', () => {
     expect(wf.nodes[0].agents![0].model).toBeUndefined();
   });
 
-  test('rejects an unmodelled slot pin naming an unregistered provider', () => {
+  test('rejects a slot provider pin without a model', () => {
     const manager = makeManager();
     expect(() =>
       manager.createWorkflow({
         spaceId: 'space-1',
-        name: 'Ghost pin',
+        name: 'Pin without model',
         nodes: [
           {
             id: 'node-1',
             name: 'Code',
             agentId: 'agent-coder',
-            agents: [{ agentId: 'agent-coder', name: 'Code', provider: 'no-such-provider' }],
+            agents: [{ agentId: 'agent-coder', name: 'Code', provider: stubId }],
           },
         ],
         completionAutonomyLevel: 3,
       })
-    ).toThrow(/is not registered/);
+    ).toThrow(/requires a model/);
   });
 
   test('rejects a modelled slot pin naming an unregistered provider', () => {
@@ -1346,24 +1346,6 @@ describe('SpaceWorkflowManager slot model/provider normalization', () => {
         completionAutonomyLevel: 3,
       })
     ).toThrow(/is not registered/);
-  });
-
-  test('keeps an unmodelled slot pin that names a registered provider', () => {
-    const manager = makeManager();
-    const wf = manager.createWorkflow({
-      spaceId: 'space-1',
-      name: 'Modelless pin',
-      nodes: [
-        {
-          id: 'node-1',
-          name: 'Code',
-          agentId: 'agent-coder',
-          agents: [{ agentId: 'agent-coder', name: 'Code', provider: stubId }],
-        },
-      ],
-      completionAutonomyLevel: 3,
-    });
-    expect(wf.nodes[0].agents![0].provider).toBe(stubId);
   });
 
   test('rejects a registered provider that does not offer the trimmed model', () => {

@@ -70,7 +70,11 @@ export async function resolveAvailableQueryProvider(
   const { warmOwners, coldCatalogCandidates } = orderedOwnerCandidates(registry, modelId);
   const candidates = warmOwners.length > 0 ? warmOwners : coldCatalogCandidates;
   if (candidates.length === 0) {
-    return { provider: registry.get('anthropic'), available: null, fallback: true };
+    return {
+      provider: registry.get('anthropic'),
+      available: null,
+      fallback: !isAnthropicSdkModelId(modelId),
+    };
   }
   for (const owner of candidates) {
     if (typeof owner.isAvailable !== 'function') {
@@ -81,7 +85,11 @@ export async function resolveAvailableQueryProvider(
     } catch {}
   }
   if (warmOwners.length > 0) return { provider: warmOwners[0], available: false, fallback: false };
-  return { provider: registry.get('anthropic'), available: null, fallback: true };
+  return {
+    provider: registry.get('anthropic'),
+    available: null,
+    fallback: !isAnthropicSdkModelId(modelId),
+  };
 }
 
 export class ProviderRegistry {
@@ -257,12 +265,15 @@ export function resetProviderRegistry(): void {
   registryInstance = null;
 }
 
-export async function inferAvailableSpawnProviderForModel(
-  modelId: string
-): Promise<string | undefined> {
-  if (inferProviderForModel(modelId) === 'acp') return 'acp';
+export interface SpawnRouteDecision {
+  provider: string | undefined;
+  fallback: boolean;
+}
+
+export async function inferAvailableSpawnRoute(modelId: string): Promise<SpawnRouteDecision> {
+  if (inferProviderForModel(modelId) === 'acp') return { provider: 'acp', fallback: false };
   const resolved = await resolveAvailableQueryProvider(getProviderRegistry(), modelId, undefined);
-  return resolved.provider?.id;
+  return { provider: resolved.provider?.id, fallback: resolved.fallback };
 }
 
 export function inferProviderForModel(modelId: string): ProviderIdStr {

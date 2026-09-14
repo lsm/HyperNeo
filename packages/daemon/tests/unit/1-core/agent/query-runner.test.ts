@@ -8,7 +8,7 @@ import {
   resolveQueryProvider,
   type QueryRunnerContext,
 } from '../../../../src/lib/agent/query-runner';
-import { inferAvailableSpawnProviderForModel } from '../../../../src/lib/providers/registry';
+import { inferAvailableSpawnRoute } from '../../../../src/lib/providers/registry';
 import { resetSdkStartupGateForTests } from '../../../../src/lib/agent/sdk-startup-gate';
 import type { LimitRetryHint } from '../../../../src/lib/agent/limit-error-classifier';
 import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session';
@@ -451,9 +451,11 @@ describe('QueryRunner', () => {
     });
   });
 
-  describe('inferAvailableSpawnProviderForModel', () => {
+  describe('inferAvailableSpawnRoute', () => {
     it('returns acp for providerless ACP models ahead of registry filtering', async () => {
-      expect(await inferAvailableSpawnProviderForModel('acp-coder')).toBe('acp');
+      const route = await inferAvailableSpawnRoute('acp-coder');
+      expect(route.provider).toBe('acp');
+      expect(route.fallback).toBe(false);
     });
   });
 
@@ -654,11 +656,11 @@ describe('QueryRunner', () => {
       }
     }
 
-    it('keeps a blank session providerless when routing reaches the zero-candidate fallback', async () => {
+    it('keeps a blank non-anthropic-family session providerless on the zero-candidate fallback', async () => {
       await withAnthropicApiKey(async () => {
         const blankSession: Session = {
           ...mockSession,
-          config: { ...mockSession.config, provider: '   ' },
+          config: { ...mockSession.config, model: 'custom-only-model', provider: '   ' },
         };
         const ctx = createContext({ session: blankSession });
         runner = new QueryRunner(ctx);

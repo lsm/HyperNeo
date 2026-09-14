@@ -10,7 +10,7 @@ import type {
   SpaceWorkflow,
   WorkflowNodeInput,
 } from '@hyperneo/shared';
-import { generateUUID } from '@hyperneo/shared';
+import { generateUUID, modelPoolEntryKey } from '@hyperneo/shared';
 import { getProviderRegistry, providerMayOfferModel } from '../providers/registry.js';
 import { SpaceAgentTemplateRepository } from '../../storage/repositories/space-agent-template-repository.ts';
 import { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository.ts';
@@ -461,7 +461,13 @@ export function buildWorkflowCreateParams(
       if (entry.provider) {
         const provider = getProviderRegistry().get(entry.provider);
         const effectiveModel = entry.model;
-        if (!provider) {
+        if (!effectiveModel) {
+          recoveries.push(
+            `node "${exportedNode.name}" slot "${entry.name}" pins a provider without a model; ` +
+              'the slot was imported without the provider pin'
+          );
+          entry.provider = undefined;
+        } else if (!provider) {
           recoveries.push(
             `node "${exportedNode.name}" slot "${entry.name}" pins provider ` +
               `"${entry.provider}" which is not registered here; ` +
@@ -1063,13 +1069,22 @@ export function setupSpaceExportImportHandlers(
             bundle.version < 7 &&
             exportedAgent.modelPool?.some((entry) => entry.provider !== undefined)
           ) {
-            allWarnings.push(
-              `Agent "${exportedAgent.name}": modelPool provider pins require export version 7; ` +
-                'the pins were dropped on import'
-            );
-            exportedAgent.modelPool = exportedAgent.modelPool.map((entry) =>
+            const stripped = exportedAgent.modelPool.map((entry) =>
               entry.provider !== undefined ? { ...entry, provider: undefined } : entry
             );
+            const seenPoolKeys = new Set<string>();
+            const deduped = stripped.filter((entry) => {
+              const key = modelPoolEntryKey(entry);
+              if (seenPoolKeys.has(key)) return false;
+              seenPoolKeys.add(key);
+              return true;
+            });
+            allWarnings.push(
+              `Agent "${exportedAgent.name}": modelPool provider pins require export version 7; ` +
+                'the pins were dropped on import' +
+                (deduped.length < stripped.length ? ' and duplicate entries merged' : '')
+            );
+            exportedAgent.modelPool = deduped;
           }
           const existing = existingAgentByName.get(nameKey(exportedAgent.name));
 
