@@ -30,14 +30,13 @@ describe('task execution stopping', () => {
     expect(requireStoppingExecutor(undefined)).toEqual({ reason: 'execution_unavailable' });
   });
 
-  test.each(['open', 'cancelled', 'blocked'])('admits teardown target %s', (status) => {
+  test.each(['open', 'cancelled', 'blocked', 'done'])('admits teardown target %s', (status) => {
     expect(requireStopTarget(status)).toEqual({ value: status });
   });
 
   test.each([
     'in_progress',
     'stopped',
-    'done',
     'archived',
     'review',
     'approved',
@@ -81,12 +80,14 @@ describe('task execution stopping', () => {
 
   test('rejects unsupported targets without stopping execution', async () => {
     const stopForStatus = mock(async () => task);
-    expect(await stopTaskExecution({ stopForStatus }, task.id, 'done')).toBe('invalid_stop_status');
+    expect(await stopTaskExecution({ stopForStatus }, task.id, 'archived')).toBe(
+      'invalid_stop_status'
+    );
     expect(stopForStatus).not.toHaveBeenCalled();
   });
 
   test('missing execution takes precedence over invalid target', async () => {
-    expect(await stopTaskExecution(undefined, task.id, 'done')).toBe('execution_unavailable');
+    expect(await stopTaskExecution(undefined, task.id, 'archived')).toBe('execution_unavailable');
   });
 
   test('preserves null and original failures', async () => {

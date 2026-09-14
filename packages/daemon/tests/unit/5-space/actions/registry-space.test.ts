@@ -45,6 +45,7 @@ const SPACE_ID = 'space-registry-test';
 
 const stubTaskAgentManager = {
   injectSubSessionMessage: async () => 'sdk-message-stub',
+  getLiveSubSessionIdsForTasks: () => [],
 } as unknown as TaskAgentManager;
 
 interface RegistryCtx {
@@ -338,6 +339,14 @@ describe('createSpaceRegistryEntries — composition', () => {
         expect(await resolve({ task_id: workflowTask.id, status: 'stopped' })).toBe(
           SESSION_WRITE_AUTONOMY_LEVEL
         );
+        expect(await resolve({ task_id: workflowTask.id, status: 'done' })).toBe(1);
+        ctx.taskRepo.updateTask(workflowTask.id, { taskAgentSessionId: 'live-session-1' });
+        for (const status of ['done', 'blocked'] as const) {
+          expect(await resolve({ task_id: workflowTask.id, status })).toBe(
+            SESSION_WRITE_AUTONOMY_LEVEL
+          );
+        }
+        ctx.taskRepo.updateTask(workflowTask.id, { taskAgentSessionId: null });
         expect(await resolve({ task_id: blockedWorkflowTask.id, status: 'stopped' })).toBe(
           SESSION_WRITE_AUTONOMY_LEVEL
         );

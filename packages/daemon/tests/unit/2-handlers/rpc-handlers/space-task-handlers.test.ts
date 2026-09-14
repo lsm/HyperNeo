@@ -871,6 +871,77 @@ describe('space-task-handlers', () => {
       expect(taskManager.setTaskStatus).not.toHaveBeenCalled();
     });
 
+    it('tears the run down before marking a workflow-backed task done', async () => {
+      const runningTask = {
+        ...mockTask,
+        status: 'in_progress' as const,
+        workflowRunId: 'run-1',
+        taskAgentSessionId: 'task-session-1',
+      };
+      const doneTask = { ...runningTask, status: 'done' as const, taskAgentSessionId: undefined };
+      const runtime = {
+        stopWorkflowBackedTaskForStatus: mock(async () => doneTask),
+        isWorkflowRunActive: mock(() => true),
+      } as unknown as SpaceRuntimeService;
+      setup(mockSpace, runningTask, runtime);
+
+      const result = await call('spaceTask.update', {
+        spaceId: 'space-1',
+        taskId: 'task-1',
+        status: 'done',
+      });
+
+      expect(result).toEqual(doneTask);
+      expect(runtime.stopWorkflowBackedTaskForStatus).toHaveBeenCalledWith('space-1', 'task-1', {
+        status: 'done',
+      });
+      expect(taskManager.setTaskStatus).not.toHaveBeenCalled();
+    });
+
+    it('keeps the human approval stamp when review → done goes through the stop path', async () => {
+      const reviewTask = {
+        ...mockTask,
+        status: 'review' as const,
+        workflowRunId: 'run-1',
+        taskAgentSessionId: 'task-session-1',
+      };
+      const doneTask = { ...reviewTask, status: 'done' as const };
+      const runtime = {
+        stopWorkflowBackedTaskForStatus: mock(async () => doneTask),
+        isWorkflowRunActive: mock(() => true),
+      } as unknown as SpaceRuntimeService;
+      setup(mockSpace, reviewTask, runtime);
+
+      await call('spaceTask.update', { spaceId: 'space-1', taskId: 'task-1', status: 'done' });
+
+      expect(runtime.stopWorkflowBackedTaskForStatus).toHaveBeenCalledWith('space-1', 'task-1', {
+        status: 'done',
+        approvalSource: 'human',
+      });
+    });
+
+    it('writes done directly when the workflow run is no longer active', async () => {
+      const runningTask = {
+        ...mockTask,
+        status: 'in_progress' as const,
+        workflowRunId: 'run-1',
+      };
+      const runtime = {
+        stopWorkflowBackedTaskForStatus: mock(async () => runningTask),
+        isWorkflowRunActive: mock(() => false),
+      } as unknown as SpaceRuntimeService;
+      setup(mockSpace, runningTask, runtime);
+      (taskManager.setTaskStatus as ReturnType<typeof mock>).mockResolvedValue({
+        ...runningTask,
+        status: 'done',
+      });
+
+      await call('spaceTask.update', { spaceId: 'space-1', taskId: 'task-1', status: 'done' });
+
+      expect(runtime.stopWorkflowBackedTaskForStatus).not.toHaveBeenCalled();
+      expect(taskManager.setTaskStatus).toHaveBeenCalled();
+    });
+
     it('routes unmet dependency updates for workflow-backed in-progress tasks through runtime', async () => {
       const activeTask = {
         ...mockTask,

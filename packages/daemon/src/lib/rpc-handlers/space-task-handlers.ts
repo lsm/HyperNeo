@@ -238,8 +238,13 @@ export function setupSpaceTaskHandlers(
           const toStopped = updateParams.status === 'open' || updateParams.status === 'cancelled';
           const toBlockedFromPaused =
             updateParams.status === 'blocked' && isRateOrUsageLimited(currentTask.status);
+          const toTerminalWithActiveRun =
+            (updateParams.status === 'done' || updateParams.status === 'blocked') &&
+            !!currentTask.workflowRunId &&
+            !!spaceRuntimeService?.isWorkflowRunActive(currentTask.workflowRunId);
           const shouldStopWorkflowForStatus =
-            !!currentTask.workflowRunId && fromActivePaused && (toStopped || toBlockedFromPaused);
+            !!currentTask.workflowRunId &&
+            (toTerminalWithActiveRun || (fromActivePaused && (toStopped || toBlockedFromPaused)));
           if (updateParams.status === 'review') {
             throw new Error(
               `spaceTask.update cannot transition a task into 'review' directly. ` +
@@ -282,8 +287,12 @@ export function setupSpaceTaskHandlers(
                 `Cannot stop workflow-backed task ${taskId}: SpaceRuntimeService is unavailable.`
               );
             }
+            const stoppingParams =
+              currentTask.status === 'review' && updateParams.status === 'done'
+                ? { ...updateParams, approvalSource: 'human' as const }
+                : updateParams;
             const stopped = await stopTaskExecution(
-              createWorkflowTaskStoppingExecutor(spaceId, spaceRuntimeService, updateParams),
+              createWorkflowTaskStoppingExecutor(spaceId, spaceRuntimeService, stoppingParams),
               taskId,
               updateParams.status
             );

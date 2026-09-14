@@ -232,7 +232,12 @@ export function routeTaskUpdate(input: TaskUpdateRoutingInput): TaskUpdateRoutin
       rateOrUsageLimited;
     const toStopped = requestedStatus === 'open' || requestedStatus === 'cancelled';
     const toBlockedFromPaused = requestedStatus === 'blocked' && rateOrUsageLimited;
-    if (hasWorkflowRun && fromActivePaused && (toStopped || toBlockedFromPaused)) {
+    const toTerminalWithActiveRun =
+      runActive && (requestedStatus === 'done' || requestedStatus === 'blocked');
+    if (
+      hasWorkflowRun &&
+      (toTerminalWithActiveRun || (fromActivePaused && (toStopped || toBlockedFromPaused)))
+    ) {
       return {
         action: 'stop_for_status',
         auditParamsShape: 'transition',
