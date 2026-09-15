@@ -95,7 +95,7 @@ import {
   type EnsuredSession,
   isAgentTargetLifecycleEligible,
   runEnsureAgentSession,
-} from './ensure-agent-session.ts';
+} from '../../session/ensure-agent-session.ts';
 import type { SelectWorkflowWithLlm } from './llm-workflow-selector.ts';
 import { selectWorkflowWithLlmDefault } from './llm-workflow-selector.ts';
 import type { PostApprovalRouteResult } from './post-approval-router.ts';

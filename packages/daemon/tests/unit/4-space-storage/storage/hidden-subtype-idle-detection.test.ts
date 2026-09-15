@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
-import { classifyLastMessageForIdleAgent } from '../../../../src/lib/space/runtime/last-message-classifier';
+import { classifyLastMessageForIdleAgent } from '../../../../src/lib/session/last-message-classifier';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 
 const HIDDEN_SUBTYPES = [

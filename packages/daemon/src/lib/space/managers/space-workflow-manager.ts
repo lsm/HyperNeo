@@ -20,14 +20,14 @@ import { getProviderRegistry, providerMayOfferModel } from '../../providers/regi
 import { getLongHorizonAgentTemplate } from '../agents/long-horizon-agent-templates.ts';
 import { isRunnableUnifiedAgent } from '../agents/worker-long-horizon-mapper.ts';
 import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../export-format.ts';
-import { KNOWN_TOPIC_FROM_SOURCES } from '../runtime/parse-pr-url.ts';
+import { KNOWN_TOPIC_FROM_SOURCES } from '../../github/parse-pr-url.ts';
 import { validateWorkflowHooks } from '../workflow-hook-validation.ts';
 import { patchPinnedBuiltInPromptDrift } from '../workflows/built-in-workflows.ts';
 import {
   validatePostApproval,
   validatePostApprovalRoutes,
 } from '../workflows/post-approval-validator.ts';
-import '../runtime/connectors/production.ts';
+import '../../github/connectors/production.ts';
 import { slugify, validateSlug } from '../slug.ts';
 import type { SpaceAgentTemplateRepository } from '../../../storage/repositories/space-agent-template-repository.ts';
 

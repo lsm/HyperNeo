@@ -7,7 +7,7 @@ import { McpAuditLogRepository } from '../../storage/repositories/mcp-audit-log-
 import { createSpaceOperationRegistryProvider } from '../space/operations/registry.ts';
 import { createCompletionGateBindings } from '../space/operations/complete-task-gates.ts';
 import { isCoderOwnedMergeWorkflow } from '../space/runtime/post-approval-router.ts';
-import { createGithubConnector } from '../space/runtime/connectors/github-connector.ts';
+import { createGithubConnector } from '../github/connectors/github-connector.ts';
 import { setupOperationHandlers } from './operation-handlers.ts';
 import type { MessageHub } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
