@@ -117,7 +117,7 @@ import {
   DEFAULT_CUSTOM_AGENT_MODEL,
   resolveAgentInit,
 } from '../agents/custom-agent.ts';
-import type { EvolutionScopeService } from '../evolution-scope-service.ts';
+import type { EvolutionScopeService } from '../../evolution/scope-service.ts';
 import { TERMINAL_NODE_EXECUTION_STATUSES } from '../../workflows/node-execution-manager.ts';
 import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools.ts';
 import {
@@ -292,7 +292,7 @@ export interface TaskAgentManagerConfig {
       message: MessageRecord
     ) => Promise<string | null | undefined>;
   };
-  goalService?: import('../goals/goal-service.ts').SpaceGoalService;
+  goalService?: import('../../goals/service.ts').SpaceGoalService;
   evolutionScopeService?: EvolutionScopeService;
   externalEventStore?: import('../../external-events/external-event-store.ts').ExternalEventStore;
 }

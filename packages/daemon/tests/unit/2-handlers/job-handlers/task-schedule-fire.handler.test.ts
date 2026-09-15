@@ -9,7 +9,7 @@ import { SpaceRepository } from '../../../../src/storage/repositories/space-repo
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import { SpaceGoalRepository } from '../../../../src/storage/repositories/space-goal-repository';
 import { ScheduleService } from '../../../../src/lib/schedule/schedule-service';
-import { SpaceGoalService } from '../../../../src/lib/space/goals/goal-service';
+import { SpaceGoalService } from '../../../../src/lib/goals/service';
 import {
   createInternalEventBus,
   type DaemonInternalEventMap,

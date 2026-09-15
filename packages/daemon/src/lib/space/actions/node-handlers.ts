@@ -13,7 +13,7 @@ import type { WorkflowRunArtifactRepository } from '../../../storage/repositorie
 import type { ExternalEventStore } from '../../external-events/external-event-store.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
 import { Logger } from '../../logger.ts';
-import type { SpaceGoalService } from '../goals/goal-service.ts';
+import type { SpaceGoalService } from '../../goals/service.ts';
 import { translateLegacyNodeTargets } from '../messaging-adapter.ts';
 import type { AgentMessageRouter } from '../runtime/agent-message-router.ts';
 import type { WorkflowArtifactProfile } from '../../workflows/artifact-profile.ts';

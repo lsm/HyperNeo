@@ -50,12 +50,9 @@ export interface PostApprovalRouterDeps {
   spawner: PostApprovalSubSessionSpawner;
   livenessProbe?: SessionLivenessProbe;
   resolveCompletionOutcome?: (task: SpaceTask) => UpdateSpaceTaskParams | null;
-  goalService?: Pick<
-    import('../space/goals/goal-service.ts').SpaceGoalService,
-    'handleTaskTerminal'
-  >;
+  goalService?: Pick<import('../goals/service.ts').SpaceGoalService, 'handleTaskTerminal'>;
   evolutionScopeService?: Pick<
-    import('../space/evolution-scope-service.ts').EvolutionScopeService,
+    import('../evolution/scope-service.ts').EvolutionScopeService,
     'captureCompletedTaskEvidence'
   >;
   validateRecordedPointer?: (args: {

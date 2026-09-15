@@ -245,10 +245,10 @@ export interface SpaceRuntimeConfig {
   }) => Promise<void> | void;
   selectWorkflowWithLlm?: SelectWorkflowWithLlm;
   goalService?: Pick<
-    import('../goals/goal-service.ts').SpaceGoalService,
+    import('../../goals/service.ts').SpaceGoalService,
     'handleTaskTerminal' | 'supersedeOutcomeNotificationsForTask' | 'retryQueuedRunsForSpace'
   >;
-  evolutionScopeService?: import('../evolution-scope-service.ts').EvolutionScopeService;
+  evolutionScopeService?: import('../../evolution/scope-service.ts').EvolutionScopeService;
   actorRegistry?: SpaceActorRegistryAdapter;
   deliverLongHorizonExternalEvent?: (args: {
     spaceId: string;

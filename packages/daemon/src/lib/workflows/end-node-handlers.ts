@@ -7,7 +7,7 @@ import type {
   MarkCompleteInput,
   SubmitForApprovalInput,
 } from '../space/actions/task-agent-schemas.ts';
-import type { SpaceGoalService } from '../space/goals/goal-service.ts';
+import type { SpaceGoalService } from '../goals/service.ts';
 import type { SpaceManager } from '../space/managers/space-manager.ts';
 import type { SpaceTaskManager } from '../space/managers/space-task-manager.ts';
 import { normalizeMeaningfulTaskResult } from '../space/task-result-utils.ts';

@@ -5,14 +5,16 @@ import type { EvolutionRepository } from '../../storage/repositories/evolution-r
 import type { GoalAutomationCursorRepository } from '../../storage/repositories/goal-automation-cursor-repository.ts';
 import type { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository.ts';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
-import type { EvolutionEpisodeService } from '../space/evolution-episode-service.ts';
+import type { EvolutionEpisodeService } from '../evolution/episode-service.ts';
+import {
+  readAutomationPolicyForScope,
+  readCompletedTaskThreshold,
+} from '../goals/automation-policy.ts';
 import {
   maxCompletedTaskTimestamp,
   maxEvidenceCursor,
-  readAutomationPolicyForScope,
-  readCompletedTaskThreshold,
   selectEvidenceAfterCursor,
-} from '../space/goals/goal-automation-service.ts';
+} from '../goals/automation-service.ts';
 import { GOAL_AUTOMATION_EXECUTE } from '../job-queue-constants.ts';
 import { Logger } from '../logger.ts';
 

@@ -80,10 +80,10 @@ import {
   publishUnifiedAgentCreated,
   publishUnifiedAgentUpdated,
 } from '../agents/unified-agent-events.ts';
-import { mergeEvolutionPolicy } from '../evolution-scope-service.ts';
-import { validateGoalAutomationSelfNagPolicy } from '../goals/evolution-policy-validation.ts';
-import { syncGoalAutomationSelfNagScheduleForScope } from '../goals/goal-automation-schedule-sync.ts';
-import { decideGoalOwnershipMutationAdmission } from '../goals/goal-ownership-gates.ts';
+import { mergeEvolutionPolicy } from '../../evolution/scope-service.ts';
+import { validateGoalAutomationSelfNagPolicy } from '../../goals/evolution-policy-validation.ts';
+import { syncGoalAutomationSelfNagScheduleForScope } from '../../goals/automation-schedule-sync.ts';
+import { decideGoalOwnershipMutationAdmission } from '../../goals/ownership-gates.ts';
 import {
   getBuiltInSpaceAgentTemplates,
   SpaceAgentTemplateManager,
@@ -411,10 +411,10 @@ export interface SpaceAgentToolsConfig {
   auditLogRepo?: McpAuditLogRepository;
   scheduleService?: import('../../schedule/schedule-service.ts').ScheduleService;
   replyRoutingRegistry?: ReplyRoutingRegistry;
-  goalService?: import('../goals/goal-service.ts').SpaceGoalService;
-  evolutionScopeService?: import('../evolution-scope-service.ts').EvolutionScopeService;
+  goalService?: import('../../goals/service.ts').SpaceGoalService;
+  evolutionScopeService?: import('../../evolution/scope-service.ts').EvolutionScopeService;
   goalRepo?: import('../../../storage/repositories/space-goal-repository.ts').SpaceGoalRepository;
-  evolutionEpisodeService?: import('../evolution-episode-service.ts').EvolutionEpisodeService;
+  evolutionEpisodeService?: import('../../evolution/episode-service.ts').EvolutionEpisodeService;
   messageResolver?: ActorResolver;
   longTermAgentDelivery?: {
     deliverToSession?: (
@@ -3631,7 +3631,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           args.episode_judge_provider !== undefined;
 
         const serviceParams: Parameters<
-          import('../evolution-scope-service.ts').EvolutionScopeService['updateScope']
+          import('../../evolution/scope-service.ts').EvolutionScopeService['updateScope']
         >[1] = {
           spaceGoalId: args.goal_id,
           kind: args.kind,

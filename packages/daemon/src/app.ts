@@ -129,7 +129,7 @@ import { FileIndex } from './lib/file-index.ts';
 import { installConsoleLogCapture, subscribeToStructuredLogs } from './lib/logger.ts';
 import { createStartupPhaseTimer } from './lib/startup-phase-timer.ts';
 import { StructuredLogFileSink } from './lib/structured-log-file-sink.ts';
-import { EvolutionLogEvidenceService } from './lib/space/evolution-log-evidence-service.ts';
+import { EvolutionLogEvidenceService } from './lib/evolution/log-evidence-service.ts';
 import { SkillsManager } from './lib/skills-manager.ts';
 import {
   cleanupSuspiciousProcesses,
