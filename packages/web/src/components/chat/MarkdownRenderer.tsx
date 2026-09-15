@@ -3,6 +3,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { resolvedTheme } from '../../lib/theme.ts';
 import { CopyButton } from '../ui/CopyButton.tsx';
 import { MermaidFigureToolbar, getMermaidForTheme } from './MermaidViewer.tsx';
+import { decideMarkdownImage, isNavigatableHref } from './markdown-image.ts';
 
 interface MarkdownRendererProps {
   content: string;
@@ -934,17 +935,6 @@ type MarkdownImageNode = {
   value?: string;
 };
 
-const uriSchemePattern = /^([a-zA-Z][a-zA-Z0-9+.-]*):/;
-
-function isAllowedImageSrc(src: string) {
-  const normalized = src.replace(/[\t\n\r]+/g, '').trim();
-  const schemeMatch = uriSchemePattern.exec(normalized);
-  if (!schemeMatch) return true;
-  const scheme = schemeMatch[1].toLowerCase();
-  if (scheme === 'http' || scheme === 'https') return true;
-  return scheme === 'data' && /^data:image\//i.test(normalized);
-}
-
 function transformMarkdownImageNodes(node: MarkdownImageNode) {
   const { children } = node;
   if (!children) return;
@@ -954,29 +944,31 @@ function transformMarkdownImageNodes(node: MarkdownImageNode) {
     if (child.type === 'element' && child.tagName === 'img') {
       if (!child.properties) child.properties = {};
       const properties = child.properties;
-      const src = typeof properties.src === 'string' ? properties.src : '';
-      const alt = typeof properties.alt === 'string' ? properties.alt : '';
-      if (src && isAllowedImageSrc(src)) {
-        properties.loading = 'lazy';
-        properties.referrerpolicy = 'no-referrer';
-        if (node.tagName !== 'a') {
-          children[index] = {
-            type: 'element',
-            tagName: 'a',
-            properties: {
-              className: ['markdown-image-link'],
-              href: src,
-              target: '_blank',
-              rel: 'noopener noreferrer',
-              ariaLabel: alt || 'Open image',
-            },
-            children: [child],
-          };
-        }
+      const admission = decideMarkdownImage({
+        src: typeof properties.src === 'string' ? properties.src : '',
+        alt: typeof properties.alt === 'string' ? properties.alt : '',
+        title: typeof properties.title === 'string' ? properties.title : '',
+      });
+      if (admission.kind === 'downgrade') {
+        children[index] = { type: 'text', value: admission.text };
         continue;
       }
-      const title = typeof properties.title === 'string' ? ` "${properties.title}"` : '';
-      children[index] = { type: 'text', value: `![${alt}](${src}${title})` };
+      properties.loading = 'lazy';
+      properties.referrerpolicy = 'no-referrer';
+      if (node.tagName !== 'a') {
+        children[index] = {
+          type: 'element',
+          tagName: 'a',
+          properties: {
+            className: ['markdown-image-link'],
+            href: admission.src,
+            target: '_blank',
+            rel: 'noopener noreferrer',
+            ariaLabel: admission.alt || 'Open image',
+          },
+          children: [child],
+        };
+      }
       continue;
     }
     transformMarkdownImageNodes(child);
@@ -987,13 +979,6 @@ function rehypeMarkdownImages() {
   return (tree: MarkdownImageNode) => {
     transformMarkdownImageNodes(tree);
   };
-}
-
-function isNavigatableHref(href: string) {
-  const schemeMatch = uriSchemePattern.exec(href.replace(/[\t\n\r]+/g, '').trim());
-  if (!schemeMatch) return true;
-  const scheme = schemeMatch[1].toLowerCase();
-  return scheme === 'http' || scheme === 'https';
 }
 
 function showImageOverlay(src: string) {
@@ -1092,6 +1077,13 @@ export default function MarkdownRenderer({ content, class: className }: Markdown
       cancelAnimationFrame(rafId);
     };
   }, [content, theme]);
+
+  useEffect(
+    () => () => {
+      document.querySelector('.markdown-image-overlay')?.remove();
+    },
+    []
+  );
 
   useLayoutEffect(() => {
     if (html == null || !containerRef.current) return;

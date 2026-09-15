@@ -482,6 +482,34 @@ describe('MarkdownRenderer', () => {
       expect(document.body.querySelector('.markdown-image-overlay')).toBeFalsy();
     });
 
+    it('should remove the svg overlay when the renderer unmounts', async () => {
+      const { container, unmount } = render(
+        <MarkdownRenderer content={'![s](data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=)'} />
+      );
+      await waitFor(() => {
+        expect(container.querySelector('img')).toBeTruthy();
+      });
+      container.querySelector('img')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      expect(document.body.querySelector('.markdown-image-overlay')).toBeTruthy();
+      unmount();
+      expect(document.body.querySelector('.markdown-image-overlay')).toBeFalsy();
+    });
+
+    it('should delegate mailto linked images to the author link', async () => {
+      const openMock = vi.spyOn(window, 'open').mockImplementation(() => null);
+      const { container } = render(
+        <MarkdownRenderer
+          content={'[![email](https://example.com/icon.png)](mailto:user@example.com)'}
+        />
+      );
+      await waitFor(() => {
+        expect(container.querySelector('img')).toBeTruthy();
+      });
+      container.querySelector('img')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      expect(openMock).not.toHaveBeenCalled();
+      openMock.mockRestore();
+    });
+
     it('should open a data image through a blob url on click', async () => {
       const openMock = vi.spyOn(window, 'open').mockImplementation(() => null);
       const fetchMock = vi
