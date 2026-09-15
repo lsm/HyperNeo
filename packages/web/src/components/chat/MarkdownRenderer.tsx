@@ -3,6 +3,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { resolvedTheme } from '../../lib/theme.ts';
 import { CopyButton } from '../ui/CopyButton.tsx';
 import { MermaidFigureToolbar, getMermaidForTheme } from './MermaidViewer.tsx';
+import { decideMarkdownImage, isNavigatableHref } from './markdown-image.ts';
 
 interface MarkdownRendererProps {
   content: string;
@@ -926,6 +927,157 @@ function attachCodeBlockCopyButtons(container: HTMLElement) {
   return mounts;
 }
 
+type MarkdownImageNode = {
+  type: string;
+  tagName?: string;
+  properties?: Record<string, unknown>;
+  children?: MarkdownImageNode[];
+  value?: string;
+};
+
+function transformMarkdownImageNodes(node: MarkdownImageNode, insideAnchor = false) {
+  const { children } = node;
+  if (!children) return;
+
+  for (let index = children.length - 1; index >= 0; index -= 1) {
+    const child = children[index];
+    if (child.type === 'element' && child.tagName === 'img') {
+      if (!child.properties) child.properties = {};
+      const properties = child.properties;
+      const admission = decideMarkdownImage({
+        src: typeof properties.src === 'string' ? properties.src : '',
+        alt: typeof properties.alt === 'string' ? properties.alt : '',
+        title: typeof properties.title === 'string' ? properties.title : '',
+      });
+      if (admission.kind === 'downgrade') {
+        children[index] = { type: 'text', value: admission.text };
+        continue;
+      }
+      properties.loading = 'lazy';
+      properties.referrerpolicy = 'no-referrer';
+      if (!insideAnchor) {
+        children[index] = {
+          type: 'element',
+          tagName: 'a',
+          properties: {
+            className: ['markdown-image-link'],
+            href: admission.src,
+            target: '_blank',
+            rel: 'noopener noreferrer',
+            ariaLabel: admission.alt || 'Open image',
+          },
+          children: [child],
+        };
+      }
+      continue;
+    }
+    transformMarkdownImageNodes(child, insideAnchor || child.tagName === 'a');
+  }
+}
+
+function rehypeMarkdownImages() {
+  return (tree: MarkdownImageNode) => {
+    transformMarkdownImageNodes(tree);
+  };
+}
+
+function percentEncodedToBytes(payload: string) {
+  const bytes: number[] = [];
+  for (let index = 0; index < payload.length; ) {
+    const char = payload[index];
+    if (char === '%') {
+      const hex = payload.slice(index + 1, index + 3);
+      if (!/^[0-9a-fA-F]{2}$/.test(hex)) throw new Error('invalid percent encoding');
+      bytes.push(parseInt(hex, 16));
+      index += 3;
+    } else {
+      const code = char.charCodeAt(0);
+      if (code > 0xff) throw new Error('unexpected byte in data url payload');
+      bytes.push(code);
+      index += 1;
+    }
+  }
+  return new Uint8Array(bytes);
+}
+
+const dataUrlTypePattern = /^image\/[a-z0-9.+-]+$/i;
+
+function dataUrlToBlob(dataUrl: string): Blob | null {
+  const commaIndex = dataUrl.indexOf(',');
+  if (commaIndex === -1) return null;
+  const meta = dataUrl.slice(5, commaIndex);
+  const payload = dataUrl.slice(commaIndex + 1);
+  const isBase64 = meta.endsWith(';base64');
+  const mimeType = (isBase64 ? meta.slice(0, -7) : meta) || 'application/octet-stream';
+  if (!dataUrlTypePattern.test(mimeType)) return null;
+  try {
+    if (isBase64) {
+      const binary = atob(payload);
+      const bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index += 1) {
+        bytes[index] = binary.charCodeAt(index);
+      }
+      return new Blob([bytes], { type: mimeType });
+    }
+    return new Blob([percentEncodedToBytes(payload)], { type: mimeType });
+  } catch {
+    return null;
+  }
+}
+
+type ActiveImageOverlay = { dismiss: () => void; owner: unknown };
+
+let activeImageOverlay: ActiveImageOverlay | null = null;
+
+function showImageOverlay(src: string, owner: unknown) {
+  activeImageOverlay?.dismiss();
+  const overlay = document.createElement('div');
+  overlay.className = 'markdown-image-overlay';
+  overlay.tabIndex = -1;
+  const img = document.createElement('img');
+  img.alt = '';
+  img.src = src;
+  overlay.appendChild(img);
+  const dismiss = () => {
+    overlay.remove();
+    document.removeEventListener('keydown', handleKeydown);
+    if (activeImageOverlay?.dismiss === dismiss) activeImageOverlay = null;
+  };
+  const handleKeydown = (event: KeyboardEvent) => {
+    if (event.key === 'Escape') dismiss();
+  };
+  overlay.addEventListener('click', dismiss);
+  document.addEventListener('keydown', handleKeydown);
+  activeImageOverlay = { dismiss, owner };
+  document.body.appendChild(overlay);
+  overlay.focus();
+}
+
+function dismissImageOverlayFor(owner: unknown) {
+  const overlay = activeImageOverlay;
+  if (overlay && overlay.owner === owner) overlay.dismiss();
+}
+
+function openImageAtFullSize(src: string, owner: unknown) {
+  const dataImageMatch = /^data:(image\/[a-z0-9.+-]+)/i.exec(src);
+  if (dataImageMatch && !dataImageMatch[1].toLowerCase().includes('svg')) {
+    const blob = dataUrlToBlob(src);
+    if (!blob) {
+      showImageOverlay(src, owner);
+      return;
+    }
+    const objectUrl = URL.createObjectURL(blob);
+    window.open(objectUrl, '_blank', 'noopener,noreferrer');
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
+    return;
+  }
+  if (dataImageMatch) {
+    showImageOverlay(src, owner);
+    return;
+  }
+  window.open(src, '_blank', 'noopener,noreferrer');
+}
+
 async function renderMarkdown(content: string) {
   const modules = await getMarkdownModules();
   const escapedContent = escapeRawHtmlBlocks(content);
@@ -944,7 +1096,8 @@ async function renderMarkdown(content: string) {
     .use(modules.remarkGfm)
     .use(modules.remarkMath, { singleDollarTextMath: false })
     .use(modules.remarkBreaks)
-    .use(modules.remarkRehype);
+    .use(modules.remarkRehype)
+    .use(rehypeMarkdownImages);
 
   if (rehypeKatex) {
     processor.use(rehypeKatex);
@@ -961,6 +1114,7 @@ async function renderMarkdown(content: string) {
 
 export default function MarkdownRenderer({ content, class: className }: MarkdownRendererProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const overlayOwner = useRef({});
   const [html, setHtml] = useState<string | null>(null);
   const theme = resolvedTheme.value;
 
@@ -985,9 +1139,32 @@ export default function MarkdownRenderer({ content, class: className }: Markdown
     };
   }, [content, theme]);
 
+  useEffect(
+    () => () => {
+      dismissImageOverlayFor(overlayOwner.current);
+    },
+    []
+  );
+
   useLayoutEffect(() => {
     if (html == null || !containerRef.current) return;
-    containerRef.current.innerHTML = html;
+    const container = containerRef.current;
+    container.innerHTML = html;
+
+    const handleImageActivate = (event: Event) => {
+      if (event instanceof MouseEvent && event.type === 'auxclick' && event.button !== 1) return;
+      const target = event.target instanceof Element ? event.target : null;
+      const anchor = target?.closest('a') || null;
+      if (!target || !anchor) return;
+      const img = target instanceof HTMLImageElement ? target : anchor.querySelector('img');
+      if (!img) return;
+      if (isNavigatableHref(anchor.getAttribute('href') || '')) return;
+      const src = img.getAttribute('src') || '';
+      event.preventDefault();
+      if (src) openImageAtFullSize(src, overlayOwner.current);
+    };
+    container.addEventListener('click', handleImageActivate);
+    container.addEventListener('auxclick', handleImageActivate);
 
     const copyMounts = attachCodeBlockCopyButtons(containerRef.current);
 
@@ -1016,6 +1193,8 @@ export default function MarkdownRenderer({ content, class: className }: Markdown
     }
 
     return () => {
+      container.removeEventListener('click', handleImageActivate);
+      container.removeEventListener('auxclick', handleImageActivate);
       copyMounts.forEach((mount) => {
         render(null, mount);
       });

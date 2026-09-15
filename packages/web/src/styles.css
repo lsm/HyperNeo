@@ -643,6 +643,28 @@ html {
   color: var(--prose-link-hover);
 }
 
+.prose a.markdown-image-link {
+  text-decoration: none;
+}
+
+.markdown-image-overlay {
+  align-items: center;
+  background: rgb(0 0 0 / 80%);
+  cursor: zoom-out;
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  outline: none;
+  padding: 1rem;
+  position: fixed;
+  z-index: 50;
+}
+
+.markdown-image-overlay img {
+  max-height: 90vh;
+  max-width: 90vw;
+}
+
 .prose blockquote {
   font-style: italic;
   border-left: 4px solid var(--line);
@@ -700,7 +722,10 @@ html {
 
 .prose img {
   border-radius: 0.5rem;
+  cursor: zoom-in;
+  height: auto;
   margin: 1.7em 0;
+  max-width: 100%;
 }
 
 /* Syntax highlighting — per-theme palette via --hljs-* vars
