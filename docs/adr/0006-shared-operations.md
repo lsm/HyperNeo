@@ -337,17 +337,18 @@ messages and events; there is no conversation-wide correlation scheme.
 ## Current state
 
 What is wired versus what the design permits. Read this before assuming
-parity.
+parity. Rows carry the date they were last verified; an undated row is the
+2026-09-11 acceptance snapshot and may have moved since.
 
 | Path | State |
 | --- | --- |
 | Registry, invoker, both adapters, discovery, instance-owned catalogs | Implemented and tested (`tests/unit/1-core/operations/`, `2-handlers/rpc-handlers/operation-handlers.test.ts`, `5-space/runtime/{submit-for-review,cancel-task,direct-outcome-jobs,direct-start-jobs,operation-registry}.test.ts`) |
 | Shared metadata, dependencies, review submission, approval/rejection, direct cancellation | Implemented; supported ownership types vary per binding — read the description |
 | `task.start` / verified retry | Pending in PR #4391 (#4382) |
-| Caller policy | `source` is the only differentiation. Neither adapter authenticates or authorizes: the RPC adapter resolves `{}`, the MCP adapter resolves the owning session id. Six operations branch on caller source: five substitute the branch for a missing Space-membership or worker-binding fact and are migration targets; the sixth, `message.send`, rejects MCP callers claiming human provenance and keeps that as a policy check |
+| Caller policy | *Still true 2026-09-14.* `source` is the only differentiation. Neither adapter authenticates or authorizes: the RPC adapter resolves `{}`, the MCP adapter resolves the owning session id. Six operations branch on caller source: five substitute the branch for a missing Space-membership or worker-binding fact and are migration targets; the sixth, `message.send`, rejects MCP callers claiming human provenance and keeps that as a policy check |
 | Pre-invocation pipelines | **Not built.** The `resolveCaller` callbacks are the seam |
-| Web UI | **Zero callers** of `operation.invoke`. The UI still uses legacy RPC handlers; the human arrow in the diagram is a capability, not a fact |
-| `call_action` → operations | **No action delegates to an operation yet**; actions still wrap typed handlers |
+| Web UI | *Verified 2026-09-14:* the UI reads and writes through `operation.invoke` — 8 call sites in `space-store.ts`, 4 in `operations.ts` — covering task reads, listing, transitions, publish, cancel and review submission. The last legacy Space task write handler was retired in #4576. (Was "zero callers" at acceptance) |
+| `call_action` → operations | *Verified 2026-09-14:* delegation has started — `space/actions/operation-action.ts` is the bridge, referenced from `registry-space.ts` and `registry-node.ts`. Most actions still wrap typed handlers; the 104-action surface is measured in [`rpc-mcp-unification-gap.md`](../architecture/rpc-mcp-unification-gap.md). (Was "no action delegates yet" at acceptance) |
 | Legacy typed MCP tools and RPC handlers | Not all removed or migrated; each family follows the procedure below |
 | Daemon-crash recovery | An outcome job whose shutdown cannot be verified parks and requeues every 30 s (`parked: 'direct_stop_unverified'`). After a daemon restart there is no in-memory process handle to verify against, so such jobs stay parked until the guardian ledger (PR #4367) lands. This is a known boundary, not an accident |
 
