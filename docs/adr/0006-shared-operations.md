@@ -2,7 +2,10 @@
 
 ## Status
 
-Accepted — 2026-09-11. Tracks epic #4164 (unify Space task operations). This
+Accepted — 2026-09-11. Amended 2026-09-14: the `call_action` relationship,
+left open at acceptance, is now decided — see the amendment note in §4 and
+[`docs/architecture/rpc-mcp-unification-gap.md`](../architecture/rpc-mcp-unification-gap.md).
+Tracks epic #4164 (unify Space task operations). This
 ADR records the implemented operation seam, the per-transport pre-invocation
 pipeline design it grows into, and how it relates to the ADR 0005 action
 dispatcher. Snapshot at acceptance: shared start/retry (#4382, PR #4391) is
@@ -209,10 +212,17 @@ Operations are the **domain layer**; the pre-invocation pipelines and the ADR
 - MessageHub RPC reaches operations through `operation.invoke`. ADR 0005's ban
   on RPC loopback stands: the dispatcher is not reachable over RPC, and RPC
   callers get the human policy from the RPC pipeline, not the agent policy.
-- Whether `call_action` eventually becomes a thin front over the MCP
-  pre-invocation pipeline or stays a parallel front is open. Both are
-  compatible with this ADR because policy lives in shared stages, not in a
-  transport or an operation.
+- ~~Whether `call_action` eventually becomes a thin front over the MCP
+  pre-invocation pipeline or stays a parallel front is open.~~ **Amended
+  2026-09-14:** decided, and the outcome is neither of the two options framed
+  here. `call_action`, the `ActionRegistry`, the `space-actions` MCP server and
+  the separate action handlers are **retired**; agents reach the daemon only
+  through `hyperneo-operations`. `dispatcher-pipeline.ts` becomes the donor for
+  the MCP pre-invocation pipeline rather than a parallel front. The 104-action
+  surface this commits to absorbing is measured in
+  [`docs/architecture/rpc-mcp-unification-gap.md`](../architecture/rpc-mcp-unification-gap.md).
+  This remains compatible with the ADR for the original reason: policy lives in
+  shared stages, not in a transport or an operation.
 
 ### 5. Result contract
 
@@ -418,8 +428,9 @@ unrelated recovery infrastructure.
   natural candidate: identical semantics, different policy layer).
 - First UI control calling `operation.invoke`, under a characterization pin of
   its legacy handler.
-- Decide the eventual relationship between `call_action` and the MCP
-  pre-invocation pipeline (thin front versus parallel front).
+- ~~Decide the eventual relationship between `call_action` and the MCP
+  pre-invocation pipeline (thin front versus parallel front).~~ Decided
+  2026-09-14: full retirement. See the §4 amendment note.
 - Guardian-based daemon-crash recovery (PR #4367), separately scoped.
 
 ## References
