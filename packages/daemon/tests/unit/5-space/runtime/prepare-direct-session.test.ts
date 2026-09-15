@@ -11,7 +11,7 @@ import {
   createDormantDirectSessionPreparer,
   matchesDirectPreparedSession,
   requireReservedDirectTask,
-} from '../../../../src/lib/space/runtime/prepare-direct-session';
+} from '../../../../src/lib/tasks/prepare-direct-session';
 
 let sql: Database;
 let attempts: DirectTaskExecutionRepository;

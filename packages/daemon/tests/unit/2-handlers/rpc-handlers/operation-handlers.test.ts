@@ -1,7 +1,7 @@
 import { createDaemonOperationCatalog } from '../../../../src/lib/operations/catalog.ts';
 import { setStandaloneTaskDependencies } from '../../../../src/storage/tasks/set-task-dependencies';
 import { transitionStandaloneTask } from '../../../../src/storage/tasks/transition-task';
-import { createStandaloneTaskMetadataEditor } from '../../../../src/lib/operations/task-metadata-standalone';
+import { createStandaloneTaskMetadataEditor } from '../../../../src/lib/tasks/metadata-standalone';
 import { listTaskCores } from '../../../../src/storage/tasks/list-tasks';
 import { createStandaloneTask } from '../../../../src/storage/tasks/create-task';
 import type { TaskCore } from '@hyperneo/shared/types/task-core';

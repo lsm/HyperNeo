@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry';
-import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager';
+import { SpaceTaskManager } from '../../../../src/lib/tasks/task-manager';
 import {
   createSetPreferredWorkflowOperation,
   type SetPreferredWorkflowDependencies,
-} from '../../../../src/lib/space/operations/set-preferred-workflow';
+} from '../../../../src/lib/tasks/set-preferred-workflow';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';

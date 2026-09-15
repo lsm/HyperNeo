@@ -10,8 +10,8 @@ import { JobQueueRepository } from '../../../../src/storage/repositories/job-que
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
-import { createDirectKickoffRecorder } from '../../../../src/lib/space/runtime/direct-kickoff-intent';
-import { createDirectKickoffReconciler } from '../../../../src/lib/space/runtime/reconcile-direct-kickoff';
+import { createDirectKickoffRecorder } from '../../../../src/lib/tasks/direct-kickoff-intent';
+import { createDirectKickoffReconciler } from '../../../../src/lib/tasks/reconcile-direct-kickoff';
 import { MAILBOX_LANE } from '../../../../src/lib/mailbox/enqueue';
 import { type MailboxEntry } from '../../../../src/lib/mailbox/entry';
 import { createTestSession } from '../../../helpers/database';

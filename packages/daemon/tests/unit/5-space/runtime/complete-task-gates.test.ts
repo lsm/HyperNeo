@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'bun:test';
 import type { SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
-import { createCompletionGateBindings } from '../../../../src/lib/space/operations/complete-task-gates';
+import { createCompletionGateBindings } from '../../../../src/lib/tasks/complete-task-gates';
 
 const task = { id: 'task-1' } as unknown as SpaceTask;
 const workflow = { id: 'wf-1' } as unknown as SpaceWorkflow;

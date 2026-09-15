@@ -6,12 +6,12 @@ import { SpaceRepository } from '../../../../src/storage/repositories/space-repo
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
-import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager';
+import { SpaceTaskManager } from '../../../../src/lib/tasks/task-manager';
 import {
   createBoundSpaceTaskDependencyEditor,
   isTaskDependenciesOnlyUpdate,
   selectSpaceDependencyCompletion,
-} from '../../../../src/lib/space/operations/task-dependencies';
+} from '../../../../src/lib/tasks/dependencies';
 
 let db: Database;
 let spaceId: string;

@@ -6,10 +6,7 @@ import { SessionRepository } from '../../../../src/storage/repositories/session-
 import { createStandaloneTask } from '../../../../src/storage/tasks/create-task';
 import { createSpaceTables } from '../../helpers/space-test-db';
 import { createTestSession } from '../../../helpers/database';
-import {
-  admitSpaceTaskCaller,
-  resolveSpaceTaskOwner,
-} from '../../../../src/lib/space/operations/task-metadata';
+import { admitSpaceTaskCaller, resolveSpaceTaskOwner } from '../../../../src/lib/tasks/metadata';
 
 let db: Database;
 let spaces: SpaceRepository;

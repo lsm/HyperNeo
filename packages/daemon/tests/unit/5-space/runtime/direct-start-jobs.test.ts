@@ -1,10 +1,10 @@
-import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager';
+import { SpaceTaskManager } from '../../../../src/lib/tasks/task-manager';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
-import { createPendingCompletionOperation } from '../../../../src/lib/space/operations/pending-completion';
-import { createSpaceOperationRegistryProvider } from '../../../../src/lib/space/operations/registry';
+import { createPendingCompletionOperation } from '../../../../src/lib/tasks/pending-completion';
+import { createSpaceOperationRegistryProvider } from '../../../../src/lib/tasks/operations';
 import type { Database as AppDatabase } from '../../../../src/storage/database';
-import { createStartTaskOperation } from '../../../../src/lib/space/operations/start-task';
+import { createStartTaskOperation } from '../../../../src/lib/tasks/start-task';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry';
 import { createOperationRpcHandler } from '../../../../src/lib/operations/rpc-adapter';
 import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-adapter';
@@ -22,20 +22,20 @@ import {
   JobQueueRepository,
   type Job,
 } from '../../../../src/storage/repositories/job-queue-repository';
-import { createDirectTaskStarter } from '../../../../src/lib/space/runtime/start-direct-task';
+import { createDirectTaskStarter } from '../../../../src/lib/tasks/start-direct-task';
 import {
   registerDirectStartJobs,
   createDirectStartRequester,
   createDirectStartJobHandler,
-} from '../../../../src/lib/space/runtime/direct-start-jobs';
+} from '../../../../src/lib/tasks/direct-start-jobs';
 import {
   readDirectStartRequest,
   DIRECT_TASK_START,
-} from '../../../../src/lib/space/runtime/direct-start-request';
+} from '../../../../src/lib/tasks/direct-start-request';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session';
 import { SessionManager } from '../../../../src/lib/session/session-manager';
-import { createDirectTaskFinalizer } from '../../../../src/lib/space/runtime/finalize-direct-attempt';
-import { readDirectKickoffIntent } from '../../../../src/lib/space/runtime/direct-kickoff-intent';
+import { createDirectTaskFinalizer } from '../../../../src/lib/tasks/finalize-direct-attempt';
+import { readDirectKickoffIntent } from '../../../../src/lib/tasks/direct-kickoff-intent';
 
 let db: Database;
 let jobs: JobQueueRepository;

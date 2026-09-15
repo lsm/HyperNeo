@@ -9,7 +9,7 @@ import { DirectTaskExecutionRepository } from '../../../../src/storage/repositor
 import {
   createDirectTaskFinalizer,
   type DirectFinalizationInput,
-} from '../../../../src/lib/space/runtime/finalize-direct-attempt';
+} from '../../../../src/lib/tasks/finalize-direct-attempt';
 import { createSpaceTables } from '../../helpers/space-test-db';
 
 let db: Database;

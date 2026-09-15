@@ -25,7 +25,7 @@ import {
 } from '../../../../src/lib/agents/system-contracts.ts';
 import { buildSelectionPrompt } from '../../../../src/lib/space/runtime/llm-workflow-selector.ts';
 import { appendPostApprovalCompletionInstructions } from '../../../../src/lib/space/runtime/post-approval-router.ts';
-import { buildPromptTooLongContinueNag } from '../../../../src/lib/space/runtime/prompt-too-long-recovery.ts';
+import { buildPromptTooLongContinueNag } from '../../../../src/lib/session/prompt-too-long-recovery.ts';
 import {
   CODER_EXTERNAL_GATE_BLOCK,
   CODER_ONLY_MERGE_INSTRUCTIONS,

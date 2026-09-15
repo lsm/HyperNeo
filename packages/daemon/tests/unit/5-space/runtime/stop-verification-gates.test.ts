@@ -8,7 +8,7 @@ import {
   type StopVerificationDecision,
   type StopVerificationSnapshot,
   VERIFIED_STOP_MAX_INTERRUPT_ATTEMPTS,
-} from '../../../../src/lib/space/runtime/stop-verification-gates';
+} from '../../../../src/lib/tasks/stop-verification-gates';
 
 const STATUS_DOWN_ELIGIBILITY: Record<AgentProcessingState['status'], boolean> = {
   idle: true,

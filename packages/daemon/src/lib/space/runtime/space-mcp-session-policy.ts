@@ -1,18 +1,12 @@
 import type { Session } from '@hyperneo/shared';
+import type { OperationCallerRole } from '../../operations/registry.ts';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import { longTermAgentSessionId } from '../long-term-agent-session.ts';
-import type { DirectTaskWorkerIdentity } from './direct-task-worker-identity.ts';
+import type { DirectTaskWorkerIdentity } from '../../tasks/direct-task-worker-identity.ts';
 
-export type SpaceMcpSessionRole =
-  | 'ad_hoc_member'
-  | 'workflow_worker'
-  | 'direct_task_worker'
-  | 'long_term_agent'
-  | 'universal_read'
-  | 'legacy_task_agent'
-  | 'outside_space';
+export type SpaceMcpSessionRole = OperationCallerRole;
 
 export function hasSpaceAuthority(role: SpaceMcpSessionRole | undefined): boolean {
   return role === 'long_term_agent';
@@ -155,7 +149,7 @@ export function resolveSpaceMcpSessionPolicy(
   };
 }
 
-function resolveWorkflowExecution(
+export function resolveWorkflowExecution(
   session: Session,
   nodeExecutionRepo: SpaceMcpSessionPolicyContext['nodeExecutionRepo']
 ) {

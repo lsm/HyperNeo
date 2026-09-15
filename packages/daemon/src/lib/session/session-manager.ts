@@ -1,6 +1,7 @@
-import type { DirectStopVerificationResult } from '../space/runtime/stop-direct-attempt.ts';
+import type { DirectStopVerificationResult } from '../tasks/stop-direct-attempt.ts';
 import { createDatabaseOperationCatalog } from '../operations/database-catalog.ts';
 import type { OperationRegistry, OperationRegistryProvider } from '../operations/registry.ts';
+import { NO_CALLER_SCOPE, type CallerScopeResolver } from '../operations/caller.ts';
 import type {
   ImageContent,
   MessageDeliveryMode,
@@ -83,6 +84,7 @@ export class SessionManager {
   private messagePersistence: MessagePersistence;
   private spaceRuntimeMcpProvider?: SpaceRuntimeMcpProvider;
   private operationRegistryProvider?: OperationRegistryProvider;
+  private callerScopeResolver: CallerScopeResolver = NO_CALLER_SCOPE;
   private defaultOperationRegistryProvider?: OperationRegistryProvider;
   private defaultOperationRegistry?: OperationRegistry;
   private mailboxDeferredReplaySuppressor?: (sessionId: string) => void;
@@ -168,6 +170,7 @@ export class SessionManager {
         autoReplayPendingMessages: !this.needsSpaceRuntimeProvisioning(session),
         ...runtimeOptions,
         operationRegistryProvider: () => this.getOperationRegistry(),
+        callerScopeResolver: (sessionId) => this.resolveCallerScope(sessionId),
         hardReset: (agentSession, options) => this.hardResetAgentSession(agentSession, options),
       }
     );
@@ -512,6 +515,14 @@ export class SessionManager {
       session.setOperationRegistryProvider(() => this.getOperationRegistry());
   }
 
+  resolveCallerScope(sessionId: string) {
+    return this.callerScopeResolver(sessionId);
+  }
+
+  setCallerScopeResolver(resolver: CallerScopeResolver): void {
+    this.callerScopeResolver = resolver;
+  }
+
   setSpaceRuntimeMcpProvider(provider: SpaceRuntimeMcpProvider): void {
     this.spaceRuntimeMcpProvider = provider;
   }
@@ -658,6 +669,7 @@ export class SessionManager {
 
   registerSession(agentSession: AgentSession): void {
     agentSession.setOperationRegistryProvider(() => this.getOperationRegistry());
+    agentSession.setCallerScopeResolver((sessionId) => this.resolveCallerScope(sessionId));
     if (this.mailboxDeferredReplaySuppressor) {
       const suppressor = this.mailboxDeferredReplaySuppressor;
       agentSession.suppressDeferredReplay = (sessionId) => suppressor(sessionId);
