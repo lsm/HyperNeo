@@ -5,7 +5,7 @@ import type { ScheduleService } from '../../../../src/lib/schedule/schedule-serv
 import {
   orderSelfNagSchedules,
   syncGoalAutomationSelfNagScheduleForScope,
-} from '../../../../src/lib/space/goals/goal-automation-schedule-sync';
+} from '../../../../src/lib/goals/automation-schedule-sync';
 
 const SPACE_ID = 'space-1';
 const GOAL_ID = 'goal-1';

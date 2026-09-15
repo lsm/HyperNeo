@@ -69,7 +69,7 @@ import { WorkflowRunArtifactCacheRepository } from '../../storage/repositories/w
 import { WorkflowHookStateRepository } from '../../storage/repositories/workflow-hook-state-repository.ts';
 import { createConversationFrictionEvidenceHandler } from '../job-handlers/conversation-friction-evidence.handler.ts';
 import { handleGoalAutomationExecute } from '../job-handlers/goal-automation-execute.handler.ts';
-import { GoalAutomationService } from '../space/goals/goal-automation-service.ts';
+import { GoalAutomationService } from '../goals/automation-service.ts';
 import { createSyncArtifactHandlers } from '../job-handlers/space-workflow-run-artifact.handler.ts';
 import {
   GOAL_AUTOMATION_EXECUTE,
@@ -138,8 +138,8 @@ import { SpaceRepository } from '../../storage/repositories/space-repository.ts'
 import { setupTaskScheduleHandlers } from './task-schedule-handlers.ts';
 import { setupAgentMemoryHandlers } from './agent-memory-handlers.ts';
 import { setupSpaceGoalHandlers } from './space-goal-handlers.ts';
-import { subscribeAgentActivationOutcomeRedelivery } from '../space/goals/agent-activation-outcome-redelivery.ts';
-import { subscribeGoalOwnerChangeOutcomeRedelivery } from '../space/goals/goal-owner-change-outcome-redelivery.ts';
+import { subscribeAgentActivationOutcomeRedelivery } from '../goals/agent-activation-outcome-redelivery.ts';
+import { subscribeGoalOwnerChangeOutcomeRedelivery } from '../goals/owner-change-outcome-redelivery.ts';
 import { setupEvolutionHandlers } from './evolution-handlers.ts';
 import { EvolutionConversationAnalysisService } from '../space/evolution-conversation-analysis-service.ts';
 import { EvolutionEpisodeService } from '../space/evolution-episode-service.ts';
@@ -149,7 +149,7 @@ import { ScheduleService } from '../schedule/schedule-service.ts';
 import { SpaceGoalEventRepository } from '../../storage/repositories/space-goal-event-repository.ts';
 import { SpaceGoalOutcomeNotificationRepository } from '../../storage/repositories/space-goal-outcome-notification-repository.ts';
 import { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository.ts';
-import { SpaceGoalService } from '../space/goals/goal-service.ts';
+import { SpaceGoalService } from '../goals/service.ts';
 import { ExternalEventExtensionConfigStore } from '../external-events/extension-config-store.ts';
 import { mergeEvolutionPolicy } from '../space/evolution-scope-service.ts';
 import {
@@ -170,12 +170,12 @@ const EXTERNAL_EVENT_DELIVERY_STATES: ExternalEventDeliveryState[] = [
 import {
   validateCompletedTaskThreshold,
   validateGoalAutomationSelfNagPolicy,
-} from '../space/goals/evolution-policy-validation.ts';
+} from '../goals/evolution-policy-validation.ts';
 export { validateCompletedTaskThreshold, validateGoalAutomationSelfNagPolicy };
 import {
   readSelfNagScheduleScopeId,
   syncGoalAutomationSelfNagScheduleForScope,
-} from '../space/goals/goal-automation-schedule-sync.ts';
+} from '../goals/automation-schedule-sync.ts';
 export { readSelfNagScheduleScopeId, syncGoalAutomationSelfNagScheduleForScope };
 
 function createGoalAutomationSelfNagSchedules(

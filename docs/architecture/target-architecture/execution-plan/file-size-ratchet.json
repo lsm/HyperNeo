@@ -483,10 +483,6 @@
       "maxLines": 578,
       "followUp": "M10 cleanup split when touched"
     },
-    "packages/daemon/src/lib/space/goals/goal-service.ts": {
-      "maxLines": 572,
-      "followUp": "M9 space service extraction"
-    },
     "packages/ui/src/internal/floating-provider.tsx": {
       "maxLines": 565,
       "followUp": "UI design-system primitive split"

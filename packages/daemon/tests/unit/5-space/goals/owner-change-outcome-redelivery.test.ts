@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from 'bun:test';
 import { createDaemonInternalEventBus } from '../../../../src/lib/internal-event-bus';
-import { subscribeGoalOwnerChangeOutcomeRedelivery } from '../../../../src/lib/space/goals/goal-owner-change-outcome-redelivery';
+import { subscribeGoalOwnerChangeOutcomeRedelivery } from '../../../../src/lib/goals/owner-change-outcome-redelivery';
 
 describe('subscribeGoalOwnerChangeOutcomeRedelivery', () => {
   test('redelivers pending outcome notifications for the goal whose owner changed', async () => {

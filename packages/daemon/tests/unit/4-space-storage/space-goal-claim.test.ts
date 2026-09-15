@@ -4,8 +4,8 @@ import {
   SpaceGoalService,
   type ClaimOutcomeNotificationParams,
   type SpaceGoalServiceDeps,
-} from '../../../src/lib/space/goals/goal-service';
-import type { GoalOwnerResolutionDecision } from '../../../src/lib/space/goals/goal-owner-resolution';
+} from '../../../src/lib/goals/service';
+import type { GoalOwnerResolutionDecision } from '../../../src/lib/goals/owner-resolution';
 import { SpaceGoalEventRepository } from '../../../src/storage/repositories/space-goal-event-repository';
 import { SpaceGoalRepository } from '../../../src/storage/repositories/space-goal-repository';
 import { SpaceGoalOutcomeNotificationRepository } from '../../../src/storage/repositories/space-goal-outcome-notification-repository';
