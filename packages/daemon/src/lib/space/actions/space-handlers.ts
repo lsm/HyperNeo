@@ -119,7 +119,7 @@ import type { TaskAgentManager } from '../runtime/task-agent-manager.ts';
 import { createWorkflowTaskParkingExecutor } from '../runtime/task-parking-executor.ts';
 import { createWorkflowTaskRecoveryExecutor } from '../runtime/task-recovery-executor.ts';
 import { createWorkflowTaskStoppingExecutor } from '../runtime/task-stopping-executor.ts';
-import { getNextRunAt, isValidCronExpression } from '../schedule/cron-utils.ts';
+import { getNextRunAt, isValidCronExpression } from '../../schedule/cron-utils.ts';
 import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit } from '../slug.ts';
 import { normalizeMeaningfulTaskResult } from '../task-result-utils.ts';
 import { SESSION_MESSAGE_MAX_LIMIT, SPACE_SESSION_MAX_LIMIT } from './space-agent-schemas.ts';
@@ -409,7 +409,7 @@ export interface SpaceAgentToolsConfig {
 
   onRestoreNodeAgent?: (args: { reason?: string }) => Promise<void> | void;
   auditLogRepo?: McpAuditLogRepository;
-  scheduleService?: import('../schedule/schedule-service.ts').ScheduleService;
+  scheduleService?: import('../../schedule/schedule-service.ts').ScheduleService;
   replyRoutingRegistry?: ReplyRoutingRegistry;
   goalService?: import('../goals/goal-service.ts').SpaceGoalService;
   evolutionScopeService?: import('../evolution-scope-service.ts').EvolutionScopeService;

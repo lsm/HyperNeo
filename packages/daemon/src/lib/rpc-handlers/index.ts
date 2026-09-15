@@ -145,7 +145,7 @@ import { EvolutionConversationAnalysisService } from '../space/evolution-convers
 import { EvolutionEpisodeService } from '../space/evolution-episode-service.ts';
 import { EvolutionScopeService } from '../space/evolution-scope-service.ts';
 import { EvolutionTraceEvidenceService } from '../space/evolution-trace-evidence-service.ts';
-import { ScheduleService } from '../space/schedule/schedule-service.ts';
+import { ScheduleService } from '../schedule/schedule-service.ts';
 import { SpaceGoalEventRepository } from '../../storage/repositories/space-goal-event-repository.ts';
 import { SpaceGoalOutcomeNotificationRepository } from '../../storage/repositories/space-goal-outcome-notification-repository.ts';
 import { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository.ts';

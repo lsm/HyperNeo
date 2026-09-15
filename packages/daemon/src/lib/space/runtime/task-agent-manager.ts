@@ -278,7 +278,7 @@ export interface TaskAgentManagerConfig {
       disposeSignal?: AbortSignal;
     }
   ) => Promise<import('./session-message-delivery.ts').SessionInjectionOutcome>;
-  scheduleService?: import('../schedule/schedule-service.ts').ScheduleService;
+  scheduleService?: import('../../schedule/schedule-service.ts').ScheduleService;
   replyRoutingRegistry?: ReplyRoutingRegistry;
   memoryRepo?: AgentMemoryRepository;
   messageResolverFactory?: (

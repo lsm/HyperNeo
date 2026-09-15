@@ -539,7 +539,7 @@
       "maxLines": 536,
       "followUp": "M7 agent runtime boundary split"
     },
-    "packages/daemon/src/lib/space/schedule/schedule-service.ts": {
+    "packages/daemon/src/lib/schedule/schedule-service.ts": {
       "maxLines": 533,
       "followUp": "M10 cleanup split when touched"
     },

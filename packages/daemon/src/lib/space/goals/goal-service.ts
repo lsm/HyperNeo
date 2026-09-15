@@ -24,7 +24,7 @@ import type { SpaceGoalOutcomeNotificationRepository } from '../../../storage/re
 import type { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository.ts';
 import type { SpaceAgentGoalScopeRepository } from '../../../storage/repositories/space-agent-goal-scope-repository.ts';
 import type { SpaceAgentRepository } from '../../../storage/repositories/space-agent-repository.ts';
-import type { ScheduleService } from '../schedule/schedule-service.ts';
+import type { ScheduleService } from '../../schedule/schedule-service.ts';
 import { Logger } from '../../logger.ts';
 import type { GoalAutomationService } from './goal-automation-service.ts';
 import { pauseScheduleStrict } from './goal-automation-schedule-sync.ts';
