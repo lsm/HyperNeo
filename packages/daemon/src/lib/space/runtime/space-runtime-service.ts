@@ -67,6 +67,8 @@ import { ensureSession } from '../../session-resolution/ensure-session.ts';
 import { resolveAgentDeliverySession } from '../../session-resolution/resolve-agent-delivery-session.ts';
 import type { ResolveAgentRecordDeps } from '../../session-resolution/resolve-agent-record.ts';
 import type { EnsureSessionOutcome, SessionTarget } from '../../session-resolution/target.ts';
+import { actionsAsOperations } from '../actions/action-operations.ts';
+import { createOperationRegistry } from '../../operations/registry.ts';
 import {
   createSpaceActionsMcpServer,
   type SpaceActionsMcpServer,
@@ -877,10 +879,23 @@ export class SpaceRuntimeService {
     buildConfig: () => SpaceActionsServerConfig
   ): void {
     const sessionManager = this.config.sessionManager;
-    mcpServers['space-actions'] = createSpaceActionsMcpServer({
-      ...buildConfig(),
+    const config = buildConfig();
+    const server = createSpaceActionsMcpServer({
+      ...config,
       operationRegistry: sessionManager ? () => sessionManager.getOperationRegistry() : undefined,
-    }) as unknown as McpServerConfig;
+    });
+    mcpServers['space-actions'] = server as unknown as McpServerConfig;
+    const sessionId =
+      config.sessionId ?? config.spaceConfig?.mySessionId ?? config.nodeConfig?.mySessionId;
+    if (!sessionManager || !sessionId || typeof sessionManager.getSession !== 'function') return;
+    const agentSession = sessionManager.getSession(sessionId);
+    if (!agentSession?.setOperationRegistryProvider) return;
+    agentSession.setOperationRegistryProvider(() =>
+      createOperationRegistry([
+        ...sessionManager.getOperationRegistry().entries,
+        ...actionsAsOperations(server.registry),
+      ])
+    );
   }
 
   buildUniversalReadDispatcherServer(): SpaceActionsMcpServer {
