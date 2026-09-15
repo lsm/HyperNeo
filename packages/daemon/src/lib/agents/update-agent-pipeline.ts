@@ -1,7 +1,7 @@
 import type { AgentModelPoolEntry, SpaceAgent, UpdateSpaceAgentParams } from '@hyperneo/shared';
 import superpipe, { type Dependencies, type PipelineAPI } from 'superpipe';
-import { RESERVED_SPACE_AGENT_HANDLES, validateSlug } from '../slug.ts';
-import { firstAgentFieldError } from './agent-field-validation.ts';
+import { RESERVED_SPACE_AGENT_HANDLES, validateSlug } from '../space/slug.ts';
+import { firstAgentFieldError } from './field-validation.ts';
 import {
   type BindableSession,
   type Gate,
@@ -10,7 +10,7 @@ import {
   gateTools,
   rejectSpaceAgent as reject,
   type SpaceAgentRejection,
-} from './create-space-agent-pipeline.ts';
+} from './create-agent-pipeline.ts';
 
 export interface UpdateSpaceAgentInput extends UpdateSpaceAgentParams {
   id: string;

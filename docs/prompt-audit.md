@@ -24,7 +24,7 @@ Largest savings are in repeated, long behavioral instructions embedded in workfl
 
 ### Builder: `buildCustomAgentTaskMessage`
 
-Source: `packages/daemon/src/lib/space/agents/custom-agent.ts`
+Source: `packages/daemon/src/lib/agents/custom-agent.ts`
 
 Builds initial user message for task agents. Behavioral persona lives in system prompt, but factual context is resent on each session/activation.
 
@@ -51,7 +51,7 @@ Observations:
 
 ### Builder: `buildCustomAgentSystemPrompt` / `resolveCustomAgentPrompt`
 
-Source: `packages/daemon/src/lib/space/agents/custom-agent.ts`
+Source: `packages/daemon/src/lib/agents/custom-agent.ts`
 
 Builds custom agent system prompt by concatenating base SpaceAgent prompt and workflow slot prompt.
 
@@ -67,7 +67,7 @@ Key issue: append-only model preserves both preset persona and slot persona. Tha
 
 ### Builder: preset agents in `seed-agents.ts`
 
-Source: `packages/daemon/src/lib/space/agents/seed-agents.ts`
+Source: `packages/daemon/src/lib/agents/seed-agents.ts`
 
 | Preset agent prompt | Est. Tokens | Notes |
 |---|---:|---|
@@ -153,7 +153,7 @@ Risk: legacy fallback can concatenate old `systemPrompt` and `instructions` that
 
 ### Builder: long-horizon agent templates
 
-Source: `packages/daemon/src/lib/space/agents/long-horizon-agent-templates.ts`
+Source: `packages/daemon/src/lib/agents/long-horizon-templates.ts`
 
 | Template | Instructions tokens | Other prompt-ish metadata | Notes |
 |---|---:|---:|---|

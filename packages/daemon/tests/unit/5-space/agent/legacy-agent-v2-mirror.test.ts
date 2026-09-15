@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { SpaceAgent } from '@hyperneo/shared';
-import { publishSpaceAgentV2Mirror } from '../../../../src/lib/space/agents/unified-agent-events';
+import { publishSpaceAgentV2Mirror } from '../../../../src/lib/agents/unified-agent-events';
 
 function makeBus() {
   const published: Array<{ topic: string; payload: Record<string, unknown> }> = [];

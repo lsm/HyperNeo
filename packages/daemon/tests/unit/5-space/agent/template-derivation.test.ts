@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   type AgentTemplateDerivationSource,
   deriveAgentTemplate,
-} from '../../../../src/lib/space/agents/template-derivation.ts';
+} from '../../../../src/lib/agents/template-derivation.ts';
 
 function makeSource(
   overrides: Partial<AgentTemplateDerivationSource> = {}

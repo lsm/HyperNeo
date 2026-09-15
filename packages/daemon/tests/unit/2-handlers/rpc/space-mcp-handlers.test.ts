@@ -15,7 +15,7 @@ import { setupSpaceMcpHandlers } from '../../../../src/lib/rpc-handlers/space-mc
 import { McpImportService } from '../../../../src/lib/mcp/mcp-import-service';
 import { createSpaceTables } from '../../helpers/space-test-db';
 import type { Database } from '../../../../src/storage/database';
-import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
+import type { DaemonHub } from '../../../helpers/daemon-hub';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
 import type { ReactiveDatabase } from '../../../../src/storage/reactive-database';

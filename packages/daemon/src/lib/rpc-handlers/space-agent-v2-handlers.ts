@@ -8,23 +8,23 @@ import {
   validateAgentModel,
   validateAgentModelPool,
   validateSpaceAgentTools,
-} from '../space/agents/agent-validation.ts';
+} from '../agents/validation.ts';
 import {
   type BindableSession,
   buildCreateSpaceAgentPipeline,
   type CreateSpaceAgentInput,
   isCreateSpaceAgentRejection,
-} from '../space/agents/create-space-agent-pipeline.ts';
+} from '../agents/create-agent-pipeline.ts';
 import {
   buildUpdateSpaceAgentPipeline,
   type UpdateSpaceAgentInput,
-} from '../space/agents/update-space-agent-pipeline.ts';
-import { getBuiltInSpaceAgentTemplates } from '../space/managers/space-agent-template-manager.ts';
+} from '../agents/update-agent-pipeline.ts';
+import { getBuiltInSpaceAgentTemplates } from '../agents/template-manager.ts';
 import {
   publishUnifiedAgentCreated,
   publishUnifiedAgentDeleted,
   publishUnifiedAgentUpdated,
-} from '../space/agents/unified-agent-events.ts';
+} from '../agents/unified-agent-events.ts';
 
 const METHOD_PREFIX = 'spaceAgentV2';
 

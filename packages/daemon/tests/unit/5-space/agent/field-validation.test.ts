@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { firstAgentFieldError } from '../../../../src/lib/space/agents/agent-field-validation';
+import { firstAgentFieldError } from '../../../../src/lib/agents/field-validation';
 
 describe('firstAgentFieldError', () => {
   test('accepts an empty object', () => {

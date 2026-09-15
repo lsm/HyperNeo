@@ -6,7 +6,7 @@ Recommendation: implement a HyperNeo-native compressed output policy as the firs
 
 Do **not** bundle Caveman wholesale. Caveman's highest-value primitive is a small style contract: terse status, no filler, code/identifier preservation, short failures, and normal-prose escape hatches for safety/approval/clarity. Its hooks, installer, statusline, memory compressor, MCP shrink proxy, and branded slash commands solve Claude Code/plugin distribution problems that do not map cleanly to HyperNeo's runtime.
 
-Best first integration point: add a generic prompt policy resolver/composer/renderer in the general session-init/query-options path before the SDK query starts, not only in `packages/daemon/src/lib/space/agents/custom-agent.ts`. Compressed output should be enabled by scoped `prompt_policy_records` rows, not by typed `outputMode` fields on `GlobalSettings`, `SessionConfig`, `AgentSessionInit`, `Space`, or `SpaceAgent`. The same mechanism should apply to every `AgentSession` created by HyperNeo.
+Best first integration point: add a generic prompt policy resolver/composer/renderer in the general session-init/query-options path before the SDK query starts, not only in `packages/daemon/src/lib/agents/custom-agent.ts`. Compressed output should be enabled by scoped `prompt_policy_records` rows, not by typed `outputMode` fields on `GlobalSettings`, `SessionConfig`, `AgentSessionInit`, `Space`, or `SpaceAgent`. The same mechanism should apply to every `AgentSession` created by HyperNeo.
 
 Target: 50%+ output-token reduction on representative user chat, ad-hoc worker, Space task, and subagent outputs without lower task quality.
 
@@ -20,8 +20,8 @@ Target: 50%+ output-token reduction on representative user chat, ad-hoc worker, 
   - `packages/shared/src/types/sdk-config.ts`
   - `packages/shared/src/types/settings.ts`
 - HyperNeo Space agent prompt path:
-  - `packages/daemon/src/lib/space/agents/custom-agent.ts`
-  - `packages/daemon/src/lib/space/agents/seed-agents.ts`
+  - `packages/daemon/src/lib/agents/custom-agent.ts`
+  - `packages/daemon/src/lib/agents/seed-agents.ts`
   - `packages/shared/src/types/space.ts`
 - HyperNeo token/context usage surfaces:
   - `packages/daemon/src/lib/agent/context-fetcher.ts`
@@ -371,8 +371,8 @@ Defer:
 - Local Caveman reviewer contract: `~/.claude/plugins/marketplaces/caveman/agents/cavecrew-reviewer.md`
 - Caveman license: `~/.claude/plugins/marketplaces/caveman/LICENSE`
 - HyperNeo existing research note: `docs/research/token-efficiency/reports/05-caveman.md`
-- HyperNeo Space agent prompt builder: `packages/daemon/src/lib/space/agents/custom-agent.ts`
-- HyperNeo preset agents: `packages/daemon/src/lib/space/agents/seed-agents.ts`
+- HyperNeo Space agent prompt builder: `packages/daemon/src/lib/agents/custom-agent.ts`
+- HyperNeo preset agents: `packages/daemon/src/lib/agents/seed-agents.ts`
 - HyperNeo Space agent types: `packages/shared/src/types/space.ts`
 - HyperNeo generic session config types: `packages/shared/src/types/sdk-config.ts`
 - HyperNeo settings/output style types: `packages/shared/src/types/settings.ts`

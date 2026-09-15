@@ -14,13 +14,13 @@ export type { SpaceAgentToolsConfig } from './actions/space-handlers.ts';
 export { createSpaceAgentToolHandlers } from './actions/space-handlers.ts';
 export type { SpaceActorRegistryRepositories } from './actor-registry.ts';
 export { SPACE_SYSTEM_ACTORS, SpaceActorRegistryAdapter } from './actor-registry.ts';
-export type { CustomAgentConfig, ResolveAgentInitConfig } from './agents/custom-agent.ts';
+export type { CustomAgentConfig, ResolveAgentInitConfig } from '../agents/custom-agent.ts';
 export {
   buildCustomAgentSystemPrompt,
   buildCustomAgentTaskMessage,
   createCustomAgentInit,
   resolveAgentInit,
-} from './agents/custom-agent.ts';
+} from '../agents/custom-agent.ts';
 export type { ValidationResult } from './export-format.ts';
 export {
   exportAgent,

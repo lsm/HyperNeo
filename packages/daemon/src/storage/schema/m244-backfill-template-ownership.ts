@@ -1,7 +1,7 @@
 import {
   planTemplateSpaceAssignments,
   type TemplateAttributionInputs,
-} from '../../lib/space/agents/template-space-attribution.ts';
+} from '../../lib/agents/template-space-attribution.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 
 const UNOWNED = '';

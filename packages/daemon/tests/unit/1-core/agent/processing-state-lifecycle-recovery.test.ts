@@ -9,7 +9,7 @@ import { SDKMessageHandler } from '../../../../src/lib/agent/sdk-message-handler
 import type { ErrorManager } from '../../../../src/lib/error-manager';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { Database } from '../../../../src/storage/database';
-import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
+import type { DaemonHub } from '../../../helpers/daemon-hub';
 
 const sessionId = 'recovery-session';
 

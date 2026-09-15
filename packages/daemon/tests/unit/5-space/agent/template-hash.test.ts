@@ -4,7 +4,7 @@ import {
   computeAgentTemplateHash,
   agentTemplatesMatch,
   type AgentTemplateInput,
-} from '../../../../src/lib/space/agents/agent-template-hash';
+} from '../../../../src/lib/agents/template-hash';
 
 function makeAgent(overrides: Partial<AgentTemplateInput> = {}): AgentTemplateInput {
   return {

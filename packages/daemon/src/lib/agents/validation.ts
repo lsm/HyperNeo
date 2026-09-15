@@ -4,9 +4,9 @@ import {
   getModelsCache,
   getModelInfoUnfiltered,
   isValidModel,
-} from '../../model-service.ts';
-import { getProviderRegistry, providerMayOfferModel } from '../../providers/registry.js';
-import { isValidThinkingLevel } from './agent-field-validation.ts';
+} from '../model-service.ts';
+import { getProviderRegistry, providerMayOfferModel } from '../providers/registry.js';
+import { isValidThinkingLevel } from './field-validation.ts';
 
 export type SpaceAgentResult<T> =
   | { ok: true; value: T }

@@ -25,18 +25,15 @@ import {
 } from '../../providers/registry.js';
 import type { ActorResolver } from '../../../../../messaging/src/contracts.ts';
 import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types.ts';
-import type { AgentSessionInit } from '../../../lib/agent/agent-session.ts';
-import { AgentSession, ClearConversationCancelledError } from '../../../lib/agent/agent-session.ts';
+import type { AgentSessionInit } from '../../agent/agent-session.ts';
+import { AgentSession, ClearConversationCancelledError } from '../../agent/agent-session.ts';
 import {
   acquireContextClearBoundary,
   type ContextClearBoundaryOwner,
   withSessionOperationLock,
-} from '../../../lib/agent/message-delivery.ts';
-import {
-  activatePrompts,
-  verifyPromptContent,
-} from '../../../lib/agent/message-delivery-outbox.ts';
-import { decideInjectDelivery } from '../../../lib/agent/message-delivery-pipeline.ts';
+} from '../../agent/message-delivery.ts';
+import { activatePrompts, verifyPromptContent } from '../../agent/message-delivery-outbox.ts';
+import { decideInjectDelivery } from '../../agent/message-delivery-pipeline.ts';
 import type { Database } from '../../../storage/database.ts';
 import type { ReactiveDatabase } from '../../../storage/reactive-database.ts';
 import type { AppMcpServerRepository } from '../../../storage/repositories/app-mcp-server-repository.ts';
@@ -55,8 +52,8 @@ import { CleanupState, type SessionManager } from '../../session-manager.ts';
 import { createDefaultSessionResolutionDeps } from '../../session-resolution/default-deps.ts';
 import { ensureSession } from '../../session-resolution/ensure-session.ts';
 import type { SkillsManager } from '../../skills-manager.ts';
-import { getLongHorizonAgentTemplate } from '../agents/long-horizon-agent-templates.ts';
-import { isRunnableUnifiedAgent } from '../agents/worker-long-horizon-mapper.ts';
+import { getLongHorizonAgentTemplate } from '../../agents/long-horizon-templates.ts';
+import { isRunnableUnifiedAgent } from '../../agents/worker-long-horizon-mapper.ts';
 import type { SpaceManager } from '../managers/space-manager.ts';
 import { SpaceTaskManager } from '../../tasks/task-manager.ts';
 import { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository.ts';
@@ -119,7 +116,7 @@ import {
   buildCustomAgentTaskMessage,
   DEFAULT_CUSTOM_AGENT_MODEL,
   resolveAgentInit,
-} from '../agents/custom-agent.ts';
+} from '../../agents/custom-agent.ts';
 import type { EvolutionScopeService } from '../../evolution/scope-service.ts';
 import { TERMINAL_NODE_EXECUTION_STATUSES } from '../managers/node-execution-manager.ts';
 import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools.ts';

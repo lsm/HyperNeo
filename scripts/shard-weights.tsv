@@ -36,7 +36,7 @@
 216	packages/daemon/tests/unit/5-space/agent/agent-memory-tools.test.ts
 6	packages/daemon/tests/unit/5-space/agent/agent-message-envelope.test.ts
 6034	packages/daemon/tests/unit/5-space/agent/agent-message-router.test.ts
-9	packages/daemon/tests/unit/5-space/agent/agent-template-hash.test.ts
+9	packages/daemon/tests/unit/5-space/agent/template-hash.test.ts
 4	packages/daemon/tests/unit/5-space/agent/custom-agent-memory.test.ts
 18	packages/daemon/tests/unit/5-space/agent/custom-agent.test.ts
 3393	packages/daemon/tests/unit/5-space/agent/end-node-handlers.test.ts
@@ -71,7 +71,7 @@
 34	packages/daemon/tests/unit/5-space/other/export-format.test.ts
 423	packages/daemon/tests/unit/5-space/other/export-import-round-trip.test.ts
 51	packages/daemon/tests/unit/5-space/other/long-horizon-agent-lifecycle-integration.test.ts
-9	packages/daemon/tests/unit/5-space/other/long-horizon-agent-templates.test.ts
+9	packages/daemon/tests/unit/5-space/other/long-horizon-templates.test.ts
 27	packages/daemon/tests/unit/5-space/other/retry-utils.test.ts
 135	packages/daemon/tests/unit/5-space/other/seed-agents.test.ts
 1430	packages/daemon/tests/unit/5-space/other/send-message-unified.test.ts

@@ -5,7 +5,7 @@ import {
   EXTERNAL_REVIEW_BOTS_GUIDANCE,
 } from '../../../../src/lib/space/workflows/built-in-workflows.ts';
 import { CODER_OWNED_MERGE_INSTRUCTIONS } from '../../../../src/lib/space/workflows/post-approval-merge-template.ts';
-import { REVIEWER_SYSTEM_CONTRACT } from '../../../../src/lib/space/agents/system-contracts.ts';
+import { REVIEWER_SYSTEM_CONTRACT } from '../../../../src/lib/agents/system-contracts.ts';
 
 const AUDIT_ACCEPTANCE_LINE = 'merged anyway per policy decided 2026-08-24';
 

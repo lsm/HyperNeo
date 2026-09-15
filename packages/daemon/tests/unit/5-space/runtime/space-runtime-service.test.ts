@@ -36,7 +36,7 @@ import { buildAgentSessionConfig } from '../../../../src/lib/session-resolution/
 import {
   LONG_HORIZON_AGENT_BUILTIN_TOOLS,
   LONG_HORIZON_SCHEDULING_GUARDRAIL,
-} from '../../../../src/lib/space/agents/long-horizon-agent-tools.ts';
+} from '../../../../src/lib/agents/long-horizon-tools.ts';
 import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session.ts';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { SpaceManager as SpaceMgr } from '../../../../src/lib/space/managers/space-manager.ts';

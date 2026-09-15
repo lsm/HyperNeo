@@ -12,7 +12,7 @@ import type { Session, ModelInfo } from '@hyperneo/shared';
 import type { MessageHub } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import { createTestDb, createTestSession } from '../../../helpers/database';
-import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
+import type { DaemonHub } from '../../../helpers/daemon-hub';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { Database } from '../../../../src/storage/database';
 import type { ContextTracker } from '../../../../src/lib/agent/context-tracker';

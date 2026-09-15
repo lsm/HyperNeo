@@ -11,7 +11,7 @@ import {
   INACTIVITY_NAG_PROMPT_MAX_CHARS,
   type InactivityNagDeliveryOutcome,
   type InactivityWatchdogSessionSnapshot,
-} from '../../../../src/lib/space/agents/inactivity-watchdog-service';
+} from '../../../../src/lib/agents/inactivity-watchdog-service';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { createSpaceTables } from '../../helpers/space-test-db';
 

@@ -1,7 +1,7 @@
 import type { SpaceAgent, SpaceAgentTemplate } from '@hyperneo/shared';
-import { composeLongHorizonSubscriptionPattern } from '../../external-events/long-horizon-subscription-pattern.ts';
-import { validateGlobPattern, validateSource } from '../../external-events/topic-validator.ts';
-import { getNextRunAt } from '../../schedule/cron-utils.ts';
+import { composeLongHorizonSubscriptionPattern } from '../external-events/long-horizon-subscription-pattern.ts';
+import { validateGlobPattern, validateSource } from '../external-events/topic-validator.ts';
+import { getNextRunAt } from '../schedule/cron-utils.ts';
 
 export interface TemplateExtrasStore {
   upsertSubscription(params: {
