@@ -14,8 +14,10 @@ code. Amber is policy that exists but sits below the registry and has to move ab
 **The third lane is the point.** A Space agent session holds *both* MCP servers at once —
 `query-options-builder.ts:305` merges `hyperneo-operations` into the same server map that
 already carries `space-actions`. So an agent has two doors into the same data: `call_action`,
-behind five built policy gates, and `operation.invoke`, behind none. The gap is not that
-agents are ungated; it is that one of their two doors is.
+behind five built policy gates, and the `hyperneo-operations` invoke tool, behind none. The
+gap is not that agents are ungated; it is that one of their two doors is. (Agents reach the
+operations plane through that MCP tool, not through `operation.invoke`, which is the
+MessageHub RPC method the web uses. Both land on the same shared invoker.)
 
 **One liberty in the drawing:** the red boxes sit in the flow as though the stage existed and
 were empty. It does not exist at all — the built path is adapter → shared invoker, one call.
@@ -68,7 +70,7 @@ before the operation is resolved. Two consequences:
 So the RPC route is currently unscoped and unaudited — the hazard the target doc names as a
 thing convergence must not create. The agent route is only partly better: the same operation
 reached through `call_action` passes safety, role, autonomy, rate and audit, and reached
-through `operation.invoke` passes none of them. Turning the scope check on will reject calls
+through the `hyperneo-operations` invoke tool passes none of them. Turning the scope check on will reject calls
 that succeed today, which makes closing this a staged behavior change rather than wiring.
 
 **The policy is not missing — it is built on the wrong surface.** `dispatcher-pipeline.ts`
