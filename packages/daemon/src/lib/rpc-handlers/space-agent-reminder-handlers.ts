@@ -1,6 +1,6 @@
 import type { MessageHub } from '@hyperneo/shared';
 import type { SpaceAgentReminderRepository } from '../../storage/repositories/space-agent-reminder-repository.ts';
-import { getNextRunAt, isValidCronExpression } from '../space/schedule/cron-utils.ts';
+import { getNextRunAt, isValidCronExpression } from '../schedule/cron-utils.ts';
 
 const METHOD_PREFIX = 'spaceAgentReminder';
 

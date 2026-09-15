@@ -46,9 +46,9 @@ export {
   SpaceWorkspaceManager,
   WorkspaceRegistrationError,
   WorkspaceRemovalBlockedError,
-} from './managers/space-workspace-manager.ts';
-export type { SpaceWorktreeInfo } from './managers/space-worktree-manager.ts';
-export { SpaceWorktreeManager } from './managers/space-worktree-manager.ts';
+} from '../workspaces/workspace-manager.ts';
+export type { SpaceWorktreeInfo } from '../workspaces/worktree-manager.ts';
+export { SpaceWorktreeManager } from '../workspaces/worktree-manager.ts';
 export type {
   SpaceDeliveryFacadeConfig,
   SpaceMessageResolverConfig,

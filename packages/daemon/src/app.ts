@@ -84,7 +84,7 @@ import { SpaceAgentRepository } from './storage/repositories/space-agent-reposit
 import { SpaceManager } from './lib/space/managers/space-manager.ts';
 import type { SpaceRuntimeService } from './lib/space/runtime/space-runtime-service.ts';
 import type { TaskAgentManager } from './lib/space/runtime/task-agent-manager.ts';
-import type { SpaceWorktreeManager } from './lib/space/managers/space-worktree-manager.ts';
+import type { SpaceWorktreeManager } from './lib/workspaces/worktree-manager.ts';
 import { JobQueueRepository } from './storage/repositories/job-queue-repository.ts';
 import { JobQueueProcessor, applyStaleReclaimJitter } from './storage/job-queue-processor.ts';
 import { createCleanupHandler } from './lib/job-handlers/cleanup.handler.ts';
@@ -129,7 +129,7 @@ import { FileIndex } from './lib/file-index.ts';
 import { installConsoleLogCapture, subscribeToStructuredLogs } from './lib/logger.ts';
 import { createStartupPhaseTimer } from './lib/startup-phase-timer.ts';
 import { StructuredLogFileSink } from './lib/structured-log-file-sink.ts';
-import { EvolutionLogEvidenceService } from './lib/space/evolution-log-evidence-service.ts';
+import { EvolutionLogEvidenceService } from './lib/evolution/log-evidence-service.ts';
 import { SkillsManager } from './lib/skills-manager.ts';
 import {
   cleanupSuspiciousProcesses,

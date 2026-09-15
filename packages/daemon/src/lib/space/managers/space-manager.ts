@@ -16,14 +16,14 @@ import {
   buildRegistrySnapshot,
   SpaceWorkspaceManager,
   WorkspaceRegistrationError,
-} from './space-workspace-manager.ts';
+} from '../../workspaces/workspace-manager.ts';
 import {
   checkWorkspaceRegistryGates,
   nodeWorkspaceValidationIo,
   validateWorkspaceRegistration,
   type WorkspaceRegistrySnapshot,
   type WorkspaceValidationIo,
-} from '../workspaces/workspace-validation-pipeline.ts';
+} from '../../workspaces/validation-pipeline.ts';
 import { Logger } from '../../logger.ts';
 import { slugify, validateSlug } from '../slug.ts';
 import type { Space, CreateSpaceParams, UpdateSpaceParams } from '@hyperneo/shared';

@@ -10,7 +10,7 @@ import type { JobQueueRepository } from '../../storage/repositories/job-queue-re
 import type { WorkflowHookStateRepository } from '../../storage/repositories/workflow-hook-state-repository.ts';
 import type { SpaceTaskManager } from '../space/managers/space-task-manager.ts';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
-import type { SpaceWorktreeManager } from '../space/managers/space-worktree-manager.ts';
+import type { SpaceWorktreeManager } from '../workspaces/worktree-manager.ts';
 import { getWorkflowRunExecutionStatusLabel } from '@hyperneo/shared';
 import { resolveTaskWorkspace } from '../space/runtime/spawn-slot-resolution.ts';
 import type { WorkflowRunStatus } from '@hyperneo/shared';
