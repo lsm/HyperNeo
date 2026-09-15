@@ -221,7 +221,6 @@ export function claimDirectStart(
       const attempt = attempts.claim(task.id, attemptId, sessionId);
       if (!attempt) throw new Error('Direct start lost its atomic claim');
       reactiveDb?.notifyChange('space_tasks');
-      onTaskClaimed?.(task.id);
       if (startJobs)
         enqueueDirectStartRequest(
           db,
@@ -234,6 +233,7 @@ export function claimDirectStart(
       return { value: attempt };
     }, 'immediate')();
     reactiveDb?.commitTransaction();
+    if ('value' in result && result.value) onTaskClaimed?.(result.value.taskId);
     return result;
   } catch (error) {
     reactiveDb?.abortTransaction();

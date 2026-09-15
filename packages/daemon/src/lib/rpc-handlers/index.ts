@@ -588,6 +588,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     sessionManager: deps.sessionManager,
     jobQueue: deps.jobQueue,
     jobProcessor: deps.jobProcessor,
+    onAttemptRetired: emitClaimedTaskUpdate,
     onTaskUpdated: (task) => {
       void deps.internalEventBus
         .publish('space.task.updated', {

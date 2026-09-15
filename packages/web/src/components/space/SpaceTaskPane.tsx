@@ -1177,7 +1177,11 @@ export function SpaceTaskPane({
     );
   }
   const canRunDirectly =
-    task.status === 'open' && !task.workflowRunId && !task.taskAgentSessionId && !task.archivedAt;
+    task.status === 'open' &&
+    !task.workflowRunId &&
+    !task.taskAgentSessionId &&
+    !task.hasActiveDirectAttempt &&
+    !task.archivedAt;
   if (canRunDirectly || filteredTransitionActions.length > 0) {
     if (taskActionItems.length > 0) {
       taskActionItems.push({ type: 'divider' as const });

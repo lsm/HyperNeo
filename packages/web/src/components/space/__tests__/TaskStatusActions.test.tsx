@@ -345,6 +345,7 @@ describe('filterDirectAttemptTargets', () => {
   it('keeps only the targets that do not route through task.transition', () => {
     const targets = filterDirectAttemptTargets(getTransitionActions('in_progress'), {
       hasActiveDirectAttempt: true,
+      taskAgentSessionId: 'session-1',
     }).map(({ target }) => target);
     expect(targets).toEqual(['review', 'cancelled']);
   });
@@ -352,8 +353,17 @@ describe('filterDirectAttemptTargets', () => {
   it('also hides start and archive from an open task with a live attempt', () => {
     const targets = filterDirectAttemptTargets(getTransitionActions('open'), {
       hasActiveDirectAttempt: true,
+      taskAgentSessionId: 'session-1',
     }).map(({ target }) => target);
     expect(targets).toEqual(['review', 'cancelled']);
+  });
+
+  it('hides review too while the attempt is only reserved', () => {
+    const targets = filterDirectAttemptTargets(getTransitionActions('in_progress'), {
+      hasActiveDirectAttempt: true,
+      taskAgentSessionId: null,
+    }).map(({ target }) => target);
+    expect(targets).toEqual(['cancelled']);
   });
 
   it('leaves the actions untouched when no attempt is live', () => {
