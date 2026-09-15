@@ -1173,7 +1173,7 @@ export class TaskAgentManager {
         const execution = this.config.nodeExecutionRepo.getById(executionId);
         if (execution && readRestartRecoveryNote(execution)) {
           this.config.nodeExecutionRepo.update(executionId, {
-            data: { ...(execution.data ?? {}), restartRecoveryNote: null },
+            data: { ...execution.data, restartRecoveryNote: null },
           });
         }
       },

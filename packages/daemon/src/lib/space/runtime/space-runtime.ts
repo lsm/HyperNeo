@@ -5306,7 +5306,7 @@ export class SpaceRuntime {
                 result: null,
                 startedAt: null,
                 completedAt: null,
-                data: { ...(existing.data ?? {}), restartRecoveryNote: message },
+                data: { ...existing.data, restartRecoveryNote: message },
               });
               activatedForTarget = true;
             }
