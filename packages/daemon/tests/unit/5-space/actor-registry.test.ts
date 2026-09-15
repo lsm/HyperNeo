@@ -4,7 +4,7 @@ import { parseAddress } from '../../../../messaging/src/address';
 import {
   canonicalAgentHandle,
   SpaceActorRegistryAdapter,
-} from '../../../src/lib/space/actor-registry';
+} from '../../../src/lib/messaging/actor-registry';
 import { longTermAgentSessionId } from '../../../src/lib/space/long-term-agent-session';
 import { NodeExecutionRepository } from '../../../src/storage/repositories/node-execution-repository';
 import { SessionRepository } from '../../../src/storage/repositories/session-repository';

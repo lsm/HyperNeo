@@ -76,7 +76,7 @@ import {
   type SpaceActionsServerConfig,
 } from '../actions/space-actions-server.ts';
 import type { SpaceAgentToolsConfig } from '../actions/space-handlers.ts';
-import { SpaceActorRegistryAdapter } from '../actor-registry.ts';
+import { SpaceActorRegistryAdapter } from '../../messaging/actor-registry.ts';
 import { LONG_HORIZON_AGENT_BUILTIN_TOOLS } from '../agents/long-horizon-agent-tools.ts';
 import type { OwnedAgentLookup } from '../agents/unified-agent-events.ts';
 import { unifiedAgentRecordExists } from '../agents/worker-long-horizon-mapper.ts';
@@ -85,10 +85,10 @@ import { SpaceAgentTemplateManager } from '../managers/space-agent-template-mana
 import type { SpaceManager } from '../managers/space-manager.ts';
 import { SpaceTaskManager } from '../managers/space-task-manager.ts';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager.ts';
-import { SpaceMessageResolver } from '../messaging-adapter.ts';
+import { SpaceMessageResolver } from '../../messaging/space-adapter.ts';
 import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools.ts';
 import type { WorkflowArtifactProfile } from './artifact-profile.ts';
-import { ChannelRouter } from './channel-router.ts';
+import { ChannelRouter } from '../../messaging/channel-router.ts';
 import { createDatabaseDirectTaskWorkerResolver } from './direct-task-worker-identity.ts';
 import {
   type EnsureAgentSessionDeps,
@@ -100,8 +100,8 @@ import type { SelectWorkflowWithLlm } from './llm-workflow-selector.ts';
 import { selectWorkflowWithLlmDefault } from './llm-workflow-selector.ts';
 import type { PostApprovalRouteResult } from './post-approval-router.ts';
 import { createDirectKickoffReconciler } from './reconcile-direct-kickoff.ts';
-import type { RenderPendingDigestOutcome } from './render-pending-digest-pipeline.ts';
-import type { ReplyRoutingRegistry } from './reply-routing-registry.ts';
+import type { RenderPendingDigestOutcome } from '../../messaging/render-pending-digest-pipeline.ts';
+import type { ReplyRoutingRegistry } from '../../messaging/reply-routing-registry.ts';
 import {
   FAIL_CLOSED_LONG_HORIZON_AGENT_REPO,
   resolveSpaceMcpSessionPolicy,

@@ -5,7 +5,7 @@ import type { JobQueueRepository } from '../../storage/repositories/job-queue-re
 import { isValidAddress, renderAddress } from '../mailbox/address.ts';
 import { toMailboxMessage } from '../mailbox/entry.ts';
 import { handoffPromptToMailbox, type MailboxHandoffOutcome } from '../mailbox/handoff.ts';
-import { defineOperation, type OperationCaller } from './registry.ts';
+import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 
 const ContentBlockSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('text'), text: z.string().min(1) }),

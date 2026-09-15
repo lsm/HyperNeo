@@ -11,7 +11,7 @@ import type { NodeExecutionRepository } from '../../../storage/repositories/node
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository.ts';
 import type { WorkflowHookStateRepository } from '../../../storage/repositories/workflow-hook-state-repository.ts';
 import type { HookExecutor, HookExecutorContext } from './hook-executor.ts';
-import { ChannelResolver } from './channel-resolver.ts';
+import { ChannelResolver } from '../../messaging/channel-resolver.ts';
 import { isConnectorsLayerEnabled } from './connectors/connector.ts';
 import { getBuiltInConnectorDeps } from './connectors/production.ts';
 import { isRateLimitError } from './rate-limit-detector.ts';

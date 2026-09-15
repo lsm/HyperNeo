@@ -3,11 +3,14 @@ import type { NodeExecution, Session, Space, SpaceLongHorizonAgent } from '@hype
 import type { NodeExecutionRepository } from '../../storage/repositories/node-execution-repository.ts';
 import type { SessionRepository } from '../../storage/repositories/session-repository.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
-import { MIGRATED_WORKER_TEMPLATE_KEY } from './agents/worker-long-horizon-mapper.ts';
+import { MIGRATED_WORKER_TEMPLATE_KEY } from '../space/agents/worker-long-horizon-mapper.ts';
 import type { SpaceRepository } from '../../storage/repositories/space-repository.ts';
 import type { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository.ts';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository.ts';
-import { encodeActorIdComponent, longTermAgentSessionId } from './long-term-agent-session.ts';
+import {
+  encodeActorIdComponent,
+  longTermAgentSessionId,
+} from '../space/long-term-agent-session.ts';
 
 export const SPACE_SYSTEM_ACTORS = [
   { actorId: 'system:runtime', handle: '@system-runtime', roles: ['runtime'] },

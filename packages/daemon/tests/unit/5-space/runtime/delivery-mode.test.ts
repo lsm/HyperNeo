@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { deliveryModeFromFailureReason } from '../../../../src/lib/space/runtime/delivery-mode';
+import { deliveryModeFromFailureReason } from '../../../../src/lib/messaging/delivery-mode';
 
 describe('deliveryModeFromFailureReason', () => {
   test('returns defer for a deliveryMode:defer; prefix with a trailing reason', () => {

@@ -2,16 +2,16 @@ import type { MessageInputKind } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { UUID } from 'crypto';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import { ClearConversationCancelledError, type AgentSession } from '../../agent/agent-session.ts';
-import type { MessageDeliveryOrigin } from '../../agent/message-delivery.ts';
+import { ClearConversationCancelledError, type AgentSession } from '../agent/agent-session.ts';
+import type { MessageDeliveryOrigin } from '../agent/message-delivery.ts';
 import {
   acquireContextClearBoundary,
   type ContextClearBoundaryOwner,
-} from '../../agent/message-delivery.ts';
-import { Logger } from '../../logger.ts';
-import { renderAddress } from '../../mailbox/address.ts';
-import type { MailboxHandoffArgs, MailboxHandoffOutcome } from '../../mailbox/handoff.ts';
-import type { EnsureSessionOutcome, SessionTarget } from '../../session-resolution/target.ts';
+} from '../agent/message-delivery.ts';
+import { Logger } from '../logger.ts';
+import { renderAddress } from '../mailbox/address.ts';
+import type { MailboxHandoffArgs, MailboxHandoffOutcome } from '../mailbox/handoff.ts';
+import type { EnsureSessionOutcome, SessionTarget } from '../session-resolution/target.ts';
 import type { AgentMessageDeliveryOutcome } from './agent-message-router.ts';
 
 const log = new Logger('agent-message-delivery');

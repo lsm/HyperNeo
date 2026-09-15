@@ -1,7 +1,7 @@
 import { generateUUID } from '@hyperneo/shared';
 import { z } from 'zod';
-import type { AgentSession } from '../../agent/agent-session.ts';
-import { defineOperation } from '../../operations/registry.ts';
+import type { AgentSession } from '../agent/agent-session.ts';
+import { defineOperation } from '../operations/registry.ts';
 
 export interface SessionMessageSendRow {
   status: string;

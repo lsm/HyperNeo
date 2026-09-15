@@ -34,7 +34,7 @@
 7	packages/daemon/tests/unit/5-space/agent-handle.test.ts
 9	packages/daemon/tests/unit/5-space/agent/agent-config.test.ts
 216	packages/daemon/tests/unit/5-space/agent/agent-memory-tools.test.ts
-6	packages/daemon/tests/unit/5-space/agent/agent-message-envelope.test.ts
+6	packages/daemon/tests/unit/5-space/agent/envelope.test.ts
 6034	packages/daemon/tests/unit/5-space/agent/agent-message-router.test.ts
 9	packages/daemon/tests/unit/5-space/agent/agent-template-hash.test.ts
 4	packages/daemon/tests/unit/5-space/agent/custom-agent-memory.test.ts
@@ -60,7 +60,7 @@
 15	packages/daemon/tests/unit/5-space/goals/goal-owner-resolution.test.ts
 5	packages/daemon/tests/unit/5-space/goals/goal-ownership-gates.test.ts
 6	packages/daemon/tests/unit/5-space/goals/reportable-terminal-gates.test.ts
-205	packages/daemon/tests/unit/5-space/messaging-adapter.test.ts
+205	packages/daemon/tests/unit/5-space/space-adapter.test.ts
 680	packages/daemon/tests/unit/5-space/other/agent-capability-contract.test.ts
 54	packages/daemon/tests/unit/5-space/other/artifact-git-ops.test.ts
 4	packages/daemon/tests/unit/5-space/other/channel-resolution.test.ts
@@ -78,8 +78,8 @@
 8	packages/daemon/tests/unit/5-space/other/slug.test.ts
 7	packages/daemon/tests/unit/5-space/other/worktree-slug.test.ts
 8	packages/daemon/tests/unit/5-space/runtime/activation-routing.test.ts
-15	packages/daemon/tests/unit/5-space/runtime/agent-message-routing-gates.test.ts
-9	packages/daemon/tests/unit/5-space/runtime/agent-message-routing-pipeline.test.ts
+15	packages/daemon/tests/unit/5-space/runtime/routing-gates.test.ts
+9	packages/daemon/tests/unit/5-space/runtime/routing-pipeline.test.ts
 12	packages/daemon/tests/unit/5-space/runtime/built-in-validator-registry.test.ts
 6	packages/daemon/tests/unit/5-space/runtime/connectors/external-state-validator.test.ts
 15	packages/daemon/tests/unit/5-space/runtime/connectors/github-connector.test.ts

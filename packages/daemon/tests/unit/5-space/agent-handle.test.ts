@@ -3,7 +3,7 @@ import {
   isReservedAgentHandle,
   normalizeAgentNameToken,
   normalizeReplyTargetHandle,
-} from '../../../src/lib/space/agent-handle';
+} from '../../../src/lib/messaging/agent-handle';
 
 describe('normalizeAgentNameToken', () => {
   test('lowercases the value', () => {

@@ -10,7 +10,7 @@ import type {
   SpaceAgentTemplateRecord,
   SpaceAgentTemplateRepository,
 } from '../../../storage/repositories/space-agent-template-repository.ts';
-import { isReservedAgentHandle } from '../agent-handle.ts';
+import { isReservedAgentHandle } from '../../messaging/agent-handle.ts';
 import type { SpaceAgentResult } from '../agents/agent-validation.ts';
 import {
   validateAgentModel,

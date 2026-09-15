@@ -1,6 +1,6 @@
-import { parseAddress } from '../../../../../messaging/src/address.ts';
-import type { ResolveNodeAgentTargetsOutcome } from './agent-message-routing-gates.ts';
-import { decisionRun } from './decision-pipeline.ts';
+import { parseAddress } from '../../../../messaging/src/address.ts';
+import type { ResolveNodeAgentTargetsOutcome } from './routing-gates.ts';
+import { decisionRun } from '../space/runtime/decision-pipeline.ts';
 
 export type AgentMessageRoutingDecision =
   | { action: 'delegateGeneric' }

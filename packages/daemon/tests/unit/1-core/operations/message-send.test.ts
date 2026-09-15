@@ -6,7 +6,7 @@ import {
   SendMessageInputSchema,
   selectMessageOrigin,
   mapMessageReceipt,
-} from '../../../../src/lib/operations/message-send';
+} from '../../../../src/lib/messaging/message-send';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry';
 import { parseMailboxEntry } from '../../../../src/lib/mailbox/entry';
 import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db';

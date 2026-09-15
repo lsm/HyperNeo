@@ -12,8 +12,8 @@ export { SpaceWorktreeRepository } from '../../storage/repositories/space-worktr
 export { WorkflowHookStateRepository } from '../../storage/repositories/workflow-hook-state-repository.ts';
 export type { SpaceAgentToolsConfig } from './actions/space-handlers.ts';
 export { createSpaceAgentToolHandlers } from './actions/space-handlers.ts';
-export type { SpaceActorRegistryRepositories } from './actor-registry.ts';
-export { SPACE_SYSTEM_ACTORS, SpaceActorRegistryAdapter } from './actor-registry.ts';
+export type { SpaceActorRegistryRepositories } from '../messaging/actor-registry.ts';
+export { SPACE_SYSTEM_ACTORS, SpaceActorRegistryAdapter } from '../messaging/actor-registry.ts';
 export type { CustomAgentConfig, ResolveAgentInitConfig } from './agents/custom-agent.ts';
 export {
   buildCustomAgentSystemPrompt,
@@ -53,8 +53,8 @@ export type {
   SpaceDeliveryFacadeConfig,
   SpaceMessageResolverConfig,
   SpaceMessageResolverContext,
-} from './messaging-adapter.ts';
-export { SpaceDeliveryFacade, SpaceMessageResolver } from './messaging-adapter.ts';
+} from '../messaging/space-adapter.ts';
+export { SpaceDeliveryFacade, SpaceMessageResolver } from '../messaging/space-adapter.ts';
 export type { SpaceRuntimeConfig } from './runtime/space-runtime.ts';
 export { SpaceRuntime } from './runtime/space-runtime.ts';
 export type { SpaceRuntimeServiceConfig } from './runtime/space-runtime-service.ts';

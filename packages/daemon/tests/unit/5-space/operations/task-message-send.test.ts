@@ -6,7 +6,7 @@ import type { ResolveTargetsResult } from '../../../../../messaging/src/contract
 import {
   createSendTaskMessageOperation,
   sendTaskMessage,
-} from '../../../../src/lib/space/operations/task-message-send.ts';
+} from '../../../../src/lib/messaging/task-message-send.ts';
 
 const SPACE_ID = 'space-send-test';
 

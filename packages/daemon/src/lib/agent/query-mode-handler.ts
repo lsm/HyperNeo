@@ -8,7 +8,7 @@ import { emitStructuredLogEvent } from '../logger.ts';
 import {
   DETERMINISTIC_DIGEST_UUID_PREFIX,
   type RenderPendingDigestOutcome,
-} from '../space/runtime/render-pending-digest-pipeline.ts';
+} from '../messaging/render-pending-digest-pipeline.ts';
 import { ClearConversationCancelledError } from './agent-session.ts';
 import {
   acquireContextClearBoundary,

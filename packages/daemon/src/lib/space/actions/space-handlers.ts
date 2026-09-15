@@ -67,8 +67,8 @@ import {
   isReservedAgentHandle,
   normalizeAgentNameToken,
   normalizeReplyTargetHandle,
-} from '../agent-handle.ts';
-import { formatAgentMessage } from '../agent-message-envelope.ts';
+} from '../../messaging/agent-handle.ts';
+import { formatAgentMessage } from '../../messaging/envelope.ts';
 import {
   getLongHorizonAgentTemplate,
   getLongHorizonAgentTemplates,
@@ -94,7 +94,7 @@ import {
   type SpaceTaskManager,
 } from '../managers/space-task-manager.ts';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager.ts';
-import { SpaceDeliveryFacade, translateTaskMessageTarget } from '../messaging-adapter.ts';
+import { SpaceDeliveryFacade, translateTaskMessageTarget } from '../../messaging/space-adapter.ts';
 import {
   createBoundSpaceTaskMetadataEditor,
   isTaskMetadataOnlyUpdate,
@@ -105,7 +105,7 @@ import {
   isTaskDependenciesOnlyUpdate,
 } from '../operations/task-dependencies.ts';
 import { createSpaceTaskFieldUpdater } from '../operations/task-field-effects.ts';
-import type { ReplyRoutingRegistry } from '../runtime/reply-routing-registry.ts';
+import type { ReplyRoutingRegistry } from '../../messaging/reply-routing-registry.ts';
 import {
   hasSpaceAuthority,
   type SpaceMcpSessionRole,

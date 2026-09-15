@@ -8,7 +8,7 @@ import type { CreateStandaloneTaskInput } from '../../storage/tasks/create-task.
 import type { TransitionStandaloneTaskInput } from '../../storage/tasks/transition-task.ts';
 import { createGetTaskOperation } from './task-get.ts';
 import { createDiscoveryOperations } from './discovery.ts';
-import { createSendMessageOperation } from './message-send.ts';
+import { createSendMessageOperation } from '../messaging/message-send.ts';
 import {
   createOperationRegistry,
   type OperationRegistry,

@@ -3,7 +3,7 @@ import type {
   MessageHub,
   UpdateSpaceAgentTemplateParams,
 } from '@hyperneo/shared';
-import { isReservedAgentHandle } from '../space/agent-handle.ts';
+import { isReservedAgentHandle } from '../messaging/agent-handle.ts';
 import { getLongHorizonAgentTemplates } from '../space/agents/long-horizon-agent-templates.ts';
 import type { SpaceAgentTemplateManager } from '../space/managers/space-agent-template-manager.ts';
 import type { SpaceManager } from '../space/managers/space-manager.ts';

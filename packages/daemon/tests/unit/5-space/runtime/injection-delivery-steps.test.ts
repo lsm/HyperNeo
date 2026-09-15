@@ -1,11 +1,11 @@
 import { describe, expect, it, mock } from 'bun:test';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
-import type { InjectionDeliveryRowDeps } from '../../../../src/lib/space/runtime/injection-delivery-steps';
+import type { InjectionDeliveryRowDeps } from '../../../../src/lib/messaging/injection-delivery-steps';
 import {
   flipDeliveryRowToDeferred,
   reopenFailedDeliveryRow,
   settleDeliveryRowStatus,
-} from '../../../../src/lib/space/runtime/injection-delivery-steps';
+} from '../../../../src/lib/messaging/injection-delivery-steps';
 
 const SESSION_ID = 'session-inject-steps';
 const MESSAGE_ID = '11111111-2222-3333-4444-555555555555';
