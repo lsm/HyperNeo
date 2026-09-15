@@ -1,6 +1,6 @@
 # RPC/MCP Unification — Target Structure
 
-Target architecture after all operations converge on a single `OperationRegistry` and a two-stage pre-invocation pipeline: shared `resolve + validate`, then transport-specific policy.
+Target architecture after all operations converge on a single `OperationRegistry` and a two-stage pre-invocation pipeline: transport-specific caller policy first, then shared `resolve + parse + execute + validate`.
 
 ```mermaid
 %%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#e1f5e1', 'primaryTextColor': '#1a1a1a', 'primaryBorderColor': '#2e7d32', 'lineColor': '#666666', 'secondaryColor': '#e3f2fd', 'tertiaryColor': '#fff3e0'}}}%%
@@ -19,10 +19,11 @@ flowchart TB
 
   subgraph Client [Client / Agent]
     Web["packages/web"]
-    CLI["packages/cli"]
     Desktop["packages/desktop"]
     AgentSDK["Agent SDK<br/>(in-process)"]
     Acp["ACP Agent<br/>(out-of-process)"]
+    AcpStdio["ACP stdio adapter"]
+    Internal["daemon internal caller"]
   end
 
   subgraph Transport [Shared Transport]
@@ -35,22 +36,30 @@ flowchart TB
     Mcp["hyperneo-operations<br/>MCP server"]
   end
 
-  subgraph SharedPre [Shared Pre-Invocation]
-    Resolve["resolve operation"]
-    Validate["validate input"]
-  end
-
-  subgraph RpcPolicy [RPC-Specific Policy]
-    RpcAuth["session auth"]
+  subgraph RpcPolicy [RPC Pre-Invocation]
+    RpcAuth["resolve human principal"]
+    RpcScope["resolve target scope"]
+    RpcMatch["require same Space"]
     RpcRate["rate limit"]
+    RpcAudit["audit"]
   end
 
-  subgraph McpPolicy [MCP-Specific Policy]
+  subgraph McpPolicy [MCP Pre-Invocation]
+    McpPrincipal["resolve agent principal"]
+    McpScope["resolve target scope"]
+    McpMatch["require same Space"]
     McpSafety["safety class"]
-    McpTargets["resolve targets"]
     McpRole["role admission"]
     McpAutonomy["autonomy gate"]
-    McpAudit["audit + rate"]
+    McpRate["rate limit"]
+    McpAudit["audit"]
+  end
+
+  subgraph SharedInvocation [Shared Invoker]
+    Resolve["resolve operation"]
+    Validate["validate input"]
+    Execute["execute"]
+    ValidateResult["validate result"]
   end
 
   subgraph OpsPlane [Operations Plane]
@@ -80,24 +89,34 @@ flowchart TB
   end
 
   Web -->|WebSocket| Hub
-  CLI -->|WebSocket| Hub
   Desktop -->|WebSocket| Hub
   AgentSDK -->|MCP tools| Mcp
-  Acp -->|Unix socket| Proxy
+  Acp -->|stdio MCP JSON-RPC| AcpStdio
+  AcpStdio -->|ProxyCallRequest over Unix socket| Proxy
   Proxy -->|MCP| Mcp
   Hub -->|REQ/RSP| Rpc
-  Rpc --> SharedPre
-  Mcp -->|tools/call invoke| SharedPre
-  Resolve --> Validate
-  Validate -->|RPC path| RpcAuth
-  Validate -->|MCP path| McpSafety
-  RpcAuth --> RpcRate
-  RpcRate --> OpRegistry
-  McpSafety --> McpTargets
-  McpTargets --> McpRole
+  Rpc --> RpcAuth
+  Mcp -->|tools/call invoke| McpPrincipal
+  McpPrincipal --> McpScope
+  McpScope --> McpMatch
+  McpMatch --> McpSafety
+  McpSafety --> McpRole
   McpRole --> McpAutonomy
-  McpAutonomy --> McpAudit
-  McpAudit --> OpRegistry
+  McpAutonomy --> McpRate
+  McpRate --> McpAudit
+  McpAudit --> SharedInvocation
+  RpcAuth --> RpcScope
+  RpcScope --> RpcMatch
+  RpcMatch --> RpcRate
+  RpcRate --> RpcAudit
+  RpcAudit --> SharedInvocation
+  Internal -->|constructs OperationCaller { source: internal }| SharedInvocation
+  Resolve --> Validate
+  Validate --> Execute
+  Execute --> ValidateResult
+  Execute -->|delegates| OpRegistry
+  ValidateResult -->|response mapping| Rpc
+  ValidateResult -->|response mapping| Mcp
   OpRegistry --> Tasks
   OpRegistry --> Messaging
   OpRegistry --> Workflows
@@ -121,12 +140,12 @@ flowchart TB
   DB --> Reactive
   Reactive -->|live updates| Web
 
-  class Web,CLI,Desktop,AgentSDK,Acp client
+  class Web,Desktop,AgentSDK,Acp,AcpStdio,Internal client
   class Hub,Proxy transport
   class Rpc,Mcp adapter
-  class Resolve,Validate shared
-  class RpcAuth,RpcRate rpcpolicy
-  class McpSafety,McpTargets,McpRole,McpAutonomy,McpAudit mcppolicy
+  class Resolve,Validate,Execute,ValidateResult shared
+  class RpcAuth,RpcScope,RpcMatch,RpcRate,RpcAudit rpcpolicy
+  class McpPrincipal,McpScope,McpMatch,McpSafety,McpRole,McpAutonomy,McpRate,McpAudit mcppolicy
   class OpRegistry ops
   class Tasks,Messaging,Workflows,Goals,Evolve,Memory,Events,Ext subsystem
   class SpaceOrganizer,Scope,Permission space
@@ -137,10 +156,13 @@ flowchart TB
 ## Key ideas
 
 - **Two-stage pre-invocation**:
-  - **Shared**: resolve the operation and validate input. Same for both RPC and MCP.
-  - **Transport-specific policy**: after validation, the RPC adapter runs session auth and rate limits, while the MCP adapter runs the stricter agent policy — safety class, target resolution, role admission, autonomy gate, and audit.
-- **Operations plane**: a flat `OperationRegistry` of subsystem operations (`tasks`, `messaging`, `workflows`, `goals`, `evolve`, `memory`, `external events`, plus extension subsystems). No `Space`/`Node` split and no separate `ActionRegistry`.
-- **Space as organizer**: scopes, permissions, and roles configure which operations are allowed in a session, especially for the agent/MCP path.
-- **Two thin adapters**: `operation.invoke` for MessageHub RPC and `hyperneo-operations` MCP server for the agent SDK and ACP.
-- **Extensibility**: a new subsystem registers its operations in `OperationRegistry` without touching the core adapters or policy logic.
+  - **Transport-specific caller policy first.** Each transport's pre-invocation pipeline resolves the caller principal and runs transport-specific policy before the operation is resolved. This matches the ADR 0006 trust boundary: a transport must produce a trusted `OperationCaller` before the shared invoker resolves, validates, executes, and result-validates an operation.
+  - **Shared invocation** for both transports: `resolve operation` → `validate input` → `execute` → `validate result`. The `invokeOperation` pipeline already implements this sequence.
+  - The pre-invocation pipelines share stages where possible (`resolve target scope`, `require same Space`, `audit`) but keep transport-specific concerns separate (`resolve human principal` for RPC, `resolve agent principal`/`safety class`/`role admission`/`autonomy` for MCP).
+- **Internal caller path.** Trusted daemon/runtime code constructs an `OperationCaller` with `source: 'internal'` and enters the shared invoker directly, bypassing both transports. ADR 0006 explicitly includes `internal` as a caller source.
+- **Operations plane**: a flat `OperationRegistry` of subsystem operations (`tasks`, `messaging`, `workflows`, `goals`, `evolve`, `memory`, `external events`, plus extension subsystems). No `Space`/`Node` split at this layer. The `ActionRegistry`/`call_action` relationship is left open per ADR 0006 — `call_action` may become a thin front over the MCP pre-invocation pipeline or remain a parallel policy layer — and this target does not present that decision as already made.
+- **Space as organizer**: scopes, permissions, and roles configure which operations are allowed in a session, especially for the agent/MCP path. The same shared stages feed both RPC and MCP role/scope decisions.
+- **Two thin adapters**: `operation.invoke` for MessageHub RPC and `hyperneo-operations` MCP server for the agent SDK and ACP. Both adapters own only transport concerns (envelope parsing, caller principal, error mapping); they do not duplicate the operation effect or validation logic.
+- **Result validation is mandatory.** The shared invoker validates the operation result against its schema and maps `invalid_result` back through the adapter, so malformed output becomes a typed failure rather than an untyped transport response.
+- **Auditing and scope admission are not MCP-only.** The target shows `resolve target scope`, `require same Space`, and `audit` in both the RPC and MCP pre-invocation pipelines, so RPC convergence does not create an unaudited cross-scope route.
 - **Persistence unchanged**: all writes still go through SQLite; `ReactiveDatabase` and `LiveQuery` push updates back to clients.
