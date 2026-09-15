@@ -1347,3 +1347,87 @@ describe('publish_task — operation-backed', () => {
     }
   });
 });
+
+function makeArchiveTaskOperation(
+  execute: (input: { taskId: string }) => Promise<{ id: string } | string>
+) {
+  return createOperationRegistry([
+    defineOperation({
+      name: 'task.archive',
+      description: 'Archive a task',
+      inputSchema: z.object({ taskId: z.string() }),
+      resultSchema: z.union([z.object({ id: z.string() }), z.string()]),
+      execute: execute as never,
+    }),
+  ]);
+}
+
+describe('archive_task — operation-backed', () => {
+  test('archive_task is present through the operation registry even without onArchiveTask', () => {
+    const ctx = makeCtx();
+    try {
+      const operations = makeArchiveTaskOperation(async () => ({ id: 'task-1' }));
+      const entry = createNodeRegistryEntries(makeBareConfig(ctx), operations).find(
+        (candidate) => candidate.name === 'archive_task'
+      );
+      if (!entry) throw new Error('archive_task entry missing');
+      expect(entry.safetyClass).toBe('destructive');
+      expect(entry.autonomyRequirement).toBe(4);
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('invokes task.archive with the action task_id and maps a task result to { success, task }', async () => {
+    const ctx = makeCtx();
+    try {
+      const calls: Array<{ input: unknown }> = [];
+      const operations = makeArchiveTaskOperation(async (input) => {
+        calls.push({ input });
+        return { id: 'task-1', title: 'Archived' };
+      });
+      const config = makeBareConfig(ctx);
+      const entry = createNodeRegistryEntries(config, operations).find(
+        (candidate) => candidate.name === 'archive_task'
+      );
+      if (!entry) throw new Error('archive_task entry missing');
+      const result = (await entry.handler({ task_id: 'task-1' })) as {
+        content: Array<{ text: string }>;
+        isError?: boolean;
+      };
+      expect(result.isError).toBeUndefined();
+      expect(JSON.parse(result.content[0].text)).toEqual({
+        success: true,
+        task: { id: 'task-1' },
+      });
+      expect(calls).toEqual([{ input: { taskId: 'task-1' } }]);
+      expect(ctx.calls.get('archive_task')).toBeUndefined();
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('maps a string rejection to the legacy { success: false, error } shape', async () => {
+    const ctx = makeCtx();
+    try {
+      const operations = makeArchiveTaskOperation(async () => 'archive_active_run');
+      const entry = createNodeRegistryEntries(makeBareConfig(ctx), operations).find(
+        (candidate) => candidate.name === 'archive_task'
+      );
+      if (!entry) throw new Error('archive_task entry missing');
+      const result = (await entry.handler({ task_id: 'task-1' })) as {
+        content: Array<{ text: string }>;
+        isError?: boolean;
+      };
+      expect(result.isError).toBeUndefined();
+      const payload = JSON.parse(result.content[0].text) as {
+        success: boolean;
+        error: string;
+      };
+      expect(payload.success).toBe(false);
+      expect(payload.error).toContain('active workflow run');
+    } finally {
+      ctx.db.close();
+    }
+  });
+});
