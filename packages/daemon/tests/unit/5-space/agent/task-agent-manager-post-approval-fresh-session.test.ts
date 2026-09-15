@@ -9,6 +9,10 @@ import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
 import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
+import {
+  createOperationRegistry,
+  type OperationRegistry,
+} from '../../../../src/lib/operations/registry.ts';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 
 const TASK_ID = 'task-850';
@@ -63,6 +67,7 @@ function makeCapturingFakeSession(id: string): {
   const mergedArgs: Record<string, unknown>[] = [];
   const session = {
     session: { id },
+    getSessionData: () => ({ id, config: {} }),
     skillOverrides: undefined,
     toolGuards: undefined,
     onMissingWorkflowMcpServers: undefined,
@@ -906,7 +911,7 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
       }
     ).rehydrateSubSession = async (id) =>
       seedLiveSession(tam, id, {
-        config: { mcpServers: { 'space-actions': { type: 'sdk' } } },
+        config: { workerOperations: true },
       }).session;
     const injected = stubReuseInjection(tam);
 
@@ -930,6 +935,46 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
 
     expect(result.sessionId).toBe(FRESH_PA_SESSION_ID);
     expect(fromInitSpy).toHaveBeenCalledTimes(1);
+  });
+
+  test('fresh spawn installs the worker operations on the created session (#4600)', async () => {
+    const tam = makeManager([execOnNode(OTHER_NODE, OTHER_SESSION_ID)]);
+    seedLiveSession(tam, OTHER_SESSION_ID);
+    stubFreshCreateSpawnPath(tam);
+    delete (tam as unknown as Record<string, unknown>).buildNodeAgentMcpServersForSession;
+    Object.assign(
+      (tam.config as unknown as { spaceRuntimeService: Record<string, unknown> })
+        .spaceRuntimeService,
+      { getSpaceRuntime: () => ({}) }
+    );
+    (tam.config as unknown as Record<string, unknown>).sessionManager = {
+      registerSession: () => {},
+      getOperationRegistry: () => createOperationRegistry([]),
+    };
+    const providers: Array<() => OperationRegistry> = [];
+    const fresh = makeFakeSession(FRESH_PA_SESSION_ID);
+    (
+      fresh.session as unknown as {
+        setOperationRegistryProvider: (provider: () => OperationRegistry) => void;
+      }
+    ).setOperationRegistryProvider = (provider) => {
+      providers.push(provider);
+    };
+    fromInitSpy.mockImplementation(
+      (() => fresh.session) as unknown as typeof AgentSession.fromInit
+    );
+
+    const result = await tam.spawnPostApprovalSubSession(
+      postApprovalSpawn(twoReviewerNodeWorkflow())
+    );
+
+    expect(result.sessionId).toBe(FRESH_PA_SESSION_ID);
+    expect(fromInitSpy).toHaveBeenCalledTimes(1);
+    const names = tam.workerActionNamesFor(FRESH_PA_SESSION_ID);
+    expect(names?.size).toBeGreaterThan(0);
+    const installed = new Set(providers.at(-1)!().entries.map((entry) => entry.name));
+    for (const name of names!) expect(installed.has(name)).toBe(true);
+    expect(fresh.session.getSessionData().config).toMatchObject({ workerOperations: true });
   });
 
   test('rejects the spawn when the space pauses during the reuse probe', async () => {

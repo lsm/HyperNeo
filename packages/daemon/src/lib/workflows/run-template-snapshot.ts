@@ -1,6 +1,6 @@
 import type { SpaceAgentTemplate, SpaceWorkflow, WorkflowTemplateSnapshot } from '@hyperneo/shared';
 import type { SpaceAgentTemplateRepository } from '../../storage/repositories/space-agent-template-repository.ts';
-import { getBuiltInSpaceAgentTemplates } from '../space/managers/space-agent-template-manager.ts';
+import { getBuiltInSpaceAgentTemplates } from '../agents/template-manager.ts';
 
 export type AgentTemplateResolver = (key: string) => SpaceAgentTemplate | null;
 

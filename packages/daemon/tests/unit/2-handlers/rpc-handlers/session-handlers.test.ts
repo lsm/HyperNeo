@@ -7,6 +7,10 @@ import type {
   InternalEventBus,
 } from '../../../../src/lib/internal-event-bus';
 import { MESSAGE_DELIVERY } from '../../../../src/lib/job-queue-constants';
+import {
+  createOperationRegistry,
+  type OperationRegistry,
+} from '../../../../src/lib/operations/registry';
 import { clearModelsCache, setModelsCache } from '../../../../src/lib/model-service.js';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
@@ -2392,7 +2396,7 @@ describe('Session RPC Handlers — client.interrupt', () => {
   });
 });
 
-describe('Session RPC Handlers — session.create universal-read dispatcher injection', () => {
+describe('Session RPC Handlers — session.create universal-read operations injection', () => {
   let messageHubData: ReturnType<typeof createMockMessageHub>;
 
   function makeSessionFixture(sessionData: Record<string, unknown>) {
@@ -2408,15 +2412,27 @@ describe('Session RPC Handlers — session.create universal-read dispatcher inje
         mcpServers: { ...(config.mcpServers ?? {}), ...additional },
       };
     });
+    const installedProviders: Array<() => OperationRegistry> = [];
+    const setOperationRegistryProvider = mock((provider: () => OperationRegistry) => {
+      installedProviders.push(provider);
+    });
     const agentSession = {
       getSessionData: () => session,
       mergeRuntimeMcpServers,
+      setOperationRegistryProvider,
     };
     const sessionManager = {
       createSession: mock(async () => session.id),
       getSession: mock(() => agentSession),
+      getOperationRegistry: mock(() => createOperationRegistry([])),
     } as unknown as SessionManager;
-    return { sessionManager, session, mergeRuntimeMcpServers };
+    return {
+      sessionManager,
+      session,
+      mergeRuntimeMcpServers,
+      setOperationRegistryProvider,
+      installedProviders,
+    };
   }
 
   async function setupWith(
@@ -2436,7 +2452,7 @@ describe('Session RPC Handlers — session.create universal-read dispatcher inje
     );
   }
 
-  function buildRuntimeService(): SpaceRuntimeService {
+  function buildRuntimeService(sessionManager: SessionManager): SpaceRuntimeService {
     return new SpaceRuntimeService({
       db: {} as Database,
       spaceManager: {
@@ -2450,59 +2466,39 @@ describe('Session RPC Handlers — session.create universal-read dispatcher inje
         getByAgentSessionId: () => null,
         getById: () => null,
       } as unknown as NodeExecutionRepository,
+      sessionManager,
       tickIntervalMs: 60_000,
     });
   }
 
-  async function dispatchCallAction(server: unknown, actionName: string): Promise<unknown> {
-    const tools = (
-      server as {
-        tools: Array<{
-          name: string;
-          handler: (args: unknown, extra: unknown) => Promise<{ content: Array<{ text: string }> }>;
-        }>;
-      }
-    ).tools;
-    const callAction = tools.find((entry) => entry.name === 'call_action');
-    if (!callAction) throw new Error('call_action tool missing');
-    const result = await callAction.handler({ name: actionName, params: {} }, {});
-    return JSON.parse(result.content[0].text);
-  }
-
-  it('attaches the read-only space-actions dispatcher to a non-space session and serves list_actions', async () => {
+  it('installs the read-only operation registry on a non-space session', async () => {
     const fixture = makeSessionFixture({});
-    await setupWith(fixture.sessionManager, buildRuntimeService());
+    await setupWith(fixture.sessionManager, buildRuntimeService(fixture.sessionManager));
 
     const handler = messageHubData.handlers.get('session.create');
     expect(handler).toBeDefined();
     await handler!({ workspacePath: '/tmp/hyperneo-ws' }, {});
 
-    const attached = ((fixture.session.config as { mcpServers?: Record<string, unknown> })
-      .mcpServers ?? {})['space-actions'] as
-      | { tools: Array<{ name: string }>; registry: { entries: Array<{ name: string }> } }
-      | undefined;
-    expect(attached).toBeDefined();
-    expect(attached?.tools.map((entry) => entry.name)).toEqual(['call_action']);
-    expect(attached?.registry.entries.map((entry) => entry.name).sort()).toEqual([
+    expect(fixture.setOperationRegistryProvider).toHaveBeenCalledTimes(1);
+    expect(fixture.mergeRuntimeMcpServers).not.toHaveBeenCalled();
+
+    const registry = fixture.installedProviders.at(-1)!();
+    expect(registry.entries.map((entry) => entry.name).sort()).toEqual([
       'describe_action',
       'list_actions',
     ]);
-
-    const catalog = (await dispatchCallAction(attached, 'list_actions')) as Array<{
-      name: string;
-    }>;
-    expect(catalog.map((entry) => entry.name).sort()).toEqual(['describe_action', 'list_actions']);
+    expect(registry.get('list_actions')).toBeDefined();
   });
 
-  it('routes space sessions through attachSpaceToolsToMemberSession instead of the universal dispatcher', async () => {
+  it('routes space sessions through attachSpaceToolsToMemberSession instead of the universal read surface', async () => {
     const fixture = makeSessionFixture({ context: { spaceId: 'space-1' } });
     const attachSpaceToolsToMemberSession = mock(async () => {});
-    const buildUniversalReadDispatcherServer = mock(() => {
-      throw new Error('buildUniversalReadDispatcherServer must not be called');
+    const installUniversalReadOperations = mock(() => {
+      throw new Error('installUniversalReadOperations must not be called');
     });
     await setupWith(fixture.sessionManager, {
       attachSpaceToolsToMemberSession,
-      buildUniversalReadDispatcherServer,
+      installUniversalReadOperations,
     });
 
     const handler = messageHubData.handlers.get('session.create');
@@ -2510,7 +2506,8 @@ describe('Session RPC Handlers — session.create universal-read dispatcher inje
     await handler!({ workspacePath: '/tmp/hyperneo-ws' }, {});
 
     expect(attachSpaceToolsToMemberSession).toHaveBeenCalledTimes(1);
-    expect(buildUniversalReadDispatcherServer).not.toHaveBeenCalled();
+    expect(installUniversalReadOperations).not.toHaveBeenCalled();
+    expect(fixture.setOperationRegistryProvider).not.toHaveBeenCalled();
     expect(fixture.mergeRuntimeMcpServers).not.toHaveBeenCalled();
   });
 });

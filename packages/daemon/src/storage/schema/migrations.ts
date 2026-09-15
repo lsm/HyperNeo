@@ -26,7 +26,7 @@ import {
   resolveLegacyShape,
 } from '@hyperneo/shared';
 import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';
-import { migrateLegacyLongHorizonAgentData } from '../../lib/space/agents/legacy-long-horizon-migration.ts';
+import { migrateLegacyLongHorizonAgentData } from '../../lib/agents/legacy-long-horizon-migration.ts';
 import { RESERVED_SPACE_AGENT_HANDLES, slugify, validateSlug } from '../../lib/space/slug.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import { createEvolutionTables } from './evolution.ts';

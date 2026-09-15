@@ -12,7 +12,7 @@ Upgrade the system prompts for planner, coder, reviewer, and QA node agents in t
 
 ### Task 2.1: Enhance Coder Node Agent System Prompt
 
-**Description**: Update `buildCustomAgentSystemPrompt()` in `packages/daemon/src/lib/space/agents/custom-agent.ts` to include full git workflow instructions, PR creation, and gate data writing — mirroring the Room system's `buildCoderSystemPrompt()`.
+**Description**: Update `buildCustomAgentSystemPrompt()` in `packages/daemon/src/lib/agents/custom-agent.ts` to include full git workflow instructions, PR creation, and gate data writing — mirroring the Room system's `buildCoderSystemPrompt()`.
 
 **Subtasks**:
 1. Read `packages/daemon/src/lib/room/agents/coder-agent.ts` (`buildCoderSystemPrompt()`) and identify all prompt sections

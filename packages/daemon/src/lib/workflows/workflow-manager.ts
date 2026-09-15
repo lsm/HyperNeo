@@ -9,7 +9,7 @@ import { generateUUID } from '@hyperneo/shared';
 import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
 import type { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository.ts';
 import { Logger } from '../logger.ts';
-import { isRunnableUnifiedAgent } from '../space/agents/worker-long-horizon-mapper.ts';
+import { isRunnableUnifiedAgent } from '../agents/worker-long-horizon-mapper.ts';
 import { patchPinnedBuiltInPromptDrift } from './built-in-prompt-drift.ts';
 import { validatePostApproval, validatePostApprovalRoutes } from './post-approval-validator.ts';
 import '../github/connectors/production.ts';

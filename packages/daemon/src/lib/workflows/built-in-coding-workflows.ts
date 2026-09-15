@@ -7,7 +7,7 @@ import {
   CODER_OWNED_REVIEW_PROMPT,
 } from '@hyperneo/prompts';
 import type { EventInterest, SpaceWorkflow } from '@hyperneo/shared';
-import { workerTemplateKey } from '../space/agents/long-horizon-agent-templates.ts';
+import { workerTemplateKey } from '../agents/long-horizon-templates.ts';
 import { CODER_OWNED_MERGE_INSTRUCTIONS } from './post-approval-merge-template.ts';
 
 export const IMPLEMENTER_PR_EVENT_INTEREST: EventInterest = {

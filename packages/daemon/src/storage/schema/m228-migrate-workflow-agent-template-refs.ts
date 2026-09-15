@@ -13,7 +13,7 @@ import {
   synthesizeOrphanAgentTemplate,
   type AgentTemplateSynthesisInput,
   type OrphanAgentSlotSource,
-} from '../../lib/space/agents/agent-template-synthesis.ts';
+} from '../../lib/agents/template-synthesis.ts';
 
 interface WorkflowRow {
   id: string;

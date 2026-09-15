@@ -18,8 +18,8 @@ import {
   getLongHorizonAgentTemplate,
   WORKER_TEMPLATE_KEY_PREFIX,
   workerTemplateKey,
-} from '../../../../src/lib/space/agents/long-horizon-agent-templates.ts';
-import { getPresetAgentTemplates } from '../../../../src/lib/space/agents/seed-agents.ts';
+} from '../../../../src/lib/agents/long-horizon-templates.ts';
+import { getPresetAgentTemplates } from '../../../../src/lib/agents/seed-agents.ts';
 import {
   exportWorkflow,
   validateExportedWorkflow,

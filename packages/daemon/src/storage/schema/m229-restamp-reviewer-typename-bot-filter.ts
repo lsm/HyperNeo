@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { Logger } from '../../lib/logger.ts';
-import { getPresetAgentTemplates } from '../../lib/space/agents/seed-agents.ts';
+import { getPresetAgentTemplates } from '../../lib/agents/seed-agents.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 
 const log = new Logger('migration-229');

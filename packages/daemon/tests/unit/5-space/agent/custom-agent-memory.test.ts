@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test';
-import { buildCustomAgentTaskMessage } from '../../../../src/lib/space/agents/custom-agent.ts';
+import { buildCustomAgentTaskMessage } from '../../../../src/lib/agents/custom-agent.ts';
 import type { Space, SpaceLongHorizonAgent, SpaceTask } from '@hyperneo/shared';
 import type { AgentMemorySearchResult } from '../../../../src/storage/repositories/agent-memory-repository.ts';
 

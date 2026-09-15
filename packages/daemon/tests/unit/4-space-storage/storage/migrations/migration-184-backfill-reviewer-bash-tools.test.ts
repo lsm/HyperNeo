@@ -1,8 +1,8 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { copyFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { computeAgentTemplateHash } from '../../../../../src/lib/space/agents/agent-template-hash.ts';
-import { getPresetAgentTemplates } from '../../../../../src/lib/space/agents/seed-agents.ts';
+import { computeAgentTemplateHash } from '../../../../../src/lib/agents/template-hash.ts';
+import { getPresetAgentTemplates } from '../../../../../src/lib/agents/seed-agents.ts';
 import { createLegacySpaceAgentTables } from '../../../helpers/space-agent-schema.ts';
 import { runMigrations } from '../../../../../src/storage/schema/index.ts';
 import {

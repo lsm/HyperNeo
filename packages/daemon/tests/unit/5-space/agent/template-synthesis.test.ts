@@ -4,7 +4,7 @@ import {
   synthesizeAgentTemplate,
   synthesizeOrphanAgentTemplate,
   type AgentTemplateSynthesisInput,
-} from '../../../../src/lib/space/agents/agent-template-synthesis.ts';
+} from '../../../../src/lib/agents/template-synthesis.ts';
 
 function makeSynthesisInput(
   overrides: Partial<AgentTemplateSynthesisInput> = {}

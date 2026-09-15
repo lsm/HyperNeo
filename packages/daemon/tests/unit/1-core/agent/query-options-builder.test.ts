@@ -21,7 +21,7 @@ import {
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
 import { SkillsManager } from '../../../../src/lib/skills-manager';
-import { LONG_HORIZON_AGENT_BUILTIN_TOOLS } from '../../../../src/lib/space/agents/long-horizon-agent-tools';
+import { LONG_HORIZON_AGENT_BUILTIN_TOOLS } from '../../../../src/lib/agents/long-horizon-tools';
 import { AppMcpServerRepository } from '../../../../src/storage/repositories/app-mcp-server-repository';
 import { SkillRepository } from '../../../../src/storage/repositories/skill-repository';
 import { createTables } from '../../../../src/storage/schema';

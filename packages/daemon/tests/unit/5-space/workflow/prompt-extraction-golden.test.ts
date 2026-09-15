@@ -13,16 +13,16 @@ import { vcsAgent } from '../../../../src/lib/agent/coordinator/vcs.ts';
 import { verifierAgent } from '../../../../src/lib/agent/coordinator/verifier.ts';
 import { SECURITY_AGENT_SYSTEM_PROMPT } from '../../../../src/lib/github/prompts/security-prompt.ts';
 import { buildTitleGenerationPrompt } from '../../../../src/lib/session/session-lifecycle.ts';
-import { NON_DELEGATING_GENERAL_AGENT } from '../../../../src/lib/space/agents/custom-agent.ts';
-import { LONG_HORIZON_SCHEDULING_GUARDRAIL } from '../../../../src/lib/space/agents/long-horizon-agent-tools.ts';
+import { NON_DELEGATING_GENERAL_AGENT } from '../../../../src/lib/agents/custom-agent.ts';
+import { LONG_HORIZON_SCHEDULING_GUARDRAIL } from '../../../../src/lib/agents/long-horizon-tools.ts';
 import {
   getPresetAgentTemplates,
   LEGACY_REVIEWER_PROMPT,
-} from '../../../../src/lib/space/agents/seed-agents.ts';
+} from '../../../../src/lib/agents/seed-agents.ts';
 import {
   QA_SYSTEM_CONTRACT,
   REVIEWER_SYSTEM_CONTRACT,
-} from '../../../../src/lib/space/agents/system-contracts.ts';
+} from '../../../../src/lib/agents/system-contracts.ts';
 import { buildSelectionPrompt } from '../../../../src/lib/workflows/llm-workflow-selector.ts';
 import { appendPostApprovalCompletionInstructions } from '../../../../src/lib/workflows/post-approval-route-selection.ts';
 import { buildPromptTooLongContinueNag } from '../../../../src/lib/session/prompt-too-long-recovery.ts';

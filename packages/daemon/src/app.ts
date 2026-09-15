@@ -11,7 +11,7 @@ import {
 } from './storage/repositories/agent-memory-transformers.ts';
 import { SessionManager } from './lib/session-manager.ts';
 import {
-  hasRuntimeNodeAgentServer,
+  hasRuntimeWorkerOperations,
   isWorkflowSubSessionIdentity,
 } from './lib/session/sub-session-identity.ts';
 import { AuthManager } from './lib/auth-manager.ts';
@@ -982,7 +982,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           if (
             session &&
             isWorkflowSubSessionIdentity(sessionId) &&
-            !hasRuntimeNodeAgentServer(session.getSessionData().config)
+            !hasRuntimeWorkerOperations(session.getSessionData().config)
           ) {
             return null;
           }

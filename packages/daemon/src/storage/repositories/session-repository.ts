@@ -77,6 +77,7 @@ export class SessionRepository {
       session.status,
       JSON.stringify(session.config, (key, val) => {
         if (key === 'mcpServers') return undefined;
+        if (key === 'workerOperations') return undefined;
         if (typeof val === 'function') return undefined;
         return val;
       }),
@@ -219,6 +220,7 @@ export class SessionRepository {
       try {
         serializedConfig = JSON.stringify(mergedConfig, (key, val) => {
           if (key === 'mcpServers') return undefined;
+          if (key === 'workerOperations') return undefined;
           if (typeof val === 'function') return undefined;
           return val;
         });

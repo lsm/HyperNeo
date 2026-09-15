@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { validateAgentModelPool } from '../../../../src/lib/space/agents/agent-validation';
+import { validateAgentModelPool } from '../../../../src/lib/agents/validation';
 import { clearModelsCache, setModelsCache } from '../../../../src/lib/model-service';
 import { getProviderRegistry } from '../../../../src/lib/providers/registry';
 import type { ModelInfo } from '@hyperneo/shared';

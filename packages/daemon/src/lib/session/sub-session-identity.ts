@@ -42,15 +42,8 @@ export function buildPostApprovalSessionId(
   return `space:${spaceId}:task:${taskId}:post-approval:${agentName}`;
 }
 
-export function hasRuntimeNodeAgentServer(
-  config:
-    | {
-        mcpServers?: Record<string, unknown>;
-      }
-    | undefined
+export function hasRuntimeWorkerOperations(
+  config: { workerOperations?: boolean } | undefined
 ): boolean {
-  const server = config?.mcpServers?.['space-actions'];
-  return (
-    typeof server === 'object' && server !== null && (server as { type?: unknown }).type === 'sdk'
-  );
+  return config?.workerOperations === true;
 }

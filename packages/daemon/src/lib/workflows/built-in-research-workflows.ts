@@ -4,7 +4,7 @@ import {
   REVIEW_ONLY_REVIEW_PROMPT,
 } from '@hyperneo/prompts';
 import type { SpaceWorkflow } from '@hyperneo/shared';
-import { workerTemplateKey } from '../space/agents/long-horizon-agent-templates.ts';
+import { workerTemplateKey } from '../agents/long-horizon-templates.ts';
 import { IMPLEMENTER_PR_EVENT_INTEREST } from './built-in-coding-workflows.ts';
 import { CODER_OWNED_MERGE_INSTRUCTIONS } from './post-approval-merge-template.ts';
 

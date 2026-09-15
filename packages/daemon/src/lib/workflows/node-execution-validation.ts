@@ -7,7 +7,7 @@ import type {
   WorkflowNode,
 } from '@hyperneo/shared';
 import { isRateOrUsageLimited, resolveNodeAgents } from '@hyperneo/shared';
-import { migratedAgentTemplateKey } from '../space/agents/agent-template-synthesis.ts';
+import { migratedAgentTemplateKey } from '../agents/template-synthesis.ts';
 
 export type ExecutionWorkflowValidationResult =
   | { valid: true }

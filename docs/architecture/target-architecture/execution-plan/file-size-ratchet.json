@@ -251,10 +251,6 @@
       "maxLines": 833,
       "followUp": "M7 agent runtime boundary split"
     },
-    "packages/daemon/src/lib/space/agents/custom-agent.ts": {
-      "maxLines": 820,
-      "followUp": "M10 cleanup split when touched"
-    },
     "packages/web/src/lib/session-store.ts": {
       "maxLines": 816,
       "followUp": "M8 focused read-model stores"

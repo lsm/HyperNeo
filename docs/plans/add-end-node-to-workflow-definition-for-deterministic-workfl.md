@@ -498,7 +498,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 **Subtasks:**
 
 1. **Remove `SpaceAgent.role` usage:**
-   - Remove `getFeaturesForRole()` from `packages/daemon/src/lib/space/agents/seed-agents.ts`. **Replacement:** `SessionFeatures` should be derived from `SpaceAgent.tools[]` array instead of the role string. If `tools` is empty, use sensible defaults (equivalent to current `DEFAULT_ROLE_FEATURES`).
+   - Remove `getFeaturesForRole()` from `packages/daemon/src/lib/agents/seed-agents.ts`. **Replacement:** `SessionFeatures` should be derived from `SpaceAgent.tools[]` array instead of the role string. If `tools` is empty, use sensible defaults (equivalent to current `DEFAULT_ROLE_FEATURES`).
    - Remove `resolveTaskTypeForAgent()` from `channel-router.ts` and `space-runtime.ts` — task type is no longer needed since `node_executions` don't have a `taskType` field. Remove `SpaceTaskType` type definition from `space.ts` (it becomes a dead export once `resolveTaskTypeForAgent()` and `SpaceTask.taskType` are removed — knip will flag it).
    - Remove `getRoleLabel()` usage.
    - Update `custom-agent.ts` (lines 182, 201): replace `getFeaturesForRole(agent.role)` with the new tools-based feature resolution.

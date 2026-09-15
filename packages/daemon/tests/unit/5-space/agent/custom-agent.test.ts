@@ -18,8 +18,8 @@ import {
   resolveAgentInit,
   resolveCustomAgentPrompt,
   type SlotOverrides,
-} from '../../../../src/lib/space/agents/custom-agent';
-import { REVIEWER_SYSTEM_CONTRACT } from '../../../../src/lib/space/agents/system-contracts';
+} from '../../../../src/lib/agents/custom-agent';
+import { REVIEWER_SYSTEM_CONTRACT } from '../../../../src/lib/agents/system-contracts';
 import {
   CODING_WORKFLOW,
   EXTERNAL_REVIEW_BOTS_GUIDANCE,

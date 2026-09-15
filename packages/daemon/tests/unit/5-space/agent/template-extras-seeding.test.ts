@@ -4,7 +4,7 @@ import {
   buildTemplateExtrasSeeder,
   isSeedableSubscription,
   type TemplateExtrasStore,
-} from '../../../../src/lib/space/agents/template-extras-seeding';
+} from '../../../../src/lib/agents/template-extras-seeding';
 
 const agent = { id: 'agent-1', spaceId: 'space-1' } as SpaceAgent;
 

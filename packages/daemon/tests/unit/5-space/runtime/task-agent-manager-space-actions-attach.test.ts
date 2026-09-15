@@ -4,14 +4,26 @@ import { execSync } from 'node:child_process';
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { z } from 'zod';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
-import type { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
-import type { McpServerConfig } from '@hyperneo/shared';
-import type { SpaceActionsMcpServer } from '../../../../src/lib/space/actions/space-actions-server.ts';
+import { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
+import {
+  createOperationRegistry,
+  defineOperation,
+  type OperationRegistry,
+} from '../../../../src/lib/operations/registry.ts';
+import { SessionManager } from '../../../../src/lib/session/session-manager.ts';
+import { hasRuntimeWorkerOperations } from '../../../../src/lib/session/sub-session-identity.ts';
+import { MessageHub, type McpServerConfig } from '@hyperneo/shared';
 import type { ToolResult } from '../../../../src/lib/space/tools/tool-result.ts';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
+import {
+  createTestDb,
+  createTestInternalEventBus,
+  createTestSession,
+} from '../../../helpers/database';
 
 const SPACE_ID = 'space-actions-attach';
 const RUN_ID = 'run-actions-attach';
@@ -33,6 +45,7 @@ function makeManager(): TaskAgentManager {
   return new TaskAgentManager({
     db: { getDatabase: () => new BunDatabase(':memory:') },
     internalEventBus: { subscribe: () => () => {} },
+    sessionManager: { getOperationRegistry: () => createOperationRegistry([]) },
     taskRepo: {
       getTask: () => task,
       getTaskByNumber: () => task,
@@ -72,14 +85,27 @@ function makeFakeSession() {
     merged: [] as Array<Record<string, McpServerConfig>>,
     restarted: 0,
     calls: [] as string[],
+    providers: [] as Array<() => OperationRegistry>,
     session: {
       id: SUB_SESSION_ID,
-      config: { mcpServers: {} as Record<string, McpServerConfig> | undefined },
+      config: { mcpServers: {} as Record<string, McpServerConfig> | undefined } as Record<
+        string,
+        unknown
+      >,
     },
   };
   const agentSession = {
     get session() {
       return state.session;
+    },
+    setOperationRegistryProvider: (provider: () => OperationRegistry) => {
+      state.providers.push(provider);
+    },
+    handleInterrupt: async () => {
+      state.calls.push('handleInterrupt');
+    },
+    cleanup: async () => {
+      state.calls.push('cleanup');
     },
     mergeRuntimeMcpServers: (additional: Record<string, McpServerConfig>) => {
       state.merged.push(additional);
@@ -127,22 +153,24 @@ function contractOf(
   );
 }
 
-function registryNamesOf(server: SpaceActionsMcpServer): ReadonlySet<string> {
-  return new Set(server.registry.entries.map((entry) => entry.name));
+function workerActionNames(tam: TaskAgentManager, agentName = 'coder'): ReadonlySet<string> {
+  buildServers(tam, agentName);
+  return tam.workerActionNamesFor(SUB_SESSION_ID) ?? new Set<string>();
 }
 
 describe('TaskAgentManager — space-actions dispatcher attach', () => {
-  test('worker servers contain only space-actions', () => {
-    const servers = buildServers(makeManager());
-    expect(Object.keys(servers)).toEqual(['space-actions']);
-    const spaceActions = servers['space-actions'] as unknown as SpaceActionsMcpServer;
-    expect(spaceActions.tools.map((entry) => entry.name)).toEqual(['call_action']);
-    expect(spaceActions.registry.get('list_peers')?.family).toBe('node');
-    expect(spaceActions.registry.get('list_actions')).toBeDefined();
-    expect(spaceActions.registry.get('approve_pending_completion')).toBeUndefined();
+  test('worker sessions attach no MCP servers of their own', () => {
+    const tam = makeManager();
+    const servers = buildServers(tam);
+    expect(Object.keys(servers)).toEqual([]);
+    expect(workerActionNames(tam)).toContain('list_peers');
+    expect(tam.workerActionRegistryFor(SUB_SESSION_ID)?.get('list_actions')).toBeDefined();
+    expect(
+      tam.workerActionRegistryFor(SUB_SESSION_ID)?.get('approve_pending_completion')
+    ).toBeUndefined();
   });
 
-  test('reinject (self-heal rebuild path) merges the dispatcher and restarts the query', async () => {
+  test('reinject (self-heal rebuild path) reinstalls operations and restarts the query', async () => {
     const tam = makeManager();
     const fake = makeFakeSession();
     await tam.reinjectNodeAgentMcpServer(fake.agentSession, {
@@ -154,9 +182,9 @@ describe('TaskAgentManager — space-actions dispatcher attach', () => {
       workspacePath: '/tmp/ws',
       workflowNodeId: 'node-coder',
     });
-    const merged = fake.state.merged.at(-1)!;
-    expect(Object.keys(merged)).toEqual(['space-actions']);
-    expect(fake.state.session.config.mcpServers?.['space-actions']).toBeDefined();
+    const merged = fake.state.merged.at(-1) ?? {};
+    expect(Object.keys(merged)).toEqual([]);
+    expect(tam.workerActionRegistryFor(SUB_SESSION_ID)).toBeDefined();
     expect(fake.state.restarted).toBe(1);
   });
 
@@ -178,27 +206,21 @@ describe('TaskAgentManager — space-actions dispatcher attach', () => {
     });
     await tam.reinjectNodeAgentMcpServer(userProvided.agentSession, ctx);
     const merged = userProvided.state.merged.at(-1)!;
-    expect(Object.keys(merged)).toEqual(['space-actions']);
-    const reattached = userProvided.state.session.config.mcpServers?.['space-actions'];
-    expect(reattached).toBeDefined();
-    expect(reattached).not.toEqual({ __userProvided: true });
-    expect((reattached as unknown as SpaceActionsMcpServer).registry).toBeDefined();
+    expect(Object.keys(merged)).toEqual([]);
     expect(userProvided.state.restarted).toBe(1);
   });
 
   test('contract renders dispatcher guidance with registry-filtered availability', () => {
     const tam = makeManager();
-    const servers = buildServers(tam);
-    const names = registryNamesOf(servers['space-actions'] as unknown as SpaceActionsMcpServer);
-    const contract = contractOf(tam, 'coder', names);
+    const contract = contractOf(tam, 'coder', workerActionNames(tam));
     expect(contract).toContain('Tools available:');
     expect(contract).toContain(
-      'call_action({ name, params? }) on the space-actions server — one dispatcher for every action available to the Coder role'
+      'invoke({ name, input? }) on the operations server — one door for every operation available to the Coder role'
     );
-    expect(contract).toContain('call_action(name="list_actions")');
-    expect(contract).toContain('call_action(name="restore_node_agent")');
-    expect(contract).toContain('call_action(name="create_standalone_task")');
-    expect(contract).not.toContain('call_action(name="update_task")');
+    expect(contract).toContain('invoke(name="operations.list")');
+    expect(contract).toContain('invoke(name="restore_node_agent")');
+    expect(contract).toContain('invoke(name="create_standalone_task")');
+    expect(contract).not.toContain('invoke(name="update_task")');
     expect(contract).not.toContain('send_message({ target, message, data? })');
     expect(contract).not.toContain('Escalation: send_message');
   });
@@ -206,11 +228,9 @@ describe('TaskAgentManager — space-actions dispatcher attach', () => {
   test('every suggested contract action resolves through the attached worker registry', () => {
     for (const agentName of ['coder', 'reviewer']) {
       const tam = makeManager();
-      const servers = buildServers(tam, agentName);
-      const spaceActions = servers['space-actions'] as unknown as SpaceActionsMcpServer;
-      const names = registryNamesOf(spaceActions);
+      const names = workerActionNames(tam, agentName);
       const contract = contractOf(tam, agentName, names);
-      const suggested = [...contract.matchAll(/call_action\(name="([a-z_]+)"\)/g)].map(
+      const suggested = [...contract.matchAll(/invoke\(name="([a-z_]+)"\)/g)].map(
         (match) => match[1]
       );
       expect(suggested.length).toBeGreaterThan(0);
@@ -223,10 +243,132 @@ describe('TaskAgentManager — space-actions dispatcher attach', () => {
   test('without registry names the contract omits suggestions instead of guessing', () => {
     const contract = contractOf(makeManager(), 'coder', undefined);
     expect(contract).toContain(
-      'call_action({ name, params? }) on the space-actions server — one dispatcher for every action available to the Coder role'
+      'invoke({ name, input? }) on the operations server — one door for every operation available to the Coder role'
     );
-    expect(contract).toContain('call_action(name="list_actions")');
+    expect(contract).toContain('invoke(name="operations.list")');
     expect(contract).not.toContain('Suggested:');
+  });
+});
+
+describe('TaskAgentManager — worker operations attach (#4600)', () => {
+  test('attachWorkerOperations installs the worker actions on the session and marks it', () => {
+    const tam = makeManager();
+    buildServers(tam);
+    const fake = makeFakeSession();
+    expect(hasRuntimeWorkerOperations(fake.state.session.config)).toBe(false);
+
+    tam.attachWorkerOperations(fake.agentSession);
+
+    const names = tam.workerActionNamesFor(SUB_SESSION_ID);
+    expect(names?.size).toBeGreaterThan(0);
+    const installed = new Set(fake.state.providers.at(-1)!().entries.map((entry) => entry.name));
+    for (const name of names!) expect(installed.has(name)).toBe(true);
+    expect(hasRuntimeWorkerOperations(fake.state.session.config)).toBe(true);
+    expect(fake.state.session.config.mcpServers).toEqual({});
+  });
+
+  test('attachWorkerOperations leaves a session with no worker registry untouched', () => {
+    const tam = makeManager();
+    const fake = makeFakeSession();
+
+    tam.attachWorkerOperations(fake.agentSession);
+
+    expect(fake.state.providers).toEqual([]);
+    expect(hasRuntimeWorkerOperations(fake.state.session.config)).toBe(false);
+  });
+
+  test('reinject re-installs the worker operations on the healed session', async () => {
+    const tam = makeManager();
+    const fake = makeFakeSession();
+    await tam.reinjectNodeAgentMcpServer(fake.agentSession, {
+      taskId: TASK_ID,
+      subSessionId: SUB_SESSION_ID,
+      agentName: 'coder',
+      spaceId: SPACE_ID,
+      workflowRunId: RUN_ID,
+      workspacePath: '/tmp/ws',
+      workflowNodeId: 'node-coder',
+    });
+    expect(fake.state.providers).toHaveLength(1);
+    expect(hasRuntimeWorkerOperations(fake.state.session.config)).toBe(true);
+  });
+
+  test('stopping a sub-session evicts its worker registry with the rest of its bookkeeping', async () => {
+    const tam = makeManager();
+    buildServers(tam);
+    expect(tam.workerActionRegistryFor(SUB_SESSION_ID)).toBeDefined();
+    const fake = makeFakeSession();
+
+    await (
+      tam as unknown as {
+        stopSessionPreserveDb: (sessionId: string, session: AgentSession) => Promise<void>;
+      }
+    ).stopSessionPreserveDb(SUB_SESSION_ID, fake.agentSession);
+
+    expect(fake.state.calls).toEqual(['handleInterrupt', 'cleanup']);
+    expect(tam.workerActionRegistryFor(SUB_SESSION_ID)).toBeUndefined();
+    expect(tam.workerActionNamesFor(SUB_SESSION_ID)).toBeUndefined();
+  });
+
+  test('registerSession keeps a session-scoped provider installed ahead of it', async () => {
+    const db = await createTestDb();
+    const hub = new MessageHub();
+    const bus = await createTestInternalEventBus();
+    const manager = new SessionManager(
+      db,
+      hub,
+      { getCurrentApiKey: async () => null } as ConstructorParameters<typeof SessionManager>[2],
+      {} as ConstructorParameters<typeof SessionManager>[3],
+      bus,
+      { defaultModel: 'claude-sonnet-4-20250514', disableWorktrees: true },
+      db.getJobQueueRepo(),
+      {} as ConstructorParameters<typeof SessionManager>[7]
+    );
+    const restore = (id: string) => {
+      db.createSession(createTestSession(id));
+      const session = AgentSession.restore(
+        id,
+        db,
+        hub,
+        bus,
+        async () => null,
+        undefined,
+        undefined,
+        {
+          autoReplayPendingMessages: false,
+        }
+      );
+      if (!session) throw new Error(`restore failed for ${id}`);
+      return session;
+    };
+    const scoped = createOperationRegistry([
+      defineOperation({
+        name: 'worker_probe',
+        description: 'worker_probe',
+        inputSchema: z.unknown(),
+        resultSchema: z.unknown(),
+        execute: async () => 'probed',
+      }),
+    ]);
+    const worker = restore('worker-scoped');
+    const plain = restore('plain-global');
+    try {
+      worker.setOperationRegistryProvider(() => scoped);
+      manager.registerSession(worker);
+      manager.registerSession(plain);
+      manager.setOperationRegistryProvider(() => createOperationRegistry([]));
+
+      const probe = async (session: AgentSession) =>
+        (await session.getOperationMcpServer().tools[0].handler({ name: 'worker_probe' }, {}))
+          .isError;
+      expect(await probe(worker)).not.toBe(true);
+      expect(await probe(plain)).toBe(true);
+    } finally {
+      await worker.cleanup();
+      await plain.cleanup();
+      hub.cleanup();
+      db.close();
+    }
   });
 });
 
@@ -296,9 +438,9 @@ describe('TaskAgentManager — space-actions create_standalone_task default-work
   async function callCreateStandaloneTask(
     args: Record<string, unknown>
   ): Promise<Record<string, unknown>> {
-    const servers = buildServers(makeMigratedManager());
-    const spaceActions = servers['space-actions'] as unknown as SpaceActionsMcpServer;
-    const action = spaceActions.registry.get('create_standalone_task');
+    const tam = makeMigratedManager();
+    buildServers(tam);
+    const action = tam.workerActionRegistryFor(SUB_SESSION_ID)?.get('create_standalone_task');
     expect(action).toBeDefined();
     const result = (await action!.handler(args)) as ToolResult;
     return JSON.parse(result.content[0].text) as Record<string, unknown>;

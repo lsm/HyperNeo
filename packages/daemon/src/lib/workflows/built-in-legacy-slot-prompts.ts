@@ -5,7 +5,7 @@ import {
   REVIEW_THREAD_RESOLUTION_GUIDANCE,
   REVIEWER_POST_APPROVAL_BLOCKER_PARAGRAPH,
 } from '@hyperneo/prompts';
-import { QA_SYSTEM_CONTRACT } from '../space/agents/system-contracts.ts';
+import { QA_SYSTEM_CONTRACT } from '../agents/system-contracts.ts';
 
 function reviewerFeedbackProcedure(upstreamNodeName: string): string {
   return (

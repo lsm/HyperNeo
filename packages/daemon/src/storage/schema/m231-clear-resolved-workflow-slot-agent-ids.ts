@@ -5,7 +5,7 @@ import {
   verifyDefinitionVersion,
 } from '../../lib/workflows/definition-version.ts';
 import type { SpaceWorkflow } from '@hyperneo/shared';
-import { getLongHorizonAgentTemplates } from '../../lib/space/agents/long-horizon-agent-templates.ts';
+import { getLongHorizonAgentTemplates } from '../../lib/agents/long-horizon-templates.ts';
 import { ensureTemplateForAgentRef } from './m228-migrate-workflow-agent-template-refs.ts';
 
 const TASK_AGENT_TARGET = 'task-agent';

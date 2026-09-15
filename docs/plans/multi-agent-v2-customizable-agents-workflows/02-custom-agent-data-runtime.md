@@ -167,7 +167,7 @@ Create the factory function that builds an `AgentSessionInit` from a `SpaceAgent
 
 **Subtasks:**
 
-1. Create `packages/daemon/src/lib/space/agents/custom-agent.ts`:
+1. Create `packages/daemon/src/lib/agents/custom-agent.ts`:
    - `CustomAgentConfig` interface: `{ customAgent: SpaceAgent, task: SpaceTask, workflowRun: SpaceWorkflowRun | null, space: Space, sessionId: string, workspacePath: string, previousTaskSummaries?: string[] }`
    - `buildCustomAgentSystemPrompt(customAgent: SpaceAgent): string` — uses custom `systemPrompt` as base, prepends role identification and mandatory git workflow instructions, appends bypass markers and review feedback sections
    - `buildCustomAgentTaskMessage(config: CustomAgentConfig): string` — builds initial task message with task/workflow/space context
