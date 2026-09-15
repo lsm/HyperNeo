@@ -1,6 +1,7 @@
 import { resolveOperationRegistry } from './registry.ts';
 import { z } from 'zod';
 import { invokeOperation } from './invoke.ts';
+import type { OperationAudit } from './invoke.ts';
 import type { OperationCaller, OperationRegistrySource } from './registry.ts';
 
 export const OperationMcpInvocationSchema = z.object({
@@ -17,7 +18,8 @@ function mcpResult(value: unknown, isError = false) {
 
 export function createOperationMcpHandler(
   registry: OperationRegistrySource,
-  resolveCaller: () => Omit<OperationCaller, 'source'> | Promise<Omit<OperationCaller, 'source'>>
+  resolveCaller: () => Omit<OperationCaller, 'source'> | Promise<Omit<OperationCaller, 'source'>>,
+  audit?: OperationAudit
 ) {
   return async (args: unknown) => {
     const parsed = OperationMcpInvocationSchema.safeParse(args);
@@ -33,7 +35,8 @@ export function createOperationMcpHandler(
         {
           ...caller,
           source: 'mcp',
-        }
+        },
+        audit
       );
       return outcome.kind === 'completed'
         ? mcpResult(outcome.value)

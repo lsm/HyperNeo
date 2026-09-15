@@ -69,4 +69,17 @@ describe('generic operation MCP adapter', () => {
     });
     expect(execute).not.toHaveBeenCalled();
   });
+  test('forwards audit hooks into the shared invocation pipeline', async () => {
+    const { definition, caller } = fixture();
+    const before = mock(() => {});
+    const after = mock(() => {});
+    const handler = createOperationMcpHandler(createOperationRegistry([definition]), caller, {
+      before,
+      after,
+    });
+    await handler({ name: 'example', input: 'hello' });
+    expect(before).toHaveBeenCalledTimes(1);
+    expect(after).toHaveBeenCalledTimes(1);
+    expect(after.mock.calls[0][2]).toEqual({ kind: 'completed', value: { text: 'hello' } });
+  });
 });
