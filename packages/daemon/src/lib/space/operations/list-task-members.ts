@@ -38,7 +38,7 @@ export interface ListTaskMembersDependencies {
 }
 
 type LocatedTask = { taskId: string; workflowRunId: string | null };
-type TaskRoster = { taskId: string; members: NodeExecution[] };
+type TaskRoster = { taskId: string; workflowRunId: string | null; members: NodeExecution[] };
 
 function locateTask(
   taskRepo: ListTaskMembersDependencies['taskRepo'],
@@ -56,6 +56,7 @@ function collectMembers(
 ): TaskRoster {
   return {
     taskId: located.taskId,
+    workflowRunId: located.workflowRunId,
     members: located.workflowRunId
       ? nodeExecutionRepo.listByWorkflowRun(located.workflowRunId)
       : [],
@@ -80,7 +81,11 @@ export function createListTaskMembersOperation(deps: ListTaskMembersDependencies
       'List the workflow members working a task. One record per execution slot, which is a workflow node paired with one agent, so a node configured with several agents contributes several members. Slots come back oldest first by creation time and then by id, each with the agent name, agent id, agent session id, per-slot status, result and timestamps. Returns null when the task does not exist, and an empty list when the task exists but is not backed by a workflow run.',
     inputSchema: z.object({ taskId: z.string().min(1) }).strict(),
     resultSchema: z
-      .object({ taskId: z.string(), members: z.array(NodeExecutionSchema) })
+      .object({
+        taskId: z.string(),
+        workflowRunId: z.string().nullable(),
+        members: z.array(NodeExecutionSchema),
+      })
       .nullable(),
     execute: async (input) =>
       readTaskMembers(deps.taskRepo, deps.readCoreTask, deps.nodeExecutionRepo, input.taskId),

@@ -39,11 +39,12 @@ function exampleRegistry(
 }
 
 describe('mapActionParams (gate)', () => {
-  test('a plain mapped value continues with { mappedParams }', async () => {
-    const result = await mapActionParams({ text: 'hi' }, (params) => ({
-      text: (params as { text: string }).text,
+  test('a plain mapped value continues with { params, mappedParams }', async () => {
+    const params = { text: 'hi' };
+    const result = await mapActionParams(params, (p) => ({
+      text: (p as { text: string }).text,
     }));
-    expect(result).toEqual({ value: { mappedParams: { text: 'hi' } } });
+    expect(result).toEqual({ value: { params, mappedParams: { text: 'hi' } } });
   });
 
   test('a { reject } mapped value halts with a formatted ToolResult reason', async () => {
@@ -57,7 +58,7 @@ describe('mapActionParams (gate)', () => {
 
   test('awaits an async mapParams before deciding', async () => {
     const result = await mapActionParams({}, async () => ({ text: 'async' }));
-    expect(result).toEqual({ value: { mappedParams: { text: 'async' } } });
+    expect(result).toEqual({ value: { params: {}, mappedParams: { text: 'async' } } });
   });
 });
 

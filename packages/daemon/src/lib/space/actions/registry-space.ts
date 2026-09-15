@@ -850,7 +850,36 @@ export function createSpaceRegistryEntries(
       paramsDoc: 'task_number (preferred) or task_id',
       paramsSchema: GetTaskDetailSchema,
       taskIdPreference: 'task_number',
-      handler: (args) => handlers.get_task_detail(args),
+      handler: operations
+        ? createOperationActionHandler(
+            operations,
+            { sessionId: config.mySessionId },
+            'task.get',
+            (params) => {
+              const typed = params as { task_id?: string; task_number?: number };
+              if (typed.task_id === undefined && typed.task_number === undefined) {
+                return { reject: 'Either task_id or task_number is required' };
+              }
+              if (typed.task_number !== undefined) {
+                return { spaceId: config.spaceId, taskNumber: typed.task_number };
+              }
+              return { taskId: typed.task_id };
+            },
+            (value, originalParams) => {
+              const original = originalParams as { task_id?: string; task_number?: number };
+              const ref =
+                original.task_number !== undefined ? `#${original.task_number}` : original.task_id;
+              if (value === null) {
+                return { success: false, error: `Task not found: ${ref}` };
+              }
+              const typed = value as { spaceId?: string };
+              if (typed.spaceId === undefined || typed.spaceId !== config.spaceId) {
+                return { success: false, error: `Task not found: ${ref}` };
+              }
+              return { success: true, task: value };
+            }
+          )
+        : (args) => handlers.get_task_detail(args),
     }),
     defineAction({
       name: 'update_task',
@@ -948,7 +977,44 @@ export function createSpaceRegistryEntries(
         "List a task's workflow node executions with status, result, and saved data; returns the execution list.",
       paramsDoc: 'task_id',
       paramsSchema: ListTaskMembersSchema,
-      handler: (args) => handlers.list_task_members(args),
+      handler: operations
+        ? createOperationActionHandler(
+            operations,
+            { sessionId: config.mySessionId },
+            'task.members.list',
+            (params) => {
+              const typed = params as { task_id: string };
+              const task = config.taskRepo.getTask(typed.task_id);
+              if (!task) {
+                return { reject: `Task not found: ${typed.task_id}` };
+              }
+              if (task.spaceId !== config.spaceId) {
+                return { reject: `Task ${typed.task_id} does not belong to this space.` };
+              }
+              return { taskId: typed.task_id };
+            },
+            (value, originalParams) => {
+              const typed = originalParams as { task_id: string };
+              if (value === null) {
+                return { success: false, error: `Task not found: ${typed.task_id}` };
+              }
+              const result = value as {
+                taskId: string;
+                workflowRunId: string | null;
+                members: unknown[];
+              };
+              if (result.workflowRunId === null && result.members.length === 0) {
+                return {
+                  success: true,
+                  task_id: result.taskId,
+                  executions: result.members,
+                  message: 'This task has no associated workflow run.',
+                };
+              }
+              return { success: true, task_id: result.taskId, executions: result.members };
+            }
+          )
+        : (args) => handlers.list_task_members(args),
     }),
     defineAction({
       name: 'approve_task',

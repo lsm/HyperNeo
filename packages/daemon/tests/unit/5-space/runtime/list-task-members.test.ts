@@ -77,7 +77,10 @@ test('a task with no workflow run has an empty member list', async () => {
     { taskId: task.id },
     caller
   );
-  expect(outcome).toEqual({ kind: 'completed', value: { taskId: task.id, members: [] } });
+  expect(outcome).toEqual({
+    kind: 'completed',
+    value: { taskId: task.id, workflowRunId: null, members: [] },
+  });
 });
 
 test('members come back oldest first by creation time then id, with every declared field', async () => {
@@ -227,7 +230,7 @@ test('a standalone task reads as an empty roster, not as a missing task', async 
 
   expect(outcome).toEqual({
     kind: 'completed',
-    value: { taskId: standalone.id, members: [] },
+    value: { taskId: standalone.id, workflowRunId: null, members: [] },
   });
 });
 
