@@ -5,7 +5,7 @@ import { Logger } from '../logger.ts';
 import { getProviderRegistry, providerMayOfferModel } from '../providers/registry.js';
 import { getLongHorizonAgentTemplate } from '../space/agents/long-horizon-agent-templates.ts';
 import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../space/export-format.ts';
-import { KNOWN_TOPIC_FROM_SOURCES } from '../space/runtime/parse-pr-url.ts';
+import { KNOWN_TOPIC_FROM_SOURCES } from '../github/parse-pr-url.ts';
 import type { SpaceAgentLookup } from './workflow-manager.ts';
 import { WorkflowValidationError } from './workflow-validation-error.ts';
 

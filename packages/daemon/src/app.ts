@@ -1,5 +1,5 @@
 import type { TaskCore } from '@hyperneo/shared/types/task-core';
-import { stampActiveAttempt } from './lib/space/operations/direct-attempt-flag.ts';
+import { stampActiveAttempt } from './lib/tasks/direct-attempt-flag.ts';
 import { homedir } from 'os';
 import { parsePositiveInt, type Config } from './config.ts';
 import type { WebSocketData } from './types/websocket.ts';

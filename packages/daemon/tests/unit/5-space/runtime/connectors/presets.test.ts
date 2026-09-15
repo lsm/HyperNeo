@@ -7,10 +7,10 @@ import {
   createReviewPostedValidator,
 } from '../../../../../src/lib/space/runtime/connectors';
 import type { HookExecutorContext } from '../../../../../src/lib/workflows/hook-executor';
-import { runGhJson } from '../../../../../src/lib/space/runtime/gh-lookup-helpers';
+import { runGhJson } from '../../../../../src/lib/github/gh-lookup-helpers.ts';
 import type { SpawnFn, SpawnProcess } from '../../../../../src/lib/runtime-spawn';
-import { MAX_BUFFER_BYTES } from '../../../../../src/lib/space/runtime/script-utils';
-import { RATE_LIMIT_MIN_BACKOFF_MS } from '../../../../../src/lib/space/runtime/rate-limit-detector';
+import { MAX_BUFFER_BYTES } from '../../../../../src/lib/utils/script-utils';
+import { RATE_LIMIT_MIN_BACKOFF_MS } from '../../../../../src/lib/session/rate-limit-detector';
 
 const PR_URL = 'https://github.com/acme/corp/pull/42';
 

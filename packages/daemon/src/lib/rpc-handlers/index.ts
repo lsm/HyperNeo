@@ -1,14 +1,15 @@
-import { stampActiveAttemptList } from '../space/operations/direct-attempt-flag.ts';
-import { registerDirectStartJobs } from '../space/runtime/direct-start-jobs.ts';
-import { registerDirectOutcomeJobs } from '../space/runtime/direct-outcome-jobs.ts';
-import { createWorkflowTaskRecoveryExecutor } from '../space/runtime/task-recovery-executor.ts';
+import { stampActiveAttemptList } from '../tasks/direct-attempt-flag.ts';
+import { registerDirectStartJobs } from '../tasks/direct-start-jobs.ts';
+import { registerDirectOutcomeJobs } from '../tasks/direct-outcome-jobs.ts';
+import { createWorkflowTaskRecoveryExecutor } from '../tasks/recovery-executor.ts';
 import { recoverTaskExecution } from '../tasks/recover-task-execution.ts';
 import { McpAuditLogRepository } from '../../storage/repositories/mcp-audit-log-repository.ts';
-import { createSpaceOperationRegistryProvider } from '../space/operations/registry.ts';
-import { createCompletionGateBindings } from '../space/operations/complete-task-gates.ts';
+import { createSpaceOperationRegistryProvider } from '../tasks/operations.ts';
+import { createCompletionGateBindings } from '../tasks/complete-task-gates.ts';
 import { isCoderOwnedMergeWorkflow } from '../workflows/post-approval-router.ts';
-import { createGithubConnector } from '../space/runtime/connectors/github-connector.ts';
+import { createGithubConnector } from '../github/connectors/github-connector.ts';
 import { setupOperationHandlers } from './operation-handlers.ts';
+import { createSpaceCallerScopeResolver } from '../space/runtime/space-caller-scope.ts';
 import type { MessageHub } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type { SpaceGoalOutcomeNotification } from '@hyperneo/shared';
@@ -56,7 +57,7 @@ import {
   restampBuiltInWorkflowsOnStartup,
 } from './space-workflow-handlers.ts';
 import type { SpaceManager } from '../space/managers/space-manager.ts';
-import { SpaceTaskManager } from '../space/managers/space-task-manager.ts';
+import { SpaceTaskManager } from '../tasks/task-manager.ts';
 import { SpaceWorkflowManager, createSpaceAgentLookup } from '../workflows/workflow-manager.ts';
 import type { SpaceAgentLookup } from '../workflows/workflow-manager.ts';
 import { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
@@ -1375,6 +1376,14 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   );
 
   deps.sessionManager.setDefaultOperationRegistryProvider(spaceOperationRegistryProvider);
+  deps.sessionManager.setCallerScopeResolver(
+    createSpaceCallerScopeResolver({
+      getSession: (sessionId) => deps.db.getSession(sessionId),
+      taskRepo: spaceTaskRepo,
+      nodeExecutionRepo,
+      longHorizonAgentRepo,
+    })
+  );
 
   spaceRuntimeService.setTaskAgentManager(taskAgentManager);
   deps.sessionManager.setSpaceRuntimeMcpProvider(spaceRuntimeService);

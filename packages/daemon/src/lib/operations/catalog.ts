@@ -1,12 +1,12 @@
-import { createSetTaskDependenciesOperation } from './task-dependencies.ts';
-import { createTransitionTaskOperation } from './task-transition.ts';
-import { createUpdateTaskOperation } from './task-update.ts';
-import { createListTasksOperation } from './task-list.ts';
-import { createCreateTaskOperation } from './task-create.ts';
+import { createSetTaskDependenciesOperation } from '../tasks/dependencies-operation.ts';
+import { createTransitionTaskOperation } from '../tasks/transition-operation.ts';
+import { createUpdateTaskOperation } from '../tasks/update-operation.ts';
+import { createListTasksOperation } from '../tasks/list-operation.ts';
+import { createCreateTaskOperation } from '../tasks/create-operation.ts';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import type { CreateStandaloneTaskInput } from '../../storage/tasks/create-task.ts';
 import type { TransitionStandaloneTaskInput } from '../../storage/tasks/transition-task.ts';
-import { createGetTaskOperation } from './task-get.ts';
+import { createGetTaskOperation } from '../tasks/get-operation.ts';
 import { createDiscoveryOperations } from './discovery.ts';
 import { createSendMessageOperation } from './message-send.ts';
 import {

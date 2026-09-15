@@ -1,6 +1,6 @@
 import type { WorkflowHook, WorkflowRunArtifact } from '@hyperneo/shared';
-import { isConnectorsLayerEnabled } from '../space/runtime/connectors/connector.ts';
-import { getBuiltInConnectorDeps } from '../space/runtime/connectors/production.ts';
+import { isConnectorsLayerEnabled } from '../github/connectors/connector.ts';
+import { getBuiltInConnectorDeps } from '../github/connectors/production.ts';
 import type { HookActionMeta, WorkflowHookEngineConfig } from './hook-engine.ts';
 import type { HookExecutorContext } from './hook-executor.ts';
 import { boundArtifactData, boundHookLocalState, boundParams } from './hook-param-bounds.ts';

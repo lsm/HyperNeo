@@ -6,7 +6,7 @@ import {
   SpaceTaskManager,
   VALID_SPACE_TASK_TRANSITIONS,
   isValidSpaceTaskTransition,
-} from '../../../../src/lib/space/managers/space-task-manager.ts';
+} from '../../../../src/lib/tasks/task-manager.ts';
 
 const SPACE_ID = 'space-draft-test';
 

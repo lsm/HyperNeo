@@ -10,7 +10,7 @@ import {
 } from '../../../../src/lib/workflows/built-in-validator-registry';
 import '../../../../src/lib/workflows/built-in-validators';
 import { registerProductionBuiltInValidators } from '../../../../src/lib/workflows/built-in-validators';
-import { createPrMergedValidator } from '../../../../src/lib/space/runtime/connectors/presets';
+import { createPrMergedValidator } from '../../../../src/lib/github/connectors/presets.ts';
 import type { SpawnFn, SpawnProcess } from '../../../../src/lib/runtime-spawn';
 
 const PR_URL = 'https://github.com/acme/corp/pull/42';

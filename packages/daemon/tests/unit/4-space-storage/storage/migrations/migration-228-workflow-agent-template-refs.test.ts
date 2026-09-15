@@ -17,7 +17,7 @@ import { migratedAgentTemplateKey } from '../../../../../src/lib/space/agents/ag
 import {
   resolveNodeAgentConfig,
   spaceAgentTemplateToNodeSource,
-} from '../../../../../src/lib/space/runtime/spawn-slot-resolution.ts';
+} from '../../../../../src/lib/tasks/spawn-slot-resolution.ts';
 
 interface LongHorizonAgentSeed {
   id: string;

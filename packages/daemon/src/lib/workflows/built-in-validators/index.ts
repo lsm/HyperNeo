@@ -3,7 +3,7 @@ import {
   createCodexApprovalValidator,
   createPrMergedValidator,
   createReviewPostedValidator,
-} from '../../space/runtime/connectors/presets.ts';
+} from '../../github/connectors/presets.ts';
 import { createPostApprovalOnlyValidator } from './post-approval-only-validator.ts';
 import { createPrReadyValidator } from './pr-ready-validator.ts';
 

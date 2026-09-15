@@ -12,7 +12,7 @@ import { Logger } from '../logger.ts';
 import { isRunnableUnifiedAgent } from '../space/agents/worker-long-horizon-mapper.ts';
 import { patchPinnedBuiltInPromptDrift } from './built-in-prompt-drift.ts';
 import { validatePostApproval, validatePostApprovalRoutes } from './post-approval-validator.ts';
-import '../space/runtime/connectors/production.ts';
+import '../github/connectors/production.ts';
 import type { SpaceAgentTemplateRepository } from '../../storage/repositories/space-agent-template-repository.ts';
 import {
   validateChannels,

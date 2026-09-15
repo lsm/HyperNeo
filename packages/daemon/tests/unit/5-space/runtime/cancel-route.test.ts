@@ -10,7 +10,7 @@ import {
 import {
   resolveCancellationRoute,
   supersedeReservedAttempt,
-} from '../../../../src/lib/space/operations/cancel-route';
+} from '../../../../src/lib/tasks/cancel-route';
 
 let db: Database;
 let tasks: SpaceTaskRepository;

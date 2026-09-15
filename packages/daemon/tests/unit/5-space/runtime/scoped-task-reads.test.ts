@@ -12,7 +12,7 @@ import {
   listScopedTasks,
   readScopedTask,
   type TaskReadAdmission,
-} from '../../../../src/lib/space/operations/scoped-task-reads';
+} from '../../../../src/lib/tasks/scoped-task-reads';
 import { createSpaceTables } from '../../helpers/space-test-db';
 import { createTestSession } from '../../../helpers/database';
 

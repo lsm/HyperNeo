@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
 import { getPresetAgentTemplates } from '../../../../src/lib/space/agents/seed-agents.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
-import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
+import { SpaceTaskManager } from '../../../../src/lib/tasks/task-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager.ts';
 import {
   isPostApprovalRoutingEnabled,

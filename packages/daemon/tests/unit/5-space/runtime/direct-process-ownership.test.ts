@@ -12,7 +12,7 @@ import {
   DirectProcessOwnershipRepository,
   type DirectProcessLaunch,
 } from '../../../../src/storage/repositories/direct-process-ownership-repository';
-import { decideDirectGuardianTransition } from '../../../../src/lib/space/runtime/direct-guardian-protocol';
+import { decideDirectGuardianTransition } from '../../../../src/lib/tasks/direct-guardian-protocol';
 
 let dir: string;
 let db: Database;

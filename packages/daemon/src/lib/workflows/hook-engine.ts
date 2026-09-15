@@ -10,7 +10,7 @@ import type { NodeExecutionRepository } from '../../storage/repositories/node-ex
 import type { WorkflowRunArtifactRepository } from '../../storage/repositories/workflow-run-artifact-repository.ts';
 import type { WorkflowHookStateRepository } from '../../storage/repositories/workflow-hook-state-repository.ts';
 import type { HookExecutor } from './hook-executor.ts';
-import { isRateLimitError } from '../space/runtime/rate-limit-detector.ts';
+import { isRateLimitError } from '../session/rate-limit-detector.ts';
 import { Logger } from '../logger.ts';
 import { type AnyToolResult, scheduleRetryableAction } from './hook-binding.ts';
 import {

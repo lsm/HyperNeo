@@ -6,7 +6,7 @@ import type {
   SpaceTask,
   SpaceTaskStatus,
 } from '@hyperneo/shared';
-import { normalizeMeaningfulTaskResult } from '../space/task-result-utils.ts';
+import { normalizeMeaningfulTaskResult } from '../tasks/result-utils.ts';
 import type {
   EpisodeJudgePromptInput,
   EpisodeTaskContext,

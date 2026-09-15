@@ -14,7 +14,7 @@ import {
   modelPoolReservationKey,
   releaseModelPoolReservation,
   reserveModelPoolSlot,
-} from '../../../../src/lib/space/runtime/model-pool-scheduler';
+} from '../../../../src/lib/session/model-pool-scheduler';
 
 const NOW = 1_000_000;
 

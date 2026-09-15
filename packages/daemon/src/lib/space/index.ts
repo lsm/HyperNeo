@@ -35,7 +35,7 @@ export {
   isValidSpaceTaskTransition,
   SpaceTaskManager,
   VALID_SPACE_TASK_TRANSITIONS,
-} from './managers/space-task-manager.ts';
+} from '../tasks/task-manager.ts';
 export type { SpaceAgentLookup } from '../workflows/workflow-manager.ts';
 export {
   SpaceWorkflowManager,

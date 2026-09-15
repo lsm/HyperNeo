@@ -7,7 +7,7 @@ import {
   getRegisteredConnectorIds,
   isConnectorsLayerEnabled,
   isRegisteredConnector,
-} from '../space/runtime/connectors/connector.ts';
+} from '../github/connectors/connector.ts';
 import './built-in-validators/index.ts';
 import {
   getRegisteredBuiltInValidatorIds,

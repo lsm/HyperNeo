@@ -88,8 +88,8 @@
 6	packages/daemon/tests/unit/5-space/runtime/connectors/production.test.ts
 5	packages/daemon/tests/unit/5-space/runtime/decision-pipeline.test.ts
 4	packages/daemon/tests/unit/5-space/runtime/delivery-mode.test.ts
-9	packages/daemon/tests/unit/5-space/runtime/external-event-admission-gates.test.ts
-10	packages/daemon/tests/unit/5-space/runtime/external-event-delivery-pipeline.test.ts
+9	packages/daemon/tests/unit/5-space/runtime/admission-gates.test.ts
+10	packages/daemon/tests/unit/5-space/runtime/delivery-pipeline.test.ts
 7	packages/daemon/tests/unit/5-space/runtime/github-subscription-pattern.test.ts
 284	packages/daemon/tests/unit/5-space/runtime/hook-engine.test.ts
 20	packages/daemon/tests/unit/5-space/runtime/injection-delivery-steps.test.ts

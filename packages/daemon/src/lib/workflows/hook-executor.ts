@@ -8,13 +8,13 @@ import {
   deepMergeWithDepthLimit,
   MAX_BUFFER_BYTES,
   parseJsonStdout,
-} from '../space/runtime/script-utils.ts';
+} from '../utils/script-utils.ts';
 import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { spawnProcess } from '../runtime-spawn/index.ts';
 import { validateWorkflowHookResult } from './hook-validation.ts';
-import '../space/runtime/connectors/production.ts';
+import '../github/connectors/production.ts';
 import './built-in-validators/index.ts';
 import { getBuiltInValidator } from './built-in-validator-registry.ts';
 import { buildHookRestrictedEnv } from './hook-script-env.ts';

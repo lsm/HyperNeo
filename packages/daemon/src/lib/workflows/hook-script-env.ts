@@ -1,10 +1,10 @@
-import type { Connector } from '../space/runtime/connectors/connector.ts';
+import type { Connector } from '../github/connectors/connector.ts';
 import {
   getConnector,
   getRegisteredConnectorIds,
   isConnectorsLayerEnabled,
-} from '../space/runtime/connectors/connector.ts';
-import { resolveGithubConfigDir } from '../space/runtime/gh-lookup-helpers.ts';
+} from '../github/connectors/connector.ts';
+import { resolveGithubConfigDir } from '../github/gh-lookup-helpers.ts';
 import type { HookExecutorContext } from './hook-executor.ts';
 
 const RESTRICTED_ENV_PREFIXES = [

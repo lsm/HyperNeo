@@ -1,5 +1,5 @@
 import type { SpaceTask } from '@hyperneo/shared';
-import { resolveTaskWorkspace } from '../space/runtime/spawn-slot-resolution.ts';
+import { resolveTaskWorkspace } from '../tasks/spawn-slot-resolution.ts';
 import { worktreePathScopedCacheKey } from '../space/artifact-git-ops.ts';
 import type { Job } from '../../storage/repositories/job-queue-repository.ts';
 import type { WorkflowRunArtifactCacheRepository } from '../../storage/repositories/workflow-run-artifact-cache-repository.ts';
