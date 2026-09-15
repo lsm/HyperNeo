@@ -682,105 +682,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       });
     },
   };
-  const spaceOperationRegistryProvider = createSpaceOperationRegistryProvider(
-    deps.db,
-    deps.jobQueue,
-    {
-      blockExecution: (spaceId, taskId, params) =>
-        spaceRuntimeService.stopWorkflowBackedTask(spaceId, taskId, params),
-      stopForStatus: (spaceId, taskId, params) =>
-        spaceRuntimeService.stopWorkflowBackedTaskForStatus(spaceId, taskId, params),
-      getSession: (sessionId) => deps.db.getSession(sessionId),
-      getTaskManager: spaceTaskManagerFactory,
-      getWorkflow: (workflowId) => spaceWorkflowManager.getWorkflow(workflowId),
-      isWorkflowRunActive: (workflowRunId) =>
-        spaceRuntimeService.isWorkflowRunActive(workflowRunId),
-      taskRepo: spaceTaskRepo,
-      nodeExecutionRepo,
-      longHorizonAgentRepo,
-      notifyStandalone: () => deps.db.notifyChange('space_tasks'),
-      emitTaskUpdated: async (spaceId, task) => {
-        await deps.internalEventBus.publish('space.task.updated', {
-          sessionId: 'global',
-          spaceId,
-          taskId: task.id,
-          task,
-        });
-      },
-      emitTaskCreated: async (spaceId, task) => {
-        await deps.internalEventBus.publish('space.task.created', {
-          sessionId: 'global',
-          spaceId,
-          taskId: task.id,
-          task,
-        });
-      },
-      getSpace: (spaceId) => deps.spaceManager.getSpace(spaceId),
-      validateDefaultTaskWorkspace: (spaceId) =>
-        deps.spaceManager.validateDefaultTaskWorkspace(spaceId),
-      resolveResultArtifactSummary: (task) =>
-        task.workflowRunId
-          ? (artifactProfile.summarizeRunOutcome(task.workflowRunId) ?? null)
-          : null,
-      sessionManager: deps.sessionManager,
-      ...createCompletionGateBindings({
-        resolveWorkflowForTask: (task) => {
-          const run = task.workflowRunId ? spaceWorkflowRunRepo.getRun(task.workflowRunId) : null;
-          return run?.workflowId ? (spaceWorkflowManager.getWorkflowForRun(run) ?? null) : null;
-        },
-        isCoderOwnedMergeWorkflow,
-        resolvePrUrl: (task) =>
-          task.workflowRunId
-            ? artifactProfile.resolveInitialPrimaryLinkUrl(task.workflowRunId)
-            : '',
-        getPrState: async (prUrl) => {
-          const outcome = await createGithubConnector().ops.getPr(
-            { prUrl },
-            { workspacePath: '', params: {}, rawParams: {}, hookLocalState: {} }
-          );
-          if (!outcome.ok) throw new Error(outcome.error);
-          const state = (outcome.data as { state?: unknown } | null)?.state;
-          return typeof state === 'string' ? state : 'UNKNOWN';
-        },
-        workflowDeclaresPostApprovalRoute: (taskId) =>
-          spaceRuntimeService.workflowDeclaresPostApprovalRoute(taskId),
-      }),
-    },
-    pendingCompletion,
-    {
-      reactiveDb: deps.reactiveDb,
-      onTaskReopened: (taskId) => spaceGoalService.supersedeOutcomeNotificationsForTask(taskId),
-      onTaskClaimed: emitClaimedTaskUpdate,
-    },
-    {
-      getSession: (sessionId) => deps.db.getSession(sessionId),
-      getTaskManager: spaceTaskManagerFactory,
-      taskRepo: spaceTaskRepo,
-      nodeExecutionRepo,
-      longHorizonAgentRepo,
-      notifyStandalone: () => deps.db.notifyChange('space_tasks'),
-      emitTaskUpdated: async (spaceId, task) => {
-        await deps.internalEventBus.publish('space.task.updated', {
-          sessionId: 'global',
-          spaceId,
-          taskId: task.id,
-          task,
-        });
-      },
-      isWorkflowRunActive: (workflowRunId) =>
-        spaceRuntimeService.isWorkflowRunActive(workflowRunId),
-      recoverTransition: (spaceId, taskId, status) =>
-        recoverTaskExecution(
-          createWorkflowTaskRecoveryExecutor(spaceId, spaceRuntimeService),
-          taskId,
-          status
-        ),
-      stopForStatus: (spaceId, taskId, params) =>
-        spaceRuntimeService.stopWorkflowBackedTaskForStatus(spaceId, taskId, params),
-      parkStopped: (spaceId, taskId) =>
-        spaceRuntimeService.parkStoppedWorkflowTask(spaceId, taskId),
-    }
-  );
   const replyRoutingRegistry = new ReplyRoutingRegistry();
   const artifactProfile = new CodingArtifactProfile({
     db: deps.db.getDatabase(),
@@ -986,9 +887,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       return Promise.resolve();
     },
   });
-
-  deps.sessionManager.setDefaultOperationRegistryProvider(spaceOperationRegistryProvider);
-
   const spaceAgentInactivityWatchdog: SpaceAgentInactivityWatchdogService =
     new SpaceAgentInactivityWatchdogService({
       configRepo: spaceAgentInactivityConfigRepo,
@@ -1367,6 +1265,119 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       return { ok: false, error: err };
     }
   });
+
+  const spaceOperationRegistryProvider = createSpaceOperationRegistryProvider(
+    deps.db,
+    deps.jobQueue,
+    {
+      blockExecution: (spaceId, taskId, params) =>
+        spaceRuntimeService.stopWorkflowBackedTask(spaceId, taskId, params),
+      stopForStatus: (spaceId, taskId, params) =>
+        spaceRuntimeService.stopWorkflowBackedTaskForStatus(spaceId, taskId, params),
+      getSession: (sessionId) => deps.db.getSession(sessionId),
+      getTaskManager: spaceTaskManagerFactory,
+      getWorkflow: (workflowId) => spaceWorkflowManager.getWorkflow(workflowId),
+      isWorkflowRunActive: (workflowRunId) =>
+        spaceRuntimeService.isWorkflowRunActive(workflowRunId),
+      taskRepo: spaceTaskRepo,
+      nodeExecutionRepo,
+      longHorizonAgentRepo,
+      notifyStandalone: () => deps.db.notifyChange('space_tasks'),
+      workflowRunRepo: spaceWorkflowRunRepo,
+      getWorkflowForRun: (run) => spaceWorkflowManager.getWorkflowForRun(run),
+      taskAgentManager,
+      ensureTargetSession: (target) => spaceRuntimeService.ensureToolTargetSession(target),
+      activateNode: async (runId, nodeId) => {
+        await spaceRuntimeService.activateWorkflowNode(runId, nodeId);
+      },
+      messageResolverFactory: (spaceId, context) =>
+        spaceRuntimeService.createMessageResolver(spaceId, context),
+      longTermAgentDelivery: spaceRuntimeService.longTermAgentDeliveryCallbacks(),
+      replyRoutingRegistry,
+      emitTaskUpdated: async (spaceId, task) => {
+        await deps.internalEventBus.publish('space.task.updated', {
+          sessionId: 'global',
+          spaceId,
+          taskId: task.id,
+          task,
+        });
+      },
+      emitTaskCreated: async (spaceId, task) => {
+        await deps.internalEventBus.publish('space.task.created', {
+          sessionId: 'global',
+          spaceId,
+          taskId: task.id,
+          task,
+        });
+      },
+      getSpace: (spaceId) => deps.spaceManager.getSpace(spaceId),
+      validateDefaultTaskWorkspace: (spaceId) =>
+        deps.spaceManager.validateDefaultTaskWorkspace(spaceId),
+      resolveResultArtifactSummary: (task) =>
+        task.workflowRunId
+          ? (artifactProfile.summarizeRunOutcome(task.workflowRunId) ?? null)
+          : null,
+      sessionManager: deps.sessionManager,
+      ...createCompletionGateBindings({
+        resolveWorkflowForTask: (task) => {
+          const run = task.workflowRunId ? spaceWorkflowRunRepo.getRun(task.workflowRunId) : null;
+          return run?.workflowId ? (spaceWorkflowManager.getWorkflowForRun(run) ?? null) : null;
+        },
+        isCoderOwnedMergeWorkflow,
+        resolvePrUrl: (task) =>
+          task.workflowRunId
+            ? artifactProfile.resolveInitialPrimaryLinkUrl(task.workflowRunId)
+            : '',
+        getPrState: async (prUrl) => {
+          const outcome = await createGithubConnector().ops.getPr(
+            { prUrl },
+            { workspacePath: '', params: {}, rawParams: {}, hookLocalState: {} }
+          );
+          if (!outcome.ok) throw new Error(outcome.error);
+          const state = (outcome.data as { state?: unknown } | null)?.state;
+          return typeof state === 'string' ? state : 'UNKNOWN';
+        },
+        workflowDeclaresPostApprovalRoute: (taskId) =>
+          spaceRuntimeService.workflowDeclaresPostApprovalRoute(taskId),
+      }),
+    },
+    pendingCompletion,
+    {
+      reactiveDb: deps.reactiveDb,
+      onTaskReopened: (taskId) => spaceGoalService.supersedeOutcomeNotificationsForTask(taskId),
+      onTaskClaimed: emitClaimedTaskUpdate,
+    },
+    {
+      getSession: (sessionId) => deps.db.getSession(sessionId),
+      getTaskManager: spaceTaskManagerFactory,
+      taskRepo: spaceTaskRepo,
+      nodeExecutionRepo,
+      longHorizonAgentRepo,
+      notifyStandalone: () => deps.db.notifyChange('space_tasks'),
+      emitTaskUpdated: async (spaceId, task) => {
+        await deps.internalEventBus.publish('space.task.updated', {
+          sessionId: 'global',
+          spaceId,
+          taskId: task.id,
+          task,
+        });
+      },
+      isWorkflowRunActive: (workflowRunId) =>
+        spaceRuntimeService.isWorkflowRunActive(workflowRunId),
+      recoverTransition: (spaceId, taskId, status) =>
+        recoverTaskExecution(
+          createWorkflowTaskRecoveryExecutor(spaceId, spaceRuntimeService),
+          taskId,
+          status
+        ),
+      stopForStatus: (spaceId, taskId, params) =>
+        spaceRuntimeService.stopWorkflowBackedTaskForStatus(spaceId, taskId, params),
+      parkStopped: (spaceId, taskId) =>
+        spaceRuntimeService.parkStoppedWorkflowTask(spaceId, taskId),
+    }
+  );
+
+  deps.sessionManager.setDefaultOperationRegistryProvider(spaceOperationRegistryProvider);
 
   spaceRuntimeService.setTaskAgentManager(taskAgentManager);
   deps.sessionManager.setSpaceRuntimeMcpProvider(spaceRuntimeService);

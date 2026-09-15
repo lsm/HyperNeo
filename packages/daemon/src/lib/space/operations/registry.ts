@@ -18,6 +18,9 @@ import {
 import type { Database } from '../../../storage/database.ts';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
+import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
+import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
+import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
 import type { SessionManager } from '../../session/session-manager.ts';
 import { listTaskCores } from '../../../storage/tasks/list-tasks.ts';
 import { readTaskCore } from '../../../storage/tasks/task-reader.ts';
@@ -40,6 +43,10 @@ import {
   type SetPreferredWorkflowDependencies,
 } from './set-preferred-workflow.ts';
 import { createSendSessionMessageOperation } from './session-message-send.ts';
+import {
+  createSendTaskMessageOperation,
+  type TaskMessageSendDependencies,
+} from './task-message-send.ts';
 
 interface ArchiveTaskCapability {
   getTaskManager: ArchiveTaskDependencies['getTaskManager'];
@@ -58,6 +65,20 @@ interface SessionMessagingCapability {
   sessionManager?: Pick<SessionManager, 'getCachedSession' | 'getSessionAsync' | 'sendUserMessage'>;
 }
 
+interface TaskMessageSendCapability {
+  longHorizonAgentRepo?: SpaceLongHorizonAgentRepository;
+  workflowRunRepo?: Pick<SpaceWorkflowRunRepository, 'getRun'>;
+  getWorkflowForRun?: TaskMessageSendDependencies['getWorkflowForRun'];
+  nodeExecutionRepo?: Pick<NodeExecutionRepository, 'listByWorkflowRun' | 'getById'>;
+  taskAgentManager?: TaskMessageSendDependencies['taskAgentManager'];
+  ensureTargetSession?: TaskMessageSendDependencies['ensureTargetSession'];
+  activateNode?: TaskMessageSendDependencies['activateNode'];
+  messageResolverFactory?: TaskMessageSendDependencies['messageResolverFactory'];
+  longTermAgentDelivery?: TaskMessageSendDependencies['longTermAgentDelivery'];
+  replyRoutingRegistry?: TaskMessageSendDependencies['replyRoutingRegistry'];
+  audit?: TaskMessageSendDependencies['audit'];
+}
+
 export function createSpaceOperationRegistryProvider(
   database: Database,
   jobQueue: JobQueueRepository,
@@ -71,6 +92,7 @@ export function createSpaceOperationRegistryProvider(
     TaskNumberRepository &
     PreferredWorkflowCapability &
     SessionMessagingCapability &
+    TaskMessageSendCapability &
     Omit<
       CompleteTaskDependencies,
       'getTaskManager' | 'emitTaskUpdated' | 'requiresPostApprovalOwner' | 'completionGate'
@@ -197,5 +219,34 @@ export function createSpaceOperationRegistryProvider(
             sendUserMessage: (data) => tasks.sessionManager!.sendUserMessage(data),
           })
         : undefined,
+      sendTaskMessage:
+        tasks.taskRepo &&
+        tasks.workflowRunRepo &&
+        tasks.nodeExecutionRepo &&
+        tasks.getWorkflowForRun &&
+        tasks.taskAgentManager &&
+        tasks.ensureTargetSession &&
+        tasks.activateNode &&
+        tasks.messageResolverFactory &&
+        tasks.longTermAgentDelivery
+          ? createSendTaskMessageOperation({
+              getTask: (taskId) => tasks.taskRepo!.getTask(taskId),
+              getTaskByNumber: (spaceId, taskNumber) =>
+                tasks.taskRepo!.getTaskByNumber(spaceId, taskNumber),
+              getWorkflowRun: (workflowRunId) => tasks.workflowRunRepo!.getRun(workflowRunId),
+              getWorkflowForRun: tasks.getWorkflowForRun,
+              listNodeExecutions: (workflowRunId) =>
+                tasks.nodeExecutionRepo!.listByWorkflowRun(workflowRunId),
+              getNodeExecutionById: (executionId) => tasks.nodeExecutionRepo!.getById(executionId),
+              ensureTargetSession: tasks.ensureTargetSession,
+              activateNode: tasks.activateNode,
+              taskAgentManager: tasks.taskAgentManager,
+              messageResolverFactory: tasks.messageResolverFactory,
+              longHorizonAgentRepo: tasks.longHorizonAgentRepo,
+              longTermAgentDelivery: tasks.longTermAgentDelivery,
+              replyRoutingRegistry: tasks.replyRoutingRegistry,
+              audit: tasks.audit,
+            })
+          : undefined,
     }));
 }

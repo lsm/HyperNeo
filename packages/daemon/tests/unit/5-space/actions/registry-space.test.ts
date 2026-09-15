@@ -774,6 +774,46 @@ describe('createSpaceRegistryEntries — composition', () => {
     }
   });
 
+  test('send_message_to_task prefers task_id and omits task_number when both are provided', async () => {
+    const ctx = makeCtx();
+    try {
+      const calls: Array<{ input: unknown }> = [];
+      const operations = createOperationRegistry([
+        defineOperation({
+          name: 'task.message.send',
+          description: 'Send a task message',
+          inputSchema: z.object({}).passthrough(),
+          resultSchema: z.object({ success: z.boolean() }),
+          execute: async (input) => {
+            calls.push({ input });
+            return { success: true };
+          },
+        }),
+      ]);
+      const entry = createSpaceRegistryEntries(ctx.config, operations).find(
+        (candidate) => candidate.name === 'send_message_to_task'
+      );
+      if (!entry) throw new Error('send_message_to_task entry missing');
+      const result = (await entry.handler({
+        task_id: 'task-1',
+        task_number: 37,
+        message: 'Hello',
+        node_id: 'coder',
+      })) as { content: Array<{ text: string }>; isError?: boolean };
+      expect(result.isError).toBeUndefined();
+      expect(JSON.parse(result.content[0].text)).toEqual({ success: true });
+      expect(calls[0]?.input).toMatchObject({
+        spaceId: SPACE_ID,
+        taskId: 'task-1',
+        message: 'Hello',
+        nodeId: 'coder',
+      });
+      expect(calls[0]?.input).not.toMatchObject({ taskNumber: expect.any(Number) });
+    } finally {
+      ctx.db.close();
+    }
+  });
+
   test('resolveWorkspacePath keeps the draft empty when no workspace and no spaceManager', async () => {
     const ctx = makeCtx();
     try {

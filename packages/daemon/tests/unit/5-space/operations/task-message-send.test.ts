@@ -80,13 +80,14 @@ function execution(overrides: Partial<NodeExecution> = {}): NodeExecution {
   };
 }
 
-function workflow(): SpaceWorkflow {
+function workflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
   return {
     id: 'wf-1',
     spaceId: SPACE_ID,
     name: 'Test workflow',
     description: '',
     nodes: [{ id: 'node-1', name: 'Work', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
+    startNodeId: 'node-1',
     channels: [],
     tags: [],
     version: '1',
@@ -94,6 +95,8 @@ function workflow(): SpaceWorkflow {
     updatedAt: 0,
     disabled: false,
     hooks: [],
+    completionAutonomyLevel: 1,
+    ...overrides,
   };
 }
 
@@ -374,6 +377,26 @@ describe('sendTaskMessage — handle and role targets', () => {
       baseDeps({
         listNodeExecutions: () => [execution({ agentName: 'other' })],
         messageResolver: messageResolverFor(actor),
+      })
+    );
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('target and node_id disagree');
+  });
+
+  test('rejects when @handle resolves to a different worker than node_id', async () => {
+    const other = execution({ id: 'exec-2', agentName: 'other', workflowNodeId: 'node-2' });
+    const result = await sendTaskMessage(
+      { ...baseInput, target: '@coder', nodeId: 'other' },
+      { source: 'mcp' as const },
+      baseDeps({
+        listNodeExecutions: () => [execution(), other],
+        getWorkflowForRun: () =>
+          workflow({
+            nodes: [
+              { id: 'node-1', name: 'Work', agents: [{ agentId: 'agent-1', name: 'coder' }] },
+              { id: 'node-2', name: 'Other', agents: [{ agentId: 'agent-2', name: 'other' }] },
+            ],
+          }),
       })
     );
     expect(result.success).toBe(false);

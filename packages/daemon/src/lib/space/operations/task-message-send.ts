@@ -101,6 +101,10 @@ export interface TaskMessageSendDependencies {
   activateNode: (runId: string, nodeId: string) => Promise<void>;
   taskAgentManager: Pick<TaskAgentManager, 'injectSubSessionMessage'>;
   messageResolver?: ActorResolver;
+  messageResolverFactory?: (
+    spaceId: string,
+    context?: { workflowRunId?: string; nodeId?: string; agentName?: string }
+  ) => ActorResolver | undefined;
   longHorizonAgentRepo?: SpaceLongHorizonAgentRepository;
   longTermAgentDelivery?: {
     deliverToSession?: (
@@ -173,6 +177,14 @@ function workflowNodeNameById(workflow: SpaceWorkflow | null): Map<string, strin
   return new Map((workflow?.nodes ?? []).map((node) => [node.id, node.name] as const));
 }
 
+function resolveActorResolver(
+  spaceId: string,
+  context: { workflowRunId?: string; nodeId?: string; agentName?: string },
+  deps: TaskMessageSendDependencies
+): ActorResolver | undefined {
+  return deps.messageResolver ?? deps.messageResolverFactory?.(spaceId, context);
+}
+
 function parseTargetAddress(trimmedTarget: string): { value: ParsedAddress } | { reason: string } {
   try {
     return { value: parseAddress(trimmedTarget) };
@@ -201,12 +213,17 @@ async function resolveMessageTarget(
 
   let handleResolution: TaskRoutingTargetResolution | null = null;
   if (targetAddress?.kind === 'handle') {
+    const messageResolver = resolveActorResolver(
+      input.spaceId,
+      { workflowRunId: task.workflowRunId!, nodeId: input.nodeId },
+      deps
+    );
     handleResolution = await resolveHandleForTaskRouting(
       trimmedTarget,
       executions,
       input.spaceId,
       task.workflowRunId!,
-      deps.messageResolver,
+      messageResolver,
       deps.longHorizonAgentRepo
     );
   }
@@ -270,7 +287,12 @@ async function resolveMessageTarget(
   const address = parseAddress(genericTarget);
 
   if (address.kind === 'handle' || address.kind === 'role') {
-    if (!deps.messageResolver || !deps.longTermAgentDelivery) {
+    const messageResolver = resolveActorResolver(
+      input.spaceId,
+      { workflowRunId: task.workflowRunId!, nodeId: input.nodeId },
+      deps
+    );
+    if (!messageResolver || !deps.longTermAgentDelivery) {
       return { reason: 'Long-term agent messaging is not available in this context.' };
     }
     return { value: { kind: 'agent', genericTarget } };
@@ -288,6 +310,15 @@ async function resolveMessageTarget(
         reason: `Node not found for task ${task.id}: "${genericTarget}". Expected an execution UUID, agent name, @worker target, or task agent @session target.`,
       };
     }
+    if (nodeResolved && resolved.id !== nodeResolved.id) {
+      return {
+        reason:
+          `target and node_id disagree for task #${task.taskNumber}:\n` +
+          `  target: "${trimmedTarget}"  → ${describeTaskExecution(resolved)}\n` +
+          `  node_id: "${input.nodeId}"  → ${describeTaskExecution(nodeResolved)}\n` +
+          `Pick one. node_id is preferred for workflow node routing.`,
+      };
+    }
     return { value: { kind: 'worker', resolved } };
   }
 
@@ -296,6 +327,15 @@ async function resolveMessageTarget(
     if (!resolved) {
       return {
         reason: `Node not found for task ${task.id}: "${genericTarget}". Expected an execution UUID, agent name, @worker target, or task agent @session target.`,
+      };
+    }
+    if (nodeResolved && resolved.id !== nodeResolved.id) {
+      return {
+        reason:
+          `target and node_id disagree for task #${task.taskNumber}:\n` +
+          `  target: "${trimmedTarget}"  → ${describeTaskExecution(resolved)}\n` +
+          `  node_id: "${input.nodeId}"  → ${describeTaskExecution(nodeResolved)}\n` +
+          `Pick one. node_id is preferred for workflow node routing.`,
       };
     }
     return { value: { kind: 'worker', resolved, sessionSelector: address.sessionId } };
@@ -397,8 +437,16 @@ async function deliverToAgent(
   deps: TaskMessageSendDependencies
 ): Promise<TaskMessageSendResult> {
   const messageRecord = buildAgentMessageRecord(input, task, genericTarget);
+  const messageResolver = resolveActorResolver(
+    input.spaceId,
+    { workflowRunId: task.workflowRunId!, nodeId: input.nodeId },
+    deps
+  );
+  if (!messageResolver) {
+    return { success: false, task_id: task.id, error: 'Actor resolver is not available.' };
+  }
   const routed = await new SpaceDeliveryFacade({
-    resolver: deps.messageResolver!,
+    resolver: messageResolver,
     deliverToSession: deps.longTermAgentDelivery!.deliverToSession!,
     queueForActivation: deps.longTermAgentDelivery!.queueForActivation!,
   }).routeMessage(messageRecord);
