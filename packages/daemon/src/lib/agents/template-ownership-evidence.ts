@@ -1,4 +1,4 @@
-import { MIGRATED_AGENT_TEMPLATE_KEY_PREFIX } from './agent-template-synthesis.ts';
+import { MIGRATED_AGENT_TEMPLATE_KEY_PREFIX } from './template-synthesis.ts';
 
 export interface TemplateOwnershipTemplateRow {
   key: string;

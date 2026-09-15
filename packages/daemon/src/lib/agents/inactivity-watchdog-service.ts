@@ -1,84 +1,33 @@
-import { Logger } from '../../logger';
-import type { SpaceManager } from '../managers/space-manager';
+import { Logger } from '../logger';
+import { reconcileInactivityClaim } from './inactivity-claim-reconciliation';
 import type {
-  SpaceAgentInactivityClaimRepository,
-  SpaceAgentInactivityConfigRepository,
-  SpaceAgentInactivityClaim,
-} from '../../../storage/repositories/space-agent-inactivity-repository';
-import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository';
+  InactivityNagDeliveryOutcome,
+  InactivityWatchdogDeps,
+} from './inactivity-watchdog-contracts';
+import {
+  applyRunNowBaseline,
+  boundInactivityNagPrompt,
+  claimSnapshotForCore,
+  INACTIVITY_NAG_DELIVERY_TIMEOUT_MS,
+} from './inactivity-watchdog-contracts';
 import {
   decideInactivityNag,
   decideNagWindowReset,
   resolveLastActivityAt,
 } from './inactivity-watchdog-gates';
 
+export type {
+  InactivityNagDeliveryOutcome,
+  InactivityWatchdogDeps,
+  InactivityWatchdogSessionSnapshot,
+} from './inactivity-watchdog-contracts';
+export {
+  boundInactivityNagPrompt,
+  DEFAULT_INACTIVITY_NAG_PROMPT,
+  INACTIVITY_NAG_PROMPT_MAX_CHARS,
+} from './inactivity-watchdog-contracts';
+
 const log = new Logger('inactivity-watchdog');
-
-export const INACTIVITY_NAG_PROMPT_MAX_CHARS = 4000;
-export const INACTIVITY_NAG_DELIVERY_TIMEOUT_MS = 30_000;
-const INACTIVITY_CLAIM_LEASE_MS = 5 * 60 * 1000;
-
-export const DEFAULT_INACTIVITY_NAG_PROMPT =
-  'You have been idle for a while. Check your goals, reminders, and pending reviews; if nothing needs you, say so briefly and stand by.';
-
-export type InactivityNagDeliveryOutcome =
-  | 'consumed'
-  | 'accepted'
-  | 'terminal_failure'
-  | 'terminal_failure_after_consumption'
-  | 'pre_admission_failure';
-
-export interface InactivityWatchdogSessionSnapshot {
-  latestConsumedMessageAt: number | null;
-  latestConsumedUserMessageAt: number | null;
-  sessionCreatedAt: number | null;
-  busyWithOtherWork: boolean;
-  pendingOtherAcceptedDelivery: boolean;
-}
-
-export function applyRunNowBaseline(
-  session: InactivityWatchdogSessionSnapshot,
-  activityBaseline: number | undefined,
-  invokedAt: number | undefined,
-  invokingUserMsgAt: number | null | undefined,
-  snapshotActivity: number | null
-): number | null {
-  if (activityBaseline === undefined || invokedAt === undefined) return snapshotActivity;
-  const freshTurnStarted =
-    invokingUserMsgAt !== undefined &&
-    session.latestConsumedUserMessageAt !== null &&
-    session.latestConsumedUserMessageAt > (invokingUserMsgAt ?? 0);
-  return freshTurnStarted ? snapshotActivity : activityBaseline;
-}
-
-export interface InactivityWatchdogDeps {
-  configRepo: SpaceAgentInactivityConfigRepository;
-  claimRepo: SpaceAgentInactivityClaimRepository;
-  agentRepo: Pick<SpaceLongHorizonAgentRepository, 'getById' | 'listBySpaceId'>;
-  spaceManager: Pick<SpaceManager, 'getSpace'>;
-  scannerToken: string;
-  now?: () => number;
-  deliveryTimeoutMs?: number;
-  shouldAbort?: () => boolean;
-  getSessionSnapshot(spaceId: string, agentId: string): InactivityWatchdogSessionSnapshot | null;
-  isNagDeliveryPending(spaceId: string, agentId: string, claimKey: string): boolean;
-  isNagDeliveryFailed(spaceId: string, agentId: string, claimKey: string): boolean;
-  deliverNag(args: {
-    spaceId: string;
-    agentId: string;
-    prompt: string;
-    idempotencyKey: string;
-    configRevision: number | null;
-  }): Promise<InactivityNagDeliveryOutcome>;
-}
-
-export function boundInactivityNagPrompt(prompt: string | null): string {
-  const trimmed = (prompt ?? '').trim();
-  const value = trimmed.length > 0 ? trimmed : DEFAULT_INACTIVITY_NAG_PROMPT;
-  const codePoints = [...value];
-  if (codePoints.length <= INACTIVITY_NAG_PROMPT_MAX_CHARS) return value;
-  return `${codePoints.slice(0, INACTIVITY_NAG_PROMPT_MAX_CHARS - 1).join('')}…`;
-}
 
 export class SpaceAgentInactivityWatchdogService {
   constructor(private readonly deps: InactivityWatchdogDeps) {}
@@ -127,51 +76,8 @@ export class SpaceAgentInactivityWatchdogService {
     );
     if (lastActivityAt === null) return;
     const space = await this.deps.spaceManager.getSpace(spaceId);
-    let claim = this.deps.claimRepo.getByAgent(spaceId, agentId);
-    if (claim !== null && claim.degraded && claim.windowAnchoredAt < lastActivityAt) {
-      this.deps.claimRepo.clearDegraded(spaceId, agentId);
-      claim = null;
-    }
-    if (claim !== null && claim.degraded && claim.configRevision !== config.configRevision) {
-      this.deps.claimRepo.applyReset(
-        spaceId,
-        agentId,
-        claim.id,
-        claim.claimKey,
-        claim.ownerToken,
-        claim.configRevision,
-        { releaseClaim: true, markDegraded: false, advanceAttemptGeneration: false }
-      );
-      claim = null;
-    }
-    if (
-      claim !== null &&
-      claim.state !== 'none' &&
-      !claim.degraded &&
-      !this.deps.isNagDeliveryPending(spaceId, agentId, claim.claimKey)
-    ) {
-      const deliveryFailed = this.deps.isNagDeliveryFailed(spaceId, agentId, claim.claimKey);
-      const superseded = claim.configRevision !== config.configRevision;
-      const freshInFlight =
-        claim.state === 'in_flight' &&
-        !deliveryFailed &&
-        claim.updatedAt > Date.now() - INACTIVITY_CLAIM_LEASE_MS;
-      if (!freshInFlight) {
-        this.deps.claimRepo.applyReset(
-          spaceId,
-          agentId,
-          claim.id,
-          claim.claimKey,
-          claim.ownerToken,
-          claim.configRevision,
-          deliveryFailed && !superseded
-            ? { releaseClaim: false, markDegraded: true, advanceAttemptGeneration: true }
-            : { releaseClaim: true, markDegraded: false, advanceAttemptGeneration: false }
-        );
-        claim = null;
-      }
-    }
-    claim = this.deps.claimRepo.getByAgent(spaceId, agentId);
+    reconcileInactivityClaim(this.deps, spaceId, agentId, config.configRevision, lastActivityAt);
+    const claim = this.deps.claimRepo.getByAgent(spaceId, agentId);
     const decision = decideInactivityNag({
       now: this.deps.now?.() ?? Date.now(),
       enabled: config.enabled,
@@ -420,15 +326,4 @@ export class SpaceAgentInactivityWatchdogService {
       }
     );
   }
-}
-
-function claimSnapshotForCore(claim: SpaceAgentInactivityClaim) {
-  return {
-    state: claim.state,
-    windowAnchoredAt: claim.windowAnchoredAt,
-    attemptGeneration: claim.attemptGeneration,
-    ownerToken: claim.ownerToken,
-    configRevision: claim.configRevision,
-    degraded: claim.degraded,
-  };
 }

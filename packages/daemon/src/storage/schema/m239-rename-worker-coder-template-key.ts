@@ -2,7 +2,7 @@ import type { SpaceWorkflow } from '@hyperneo/shared';
 import {
   getLongHorizonAgentTemplate,
   RELOCATED_FROM_LABEL_PREFIX,
-} from '../../lib/space/agents/long-horizon-agent-templates.ts';
+} from '../../lib/agents/long-horizon-templates.ts';
 import {
   computeDefinitionVersion,
   verifyDefinitionVersion,

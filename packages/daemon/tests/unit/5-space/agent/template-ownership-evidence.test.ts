@@ -3,7 +3,7 @@ import {
   collectTemplateOwnershipEvidence,
   migratedAgentIdCandidates,
   type TemplateOwnershipInputs,
-} from '../../../../src/lib/space/agents/template-ownership-evidence.ts';
+} from '../../../../src/lib/agents/template-ownership-evidence.ts';
 
 function inputs(overrides: Partial<TemplateOwnershipInputs> = {}): TemplateOwnershipInputs {
   return { templates: [], agents: [], workflowSlots: [], ...overrides };

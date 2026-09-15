@@ -4,7 +4,7 @@ import {
   isRunnableUnifiedAgent,
   type WorkerAgentRowSource,
   workerAgentToLongHorizonParams,
-} from '../../../../src/lib/space/agents/worker-long-horizon-mapper.ts';
+} from '../../../../src/lib/agents/worker-long-horizon-mapper.ts';
 
 interface WorkerSeed {
   id: string;

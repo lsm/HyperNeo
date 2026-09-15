@@ -5,8 +5,8 @@ import type {
   SpaceAgentTemplate,
 } from '@hyperneo/shared';
 import superpipe, { type Dependencies, type PipelineAPI } from 'superpipe';
-import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit, validateSlug } from '../slug.ts';
-import { firstAgentFieldError } from './agent-field-validation.ts';
+import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit, validateSlug } from '../space/slug.ts';
+import { firstAgentFieldError } from './field-validation.ts';
 
 export interface CreateSpaceAgentInput extends Omit<CreateSpaceAgentParams, 'handle'> {
   handle?: string;

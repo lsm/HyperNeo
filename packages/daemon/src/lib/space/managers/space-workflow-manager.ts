@@ -17,8 +17,8 @@ import type { SpaceWorkflowRepository } from '../../../storage/repositories/spac
 import { validateGlobPattern } from '../../external-events/topic-validator.ts';
 import { Logger } from '../../logger.ts';
 import { getProviderRegistry, providerMayOfferModel } from '../../providers/registry.js';
-import { getLongHorizonAgentTemplate } from '../agents/long-horizon-agent-templates.ts';
-import { isRunnableUnifiedAgent } from '../agents/worker-long-horizon-mapper.ts';
+import { getLongHorizonAgentTemplate } from '../../agents/long-horizon-templates.ts';
+import { isRunnableUnifiedAgent } from '../../agents/worker-long-horizon-mapper.ts';
 import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../export-format.ts';
 import { KNOWN_TOPIC_FROM_SOURCES } from '../runtime/parse-pr-url.ts';
 import { validateWorkflowHooks } from '../workflow-hook-validation.ts';

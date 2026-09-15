@@ -1,12 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import type { Space, SpaceTask } from '@hyperneo/shared';
 import { DENIABLE_TOOLS, isScopedBashToolEntry } from '@hyperneo/shared';
-import {
-  createCustomAgentInit,
-  resolveAgentInit,
-} from '../../../../src/lib/space/agents/custom-agent';
-import { PRESET_AGENT_TOOLS } from '../../../../src/lib/space/agents/seed-agents';
-import { deriveWorkerDisallowedTools } from '../../../../src/lib/space/agents/tool-policy';
+import { createCustomAgentInit, resolveAgentInit } from '../../../../src/lib/agents/custom-agent';
+import { PRESET_AGENT_TOOLS } from '../../../../src/lib/agents/seed-agents';
+import { deriveWorkerDisallowedTools } from '../../../../src/lib/agents/tool-policy';
 
 describe('deriveWorkerDisallowedTools — shared tool-policy resolver', () => {
   test('empty / null / undefined profile is permissive: no built-ins denied', () => {

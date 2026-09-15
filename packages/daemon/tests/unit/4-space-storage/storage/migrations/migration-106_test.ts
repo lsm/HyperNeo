@@ -5,8 +5,8 @@ import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compa
 import { createLegacySpaceAgentTables } from '../../../helpers/space-agent-schema.ts';
 import { runMigrations } from '../../../../../src/storage/schema/index.ts';
 import { runMigration106 } from '../../../../../src/storage/schema/migrations.ts';
-import { getPresetAgentTemplates } from '../../../../../src/lib/space/agents/seed-agents.ts';
-import { computeAgentTemplateHash } from '../../../../../src/lib/space/agents/agent-template-hash.ts';
+import { getPresetAgentTemplates } from '../../../../../src/lib/agents/seed-agents.ts';
+import { computeAgentTemplateHash } from '../../../../../src/lib/agents/template-hash.ts';
 
 interface AgentRow {
   id: string;

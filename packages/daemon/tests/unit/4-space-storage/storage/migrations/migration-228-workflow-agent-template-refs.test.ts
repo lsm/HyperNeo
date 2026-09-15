@@ -13,7 +13,7 @@ import {
   insertSpace,
   insertWorkflow,
 } from '../../../helpers/space-agent-schema.ts';
-import { migratedAgentTemplateKey } from '../../../../../src/lib/space/agents/agent-template-synthesis.ts';
+import { migratedAgentTemplateKey } from '../../../../../src/lib/agents/template-synthesis.ts';
 import {
   resolveNodeAgentConfig,
   spaceAgentTemplateToNodeSource,

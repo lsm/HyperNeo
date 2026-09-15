@@ -6,8 +6,8 @@ import {
   LONG_HORIZON_AGENT_BUILTIN_TOOLS,
   LONG_HORIZON_OWNER_REVIEW_CONTRACT,
   LONG_HORIZON_SCHEDULING_GUARDRAIL,
-} from '../space/agents/long-horizon-agent-tools.ts';
-import { deriveWorkerDisallowedTools } from '../space/agents/tool-policy.ts';
+} from '../agents/long-horizon-tools.ts';
+import { deriveWorkerDisallowedTools } from '../agents/tool-policy.ts';
 
 const LONG_TERM_AGENT_SESSION_FEATURES = {
   rewind: false,

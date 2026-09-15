@@ -111,14 +111,15 @@ Sessions with `session.context.spaceId` receive the `space-actions` dispatcher (
 Important seams under `packages/daemon/src/lib/space/`:
 
 - `runtime/` — task/workflow execution and persistent delivery
-- `agents/` — worker, custom, and long-horizon agents
 - `goals/` — rolling goals, check-ins, and automation
 - `workflows/` and `managers/` — workflow definitions and lifecycle
 - `tools/` — Space MCP servers
 
+Agent definitions (worker, custom, and long-horizon agents, plus agent templates) are their own subsystem at `packages/daemon/src/lib/agents/`. Do not confuse it with `packages/daemon/src/lib/agent/` (singular), which is the SDK query runtime.
+
 A space owns a registry of git-repo workspaces (`space_workspaces`, with `spaces.workspace_path` kept as the immutable primary; see `docs/features/space-workspaces.md`). Tasks, goals, and sessions bind to one registered repo each, and all task→repo resolution flows through `resolveTaskWorkspace` in `space/runtime/spawn-slot-resolution.ts` — never hand-roll a space-root fallback beside it.
 
-`buildCustomAgentTaskMessage` in `space/agents/custom-agent.ts` centrally injects runtime location, role, prior goal work, project context, and standing instructions. Workflow slot prompts must remain behavioral; do not duplicate peers, channels, gate IDs, or reviewer framing there.
+`buildCustomAgentTaskMessage` in `agents/custom-agent.ts` centrally injects runtime location, role, prior goal work, project context, and standing instructions. Workflow slot prompts must remain behavioral; do not duplicate peers, channels, gate IDs, or reviewer framing there.
 
 Space goals use `space_goals` plus append-only `space_goal_events`. They store rolling summary, progress, metrics, next steps, task pointers, and optional check-in schedules. Check-ins create ordinary Space tasks. Forge scopes provide linked evidence/episode/lesson loops; they do not replace goal state.
 

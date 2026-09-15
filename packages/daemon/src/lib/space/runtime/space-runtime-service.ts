@@ -77,11 +77,11 @@ import {
 } from '../actions/space-actions-server.ts';
 import type { SpaceAgentToolsConfig } from '../actions/space-handlers.ts';
 import { SpaceActorRegistryAdapter } from '../actor-registry.ts';
-import { LONG_HORIZON_AGENT_BUILTIN_TOOLS } from '../agents/long-horizon-agent-tools.ts';
-import type { OwnedAgentLookup } from '../agents/unified-agent-events.ts';
-import { unifiedAgentRecordExists } from '../agents/worker-long-horizon-mapper.ts';
+import { LONG_HORIZON_AGENT_BUILTIN_TOOLS } from '../../agents/long-horizon-tools.ts';
+import type { OwnedAgentLookup } from '../../agents/unified-agent-events.ts';
+import { unifiedAgentRecordExists } from '../../agents/worker-long-horizon-mapper.ts';
 import { encodeActorIdComponent, longTermAgentSessionId } from '../long-term-agent-session.ts';
-import { SpaceAgentTemplateManager } from '../managers/space-agent-template-manager.ts';
+import { SpaceAgentTemplateManager } from '../../agents/template-manager.ts';
 import type { SpaceManager } from '../managers/space-manager.ts';
 import { SpaceTaskManager } from '../managers/space-task-manager.ts';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager.ts';

@@ -88,7 +88,7 @@ import {
   type SpaceAgentV2Deps,
   setupSpaceAgentV2Handlers,
 } from './space-agent-v2-handlers.ts';
-import { buildTemplateExtrasSeeder } from '../space/agents/template-extras-seeding.ts';
+import { buildTemplateExtrasSeeder } from '../agents/template-extras-seeding.ts';
 import { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository.ts';
 import {
   SpaceLongHorizonAgentRepository,
@@ -99,7 +99,7 @@ import { SpaceAgentGoalScopeRepository } from '../../storage/repositories/space-
 import { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository.ts';
 import { SpaceAgentReminderRepository } from '../../storage/repositories/space-agent-reminder-repository.ts';
 import { SpaceAgentSubscriptionRepository } from '../../storage/repositories/space-agent-subscription-repository.ts';
-import { SpaceAgentTemplateManager } from '../space/managers/space-agent-template-manager.ts';
+import { SpaceAgentTemplateManager } from '../agents/template-manager.ts';
 import { createAgentTemplateResolverFactory } from '../space/workflows/run-template-snapshot.ts';
 import {
   deliverSpaceAgentMessage,
@@ -111,8 +111,8 @@ import type { JobQueueProcessor } from '../../storage/job-queue-processor.ts';
 import type { EvolutionRepository } from '../../storage/repositories/evolution-repository.ts';
 import { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
 import { GOAL_OUTCOME_WAKE_ENABLED } from '../space/runtime/goal-outcome-wake-flag.ts';
-import { SpaceAgentInactivityWatchdogService } from '../space/agents/inactivity-watchdog-service.ts';
-import type { InactivityWatchdogSessionSnapshot } from '../space/agents/inactivity-watchdog-service.ts';
+import { SpaceAgentInactivityWatchdogService } from '../agents/inactivity-watchdog-service.ts';
+import type { InactivityWatchdogSessionSnapshot } from '../agents/inactivity-watchdog-service.ts';
 import {
   SpaceAgentInactivityClaimRepository,
   SpaceAgentInactivityConfigRepository,

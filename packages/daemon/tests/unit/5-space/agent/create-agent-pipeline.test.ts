@@ -7,7 +7,7 @@ import {
   type CreateSpaceAgentRejection,
   isCreateSpaceAgentRejection,
   templateToCreateParams,
-} from '../../../../src/lib/space/agents/create-space-agent-pipeline';
+} from '../../../../src/lib/agents/create-agent-pipeline';
 
 const MODEL_POOL: AgentModelPoolEntry[] = [
   { model: 'claude-opus-5', provider: 'anthropic', maxConcurrent: 2, weight: 3 },

@@ -4,7 +4,7 @@ import type { ActorResolver } from '../../../../../messaging/src/contracts.ts';
 import type { ActorRef } from '../../../../../messaging/src/types.ts';
 import { normalizeAgentNameToken } from '../agent-handle.ts';
 import { formatAgentMessage, type AgentMessageLevel } from '../agent-message-envelope.ts';
-import { MIGRATED_WORKER_TEMPLATE_KEY } from '../agents/worker-long-horizon-mapper.ts';
+import { MIGRATED_WORKER_TEMPLATE_KEY } from '../../agents/worker-long-horizon-mapper.ts';
 import type { TaskAgentManager } from '../runtime/task-agent-manager.ts';
 import type { EnsureSessionOutcome, SessionTarget } from '../../session-resolution/target.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';

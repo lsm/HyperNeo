@@ -3,7 +3,7 @@ import {
   getPresetAgentTemplates,
   PRESET_AGENT_TOOLS,
   SUB_SESSION_FEATURES,
-} from '../../../../src/lib/space/agents/seed-agents';
+} from '../../../../src/lib/agents/seed-agents';
 
 describe('PRESET_AGENT_TOOLS export', () => {
   const EXPECTED_SWE_TOOLS: string[] = [];

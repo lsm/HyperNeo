@@ -11,7 +11,7 @@ import { handleGoalAutomationExecute } from '../../../../src/lib/job-handlers/go
 import { handleTaskScheduleFire } from '../../../../src/lib/job-handlers/task-schedule-fire.handler';
 import { GoalAutomationService } from '../../../../src/lib/space/goals/goal-automation-service';
 import { ScheduleService } from '../../../../src/lib/space/schedule/schedule-service';
-import { getLongHorizonAgentTemplate } from '../../../../src/lib/space/agents/long-horizon-agent-templates';
+import { getLongHorizonAgentTemplate } from '../../../../src/lib/agents/long-horizon-templates';
 import { syncGoalAutomationSelfNagScheduleForScope } from '../../../../src/lib/rpc-handlers';
 import { GoalAutomationCursorRepository } from '../../../../src/storage/repositories/goal-automation-cursor-repository';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';

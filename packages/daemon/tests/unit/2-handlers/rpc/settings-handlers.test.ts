@@ -5,7 +5,7 @@ import {
   registerSettingsHandlers,
 } from '../../../../src/lib/rpc-handlers/settings-handlers';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
-import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
+import type { DaemonHub } from '../../../helpers/daemon-hub';
 import type { Database } from '../../../../src/storage/database';
 import type {
   InternalEventBus,

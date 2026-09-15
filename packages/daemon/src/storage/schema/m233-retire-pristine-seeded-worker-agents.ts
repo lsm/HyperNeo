@@ -1,6 +1,6 @@
 import type { SpaceLongHorizonAgent } from '@hyperneo/shared';
-import { computeAgentTemplateHash } from '../../lib/space/agents/agent-template-hash.ts';
-import { retireRemovedPresetAgents } from '../../lib/space/agents/seed-agents.ts';
+import { computeAgentTemplateHash } from '../../lib/agents/template-hash.ts';
+import { retireRemovedPresetAgents } from '../../lib/agents/seed-agents.ts';
 import { SpaceLongHorizonAgentRepository } from '../repositories/space-long-horizon-agent-repository.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 

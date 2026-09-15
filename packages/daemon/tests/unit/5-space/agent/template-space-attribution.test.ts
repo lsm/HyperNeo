@@ -6,7 +6,7 @@ import {
   claimByWorkflowSlot,
   planTemplateSpaceAssignments,
   type TemplateAttributionInputs,
-} from '../../../../src/lib/space/agents/template-space-attribution.ts';
+} from '../../../../src/lib/agents/template-space-attribution.ts';
 
 function inputs(overrides: Partial<TemplateAttributionInputs> = {}): TemplateAttributionInputs {
   return { templates: [], agents: [], workflowSlots: [], spaceIds: [], ...overrides };
