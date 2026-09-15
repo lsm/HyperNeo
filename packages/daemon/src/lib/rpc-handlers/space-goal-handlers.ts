@@ -6,8 +6,8 @@ import type {
 } from '@hyperneo/shared';
 import type { SpaceAgentGoalScopeRepository } from '../../storage/repositories/space-agent-goal-scope-repository.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
-import { decideGoalOwnershipMutationAdmission } from '../space/goals/goal-ownership-gates.ts';
-import type { PublicSpaceGoalUpdateParams, SpaceGoalService } from '../space/goals/goal-service.ts';
+import { decideGoalOwnershipMutationAdmission } from '../goals/ownership-gates.ts';
+import type { PublicSpaceGoalUpdateParams, SpaceGoalService } from '../goals/service.ts';
 import type { SpaceManager } from '../space/managers/space-manager.ts';
 
 export interface SpaceGoalHandlerDeps {

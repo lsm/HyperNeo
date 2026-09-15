@@ -3,7 +3,7 @@ import {
   decideGoalOwnerResolution,
   type GoalOwnerAgentState,
   type GoalOwnerResolutionDecision,
-} from '../../lib/space/goals/goal-owner-resolution.ts';
+} from '../../lib/goals/owner-resolution.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import type { SpaceAgentRepository } from './space-agent-repository.ts';
 

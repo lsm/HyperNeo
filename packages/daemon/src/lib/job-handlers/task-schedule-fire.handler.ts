@@ -3,13 +3,13 @@ import type { SpaceGoal, TaskSchedule } from '@hyperneo/shared';
 import { TASK_SCHEDULE_FIRE } from '../job-queue-constants.ts';
 import { readSelfNagScheduleScopeId } from '../rpc-handlers/index.ts';
 import { Logger } from '../logger.ts';
-import { getNextRunAt } from '../space/schedule/cron-utils.ts';
+import { getNextRunAt } from '../schedule/cron-utils.ts';
 import type { TaskScheduleRepository } from '../../storage/repositories/task-schedule-repository.ts';
 import type { JobQueueRepository, Job } from '../../storage/repositories/job-queue-repository.ts';
 import type { SpaceRepository } from '../../storage/repositories/space-repository.ts';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
-import type { SpaceGoalService } from '../space/goals/goal-service.ts';
-import type { GoalAutomationService } from '../space/goals/goal-automation-service.ts';
+import type { SpaceGoalService } from '../goals/service.ts';
+import type { GoalAutomationService } from '../goals/automation-service.ts';
 import type { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository.ts';
 
 const log = new Logger('task-schedule-fire-handler');
