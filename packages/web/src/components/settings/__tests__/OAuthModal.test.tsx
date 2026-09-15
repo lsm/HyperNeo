@@ -276,6 +276,84 @@ describe('OAuthModal', () => {
       );
       expect(openButton).toBeTruthy();
     });
+
+    it('should not show the callback paste section when onSubmitCallback is omitted', () => {
+      render(
+        <OAuthModal
+          providerName="TestProvider"
+          authUrl="https://example.com/auth"
+          onCancel={mockOnCancel}
+          onComplete={mockOnComplete}
+        />
+      );
+
+      const pasteInput = document.body.querySelector('input[placeholder^="http://localhost"]');
+      expect(pasteInput).toBeNull();
+    });
+
+    it('should relay a pasted callback URL through onSubmitCallback', async () => {
+      const submitCallback = vi.fn(async () => ({ success: true }));
+
+      render(
+        <OAuthModal
+          providerName="TestProvider"
+          authUrl="https://example.com/auth"
+          onCancel={mockOnCancel}
+          onComplete={mockOnComplete}
+          onSubmitCallback={submitCallback}
+        />
+      );
+
+      const pasteInput = document.body.querySelector(
+        'input[placeholder^="http://localhost"]'
+      ) as HTMLInputElement;
+      expect(pasteInput).toBeTruthy();
+
+      pasteInput.value = ' http://localhost:49279/callback?code=abc&state=def ';
+      pasteInput.dispatchEvent(new Event('input', { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      const buttons = document.body.querySelectorAll('[data-testid="button"]');
+      const submitButton = Array.from(buttons).find((btn) => btn.textContent?.includes('Submit'));
+      submitButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(submitCallback).toHaveBeenCalledWith(
+        'http://localhost:49279/callback?code=abc&state=def'
+      );
+    });
+
+    it('should surface a relay error under the paste input', async () => {
+      const submitCallback = vi.fn(async () => ({
+        success: false,
+        error: 'The pasted code does not match the current login flow.',
+      }));
+
+      render(
+        <OAuthModal
+          providerName="TestProvider"
+          authUrl="https://example.com/auth"
+          onCancel={mockOnCancel}
+          onComplete={mockOnComplete}
+          onSubmitCallback={submitCallback}
+        />
+      );
+
+      const pasteInput = document.body.querySelector(
+        'input[placeholder^="http://localhost"]'
+      ) as HTMLInputElement;
+      pasteInput.value = 'http://localhost:1/callback?code=a&state=b';
+      pasteInput.dispatchEvent(new Event('input', { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      const buttons = document.body.querySelectorAll('[data-testid="button"]');
+      const submitButton = Array.from(buttons).find((btn) => btn.textContent?.includes('Submit'));
+      submitButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      const errorText = document.body.querySelector('.text-danger-soft');
+      expect(errorText?.textContent).toContain('does not match');
+    });
   });
 
   describe('Interactions', () => {

@@ -7,6 +7,7 @@ export interface OAuthFlowState {
   authUrl?: string;
   userCode?: string;
   verificationUri?: string;
+  authSignature?: string;
 }
 
 interface OAuthModalProps {
@@ -16,6 +17,7 @@ interface OAuthModalProps {
   verificationUri?: string;
   onCancel: () => void;
   onComplete: () => void;
+  onSubmitCallback?: (input: string) => Promise<{ success: boolean; error?: string }>;
 }
 
 export function OAuthModal({
@@ -25,8 +27,12 @@ export function OAuthModal({
   verificationUri,
   onCancel,
   onComplete: _onComplete,
+  onSubmitCallback,
 }: OAuthModalProps) {
   const [copied, setCopied] = useState(false);
+  const [callbackInput, setCallbackInput] = useState('');
+  const [callbackSubmitting, setCallbackSubmitting] = useState(false);
+  const [callbackError, setCallbackError] = useState<string | null>(null);
   const isDeviceFlow = !!userCode && !!verificationUri;
   const isRedirectFlow = !!authUrl;
 
@@ -60,6 +66,22 @@ export function OAuthModal({
   const openAuthUrl = () => {
     if (authUrl) {
       window.open(authUrl, '_blank');
+    }
+  };
+
+  const submitCallback = async () => {
+    if (!onSubmitCallback || !callbackInput.trim() || callbackSubmitting) return;
+    setCallbackSubmitting(true);
+    setCallbackError(null);
+    try {
+      const response = await onSubmitCallback(callbackInput.trim());
+      if (!response.success) {
+        setCallbackError(response.error || 'Callback relay failed');
+      }
+    } catch (err) {
+      setCallbackError(err instanceof Error ? err.message : 'Callback relay failed');
+    } finally {
+      setCallbackSubmitting(false);
     }
   };
 
@@ -193,6 +215,45 @@ export function OAuthModal({
                   </Button>
                 </div>
               </div>
+
+              {onSubmitCallback && (
+                <div class="border-t border-line pt-3">
+                  <p class="text-xs text-fg-muted mb-2">
+                    Browser on another machine? After authorizing, your browser lands on a localhost
+                    URL that fails to load — copy the full URL from the address bar
+                    (http://localhost:…/callback?code=…&state=…) and paste it here to finish the
+                    login.
+                  </p>
+                  <div class="flex gap-2">
+                    <input
+                      type="text"
+                      placeholder="http://localhost:…/callback?code=…&state=…"
+                      value={callbackInput}
+                      disabled={callbackSubmitting}
+                      onInput={(e) => setCallbackInput(e.currentTarget.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          void submitCallback();
+                        }
+                      }}
+                      class="flex-1 min-w-0 bg-bg border border-line rounded px-2 py-1.5 text-xs text-fg focus:outline-none focus:border-accent font-mono"
+                    />
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => void submitCallback()}
+                      loading={callbackSubmitting}
+                      disabled={callbackSubmitting || !callbackInput.trim()}
+                    >
+                      Submit
+                    </Button>
+                  </div>
+                  {callbackError && (
+                    <p class="text-xs text-danger-soft mt-2 break-words">{callbackError}</p>
+                  )}
+                </div>
+              )}
             </>
           )}
 

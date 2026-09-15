@@ -12,6 +12,7 @@ import {
   loginProvider,
   logoutProvider,
   refreshProvider,
+  submitProviderCallback,
   listProviderRemoteModels,
 } from '../../lib/api-helpers.ts';
 import { toast } from '../../lib/toast.ts';
@@ -369,9 +370,12 @@ export function ProvidersSettings() {
         const response = await listProviderAuthStatus();
         const provider = response.providers.find((p) => p.id === oauthFlow.providerId);
         if (provider?.isAuthenticated) {
-          setOauthFlow(null);
-          toast.success(`${oauthFlow.providerName} authenticated successfully`);
-          await loadProviders();
+          const signature = `${provider.method ?? ''}:${provider.expiresAt ?? 0}`;
+          if (!oauthFlow.authSignature || oauthFlow.authSignature !== signature) {
+            setOauthFlow(null);
+            toast.success(`${oauthFlow.providerName} authenticated successfully`);
+            await loadProviders();
+          }
         }
       } catch {}
     }, 2000);
@@ -486,12 +490,14 @@ export function ProvidersSettings() {
       if (response.authUrl) {
         window.open(response.authUrl, '_blank');
       }
+      const existing = providers.find((p) => p.providerId === provider.providerId)?.authStatus;
       setOauthFlow({
         providerId: provider.providerId,
         providerName: provider.displayName,
         authUrl: response.authUrl,
         userCode: response.userCode,
         verificationUri: response.verificationUri,
+        authSignature: existing ? `${existing.method ?? ''}:${existing.expiresAt ?? 0}` : undefined,
       });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Login failed');
@@ -1031,11 +1037,12 @@ export function ProvidersSettings() {
 
                     {isExpanded && (
                       <div class="px-4 pb-4 border-t border-white/[0.06] space-y-4">
-                        <div class="pt-3">
+                        <div class="pt-3 space-y-2">
                           <h5 class="text-xs font-semibold uppercase tracking-wider text-fg-muted mb-2">
                             Authentication
                           </h5>
-                          {provider.authType === 'api_key' && (
+                          {(provider.authType === 'api_key' ||
+                            provider.providerId === 'anthropic') && (
                             <div class="flex gap-2">
                               <input
                                 type="password"
@@ -1060,7 +1067,8 @@ export function ProvidersSettings() {
                               </Button>
                             </div>
                           )}
-                          {provider.authType === 'oauth' && (
+                          {(provider.authType === 'oauth' ||
+                            provider.providerId === 'anthropic') && (
                             <div class="flex gap-2">
                               {needsRefresh && (
                                 <Button
@@ -1073,7 +1081,7 @@ export function ProvidersSettings() {
                                   Refresh Login
                                 </Button>
                               )}
-                              {isAuthenticated || needsRefresh ? (
+                              {(isAuthenticated || needsRefresh) && (
                                 <Button
                                   size="sm"
                                   variant="secondary"
@@ -1083,7 +1091,8 @@ export function ProvidersSettings() {
                                 >
                                   Logout
                                 </Button>
-                              ) : (
+                              )}
+                              {(!isAuthenticated || provider.providerId === 'anthropic') && (
                                 <Button
                                   size="sm"
                                   variant="primary"
@@ -1371,6 +1380,7 @@ export function ProvidersSettings() {
             setOauthFlow(null);
             loadProviders();
           }}
+          onSubmitCallback={(input) => submitProviderCallback(oauthFlow.providerId, input)}
         />
       )}
 

@@ -1,9 +1,11 @@
+import * as http from 'http';
 import type { QueryLike } from '../agent/query-like.ts';
 import type {
   Provider,
   ProviderAuthStatusInfo,
   ProviderCapabilities,
   ProviderCredentials,
+  ProviderOAuthFlowData,
   ProviderSdkConfig,
   ModelTier,
   ListRemoteModelsOptions,
@@ -14,9 +16,31 @@ import { withSdkTranscriptRetention } from '../agent/sdk-transcript-retention.ts
 import { applyRecordedFailureToAuthStatus } from './provider-failure-store.js';
 import { providerEnvCoordinator } from './provider-env-enrollment.ts';
 import { canonicalAnthropicSdkAlias, isAnthropicSdkModelId } from './anthropic-sdk-models.js';
+import {
+  CLAUDE_SUBSCRIPTION_OAUTH_CONFIG,
+  buildClaudeSubscriptionAuthorizeUrl,
+  createClaudeSubscriptionPkce,
+  createClaudeSubscriptionState,
+  exchangeClaudeSubscriptionCode,
+  parseClaudeSubscriptionCallback,
+  refreshClaudeSubscriptionToken,
+  type ClaudeSubscriptionTokenResponse,
+} from './anthropic-subscription-oauth.js';
+import { Logger } from '../logger.js';
+
+const logger = new Logger('anthropic-provider');
+
+const OAUTH_FLOW_TIMEOUT_MS = 5 * 60 * 1000;
+const OAUTH_REFRESH_WINDOW_MS = 10 * 60 * 1000;
 
 function isFullVersionId(modelId: string): boolean {
   return /^claude-(sonnet|opus|haiku|fable)-[\d-]+$/.test(modelId);
+}
+
+function readAccountEmail(credentials: ProviderCredentials | null): string | undefined {
+  if (credentials?.type !== 'oauth') return undefined;
+  const account = credentials.raw?.account as { email_address?: unknown } | undefined;
+  return typeof account?.email_address === 'string' ? account.email_address : undefined;
 }
 
 function extractVersionFromDescription(description: string): string | null {
@@ -79,10 +103,23 @@ export class AnthropicProvider implements Provider {
   private credentialsVersion = 0;
   private credentialSignature: string | undefined;
   private readonly capturedAnthropicBaseUrl: string | undefined;
+  private readonly credentialListeners = new Set<
+    (credentials: ProviderCredentials) => void | Promise<void>
+  >();
+  private activeOAuthFlow: {
+    state: string;
+    verifier: string;
+    authUrl: string;
+    redirectUri: string;
+    completed: boolean;
+    server: http.Server | null;
+    finish: ((error?: Error) => void) | null;
+  } | null = null;
 
   constructor(
     private readonly env: NodeJS.ProcessEnv = process.env,
-    private readonly modelCacheKey: string = 'anthropic-global'
+    private readonly modelCacheKey: string = 'anthropic-global',
+    private readonly fetchImpl: typeof fetch = fetch
   ) {
     this.capturedAnthropicBaseUrl = env.ANTHROPIC_BASE_URL;
   }
@@ -99,6 +136,263 @@ export class AnthropicProvider implements Provider {
 
   getCredentials(): ProviderCredentials | null {
     return this.credentials;
+  }
+
+  onCredentialsChanged(
+    listener: (credentials: ProviderCredentials) => void | Promise<void>
+  ): () => void {
+    this.credentialListeners.add(listener);
+    return () => this.credentialListeners.delete(listener);
+  }
+
+  private notifyCredentialsChanged(credentials: ProviderCredentials): void {
+    for (const listener of this.credentialListeners) {
+      void listener(credentials);
+    }
+  }
+
+  async startOAuthFlow(): Promise<ProviderOAuthFlowData> {
+    if (this.activeOAuthFlow && !this.activeOAuthFlow.completed) {
+      return {
+        type: 'redirect',
+        authUrl: this.activeOAuthFlow.authUrl,
+        message: 'OAuth flow already in progress. Complete authentication in your browser.',
+      };
+    }
+
+    const { verifier, challenge } = createClaudeSubscriptionPkce();
+    const state = createClaudeSubscriptionState();
+    const flow = {
+      state,
+      verifier,
+      authUrl: '',
+      redirectUri: '',
+      completed: false,
+      server: null as http.Server | null,
+      finish: null as ((error?: Error) => void) | null,
+    };
+    this.activeOAuthFlow = flow;
+    this.awaitOAuthFlowCompletion(flow).catch((error) => {
+      logger.error('Claude subscription OAuth flow failed:', error);
+    });
+
+    const port = await new Promise<number>((resolve, reject) => {
+      const server = http.createServer((req, res) =>
+        this.handleOAuthCallbackRequest(req, res, flow)
+      );
+      flow.server = server;
+      server.once('error', (error) => {
+        flow.finish?.(error);
+        reject(new Error(`Failed to start OAuth callback server: ${error.message}`));
+      });
+      server.listen(0, '127.0.0.1', () => {
+        const address = server.address();
+        if (address && typeof address === 'object') {
+          resolve(address.port);
+        } else {
+          reject(new Error('OAuth callback server bound without a port'));
+        }
+      });
+    });
+
+    const redirectUri = `http://localhost:${port}${CLAUDE_SUBSCRIPTION_OAUTH_CONFIG.callbackPath}`;
+    flow.redirectUri = redirectUri;
+    flow.authUrl = buildClaudeSubscriptionAuthorizeUrl({
+      state,
+      codeChallenge: challenge,
+      redirectUri,
+    });
+
+    return {
+      type: 'redirect',
+      authUrl: flow.authUrl,
+      message: 'Opening browser for Claude subscription authentication...',
+    };
+  }
+
+  private awaitOAuthFlowCompletion(
+    flow: NonNullable<AnthropicProvider['activeOAuthFlow']>
+  ): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        flow.finish?.(new Error('OAuth flow timed out'));
+      }, OAUTH_FLOW_TIMEOUT_MS);
+      flow.finish = (error?: Error) => {
+        clearTimeout(timer);
+        flow.completed = true;
+        flow.server?.close();
+        flow.finish = null;
+        if (this.activeOAuthFlow === flow) {
+          this.activeOAuthFlow = null;
+        }
+        if (error) {
+          reject(error);
+        } else {
+          resolve();
+        }
+      };
+    });
+  }
+
+  private handleOAuthCallbackRequest(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    flow: NonNullable<AnthropicProvider['activeOAuthFlow']>
+  ): void {
+    const url = new URL(req.url ?? '/', 'http://localhost');
+    if (url.pathname !== CLAUDE_SUBSCRIPTION_OAUTH_CONFIG.callbackPath) {
+      res.writeHead(404, { 'Content-Type': 'text/plain' });
+      res.end('Not found');
+      return;
+    }
+
+    const finishWith = (status: number, message: string, error: Error) => {
+      res.writeHead(status, { 'Content-Type': 'text/plain' });
+      res.end(message);
+      flow.finish?.(error);
+    };
+
+    const oauthError = url.searchParams.get('error');
+    if (oauthError) {
+      finishWith(400, `Authorization failed: ${oauthError}`, new Error(oauthError));
+      return;
+    }
+    const state = url.searchParams.get('state');
+    if (state !== flow.state) {
+      finishWith(400, 'Invalid state parameter', new Error('Invalid state parameter'));
+      return;
+    }
+    const code = url.searchParams.get('code');
+    if (!code) {
+      finishWith(
+        400,
+        'No authorization code received',
+        new Error('No authorization code received')
+      );
+      return;
+    }
+
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end(
+      '<html><body><h1>Authentication successful!</h1><p>You can close this window and return to HyperNeo.</p><script>window.close();</script></body></html>'
+    );
+
+    this.completeClaudeSubscriptionFlow(flow, code);
+  }
+
+  private completeClaudeSubscriptionFlow(
+    flow: NonNullable<AnthropicProvider['activeOAuthFlow']>,
+    code: string
+  ): void {
+    exchangeClaudeSubscriptionCode({
+      code,
+      state: flow.state,
+      codeVerifier: flow.verifier,
+      redirectUri: flow.redirectUri,
+      fetchImpl: this.fetchImpl,
+    })
+      .then((tokens) => {
+        this.applyClaudeSubscriptionTokens(tokens);
+        flow.finish?.();
+      })
+      .catch((error) => {
+        flow.finish?.(error instanceof Error ? error : new Error(String(error)));
+      });
+  }
+
+  async submitOAuthCallback(
+    callbackInput: string
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    const flow = this.activeOAuthFlow;
+    if (!flow || flow.completed) {
+      return {
+        ok: false,
+        error: 'No active OAuth login flow. Start the login again and paste the callback URL.',
+      };
+    }
+    const parsed = parseClaudeSubscriptionCallback(callbackInput);
+    if (!parsed) {
+      return {
+        ok: false,
+        error:
+          'Paste the full callback URL (http://localhost:…/callback?code=…&state=…) ' +
+          'or the code#state value shown after authorizing.',
+      };
+    }
+    if ('error' in parsed) {
+      flow.finish?.(new Error(parsed.error));
+      return { ok: false, error: `Authorization failed: ${parsed.error}` };
+    }
+    if (parsed.state !== flow.state) {
+      return {
+        ok: false,
+        error:
+          'The pasted code does not match the current login flow. Restart the login and paste the new callback URL.',
+      };
+    }
+    try {
+      const tokens = await exchangeClaudeSubscriptionCode({
+        code: parsed.code,
+        state: flow.state,
+        codeVerifier: flow.verifier,
+        redirectUri: flow.redirectUri,
+        fetchImpl: this.fetchImpl,
+      });
+      this.applyClaudeSubscriptionTokens(tokens);
+      flow.finish?.();
+      return { ok: true };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Token exchange failed';
+      flow.finish?.(error instanceof Error ? error : new Error(message));
+      return { ok: false, error: message };
+    }
+  }
+
+  private applyClaudeSubscriptionTokens(tokens: ClaudeSubscriptionTokenResponse): void {
+    const credentials = this.toClaudeSubscriptionCredentials(tokens, this.credentials);
+    this.setCredentials(credentials);
+    this.notifyCredentialsChanged(credentials);
+  }
+
+  private toClaudeSubscriptionCredentials(
+    tokens: ClaudeSubscriptionTokenResponse,
+    previous: ProviderCredentials | null
+  ): ProviderCredentials {
+    const previousOauth = previous?.type === 'oauth' ? previous : null;
+    const raw: Record<string, unknown> = { ...previousOauth?.raw };
+    if (tokens.scope !== undefined) raw.scope = tokens.scope;
+    if (tokens.account !== undefined) raw.account = tokens.account;
+    if (tokens.organization !== undefined) raw.organization = tokens.organization;
+    return {
+      type: 'oauth',
+      accessToken: tokens.access_token,
+      refreshToken: tokens.refresh_token ?? previousOauth?.refreshToken,
+      expiresAt: Date.now() + tokens.expires_in * 1000,
+      raw,
+    };
+  }
+
+  async refreshToken(): Promise<boolean> {
+    const credentials = this.credentials;
+    if (credentials?.type !== 'oauth' || !credentials.refreshToken) return false;
+    const result = await refreshClaudeSubscriptionToken({
+      refreshToken: credentials.refreshToken,
+      fetchImpl: this.fetchImpl,
+    });
+    if (!result.ok) return false;
+    this.applyClaudeSubscriptionTokens(result.token);
+    return true;
+  }
+
+  async logout(): Promise<void> {
+    this.activeOAuthFlow?.finish?.(new Error('OAuth flow cancelled'));
+    this.activeOAuthFlow = null;
+    if (this.credentials !== null) {
+      this.credentials = null;
+      this.credentialSignature = undefined;
+      this.credentialsVersion++;
+      this.clearModelCache();
+    }
   }
 
   isAvailable(): boolean {
@@ -118,10 +412,20 @@ export class AnthropicProvider implements Provider {
   async getAuthStatus(): Promise<ProviderAuthStatusInfo> {
     return providerEnvCoordinator.runWithLease('anthropic.isAvailable', () => {
       const apiKey = this.getApiKey();
+      const credentials = this.credentials;
+      const expiresAt = credentials?.type === 'oauth' ? credentials.expiresAt : undefined;
+      const needsRefresh =
+        typeof expiresAt === 'number' && expiresAt - Date.now() <= OAUTH_REFRESH_WINDOW_MS;
+      const account = readAccountEmail(credentials);
       return applyRecordedFailureToAuthStatus(this.id, {
         isAuthenticated: !!apiKey,
-        method: this.credentials?.type ?? 'api_key',
-        error: apiKey ? undefined : 'Set ANTHROPIC_API_KEY or log in with Claude Code OAuth.',
+        method: credentials?.type ?? 'api_key',
+        expiresAt,
+        needsRefresh: needsRefresh || undefined,
+        user: account ? { email: account } : undefined,
+        error: apiKey
+          ? undefined
+          : 'Set ANTHROPIC_API_KEY, inherit Claude Code credentials, or log in with a Claude subscription.',
       });
     });
   }
