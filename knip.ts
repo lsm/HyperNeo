@@ -78,7 +78,7 @@ const config: KnipConfig = {
     'packages/daemon/src/lib/mailbox/resolution.ts': ['exports'],
     'packages/daemon/src/lib/mailbox/settlement.ts': ['exports'],
     'packages/daemon/src/lib/mailbox/spawn.ts': ['exports'],
-    'packages/daemon/src/lib/space/messaging-adapter.ts': ['exports'],
+    'packages/daemon/src/lib/messaging/space-adapter.ts': ['exports'],
     'packages/daemon/src/lib/space/runtime/gate-evaluator.ts': ['exports'],
     'packages/daemon/src/lib/space/runtime/post-approval-router.ts': ['exports'],
     'packages/daemon/src/lib/space/runtime/retry-utils.ts': ['exports'],

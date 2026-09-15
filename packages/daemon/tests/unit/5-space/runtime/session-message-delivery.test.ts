@@ -14,7 +14,7 @@ import {
   deliverSpaceAgentMessage,
   type LateSettlementRequest,
   SessionLateSettlements,
-} from '../../../../src/lib/space/runtime/session-message-delivery';
+} from '../../../../src/lib/messaging/session-message-delivery';
 import { JobQueueProcessor } from '../../../../src/storage/job-queue-processor';
 import { createOutboxTestDb, type OutboxTestDb } from '../../../helpers/outbox-test-db';
 

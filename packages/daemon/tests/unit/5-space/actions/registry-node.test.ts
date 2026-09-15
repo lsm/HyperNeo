@@ -5,8 +5,8 @@ import { NodeExecutionRepository } from '../../../../src/storage/repositories/no
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository.ts';
 import { McpAuditLogRepository } from '../../../../src/storage/repositories/mcp-audit-log-repository.ts';
-import { AgentMessageRouter } from '../../../../src/lib/space/runtime/agent-message-router.ts';
-import { ChannelResolver } from '../../../../src/lib/space/runtime/channel-resolver.ts';
+import { AgentMessageRouter } from '../../../../src/lib/messaging/agent-message-router.ts';
+import { ChannelResolver } from '../../../../src/lib/messaging/channel-resolver.ts';
 import type { WorkflowHookEngine } from '../../../../src/lib/space/runtime/workflow-hook-engine.ts';
 import type { SpaceMcpSessionRole } from '../../../../src/lib/space/runtime/space-mcp-session-policy.ts';
 import {

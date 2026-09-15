@@ -1,30 +1,21 @@
-import type { SpaceTask, SpaceWorkflow, WorkflowChannel, WorkflowNode } from '@hyperneo/shared';
-import { resolveNodeAgents, isChannelCyclic } from '@hyperneo/shared';
+import type { SpaceTask } from '@hyperneo/shared';
+import { resolveNodeAgents } from '@hyperneo/shared';
 import type { NodeExecution } from '@hyperneo/shared';
-import { POST_APPROVAL_TASK_AGENT_TARGET } from '../workflows/post-approval-validator.ts';
 import {
   runTemplateResolves,
   runTemplateSnapshotRecord,
-} from '../workflows/run-template-snapshot.ts';
-import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
-import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
-import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository.ts';
-import {
-  DEAD_LOOP_THRESHOLD,
-  DEAD_LOOP_WINDOW_MS,
-} from '../../../storage/repositories/channel-cycle-repository.ts';
-import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
+} from '../space/workflows/run-template-snapshot.ts';
+import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
+import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository.ts';
+import type { ChannelCycleRepository } from '../../storage/repositories/channel-cycle-repository.ts';
+import type { NodeExecutionRepository } from '../../storage/repositories/node-execution-repository.ts';
 import {
   isReservedWorkflowAgentName,
   type SpaceWorkflowManager,
-} from '../managers/space-workflow-manager.ts';
-import { TERMINAL_NODE_EXECUTION_STATUSES } from '../managers/node-execution-manager.ts';
-import type {
-  InternalEventBus,
-  DaemonInternalEventMap,
-  InternalEventPayload,
-} from '../../internal-event-bus.ts';
-import { Logger } from '../../logger.ts';
+} from '../space/managers/space-workflow-manager.ts';
+import { TERMINAL_NODE_EXECUTION_STATUSES } from '../space/managers/node-execution-manager.ts';
+import type { InternalEventBus, DaemonInternalEventMap } from '../internal-event-bus.ts';
+import { Logger } from '../logger.ts';
 import {
   MissingWorkflowAgentError,
   PermanentSpawnError,
@@ -32,23 +23,21 @@ import {
   formatMissingAgentReference,
   formatMissingTemplateReference,
   validateExecutionAgainstWorkflow,
-} from './workflow-node-execution-validation.ts';
+} from '../space/runtime/workflow-node-execution-validation.ts';
+import { reopenRun } from './activation-reopen.ts';
+import { deadLoopReason, isDeadLoopReached, notifyDeadLoop } from './channel-cycle-bookkeeping.ts';
+import {
+  findMatchingWorkflowChannel,
+  findNodeByAgentName,
+  getPostApprovalTargetAgents,
+  isChannelCyclicByIndex,
+} from './channel-matching.ts';
 
 const log = new Logger('channel-router');
 
 export interface GateResult {
   allowed: boolean;
   reason?: string;
-}
-
-interface WorkflowRunReopenedEvent {
-  kind: 'workflow_run_reopened';
-  spaceId: string;
-  runId: string;
-  fromStatus: 'done' | 'cancelled' | 'blocked';
-  reason: string;
-  by: string;
-  timestamp: string;
 }
 
 export interface DeliveredMessage {
@@ -117,7 +106,8 @@ export class ChannelRouter {
           `Run ${runId} is ${run.status} — create a new task or use an explicit resume action.`
         );
       }
-      await this.reopenRun(
+      await reopenRun(
+        this.config,
         run.id,
         run.status,
         run.spaceId,
@@ -257,16 +247,16 @@ export class ChannelRouter {
     const workflow = this.config.workflowManager.getWorkflowForRun(run);
     if (!workflow) throw new ActivationError(`Workflow not found: ${run.workflowId}`);
 
-    const match = this.findMatchingWorkflowChannel(workflow, fromRole, toTarget);
+    const match = findMatchingWorkflowChannel(workflow, fromRole, toTarget);
     if (!match) {
       return { allowed: true };
     }
     const { index } = match;
 
-    const channelIsCyclic = this.isChannelCyclicByIndex(index, workflow);
+    const channelIsCyclic = isChannelCyclicByIndex(index, workflow);
 
-    if (channelIsCyclic && this.isDeadLoopReached(runId, index)) {
-      return { allowed: false, reason: this.deadLoopReason(fromRole, toTarget) };
+    if (channelIsCyclic && isDeadLoopReached(this.config, runId, index)) {
+      return { allowed: false, reason: deadLoopReason(fromRole, toTarget) };
     }
 
     return { allowed: true };
@@ -283,17 +273,6 @@ export class ChannelRouter {
     if (!sessionId) return undefined;
     const probe = this.config.isPostApprovalSessionInMemory ?? this.config.isSessionAlive;
     return !probe || probe(sessionId) ? sessionId : undefined;
-  }
-
-  private getPostApprovalTargetAgents(workflow: SpaceWorkflow): Set<string> {
-    const agents = new Set<string>();
-    for (const node of workflow.nodes) {
-      const targetAgent = node.postApproval?.targetAgent;
-      if (targetAgent && targetAgent !== POST_APPROVAL_TASK_AGENT_TARGET) agents.add(targetAgent);
-    }
-    const legacy = workflow.postApproval?.targetAgent;
-    if (legacy && legacy !== POST_APPROVAL_TASK_AGENT_TARGET) agents.add(legacy);
-    return agents;
   }
 
   async deliverMessage(
@@ -316,12 +295,12 @@ export class ChannelRouter {
       throw new ActivationError(`Workflow not found: ${run.workflowId}`);
     }
 
-    const match = this.findMatchingWorkflowChannel(workflow, fromRole, toTarget);
+    const match = findMatchingWorkflowChannel(workflow, fromRole, toTarget);
     const channel = match?.channel;
     const channelIndex = match?.index ?? -1;
-    const channelIsCyclic = match ? this.isChannelCyclicByIndex(channelIndex, workflow) : false;
+    const channelIsCyclic = match ? isChannelCyclicByIndex(channelIndex, workflow) : false;
 
-    let targetNode = this.findNodeByAgentName(workflow, toTarget);
+    let targetNode = findNodeByAgentName(workflow, toTarget);
     let isFanOut = false;
 
     if (!targetNode) {
@@ -341,7 +320,9 @@ export class ChannelRouter {
         ? this.config.channelCycleRepo.reserveCycleEvent(runId, channelIndex)
         : { allowed: true, recentCount: 0 };
       if (!reservation.allowed) {
-        await this.notifyDeadLoop(
+        await notifyDeadLoop(
+          this.config,
+          this.deadLoopNotifiedAt,
           run.spaceId,
           runId,
           fromRole,
@@ -349,7 +330,7 @@ export class ChannelRouter {
           channelIndex,
           reservation.recentCount
         );
-        throw new ActivationError(this.deadLoopReason(fromRole, toTarget));
+        throw new ActivationError(deadLoopReason(fromRole, toTarget));
       }
       this.deadLoopNotifiedAt.delete(`${runId}:${channelIndex}`);
     }
@@ -357,7 +338,7 @@ export class ChannelRouter {
     const activeTasks = this.getActiveTasksForNode(runId, targetNode.id);
     let activatedTasks: SpaceTask[] | undefined;
 
-    const postApprovalTargetAgents = this.getPostApprovalTargetAgents(workflow);
+    const postApprovalTargetAgents = getPostApprovalTargetAgents(workflow);
     const skipForLiveMerger =
       postApprovalTargetAgents.size > 0 &&
       !!this.resolveLivePostApprovalSession(runId) &&
@@ -405,125 +386,9 @@ export class ChannelRouter {
     return runTasks[0] ?? null;
   }
 
-  private findNodeByAgentName(workflow: SpaceWorkflow, role: string): WorkflowNode | undefined {
-    for (const node of workflow.nodes) {
-      try {
-        const agents = resolveNodeAgents(node);
-        if (agents.some((a) => a.name === role)) return node;
-      } catch {}
-    }
-    return undefined;
-  }
-
-  private findMatchingWorkflowChannel(
-    workflow: SpaceWorkflow,
-    fromRole: string,
-    toTarget: string
-  ): { channel: WorkflowChannel; index: number } | undefined {
-    const fromNodeName = this.findNodeByAgentName(workflow, fromRole)?.name;
-    const toNodeName =
-      this.findNodeByAgentName(workflow, toTarget)?.name ??
-      workflow.nodes.find((node) => node.name === toTarget)?.name;
-    const channels = workflow.channels ?? [];
-    const index = channels.findIndex((ch) => {
-      if (ch.from !== '*' && ch.from !== fromRole && ch.from !== fromNodeName) return false;
-      if (ch.to === '*' || ch.to === toTarget || (!!toNodeName && ch.to === toNodeName))
-        return true;
-      if (Array.isArray(ch.to)) {
-        return ch.to.includes(toTarget) || (!!toNodeName && ch.to.includes(toNodeName));
-      }
-      return false;
-    });
-    return index >= 0 ? { channel: channels[index], index } : undefined;
-  }
-
-  private isChannelCyclicByIndex(channelIndex: number, workflow: SpaceWorkflow): boolean {
-    const channels = workflow.channels ?? [];
-    return isChannelCyclic(channelIndex, channels, workflow.nodes);
-  }
-
-  private isDeadLoopReached(runId: string, channelIndex: number): boolean {
-    if (!this.config.channelCycleRepo) return false;
-    return this.config.channelCycleRepo.isDeadLoopReached(runId, channelIndex);
-  }
-
-  private deadLoopReason(fromRole: string, toTarget: string): string {
-    const windowMin = Math.round(DEAD_LOOP_WINDOW_MS / 60000);
-    return (
-      `Cyclic channel from "${fromRole}" to "${toTarget}" is in a dead loop: ` +
-      `${DEAD_LOOP_THRESHOLD} message round-trips within ${windowMin} minute(s). ` +
-      `Spread the exchange out or break the loop.`
-    );
-  }
-
-  private async notifyDeadLoop(
-    spaceId: string,
-    runId: string,
-    fromRole: string,
-    toTarget: string,
-    channelIndex: number,
-    recentCount: number
-  ): Promise<void> {
-    if (!this.config.internalEventBus) return;
-    const key = `${runId}:${channelIndex}`;
-    const now = Date.now();
-    const last = this.deadLoopNotifiedAt.get(key);
-    if (last !== undefined && now - last < DEAD_LOOP_WINDOW_MS) return;
-    try {
-      await this.config.internalEventBus.publish('space.workflowRun.deadLoop', {
-        namespaceId: 'global',
-        spaceId,
-        runId,
-        fromAgent: fromRole,
-        toTarget,
-        channelIndex,
-        recentCount,
-        threshold: DEAD_LOOP_THRESHOLD,
-        windowMs: DEAD_LOOP_WINDOW_MS,
-        reason: this.deadLoopReason(fromRole, toTarget),
-        timestamp: new Date(now).toISOString(),
-      } satisfies DaemonInternalEventMap['space.workflowRun.deadLoop'] & InternalEventPayload);
-      this.deadLoopNotifiedAt.set(key, now);
-    } catch {}
-  }
-
   private isParentTaskArchived(runId: string): boolean {
     const tasks = this.config.taskRepo.listByWorkflowRunIncludingArchived(runId);
     if (tasks.length === 0) return false;
     return tasks.every((t) => t.archivedAt != null);
-  }
-
-  private async reopenRun(
-    runId: string,
-    fromStatus: 'done' | 'cancelled' | 'blocked',
-    spaceId: string,
-    reason: string,
-    by: string
-  ): Promise<void> {
-    this.config.workflowRunRepo.transitionStatus(runId, 'in_progress');
-    await this.safeNotify({
-      kind: 'workflow_run_reopened',
-      spaceId,
-      runId,
-      fromStatus,
-      reason,
-      by,
-      timestamp: new Date().toISOString(),
-    });
-  }
-
-  private async safeNotify(event: WorkflowRunReopenedEvent): Promise<void> {
-    if (!this.config.internalEventBus) return;
-    try {
-      await this.config.internalEventBus.publish('space.workflowRun.reopened', {
-        namespaceId: 'global',
-        spaceId: event.spaceId,
-        runId: event.runId,
-        fromStatus: event.fromStatus,
-        reason: event.reason,
-        by: event.by,
-        timestamp: event.timestamp,
-      } satisfies DaemonInternalEventMap['space.workflowRun.reopened'] & InternalEventPayload);
-    } catch {}
   }
 }

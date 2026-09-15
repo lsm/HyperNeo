@@ -1,23 +1,23 @@
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import { Logger } from '../../logger.ts';
+import { Logger } from '../logger.ts';
 import {
   MESSAGE_DELIVERY_PARK_MS,
   signalDeliveryConsumed,
   waitForDeliveryConsumption,
   withSessionLock,
   type MessageDeliveryOrigin,
-} from '../../agent/message-delivery.ts';
+} from '../agent/message-delivery.ts';
 import {
   PromptContentConflictError,
   verifyPromptContent,
-} from '../../agent/message-delivery-outbox.ts';
-import { createMailboxEntry, type MailboxEntry } from '../../mailbox/entry.ts';
-import { enqueueMailboxEntry, MAILBOX_LANE } from '../../mailbox/enqueue.ts';
-import type { MailboxHandoffOutcome } from '../../mailbox/handoff.ts';
-import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
-import type { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository.ts';
-import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
+} from '../agent/message-delivery-outbox.ts';
+import { createMailboxEntry, type MailboxEntry } from '../mailbox/entry.ts';
+import { enqueueMailboxEntry, MAILBOX_LANE } from '../mailbox/enqueue.ts';
+import type { MailboxHandoffOutcome } from '../mailbox/handoff.ts';
+import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
+import type { SDKMessageRepository } from '../../storage/repositories/sdk-message-repository.ts';
+import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 
 const log = new Logger('space-agent-delivery');
 

@@ -7,7 +7,7 @@ import type {
   SpaceAgentTemplateRecord,
   SpaceAgentTemplateRepository,
 } from '../../storage/repositories/space-agent-template-repository.ts';
-import { isReservedAgentHandle } from '../space/agent-handle.ts';
+import { isReservedAgentHandle } from '../messaging/agent-handle.ts';
 import type { SpaceAgentResult } from './validation.ts';
 import { getLongHorizonAgentTemplates } from './long-horizon-templates.ts';
 import type { TemplateInstanceScan } from './template-pipelines.ts';

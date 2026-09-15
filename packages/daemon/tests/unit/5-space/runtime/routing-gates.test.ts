@@ -10,7 +10,7 @@ import {
   type NodeTargetDeliverySnapshot,
   type ResolveNodeAgentTargetsInput,
   resolveNodeAgentTargets,
-} from '../../../../src/lib/space/runtime/agent-message-routing-gates';
+} from '../../../../src/lib/messaging/routing-gates';
 
 function makeInput(
   overrides: Partial<ResolveNodeAgentTargetsInput> = {}

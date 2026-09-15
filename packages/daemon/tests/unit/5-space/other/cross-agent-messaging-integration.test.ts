@@ -8,8 +8,8 @@ import {
   createNodeAgentToolHandlers,
   type NodeAgentToolsConfig,
 } from '../../../../src/lib/space/actions/node-handlers.ts';
-import { AgentMessageRouter } from '../../../../src/lib/space/runtime/agent-message-router.ts';
-import { ChannelResolver } from '../../../../src/lib/space/runtime/channel-resolver.ts';
+import { AgentMessageRouter } from '../../../../src/lib/messaging/agent-message-router.ts';
+import { ChannelResolver } from '../../../../src/lib/messaging/channel-resolver.ts';
 import type { WorkflowChannel } from '@hyperneo/shared';
 
 const STEP_NODE_ID = 'node-integration-step';

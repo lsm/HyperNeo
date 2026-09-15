@@ -92,10 +92,10 @@ const { resetProviderFactory } = await import('../../../../src/lib/providers/fac
 const { AnthropicProvider } = await import('../../../../src/lib/providers/anthropic-provider.js');
 const { resetProviderServiceInstance } = await import('../../../../src/lib/provider-service');
 const { deliverSpaceAgentMessage, SessionLateSettlements } = await import(
-  '../../../../src/lib/space/runtime/session-message-delivery'
+  '../../../../src/lib/messaging/session-message-delivery'
 );
 const { AgentMessageRouter } = await import(
-  '../../../../src/lib/space/runtime/agent-message-router.ts'
+  '../../../../src/lib/messaging/agent-message-router.ts'
 );
 const { createMessageDeliveryHandler } = await import(
   '../../../../src/lib/job-handlers/message-delivery.handler'
@@ -113,7 +113,7 @@ import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus';
 import type { AgentSession as AgentSessionType } from '../../../../src/lib/agent/agent-session';
 import type { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
-import type { SessionInjectionOutcome } from '../../../../src/lib/space/runtime/session-message-delivery';
+import type { SessionInjectionOutcome } from '../../../../src/lib/messaging/session-message-delivery';
 
 const SPACE_ID = 'sp-idle-coordinator';
 const SESSION_ID = `space:chat:${SPACE_ID}`;

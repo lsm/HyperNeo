@@ -5,8 +5,8 @@ import {
   SpaceMessageResolver,
   translateLegacyNodeTargets,
   translateTaskMessageTarget,
-} from '../../../src/lib/space/messaging-adapter';
-import { SpaceActorRegistryAdapter } from '../../../src/lib/space/actor-registry';
+} from '../../../src/lib/messaging/space-adapter';
+import { SpaceActorRegistryAdapter } from '../../../src/lib/messaging/actor-registry';
 import { NodeExecutionRepository } from '../../../src/storage/repositories/node-execution-repository';
 import { SessionRepository } from '../../../src/storage/repositories/session-repository';
 import { SpaceLongHorizonAgentRepository } from '../../../src/storage/repositories/space-long-horizon-agent-repository';

@@ -1,19 +1,37 @@
 import { parseAddress } from '../../../../messaging/src/address.ts';
 import type { ParsedAddress, WorkerAddress } from '../../../../messaging/src/address.ts';
-import type { ActorRef, DeliveryRecord, MessageRecord } from '../../../../messaging/src/types.ts';
+import type { ActorRef, MessageRecord } from '../../../../messaging/src/types.ts';
 import type {
   ActorResolver,
   ResolvedTarget,
   ResolveTargetsResult,
-  RouteMessageResult,
   UnresolvedTarget,
 } from '../../../../messaging/src/contracts.ts';
-import type { NodeExecution } from '@hyperneo/shared';
 import type { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository.ts';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository.ts';
-import type { SpaceWorkflow, WorkflowChannel, WorkflowNode } from '@hyperneo/shared';
-import { ChannelResolver } from './runtime/channel-resolver.ts';
+import type { SpaceWorkflow } from '@hyperneo/shared';
+import {
+  actorRole,
+  canSendToWorkerTarget,
+  decodeAddressComponent,
+  isRoutable,
+  parseWorkerActorId,
+  stableActors,
+  uniqueStrings,
+  workerActorId,
+  workerHandle,
+  workflowNodeId,
+  workflowNodeName,
+} from './actor-address.ts';
 import type { SpaceActorRegistryAdapter } from './actor-registry.ts';
+
+export type { SpaceDeliveryFacadeConfig } from './delivery-facade.ts';
+export { SpaceDeliveryFacade } from './delivery-facade.ts';
+export type {
+  LegacyNodeTargetTranslatorConfig,
+  TaskMessageTargetTranslatorConfig,
+} from './target-translation.ts';
+export { translateLegacyNodeTargets, translateTaskMessageTarget } from './target-translation.ts';
 
 export interface SpaceMessageResolverContext {
   spaceId: string;
@@ -355,343 +373,4 @@ export class SpaceMessageResolver implements ActorResolver {
     if (!run || run.spaceId !== this.context.spaceId) return null;
     return this.config.workflowRepo.getWorkflowForRun(run) ?? null;
   }
-}
-
-export interface SpaceDeliveryFacadeConfig {
-  resolver: ActorResolver;
-  deliverToSession?: (
-    actor: ActorRef,
-    message: MessageRecord
-  ) => Promise<string | null | undefined>;
-  queueForActivation?: (
-    actor: ActorRef,
-    message: MessageRecord
-  ) => Promise<string | null | undefined>;
-}
-
-export interface LegacyNodeTargetTranslatorConfig {
-  spaceId: string;
-  workflowRunId: string;
-  workflowNodeId: string;
-  agentName: string;
-  workflow: SpaceWorkflow | null;
-  actors?: ActorRef[];
-  replyRoutingLookup?: (agentName?: string | null) => string | null;
-}
-
-export interface TaskMessageTargetTranslatorConfig {
-  workflowRunId: string;
-  nodeExecutions: NodeExecution[];
-  workflow: SpaceWorkflow | null;
-}
-
-export function translateLegacyNodeTargets(
-  target: string | string[],
-  config: LegacyNodeTargetTranslatorConfig
-): string[] {
-  const targets = Array.isArray(target) ? target : [target];
-  const translated = targets.flatMap((targetRef) => {
-    const matches = translateLegacyNodeTarget(targetRef, config);
-    if (matches.length === 0) {
-      throw new Error(`Unknown target "${targetRef}".`);
-    }
-    return matches;
-  });
-  return uniqueStrings(translated);
-}
-
-export function translateTaskMessageTarget(
-  input: { target?: string | null; nodeId?: string | null },
-  config: TaskMessageTargetTranslatorConfig
-): string {
-  const explicitTarget = input.target?.trim();
-  if (explicitTarget) {
-    if (explicitTarget === 'task-agent') {
-      throw new Error('Target "task-agent" is no longer supported. Use a worker target.');
-    }
-    const address = parseAddress(explicitTarget);
-    if (
-      address.kind !== 'worker' &&
-      address.kind !== 'session' &&
-      address.kind !== 'handle' &&
-      address.kind !== 'role'
-    ) {
-      throw new Error(
-        `Generic target ${explicitTarget} is not routable from this tool. Use @handle, @role:<role>, @worker:<node>/<agent>, @worker:<run>/<node>/<agent>, @session:<task-agent-session>, or node_id.`
-      );
-    }
-    return explicitTarget;
-  }
-
-  const nodeId = input.nodeId?.trim();
-  if (!nodeId) {
-    throw new Error('Target is required. Provide target or node_id.');
-  }
-  if (nodeId === 'task-agent') {
-    throw new Error('Target "task-agent" is no longer supported. Use a worker target.');
-  }
-
-  const resolved = resolveTaskNodeExecution(config.nodeExecutions, nodeId);
-  if (!resolved) {
-    throw new Error(`Node not found: "${nodeId}". Expected an execution UUID or agent name.`);
-  }
-  const nodeName = workflowNodeName(config.workflow?.nodes ?? [], resolved.workflowNodeId);
-  if (!nodeName) {
-    throw new Error(`Workflow node not found for execution ${resolved.id}.`);
-  }
-  return workerTarget(config.workflowRunId, nodeName, resolved.agentName);
-}
-
-export class SpaceDeliveryFacade {
-  constructor(private readonly config: SpaceDeliveryFacadeConfig) {}
-
-  async routeMessage(message: MessageRecord): Promise<RouteMessageResult> {
-    const result = await this.config.resolver.resolveTargets(message);
-    const deliveries: DeliveryRecord[] = [];
-
-    for (const target of result.resolved) {
-      const delivery = createDeliveryFromActor(message, target.targetRef, target.actor);
-      if (target.actor.status === 'active' && this.config.deliverToSession) {
-        try {
-          const deliveredSessionId = await this.config.deliverToSession(target.actor, message);
-          if (deliveredSessionId) {
-            delivery.state = 'delivered';
-            delivery.deliveredAt = Date.now();
-            delivery.deliveredSessionId = deliveredSessionId;
-          } else {
-            delivery.state = 'failed';
-            delivery.attemptCount += 1;
-            delivery.lastError = 'Session delivery returned no delivered session';
-          }
-        } catch (error) {
-          delivery.state = 'failed';
-          delivery.attemptCount += 1;
-          delivery.lastError = error instanceof Error ? error.message : String(error);
-        }
-      } else if (target.actor.status === 'inactive' && this.config.queueForActivation) {
-        try {
-          const deliveredSessionId = await this.config.queueForActivation(target.actor, message);
-          if (deliveredSessionId) {
-            delivery.state = 'delivered';
-            delivery.deliveredAt = Date.now();
-            delivery.deliveredSessionId = deliveredSessionId;
-          } else {
-            delivery.state = 'failed';
-            delivery.attemptCount += 1;
-            delivery.lastError = 'Activation delivery returned no delivered session';
-          }
-        } catch (error) {
-          delivery.state = 'failed';
-          delivery.attemptCount += 1;
-          delivery.lastError = error instanceof Error ? error.message : String(error);
-        }
-      }
-      deliveries.push(delivery);
-    }
-
-    const failedCounts = new Map<string, number>();
-    for (const target of result.unresolved) {
-      const occurrence = failedCounts.get(target.targetRef) ?? 0;
-      failedCounts.set(target.targetRef, occurrence + 1);
-      deliveries.push(createFailedDelivery(message, target.targetRef, target.reason, occurrence));
-    }
-
-    return { message, deliveries };
-  }
-}
-
-function createDeliveryFromActor(
-  message: MessageRecord,
-  targetRef: string,
-  actor: ActorRef
-): DeliveryRecord {
-  return {
-    deliveryId: `delivery_${message.messageId}_${encodeURIComponent(targetRef)}_${encodeURIComponent(actor.actorId)}`,
-    messageId: message.messageId,
-    targetActorId: actor.actorId,
-    targetRef,
-    state: 'queued',
-    attemptCount: 0,
-    maxAttempts: 5,
-    createdAt: Date.now(),
-  };
-}
-
-function createFailedDelivery(
-  message: MessageRecord,
-  targetRef: string,
-  lastError: string,
-  occurrence = 0
-): DeliveryRecord {
-  const suffix = occurrence === 0 ? '' : `_${occurrence}`;
-  return {
-    deliveryId: `delivery_${message.messageId}_${encodeURIComponent(targetRef)}_failed${suffix}`,
-    messageId: message.messageId,
-    targetRef,
-    state: 'failed',
-    attemptCount: 0,
-    maxAttempts: 0,
-    createdAt: Date.now(),
-    lastError,
-  };
-}
-
-function translateLegacyNodeTarget(
-  target: string,
-  config: LegacyNodeTargetTranslatorConfig
-): string[] {
-  const targetRef = target.trim();
-  if (!targetRef) return [];
-  if (targetRef === 'task-agent') {
-    throw new Error('Target "task-agent" is no longer supported. Use a worker target.');
-  }
-  if (targetRef.startsWith('@') || targetRef.startsWith('#')) {
-    parseAddress(targetRef);
-    return [targetRef];
-  }
-  if (targetRef === '*') {
-    return permittedWorkerTargets(config);
-  }
-  return legacyBareTargetMatches(targetRef, config);
-}
-
-function permittedWorkerTargets(config: LegacyNodeTargetTranslatorConfig): string[] {
-  const workflow = config.workflow;
-  if (!workflow) return [];
-  const fromNodeName = workflowNodeName(workflow.nodes, config.workflowNodeId);
-  if (!fromNodeName) return [];
-  const resolver = new ChannelResolver(workflow.channels ?? []);
-  return uniqueStrings(
-    workflow.nodes.flatMap((node) => {
-      if (!resolver.canSend(fromNodeName, node.name)) return [];
-      return node.agents.map((agent) => workerTarget(config.workflowRunId, node.name, agent.name));
-    })
-  );
-}
-
-function legacyBareTargetMatches(
-  targetRef: string,
-  config: LegacyNodeTargetTranslatorConfig
-): string[] {
-  const workflow = config.workflow;
-  if (!workflow) return [];
-  const nodeMatches = workflow.nodes
-    .filter((node) => node.name === targetRef || node.id === targetRef)
-    .flatMap((node) =>
-      node.agents.map((agent) => workerTarget(config.workflowRunId, node.name, agent.name))
-    );
-  if (nodeMatches.length > 0) return uniqueStrings(nodeMatches);
-
-  const actorMatches = (config.actors ?? [])
-    .filter((actor) => {
-      if (actor.kind !== 'worker') return false;
-      const parsed = parseWorkerActorId(actor.actorId);
-      return parsed?.workflowRunId === config.workflowRunId && parsed.agentName === targetRef;
-    })
-    .map((actor) => {
-      const parsed = parseWorkerActorId(actor.actorId)!;
-      const nodeName = workflowNodeName(workflow.nodes, parsed.nodeId) ?? parsed.nodeId;
-      return workerTarget(parsed.workflowRunId, nodeName, parsed.agentName);
-    });
-  if (actorMatches.length > 0) return uniqueStrings(actorMatches);
-
-  const agentMatches = workflow.nodes.flatMap((node) =>
-    node.agents
-      .filter((agent) => agent.name === targetRef)
-      .map((agent) => workerTarget(config.workflowRunId, node.name, agent.name))
-  );
-  if (agentMatches.length > 0) return uniqueStrings(agentMatches);
-
-  return [];
-}
-
-function resolveTaskNodeExecution(
-  executions: NodeExecution[],
-  selector: string
-): NodeExecution | null {
-  const byId = executions.find((execution) => execution.id === selector);
-  if (byId) return byId;
-  const targetName = selector.toLowerCase();
-  const byName = executions.filter((execution) => execution.agentName.toLowerCase() === targetName);
-  return byName.at(-1) ?? null;
-}
-
-function workerTarget(workflowRunId: string, nodeName: string, agentName: string): string {
-  return `@worker:${encodeURIComponent(workflowRunId)}/${encodeURIComponent(nodeName)}/${encodeURIComponent(agentName)}`;
-}
-
-function isRoutable(actor: ActorRef): boolean {
-  return actor.status === 'active' || actor.status === 'inactive';
-}
-
-function stableActors(actors: ActorRef[]): ActorRef[] {
-  return [...actors].sort((left, right) => left.actorId.localeCompare(right.actorId));
-}
-
-function actorRole(role: string): string {
-  return `actor-role:${encodeURIComponent(role)}`;
-}
-
-function workflowNodeId(nodes: WorkflowNode[], nodeRef: string): string | null {
-  const node = nodes.find((candidate) => candidate.id === nodeRef || candidate.name === nodeRef);
-  return node?.id ?? null;
-}
-
-function workflowNodeName(nodes: WorkflowNode[], nodeId: string | undefined): string | null {
-  if (!nodeId) return null;
-  const node = nodes.find((candidate) => candidate.id === nodeId || candidate.name === nodeId);
-  return node?.name ?? null;
-}
-
-function canSendToWorkerTarget(
-  channels: WorkflowChannel[],
-  fromRefs: Array<string | undefined>,
-  toRefs: Array<string | undefined>
-): boolean {
-  const resolver = new ChannelResolver(channels);
-  for (const from of uniqueStrings(fromRefs)) {
-    for (const to of uniqueStrings(toRefs)) {
-      if (resolver.canSend(from, to)) return true;
-    }
-  }
-  return false;
-}
-
-function uniqueStrings(values: Array<string | undefined>): string[] {
-  return [...new Set(values.filter((value): value is string => Boolean(value)))];
-}
-
-function decodeAddressComponent(
-  component: string,
-  targetRef: string
-): { ok: true; value: string } | { ok: false; reason: string } {
-  try {
-    return { ok: true, value: decodeURIComponent(component) };
-  } catch (error) {
-    if (error instanceof URIError) {
-      return { ok: false, reason: `Invalid worker target escape in ${targetRef}` };
-    }
-    throw error;
-  }
-}
-
-function workerActorId(workflowRunId: string, nodeId: string, agentName: string): string {
-  return `worker:${[workflowRunId, nodeId, agentName].map(encodeURIComponent).join(':')}`;
-}
-
-function workerHandle(workflowRunId: string, nodeId: string, agentName: string): string {
-  return `@worker:${[workflowRunId, nodeId, agentName].map(encodeURIComponent).join('/')}`;
-}
-
-function parseWorkerActorId(
-  actorId: string
-): { workflowRunId: string; nodeId: string; agentName: string } | null {
-  if (!actorId.startsWith('worker:')) return null;
-  const parts = actorId.slice('worker:'.length).split(':');
-  if (parts.length !== 3) return null;
-  return {
-    workflowRunId: decodeURIComponent(parts[0]),
-    nodeId: decodeURIComponent(parts[1]),
-    agentName: decodeURIComponent(parts[2]),
-  };
 }

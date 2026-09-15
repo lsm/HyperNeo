@@ -8,24 +8,30 @@ import type {
 } from '../../../../src/lib/external-events/types';
 import { buildImmediateEventMessageUuid } from '../../../../src/lib/external-events/immediate-delivery-pipeline';
 import {
-  admitTurnEnd,
+  DETERMINISTIC_DIGEST_UUID_PREFIX,
+  persistAndAppend,
+  runRenderPendingDigest,
+} from '../../../../src/lib/messaging/render-pending-digest-pipeline';
+import {
   aggregateRender,
   buildMessage,
   capDigestBatch,
-  claimPending,
-  DETERMINISTIC_DIGEST_UUID_PREFIX,
-  loadPending,
   orderAndDedupe,
-  persistAndAppend,
+} from '../../../../src/lib/messaging/render-pending-digest-rendering';
+import {
+  admitTurnEnd,
+  claimPending,
+  loadPending,
   reconcileDurable,
   resolveTarget,
-  runRenderPendingDigest,
+} from '../../../../src/lib/messaging/render-pending-digest-selection';
+import {
   TURN_END_DIGEST_MESSAGE_BYTE_CAP,
   TURN_END_DIGEST_PENDING_ROW_CAP,
   type RenderPendingDigestCtx,
   type RenderPendingDigestDeps,
   type RenderPendingDigestLedgerMark,
-} from '../../../../src/lib/space/runtime/render-pending-digest-pipeline';
+} from '../../../../src/lib/messaging/render-pending-digest-types';
 
 const SESSION_ID = 'session-digest';
 const TARGET = {

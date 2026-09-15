@@ -3,7 +3,7 @@ import {
   type ResolveNodeAgentTargetsInput,
   type ResolveNodeAgentTargetsOutcome,
   resolveNodeAgentTargets,
-} from '../../../../src/lib/space/runtime/agent-message-routing-gates';
+} from '../../../../src/lib/messaging/routing-gates';
 import {
   type AgentMessageRoutingCtx,
   type AgentMessageRoutingDecision,
@@ -13,7 +13,7 @@ import {
   applyTargetResolutionGate,
   applyTopologyAuthorizationGate,
   decideAgentMessageRouting,
-} from '../../../../src/lib/space/runtime/agent-message-routing-pipeline';
+} from '../../../../src/lib/messaging/routing-pipeline';
 
 const noPermittedReason = `No permitted targets for agent 'coder' in the declared channel topology.`;
 const unknownGhostReason =

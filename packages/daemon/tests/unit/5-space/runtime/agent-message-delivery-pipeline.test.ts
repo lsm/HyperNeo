@@ -5,7 +5,7 @@ import type { SessionTarget } from '../../../../src/lib/session-resolution/targe
 import {
   deliverAgentMessageToTarget,
   type AgentMessageDeliveryDeps,
-} from '../../../../src/lib/space/runtime/agent-message-delivery-pipeline.ts';
+} from '../../../../src/lib/messaging/delivery-pipeline.ts';
 
 const WORKER_TARGET: SessionTarget = {
   kind: 'worker',
