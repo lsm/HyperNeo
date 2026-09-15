@@ -36,7 +36,7 @@ export function createOperationRegistry(
 ): OperationRegistry {
   const byName = new Map<string, OperationDefinition>();
   for (const definition of definitions) {
-    if (!/^[a-zA-Z][a-zA-Z0-9]*(?:\.[a-zA-Z][a-zA-Z0-9]*)*$/.test(definition.name)) {
+    if (!/^[a-zA-Z][a-zA-Z0-9_]*(?:\.[a-zA-Z][a-zA-Z0-9_]*)*$/.test(definition.name)) {
       throw new Error(`Invalid operation name: ${definition.name}`);
     }
     if (byName.has(definition.name)) {
