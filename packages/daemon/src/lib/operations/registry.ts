@@ -7,7 +7,7 @@ export interface OperationCaller {
 }
 
 export interface OperationEntry<Input, Output> {
-  readonly name: OperationName;
+  readonly name: OperationName | (string & {});
   readonly description: string;
   readonly inputSchema: z.ZodType<Input>;
   readonly resultSchema: z.ZodType<Output>;
