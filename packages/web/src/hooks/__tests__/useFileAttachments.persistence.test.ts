@@ -266,6 +266,38 @@ describe('useFileAttachments session persistence', () => {
     ]);
   });
 
+  it('routes file reads that finish after session resolution into the session bucket', async () => {
+    let resolveRead: (value: string) => void = () => {};
+    vi.mocked(fileToBase64).mockReturnValueOnce(
+      new Promise<string>((resolve) => {
+        resolveRead = resolve;
+      })
+    );
+
+    const { result, rerender } = renderHook(({ sessionId }) => useFileAttachments(sessionId), {
+      initialProps: { sessionId: undefined as string | undefined },
+    });
+
+    const file = createMockFile('pasted.png', 'image/png');
+    vi.mocked(extractImagesFromClipboard).mockReturnValueOnce([file]);
+    let pastePromise: Promise<unknown> = Promise.resolve();
+    act(() => {
+      pastePromise = result.current.handlePaste(createPasteEvent([file])) as Promise<unknown>;
+    });
+
+    rerender({ sessionId: 'session-a' });
+    expect(result.current.attachments).toEqual([]);
+
+    await act(async () => {
+      resolveRead('b64:pasted.png');
+      await pastePromise;
+    });
+
+    expect(result.current.attachments).toHaveLength(1);
+    expect(result.current.attachments[0].name).toBe('pasted.png');
+    expect(readPendingComposerAttachments('session-a')).toHaveLength(1);
+  });
+
   it('keeps two mounted composers for the same session in sync', async () => {
     const a = renderHook(() => useFileAttachments('session-a'));
     const b = renderHook(() => useFileAttachments('session-a'));

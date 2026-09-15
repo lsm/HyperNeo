@@ -223,6 +223,7 @@ export function TaskSessionChatComposer({
         </div>
       )}
       <ChatComposer
+        key={selectedTarget?.id ?? 'no-target'}
         sessionId={targetSessionId ?? ''}
         readonly={false}
         isProcessing={targetIsProcessing}

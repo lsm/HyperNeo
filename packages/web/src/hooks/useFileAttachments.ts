@@ -38,18 +38,22 @@ export function useFileAttachments(sessionId?: string): UseFileAttachmentsResult
     ? (composerAttachmentsSignal.value[sessionId] ?? EMPTY_ATTACHMENTS)
     : ephemeralAttachments.value;
 
+  const sessionIdRef = useRef(sessionId);
+  sessionIdRef.current = sessionId;
+
   const setAttachments = useCallback(
     (update: (prev: AttachmentWithMetadata[]) => AttachmentWithMetadata[]) => {
-      if (sessionId) {
+      const currentSessionId = sessionIdRef.current;
+      if (currentSessionId) {
         writePendingComposerAttachments(
-          sessionId,
-          update(readPendingComposerAttachments(sessionId))
+          currentSessionId,
+          update(readPendingComposerAttachments(currentSessionId))
         );
       } else {
         ephemeralAttachments.value = update(ephemeralAttachments.value);
       }
     },
-    [sessionId, ephemeralAttachments]
+    [ephemeralAttachments]
   );
 
   const prevSessionIdRef = useRef(sessionId);
