@@ -73,10 +73,50 @@ through `operation.invoke` passes none of them.
 **The policy is not missing — it is built on the wrong surface.** `dispatcher-pipeline.ts`
 already implements this pipeline for `call_action`: 257 lines across `resolveTargets` (46),
 `applySafetyClass` (5), `applyRoleAdmission` (18), `applyAutonomyGate` (61), `applyRateAndAudit`
-(75) and its audit helpers (52). Whether that pipeline becomes the operations pre-invocation
-pipeline, or is duplicated beside it, is the open `ActionRegistry` decision that
-`-target.md` deliberately leaves unmade. It should be settled before the stages are written,
-because the answer decides whether this is a lift or a second implementation. Turning the scope check on will reject calls that succeed
+(75) and its audit helpers (52).
+
+## Decision: one agent door
+
+`call_action`, the `ActionRegistry`, `space-actions` and the separate action handlers are
+**retired** in the target. Agents reach the daemon only through `hyperneo-operations` →
+MCP adapter → pre-invocation → shared invoker. Web and desktop keep a parallel entry at
+`operation.invoke` and share everything from pre-invocation down: two thin adapters, one
+pipeline.
+
+This settles the question ADR 0006 and `-target.md` had deliberately left open. Three
+consequences follow directly:
+
+1. **`dispatcher-pipeline.ts` is the donor, not a rival.** Its 257 lines of policy move into
+   the operations pre-invocation pipeline rather than being reimplemented beside it.
+2. **`space-actions` naming retires with the surface**, including the three
+   `packages/prompts` files that steer agents toward `call_action` and the
+   `HYPERNEO_SPACE_ACTIONS_RATE_LIMIT_PER_MINUTE` env var. The rename is a consequence of
+   this decision, so it lands last, as its own deletion-shaped change — not ahead of it.
+3. **The pipeline must exist before the bulk porting.** Every action ported to an operation
+   moves from nine gates to zero until pre-invocation is in place.
+
+### What the decision commits to
+
+The action surface is **104 actions** (89 in `registry-space`, 22 in `registry-node`, with
+overlap) against **15 operations** plus 2 discovery ops. Grouped by the subsystem each would
+port to:
+
+| Family | Actions |
+|---|---|
+| task | 25 |
+| agent | 20 |
+| evolve (scope, evidence, lesson, proposal) | 12 |
+| goal | 11 |
+| events + subscriptions | 5 |
+| workflows + templates + nodes | 4 |
+| messaging | 3 |
+| unclassified | 24 |
+
+So the pre-invocation pipeline is the smaller half of the work. The larger half is porting
+~89 actions onto operations, one family at a time, and deleting those that turn out to be
+redundant with an operation that already exists. The family table is the natural slice
+sequence; `task` is the family already partly ported and therefore the one with the clearest
+precedent. Turning the scope check on will reject calls that succeed
 today, which makes it a staged behavior change rather than wiring.
 
 **Suggested order: audit before enforcement.** Nothing records whether real RPC callers cross
