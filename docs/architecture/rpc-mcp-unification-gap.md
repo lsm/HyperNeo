@@ -35,10 +35,14 @@ Both pre-invocation columns are empty, not partial:
 
 - `setupOperationHandlers` passes `() => ({})` as the RPC caller resolver, discarding a
   `sessionId` that `CallContext` already carries. None of the target's five RPC stages exist.
-- None of the target's eight MCP stages exist on this path either. The autonomy machinery
-  (`TOOL_AUTONOMY_REQUIREMENTS`, `decideAutonomyAdmission`) is keyed by **tool name** and
-  lives in the `call_action`/`ActionRegistry` dispatcher, so adopting it here is a re-keying,
-  not a move.
+- Seven of the target's eight MCP stages are absent. The exception is the autonomy gate,
+  which one operation already runs in-plane: `task.resolvePendingCompletion` calls
+  `decideAutonomyAdmission` from `owned-pending-completion.ts`. It runs *below* the registry
+  like the rest of today's policy, so it is an instance of the inversion rather than a stage
+  in place. Notably it already passes an operation name into the `toolName` slot
+  (`toolName: 'task.resolvePendingCompletion'`), so lifting the gate is closer to a re-key
+  than a redesign — but the requirements table (`TOOL_AUTONOMY_REQUIREMENTS`) is still keyed
+  by dispatcher tool names.
 
 ## Why this is a tightening, not a refactor
 
@@ -47,9 +51,13 @@ before the operation is resolved. Two consequences:
 
 - `requireMetadataCallerScope` (`space/operations/task-metadata.ts`) returns allow
   unconditionally when `caller.source === 'rpc'`, so RPC callers skip the same-Space check.
-- No caller in the operations plane writes `mcp_audit_log`. The audit described in
-  `-current.md` belongs to the `call_action` dispatcher (`applyRateAndAudit`), not to
-  `operation.invoke`.
+  `admitSpaceTaskCaller` reaches it from 4 source files across 9 call sites.
+- The operations plane writes exactly one audit entry, and only for agents:
+  `task.resolvePendingCompletion` calls an injected `audit` dependency (wired to
+  `McpAuditLogRepository` at `rpc-handlers/index.ts:655`), gated to
+  `actor.source === 'mcp'`. No other operation audits, and nothing records an RPC caller.
+  The general audit described in `-current.md` belongs to the `call_action` dispatcher
+  (`applyRateAndAudit`), not to `operation.invoke`.
 
 So the RPC route is currently unscoped and unaudited — the hazard the target doc names as a
 thing convergence must not create. Turning the scope check on will reject calls that succeed

@@ -56,7 +56,7 @@
 <g class="green"><rect x="60" y="442" width="560" height="52" rx="4"/><text class="th" x="340" y="464" text-anchor="middle">Flat operation registry</text><text class="ts" x="340" y="482" text-anchor="middle">space implementations override the same names</text></g>
 <line class="arr" x1="340" y1="494" x2="340" y2="514" marker-end="url(#arrow)"/>
 
-<g class="amber"><rect x="60" y="514" width="560" height="52" rx="4"/><text class="th" x="340" y="536" text-anchor="middle">Per-operation admission</text><text class="ts" x="340" y="554" text-anchor="middle">admitSpaceTaskCaller in 5 files · rpc skips the scope check</text></g>
+<g class="amber"><rect x="60" y="514" width="560" height="52" rx="4"/><text class="th" x="340" y="536" text-anchor="middle">Per-operation admission</text><text class="ts" x="340" y="554" text-anchor="middle">admitSpaceTaskCaller in 4 files · rpc skips the scope check</text></g>
 <line class="arr" x1="190" y1="566" x2="190" y2="586" marker-end="url(#arrow)"/>
 <line class="arr" x1="490" y1="566" x2="490" y2="586" marker-end="url(#arrow)"/>
 
