@@ -1434,7 +1434,7 @@ describe('createSpaceRegistryEntries — handler wiring', () => {
         content: Array<{ text: string }>;
         isError?: boolean;
       };
-      expect(missingRun.isError).toBe(true);
+      expect(missingRun.isError).toBeUndefined();
       expect(JSON.parse(missingRun.content[0].text)).toEqual({
         success: false,
         error: 'Workflow run not found: missing-run',
