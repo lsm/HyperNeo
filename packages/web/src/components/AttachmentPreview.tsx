@@ -34,14 +34,16 @@ export function AttachmentPreview({ attachments, onRemove }: AttachmentPreviewPr
     dialogRef.current?.focus();
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        e.stopPropagation();
         closeLightbox();
       } else if (e.key === 'Tab') {
         e.preventDefault();
+        e.stopPropagation();
         dialogRef.current?.focus();
       }
     };
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
+    document.addEventListener('keydown', handleKeyDown, { capture: true });
+    return () => document.removeEventListener('keydown', handleKeyDown, { capture: true });
   }, [enlargedIndex, attachments.length]);
 
   if (attachments.length === 0) return null;

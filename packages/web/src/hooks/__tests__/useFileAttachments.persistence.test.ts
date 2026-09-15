@@ -230,6 +230,42 @@ describe('useFileAttachments session persistence', () => {
     expect(result.current.attachments[0].name).toBe('pasted.png');
   });
 
+  it('carries ephemeral attachments into the session bucket once an id resolves', async () => {
+    const { result, rerender } = renderHook(({ sessionId }) => useFileAttachments(sessionId), {
+      initialProps: { sessionId: undefined as string | undefined },
+    });
+
+    await pasteImages(result, [createMockFile('pasted.png', 'image/png')]);
+    expect(result.current.attachments).toHaveLength(1);
+
+    rerender({ sessionId: 'session-a' });
+    expect(result.current.attachments).toHaveLength(1);
+    expect(result.current.attachments[0].name).toBe('pasted.png');
+    expect(result.current.getImagesForSend()).toEqual([
+      { data: 'b64:pasted.png', media_type: 'image/png' },
+    ]);
+
+    rerender({ sessionId: undefined });
+    expect(result.current.attachments).toEqual([]);
+  });
+
+  it('merges ephemeral attachments into an existing bucket for the resolved session', async () => {
+    writePendingComposerAttachments('session-a', [
+      { data: 'XXXX', media_type: 'image/png', name: 'existing.png', size: 4 },
+    ]);
+    const { result, rerender } = renderHook(({ sessionId }) => useFileAttachments(sessionId), {
+      initialProps: { sessionId: undefined as string | undefined },
+    });
+
+    await pasteImages(result, [createMockFile('pasted.png', 'image/png')]);
+
+    rerender({ sessionId: 'session-a' });
+    expect(result.current.attachments.map((attachment) => attachment.data)).toEqual([
+      'XXXX',
+      'b64:pasted.png',
+    ]);
+  });
+
   it('keeps two mounted composers for the same session in sync', async () => {
     const a = renderHook(() => useFileAttachments('session-a'));
     const b = renderHook(() => useFileAttachments('session-a'));

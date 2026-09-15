@@ -451,11 +451,32 @@ describe('AttachmentPreview', () => {
       );
 
       fireEvent.click(openButton(container));
-      expect(document.querySelector(`[data-testid="${ATTACHMENT_LIGHTBOX_TEST_ID}"]`)).toBeTruthy();
+      const lightbox = document.querySelector(`[data-testid="${ATTACHMENT_LIGHTBOX_TEST_ID}"]`);
+      expect(lightbox).toBeTruthy();
 
-      fireEvent.keyDown(document, { key: 'Escape' });
+      fireEvent.keyDown(lightbox, { key: 'Escape' });
 
       expect(document.querySelector(`[data-testid="${ATTACHMENT_LIGHTBOX_TEST_ID}"]`)).toBeNull();
+    });
+
+    it('should not let enclosing overlay Escape handlers fire while open', () => {
+      const overlayEscape = vi.fn();
+      document.addEventListener('keydown', overlayEscape);
+      try {
+        const { container } = render(
+          <AttachmentPreview attachments={[mockAttachments[0]]} onRemove={mockOnRemove} />
+        );
+
+        fireEvent.click(openButton(container));
+        const lightbox = document.querySelector(`[data-testid="${ATTACHMENT_LIGHTBOX_TEST_ID}"]`);
+
+        fireEvent.keyDown(lightbox, { key: 'Escape' });
+
+        expect(document.querySelector(`[data-testid="${ATTACHMENT_LIGHTBOX_TEST_ID}"]`)).toBeNull();
+        expect(overlayEscape).not.toHaveBeenCalled();
+      } finally {
+        document.removeEventListener('keydown', overlayEscape);
+      }
     });
 
     it('should not open the overlay when the remove button is clicked', () => {
@@ -495,7 +516,9 @@ describe('AttachmentPreview', () => {
       const button = openButton(container) as HTMLElement;
       fireEvent.click(button);
 
-      fireEvent.keyDown(document, { key: 'Escape' });
+      fireEvent.keyDown(document.querySelector(`[data-testid="${ATTACHMENT_LIGHTBOX_TEST_ID}"]`), {
+        key: 'Escape',
+      });
 
       expect(document.querySelector(`[data-testid="${ATTACHMENT_LIGHTBOX_TEST_ID}"]`)).toBeNull();
       expect(document.activeElement).toBe(button);

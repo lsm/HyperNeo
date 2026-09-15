@@ -1,5 +1,5 @@
 import type { RefObject } from 'preact';
-import { useCallback, useRef } from 'preact/hooks';
+import { useCallback, useLayoutEffect, useRef } from 'preact/hooks';
 import { useSignal } from '@preact/signals';
 import type { MessageImage } from '@hyperneo/shared';
 import { toast } from '../lib/toast.ts';
@@ -51,6 +51,20 @@ export function useFileAttachments(sessionId?: string): UseFileAttachmentsResult
     },
     [sessionId, ephemeralAttachments]
   );
+
+  const prevSessionIdRef = useRef(sessionId);
+  useLayoutEffect(() => {
+    const prevSessionId = prevSessionIdRef.current;
+    prevSessionIdRef.current = sessionId;
+    if (prevSessionId || !sessionId) return;
+    const ephemeral = ephemeralAttachments.peek();
+    if (ephemeral.length === 0) return;
+    writePendingComposerAttachments(sessionId, [
+      ...readPendingComposerAttachments(sessionId),
+      ...ephemeral,
+    ]);
+    ephemeralAttachments.value = [];
+  }, [sessionId, ephemeralAttachments]);
 
   const processFiles = useCallback(
     async (files: FileList | File[]) => {
