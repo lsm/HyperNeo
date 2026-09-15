@@ -171,6 +171,16 @@ test('stale or unlinked jobs never invoke the starter', async () => {
   expect(await handler(job)).toMatchObject({ reason: 'superseded' });
   expect(run).not.toHaveBeenCalled();
 });
+test('a superseded cleanup stop notifies so the live-attempt flag clears', async () => {
+  const job = acceptedJob();
+  const changed: string[] = [];
+  tasks.updateTask(taskId, { status: 'done' });
+  const handler = createDirectStartJobHandler(db, start, jobs, control, (id) => changed.push(id));
+  await handler(job);
+  expect(attempts.getActive(taskId)).toBeNull();
+  expect(changed).toEqual([taskId]);
+});
+
 test('pruned job receipt is not silently recreated by duplicate request', () => {
   const job = acceptedJob();
   db.prepare('DELETE FROM job_queue WHERE id=?').run(job.id);
