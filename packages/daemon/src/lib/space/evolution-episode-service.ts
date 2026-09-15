@@ -39,7 +39,7 @@ import type { WorkflowArtifactProfile } from './runtime/artifact-profile.ts';
 import { isRunningUnderBun, resolveSDKCliPath } from '../agent/sdk-cli-resolver.ts';
 import { Logger } from '../logger.ts';
 import { getProviderService, mergeProviderEnvVars } from '../provider-service.ts';
-import { normalizeMeaningfulTaskResult } from './task-result-utils.ts';
+import { normalizeMeaningfulTaskResult } from '../tasks/result-utils.ts';
 import { KimiProvider } from '../providers/kimi-provider.js';
 import { getAvailableModels } from '../model-service.ts';
 import { inferProviderForModel } from '../providers/registry.ts';

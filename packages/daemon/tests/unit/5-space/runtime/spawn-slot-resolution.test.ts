@@ -9,7 +9,7 @@ import type {
 } from '@hyperneo/shared';
 import type { AgentSessionInit } from '../../../../src/lib/agent/agent-session';
 import { buildExecutionBaseSessionId } from '../../../../src/lib/session/sub-session-identity';
-import type { NodeAgentTemplateSource } from '../../../../src/lib/space/runtime/spawn-slot-resolution';
+import type { NodeAgentTemplateSource } from '../../../../src/lib/tasks/spawn-slot-resolution';
 import {
   assembleNodeAgentSessionInit,
   buildSlotOverrides,
@@ -20,7 +20,7 @@ import {
   resolveTaskWorkspace,
   resolveWorkflowNodeSlot,
   spaceAgentTemplateToNodeSource,
-} from '../../../../src/lib/space/runtime/spawn-slot-resolution';
+} from '../../../../src/lib/tasks/spawn-slot-resolution';
 
 function makeNode(overrides: Partial<WorkflowNode> = {}): WorkflowNode {
   return {

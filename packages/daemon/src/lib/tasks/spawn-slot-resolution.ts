@@ -1,0 +1,253 @@
+import type {
+  AgentModelPoolEntry,
+  McpServerConfig,
+  SettingSource,
+  Space,
+  SpaceLongHorizonAgent,
+  SpaceLongHorizonAgentTemplate,
+  SpaceTask,
+  SpaceWorkflow,
+  ThinkingLevel,
+  WorkflowNode,
+  WorkflowNodeAgent,
+} from '@hyperneo/shared';
+import { resolveNodeAgents } from '@hyperneo/shared';
+import type { SpaceAgentTemplate, WorkflowTemplateSnapshot } from '@hyperneo/shared';
+import type { AgentSessionInit } from '../agent/agent-session.ts';
+import type { SlotOverrides } from '../space/agents/custom-agent.ts';
+
+export interface WorkflowNodeSlotResolution {
+  node: WorkflowNode;
+  slot: WorkflowNodeAgent;
+}
+
+export function resolveWorkflowNodeSlot(
+  workflow: SpaceWorkflow | null | undefined,
+  workflowNodeId: string,
+  agentName: string
+): WorkflowNodeSlotResolution | null {
+  const node = workflow?.nodes.find((candidate) => candidate.id === workflowNodeId);
+  if (!node) return null;
+
+  let nodeAgents: ReturnType<typeof resolveNodeAgents>;
+  try {
+    nodeAgents = resolveNodeAgents(node);
+  } catch {
+    return null;
+  }
+
+  const slot =
+    nodeAgents.length === 1
+      ? nodeAgents[0]
+      : nodeAgents.find((agentSlot) => agentSlot.name === agentName);
+  return slot?.agentId || slot?.templateKey ? { node, slot } : null;
+}
+
+export function resolveSlotCustomPrompt(slot: WorkflowNodeAgent): string | undefined {
+  const directPrompt = slot.customPrompt?.value;
+  if (directPrompt) return directPrompt;
+  if (slot.replaceAgentPrompt === true) return undefined;
+  const legacySlot = slot as {
+    systemPrompt?: { value: string };
+    instructions?: { value: string };
+  };
+  const legacySp = legacySlot.systemPrompt?.value?.trim() ?? '';
+  const legacyInstr = legacySlot.instructions?.value?.trim() ?? '';
+  if (legacySp && legacyInstr) return `${legacySp}\n\n${legacyInstr}`;
+  return legacySp || legacyInstr || undefined;
+}
+
+export interface BuildSlotOverridesContext {
+  task?: Pick<SpaceTask, 'workflowModelOverrides'>;
+  node?: { id: string; name: string };
+  workflow?: { id: string };
+  workflowRun?: { id: string };
+}
+
+export function buildSlotOverrides(
+  slot: WorkflowNodeAgent,
+  context?: BuildSlotOverridesContext
+): SlotOverrides {
+  const slotCustomPrompt = resolveSlotCustomPrompt(slot);
+  const modelOverrideKey = context?.node ? `${context.node.id}:${slot.name}` : null;
+  const taskModelOverride = modelOverrideKey
+    ? context?.task?.workflowModelOverrides?.[modelOverrideKey]
+    : undefined;
+  const effectiveGuards = slot.toolGuards;
+  const slotProvider = slot.provider?.trim() ? slot.provider?.trim() : undefined;
+  return {
+    model: taskModelOverride ?? slot.model,
+    provider: taskModelOverride ? undefined : slotProvider,
+    thinkingLevel: slot.thinkingLevel,
+    customPrompt: slotCustomPrompt,
+    replaceAgentPrompt: slot.replaceAgentPrompt,
+    disabledSkillIds: slot.disabledSkillIds,
+    extraMcpServers: slot.extraMcpServers,
+    toolGuards: effectiveGuards,
+    resolutionContext: {
+      agentId: slot.agentId || slot.templateKey || '',
+      agentName: slot.name,
+      workflowRunId: context?.workflowRun?.id,
+      workflowId: context?.workflow?.id,
+      nodeId: context?.node?.id,
+      nodeName: context?.node?.name,
+    },
+  };
+}
+
+export interface NodeAgentTemplateSource extends SpaceLongHorizonAgentTemplate {
+  model?: string;
+  provider?: string;
+  thinkingLevel?: ThinkingLevel;
+  settingSources?: SettingSource[];
+  modelPool?: AgentModelPoolEntry[];
+}
+
+export function spaceAgentTemplateToNodeSource(
+  template: SpaceAgentTemplate | WorkflowTemplateSnapshot
+): NodeAgentTemplateSource {
+  return {
+    key: template.key,
+    handle: template.handle,
+    displayName: template.displayName,
+    description: template.description,
+    instructions: template.instructions,
+    suggestedAutonomyLevel: template.suggestedAutonomyLevel,
+    suggestedEventSubscriptions: [],
+    reminderDefaults: [],
+    ownershipPatterns: [],
+    toolPermissions: template.tools ? { tools: template.tools } : {},
+    model: template.model ?? undefined,
+    provider: template.provider ?? undefined,
+    thinkingLevel: template.thinkingLevel ?? undefined,
+    settingSources: template.settingSources ?? undefined,
+    modelPool: template.modelPool ?? undefined,
+  };
+}
+
+export interface NodeAgentOverrides {
+  agentId?: string;
+  name?: string;
+  model?: string;
+  provider?: string;
+  thinkingLevel?: ThinkingLevel;
+}
+
+export type NodeAgentSpawnSource = 'template' | 'agent';
+
+export interface NodeAgentSpawnConfig {
+  agent: SpaceLongHorizonAgent;
+  source: NodeAgentSpawnSource;
+  templateKey: string | null;
+}
+
+export function resolveNodeAgentConfig(
+  template: NodeAgentTemplateSource | null | undefined,
+  overrides: NodeAgentOverrides,
+  agents: readonly SpaceLongHorizonAgent[]
+): NodeAgentSpawnConfig | null {
+  if (template) {
+    return {
+      agent: {
+        id: `template:${template.key}`,
+        spaceId: '',
+        handle: template.handle,
+        displayName: overrides.name ?? template.displayName,
+        templateKey: template.key,
+        status: 'active',
+        sessionId: null,
+        instructions: template.instructions,
+        autonomyLevel: null,
+        model: overrides.model ?? template.model ?? null,
+        thinkingLevel: overrides.thinkingLevel ?? template.thinkingLevel ?? null,
+        provider: overrides.provider ?? template.provider ?? null,
+        settingSources: template.settingSources ?? null,
+        toolPermissions: template.toolPermissions,
+        description: template.description,
+        modelPool: template.modelPool,
+        createdAt: 0,
+        updatedAt: 0,
+      },
+      source: 'template',
+      templateKey: template.key,
+    };
+  }
+
+  const agentId = overrides.agentId;
+  if (!agentId) return null;
+  const agent = agents.find((candidate) => candidate.id === agentId);
+  if (!agent) return null;
+  return {
+    agent: {
+      ...agent,
+      displayName: overrides.name ?? agent.displayName,
+      model: overrides.model ?? agent.model,
+      provider: overrides.provider ?? agent.provider,
+      thinkingLevel: overrides.thinkingLevel ?? agent.thinkingLevel,
+    },
+    source: 'agent',
+    templateKey: agent.templateKey ?? null,
+  };
+}
+
+export function findAvailableSessionId(
+  baseId: string,
+  isTaken: (sessionId: string) => boolean
+): string {
+  if (!isTaken(baseId)) return baseId;
+
+  const MAX_ATTEMPTS = 100;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const candidateId = `${baseId}:${attempt}`;
+    if (!isTaken(candidateId)) return candidateId;
+  }
+  throw new Error(
+    `Could not find available session ID for base "${baseId}" after ${MAX_ATTEMPTS} attempts`
+  );
+}
+
+export interface SpawnWorkspaceResolution {
+  workspacePath: string;
+  createWorktree: boolean;
+}
+
+export function resolveSpawnWorkspace(input: {
+  cachedTaskWorktreePath: string | undefined;
+  hasWorktreeManager: boolean;
+  spaceWorkspacePath: string;
+}): SpawnWorkspaceResolution {
+  return {
+    workspacePath: input.cachedTaskWorktreePath ?? input.spaceWorkspacePath,
+    createWorktree: input.cachedTaskWorktreePath === undefined && input.hasWorktreeManager,
+  };
+}
+
+export function explicitTaskWorkspace(task: Pick<SpaceTask, 'workspacePath'>): string | undefined {
+  const raw = task.workspacePath;
+  if (raw === undefined || raw === null) return undefined;
+  return raw.trim() === '' ? undefined : raw;
+}
+
+export function resolveTaskWorkspace(
+  space: Pick<Space, 'workspacePath'>,
+  task: Pick<SpaceTask, 'workspacePath'>
+): string {
+  return explicitTaskWorkspace(task) ?? space.workspacePath;
+}
+
+export function assembleNodeAgentSessionInit(input: {
+  baseInit: AgentSessionInit;
+  title: string;
+  nodeAgentMcpServers: Record<string, McpServerConfig>;
+  agentMemoryMcpServers: Record<string, McpServerConfig>;
+}): AgentSessionInit {
+  return {
+    ...input.baseInit,
+    title: input.title,
+    mcpServers: {
+      ...input.baseInit.mcpServers,
+      ...input.nodeAgentMcpServers,
+      ...input.agentMemoryMcpServers,
+    },
+  };
+}

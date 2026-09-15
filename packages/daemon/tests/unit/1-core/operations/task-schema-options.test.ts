@@ -7,11 +7,11 @@ import { createOperationRegistry } from '../../../../src/lib/operations/registry
 import {
   createCreateTaskOperation,
   StandaloneCreateTaskInputSchema,
-} from '../../../../src/lib/operations/task-create';
+} from '../../../../src/lib/tasks/create-operation';
 import {
   createTransitionTaskOperation,
   StandaloneTransitionTaskInputSchema,
-} from '../../../../src/lib/operations/task-transition';
+} from '../../../../src/lib/tasks/transition-operation';
 
 const caller = { source: 'internal' as const, sessionId: 'session-1' };
 
