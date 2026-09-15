@@ -2,6 +2,7 @@ import { render } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { resolvedTheme } from '../../lib/theme.ts';
 import { CopyButton } from '../ui/CopyButton.tsx';
+import { MermaidFigureToolbar, getMermaidForTheme } from './MermaidViewer.tsx';
 
 interface MarkdownRendererProps {
   content: string;
@@ -25,26 +26,6 @@ let markdownModulesPromise: Promise<MarkdownModules> | null = null;
 let rehypeHighlightPromise: Promise<RehypeHighlight> | null = null;
 let rehypeKatexPromise: Promise<RehypeKatex> | null = null;
 let katexCssPromise: Promise<unknown> | null = null;
-let mermaidModulePromise: Promise<typeof import('mermaid').default> | null = null;
-let mermaidInitializedTheme: 'dark' | 'default' | null = null;
-
-function getMermaidForTheme(theme: 'dark' | 'default') {
-  if (!mermaidModulePromise) {
-    mermaidModulePromise = import('mermaid')
-      .then((module) => module.default)
-      .catch((error) => {
-        mermaidModulePromise = null;
-        throw error;
-      });
-  }
-  return mermaidModulePromise.then((mermaid) => {
-    if (mermaidInitializedTheme !== theme) {
-      mermaid.initialize({ startOnLoad: false, theme, layout: 'dagre', look: 'classic' });
-      mermaidInitializedTheme = theme;
-    }
-    return mermaid;
-  });
-}
 
 function getMarkdownModules() {
   if (!markdownModulesPromise) {
@@ -869,8 +850,13 @@ function hasCodeBlock(content: string) {
 }
 
 const codeBlockCopyGutter = '2.5rem';
+const mermaidToolbarGutter = '5.75rem';
 
-async function renderMermaidBlocks(container: HTMLElement, isCancelled?: () => boolean) {
+async function renderMermaidBlocks(
+  container: HTMLElement,
+  mounts: Array<HTMLElement>,
+  isCancelled?: () => boolean
+) {
   const blocks = Array.from(container.querySelectorAll('pre code.language-mermaid'));
   if (blocks.length === 0) return;
 
@@ -886,7 +872,7 @@ async function renderMermaidBlocks(container: HTMLElement, isCancelled?: () => b
       const source = block.textContent || '';
       const wrapper = document.createElement('div');
       wrapper.className = 'mermaid';
-      wrapper.style.paddingRight = codeBlockCopyGutter;
+      wrapper.style.paddingRight = mermaidToolbarGutter;
       wrapper.textContent = source;
 
       try {
@@ -909,6 +895,14 @@ async function renderMermaidBlocks(container: HTMLElement, isCancelled?: () => b
           wrapper.replaceWith(pre);
         }
         throw error;
+      }
+
+      if (!isCancelled?.() && wrapper.parentElement) {
+        const mount = document.createElement('div');
+        mount.className = 'mermaid-toolbar-mount absolute top-2 right-12';
+        wrapper.parentElement.appendChild(mount);
+        render(<MermaidFigureToolbar source={source} />, mount);
+        mounts.push(mount);
       }
     })
   );
@@ -998,7 +992,10 @@ export default function MarkdownRenderer({ content, class: className }: Markdown
     const copyMounts = attachCodeBlockCopyButtons(containerRef.current);
 
     let mermaidCancelled = false;
-    renderMermaidBlocks(containerRef.current, () => mermaidCancelled).catch(() => undefined);
+    const mermaidMounts: Array<HTMLElement> = [];
+    renderMermaidBlocks(containerRef.current, mermaidMounts, () => mermaidCancelled).catch(
+      () => undefined
+    );
 
     const tables = containerRef.current.querySelectorAll('table');
     tables.forEach((table) => {
@@ -1020,6 +1017,9 @@ export default function MarkdownRenderer({ content, class: className }: Markdown
 
     return () => {
       copyMounts.forEach((mount) => {
+        render(null, mount);
+      });
+      mermaidMounts.forEach((mount) => {
         render(null, mount);
       });
       mermaidCancelled = true;
