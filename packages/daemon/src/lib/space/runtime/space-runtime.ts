@@ -1,7 +1,7 @@
 import { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
-import { availableTaskSlots } from './task-capacity.ts';
+import { availableTaskSlots } from '../../tasks/capacity.ts';
 import { DirectTaskExecutionRepository } from '../../../storage/repositories/direct-task-execution-repository.ts';
-import { PendingCompletionSupersededError } from '../operations/pending-completion-guard.ts';
+import { PendingCompletionSupersededError } from '../../tasks/pending-completion-guard.ts';
 import type {
   CreateNodeExecutionParams,
   NodeExecution,
@@ -78,7 +78,7 @@ import {
   isValidSpaceTaskTransition,
   SpaceTaskManager,
   VALID_SPACE_TASK_TRANSITIONS,
-} from '../managers/space-task-manager.ts';
+} from '../../tasks/task-manager.ts';
 import {
   isReservedWorkflowAgentName,
   type SpaceWorkflowManager,
@@ -88,7 +88,7 @@ import {
   runTemplateResolves,
   runTemplateSnapshotRecord,
 } from '../workflows/run-template-snapshot.ts';
-import { normalizeMeaningfulTaskResult } from '../task-result-utils.ts';
+import { normalizeMeaningfulTaskResult } from '../../tasks/result-utils.ts';
 import type { WorkflowArtifactProfile } from './artifact-profile.ts';
 import { CompletionDetector } from './completion-detector.ts';
 import {
@@ -105,7 +105,7 @@ import {
   decideStuckLadderAction,
   observeExecutionProgress,
   type AgentStuckRecoveryState,
-} from './anti-stuck/stuck-ladder-gates.ts';
+} from '../../tasks/stuck-ladder-gates.ts';
 import {
   DEFAULT_EXTERNAL_EVENT_QUEUE_TTL_MS,
   evaluateRequeueTaskLifecycle,
@@ -127,7 +127,7 @@ import {
   type RestoreIdleSessionsDeps,
   type RestoreIdleSessionsOutcome,
   runRestoreIdleSessions,
-} from './restore-idle-sessions-pipeline.ts';
+} from '../../tasks/restore-idle-sessions-pipeline.ts';
 import {
   DETERMINISTIC_DIGEST_UUID_PREFIX,
   type RenderPendingDigestDeps,

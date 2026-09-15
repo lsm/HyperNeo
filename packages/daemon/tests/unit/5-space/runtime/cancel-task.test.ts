@@ -1,11 +1,11 @@
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
-import { createSubmitTaskForReviewOperation } from '../../../../src/lib/space/operations/submit-for-review';
+import { createSubmitTaskForReviewOperation } from '../../../../src/lib/tasks/submit-for-review';
 import type { CallContext, UpdateSpaceTaskParams } from '@hyperneo/shared';
 import type { Database as AppDatabase } from '../../../../src/storage/database';
-import { createSpaceOperationRegistryProvider } from '../../../../src/lib/space/operations/registry';
+import { createSpaceOperationRegistryProvider } from '../../../../src/lib/tasks/operations';
 import { createDatabaseOperationCatalog } from '../../../../src/lib/operations/database-catalog';
-import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager';
+import { SpaceTaskManager } from '../../../../src/lib/tasks/task-manager';
 import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-adapter';
 import { createOperationRpcHandler } from '../../../../src/lib/operations/rpc-adapter';
 import { afterEach, beforeEach, expect, mock, spyOn, test } from 'bun:test';
@@ -16,13 +16,13 @@ import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
 import { DirectTaskExecutionRepository } from '../../../../src/storage/repositories/direct-task-execution-repository';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
-import { createDirectTaskStarter } from '../../../../src/lib/space/runtime/start-direct-task';
-import { createCancelTaskOperation } from '../../../../src/lib/space/operations/cancel-task';
+import { createDirectTaskStarter } from '../../../../src/lib/tasks/start-direct-task';
+import { createCancelTaskOperation } from '../../../../src/lib/tasks/cancel-task';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
-import { readDirectFinalizationRequest } from '../../../../src/lib/space/runtime/finalize-direct-attempt';
+import { readDirectFinalizationRequest } from '../../../../src/lib/tasks/finalize-direct-attempt';
 import { SessionManager } from '../../../../src/lib/session/session-manager';
-import { createDirectOutcomeHandler } from '../../../../src/lib/space/runtime/direct-outcome-jobs';
+import { createDirectOutcomeHandler } from '../../../../src/lib/tasks/direct-outcome-jobs';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session';
 
 let db: Database;

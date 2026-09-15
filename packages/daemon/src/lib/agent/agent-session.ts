@@ -1,4 +1,4 @@
-import { createDirectQueryStartGuard } from '../space/runtime/direct-query-start-guard.ts';
+import { createDirectQueryStartGuard } from '../tasks/direct-query-start-guard.ts';
 import { createDatabaseOperationCatalog } from '../operations/database-catalog.ts';
 import type { OperationRegistry, OperationRegistryProvider } from '../operations/registry.ts';
 import { createOperationMcpServer } from '../operations/mcp-server.ts';

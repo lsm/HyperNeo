@@ -3,7 +3,7 @@ import { mailboxEntryExpired } from '../../../../src/lib/mailbox/entry';
 import {
   createDirectKickoffRecorder,
   readDirectKickoffIntent,
-} from '../../../../src/lib/space/runtime/direct-kickoff-intent';
+} from '../../../../src/lib/tasks/direct-kickoff-intent';
 import { afterEach, beforeEach, expect, mock, spyOn, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import type { ReactiveDatabase } from '../../../../src/storage/reactive-database';
@@ -16,7 +16,7 @@ import { DirectTaskExecutionRepository } from '../../../../src/storage/repositor
 import {
   createDirectAttemptActivator,
   requireDirectActivation,
-} from '../../../../src/lib/space/runtime/activate-direct-attempt';
+} from '../../../../src/lib/tasks/activate-direct-attempt';
 import { createSpaceTables } from '../../helpers/space-test-db';
 import { createTestSession } from '../../../helpers/database';
 

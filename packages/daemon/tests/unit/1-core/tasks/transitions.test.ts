@@ -9,7 +9,7 @@ import {
   VALID_SPACE_TASK_TRANSITIONS,
   isValidSpaceTaskTransition,
   assertValidSpaceTaskTransition,
-} from '../../../../src/lib/space/managers/space-task-manager';
+} from '../../../../src/lib/tasks/task-manager';
 import type { TaskLifecycleStatus } from '@hyperneo/shared/types/task-core';
 
 describe('task transition policy', () => {

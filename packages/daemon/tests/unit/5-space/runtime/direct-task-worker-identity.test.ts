@@ -8,7 +8,7 @@ import { DirectTaskExecutionRepository } from '../../../../src/storage/repositor
 import {
   createDirectTaskWorkerResolver,
   requireDirectTaskWorkerIdentity,
-} from '../../../../src/lib/space/runtime/direct-task-worker-identity';
+} from '../../../../src/lib/tasks/direct-task-worker-identity';
 import { resolveSpaceMcpSessionPolicy } from '../../../../src/lib/space/runtime/space-mcp-session-policy';
 import { createSpaceTables } from '../../helpers/space-test-db';
 import { createTestSession } from '../../../helpers/database';

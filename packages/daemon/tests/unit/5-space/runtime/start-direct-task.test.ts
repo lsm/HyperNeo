@@ -9,13 +9,13 @@ import { JobQueueRepository } from '../../../../src/storage/repositories/job-que
 import {
   claimDirectStart,
   createDirectTaskStarter,
-} from '../../../../src/lib/space/runtime/start-direct-task';
-import { supersedeReservedAttempt } from '../../../../src/lib/space/operations/cancel-route';
+} from '../../../../src/lib/tasks/start-direct-task';
+import { supersedeReservedAttempt } from '../../../../src/lib/tasks/cancel-route';
 import {
   readDirectKickoffIntent,
   recordDirectKickoffAtomically,
-} from '../../../../src/lib/space/runtime/direct-kickoff-intent';
-import { createDirectTaskFinalizer } from '../../../../src/lib/space/runtime/finalize-direct-attempt';
+} from '../../../../src/lib/tasks/direct-kickoff-intent';
+import { createDirectTaskFinalizer } from '../../../../src/lib/tasks/finalize-direct-attempt';
 import { SessionManager } from '../../../../src/lib/session/session-manager';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session';
 

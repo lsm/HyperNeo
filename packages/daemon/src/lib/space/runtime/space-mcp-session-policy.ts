@@ -4,7 +4,7 @@ import type { NodeExecutionRepository } from '../../../storage/repositories/node
 import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import { longTermAgentSessionId } from '../long-term-agent-session.ts';
-import type { DirectTaskWorkerIdentity } from './direct-task-worker-identity.ts';
+import type { DirectTaskWorkerIdentity } from '../../tasks/direct-task-worker-identity.ts';
 
 export type SpaceMcpSessionRole = OperationCallerRole;
 

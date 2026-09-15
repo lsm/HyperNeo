@@ -59,7 +59,7 @@ import type { SkillsManager } from '../../skills-manager.ts';
 import { getLongHorizonAgentTemplate } from '../agents/long-horizon-agent-templates.ts';
 import { isRunnableUnifiedAgent } from '../agents/worker-long-horizon-mapper.ts';
 import type { SpaceManager } from '../managers/space-manager.ts';
-import { SpaceTaskManager } from '../managers/space-task-manager.ts';
+import { SpaceTaskManager } from '../../tasks/task-manager.ts';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager.ts';
 import {
   type SpaceWorktreeManager,
@@ -73,9 +73,9 @@ import {
   releaseModelPoolReservation,
   reserveModelPoolSlot,
 } from '../../session/model-pool-scheduler.ts';
-import { readRestartRecoveryNote } from './restart-recovery-note.ts';
+import { readRestartRecoveryNote } from '../../tasks/restart-recovery-note.ts';
 import type { SpaceRuntimeService } from './space-runtime-service.ts';
-import type { NodeAgentTemplateSource } from './spawn-slot-resolution.ts';
+import type { NodeAgentTemplateSource } from '../../tasks/spawn-slot-resolution.ts';
 export interface SubSessionMemberInfo {
   agentId?: string;
   agentName?: string;
@@ -131,7 +131,10 @@ import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools.ts';
 import { jsonResult } from '../tools/tool-result.ts';
 import { POST_APPROVAL_TASK_AGENT_TARGET } from '../workflows/post-approval-validator.ts';
 import { runTemplateSnapshotRecord } from '../workflows/run-template-snapshot.ts';
-import { decideActivationRouting, selectWorkflowNodeForAgent } from './activation-routing.ts';
+import {
+  decideActivationRouting,
+  selectWorkflowNodeForAgent,
+} from '../../tasks/activation-routing.ts';
 import {
   type AgentMessageDeliveryDeps,
   deliverAgentMessageToTarget,
@@ -153,14 +156,14 @@ import {
   isCoderOwnedMergeWorkflow as resolveIsCoderOwnedMergeWorkflow,
 } from './post-approval-router.ts';
 import type { ReplyRoutingRegistry } from './reply-routing-registry.ts';
-import { decideRestoredWorkerAdmission } from './restored-worker-admission-decision-pipeline.ts';
+import { decideRestoredWorkerAdmission } from '../../tasks/restored-worker-admission-decision-pipeline.ts';
 import { isCanonicalTaskTerminalForSpawn } from './run-spawn-decisions.ts';
 import {
   isSpawnFlowReusedSession,
   isSpawnFlowWaitConcurrent,
   runSpawnExecutionFlow,
   type SpawnExecutionFlowDeps,
-} from './spawn-flow.ts';
+} from '../../tasks/spawn-flow.ts';
 import {
   assembleNodeAgentSessionInit,
   buildSlotOverrides,
@@ -172,9 +175,9 @@ import {
   resolveTaskWorkspace,
   resolveWorkflowNodeSlot,
   spaceAgentTemplateToNodeSource,
-} from './spawn-slot-resolution.ts';
+} from '../../tasks/spawn-slot-resolution.ts';
 import { stagedRun } from './staged-run.ts';
-import { runVerifiedStopFlow, type VerifiedStopFlowDeps } from './verified-stop-flow.ts';
+import { runVerifiedStopFlow, type VerifiedStopFlowDeps } from '../../tasks/verified-stop-flow.ts';
 import {
   clearAllRetryableHookActionTimers,
   QUEUED_RETRYABLE_ACTION_STATE_KEY,
