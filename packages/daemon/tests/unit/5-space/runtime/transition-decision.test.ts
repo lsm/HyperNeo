@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  allowsWriteBesideActiveRun,
   classifyRequest,
   decideSpaceTaskTransition,
   rejectUnsupportedRequest,
@@ -33,7 +34,7 @@ const cases: Case[] = [
       requestedStatus: 'blocked',
       callerSource: 'rpc',
     },
-    { action: 'write', approvalSource: undefined },
+    { action: 'write', approvalSource: undefined, allowActiveRun: false },
   ],
   [
     'a block reason accompanying any other status is rejected',
@@ -49,7 +50,7 @@ const cases: Case[] = [
   [
     'review to done via rpc caller writes with human approval',
     { ...base, currentStatus: 'review', requestedStatus: 'done', callerSource: 'rpc' },
-    { action: 'write', approvalSource: 'human' },
+    { action: 'write', approvalSource: 'human', allowActiveRun: false },
   ],
   [
     'review to done via mcp caller is invalid',
@@ -118,7 +119,7 @@ const cases: Case[] = [
       runActive: false,
       callerSource: 'rpc',
     },
-    { action: 'write', approvalSource: undefined },
+    { action: 'write', approvalSource: undefined, allowActiveRun: false },
   ],
   [
     'a workflow task moving from in_progress to open needs the stop executor',
@@ -200,7 +201,7 @@ const cases: Case[] = [
   [
     'a plain forward transition writes without approval',
     { ...base, currentStatus: 'open', requestedStatus: 'in_progress', callerSource: 'rpc' },
-    { action: 'write', approvalSource: undefined },
+    { action: 'write', approvalSource: undefined, allowActiveRun: false },
   ],
 ];
 
@@ -349,6 +350,18 @@ describe('requireTableTransition', () => {
   });
 });
 
+describe('allowsWriteBesideActiveRun', () => {
+  test.each([
+    ['review to in_progress is a reopen', 'review', 'in_progress', true],
+    ['approved to in_progress is a reopen', 'approved', 'in_progress', true],
+    ['review to cancelled is not', 'review', 'cancelled', false],
+    ['approved to cancelled is not', 'approved', 'cancelled', false],
+    ['review to done is not', 'review', 'done', false],
+  ] as const)('%s', (_name, currentStatus, requestedStatus, expected) => {
+    expect(allowsWriteBesideActiveRun({ ...base, currentStatus, requestedStatus })).toBe(expected);
+  });
+});
+
 describe('routeRuntimeAction', () => {
   test('a runtime action becomes the runtime decision', () => {
     expect(
@@ -390,6 +403,6 @@ describe('stampApproval', () => {
       requestedStatus,
       callerSource: 'rpc',
     });
-    expect(decision).toEqual({ action: 'write', approvalSource });
+    expect(decision).toEqual({ action: 'write', approvalSource, allowActiveRun: false });
   });
 });

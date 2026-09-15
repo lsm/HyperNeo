@@ -448,7 +448,7 @@ describe('decide', () => {
       deps()
     );
     expect(result).toEqual({
-      value: { ...owned, approvalSource, runActiveAtDecision: false },
+      value: { ...owned, approvalSource, allowActiveRun: false },
     });
   });
 
@@ -615,7 +615,7 @@ describe('decide', () => {
 describe('writeStatus', () => {
   test('writes the status and emits once', async () => {
     const owned = createOwned('open');
-    const decided = { ...owned, approvalSource: undefined, runActiveAtDecision: false };
+    const decided = { ...owned, approvalSource: undefined, allowActiveRun: false };
     const result = await writeStatus(
       decided,
       { taskId: owned.task.id, status: 'in_progress' },
@@ -627,7 +627,7 @@ describe('writeStatus', () => {
 
   test('a direct attempt claimed after admission still blocks the write', async () => {
     const owned = createOwned('open');
-    const decided = { ...owned, approvalSource: undefined, runActiveAtDecision: false };
+    const decided = { ...owned, approvalSource: undefined, allowActiveRun: false };
     attempts.select(owned.task.id);
     attempts.claim(owned.task.id, 'attempt', 'worker');
     const result = await writeStatus(
@@ -642,7 +642,7 @@ describe('writeStatus', () => {
   test('a workflow run activated after admission still blocks the write', async () => {
     const run = createWorkflowRun();
     const owned = createOwned('open', run.id);
-    const decided = { ...owned, approvalSource: undefined, runActiveAtDecision: false };
+    const decided = { ...owned, approvalSource: undefined, allowActiveRun: false };
     isWorkflowRunActive.mockImplementation(() => true);
     const result = await writeStatus(
       decided,
@@ -653,10 +653,10 @@ describe('writeStatus', () => {
     expect(tasks.getTask(owned.task.id)?.status).toBe('open');
   });
 
-  test('a run already active when the decision was made does not block the write', async () => {
+  test('a reopen out of review writes beside the live run', async () => {
     const run = createWorkflowRun();
     const owned = createOwned('review', run.id);
-    const decided = { ...owned, approvalSource: undefined, runActiveAtDecision: true };
+    const decided = { ...owned, approvalSource: undefined, allowActiveRun: true };
     isWorkflowRunActive.mockImplementation(() => true);
     const result = await writeStatus(
       decided,
@@ -666,9 +666,23 @@ describe('writeStatus', () => {
     expect(result).toMatchObject({ id: owned.task.id, status: 'in_progress' });
   });
 
+  test('an rpc cancellation with a live run is still blocked', async () => {
+    const run = createWorkflowRun();
+    const owned = createOwned('review', run.id);
+    const decided = { ...owned, approvalSource: undefined, allowActiveRun: false };
+    isWorkflowRunActive.mockImplementation(() => true);
+    const result = await writeStatus(
+      decided,
+      { taskId: owned.task.id, status: 'cancelled' },
+      deps()
+    );
+    expect(result).toBe('invalid_transition');
+    expect(tasks.getTask(owned.task.id)?.status).toBe('review');
+  });
+
   test('a stale-guard error maps to invalid_transition', async () => {
     const owned = createOwned('open');
-    const decided = { ...owned, approvalSource: undefined, runActiveAtDecision: false };
+    const decided = { ...owned, approvalSource: undefined, allowActiveRun: false };
     const staleManager: Pick<SpaceTaskManager, 'getTask' | 'setTaskStatus'> = {
       getTask: async (id) => tasks.getTask(id),
       setTaskStatus: async () => {
@@ -685,7 +699,7 @@ describe('writeStatus', () => {
 
   test('an unrelated error rethrows', async () => {
     const owned = createOwned('open');
-    const decided = { ...owned, approvalSource: undefined, runActiveAtDecision: false };
+    const decided = { ...owned, approvalSource: undefined, allowActiveRun: false };
     const brokenManager: Pick<SpaceTaskManager, 'getTask' | 'setTaskStatus'> = {
       getTask: async (id) => tasks.getTask(id),
       setTaskStatus: async () => {

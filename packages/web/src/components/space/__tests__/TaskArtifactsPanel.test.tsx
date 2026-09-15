@@ -451,7 +451,6 @@ describe('TaskAuxiliaryPanel — artifacts section', () => {
     }));
     vi.doMock('../TaskStatusActions', () => ({
       getTransitionActions: () => [],
-      filterDirectAttemptTargets: (actions: unknown[]) => actions,
     }));
     vi.doMock('../../../lib/router', () => ({
       navigateToSpaceEvolve: vi.fn(),

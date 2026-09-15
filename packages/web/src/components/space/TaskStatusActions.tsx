@@ -89,28 +89,6 @@ export function getTransitionActions(
   }));
 }
 
-const DIRECT_ATTEMPT_REFUSED_TARGETS: SpaceTaskStatus[] = ['done', 'blocked', 'stopped'];
-
-export function hasLiveDirectAttempt(task: {
-  status: SpaceTaskStatus;
-  workflowRunId?: string | null;
-  taskAgentSessionId?: string | null;
-}): boolean {
-  return task.status === 'in_progress' && !task.workflowRunId && Boolean(task.taskAgentSessionId);
-}
-
-export function filterDirectAttemptTargets<T extends { target: SpaceTaskStatus }>(
-  actions: T[],
-  task: {
-    status: SpaceTaskStatus;
-    workflowRunId?: string | null;
-    taskAgentSessionId?: string | null;
-  }
-): T[] {
-  if (!hasLiveDirectAttempt(task)) return actions;
-  return actions.filter(({ target }) => !DIRECT_ATTEMPT_REFUSED_TARGETS.includes(target));
-}
-
 interface TaskStatusActionsProps {
   status: SpaceTaskStatus;
   onTransition: (newStatus: SpaceTaskStatus) => void;

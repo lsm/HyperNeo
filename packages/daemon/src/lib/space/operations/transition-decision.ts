@@ -19,7 +19,7 @@ type RejectResult =
   | 'result_requires_done'
   | 'block_reason_requires_blocked';
 export type SpaceTaskTransitionDecision =
-  | { action: 'write'; approvalSource: 'human' | undefined }
+  | { action: 'write'; approvalSource: 'human' | undefined; allowActiveRun: boolean }
   | { action: 'reject'; result: RejectResult }
   | {
       action: 'runtime';
@@ -93,8 +93,18 @@ export function routeRuntimeAction(routing: TaskUpdateRouting, input: Input): Ga
 function resolveApprovalSource(input: Input): 'human' | undefined {
   return input.currentStatus === 'review' && input.requestedStatus === 'done' ? 'human' : undefined;
 }
+export function allowsWriteBesideActiveRun(input: Input): boolean {
+  return (
+    input.requestedStatus === 'in_progress' &&
+    (input.currentStatus === 'review' || input.currentStatus === 'approved')
+  );
+}
 export function stampApproval(input: Input): SpaceTaskTransitionDecision {
-  return { action: 'write', approvalSource: resolveApprovalSource(input) };
+  return {
+    action: 'write',
+    approvalSource: resolveApprovalSource(input),
+    allowActiveRun: allowsWriteBesideActiveRun(input),
+  };
 }
 export const decideSpaceTaskTransition = (superpipe({})('space-task-transition') as PipelineAPI)
   .input('input')

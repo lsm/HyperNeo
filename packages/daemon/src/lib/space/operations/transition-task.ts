@@ -48,7 +48,7 @@ export interface SpaceTransitionTaskDependencies extends SpaceTransitionAdmissio
 type Deps = SpaceTransitionTaskDependencies;
 type DecidedTask = OwnedTask & {
   approvalSource: 'human' | undefined;
-  runActiveAtDecision: boolean;
+  allowActiveRun: boolean;
 };
 type RuntimeExecutor = 'park_stopped' | 'recover_transition' | 'stop_for_status';
 
@@ -123,7 +123,11 @@ export async function decide(
     };
   }
   return {
-    value: { ...owned, approvalSource: decision.approvalSource, runActiveAtDecision: runActive },
+    value: {
+      ...owned,
+      approvalSource: decision.approvalSource,
+      allowActiveRun: decision.allowActiveRun,
+    },
   };
 }
 async function emitUpdated(spaceId: string, task: SpaceTask, deps: Deps): Promise<void> {
@@ -133,14 +137,14 @@ async function emitUpdated(spaceId: string, task: SpaceTask, deps: Deps): Promis
 }
 function guardActiveExecution(
   deps: Deps,
-  runActiveAtDecision: boolean
+  allowActiveRun: boolean
 ): (current: SpaceTask) => string | undefined {
   return (current) => {
     if (new DirectTaskExecutionRepository(deps.db).getActive(current.id)) {
       return 'active_direct_attempt';
     }
     if (
-      !runActiveAtDecision &&
+      !allowActiveRun &&
       current.workflowRunId &&
       deps.isWorkflowRunActive(current.workflowRunId)
     ) {
@@ -150,7 +154,7 @@ function guardActiveExecution(
   };
 }
 export async function writeStatus(decided: DecidedTask, input: In, deps: Deps): Promise<Result> {
-  const { spaceId, task, approvalSource, runActiveAtDecision } = decided;
+  const { spaceId, task, approvalSource, allowActiveRun } = decided;
   try {
     const updated = await deps.getTaskManager(spaceId).setTaskStatus(task.id, input.status, {
       result: input.result,
@@ -158,7 +162,7 @@ export async function writeStatus(decided: DecidedTask, input: In, deps: Deps): 
       approvalSource,
       expectedStatus: task.status,
       expectedWorkflowRunId: task.workflowRunId ?? null,
-      guardWrite: guardActiveExecution(deps, runActiveAtDecision),
+      guardWrite: guardActiveExecution(deps, allowActiveRun),
       onCascadedTasks: async (cascaded) => {
         for (const cascadedTask of cascaded) await emitUpdated(spaceId, cascadedTask, deps);
       },
