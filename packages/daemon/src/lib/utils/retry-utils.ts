@@ -1,5 +1,5 @@
-import { MAX_NETWORK_RETRIES, NETWORK_RETRY_DELAYS_MS } from './constants.ts';
-import { Logger } from '../../logger.ts';
+import { MAX_NETWORK_RETRIES, NETWORK_RETRY_DELAYS_MS } from '../space/runtime/constants.ts';
+import { Logger } from '../logger.ts';
 
 const log = new Logger('retry-utils');
 

@@ -3,11 +3,8 @@ import {
   clearConnectorRegistry,
   registerConnector,
   createExternalStateValidator,
-} from '../../../../../src/lib/space/runtime/connectors';
-import type {
-  ConnectorOp,
-  ConnectorOutcome,
-} from '../../../../../src/lib/space/runtime/connectors';
+} from '../../../../../src/lib/github/connectors';
+import type { ConnectorOp, ConnectorOutcome } from '../../../../../src/lib/github/connectors';
 import type { HookExecutorContext } from '../../../../../src/lib/space/runtime/hook-executor';
 
 function ctxWithData(prUrl?: string, extra?: Record<string, unknown>): HookExecutorContext {

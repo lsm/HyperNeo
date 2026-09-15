@@ -1,8 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import {
-  evaluatePredicate,
-  getPath,
-} from '../../../../../src/lib/space/runtime/connectors/predicate';
+import { evaluatePredicate, getPath } from '../../../../../src/lib/github/connectors/predicate';
 
 describe('predicate.getPath', () => {
   test('dot path into nested object', () => {

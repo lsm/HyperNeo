@@ -13,7 +13,7 @@ import {
   resolveCurrentQueueableOrActiveExecution,
   resolveLiveDeliveryTarget,
   resolveSubscriptionTarget,
-} from '../../../../src/lib/space/runtime/external-event-admission-gates';
+} from '../../../../src/lib/external-events/admission-gates';
 
 function makeExecution(overrides: Partial<NodeExecution> = {}): NodeExecution {
   return {
