@@ -21,7 +21,7 @@ import {
   syncGoalAutomationSelfNagScheduleForScope,
 } from '../../../../src/lib/rpc-handlers';
 import { mergeEvolutionPolicy } from '../../../../src/lib/space/evolution-scope-service';
-import { ScheduleService } from '../../../../src/lib/space/schedule/schedule-service';
+import { ScheduleService } from '../../../../src/lib/schedule/schedule-service';
 import { createSpaceTables } from '../../helpers/space-test-db';
 
 function createAutomationJob(payload: Job['payload'], id = 'job-automation'): Job {

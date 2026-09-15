@@ -1,16 +1,22 @@
-import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
+import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import type {
   SpaceTaskPriority,
   TaskSchedule,
   TaskScheduleStatus,
   TaskScheduleTriggerType,
 } from '@hyperneo/shared';
-import type { TaskScheduleRepository } from '../../../storage/repositories/task-schedule-repository.ts';
-import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
-import type { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
-import { getNextRunAt, isValidCronExpression } from './cron-utils.ts';
-import { TASK_SCHEDULE_FIRE } from '../../job-queue-constants.ts';
-import type { TaskScheduleFirePayload } from '../../job-handlers/task-schedule-fire.handler.ts';
+import type { TaskScheduleRepository } from '../../storage/repositories/task-schedule-repository.ts';
+import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
+import type { SpaceRepository } from '../../storage/repositories/space-repository.ts';
+import { getNextRunAt } from './cron-utils.ts';
+import {
+  computeInitialNextRun,
+  computeResumeNextRun,
+  validateCreateTrigger,
+  validateScheduleUpdate,
+} from './schedule-trigger.ts';
+import { TASK_SCHEDULE_FIRE } from '../job-queue-constants.ts';
+import type { TaskScheduleFirePayload } from '../job-handlers/task-schedule-fire.handler.ts';
 
 export interface CreateScheduleInput {
   spaceId: string;
@@ -53,39 +59,6 @@ export interface ScheduleServiceDeps {
 export class ScheduleService {
   constructor(private readonly deps: ScheduleServiceDeps) {}
 
-  private validateCreateTrigger(input: CreateScheduleInput): void {
-    if (!input.spaceId) throw new Error('spaceId is required');
-    if (!input.title?.trim()) throw new Error('title is required');
-    if (!input.triggerType) throw new Error('triggerType is required');
-
-    if (input.triggerType === 'cron') {
-      if (!input.cronExpression) throw new Error('cronExpression is required for cron triggers');
-      if (!isValidCronExpression(input.cronExpression)) {
-        throw new Error(`Invalid cron expression: ${input.cronExpression}`);
-      }
-    } else if (input.triggerType === 'at') {
-      if (!input.runAt) throw new Error('runAt is required for at triggers');
-      if (input.runAt < Date.now()) throw new Error('runAt must be in the future');
-    } else {
-      throw new Error(
-        `Unsupported triggerType: ${String(input.triggerType)} (expected 'cron' or 'at')`
-      );
-    }
-  }
-
-  private computeInitialNextRun(input: CreateScheduleInput, tz: string): number {
-    let nextRunAt: number | null;
-    if (input.triggerType === 'cron') {
-      nextRunAt = getNextRunAt(input.cronExpression as string, tz);
-    } else {
-      nextRunAt = input.runAt as number;
-    }
-    if (nextRunAt === null) {
-      throw new Error('Could not compute next run time from the provided expression');
-    }
-    return nextRunAt;
-  }
-
   createSchedule(input: CreateScheduleInput): TaskSchedule {
     return this.createScheduleInternal(input, null);
   }
@@ -95,7 +68,7 @@ export class ScheduleService {
   }
 
   private createScheduleInternal(input: CreateScheduleInput, goalId: string | null): TaskSchedule {
-    this.validateCreateTrigger(input);
+    validateCreateTrigger(input);
 
     const { spaceRepo, db, scheduleRepo, jobQueue } = this.deps;
     const space = spaceRepo.getSpace(input.spaceId);
@@ -105,7 +78,7 @@ export class ScheduleService {
     }
 
     const tz = input.timezone ?? 'UTC';
-    const nextRunAt = this.computeInitialNextRun(input, tz);
+    const nextRunAt = computeInitialNextRun(input, tz);
 
     const scheduleId = db.transaction(() => {
       const schedule = scheduleRepo.create({
@@ -145,28 +118,7 @@ export class ScheduleService {
     const existing = scheduleRepo.getById(scheduleId);
     if (!existing) throw new Error(`Schedule not found: ${scheduleId}`);
 
-    if (input.title !== undefined && !input.title.trim()) {
-      throw new Error('title must be a non-empty string');
-    }
-
-    if (
-      existing.triggerType === 'cron' &&
-      'cronExpression' in input &&
-      input.cronExpression === null
-    ) {
-      throw new Error(
-        'Cannot clear cronExpression on a cron schedule. Delete and recreate, or change triggerType.'
-      );
-    }
-
-    if (input.cronExpression !== undefined && input.cronExpression !== null) {
-      if (!isValidCronExpression(input.cronExpression)) {
-        throw new Error(`Invalid cron expression: ${input.cronExpression}`);
-      }
-    }
-    if (input.runAt !== undefined && input.runAt !== null) {
-      if (input.runAt < Date.now()) throw new Error('runAt must be in the future');
-    }
+    validateScheduleUpdate(existing, input);
 
     const timingChanged =
       input.cronExpression !== undefined ||
@@ -262,20 +214,7 @@ export class ScheduleService {
       throw new Error(`Schedule is not paused (current: ${schedule.status})`);
     }
 
-    const tz = schedule.timezone;
-    let nextRunAt: number | null;
-    if (schedule.triggerType === 'cron' && schedule.cronExpression) {
-      nextRunAt = getNextRunAt(schedule.cronExpression, tz);
-      if (nextRunAt === null) {
-        throw new Error(
-          `Cannot resume cron schedule: no next run computable from "${schedule.cronExpression}" with timezone "${tz}". Fix the trigger config and try again.`
-        );
-      }
-    } else if (schedule.triggerType === 'at' && schedule.runAt) {
-      nextRunAt = schedule.runAt < Date.now() ? null : schedule.runAt;
-    } else {
-      nextRunAt = null;
-    }
+    const nextRunAt = computeResumeNextRun(schedule);
 
     if (nextRunAt === null && schedule.triggerType === 'at') {
       const ok = scheduleRepo.resumeIfPaused(scheduleId, {

@@ -1,7 +1,7 @@
 import { describe, expect, mock, test } from 'bun:test';
 import type { EvolutionScope, TaskSchedule } from '@hyperneo/shared';
 import type { SpaceGoalRepository } from '../../../../src/storage/repositories/space-goal-repository';
-import type { ScheduleService } from '../../../../src/lib/space/schedule/schedule-service';
+import type { ScheduleService } from '../../../../src/lib/schedule/schedule-service';
 import {
   orderSelfNagSchedules,
   syncGoalAutomationSelfNagScheduleForScope,

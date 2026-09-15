@@ -1,5 +1,5 @@
 import type { SpaceGoal, UpdateSpaceGoalParams } from '@hyperneo/shared';
-import type { ScheduleService } from '../space/schedule/schedule-service.ts';
+import type { ScheduleService } from '../schedule/schedule-service.ts';
 import { pauseScheduleStrict } from './automation-schedule-sync.ts';
 import { recordGoalEvent } from './event-recording.ts';
 import type {

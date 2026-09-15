@@ -19,7 +19,7 @@ import type { SpaceGoalOutcomeNotificationRepository } from '../../storage/repos
 import type { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository.ts';
 import type { SpaceAgentGoalScopeRepository } from '../../storage/repositories/space-agent-goal-scope-repository.ts';
 import type { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository.ts';
-import type { ScheduleService } from '../space/schedule/schedule-service.ts';
+import type { ScheduleService } from '../schedule/schedule-service.ts';
 import type { GoalAutomationService } from './automation-service.ts';
 import { updateScheduledCheckIn } from './check-in-schedule.ts';
 import type { ClaimAdmissionDenyReason } from './claim-admission-gates.ts';
