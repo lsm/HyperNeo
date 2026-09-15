@@ -768,9 +768,9 @@ describe('createSpaceRegistryEntries — composition', () => {
           getTaskManager: (spaceId) => new SpaceTaskManager(ctx.db, spaceId),
           isWorkflowRunActive: () => false,
           emitTaskUpdated: emit,
-          longHorizonAgentRepo: ctx.longHorizonAgentRepo,
+          longHorizonAgentRepo: ctx.config.longHorizonAgentRepo,
           taskRepo: ctx.taskRepo,
-          nodeExecutionRepo: ctx.nodeExecutionRepo,
+          nodeExecutionRepo: ctx.config.nodeExecutionRepo,
         }),
       ]);
       const entry = createSpaceRegistryEntries(ctx.config, operations).find(
