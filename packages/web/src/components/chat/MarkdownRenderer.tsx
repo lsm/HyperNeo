@@ -981,6 +981,25 @@ function rehypeMarkdownImages() {
   };
 }
 
+function percentEncodedToBytes(payload: string) {
+  const bytes: number[] = [];
+  for (let index = 0; index < payload.length; ) {
+    const char = payload[index];
+    if (char === '%') {
+      const hex = payload.slice(index + 1, index + 3);
+      if (!/^[0-9a-fA-F]{2}$/.test(hex)) throw new Error('invalid percent encoding');
+      bytes.push(parseInt(hex, 16));
+      index += 3;
+    } else {
+      const code = char.charCodeAt(0);
+      if (code > 0xff) throw new Error('unexpected byte in data url payload');
+      bytes.push(code);
+      index += 1;
+    }
+  }
+  return new Uint8Array(bytes);
+}
+
 function dataUrlToBlob(dataUrl: string): Blob | null {
   const commaIndex = dataUrl.indexOf(',');
   if (commaIndex === -1) return null;
@@ -997,7 +1016,7 @@ function dataUrlToBlob(dataUrl: string): Blob | null {
       }
       return new Blob([bytes], { type: mimeType });
     }
-    return new Blob([decodeURIComponent(payload)], { type: mimeType });
+    return new Blob([percentEncodedToBytes(payload)], { type: mimeType });
   } catch {
     return null;
   }
@@ -1033,7 +1052,10 @@ function openImageAtFullSize(src: string) {
   const dataImageMatch = /^data:(image\/[a-z0-9.+-]+)/i.exec(src);
   if (dataImageMatch && !dataImageMatch[1].toLowerCase().includes('svg')) {
     const blob = dataUrlToBlob(src);
-    if (!blob) return;
+    if (!blob) {
+      showImageOverlay(src);
+      return;
+    }
     const objectUrl = URL.createObjectURL(blob);
     window.open(objectUrl, '_blank', 'noopener,noreferrer');
     setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);

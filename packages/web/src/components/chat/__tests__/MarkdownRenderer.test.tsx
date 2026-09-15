@@ -609,6 +609,33 @@ describe('MarkdownRenderer', () => {
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
       expect(document.body.querySelector('.markdown-image-overlay')).toBeFalsy();
     });
+
+    it('should decode percent-encoded data url bytes without utf-8 corruption', async () => {
+      const openMock = vi.spyOn(window, 'open').mockImplementation(() => null);
+      const originalCreateObjectURL = URL.createObjectURL;
+      let captured: Blob | null = null;
+      URL.createObjectURL = vi.fn((blob: Blob) => {
+        captured = blob;
+        return 'blob:mock-url';
+      });
+
+      try {
+        const dataUrl = 'data:image/png,%89%50%4E%47%0D%0A';
+        const { container } = render(<MarkdownRenderer content={`![p](${dataUrl})`} />);
+        await waitFor(() => {
+          expect(container.querySelector('img')).toBeTruthy();
+        });
+        container
+          .querySelector('img')
+          ?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+        expect(openMock).toHaveBeenCalledWith('blob:mock-url', '_blank', 'noopener,noreferrer');
+        const bytes = new Uint8Array(await (captured as Blob).arrayBuffer());
+        expect(Array.from(bytes)).toEqual([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a]);
+      } finally {
+        URL.createObjectURL = originalCreateObjectURL;
+        openMock.mockRestore();
+      }
+    });
   });
 
   describe('Code Blocks', () => {
