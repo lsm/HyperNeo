@@ -19,9 +19,13 @@ type RejectResult =
   | 'result_requires_done'
   | 'block_reason_requires_blocked';
 export type SpaceTaskTransitionDecision =
-  | { action: 'write'; approvalSource: 'human' | undefined }
+  | { action: 'write'; approvalSource: 'human' | undefined; allowActiveRun: boolean }
   | { action: 'reject'; result: RejectResult }
-  | { action: 'runtime'; executor: 'park_stopped' | 'recover_transition' | 'stop_for_status' };
+  | {
+      action: 'runtime';
+      executor: 'park_stopped' | 'recover_transition' | 'stop_for_status';
+      approvalSource: 'human' | undefined;
+    };
 type Input = SpaceTaskTransitionDecisionInput;
 type Gate = { value: TaskUpdateRouting } | { reason: SpaceTaskTransitionDecision };
 const RUNTIME_ACTIONS = ['park_stopped', 'recover_transition', 'stop_for_status'] as const;
@@ -50,13 +54,15 @@ export function classifyRequest(input: Input): TaskUpdateRouting {
     hasFieldUpdates: false,
     taskId: input.taskId,
     workflowRunId: workflowRunId ?? undefined,
+    allowReviewToDone: input.callerSource === 'rpc',
   });
 }
-export function rejectUnsupportedRequest(routing: TaskUpdateRouting, input: Input): Gate {
+export function rejectUnsupportedRequest(routing: TaskUpdateRouting): Gate {
   if (routing.action === 'fields_only') return { reason: REJECT_INVALID };
   if (routing.action !== 'reject') return { value: routing };
-  if (routing.reason !== 'review_to_done') return { reason: REJECT_UNSUPPORTED };
-  return input.callerSource !== 'rpc' ? { reason: REJECT_INVALID } : { value: routing };
+  return routing.reason === 'review_to_done'
+    ? { reason: REJECT_INVALID }
+    : { reason: REJECT_UNSUPPORTED };
 }
 export function requireResultOnlyWithDone(routing: TaskUpdateRouting, input: Input): Gate {
   return input.hasResult && input.requestedStatus !== 'done'
@@ -73,23 +79,40 @@ export function requireTableTransition(routing: TaskUpdateRouting, input: Input)
     ? { value: routing }
     : { reason: REJECT_INVALID };
 }
-export function routeRuntimeAction(routing: TaskUpdateRouting): Gate {
+export function routeRuntimeAction(routing: TaskUpdateRouting, input: Input): Gate {
   return (RUNTIME_ACTIONS as readonly string[]).includes(routing.action)
-    ? { reason: { action: 'runtime', executor: routing.action as RuntimeExecutor } }
+    ? {
+        reason: {
+          action: 'runtime',
+          executor: routing.action as RuntimeExecutor,
+          approvalSource: resolveApprovalSource(input),
+        },
+      }
     : { value: routing };
 }
+function resolveApprovalSource(input: Input): 'human' | undefined {
+  return input.currentStatus === 'review' && input.requestedStatus === 'done' ? 'human' : undefined;
+}
+export function allowsWriteBesideActiveRun(input: Input): boolean {
+  return (
+    input.requestedStatus === 'in_progress' &&
+    (input.currentStatus === 'review' || input.currentStatus === 'approved')
+  );
+}
 export function stampApproval(input: Input): SpaceTaskTransitionDecision {
-  const approvalSource =
-    input.currentStatus === 'review' && input.requestedStatus === 'done' ? 'human' : undefined;
-  return { action: 'write', approvalSource };
+  return {
+    action: 'write',
+    approvalSource: resolveApprovalSource(input),
+    allowActiveRun: allowsWriteBesideActiveRun(input),
+  };
 }
 export const decideSpaceTaskTransition = (superpipe({})('space-task-transition') as PipelineAPI)
   .input('input')
   .pipe(classifyRequest, 'input', 'routing')
-  .pipe(rejectUnsupportedRequest, ['routing', 'input'], 'result:decision')
+  .pipe(rejectUnsupportedRequest, 'routing', 'result:decision')
   .pipe(requireResultOnlyWithDone, ['decision', 'input'], 'result:decision')
   .pipe(requireBlockReasonOnlyWithBlocked, ['decision', 'input'], 'result:decision')
   .pipe(requireTableTransition, ['decision', 'input'], 'result:decision')
-  .pipe(routeRuntimeAction, 'decision', 'result:decision')
+  .pipe(routeRuntimeAction, ['decision', 'input'], 'result:decision')
   .pipe(stampApproval, 'input', 'decision')
   .end('decision') as (input: SpaceTaskTransitionDecisionInput) => SpaceTaskTransitionDecision;

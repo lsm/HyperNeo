@@ -121,9 +121,6 @@ jobs:
           bash scripts/lib/shard-split.sh --self-test
           ./scripts/test-daemon.sh --verify
 
-      - name: Test space task RPC handler gate
-        run: bun run test:space-task-handler-gate
-
       - name: Test strip-comments argument handling
         run: bun run test:strip-comments
 
@@ -150,8 +147,8 @@ jobs:
       # zero-comments gate runs first so nothing can mask it. This replaces
       # the former per-step lint/format/knip/typecheck/db-schema-parity
       # steps (which used continue-on-error + an aggregate step) and the
-      # standalone check:no-comments / check:space-task-handler-tests /
-      # check:test-matrix / check:online-shards steps, all now inside the
+      # standalone check:no-comments / check:test-matrix /
+      # check:online-shards steps, all now inside the
       # chain. strip-comments.ts enumerates files via `git ls-files`
       # (index-only), so the shallow checkout is fine.
       - name: Run make check

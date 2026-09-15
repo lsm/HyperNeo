@@ -447,7 +447,9 @@ describe('decide', () => {
       rpc,
       deps()
     );
-    expect(result).toEqual({ value: { ...owned, approvalSource } });
+    expect(result).toEqual({
+      value: { ...owned, approvalSource, allowActiveRun: false },
+    });
   });
 
   test.each([
@@ -565,6 +567,36 @@ describe('decide', () => {
     });
   });
 
+  test('an rpc review to done with a live run stops the workflow and stamps approval', async () => {
+    const owned = createOwned('review', createWorkflowRun().id);
+    const stopped = { ...owned.task, status: 'done' as const };
+    const stopForStatus = mock(async () => stopped);
+    const result = await decide(
+      owned,
+      { taskId: owned.task.id, status: 'done' },
+      rpc,
+      deps({ stopForStatus, isWorkflowRunActive: () => true })
+    );
+    expect(stopForStatus).toHaveBeenCalledWith(spaceId, owned.task.id, {
+      status: 'done',
+      approvalSource: 'human',
+    });
+    expect(result).toEqual({ reason: stopped });
+  });
+
+  test('a non-rpc review to done is still refused', async () => {
+    const owned = createOwned('review', createWorkflowRun().id);
+    const stopForStatus = mock(async () => owned.task);
+    const result = await decide(
+      owned,
+      { taskId: owned.task.id, status: 'done' },
+      { source: 'mcp', sessionId: 'session-1' },
+      deps({ stopForStatus, isWorkflowRunActive: () => true })
+    );
+    expect(result).toEqual({ reason: 'invalid_transition' });
+    expect(stopForStatus).not.toHaveBeenCalled();
+  });
+
   test('stop_for_status calls the bound executor and completes the transition', async () => {
     const owned = createOwned('in_progress', createWorkflowRun().id);
     const stopped = { ...owned.task, status: 'open' as const };
@@ -583,7 +615,7 @@ describe('decide', () => {
 describe('writeStatus', () => {
   test('writes the status and emits once', async () => {
     const owned = createOwned('open');
-    const decided = { ...owned, approvalSource: undefined };
+    const decided = { ...owned, approvalSource: undefined, allowActiveRun: false };
     const result = await writeStatus(
       decided,
       { taskId: owned.task.id, status: 'in_progress' },
@@ -595,7 +627,7 @@ describe('writeStatus', () => {
 
   test('a direct attempt claimed after admission still blocks the write', async () => {
     const owned = createOwned('open');
-    const decided = { ...owned, approvalSource: undefined };
+    const decided = { ...owned, approvalSource: undefined, allowActiveRun: false };
     attempts.select(owned.task.id);
     attempts.claim(owned.task.id, 'attempt', 'worker');
     const result = await writeStatus(
@@ -610,7 +642,7 @@ describe('writeStatus', () => {
   test('a workflow run activated after admission still blocks the write', async () => {
     const run = createWorkflowRun();
     const owned = createOwned('open', run.id);
-    const decided = { ...owned, approvalSource: undefined };
+    const decided = { ...owned, approvalSource: undefined, allowActiveRun: false };
     isWorkflowRunActive.mockImplementation(() => true);
     const result = await writeStatus(
       decided,
@@ -621,9 +653,36 @@ describe('writeStatus', () => {
     expect(tasks.getTask(owned.task.id)?.status).toBe('open');
   });
 
+  test('a reopen out of review writes beside the live run', async () => {
+    const run = createWorkflowRun();
+    const owned = createOwned('review', run.id);
+    const decided = { ...owned, approvalSource: undefined, allowActiveRun: true };
+    isWorkflowRunActive.mockImplementation(() => true);
+    const result = await writeStatus(
+      decided,
+      { taskId: owned.task.id, status: 'in_progress' },
+      deps()
+    );
+    expect(result).toMatchObject({ id: owned.task.id, status: 'in_progress' });
+  });
+
+  test('an rpc cancellation with a live run is still blocked', async () => {
+    const run = createWorkflowRun();
+    const owned = createOwned('review', run.id);
+    const decided = { ...owned, approvalSource: undefined, allowActiveRun: false };
+    isWorkflowRunActive.mockImplementation(() => true);
+    const result = await writeStatus(
+      decided,
+      { taskId: owned.task.id, status: 'cancelled' },
+      deps()
+    );
+    expect(result).toBe('invalid_transition');
+    expect(tasks.getTask(owned.task.id)?.status).toBe('review');
+  });
+
   test('a stale-guard error maps to invalid_transition', async () => {
     const owned = createOwned('open');
-    const decided = { ...owned, approvalSource: undefined };
+    const decided = { ...owned, approvalSource: undefined, allowActiveRun: false };
     const staleManager: Pick<SpaceTaskManager, 'getTask' | 'setTaskStatus'> = {
       getTask: async (id) => tasks.getTask(id),
       setTaskStatus: async () => {
@@ -640,7 +699,7 @@ describe('writeStatus', () => {
 
   test('an unrelated error rethrows', async () => {
     const owned = createOwned('open');
-    const decided = { ...owned, approvalSource: undefined };
+    const decided = { ...owned, approvalSource: undefined, allowActiveRun: false };
     const brokenManager: Pick<SpaceTaskManager, 'getTask' | 'setTaskStatus'> = {
       getTask: async (id) => tasks.getTask(id),
       setTaskStatus: async () => {

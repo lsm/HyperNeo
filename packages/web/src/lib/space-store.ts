@@ -40,7 +40,6 @@ import type {
   UpdateSpaceGoalParams,
   UpdateSpaceLongHorizonAgentSubscriptionParams,
   UpdateSpaceParams,
-  UpdateSpaceTaskParams,
   UpdateSpaceWorkflowParams,
   WorkflowRunArtifact,
 } from '@hyperneo/shared';
@@ -2136,19 +2135,11 @@ class SpaceStore {
     };
   }
 
-  async updateTask(taskId: string, params: UpdateSpaceTaskParams): Promise<SpaceTask> {
-    const spaceId = this.spaceId.value;
-    if (!spaceId) throw new Error('No space selected');
-
+  async setTaskStatus(taskId: string, status: SpaceTaskStatus): Promise<SpaceTask> {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
 
-    const task = await hub.request<SpaceTask>('spaceTask.update', {
-      taskId,
-      spaceId,
-      ...params,
-    });
-    return task;
+    return transitionTask(hub, { taskId, status });
   }
 
   async setPreferredWorkflow(taskId: string, workflowId: string | null): Promise<SpaceTask> {

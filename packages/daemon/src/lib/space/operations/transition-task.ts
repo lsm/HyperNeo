@@ -46,14 +46,18 @@ export interface SpaceTransitionTaskDependencies extends SpaceTransitionAdmissio
   parkStopped?: (spaceId: string, taskId: string) => Promise<SpaceTask>;
 }
 type Deps = SpaceTransitionTaskDependencies;
-type DecidedTask = OwnedTask & { approvalSource: 'human' | undefined };
+type DecidedTask = OwnedTask & {
+  approvalSource: 'human' | undefined;
+  allowActiveRun: boolean;
+};
 type RuntimeExecutor = 'park_stopped' | 'recover_transition' | 'stop_for_status';
 
 async function runRuntimeExecutor(
   executor: RuntimeExecutor,
   { spaceId, task }: OwnedTask,
   input: In,
-  deps: Deps
+  deps: Deps,
+  approvalSource: 'human' | undefined
 ): Promise<Result> {
   if (executor === 'park_stopped') {
     if (!deps.parkStopped) throw new Error(`Space runtime executor unavailable: ${executor}`);
@@ -73,6 +77,7 @@ async function runRuntimeExecutor(
     status: input.status,
     result: input.result,
     blockReason: input.blockReason,
+    approvalSource,
   });
   return stopped ?? 'invalid_transition';
 }
@@ -93,6 +98,7 @@ export async function decide(
   deps: Deps
 ): Promise<Gate<DecidedTask, Result>> {
   const { task } = owned;
+  const runActive = task.workflowRunId ? deps.isWorkflowRunActive(task.workflowRunId) : false;
   const decision = decideSpaceTaskTransition({
     taskId: input.taskId,
     currentStatus: task.status,
@@ -100,34 +106,55 @@ export async function decide(
     hasResult: input.result !== undefined,
     hasBlockReason: input.blockReason !== undefined,
     workflowRunId: task.workflowRunId ?? null,
-    runActive: task.workflowRunId ? deps.isWorkflowRunActive(task.workflowRunId) : false,
+    runActive,
     callerSource: caller.source,
   });
   if (decision.action === 'reject') return { reason: decision.result };
   if (decision.action === 'runtime') {
     if (!(await snapshotStillCurrent(owned, deps))) return { reason: 'invalid_transition' };
-    return { reason: await runRuntimeExecutor(decision.executor, owned, input, deps) };
+    return {
+      reason: await runRuntimeExecutor(
+        decision.executor,
+        owned,
+        input,
+        deps,
+        decision.approvalSource
+      ),
+    };
   }
-  return { value: { ...owned, approvalSource: decision.approvalSource } };
+  return {
+    value: {
+      ...owned,
+      approvalSource: decision.approvalSource,
+      allowActiveRun: decision.allowActiveRun,
+    },
+  };
 }
 async function emitUpdated(spaceId: string, task: SpaceTask, deps: Deps): Promise<void> {
   await deps
     .emitTaskUpdated(spaceId, task)
     .catch((error: unknown) => log.warn('Failed to emit space.task.updated:', error));
 }
-function guardActiveExecution(deps: Deps): (current: SpaceTask) => string | undefined {
+function guardActiveExecution(
+  deps: Deps,
+  allowActiveRun: boolean
+): (current: SpaceTask) => string | undefined {
   return (current) => {
     if (new DirectTaskExecutionRepository(deps.db).getActive(current.id)) {
       return 'active_direct_attempt';
     }
-    if (current.workflowRunId && deps.isWorkflowRunActive(current.workflowRunId)) {
+    if (
+      !allowActiveRun &&
+      current.workflowRunId &&
+      deps.isWorkflowRunActive(current.workflowRunId)
+    ) {
       return 'active_workflow_run';
     }
     return undefined;
   };
 }
 export async function writeStatus(decided: DecidedTask, input: In, deps: Deps): Promise<Result> {
-  const { spaceId, task, approvalSource } = decided;
+  const { spaceId, task, approvalSource, allowActiveRun } = decided;
   try {
     const updated = await deps.getTaskManager(spaceId).setTaskStatus(task.id, input.status, {
       result: input.result,
@@ -135,7 +162,7 @@ export async function writeStatus(decided: DecidedTask, input: In, deps: Deps): 
       approvalSource,
       expectedStatus: task.status,
       expectedWorkflowRunId: task.workflowRunId ?? null,
-      guardWrite: guardActiveExecution(deps),
+      guardWrite: guardActiveExecution(deps, allowActiveRun),
       onCascadedTasks: async (cascaded) => {
         for (const cascadedTask of cascaded) await emitUpdated(spaceId, cascadedTask, deps);
       },

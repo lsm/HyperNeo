@@ -103,7 +103,7 @@ let mockNodeExecutions: ReturnType<typeof signal<NodeExecution[]>>;
 let mockNodeExecutionsByNodeId: ReturnType<typeof signal<Map<string, unknown[]>>>;
 const mockWorkspaces = signal<unknown[]>([]);
 
-const mockUpdateTask = vi.fn().mockResolvedValue(undefined);
+const mockSetTaskStatus = vi.fn().mockResolvedValue(undefined);
 const mockEditTaskMetadata = vi.fn().mockResolvedValue(undefined);
 const mockRunTaskDirectly = vi.fn().mockResolvedValue({ accepted: true, jobId: 'job-1' });
 const mockCancelTask = vi.fn().mockResolvedValue({ accepted: true, jobId: null });
@@ -132,7 +132,7 @@ vi.mock('../../../lib/space-store', () => ({
       nodeExecutions: mockNodeExecutions,
       nodeExecutionsByNodeId: mockNodeExecutionsByNodeId,
       workspaces: mockWorkspaces,
-      updateTask: mockUpdateTask,
+      setTaskStatus: mockSetTaskStatus,
       editTaskMetadata: mockEditTaskMetadata,
       runTaskDirectly: mockRunTaskDirectly,
       cancelTask: mockCancelTask,
@@ -321,7 +321,7 @@ describe('SpaceTaskPane', () => {
     mockTaskActivity.value = new Map();
     mockNodeExecutions.value = [];
     mockWorkspaces.value = [];
-    mockUpdateTask.mockClear();
+    mockSetTaskStatus.mockClear();
     mockEditTaskMetadata.mockClear();
     mockEditTaskMetadata.mockResolvedValue(undefined);
     mockCancelTask.mockClear();
@@ -1743,14 +1743,12 @@ describe('SpaceTaskPane — activity members actions', () => {
     expect(getByText('Archive')).toBeTruthy();
   });
 
-  it('calls updateTask when a transition action is clicked in the dropdown', async () => {
+  it('calls setTaskStatus when a transition action is clicked in the dropdown', async () => {
     mockTasks.value = [makeTask({ status: 'done', taskAgentSessionId: 'session-abc' })];
     const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" />);
     fireEvent.click(getByTestId('task-actions-menu-trigger'));
     fireEvent.click(getByText('Reopen'));
-    await waitFor(() =>
-      expect(mockUpdateTask).toHaveBeenCalledWith('task-1', { status: 'in_progress' })
-    );
+    await waitFor(() => expect(mockSetTaskStatus).toHaveBeenCalledWith('task-1', 'in_progress'));
   });
 
   it('cancels blocked workflow tasks with a task status transition', async () => {
@@ -1768,7 +1766,7 @@ describe('SpaceTaskPane — activity members actions', () => {
     fireEvent.click(getByTestId('task-blocked-cancel-btn'));
 
     await waitFor(() => expect(mockCancelTask).toHaveBeenCalledWith('task-1'));
-    expect(mockUpdateTask).not.toHaveBeenCalled();
+    expect(mockSetTaskStatus).not.toHaveBeenCalled();
   });
 
   it('cancels a plain task through cancelTask instead of the generic status update', async () => {
@@ -1779,7 +1777,7 @@ describe('SpaceTaskPane — activity members actions', () => {
     fireEvent.click(getByText('Cancel'));
 
     await waitFor(() => expect(mockCancelTask).toHaveBeenCalledWith('task-1'));
-    expect(mockUpdateTask).not.toHaveBeenCalled();
+    expect(mockSetTaskStatus).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -1794,7 +1792,7 @@ describe('SpaceTaskPane — activity members actions', () => {
     expect(getByText('Reopen workflow')).toBeTruthy();
     fireEvent.click(getByText(label));
     await waitFor(() => expect(mockRecoverWorkflowTask).toHaveBeenCalledWith('task-1', target));
-    expect(mockUpdateTask).not.toHaveBeenCalled();
+    expect(mockSetTaskStatus).not.toHaveBeenCalled();
   });
 
   it('uses workflow recovery action and label for workflow-backed terminal tasks', async () => {
@@ -1814,10 +1812,10 @@ describe('SpaceTaskPane — activity members actions', () => {
     await waitFor(() =>
       expect(mockRecoverWorkflowTask).toHaveBeenCalledWith('task-1', 'in_progress')
     );
-    expect(mockUpdateTask).not.toHaveBeenCalled();
+    expect(mockSetTaskStatus).not.toHaveBeenCalled();
   });
 
-  it('stops an in_progress workflow task with a plain updateTask call', async () => {
+  it('stops an in_progress workflow task with a plain status transition', async () => {
     mockTasks.value = [
       makeTask({
         status: 'in_progress',
@@ -1831,9 +1829,7 @@ describe('SpaceTaskPane — activity members actions', () => {
     fireEvent.click(getByTestId('task-actions-menu-trigger'));
     fireEvent.click(getByText('Stop'));
 
-    await waitFor(() =>
-      expect(mockUpdateTask).toHaveBeenCalledWith('task-1', { status: 'stopped' })
-    );
+    await waitFor(() => expect(mockSetTaskStatus).toHaveBeenCalledWith('task-1', 'stopped'));
     expect(mockRecoverWorkflowTask).not.toHaveBeenCalled();
   });
 
@@ -1871,19 +1867,17 @@ describe('SpaceTaskPane — activity members actions', () => {
     await waitFor(() =>
       expect(mockRecoverWorkflowTask).toHaveBeenCalledWith('task-1', 'in_progress')
     );
-    expect(mockUpdateTask).not.toHaveBeenCalled();
+    expect(mockSetTaskStatus).not.toHaveBeenCalled();
   });
 
-  it('resumes a stopped standalone task with a plain updateTask call', async () => {
+  it('resumes a stopped standalone task with a plain status transition', async () => {
     mockTasks.value = [makeTask({ status: 'stopped', taskAgentSessionId: 'session-abc' })];
     const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" />);
 
     fireEvent.click(getByTestId('task-actions-menu-trigger'));
     fireEvent.click(getByText('Resume'));
 
-    await waitFor(() =>
-      expect(mockUpdateTask).toHaveBeenCalledWith('task-1', { status: 'in_progress' })
-    );
+    await waitFor(() => expect(mockSetTaskStatus).toHaveBeenCalledWith('task-1', 'in_progress'));
     expect(mockRecoverWorkflowTask).not.toHaveBeenCalled();
   });
 
@@ -2764,7 +2758,7 @@ describe('SpaceTaskPane — submit for review modal', () => {
   beforeEach(() => {
     cleanup();
     mockTasks.value = [];
-    mockUpdateTask.mockClear();
+    mockSetTaskStatus.mockClear();
     mockSubmitForReview.mockReset();
     mockSubmitForReview.mockResolvedValue(undefined);
     mockEnsureTaskAgentSession.mockReset();
@@ -2784,7 +2778,7 @@ describe('SpaceTaskPane — submit for review modal', () => {
     fireEvent.click(getByText('Submit for Review'));
 
     expect(getByTestId('submit-for-review-modal-content')).toBeTruthy();
-    expect(mockUpdateTask).not.toHaveBeenCalled();
+    expect(mockSetTaskStatus).not.toHaveBeenCalled();
     expect(mockSubmitForReview).not.toHaveBeenCalled();
   });
 
@@ -2802,7 +2796,7 @@ describe('SpaceTaskPane — submit for review modal', () => {
     await waitFor(() =>
       expect(mockSubmitForReview).toHaveBeenCalledWith('task-1', 'please verify the migration')
     );
-    expect(mockUpdateTask).not.toHaveBeenCalled();
+    expect(mockSetTaskStatus).not.toHaveBeenCalled();
     await waitFor(() => expect(queryByTestId('submit-for-review-modal-content')).toBeNull());
   });
 
