@@ -9,7 +9,8 @@ Tracks epic #4164 (unify Space task operations). This
 ADR records the implemented operation seam, the per-transport pre-invocation
 pipeline design it grows into, and how it relates to the ADR 0005 action
 dispatcher. Snapshot at acceptance: shared start/retry (#4382, PR #4391) is
-under review; the guardian runtime (PR #4367) is parked and is not a
+under review — *it merged 2026-09-12; see the Current state table, which is the
+live record* — and the guardian runtime (PR #4367) is parked and is not a
 prerequisite for the first release. Do not describe the stream as complete
 until its final merge gates pass.
 
@@ -162,13 +163,16 @@ Rules that follow:
   load the persisted task, session, and active attempt and compare against the
   principal.
 - Operations read principal facts from `OperationCaller` and never branch on
-  `source` to substitute for a missing fact. *Recounted 2026-09-14:* eleven
-  operations branch on `caller.source` directly — `message.send`,
+  `source` to substitute for a missing fact. *Recounted 2026-09-14:* ten
+  operations branch on `caller.source` in their own bodies — `message.send`,
   `task.archive`, `task.cancel`, `task.complete`, `task.create`,
   `task.dependencies.set`, `task.resolvePendingCompletion`, `task.start`,
-  `task.submitForReview`, `task.transition` and `task.update` — and three more
-  inherit the branch through the shared `admitSpaceTaskCaller` gate
-  (`task.get`, `task.list`, `task.setPreferredWorkflow`). All but one
+  `task.submitForReview` and `task.transition` — and four more inherit the
+  branch through the shared `admitSpaceTaskCaller` gate (`task.get`,
+  `task.list`, `task.setPreferredWorkflow` and `task.update`; the branches in
+  `task-metadata.ts` belong to `requireMetadataCallerScope` and
+  `admitSpaceTaskCaller`, not to the update editor). Fourteen operations in
+  total. All but one
   substitute for a missing Space-membership or worker-binding fact on the
   principal, and are transitional debt: as the MCP pipeline resolves those
   facts, the branches collapse to reading them. The exception is
@@ -347,8 +351,8 @@ parity. Rows carry the date they were last verified; an undated row is the
 | --- | --- |
 | Registry, invoker, both adapters, discovery, instance-owned catalogs | Implemented and tested (`tests/unit/1-core/operations/`, `2-handlers/rpc-handlers/operation-handlers.test.ts`, `5-space/runtime/{submit-for-review,cancel-task,direct-outcome-jobs,direct-start-jobs,operation-registry}.test.ts`) |
 | Shared metadata, dependencies, review submission, approval/rejection, direct cancellation | Implemented; supported ownership types vary per binding — read the description |
-| `task.start` / verified retry | Pending in PR #4391 (#4382) |
-| Caller policy | *Recounted 2026-09-14.* `source` is the only differentiation. Neither adapter authenticates or authorizes: the RPC adapter resolves `{}`, the MCP adapter resolves the owning session id. Eleven operations branch on caller source directly and three more inherit it through `admitSpaceTaskCaller`; all but `message.send` substitute for a missing Space-membership or worker-binding fact and are migration targets. `message.send` rejects MCP callers claiming human provenance and keeps that as a policy check. (Read "six operations" at acceptance) |
+| `task.start` / verified retry | *Verified 2026-09-15:* shipped — PR #4391 (#4382) merged 2026-09-12; `createStartTaskOperation` is registered in `space/operations/registry.ts`. (Read "Pending in PR #4391" at acceptance) |
+| Caller policy | *Recounted 2026-09-14.* `source` is the only differentiation. Neither adapter authenticates or authorizes: the RPC adapter resolves `{}`, the MCP adapter resolves the owning session id. Ten operations branch on caller source in their own bodies and four more inherit it through `admitSpaceTaskCaller` — fourteen in total; all but `message.send` substitute for a missing Space-membership or worker-binding fact and are migration targets. `message.send` rejects MCP callers claiming human provenance and keeps that as a policy check. (Read "six operations" at acceptance) |
 | Pre-invocation pipelines | **Not built.** The `resolveCaller` callbacks are the seam |
 | Web UI | *Verified 2026-09-14:* the UI reads and writes through `operation.invoke` — 7 call sites in `space-store.ts`, 3 in `operations.ts` — covering task reads, listing, transitions, publish, cancel and review submission. The last legacy Space task write handler was retired in #4576. (Was "zero callers" at acceptance) |
 | `call_action` → operations | *Verified 2026-09-14:* delegation has started — `space/actions/operation-action.ts` is the bridge, referenced from `registry-space.ts` and `registry-node.ts`. Most actions still wrap typed handlers; the 104-action surface is measured in [`rpc-mcp-unification-gap.md`](../architecture/rpc-mcp-unification-gap.md). (Was "no action delegates yet" at acceptance) |
