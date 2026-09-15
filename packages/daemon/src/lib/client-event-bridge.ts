@@ -18,6 +18,24 @@ export interface StateBroadcasts {
   broadcastSessionStateChange(sessionId: string): Promise<void>;
 }
 
+export type TaskEventStamper = (task: unknown) => unknown;
+
+function stampTaskPayload(
+  payload: ClientBridgePayload,
+  stampTask: TaskEventStamper | undefined
+): unknown {
+  const p = payload as DaemonInternalEventMap['space.task.updated'];
+  return stampTask ? { ...p, task: stampTask(p.task) } : p;
+}
+
+function spaceBridgeMappings(stampTask?: TaskEventStamper): BridgeMapping[] {
+  return SPACE_BRIDGE_MAPPINGS.map((mapping) =>
+    mapping.event === 'space.task.created' || mapping.event === 'space.task.updated'
+      ? { ...mapping, transform: (payload) => stampTaskPayload(payload, stampTask) }
+      : mapping
+  );
+}
+
 const SPACE_BRIDGE_MAPPINGS: BridgeMapping[] = [
   {
     event: 'space.created',
@@ -171,7 +189,8 @@ export class ClientEventBridge {
   constructor(
     private internalEventBus: InternalEventBus<DaemonInternalEventMap>,
     private gateway: IClientEventGateway,
-    private broadcasts?: StateBroadcasts
+    private broadcasts?: StateBroadcasts,
+    private stampTask?: TaskEventStamper
   ) {}
 
   start(): void {
@@ -179,7 +198,7 @@ export class ClientEventBridge {
       return;
     }
 
-    for (const mapping of SPACE_BRIDGE_MAPPINGS) {
+    for (const mapping of spaceBridgeMappings(this.stampTask)) {
       this.subscribeMapping(mapping);
     }
 
@@ -247,7 +266,8 @@ export class ClientEventBridge {
 export function createClientEventBridge(
   internalEventBus: InternalEventBus<DaemonInternalEventMap>,
   gateway: IClientEventGateway,
-  broadcasts?: StateBroadcasts
+  broadcasts?: StateBroadcasts,
+  stampTask?: TaskEventStamper
 ): ClientEventBridge {
-  return new ClientEventBridge(internalEventBus, gateway, broadcasts);
+  return new ClientEventBridge(internalEventBus, gateway, broadcasts, stampTask);
 }

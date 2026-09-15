@@ -78,3 +78,11 @@ test('a standalone task is left unstamped, since it cannot hold an attempt', () 
   const page = { tasks: [standalone], total: 1, nextCursor: null };
   expect(stampActiveAttempts(db, page)).toBe(page);
 });
+
+test('a reserved attempt already counts as live, before activation', () => {
+  const task = createTask('reserving');
+  attempts.select(task.id);
+  attempts.claim(task.id, `attempt-${task.id}`, 'session-1');
+  expect(attempts.get(`attempt-${task.id}`)?.phase).toBe('reserved');
+  expect(stampActiveAttempt(db, task)).toMatchObject({ hasActiveDirectAttempt: true });
+});

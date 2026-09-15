@@ -1,3 +1,5 @@
+import type { TaskCore } from '@hyperneo/shared/types/task-core';
+import { stampActiveAttempt } from './lib/space/operations/direct-attempt-flag.ts';
 import { homedir } from 'os';
 import { parsePositiveInt, type Config } from './config.ts';
 import type { WebSocketData } from './types/websocket.ts';
@@ -652,7 +654,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const clientEventBridge = createClientEventBridge(
       internalEventBus,
       clientEventGateway,
-      stateManager
+      stateManager,
+      (task) => stampActiveAttempt(db.getDatabase(), task as TaskCore)
     );
     clientEventBridge.start();
 
