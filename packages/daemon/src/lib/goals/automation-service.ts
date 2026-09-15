@@ -2,22 +2,25 @@ import type {
   EvidenceRef,
   EvolutionScope,
   GoalForgeAutomationEventSubscription,
-  GoalForgeAutomationPolicy,
   SpaceGoal,
   SpaceTask,
 } from '@hyperneo/shared';
-import { GOAL_AUTOMATION_EXECUTE } from '../../job-queue-constants.ts';
-import type { ExternalEventPublishedPayload } from '../../external-events/external-event-service.ts';
-import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
-import type { EvolutionRepository } from '../../../storage/repositories/evolution-repository.ts';
-import type { GoalAutomationCursorRepository } from '../../../storage/repositories/goal-automation-cursor-repository.ts';
-import type { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository.ts';
-import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
-import type { EvolutionScopeService } from '../../evolution/scope-service.ts';
-import type { GoalAutomationExecutePayload } from '../../job-handlers/goal-automation-execute.handler.ts';
-import { Logger } from '../../logger.ts';
+import { GOAL_AUTOMATION_EXECUTE } from '../job-queue-constants.ts';
+import type { ExternalEventPublishedPayload } from '../external-events/external-event-service.ts';
+import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
+import type { EvolutionRepository } from '../../storage/repositories/evolution-repository.ts';
+import type { GoalAutomationCursorRepository } from '../../storage/repositories/goal-automation-cursor-repository.ts';
+import type { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository.ts';
+import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
+import type { EvolutionScopeService } from '../evolution/scope-service.ts';
+import type { GoalAutomationExecutePayload } from '../job-handlers/goal-automation-execute.handler.ts';
+import { Logger } from '../logger.ts';
+import {
+  findMatchingSubscription,
+  readAutomationPolicyForScope,
+  readCompletedTaskThreshold,
+} from './automation-policy.ts';
 
-export const DEFAULT_COMPLETED_TASK_THRESHOLD = 10;
 const DEFAULT_MAX_EVIDENCE_PER_EPISODE = 12;
 const log = new Logger('goal-automation-service');
 
@@ -179,12 +182,6 @@ export class GoalAutomationService {
   }
 }
 
-export function readAutomationPolicyForScope(
-  scope: EvolutionScope | null | undefined
-): GoalForgeAutomationPolicy {
-  return normalizePolicy(scope?.policy.automation);
-}
-
 export function resolveScopeForGoal(
   evolutionRepo: Pick<EvolutionRepository, 'listScopes'>,
   goal: SpaceGoal
@@ -250,89 +247,6 @@ function newestCursor<
     return firstEvidenceId.localeCompare(secondEvidenceId) >= 0 ? first : second;
   }
   return first.updatedAt >= second.updatedAt ? first : second;
-}
-
-export function readCompletedTaskThreshold(policy: GoalForgeAutomationPolicy): number | null {
-  if (policy.completedTaskAutomationEnabled === false) return null;
-  const threshold = policy.completedTaskThreshold;
-  if (threshold === undefined) return DEFAULT_COMPLETED_TASK_THRESHOLD;
-  if (typeof threshold !== 'number' || !Number.isFinite(threshold)) return null;
-  const normalized = Math.floor(threshold);
-  return normalized > 0 ? normalized : null;
-}
-
-function normalizePolicy(value: unknown): GoalForgeAutomationPolicy {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
-  const record = value as Record<string, unknown>;
-  return {
-    completedTaskThreshold:
-      typeof record.completedTaskThreshold === 'number' ? record.completedTaskThreshold : undefined,
-    completedTaskAutomationEnabled:
-      typeof record.completedTaskAutomationEnabled === 'boolean'
-        ? record.completedTaskAutomationEnabled
-        : undefined,
-    selfNagCronExpression:
-      typeof record.selfNagCronExpression === 'string'
-        ? record.selfNagCronExpression.trim()
-        : undefined,
-    selfNagTimezone:
-      typeof record.selfNagTimezone === 'string' ? record.selfNagTimezone.trim() : undefined,
-    eventSubscriptions: Array.isArray(record.eventSubscriptions)
-      ? record.eventSubscriptions.flatMap((item) => normalizeSubscription(item))
-      : undefined,
-    maxEvidencePerEpisode:
-      typeof record.maxEvidencePerEpisode === 'number' ? record.maxEvidencePerEpisode : undefined,
-  };
-}
-
-function normalizeSubscription(value: unknown): GoalForgeAutomationEventSubscription[] {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
-  const record = value as Record<string, unknown>;
-  if (typeof record.topic !== 'string' || !record.topic.trim()) return [];
-  const filter =
-    record.filter && typeof record.filter === 'object' && !Array.isArray(record.filter)
-      ? (record.filter as Record<string, string | number | boolean | null>)
-      : undefined;
-  return [
-    {
-      topic: record.topic.trim(),
-      source:
-        typeof record.source === 'string' && record.source.trim()
-          ? record.source.trim()
-          : undefined,
-      filter,
-    },
-  ];
-}
-
-function findMatchingSubscription(
-  subscriptions: GoalForgeAutomationEventSubscription[] | undefined,
-  event: ExternalEventPublishedPayload
-): GoalForgeAutomationEventSubscription | null {
-  for (const subscription of subscriptions ?? []) {
-    if (subscription.source && subscription.source !== event.source) continue;
-    if (!topicMatches(subscription.topic, event.topic)) continue;
-    if (!filterMatches(subscription.filter, event.payload)) continue;
-    return subscription;
-  }
-  return null;
-}
-
-function topicMatches(pattern: string, topic: string): boolean {
-  if (pattern === topic || pattern === '*') return true;
-  const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
-  return new RegExp(`^${escaped}$`).test(topic);
-}
-
-function filterMatches(
-  filter: Record<string, string | number | boolean | null> | undefined,
-  payload: Record<string, unknown>
-): boolean {
-  if (!filter) return true;
-  for (const [key, expected] of Object.entries(filter)) {
-    if (payload[key] !== expected) return false;
-  }
-  return true;
 }
 
 function uniqueJobMatchPayload(payload: GoalAutomationExecutePayload): Record<string, unknown> {

@@ -150,7 +150,7 @@ export interface SpaceRuntimeServiceConfig {
   artifactRepo?: WorkflowRunArtifactRepository;
   artifactProfile?: WorkflowArtifactProfile;
   selectWorkflowWithLlm?: SelectWorkflowWithLlm;
-  scheduleService?: import('../schedule/schedule-service.ts').ScheduleService;
+  scheduleService?: import('../../schedule/schedule-service.ts').ScheduleService;
   internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
   commandBus?: InternalCommandBus<DaemonCommandMap>;
   externalEventStore?: ExternalEventStore;
@@ -166,7 +166,7 @@ export interface SpaceRuntimeServiceConfig {
     workflowRunRepo: SpaceWorkflowRunRepository;
     nodeExecutionRepo: NodeExecutionRepository;
   };
-  goalService?: import('../goals/goal-service.ts').SpaceGoalService;
+  goalService?: import('../../goals/service.ts').SpaceGoalService;
   evolutionScopeService?: import('../../evolution/scope-service.ts').EvolutionScopeService;
   evolutionEpisodeService?: import('../../evolution/episode-service.ts').EvolutionEpisodeService;
   outcomeNotificationRepo?: SpaceGoalOutcomeNotificationRepository;

@@ -23,7 +23,7 @@ import type {
   WorkflowRunArtifactRecord,
   WorkflowRunArtifactRepository,
 } from '../../storage/repositories/workflow-run-artifact-repository.ts';
-import type { SpaceGoalService } from '../space/goals/goal-service.ts';
+import type { SpaceGoalService } from '../goals/service.ts';
 import type { WorkflowArtifactProfile } from '../space/runtime/artifact-profile.ts';
 
 export interface CreateEpisodeFromEvidenceParams {

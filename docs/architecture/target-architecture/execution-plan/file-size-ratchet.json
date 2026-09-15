@@ -471,10 +471,6 @@
       "maxLines": 578,
       "followUp": "M10 cleanup split when touched"
     },
-    "packages/daemon/src/lib/space/goals/goal-service.ts": {
-      "maxLines": 572,
-      "followUp": "M9 space service extraction"
-    },
     "packages/ui/src/internal/floating-provider.tsx": {
       "maxLines": 565,
       "followUp": "UI design-system primitive split"
@@ -523,7 +519,7 @@
       "maxLines": 536,
       "followUp": "M7 agent runtime boundary split"
     },
-    "packages/daemon/src/lib/space/schedule/schedule-service.ts": {
+    "packages/daemon/src/lib/schedule/schedule-service.ts": {
       "maxLines": 533,
       "followUp": "M10 cleanup split when touched"
     },

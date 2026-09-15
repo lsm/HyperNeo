@@ -3,13 +3,13 @@ import { execSync } from 'node:child_process';
 import { existsSync, mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { SpaceWorktreeManager } from '../../../../src/lib/space/managers/space-worktree-manager.ts';
+import { SpaceWorktreeManager } from '../../../../src/lib/workspaces/worktree-manager.ts';
 import { worktreeSlug } from '../../../../src/lib/space/worktree-slug.ts';
 import { encodeRepoPath, getProjectShortKey } from '../../../../src/lib/worktree-path-utils.ts';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 
-const TMP_ROOT = join(tmpdir(), 'test-space-worktree-manager');
+const TMP_ROOT = join(tmpdir(), 'test-worktree-manager');
 
 async function makeGitRepo(label: string): Promise<string> {
   const dir = join(TMP_ROOT, `${label}-${Date.now()}-${Math.random().toString(36).slice(2)}`);

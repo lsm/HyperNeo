@@ -1,7 +1,7 @@
 import type { SpaceLongHorizonAgent, SpaceLongHorizonAgentGoal } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
-import { Logger } from '../../logger.ts';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import { Logger } from '../logger.ts';
 
 const log = new Logger('agent-activation-outcome-redelivery');
 

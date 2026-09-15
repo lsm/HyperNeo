@@ -9,8 +9,8 @@ import {
 } from '../../../../src/lib/job-queue-constants';
 import { handleGoalAutomationExecute } from '../../../../src/lib/job-handlers/goal-automation-execute.handler';
 import { handleTaskScheduleFire } from '../../../../src/lib/job-handlers/task-schedule-fire.handler';
-import { GoalAutomationService } from '../../../../src/lib/space/goals/goal-automation-service';
-import { ScheduleService } from '../../../../src/lib/space/schedule/schedule-service';
+import { GoalAutomationService } from '../../../../src/lib/goals/automation-service';
+import { ScheduleService } from '../../../../src/lib/schedule/schedule-service';
 import { getLongHorizonAgentTemplate } from '../../../../src/lib/space/agents/long-horizon-agent-templates';
 import { syncGoalAutomationSelfNagScheduleForScope } from '../../../../src/lib/rpc-handlers';
 import { GoalAutomationCursorRepository } from '../../../../src/storage/repositories/goal-automation-cursor-repository';
