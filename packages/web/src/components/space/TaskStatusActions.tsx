@@ -89,6 +89,17 @@ export function getTransitionActions(
   }));
 }
 
+export function filterDirectAttemptTargets<T extends { target: SpaceTaskStatus }>(
+  actions: T[],
+  task: { hasActiveDirectAttempt?: boolean; taskAgentSessionId?: string | null }
+): T[] {
+  if (!task.hasActiveDirectAttempt) return actions;
+  const allowed: SpaceTaskStatus[] = task.taskAgentSessionId
+    ? ['review', 'cancelled']
+    : ['cancelled'];
+  return actions.filter(({ target }) => allowed.includes(target));
+}
+
 interface TaskStatusActionsProps {
   status: SpaceTaskStatus;
   onTransition: (newStatus: SpaceTaskStatus) => void;

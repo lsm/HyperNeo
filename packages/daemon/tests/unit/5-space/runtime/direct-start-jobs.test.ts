@@ -171,6 +171,16 @@ test('stale or unlinked jobs never invoke the starter', async () => {
   expect(await handler(job)).toMatchObject({ reason: 'superseded' });
   expect(run).not.toHaveBeenCalled();
 });
+test('a superseded cleanup stop notifies so the live-attempt flag clears', async () => {
+  const job = acceptedJob();
+  const changed: string[] = [];
+  tasks.updateTask(taskId, { status: 'done' });
+  const handler = createDirectStartJobHandler(db, start, jobs, control, (id) => changed.push(id));
+  await handler(job);
+  expect(attempts.getActive(taskId)).toBeNull();
+  expect(changed).toEqual([taskId]);
+});
+
 test('pruned job receipt is not silently recreated by duplicate request', () => {
   const job = acceptedJob();
   db.prepare('DELETE FROM job_queue WHERE id=?').run(job.id);
@@ -613,6 +623,38 @@ test('shared start rejects a workflow-owned task without claiming', async () => 
   ).toMatchObject({ accepted: false, reason: 'direct_start_unavailable' });
   expect(attempts.getActive(taskId)).toBeNull();
   expect(count()).toBe(0);
+});
+
+test('a successful claim notifies onTaskClaimed so clients can refresh', async () => {
+  const claimed: string[] = [];
+  const operation = createStartTaskOperation(
+    () => db,
+    jobs,
+    {},
+    { onTaskReopened: () => {}, onTaskClaimed: (id) => claimed.push(id) }
+  );
+  expect(
+    await operation.execute({ taskId, requestKey: 'claim-notify' }, { source: 'rpc' })
+  ).toMatchObject({ accepted: true });
+  expect(claimed).toEqual([taskId]);
+  expect(attempts.getActive(taskId)?.phase).toBe('reserved');
+});
+
+test('a replayed claim of the same attempt notifies onTaskClaimed only once', async () => {
+  const claimed: string[] = [];
+  const operation = createStartTaskOperation(
+    () => db,
+    jobs,
+    {},
+    { onTaskReopened: () => {}, onTaskClaimed: (id) => claimed.push(id) }
+  );
+  expect(
+    await operation.execute({ taskId, requestKey: 'claim-replay' }, { source: 'rpc' })
+  ).toMatchObject({ accepted: true });
+  expect(
+    await operation.execute({ taskId, requestKey: 'claim-replay' }, { source: 'rpc' })
+  ).toMatchObject({ accepted: true });
+  expect(claimed).toEqual([taskId]);
 });
 
 test.each(['blocked', 'cancelled', 'stopped'] as const)(

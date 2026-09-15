@@ -1,3 +1,4 @@
+import { stampActiveAttemptList } from '../space/operations/direct-attempt-flag.ts';
 import { registerDirectStartJobs } from '../space/runtime/direct-start-jobs.ts';
 import { registerDirectOutcomeJobs } from '../space/runtime/direct-outcome-jobs.ts';
 import { createWorkflowTaskRecoveryExecutor } from '../space/runtime/task-recovery-executor.ts';
@@ -556,6 +557,19 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     spaceAgentTemplateRepo
   );
 
+  const emitClaimedTaskUpdate = (taskId: string) => {
+    const task = spaceTaskRepo.getTask(taskId);
+    if (!task) return;
+    void deps.internalEventBus
+      .publish('space.task.updated', {
+        sessionId: 'global',
+        spaceId: task.spaceId,
+        taskId: task.id,
+        task,
+      })
+      .catch((error) => log.warn('Failed to emit direct claim task update:', error));
+  };
+
   registerDirectStartJobs({
     db: deps.db.getDatabase(),
     reactiveDb: deps.reactiveDb,
@@ -565,6 +579,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     jobQueue: deps.jobQueue,
     jobProcessor: deps.jobProcessor,
     onTaskReopened: (taskId) => spaceGoalService.supersedeOutcomeNotificationsForTask(taskId),
+    onTaskClaimed: emitClaimedTaskUpdate,
   });
 
   registerDirectOutcomeJobs({
@@ -573,6 +588,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     sessionManager: deps.sessionManager,
     jobQueue: deps.jobQueue,
     jobProcessor: deps.jobProcessor,
+    onAttemptRetired: emitClaimedTaskUpdate,
     onTaskUpdated: (task) => {
       void deps.internalEventBus
         .publish('space.task.updated', {
@@ -734,6 +750,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     {
       reactiveDb: deps.reactiveDb,
       onTaskReopened: (taskId) => spaceGoalService.supersedeOutcomeNotificationsForTask(taskId),
+      onTaskClaimed: emitClaimedTaskUpdate,
     },
     {
       getSession: (sessionId) => deps.db.getSession(sessionId),
@@ -1229,7 +1246,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     spaceWorkflowManager,
     deps.sessionManager,
     spaceRuntimeService,
-    seedSpaceAgents
+    seedSpaceAgents,
+    (tasks) => stampActiveAttemptList(deps.db.getDatabase(), tasks)
   );
 
   deps.messageHub.onRequest('space.externalEvents.queueHealth', async () => {

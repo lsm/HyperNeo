@@ -68,6 +68,16 @@ export class DirectTaskExecutionRepository {
       .get(taskId) as DirectTaskAttempt | null;
   }
 
+  getActiveTaskIds(taskIds: readonly string[]): Set<string> {
+    if (taskIds.length === 0) return new Set();
+    const placeholders = taskIds.map(() => '?').join(', ');
+    const rows = this.db
+      .prepare(`SELECT DISTINCT task_id AS taskId FROM direct_task_execution_attempts
+      WHERE phase <> 'stopped' AND task_id IN (${placeholders})`)
+      .all(...taskIds) as { taskId: string }[];
+    return new Set(rows.map((row) => row.taskId));
+  }
+
   claim(taskId: string, attemptId: string, sessionId: string): DirectTaskAttempt | null {
     this.db
       .prepare(`INSERT INTO direct_task_execution_attempts

@@ -154,7 +154,8 @@ export function setupSpaceHandlers(
   spaceWorkflowManager: SpaceWorkflowManager,
   sessionManager?: SessionManager,
   spaceRuntimeService?: SpaceRuntimeService,
-  seedAgents?: CreateSpaceDeps['seedAgents']
+  seedAgents?: CreateSpaceDeps['seedAgents'],
+  stampTasks: (tasks: SpaceTask[]) => SpaceTask[] = (tasks) => tasks
 ): void {
   messageHub.onRequest('space.create', async (data) => {
     return createSpace(
@@ -418,10 +419,12 @@ export function setupSpaceHandlers(
           lastActiveAt: s!.lastActiveAt ? new Date(s!.lastActiveAt).getTime() : 0,
         }));
 
-      const tasks = collapseToCanonicalTasks(
-        taskRepo.listBySpace(space.id),
-        workflowRunRepo.listBySpace(space.id)
-      ).filter((t) => t.status !== 'done' && t.status !== 'cancelled');
+      const tasks = stampTasks(
+        collapseToCanonicalTasks(
+          taskRepo.listBySpace(space.id),
+          workflowRunRepo.listBySpace(space.id)
+        ).filter((t) => t.status !== 'done' && t.status !== 'cancelled')
+      );
 
       return {
         ...space,
@@ -450,7 +453,9 @@ export function setupSpaceHandlers(
     }
 
     const workflowRuns = workflowRunRepo.listBySpace(space.id);
-    const tasks = collapseToCanonicalTasks(taskRepo.listBySpace(space.id), workflowRuns);
+    const tasks = stampTasks(
+      collapseToCanonicalTasks(taskRepo.listBySpace(space.id), workflowRuns)
+    );
 
     const result: SpaceOverviewResult = {
       space,

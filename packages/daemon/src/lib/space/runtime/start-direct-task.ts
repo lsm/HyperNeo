@@ -69,11 +69,13 @@ export function claimDirectStart(
   reactiveDb: ReactiveDatabase | undefined,
   input: DirectTaskStartInput,
   onTaskReopened?: (taskId: string) => void,
-  startJobs?: JobQueueRepository
+  startJobs?: JobQueueRepository,
+  onTaskClaimed?: (taskId: string) => void
 ): { value: DirectTaskAttempt } | { reason: DirectTaskStartResult } {
   const unavailable = { reason: { started: false as const, reason: 'direct_start_unavailable' } };
   if (!input.requestKey.trim() || (input.reviewRejection && !input.retryFrom)) return unavailable;
   const { attemptId, sessionId } = directTaskStartIdentity(input);
+  let claimedTaskId: string | null = null;
   reactiveDb?.beginTransaction();
   try {
     const result = db.transaction(() => {
@@ -217,8 +219,11 @@ export function claimDirectStart(
         if (!tasks.updateTask(task.id, { status: 'open' }, 'draft'))
           throw new Error('Direct start lost draft publication');
       }
+      const replayed = attempts.get(attemptId) !== null;
       const attempt = attempts.claim(task.id, attemptId, sessionId);
       if (!attempt) throw new Error('Direct start lost its atomic claim');
+      if (!replayed) claimedTaskId = attempt.taskId;
+      reactiveDb?.notifyChange('space_tasks');
       if (startJobs)
         enqueueDirectStartRequest(
           db,
@@ -231,6 +236,7 @@ export function claimDirectStart(
       return { value: attempt };
     }, 'immediate')();
     reactiveDb?.commitTransaction();
+    if (claimedTaskId) onTaskClaimed?.(claimedTaskId);
     return result;
   } catch (error) {
     reactiveDb?.abortTransaction();
@@ -296,6 +302,7 @@ export function createDirectTaskStarter(dependencies: {
   sessionManager: DirectSessionPreparationDependencies['sessionManager'];
   defaultModel: string;
   onTaskReopened?: (taskId: string) => void;
+  onTaskClaimed?: (taskId: string) => void;
 }) {
   const { db, reactiveDb, sessionDb, sessionManager, defaultModel } = dependencies;
   const attempts = new DirectTaskExecutionRepository(db);
@@ -309,13 +316,19 @@ export function createDirectTaskStarter(dependencies: {
       sessionManager,
       defaultModel,
       onTaskReopened: dependencies.onTaskReopened,
+      startJobs: undefined,
+      onTaskClaimed: dependencies.onTaskClaimed,
       attempts,
       tasks,
       getSpace: (id: string) => spaces.getSpace(id),
     })('start-direct-task') as PipelineAPI
   )
     .input('input')
-    .pipe(claimDirectStart, ['db', 'reactiveDb', 'input', 'onTaskReopened'], 'result:start')
+    .pipe(
+      claimDirectStart,
+      ['db', 'reactiveDb', 'input', 'onTaskReopened', 'startJobs', 'onTaskClaimed'],
+      'result:start'
+    )
     .pipe((attempt: DirectTaskAttempt) => attempt.id, 'start', 'attemptId')
     .pipe(readPreparation, ['attempts', 'tasks', 'getSpace', 'attemptId'], 'preparation')
     .pipe(requireStartStage, ['preparation', 'db', 'input'], 'result:start')

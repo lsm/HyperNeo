@@ -501,7 +501,7 @@ test('task.get returns full Space fields for a Space-owned task through the Spac
   });
   const rpc = createOperationRpcHandler(provider(), () => ({}));
   const result = await rpc({ name: 'task.get', input: { taskId } }, context);
-  expect(result).toEqual(tasks.getTask(taskId));
+  expect(result).toEqual({ ...tasks.getTask(taskId), hasActiveDirectAttempt: false });
   expect(result).toMatchObject({
     id: taskId,
     spaceId,
@@ -721,7 +721,10 @@ test('task.list preserves Space-scoped pagination while adding Space fields, acr
   const rpc = createOperationRpcHandler(provider(), () => ({}));
   const firstPage = await rpc({ name: 'task.list', input: { spaceId, limit: 2 } }, context);
   expect(firstPage).toEqual({
-    tasks: [tasks.getTask(third.id), tasks.getTask(second.id)],
+    tasks: [
+      { ...tasks.getTask(third.id), hasActiveDirectAttempt: false },
+      { ...tasks.getTask(second.id), hasActiveDirectAttempt: false },
+    ],
     total: 3,
     nextCursor: { createdAt: 20, id: second.id },
   });
@@ -736,7 +739,11 @@ test('task.list preserves Space-scoped pagination while adding Space fields, acr
     { name: 'task.list', input: { spaceId, limit: 2, before: nextCursor } },
     context
   );
-  expect(secondPage).toEqual({ tasks: [tasks.getTask(taskId)], total: 3, nextCursor: null });
+  expect(secondPage).toEqual({
+    tasks: [{ ...tasks.getTask(taskId), hasActiveDirectAttempt: false }],
+    total: 3,
+    nextCursor: null,
+  });
 });
 
 function get(id = taskId) {

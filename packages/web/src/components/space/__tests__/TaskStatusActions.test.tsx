@@ -6,6 +6,7 @@ import type { SpaceTaskStatus } from '@hyperneo/shared';
 import {
   TaskStatusActions,
   getTransitionActions,
+  filterDirectAttemptTargets,
   VALID_TASK_TRANSITIONS,
   TRANSITION_LABELS,
 } from '../TaskStatusActions';
@@ -337,5 +338,41 @@ describe('TaskStatusActions component', () => {
       expect(getByTestId('task-action-in_progress')).toBeTruthy();
       expect(getByTestId('task-action-archived')).toBeTruthy();
     });
+  });
+});
+
+describe('filterDirectAttemptTargets', () => {
+  it('keeps only the targets that do not route through task.transition', () => {
+    const targets = filterDirectAttemptTargets(getTransitionActions('in_progress'), {
+      hasActiveDirectAttempt: true,
+      taskAgentSessionId: 'session-1',
+    }).map(({ target }) => target);
+    expect(targets).toEqual(['review', 'cancelled']);
+  });
+
+  it('also hides start and archive from an open task with a live attempt', () => {
+    const targets = filterDirectAttemptTargets(getTransitionActions('open'), {
+      hasActiveDirectAttempt: true,
+      taskAgentSessionId: 'session-1',
+    }).map(({ target }) => target);
+    expect(targets).toEqual(['review', 'cancelled']);
+  });
+
+  it('hides review too while the attempt is only reserved', () => {
+    const targets = filterDirectAttemptTargets(getTransitionActions('in_progress'), {
+      hasActiveDirectAttempt: true,
+      taskAgentSessionId: null,
+    }).map(({ target }) => target);
+    expect(targets).toEqual(['cancelled']);
+  });
+
+  it('leaves the actions untouched when no attempt is live', () => {
+    const actions = getTransitionActions('in_progress');
+    expect(filterDirectAttemptTargets(actions, { hasActiveDirectAttempt: false })).toEqual(actions);
+  });
+
+  it('treats a missing flag as no live attempt', () => {
+    const actions = getTransitionActions('in_progress');
+    expect(filterDirectAttemptTargets(actions, {})).toEqual(actions);
   });
 });

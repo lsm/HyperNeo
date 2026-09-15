@@ -139,6 +139,7 @@ export function createDirectOutcomeHandler(deps: DirectOutcomeDependencies) {
         'onTaskReopened',
         'input',
         'outcome',
+        'onAttemptRetired',
       ],
       'outcome'
     )

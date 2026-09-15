@@ -43,10 +43,15 @@ export function createDirectStartRequester(deps: {
   reactiveDb?: ReactiveDatabase;
   jobQueue: JobQueueRepository;
   onTaskReopened?: (id: string) => void;
+  onTaskAttemptChanged?: (id: string) => void;
 }) {
   return (superpipe({ ...deps })('request-direct-task-start') as PipelineAPI)
     .input('input')
-    .pipe(claimDirectStart, ['db', 'reactiveDb', 'input', 'onTaskReopened', 'jobQueue'], 'claim')
+    .pipe(
+      claimDirectStart,
+      ['db', 'reactiveDb', 'input', 'onTaskReopened', 'jobQueue', 'onTaskAttemptChanged'],
+      'claim'
+    )
     .pipe(acknowledgeDirectStart, ['db', 'claim'], 'result')
     .end('result') as (input: DirectTaskStartInput) => DirectStartAcknowledgement;
 }
@@ -54,7 +59,8 @@ export function createDirectStartJobHandler(
   db: Database,
   start: (input: DirectTaskStartInput) => Promise<DirectTaskStartResult>,
   jobs: Pick<JobQueueRepository, 'requeue'>,
-  sessionManager: DirectAttemptStopDependencies['sessionManager']
+  sessionManager: DirectAttemptStopDependencies['sessionManager'],
+  onTaskAttemptChanged?: (taskId: string) => void
 ) {
   const attempts = new DirectTaskExecutionRepository(db);
   const tasks = new SpaceTaskRepository(db);
@@ -102,6 +108,7 @@ export function createDirectStartJobHandler(
         sessionId: current.sessionId,
         outcome: 'start_superseded',
       });
+      if (stopped.stopped) onTaskAttemptChanged?.(attempt.taskId);
       if (stopped.stopped || attempts.getActive(attempt.taskId)?.id !== attempt.id)
         return { started: false, reason: 'superseded' };
     } else if (attempts.isStopRequested(attempt.id, attempt.sessionId))
@@ -129,7 +136,8 @@ export function registerDirectStartJobs(
       deps.db,
       createDirectTaskStarter(deps),
       deps.jobQueue,
-      deps.sessionManager
+      deps.sessionManager,
+      deps.onTaskClaimed
     )
   );
 }

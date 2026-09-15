@@ -44,6 +44,7 @@ export interface DirectTaskFinalizerDependencies {
   sessionManager: DirectAttemptStopDependencies['sessionManager'];
   onTaskReopened?: (taskId: string) => void;
   onTerminalTransition?: (taskId: string, fromStatus: SpaceTaskStatus) => void;
+  onAttemptRetired?: (taskId: string) => void;
 }
 
 function matchesTarget(
@@ -146,7 +147,8 @@ export function commitDirectTaskFinalization(
   onTerminalTransition: DirectTaskFinalizerDependencies['onTerminalTransition'],
   onTaskReopened: DirectTaskFinalizerDependencies['onTaskReopened'],
   input: DirectFinalizationInput,
-  verified: VerifiedDirectStop
+  verified: VerifiedDirectStop,
+  onAttemptRetired?: DirectTaskFinalizerDependencies['onAttemptRetired']
 ): DirectFinalizationResult {
   const { attempt, session, token } = verified;
   const attempts = new DirectTaskExecutionRepository(db);
@@ -163,6 +165,7 @@ export function commitDirectTaskFinalization(
     attempts.clearStopVerification(attempt.id, attempt.sessionId, token);
     return { finalized: false, reason: 'unverified' };
   }
+  let retiredTaskId: string | undefined;
   reactiveDb?.beginTransaction();
   try {
     const result = db.transaction((): DirectFinalizationResult => {
@@ -209,6 +212,7 @@ export function commitDirectTaskFinalization(
         tasks.getLifecycleGeneration(task.id) !== request.lifecycleGeneration
       ) {
         mark.run('superseded', current.id, current.sessionId);
+        retiredTaskId = current.taskId;
         return { finalized: false, reason: 'superseded' };
       }
       const { updates, reopened } = prepareSpaceTaskStatusUpdate(
@@ -237,6 +241,7 @@ export function commitDirectTaskFinalization(
       return { finalized: true, attempt: stopped, task: updated };
     }, 'immediate')();
     reactiveDb?.commitTransaction();
+    if (retiredTaskId) onAttemptRetired?.(retiredTaskId);
     return result;
   } catch (error) {
     reactiveDb?.abortTransaction();
@@ -287,6 +292,7 @@ export function createDirectTaskFinalizer(dependencies: DirectTaskFinalizerDepen
         'onTaskReopened',
         'input',
         'outcome',
+        'onAttemptRetired',
       ],
       'outcome'
     )
