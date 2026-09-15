@@ -4,7 +4,7 @@ import { transitionStandaloneTask } from '../../storage/tasks/transition-task.ts
 import { listTaskCores } from '../../storage/tasks/list-tasks.ts';
 import { createStandaloneTask } from '../../storage/tasks/create-task.ts';
 import { readTaskCore } from '../../storage/tasks/task-reader.ts';
-import { createStandaloneTaskMetadataEditor } from './task-metadata-standalone.ts';
+import { createStandaloneTaskMetadataEditor } from '../tasks/metadata-standalone.ts';
 import { createDaemonOperationCatalog, type TaskOperationDependencies } from './catalog.ts';
 
 export function createDatabaseOperationCatalog(

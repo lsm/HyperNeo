@@ -1,4 +1,4 @@
-import { captureDirectMailboxAdmission } from '../space/runtime/direct-mailbox-admission.ts';
+import { captureDirectMailboxAdmission } from '../tasks/direct-mailbox-admission.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/database.ts';
 import type { JobQueueProcessor } from '../../storage/job-queue-processor.ts';

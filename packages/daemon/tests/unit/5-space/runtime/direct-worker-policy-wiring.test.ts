@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
 import { AgentSession } from '../../../../src/lib/agent/agent-session';
 import { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-runtime-service';
 import { resolveSpaceMcpSessionPolicy } from '../../../../src/lib/space/runtime/space-mcp-session-policy';
-import { createDatabaseDirectTaskWorkerResolver } from '../../../../src/lib/space/runtime/direct-task-worker-identity';
+import { createDatabaseDirectTaskWorkerResolver } from '../../../../src/lib/tasks/direct-task-worker-identity';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';

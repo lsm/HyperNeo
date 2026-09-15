@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { SpaceTaskStatus } from '@hyperneo/shared';
-import type { SpawnExecutionAdmissionInput } from '../../../../src/lib/space/runtime/spawn-admission-gates';
-import { decideSpawnExecutionAdmission } from '../../../../src/lib/space/runtime/spawn-admission-gates';
+import type { SpawnExecutionAdmissionInput } from '../../../../src/lib/tasks/spawn-admission-gates';
+import { decideSpawnExecutionAdmission } from '../../../../src/lib/tasks/spawn-admission-gates';
 import {
   applyConcurrentSpawnGate,
   applyLiveSessionGate,
@@ -11,7 +11,7 @@ import {
   applyWorkflowValidityGate,
   decideSpawnExecutionAdmissionViaPipeline,
   type SpawnAdmissionCtx,
-} from '../../../../src/lib/space/runtime/spawn-admission-decision-pipeline';
+} from '../../../../src/lib/tasks/spawn-admission-decision-pipeline';
 
 const BASE: SpawnExecutionAdmissionInput = {
   hasLiveIndexedSession: false,

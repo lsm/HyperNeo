@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { SpaceWorkflow, SpaceWorkflowRun } from '@hyperneo/shared';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
-import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
+import { SpaceTaskManager } from '../../../../src/lib/tasks/task-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';

@@ -5,7 +5,7 @@ import { EvolutionEpisodeService } from '../../../../src/lib/space/evolution-epi
 import { EvolutionScopeService } from '../../../../src/lib/space/evolution-scope-service.ts';
 import { SpaceGoalService } from '../../../../src/lib/space/goals/goal-service.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
-import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
+import { SpaceTaskManager } from '../../../../src/lib/tasks/task-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import { ScheduleService } from '../../../../src/lib/space/schedule/schedule-service.ts';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';

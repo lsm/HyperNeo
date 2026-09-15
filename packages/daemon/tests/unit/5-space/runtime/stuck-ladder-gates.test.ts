@@ -8,7 +8,7 @@ import {
   decideStuckLadderAction,
   observeExecutionProgress,
   type AgentStuckRecoveryState,
-} from '../../../../src/lib/space/runtime/anti-stuck/stuck-ladder-gates';
+} from '../../../../src/lib/tasks/stuck-ladder-gates';
 
 const NOW = 10_000;
 const THRESHOLD_MS = 15 * 60 * 1000;

@@ -5,8 +5,8 @@ import {
   SpaceTaskManager,
   StaleTaskGuardError,
   VALID_SPACE_TASK_TRANSITIONS,
-} from '../../../../src/lib/space/managers/space-task-manager.ts';
-import { PendingCompletionSupersededError } from '../../../../src/lib/space/operations/pending-completion-guard.ts';
+} from '../../../../src/lib/tasks/task-manager.ts';
+import { PendingCompletionSupersededError } from '../../../../src/lib/tasks/pending-completion-guard.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';

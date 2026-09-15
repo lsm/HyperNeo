@@ -7,7 +7,7 @@ import { SpaceGoalRepository } from '../../../../src/storage/repositories/space-
 import { TaskScheduleRepository } from '../../../../src/storage/repositories/task-schedule-repository.ts';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository.ts';
-import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
+import { SpaceTaskManager } from '../../../../src/lib/tasks/task-manager.ts';
 import { ScheduleService } from '../../../../src/lib/space/schedule/schedule-service.ts';
 import { SpaceGoalService } from '../../../../src/lib/space/goals/goal-service.ts';
 import {

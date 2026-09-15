@@ -247,7 +247,7 @@
       "maxLines": 853,
       "followUp": "M2/M4 fabric bridge split"
     },
-    "packages/daemon/src/lib/space/managers/space-task-manager.ts": {
+    "packages/daemon/src/lib/tasks/task-manager.ts": {
       "maxLines": 847,
       "followUp": "M9 space service extraction"
     },

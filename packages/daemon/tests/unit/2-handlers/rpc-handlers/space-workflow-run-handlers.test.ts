@@ -9,7 +9,7 @@ import type { SpaceManager } from '../../../../src/lib/space/managers/space-mana
 import type { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import type { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
 import type { WorkflowHookStateRepository } from '../../../../src/storage/repositories/workflow-hook-state-repository.ts';
-import type { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
+import type { SpaceTaskManager } from '../../../../src/lib/tasks/task-manager.ts';
 import type { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import type { SpaceWorktreeManager } from '../../../../src/lib/space/managers/space-worktree-manager.ts';
 import type { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository.ts';

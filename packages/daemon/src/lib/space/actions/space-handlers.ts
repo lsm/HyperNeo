@@ -89,22 +89,19 @@ import {
   SpaceAgentTemplateManager,
 } from '../managers/space-agent-template-manager.ts';
 import type { SpaceManager } from '../managers/space-manager.ts';
-import {
-  assertValidSpaceTaskTransition,
-  type SpaceTaskManager,
-} from '../managers/space-task-manager.ts';
+import { assertValidSpaceTaskTransition, type SpaceTaskManager } from '../../tasks/task-manager.ts';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager.ts';
 import { SpaceDeliveryFacade, translateTaskMessageTarget } from '../messaging-adapter.ts';
 import {
   createBoundSpaceTaskMetadataEditor,
   isTaskMetadataOnlyUpdate,
-} from '../operations/bound-task-metadata.ts';
-import { createPendingCompletionOperation } from '../operations/pending-completion.ts';
+} from '../../tasks/bound-metadata.ts';
+import { createPendingCompletionOperation } from '../../tasks/pending-completion.ts';
 import {
   createBoundSpaceTaskDependencyEditor,
   isTaskDependenciesOnlyUpdate,
-} from '../operations/task-dependencies.ts';
-import { createSpaceTaskFieldUpdater } from '../operations/task-field-effects.ts';
+} from '../../tasks/dependencies.ts';
+import { createSpaceTaskFieldUpdater } from '../../tasks/field-effects.ts';
 import type { ReplyRoutingRegistry } from '../runtime/reply-routing-registry.ts';
 import {
   hasSpaceAuthority,
@@ -114,14 +111,14 @@ import type { SpaceRuntime } from '../runtime/space-runtime.ts';
 import {
   type NodeAgentTemplateSource,
   spaceAgentTemplateToNodeSource,
-} from '../runtime/spawn-slot-resolution.ts';
+} from '../../tasks/spawn-slot-resolution.ts';
 import type { TaskAgentManager } from '../runtime/task-agent-manager.ts';
-import { createWorkflowTaskParkingExecutor } from '../runtime/task-parking-executor.ts';
-import { createWorkflowTaskRecoveryExecutor } from '../runtime/task-recovery-executor.ts';
-import { createWorkflowTaskStoppingExecutor } from '../runtime/task-stopping-executor.ts';
+import { createWorkflowTaskParkingExecutor } from '../../tasks/parking-executor.ts';
+import { createWorkflowTaskRecoveryExecutor } from '../../tasks/recovery-executor.ts';
+import { createWorkflowTaskStoppingExecutor } from '../../tasks/stopping-executor.ts';
 import { getNextRunAt, isValidCronExpression } from '../schedule/cron-utils.ts';
 import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit } from '../slug.ts';
-import { normalizeMeaningfulTaskResult } from '../task-result-utils.ts';
+import { normalizeMeaningfulTaskResult } from '../../tasks/result-utils.ts';
 import { SESSION_MESSAGE_MAX_LIMIT, SPACE_SESSION_MAX_LIMIT } from './space-agent-schemas.ts';
 import {
   createDeliverTaskWorkerMessagePipeline,

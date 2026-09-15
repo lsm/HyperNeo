@@ -6,8 +6,8 @@ import { Database } from '../../../../src/storage/sqlite-compat';
 import { runMigration247 } from '../../../../src/storage/schema/m247-pending-completion-generation';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
-import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager';
-import { PendingCompletionSupersededError } from '../../../../src/lib/space/operations/pending-completion-guard';
+import { SpaceTaskManager } from '../../../../src/lib/tasks/task-manager';
+import { PendingCompletionSupersededError } from '../../../../src/lib/tasks/pending-completion-guard';
 import { createSpaceTables } from '../../helpers/space-test-db';
 
 let db: Database;

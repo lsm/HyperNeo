@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'bun:test';
 import { Database } from '../../../src/storage/sqlite-compat';
 import { EvolutionScopeService } from '../../../src/lib/space/evolution-scope-service';
 import { EvolutionTraceEvidenceService } from '../../../src/lib/space/evolution-trace-evidence-service';
-import { SpaceTaskManager } from '../../../src/lib/space/managers/space-task-manager';
+import { SpaceTaskManager } from '../../../src/lib/tasks/task-manager';
 import { EvolutionRepository } from '../../../src/storage/repositories/evolution-repository';
 import { JobQueueRepository } from '../../../src/storage/repositories/job-queue-repository';
 import { SpaceGoalRepository } from '../../../src/storage/repositories/space-goal-repository';

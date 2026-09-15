@@ -8,7 +8,7 @@ import {
   decideRestoredWorkerAdmission,
   type RestoredWorkerAdmissionCtx,
   type RestoredWorkerAdmissionInput,
-} from '../../../../src/lib/space/runtime/restored-worker-admission-decision-pipeline';
+} from '../../../../src/lib/tasks/restored-worker-admission-decision-pipeline';
 
 const POST_APPROVAL_SESSION_ID = 'space:space-1:task:task-1:post-approval:worker';
 const EXECUTION_SESSION_ID = 'space:space-1:task:task-1:exec:e1';
