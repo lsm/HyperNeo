@@ -59,6 +59,7 @@ import {
   type MailboxMessage,
   toMailboxMessage,
 } from '../../mailbox/entry.ts';
+import { createOperationRegistry, type OperationRegistry } from '../../operations/registry.ts';
 import type { SessionManager } from '../../session-manager.ts';
 import { buildAgentSessionConfig } from '../../session-resolution/agent-session-config.ts';
 import { createDefaultSessionResolutionDeps } from '../../session-resolution/default-deps.ts';
@@ -68,13 +69,10 @@ import { resolveAgentDeliverySession } from '../../session-resolution/resolve-ag
 import type { ResolveAgentRecordDeps } from '../../session-resolution/resolve-agent-record.ts';
 import type { EnsureSessionOutcome, SessionTarget } from '../../session-resolution/target.ts';
 import { actionsAsOperations } from '../actions/action-operations.ts';
-import { createSessionActionRegistry } from '../actions/session-action-registry.ts';
-import { createOperationRegistry } from '../../operations/registry.ts';
 import {
-  createSpaceActionsMcpServer,
-  type SpaceActionsMcpServer,
-  type SpaceActionsServerConfig,
-} from '../actions/space-actions-server.ts';
+  createSessionActionRegistry,
+  type SessionActionRegistryConfig,
+} from '../actions/session-action-registry.ts';
 import type { SpaceAgentToolsConfig } from '../actions/space-handlers.ts';
 import { SpaceActorRegistryAdapter } from '../actor-registry.ts';
 import { LONG_HORIZON_AGENT_BUILTIN_TOOLS } from '../agents/long-horizon-agent-tools.ts';
@@ -876,16 +874,11 @@ export class SpaceRuntimeService {
   }
 
   private attachSpaceActionsMcpServer(
-    mcpServers: Record<string, McpServerConfig>,
-    buildConfig: () => SpaceActionsServerConfig
+    _mcpServers: Record<string, McpServerConfig>,
+    buildConfig: () => SessionActionRegistryConfig
   ): void {
     const sessionManager = this.config.sessionManager;
     const config = buildConfig();
-    const server = createSpaceActionsMcpServer({
-      ...config,
-      operationRegistry: sessionManager ? () => sessionManager.getOperationRegistry() : undefined,
-    });
-    mcpServers['space-actions'] = server as unknown as McpServerConfig;
     const sessionId =
       config.sessionId ?? config.spaceConfig?.mySessionId ?? config.nodeConfig?.mySessionId;
     if (!sessionManager || !sessionId || typeof sessionManager.getSession !== 'function') return;
@@ -903,11 +896,22 @@ export class SpaceRuntimeService {
     );
   }
 
-  buildUniversalReadDispatcherServer(): SpaceActionsMcpServer {
-    return createSpaceActionsMcpServer({
+  installUniversalReadOperations(agentSession: {
+    setOperationRegistryProvider?: (provider: () => OperationRegistry) => void;
+  }): void {
+    const sessionManager = this.config.sessionManager;
+    if (!sessionManager || !agentSession.setOperationRegistryProvider) return;
+    const actionRegistry = createSessionActionRegistry({
       role: 'universal_read',
       spaceId: '',
+      operationRegistry: () => sessionManager.getOperationRegistry(),
     });
+    agentSession.setOperationRegistryProvider(() =>
+      createOperationRegistry([
+        ...sessionManager.getOperationRegistry().entries,
+        ...actionsAsOperations(actionRegistry),
+      ])
+    );
   }
 
   private releaseLongTermAgentDbQuery(sessionId: string): void {
