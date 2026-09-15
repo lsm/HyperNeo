@@ -39,25 +39,24 @@ function exampleRegistry(
 }
 
 describe('mapActionParams (gate)', () => {
-  test('a plain mapped value continues with { mappedParams }', async () => {
-    const result = await mapActionParams({ text: 'hi' }, (params) => ({
-      text: (params as { text: string }).text,
+  test('a plain mapped value continues with { params, mappedParams }', async () => {
+    const params = { text: 'hi' };
+    const result = await mapActionParams(params, (p) => ({
+      text: (p as { text: string }).text,
     }));
-    expect(result).toEqual({ value: { mappedParams: { text: 'hi' } } });
+    expect(result).toEqual({ value: { params, mappedParams: { text: 'hi' } } });
   });
 
   test('a { reject } mapped value halts with a formatted ToolResult reason', async () => {
     const result = await mapActionParams({}, () => ({ reject: 'nope' }));
-    expect(result).toMatchObject({
-      reason: { isError: true },
-    });
     const reason = (result as { reason: { content: Array<{ text: string }> } }).reason;
+    expect(reason.isError).toBeUndefined();
     expect(JSON.parse(reason.content[0].text)).toEqual({ success: false, error: 'nope' });
   });
 
   test('awaits an async mapParams before deciding', async () => {
     const result = await mapActionParams({}, async () => ({ text: 'async' }));
-    expect(result).toEqual({ value: { mappedParams: { text: 'async' } } });
+    expect(result).toEqual({ value: { params: {}, mappedParams: { text: 'async' } } });
   });
 });
 
@@ -164,7 +163,7 @@ describe('createOperationActionHandler', () => {
         content: Array<{ text: string }>;
         isError?: boolean;
       };
-      expect(result.isError).toBe(true);
+      expect(result.isError).toBeUndefined();
       expect(JSON.parse(extractText(result))).toEqual({
         success: false,
         error: 'not allowed',
