@@ -5,7 +5,7 @@ import {
   createPrMergedValidator,
   createPrReadyValidatorV2,
   createReviewPostedValidator,
-} from '../../../../../src/lib/space/runtime/connectors';
+} from '../../../../../src/lib/github/connectors';
 import type { HookExecutorContext } from '../../../../../src/lib/workflows/hook-executor';
 import { runGhJson } from '../../../../../src/lib/github/gh-lookup-helpers.ts';
 import type { SpawnFn, SpawnProcess } from '../../../../../src/lib/runtime-spawn';
