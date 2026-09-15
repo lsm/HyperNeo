@@ -88,7 +88,7 @@ function createMockDaemonHub() {
   return {
     emit: mock(() => Promise.resolve()),
     on: mock(() => () => {}),
-  } as unknown as import('../../../../tests/helpers/daemon-hub').DaemonHub;
+  } as unknown as import('../../../helpers/daemon-hub').DaemonHub;
 }
 
 describe('Skill RPC Handlers', () => {

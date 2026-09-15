@@ -6,7 +6,7 @@ import {
   INACTIVITY_WATCHDOG_PREDICATE_VERSION,
   resolveLastActivityAt,
   type InactivityWatchdogInput,
-} from '../../../../src/lib/space/agents/inactivity-watchdog-gates';
+} from '../../../../src/lib/agents/inactivity-watchdog-gates';
 
 const NOW = 1_000_000;
 const THRESHOLD_MS = 3_600_000;

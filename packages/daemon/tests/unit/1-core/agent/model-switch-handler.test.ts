@@ -5,7 +5,7 @@ import {
 } from '../../../../src/lib/agent/model-switch-handler';
 import type { Session, ModelInfo } from '@hyperneo/shared';
 import type { MessageHub } from '@hyperneo/shared';
-import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
+import type { DaemonHub } from '../../../helpers/daemon-hub';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { Database } from '../../../../src/storage/database';
 import type { ContextTracker } from '../../../../src/lib/agent/context-tracker';

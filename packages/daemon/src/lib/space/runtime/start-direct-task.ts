@@ -20,7 +20,7 @@ import {
   assertValidTaskTransition,
   assertQueuedTaskRetryTransition,
 } from '../../tasks/transitions.ts';
-import { buildCustomAgentTaskMessage } from '../agents/custom-agent.ts';
+import { buildCustomAgentTaskMessage } from '../../agents/custom-agent.ts';
 import { resolveTaskWorkspace } from './spawn-slot-resolution.ts';
 import {
   readPreparation,

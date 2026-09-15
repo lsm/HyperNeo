@@ -17,7 +17,7 @@ import { SpaceWorkflowManager as RealSpaceWorkflowManager } from '../../../../sr
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { createSpaceTables } from '../../helpers/space-test-db';
-import { getPresetAgentTemplates } from '../../../../src/lib/space/agents/seed-agents';
+import { getPresetAgentTemplates } from '../../../../src/lib/agents/seed-agents';
 import { restampBuiltInWorkflowsOnStartup } from '../../../../src/lib/rpc-handlers/space-workflow-handlers';
 import type { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import type {

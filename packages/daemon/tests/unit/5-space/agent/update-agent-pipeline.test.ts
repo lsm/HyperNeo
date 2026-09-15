@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
 import type { AgentModelPoolEntry, SpaceAgent } from '@hyperneo/shared';
-import type { SpaceAgentRejection } from '../../../../src/lib/space/agents/create-space-agent-pipeline';
+import type { SpaceAgentRejection } from '../../../../src/lib/agents/create-agent-pipeline';
 import {
   buildUpdateSpaceAgentPipeline,
   type UpdateSpaceAgentDeps,
   type UpdateSpaceAgentInput,
-} from '../../../../src/lib/space/agents/update-space-agent-pipeline';
+} from '../../../../src/lib/agents/update-agent-pipeline';
 
 const MODEL_POOL: AgentModelPoolEntry[] = [
   { model: 'claude-opus-5', provider: 'anthropic', maxConcurrent: 2, weight: 3 },

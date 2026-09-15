@@ -1,5 +1,5 @@
 import type { AgentProcessingState } from '@hyperneo/shared';
-import type { AgentSession } from '../../../lib/agent/agent-session.ts';
+import type { AgentSession } from '../../agent/agent-session.ts';
 import {
   assembleVerifiedStopResult,
   decideStopVerification,

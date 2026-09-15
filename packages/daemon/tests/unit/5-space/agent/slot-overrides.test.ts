@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import type { WorkflowNodeAgent } from '@hyperneo/shared';
 import { buildSlotOverrides } from '../../../../src/lib/space/runtime/spawn-slot-resolution';
-import { resolveCustomAgentPrompt } from '../../../../src/lib/space/agents/custom-agent';
+import { resolveCustomAgentPrompt } from '../../../../src/lib/agents/custom-agent';
 import type { SpaceLongHorizonAgent } from '@hyperneo/shared';
 
 function makeSlot(overrides?: Partial<WorkflowNodeAgent>): WorkflowNodeAgent {

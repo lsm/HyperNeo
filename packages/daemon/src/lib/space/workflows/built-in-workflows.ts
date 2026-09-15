@@ -33,8 +33,8 @@ import type {
 } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import { Logger } from '../../logger.ts';
-import { workerTemplateKey } from '../agents/long-horizon-agent-templates.ts';
-import { QA_SYSTEM_CONTRACT } from '../agents/system-contracts.ts';
+import { workerTemplateKey } from '../../agents/long-horizon-templates.ts';
+import { QA_SYSTEM_CONTRACT } from '../../agents/system-contracts.ts';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager.ts';
 
 export {

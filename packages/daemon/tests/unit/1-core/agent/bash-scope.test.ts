@@ -6,7 +6,7 @@ import {
   isBashCommandAllowed,
   parseScopedBashPrefix,
 } from '../../../../src/lib/agent/bash-scope';
-import { PRESET_AGENT_TOOLS } from '../../../../src/lib/space/agents/seed-agents';
+import { PRESET_AGENT_TOOLS } from '../../../../src/lib/agents/seed-agents';
 
 const PREFIXES = extractBashScopePrefixes([
   'Bash(gh pr view:*)',
