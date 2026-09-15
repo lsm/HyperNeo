@@ -4,7 +4,7 @@ import {
   isRateLimitError,
   isSecondaryRateLimitError,
   RATE_LIMIT_MIN_BACKOFF_MS,
-} from '../../../../src/lib/space/runtime/rate-limit-detector';
+} from '../../../../src/lib/session/rate-limit-detector';
 
 describe('isRateLimitError', () => {
   test('matches gh api rate-limit stderr', () => {

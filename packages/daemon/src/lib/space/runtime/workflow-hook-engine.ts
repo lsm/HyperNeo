@@ -12,9 +12,9 @@ import type { WorkflowRunArtifactRepository } from '../../../storage/repositorie
 import type { WorkflowHookStateRepository } from '../../../storage/repositories/workflow-hook-state-repository.ts';
 import type { HookExecutor, HookExecutorContext } from './hook-executor.ts';
 import { ChannelResolver } from './channel-resolver.ts';
-import { isConnectorsLayerEnabled } from './connectors/connector.ts';
-import { getBuiltInConnectorDeps } from './connectors/production.ts';
-import { isRateLimitError } from './rate-limit-detector.ts';
+import { isConnectorsLayerEnabled } from '../../github/connectors/connector.ts';
+import { getBuiltInConnectorDeps } from '../../github/connectors/production.ts';
+import { isRateLimitError } from '../../session/rate-limit-detector.ts';
 import { Logger } from '../../logger.ts';
 import { parseAddress } from '../../../../../messaging/src/address.ts';
 import {

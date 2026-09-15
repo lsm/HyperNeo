@@ -6,7 +6,7 @@ import type { WorkflowRunArtifactCacheRepository } from '../../storage/repositor
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository.ts';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
 import type { SpaceManager } from '../space/managers/space-manager.ts';
-import type { SpaceWorktreeManager } from '../space/managers/space-worktree-manager.ts';
+import type { SpaceWorktreeManager } from '../workspaces/worktree-manager.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import {
   execGit,

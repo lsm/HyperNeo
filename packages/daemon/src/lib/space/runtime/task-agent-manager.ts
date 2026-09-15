@@ -64,7 +64,7 @@ import type { SpaceWorkflowManager } from '../managers/space-workflow-manager.ts
 import {
   type SpaceWorktreeManager,
   WorkspaceNotGitRepositoryError,
-} from '../managers/space-worktree-manager.ts';
+} from '../../workspaces/worktree-manager.ts';
 import {
   activateModelPoolReservation,
   applyModelPoolToSlot,
@@ -72,7 +72,7 @@ import {
   raiseModelPoolDeferred,
   releaseModelPoolReservation,
   reserveModelPoolSlot,
-} from './model-pool-scheduler.ts';
+} from '../../session/model-pool-scheduler.ts';
 import { readRestartRecoveryNote } from './restart-recovery-note.ts';
 import type { SpaceRuntimeService } from './space-runtime-service.ts';
 import type { NodeAgentTemplateSource } from './spawn-slot-resolution.ts';
@@ -120,7 +120,7 @@ import {
   DEFAULT_CUSTOM_AGENT_MODEL,
   resolveAgentInit,
 } from '../agents/custom-agent.ts';
-import type { EvolutionScopeService } from '../evolution-scope-service.ts';
+import type { EvolutionScopeService } from '../../evolution/scope-service.ts';
 import { TERMINAL_NODE_EXECUTION_STATUSES } from '../managers/node-execution-manager.ts';
 import {
   createEndNodeHandlers,
@@ -140,7 +140,7 @@ import { AgentMessageRouter } from './agent-message-router.ts';
 import type { WorkflowArtifactProfile } from './artifact-profile.ts';
 import { ChannelResolver } from './channel-resolver.ts';
 import { ChannelRouter } from './channel-router.ts';
-import { createGithubConnector } from './connectors/github-connector.ts';
+import { createGithubConnector } from '../../github/connectors/github-connector.ts';
 import { HookExecutor } from './hook-executor.ts';
 import type { InjectionDeliveryRowDeps } from './injection-delivery-steps.ts';
 import {
@@ -278,7 +278,7 @@ export interface TaskAgentManagerConfig {
       disposeSignal?: AbortSignal;
     }
   ) => Promise<import('./session-message-delivery.ts').SessionInjectionOutcome>;
-  scheduleService?: import('../schedule/schedule-service.ts').ScheduleService;
+  scheduleService?: import('../../schedule/schedule-service.ts').ScheduleService;
   replyRoutingRegistry?: ReplyRoutingRegistry;
   memoryRepo?: AgentMemoryRepository;
   messageResolverFactory?: (
@@ -295,7 +295,7 @@ export interface TaskAgentManagerConfig {
       message: MessageRecord
     ) => Promise<string | null | undefined>;
   };
-  goalService?: import('../goals/goal-service.ts').SpaceGoalService;
+  goalService?: import('../../goals/service.ts').SpaceGoalService;
   evolutionScopeService?: EvolutionScopeService;
   externalEventStore?: import('../../external-events/external-event-store.ts').ExternalEventStore;
 }

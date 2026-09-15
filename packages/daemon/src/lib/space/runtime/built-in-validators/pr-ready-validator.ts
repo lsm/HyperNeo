@@ -1,15 +1,18 @@
 import type { WorkflowHookResult } from '@hyperneo/shared';
 import type { HookExecutorContext } from '../hook-executor.ts';
 import { spawnProcess, type SpawnFn } from '../../../runtime-spawn/index.ts';
-import { collectWithMaxBuffer, parseJsonStdout } from '../script-utils.ts';
-import { buildGitHubLookupEnv, fetchRateLimitResetEpoch } from '../gh-lookup-helpers.ts';
-import { parsePrUrl } from '../parse-pr-url.ts';
+import { collectWithMaxBuffer, parseJsonStdout } from '../../../utils/script-utils.ts';
+import {
+  buildGitHubLookupEnv,
+  fetchRateLimitResetEpoch,
+} from '../../../github/gh-lookup-helpers.ts';
+import { parsePrUrl } from '../../../github/parse-pr-url.ts';
 import {
   computeRateLimitRetryMs,
   isRateLimitError,
   isSecondaryRateLimitError,
   RATE_LIMIT_MIN_BACKOFF_MS,
-} from '../rate-limit-detector.ts';
+} from '../../../session/rate-limit-detector.ts';
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_BUFFER_BYTES = 1_048_576;

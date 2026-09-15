@@ -2,7 +2,7 @@ import { describe, test, expect } from 'bun:test';
 import { createPrReadyValidator } from '../../../../src/lib/space/runtime/built-in-validators/pr-ready-validator';
 import type { SpawnFn, SpawnProcess } from '../../../../src/lib/runtime-spawn';
 import type { HookExecutorContext } from '../../../../src/lib/space/runtime/hook-executor';
-import { RATE_LIMIT_MIN_BACKOFF_MS } from '../../../../src/lib/space/runtime/rate-limit-detector';
+import { RATE_LIMIT_MIN_BACKOFF_MS } from '../../../../src/lib/session/rate-limit-detector';
 
 function streamFromString(text: string): ReadableStream<Uint8Array> {
   return new ReadableStream({

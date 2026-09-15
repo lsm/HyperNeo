@@ -1,9 +1,22 @@
 import type { OperationName } from '@hyperneo/shared/types/operation-names';
 import type { z } from 'zod';
 
+export type OperationCallerRole =
+  | 'ad_hoc_member'
+  | 'workflow_worker'
+  | 'direct_task_worker'
+  | 'long_term_agent'
+  | 'universal_read'
+  | 'legacy_task_agent'
+  | 'outside_space';
+
 export interface OperationCaller {
-  source: 'rpc' | 'mcp' | 'internal';
-  sessionId?: string;
+  readonly source: 'rpc' | 'mcp' | 'internal';
+  readonly sessionId?: string;
+  readonly spaceId?: string;
+  readonly role?: OperationCallerRole;
+  readonly agentId?: string;
+  readonly agentName?: string;
 }
 
 export interface OperationEntry<Input, Output> {

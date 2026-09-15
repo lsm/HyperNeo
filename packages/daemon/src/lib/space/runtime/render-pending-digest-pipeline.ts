@@ -13,8 +13,8 @@ import type {
   ExternalEventDeliveryRecord,
   ExternalEventRecord,
 } from '../../external-events/types.ts';
-import { isQueuedExternalEventExpired } from './external-event-admission-gates.ts';
-import { buildImmediateEventMessageUuid } from './immediate-event-delivery-pipeline.ts';
+import { isQueuedExternalEventExpired } from '../../external-events/admission-gates.ts';
+import { buildImmediateEventMessageUuid } from '../../external-events/immediate-delivery-pipeline.ts';
 
 export interface RenderPendingDigestTarget {
   workflowRunId: string;
