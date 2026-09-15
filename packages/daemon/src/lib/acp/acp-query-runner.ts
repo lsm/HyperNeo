@@ -42,18 +42,12 @@ import {
   getSdkStartInactivityBackstopMs,
   runStartupWatch,
 } from '../agent/startup-watch-pipeline.ts';
-import type { AgentSession } from '../agent/agent-session.ts';
 import { QueryAttemptRegistry, type QueryAttemptToken } from '../agent/query-attempt-token.ts';
 import {
   refreshQueryEnvFromProcess,
   type QueryRunnerContext,
   type TrackedAgentProcess,
 } from '../agent/query-runner.ts';
-import {
-  FAIL_CLOSED_LONG_HORIZON_AGENT_REPO,
-  missingMcpServers,
-  resolveSpaceMcpSessionPolicy,
-} from '../space/runtime/space-mcp-session-policy.ts';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { AcpClient, type AcpClientOptions } from './acp-client.ts';
 import { buildAcpSafeEnv, getAcpCommandIdentityDigest, parseAcpCommand } from './acp-command.ts';
@@ -658,8 +652,6 @@ export class AcpQueryRunner {
             assertActiveAcpStartup();
 
             let queryOptions = await optionsBuilder.build();
-            assertActiveAcpStartup();
-            queryOptions = await this.ensureRequiredMcpServersForAcp(queryOptions);
             assertActiveAcpStartup();
 
             const acpCommand =
@@ -1459,104 +1451,6 @@ export class AcpQueryRunner {
   private async handleSDKMessage(message: SDKMessage, queryGeneration?: number): Promise<void> {
     await this.ctx.onSDKMessage(message, undefined, queryGeneration);
     await this.ctx.onMarkApiSuccess(message, queryGeneration);
-  }
-
-  private async ensureRequiredMcpServersForAcp(queryOptions: Options): Promise<Options> {
-    const { session, logger } = this.ctx;
-    const policy = resolveSpaceMcpSessionPolicy(session, {
-      nodeExecutionRepo: this.ctx.db.getNodeExecutionRepo(),
-      taskRepo: this.ctx.db.getSpaceTaskRepo(),
-      longHorizonAgentRepo:
-        this.ctx.db.getLongHorizonAgentRepo?.() ?? FAIL_CLOSED_LONG_HORIZON_AGENT_REPO,
-    });
-    if (policy.requiredServers.length === 0) return queryOptions;
-
-    if (policy.owner === 'none') {
-      const presentServers = Object.keys(queryOptions.mcpServers ?? {}).sort();
-      if (!presentServers.includes('space-actions')) {
-        logger.info(
-          `[MCP invariant, soft] ACP session ${session.id} (role ${policy.role}) is missing ` +
-            `the space-actions dispatcher server; the server will be injected in a ` +
-            `follow-up slice. Proceeding log-only. ` +
-            `Present: [${presentServers.join(', ')}].`
-        );
-      }
-      return queryOptions;
-    }
-
-    let currentOptions = queryOptions;
-    let missing = missingMcpServers(
-      currentOptions.mcpServers as Record<string, unknown> | undefined,
-      policy.requiredServers
-    );
-
-    if (missing.length > 0) {
-      logger.error(
-        `AcpQueryRunner.start(): session ${session.id} is missing required Space MCP servers. ` +
-          `Missing: [${missing.join(', ')}]. ACP cannot proxy in-process SDK MCP servers yet. ` +
-          `${JSON.stringify({
-            event: 'acp.space.mcp.missing',
-            sessionId: session.id,
-            spaceId: policy.spaceId,
-            sessionType: session.type,
-            role: policy.role,
-            owner: policy.owner,
-            requiredServers: policy.requiredServers,
-            missingServers: missing,
-            presentServers: Object.keys(currentOptions.mcpServers ?? {}).sort(),
-            selfHealAttempted: this.hasSpaceMcpSelfHealCallback(policy),
-          })}`
-      );
-
-      await this.runSpaceMcpSelfHeal(policy, missing);
-      currentOptions = await this.ctx.optionsBuilder.build();
-      currentOptions = this.ctx.optionsBuilder.addSessionStateOptions(currentOptions);
-      missing = missingMcpServers(
-        currentOptions.mcpServers as Record<string, unknown> | undefined,
-        policy.requiredServers
-      );
-
-      if (missing.length > 0) {
-        throw new Error(
-          `[MCP invariant] ACP session ${session.id} missing required Space MCP servers: ` +
-            `[${missing.join(', ')}]. Refusing to start a degraded Space turn. ` +
-            `ACP cannot proxy in-process SDK MCP servers yet.`
-        );
-      }
-    }
-
-    return currentOptions;
-  }
-
-  private hasSpaceMcpSelfHealCallback(
-    policy: ReturnType<typeof resolveSpaceMcpSessionPolicy>
-  ): boolean {
-    if (policy.isWorkflowWorker) return !!this.ctx.onMissingWorkflowMcpServers;
-    if (policy.attachSpaceChatTools) return !!this.ctx.onMissingSpaceChatMcpServers;
-    if (policy.attachGenericSpaceTools || policy.attachLongTermAgentTools) {
-      return !!this.ctx.onMissingMemberSpaceMcpServers;
-    }
-    return false;
-  }
-
-  private async runSpaceMcpSelfHeal(
-    policy: ReturnType<typeof resolveSpaceMcpSessionPolicy>,
-    missing: string[]
-  ): Promise<void> {
-    if (policy.isWorkflowWorker && this.ctx.onMissingWorkflowMcpServers) {
-      await this.ctx.onMissingWorkflowMcpServers(this.ctx as AgentSession, missing);
-      return;
-    }
-    if (policy.attachSpaceChatTools && this.ctx.onMissingSpaceChatMcpServers) {
-      await this.ctx.onMissingSpaceChatMcpServers(this.ctx.session.id, missing);
-      return;
-    }
-    if (
-      (policy.attachGenericSpaceTools || policy.attachLongTermAgentTools) &&
-      this.ctx.onMissingMemberSpaceMcpServers
-    ) {
-      await this.ctx.onMissingMemberSpaceMcpServers(this.ctx.session.id, missing);
-    }
   }
 
   private persistAcpSessionId(acpSessionId: string): void {
