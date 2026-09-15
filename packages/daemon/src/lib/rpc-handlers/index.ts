@@ -9,6 +9,7 @@ import { createCompletionGateBindings } from '../space/operations/complete-task-
 import { isCoderOwnedMergeWorkflow } from '../space/runtime/post-approval-router.ts';
 import { createGithubConnector } from '../space/runtime/connectors/github-connector.ts';
 import { setupOperationHandlers } from './operation-handlers.ts';
+import { createSpaceCallerScopeResolver } from '../space/runtime/space-caller-scope.ts';
 import type { MessageHub } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type { SpaceGoalOutcomeNotification } from '@hyperneo/shared';
@@ -338,7 +339,11 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   let inactivityRunNowCancelled = false;
   let inactivityAborted = false;
   setupMessageHandlers(deps.messageHub, deps.sessionManager, deps.db);
-  setupOperationHandlers(deps.messageHub, () => deps.sessionManager.getOperationRegistry());
+  setupOperationHandlers(
+    deps.messageHub,
+    () => deps.sessionManager.getOperationRegistry(),
+    (sessionId) => deps.sessionManager.resolveCallerScope(sessionId)
+  );
   setupSystemHandlers(deps.messageHub, deps.sessionManager);
   setupAuthHandlers(
     deps.messageHub,
@@ -1378,6 +1383,14 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   );
 
   deps.sessionManager.setDefaultOperationRegistryProvider(spaceOperationRegistryProvider);
+  deps.sessionManager.setCallerScopeResolver(
+    createSpaceCallerScopeResolver({
+      getSession: (sessionId) => deps.db.getSession(sessionId),
+      taskRepo: spaceTaskRepo,
+      nodeExecutionRepo,
+      longHorizonAgentRepo,
+    })
+  );
 
   spaceRuntimeService.setTaskAgentManager(taskAgentManager);
   deps.sessionManager.setSpaceRuntimeMcpProvider(spaceRuntimeService);
