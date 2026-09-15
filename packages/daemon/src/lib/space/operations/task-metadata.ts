@@ -8,10 +8,8 @@ import {
 } from '../../operations/task-metadata.ts';
 import { Logger } from '../../logger.ts';
 import type { SpaceTaskManager } from '../managers/space-task-manager.ts';
-import {
-  resolveSpaceMcpSessionPolicy,
-  type SpaceMcpSessionPolicyContext,
-} from '../runtime/space-mcp-session-policy.ts';
+import { resolveSessionSpaceId } from '../runtime/space-caller-scope.ts';
+import type { SpaceMcpSessionPolicyContext } from '../runtime/space-mcp-session-policy.ts';
 
 const log = new Logger('SpaceTaskMetadata');
 
@@ -40,11 +38,7 @@ export function resolveMetadataSessionSpace(
   session: Session | null,
   context: SpaceMcpSessionPolicyContext
 ): string | undefined {
-  if (!session) return undefined;
-  return (
-    resolveSpaceMcpSessionPolicy(session, context).spaceId ??
-    (session.type === 'space_chat' ? session.id.match(/^space:chat:(.+)$/)?.[1] : undefined)
-  );
+  return resolveSessionSpaceId(session, context);
 }
 
 export function resolveSpaceTaskOwner(db: Database, taskId: string): TaskMetadataOwner | null {

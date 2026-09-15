@@ -4,7 +4,7 @@ import {
   buildPrEventTopicPattern,
   parsePrUrl,
   resolveTopicFromInterest,
-} from '../../../../src/lib/space/runtime/parse-pr-url';
+} from '../../../../src/lib/github/parse-pr-url';
 import { validateGlobPattern } from '../../../../src/lib/external-events/topic-validator';
 
 describe('parsePrUrl', () => {

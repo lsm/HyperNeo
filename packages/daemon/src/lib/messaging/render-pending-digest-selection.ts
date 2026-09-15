@@ -2,8 +2,8 @@ import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { ExternalEventEssenceEntry } from '../external-events/deferred-event-digest.ts';
 import { essenceEntryFromExternalEvent } from '../external-events/event-essence-entry.ts';
 import type { ExternalEventDeliveryRecord, ExternalEventRecord } from '../external-events/types.ts';
-import { isQueuedExternalEventExpired } from '../space/runtime/external-event-admission-gates.ts';
-import { buildImmediateEventMessageUuid } from '../space/runtime/immediate-event-delivery-pipeline.ts';
+import { isQueuedExternalEventExpired } from '../external-events/admission-gates.ts';
+import { buildImmediateEventMessageUuid } from '../external-events/immediate-delivery-pipeline.ts';
 import { DETERMINISTIC_DIGEST_UUID_PREFIX } from './render-pending-digest-rendering.ts';
 import {
   type RenderPendingDigestCtx,

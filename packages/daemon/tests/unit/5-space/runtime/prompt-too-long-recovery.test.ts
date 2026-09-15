@@ -11,7 +11,7 @@ import {
   isPromptTooLongResult,
   isPromptTooLongUserMessage,
   MAX_PROMPT_TOO_LONG_RECOVERY_ATTEMPTS,
-} from '../../../../src/lib/space/runtime/prompt-too-long-recovery';
+} from '../../../../src/lib/session/prompt-too-long-recovery';
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';

@@ -18,7 +18,7 @@ import { translateLegacyNodeTargets } from '../../messaging/space-adapter.ts';
 import type { AgentMessageRouter } from '../../messaging/agent-message-router.ts';
 import type { WorkflowArtifactProfile } from '../runtime/artifact-profile.ts';
 import type { ChannelResolver } from '../../messaging/channel-resolver.ts';
-import { buildPrEventTopicPattern, parsePrUrl } from '../runtime/parse-pr-url.ts';
+import { buildPrEventTopicPattern, parsePrUrl } from '../../github/parse-pr-url.ts';
 import type { WorkflowHookEngine } from '../runtime/workflow-hook-engine.ts';
 import { wrapHandlerWithHooks } from '../runtime/workflow-hook-engine.ts';
 import type {

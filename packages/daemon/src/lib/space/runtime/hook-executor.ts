@@ -8,22 +8,22 @@ import {
   deepMergeWithDepthLimit,
   MAX_BUFFER_BYTES,
   parseJsonStdout,
-} from './script-utils.ts';
+} from '../../utils/script-utils.ts';
 import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { spawnProcess } from '../../runtime-spawn/index.ts';
 import { validateWorkflowHookResult } from '../workflow-hook-validation.ts';
-import type { Connector } from './connectors/connector.ts';
+import type { Connector } from '../../github/connectors/connector.ts';
 import {
   getConnector,
   getRegisteredConnectorIds,
   isConnectorsLayerEnabled,
-} from './connectors/connector.ts';
-import './connectors/production.ts';
+} from '../../github/connectors/connector.ts';
+import '../../github/connectors/production.ts';
 import './built-in-validators/index.ts';
 import { getBuiltInValidator } from './built-in-validator-registry.ts';
-import { resolveGithubConfigDir } from './gh-lookup-helpers.ts';
+import { resolveGithubConfigDir } from '../../github/gh-lookup-helpers.ts';
 
 export interface HookExecutorContext {
   workspacePath: string;

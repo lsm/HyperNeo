@@ -72,7 +72,7 @@ import {
   raiseModelPoolDeferred,
   releaseModelPoolReservation,
   reserveModelPoolSlot,
-} from './model-pool-scheduler.ts';
+} from '../../session/model-pool-scheduler.ts';
 import { readRestartRecoveryNote } from './restart-recovery-note.ts';
 import type { SpaceRuntimeService } from './space-runtime-service.ts';
 import type { NodeAgentTemplateSource } from './spawn-slot-resolution.ts';
@@ -140,7 +140,7 @@ import { AgentMessageRouter } from '../../messaging/agent-message-router.ts';
 import type { WorkflowArtifactProfile } from './artifact-profile.ts';
 import { ChannelResolver } from '../../messaging/channel-resolver.ts';
 import { ChannelRouter } from '../../messaging/channel-router.ts';
-import { createGithubConnector } from './connectors/github-connector.ts';
+import { createGithubConnector } from '../../github/connectors/github-connector.ts';
 import { HookExecutor } from './hook-executor.ts';
 import type { InjectionDeliveryRowDeps } from '../../messaging/injection-delivery-steps.ts';
 import {

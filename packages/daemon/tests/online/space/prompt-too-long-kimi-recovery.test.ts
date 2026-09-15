@@ -4,7 +4,7 @@ import { createDaemonServer } from '../../helpers/daemon-server';
 import { waitForIdle } from '../../helpers/daemon-actions';
 import type { NodeExecution, Space, SpaceWorkflow } from '@hyperneo/shared';
 import type { DaemonAppContext } from '../../../src/app';
-import { buildPromptTooLongContinueNag } from '../../../src/lib/space/runtime/prompt-too-long-recovery';
+import { buildPromptTooLongContinueNag } from '../../../src/lib/session/prompt-too-long-recovery';
 
 const IS_MOCK = !!process.env.HYPERNEO_USE_DEV_PROXY;
 const IDLE_TIMEOUT = IS_MOCK ? 45_000 : 60_000;

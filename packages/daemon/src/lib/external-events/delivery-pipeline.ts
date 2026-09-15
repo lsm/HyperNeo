@@ -1,5 +1,5 @@
-import { decisionRun } from './decision-pipeline.ts';
-import type { ExternalEventTaskDecision } from './external-event-admission-gates.ts';
+import { decisionRun } from '../space/runtime/decision-pipeline.ts';
+import type { ExternalEventTaskDecision } from './admission-gates.ts';
 
 export type ExternalEventDeliveryDecision =
   | { action: 'skip' }

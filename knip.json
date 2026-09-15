@@ -33,7 +33,7 @@
     "packages/daemon/dump-context.ts",
     "packages/daemon/src/lib/external-events/index.ts",
     "packages/daemon/vitest.online.config.ts",
-    "packages/daemon/src/lib/space/runtime/connectors/**",
+    "packages/daemon/src/lib/github/connectors/**",
     ".claude/**"
   ],
   "ignoreFiles": [
@@ -90,7 +90,7 @@
     "packages/daemon/src/lib/messaging/render-pending-digest-pipeline.ts": ["exports"],
     "packages/daemon/src/lib/space/runtime/post-approval-router.ts": ["exports"],
     "packages/daemon/src/lib/space/runtime/built-in-validator-registry.ts": ["exports"],
-    "packages/daemon/src/lib/space/runtime/retry-utils.ts": ["exports"],
+    "packages/daemon/src/lib/utils/retry-utils.ts": ["exports"],
     "packages/daemon/src/lib/space/workflows/template-hash.ts": ["exports"],
     "packages/daemon/src/storage/index.ts": ["exports"],
     "packages/daemon/src/storage/schema/index.ts": ["exports"],

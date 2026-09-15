@@ -114,11 +114,11 @@ import {
   isWorkflowTargetOwnedBySpace,
   resolveCurrentQueueableOrActiveExecution,
   resolveSubscriptionTarget,
-} from './external-event-admission-gates.ts';
+} from '../../external-events/admission-gates.ts';
 import {
   deliverImmediateEvent,
   type ImmediateEventDeliveryDeps,
-} from './immediate-event-delivery-pipeline.ts';
+} from '../../external-events/immediate-delivery-pipeline.ts';
 import {
   type RequeuePendingDeliveryDeps,
   runRequeuePendingDelivery,
@@ -134,7 +134,7 @@ import {
   type RenderPendingDigestOutcome,
   runRenderPendingDigest,
 } from '../../messaging/render-pending-digest-pipeline.ts';
-import { classifyLastMessageForIdleAgent } from './last-message-classifier.ts';
+import { classifyLastMessageForIdleAgent } from '../../session/last-message-classifier.ts';
 import type { SelectWorkflowWithLlm } from './llm-workflow-selector.ts';
 import {
   clearPendingCompletionState,
@@ -150,7 +150,7 @@ import {
   isPromptTooLongErrorMessage,
   MAX_PROMPT_TOO_LONG_RECOVERY_ATTEMPTS,
   type PromptTooLongRecoveryState,
-} from './prompt-too-long-recovery.ts';
+} from '../../session/prompt-too-long-recovery.ts';
 import type { TaskAgentManager } from './task-agent-manager.ts';
 import { WorkflowExecutor } from './workflow-executor.ts';
 import {

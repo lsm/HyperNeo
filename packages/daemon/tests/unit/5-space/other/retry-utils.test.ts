@@ -1,8 +1,5 @@
 import { describe, test, expect } from 'bun:test';
-import {
-  retryWithBackoff,
-  parseRetryAfter,
-} from '../../../../src/lib/space/runtime/retry-utils.ts';
+import { retryWithBackoff, parseRetryAfter } from '../../../../src/lib/utils/retry-utils.ts';
 import { MAX_NETWORK_RETRIES } from '../../../../src/lib/space/runtime/constants.ts';
 
 function makeFlaky(failCount: number, result = 'ok'): () => Promise<string> {
