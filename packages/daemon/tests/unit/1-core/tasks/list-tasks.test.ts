@@ -200,6 +200,31 @@ describe('bounded core task listing', () => {
     expect(listTaskCores(db, { limit: 1 }).nextCursor).not.toBeNull();
   });
 
+  test('filters by workflow run and title search', () => {
+    const runId = 'run-1';
+    db.prepare(
+      'INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).run(runId, spaceId, 'wf-1', 'Run', 'in_progress', 1, 1);
+    db.prepare(
+      "INSERT INTO space_tasks (id, space_id, task_number, title, status, workflow_run_id, created_at, updated_at) VALUES (?, ?, ?, ?, 'open', ?, ?, ?)"
+    ).run('run-a', spaceId, 2, 'Run A', runId, 50, 50);
+    db.prepare(
+      "INSERT INTO space_tasks (id, space_id, task_number, title, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'open', ?, ?)"
+    ).run('outside', spaceId, 3, 'Outside', 60, 60);
+
+    const byRun = listTaskCores(db, { spaceId, workflowRunId: runId });
+    expect(byRun.tasks.map((task) => task.id)).toEqual(['run-a']);
+    expect(byRun.total).toBe(1);
+
+    const bySearch = listTaskCores(db, { spaceId, search: 'outside' });
+    expect(bySearch.tasks.map((task) => task.id)).toEqual(['outside']);
+    expect(bySearch.total).toBe(1);
+
+    const combined = listTaskCores(db, { spaceId, workflowRunId: runId, search: 'run a' });
+    expect(combined.tasks.map((task) => task.id)).toEqual(['run-a']);
+    expect(combined.total).toBe(1);
+  });
+
   test('bounds page size and normalizes invalid limits', () => {
     const insert = db.prepare(
       "INSERT INTO space_tasks (id, title, status, created_at, updated_at) VALUES (?, 'Extra', 'open', 1, 1)"

@@ -675,6 +675,42 @@ test('task.list filters a Space page by block reason through the registry', asyn
   expect(page.total).toBe(1);
 });
 
+test('task.list filters a Space page by workflow run and title search', async () => {
+  const { workflowRunId } = attachSpaceFields();
+  const otherRun = new SpaceWorkflowRunRepository(db).createRun({
+    spaceId,
+    workflowId: new SpaceWorkflowRepository(db).createWorkflow({ spaceId, name: 'Other' }).id,
+    title: 'Other run',
+  });
+  const otherTask = tasks.createTask({
+    spaceId,
+    title: 'Other task',
+    description: '',
+    workflowRunId: otherRun.id,
+  });
+  const rpc = createOperationRpcHandler(provider(), () => ({}));
+  const byRun = (await rpc({ name: 'task.list', input: { spaceId, workflowRunId } }, context)) as {
+    tasks: { id: string }[];
+    total: number;
+  };
+  expect(byRun.tasks.map((task) => task.id)).toEqual([taskId]);
+  expect(byRun.total).toBe(1);
+
+  const bySearch = (await rpc(
+    { name: 'task.list', input: { spaceId, search: 'Other task' } },
+    context
+  )) as { tasks: { id: string }[]; total: number };
+  expect(bySearch.tasks.map((task) => task.id)).toEqual([otherTask.id]);
+  expect(bySearch.total).toBe(1);
+
+  const combined = (await rpc(
+    { name: 'task.list', input: { spaceId, workflowRunId: otherRun.id, search: 'Other' } },
+    context
+  )) as { tasks: { id: string }[]; total: number };
+  expect(combined.tasks.map((task) => task.id)).toEqual([otherTask.id]);
+  expect(combined.total).toBe(1);
+});
+
 test('task.list preserves Space-scoped pagination while adding Space fields, across a cursor boundary', async () => {
   const second = tasks.createTask({ spaceId, title: 'Second', description: '' });
   const third = tasks.createTask({ spaceId, title: 'Third', description: '' });

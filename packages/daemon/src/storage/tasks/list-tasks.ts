@@ -15,6 +15,8 @@ export interface ListTasksInput {
   status?: TaskLifecycleStatus;
   blockReason?: SpaceBlockReason | null;
   blockReasonNotIn?: SpaceBlockReason[];
+  workflowRunId?: string;
+  search?: string;
   limit?: number;
   offset?: number;
   orderBy?: 'createdAt' | 'updatedAt';
@@ -59,6 +61,14 @@ function buildTaskListQuery(input: ListTasksInput): TaskListQuery {
     const placeholders = input.blockReasonNotIn.map(() => '?').join(', ');
     where.push(`(block_reason IS NULL OR block_reason NOT IN (${placeholders}))`);
     for (const reason of input.blockReasonNotIn) values.push(reason);
+  }
+  if (input.workflowRunId !== undefined) {
+    where.push('workflow_run_id = ?');
+    values.push(input.workflowRunId);
+  }
+  if (input.search !== undefined && input.search.length > 0) {
+    where.push("LOWER(title) LIKE '%' || ? || '%'");
+    values.push(input.search.toLowerCase());
   }
   const countSql = `SELECT COUNT(*) AS total FROM space_tasks WHERE ${where.join(' AND ')}`;
   const countValues = [...values];

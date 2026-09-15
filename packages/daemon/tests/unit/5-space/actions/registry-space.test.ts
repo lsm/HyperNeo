@@ -1310,6 +1310,140 @@ describe('createSpaceRegistryEntries — handler wiring', () => {
     }
   });
 
+  test('list_tasks maps to task.list, validates workflow_run_id, and trims compact output', async () => {
+    const ctx = makeCtx({ mySessionId: 'space-chat-1' });
+    try {
+      const now = new Date().toISOString();
+      ctx.db
+        .prepare(
+          `INSERT INTO sessions (id, title, created_at, last_active_at, status, config, metadata, type, session_context)
+           VALUES ('space-chat-1', 'Space Chat', ?, ?, 'active', '{}', '{}', 'space_chat', ?)`
+        )
+        .run(now, now, JSON.stringify({ spaceId: SPACE_ID }));
+      const workflow = ctx.workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: 'Run filter',
+        nodes: [{ name: 'Work', agents: [{ agentId: 'agent-coder-1', name: 'Coder' }] }],
+        tags: [],
+      });
+      const run = ctx.workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Run',
+      });
+
+      const calls: Array<{ input: unknown; caller: unknown }> = [];
+      const operations = createOperationRegistry([
+        defineOperation({
+          name: 'task.list',
+          description: 'List tasks',
+          inputSchema: z.object({}).passthrough(),
+          resultSchema: z.object({
+            tasks: z.array(
+              z.object({
+                id: z.string(),
+                title: z.string(),
+                status: z.string(),
+                priority: z.string(),
+                createdAt: z.number(),
+              })
+            ),
+            total: z.number(),
+            nextCursor: z.null(),
+          }),
+          execute: async (input, caller) => {
+            calls.push({ input, caller });
+            return {
+              tasks: [
+                {
+                  id: 't-1',
+                  title: 'Compact me',
+                  status: 'open',
+                  priority: 'normal',
+                  createdAt: 1000,
+                },
+              ],
+              total: 1,
+              nextCursor: null,
+            };
+          },
+        }),
+      ]);
+
+      const entries = createSpaceRegistryEntries(ctx.config, operations);
+      const entry = entries.find((candidate) => candidate.name === 'list_tasks');
+      if (!entry) throw new Error('list_tasks entry missing');
+
+      const full = (await entry.handler({})) as {
+        content: Array<{ text: string }>;
+        isError?: boolean;
+      };
+      expect(full.isError).toBeUndefined();
+      expect(JSON.parse(full.content[0].text)).toEqual({
+        success: true,
+        total: 1,
+        tasks: [
+          {
+            id: 't-1',
+            title: 'Compact me',
+            status: 'open',
+            priority: 'normal',
+            createdAt: 1000,
+          },
+        ],
+      });
+      expect(calls[0]?.input).toMatchObject({ spaceId: SPACE_ID });
+      expect(calls[0]?.caller).toEqual({ source: 'mcp', sessionId: 'space-chat-1' });
+
+      calls.length = 0;
+      const compact = (await entry.handler({ compact: true })) as {
+        content: Array<{ text: string }>;
+      };
+      expect(JSON.parse(compact.content[0].text)).toEqual({
+        success: true,
+        total: 1,
+        tasks: [
+          { id: 't-1', title: 'Compact me', status: 'open', priority: 'normal', createdAt: 1000 },
+        ],
+      });
+
+      const withRun = await entry.handler({ workflow_run_id: run.id });
+      expect(JSON.parse((withRun as { content: Array<{ text: string }> }).content[0].text)).toEqual(
+        {
+          success: true,
+          total: 1,
+          tasks: [
+            {
+              id: 't-1',
+              title: 'Compact me',
+              status: 'open',
+              priority: 'normal',
+              createdAt: 1000,
+            },
+          ],
+        }
+      );
+      expect(calls[calls.length - 1]?.input).toMatchObject({
+        spaceId: SPACE_ID,
+        workflowRunId: run.id,
+      });
+
+      const missingRun = (await entry.handler({
+        workflow_run_id: 'missing-run',
+      })) as {
+        content: Array<{ text: string }>;
+        isError?: boolean;
+      };
+      expect(missingRun.isError).toBe(true);
+      expect(JSON.parse(missingRun.content[0].text)).toEqual({
+        success: false,
+        error: 'Workflow run not found: missing-run',
+      });
+    } finally {
+      ctx.db.close();
+    }
+  });
+
   test('round-trips every agents-family entry through its underlying handler', async () => {
     const ctx = makeCtx();
     try {
