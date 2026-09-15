@@ -18,6 +18,7 @@ import {
 import type { Database } from '../../../storage/database.ts';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
+import type { SessionManager } from '../../session/session-manager.ts';
 import { listTaskCores } from '../../../storage/tasks/list-tasks.ts';
 import { readTaskCore } from '../../../storage/tasks/task-reader.ts';
 import { listTasksWithSpaceFields, spaceTaskBatchReader } from './list-tasks-with-space-fields.ts';
@@ -37,6 +38,7 @@ import {
   createSetPreferredWorkflowOperation,
   type SetPreferredWorkflowDependencies,
 } from './set-preferred-workflow.ts';
+import { createSendSessionMessageOperation } from './session-message-send.ts';
 
 interface ArchiveTaskCapability {
   getTaskManager: ArchiveTaskDependencies['getTaskManager'];
@@ -51,6 +53,10 @@ interface PreferredWorkflowCapability {
   getWorkflow?: SetPreferredWorkflowDependencies['getWorkflow'];
 }
 
+interface SessionMessagingCapability {
+  sessionManager?: Pick<SessionManager, 'getCachedSession' | 'getSessionAsync' | 'sendUserMessage'>;
+}
+
 export function createSpaceOperationRegistryProvider(
   database: Database,
   jobQueue: JobQueueRepository,
@@ -63,6 +69,7 @@ export function createSpaceOperationRegistryProvider(
     ArchiveTaskCapability &
     TaskNumberRepository &
     PreferredWorkflowCapability &
+    SessionMessagingCapability &
     Omit<
       CompleteTaskDependencies,
       'getTaskManager' | 'emitTaskUpdated' | 'requiresPostApprovalOwner' | 'completionGate'
@@ -158,5 +165,27 @@ export function createSpaceOperationRegistryProvider(
           ...tasks,
           db: database.getDatabase(),
         })(input, caller),
+      sendSessionMessage: tasks.sessionManager
+        ? createSendSessionMessageOperation({
+            getSessionRow: (spaceId, sessionId) => {
+              const row = database
+                .getDatabase()
+                .prepare(
+                  `SELECT status, processing_state FROM sessions WHERE id = ? AND space_id = ?`
+                )
+                .get(sessionId, spaceId) as {
+                status: string;
+                processing_state: string | null;
+              } | null;
+              return row ?? null;
+            },
+            getLiveSession: async (sessionId) => {
+              const cached = tasks.sessionManager!.getCachedSession(sessionId);
+              if (cached) return cached;
+              return (await tasks.sessionManager!.getSessionAsync(sessionId)) ?? null;
+            },
+            sendUserMessage: (data) => tasks.sessionManager!.sendUserMessage(data),
+          })
+        : undefined,
     }));
 }
