@@ -1000,6 +1000,8 @@ function percentEncodedToBytes(payload: string) {
   return new Uint8Array(bytes);
 }
 
+const dataUrlTypePattern = /^image\/[a-z0-9.+-]+$/i;
+
 function dataUrlToBlob(dataUrl: string): Blob | null {
   const commaIndex = dataUrl.indexOf(',');
   if (commaIndex === -1) return null;
@@ -1007,6 +1009,7 @@ function dataUrlToBlob(dataUrl: string): Blob | null {
   const payload = dataUrl.slice(commaIndex + 1);
   const isBase64 = meta.endsWith(';base64');
   const mimeType = (isBase64 ? meta.slice(0, -7) : meta) || 'application/octet-stream';
+  if (!dataUrlTypePattern.test(mimeType)) return null;
   try {
     if (isBase64) {
       const binary = atob(payload);

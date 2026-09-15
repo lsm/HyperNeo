@@ -610,6 +610,27 @@ describe('MarkdownRenderer', () => {
       expect(document.body.querySelector('.markdown-image-overlay')).toBeFalsy();
     });
 
+    it('should open smuggled-mime data urls in the overlay instead of a typeless blob', async () => {
+      const openMock = vi.spyOn(window, 'open').mockImplementation(() => null);
+      const { container } = render(
+        <MarkdownRenderer content={'![p](data:image/png%09text/html;base64,PHNjcmlwdD4=)'} />
+      );
+      await waitFor(() => {
+        expect(container.querySelector('img')).toBeTruthy();
+      });
+      container
+        .querySelector('img')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      expect(openMock).not.toHaveBeenCalled();
+      expect(document.body.querySelector('.markdown-image-overlay img')?.getAttribute('src')).toBe(
+        'data:image/png%09text/html;base64,PHNjcmlwdD4='
+      );
+      document.body
+        .querySelector('.markdown-image-overlay')
+        ?.dispatchEvent(new MouseEvent('click'));
+      openMock.mockRestore();
+    });
+
     it('should only remove the overlay on its own renderer unmount', async () => {
       const first = render(
         <MarkdownRenderer content={'![s](data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=)'} />
