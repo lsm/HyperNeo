@@ -1012,7 +1012,41 @@ export function createSpaceRegistryEntries(
         'Publish a draft task to open so orchestration can pick it up; returns the updated task.',
       paramsDoc: 'task_id',
       paramsSchema: PublishTaskSchema,
-      handler: (args) => handlers.publish_task(args),
+      handler: operations
+        ? createOperationActionHandler(
+            operations,
+            { sessionId: config.mySessionId },
+            'task.transition',
+            (params) => ({
+              taskId: (params as { task_id: string }).task_id,
+              status: 'open',
+              expectedStatus: 'draft',
+            }),
+            (value, originalParams) => {
+              if (value && typeof value === 'object' && 'id' in value) {
+                return { success: true, task: value };
+              }
+              const typed = originalParams as { task_id: string };
+              if (value === null) {
+                return {
+                  success: false,
+                  error: `Task not found or not in this space: ${typed.task_id}`,
+                };
+              }
+              const reason = value as string;
+              const errorByReason: Record<string, string> = {
+                invalid_transition:
+                  `Task is not in 'draft' status, or it cannot be published. ` +
+                  `Only draft tasks can be published.`,
+                unsupported_status: 'Unsupported target status for publish_task.',
+              };
+              return {
+                success: false,
+                error: errorByReason[reason] ?? `Task publish failed: ${reason}`,
+              };
+            }
+          )
+        : (args) => handlers.publish_task(args),
     }),
     defineAction({
       name: 'archive_task',

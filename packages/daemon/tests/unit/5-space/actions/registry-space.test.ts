@@ -16,6 +16,7 @@ import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import { createCancelTaskOperation } from '../../../../src/lib/space/operations/cancel-task.ts';
 import { SpaceCreateTaskInputSchema } from '../../../../src/lib/space/operations/create-task-target.ts';
+import { createSpaceTransitionTaskOperation } from '../../../../src/lib/space/operations/transition-task.ts';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import {
@@ -33,6 +34,7 @@ import { NodeExecutionRepository } from '../../../../src/storage/repositories/no
 import { SpaceAgentReminderRepository } from '../../../../src/storage/repositories/space-agent-reminder-repository.ts';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
 import { SpaceAgentSubscriptionRepository } from '../../../../src/storage/repositories/space-agent-subscription-repository.ts';
+import { SessionRepository } from '../../../../src/storage/repositories/session-repository.ts';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
@@ -639,6 +641,104 @@ describe('createSpaceRegistryEntries — composition', () => {
       expect(result.isError).toBeUndefined();
       expect(JSON.parse(result.content[0].text)).toEqual({ accepted: true, jobId: null });
       expect(ctx.taskRepo.getTask(plainTask.id)?.status).toBe('cancelled');
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  function transitionOperation(ctx: RegistryCtx) {
+    return createOperationRegistry([
+      createSpaceTransitionTaskOperation({
+        db: ctx.db,
+        getSession: (id) => new SessionRepository(ctx.db).getSession(id),
+        getTaskManager: (spaceId) => new SpaceTaskManager(ctx.db, spaceId),
+        notifyStandalone: () => {},
+        emitTaskUpdated: async () => {},
+        isWorkflowRunActive: () => false,
+        longHorizonAgentRepo: ctx.config.longHorizonAgentRepo,
+      }),
+    ]);
+  }
+
+  test('publish_task publishes a draft task through the shared task.transition operation', async () => {
+    const ctx = makeCtx({ mySessionId: 'space-chat-1' });
+    try {
+      const now = new Date().toISOString();
+      ctx.db
+        .prepare(
+          `INSERT INTO sessions (id, title, created_at, last_active_at, status, config, metadata, type, session_context)
+           VALUES ('space-chat-1', 'Space Chat', ?, ?, 'active', '{}', '{}', 'space_chat', ?)`
+        )
+        .run(now, now, JSON.stringify({ spaceId: SPACE_ID }));
+      const draftTask = ctx.taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Draft to publish',
+        description: '',
+        status: 'draft',
+      });
+      const entry = createSpaceRegistryEntries(ctx.config, transitionOperation(ctx)).find(
+        (candidate) => candidate.name === 'publish_task'
+      );
+      if (!entry) throw new Error('publish_task entry missing');
+      const result = (await entry.handler({ task_id: draftTask.id })) as {
+        content: Array<{ text: string }>;
+        isError?: boolean;
+      };
+      expect(result.isError).toBeUndefined();
+      expect(JSON.parse(result.content[0].text)).toMatchObject({
+        success: true,
+        task: { id: draftTask.id, status: 'open' },
+      });
+      expect(ctx.taskRepo.getTask(draftTask.id)?.status).toBe('open');
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('publish_task maps task.transition rejections to the legacy { success, error } shape', async () => {
+    const ctx = makeCtx({ mySessionId: 'space-chat-1' });
+    try {
+      const now = new Date().toISOString();
+      ctx.db
+        .prepare(
+          `INSERT INTO sessions (id, title, created_at, last_active_at, status, config, metadata, type, session_context)
+           VALUES ('space-chat-1', 'Space Chat', ?, ?, 'active', '{}', '{}', 'space_chat', ?)`
+        )
+        .run(now, now, JSON.stringify({ spaceId: SPACE_ID }));
+      const openTask = ctx.taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Already open',
+        description: '',
+        status: 'open',
+      });
+      const missingId = 'missing-task-id';
+      const operations = transitionOperation(ctx);
+      const byName = new Map(
+        createSpaceRegistryEntries(ctx.config, operations).map((entry) => [entry.name, entry])
+      );
+      const entry = byName.get('publish_task');
+      if (!entry) throw new Error('publish_task entry missing');
+
+      const missingResult = (await entry.handler({ task_id: missingId })) as {
+        content: Array<{ text: string }>;
+      };
+      const missingPayload = JSON.parse(missingResult.content[0].text) as {
+        success: boolean;
+        error: string;
+      };
+      expect(missingPayload.success).toBe(false);
+      expect(missingPayload.error).toContain(missingId);
+
+      const invalidResult = (await entry.handler({ task_id: openTask.id })) as {
+        content: Array<{ text: string }>;
+      };
+      const invalidPayload = JSON.parse(invalidResult.content[0].text) as {
+        success: boolean;
+        error: string;
+      };
+      expect(invalidPayload.success).toBe(false);
+      expect(invalidPayload.error).toContain('Only draft tasks can be published');
+      expect(ctx.taskRepo.getTask(openTask.id)?.status).toBe('open');
     } finally {
       ctx.db.close();
     }
