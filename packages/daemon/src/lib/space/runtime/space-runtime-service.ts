@@ -68,6 +68,7 @@ import { resolveAgentDeliverySession } from '../../session-resolution/resolve-ag
 import type { ResolveAgentRecordDeps } from '../../session-resolution/resolve-agent-record.ts';
 import type { EnsureSessionOutcome, SessionTarget } from '../../session-resolution/target.ts';
 import { actionsAsOperations } from '../actions/action-operations.ts';
+import { createSessionActionRegistry } from '../actions/session-action-registry.ts';
 import { createOperationRegistry } from '../../operations/registry.ts';
 import {
   createSpaceActionsMcpServer,
@@ -890,10 +891,14 @@ export class SpaceRuntimeService {
     if (!sessionManager || !sessionId || typeof sessionManager.getSession !== 'function') return;
     const agentSession = sessionManager.getSession(sessionId);
     if (!agentSession?.setOperationRegistryProvider) return;
+    const actionRegistry = createSessionActionRegistry({
+      ...config,
+      operationRegistry: () => sessionManager.getOperationRegistry(),
+    });
     agentSession.setOperationRegistryProvider(() =>
       createOperationRegistry([
         ...sessionManager.getOperationRegistry().entries,
-        ...actionsAsOperations(server.registry),
+        ...actionsAsOperations(actionRegistry),
       ])
     );
   }
