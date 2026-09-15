@@ -557,6 +557,19 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     spaceAgentTemplateRepo
   );
 
+  const emitClaimedTaskUpdate = (taskId: string) => {
+    const task = spaceTaskRepo.getTask(taskId);
+    if (!task) return;
+    void deps.internalEventBus
+      .publish('space.task.updated', {
+        sessionId: 'global',
+        spaceId: task.spaceId,
+        taskId: task.id,
+        task,
+      })
+      .catch((error) => log.warn('Failed to emit direct claim task update:', error));
+  };
+
   registerDirectStartJobs({
     db: deps.db.getDatabase(),
     reactiveDb: deps.reactiveDb,
@@ -566,18 +579,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     jobQueue: deps.jobQueue,
     jobProcessor: deps.jobProcessor,
     onTaskReopened: (taskId) => spaceGoalService.supersedeOutcomeNotificationsForTask(taskId),
-    onTaskClaimed: (taskId) => {
-      const task = spaceTaskRepo.getTask(taskId);
-      if (!task) return;
-      void deps.internalEventBus
-        .publish('space.task.updated', {
-          sessionId: 'global',
-          spaceId: task.spaceId,
-          taskId: task.id,
-          task,
-        })
-        .catch((error) => log.warn('Failed to emit direct claim task update:', error));
-    },
+    onTaskClaimed: emitClaimedTaskUpdate,
   });
 
   registerDirectOutcomeJobs({
@@ -746,6 +748,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     {
       reactiveDb: deps.reactiveDb,
       onTaskReopened: (taskId) => spaceGoalService.supersedeOutcomeNotificationsForTask(taskId),
+      onTaskClaimed: emitClaimedTaskUpdate,
     },
     {
       getSession: (sessionId) => deps.db.getSession(sessionId),

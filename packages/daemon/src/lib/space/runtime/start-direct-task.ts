@@ -69,8 +69,8 @@ export function claimDirectStart(
   reactiveDb: ReactiveDatabase | undefined,
   input: DirectTaskStartInput,
   onTaskReopened?: (taskId: string) => void,
-  onTaskClaimed?: (taskId: string) => void,
-  startJobs?: JobQueueRepository
+  startJobs?: JobQueueRepository,
+  onTaskClaimed?: (taskId: string) => void
 ): { value: DirectTaskAttempt } | { reason: DirectTaskStartResult } {
   const unavailable = { reason: { started: false as const, reason: 'direct_start_unavailable' } };
   if (!input.requestKey.trim() || (input.reviewRejection && !input.retryFrom)) return unavailable;
@@ -313,6 +313,7 @@ export function createDirectTaskStarter(dependencies: {
       sessionManager,
       defaultModel,
       onTaskReopened: dependencies.onTaskReopened,
+      startJobs: undefined,
       onTaskClaimed: dependencies.onTaskClaimed,
       attempts,
       tasks,
@@ -322,7 +323,7 @@ export function createDirectTaskStarter(dependencies: {
     .input('input')
     .pipe(
       claimDirectStart,
-      ['db', 'reactiveDb', 'input', 'onTaskReopened', 'onTaskClaimed'],
+      ['db', 'reactiveDb', 'input', 'onTaskReopened', 'startJobs', 'onTaskClaimed'],
       'result:start'
     )
     .pipe((attempt: DirectTaskAttempt) => attempt.id, 'start', 'attemptId')

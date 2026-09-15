@@ -615,6 +615,21 @@ test('shared start rejects a workflow-owned task without claiming', async () => 
   expect(count()).toBe(0);
 });
 
+test('a successful claim notifies onTaskClaimed so clients can refresh', async () => {
+  const claimed: string[] = [];
+  const operation = createStartTaskOperation(
+    () => db,
+    jobs,
+    {},
+    { onTaskReopened: () => {}, onTaskClaimed: (id) => claimed.push(id) }
+  );
+  expect(
+    await operation.execute({ taskId, requestKey: 'claim-notify' }, { source: 'rpc' })
+  ).toMatchObject({ accepted: true });
+  expect(claimed).toEqual([taskId]);
+  expect(attempts.getActive(taskId)?.phase).toBe('reserved');
+});
+
 test.each(['blocked', 'cancelled', 'stopped'] as const)(
   'shared start derives verified %s retry identity and replays its receipt',
   async (status) => {

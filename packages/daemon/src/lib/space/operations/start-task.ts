@@ -27,6 +27,7 @@ type Input = z.infer<typeof inputSchema>;
 export interface DirectStartOperationDependencies {
   reactiveDb?: ReactiveDatabase;
   onTaskReopened: (taskId: string) => void;
+  onTaskClaimed?: (taskId: string) => void;
 }
 function admitStart(
   db: Database,
@@ -74,7 +75,11 @@ export function createStartTaskOperation(
     .input(['input', 'caller'])
     .pipe(getDatabase, undefined, 'db')
     .pipe(admitStart, ['db', 'input', 'caller', 'policy'], 'result:outcome')
-    .pipe(claimDirectStart, ['db', 'reactiveDb', 'outcome', 'onTaskReopened', 'jobQueue'], 'claim')
+    .pipe(
+      claimDirectStart,
+      ['db', 'reactiveDb', 'outcome', 'onTaskReopened', 'jobQueue', 'onTaskClaimed'],
+      'claim'
+    )
     .pipe(acknowledgeDirectStart, ['db', 'claim'], 'outcome')
     .end('outcome') as (input: Input, caller: OperationCaller) => DirectStartAcknowledgement;
   return defineOperation({
