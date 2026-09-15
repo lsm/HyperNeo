@@ -28,7 +28,7 @@ export function AttachmentPreview({ attachments, onRemove }: AttachmentPreviewPr
   useEffect(() => {
     if (enlargedIndex === null) return;
     if (enlargedIndex >= attachments.length) {
-      setEnlargedIndex(null);
+      closeLightbox();
       return;
     }
     dialogRef.current?.focus();

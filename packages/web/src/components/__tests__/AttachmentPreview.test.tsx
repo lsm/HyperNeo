@@ -523,5 +523,22 @@ describe('AttachmentPreview', () => {
       expect(document.querySelector(`[data-testid="${ATTACHMENT_LIGHTBOX_TEST_ID}"]`)).toBeNull();
       expect(document.activeElement).toBe(button);
     });
+
+    it('should close the lightbox when the open attachment disappears from the list', () => {
+      const view = render(
+        <AttachmentPreview attachments={mockAttachments} onRemove={mockOnRemove} />
+      );
+
+      fireEvent.click(
+        view.container.querySelector('button[aria-label="Open photo.jpg full size"]')
+      );
+      expect(document.querySelector(`[data-testid="${ATTACHMENT_LIGHTBOX_TEST_ID}"]`)).toBeTruthy();
+
+      view.rerender(
+        <AttachmentPreview attachments={[mockAttachments[0]]} onRemove={mockOnRemove} />
+      );
+
+      expect(document.querySelector(`[data-testid="${ATTACHMENT_LIGHTBOX_TEST_ID}"]`)).toBeNull();
+    });
   });
 });
