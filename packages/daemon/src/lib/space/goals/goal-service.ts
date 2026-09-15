@@ -111,7 +111,7 @@ export interface SpaceGoalServiceDeps {
   outcomeNotificationRepo?: SpaceGoalOutcomeNotificationRepository;
   onOutcomeNotification?: (notification: SpaceGoalOutcomeNotification) => void;
   evolutionScopeService?: Pick<
-    import('../evolution-scope-service.ts').EvolutionScopeService,
+    import('../../evolution/scope-service.ts').EvolutionScopeService,
     'captureCompletedTaskEvidence'
   >;
   reactiveDb?: Pick<

@@ -7,7 +7,7 @@ import {
   GoalAutomationService,
   externalEventTriggerKey,
 } from '../../../src/lib/space/goals/goal-automation-service';
-import { EvolutionScopeService } from '../../../src/lib/space/evolution-scope-service';
+import { EvolutionScopeService } from '../../../src/lib/evolution/scope-service';
 import { EvolutionRepository } from '../../../src/storage/repositories/evolution-repository';
 import { GoalAutomationCursorRepository } from '../../../src/storage/repositories/goal-automation-cursor-repository';
 import { JobQueueRepository } from '../../../src/storage/repositories/job-queue-repository';
@@ -20,7 +20,7 @@ import {
   validateGoalAutomationSelfNagPolicy,
   syncGoalAutomationSelfNagScheduleForScope,
 } from '../../../src/lib/rpc-handlers';
-import { mergeEvolutionPolicy } from '../../../src/lib/space/evolution-scope-service';
+import { mergeEvolutionPolicy } from '../../../src/lib/evolution/scope-service';
 import { ScheduleService } from '../../../src/lib/space/schedule/schedule-service';
 import { createSpaceTables } from '../helpers/space-test-db';
 

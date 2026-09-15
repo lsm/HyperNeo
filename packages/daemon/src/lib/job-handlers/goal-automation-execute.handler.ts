@@ -5,7 +5,7 @@ import type { EvolutionRepository } from '../../storage/repositories/evolution-r
 import type { GoalAutomationCursorRepository } from '../../storage/repositories/goal-automation-cursor-repository.ts';
 import type { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository.ts';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
-import type { EvolutionEpisodeService } from '../space/evolution-episode-service.ts';
+import type { EvolutionEpisodeService } from '../evolution/episode-service.ts';
 import {
   maxCompletedTaskTimestamp,
   maxEvidenceCursor,

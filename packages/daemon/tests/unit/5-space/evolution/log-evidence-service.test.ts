@@ -1,14 +1,14 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
-import { Database } from '../../../src/storage/sqlite-compat';
+import { Database } from '../../../../src/storage/sqlite-compat';
 import type { CreateEvidenceRefParams, StructuredLogEvent } from '@hyperneo/shared';
 import {
   EvolutionLogEvidenceService,
   PRODUCT_FORGE_SCOPE_ID,
-} from '../../../src/lib/space/evolution-log-evidence-service';
-import { EvolutionRepository } from '../../../src/storage/repositories/evolution-repository';
+} from '../../../../src/lib/evolution/log-evidence-service';
+import { EvolutionRepository } from '../../../../src/storage/repositories/evolution-repository';
 import type { EvidenceRef } from '@hyperneo/shared';
-import { SpaceRepository } from '../../../src/storage/repositories/space-repository';
-import { createSpaceTables } from '../helpers/space-test-db';
+import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
+import { createSpaceTables } from '../../helpers/space-test-db';
 
 describe('EvolutionLogEvidenceService', () => {
   let db: Database;
