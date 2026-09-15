@@ -1022,10 +1022,12 @@ function dataUrlToBlob(dataUrl: string): Blob | null {
   }
 }
 
-let activeImageOverlayDismiss: (() => void) | null = null;
+type ActiveImageOverlay = { dismiss: () => void; owner: unknown };
 
-function showImageOverlay(src: string) {
-  activeImageOverlayDismiss?.();
+let activeImageOverlay: ActiveImageOverlay | null = null;
+
+function showImageOverlay(src: string, owner: unknown) {
+  activeImageOverlay?.dismiss();
   const overlay = document.createElement('div');
   overlay.className = 'markdown-image-overlay';
   overlay.tabIndex = -1;
@@ -1036,24 +1038,29 @@ function showImageOverlay(src: string) {
   const dismiss = () => {
     overlay.remove();
     document.removeEventListener('keydown', handleKeydown);
-    if (activeImageOverlayDismiss === dismiss) activeImageOverlayDismiss = null;
+    if (activeImageOverlay?.dismiss === dismiss) activeImageOverlay = null;
   };
   const handleKeydown = (event: KeyboardEvent) => {
     if (event.key === 'Escape') dismiss();
   };
   overlay.addEventListener('click', dismiss);
   document.addEventListener('keydown', handleKeydown);
-  activeImageOverlayDismiss = dismiss;
+  activeImageOverlay = { dismiss, owner };
   document.body.appendChild(overlay);
   overlay.focus();
 }
 
-function openImageAtFullSize(src: string) {
+function dismissImageOverlayFor(owner: unknown) {
+  const overlay = activeImageOverlay;
+  if (overlay && overlay.owner === owner) overlay.dismiss();
+}
+
+function openImageAtFullSize(src: string, owner: unknown) {
   const dataImageMatch = /^data:(image\/[a-z0-9.+-]+)/i.exec(src);
   if (dataImageMatch && !dataImageMatch[1].toLowerCase().includes('svg')) {
     const blob = dataUrlToBlob(src);
     if (!blob) {
-      showImageOverlay(src);
+      showImageOverlay(src, owner);
       return;
     }
     const objectUrl = URL.createObjectURL(blob);
@@ -1062,7 +1069,7 @@ function openImageAtFullSize(src: string) {
     return;
   }
   if (dataImageMatch) {
-    showImageOverlay(src);
+    showImageOverlay(src, owner);
     return;
   }
   window.open(src, '_blank', 'noopener,noreferrer');
@@ -1104,6 +1111,7 @@ async function renderMarkdown(content: string) {
 
 export default function MarkdownRenderer({ content, class: className }: MarkdownRendererProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const overlayOwner = useRef({});
   const [html, setHtml] = useState<string | null>(null);
   const theme = resolvedTheme.value;
 
@@ -1130,7 +1138,7 @@ export default function MarkdownRenderer({ content, class: className }: Markdown
 
   useEffect(
     () => () => {
-      activeImageOverlayDismiss?.();
+      dismissImageOverlayFor(overlayOwner.current);
     },
     []
   );
@@ -1150,7 +1158,7 @@ export default function MarkdownRenderer({ content, class: className }: Markdown
       if (isNavigatableHref(anchor.getAttribute('href') || '')) return;
       const src = img.getAttribute('src') || '';
       event.preventDefault();
-      if (src) openImageAtFullSize(src);
+      if (src) openImageAtFullSize(src, overlayOwner.current);
     };
     container.addEventListener('click', handleImageActivate);
     container.addEventListener('auxclick', handleImageActivate);

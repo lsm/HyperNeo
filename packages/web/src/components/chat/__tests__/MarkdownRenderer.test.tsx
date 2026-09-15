@@ -529,7 +529,7 @@ describe('MarkdownRenderer', () => {
       expect(container.querySelector('a.markdown-image-link')).toBeFalsy();
     });
 
-    it('should not admit images whose control-character prefix hides the scheme', async () => {
+    it('should neutralize control-character scheme smuggling in rendered srcs', async () => {
       const { container } = render(<MarkdownRenderer content={'![x](&#1;javascript:alert(1))'} />);
       await waitFor(() => {
         expect(container.querySelector('img')).toBeTruthy();
@@ -607,6 +607,24 @@ describe('MarkdownRenderer', () => {
         ?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
       expect(document.body.querySelector('.markdown-image-overlay')).toBeTruthy();
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      expect(document.body.querySelector('.markdown-image-overlay')).toBeFalsy();
+    });
+
+    it('should only remove the overlay on its own renderer unmount', async () => {
+      const first = render(
+        <MarkdownRenderer content={'![s](data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=)'} />
+      );
+      await waitFor(() => {
+        expect(first.container.querySelector('img')).toBeTruthy();
+      });
+      first.container
+        .querySelector('img')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      expect(document.body.querySelector('.markdown-image-overlay')).toBeTruthy();
+      const second = render(<MarkdownRenderer content="plain" />);
+      second.unmount();
+      expect(document.body.querySelector('.markdown-image-overlay')).toBeTruthy();
+      first.unmount();
       expect(document.body.querySelector('.markdown-image-overlay')).toBeFalsy();
     });
 
