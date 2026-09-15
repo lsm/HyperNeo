@@ -6,6 +6,7 @@ import type { SpaceTaskStatus } from '@hyperneo/shared';
 import {
   TaskStatusActions,
   getTransitionActions,
+  filterDirectAttemptTargets,
   VALID_TASK_TRANSITIONS,
   TRANSITION_LABELS,
 } from '../TaskStatusActions';
@@ -337,5 +338,24 @@ describe('TaskStatusActions component', () => {
       expect(getByTestId('task-action-in_progress')).toBeTruthy();
       expect(getByTestId('task-action-archived')).toBeTruthy();
     });
+  });
+});
+
+describe('filterDirectAttemptTargets', () => {
+  it('hides the targets task.transition refuses while an attempt is live', () => {
+    const targets = filterDirectAttemptTargets(getTransitionActions('in_progress'), {
+      hasActiveDirectAttempt: true,
+    }).map(({ target }) => target);
+    expect(targets).toEqual(['review', 'cancelled']);
+  });
+
+  it('leaves the actions untouched when no attempt is live', () => {
+    const actions = getTransitionActions('in_progress');
+    expect(filterDirectAttemptTargets(actions, { hasActiveDirectAttempt: false })).toEqual(actions);
+  });
+
+  it('treats a missing flag as no live attempt', () => {
+    const actions = getTransitionActions('in_progress');
+    expect(filterDirectAttemptTargets(actions, {})).toEqual(actions);
   });
 });

@@ -33,6 +33,7 @@ import {
 } from './list-task-members.ts';
 import { createArchiveTaskOperation, type ArchiveTaskDependencies } from './archive-task.ts';
 import { listScopedTasks, readScopedTask, readScopedTaskByNumber } from './scoped-task-reads.ts';
+import { stampActiveAttempt, stampActiveAttempts } from './direct-attempt-flag.ts';
 import {
   createSetPreferredWorkflowOperation,
   type SetPreferredWorkflowDependencies,
@@ -76,12 +77,15 @@ export function createSpaceOperationRegistryProvider(
   return () =>
     (registry ??= createDatabaseOperationCatalog(database, jobQueue, {
       readTask: (taskId, caller) =>
-        readScopedTask(
+        stampActiveAttempt(
           database.getDatabase(),
-          caller,
-          tasks,
-          (id) => tasks.taskRepo?.getTask(id) ?? readTaskCore(database.getDatabase(), id),
-          taskId
+          readScopedTask(
+            database.getDatabase(),
+            caller,
+            tasks,
+            (id) => tasks.taskRepo?.getTask(id) ?? readTaskCore(database.getDatabase(), id),
+            taskId
+          )
         ),
       readTaskByNumber: tasks.taskRepo?.getTaskByNumber
         ? (spaceId, taskNumber, caller) =>
@@ -94,16 +98,19 @@ export function createSpaceOperationRegistryProvider(
             )
         : undefined,
       listTasks: (input, caller) =>
-        listScopedTasks(
-          caller,
-          tasks,
-          (listInput) =>
-            listTasksWithSpaceFields(
-              (coreInput) => listTaskCores(database.getDatabase(), coreInput),
-              listInput,
-              spaceTaskBatchReader(tasks.taskRepo)
-            ),
-          input
+        stampActiveAttempts(
+          database.getDatabase(),
+          listScopedTasks(
+            caller,
+            tasks,
+            (listInput) =>
+              listTasksWithSpaceFields(
+                (coreInput) => listTaskCores(database.getDatabase(), coreInput),
+                listInput,
+                spaceTaskBatchReader(tasks.taskRepo)
+              ),
+            input
+          )
         ),
       create: createSpaceCreateTaskOperation({
         ...tasks,

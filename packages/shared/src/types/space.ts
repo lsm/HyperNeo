@@ -605,6 +605,7 @@ export interface SpaceTask extends TaskCore {
   workflowModelOverrides?: Record<string, string>;
   activeSession?: 'worker' | 'leader' | null;
   taskAgentSessionId?: string | null;
+  hasActiveDirectAttempt?: boolean;
   blockReason: SpaceBlockReason | null;
   approvalSource: SpaceApprovalSource | null;
   approvalReason: string | null;

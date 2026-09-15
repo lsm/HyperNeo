@@ -89,6 +89,16 @@ export function getTransitionActions(
   }));
 }
 
+const DIRECT_ATTEMPT_REFUSED_TARGETS: SpaceTaskStatus[] = ['done', 'blocked', 'stopped'];
+
+export function filterDirectAttemptTargets<T extends { target: SpaceTaskStatus }>(
+  actions: T[],
+  task: { hasActiveDirectAttempt?: boolean }
+): T[] {
+  if (!task.hasActiveDirectAttempt) return actions;
+  return actions.filter(({ target }) => !DIRECT_ATTEMPT_REFUSED_TARGETS.includes(target));
+}
+
 interface TaskStatusActionsProps {
   status: SpaceTaskStatus;
   onTransition: (newStatus: SpaceTaskStatus) => void;

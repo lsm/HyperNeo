@@ -54,6 +54,7 @@ export const TaskWithSpaceFieldsSchema = TaskCoreSchema.extend({
   workflowModelOverrides: z.record(z.string(), z.string()).optional(),
   activeSession: z.enum(['worker', 'leader']).nullable().optional(),
   taskAgentSessionId: z.string().nullable().optional(),
+  hasActiveDirectAttempt: z.boolean().optional(),
   blockReason: BlockReasonSchema.nullable().optional(),
   approvalSource: z.enum(['human', 'auto_policy', 'agent']).nullable().optional(),
   approvalReason: z.string().nullable().optional(),
