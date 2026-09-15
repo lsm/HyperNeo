@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { Database } from '../../../src/storage/sqlite-compat';
-import { JobQueueRepository } from '../../../src/storage/repositories/job-queue-repository';
-import { TaskScheduleRepository } from '../../../src/storage/repositories/task-schedule-repository';
-import { SpaceRepository } from '../../../src/storage/repositories/space-repository';
-import { ScheduleService } from '../../../src/lib/space/schedule/schedule-service';
-import { createSpaceTables } from '../helpers/space-test-db';
+import { Database } from '../../../../src/storage/sqlite-compat';
+import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
+import { TaskScheduleRepository } from '../../../../src/storage/repositories/task-schedule-repository';
+import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
+import { ScheduleService } from '../../../../src/lib/schedule/schedule-service';
+import { createSpaceTables } from '../../helpers/space-test-db';
 
 describe('ScheduleService', () => {
   let db: Database;

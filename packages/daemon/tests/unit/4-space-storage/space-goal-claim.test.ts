@@ -12,7 +12,7 @@ import { SpaceGoalOutcomeNotificationRepository } from '../../../src/storage/rep
 import { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository';
 import { SpaceRepository } from '../../../src/storage/repositories/space-repository';
 import type { SpaceGoal, SpaceGoalOutcomeNotification, SpaceTask } from '@hyperneo/shared';
-import type { ScheduleService } from '../../../src/lib/space/schedule/schedule-service';
+import type { ScheduleService } from '../../../src/lib/schedule/schedule-service';
 import { createSpaceTables } from '../helpers/space-test-db';
 
 describe('SpaceGoalService.claimOutcomeNotification', () => {
