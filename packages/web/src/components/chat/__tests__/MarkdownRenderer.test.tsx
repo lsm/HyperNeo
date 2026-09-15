@@ -529,6 +529,36 @@ describe('MarkdownRenderer', () => {
       expect(container.querySelector('a.markdown-image-link')).toBeFalsy();
     });
 
+    it('should not admit images whose control-character prefix hides the scheme', async () => {
+      const { container } = render(<MarkdownRenderer content={'![x](&#1;javascript:alert(1))'} />);
+      await waitFor(() => {
+        expect(container.querySelector('img')).toBeTruthy();
+      });
+      const src = container.querySelector('img')?.getAttribute('src') || '';
+      expect(src).not.toMatch(/^[\u0000-\u0020]*javascript:/i);
+    });
+
+    it('should block caption clicks on image links with unsafe hrefs', async () => {
+      const openMock = vi.spyOn(window, 'open').mockImplementation(() => null);
+      const { container } = render(
+        <MarkdownRenderer
+          content={'[![ok](https://example.com/ok.png) caption](javascript:alert(1))'}
+        />
+      );
+      await waitFor(() => {
+        expect(container.querySelector('a img')).toBeTruthy();
+      });
+      const event = new MouseEvent('click', { bubbles: true, cancelable: true });
+      container.querySelector('a')?.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(true);
+      expect(openMock).toHaveBeenCalledWith(
+        'https://example.com/ok.png',
+        '_blank',
+        'noopener,noreferrer'
+      );
+      openMock.mockRestore();
+    });
+
     it('should open a data image through a blob url on click', async () => {
       const openMock = vi.spyOn(window, 'open').mockImplementation(() => null);
       const originalCreateObjectURL = URL.createObjectURL;

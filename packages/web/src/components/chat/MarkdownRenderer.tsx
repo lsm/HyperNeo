@@ -1118,33 +1118,17 @@ export default function MarkdownRenderer({ content, class: className }: Markdown
     const container = containerRef.current;
     container.innerHTML = html;
 
-    const resolveZoomImage = (target: EventTarget | null): HTMLImageElement | null => {
-      if (target instanceof HTMLImageElement) return target;
-      if (target instanceof HTMLAnchorElement) {
-        const img = target.querySelector('img');
-        if (img && target.textContent?.trim() === '') return img;
-      }
-      return null;
-    };
-
     const handleImageActivate = (event: Event) => {
       if (event instanceof MouseEvent && event.type === 'auxclick' && event.button !== 1) return;
-      const img = resolveZoomImage(event.target);
+      const target = event.target instanceof Element ? event.target : null;
+      const anchor = target?.closest('a') || null;
+      if (!target || !anchor) return;
+      const img = target instanceof HTMLImageElement ? target : anchor.querySelector('img');
       if (!img) return;
+      if (isNavigatableHref(anchor.getAttribute('href') || '')) return;
       const src = img.getAttribute('src') || '';
-      if (!src) return;
-      const href = img.closest('a')?.getAttribute('href') || '';
-      if (href && href !== src) {
-        if (!isNavigatableHref(href)) {
-          event.preventDefault();
-          openImageAtFullSize(src);
-        }
-        return;
-      }
-      if (/^data:image\//i.test(src)) {
-        event.preventDefault();
-        openImageAtFullSize(src);
-      }
+      event.preventDefault();
+      if (src) openImageAtFullSize(src);
     };
     container.addEventListener('click', handleImageActivate);
     container.addEventListener('auxclick', handleImageActivate);

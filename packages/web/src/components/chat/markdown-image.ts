@@ -27,7 +27,7 @@ const delegatableHrefSchemes = new Set([
 ]);
 
 function normalizeUri(uri: string) {
-  return uri.replace(/[\t\n\r]+/g, '').trim();
+  return uri.replace(/^[\u0000-\u0020]+|[\u0000-\u0020]+$/g, '').replace(/[\t\n\r]/g, '');
 }
 
 function isAllowedImageSrc(src: string) {

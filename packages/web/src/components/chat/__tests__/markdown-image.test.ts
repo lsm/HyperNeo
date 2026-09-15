@@ -93,4 +93,13 @@ describe('markdown-image admission', () => {
       expect(isNavigatableHref(href)).toBe(false);
     }
   });
+
+  it('rejects control-character prefixes the browser URL parser would strip', () => {
+    expect(decideMarkdownImage({ src: '\u0000javascript:alert(1)', alt: 'x', title: '' })).toEqual({
+      kind: 'downgrade',
+      text: '![x](\u0000javascript:alert(1))',
+    });
+    expect(isNavigatableHref('\u0001javascript:alert(1)')).toBe(false);
+    expect(isNavigatableHref('\u0000https://e.com')).toBe(true);
+  });
 });
