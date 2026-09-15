@@ -120,7 +120,7 @@ import {
   DEFAULT_CUSTOM_AGENT_MODEL,
   resolveAgentInit,
 } from '../agents/custom-agent.ts';
-import type { EvolutionScopeService } from '../evolution-scope-service.ts';
+import type { EvolutionScopeService } from '../../evolution/scope-service.ts';
 import { TERMINAL_NODE_EXECUTION_STATUSES } from '../managers/node-execution-manager.ts';
 import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools.ts';
 import {

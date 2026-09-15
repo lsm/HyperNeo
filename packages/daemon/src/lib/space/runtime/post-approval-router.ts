@@ -58,7 +58,7 @@ export interface PostApprovalRouterDeps {
   resolveCompletionOutcome?: (task: SpaceTask) => UpdateSpaceTaskParams | null;
   goalService?: Pick<import('../../goals/service.ts').SpaceGoalService, 'handleTaskTerminal'>;
   evolutionScopeService?: Pick<
-    import('../evolution-scope-service.ts').EvolutionScopeService,
+    import('../../evolution/scope-service.ts').EvolutionScopeService,
     'captureCompletedTaskEvidence'
   >;
   validateRecordedPointer?: (args: {

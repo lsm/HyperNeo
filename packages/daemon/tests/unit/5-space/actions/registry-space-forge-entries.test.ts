@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import { createActionRegistry } from '../../../../src/lib/space/actions/registry.ts';
 import { createSpaceRegistryEntries } from '../../../../src/lib/space/actions/registry-space.ts';
-import { EvolutionEpisodeService } from '../../../../src/lib/space/evolution-episode-service.ts';
-import { EvolutionScopeService } from '../../../../src/lib/space/evolution-scope-service.ts';
+import { EvolutionEpisodeService } from '../../../../src/lib/evolution/episode-service.ts';
+import { EvolutionScopeService } from '../../../../src/lib/evolution/scope-service.ts';
 import { SpaceGoalService } from '../../../../src/lib/goals/service.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';

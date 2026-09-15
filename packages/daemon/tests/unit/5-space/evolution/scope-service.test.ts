@@ -1,18 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { Database } from '../../../src/storage/sqlite-compat';
+import { Database } from '../../../../src/storage/sqlite-compat';
 import {
   EvolutionScopeService,
-  extractArtifactDetail,
   mergeEvolutionPolicy,
-  rankLessonsByTaskRelevance,
-} from '../../../src/lib/space/evolution-scope-service';
-import { EvolutionRepository } from '../../../src/storage/repositories/evolution-repository';
-import { SpaceGoalRepository } from '../../../src/storage/repositories/space-goal-repository';
-import { SpaceRepository } from '../../../src/storage/repositories/space-repository';
-import { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository';
-import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository';
-import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space-workflow-repository';
-import { createSpaceTables } from '../helpers/space-test-db';
+} from '../../../../src/lib/evolution/scope-service';
+import { extractArtifactDetail } from '../../../../src/lib/evolution/scope-evidence-summaries';
+import { rankLessonsByTaskRelevance } from '../../../../src/lib/evolution/lesson-ranking';
+import { EvolutionRepository } from '../../../../src/storage/repositories/evolution-repository';
+import { SpaceGoalRepository } from '../../../../src/storage/repositories/space-goal-repository';
+import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
+import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
+import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
+import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
+import { createSpaceTables } from '../../helpers/space-test-db';
 
 describe('EvolutionScopeService', () => {
   let db: Database;
