@@ -1,5 +1,5 @@
 import { createDirectTaskStarter } from '../../../../src/lib/tasks/start-direct-task';
-import { decideReportableTerminal } from '../../../../src/lib/space/goals/reportable-terminal-gates.ts';
+import { decideReportableTerminal } from '../../../../src/lib/goals/reportable-terminal-gates.ts';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
 import { DirectTaskExecutionRepository } from '../../../../src/storage/repositories/direct-task-execution-repository';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session';

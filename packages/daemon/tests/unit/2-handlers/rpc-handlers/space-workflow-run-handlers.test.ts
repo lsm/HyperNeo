@@ -11,7 +11,7 @@ import type { SpaceWorkflowRunRepository } from '../../../../src/storage/reposit
 import type { WorkflowHookStateRepository } from '../../../../src/storage/repositories/workflow-hook-state-repository.ts';
 import type { SpaceTaskManager } from '../../../../src/lib/tasks/task-manager.ts';
 import type { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
-import type { SpaceWorktreeManager } from '../../../../src/lib/space/managers/space-worktree-manager.ts';
+import type { SpaceWorktreeManager } from '../../../../src/lib/workspaces/worktree-manager.ts';
 import type { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository.ts';
 import type { WorkflowRunArtifactCacheRepository } from '../../../../src/storage/repositories/workflow-run-artifact-cache-repository.ts';
 import type { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';

@@ -7,7 +7,7 @@ import type { SpawnExecutionFlowDeps } from '../../../../src/lib/tasks/spawn-flo
 import {
   WorkspaceNotGitRepositoryError,
   type SpaceWorktreeManager,
-} from '../../../../src/lib/space/managers/space-worktree-manager.ts';
+} from '../../../../src/lib/workspaces/worktree-manager.ts';
 import {
   isPermanentSpawnError,
   PermanentSpawnError,

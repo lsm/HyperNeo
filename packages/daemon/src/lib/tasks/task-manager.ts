@@ -42,7 +42,7 @@ import { SpaceTaskRepository } from '../../storage/repositories/space-task-repos
 import { SpaceWorktreeRepository } from '../../storage/repositories/space-worktree-repository.ts';
 import { ChannelCycleRepository } from '../../storage/repositories/channel-cycle-repository.ts';
 import { Logger } from '../logger.ts';
-import type { EvolutionScopeService } from '../space/evolution-scope-service.ts';
+import type { EvolutionScopeService } from '../evolution/scope-service.ts';
 import { arraysEqual } from '../utils/array-utils.ts';
 
 export type TaskExecutionPointers = Pick<

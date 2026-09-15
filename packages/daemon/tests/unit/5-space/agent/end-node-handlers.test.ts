@@ -8,8 +8,8 @@ import { TaskScheduleRepository } from '../../../../src/storage/repositories/tas
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository.ts';
 import { SpaceTaskManager } from '../../../../src/lib/tasks/task-manager.ts';
-import { ScheduleService } from '../../../../src/lib/space/schedule/schedule-service.ts';
-import { SpaceGoalService } from '../../../../src/lib/space/goals/goal-service.ts';
+import { ScheduleService } from '../../../../src/lib/schedule/schedule-service.ts';
+import { SpaceGoalService } from '../../../../src/lib/goals/service.ts';
 import {
   createEndNodeHandlers,
   createMarkCompleteHandler,
