@@ -562,7 +562,7 @@ describe('MarkdownRenderer', () => {
       });
     });
 
-    it('should reserve the copy-button gutter on rendered mermaid blocks', async () => {
+    it('should reserve the toolbar gutter on rendered mermaid blocks', async () => {
       const { container } = render(
         <MarkdownRenderer content={'```mermaid\ngraph TD\n  A-->B\n```'} />
       );
@@ -570,7 +570,7 @@ describe('MarkdownRenderer', () => {
         expect(mermaidRunMock).toHaveBeenCalled();
       });
       const mermaid = container.querySelector('.mermaid') as HTMLElement;
-      expect(mermaid?.style.paddingRight).toBe('2.5rem');
+      expect(mermaid?.style.paddingRight).toBe('5.75rem');
     });
 
     it('should preserve mermaid code blocks when parsing fails', async () => {
@@ -594,6 +594,82 @@ describe('MarkdownRenderer', () => {
         const code = container.querySelector('pre code.language-mermaid');
         expect(code?.textContent).toContain('A-->B');
         expect(container.querySelector('.mermaid')).toBeFalsy();
+      });
+    });
+
+    it('should attach an always-visible expand toolbar to each rendered mermaid figure', async () => {
+      const { container } = render(
+        <MarkdownRenderer
+          content={'```mermaid\ngraph TD\n  A-->B\n```\n\n```mermaid\ngraph TD\n  C-->D\n```'}
+        />
+      );
+      await waitFor(() => {
+        expect(container.querySelectorAll('.mermaid')).toHaveLength(2);
+      });
+      const toolbars = container.querySelectorAll('.mermaid-figure-toolbar');
+      expect(toolbars).toHaveLength(2);
+      toolbars.forEach((toolbar) => {
+        expect(toolbar.querySelector('button[title="Expand diagram"]')).toBeTruthy();
+      });
+      const mount = toolbars[0].parentElement;
+      expect(mount?.className).not.toContain('opacity-0');
+      expect(mount?.className).not.toContain('group-hover');
+    });
+
+    it('should not attach an expand toolbar when the mermaid block fails to parse', async () => {
+      mermaidParseMock.mockRejectedValueOnce(new Error('invalid mermaid'));
+      const { container } = render(
+        <MarkdownRenderer content={'```mermaid\ngraph TD;\n  A--\n```'} />
+      );
+      await waitFor(() => {
+        expect(container.querySelector('pre code.language-mermaid')).toBeTruthy();
+      });
+      expect(container.querySelector('.mermaid-figure-toolbar')).toBeFalsy();
+    });
+
+    it('should open the fullscreen overlay outside the card when expand is clicked', async () => {
+      const { container } = render(
+        <MarkdownRenderer content={'```mermaid\ngraph TD\n  A-->B\n```'} />
+      );
+      await waitFor(() => {
+        expect(container.querySelector('.mermaid')).toBeTruthy();
+      });
+      container
+        .querySelector('button[title="Expand diagram"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await waitFor(() => {
+        expect(document.querySelector('.mermaid-overlay')).toBeTruthy();
+      });
+      expect(container.querySelector('.mermaid-overlay')).toBeFalsy();
+      expect(document.querySelector('.mermaid-overlay')?.textContent).toContain('A-->B');
+      document
+        .querySelector('.mermaid-overlay button[title="Close"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await waitFor(() => {
+        expect(document.querySelector('.mermaid-overlay')).toBeFalsy();
+      });
+    });
+
+    it('should keep an open viewer mounted when the renderer unmounts', async () => {
+      const { container, unmount } = render(
+        <MarkdownRenderer content={'```mermaid\ngraph TD\n  A-->B\n```'} />
+      );
+      await waitFor(() => {
+        expect(container.querySelector('.mermaid-figure-toolbar')).toBeTruthy();
+      });
+      container
+        .querySelector('button[title="Expand diagram"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await waitFor(() => {
+        expect(document.querySelector('.mermaid-overlay')).toBeTruthy();
+      });
+      unmount();
+      expect(document.querySelector('.mermaid-overlay')).toBeTruthy();
+      document
+        .querySelector('.mermaid-overlay button[title="Close"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await waitFor(() => {
+        expect(document.querySelector('.mermaid-overlay')).toBeFalsy();
       });
     });
   });
