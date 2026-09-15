@@ -368,7 +368,7 @@ describe('resolveSpaceMcpSessionPolicy', () => {
     expect(policy.requiredServers).toEqual([]);
   });
 
-  test('resolves non-Space sessions to universal_read requiring the dispatcher server', () => {
+  test('resolves non-Space sessions to universal_read with no required servers', () => {
     const policy = resolveSpaceMcpSessionPolicy(makeSession({ context: undefined }));
 
     expect(policy).toMatchObject({
@@ -378,7 +378,7 @@ describe('resolveSpaceMcpSessionPolicy', () => {
       isWorkflowWorker: false,
     });
     expect(policy.spaceId).toBeUndefined();
-    expect(policy.requiredServers).toEqual(['space-actions']);
+    expect(policy.requiredServers).toEqual([]);
   });
 });
 

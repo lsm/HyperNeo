@@ -18,7 +18,7 @@ const sessionOf = (
 ): FakeSession => ({ getSessionData: () => ({ status, config }) });
 
 const WORKFLOW_ID = 'space:space-1:task:task-1:exec:e1';
-const SPACE_ACTIONS_CONFIG = { mcpServers: { 'space-actions': { type: 'sdk' } } };
+const WORKER_OPERATIONS_CONFIG = { workerOperations: true };
 
 function makeTask(overrides: Partial<SpaceTask> = {}): SpaceTask {
   return {
@@ -195,11 +195,11 @@ describe('createDefaultSessionResolutionDeps', () => {
       }
     });
 
-    test('indexed workflow sub-session gates on the runtime space-actions server', async () => {
+    test('indexed workflow sub-session gates on runtime worker operations', async () => {
       const bare = sessionOf('active', { mcpServers: {} });
       const bareHarness = makeHarness({ indexed: () => bare, cached: () => bare });
       expect(await bareHarness.deps.getSession(WORKFLOW_ID)).toBeNull();
-      const attached = sessionOf('active', SPACE_ACTIONS_CONFIG);
+      const attached = sessionOf('active', WORKER_OPERATIONS_CONFIG);
       const attachedHarness = makeHarness({ indexed: () => attached, cached: () => attached });
       expect(await attachedHarness.deps.getSession(WORKFLOW_ID)).toBe(attached);
     });
@@ -224,7 +224,7 @@ describe('createDefaultSessionResolutionDeps', () => {
 
   describe('rehydrateSubSession', () => {
     test('delegates once; unavailable restores resolve null', async () => {
-      const restored = sessionOf('active', SPACE_ACTIONS_CONFIG);
+      const restored = sessionOf('active', WORKER_OPERATIONS_CONFIG);
       const { deps, calls } = makeHarness({ rehydrated: restored });
       expect(await deps.rehydrateSubSession(WORKFLOW_ID)).toBe(restored);
       expect(calls.rehydrateSubSessionById).toEqual([WORKFLOW_ID]);
