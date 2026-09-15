@@ -89,12 +89,15 @@ export function createSpaceOperationRegistryProvider(
         ),
       readTaskByNumber: tasks.taskRepo?.getTaskByNumber
         ? (spaceId, taskNumber, caller) =>
-            readScopedTaskByNumber(
-              caller,
-              tasks,
-              (id, number) => tasks.taskRepo?.getTaskByNumber(id, number) ?? null,
-              spaceId,
-              taskNumber
+            stampActiveAttempt(
+              database.getDatabase(),
+              readScopedTaskByNumber(
+                caller,
+                tasks,
+                (id, number) => tasks.taskRepo?.getTaskByNumber(id, number) ?? null,
+                spaceId,
+                taskNumber
+              )
             )
         : undefined,
       listTasks: (input, caller) =>
