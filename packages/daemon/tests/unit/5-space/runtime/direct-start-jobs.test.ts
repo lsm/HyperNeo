@@ -640,6 +640,23 @@ test('a successful claim notifies onTaskClaimed so clients can refresh', async (
   expect(attempts.getActive(taskId)?.phase).toBe('reserved');
 });
 
+test('a replayed claim of the same attempt notifies onTaskClaimed only once', async () => {
+  const claimed: string[] = [];
+  const operation = createStartTaskOperation(
+    () => db,
+    jobs,
+    {},
+    { onTaskReopened: () => {}, onTaskClaimed: (id) => claimed.push(id) }
+  );
+  expect(
+    await operation.execute({ taskId, requestKey: 'claim-replay' }, { source: 'rpc' })
+  ).toMatchObject({ accepted: true });
+  expect(
+    await operation.execute({ taskId, requestKey: 'claim-replay' }, { source: 'rpc' })
+  ).toMatchObject({ accepted: true });
+  expect(claimed).toEqual([taskId]);
+});
+
 test.each(['blocked', 'cancelled', 'stopped'] as const)(
   'shared start derives verified %s retry identity and replays its receipt',
   async (status) => {

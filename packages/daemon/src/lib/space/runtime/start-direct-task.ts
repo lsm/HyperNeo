@@ -75,6 +75,7 @@ export function claimDirectStart(
   const unavailable = { reason: { started: false as const, reason: 'direct_start_unavailable' } };
   if (!input.requestKey.trim() || (input.reviewRejection && !input.retryFrom)) return unavailable;
   const { attemptId, sessionId } = directTaskStartIdentity(input);
+  let claimedTaskId: string | null = null;
   reactiveDb?.beginTransaction();
   try {
     const result = db.transaction(() => {
@@ -218,8 +219,10 @@ export function claimDirectStart(
         if (!tasks.updateTask(task.id, { status: 'open' }, 'draft'))
           throw new Error('Direct start lost draft publication');
       }
+      const replayed = attempts.get(attemptId) !== null;
       const attempt = attempts.claim(task.id, attemptId, sessionId);
       if (!attempt) throw new Error('Direct start lost its atomic claim');
+      if (!replayed) claimedTaskId = attempt.taskId;
       reactiveDb?.notifyChange('space_tasks');
       if (startJobs)
         enqueueDirectStartRequest(
@@ -233,7 +236,7 @@ export function claimDirectStart(
       return { value: attempt };
     }, 'immediate')();
     reactiveDb?.commitTransaction();
-    if ('value' in result && result.value) onTaskClaimed?.(result.value.taskId);
+    if (claimedTaskId) onTaskClaimed?.(claimedTaskId);
     return result;
   } catch (error) {
     reactiveDb?.abortTransaction();
