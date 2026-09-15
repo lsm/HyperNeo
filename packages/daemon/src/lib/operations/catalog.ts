@@ -9,6 +9,9 @@ import type { TransitionStandaloneTaskInput } from '../../storage/tasks/transiti
 import { createGetTaskOperation } from './task-get.ts';
 import { createDiscoveryOperations } from './discovery.ts';
 import { createSendMessageOperation } from './message-send.ts';
+import { createAgentGetOperation } from './agents/agent-get.ts';
+import { createAgentListOperation } from './agents/agent-list.ts';
+import type { AgentOperationDependencies } from './agents/agent-catalog.ts';
 import {
   createOperationRegistry,
   type OperationRegistry,
@@ -39,9 +42,12 @@ export interface TaskOperationDependencies {
   setDependencies: Parameters<typeof createSetTaskDependenciesOperation>[0];
 }
 
+export type { AgentOperationDependencies };
+
 export function createDaemonOperationCatalog(
   jobQueue: JobQueueRepository,
-  tasks: TaskOperationDependencies
+  tasks: TaskOperationDependencies,
+  agents: AgentOperationDependencies = {}
 ): OperationRegistry {
   const registry: OperationRegistry = createOperationRegistry([
     createSendMessageOperation(jobQueue),
@@ -61,6 +67,8 @@ export function createDaemonOperationCatalog(
     ...(tasks.setPreferredWorkflow ? [tasks.setPreferredWorkflow] : []),
     ...(tasks.sendSessionMessage ? [tasks.sendSessionMessage] : []),
     ...(tasks.sendTaskMessage ? [tasks.sendTaskMessage] : []),
+    ...(agents.listAgents ? [createAgentListOperation(agents.listAgents)] : []),
+    ...(agents.getAgent ? [createAgentGetOperation(agents.getAgent)] : []),
     ...createDiscoveryOperations(() => registry),
   ]);
   return registry;

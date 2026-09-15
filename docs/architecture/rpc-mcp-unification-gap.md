@@ -109,19 +109,19 @@ consequences follow directly:
 ### What the decision commits to
 
 The action surface is **104 actions** (89 in `registry-space`, 22 in `registry-node`, with
-overlap) against **15 operations** plus 2 discovery ops. Grouped by the subsystem each would
+overlap) against **19 operations** plus 2 discovery ops. Grouped by the subsystem each would
 port to:
 
-| Family | Actions |
-|---|---|
-| task | 25 |
-| agent | 20 |
-| evolve (scope, evidence, lesson, proposal) | 12 |
-| goal | 11 |
-| events + subscriptions | 5 |
-| workflows + templates + nodes | 4 |
-| messaging | 3 |
-| unclassified | 24 |
+| Subsystem | Family | Actions |
+|---|---|---|
+| Tasks | task | 25 |
+| Agents | agent | 20 |
+| Evolve | evolve (scope, evidence, lesson, proposal) | 12 |
+| Goals | goal | 11 |
+| Events | events + subscriptions | 5 |
+| Workflows | workflows + templates + nodes | 4 |
+| Messaging | messaging | 3 |
+| — | unclassified | 24 |
 
 So the pre-invocation pipeline is the smaller half of the work. The larger half is porting the
 whole 104-action surface onto operations — 89 in `registry-space`, 22 in `registry-node`, 7 of

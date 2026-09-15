@@ -70,6 +70,7 @@ flowchart TB
       Messaging["messaging"]
       Workflows["workflows"]
       Goals["goals"]
+      Agents["agents"]
       Evolve["evolve"]
       Memory["memory"]
       Events["external events"]
@@ -121,6 +122,7 @@ flowchart TB
   OpRegistry --> Messaging
   OpRegistry --> Workflows
   OpRegistry --> Goals
+  OpRegistry --> Agents
   OpRegistry --> Evolve
   OpRegistry --> Memory
   OpRegistry --> Events
@@ -133,6 +135,7 @@ flowchart TB
   Messaging --> DB
   Workflows --> DB
   Goals --> DB
+  Agents --> DB
   Evolve --> DB
   Memory --> DB
   Events --> DB
@@ -147,7 +150,7 @@ flowchart TB
   class RpcAuth,RpcScope,RpcMatch,RpcRate,RpcAudit rpcpolicy
   class McpPrincipal,McpScope,McpMatch,McpSafety,McpRole,McpAutonomy,McpRate,McpAudit mcppolicy
   class OpRegistry ops
-  class Tasks,Messaging,Workflows,Goals,Evolve,Memory,Events,Ext subsystem
+  class Tasks,Messaging,Workflows,Goals,Agents,Evolve,Memory,Events,Ext subsystem
   class SpaceOrganizer,Scope,Permission space
   class DB,Reactive persist
   class Ext ext

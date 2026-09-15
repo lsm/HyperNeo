@@ -37,6 +37,7 @@ import {
 } from './list-task-members.ts';
 import { createArchiveTaskOperation, type ArchiveTaskDependencies } from './archive-task.ts';
 import { listScopedTasks, readScopedTask, readScopedTaskByNumber } from './scoped-task-reads.ts';
+import { readScopedAgent, listScopedAgents } from './scoped-agent-reads.ts';
 import { stampActiveAttempt, stampActiveAttempts } from './direct-attempt-flag.ts';
 import {
   createSetPreferredWorkflowOperation,
@@ -197,6 +198,26 @@ export function createSpaceOperationRegistryProvider(
           ...tasks,
           db: database.getDatabase(),
         })(input, caller),
+      listAgents: (spaceId: string, caller) =>
+        listScopedAgents(
+          caller,
+          {
+            getSession: (sessionId) => database.getSession(sessionId),
+            longHorizonAgentRepo: database.getLongHorizonAgentRepo(),
+          },
+          (id) => database.getLongHorizonAgentRepo().listBySpaceId(id),
+          spaceId
+        ),
+      getAgent: (agentId: string, caller) =>
+        readScopedAgent(
+          caller,
+          {
+            getSession: (sessionId) => database.getSession(sessionId),
+            longHorizonAgentRepo: database.getLongHorizonAgentRepo(),
+          },
+          (id) => database.getLongHorizonAgentRepo().getById(id),
+          agentId
+        ),
       sendSessionMessage: tasks.sessionManager
         ? createSendSessionMessageOperation({
             getSessionRow: (spaceId, sessionId) => {
