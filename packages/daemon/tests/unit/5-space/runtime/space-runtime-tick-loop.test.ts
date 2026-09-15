@@ -1,15 +1,15 @@
-import { createDirectTaskStarter } from '../../../../src/lib/space/runtime/start-direct-task';
+import { createDirectTaskStarter } from '../../../../src/lib/tasks/start-direct-task';
 import { decideReportableTerminal } from '../../../../src/lib/goals/reportable-terminal-gates.ts';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
 import { DirectTaskExecutionRepository } from '../../../../src/storage/repositories/direct-task-execution-repository';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session';
-import { availableTaskSlots } from '../../../../src/lib/space/runtime/task-capacity.ts';
+import { availableTaskSlots } from '../../../../src/lib/tasks/capacity.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { NodeExecution, SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
 import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
-import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
+import { SpaceTaskManager } from '../../../../src/lib/tasks/task-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import { MAX_BLOCKED_RUN_RETRIES } from '../../../../src/lib/space/runtime/constants.ts';
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';

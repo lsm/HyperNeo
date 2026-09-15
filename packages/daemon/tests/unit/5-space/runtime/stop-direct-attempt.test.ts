@@ -14,7 +14,7 @@ import {
   directSessionIsDown,
   requireDirectStopTarget,
   verifyDirectAttemptStop,
-} from '../../../../src/lib/space/runtime/stop-direct-attempt';
+} from '../../../../src/lib/tasks/stop-direct-attempt';
 
 let sql: Database;
 let attempts: DirectTaskExecutionRepository;

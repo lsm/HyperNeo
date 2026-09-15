@@ -1,4 +1,4 @@
-import type { ArchiveTaskRejection } from '../operations/archive-task.ts';
+import type { ArchiveTaskRejection } from '../../tasks/archive-task.ts';
 
 type ArchiveParams = { task_id: string };
 

@@ -6,13 +6,13 @@ import type {
   SpaceWorkflow,
   SpaceWorkflowRun,
 } from '@hyperneo/shared';
-import type { SpawnExecutionFlowDeps } from '../../../../src/lib/space/runtime/spawn-flow';
+import type { SpawnExecutionFlowDeps } from '../../../../src/lib/tasks/spawn-flow';
 import {
   isSpawnFlowReusedSession,
   isSpawnFlowWaitConcurrent,
   runSpawnExecutionFlow,
-} from '../../../../src/lib/space/runtime/spawn-flow';
-import { resolveWorkflowNodeSlot } from '../../../../src/lib/space/runtime/spawn-slot-resolution';
+} from '../../../../src/lib/tasks/spawn-flow';
+import { resolveWorkflowNodeSlot } from '../../../../src/lib/tasks/spawn-slot-resolution';
 
 const TASK_ID = 'task-1240';
 const RUN_ID = 'run-1240';

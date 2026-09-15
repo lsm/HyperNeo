@@ -3,11 +3,11 @@ import {
   createDatabaseDirectTaskQueryAdmission,
   createDirectTaskQueryAdmission,
   requireRunningDirectTaskQuery,
-} from '../../../../src/lib/space/runtime/direct-task-query-admission';
+} from '../../../../src/lib/tasks/direct-task-query-admission';
 import {
   loadDirectTaskWorkerEvidence,
   requireDirectTaskWorkerIdentity,
-} from '../../../../src/lib/space/runtime/direct-task-worker-identity';
+} from '../../../../src/lib/tasks/direct-task-worker-identity';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { DirectTaskExecutionRepository } from '../../../../src/storage/repositories/direct-task-execution-repository';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';

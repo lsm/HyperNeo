@@ -131,7 +131,7 @@ describe('buildMeasuredFromJunit', () => {
         path: 'junit-a.xml',
         xml: junitXml([
           {
-            name: 'tests/unit/5-space/runtime/agent-message-routing-gates.test.ts',
+            name: 'tests/unit/5-space/runtime/routing-gates.test.ts',
             time: 1.234,
             tests: 2,
           },
@@ -142,7 +142,7 @@ describe('buildMeasuredFromJunit', () => {
         path: 'junit-b.xml',
         xml: junitXml([
           {
-            name: 'tests/unit/5-space/runtime/agent-message-routing-gates.test.ts',
+            name: 'tests/unit/5-space/runtime/routing-gates.test.ts',
             time: 2.5,
             tests: 1,
           },
@@ -150,9 +150,9 @@ describe('buildMeasuredFromJunit', () => {
       },
     ]);
 
-    expect(
-      measured.get('packages/daemon/tests/unit/5-space/runtime/agent-message-routing-gates.test.ts')
-    ).toBe(2500);
+    expect(measured.get('packages/daemon/tests/unit/5-space/runtime/routing-gates.test.ts')).toBe(
+      2500
+    );
     expect(unresolved).toEqual(['nowhere/x.test.ts']);
   });
 
@@ -162,7 +162,7 @@ describe('buildMeasuredFromJunit', () => {
         path: 'junit.xml',
         xml: junitXml([
           {
-            name: 'tests/unit/5-space/runtime/agent-message-routing-gates.test.ts',
+            name: 'tests/unit/5-space/runtime/routing-gates.test.ts',
             time: 0.0004,
             tests: 1,
           },
@@ -170,9 +170,9 @@ describe('buildMeasuredFromJunit', () => {
       },
     ]);
 
-    expect(
-      measured.has('packages/daemon/tests/unit/5-space/runtime/agent-message-routing-gates.test.ts')
-    ).toBe(false);
+    expect(measured.has('packages/daemon/tests/unit/5-space/runtime/routing-gates.test.ts')).toBe(
+      false
+    );
   });
 });
 
@@ -203,7 +203,7 @@ describe('main', () => {
       junitPath,
       junitXml([
         {
-          name: 'tests/unit/5-space/runtime/agent-message-routing-gates.test.ts',
+          name: 'tests/unit/5-space/runtime/routing-gates.test.ts',
           time: 4.0,
           tests: 3,
         },
@@ -228,7 +228,7 @@ describe('main', () => {
     expect(out.join('\n')).toContain('packed:');
     expect(out.join('\n')).toContain('# shard-weights manifest');
     expect(out.join('\n')).toContain(
-      '4000\tpackages/daemon/tests/unit/5-space/runtime/agent-message-routing-gates.test.ts'
+      '4000\tpackages/daemon/tests/unit/5-space/runtime/routing-gates.test.ts'
     );
     expect(warn.join('\n')).toContain('references manifest scripts/shard-weights.tsv');
     expect(warn.join('\n')).toContain('hash-fallback');
@@ -266,7 +266,7 @@ describe('main', () => {
       junitPath,
       junitXml([
         {
-          name: 'tests/unit/5-space/runtime/agent-message-routing-gates.test.ts',
+          name: 'tests/unit/5-space/runtime/routing-gates.test.ts',
           time: 4.0,
           tests: 3,
         },
@@ -275,7 +275,7 @@ describe('main', () => {
     const outPath = join(dir, 'shard-weights.tsv');
     writeFileSync(
       outPath,
-      '# existing\n777\tpackages/daemon/tests/unit/5-space/runtime/agent-message-routing-gates.test.ts\n500\tpackages/daemon/tests/unit/1-core/core/main-import-order.test.ts\n'
+      '# existing\n777\tpackages/daemon/tests/unit/5-space/runtime/routing-gates.test.ts\n500\tpackages/daemon/tests/unit/1-core/core/main-import-order.test.ts\n'
     );
     const out: string[] = [];
     const code = main(['--suite', 'daemon-unit', '--out', outPath, junitPath], {
@@ -286,7 +286,7 @@ describe('main', () => {
     expect(code).toBe(0);
     const manifest = readFileSync(outPath, 'utf8');
     expect(manifest).toContain(
-      '4000\tpackages/daemon/tests/unit/5-space/runtime/agent-message-routing-gates.test.ts'
+      '4000\tpackages/daemon/tests/unit/5-space/runtime/routing-gates.test.ts'
     );
     expect(manifest).toContain(
       '500\tpackages/daemon/tests/unit/1-core/core/main-import-order.test.ts'

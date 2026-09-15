@@ -12,12 +12,12 @@ import {
 import { createActionRegistry } from '../../../../src/lib/space/actions/registry.ts';
 import { createSpaceRegistryEntries } from '../../../../src/lib/space/actions/registry-space.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
-import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
+import { SpaceTaskManager } from '../../../../src/lib/tasks/task-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
-import { createArchiveTaskOperation } from '../../../../src/lib/space/operations/archive-task.ts';
-import { createCancelTaskOperation } from '../../../../src/lib/space/operations/cancel-task.ts';
-import { SpaceCreateTaskInputSchema } from '../../../../src/lib/space/operations/create-task-target.ts';
-import { createSpaceTransitionTaskOperation } from '../../../../src/lib/space/operations/transition-task.ts';
+import { createArchiveTaskOperation } from '../../../../src/lib/tasks/archive-task.ts';
+import { createCancelTaskOperation } from '../../../../src/lib/tasks/cancel-task.ts';
+import { SpaceCreateTaskInputSchema } from '../../../../src/lib/tasks/create-task-target.ts';
+import { createSpaceTransitionTaskOperation } from '../../../../src/lib/tasks/transition-task.ts';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import {

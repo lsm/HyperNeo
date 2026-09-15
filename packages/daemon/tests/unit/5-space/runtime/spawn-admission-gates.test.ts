@@ -3,7 +3,7 @@ import type { SpaceTaskStatus } from '@hyperneo/shared';
 import {
   decideSpawnExecutionAdmission,
   type SpawnExecutionAdmissionDecision,
-} from '../../../../src/lib/space/runtime/spawn-admission-gates';
+} from '../../../../src/lib/tasks/spawn-admission-gates';
 
 const ALL_STATUSES: SpaceTaskStatus[] = [
   'draft',

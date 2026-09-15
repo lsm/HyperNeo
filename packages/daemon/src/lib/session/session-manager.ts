@@ -1,4 +1,4 @@
-import type { DirectStopVerificationResult } from '../space/runtime/stop-direct-attempt.ts';
+import type { DirectStopVerificationResult } from '../tasks/stop-direct-attempt.ts';
 import { createDatabaseOperationCatalog } from '../operations/database-catalog.ts';
 import type { OperationRegistry, OperationRegistryProvider } from '../operations/registry.ts';
 import { NO_CALLER_SCOPE, type CallerScopeResolver } from '../operations/caller.ts';
