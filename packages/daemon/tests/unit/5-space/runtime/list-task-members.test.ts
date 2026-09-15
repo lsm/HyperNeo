@@ -8,7 +8,7 @@ import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/sp
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
-import { createListTaskMembersOperation } from '../../../../src/lib/space/operations/list-task-members';
+import { createListTaskMembersOperation } from '../../../../src/lib/tasks/list-task-members';
 import { readTaskCore } from '../../../../src/storage/tasks/task-reader';
 import { createStandaloneTask } from '../../../../src/storage/tasks/create-task';
 import { createDatabaseOperationCatalog } from '../../../../src/lib/operations/database-catalog';

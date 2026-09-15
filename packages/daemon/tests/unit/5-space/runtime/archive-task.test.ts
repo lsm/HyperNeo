@@ -9,8 +9,8 @@ import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import { createStandaloneTask } from '../../../../src/storage/tasks/create-task';
-import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager';
-import { createSpaceOperationRegistryProvider } from '../../../../src/lib/space/operations/registry';
+import { SpaceTaskManager } from '../../../../src/lib/tasks/task-manager';
+import { createSpaceOperationRegistryProvider } from '../../../../src/lib/tasks/operations';
 import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-adapter';
 import { createOperationRpcHandler } from '../../../../src/lib/operations/rpc-adapter';
 import { createSpaceTables } from '../../helpers/space-test-db';

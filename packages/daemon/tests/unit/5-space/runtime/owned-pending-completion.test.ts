@@ -3,14 +3,14 @@ import type { NodeExecution, Session, SpaceLongHorizonAgent, SpaceTask } from '@
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry';
 import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session';
-import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager';
+import { SpaceTaskManager } from '../../../../src/lib/tasks/task-manager';
 import {
   createOwnedPendingCompletionOperation,
   loadCompletionTarget,
   type OwnedPendingCompletionDependencies,
   requireCompletionTarget,
   resolveCompletionActor,
-} from '../../../../src/lib/space/operations/owned-pending-completion';
+} from '../../../../src/lib/tasks/owned-pending-completion';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';

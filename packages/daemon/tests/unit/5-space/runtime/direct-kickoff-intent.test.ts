@@ -11,7 +11,7 @@ import {
   readDirectKickoffIntent,
   requireDirectKickoffClaim,
   type DirectKickoffInput,
-} from '../../../../src/lib/space/runtime/direct-kickoff-intent';
+} from '../../../../src/lib/tasks/direct-kickoff-intent';
 import { parseMailboxEntry } from '../../../../src/lib/mailbox/entry';
 import { runMigration252 } from '../../../../src/storage/schema/m252-direct-kickoff-intents';
 import { createSpaceTables } from '../../helpers/space-test-db';

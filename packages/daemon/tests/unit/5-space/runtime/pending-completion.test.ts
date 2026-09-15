@@ -1,4 +1,4 @@
-import { PendingCompletionSupersededError } from '../../../../src/lib/space/operations/pending-completion-guard';
+import { PendingCompletionSupersededError } from '../../../../src/lib/tasks/pending-completion-guard';
 import { expect, mock, test } from 'bun:test';
 import type { SpaceTask } from '@hyperneo/shared';
 import {
@@ -9,7 +9,7 @@ import {
   readPendingCompletionResult,
   rejectPendingCompletion,
   type PendingCompletionDependencies,
-} from '../../../../src/lib/space/operations/pending-completion';
+} from '../../../../src/lib/tasks/pending-completion';
 import { mapPostApprovalDispatchWarning } from '../../../../src/lib/space/runtime/post-approval-router';
 
 const approved = { id: 'task', status: 'approved', spaceId: 'space' } as SpaceTask;

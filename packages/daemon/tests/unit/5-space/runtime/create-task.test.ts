@@ -2,11 +2,11 @@ import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
 import type { SpaceTask } from '@hyperneo/shared';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry';
-import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager';
+import { SpaceTaskManager } from '../../../../src/lib/tasks/task-manager';
 import {
   createSpaceCreateTaskOperation,
   type SpaceCreateTaskDependencies,
-} from '../../../../src/lib/space/operations/create-task';
+} from '../../../../src/lib/tasks/create-task';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';

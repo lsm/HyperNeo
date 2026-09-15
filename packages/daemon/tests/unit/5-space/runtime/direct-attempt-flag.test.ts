@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from 'bun:test';
 import {
   stampActiveAttempt,
   stampActiveAttempts,
-} from '../../../../src/lib/space/operations/direct-attempt-flag';
+} from '../../../../src/lib/tasks/direct-attempt-flag';
 import { DirectTaskExecutionRepository } from '../../../../src/storage/repositories/direct-task-execution-repository';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';

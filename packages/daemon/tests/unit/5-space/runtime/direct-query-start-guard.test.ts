@@ -9,9 +9,9 @@ import { SpaceRepository } from '../../../../src/storage/repositories/space-repo
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
-import { createDirectKickoffRecorder } from '../../../../src/lib/space/runtime/direct-kickoff-intent';
-import { createDirectKickoffReconciler } from '../../../../src/lib/space/runtime/reconcile-direct-kickoff';
-import { createDirectQueryStartGuard } from '../../../../src/lib/space/runtime/direct-query-start-guard';
+import { createDirectKickoffRecorder } from '../../../../src/lib/tasks/direct-kickoff-intent';
+import { createDirectKickoffReconciler } from '../../../../src/lib/tasks/reconcile-direct-kickoff';
+import { createDirectQueryStartGuard } from '../../../../src/lib/tasks/direct-query-start-guard';
 import { planMailboxAdmission } from '../../../../src/lib/mailbox/admission-plan';
 import { ensurePrompt } from '../../../../src/lib/agent/message-delivery-outbox';
 import type { MailboxEntry } from '../../../../src/lib/mailbox/entry';

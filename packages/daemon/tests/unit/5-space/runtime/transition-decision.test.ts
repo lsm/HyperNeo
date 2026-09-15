@@ -11,7 +11,7 @@ import {
   type SpaceTaskTransitionDecision,
   type SpaceTaskTransitionDecisionInput,
   stampApproval,
-} from '../../../../src/lib/space/operations/transition-decision';
+} from '../../../../src/lib/tasks/transition-decision';
 import type { TaskUpdateRouting } from '../../../../src/lib/space/tools/task-transition-routing';
 
 type Case = [string, SpaceTaskTransitionDecisionInput, SpaceTaskTransitionDecision];

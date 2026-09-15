@@ -1,8 +1,8 @@
 import type { CallContext } from '@hyperneo/shared';
 import type { Database as AppDatabase } from '../../../../src/storage/database';
-import { createSpaceOperationRegistryProvider } from '../../../../src/lib/space/operations/registry';
+import { createSpaceOperationRegistryProvider } from '../../../../src/lib/tasks/operations';
 import { createDatabaseOperationCatalog } from '../../../../src/lib/operations/database-catalog';
-import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager';
+import { SpaceTaskManager } from '../../../../src/lib/tasks/task-manager';
 import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-adapter';
 import { createOperationRpcHandler } from '../../../../src/lib/operations/rpc-adapter';
 import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
@@ -16,12 +16,12 @@ import { JobQueueRepository } from '../../../../src/storage/repositories/job-que
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
-import { createDirectTaskStarter } from '../../../../src/lib/space/runtime/start-direct-task';
-import { createSubmitTaskForReviewOperation } from '../../../../src/lib/space/operations/submit-for-review';
+import { createDirectTaskStarter } from '../../../../src/lib/tasks/start-direct-task';
+import { createSubmitTaskForReviewOperation } from '../../../../src/lib/tasks/submit-for-review';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry';
-import { readDirectFinalizationRequest } from '../../../../src/lib/space/runtime/finalize-direct-attempt';
+import { readDirectFinalizationRequest } from '../../../../src/lib/tasks/finalize-direct-attempt';
 import { SessionManager } from '../../../../src/lib/session/session-manager';
-import { createDirectOutcomeHandler } from '../../../../src/lib/space/runtime/direct-outcome-jobs';
+import { createDirectOutcomeHandler } from '../../../../src/lib/tasks/direct-outcome-jobs';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session';
 
 let db: Database;

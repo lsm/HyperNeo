@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
-import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager';
+import { SpaceTaskManager } from '../../../../src/lib/tasks/task-manager';
 import {
   admitCaller,
   loadTask,
   rejectActiveDirectAttempt,
   resolveOwner,
   type SpaceTransitionAdmissionDependencies,
-} from '../../../../src/lib/space/operations/transition-task-admission';
+} from '../../../../src/lib/tasks/transition-task-admission';
 import { DirectTaskExecutionRepository } from '../../../../src/storage/repositories/direct-task-execution-repository';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';

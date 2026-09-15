@@ -2,16 +2,13 @@ import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { SpaceTaskStatus } from '@hyperneo/shared';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry';
-import {
-  SpaceTaskManager,
-  StaleTaskGuardError,
-} from '../../../../src/lib/space/managers/space-task-manager';
+import { SpaceTaskManager, StaleTaskGuardError } from '../../../../src/lib/tasks/task-manager';
 import {
   createSpaceTransitionTaskOperation,
   decide,
   type SpaceTransitionTaskDependencies,
   writeStatus,
-} from '../../../../src/lib/space/operations/transition-task';
+} from '../../../../src/lib/tasks/transition-task';
 import { DirectTaskExecutionRepository } from '../../../../src/storage/repositories/direct-task-execution-repository';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';

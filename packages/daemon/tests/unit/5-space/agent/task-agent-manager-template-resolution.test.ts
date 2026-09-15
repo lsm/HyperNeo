@@ -19,7 +19,7 @@ import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
 import type {
   NodeAgentSpawnConfig,
   NodeAgentTemplateSource,
-} from '../../../../src/lib/space/runtime/spawn-slot-resolution.ts';
+} from '../../../../src/lib/tasks/spawn-slot-resolution.ts';
 import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import {
   createAgentTemplateResolver,
