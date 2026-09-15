@@ -82,7 +82,7 @@ Rules for every slice:
 
 ADRs in `docs/adr/` (0001 live query + job queue, 0002 job-queue migration, 0003 workflow engine, 0004 superpipe, 0005 capability dispatcher, 0006 shared operations). `docs/architecture/` holds the RPC/MCP unification docs and the module decomposition program.
 
-**Daemon.** `DaemonApp` (`packages/daemon/src/app.ts`) wires managers, background jobs, and external-event extensions; core areas are `lib/agent`, `providers`, `session`, `rpc-handlers`, `operations`, `space`. MessageHub layers under `packages/shared/src/message-hub/`: `MessageHubRouter` → `MessageHub` → `WebSocketServerTransport` (daemon-side); initialize in that order. SDK messages reach the web through LiveQuery `messages.bySession`; `SessionStore` applies snapshots/deltas and keeps optimistic messages via `pendingLocalMessageUuids`.
+**Daemon.** `DaemonApp` (`packages/daemon/src/app.ts`) wires managers, background jobs, and external-event extensions; core areas are `lib/agent`, `providers`, `session`, `rpc-handlers`, `operations`, `space`. MessageHub layers under `packages/shared/src/message-hub/`: `MessageHubRouter` → `MessageHub` → `WebSocketServerTransport` (daemon-side); initialize in that order. SDK messages reach the web through LiveQuery `messages.bySession`; `SessionStore` subscribes, applies snapshot and delta events, and re-syncs on reconnect or `MESSAGE_TOO_LARGE`.
 
 **Storage.** `packages/daemon/src/storage/schema/index.ts` owns `createTables` and sequences the numbered migrations `mNNN-*.ts`; data access goes through `storage/repositories/`. Bun/Deno dual support rests on the runtime seams (`sqlite-compat.ts`, `lib/runtime-server/`, `lib/runtime-spawn/`, `lib/runtime-hash.ts`); route new `Bun.*` usage through them.
 
