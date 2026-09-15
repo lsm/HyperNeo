@@ -13,7 +13,7 @@ import { ATTACHMENT_LIGHTBOX_TEST_ID } from '../AttachmentPreview.tsx';
 
 const mockAgentWorking = signal(false);
 let mockDraftContent = '';
-const mockRequest = vi.fn(async () => ({ messages: [] }));
+const mockRequest = vi.fn(async () => ({ messages: [], session: {} }));
 
 vi.mock('../../lib/state.ts', () => ({
   globalSettings: { value: { voice: { enabled: false } } },

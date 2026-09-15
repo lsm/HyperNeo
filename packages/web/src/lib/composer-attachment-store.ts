@@ -1,6 +1,7 @@
 import { signal } from '@preact/signals';
 import type { MessageImage } from '@hyperneo/shared';
 import { connectionManager } from './connection-manager';
+import { classifySessionLoadError } from './session-load-error';
 import { connectionState } from './state';
 import type { AttachmentWithMetadata } from '../hooks/useFileAttachments.ts';
 
@@ -47,6 +48,25 @@ export function removeDeliveredComposerAttachments(
 
 let stopDeletionWatch: (() => void) | null = null;
 
+function reconcileDeletedSessions(
+  hub: NonNullable<ReturnType<typeof connectionManager.getHubIfConnected>>
+): void {
+  for (const sessionId of Object.keys(composerAttachmentsSignal.peek())) {
+    if (sessionId.startsWith('pending:')) continue;
+    hub
+      .request<{ session?: unknown }>('session.get', { sessionId })
+      .then((response) => {
+        if (!response?.session) dropPendingComposerAttachments(sessionId);
+      })
+      .catch((err: unknown) => {
+        const { kind } = classifySessionLoadError(err, connectionState.value);
+        if (kind === 'not-found' || kind === 'unauthorized') {
+          dropPendingComposerAttachments(sessionId);
+        }
+      });
+  }
+}
+
 function ensureDeletionPurge(): void {
   if (stopDeletionWatch) return;
   let unsubEvent: (() => void) | null = null;
@@ -58,13 +78,19 @@ function ensureDeletionPurge(): void {
       if (event?.sessionId) dropPendingComposerAttachments(event.sessionId);
     });
   };
+  const reconcileIfConnected = (): void => {
+    const hub = connectionManager.getHubIfConnected();
+    if (hub) reconcileDeletedSessions(hub);
+  };
   register();
-  const unsubscribeConnection = connectionState.subscribe(() => {
+  reconcileIfConnected();
+  const unsubscribeConnection = connectionState.subscribe((state) => {
     if (unsubEvent) {
       unsubEvent();
       unsubEvent = null;
     }
     register();
+    if (state === 'connected') reconcileIfConnected();
   });
   stopDeletionWatch = () => {
     unsubscribeConnection();

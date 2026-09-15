@@ -539,6 +539,9 @@ describe('AttachmentPreview', () => {
       );
 
       expect(document.querySelector(`[data-testid="${ATTACHMENT_LIGHTBOX_TEST_ID}"]`)).toBeNull();
+      expect(document.activeElement).toBe(
+        view.container.querySelector('button[aria-label="Open screenshot.png full size"]')
+      );
     });
   });
 });

@@ -13,6 +13,7 @@ export const ATTACHMENT_LIGHTBOX_TEST_ID = 'attachment-lightbox';
 export function AttachmentPreview({ attachments, onRemove }: AttachmentPreviewProps) {
   const [enlargedIndex, setEnlargedIndex] = useState<number | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
+  const stripRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLElement | null>(null);
   const enlarged =
     enlargedIndex !== null && enlargedIndex < attachments.length
@@ -21,8 +22,13 @@ export function AttachmentPreview({ attachments, onRemove }: AttachmentPreviewPr
 
   const closeLightbox = () => {
     setEnlargedIndex(null);
-    triggerRef.current?.focus();
+    const trigger = triggerRef.current;
     triggerRef.current = null;
+    if (trigger?.isConnected) {
+      trigger.focus();
+      return;
+    }
+    stripRef.current?.querySelector<HTMLButtonElement>('button[title="Open full size"]')?.focus();
   };
 
   useEffect(() => {
@@ -49,7 +55,10 @@ export function AttachmentPreview({ attachments, onRemove }: AttachmentPreviewPr
   if (attachments.length === 0) return null;
 
   return (
-    <div class="flex flex-wrap gap-2 p-2 bg-surface-raised/50 rounded-lg border border-line">
+    <div
+      ref={stripRef}
+      class="flex flex-wrap gap-2 p-2 bg-surface-raised/50 rounded-lg border border-line"
+    >
       {attachments.map((attachment, index) => (
         <div
           key={index}
