@@ -111,10 +111,11 @@ Sessions with `session.context.spaceId` receive the `space-actions` dispatcher (
 Important seams under `packages/daemon/src/lib/space/`:
 
 - `runtime/` — task/workflow execution and persistent delivery
-- `agents/` — worker, custom, and long-horizon agents
 - `goals/` — rolling goals, check-ins, and automation
 - `workflows/` and `managers/` — workflow definitions and lifecycle
 - `tools/` — Space MCP servers
+
+Agent definitions (worker, custom, and long-horizon agents, plus agent templates) are their own subsystem at `packages/daemon/src/lib/agents/`. Do not confuse it with `packages/daemon/src/lib/agent/` (singular), which is the SDK query runtime.
 
 A space owns a registry of git-repo workspaces (`space_workspaces`, with `spaces.workspace_path` kept as the immutable primary; see `docs/features/space-workspaces.md`). Tasks, goals, and sessions bind to one registered repo each, and all task→repo resolution flows through `resolveTaskWorkspace` in `space/runtime/spawn-slot-resolution.ts` — never hand-roll a space-root fallback beside it.
 

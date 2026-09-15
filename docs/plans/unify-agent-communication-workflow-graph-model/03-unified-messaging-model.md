@@ -69,7 +69,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - Remove imports of `RequestPeerInputSchema` and `RequestPeerInputInput`
 4. Update `packages/daemon/src/lib/space/runtime/task-agent-manager.ts`:
    - Remove the `injectToTaskAgent` wiring from the config passed to `createStepAgentToolHandlers`
-5. Update `packages/daemon/src/lib/space/agents/custom-agent.ts`:
+5. Update `packages/daemon/src/lib/agents/custom-agent.ts`:
    - Remove any references to `request_peer_input` in system prompt text or comments
 6. In `send_message` handler: remove all suggestions to use `request_peer_input` as fallback. When no channel topology is declared, return a clear error message (no fallback tool suggestion). **Note:** Backward compatibility for existing topology-less workflows is not required — this feature is not yet in production.
 7. Run `bun run typecheck`.

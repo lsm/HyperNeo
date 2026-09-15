@@ -33,7 +33,7 @@ Rename the `send_feedback` tool to `send_message` across all schemas, handlers, 
    - Update all comments and suggestion strings referencing `send_feedback`
 4. In `packages/daemon/src/lib/space/runtime/task-agent-manager.ts`:
    - Update any references to `send_feedback` in comments or code
-5. In `packages/daemon/src/lib/space/agents/custom-agent.ts`:
+5. In `packages/daemon/src/lib/agents/custom-agent.ts`:
    - Update any system prompt text or comments referencing `send_feedback`
 6. Search for any remaining references to `send_feedback` in `packages/daemon/src/` and update them.
 7. Run `bun run typecheck` to verify no type errors.

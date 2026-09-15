@@ -64,7 +64,7 @@ Milestones 1 and 2 can proceed in parallel. Milestones 5 and 6 can also proceed 
 - `packages/daemon/src/lib/space/tools/task-agent-tool-schemas.ts` -- Zod schemas
 - `packages/daemon/src/lib/space/runtime/channel-resolver.ts` -- channel topology validation
 - `packages/daemon/src/lib/space/runtime/task-agent-manager.ts` -- wires step agent tools
-- `packages/daemon/src/lib/space/agents/custom-agent.ts` -- agent initialization
+- `packages/daemon/src/lib/agents/custom-agent.ts` -- agent initialization
 - `packages/daemon/src/lib/space/agents/task-agent.ts` -- Task Agent system prompt, step references
 
 ### Backend Storage
