@@ -48,7 +48,7 @@ import { ensureSession } from '../session-resolution/ensure-session.ts';
 import { NodeExecutionRepository } from '../../storage/repositories/node-execution-repository.ts';
 import { TaskAgentManager } from '../space/runtime/task-agent-manager.ts';
 import { ReplyRoutingRegistry } from '../space/runtime/reply-routing-registry.ts';
-import { SpaceWorktreeManager } from '../space/managers/space-worktree-manager.ts';
+import { SpaceWorktreeManager } from '../workspaces/worktree-manager.ts';
 import { CodingArtifactProfile } from '../space/workflows/coding-artifact-profile.ts';
 import {
   setupSpaceWorkflowHandlers,

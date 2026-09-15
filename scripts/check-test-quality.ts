@@ -1263,7 +1263,7 @@ function fileImportsName(sf: ts.SourceFile, name: string): boolean {
 const DESCRIBE_SCOPE_IGNORE_LIST = new Set([
   'packages/web/src/lib/__tests__/aaa-toast.test.ts',
   'packages/ui/tests/icon-map.test.ts',
-  'packages/daemon/tests/unit/5-space/runtime/space-worktree-manager.test.ts',
+  'packages/daemon/tests/unit/5-space/workspaces/worktree-manager.test.ts',
   'packages/daemon/tests/unit/1-core/providers/anthropic-copilot/provider.test.ts',
   'packages/daemon/tests/unit/1-core/providers/anthropic-copilot/server.test.ts',
   'packages/daemon/tests/unit/2-handlers/rpc-handlers/live-query-subscribe.test.ts',
