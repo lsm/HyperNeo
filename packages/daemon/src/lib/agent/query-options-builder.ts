@@ -51,7 +51,7 @@ import {
 import { KimiProvider } from '../providers/kimi-provider.js';
 import type { SettingsManager } from '../settings-manager.ts';
 import type { SkillsManager } from '../skills-manager.ts';
-import { NON_DELEGATING_GENERAL_AGENT } from '../space/agents/custom-agent.ts';
+import { NON_DELEGATING_GENERAL_AGENT } from '../agents/custom-agent.ts';
 import { createBashScopeHook, extractBashScopePrefixes } from './bash-scope.ts';
 import {
   builtinSkillPluginPath,

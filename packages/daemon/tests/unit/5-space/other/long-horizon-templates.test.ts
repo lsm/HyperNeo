@@ -6,7 +6,7 @@ import {
   isLegacyWorkerTemplateKey,
   normalizeLegacyWorkerTemplateKey,
   WORKER_TEMPLATE_KEY_PREFIX,
-} from '../../../../src/lib/space/agents/long-horizon-agent-templates';
+} from '../../../../src/lib/agents/long-horizon-templates';
 
 function getLongHorizonFamilyTemplates() {
   return getLongHorizonAgentTemplates().filter(

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { PRESET_GENERAL_PROMPT, PRESET_PLANNER_PROMPT } from '@hyperneo/prompts';
-import { getPresetAgentTemplates } from '../../../../../src/lib/space/agents/seed-agents.ts';
+import { getPresetAgentTemplates } from '../../../../../src/lib/agents/seed-agents.ts';
 import { SpaceLongHorizonAgentRepository } from '../../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import { runMigration213 } from '../../../../../src/storage/schema/m213-inactivity-watchdog.ts';
 import { runMigration233 } from '../../../../../src/storage/schema/m233-retire-pristine-seeded-worker-agents.ts';

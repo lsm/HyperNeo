@@ -1,6 +1,6 @@
 import type { SpaceAgent, SpaceLongHorizonAgent } from '@hyperneo/shared';
-import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
-import { Logger } from '../../logger.ts';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import { Logger } from '../logger.ts';
 
 const log = new Logger('unified-agent-events');
 

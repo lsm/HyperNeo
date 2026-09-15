@@ -51,7 +51,7 @@ The plan is organized into 7 milestones, progressing from foundational backend c
 ### Backend
 - `packages/daemon/src/lib/space/managers/` -- All space managers
 - `packages/daemon/src/lib/space/runtime/` -- Runtime engine
-- `packages/daemon/src/lib/space/agents/seed-agents.ts` -- Agent seeding
+- `packages/daemon/src/lib/agents/seed-agents.ts` -- Agent seeding
 - `packages/daemon/src/lib/space/workflows/built-in-workflows.ts` -- Workflow templates
 - `packages/daemon/src/lib/rpc-handlers/space-*.ts` -- RPC handlers
 

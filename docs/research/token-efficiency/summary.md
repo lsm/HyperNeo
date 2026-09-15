@@ -142,7 +142,7 @@ Adoption recommendations must account for license differences:
 
 Relevant current architecture from codebase:
 
-- Preset agents are seeded in `packages/daemon/src/lib/space/agents/seed-agents.ts`.
+- Preset agents are seeded in `packages/daemon/src/lib/agents/seed-agents.ts`.
 - Preset agents include Coder, General, Planner, Research, Reviewer, QA with tool lists and custom prompts.
 - Review prompt is large and verbose; Research prompt is shorter but generic.
 - `SUB_SESSION_FEATURES` disables rewind/worktree/coordinator/archive/sessionInfo for sub-session agents.

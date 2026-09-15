@@ -5,7 +5,7 @@ import {
   REVIEWER_SYSTEM_CONTRACT,
 } from '@hyperneo/prompts';
 import type { SpaceLongHorizonAgent } from '@hyperneo/shared';
-import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
+import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
 
 export { LEGACY_REVIEWER_PROMPT } from '@hyperneo/prompts';
 

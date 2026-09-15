@@ -3,7 +3,7 @@ import { MessageHub } from '@hyperneo/shared';
 import { setupQuestionHandlers } from '../../../../src/lib/rpc-handlers/question-handlers';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session';
 import type { SessionManager } from '../../../../src/lib/session-manager';
-import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
+import type { DaemonHub } from '../../../helpers/daemon-hub';
 
 type RequestHandler = (data: unknown, context?: unknown) => Promise<unknown>;
 
@@ -228,7 +228,7 @@ describe('question handlers — workflow provisioning gate', () => {
     const sessionManager = createMockSessionManager({
       getSessionData: () => ({
         id: 'space:s1:task:t1:exec:e1',
-        config: { mcpServers: { 'space-actions': { type: 'sdk' } } },
+        config: { workerOperations: true },
       }),
       handleQuestionResponse,
     } as unknown as AgentSession);

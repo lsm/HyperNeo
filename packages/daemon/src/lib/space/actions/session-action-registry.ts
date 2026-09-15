@@ -21,6 +21,7 @@ export const DISPATCHABLE_ROLES: ReadonlySet<SpaceMcpSessionRole> = new Set([
 export interface SessionActionRegistryConfig {
   readonly role: SpaceMcpSessionRole;
   readonly spaceId: string;
+  readonly sessionId?: string | null;
   readonly deniedActionNames?: ReadonlySet<string>;
   readonly spaceConfig?: SpaceAgentToolsConfig;
   readonly nodeConfig?: NodeAgentToolsConfig;
@@ -78,8 +79,8 @@ export function createRegistryMetaEntries(getRegistry: () => ActionRegistry): Ac
 export function assertDispatchableSessionConfig(config: SessionActionRegistryConfig): void {
   if (!DISPATCHABLE_ROLES.has(config.role)) {
     throw new Error(
-      `createSpaceActionsMcpServer does not support role "${config.role}": the dispatcher ` +
-        'admits no action families for it, so no action (including list_actions) could ever run'
+      `createSessionActionRegistry does not support role "${config.role}": no action ` +
+        'family is admitted for it, so the registry would be empty'
     );
   }
   if (config.spaceConfig && config.spaceConfig.spaceId !== config.spaceId) {

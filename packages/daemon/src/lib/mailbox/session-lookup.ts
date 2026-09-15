@@ -1,5 +1,5 @@
 import {
-  hasRuntimeNodeAgentServer,
+  hasRuntimeWorkerOperations,
   isWorkflowSubSessionIdentity,
 } from '../session/sub-session-identity.ts';
 import type { SessionManager } from '../session-manager.ts';
@@ -14,7 +14,7 @@ export async function resolveMailboxSession(
   if (indexed && sessionManager?.getCachedSession(sessionId) === indexed) {
     const data = indexed.getSessionData();
     if (data.status === 'ended') return null;
-    if (isWorkflowSubSessionIdentity(sessionId) && !hasRuntimeNodeAgentServer(data.config)) {
+    if (isWorkflowSubSessionIdentity(sessionId) && !hasRuntimeWorkerOperations(data.config)) {
       return null;
     }
     return indexed;
@@ -26,7 +26,7 @@ export async function resolveMailboxSession(
   if (
     session &&
     isWorkflowSubSessionIdentity(sessionId) &&
-    !hasRuntimeNodeAgentServer(session.getSessionData().config)
+    !hasRuntimeWorkerOperations(session.getSessionData().config)
   ) {
     return null;
   }

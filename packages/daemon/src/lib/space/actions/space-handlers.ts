@@ -72,14 +72,14 @@ import { formatAgentMessage } from '../../messaging/envelope.ts';
 import {
   getLongHorizonAgentTemplate,
   getLongHorizonAgentTemplates,
-} from '../agents/long-horizon-agent-templates.ts';
-import { deriveAgentTemplate } from '../agents/template-derivation.ts';
+} from '../../agents/long-horizon-templates.ts';
+import { deriveAgentTemplate } from '../../agents/template-derivation.ts';
 import {
   type OwnedAgentLookup,
   publishSpaceAgentV2Mirror,
   publishUnifiedAgentCreated,
   publishUnifiedAgentUpdated,
-} from '../agents/unified-agent-events.ts';
+} from '../../agents/unified-agent-events.ts';
 import { mergeEvolutionPolicy } from '../../evolution/scope-service.ts';
 import { validateGoalAutomationSelfNagPolicy } from '../../goals/evolution-policy-validation.ts';
 import { syncGoalAutomationSelfNagScheduleForScope } from '../../goals/automation-schedule-sync.ts';
@@ -87,7 +87,7 @@ import { decideGoalOwnershipMutationAdmission } from '../../goals/ownership-gate
 import {
   getBuiltInSpaceAgentTemplates,
   SpaceAgentTemplateManager,
-} from '../managers/space-agent-template-manager.ts';
+} from '../../agents/template-manager.ts';
 import type { SpaceManager } from '../managers/space-manager.ts';
 import { assertValidSpaceTaskTransition, type SpaceTaskManager } from '../../tasks/task-manager.ts';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager.ts';
@@ -427,7 +427,7 @@ export interface SpaceAgentToolsConfig {
   inactivityConfigRepo?: import('../../../storage/repositories/space-agent-inactivity-repository.ts').SpaceAgentInactivityConfigRepository;
   inactivityClaimRepo?: import('../../../storage/repositories/space-agent-inactivity-repository.ts').SpaceAgentInactivityClaimRepository;
   inactivityRunNow?: (spaceId: string, agentId: string) => Promise<void>;
-  templateManager?: import('../managers/space-agent-template-manager.ts').SpaceAgentTemplateManager;
+  templateManager?: import('../../agents/template-manager.ts').SpaceAgentTemplateManager;
 }
 
 type AgentTemplateLibrary = {
@@ -1647,7 +1647,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         if (getLongHorizonAgentTemplate(args.key)) {
           return jsonResult({
             success: false,
-            error: `Template "${args.key}" is built-in and cannot be updated; built-ins live in the code registry (packages/daemon/src/lib/space/agents/long-horizon-agent-templates.ts)`,
+            error: `Template "${args.key}" is built-in and cannot be updated; built-ins live in the code registry (packages/daemon/src/lib/agents/long-horizon-templates.ts)`,
           });
         }
         const result = await requireTemplateManager().casUpdateIn(

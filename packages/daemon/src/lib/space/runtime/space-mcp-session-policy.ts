@@ -32,11 +32,11 @@ export interface SpaceMcpSessionPolicy {
 }
 
 export function spaceAdHocMemberRequiredMcpServers(): readonly string[] {
-  return ['space-actions'];
+  return [];
 }
 
 export function spaceWorkflowWorkerRequiredMcpServers(): readonly string[] {
-  return ['space-actions'];
+  return [];
 }
 
 export const FAIL_CLOSED_LONG_HORIZON_AGENT_REPO: SpaceMcpSessionPolicyContext['longHorizonAgentRepo'] =
@@ -116,7 +116,7 @@ export function resolveSpaceMcpSessionPolicy(
       role: 'universal_read',
       spaceId: undefined,
       owner: 'none',
-      requiredServers: ['space-actions'],
+      requiredServers: [],
       attachGenericSpaceTools: false,
       attachSpaceChatTools: false,
       attachLongTermAgentTools: false,

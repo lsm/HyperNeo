@@ -45,18 +45,14 @@ describe('TaskAgentManager agent-memory MCP wiring', () => {
   });
 
   test('requires agent-memory only when memory repo is configured', () => {
-    expect(makeManager().requiredWorkflowSubSessionMcpServers()).toEqual(['space-actions']);
-    expect(makeManager({}).requiredWorkflowSubSessionMcpServers()).toEqual([
-      'space-actions',
-      'agent-memory',
-    ]);
+    expect(makeManager().requiredWorkflowSubSessionMcpServers()).toEqual([]);
+    expect(makeManager({}).requiredWorkflowSubSessionMcpServers()).toEqual(['agent-memory']);
   });
 
   test('reattaches agent-memory when missing during rehydrate self-heal', async () => {
     const manager = makeManager({});
     const session = makeSession({
       'node-agent': { type: 'sdk' } as McpServerConfig,
-      'space-actions': { type: 'sdk' } as McpServerConfig,
     });
 
     await manager.ensureNodeAgentAttached(session as never, {
@@ -73,7 +69,6 @@ describe('TaskAgentManager agent-memory MCP wiring', () => {
     expect(Object.keys(session.session.config.mcpServers).sort()).toEqual([
       'agent-memory',
       'node-agent',
-      'space-actions',
     ]);
     expect(session.restartCount).toBe(1);
   });

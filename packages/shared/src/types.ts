@@ -250,6 +250,8 @@ export interface SessionConfig extends Omit<SDKConfig, 'tools'> {
   features?: SessionFeatures;
 
   toolGuards?: DeclarativeToolGuard[];
+
+  workerOperations?: boolean;
 }
 
 export interface ToolsConfig {

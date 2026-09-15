@@ -79,7 +79,7 @@
 
 | Section | File | Function | Notes |
 | --- | --- | --- | --- |
-| System prompt | `packages/daemon/src/lib/space/agents/custom-agent.ts` | `buildCustomAgentSystemPrompt` / `createCustomAgentInit` | `systemPrompt.append = customAgent.customPrompt + slot.customPrompt`. No `space.instructions` here. |
+| System prompt | `packages/daemon/src/lib/agents/custom-agent.ts` | `buildCustomAgentSystemPrompt` / `createCustomAgentInit` | `systemPrompt.append = customAgent.customPrompt + slot.customPrompt`. No `space.instructions` here. |
 | User message (body) | `custom-agent.ts` | `buildCustomAgentTaskMessage` | Renders sections 1–6. Soft-warns at 4 096 B (see §2). |
 | Runtime contract (section 7) | `packages/daemon/src/lib/space/runtime/task-agent-manager.ts` | `buildNodeExecutionRuntimeContract` | Invoked in the kickoff block at ~line 942 and concatenated with `\n\n`. |
 | MCP tool descriptions | `packages/daemon/src/lib/space/tools/node-agent-tools.ts` | `createNodeAgentMcpServer` (tool literals ~lines 1053–1170) | 9 tools for node sessions. |
@@ -321,7 +321,7 @@ For every recommendation above:
 ## 6. Implementation notes for the follow-up coding task
 
 - Changes are isolated to two files:
-  - `packages/daemon/src/lib/space/agents/custom-agent.ts`
+  - `packages/daemon/src/lib/agents/custom-agent.ts`
   - `packages/daemon/src/lib/space/runtime/task-agent-manager.ts`
 - Existing tests with snapshots of the user message / runtime contract
   need updating. A quick scan with `rg 'Runtime Execution Contract|Your Role in This Workflow'` returns only `task-agent-manager.ts`; snapshot tests, if any, live under `packages/daemon/tests/unit/**`.
@@ -366,14 +366,14 @@ For every recommendation above:
 - Measured byte counts using `Buffer.byteLength(s, 'utf8')` in a Bun
   script; numbers in §2 are exact, not estimates.
 - Cross-checked wiring by reading:
-  - `packages/daemon/src/lib/space/agents/custom-agent.ts`
+  - `packages/daemon/src/lib/agents/custom-agent.ts`
   - `packages/daemon/src/lib/space/agents/task-agent.ts`
   - `packages/daemon/src/lib/space/runtime/task-agent-manager.ts`
   - `packages/daemon/src/lib/space/tools/node-agent-tools.ts` /
     `node-agent-tool-schemas.ts` /
     `task-agent-tool-schemas.ts` /
     `space-agent-tools.ts`
-  - `packages/daemon/src/lib/space/agents/seed-agents.ts`
+  - `packages/daemon/src/lib/agents/seed-agents.ts`
   - `packages/daemon/src/lib/space/workflows/built-in-workflows.ts`
 
 ## 9. Sources

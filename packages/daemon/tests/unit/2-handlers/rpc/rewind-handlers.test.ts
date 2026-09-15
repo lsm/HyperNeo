@@ -3,7 +3,7 @@ import { MessageHub } from '@hyperneo/shared';
 import { setupRewindHandlers } from '../../../../src/lib/rpc-handlers/rewind-handlers';
 import type { SessionManager } from '../../../../src/lib/session-manager';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session';
-import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
+import type { DaemonHub } from '../../../helpers/daemon-hub';
 
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
 

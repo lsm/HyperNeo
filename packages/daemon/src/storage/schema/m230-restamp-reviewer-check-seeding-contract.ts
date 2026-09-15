@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { Logger } from '../../lib/logger.ts';
-import { MIGRATED_AGENT_TEMPLATE_KEY_PREFIX } from '../../lib/space/agents/agent-template-synthesis.ts';
-import { getPresetAgentTemplates } from '../../lib/space/agents/seed-agents.ts';
+import { MIGRATED_AGENT_TEMPLATE_KEY_PREFIX } from '../../lib/agents/template-synthesis.ts';
+import { getPresetAgentTemplates } from '../../lib/agents/seed-agents.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import {
   hasStockReviewerToolList,
