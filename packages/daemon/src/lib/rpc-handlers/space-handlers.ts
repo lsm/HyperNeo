@@ -154,7 +154,8 @@ export function setupSpaceHandlers(
   spaceWorkflowManager: SpaceWorkflowManager,
   sessionManager?: SessionManager,
   spaceRuntimeService?: SpaceRuntimeService,
-  seedAgents?: CreateSpaceDeps['seedAgents']
+  seedAgents?: CreateSpaceDeps['seedAgents'],
+  stampTasks: (tasks: SpaceTask[]) => SpaceTask[] = (tasks) => tasks
 ): void {
   messageHub.onRequest('space.create', async (data) => {
     return createSpace(
@@ -450,7 +451,9 @@ export function setupSpaceHandlers(
     }
 
     const workflowRuns = workflowRunRepo.listBySpace(space.id);
-    const tasks = collapseToCanonicalTasks(taskRepo.listBySpace(space.id), workflowRuns);
+    const tasks = stampTasks(
+      collapseToCanonicalTasks(taskRepo.listBySpace(space.id), workflowRuns)
+    );
 
     const result: SpaceOverviewResult = {
       space,

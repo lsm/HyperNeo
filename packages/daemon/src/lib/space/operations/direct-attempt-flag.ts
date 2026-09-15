@@ -19,18 +19,18 @@ export function stampActiveAttempt(
   return { ...task, hasActiveDirectAttempt: active };
 }
 
-export function stampActiveAttempts(db: Database, page: TaskListPage): TaskListPage {
-  const owned = page.tasks.filter(isSpaceOwned);
-  if (owned.length === 0) return page;
+export function stampActiveAttemptList<T extends TaskCore>(db: Database, tasks: T[]): T[] {
+  const owned = tasks.filter(isSpaceOwned);
+  if (owned.length === 0) return tasks;
   const active = new DirectTaskExecutionRepository(db).getActiveTaskIds(
     owned.map((task) => task.id)
   );
-  return {
-    ...page,
-    tasks: page.tasks.map((task) =>
-      isSpaceOwned(task)
-        ? { ...(task as SpaceTask), hasActiveDirectAttempt: active.has(task.id) }
-        : task
-    ),
-  };
+  return tasks.map((task) =>
+    isSpaceOwned(task) ? { ...task, hasActiveDirectAttempt: active.has(task.id) } : task
+  );
+}
+
+export function stampActiveAttempts(db: Database, page: TaskListPage): TaskListPage {
+  const tasks = stampActiveAttemptList(db, page.tasks as SpaceTask[]);
+  return tasks === page.tasks ? page : { ...page, tasks };
 }

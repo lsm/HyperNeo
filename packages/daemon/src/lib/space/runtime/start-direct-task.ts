@@ -69,6 +69,7 @@ export function claimDirectStart(
   reactiveDb: ReactiveDatabase | undefined,
   input: DirectTaskStartInput,
   onTaskReopened?: (taskId: string) => void,
+  onTaskClaimed?: (taskId: string) => void,
   startJobs?: JobQueueRepository
 ): { value: DirectTaskAttempt } | { reason: DirectTaskStartResult } {
   const unavailable = { reason: { started: false as const, reason: 'direct_start_unavailable' } };
@@ -220,6 +221,7 @@ export function claimDirectStart(
       const attempt = attempts.claim(task.id, attemptId, sessionId);
       if (!attempt) throw new Error('Direct start lost its atomic claim');
       reactiveDb?.notifyChange('space_tasks');
+      onTaskClaimed?.(task.id);
       if (startJobs)
         enqueueDirectStartRequest(
           db,
@@ -297,6 +299,7 @@ export function createDirectTaskStarter(dependencies: {
   sessionManager: DirectSessionPreparationDependencies['sessionManager'];
   defaultModel: string;
   onTaskReopened?: (taskId: string) => void;
+  onTaskClaimed?: (taskId: string) => void;
 }) {
   const { db, reactiveDb, sessionDb, sessionManager, defaultModel } = dependencies;
   const attempts = new DirectTaskExecutionRepository(db);
@@ -310,13 +313,18 @@ export function createDirectTaskStarter(dependencies: {
       sessionManager,
       defaultModel,
       onTaskReopened: dependencies.onTaskReopened,
+      onTaskClaimed: dependencies.onTaskClaimed,
       attempts,
       tasks,
       getSpace: (id: string) => spaces.getSpace(id),
     })('start-direct-task') as PipelineAPI
   )
     .input('input')
-    .pipe(claimDirectStart, ['db', 'reactiveDb', 'input', 'onTaskReopened'], 'result:start')
+    .pipe(
+      claimDirectStart,
+      ['db', 'reactiveDb', 'input', 'onTaskReopened', 'onTaskClaimed'],
+      'result:start'
+    )
     .pipe((attempt: DirectTaskAttempt) => attempt.id, 'start', 'attemptId')
     .pipe(readPreparation, ['attempts', 'tasks', 'getSpace', 'attemptId'], 'preparation')
     .pipe(requireStartStage, ['preparation', 'db', 'input'], 'result:start')

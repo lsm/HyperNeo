@@ -46,6 +46,7 @@ export function reopenDirectCompletion(
       reviewRejection: { expectedPendingCompletionGeneration: expectedGeneration, reason },
     },
     onTaskReopened,
+    undefined,
     new JobQueueRepository(db)
   );
   if ('reason' in claimed && !claimed.reason.started)

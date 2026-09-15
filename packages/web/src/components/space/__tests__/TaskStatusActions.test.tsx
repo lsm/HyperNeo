@@ -342,8 +342,15 @@ describe('TaskStatusActions component', () => {
 });
 
 describe('filterDirectAttemptTargets', () => {
-  it('hides the targets task.transition refuses while an attempt is live', () => {
+  it('keeps only the targets that do not route through task.transition', () => {
     const targets = filterDirectAttemptTargets(getTransitionActions('in_progress'), {
+      hasActiveDirectAttempt: true,
+    }).map(({ target }) => target);
+    expect(targets).toEqual(['review', 'cancelled']);
+  });
+
+  it('also hides start and archive from an open task with a live attempt', () => {
+    const targets = filterDirectAttemptTargets(getTransitionActions('open'), {
       hasActiveDirectAttempt: true,
     }).map(({ target }) => target);
     expect(targets).toEqual(['review', 'cancelled']);

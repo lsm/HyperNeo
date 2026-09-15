@@ -1,3 +1,4 @@
+import { stampActiveAttemptList } from '../space/operations/direct-attempt-flag.ts';
 import { registerDirectStartJobs } from '../space/runtime/direct-start-jobs.ts';
 import { registerDirectOutcomeJobs } from '../space/runtime/direct-outcome-jobs.ts';
 import { createWorkflowTaskRecoveryExecutor } from '../space/runtime/task-recovery-executor.ts';
@@ -565,6 +566,18 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     jobQueue: deps.jobQueue,
     jobProcessor: deps.jobProcessor,
     onTaskReopened: (taskId) => spaceGoalService.supersedeOutcomeNotificationsForTask(taskId),
+    onTaskClaimed: (taskId) => {
+      const task = spaceTaskRepo.getTask(taskId);
+      if (!task) return;
+      void deps.internalEventBus
+        .publish('space.task.updated', {
+          sessionId: 'global',
+          spaceId: task.spaceId,
+          taskId: task.id,
+          task,
+        })
+        .catch((error) => log.warn('Failed to emit direct claim task update:', error));
+    },
   });
 
   registerDirectOutcomeJobs({
@@ -1228,7 +1241,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     spaceWorkflowManager,
     deps.sessionManager,
     spaceRuntimeService,
-    seedSpaceAgents
+    seedSpaceAgents,
+    (tasks) => stampActiveAttemptList(deps.db.getDatabase(), tasks)
   );
 
   deps.messageHub.onRequest('space.externalEvents.queueHealth', async () => {

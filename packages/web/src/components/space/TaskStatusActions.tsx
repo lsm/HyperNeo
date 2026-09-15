@@ -89,14 +89,14 @@ export function getTransitionActions(
   }));
 }
 
-const DIRECT_ATTEMPT_REFUSED_TARGETS: SpaceTaskStatus[] = ['done', 'blocked', 'stopped'];
+const DIRECT_ATTEMPT_ALLOWED_TARGETS: SpaceTaskStatus[] = ['review', 'cancelled'];
 
 export function filterDirectAttemptTargets<T extends { target: SpaceTaskStatus }>(
   actions: T[],
   task: { hasActiveDirectAttempt?: boolean }
 ): T[] {
   if (!task.hasActiveDirectAttempt) return actions;
-  return actions.filter(({ target }) => !DIRECT_ATTEMPT_REFUSED_TARGETS.includes(target));
+  return actions.filter(({ target }) => DIRECT_ATTEMPT_ALLOWED_TARGETS.includes(target));
 }
 
 interface TaskStatusActionsProps {
