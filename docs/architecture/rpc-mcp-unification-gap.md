@@ -123,9 +123,11 @@ port to:
 | messaging | 3 |
 | unclassified | 24 |
 
-So the pre-invocation pipeline is the smaller half of the work. The larger half is porting
-~89 actions onto operations, one family at a time, and deleting those that turn out to be
-redundant with an operation that already exists. The family table is the natural slice
+So the pre-invocation pipeline is the smaller half of the work. The larger half is porting the
+whole 104-action surface onto operations — 89 in `registry-space`, 22 in `registry-node`, 7 of
+which are shared, leaving 15 node-only — one family at a time, and deleting those that turn out
+to be redundant with an operation that already exists. The node-only fifteen are
+`workflow_worker`-scoped and port with the workflows family. The family table is the natural slice
 sequence; `task` is the family already partly ported and therefore the one with the clearest
 precedent.
 

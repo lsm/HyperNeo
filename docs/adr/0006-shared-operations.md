@@ -178,9 +178,12 @@ Rules that follow:
   facts, the branches collapse to reading them. The exception is
   `message.send`, which rejects MCP callers claiming human input provenance;
   that is a policy check, not a missing-fact workaround, and it moves into the
-  MCP pre-invocation pipeline rather than onto a principal field. (The count
-  read "six" at acceptance, before `task.start` (#4391),
-  `task.setPreferredWorkflow` (#4573) and the `task.update` admission landed.)
+  MCP pre-invocation pipeline rather than onto a principal field. (The count read "six" at
+  acceptance. Verified with `git log -S`, the five own-body branches added
+  since are `task.start` (#4391), `task.complete` (#4427), `task.create`
+  (#4447), `task.transition` (#4436) and `task.archive` (#4507), all merged
+  2026-09-11 to 09-13. `task.setPreferredWorkflow` (#4573) and the
+  `task.update` admission grew the inherited bucket, not the own-body ten.)
 - Today's adapters take a `resolveCaller` callback. That callback is the
   degenerate one-stage form of the pre-invocation pipeline, and the seam where
   the pipeline slots in. Extending caller policy means replacing the callback
