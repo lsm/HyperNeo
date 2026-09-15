@@ -132,7 +132,7 @@
 12146	packages/daemon/tests/unit/5-space/runtime/space-runtime.test.ts
 15	packages/daemon/tests/unit/5-space/runtime/space-slug.test.ts
 7114	packages/daemon/tests/unit/5-space/runtime/space-workflow.test.ts
-3590	packages/daemon/tests/unit/5-space/runtime/space-worktree-manager.test.ts
+3590	packages/daemon/tests/unit/5-space/workspaces/worktree-manager.test.ts
 12	packages/daemon/tests/unit/5-space/runtime/spawn-admission-decision-pipeline.test.ts
 8	packages/daemon/tests/unit/5-space/runtime/spawn-admission-gates.test.ts
 23	packages/daemon/tests/unit/5-space/runtime/spawn-flow.test.ts

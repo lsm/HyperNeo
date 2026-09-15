@@ -9,8 +9,8 @@ import {
   type WorkspaceSessionReferences,
   type WorkspaceTaskReferences,
   type WorkspaceGoalReferences,
-} from '../../../../src/lib/space/managers/space-workspace-manager.ts';
-import type { WorkspaceValidationIo } from '../../../../src/lib/space/workspaces/workspace-validation-pipeline.ts';
+} from '../../../../src/lib/workspaces/workspace-manager.ts';
+import type { WorkspaceValidationIo } from '../../../../src/lib/workspaces/validation-pipeline.ts';
 
 const SPACE_A = 'space-a';
 const SPACE_B = 'space-b';

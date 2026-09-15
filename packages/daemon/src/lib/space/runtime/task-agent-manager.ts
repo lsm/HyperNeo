@@ -64,7 +64,7 @@ import type { SpaceWorkflowManager } from '../managers/space-workflow-manager.ts
 import {
   type SpaceWorktreeManager,
   WorkspaceNotGitRepositoryError,
-} from '../managers/space-worktree-manager.ts';
+} from '../../workspaces/worktree-manager.ts';
 import {
   activateModelPoolReservation,
   applyModelPoolToSlot,
