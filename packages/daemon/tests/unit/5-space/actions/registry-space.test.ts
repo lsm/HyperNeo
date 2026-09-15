@@ -243,7 +243,9 @@ describe('createSpaceRegistryEntries — composition', () => {
         expect(byName.get(name)?.autonomyRequirement).toBe(SESSION_WRITE_AUTONOMY_LEVEL);
       }
       expect(byName.get('approve_pending_completion')?.autonomyRequirement).toBe(5);
-      expect(byName.get('send_session_message')?.autonomyRequirement).toBeUndefined();
+      const sendSessionMessageAutonomy = byName.get('send_session_message')?.autonomyRequirement;
+      expect(sendSessionMessageAutonomy).toBeDefined();
+      expect(typeof sendSessionMessageAutonomy).toBe('function');
       for (const [name] of EXPECTED_ENTRIES) {
         if (
           [
@@ -256,6 +258,7 @@ describe('createSpaceRegistryEntries — composition', () => {
             'approve_task',
             'approve_pending_completion',
             'delete_agent_template',
+            'send_session_message',
           ].includes(name)
         )
           continue;

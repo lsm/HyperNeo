@@ -26,6 +26,7 @@ export interface TaskOperationDependencies {
   create?: OperationDefinition;
   transition?: OperationDefinition;
   archive?: OperationDefinition;
+  sendSessionMessage?: OperationDefinition;
   readTask: Parameters<typeof createGetTaskOperation>[0];
   readTaskByNumber?: Parameters<typeof createGetTaskOperation>[1];
   createTask: Parameters<typeof createCreateTaskOperation<CreateStandaloneTaskInput>>[0];
@@ -57,6 +58,7 @@ export function createDaemonOperationCatalog(
     ...(tasks.complete ? [tasks.complete] : []),
     ...(tasks.start ? [tasks.start] : []),
     ...(tasks.setPreferredWorkflow ? [tasks.setPreferredWorkflow] : []),
+    ...(tasks.sendSessionMessage ? [tasks.sendSessionMessage] : []),
     ...createDiscoveryOperations(() => registry),
   ]);
   return registry;

@@ -706,6 +706,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
         task.workflowRunId
           ? (artifactProfile.summarizeRunOutcome(task.workflowRunId) ?? null)
           : null,
+      sessionManager: deps.sessionManager,
       ...createCompletionGateBindings({
         resolveWorkflowForTask: (task) => {
           const run = task.workflowRunId ? spaceWorkflowRunRepo.getRun(task.workflowRunId) : null;

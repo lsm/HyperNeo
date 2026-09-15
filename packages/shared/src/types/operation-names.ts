@@ -2,6 +2,7 @@ export const OPERATION_NAMES = [
   'message.send',
   'operations.describe',
   'operations.list',
+  'session.message.send',
   'task.archive',
   'task.cancel',
   'task.complete',

@@ -525,7 +525,29 @@ export function createSpaceRegistryEntries(
       paramsDoc: 'session_id, message, answer_question?',
       paramsSchema: SendSessionMessageSchema,
       auditRedactKeys: ['message'],
-      handler: (args) => handlers.send_session_message(args),
+      autonomyRequirement: async (params: z.infer<typeof SendSessionMessageSchema>) => {
+        if (params.answer_question) return SESSION_WRITE_AUTONOMY_LEVEL;
+        if (config.mySessionId && params.session_id !== config.mySessionId) {
+          return SESSION_WRITE_AUTONOMY_LEVEL;
+        }
+        return 1;
+      },
+      handler: operations
+        ? createOperationActionHandler(
+            operations,
+            { sessionId: config.mySessionId },
+            'session.message.send',
+            (params) => {
+              const typed = params as z.infer<typeof SendSessionMessageSchema>;
+              return {
+                spaceId: config.spaceId,
+                sessionId: typed.session_id,
+                message: typed.message,
+                answerQuestion: typed.answer_question,
+              };
+            }
+          )
+        : (args) => handlers.send_session_message(args),
     }),
     defineAction({
       name: 'update_session_state',
