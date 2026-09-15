@@ -935,7 +935,7 @@ type MarkdownImageNode = {
   value?: string;
 };
 
-function transformMarkdownImageNodes(node: MarkdownImageNode) {
+function transformMarkdownImageNodes(node: MarkdownImageNode, insideAnchor = false) {
   const { children } = node;
   if (!children) return;
 
@@ -955,7 +955,7 @@ function transformMarkdownImageNodes(node: MarkdownImageNode) {
       }
       properties.loading = 'lazy';
       properties.referrerpolicy = 'no-referrer';
-      if (node.tagName !== 'a') {
+      if (!insideAnchor) {
         children[index] = {
           type: 'element',
           tagName: 'a',
@@ -971,7 +971,7 @@ function transformMarkdownImageNodes(node: MarkdownImageNode) {
       }
       continue;
     }
-    transformMarkdownImageNodes(child);
+    transformMarkdownImageNodes(child, insideAnchor || child.tagName === 'a');
   }
 }
 
