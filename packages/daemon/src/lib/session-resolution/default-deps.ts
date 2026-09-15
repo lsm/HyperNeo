@@ -2,7 +2,7 @@ import type { NodeExecutionRepository } from '../../storage/repositories/node-ex
 import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
 import {
-  hasRuntimeNodeAgentServer,
+  hasRuntimeWorkerOperations,
   isWorkflowSubSessionIdentity,
 } from '../session/sub-session-identity.ts';
 import type { SessionManager } from '../session-manager.ts';
@@ -40,7 +40,7 @@ export function createDefaultSessionResolutionDeps(
       if (restored === null) return null;
       const data = restored.getSessionData();
       if (sessionUnavailable(data.status)) return null;
-      if (isWorkflowSubSessionIdentity(sessionId) && !hasRuntimeNodeAgentServer(data.config)) {
+      if (isWorkflowSubSessionIdentity(sessionId) && !hasRuntimeWorkerOperations(data.config)) {
         return null;
       }
       return restored;

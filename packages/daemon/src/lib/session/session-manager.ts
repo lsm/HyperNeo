@@ -39,7 +39,10 @@ import {
   SessionLifecycle,
   type SessionLifecycleConfig,
 } from './session-lifecycle.ts';
-import { hasRuntimeNodeAgentServer, isWorkflowSubSessionIdentity } from './sub-session-identity.ts';
+import {
+  hasRuntimeWorkerOperations,
+  isWorkflowSubSessionIdentity,
+} from './sub-session-identity.ts';
 import { ToolsConfigManager } from './tools-config.ts';
 
 export interface SpaceRuntimeMcpProvider {
@@ -509,7 +512,7 @@ export class SessionManager {
   setOperationRegistryProvider(provider: OperationRegistryProvider): void {
     this.operationRegistryProvider = provider;
     for (const session of this.getCachedSessions())
-      session.setOperationRegistryProvider(() => this.getOperationRegistry());
+      session.ensureOperationRegistryProvider(() => this.getOperationRegistry());
   }
 
   setSpaceRuntimeMcpProvider(provider: SpaceRuntimeMcpProvider): void {
@@ -593,7 +596,7 @@ export class SessionManager {
     this.workflowMcpProvisioning.set(sessionId, { session, promise: provisioning });
     await provisioning;
     if (this.cleanupState !== CleanupState.IDLE) return;
-    if (hasRuntimeNodeAgentServer(session.getSessionData().config)) {
+    if (hasRuntimeWorkerOperations(session.getSessionData().config)) {
       this.workflowMcpProvisioned.add(session);
       if (options.startQuery !== false && session.isQueryActiveOrStarting()) {
         this.workflowQueryStarted.add(session);
@@ -616,7 +619,7 @@ export class SessionManager {
     if (!session) return null;
     if (
       this.isWorkflowSubSession(session) &&
-      !hasRuntimeNodeAgentServer(session.getSessionData().config)
+      !hasRuntimeWorkerOperations(session.getSessionData().config)
     ) {
       return null;
     }
@@ -657,7 +660,7 @@ export class SessionManager {
   }
 
   registerSession(agentSession: AgentSession): void {
-    agentSession.setOperationRegistryProvider(() => this.getOperationRegistry());
+    agentSession.ensureOperationRegistryProvider(() => this.getOperationRegistry());
     if (this.mailboxDeferredReplaySuppressor) {
       const suppressor = this.mailboxDeferredReplaySuppressor;
       agentSession.suppressDeferredReplay = (sessionId) => suppressor(sessionId);

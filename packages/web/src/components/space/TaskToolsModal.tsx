@@ -3,10 +3,6 @@ import { Modal } from '../ui/Modal.tsx';
 import { listRuntimeMcpServers } from '../../lib/api-helpers.ts';
 
 const RUNTIME_MCP_LABELS: Record<string, { title: string; description: string }> = {
-  'space-actions': {
-    title: 'Space actions',
-    description: 'call_action dispatcher for Space tasks, workflows, and messages',
-  },
   'agent-memory': {
     title: 'Agent memory',
     description: 'Persistent Space memory read/write/search',

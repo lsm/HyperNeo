@@ -254,6 +254,10 @@ export class AgentSession
     this.operationRegistryProvider = provider;
   }
 
+  ensureOperationRegistryProvider(provider: OperationRegistryProvider): void {
+    this.operationRegistryProvider ??= provider;
+  }
+
   getOperationMcpServer(): ReturnType<typeof createOperationMcpServer> {
     return (this.operationMcpServer ??= createOperationMcpServer(
       () =>

@@ -1,7 +1,7 @@
 import type { MessageHub, QuestionDraftResponse } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import {
-  hasRuntimeNodeAgentServer,
+  hasRuntimeWorkerOperations,
   isWorkflowSubSessionIdentity,
 } from '../session/sub-session-identity.ts';
 import type { SessionManager } from '../session-manager.ts';
@@ -38,7 +38,7 @@ export function setupQuestionHandlers(
 
   function assertWorkflowProvisioned(agentSession: AgentSession, sessionId: string): void {
     const data = agentSession.getSessionData();
-    if (isWorkflowSubSessionIdentity(data.id) && !hasRuntimeNodeAgentServer(data.config)) {
+    if (isWorkflowSubSessionIdentity(data.id) && !hasRuntimeWorkerOperations(data.config)) {
       throw new Error(`Workflow session ${sessionId} is not resumable — provisioning skipped`);
     }
   }

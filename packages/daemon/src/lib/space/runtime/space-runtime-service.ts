@@ -817,7 +817,7 @@ export class SpaceRuntimeService {
     );
     agentSession.onMissingMemberSpaceMcpServers = async (_sessionId, missing) => {
       log.warn(
-        `Long-term Space agent session ${session.id} missing MCP servers [${missing.join(', ')}]; re-attaching space-actions before query start`
+        `Long-term Space agent session ${session.id} missing MCP servers [${missing.join(', ')}]; re-installing Space operations before query start`
       );
       await this.attachLongTermAgentMcpServersForSession(session, {
         replayPendingMessages: false,
@@ -1619,7 +1619,7 @@ export class SpaceRuntimeService {
 
     agentSession.onMissingMemberSpaceMcpServers = async (_sessionId, missing) => {
       log.warn(
-        `Space member session ${session.id} missing MCP servers [${missing.join(', ')}]; re-attaching space-actions before query start`
+        `Space member session ${session.id} missing MCP servers [${missing.join(', ')}]; re-installing Space operations before query start`
       );
       await this.attachSpaceToolsToMemberSession(session, { replayPendingMessages: false });
     };
@@ -1629,7 +1629,7 @@ export class SpaceRuntimeService {
     }
 
     log.info(
-      `Attached space-actions to member session ${session.id} (space ${space.id}, role ${policy.role}, type ${session.type ?? 'worker'})`
+      `Installed Space operations on member session ${session.id} (space ${space.id}, role ${policy.role}, type ${session.type ?? 'worker'})`
     );
   }
 
@@ -1787,7 +1787,7 @@ export class SpaceRuntimeService {
     session.mergeRuntimeMcpServers(mcpServers);
     session.onMissingSpaceChatMcpServers = async (_sessionId, missing) => {
       log.warn(
-        `Space chat session ${spaceChatSessionId} missing MCP servers [${missing.join(', ')}]; re-attaching space-actions before query start`
+        `Space chat session ${spaceChatSessionId} missing MCP servers [${missing.join(', ')}]; re-installing Space operations before query start`
       );
       await this.setupSpaceAgentSession(space);
     };

@@ -12,6 +12,11 @@ import type { Database } from '../../../../src/storage/database';
 import type { JobQueueProcessor } from '../../../../src/storage/job-queue-processor';
 import type { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 
+function markWorkerOperations(session: AgentSession): void {
+  const data = session.getSessionData();
+  data.config = { ...data.config, workerOperations: true };
+}
+
 describe('SessionManager', () => {
   let sessionManager: SessionManager;
   let mockDb: Database;
@@ -295,7 +300,7 @@ describe('SessionManager', () => {
             session: AgentSession,
             options?: { onReplaySettled?: (succeeded: boolean) => void }
           ) => {
-            session.mergeRuntimeMcpServers({ 'space-actions': { type: 'sdk' } as never });
+            markWorkerOperations(session);
             options?.onReplaySettled?.(true);
           }
         ),
@@ -308,7 +313,7 @@ describe('SessionManager', () => {
         session,
         expect.objectContaining({ onReplaySettled: expect.any(Function) })
       );
-      expect(session!.getSessionData().config.mcpServers).toHaveProperty('space-actions');
+      expect(session!.getSessionData().config.workerOperations).toBe(true);
     });
 
     it('shares in-flight workflow provisioning across concurrent restores', async () => {
@@ -334,7 +339,7 @@ describe('SessionManager', () => {
             new Promise<void>((resolve) => {
               signalProvisioningStarted!();
               releaseProvisioning = () => {
-                session.mergeRuntimeMcpServers({ 'space-actions': { type: 'sdk' } as never });
+                markWorkerOperations(session);
                 resolve();
               };
             })
@@ -371,7 +376,7 @@ describe('SessionManager', () => {
             session: AgentSession,
             options?: { onReplaySettled?: (succeeded: boolean) => void }
           ) => {
-            session.mergeRuntimeMcpServers({ 'space-actions': { type: 'sdk' } as never });
+            markWorkerOperations(session);
             options?.onReplaySettled?.(true);
           }
         ),
@@ -384,7 +389,7 @@ describe('SessionManager', () => {
         session,
         expect.objectContaining({ startQuery: false })
       );
-      expect(session!.getSessionData().config.mcpServers).toHaveProperty('space-actions');
+      expect(session!.getSessionData().config.workerOperations).toBe(true);
     });
 
     it('forwards replayPendingMessages:false to the workflow provisioning provider', async () => {
@@ -406,7 +411,7 @@ describe('SessionManager', () => {
             session: AgentSession,
             options?: { onReplaySettled?: (succeeded: boolean) => void }
           ) => {
-            session.mergeRuntimeMcpServers({ 'space-actions': { type: 'sdk' } as never });
+            markWorkerOperations(session);
             options?.onReplaySettled?.(true);
           }
         ),
@@ -421,7 +426,7 @@ describe('SessionManager', () => {
         session,
         expect.objectContaining({ replayPendingMessages: false })
       );
-      expect(session!.getSessionData().config.mcpServers).toHaveProperty('space-actions');
+      expect(session!.getSessionData().config.workerOperations).toBe(true);
     });
 
     const makeWorkerFake = (id: string) => {
@@ -436,6 +441,7 @@ describe('SessionManager', () => {
       };
       return {
         setOperationRegistryProvider: mock(() => {}),
+        ensureOperationRegistryProvider: mock(() => {}),
         getSessionData: mock(() => data),
         mergeRuntimeMcpServers: mock((additional: Record<string, McpServerConfig>) => {
           data.config = {
@@ -463,7 +469,7 @@ describe('SessionManager', () => {
             session: AgentSession,
             options?: { onReplaySettled?: (succeeded: boolean) => void }
           ) => {
-            session.mergeRuntimeMcpServers({ 'space-actions': { type: 'sdk' } as never });
+            markWorkerOperations(session);
             options?.onReplaySettled?.(true);
           }
         ),
@@ -489,7 +495,7 @@ describe('SessionManager', () => {
             session: AgentSession,
             options?: { onReplaySettled?: (succeeded: boolean) => void }
           ) => {
-            session.mergeRuntimeMcpServers({ 'space-actions': { type: 'sdk' } as never });
+            markWorkerOperations(session);
             options?.onReplaySettled?.(true);
           }
         ),
@@ -523,7 +529,7 @@ describe('SessionManager', () => {
             session: AgentSession,
             options?: { onReplaySettled?: (succeeded: boolean) => void }
           ) => {
-            session.mergeRuntimeMcpServers({ 'space-actions': { type: 'sdk' } as never });
+            markWorkerOperations(session);
             replayAttempts += 1;
             options?.onReplaySettled?.(replayAttempts > 1);
           }
@@ -557,7 +563,7 @@ describe('SessionManager', () => {
             session: AgentSession,
             options?: { onReplaySettled?: (succeeded: boolean) => void }
           ) => {
-            session.mergeRuntimeMcpServers({ 'space-actions': { type: 'sdk' } as never });
+            markWorkerOperations(session);
             options?.onReplaySettled?.(true);
           }
         ),
@@ -596,7 +602,7 @@ describe('SessionManager', () => {
             session: AgentSession,
             options?: { onReplaySettled?: (succeeded: boolean) => void }
           ) => {
-            session.mergeRuntimeMcpServers({ 'space-actions': { type: 'sdk' } as never });
+            markWorkerOperations(session);
             options?.onReplaySettled?.(true);
           }
         ),
@@ -637,7 +643,7 @@ describe('SessionManager', () => {
                 releaseProvisioning = resolve;
                 return;
               }
-              session.mergeRuntimeMcpServers({ 'space-actions': { type: 'sdk' } as never });
+              markWorkerOperations(session);
               resolve();
             })
         ),
@@ -658,7 +664,7 @@ describe('SessionManager', () => {
         instanceB,
         expect.objectContaining({ onReplaySettled: expect.any(Function) })
       );
-      expect(instanceB.getSessionData().config.mcpServers).toHaveProperty('space-actions');
+      expect(instanceB.getSessionData().config.workerOperations).toBe(true);
       expect(firstSession).toBe(instanceB);
     });
 
@@ -686,7 +692,7 @@ describe('SessionManager', () => {
                 releaseFirst = resolve;
                 return;
               }
-              session.mergeRuntimeMcpServers({ 'space-actions': { type: 'sdk' } as never });
+              markWorkerOperations(session);
               options?.onReplaySettled?.(true);
               if (providerCalls === 2) {
                 releaseSecond = resolve;
@@ -745,7 +751,7 @@ describe('SessionManager', () => {
                 releaseProvisioning = resolve;
                 return;
               }
-              session.mergeRuntimeMcpServers({ 'space-actions': { type: 'sdk' } as never });
+              markWorkerOperations(session);
               resolve();
             })
         ),
@@ -766,8 +772,8 @@ describe('SessionManager', () => {
         instanceC,
         expect.objectContaining({ onReplaySettled: expect.any(Function) })
       );
-      expect(instanceC.getSessionData().config.mcpServers).toHaveProperty('space-actions');
-      expect(instanceB.getSessionData().config.mcpServers?.['space-actions']).toBeUndefined();
+      expect(instanceC.getSessionData().config.workerOperations).toBe(true);
+      expect(instanceB.getSessionData().config.workerOperations).toBeUndefined();
     });
 
     it('marks a displaced in-flight provisioning owner archived before awaiting it', async () => {
@@ -800,7 +806,7 @@ describe('SessionManager', () => {
               releaseFirstCall = resolve;
             });
           }
-          session.mergeRuntimeMcpServers({ 'space-actions': { type: 'sdk' } as never });
+          markWorkerOperations(session);
           return Promise.resolve();
         }),
       };
@@ -842,12 +848,12 @@ describe('SessionManager', () => {
             return new Promise<void>((resolve) => {
               signalProvisioningStarted!();
               releaseFirstCall = () => {
-                session.mergeRuntimeMcpServers({ 'space-actions': { type: 'sdk' } as never });
+                markWorkerOperations(session);
                 resolve();
               };
             });
           }
-          session.mergeRuntimeMcpServers({ 'space-actions': { type: 'sdk' } as never });
+          markWorkerOperations(session);
           return Promise.resolve();
         }),
       };
@@ -871,7 +877,7 @@ describe('SessionManager', () => {
         instanceB,
         expect.objectContaining({ onReplaySettled: expect.any(Function) })
       );
-      expect(instanceB.getSessionData().config.mcpServers).toHaveProperty('space-actions');
+      expect(instanceB.getSessionData().config.workerOperations).toBe(true);
     });
   });
 
@@ -1031,6 +1037,7 @@ describe('SessionManager', () => {
         ({
           getSessionData: () => ({ id: 'direct:prepared' }),
           setOperationRegistryProvider: mock(() => {}),
+          ensureOperationRegistryProvider: mock(() => {}),
         }) as unknown as AgentSession;
       const original = make();
       const replacement = make();
@@ -1073,6 +1080,7 @@ describe('SessionManager', () => {
       };
       const fakeAgentSession = {
         setOperationRegistryProvider: mock(() => {}),
+        ensureOperationRegistryProvider: mock(() => {}),
         getSessionData: mock(() => mockSession),
         cleanup: mock(async () => {}),
       } as unknown as import('../../../../src/lib/agent/agent-session').AgentSession;
@@ -1095,6 +1103,7 @@ describe('SessionManager', () => {
       };
       const fakeAgentSession = {
         setOperationRegistryProvider: mock(() => {}),
+        ensureOperationRegistryProvider: mock(() => {}),
         getSessionData: mock(() => mockSession),
         cleanup: mock(async () => {}),
       } as unknown as import('../../../../src/lib/agent/agent-session').AgentSession;
@@ -1118,6 +1127,7 @@ describe('SessionManager', () => {
       };
       const fakeAgentSession = {
         setOperationRegistryProvider: mock(() => {}),
+        ensureOperationRegistryProvider: mock(() => {}),
         getSessionData: mock(() => mockSession),
         cleanup: mock(async () => {}),
       } as unknown as import('../../../../src/lib/agent/agent-session').AgentSession;
@@ -1141,6 +1151,7 @@ describe('SessionManager', () => {
       };
       const fakeAgentSession = {
         setOperationRegistryProvider: mock(() => {}),
+        ensureOperationRegistryProvider: mock(() => {}),
         getSessionData: mock(() => mockSession),
         cleanup: mock(async () => {}),
         getTrackedAgentRootPidsSplit: mock(() => ({ live: [], exited: [] })),
@@ -1166,6 +1177,7 @@ describe('SessionManager', () => {
       };
       const fakeAgentSession = {
         setOperationRegistryProvider: mock(() => {}),
+        ensureOperationRegistryProvider: mock(() => {}),
         getSessionData: mock(() => mockSession),
         cleanup: mock(async () => {}),
         getTrackedAgentRootPidsSplit: mock(() => ({
@@ -1291,6 +1303,7 @@ describe('SessionManager', () => {
       } as Session;
       const cachedAgent = {
         setOperationRegistryProvider: mock(() => {}),
+        ensureOperationRegistryProvider: mock(() => {}),
         getSessionData: mock(() => cachedSession),
         cleanup: mock(async () => {}),
         getTrackedAgentRootPidsSplit: mock(() => ({ live: [], exited: [] })),
@@ -1323,6 +1336,7 @@ describe('SessionManager', () => {
       } as Session;
       const cachedAgent = {
         setOperationRegistryProvider: mock(() => {}),
+        ensureOperationRegistryProvider: mock(() => {}),
         getSessionData: mock(() => cachedSession),
         cleanup: mock(async () => {}),
         getTrackedAgentRootPidsSplit: mock(() => ({ live: [], exited: [] })),
@@ -1364,6 +1378,7 @@ describe('SessionManager', () => {
       } as Session;
       const cachedAgent = {
         setOperationRegistryProvider: mock(() => {}),
+        ensureOperationRegistryProvider: mock(() => {}),
         getSessionData: mock(() => cachedSession),
         cleanup: mock(async () => {}),
         getTrackedAgentRootPidsSplit: mock(() => ({ live: [], exited: [] })),
@@ -1398,6 +1413,7 @@ describe('SessionManager', () => {
       }));
       const fakeAgentSession = {
         setOperationRegistryProvider: mock(() => {}),
+        ensureOperationRegistryProvider: mock(() => {}),
         getSessionData: mock(() => mockSession),
         cleanup: mock(async () => {
           getSplit.mockImplementation(() => ({
@@ -1446,6 +1462,7 @@ describe('SessionManager', () => {
       }));
       const fakeAgentSession = {
         setOperationRegistryProvider: mock(() => {}),
+        ensureOperationRegistryProvider: mock(() => {}),
         getSessionData: mock(() => mockSession),
         cleanup: mock(async () => {
           getSplit.mockImplementation(() => ({
@@ -1488,6 +1505,7 @@ describe('SessionManager', () => {
     }));
     const fakeAgentSession = {
       setOperationRegistryProvider: mock(() => {}),
+      ensureOperationRegistryProvider: mock(() => {}),
       getSessionData: mock(() => mockSession),
       cleanup: mock(async () => {
         getSplit.mockImplementation(() => ({
@@ -1534,6 +1552,7 @@ describe('SessionManager', () => {
     }));
     const fakeAgentSession = {
       setOperationRegistryProvider: mock(() => {}),
+      ensureOperationRegistryProvider: mock(() => {}),
       getSessionData: mock(() => mockSession),
       cleanup: mock(async () => {
         getSplit.mockImplementation(() => ({
@@ -1572,6 +1591,7 @@ describe('SessionManager', () => {
     }));
     const fakeAgentSession = {
       setOperationRegistryProvider: mock(() => {}),
+      ensureOperationRegistryProvider: mock(() => {}),
       getSessionData: mock(() => mockSession),
       cleanup: mock(async () => {
         getSplit.mockImplementation(() => ({
@@ -1618,6 +1638,7 @@ describe('SessionManager', () => {
     }));
     const fakeAgentSession = {
       setOperationRegistryProvider: mock(() => {}),
+      ensureOperationRegistryProvider: mock(() => {}),
       getSessionData: mock(() => mockSession),
       cleanup: mock(async () => {
         getSplit.mockImplementation(() => ({
@@ -1659,6 +1680,7 @@ describe('SessionManager', () => {
     }));
     const fakeAgentSession = {
       setOperationRegistryProvider: mock(() => {}),
+      ensureOperationRegistryProvider: mock(() => {}),
       getSessionData: mock(() => mockSession),
       cleanup: mock(async () => {
         getSplit.mockImplementation(() => ({
@@ -1706,6 +1728,7 @@ describe('SessionManager', () => {
     }));
     const fakeAgentSession1 = {
       setOperationRegistryProvider: mock(() => {}),
+      ensureOperationRegistryProvider: mock(() => {}),
       getSessionData: mock(() => mockSession),
       cleanup: mock(async () => {}),
       getTrackedAgentRootPidsSplit: getSplit1,
@@ -1727,6 +1750,7 @@ describe('SessionManager', () => {
     }));
     const fakeAgentSession2 = {
       setOperationRegistryProvider: mock(() => {}),
+      ensureOperationRegistryProvider: mock(() => {}),
       getSessionData: mock(() => ({ ...mockSession, id: 'session-reevict-2' })),
       cleanup: mock(async () => {}),
       getTrackedAgentRootPidsSplit: getSplit2,
@@ -1759,6 +1783,7 @@ describe('SessionManager', () => {
     }));
     const fakeAgentSession = {
       setOperationRegistryProvider: mock(() => {}),
+      ensureOperationRegistryProvider: mock(() => {}),
       getSessionData: mock(() => mockSession),
       cleanup: mock(async () => {}),
       getTrackedAgentRootPidsSplit: getSplit,
@@ -2161,6 +2186,7 @@ describe('SessionManager', () => {
       const sessionId = 'space:s1:task:t1:exec:cleanup';
       const worker = {
         setOperationRegistryProvider: mock(() => {}),
+        ensureOperationRegistryProvider: mock(() => {}),
         getSessionData: mock(() => ({
           id: sessionId,
           status: 'active',
@@ -2176,6 +2202,7 @@ describe('SessionManager', () => {
       const blockedWorker = {
         ...worker,
         setOperationRegistryProvider: mock(() => {}),
+        ensureOperationRegistryProvider: mock(() => {}),
         getSessionData: mock(() => ({
           id: blockedSessionId,
           status: 'active',
@@ -2472,6 +2499,7 @@ describe('SessionManager', () => {
       function makeFakeSession(id: string) {
         return {
           setOperationRegistryProvider: mock(() => {}),
+          ensureOperationRegistryProvider: mock(() => {}),
           getSessionData: mock(() => ({ id })),
           reconcileEffectiveMcpServers: mock(() => {}),
           cleanup: mock(async () => {}),

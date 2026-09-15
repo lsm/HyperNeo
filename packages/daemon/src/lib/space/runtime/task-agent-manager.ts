@@ -104,7 +104,7 @@ import { sanitizeAssistantUsageInSDKSessionFile } from '../../sdk-session-file-m
 import {
   buildExecutionBaseSessionId,
   buildPostApprovalSessionId,
-  hasRuntimeNodeAgentServer,
+  hasRuntimeWorkerOperations,
   isWorkflowSubSessionIdentity,
   sanitizeAgentNameForId,
   taskIdFromSubSessionIdentity,
@@ -1386,6 +1386,7 @@ export class TaskAgentManager {
     this.subSessions.get(taskId)!.set(sessionId, subSession);
     this.agentSessionIndex.set(sessionId, subSession);
 
+    this.attachWorkerOperations(subSession);
     this.config.sessionManager.registerSession(subSession);
 
     if (memberInfo?.nodeId && memberInfo.agentName) {
@@ -2275,6 +2276,7 @@ export class TaskAgentManager {
       ...this.buildAgentMemoryMcpServers(task.spaceId, sessionId),
     };
     agentSession.mergeRuntimeMcpServers(mergedMcpServers);
+    this.attachWorkerOperations(agentSession);
 
     await this.ensureNodeAgentAttached(agentSession, {
       taskId,
@@ -2739,7 +2741,7 @@ export class TaskAgentManager {
     if (!this.isSessionAlive(sessionId)) return false;
     const session = this.getAgentSessionById(sessionId);
     if (!session) return false;
-    await this.mcpSelfHeal(session, ['worker-operations']);
+    await this.mcpSelfHeal(session, this.requiredWorkflowSubSessionMcpServers());
     await this.startRestoredWorkerForResume(session);
     return true;
   }
@@ -3976,6 +3978,7 @@ export class TaskAgentManager {
     };
 
     agentSession.mergeRuntimeMcpServers(mergedMcpServers);
+    this.attachWorkerOperations(agentSession);
 
     const rehydrateCtx = {
       taskId,
@@ -4535,6 +4538,7 @@ export class TaskAgentManager {
       this.sessionListeners.delete(sessionId);
       this.completionCallbacks.delete(sessionId);
     }
+    this.workerRegistryBySession.delete(sessionId);
   }
 
   private getWorkflowRunId(taskId: string): string | null {
@@ -4800,6 +4804,7 @@ export class TaskAgentManager {
       ctx.workflowNodeId
     );
     session.mergeRuntimeMcpServers(rebuilt);
+    this.attachWorkerOperations(session);
 
     await session.restartQuery();
   }
@@ -5386,13 +5391,22 @@ export class TaskAgentManager {
       typeof sessionManager.getOperationRegistry === 'function'
         ? sessionManager.getSession(nodeConfig.mySessionId)
         : null;
-    agentSession?.setOperationRegistryProvider?.(() =>
+    if (agentSession) this.attachWorkerOperations(agentSession);
+    return registry;
+  }
+
+  attachWorkerOperations(agentSession: AgentSession): void {
+    const data = agentSession.getSessionData();
+    const registry = this.workerActionRegistryFor(data.id);
+    if (!registry) return;
+    const sessionManager = this.config.sessionManager;
+    agentSession.setOperationRegistryProvider(() =>
       createOperationRegistry([
         ...sessionManager.getOperationRegistry().entries,
         ...actionsAsOperations(registry),
       ])
     );
-    return registry;
+    data.config = { ...data.config, workerOperations: true };
   }
 
   private buildWorkerSpaceToolsConfig(ctx: {
@@ -5854,7 +5868,7 @@ export class TaskAgentManager {
     if (!candidate) return null;
     const data = candidate.getSessionData();
     if (data.status === 'ended' || data.status === 'archived') return null;
-    if (isWorkflowSubSessionIdentity(candidateId) && !hasRuntimeNodeAgentServer(data.config)) {
+    if (isWorkflowSubSessionIdentity(candidateId) && !hasRuntimeWorkerOperations(data.config)) {
       return null;
     }
     return candidateId;

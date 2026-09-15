@@ -8,6 +8,7 @@ import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
 import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';
 import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
+import type { OperationRegistry } from '../../../../src/lib/operations/registry.ts';
 
 const SPACE_ID = 'space-rehydrate-mcp';
 const RUN_ID = 'run-rehydrate-mcp';
@@ -20,10 +21,11 @@ interface FakeSessionState {
     id: string;
     status: 'active' | 'archived';
     workspacePath?: string | null;
-    config: { mcpServers?: Record<string, McpServerConfig> };
+    config: { mcpServers?: Record<string, McpServerConfig>; workerOperations?: boolean };
   };
   onMissingWorkflowMcpServers?: AgentSessionType['onMissingWorkflowMcpServers'];
   calls: string[];
+  providers: Array<() => OperationRegistry>;
   metadataUpdates: Array<Record<string, unknown>>;
   startSawCallback: boolean;
 }
@@ -35,12 +37,16 @@ function makeFakeAgentSession(
   const state: FakeSessionState = {
     session: { id, status: 'active', config: {} },
     calls: [],
+    providers: [],
     metadataUpdates: [],
     startSawCallback: false,
   };
   const agentSession = {
     get session() {
       return state.session;
+    },
+    setOperationRegistryProvider: (provider: () => OperationRegistry) => {
+      state.providers.push(provider);
     },
     skillOverrides: undefined,
     toolGuards: undefined,
@@ -367,6 +373,8 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     await tam.provisionWorkflowSession(fake.agentSession, { startQuery: false });
 
     expect(tam.workerActionNamesFor(SUB_SESSION_ID)?.size ?? 0).toBeGreaterThan(0);
+    expect(fake.state.providers).toHaveLength(1);
+    expect(fake.state.session.config.workerOperations).toBe(true);
     expect(fake.state.calls).toEqual(['mergeRuntimeMcpServers']);
     expect(restoreSpy).toHaveBeenCalledTimes(0);
   });
@@ -558,6 +566,8 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     await callback!(fake.agentSession, ['worker-operations']);
 
     expect(tam.workerActionNamesFor(SUB_SESSION_ID)?.size ?? 0).toBeGreaterThan(0);
+    expect(fake.state.providers.length).toBeGreaterThan(0);
+    expect(fake.state.session.config.workerOperations).toBe(true);
   });
 
   test('a peer message to a parked blocked worker defers instead of starting work (#3823)', async () => {

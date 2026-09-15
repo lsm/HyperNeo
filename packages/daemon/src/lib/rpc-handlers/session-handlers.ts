@@ -31,7 +31,7 @@ import {
 import { getProviderRegistry, inferProviderForModel } from '../providers/registry.js';
 import { validateImageSizes } from '../session/message-persistence.ts';
 import {
-  hasRuntimeNodeAgentServer,
+  hasRuntimeWorkerOperations,
   isWorkflowSubSessionIdentity,
 } from '../session/sub-session-identity.ts';
 import type { SessionManager } from '../session-manager.ts';
@@ -776,7 +776,7 @@ export function setupSessionHandlers(
     if (
       restartQuery &&
       isWorkflowSubSessionIdentity(resetData.id) &&
-      !hasRuntimeNodeAgentServer(resetData.config)
+      !hasRuntimeWorkerOperations(resetData.config)
     ) {
       throw new Error(
         `Workflow session ${targetSessionId} is not resumable — provisioning skipped`
@@ -1073,7 +1073,7 @@ export function setupSessionHandlers(
       const currentData = current.getSessionData();
       if (
         isWorkflowSubSessionIdentity(currentData.id) &&
-        !hasRuntimeNodeAgentServer(currentData.config)
+        !hasRuntimeWorkerOperations(currentData.config)
       ) {
         throw new Error(
           `Workflow session ${targetSessionId} is not resumable — provisioning skipped`
