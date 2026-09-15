@@ -531,10 +531,6 @@ describe('MarkdownRenderer', () => {
 
     it('should open a data image through a blob url on click', async () => {
       const openMock = vi.spyOn(window, 'open').mockImplementation(() => null);
-      const fetchMock = vi
-        .fn()
-        .mockResolvedValue({ blob: () => Promise.resolve(new Blob(['x'], { type: 'image/png' })) });
-      vi.stubGlobal('fetch', fetchMock);
       const originalCreateObjectURL = URL.createObjectURL;
       URL.createObjectURL = vi.fn(() => 'blob:mock-url');
 
@@ -550,30 +546,38 @@ describe('MarkdownRenderer', () => {
         container
           .querySelector('img')
           ?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-        await waitFor(() => {
-          expect(openMock).toHaveBeenCalledWith('blob:mock-url', '_blank', 'noopener,noreferrer');
-        });
+        expect(openMock).toHaveBeenCalledWith('blob:mock-url', '_blank', 'noopener,noreferrer');
         openMock.mockClear();
         container
           .querySelector('a.markdown-image-link')
           ?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-        await waitFor(() => {
-          expect(openMock).toHaveBeenCalledWith('blob:mock-url', '_blank', 'noopener,noreferrer');
-        });
+        expect(openMock).toHaveBeenCalledWith('blob:mock-url', '_blank', 'noopener,noreferrer');
         openMock.mockClear();
         container
           .querySelector('a.markdown-image-link')
           ?.dispatchEvent(
             new MouseEvent('auxclick', { bubbles: true, cancelable: true, button: 1 })
           );
-        await waitFor(() => {
-          expect(openMock).toHaveBeenCalledWith('blob:mock-url', '_blank', 'noopener,noreferrer');
-        });
+        expect(openMock).toHaveBeenCalledWith('blob:mock-url', '_blank', 'noopener,noreferrer');
       } finally {
         URL.createObjectURL = originalCreateObjectURL;
-        vi.unstubAllGlobals();
         openMock.mockRestore();
       }
+    });
+
+    it('should dismiss the svg overlay with Escape after focus leaves it', async () => {
+      const { container } = render(
+        <MarkdownRenderer content={'![s](data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=)'} />
+      );
+      await waitFor(() => {
+        expect(container.querySelector('img')).toBeTruthy();
+      });
+      container
+        .querySelector('img')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      expect(document.body.querySelector('.markdown-image-overlay')).toBeTruthy();
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      expect(document.body.querySelector('.markdown-image-overlay')).toBeFalsy();
     });
   });
 

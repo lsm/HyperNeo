@@ -981,8 +981,32 @@ function rehypeMarkdownImages() {
   };
 }
 
+function dataUrlToBlob(dataUrl: string): Blob | null {
+  const commaIndex = dataUrl.indexOf(',');
+  if (commaIndex === -1) return null;
+  const meta = dataUrl.slice(5, commaIndex);
+  const payload = dataUrl.slice(commaIndex + 1);
+  const isBase64 = meta.endsWith(';base64');
+  const mimeType = (isBase64 ? meta.slice(0, -7) : meta) || 'application/octet-stream';
+  try {
+    if (isBase64) {
+      const binary = atob(payload);
+      const bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index += 1) {
+        bytes[index] = binary.charCodeAt(index);
+      }
+      return new Blob([bytes], { type: mimeType });
+    }
+    return new Blob([decodeURIComponent(payload)], { type: mimeType });
+  } catch {
+    return null;
+  }
+}
+
+let activeImageOverlayDismiss: (() => void) | null = null;
+
 function showImageOverlay(src: string) {
-  document.querySelector('.markdown-image-overlay')?.remove();
+  activeImageOverlayDismiss?.();
   const overlay = document.createElement('div');
   overlay.className = 'markdown-image-overlay';
   overlay.tabIndex = -1;
@@ -990,10 +1014,17 @@ function showImageOverlay(src: string) {
   img.alt = '';
   img.src = src;
   overlay.appendChild(img);
-  overlay.addEventListener('click', () => overlay.remove());
-  overlay.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') overlay.remove();
-  });
+  const dismiss = () => {
+    overlay.remove();
+    document.removeEventListener('keydown', handleKeydown);
+    if (activeImageOverlayDismiss === dismiss) activeImageOverlayDismiss = null;
+  };
+  const handleKeydown = (event: KeyboardEvent) => {
+    if (event.key === 'Escape') dismiss();
+  };
+  overlay.addEventListener('click', dismiss);
+  document.addEventListener('keydown', handleKeydown);
+  activeImageOverlayDismiss = dismiss;
   document.body.appendChild(overlay);
   overlay.focus();
 }
@@ -1001,14 +1032,11 @@ function showImageOverlay(src: string) {
 function openImageAtFullSize(src: string) {
   const dataImageMatch = /^data:(image\/[a-z0-9.+-]+)/i.exec(src);
   if (dataImageMatch && !dataImageMatch[1].toLowerCase().includes('svg')) {
-    fetch(src)
-      .then((response) => response.blob())
-      .then((blob) => {
-        const objectUrl = URL.createObjectURL(blob);
-        window.open(objectUrl, '_blank', 'noopener,noreferrer');
-        setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
-      })
-      .catch(() => undefined);
+    const blob = dataUrlToBlob(src);
+    if (!blob) return;
+    const objectUrl = URL.createObjectURL(blob);
+    window.open(objectUrl, '_blank', 'noopener,noreferrer');
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
     return;
   }
   if (dataImageMatch) {
@@ -1080,7 +1108,7 @@ export default function MarkdownRenderer({ content, class: className }: Markdown
 
   useEffect(
     () => () => {
-      document.querySelector('.markdown-image-overlay')?.remove();
+      activeImageOverlayDismiss?.();
     },
     []
   );
