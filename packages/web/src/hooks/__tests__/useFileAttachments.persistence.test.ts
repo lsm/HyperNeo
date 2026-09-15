@@ -1,0 +1,429 @@
+// @ts-nocheck
+
+import { renderHook, act } from '@testing-library/preact';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { useFileAttachments } from '../useFileAttachments.ts';
+import {
+  composerAttachmentsSignal,
+  dropPendingComposerAttachments,
+  readPendingComposerAttachments,
+  removeDeliveredComposerAttachments,
+  writePendingComposerAttachments,
+} from '../../lib/composer-attachment-store.ts';
+import {
+  fileToBase64,
+  validateImageFile,
+  extractImagesFromClipboard,
+} from '../../lib/file-utils.ts';
+
+vi.mock('../../lib/toast.ts', () => ({
+  toast: {
+    error: vi.fn(),
+  },
+}));
+
+vi.mock('../../lib/file-utils.ts', () => ({
+  validateImageFile: vi.fn(),
+  fileToBase64: vi.fn(),
+  extractImagesFromClipboard: vi.fn(),
+}));
+
+function createMockFile(name: string, type: string): File {
+  return new File(['test content'], name, { type });
+}
+
+function createMockFileList(files: File[]): FileList {
+  const fileList = {
+    length: files.length,
+    item: (index: number) => files[index] || null,
+    [Symbol.iterator]: function* () {
+      for (const file of files) {
+        yield file;
+      }
+    },
+  } as FileList;
+
+  files.forEach((file, index) => {
+    Object.defineProperty(fileList, index, { value: file, enumerable: true });
+  });
+
+  return fileList;
+}
+
+function createPasteEvent(files: File[]): ClipboardEvent {
+  const mockItems = { length: files.length } as DataTransferItemList;
+  for (let i = 0; i < files.length; i++) {
+    (mockItems as unknown as Record<number, DataTransferItem>)[i] = {
+      kind: 'file',
+      type: files[i].type,
+      getAsFile: () => files[i],
+    };
+  }
+  return {
+    clipboardData: { items: mockItems },
+  } as unknown as ClipboardEvent;
+}
+
+async function pasteImages(
+  hookResult: { current: ReturnType<typeof useFileAttachments> },
+  files: File[]
+) {
+  vi.mocked(extractImagesFromClipboard).mockReturnValueOnce(files);
+  await act(async () => {
+    await hookResult.current.handlePaste(createPasteEvent(files));
+  });
+}
+
+describe('useFileAttachments session persistence', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    composerAttachmentsSignal.value = {};
+    vi.mocked(validateImageFile).mockReturnValue(null);
+    vi.mocked(fileToBase64).mockImplementation(async (file: File) => `b64:${file.name}`);
+    vi.mocked(extractImagesFromClipboard).mockReturnValue([]);
+  });
+
+  it('restores pasted attachments when the hook remounts for the same session', async () => {
+    const first = renderHook(() => useFileAttachments('session-a'));
+    await pasteImages(first.result, [createMockFile('pasted.png', 'image/png')]);
+    expect(first.result.current.attachments).toHaveLength(1);
+
+    first.unmount();
+
+    const second = renderHook(() => useFileAttachments('session-a'));
+    expect(second.result.current.attachments).toHaveLength(1);
+    expect(second.result.current.attachments[0]).toEqual({
+      data: 'b64:pasted.png',
+      media_type: 'image/png',
+      name: 'pasted.png',
+      size: expect.any(Number),
+    });
+    expect(second.result.current.getImagesForSend()).toEqual([
+      { data: 'b64:pasted.png', media_type: 'image/png' },
+    ]);
+  });
+
+  it('keeps explicit removals across remounts', async () => {
+    const first = renderHook(() => useFileAttachments('session-a'));
+    await pasteImages(first.result, [
+      createMockFile('one.png', 'image/png'),
+      createMockFile('two.png', 'image/png'),
+    ]);
+    expect(first.result.current.attachments).toHaveLength(2);
+
+    act(() => {
+      first.result.current.handleRemove(0);
+    });
+    first.unmount();
+
+    const second = renderHook(() => useFileAttachments('session-a'));
+    expect(second.result.current.attachments).toHaveLength(1);
+    expect(second.result.current.attachments[0].name).toBe('two.png');
+  });
+
+  it('drops persisted attachments after clear() so a remount starts empty', async () => {
+    const first = renderHook(() => useFileAttachments('session-a'));
+    await pasteImages(first.result, [createMockFile('pasted.png', 'image/png')]);
+
+    act(() => {
+      first.result.current.clear();
+    });
+    first.unmount();
+
+    const second = renderHook(() => useFileAttachments('session-a'));
+    expect(second.result.current.attachments).toEqual([]);
+    expect(second.result.current.getImagesForSend()).toBeUndefined();
+  });
+
+  it('isolates pending attachments per session', async () => {
+    const first = renderHook(() => useFileAttachments('session-a'));
+    await pasteImages(first.result, [createMockFile('pasted.png', 'image/png')]);
+    first.unmount();
+
+    const other = renderHook(() => useFileAttachments('session-b'));
+    expect(other.result.current.attachments).toEqual([]);
+
+    const restored = renderHook(() => useFileAttachments('session-a'));
+    expect(restored.result.current.attachments).toHaveLength(1);
+  });
+
+  it('persists restore() snapshots (failed-send recovery) across remounts', () => {
+    const first = renderHook(() => useFileAttachments('session-a'));
+    const snapshot = [
+      {
+        data: 'AAAA',
+        media_type: 'image/png' as const,
+        name: 'a.png',
+        size: 4,
+      },
+    ];
+
+    act(() => {
+      first.result.current.restore(snapshot);
+    });
+    first.unmount();
+
+    const second = renderHook(() => useFileAttachments('session-a'));
+    expect(second.result.current.attachments).toEqual(snapshot);
+  });
+
+  it('restoreAfterFailedSend merges the saved snapshot with attachments added during the send', () => {
+    const { result } = renderHook(() => useFileAttachments('session-a'));
+    const saved = [{ data: 'AAAA', media_type: 'image/png' as const, name: 'a.png', size: 4 }];
+    const addedDuringSend = [
+      { data: 'BBBB', media_type: 'image/jpeg' as const, name: 'b.jpg', size: 4 },
+    ];
+
+    act(() => {
+      result.current.restoreAfterFailedSend(saved);
+    });
+    expect(result.current.attachments).toEqual(saved);
+
+    act(() => {
+      result.current.restore(addedDuringSend);
+    });
+
+    act(() => {
+      result.current.restoreAfterFailedSend(saved);
+    });
+    expect(result.current.attachments).toEqual([...saved, ...addedDuringSend]);
+  });
+
+  it('restoreAfterFailedSend does not duplicate re-added copies of saved images', () => {
+    const { result } = renderHook(() => useFileAttachments('session-a'));
+    const saved = [{ data: 'AAAA', media_type: 'image/png' as const, name: 'a.png', size: 4 }];
+
+    act(() => {
+      result.current.restore(saved);
+    });
+    act(() => {
+      result.current.restoreAfterFailedSend(saved);
+    });
+
+    expect(result.current.attachments).toEqual(saved);
+  });
+
+  it('does not persist when no sessionId is provided', async () => {
+    const first = renderHook(() => useFileAttachments());
+    await pasteImages(first.result, [createMockFile('pasted.png', 'image/png')]);
+    expect(first.result.current.attachments).toHaveLength(1);
+    first.unmount();
+
+    const second = renderHook(() => useFileAttachments());
+    expect(second.result.current.attachments).toEqual([]);
+    expect(composerAttachmentsSignal.value).toEqual({});
+  });
+
+  it('swaps to the stored list when sessionId changes mid-mount', async () => {
+    const { result, rerender } = renderHook(({ sessionId }) => useFileAttachments(sessionId), {
+      initialProps: { sessionId: 'session-a' },
+    });
+
+    await pasteImages(result, [createMockFile('pasted.png', 'image/png')]);
+    expect(result.current.attachments).toHaveLength(1);
+
+    rerender({ sessionId: 'session-b' });
+    expect(result.current.attachments).toEqual([]);
+
+    rerender({ sessionId: 'session-a' });
+    expect(result.current.attachments).toHaveLength(1);
+    expect(result.current.attachments[0].name).toBe('pasted.png');
+  });
+
+  it('carries ephemeral attachments into the session bucket once an id resolves', async () => {
+    const { result, rerender } = renderHook(({ sessionId }) => useFileAttachments(sessionId), {
+      initialProps: { sessionId: undefined as string | undefined },
+    });
+
+    await pasteImages(result, [createMockFile('pasted.png', 'image/png')]);
+    expect(result.current.attachments).toHaveLength(1);
+
+    rerender({ sessionId: 'session-a' });
+    expect(result.current.attachments).toHaveLength(1);
+    expect(result.current.attachments[0].name).toBe('pasted.png');
+    expect(result.current.getImagesForSend()).toEqual([
+      { data: 'b64:pasted.png', media_type: 'image/png' },
+    ]);
+
+    rerender({ sessionId: undefined });
+    expect(result.current.attachments).toEqual([]);
+  });
+
+  it('merges ephemeral attachments into an existing bucket for the resolved session', async () => {
+    writePendingComposerAttachments('session-a', [
+      { data: 'XXXX', media_type: 'image/png', name: 'existing.png', size: 4 },
+    ]);
+    const { result, rerender } = renderHook(({ sessionId }) => useFileAttachments(sessionId), {
+      initialProps: { sessionId: undefined as string | undefined },
+    });
+
+    await pasteImages(result, [createMockFile('pasted.png', 'image/png')]);
+
+    rerender({ sessionId: 'session-a' });
+    expect(result.current.attachments.map((attachment) => attachment.data)).toEqual([
+      'XXXX',
+      'b64:pasted.png',
+    ]);
+  });
+
+  it('routes file reads that finish after session resolution into the session bucket', async () => {
+    let resolveRead: (value: string) => void = () => {};
+    vi.mocked(fileToBase64).mockReturnValueOnce(
+      new Promise<string>((resolve) => {
+        resolveRead = resolve;
+      })
+    );
+
+    const { result, rerender } = renderHook(({ sessionId }) => useFileAttachments(sessionId), {
+      initialProps: { sessionId: undefined as string | undefined },
+    });
+
+    const file = createMockFile('pasted.png', 'image/png');
+    vi.mocked(extractImagesFromClipboard).mockReturnValueOnce([file]);
+    let pastePromise: Promise<unknown> = Promise.resolve();
+    act(() => {
+      pastePromise = result.current.handlePaste(createPasteEvent([file])) as Promise<unknown>;
+    });
+
+    rerender({ sessionId: 'session-a' });
+    expect(result.current.attachments).toEqual([]);
+
+    await act(async () => {
+      resolveRead('b64:pasted.png');
+      await pastePromise;
+    });
+
+    expect(result.current.attachments).toHaveLength(1);
+    expect(result.current.attachments[0].name).toBe('pasted.png');
+    expect(readPendingComposerAttachments('session-a')).toHaveLength(1);
+  });
+
+  it('scopes pending attachments to a pendingKey bucket while no session exists', async () => {
+    const { result } = renderHook(() => useFileAttachments(undefined, 'target-b'));
+
+    await pasteImages(result, [createMockFile('pasted.png', 'image/png')]);
+    expect(result.current.attachments).toHaveLength(1);
+    expect(readPendingComposerAttachments('pending:target-b')).toHaveLength(1);
+
+    const other = renderHook(() => useFileAttachments(undefined, 'target-a'));
+    expect(other.result.current.attachments).toEqual([]);
+  });
+
+  it('migrates only the resolved target pendingKey bucket into the session', async () => {
+    const { result, rerender } = renderHook(
+      ({ sessionId, pendingKey }) => useFileAttachments(sessionId, pendingKey),
+      { initialProps: { sessionId: undefined as string | undefined, pendingKey: 'target-b' } }
+    );
+
+    await pasteImages(result, [createMockFile('pasted.png', 'image/png')]);
+
+    rerender({ sessionId: 'session-b', pendingKey: 'target-b' });
+    expect(result.current.attachments).toHaveLength(1);
+    expect(readPendingComposerAttachments('session-b')).toHaveLength(1);
+    expect(readPendingComposerAttachments('pending:target-b')).toEqual([]);
+  });
+
+  it('does not merge another target pendingKey bucket when a different session resolves', async () => {
+    const { result, rerender } = renderHook(
+      ({ sessionId, pendingKey }) => useFileAttachments(sessionId, pendingKey),
+      { initialProps: { sessionId: undefined as string | undefined, pendingKey: 'target-b' } }
+    );
+
+    await pasteImages(result, [createMockFile('pasted.png', 'image/png')]);
+
+    rerender({ sessionId: 'session-a', pendingKey: 'target-a' });
+    expect(result.current.attachments).toEqual([]);
+    expect(readPendingComposerAttachments('session-a')).toEqual([]);
+    expect(readPendingComposerAttachments('pending:target-b')).toHaveLength(1);
+  });
+
+  it('keeps two mounted composers for the same session in sync', async () => {
+    const a = renderHook(() => useFileAttachments('session-a'));
+    const b = renderHook(() => useFileAttachments('session-a'));
+
+    await act(async () => {
+      await pasteImages(a.result, [createMockFile('pasted.png', 'image/png')]);
+    });
+
+    expect(a.result.current.attachments).toHaveLength(1);
+    expect(b.result.current.attachments).toHaveLength(1);
+  });
+
+  it('processes dropped files through the session store as well', async () => {
+    const first = renderHook(() => useFileAttachments('session-a'));
+    const file = createMockFile('dropped.png', 'image/png');
+
+    await act(async () => {
+      await first.result.current.handleFileDrop(createMockFileList([file]));
+    });
+    first.unmount();
+
+    const second = renderHook(() => useFileAttachments('session-a'));
+    expect(second.result.current.attachments).toHaveLength(1);
+    expect(second.result.current.attachments[0].name).toBe('dropped.png');
+  });
+});
+
+describe('composer-attachment-store', () => {
+  beforeEach(() => {
+    composerAttachmentsSignal.value = {};
+  });
+
+  it('returns an empty list for unknown sessions', () => {
+    expect(readPendingComposerAttachments('missing')).toEqual([]);
+  });
+
+  it('drops the session entry when cleared instead of storing an empty list', () => {
+    writePendingComposerAttachments('session-a', [
+      { data: 'AAAA', media_type: 'image/png', name: 'a.png', size: 4 },
+    ]);
+    expect('session-a' in composerAttachmentsSignal.value).toBe(true);
+
+    writePendingComposerAttachments('session-a', []);
+    expect(composerAttachmentsSignal.value).toEqual({});
+    expect(readPendingComposerAttachments('session-a')).toEqual([]);
+  });
+
+  it('clearing an untouched session is a no-op', () => {
+    writePendingComposerAttachments('session-a', []);
+    expect(composerAttachmentsSignal.value).toEqual({});
+  });
+
+  it('dropPendingComposerAttachments removes only the targeted session entry', () => {
+    writePendingComposerAttachments('session-a', [
+      { data: 'AAAA', media_type: 'image/png', name: 'a.png', size: 4 },
+    ]);
+    writePendingComposerAttachments('session-b', [
+      { data: 'BBBB', media_type: 'image/png', name: 'b.png', size: 4 },
+    ]);
+
+    dropPendingComposerAttachments('session-a');
+
+    expect(readPendingComposerAttachments('session-a')).toEqual([]);
+    expect(readPendingComposerAttachments('session-b')).toHaveLength(1);
+  });
+
+  it('removeDeliveredComposerAttachments drops delivered images and keeps later additions', () => {
+    writePendingComposerAttachments('session-a', [
+      { data: 'AAAA', media_type: 'image/png', name: 'a.png', size: 4 },
+      { data: 'CCCC', media_type: 'image/png', name: 'c.png', size: 4 },
+    ]);
+
+    removeDeliveredComposerAttachments('session-a', [{ data: 'AAAA', media_type: 'image/png' }]);
+
+    expect(readPendingComposerAttachments('session-a')).toEqual([
+      { data: 'CCCC', media_type: 'image/png', name: 'c.png', size: 4 },
+    ]);
+  });
+
+  it('removeDeliveredComposerAttachments is a no-op for unknown sessions or data', () => {
+    removeDeliveredComposerAttachments('missing', [{ data: 'AAAA', media_type: 'image/png' }]);
+
+    writePendingComposerAttachments('session-a', [
+      { data: 'CCCC', media_type: 'image/png', name: 'c.png', size: 4 },
+    ]);
+    removeDeliveredComposerAttachments('session-a', [{ data: 'ZZZZ', media_type: 'image/png' }]);
+
+    expect(readPendingComposerAttachments('session-a')).toHaveLength(1);
+  });
+});

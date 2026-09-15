@@ -224,6 +224,7 @@ export function TaskSessionChatComposer({
       )}
       <ChatComposer
         sessionId={targetSessionId ?? ''}
+        pendingAttachmentKey={selectedTarget?.id}
         readonly={false}
         isProcessing={targetIsProcessing}
         supportsQueueDelivery

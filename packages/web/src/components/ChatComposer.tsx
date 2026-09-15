@@ -16,6 +16,7 @@ import type { RegisterFileDropTarget } from '../hooks';
 
 export interface ChatComposerProps {
   sessionId: string;
+  pendingAttachmentKey?: string;
   readonly: boolean;
   sessionStatus?: string;
   sessionType?: SessionType;
@@ -64,6 +65,7 @@ export const CHAT_COMPOSER_READABILITY_SCRIM_TEST_ID = 'chat-composer-readabilit
 
 export function ChatComposer({
   sessionId,
+  pendingAttachmentKey,
   readonly,
   sessionStatus,
   sessionType,
@@ -170,6 +172,7 @@ export function ChatComposer({
           !readonly && (
             <MessageInput
               sessionId={sessionId}
+              pendingAttachmentKey={pendingAttachmentKey}
               sessionType={sessionType}
               onSend={onSend}
               disabled={
