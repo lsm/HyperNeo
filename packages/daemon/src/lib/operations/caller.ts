@@ -12,13 +12,5 @@ export function resolveCallerIdentity(
   resolveScope: CallerScopeResolver,
   sessionId: string
 ): CallerIdentity {
-  return { sessionId, ...(resolveScope(sessionId) ?? {}) };
-}
-
-export function resolveTransportCallerIdentity(
-  resolveScope: CallerScopeResolver,
-  sessionId: string | undefined
-): CallerIdentity {
-  const scope = sessionId ? resolveScope(sessionId) : null;
-  return scope ? { sessionId, ...scope } : {};
+  return { sessionId, ...resolveScope(sessionId) };
 }

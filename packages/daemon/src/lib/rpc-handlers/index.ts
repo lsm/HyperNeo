@@ -339,11 +339,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   let inactivityRunNowCancelled = false;
   let inactivityAborted = false;
   setupMessageHandlers(deps.messageHub, deps.sessionManager, deps.db);
-  setupOperationHandlers(
-    deps.messageHub,
-    () => deps.sessionManager.getOperationRegistry(),
-    (sessionId) => deps.sessionManager.resolveCallerScope(sessionId)
-  );
+  setupOperationHandlers(deps.messageHub, () => deps.sessionManager.getOperationRegistry());
   setupSystemHandlers(deps.messageHub, deps.sessionManager);
   setupAuthHandlers(
     deps.messageHub,

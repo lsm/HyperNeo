@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { InProcessTransport, MessageHub } from '@hyperneo/shared';
 import { z } from 'zod';
-import type { CallerScopeResolver } from '../../../../src/lib/operations/caller';
 import {
   createOperationRegistry,
   defineOperation,
@@ -14,10 +13,11 @@ const CallerSchema = z.object({
   sessionId: z.string().optional(),
   spaceId: z.string().optional(),
   role: z.string().optional(),
+  agentId: z.string().optional(),
   agentName: z.string().optional(),
 });
 
-async function hubPair(resolveScope: CallerScopeResolver) {
+async function hubPair() {
   const client = new MessageHub();
   const server = new MessageHub();
   const transports = InProcessTransport.createPair();
@@ -32,7 +32,7 @@ async function hubPair(resolveScope: CallerScopeResolver) {
       execute: async (_input, caller: OperationCaller) => caller,
     }),
   ]);
-  const unregister = setupOperationHandlers(server, registry, resolveScope);
+  const unregister = setupOperationHandlers(server, registry);
   await Promise.all(transports.map((transport) => transport.initialize()));
   const close = async () => {
     unregister();
@@ -43,46 +43,26 @@ async function hubPair(resolveScope: CallerScopeResolver) {
   return { client, close };
 }
 
-describe('operation.invoke caller scope', () => {
+describe('the RPC door never derives identity from the wire session id', () => {
   let close: (() => Promise<void>) | undefined;
   afterEach(async () => {
     await close?.();
     close = undefined;
   });
 
-  test('a transport session without scope invokes as a bare rpc caller', async () => {
-    const seen: string[] = [];
-    const pair = await hubPair((sessionId) => {
-      seen.push(sessionId);
-      return null;
-    });
+  test.each([
+    { label: 'identity keys in the input', input: { spaceId: 'space-1', role: 'long_term_agent' } },
+    { label: 'a long-term agent session id', input: { sessionId: 'space:agent:space-1:agent-7' } },
+    { label: 'nothing at all', input: {} },
+  ])('yields a bare rpc caller for $label', async ({ input }) => {
+    const pair = await hubPair();
     close = pair.close;
-    const caller = await pair.client.request('operation.invoke', {
-      name: 'caller.echo',
-      input: { sessionId: 'spoofed', role: 'long_term_agent' },
-    });
-    expect(caller).toEqual({ source: 'rpc' });
-    expect(seen).toHaveLength(1);
-  });
-
-  test('a transport session with scope carries that scope and nothing from the payload', async () => {
-    const pair = await hubPair(() => ({
-      spaceId: 'space-1',
-      role: 'ad_hoc_member',
-      agentName: 'operator',
-    }));
-    close = pair.close;
-    const caller = await pair.client.request<z.infer<typeof CallerSchema>>('operation.invoke', {
-      name: 'caller.echo',
-      input: { spaceId: 'spoofed-space', role: 'long_term_agent' },
-      caller: { source: 'internal' },
-    });
-    expect(caller).toMatchObject({
-      source: 'rpc',
-      spaceId: 'space-1',
-      role: 'ad_hoc_member',
-      agentName: 'operator',
-    });
-    expect(typeof caller.sessionId).toBe('string');
+    expect(
+      await pair.client.request('operation.invoke', {
+        name: 'caller.echo',
+        input,
+        caller: { source: 'internal', sessionId: 'spoofed', role: 'long_term_agent' },
+      })
+    ).toEqual({ source: 'rpc' });
   });
 });
