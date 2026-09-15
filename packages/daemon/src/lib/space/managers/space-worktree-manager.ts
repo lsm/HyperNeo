@@ -20,7 +20,7 @@ import {
   getWorktreeBaseDir,
 } from '../../worktree-path-utils.ts';
 import { MAX_NETWORK_RETRIES, NETWORK_RETRY_DELAYS_MS } from '../runtime/constants.ts';
-import { retryWithBackoff } from '../runtime/retry-utils.ts';
+import { retryWithBackoff } from '../../utils/retry-utils.ts';
 import { worktreeSlug } from '../worktree-slug.ts';
 import { nodeWorkspaceValidationIo } from '../workspaces/workspace-validation-pipeline.ts';
 

@@ -1,5 +1,5 @@
 import type { WorkflowHookResult } from '@hyperneo/shared';
-import type { HookExecutorContext } from '../hook-executor.ts';
+import type { HookExecutorContext } from '../../space/runtime/hook-executor.ts';
 import { getConnector } from './connector.ts';
 import type { Predicate } from './predicate.ts';
 import { evaluatePredicate } from './predicate.ts';

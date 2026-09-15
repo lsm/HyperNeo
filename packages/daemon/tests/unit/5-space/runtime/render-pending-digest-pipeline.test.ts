@@ -6,7 +6,7 @@ import type {
   ExternalEventDeliveryRecord,
   ExternalEventRecord,
 } from '../../../../src/lib/external-events/types';
-import { buildImmediateEventMessageUuid } from '../../../../src/lib/space/runtime/immediate-event-delivery-pipeline';
+import { buildImmediateEventMessageUuid } from '../../../../src/lib/external-events/immediate-delivery-pipeline';
 import {
   admitTurnEnd,
   aggregateRender,
