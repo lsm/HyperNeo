@@ -15,6 +15,7 @@ import {
 import { jsonResult } from '../tools/tool-result.ts';
 import { type CreateStandaloneTaskParams, mapCreateTaskParams } from './create-task-params.ts';
 import { RestoreNodeAgentSchema } from './node-agent-schemas.ts';
+import { mapArchiveTaskParams, mapArchiveTaskResult } from './archive-task-operation.ts';
 import { createOperationActionHandler } from './operation-action.ts';
 import { type ActionDefinition, defineAction } from './registry.ts';
 import {
@@ -1058,7 +1059,15 @@ export function createSpaceRegistryEntries(
       paramsDoc: 'task_id',
       paramsSchema: ArchiveTaskSchema,
       autonomyRequirement: archiveTaskAutonomy,
-      handler: (args) => handlers.archive_task(args),
+      handler: operations
+        ? createOperationActionHandler(
+            operations,
+            { sessionId: config.mySessionId },
+            'task.archive',
+            mapArchiveTaskParams,
+            mapArchiveTaskResult
+          )
+        : (args) => handlers.archive_task(args),
     }),
     defineAction({
       name: 'send_message_to_task',
