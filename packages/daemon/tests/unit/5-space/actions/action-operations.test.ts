@@ -78,8 +78,8 @@ describe('actions as operations', () => {
     expect(merged.get('get_task_detail')).toBeDefined();
   });
 
-  test('mutating actions are not exposed until the pre-invocation gates exist', () => {
+  test('mutating actions are exposed alongside reads', () => {
     const operations = actionsAsOperations(registryOfClass('mutate', 'archive_task'));
-    expect(operations).toEqual([]);
+    expect(operations.map((operation) => operation.name)).toEqual(['archive_task']);
   });
 });

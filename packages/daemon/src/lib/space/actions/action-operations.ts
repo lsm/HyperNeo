@@ -15,10 +15,6 @@ export function actionAsOperation(action: RegisteredAction): OperationDefinition
   });
 }
 
-export function isAdaptableAction(action: RegisteredAction): boolean {
-  return action.safetyClass === 'read';
-}
-
 export function actionsAsOperations(registry: ActionRegistry): OperationDefinition[] {
-  return registry.entries.filter(isAdaptableAction).map(actionAsOperation);
+  return registry.entries.map(actionAsOperation);
 }
