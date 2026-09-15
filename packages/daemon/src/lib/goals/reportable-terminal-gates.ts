@@ -1,4 +1,4 @@
-import { decisionRun } from '../runtime/decision-pipeline.ts';
+import { decisionRun } from '../space/runtime/decision-pipeline.ts';
 import type { SpaceTaskStatus } from '@hyperneo/shared';
 
 export const TERMINAL_TASK_STATUSES: readonly SpaceTaskStatus[] = [

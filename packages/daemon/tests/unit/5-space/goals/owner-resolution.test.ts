@@ -3,7 +3,7 @@ import {
   decideGoalOwnerResolution,
   type GoalOwnerCandidate,
   type GoalOwnerResolutionInput,
-} from '../../../../src/lib/space/goals/goal-owner-resolution';
+} from '../../../../src/lib/goals/owner-resolution';
 
 const active = { state: 'active' } as const;
 const missing = { state: 'missing' } as const;

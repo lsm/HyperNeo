@@ -1,28 +1,28 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { Database } from '../../../src/storage/sqlite-compat';
-import type { Job } from '../../../src/storage/repositories/job-queue-repository';
-import { GOAL_AUTOMATION_EXECUTE } from '../../../src/lib/job-queue-constants';
-import { handleGoalAutomationExecute } from '../../../src/lib/job-handlers/goal-automation-execute.handler';
+import { Database } from '../../../../src/storage/sqlite-compat';
+import type { Job } from '../../../../src/storage/repositories/job-queue-repository';
+import { GOAL_AUTOMATION_EXECUTE } from '../../../../src/lib/job-queue-constants';
+import { handleGoalAutomationExecute } from '../../../../src/lib/job-handlers/goal-automation-execute.handler';
 import {
   GoalAutomationService,
   externalEventTriggerKey,
-} from '../../../src/lib/space/goals/goal-automation-service';
-import { EvolutionScopeService } from '../../../src/lib/space/evolution-scope-service';
-import { EvolutionRepository } from '../../../src/storage/repositories/evolution-repository';
-import { GoalAutomationCursorRepository } from '../../../src/storage/repositories/goal-automation-cursor-repository';
-import { JobQueueRepository } from '../../../src/storage/repositories/job-queue-repository';
-import { SpaceGoalRepository } from '../../../src/storage/repositories/space-goal-repository';
-import { SpaceRepository } from '../../../src/storage/repositories/space-repository';
-import { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository';
-import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository';
-import { TaskScheduleRepository } from '../../../src/storage/repositories/task-schedule-repository';
+} from '../../../../src/lib/goals/automation-service';
+import { EvolutionScopeService } from '../../../../src/lib/space/evolution-scope-service';
+import { EvolutionRepository } from '../../../../src/storage/repositories/evolution-repository';
+import { GoalAutomationCursorRepository } from '../../../../src/storage/repositories/goal-automation-cursor-repository';
+import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
+import { SpaceGoalRepository } from '../../../../src/storage/repositories/space-goal-repository';
+import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
+import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
+import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
+import { TaskScheduleRepository } from '../../../../src/storage/repositories/task-schedule-repository';
 import {
   validateGoalAutomationSelfNagPolicy,
   syncGoalAutomationSelfNagScheduleForScope,
-} from '../../../src/lib/rpc-handlers';
-import { mergeEvolutionPolicy } from '../../../src/lib/space/evolution-scope-service';
-import { ScheduleService } from '../../../src/lib/space/schedule/schedule-service';
-import { createSpaceTables } from '../helpers/space-test-db';
+} from '../../../../src/lib/rpc-handlers';
+import { mergeEvolutionPolicy } from '../../../../src/lib/space/evolution-scope-service';
+import { ScheduleService } from '../../../../src/lib/space/schedule/schedule-service';
+import { createSpaceTables } from '../../helpers/space-test-db';
 
 function createAutomationJob(payload: Job['payload'], id = 'job-automation'): Job {
   return {

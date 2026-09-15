@@ -8,8 +8,8 @@ import type { TaskScheduleRepository } from '../../storage/repositories/task-sch
 import type { JobQueueRepository, Job } from '../../storage/repositories/job-queue-repository.ts';
 import type { SpaceRepository } from '../../storage/repositories/space-repository.ts';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
-import type { SpaceGoalService } from '../space/goals/goal-service.ts';
-import type { GoalAutomationService } from '../space/goals/goal-automation-service.ts';
+import type { SpaceGoalService } from '../goals/service.ts';
+import type { GoalAutomationService } from '../goals/automation-service.ts';
 import type { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository.ts';
 
 const log = new Logger('task-schedule-fire-handler');

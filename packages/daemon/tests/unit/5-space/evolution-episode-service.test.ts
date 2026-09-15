@@ -16,7 +16,7 @@ import { SpaceTaskRepository } from '../../../src/storage/repositories/space-tas
 import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository';
 import { WorkflowRunArtifactRepository } from '../../../src/storage/repositories/workflow-run-artifact-repository';
 import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space-workflow-repository';
-import { SpaceGoalService } from '../../../src/lib/space/goals/goal-service';
+import { SpaceGoalService } from '../../../src/lib/goals/service';
 import { CodingArtifactProfile } from '../../../src/lib/space/workflows/coding-artifact-profile';
 import type { WorkflowArtifactProfile } from '../../../src/lib/space/runtime/artifact-profile';
 import { createSpaceTables } from '../helpers/space-test-db';

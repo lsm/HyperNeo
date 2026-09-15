@@ -1,4 +1,4 @@
-import { decisionRun } from '../runtime/decision-pipeline.ts';
+import { decisionRun } from '../space/runtime/decision-pipeline.ts';
 
 export type GoalOwnerAgentState =
   | { state: 'active' }
