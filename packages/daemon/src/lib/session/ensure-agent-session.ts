@@ -4,7 +4,7 @@ import {
   type AgentRecordResolution,
   type ResolveAgentRecordDeps,
   resolveAgentRecord,
-} from '../../session-resolution/resolve-agent-record.ts';
+} from '../session-resolution/resolve-agent-record.ts';
 
 export interface EnsuredSession {
   getSessionData(): { status: string };

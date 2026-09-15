@@ -5,7 +5,7 @@ import {
   type EnsureAgentSessionDeps,
   isAgentTargetLifecycleEligible,
   runEnsureAgentSession,
-} from '../../../../src/lib/space/runtime/ensure-agent-session.ts';
+} from '../../../../src/lib/session/ensure-agent-session.ts';
 
 const SPACE_ID = 'space-1';
 

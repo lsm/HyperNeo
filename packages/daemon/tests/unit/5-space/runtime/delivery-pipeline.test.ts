@@ -12,7 +12,7 @@ import {
   type ExternalEventDeliveryDecision,
   type ExternalEventDeliveryInput,
   type PostActivationDeliveryInput,
-} from '../../../../src/lib/space/runtime/external-event-delivery-pipeline';
+} from '../../../../src/lib/external-events/delivery-pipeline';
 
 function makeInput(
   overrides: Partial<ExternalEventDeliveryInput> = {}

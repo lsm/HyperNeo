@@ -1,5 +1,5 @@
 import type { WorkflowHookValidatorId } from '@hyperneo/shared';
-import { spawnProcess, type SpawnFn } from '../../../runtime-spawn/index.ts';
+import { spawnProcess, type SpawnFn } from '../../runtime-spawn/index.ts';
 import { registerConnector } from './connector.ts';
 import { createGithubConnector, GITHUB_CONNECTOR_ID } from './github-connector.ts';
 
