@@ -11,6 +11,12 @@ Measured against `dev` @ `5d6f88fdb` (2026-09-14).
 **How to read it.** Green is built today. Red dashed is in the target and absent from the
 code. Amber is policy that exists but sits below the registry and has to move above it.
 
+**The third lane is the point.** A Space agent session holds *both* MCP servers at once —
+`query-options-builder.ts:305` merges `hyperneo-operations` into the same server map that
+already carries `space-actions`. So an agent has two doors into the same data: `call_action`,
+behind nine built policy stages, and `operation.invoke`, behind none. The gap is not that
+agents are ungated; it is that one of their two doors is.
+
 **One liberty in the drawing:** the red boxes sit in the flow as though the stage existed and
 were empty. It does not exist at all — the built path is adapter → shared invoker, one call.
 The red boxes are target topology overlaid on built topology, which is the useful shape for
@@ -60,7 +66,17 @@ before the operation is resolved. Two consequences:
   (`applyRateAndAudit`), not to `operation.invoke`.
 
 So the RPC route is currently unscoped and unaudited — the hazard the target doc names as a
-thing convergence must not create. Turning the scope check on will reject calls that succeed
+thing convergence must not create. The agent route is only partly better: the same operation
+reached through `call_action` passes safety, role, autonomy, rate and audit, and reached
+through `operation.invoke` passes none of them.
+
+**The policy is not missing — it is built on the wrong surface.** `dispatcher-pipeline.ts`
+already implements this pipeline for `call_action`: 257 lines across `resolveTargets` (46),
+`applySafetyClass` (5), `applyRoleAdmission` (18), `applyAutonomyGate` (61), `applyRateAndAudit`
+(75) and its audit helpers (52). Whether that pipeline becomes the operations pre-invocation
+pipeline, or is duplicated beside it, is the open `ActionRegistry` decision that
+`-target.md` deliberately leaves unmade. It should be settled before the stages are written,
+because the answer decides whether this is a lift or a second implementation. Turning the scope check on will reject calls that succeed
 today, which makes it a staged behavior change rather than wiring.
 
 **Suggested order: audit before enforcement.** Nothing records whether real RPC callers cross
