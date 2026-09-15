@@ -436,10 +436,16 @@ unrelated recovery infrastructure.
 - Split legacy `*_unavailable` reasons into unavailable/denied families as each
   operation is touched; define the pre-invocation reason family with the first
   pipeline.
-- First `call_action` entry delegating to an operation (`task.cancel` is the
-  natural candidate: identical semantics, different policy layer).
-- First UI control calling `operation.invoke`, under a characterization pin of
-  its legacy handler.
+- ~~First `call_action` entry delegating to an operation (`task.cancel` is the
+  natural candidate: identical semantics, different policy layer).~~ Done —
+  three entries delegate through `space/actions/operation-action.ts`:
+  `task.create` and `task.cancel` (`registry-space.ts`) and
+  `task.submitForReview` (`registry-node.ts`). `task.cancel` was the predicted
+  candidate and is among them.
+- ~~First UI control calling `operation.invoke`, under a characterization pin of
+  its legacy handler.~~ Done — the UI reads and writes through the operations
+  door at ten call sites, and the last legacy Space task write handler was
+  retired in #4576. See the Web UI row in Current state.
 - ~~Decide the eventual relationship between `call_action` and the MCP
   pre-invocation pipeline (thin front versus parallel front).~~ Decided
   2026-09-14: full retirement. See the §4 amendment note.
