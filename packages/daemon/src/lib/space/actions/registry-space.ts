@@ -820,7 +820,50 @@ export function createSpaceRegistryEntries(
         'List tasks in this space filterable by status, run, and title search; returns task summaries (compact mode trims fields).',
       paramsDoc: 'status?, workflow_run_id?, search?, limit? (default 50), offset?, compact?',
       paramsSchema: ListTasksSchema,
-      handler: (args) => handlers.list_tasks(args),
+      handler: operations
+        ? createOperationActionHandler(
+            operations,
+            { sessionId: config.mySessionId },
+            'task.list',
+            async (params) => {
+              const typed = params as {
+                status?: SpaceTaskStatus;
+                workflow_run_id?: string;
+                search?: string;
+                limit?: number;
+                offset?: number;
+              };
+              if (typed.workflow_run_id) {
+                const run = config.workflowRunRepo.getRun(typed.workflow_run_id);
+                if (!run || run.spaceId !== config.spaceId) {
+                  return { reject: `Workflow run not found: ${typed.workflow_run_id}` };
+                }
+              }
+              return {
+                spaceId: config.spaceId,
+                status: typed.status,
+                workflowRunId: typed.workflow_run_id,
+                search: typed.search,
+                limit: typed.limit,
+                offset: typed.offset,
+              };
+            },
+            (value, originalParams) => {
+              const page = value as { tasks: unknown[]; total: number };
+              const compact = (originalParams as { compact?: boolean }).compact;
+              const tasks = compact
+                ? page.tasks.map((t) => ({
+                    id: (t as { id: string }).id,
+                    title: (t as { title: string }).title,
+                    status: (t as { status: string }).status,
+                    priority: (t as { priority: string }).priority,
+                    createdAt: (t as { createdAt: number }).createdAt,
+                  }))
+                : page.tasks;
+              return { success: true, total: page.total, tasks };
+            }
+          )
+        : (args) => handlers.list_tasks(args),
     }),
     defineAction({
       name: 'create_standalone_task',

@@ -19,6 +19,8 @@ export function createListTasksOperation(
       .object({
         spaceId: z.string().min(1).optional(),
         status: TaskCoreSchema.shape.status.optional(),
+        workflowRunId: z.string().min(1).optional(),
+        search: z.string().optional(),
         blockReason: BlockReasonSchema.nullable().optional(),
         blockReasonNotIn: BlockReasonSchema.array().optional(),
         limit: z.number().int().min(1).max(100).optional(),
