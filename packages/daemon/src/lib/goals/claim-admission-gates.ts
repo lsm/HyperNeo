@@ -1,4 +1,4 @@
-import { decisionRun } from '../runtime/decision-pipeline.ts';
+import { decisionRun } from '../space/runtime/decision-pipeline.ts';
 import type { SpaceGoalOutcomeNotificationStatus } from '@hyperneo/shared';
 
 export type ClaimAdmissionDenyReason =

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import { Database } from '../../../src/storage/sqlite-compat';
-import { SpaceGoalService } from '../../../src/lib/space/goals/goal-service';
+import { SpaceGoalService } from '../../../src/lib/goals/service';
 import { ScheduleService } from '../../../src/lib/space/schedule/schedule-service';
 import { JobQueueRepository } from '../../../src/storage/repositories/job-queue-repository';
 import { SpaceGoalEventRepository } from '../../../src/storage/repositories/space-goal-event-repository';

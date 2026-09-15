@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { decideGoalOwnershipMutationAdmission } from '../../../../src/lib/space/goals/goal-ownership-gates';
+import { decideGoalOwnershipMutationAdmission } from '../../../../src/lib/goals/ownership-gates';
 
 describe('decideGoalOwnershipMutationAdmission', () => {
   test('allows a human invocation without a session', () => {

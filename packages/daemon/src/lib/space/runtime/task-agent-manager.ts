@@ -295,7 +295,7 @@ export interface TaskAgentManagerConfig {
       message: MessageRecord
     ) => Promise<string | null | undefined>;
   };
-  goalService?: import('../goals/goal-service.ts').SpaceGoalService;
+  goalService?: import('../../goals/service.ts').SpaceGoalService;
   evolutionScopeService?: EvolutionScopeService;
   externalEventStore?: import('../../external-events/external-event-store.ts').ExternalEventStore;
 }

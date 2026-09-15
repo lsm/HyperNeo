@@ -7,12 +7,14 @@ import type { SpaceGoalRepository } from '../../storage/repositories/space-goal-
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
 import type { EvolutionEpisodeService } from '../space/evolution-episode-service.ts';
 import {
-  maxCompletedTaskTimestamp,
-  maxEvidenceCursor,
   readAutomationPolicyForScope,
   readCompletedTaskThreshold,
+} from '../goals/automation-policy.ts';
+import {
+  maxCompletedTaskTimestamp,
+  maxEvidenceCursor,
   selectEvidenceAfterCursor,
-} from '../space/goals/goal-automation-service.ts';
+} from '../goals/automation-service.ts';
 import { GOAL_AUTOMATION_EXECUTE } from '../job-queue-constants.ts';
 import { Logger } from '../logger.ts';
 
