@@ -110,7 +110,7 @@ flowchart TB
   RpcMatch --> RpcRate
   RpcRate --> RpcAudit
   RpcAudit --> SharedInvocation
-  Internal -->|constructs OperationCaller { source: internal }| SharedInvocation
+  Internal -->|constructs OperationCaller with source internal| SharedInvocation
   Resolve --> Validate
   Validate --> Execute
   Execute --> ValidateResult
