@@ -298,6 +298,45 @@ describe('useFileAttachments session persistence', () => {
     expect(readPendingComposerAttachments('session-a')).toHaveLength(1);
   });
 
+  it('scopes pending attachments to a pendingKey bucket while no session exists', async () => {
+    const { result } = renderHook(() => useFileAttachments(undefined, 'target-b'));
+
+    await pasteImages(result, [createMockFile('pasted.png', 'image/png')]);
+    expect(result.current.attachments).toHaveLength(1);
+    expect(readPendingComposerAttachments('pending:target-b')).toHaveLength(1);
+
+    const other = renderHook(() => useFileAttachments(undefined, 'target-a'));
+    expect(other.result.current.attachments).toEqual([]);
+  });
+
+  it('migrates only the resolved target pendingKey bucket into the session', async () => {
+    const { result, rerender } = renderHook(
+      ({ sessionId, pendingKey }) => useFileAttachments(sessionId, pendingKey),
+      { initialProps: { sessionId: undefined as string | undefined, pendingKey: 'target-b' } }
+    );
+
+    await pasteImages(result, [createMockFile('pasted.png', 'image/png')]);
+
+    rerender({ sessionId: 'session-b', pendingKey: 'target-b' });
+    expect(result.current.attachments).toHaveLength(1);
+    expect(readPendingComposerAttachments('session-b')).toHaveLength(1);
+    expect(readPendingComposerAttachments('pending:target-b')).toEqual([]);
+  });
+
+  it('does not merge another target pendingKey bucket when a different session resolves', async () => {
+    const { result, rerender } = renderHook(
+      ({ sessionId, pendingKey }) => useFileAttachments(sessionId, pendingKey),
+      { initialProps: { sessionId: undefined as string | undefined, pendingKey: 'target-b' } }
+    );
+
+    await pasteImages(result, [createMockFile('pasted.png', 'image/png')]);
+
+    rerender({ sessionId: 'session-a', pendingKey: 'target-a' });
+    expect(result.current.attachments).toEqual([]);
+    expect(readPendingComposerAttachments('session-a')).toEqual([]);
+    expect(readPendingComposerAttachments('pending:target-b')).toHaveLength(1);
+  });
+
   it('keeps two mounted composers for the same session in sync', async () => {
     const a = renderHook(() => useFileAttachments('session-a'));
     const b = renderHook(() => useFileAttachments('session-a'));

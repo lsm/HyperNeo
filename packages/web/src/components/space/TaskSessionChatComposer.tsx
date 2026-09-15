@@ -223,8 +223,8 @@ export function TaskSessionChatComposer({
         </div>
       )}
       <ChatComposer
-        key={selectedTarget?.id ?? 'no-target'}
         sessionId={targetSessionId ?? ''}
+        pendingAttachmentKey={selectedTarget?.id}
         readonly={false}
         isProcessing={targetIsProcessing}
         supportsQueueDelivery

@@ -30,16 +30,25 @@ export interface UseFileAttachmentsResult {
   handlePaste: (e: ClipboardEvent) => void;
 }
 
-export function useFileAttachments(sessionId?: string): UseFileAttachmentsResult {
+export function useFileAttachments(
+  sessionId?: string,
+  pendingKey?: string
+): UseFileAttachmentsResult {
   const ephemeralAttachments = useSignal<AttachmentWithMetadata[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const attachments = sessionId
-    ? (composerAttachmentsSignal.value[sessionId] ?? EMPTY_ATTACHMENTS)
-    : ephemeralAttachments.value;
-
   const sessionIdRef = useRef(sessionId);
   sessionIdRef.current = sessionId;
+  const pendingKeyRef = useRef(pendingKey);
+  pendingKeyRef.current = pendingKey;
+
+  const pendingStoreKey = pendingKey ? `pending:${pendingKey}` : null;
+
+  const attachments = sessionId
+    ? (composerAttachmentsSignal.value[sessionId] ?? EMPTY_ATTACHMENTS)
+    : pendingStoreKey
+      ? (composerAttachmentsSignal.value[pendingStoreKey] ?? EMPTY_ATTACHMENTS)
+      : ephemeralAttachments.value;
 
   const setAttachments = useCallback(
     (update: (prev: AttachmentWithMetadata[]) => AttachmentWithMetadata[]) => {
@@ -48,6 +57,14 @@ export function useFileAttachments(sessionId?: string): UseFileAttachmentsResult
         writePendingComposerAttachments(
           currentSessionId,
           update(readPendingComposerAttachments(currentSessionId))
+        );
+        return;
+      }
+      const currentPendingKey = pendingKeyRef.current ? `pending:${pendingKeyRef.current}` : null;
+      if (currentPendingKey) {
+        writePendingComposerAttachments(
+          currentPendingKey,
+          update(readPendingComposerAttachments(currentPendingKey))
         );
       } else {
         ephemeralAttachments.value = update(ephemeralAttachments.value);
@@ -61,12 +78,17 @@ export function useFileAttachments(sessionId?: string): UseFileAttachmentsResult
     const prevSessionId = prevSessionIdRef.current;
     prevSessionIdRef.current = sessionId;
     if (prevSessionId || !sessionId) return;
-    const ephemeral = ephemeralAttachments.peek();
-    if (ephemeral.length === 0) return;
+    const pendingKeyNow = pendingKeyRef.current ? `pending:${pendingKeyRef.current}` : null;
+    const sources = [
+      ...(pendingKeyNow ? readPendingComposerAttachments(pendingKeyNow) : []),
+      ...ephemeralAttachments.peek(),
+    ];
+    if (sources.length === 0) return;
     writePendingComposerAttachments(sessionId, [
       ...readPendingComposerAttachments(sessionId),
-      ...ephemeral,
+      ...sources,
     ]);
+    if (pendingKeyNow) writePendingComposerAttachments(pendingKeyNow, []);
     ephemeralAttachments.value = [];
   }, [sessionId, ephemeralAttachments]);
 

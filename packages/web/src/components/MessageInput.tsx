@@ -173,6 +173,7 @@ function getPlaceholderForSessionType(sessionType?: SessionType): string {
 
 interface MessageInputProps {
   sessionId: string;
+  pendingAttachmentKey?: string;
   sessionType?: SessionType;
   onSend: (
     content: string,
@@ -203,6 +204,7 @@ interface MessageInputProps {
 
 export default function MessageInput({
   sessionId,
+  pendingAttachmentKey,
   sessionType,
   onSend,
   disabled,
@@ -266,7 +268,7 @@ export default function MessageInput({
     openFilePicker,
     getImagesForSend,
     handlePaste,
-  } = useFileAttachments(sessionId);
+  } = useFileAttachments(sessionId, pendingAttachmentKey);
   const { handleInterrupt } = useInterrupt({ sessionId });
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [resendingVoiceRecordId, setResendingVoiceRecordId] = useState<string | null>(null);
