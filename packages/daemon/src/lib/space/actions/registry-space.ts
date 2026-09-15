@@ -857,13 +857,16 @@ export function createSpaceRegistryEntries(
             'task.get',
             (params) => {
               const typed = params as { task_id?: string; task_number?: number };
-              if (typed.task_id === undefined && typed.task_number === undefined) {
-                return { reject: 'Either task_id or task_number is required' };
-              }
               if (typed.task_number !== undefined) {
+                if (!Number.isInteger(typed.task_number) || typed.task_number <= 0) {
+                  return { reject: 'task_number must be a positive integer' };
+                }
                 return { spaceId: config.spaceId, taskNumber: typed.task_number };
               }
-              return { taskId: typed.task_id };
+              if (typed.task_id !== undefined && typed.task_id !== '') {
+                return { taskId: typed.task_id };
+              }
+              return { reject: 'Either task_id or task_number is required' };
             },
             (value, originalParams) => {
               const original = originalParams as { task_id?: string; task_number?: number };

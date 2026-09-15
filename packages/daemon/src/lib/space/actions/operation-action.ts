@@ -23,7 +23,7 @@ export async function mapActionParams(
 ): Promise<{ value: MappedActionParams } | { reason: ToolResult }> {
   const mapped = await mapParams(params);
   return isOperationActionRejection(mapped)
-    ? { reason: { ...jsonResult({ success: false, error: mapped.reject }), isError: true } }
+    ? { reason: jsonResult({ success: false, error: mapped.reject }) }
     : { value: { params, mappedParams: mapped } };
 }
 

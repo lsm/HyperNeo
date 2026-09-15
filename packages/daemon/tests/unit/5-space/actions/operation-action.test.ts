@@ -49,10 +49,8 @@ describe('mapActionParams (gate)', () => {
 
   test('a { reject } mapped value halts with a formatted ToolResult reason', async () => {
     const result = await mapActionParams({}, () => ({ reject: 'nope' }));
-    expect(result).toMatchObject({
-      reason: { isError: true },
-    });
     const reason = (result as { reason: { content: Array<{ text: string }> } }).reason;
+    expect(reason.isError).toBeUndefined();
     expect(JSON.parse(reason.content[0].text)).toEqual({ success: false, error: 'nope' });
   });
 
@@ -165,7 +163,7 @@ describe('createOperationActionHandler', () => {
         content: Array<{ text: string }>;
         isError?: boolean;
       };
-      expect(result.isError).toBe(true);
+      expect(result.isError).toBeUndefined();
       expect(JSON.parse(extractText(result))).toEqual({
         success: false,
         error: 'not allowed',
