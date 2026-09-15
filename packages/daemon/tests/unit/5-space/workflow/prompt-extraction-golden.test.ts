@@ -54,26 +54,26 @@ const GOLDEN: Record<string, string> = {
   CODEX_REACTION_APPROVAL_GUIDANCE:
     '2e1dbf1a39b2c9b47dc930c2614e3d85c93d0ea2175d3149162262725a4966be',
   CODER_EXTERNAL_GATE_BLOCK: 'e4020f4406f182b4edd57a74bd17d1f7f3b7efeec017f7b1f5dd83d2790d720d',
-  CODER_ONLY_MERGE_INSTRUCTIONS: 'f8c9db8a28512c41c15b4d36edaffdfcb324abda5e7e2fc06d373c57e5d390a1',
-  CODER_ONLY_PROMPT: 'd0920506eb04be44da9067cc69cc82f8a5d15aaa2ae3f9efe638ae1dad000f47',
+  CODER_ONLY_MERGE_INSTRUCTIONS: '5543ba55a4fe4b68a80832481cd4a561f0990e308f979c5be7adb3a5dc85491e',
+  CODER_ONLY_PROMPT: '142b07ce7a51bca8401de280efa0ea32da3918111801ed4873a9e33a9e1f7ada',
   CODER_OWNED_MERGE_INSTRUCTIONS:
-    '68bebe232fc5b289ce4d38d723e41bc725f3fe716dcd56642ed8f35635ba1adb',
-  CODER_OWNED_MERGE_PROMPT: 'fb443b928d5185ba2cc0845dfe8e9c7558aad483deaf830386daaa81e5464e3a',
+    '04a47ad5a22134e679233bd4038a9037bbb9aa0fc3ec8166e3172a68829d4d01',
+  CODER_OWNED_MERGE_PROMPT: '2019d2456bb199c58b14e0fefd9553e3fc24c878a9010979f1b56d933ac7797e',
   CODER_OWNED_PR_SUBSCRIBE_GUIDANCE:
     '849ec685a272e0a751689014bd717b5e2103ccfb02d6b5b18e90eaad86bbb6e1',
-  CODER_OWNED_QA_PROMPT: '1e397bd79d88ed4bd2036c611444aec568371c71b62ee62522ef7673405feb54',
-  CODER_OWNED_QA_REVIEW_PROMPT: '857f679aaea42eeae46b0dc41600dbbb5ef945f2473d3d43fd7969137654d7a1',
-  CODER_OWNED_REVIEW_PROMPT: 'f435e6399a6892becb3f67c04aa3b10441abbf3b346bb5de02a3e89e934bab30',
+  CODER_OWNED_QA_PROMPT: '6ad1afe0c7e099fa117f2c95ebc6be45a7c7edcb46aed98876d93058119adff1',
+  CODER_OWNED_QA_REVIEW_PROMPT: '1e7e69cf223816813c015fd80b82240688b092559485bb48eccb14f75c16fe1f',
+  CODER_OWNED_REVIEW_PROMPT: '467779a984795c4b3b9f037f3233624c1b18010fd4b2fd188f71c7f6a42cf0b4',
   EXTERNAL_REVIEW_BOTS_GUIDANCE: '5cd7f3fe6b9a05536d0544461e1439fa01691ab4a6e821696975ac418af87933',
   FULLSTACK_CODING_NOCHANGE_GUIDANCE:
     '74f56a17289baccf098c526fe6397b8894414f6cd3fd8178af86f5e3a16b95a4',
   FULLSTACK_QA_POST_APPROVAL_PARAGRAPH:
     '77d86b527ae489e9b32394ddbe2ee72f1ac5b283fe065902e72485ce9fb62030',
-  RESEARCH_PROMPT: '0273b60949a2920d296a6b1ae4edcf688594b5ab2006467912f4644fe79d9c71',
-  RESEARCH_REVIEW_PROMPT: '170d05be08b01b476fd852b5665c86a47e8974fa12eb0f2c99b4e1aa2efcd0d0',
-  REVIEW_ONLY_REVIEW_PROMPT: '9cc7bd308c0cbffc82d69c545e8105ed8745b8f8ff6bbad5101bc2fc70cd27ec',
+  RESEARCH_PROMPT: '913955fda9e3844e52331e17f8f14c08214dfde770beff924c183d3b0eba660c',
+  RESEARCH_REVIEW_PROMPT: '95074abf105e87fa6a3752e7d16097fc46663c5a28fb5f7e3ff682c582d37269',
+  REVIEW_ONLY_REVIEW_PROMPT: '9cb98891db684bab99494d69ddeb86c5dff04edf1e0306e6cb5cc9239f1df289',
   CALL_ACTION_PREFERENCE_GUIDANCE:
-    '7a57fc8d2faa52658c9417a4fa714766dc4d9cc3b4982dcfb7269258159fbbcc',
+    '7c92b6970e05806e33f7c8e5b6761cb0466dc3129343dd6cf1bbbef05bd6f249',
   REVIEW_POLICY_GUIDANCE: '6ba821ea3dd2c230a4bd44cf70f17f24bcecf0741e99f68978a689c7904fddf7',
   REVIEWER_POST_APPROVAL_BLOCKER_PARAGRAPH:
     'a86da78d4d26ac27bf38510364b449a905abc3421297fffd180f62ee1c585c60',
@@ -84,7 +84,7 @@ const GOLDEN: Record<string, string> = {
     '48b32262a1df32c43b4f87933592e1e222c8c7f6b731dac27eede79b61c14ee9',
   LEGACY_REVIEWER_PROMPT: '3d62ec5b500028f9513df1c9d4cd6dad24a8e956026a12969fc59c7117c76d8d',
   LONG_HORIZON_SCHEDULING_GUARDRAIL:
-    '95cb4361e4b989de679b7dde4885c6d7582c9047ec60b2270ddb7f2b2531edbb',
+    'ac04d03c6c3b4c72db7af0179d6fa06b68b12bcdcd0b71e91e73500fbb3658c5',
   NON_DELEGATING_GENERAL_PROMPT: '5543aeae7a2a3aac9c5a4f9b489e3849c0998cb5e1d82b20e383da876fc5ae89',
   PRESET_CODER_PROMPT: '57b0ef8003e8e0ddea9aa4bb44404e1a8367fe43991c421046ca348d96fb1911',
   PRESET_RESEARCH_PROMPT: 'acc05ba0296ae52784b5477f97bd7246446644510c8e8228540f6387bcd8495e',
@@ -99,7 +99,7 @@ const GOLDEN: Record<string, string> = {
   SUBAGENT_VCS_PROMPT: 'ea28eae3d3fb3291df5324077b0f7d602ff9abe8222ffb2eec71c69fedbdb2b1',
   SUBAGENT_VERIFIER_PROMPT: 'b5c24ec4a2b90c6ddc5b851e33e14da2fad554c528fa93027a9bc5a08dbfbfe0',
   POST_APPROVAL_COMPLETION_INSTRUCTIONS:
-    '4de8512028fe8430dce241b2b4d00e0ab9da8f64571acb2aca0fe0931ee0c367',
+    '99579e535f19b51ec01d42f2014982ff2a2ea309bfc92f5251b1fdfcc70cc640',
   PROMPT_TOO_LONG_CONTINUE_NAG: '6087c6a95dc3d926b9c7e683ea1f125dc8fd26052b6291c93fab1d0512f79005',
   TITLE_GENERATION_PROMPT: '90eb78808852b1639e84818f8447dcb02a2b3f9e2e1fb664edf54c930c3610dd',
   WORKFLOW_SELECTOR_INSTRUCTIONS:
@@ -171,8 +171,8 @@ describe('prompt extraction golden hashes', () => {
   });
 });
 
-describe('workflow prompts prefer call_action with named-action fallback', () => {
-  const DISPATCHER_PROMPTS: Record<string, string> = {
+describe('workflow prompts prefer the operations door with named-operation fallback', () => {
+  const OPERATION_DOOR_PROMPTS: Record<string, string> = {
     CODER_ONLY_PROMPT,
     CODER_OWNED_MERGE_PROMPT,
     CODER_OWNED_REVIEW_PROMPT,
@@ -185,10 +185,10 @@ describe('workflow prompts prefer call_action with named-action fallback', () =>
     CODER_OWNED_MERGE_INSTRUCTIONS,
   };
 
-  test('every workflow role prompt and merge instruction carries the dispatcher prose', () => {
-    for (const [id, text] of Object.entries(DISPATCHER_PROMPTS)) {
-      expect(text, id).toContain('prefer `call_action(name, params)`');
-      expect(text, id).toContain('call_action(name="list_actions")');
+  test('every workflow role prompt and merge instruction carries the operations-door prose', () => {
+    for (const [id, text] of Object.entries(OPERATION_DOOR_PROMPTS)) {
+      expect(text, id).toContain('use `invoke(name, input)`');
+      expect(text, id).toContain('invoke(name="operations.list")');
     }
   });
 
@@ -202,7 +202,7 @@ describe('workflow prompts prefer call_action with named-action fallback', () =>
       'mark_complete',
     ]) {
       expect(CALL_ACTION_PREFERENCE_GUIDANCE).toContain(`\`${name}\``);
-      const usedBy = Object.entries(DISPATCHER_PROMPTS).filter(([, text]) =>
+      const usedBy = Object.entries(OPERATION_DOOR_PROMPTS).filter(([, text]) =>
         text.replace(CALL_ACTION_PREFERENCE_GUIDANCE, '').includes(name)
       );
       expect(usedBy.length, name).toBeGreaterThan(0);

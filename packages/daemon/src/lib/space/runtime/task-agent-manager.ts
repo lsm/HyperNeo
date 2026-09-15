@@ -3287,7 +3287,7 @@ export class TaskAgentManager {
       `Role: "${execution.agentName}"`,
       'Tools available:',
       ...dispatcherTools,
-      'If you hit a hard blocker: record it via call_action(name="save_artifact", params={ shape: "note", kind: "blocked", summary: "<what blocks you>" }) and stop. Do NOT wait for a reply — there is no Space-level recipient, and the unfinished task carrying that artifact is the signal a human acts on.',
+      'If you hit a hard blocker: record it via invoke(name="save_artifact", input={ shape: "note", kind: "blocked", summary: "<what blocks you>" }) and stop. Do NOT wait for a reply — there is no Space-level recipient, and the unfinished task carrying that artifact is the signal a human acts on.',
     ].join('\n');
 
     if (!workflow) {
@@ -3308,16 +3308,16 @@ export class TaskAgentManager {
     ];
 
     lines.push(
-      'If you hit a hard blocker: record it via call_action(name="save_artifact", params={ shape: "note", kind: "blocked", summary: "<what blocks you>" }) and stop. Do NOT wait for a reply — there is no Space-level recipient, and the unfinished task carrying that artifact is the signal a human acts on.'
+      'If you hit a hard blocker: record it via invoke(name="save_artifact", input={ shape: "note", kind: "blocked", summary: "<what blocks you>" }) and stop. Do NOT wait for a reply — there is no Space-level recipient, and the unfinished task carrying that artifact is the signal a human acts on.'
     );
     if (isEndNode) {
       if (approveUnlocked) {
         lines.push(
-          'When your work is complete: (1) call call_action(name="save_artifact", params={ shape: "decision", key: "outcome", summary: "...", data: { recommendation: "completed" } }) to record the outcome, then (2) call call_action(name="approve_task") as your FINAL action to close the task. The runtime — not your artifact — decides the terminal status via completion actions.'
+          'When your work is complete: (1) call invoke(name="save_artifact", input={ shape: "decision", key: "outcome", summary: "...", data: { recommendation: "completed" } }) to record the outcome, then (2) call invoke(name="approve_task") as your FINAL action to close the task. The runtime — not your artifact — decides the terminal status via completion actions.'
         );
       } else {
         lines.push(
-          'When your work is complete: (1) call call_action(name="save_artifact", params={ shape: "decision", key: "outcome", summary: "...", data: { recommendation: "completed" } }) to record the outcome, then (2) call call_action(name="submit_for_approval", params={ reason: "..." }) as your FINAL action. approve_task is NOT available at this autonomy level; only a human can finalize.'
+          'When your work is complete: (1) call invoke(name="save_artifact", input={ shape: "decision", key: "outcome", summary: "...", data: { recommendation: "completed" } }) to record the outcome, then (2) call invoke(name="submit_for_approval", input={ reason: "..." }) as your FINAL action. approve_task is NOT available at this autonomy level; only a human can finalize.'
         );
       }
     }
