@@ -4,7 +4,6 @@ import type {
   ImageContent,
   ListRuntimeMcpServersRequest,
   ListRuntimeMcpServersResponse,
-  McpServerConfig,
   MessageDeliveryMode,
   MessageHub,
   MessageImage,
@@ -175,13 +174,10 @@ export function setupSessionHandlers(
 
     if (session && !session.context?.spaceId && spaceRuntimeService && agentSession) {
       try {
-        agentSession.mergeRuntimeMcpServers({
-          'space-actions':
-            spaceRuntimeService.buildUniversalReadDispatcherServer() as unknown as McpServerConfig,
-        });
+        spaceRuntimeService.installUniversalReadOperations(agentSession);
       } catch (err) {
         log.warn(
-          `Failed to attach space-actions dispatcher to non-space session ${sessionId}:`,
+          `Failed to attach universal-read operations to non-space session ${sessionId}:`,
           err
         );
       }

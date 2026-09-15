@@ -28,7 +28,6 @@ import {
   defineAction,
   type ActionDefinition,
 } from '../../../../src/lib/space/actions/registry.ts';
-import { runDispatchAction } from '../../../../src/lib/space/actions/dispatcher-pipeline.ts';
 import {
   composeRoleActionEntries,
   createNodeRegistryEntries,
@@ -508,31 +507,6 @@ describe('composeRoleActionEntries — approve_task collision resolution', () =>
     expect(registry.get('list_sessions')?.family).toBe('space');
   });
 
-  test('runDispatchAction accepts composed space entries from non-space families', async () => {
-    const spaceEntry = defineAction({
-      name: 'list_sessions',
-      family: 'sessions',
-      safetyClass: 'read',
-      description: 'Lists sessions in the space',
-      paramsDoc: 'none',
-      paramsSchema: z.object({}),
-      handler: async () => [],
-    });
-    const registry = createActionRegistry(
-      composeRoleActionEntries('coordinator', [spaceEntry], [])
-    );
-    const outcome = await runDispatchAction(
-      { registry },
-      {
-        actionName: 'list_sessions',
-        params: {},
-        role: 'ad_hoc_member',
-        spaceId: SPACE_ID,
-      }
-    );
-    expect(outcome.action).toBe('dispatched');
-  });
-
   test('coordinator, member, long-term, and non-space registries never include node family', () => {
     const nodeEntry = defineAction({
       name: 'list_peers',
@@ -623,7 +597,7 @@ describe('composeRoleActionEntries — approve_task collision resolution', () =>
     expect(registry.get('delete_scheduled_task')).toBeUndefined();
   });
 
-  test('end-to-end: dispatched approve_task on a worker registry routes to the node handler', async () => {
+  test('invoking approve_task on a worker registry routes to the node handler', async () => {
     const ctx = makeCtx();
     try {
       const nodeEntries = createNodeRegistryEntries(
@@ -638,19 +612,7 @@ describe('composeRoleActionEntries — approve_task collision resolution', () =>
         )
       );
 
-      const outcome = await runDispatchAction(
-        { registry },
-        {
-          actionName: 'approve_task',
-          params: {},
-          role: 'workflow_worker',
-          spaceId: SPACE_ID,
-          taskId: 'task-1',
-          workflowRunId: 'run-registry-node-test',
-          spaceLevel: 5,
-        }
-      );
-      expect(outcome.action).toBe('dispatched');
+      await registry.get('approve_task')!.handler({});
       expect(ctx.calls.get('approve_task')).toBe(1);
       expect(spaceApproveCalls).toEqual([]);
     } finally {
@@ -658,63 +620,7 @@ describe('composeRoleActionEntries — approve_task collision resolution', () =>
     }
   });
 
-  test('end-to-end: default autonomy 5 denies approve_task below level 5 and allows at the workflow level', async () => {
-    const ctx = makeCtx();
-    try {
-      const registry = createActionRegistry(
-        composeRoleActionEntries(
-          'workflow_worker',
-          makeSpaceEntries([]),
-          createNodeRegistryEntries(makeBareConfig(ctx, keepCallbacks(ctx, ['onApproveTask'])))
-        )
-      );
-      const denied = await runDispatchAction(
-        { registry },
-        {
-          actionName: 'approve_task',
-          params: {},
-          role: 'workflow_worker',
-          spaceId: SPACE_ID,
-          spaceLevel: 4,
-        }
-      );
-      expect(denied).toEqual({
-        action: 'denied',
-        reason: 'autonomy_denied',
-        message: expect.stringContaining('space autonomy level 4'),
-      });
-      expect(ctx.calls.get('approve_task')).toBeUndefined();
-
-      const workflow = { completionAutonomyLevel: 3 } as SpaceWorkflow;
-      const lowered = createActionRegistry(
-        composeRoleActionEntries(
-          'workflow_worker',
-          makeSpaceEntries([]),
-          createNodeRegistryEntries(
-            makeBareConfig(ctx, {
-              workflow,
-              ...keepCallbacks(ctx, ['onApproveTask']),
-            })
-          )
-        )
-      );
-      const allowed = await runDispatchAction(
-        { registry: lowered },
-        {
-          actionName: 'approve_task',
-          params: {},
-          role: 'workflow_worker',
-          spaceId: SPACE_ID,
-          spaceLevel: 4,
-        }
-      );
-      expect(allowed.action).toBe('dispatched');
-    } finally {
-      ctx.db.close();
-    }
-  });
-
-  test('end-to-end: the coordinator registry dispatches the space approve_task, not the node one', async () => {
+  test('the coordinator registry resolves the space approve_task, not the node one', async () => {
     const ctx = makeCtx();
     try {
       const spaceApproveCalls: string[] = [];
@@ -725,58 +631,9 @@ describe('composeRoleActionEntries — approve_task collision resolution', () =>
           createNodeRegistryEntries(makeBareConfig(ctx))
         )
       );
-      const outcome = await runDispatchAction(
-        { registry },
-        {
-          actionName: 'approve_task',
-          params: { task_id: 'task-9' },
-          role: 'ad_hoc_member',
-          spaceId: SPACE_ID,
-        }
-      );
-      expect(outcome.action).toBe('dispatched');
+      await registry.get('approve_task')!.handler({ task_id: 'task-9' });
       expect(spaceApproveCalls).toEqual(['space']);
       expect(ctx.calls.get('approve_task')).toBeUndefined();
-    } finally {
-      ctx.db.close();
-    }
-  });
-});
-
-describe('createNodeRegistryEntries — dispatcher audit chokepoint', () => {
-  test('a dispatched mutating node action writes exactly one audit row', async () => {
-    const ctx = makeCtx();
-    try {
-      const auditRepo = new McpAuditLogRepository(ctx.db);
-      const registry = createActionRegistry(
-        composeRoleActionEntries(
-          'workflow_worker',
-          makeSpaceEntries([]),
-          createNodeRegistryEntries(
-            makeConfig(ctx, {
-              auditLogRepo: auditRepo,
-              ...keepCallbacks(ctx, ['onApproveTask']),
-            })
-          )
-        )
-      );
-
-      await runDispatchAction(
-        { registry, auditLogRepo: auditRepo },
-        {
-          actionName: 'approve_task',
-          params: {},
-          role: 'workflow_worker',
-          spaceId: SPACE_ID,
-          taskId: 'task-1',
-          workflowRunId: 'run-registry-node-test',
-          spaceLevel: 5,
-        }
-      );
-
-      const rows = auditRepo.listBySpace(SPACE_ID, 10, 0);
-      expect(rows).toHaveLength(1);
-      expect(rows[0].toolName).toBe('approve_task');
     } finally {
       ctx.db.close();
     }
