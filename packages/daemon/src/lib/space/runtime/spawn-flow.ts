@@ -14,7 +14,7 @@ import { type StagedRunOutcome, stagedRun } from './staged-run.ts';
 import {
   validateExecutionAgainstWorkflow,
   validateTaskAllowsSpawn,
-} from './workflow-node-execution-validation.ts';
+} from '../../workflows/node-execution-validation.ts';
 
 export interface IndexedSessionInspection {
   sessionId: string | null;

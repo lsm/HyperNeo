@@ -25,7 +25,7 @@ migration is a **no-op**:
 - `pr_merged` was never admitted before #2302, so no persisted workflow carries
   it.
 - Unregistered ids already fail-closed at dispatch (`hook-executor.ts`) and are
-  rejected at admission (`workflow-hook-validation.ts`) — no shim gap to fill.
+  rejected at admission (`hook-validation.ts`) — no shim gap to fill.
 
 So this suite delivers the task's hard constraint — *idempotent re-stamp proven
 against real snapshots* — without fabricating a transformation or compat shim

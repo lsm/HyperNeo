@@ -1,0 +1,225 @@
+import type { Connector } from '../space/runtime/connectors/connector.ts';
+import {
+  getConnector,
+  getRegisteredConnectorIds,
+  isConnectorsLayerEnabled,
+} from '../space/runtime/connectors/connector.ts';
+import { resolveGithubConfigDir } from '../space/runtime/gh-lookup-helpers.ts';
+import type { HookExecutorContext } from './hook-executor.ts';
+
+const RESTRICTED_ENV_PREFIXES = [
+  'ANTHROPIC_',
+  'CLAUDE_',
+  'GLM_',
+  'ZHIPU_',
+  'COPILOT_',
+  'HYPERNEO_',
+  'NEOKAI_',
+];
+
+const RESTRICTED_ENV_KEY_PATTERN = /SECRET|TOKEN|PASSWORD|CREDENTIAL|API_KEY/i;
+
+const HOOK_INJECTED_ENV_KEYS = new Set([
+  'HYPERNEO_HOOK_ID',
+  'HYPERNEO_WORKFLOW_RUN_ID',
+  'HYPERNEO_WORKSPACE_PATH',
+  'HYPERNEO_METHOD_NAME',
+  'HYPERNEO_NODE_ID',
+  'HYPERNEO_NODE_NAME',
+  'HYPERNEO_SESSION_ID',
+  'HYPERNEO_TASK_ID',
+  'HYPERNEO_WORKFLOW_START_ISO',
+  'HYPERNEO_TARGET_NODE',
+  'HYPERNEO_PARAMS_JSON',
+  'HYPERNEO_HOOK_LOCAL_STATE_JSON',
+  'HYPERNEO_CURRENT_ARTIFACTS_JSON',
+  'HYPERNEO_PERMITTED_EXTERNAL_LOOKUPS',
+  'HYPERNEO_HOOK_TEMPLATE_DATA_JSON',
+]);
+
+const ALWAYS_ALLOWED_ENV_KEYS = new Set([
+  'PATH',
+  'HOME',
+  'USER',
+  'SHELL',
+  'LANG',
+  'TERM',
+  'TMPDIR',
+  'HYPERNEO_VALIDATION_BASE_REF',
+]);
+
+const GITHUB_LOOKUP_ENV_KEYS = new Set([
+  'GH_TOKEN',
+  'GITHUB_TOKEN',
+  'GH_ENTERPRISE_TOKEN',
+  'GITHUB_ENTERPRISE_TOKEN',
+  'GH_HOST',
+  'GH_CONFIG_DIR',
+]);
+
+const SSH_ENV_KEYS = new Set(['SSH_AUTH_SOCK', 'SSH_AGENT_LAUNCHER', 'SSH_AGENT_PID']);
+
+const CREDENTIAL_PATH_ENV_KEYS = new Set([
+  'KUBECONFIG',
+  'DOCKER_CONFIG',
+  'NPM_CONFIG_USERCONFIG',
+  'AWS_CONFIG_FILE',
+  'AWS_SHARED_CREDENTIALS_FILE',
+  'GOOGLE_APPLICATION_CREDENTIALS',
+  'AZURE_CONFIG_DIR',
+]);
+
+function resolvePermittedConnectorAuth(lookups: string[]): {
+  permitted: Set<string>;
+  managed: Set<string>;
+  extraEnv: Record<string, string | undefined>;
+} {
+  if (isConnectorsLayerEnabled()) {
+    const permitted = new Set<string>();
+    const managed = new Set<string>();
+    const extraEnv: Record<string, string | undefined> = {};
+    for (const id of getRegisteredConnectorIds()) {
+      const connector = getConnector(id);
+      for (const key of connector?.auth?.envKeys ?? []) managed.add(key);
+    }
+    for (const id of lookups) {
+      const connector: Connector | undefined = getConnector(id);
+      if (!connector?.auth) continue;
+      for (const key of connector.auth.envKeys ?? []) permitted.add(key);
+      if (connector.auth.resolveExtraEnv) {
+        for (const [key, value] of Object.entries(connector.auth.resolveExtraEnv())) {
+          extraEnv[key] = value;
+        }
+      }
+    }
+    return { permitted, managed, extraEnv };
+  }
+  const permitGithub = lookups.includes('github');
+  return {
+    permitted: permitGithub ? new Set(GITHUB_LOOKUP_ENV_KEYS) : new Set(),
+    managed: new Set(GITHUB_LOOKUP_ENV_KEYS),
+    extraEnv: permitGithub ? { GH_CONFIG_DIR: resolveGithubConfigDir() } : {},
+  };
+}
+
+export function buildHookRestrictedEnv(
+  context: HookExecutorContext,
+  scriptEnv?: Record<string, string>
+): Record<string, string> {
+  const env: Record<string, string> = {};
+
+  const {
+    permitted: permittedConnectorEnvKeys,
+    managed: connectorManagedEnvKeys,
+    extraEnv: connectorExtraEnv,
+  } = resolvePermittedConnectorAuth(context.permittedExternalLookups);
+
+  for (const [key, value] of Object.entries(process.env) as [string, string | undefined][]) {
+    if (value === undefined) continue;
+
+    if (ALWAYS_ALLOWED_ENV_KEYS.has(key)) {
+      env[key] = value as string;
+      continue;
+    }
+
+    if (permittedConnectorEnvKeys.has(key)) {
+      env[key] = value as string;
+      continue;
+    }
+
+    if (connectorManagedEnvKeys.has(key)) continue;
+
+    const isPrefixRestricted = RESTRICTED_ENV_PREFIXES.some((prefix) => key.startsWith(prefix));
+    if (isPrefixRestricted) continue;
+
+    const isKeyRestricted = RESTRICTED_ENV_KEY_PATTERN.test(key);
+    if (isKeyRestricted) continue;
+
+    if (SSH_ENV_KEYS.has(key)) continue;
+
+    if (CREDENTIAL_PATH_ENV_KEYS.has(key)) continue;
+
+    env[key] = value as string;
+  }
+
+  for (const [key, value] of Object.entries(connectorExtraEnv)) {
+    if (value !== undefined) env[key] = value;
+  }
+
+  env['HYPERNEO_HOOK_ID'] = context.hookId;
+  env['HYPERNEO_WORKFLOW_RUN_ID'] = context.runId;
+  env['HYPERNEO_WORKSPACE_PATH'] = context.workspacePath;
+  env['HYPERNEO_METHOD_NAME'] = context.methodName;
+  env['HYPERNEO_NODE_ID'] = context.nodeId;
+  env['HYPERNEO_NODE_NAME'] = context.nodeName;
+  env['HYPERNEO_SESSION_ID'] = context.sessionId;
+  env['HYPERNEO_TASK_ID'] = context.taskId;
+
+  const workflowRunCreatedAt = (context.workflowRunCreatedAt ??
+    context.templateData?.workflowRunCreatedAt ??
+    context.templateData?.runCreatedAt) as unknown;
+  if (typeof workflowRunCreatedAt === 'string') {
+    env['HYPERNEO_WORKFLOW_START_ISO'] = workflowRunCreatedAt;
+  } else if (typeof workflowRunCreatedAt === 'number' && Number.isFinite(workflowRunCreatedAt)) {
+    env['HYPERNEO_WORKFLOW_START_ISO'] = new Date(workflowRunCreatedAt).toISOString();
+  }
+
+  if (context.targetNode) {
+    env['HYPERNEO_TARGET_NODE'] = context.targetNode;
+  }
+
+  try {
+    env['HYPERNEO_PARAMS_JSON'] = JSON.stringify(context.params);
+  } catch {
+    env['HYPERNEO_PARAMS_JSON'] = '{}';
+  }
+
+  try {
+    env['HYPERNEO_HOOK_LOCAL_STATE_JSON'] = JSON.stringify(context.hookLocalState);
+  } catch {
+    env['HYPERNEO_HOOK_LOCAL_STATE_JSON'] = '{}';
+  }
+
+  try {
+    env['HYPERNEO_CURRENT_ARTIFACTS_JSON'] = JSON.stringify(context.currentArtifacts);
+  } catch {
+    env['HYPERNEO_CURRENT_ARTIFACTS_JSON'] = '[]';
+  }
+
+  if (context.permittedExternalLookups.length > 0) {
+    env['HYPERNEO_PERMITTED_EXTERNAL_LOOKUPS'] = context.permittedExternalLookups.join(',');
+  }
+
+  if (context.templateData) {
+    try {
+      env['HYPERNEO_HOOK_TEMPLATE_DATA_JSON'] = JSON.stringify(context.templateData);
+    } catch {
+      env['HYPERNEO_HOOK_TEMPLATE_DATA_JSON'] = '{}';
+    }
+  }
+
+  const validationBaseRef = env['HYPERNEO_VALIDATION_BASE_REF'];
+  if (validationBaseRef !== undefined) {
+    env['HYPERNEO_VALIDATION_BASE_REF'] = validationBaseRef;
+  }
+
+  if (scriptEnv) {
+    for (const [key, value] of Object.entries(scriptEnv)) {
+      if (HOOK_INJECTED_ENV_KEYS.has(key)) {
+        continue;
+      }
+      const isAllowed = ALWAYS_ALLOWED_ENV_KEYS.has(key) || permittedConnectorEnvKeys.has(key);
+      if (!isAllowed) {
+        const isPrefixRestricted = RESTRICTED_ENV_PREFIXES.some((prefix) => key.startsWith(prefix));
+        if (isPrefixRestricted) continue;
+        const isKeyRestricted = RESTRICTED_ENV_KEY_PATTERN.test(key);
+        if (isKeyRestricted) continue;
+        if (SSH_ENV_KEYS.has(key)) continue;
+        if (CREDENTIAL_PATH_ENV_KEYS.has(key)) continue;
+      }
+      env[key] = value;
+    }
+  }
+
+  return env;
+}

@@ -5,7 +5,7 @@ import {
   collectEligiblePostApprovalTargets,
   validatePostApproval,
   validatePostApprovalRoutes,
-} from '../../../../src/lib/space/workflows/post-approval-validator.ts';
+} from '../../../../src/lib/workflows/post-approval-validator.ts';
 
 const node = (
   id: string,

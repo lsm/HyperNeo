@@ -11,20 +11,20 @@ import type {
 import {
   computeDefinitionVersion,
   verifyDefinitionVersion,
-} from '../../lib/space/workflows/definition-version.ts';
+} from '../../lib/workflows/definition-version.ts';
 import {
   withRunTemplateSnapshots,
   type AgentTemplateResolver,
   type AgentTemplateResolverFactory,
-} from '../../lib/space/workflows/run-template-snapshot.ts';
+} from '../../lib/workflows/run-template-snapshot.ts';
 import {
   buildPlanRunSnapshotMigration,
   isRunSnapshotMigrationSkip,
   type RunSnapshotMigrationPlan,
-} from '../../lib/space/workflows/plan-run-snapshot-migration.ts';
+} from '../../lib/workflows/plan-run-snapshot-migration.ts';
 import { SpaceWorkflowDefinitionVersionRepository } from './space-workflow-definition-version-repository.ts';
 import type { SQLiteValue } from '../types.ts';
-import { assertValidTransition } from '../../lib/space/runtime/workflow-run-status-machine.ts';
+import { assertValidTransition } from '../../lib/workflows/run-status-machine.ts';
 import { Logger } from '../../lib/logger.ts';
 
 const log = new Logger('space-workflow-run-repository');

@@ -7,7 +7,7 @@ import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositor
 import { McpAuditLogRepository } from '../../../../src/storage/repositories/mcp-audit-log-repository.ts';
 import { AgentMessageRouter } from '../../../../src/lib/space/runtime/agent-message-router.ts';
 import { ChannelResolver } from '../../../../src/lib/space/runtime/channel-resolver.ts';
-import type { WorkflowHookEngine } from '../../../../src/lib/space/runtime/workflow-hook-engine.ts';
+import type { WorkflowHookEngine } from '../../../../src/lib/workflows/hook-engine.ts';
 import type { SpaceMcpSessionRole } from '../../../../src/lib/space/runtime/space-mcp-session-policy.ts';
 import {
   createOperationRegistry,

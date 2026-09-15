@@ -1,11 +1,11 @@
 import type { SpaceTask, SpaceWorkflow, WorkflowChannel, WorkflowNode } from '@hyperneo/shared';
 import { resolveNodeAgents, isChannelCyclic } from '@hyperneo/shared';
 import type { NodeExecution } from '@hyperneo/shared';
-import { POST_APPROVAL_TASK_AGENT_TARGET } from '../workflows/post-approval-validator.ts';
+import { POST_APPROVAL_TASK_AGENT_TARGET } from '../../workflows/post-approval-validator.ts';
 import {
   runTemplateResolves,
   runTemplateSnapshotRecord,
-} from '../workflows/run-template-snapshot.ts';
+} from '../../workflows/run-template-snapshot.ts';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
 import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository.ts';
@@ -17,8 +17,8 @@ import type { NodeExecutionRepository } from '../../../storage/repositories/node
 import {
   isReservedWorkflowAgentName,
   type SpaceWorkflowManager,
-} from '../managers/space-workflow-manager.ts';
-import { TERMINAL_NODE_EXECUTION_STATUSES } from '../managers/node-execution-manager.ts';
+} from '../../workflows/workflow-manager.ts';
+import { TERMINAL_NODE_EXECUTION_STATUSES } from '../../workflows/node-execution-manager.ts';
 import type {
   InternalEventBus,
   DaemonInternalEventMap,
@@ -32,7 +32,7 @@ import {
   formatMissingAgentReference,
   formatMissingTemplateReference,
   validateExecutionAgainstWorkflow,
-} from './workflow-node-execution-validation.ts';
+} from '../../workflows/node-execution-validation.ts';
 
 const log = new Logger('channel-router');
 

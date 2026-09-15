@@ -8,7 +8,7 @@ import {
   toRunTemplateSnapshot,
   workflowReferencesTemplates,
   withRunTemplateSnapshots,
-} from '../../../../src/lib/space/workflows/run-template-snapshot.ts';
+} from '../../../../src/lib/workflows/run-template-snapshot.ts';
 
 function template(overrides: Partial<SpaceAgentTemplate> = {}): SpaceAgentTemplate {
   return {

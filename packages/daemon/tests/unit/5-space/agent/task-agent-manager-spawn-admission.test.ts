@@ -15,7 +15,7 @@ import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-m
 import {
   PermanentSpawnError,
   TransientSpawnError,
-} from '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts';
+} from '../../../../src/lib/workflows/node-execution-validation.ts';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 
 const TASK_ID = 'task-1237';

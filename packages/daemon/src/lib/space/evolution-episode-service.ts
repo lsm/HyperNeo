@@ -35,7 +35,7 @@ import type {
   WorkflowRunArtifactRepository,
 } from '../../storage/repositories/workflow-run-artifact-repository.ts';
 import type { SpaceGoalService } from './goals/goal-service.ts';
-import type { WorkflowArtifactProfile } from './runtime/artifact-profile.ts';
+import type { WorkflowArtifactProfile } from '../workflows/artifact-profile.ts';
 import { isRunningUnderBun, resolveSDKCliPath } from '../agent/sdk-cli-resolver.ts';
 import { Logger } from '../logger.ts';
 import { getProviderService, mergeProviderEnvVars } from '../provider-service.ts';

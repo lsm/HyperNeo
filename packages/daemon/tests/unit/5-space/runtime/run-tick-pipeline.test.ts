@@ -30,12 +30,12 @@ import {
   runSpaceWorkflowRunTick,
   settleIfComplete,
   spawnPendingExecutions,
-} from '../../../../src/lib/space/runtime/run-tick-pipeline.ts';
+} from '../../../../src/lib/workflows/run-tick-pipeline.ts';
 import type {
   RunTickCtx,
   SpaceWorkflowRunTickDeps,
   SpaceWorkflowRunTickOutcome,
-} from '../../../../src/lib/space/runtime/run-tick-contract.ts';
+} from '../../../../src/lib/workflows/run-tick-contract.ts';
 import type {
   AdmitSpawnExecutionOutcome,
   RunTickContext,

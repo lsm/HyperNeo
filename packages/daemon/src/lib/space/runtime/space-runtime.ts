@@ -82,15 +82,15 @@ import {
 import {
   isReservedWorkflowAgentName,
   type SpaceWorkflowManager,
-} from '../managers/space-workflow-manager.ts';
+} from '../../workflows/workflow-manager.ts';
 import {
   createAgentTemplateResolver,
   runTemplateResolves,
   runTemplateSnapshotRecord,
-} from '../workflows/run-template-snapshot.ts';
+} from '../../workflows/run-template-snapshot.ts';
 import { normalizeMeaningfulTaskResult } from '../task-result-utils.ts';
-import type { WorkflowArtifactProfile } from './artifact-profile.ts';
-import { CompletionDetector } from './completion-detector.ts';
+import type { WorkflowArtifactProfile } from '../../workflows/artifact-profile.ts';
+import { CompletionDetector } from '../../workflows/completion-detector.ts';
 import {
   DEFAULT_AGENT_NO_PROGRESS_THRESHOLD_MS,
   DEFAULT_AGENT_STUCK_NAG_GRACE_MS,
@@ -135,14 +135,17 @@ import {
   runRenderPendingDigest,
 } from './render-pending-digest-pipeline.ts';
 import { classifyLastMessageForIdleAgent } from './last-message-classifier.ts';
-import type { SelectWorkflowWithLlm } from './llm-workflow-selector.ts';
+import type { SelectWorkflowWithLlm } from '../../workflows/llm-workflow-selector.ts';
 import {
   clearPendingCompletionState,
   type PostApprovalRouteContext,
   type PostApprovalRouteResult,
   PostApprovalRouter,
-} from './post-approval-router.ts';
-import { runPostApprovalRetry, TaskScopedRetrySerializer } from './post-approval-retry.ts';
+} from '../../workflows/post-approval-router.ts';
+import {
+  runPostApprovalRetry,
+  TaskScopedRetrySerializer,
+} from '../../workflows/post-approval-retry.ts';
 import {
   buildPromptTooLongContinueNag,
   COMPACT_RESULT_TIMEOUT_MS,
@@ -152,7 +155,7 @@ import {
   type PromptTooLongRecoveryState,
 } from './prompt-too-long-recovery.ts';
 import type { TaskAgentManager } from './task-agent-manager.ts';
-import { WorkflowExecutor } from './workflow-executor.ts';
+import { WorkflowExecutor } from '../../workflows/workflow-executor.ts';
 import {
   findMissingNodeAgentReferences,
   formatMissingAgentReference,
@@ -162,15 +165,15 @@ import {
   isSpawnSupersededError,
   isTransientSpawnError,
   MissingWorkflowAgentError,
-} from './workflow-node-execution-validation.ts';
-import { canTransition as canTransitionRunStatus } from './workflow-run-status-machine.ts';
-import { selectWorkflow } from './workflow-selector.ts';
-import { selectTimedOutExecutions } from './run-tick-admission-gates.ts';
+} from '../../workflows/node-execution-validation.ts';
+import { canTransition as canTransitionRunStatus } from '../../workflows/run-status-machine.ts';
+import { selectWorkflow } from '../../workflows/workflow-selector.ts';
+import { selectTimedOutExecutions } from '../../workflows/run-tick-admission-gates.ts';
 import type {
   SpaceWorkflowRunTickDeps,
   StrandedExecutionRecoveryResult,
-} from './run-tick-contract.ts';
-import { runSpaceWorkflowRunTick } from './run-tick-pipeline.ts';
+} from '../../workflows/run-tick-contract.ts';
+import { runSpaceWorkflowRunTick } from '../../workflows/run-tick-pipeline.ts';
 import {
   resolveCompletionSummaries,
   isTaskAlreadyResolved,
@@ -179,14 +182,14 @@ import {
   isSettlementTerminal,
   resolveQuiesceSourceNodeId,
   selectSiblingsToQuiesce,
-} from './run-completion-settlement.ts';
+} from '../../workflows/run-completion-settlement.ts';
 import {
   classifySpawnFailure,
   decideSpawnAdmission,
   hasDriveableExecution,
   selectPromotablePendingExecutions,
   type SpawnAdmissionDecision,
-} from './run-spawn-decisions.ts';
+} from '../../workflows/run-spawn-decisions.ts';
 
 const log = new Logger('space-runtime');
 const PRIORITY_ORDER: Record<SpaceTaskPriority, number> = {

@@ -6,7 +6,7 @@ import {
   type SpaceWorkflowRunTaskManagerFactory,
 } from '../../../../src/lib/rpc-handlers/space-workflow-run-handlers.ts';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
-import type { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
+import type { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager.ts';
 import type { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
 import type { WorkflowHookStateRepository } from '../../../../src/storage/repositories/workflow-hook-state-repository.ts';
 import type { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';

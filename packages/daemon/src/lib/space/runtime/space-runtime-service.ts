@@ -84,10 +84,10 @@ import { encodeActorIdComponent, longTermAgentSessionId } from '../long-term-age
 import { SpaceAgentTemplateManager } from '../managers/space-agent-template-manager.ts';
 import type { SpaceManager } from '../managers/space-manager.ts';
 import { SpaceTaskManager } from '../managers/space-task-manager.ts';
-import type { SpaceWorkflowManager } from '../managers/space-workflow-manager.ts';
+import type { SpaceWorkflowManager } from '../../workflows/workflow-manager.ts';
 import { SpaceMessageResolver } from '../messaging-adapter.ts';
 import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools.ts';
-import type { WorkflowArtifactProfile } from './artifact-profile.ts';
+import type { WorkflowArtifactProfile } from '../../workflows/artifact-profile.ts';
 import { ChannelRouter } from './channel-router.ts';
 import { createDatabaseDirectTaskWorkerResolver } from './direct-task-worker-identity.ts';
 import {
@@ -96,9 +96,9 @@ import {
   isAgentTargetLifecycleEligible,
   runEnsureAgentSession,
 } from './ensure-agent-session.ts';
-import type { SelectWorkflowWithLlm } from './llm-workflow-selector.ts';
-import { selectWorkflowWithLlmDefault } from './llm-workflow-selector.ts';
-import type { PostApprovalRouteResult } from './post-approval-router.ts';
+import type { SelectWorkflowWithLlm } from '../../workflows/llm-workflow-selector.ts';
+import { selectWorkflowWithLlmDefault } from '../../workflows/llm-workflow-selector.ts';
+import type { PostApprovalRouteResult } from '../../workflows/post-approval-router.ts';
 import { createDirectKickoffReconciler } from './reconcile-direct-kickoff.ts';
 import type { RenderPendingDigestOutcome } from './render-pending-digest-pipeline.ts';
 import type { ReplyRoutingRegistry } from './reply-routing-registry.ts';
@@ -109,7 +109,7 @@ import {
 } from './space-mcp-session-policy.ts';
 import { SpaceRuntime } from './space-runtime.ts';
 import type { TaskAgentManager } from './task-agent-manager.ts';
-import { canTransition as canTransitionRunStatus } from './workflow-run-status-machine.ts';
+import { canTransition as canTransitionRunStatus } from '../../workflows/run-status-machine.ts';
 
 const log = new Logger('space-runtime-service');
 

@@ -3,20 +3,20 @@ import type { SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
 import { getPresetAgentTemplates } from '../../../../src/lib/space/agents/seed-agents.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
-import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
+import { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager.ts';
 import {
   isPostApprovalRoutingEnabled,
   POST_APPROVAL_ROUTING_FLAG_ENV,
-} from '../../../../src/lib/space/runtime/post-approval-router.ts';
+} from '../../../../src/lib/workflows/post-approval-route-selection.ts';
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
-import { createMarkCompleteHandler } from '../../../../src/lib/space/operations/end-node-handlers.ts';
+import { createMarkCompleteHandler } from '../../../../src/lib/workflows/end-node-handlers.ts';
 import {
   CODING_WORKFLOW,
   REVIEW_ONLY_WORKFLOW,
-  seedBuiltInWorkflows,
-} from '../../../../src/lib/space/workflows/built-in-workflows.ts';
-import { CodingArtifactProfile } from '../../../../src/lib/space/workflows/coding-artifact-profile.ts';
+} from '../../../../src/lib/workflows/built-in-workflows.ts';
+import { seedBuiltInWorkflows } from '../../../../src/lib/workflows/seed-built-in-workflows.ts';
+import { CodingArtifactProfile } from '../../../../src/lib/workflows/coding-artifact-profile.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';

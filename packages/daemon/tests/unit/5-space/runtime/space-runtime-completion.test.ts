@@ -4,11 +4,11 @@ import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
 import { EvolutionScopeService } from '../../../../src/lib/space/evolution-scope-service.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
-import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
+import { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager.ts';
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
-import { CodingArtifactProfile } from '../../../../src/lib/space/workflows/coding-artifact-profile.ts';
+import { CodingArtifactProfile } from '../../../../src/lib/workflows/coding-artifact-profile.ts';
 import { EvolutionRepository } from '../../../../src/storage/repositories/evolution-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';

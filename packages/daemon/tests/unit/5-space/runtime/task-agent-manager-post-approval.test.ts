@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import type { SpaceWorkflow } from '@hyperneo/shared';
 import { resolvePostApprovalTargetAgentName } from '../../../../src/lib/space/runtime/task-agent-manager';
-import { POST_APPROVAL_TASK_AGENT_TARGET } from '../../../../src/lib/space/workflows/post-approval-validator';
+import { POST_APPROVAL_TASK_AGENT_TARGET } from '../../../../src/lib/workflows/post-approval-validator';
 
 function stubWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
   return {

@@ -11,7 +11,7 @@ import {
 import {
   isPermanentSpawnError,
   PermanentSpawnError,
-} from '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts';
+} from '../../../../src/lib/workflows/node-execution-validation.ts';
 
 describe('TaskAgentManager resolveWorkspacePath — spawn callback decision table (WS02a)', () => {
   const SPACE_ID = 'space-ws02a';

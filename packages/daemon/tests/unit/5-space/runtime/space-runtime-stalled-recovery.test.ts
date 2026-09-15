@@ -4,10 +4,10 @@ import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
-import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
+import { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager.ts';
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
-import { PermanentSpawnError } from '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts';
+import { PermanentSpawnError } from '../../../../src/lib/workflows/node-execution-validation.ts';
 import {
   ChannelCycleRepository,
   DEAD_LOOP_WINDOW_MS,

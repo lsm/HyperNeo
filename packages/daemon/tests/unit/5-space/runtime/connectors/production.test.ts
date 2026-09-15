@@ -13,7 +13,7 @@ import {
   getBuiltInConnectorDeps,
   registerProductionConnectors,
 } from '../../../../../src/lib/space/runtime/connectors/production';
-import { validateWorkflowHooks } from '../../../../../src/lib/space/workflow-hook-validation';
+import { validateWorkflowHooks } from '../../../../../src/lib/workflows/hook-validation';
 import type { WorkflowHook, WorkflowNodeInput } from '@hyperneo/shared';
 
 function snapshotRegistry(): Connector[] {

@@ -23,8 +23,8 @@ import {
   QA_SYSTEM_CONTRACT,
   REVIEWER_SYSTEM_CONTRACT,
 } from '../../../../src/lib/space/agents/system-contracts.ts';
-import { buildSelectionPrompt } from '../../../../src/lib/space/runtime/llm-workflow-selector.ts';
-import { appendPostApprovalCompletionInstructions } from '../../../../src/lib/space/runtime/post-approval-router.ts';
+import { buildSelectionPrompt } from '../../../../src/lib/workflows/llm-workflow-selector.ts';
+import { appendPostApprovalCompletionInstructions } from '../../../../src/lib/workflows/post-approval-route-selection.ts';
 import { buildPromptTooLongContinueNag } from '../../../../src/lib/space/runtime/prompt-too-long-recovery.ts';
 import {
   CODER_EXTERNAL_GATE_BLOCK,
@@ -47,8 +47,8 @@ import {
   REVIEW_THREAD_RESOLUTION_GUIDANCE,
   REVIEWER_POST_APPROVAL_BLOCKER_PARAGRAPH,
   REVIEWER_ZERO_FINDINGS_GATE,
-} from '../../../../src/lib/space/workflows/built-in-workflows.ts';
-import { CODER_OWNED_MERGE_INSTRUCTIONS } from '../../../../src/lib/space/workflows/post-approval-merge-template.ts';
+} from '../../../../src/lib/workflows/built-in-workflows.ts';
+import { CODER_OWNED_MERGE_INSTRUCTIONS } from '../../../../src/lib/workflows/post-approval-merge-template.ts';
 
 const GOLDEN: Record<string, string> = {
   CODEX_REACTION_APPROVAL_GUIDANCE:

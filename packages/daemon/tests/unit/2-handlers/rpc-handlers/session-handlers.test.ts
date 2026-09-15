@@ -13,7 +13,7 @@ import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/
 import { detectStrandedProviders } from '../../../../src/lib/rpc-handlers/session-handlers';
 import type { SessionManager } from '../../../../src/lib/session-manager';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
-import type { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager';
+import type { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager';
 import { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-runtime-service';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import type { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';

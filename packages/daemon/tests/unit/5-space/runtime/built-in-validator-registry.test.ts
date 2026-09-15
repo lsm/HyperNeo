@@ -1,15 +1,15 @@
 import { afterEach, beforeAll, describe, expect, test } from 'bun:test';
-import type { BuiltInValidatorFn } from '../../../../src/lib/space/runtime/hook-executor';
-import type { HookExecutorContext } from '../../../../src/lib/space/runtime/hook-executor';
+import type { BuiltInValidatorFn } from '../../../../src/lib/workflows/hook-executor';
+import type { HookExecutorContext } from '../../../../src/lib/workflows/hook-executor';
 import {
   clearBuiltInValidatorRegistry,
   getBuiltInValidator,
   getRegisteredBuiltInValidatorIds,
   isRegisteredBuiltInValidator,
   registerBuiltInValidator,
-} from '../../../../src/lib/space/runtime/built-in-validator-registry';
-import '../../../../src/lib/space/runtime/built-in-validators';
-import { registerProductionBuiltInValidators } from '../../../../src/lib/space/runtime/built-in-validators';
+} from '../../../../src/lib/workflows/built-in-validator-registry';
+import '../../../../src/lib/workflows/built-in-validators';
+import { registerProductionBuiltInValidators } from '../../../../src/lib/workflows/built-in-validators';
 import { createPrMergedValidator } from '../../../../src/lib/space/runtime/connectors/presets';
 import type { SpawnFn, SpawnProcess } from '../../../../src/lib/runtime-spawn';
 

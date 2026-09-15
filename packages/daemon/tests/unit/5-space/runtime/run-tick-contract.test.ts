@@ -8,7 +8,7 @@ import {
   type StrandedExecutionRecoveryResult,
   type TickResult,
   type TickSkipReason,
-} from '../../../../src/lib/space/runtime/run-tick-contract.ts';
+} from '../../../../src/lib/workflows/run-tick-contract.ts';
 
 const SKIP_REASONS: TickSkipReason[] = [
   'missing_run',

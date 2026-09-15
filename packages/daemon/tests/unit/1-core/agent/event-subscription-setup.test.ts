@@ -9,7 +9,7 @@ import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { createTables } from '../../../../src/storage/schema/index';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
-import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
+import type { DaemonHub } from '../../../helpers/daemon-hub';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { Session } from '@hyperneo/shared';
 import type { ModelSwitchHandler } from '../../../../src/lib/agent/model-switch-handler';

@@ -93,7 +93,7 @@ import {
   assertValidSpaceTaskTransition,
   type SpaceTaskManager,
 } from '../managers/space-task-manager.ts';
-import type { SpaceWorkflowManager } from '../managers/space-workflow-manager.ts';
+import type { SpaceWorkflowManager } from '../../workflows/workflow-manager.ts';
 import { SpaceDeliveryFacade, translateTaskMessageTarget } from '../messaging-adapter.ts';
 import {
   createBoundSpaceTaskMetadataEditor,

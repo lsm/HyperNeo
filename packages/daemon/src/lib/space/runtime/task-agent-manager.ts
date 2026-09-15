@@ -25,18 +25,15 @@ import {
 } from '../../providers/registry.js';
 import type { ActorResolver } from '../../../../../messaging/src/contracts.ts';
 import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types.ts';
-import type { AgentSessionInit } from '../../../lib/agent/agent-session.ts';
-import { AgentSession, ClearConversationCancelledError } from '../../../lib/agent/agent-session.ts';
+import type { AgentSessionInit } from '../../agent/agent-session.ts';
+import { AgentSession, ClearConversationCancelledError } from '../../agent/agent-session.ts';
 import {
   acquireContextClearBoundary,
   type ContextClearBoundaryOwner,
   withSessionOperationLock,
-} from '../../../lib/agent/message-delivery.ts';
-import {
-  activatePrompts,
-  verifyPromptContent,
-} from '../../../lib/agent/message-delivery-outbox.ts';
-import { decideInjectDelivery } from '../../../lib/agent/message-delivery-pipeline.ts';
+} from '../../agent/message-delivery.ts';
+import { activatePrompts, verifyPromptContent } from '../../agent/message-delivery-outbox.ts';
+import { decideInjectDelivery } from '../../agent/message-delivery-pipeline.ts';
 import type { Database } from '../../../storage/database.ts';
 import type { ReactiveDatabase } from '../../../storage/reactive-database.ts';
 import type { AppMcpServerRepository } from '../../../storage/repositories/app-mcp-server-repository.ts';
@@ -60,7 +57,7 @@ import { isRunnableUnifiedAgent } from '../agents/worker-long-horizon-mapper.ts'
 import type { SpaceManager } from '../managers/space-manager.ts';
 import { SpaceTaskManager } from '../managers/space-task-manager.ts';
 import { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository.ts';
-import type { SpaceWorkflowManager } from '../managers/space-workflow-manager.ts';
+import type { SpaceWorkflowManager } from '../../workflows/workflow-manager.ts';
 import {
   type SpaceWorktreeManager,
   WorkspaceNotGitRepositoryError,
@@ -121,27 +118,27 @@ import {
   resolveAgentInit,
 } from '../agents/custom-agent.ts';
 import type { EvolutionScopeService } from '../evolution-scope-service.ts';
-import { TERMINAL_NODE_EXECUTION_STATUSES } from '../managers/node-execution-manager.ts';
+import { TERMINAL_NODE_EXECUTION_STATUSES } from '../../workflows/node-execution-manager.ts';
 import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools.ts';
 import {
   createEndNodeHandlers,
   createMarkCompleteHandler,
   createPrMergedGate,
-} from '../operations/end-node-handlers.ts';
+} from '../../workflows/end-node-handlers.ts';
 import { jsonResult } from '../tools/tool-result.ts';
-import { POST_APPROVAL_TASK_AGENT_TARGET } from '../workflows/post-approval-validator.ts';
-import { runTemplateSnapshotRecord } from '../workflows/run-template-snapshot.ts';
+import { POST_APPROVAL_TASK_AGENT_TARGET } from '../../workflows/post-approval-validator.ts';
+import { runTemplateSnapshotRecord } from '../../workflows/run-template-snapshot.ts';
 import { decideActivationRouting, selectWorkflowNodeForAgent } from './activation-routing.ts';
 import {
   type AgentMessageDeliveryDeps,
   deliverAgentMessageToTarget,
 } from './agent-message-delivery-pipeline.ts';
 import { AgentMessageRouter } from './agent-message-router.ts';
-import type { WorkflowArtifactProfile } from './artifact-profile.ts';
+import type { WorkflowArtifactProfile } from '../../workflows/artifact-profile.ts';
 import { ChannelResolver } from './channel-resolver.ts';
 import { ChannelRouter } from './channel-router.ts';
 import { createGithubConnector } from './connectors/github-connector.ts';
-import { HookExecutor } from './hook-executor.ts';
+import { HookExecutor } from '../../workflows/hook-executor.ts';
 import type { InjectionDeliveryRowDeps } from './injection-delivery-steps.ts';
 import {
   flipDeliveryRowToDeferred,
@@ -151,10 +148,10 @@ import {
 import {
   collectDispatchablePostApprovalRoutes,
   isCoderOwnedMergeWorkflow as resolveIsCoderOwnedMergeWorkflow,
-} from './post-approval-router.ts';
+} from '../../workflows/post-approval-router.ts';
 import type { ReplyRoutingRegistry } from './reply-routing-registry.ts';
 import { decideRestoredWorkerAdmission } from './restored-worker-admission-decision-pipeline.ts';
-import { isCanonicalTaskTerminalForSpawn } from './run-spawn-decisions.ts';
+import { isCanonicalTaskTerminalForSpawn } from '../../workflows/run-spawn-decisions.ts';
 import {
   isSpawnFlowReusedSession,
   isSpawnFlowWaitConcurrent,
@@ -179,7 +176,7 @@ import {
   clearAllRetryableHookActionTimers,
   QUEUED_RETRYABLE_ACTION_STATE_KEY,
   WorkflowHookEngine,
-} from './workflow-hook-engine.ts';
+} from '../../workflows/hook-engine.ts';
 import {
   assertExecutionValidAgainstWorkflow,
   formatMissingTemplateReference,
@@ -190,7 +187,7 @@ import {
   SPAWN_RESERVABLE_TASK_STATUSES,
   SpawnSupersededError,
   validateTaskAllowsSpawn,
-} from './workflow-node-execution-validation.ts';
+} from '../../workflows/node-execution-validation.ts';
 
 const log = new Logger('task-agent-manager');
 

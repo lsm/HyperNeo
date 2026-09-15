@@ -6,7 +6,7 @@ import {
   gateSource,
   isRunSnapshotMigrationSkip,
   type SnapshotlessPinnedRun,
-} from '../../../../src/lib/space/workflows/plan-run-snapshot-migration.ts';
+} from '../../../../src/lib/workflows/plan-run-snapshot-migration.ts';
 
 function template(): SpaceAgentTemplate {
   return {

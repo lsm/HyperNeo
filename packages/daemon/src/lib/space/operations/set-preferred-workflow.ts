@@ -7,7 +7,7 @@ import { Logger } from '../../logger.ts';
 import { defineOperation, type OperationCaller } from '../../operations/registry.ts';
 import { TaskWithSpaceFieldsSchema } from '../../operations/task-get.ts';
 import { type SpaceTaskManager, StaleTaskGuardError } from '../managers/space-task-manager.ts';
-import type { SpaceWorkflowManager } from '../managers/space-workflow-manager.ts';
+import type { SpaceWorkflowManager } from '../../workflows/workflow-manager.ts';
 import type { SpaceMcpSessionPolicyContext } from '../runtime/space-mcp-session-policy.ts';
 import { admitSpaceTaskCaller, resolveSpaceTaskOwner } from './task-metadata.ts';
 

@@ -6,7 +6,7 @@ import {
   createPrReadyValidatorV2,
   createReviewPostedValidator,
 } from '../../../../../src/lib/space/runtime/connectors';
-import type { HookExecutorContext } from '../../../../../src/lib/space/runtime/hook-executor';
+import type { HookExecutorContext } from '../../../../../src/lib/workflows/hook-executor';
 import { runGhJson } from '../../../../../src/lib/space/runtime/gh-lookup-helpers';
 import type { SpawnFn, SpawnProcess } from '../../../../../src/lib/runtime-spawn';
 import { MAX_BUFFER_BYTES } from '../../../../../src/lib/space/runtime/script-utils';

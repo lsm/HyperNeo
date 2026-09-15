@@ -2,7 +2,7 @@ import { isAbsolute } from 'node:path';
 import type { MessageHub, SpaceTask } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { SpaceManager } from '../space/managers/space-manager.ts';
-import type { SpaceWorkflowManager } from '../space/managers/space-workflow-manager.ts';
+import type { SpaceWorkflowManager } from '../workflows/workflow-manager.ts';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository.ts';
 import type { WorkflowRunArtifactRepository } from '../../storage/repositories/workflow-run-artifact-repository.ts';
 import type { WorkflowRunArtifactCacheRepository } from '../../storage/repositories/workflow-run-artifact-cache-repository.ts';
@@ -17,7 +17,7 @@ import type { WorkflowRunStatus } from '@hyperneo/shared';
 import {
   QUEUED_RETRYABLE_ACTION_STATE_KEY,
   triggerRetryableHookAction,
-} from '../space/runtime/workflow-hook-engine.ts';
+} from '../workflows/hook-engine.ts';
 import {
   execGit,
   isGitRepo,

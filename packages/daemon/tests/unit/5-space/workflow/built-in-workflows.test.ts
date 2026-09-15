@@ -24,8 +24,36 @@ import {
   exportWorkflow,
   validateExportedWorkflow,
 } from '../../../../src/lib/space/export-format.ts';
-import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
+import { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager.ts';
 import { isWorkflowTerminalNode } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
+import {
+  LEGACY_CODING_SLOT_PROMPTS,
+  LEGACY_FULLSTACK_REVIEWER_SLOT_PROMPT,
+  RETIRED_PRE_TYPENAME_CODEX_REACTION_APPROVAL_GUIDANCE,
+} from '../../../../src/lib/workflows/built-in-legacy-slot-prompts.ts';
+import { patchPinnedBuiltInPromptDrift } from '../../../../src/lib/workflows/built-in-prompt-drift.ts';
+import {
+  RETIRED_MERGER_RAW_MERGE_GUARD,
+  RETIRED_PR_MERGER_SLOT_PROMPT,
+} from '../../../../src/lib/workflows/built-in-retired-post-approval.ts';
+import {
+  RETIRED_PRE_BASE_ADVANCE_POLICY_CODER_ONLY_PROMPT,
+  RETIRED_PRE_EVENT_DRIVEN_CODER_ONLY_PROMPT,
+  RETIRED_PRE_REVIEW_MODES_CODER_ONLY_PROMPT,
+} from '../../../../src/lib/workflows/built-in-retired-prompts-coder-only.ts';
+import {
+  RETIRED_PRE_BASE_ADVANCE_POLICY_CODER_OWNED_MERGE_PROMPT,
+  RETIRED_PRE_EVENT_DRIVEN_CODER_OWNED_MERGE_PROMPT,
+  RETIRED_PRE_REVIEW_MODES_CODER_OWNED_MERGE_PROMPT,
+} from '../../../../src/lib/workflows/built-in-retired-prompts-coder-owned-merge.ts';
+import {
+  RETIRED_PRE_BASE_ADVANCE_POLICY_RESEARCH_PROMPT,
+  RETIRED_PRE_EVENT_DRIVEN_RESEARCH_PROMPT,
+} from '../../../../src/lib/workflows/built-in-retired-prompts-research.ts';
+import {
+  mergeChannelsFromTemplate,
+  mergeNodeStructuralFieldsFromTemplate,
+} from '../../../../src/lib/workflows/built-in-template-merge.ts';
 import {
   builtInWorkflowRequiresPrMerge,
   CODER_EXTERNAL_GATE_BLOCK,
@@ -40,39 +68,23 @@ import {
   CODEX_REACTION_APPROVAL_GUIDANCE,
   CODING_WITH_QA_WORKFLOW,
   CODING_WORKFLOW,
-  LEGACY_CODING_SLOT_PROMPTS,
   EXTERNAL_REVIEW_BOTS_GUIDANCE,
   EXTERNAL_REVIEW_BOTS_GUIDANCE_PRE_CHECK_SEEDING,
   EXTERNAL_REVIEW_BOTS_GUIDANCE_PRE_TYPENAME,
   getBuiltInWorkflows,
   LEGACY_CODING_TEMPLATE_IDENTITIES,
-  LEGACY_FULLSTACK_REVIEWER_SLOT_PROMPT,
-  mergeChannelsFromTemplate,
-  mergeNodeStructuralFieldsFromTemplate,
-  patchPinnedBuiltInPromptDrift,
   RESEARCH_PROMPT,
   RESEARCH_REVIEW_PROMPT,
   RESEARCH_WORKFLOW,
-  RETIRED_MERGER_RAW_MERGE_GUARD,
-  RETIRED_PR_MERGER_SLOT_PROMPT,
-  RETIRED_PRE_BASE_ADVANCE_POLICY_CODER_ONLY_PROMPT,
-  RETIRED_PRE_BASE_ADVANCE_POLICY_CODER_OWNED_MERGE_PROMPT,
-  RETIRED_PRE_BASE_ADVANCE_POLICY_RESEARCH_PROMPT,
-  RETIRED_PRE_EVENT_DRIVEN_CODER_ONLY_PROMPT,
-  RETIRED_PRE_EVENT_DRIVEN_CODER_OWNED_MERGE_PROMPT,
-  RETIRED_PRE_EVENT_DRIVEN_RESEARCH_PROMPT,
-  RETIRED_PRE_REVIEW_MODES_CODER_ONLY_PROMPT,
-  RETIRED_PRE_REVIEW_MODES_CODER_OWNED_MERGE_PROMPT,
-  RETIRED_PRE_TYPENAME_CODEX_REACTION_APPROVAL_GUIDANCE,
   REVIEW_ONLY_REVIEW_PROMPT,
   REVIEW_ONLY_WORKFLOW,
   REVIEW_POLICY_GUIDANCE,
   REVIEWER_ZERO_FINDINGS_GATE,
   CODING_WORKFLOW as STABLE_CODING_WORKFLOW,
-  seedBuiltInWorkflows,
-} from '../../../../src/lib/space/workflows/built-in-workflows.ts';
-import { CODER_OWNED_MERGE_INSTRUCTIONS } from '../../../../src/lib/space/workflows/post-approval-merge-template.ts';
-import { computeWorkflowHash } from '../../../../src/lib/space/workflows/template-hash.ts';
+} from '../../../../src/lib/workflows/built-in-workflows.ts';
+import { seedBuiltInWorkflows } from '../../../../src/lib/workflows/seed-built-in-workflows.ts';
+import { CODER_OWNED_MERGE_INSTRUCTIONS } from '../../../../src/lib/workflows/post-approval-merge-template.ts';
+import { computeWorkflowHash } from '../../../../src/lib/workflows/template-hash.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';

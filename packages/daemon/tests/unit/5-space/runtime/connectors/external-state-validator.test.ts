@@ -8,7 +8,7 @@ import type {
   ConnectorOp,
   ConnectorOutcome,
 } from '../../../../../src/lib/space/runtime/connectors';
-import type { HookExecutorContext } from '../../../../../src/lib/space/runtime/hook-executor';
+import type { HookExecutorContext } from '../../../../../src/lib/workflows/hook-executor';
 
 function ctxWithData(prUrl?: string, extra?: Record<string, unknown>): HookExecutorContext {
   return {

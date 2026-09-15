@@ -16,11 +16,11 @@ import { Logger } from '../../logger.ts';
 import type { SpaceGoalService } from '../goals/goal-service.ts';
 import { translateLegacyNodeTargets } from '../messaging-adapter.ts';
 import type { AgentMessageRouter } from '../runtime/agent-message-router.ts';
-import type { WorkflowArtifactProfile } from '../runtime/artifact-profile.ts';
+import type { WorkflowArtifactProfile } from '../../workflows/artifact-profile.ts';
 import type { ChannelResolver } from '../runtime/channel-resolver.ts';
 import { buildPrEventTopicPattern, parsePrUrl } from '../runtime/parse-pr-url.ts';
-import type { WorkflowHookEngine } from '../runtime/workflow-hook-engine.ts';
-import { wrapHandlerWithHooks } from '../runtime/workflow-hook-engine.ts';
+import type { WorkflowHookEngine } from '../../workflows/hook-engine.ts';
+import { wrapHandlerWithHooks } from '../../workflows/hook-engine.ts';
 import type {
   ArchiveTaskInput,
   CreateStandaloneTaskInput,

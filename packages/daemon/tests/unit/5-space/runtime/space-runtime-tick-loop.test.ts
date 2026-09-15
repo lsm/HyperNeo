@@ -10,7 +10,7 @@ import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
-import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
+import { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager.ts';
 import { MAX_BLOCKED_RUN_RETRIES } from '../../../../src/lib/space/runtime/constants.ts';
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
@@ -18,7 +18,7 @@ import {
   PermanentSpawnError,
   SpawnSupersededError,
   TransientSpawnError,
-} from '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts';
+} from '../../../../src/lib/workflows/node-execution-validation.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
 import { SpaceGoalOutcomeNotificationRepository } from '../../../../src/storage/repositories/space-goal-outcome-notification-repository.ts';

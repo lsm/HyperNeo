@@ -12,7 +12,7 @@ import {
   type SpaceActionsServerConfig,
 } from '../../../../src/lib/space/actions/space-actions-server.ts';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
-import type { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
+import type { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager.ts';
 import { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-runtime-service.ts';
 import type { NodeAgentToolsConfig } from '../../../../src/lib/space/actions/node-handlers.ts';
 import type { SpaceAgentToolsConfig } from '../../../../src/lib/space/actions/space-handlers.ts';
