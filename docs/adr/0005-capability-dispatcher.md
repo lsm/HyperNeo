@@ -5,6 +5,18 @@
 Accepted — 2026-08-27. Tracks epic #3129. This ADR is the normative design record
 for the CD 00–CD 17 slice series.
 
+**Superseded in part, 2026-09-14.** The surface this ADR establishes — `call_action`
+as the uniform entry point, the `space-actions` MCP server (CD 12), and the prompt
+preference for `call_action` (CD 15) — is slated for retirement. Agents will reach the
+daemon only through `hyperneo-operations` and the shared operation registry; the
+dispatcher's policy stages become the donor for the MCP pre-invocation pipeline rather
+than a parallel front. See the §4 amendment in
+[ADR 0006](./0006-shared-operations.md) and
+[`docs/architecture/rpc-mcp-unification-gap.md`](../architecture/rpc-mcp-unification-gap.md),
+which measures the 104-action surface that migration has to absorb. The dispatcher
+remains the normative description of what exists today, and nothing here is retired
+until its actions have operation equivalents.
+
 ## Context
 
 ### Current tool surface

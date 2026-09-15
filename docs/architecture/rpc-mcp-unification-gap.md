@@ -90,7 +90,9 @@ pipeline.
 This settles the question ADR 0006 and `-target.md` had deliberately left open, and note that
 the outcome is neither option those documents framed: they weighed "thin front" against
 "parallel front", and the answer is full retirement. ADR 0006 is amended alongside this page
-(§4 and Open items), so the decision is recorded where the question was raised. Three
+(§4 and Open items), and ADR 0005 — which established `call_action`, the `space-actions`
+server and the prompt preference as normative — carries a partial-supersession note, so the
+decision is recorded everywhere the question was raised or assumed. Three
 consequences follow directly:
 
 1. **`dispatcher-pipeline.ts` is the donor, not a rival.** Its 245 lines of policy move into
