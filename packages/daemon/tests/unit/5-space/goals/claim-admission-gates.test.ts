@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   decideClaimAdmission,
   type ClaimAdmissionInput,
-} from '../../../../src/lib/space/goals/claim-admission-gates';
+} from '../../../../src/lib/goals/claim-admission-gates';
 
 function input(overrides: Partial<ClaimAdmissionInput> = {}): ClaimAdmissionInput {
   return {

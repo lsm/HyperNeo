@@ -16,7 +16,7 @@ import { createSpaceTables } from '../../helpers/space-test-db';
 import type { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import type { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
-import type { SpaceWorktreeManager } from '../../../../src/lib/space/managers/space-worktree-manager';
+import type { SpaceWorktreeManager } from '../../../../src/lib/workspaces/worktree-manager';
 import {
   InternalEventBus,
   type DaemonInternalEventMap,

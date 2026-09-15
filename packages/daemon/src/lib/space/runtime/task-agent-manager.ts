@@ -64,7 +64,7 @@ import type { SpaceWorkflowManager } from '../managers/space-workflow-manager.ts
 import {
   type SpaceWorktreeManager,
   WorkspaceNotGitRepositoryError,
-} from '../managers/space-worktree-manager.ts';
+} from '../../workspaces/worktree-manager.ts';
 import {
   activateModelPoolReservation,
   applyModelPoolToSlot,
@@ -120,7 +120,7 @@ import {
   DEFAULT_CUSTOM_AGENT_MODEL,
   resolveAgentInit,
 } from '../agents/custom-agent.ts';
-import type { EvolutionScopeService } from '../evolution-scope-service.ts';
+import type { EvolutionScopeService } from '../../evolution/scope-service.ts';
 import { TERMINAL_NODE_EXECUTION_STATUSES } from '../managers/node-execution-manager.ts';
 import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools.ts';
 import {
@@ -278,7 +278,7 @@ export interface TaskAgentManagerConfig {
       disposeSignal?: AbortSignal;
     }
   ) => Promise<import('./session-message-delivery.ts').SessionInjectionOutcome>;
-  scheduleService?: import('../schedule/schedule-service.ts').ScheduleService;
+  scheduleService?: import('../../schedule/schedule-service.ts').ScheduleService;
   replyRoutingRegistry?: ReplyRoutingRegistry;
   memoryRepo?: AgentMemoryRepository;
   messageResolverFactory?: (
@@ -295,7 +295,7 @@ export interface TaskAgentManagerConfig {
       message: MessageRecord
     ) => Promise<string | null | undefined>;
   };
-  goalService?: import('../goals/goal-service.ts').SpaceGoalService;
+  goalService?: import('../../goals/service.ts').SpaceGoalService;
   evolutionScopeService?: EvolutionScopeService;
   externalEventStore?: import('../../external-events/external-event-store.ts').ExternalEventStore;
 }

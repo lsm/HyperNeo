@@ -60,7 +60,7 @@ Consequences of that contract:
 ## Registration validation
 
 `validateWorkspaceRegistration`
-(`packages/daemon/src/lib/space/workspaces/workspace-validation-pipeline.ts`) is one direct
+(`packages/daemon/src/lib/workspaces/validation-pipeline.ts`) is one direct
 superpipe pipeline (ADR 0004) of pure validation gates. It takes the candidate (`spaceId`,
 raw path), an IO adapter (default `nodeWorkspaceValidationIo`), and a registry snapshot, and
 returns a typed verdict instead of throwing. Gates run in order; the first failure wins:
@@ -85,13 +85,13 @@ returns a typed verdict instead of throwing. Gates run in order; the first failu
 Snapshot contract: `claims` must cover every `spaces.workspace_path` across all spaces
 (archived ones included) plus every `space_workspaces` row; `workspaceCountForSpace` is that
 space's current distinct-path count. `buildRegistrySnapshot`
-(`packages/daemon/src/lib/space/managers/space-workspace-manager.ts`) builds it, treating
+(`packages/daemon/src/lib/workspaces/workspace-manager.ts`) builds it, treating
 `spaces.workspace_path` as an implicit `space_primary_path` claim when a space has no
 primary row.
 
 ## SpaceWorkspaceManager
 
-`packages/daemon/src/lib/space/managers/space-workspace-manager.ts` wires the gates into
+`packages/daemon/src/lib/workspaces/workspace-manager.ts` wires the gates into
 operation; `SpaceManager` exposes them as a thin facade.
 
 - **`registerWorkspace(spaceId, rawPath, label?)`** — runs the validation pipeline, throws
@@ -164,7 +164,7 @@ path is collapsed back to `NULL` at write time, so the column only ever stores a
   both block the change. Because tasks get their own worktree at spawn, in practice the pin
   is fixed once a task has started.
 - **At spawn**, one task works in exactly one repo: `createTaskWorktree`
-  (`packages/daemon/src/lib/space/managers/space-worktree-manager.ts`, itself one direct
+  (`packages/daemon/src/lib/workspaces/worktree-manager.ts`, itself one direct
   superpipe pipeline) receives the repo root explicitly — `resolveTaskWorkspace(space, task)`
   — creates one worktree per task under
   `~/.hyperneo/projects/<repo>-<hash8>/worktrees/<slug>` with branch `space/<slug>`, and

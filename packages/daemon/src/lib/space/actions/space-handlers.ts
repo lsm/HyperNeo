@@ -80,10 +80,10 @@ import {
   publishUnifiedAgentCreated,
   publishUnifiedAgentUpdated,
 } from '../agents/unified-agent-events.ts';
-import { mergeEvolutionPolicy } from '../evolution-scope-service.ts';
-import { validateGoalAutomationSelfNagPolicy } from '../goals/evolution-policy-validation.ts';
-import { syncGoalAutomationSelfNagScheduleForScope } from '../goals/goal-automation-schedule-sync.ts';
-import { decideGoalOwnershipMutationAdmission } from '../goals/goal-ownership-gates.ts';
+import { mergeEvolutionPolicy } from '../../evolution/scope-service.ts';
+import { validateGoalAutomationSelfNagPolicy } from '../../goals/evolution-policy-validation.ts';
+import { syncGoalAutomationSelfNagScheduleForScope } from '../../goals/automation-schedule-sync.ts';
+import { decideGoalOwnershipMutationAdmission } from '../../goals/ownership-gates.ts';
 import {
   getBuiltInSpaceAgentTemplates,
   SpaceAgentTemplateManager,
@@ -119,7 +119,7 @@ import type { TaskAgentManager } from '../runtime/task-agent-manager.ts';
 import { createWorkflowTaskParkingExecutor } from '../runtime/task-parking-executor.ts';
 import { createWorkflowTaskRecoveryExecutor } from '../runtime/task-recovery-executor.ts';
 import { createWorkflowTaskStoppingExecutor } from '../runtime/task-stopping-executor.ts';
-import { getNextRunAt, isValidCronExpression } from '../schedule/cron-utils.ts';
+import { getNextRunAt, isValidCronExpression } from '../../schedule/cron-utils.ts';
 import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit } from '../slug.ts';
 import { normalizeMeaningfulTaskResult } from '../task-result-utils.ts';
 import { SESSION_MESSAGE_MAX_LIMIT, SPACE_SESSION_MAX_LIMIT } from './space-agent-schemas.ts';
@@ -409,12 +409,12 @@ export interface SpaceAgentToolsConfig {
 
   onRestoreNodeAgent?: (args: { reason?: string }) => Promise<void> | void;
   auditLogRepo?: McpAuditLogRepository;
-  scheduleService?: import('../schedule/schedule-service.ts').ScheduleService;
+  scheduleService?: import('../../schedule/schedule-service.ts').ScheduleService;
   replyRoutingRegistry?: ReplyRoutingRegistry;
-  goalService?: import('../goals/goal-service.ts').SpaceGoalService;
-  evolutionScopeService?: import('../evolution-scope-service.ts').EvolutionScopeService;
+  goalService?: import('../../goals/service.ts').SpaceGoalService;
+  evolutionScopeService?: import('../../evolution/scope-service.ts').EvolutionScopeService;
   goalRepo?: import('../../../storage/repositories/space-goal-repository.ts').SpaceGoalRepository;
-  evolutionEpisodeService?: import('../evolution-episode-service.ts').EvolutionEpisodeService;
+  evolutionEpisodeService?: import('../../evolution/episode-service.ts').EvolutionEpisodeService;
   messageResolver?: ActorResolver;
   longTermAgentDelivery?: {
     deliverToSession?: (
@@ -3631,7 +3631,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           args.episode_judge_provider !== undefined;
 
         const serviceParams: Parameters<
-          import('../evolution-scope-service.ts').EvolutionScopeService['updateScope']
+          import('../../evolution/scope-service.ts').EvolutionScopeService['updateScope']
         >[1] = {
           spaceGoalId: args.goal_id,
           kind: args.kind,

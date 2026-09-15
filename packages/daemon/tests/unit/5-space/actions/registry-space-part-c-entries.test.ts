@@ -11,7 +11,7 @@ import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
-import { ScheduleService } from '../../../../src/lib/space/schedule/schedule-service.ts';
+import { ScheduleService } from '../../../../src/lib/schedule/schedule-service.ts';
 import {
   EXTERNAL_EVENT_TOOL_SCHEMAS,
   INACTIVITY_TOOL_SCHEMAS,

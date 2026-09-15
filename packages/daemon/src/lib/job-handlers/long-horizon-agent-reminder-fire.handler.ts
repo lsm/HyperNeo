@@ -1,7 +1,7 @@
 import type { SpaceLongHorizonAgentReminder } from '@hyperneo/shared';
 import { LONG_HORIZON_AGENT_REMINDER_FIRE } from '../job-queue-constants.ts';
 import { Logger } from '../logger.ts';
-import { getNextRunAt } from '../space/schedule/cron-utils.ts';
+import { getNextRunAt } from '../schedule/cron-utils.ts';
 import type { SpaceAgentReminderRepository } from '../../storage/repositories/space-agent-reminder-repository.ts';
 import type { SpaceRepository } from '../../storage/repositories/space-repository.ts';
 import type { JobQueueRepository, Job } from '../../storage/repositories/job-queue-repository.ts';

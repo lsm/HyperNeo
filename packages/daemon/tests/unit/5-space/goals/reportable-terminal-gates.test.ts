@@ -3,7 +3,7 @@ import {
   decideReportableTerminal,
   REPORTABLE_TERMINAL_PREDICATE_VERSION,
   type ReportableTerminalInput,
-} from '../../../../src/lib/space/goals/reportable-terminal-gates';
+} from '../../../../src/lib/goals/reportable-terminal-gates';
 
 function input(overrides: Partial<ReportableTerminalInput> = {}): ReportableTerminalInput {
   return {
