@@ -18,7 +18,12 @@ import {
 const log = new Logger('ArchiveSpaceTask');
 const inputSchema = z.object({ taskId: z.string().min(1) }).strict();
 type Input = z.infer<typeof inputSchema>;
-type Rejection = 'task_not_found' | 'task_not_in_space' | 'archive_active_run' | 'archive_denied';
+export type ArchiveTaskRejection =
+  | 'task_not_found'
+  | 'task_not_in_space'
+  | 'archive_active_run'
+  | 'archive_denied';
+type Rejection = ArchiveTaskRejection;
 type Result = SpaceTask | Rejection;
 
 export interface ArchiveTaskDependencies extends SpaceMcpSessionPolicyContext {

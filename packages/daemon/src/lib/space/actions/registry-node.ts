@@ -29,6 +29,7 @@ import {
   UnsubscribeExternalEventSchema,
 } from './node-agent-schemas.ts';
 import { createNodeAgentToolHandlers, type NodeAgentToolsConfig } from './node-handlers.ts';
+import { mapArchiveTaskParams, mapArchiveTaskResult } from './archive-task-operation.ts';
 import { createOperationActionHandler } from './operation-action.ts';
 import { type ActionDefinition, type ActionEntry, defineAction } from './registry.ts';
 import {
@@ -302,27 +303,8 @@ export function createNodeRegistryEntries(
                   operations,
                   { sessionId: config.mySessionId },
                   'task.archive',
-                  (params) => ({ taskId: (params as { task_id: string }).task_id }),
-                  (value, originalParams) => {
-                    if (value && typeof value === 'object' && 'id' in value) {
-                      return { success: true, task: value };
-                    }
-                    const typed = originalParams as { task_id: string };
-                    const reason = value as string;
-                    const errorByReason: Record<string, string> = {
-                      task_not_found: `Task not found: ${typed.task_id}`,
-                      task_not_in_space: `Task ${typed.task_id} does not belong to this space.`,
-                      archive_active_run:
-                        `Cannot archive task ${typed.task_id}: it belongs to an active workflow run. ` +
-                        `Cancel the run instead so its agents and lifecycle are torn down — archiving would leave the run stranded.`,
-                      archive_denied:
-                        'archive_task denied: session is not active in the owning space.',
-                    };
-                    return {
-                      success: false,
-                      error: errorByReason[reason] ?? `Task archive failed: ${reason}`,
-                    };
-                  }
+                  mapArchiveTaskParams,
+                  mapArchiveTaskResult
                 )
               : handlers.archive_task,
           }),
