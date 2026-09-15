@@ -66,7 +66,7 @@ function toAdmission(candidate: MarkdownImageCandidate): MarkdownImageAdmission 
 
 export const decideMarkdownImage = (superpipe({})('markdown-image-admission') as PipelineAPI)
   .input(['candidate'])
-  .pipe(gateSrcPresent, 'candidate', 'result:admitted')
-  .pipe(gateSchemeAllowed, 'admitted', 'result:admitted')
-  .pipe(toAdmission, 'admitted', 'admission')
+  .pipe(gateSrcPresent, 'candidate', 'result:admission')
+  .pipe(gateSchemeAllowed, 'admission', 'result:admission')
+  .pipe(toAdmission, 'admission', 'admission')
   .end('admission') as (candidate: MarkdownImageCandidate) => MarkdownImageAdmission;
