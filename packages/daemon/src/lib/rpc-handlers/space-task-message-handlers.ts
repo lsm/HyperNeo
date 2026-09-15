@@ -340,7 +340,7 @@ export function setupSpaceTaskMessageHandlers(
       taskId,
       agentName,
       ...(workflowNodeId ? { workflowNodeId } : {}),
-      ...(reopen ?? {}),
+      ...reopen,
       waitCapMs: 0,
     });
   }
