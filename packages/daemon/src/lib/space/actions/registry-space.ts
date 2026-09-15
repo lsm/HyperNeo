@@ -7,6 +7,7 @@ import type { z } from 'zod';
 import type { OperationRegistrySource } from '../../operations/registry.ts';
 import { hasSpaceAuthority } from '../runtime/space-mcp-session-policy.ts';
 import { canTransition as canTransitionRunStatus } from '../runtime/workflow-run-status-machine.ts';
+import { normalizeReplyTargetHandle } from '../agent-handle.ts';
 import {
   HUMAN_ONLY_AUTONOMY_LEVEL,
   SESSION_WRITE_AUTONOMY_LEVEL,
@@ -1069,7 +1070,46 @@ export function createSpaceRegistryEntries(
         'task_id or task_number, message, node_id? or target? (@handle/@role/@session/@worker)',
       paramsSchema: SendMessageToTaskSchema,
       auditRedactKeys: ['message'],
-      handler: (args) => handlers.send_message_to_task(args),
+      handler: operations
+        ? createOperationActionHandler(
+            operations,
+            { sessionId: config.mySessionId },
+            'task.message.send',
+            (params) => {
+              const typed = params as z.infer<typeof SendMessageToTaskSchema>;
+              const outboundSenderName = config.myAgentName ?? 'space-member';
+              const callerHasSpaceAuthority = hasSpaceAuthority(config.callerRole);
+              const outboundSenderLevel =
+                outboundSenderName === 'task-agent'
+                  ? 'task-agent'
+                  : callerHasSpaceAuthority && config.myAgentId
+                    ? 'long-horizon-agent'
+                    : 'session-agent';
+              const outboundSenderDisplayName = outboundSenderName;
+              const outboundReplyTargetHandle = config.myAgentName
+                ? (normalizeReplyTargetHandle(config.myAgentNameAliases?.[0] ?? '') ??
+                  normalizeReplyTargetHandle(outboundSenderName))
+                : config.mySessionId
+                  ? `@session:${config.mySessionId}`
+                  : normalizeReplyTargetHandle(outboundSenderName);
+              return {
+                spaceId: config.spaceId,
+                ...(typed.task_id
+                  ? { taskId: typed.task_id }
+                  : typed.task_number
+                    ? { taskNumber: typed.task_number }
+                    : {}),
+                message: typed.message,
+                ...(typed.node_id ? { nodeId: typed.node_id } : {}),
+                ...(typed.target ? { target: typed.target } : {}),
+                mySessionId: config.mySessionId,
+                outboundSenderLevel,
+                outboundSenderDisplayName,
+                outboundReplyTargetHandle,
+              };
+            }
+          )
+        : (args) => handlers.send_message_to_task(args),
     }),
     defineAction({
       name: 'list_task_members',
