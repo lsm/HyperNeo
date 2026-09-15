@@ -419,10 +419,12 @@ export function setupSpaceHandlers(
           lastActiveAt: s!.lastActiveAt ? new Date(s!.lastActiveAt).getTime() : 0,
         }));
 
-      const tasks = collapseToCanonicalTasks(
-        taskRepo.listBySpace(space.id),
-        workflowRunRepo.listBySpace(space.id)
-      ).filter((t) => t.status !== 'done' && t.status !== 'cancelled');
+      const tasks = stampTasks(
+        collapseToCanonicalTasks(
+          taskRepo.listBySpace(space.id),
+          workflowRunRepo.listBySpace(space.id)
+        ).filter((t) => t.status !== 'done' && t.status !== 'cancelled')
+      );
 
       return {
         ...space,
