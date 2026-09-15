@@ -1,25 +1,25 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { Database } from '../../../src/storage/sqlite-compat';
+import { Database } from '../../../../src/storage/sqlite-compat';
 import {
   buildEpisodeJudgePrompt,
   EvolutionEpisodeService,
   parseEpisodeJudgeJson,
   resolveEpisodeJudgeModel,
-} from '../../../src/lib/space/evolution-episode-service';
-import { EvolutionScopeService } from '../../../src/lib/space/evolution-scope-service';
-import { clearModelsCache, setModelsCache } from '../../../src/lib/model-service';
-import { EvolutionRepository } from '../../../src/storage/repositories/evolution-repository';
-import { SpaceGoalEventRepository } from '../../../src/storage/repositories/space-goal-event-repository';
-import { SpaceGoalRepository } from '../../../src/storage/repositories/space-goal-repository';
-import { SpaceRepository } from '../../../src/storage/repositories/space-repository';
-import { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository';
-import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository';
-import { WorkflowRunArtifactRepository } from '../../../src/storage/repositories/workflow-run-artifact-repository';
-import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space-workflow-repository';
-import { SpaceGoalService } from '../../../src/lib/space/goals/goal-service';
-import { CodingArtifactProfile } from '../../../src/lib/space/workflows/coding-artifact-profile';
-import type { WorkflowArtifactProfile } from '../../../src/lib/space/runtime/artifact-profile';
-import { createSpaceTables } from '../helpers/space-test-db';
+} from '../../../../src/lib/evolution/episode-service';
+import { EvolutionScopeService } from '../../../../src/lib/evolution/scope-service';
+import { clearModelsCache, setModelsCache } from '../../../../src/lib/model-service';
+import { EvolutionRepository } from '../../../../src/storage/repositories/evolution-repository';
+import { SpaceGoalEventRepository } from '../../../../src/storage/repositories/space-goal-event-repository';
+import { SpaceGoalRepository } from '../../../../src/storage/repositories/space-goal-repository';
+import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
+import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
+import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
+import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository';
+import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
+import { SpaceGoalService } from '../../../../src/lib/space/goals/goal-service';
+import { CodingArtifactProfile } from '../../../../src/lib/space/workflows/coding-artifact-profile';
+import type { WorkflowArtifactProfile } from '../../../../src/lib/space/runtime/artifact-profile';
+import { createSpaceTables } from '../../helpers/space-test-db';
 
 describe('EvolutionEpisodeService', () => {
   let db: Database;

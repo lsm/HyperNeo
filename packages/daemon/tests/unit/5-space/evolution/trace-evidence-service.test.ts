@@ -1,14 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { Database } from '../../../src/storage/sqlite-compat';
+import { Database } from '../../../../src/storage/sqlite-compat';
 import type { EvidenceRef } from '@hyperneo/shared';
-import { EvolutionScopeService } from '../../../src/lib/space/evolution-scope-service';
-import { EvolutionTraceEvidenceService } from '../../../src/lib/space/evolution-trace-evidence-service';
-import { EvolutionRepository } from '../../../src/storage/repositories/evolution-repository';
-import { SpaceGoalRepository } from '../../../src/storage/repositories/space-goal-repository';
-import { SpaceRepository } from '../../../src/storage/repositories/space-repository';
-import { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository';
-import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository';
-import { createSpaceTables } from '../helpers/space-test-db';
+import { EvolutionScopeService } from '../../../../src/lib/evolution/scope-service';
+import { EvolutionTraceEvidenceService } from '../../../../src/lib/evolution/trace-evidence-service';
+import { EvolutionRepository } from '../../../../src/storage/repositories/evolution-repository';
+import { SpaceGoalRepository } from '../../../../src/storage/repositories/space-goal-repository';
+import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
+import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
+import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
+import { createSpaceTables } from '../../helpers/space-test-db';
 
 describe('EvolutionTraceEvidenceService', () => {
   let db: Database;

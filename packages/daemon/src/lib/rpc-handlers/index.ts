@@ -141,17 +141,17 @@ import { setupSpaceGoalHandlers } from './space-goal-handlers.ts';
 import { subscribeAgentActivationOutcomeRedelivery } from '../space/goals/agent-activation-outcome-redelivery.ts';
 import { subscribeGoalOwnerChangeOutcomeRedelivery } from '../space/goals/goal-owner-change-outcome-redelivery.ts';
 import { setupEvolutionHandlers } from './evolution-handlers.ts';
-import { EvolutionConversationAnalysisService } from '../space/evolution-conversation-analysis-service.ts';
-import { EvolutionEpisodeService } from '../space/evolution-episode-service.ts';
-import { EvolutionScopeService } from '../space/evolution-scope-service.ts';
-import { EvolutionTraceEvidenceService } from '../space/evolution-trace-evidence-service.ts';
+import { EvolutionConversationAnalysisService } from '../evolution/conversation-analysis-service.ts';
+import { EvolutionEpisodeService } from '../evolution/episode-service.ts';
+import { EvolutionScopeService } from '../evolution/scope-service.ts';
+import { EvolutionTraceEvidenceService } from '../evolution/trace-evidence-service.ts';
 import { ScheduleService } from '../space/schedule/schedule-service.ts';
 import { SpaceGoalEventRepository } from '../../storage/repositories/space-goal-event-repository.ts';
 import { SpaceGoalOutcomeNotificationRepository } from '../../storage/repositories/space-goal-outcome-notification-repository.ts';
 import { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository.ts';
 import { SpaceGoalService } from '../space/goals/goal-service.ts';
 import { ExternalEventExtensionConfigStore } from '../external-events/extension-config-store.ts';
-import { mergeEvolutionPolicy } from '../space/evolution-scope-service.ts';
+import { mergeEvolutionPolicy } from '../evolution/scope-service.ts';
 import {
   isHttpExtension,
   isRpcExtension,

@@ -1,15 +1,15 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
-import { Database } from '../../../src/storage/sqlite-compat';
+import { Database } from '../../../../src/storage/sqlite-compat';
 import {
   EvolutionConversationAnalysisService,
   extractConversationMessages,
   parseConversationFrictionJson,
   type TraceMessage,
-} from '../../../src/lib/space/evolution-conversation-analysis-service';
-import { EvolutionRepository } from '../../../src/storage/repositories/evolution-repository';
-import { SpaceRepository } from '../../../src/storage/repositories/space-repository';
-import { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository';
-import { createSpaceTables } from '../helpers/space-test-db';
+} from '../../../../src/lib/evolution/conversation-analysis-service';
+import { EvolutionRepository } from '../../../../src/storage/repositories/evolution-repository';
+import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
+import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
+import { createSpaceTables } from '../../helpers/space-test-db';
 
 describe('EvolutionConversationAnalysisService', () => {
   let db: Database;

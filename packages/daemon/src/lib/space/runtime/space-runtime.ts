@@ -245,7 +245,7 @@ export interface SpaceRuntimeConfig {
     import('../goals/goal-service.ts').SpaceGoalService,
     'handleTaskTerminal' | 'supersedeOutcomeNotificationsForTask' | 'retryQueuedRunsForSpace'
   >;
-  evolutionScopeService?: import('../evolution-scope-service.ts').EvolutionScopeService;
+  evolutionScopeService?: import('../../evolution/scope-service.ts').EvolutionScopeService;
   actorRegistry?: SpaceActorRegistryAdapter;
   deliverLongHorizonExternalEvent?: (args: {
     spaceId: string;
