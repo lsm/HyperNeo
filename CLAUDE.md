@@ -89,6 +89,7 @@ Standing rules for every slice:
 - Time is a budget alongside size: a slice should reach its human checkpoint within ~90 minutes of starting (implementation + bot gate + CI). If its PR sits ~2 hours without merging, blocking, or reaching a checkpoint, the slice is stalled — report status and either re-plan or block; never leave a PR sitting idle. Waiting at the human checkpoint does not count against the slice.
 - Every slice carries a **merge contract** in its task/issue description: one line naming what the PR may and may not touch (e.g. "additive dead code, no call-site changes"), plus separate prod and test line budgets (the ~300-per-PR limit is prod lines; tests ride their slice under their own cap). If the diff exceeds the budget or starts mixing phases, stop and report the overrun — in Space-managed work set the task to `blocked`; otherwise flag it in the PR — budgets are contracts, not suggestions.
 - Reuse existing pipelines/gates where they fit; do not rebuild routing or decision logic a sibling already owns.
+- Every PR description carries `Closes #<issue>` for its mapped issue, and the post-approval procedure verifies the issue actually closed after the squash-merge — close it manually with a comment referencing the squash commit if auto-close did not fire. A post-merge base mismatch caused by linear `dev` advancement (merge parent ≠ gated base) is informational, not a blocker: the gate binds to the PR head — record it in the merge audit and proceed.
 
 ## Architecture
 
