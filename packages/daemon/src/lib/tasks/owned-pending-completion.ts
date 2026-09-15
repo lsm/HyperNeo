@@ -11,6 +11,7 @@ import {
   type SpaceMcpSessionPolicyContext,
   type SpaceMcpSessionRole,
 } from '../space/runtime/space-mcp-session-policy.ts';
+import { resolveSessionSpaceId } from '../space/runtime/space-caller-scope.ts';
 import {
   decideAutonomyAdmission,
   HUMAN_ONLY_AUTONOMY_LEVEL,
@@ -70,9 +71,7 @@ export function resolveCompletionActor(
   };
   if (!session) return denied;
   const policy = resolveSpaceMcpSessionPolicy(session, policyContext);
-  const spaceId =
-    policy.spaceId ??
-    (session.type === 'space_chat' ? session.id.match(/^space:chat:(.+)$/)?.[1] : undefined);
+  const spaceId = resolveSessionSpaceId(session, policyContext, policy);
   if (!spaceId) return denied;
   const allowed = policy.role === 'legacy_task_agent' || policy.role === 'long_term_agent';
   if (!allowed) return denied;

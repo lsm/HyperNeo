@@ -2,6 +2,11 @@ import { createDirectQueryStartGuard } from '../tasks/direct-query-start-guard.t
 import { createDatabaseOperationCatalog } from '../operations/database-catalog.ts';
 import type { OperationRegistry, OperationRegistryProvider } from '../operations/registry.ts';
 import { createOperationMcpServer } from '../operations/mcp-server.ts';
+import {
+  NO_CALLER_SCOPE,
+  resolveCallerIdentity,
+  type CallerScopeResolver,
+} from '../operations/caller.ts';
 import type {
   AgentProcessingState,
   ChatMessage,
@@ -114,6 +119,7 @@ export interface AgentSessionInit {
 
 export interface AgentSessionRuntimeOptions {
   operationRegistryProvider?: () => OperationRegistry | undefined;
+  callerScopeResolver?: CallerScopeResolver;
   autoReplayPendingMessages?: boolean;
 
   hardReset?: (
@@ -248,10 +254,15 @@ export class AgentSession
   private operationMcpServer?: ReturnType<typeof createOperationMcpServer>;
 
   private operationRegistryProvider?: () => OperationRegistry | undefined;
+  private callerScopeResolver: CallerScopeResolver = NO_CALLER_SCOPE;
   private defaultOperationRegistry?: OperationRegistry;
 
   setOperationRegistryProvider(provider: OperationRegistryProvider): void {
     this.operationRegistryProvider = provider;
+  }
+
+  setCallerScopeResolver(resolver: CallerScopeResolver): void {
+    this.callerScopeResolver = resolver;
   }
 
   getOperationMcpServer(): ReturnType<typeof createOperationMcpServer> {
@@ -259,7 +270,7 @@ export class AgentSession
       () =>
         this.operationRegistryProvider?.() ??
         (this.defaultOperationRegistry ??= createDatabaseOperationCatalog(this.db)),
-      () => ({ sessionId: this.session.id })
+      () => resolveCallerIdentity(this.callerScopeResolver, this.session.id)
     ));
   }
 
@@ -391,6 +402,7 @@ export class AgentSession
     private readonly runtimeOptions: AgentSessionRuntimeOptions = {}
   ) {
     this.operationRegistryProvider = runtimeOptions.operationRegistryProvider;
+    this.callerScopeResolver = runtimeOptions.callerScopeResolver ?? NO_CALLER_SCOPE;
     this.errorManager = new ErrorManager(this.messageHub, this.internalEventBus);
     this.logger = new Logger(`AgentSession ${session.id}`);
 
