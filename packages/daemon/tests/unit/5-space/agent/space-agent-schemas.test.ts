@@ -321,15 +321,11 @@ const LIFECYCLE_TOOL_NAMES: SpaceAgentLifecycleToolName[] = [
 ];
 
 const GOAL_TOOL_NAMES: SpaceGoalToolName[] = [
-  'list_goals',
-  'get_goal',
   'create_goal',
   'update_goal',
   'pause_goal',
   'resume_goal',
   'trigger_goal_task',
-  'list_goal_tasks',
-  'list_goal_events',
 ];
 
 const FORGE_TOOL_NAMES: SpaceForgeToolName[] = [
@@ -366,9 +362,9 @@ describe('conditional family tool schema maps', () => {
     expect(Object.keys(SPACE_AGENT_LIFECYCLE_TOOL_SCHEMAS)).toHaveLength(20);
   });
 
-  test('SPACE_GOAL_TOOL_SCHEMAS contains exactly the 9 goal tools', () => {
+  test('SPACE_GOAL_TOOL_SCHEMAS contains exactly the 5 goal tools', () => {
     expect(Object.keys(SPACE_GOAL_TOOL_SCHEMAS).sort()).toEqual([...GOAL_TOOL_NAMES].sort());
-    expect(Object.keys(SPACE_GOAL_TOOL_SCHEMAS)).toHaveLength(9);
+    expect(Object.keys(SPACE_GOAL_TOOL_SCHEMAS)).toHaveLength(5);
   });
 
   test('SPACE_FORGE_TOOL_SCHEMAS contains exactly the 23 Forge tools', () => {
@@ -720,19 +716,6 @@ const LIFECYCLE_PINS: FamilySafeParsePin[] = [
 
 const GOAL_PINS: FamilySafeParsePin[] = [
   {
-    tool: 'list_goals',
-    accepts: [
-      { input: {}, data: {} },
-      { input: { status: 'completed' }, data: { status: 'completed' } },
-    ],
-    rejects: [{ status: 'disabled' }, { status: 'done' }],
-  },
-  {
-    tool: 'get_goal',
-    accepts: [{ input: { goal_id: 'g1' }, data: { goal_id: 'g1' } }],
-    rejects: [{}],
-  },
-  {
     tool: 'create_goal',
     accepts: [
       {
@@ -826,45 +809,6 @@ const GOAL_PINS: FamilySafeParsePin[] = [
     tool: 'trigger_goal_task',
     accepts: [{ input: { goal_id: 'g1' }, data: { goal_id: 'g1' } }],
     rejects: [{}],
-  },
-  {
-    tool: 'list_goal_tasks',
-    accepts: [
-      { input: { goal_id: 'g1' }, data: { goal_id: 'g1' } },
-      {
-        input: {
-          goal_id: 'g1',
-          status: 'blocked',
-          limit: 100,
-          before: 1700000000000,
-          before_id: 't1',
-        },
-        data: {
-          goal_id: 'g1',
-          status: 'blocked',
-          limit: 100,
-          before: 1700000000000,
-          before_id: 't1',
-        },
-      },
-    ],
-    rejects: [
-      { goal_id: 'g1', status: 'paused' },
-      { goal_id: 'g1', limit: 101 },
-      { goal_id: 'g1', limit: 0 },
-      {},
-    ],
-  },
-  {
-    tool: 'list_goal_events',
-    accepts: [
-      { input: { goal_id: 'g1' }, data: { goal_id: 'g1' } },
-      {
-        input: { goal_id: 'g1', limit: 100, before: 123, before_id: 'e1' },
-        data: { goal_id: 'g1', limit: 100, before: 123, before_id: 'e1' },
-      },
-    ],
-    rejects: [{ goal_id: 'g1', limit: 101 }, {}],
   },
 ];
 
