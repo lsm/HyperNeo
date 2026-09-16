@@ -1269,10 +1269,24 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   const familyOperations: OperationDefinition[] = [];
   familyOperations.push(
     ...createWorkflowOperations({
+      getSession: (sessionId) => deps.db.getSession(sessionId),
+      taskRepo: spaceTaskRepo,
+      nodeExecutionRepo,
+      longHorizonAgentRepo,
       listWorkflowSummaries: (spaceId) => spaceWorkflowManager.listWorkflowSummaries(spaceId),
       getWorkflow: (workflowId) => spaceWorkflowManager.getWorkflow(workflowId),
       getWorkflowByHandle: (spaceId, handle) =>
         spaceWorkflowManager.getWorkflowByHandle(spaceId, handle),
+      getRun: (runId) => spaceWorkflowRunRepo.getRun(runId),
+      updateRunDescription: (runId, description) =>
+        spaceWorkflowRunRepo.updateRun(runId, { description }),
+      listRunExecutions: (runId) => nodeExecutionRepo.listByWorkflowRun(runId),
+      cancelWorkflowRun: (spaceId, runId) =>
+        spaceRuntimeService.getSharedRuntime().cancelWorkflowRun(spaceId, runId),
+      startWorkflowRun: (spaceId, workflowId, title, description) =>
+        spaceRuntimeService
+          .getSharedRuntime()
+          .startWorkflowRun(spaceId, workflowId, title, description),
     })
   );
 

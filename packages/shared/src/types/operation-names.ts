@@ -18,8 +18,10 @@ export const OPERATION_NAMES = [
   'task.submitForReview',
   'task.transition',
   'task.update',
+  'workflow.changePlan',
   'workflow.get',
   'workflow.list',
+  'workflow.run.get',
   'workflow.suggest',
 ] as const;
 

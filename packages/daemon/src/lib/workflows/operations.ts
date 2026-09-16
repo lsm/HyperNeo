@@ -3,11 +3,15 @@ import {
   createWorkflowReadOperations,
   type WorkflowReadDependencies,
 } from './workflow-read-operations.ts';
+import {
+  createWorkflowRunOperations,
+  type WorkflowRunDependencies,
+} from './workflow-run-operations.ts';
 
-export type WorkflowOperationDependencies = WorkflowReadDependencies;
+export type WorkflowOperationDependencies = WorkflowReadDependencies & WorkflowRunDependencies;
 
 export function createWorkflowOperations(
   deps: WorkflowOperationDependencies
 ): OperationDefinition[] {
-  return createWorkflowReadOperations(deps);
+  return [...createWorkflowReadOperations(deps), ...createWorkflowRunOperations(deps)];
 }
