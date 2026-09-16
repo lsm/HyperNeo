@@ -81,7 +81,7 @@ import {
   publishUnifiedAgentUpdated,
 } from '../../agents/unified-agent-events.ts';
 import { mergeEvolutionPolicy } from '../../evolution/scope-service.ts';
-import { validateGoalAutomationSelfNagPolicy } from '../../goals/evolution-policy-validation.ts';
+import { validateGoalAutomationSelfNagPolicy } from '../../evolution/evolution-policy-validation.ts';
 import { syncGoalAutomationSelfNagScheduleForScope } from '../../goals/automation-schedule-sync.ts';
 import { decideGoalOwnershipMutationAdmission } from '../../goals/ownership-gates.ts';
 import {
