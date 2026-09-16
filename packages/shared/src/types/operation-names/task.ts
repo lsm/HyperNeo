@@ -9,6 +9,7 @@ export const TASK_OPERATION_NAMES = [
   'task.members.list',
   'task.message.send',
   'task.resolvePendingCompletion',
+  'task.retry',
   'task.setPreferredWorkflow',
   'task.start',
   'task.submitForReview',
