@@ -145,18 +145,10 @@ function failureMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-function recordScheduleAudit(
-  deps: ScheduleOperationDependencies,
-  toolName: string,
-  schedule: TaskSchedule,
-  caller: OperationCaller
-): void {
-  deps.audit?.({
-    toolName,
-    spaceId: schedule.spaceId,
-    caller,
-    paramsSummary: { schedule_id: schedule.id },
-  });
+function recordScheduleAudit(deps: ScheduleOperationDependencies, entry: ScheduleAuditEntry): void {
+  try {
+    deps.audit?.(entry);
+  } catch {}
 }
 
 export function resolveScheduleScope(
@@ -190,8 +182,9 @@ export function createScheduleRecord(
   caller: OperationCaller,
   deps: ScheduleOperationDependencies
 ): ScheduleResult {
+  let schedule: TaskSchedule;
   try {
-    const schedule = deps.schedules.createSchedule({
+    schedule = deps.schedules.createSchedule({
       spaceId,
       title: input.title,
       description: input.description ?? '',
@@ -205,22 +198,22 @@ export function createScheduleRecord(
       createdByAgent: caller.agentName ?? null,
       createdBySession: caller.sessionId ?? null,
     });
-    deps.audit?.({
-      toolName: 'schedule.create',
-      spaceId,
-      caller,
-      paramsSummary: {
-        title: input.title,
-        trigger_type: input.triggerType,
-        cron_expression: input.cronExpression,
-        run_at: input.runAt,
-        timezone: input.timezone,
-      },
-    });
-    return { ok: true, schedule };
   } catch (err) {
     return reject('rejected', failureMessage(err));
   }
+  recordScheduleAudit(deps, {
+    toolName: 'schedule.create',
+    spaceId,
+    caller,
+    paramsSummary: {
+      title: input.title,
+      trigger_type: input.triggerType,
+      cron_expression: input.cronExpression,
+      run_at: input.runAt,
+      timezone: input.timezone,
+    },
+  });
+  return { ok: true, schedule };
 }
 
 export function listScheduleRecords(
@@ -245,16 +238,22 @@ export function applyScheduleTransition(
   deps: ScheduleOperationDependencies,
   transition: 'pause' | 'resume'
 ): ScheduleResult {
+  let updated: TaskSchedule;
   try {
-    const updated =
+    updated =
       transition === 'pause'
         ? deps.schedules.pauseSchedule(schedule.id)
         : deps.schedules.resumeSchedule(schedule.id);
-    recordScheduleAudit(deps, `schedule.${transition}`, schedule, caller);
-    return { ok: true, schedule: updated };
   } catch (err) {
     return reject('rejected', failureMessage(err));
   }
+  recordScheduleAudit(deps, {
+    toolName: `schedule.${transition}`,
+    spaceId: schedule.spaceId,
+    caller,
+    paramsSummary: { schedule_id: schedule.id },
+  });
+  return { ok: true, schedule: updated };
 }
 
 export function deleteScheduleRecord(
@@ -262,18 +261,25 @@ export function deleteScheduleRecord(
   caller: OperationCaller,
   deps: ScheduleOperationDependencies
 ): ScheduleDeleteResult {
+  let deleted: boolean;
   try {
-    if (!deps.schedules.deleteSchedule(schedule.id)) {
-      return reject(
-        'modified_concurrently',
-        'Schedule was modified concurrently (e.g. a fire job advanced it). Please retry.'
-      );
-    }
-    recordScheduleAudit(deps, 'schedule.delete', schedule, caller);
-    return { ok: true };
+    deleted = deps.schedules.deleteSchedule(schedule.id);
   } catch (err) {
     return reject('rejected', failureMessage(err));
   }
+  if (!deleted) {
+    return reject(
+      'modified_concurrently',
+      'Schedule was modified concurrently (e.g. a fire job advanced it). Please retry.'
+    );
+  }
+  recordScheduleAudit(deps, {
+    toolName: 'schedule.delete',
+    spaceId: schedule.spaceId,
+    caller,
+    paramsSummary: { schedule_id: schedule.id },
+  });
+  return { ok: true };
 }
 
 const READ_ADMISSION: SpaceCallerAdmission = { readOnly: true, workerAllowed: true };

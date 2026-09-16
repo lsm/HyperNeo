@@ -64,6 +64,7 @@ interface Harness {
   sessions: Map<string, Session>;
   deleteSucceeds: boolean;
   createThrows: string | null;
+  auditThrows: boolean;
 }
 
 function harness(): Harness {
@@ -76,6 +77,7 @@ function harness(): Harness {
     sessions: new Map([['member-1', session('active', SPACE_ID)]]),
     deleteSucceeds: true,
     createThrows: null,
+    auditThrows: false,
   };
   state.deps = {
     schedules: {
@@ -117,7 +119,10 @@ function harness(): Harness {
     getSession: (sessionId) => state.sessions.get(sessionId) ?? null,
     sessionSpaceId: (value) =>
       (value.context as { spaceId?: string } | undefined)?.spaceId ?? undefined,
-    audit: (entry) => state.audits.push(entry),
+    audit: (entry) => {
+      if (state.auditThrows) throw new Error('audit down');
+      state.audits.push(entry);
+    },
   };
   for (const operation of createScheduleOperations(state.deps)) {
     state.operations.set(operation.name, operation);
@@ -297,6 +302,22 @@ describe('schedule operation catalog', () => {
     ).toEqual({ ok: true });
     expect(h.stored).toEqual([]);
     expect(h.audits.map((entry) => entry.toolName)).toEqual(['schedule.delete']);
+  });
+
+  test('an audit writer failure never turns a committed mutation into a rejection', async () => {
+    h.auditThrows = true;
+    expect(
+      await run(
+        'schedule.create',
+        { title: 'Weekly', description: 'd', triggerType: 'cron', cronExpression: '@daily' },
+        mcpCaller('ad_hoc_member')
+      )
+    ).toMatchObject({ ok: true });
+    expect(h.stored).toHaveLength(2);
+    expect(
+      await run('schedule.delete', { scheduleId: 'sched-1' }, mcpCaller('ad_hoc_member'))
+    ).toEqual({ ok: true });
+    expect(h.stored.map((entry) => entry.id)).not.toContain('sched-1');
   });
 });
 
