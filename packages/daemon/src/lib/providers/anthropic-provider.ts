@@ -220,9 +220,7 @@ export class AnthropicProvider implements Provider {
     if (!parsed) {
       return {
         ok: false,
-        error:
-          'Paste the code page URL (…/oauth/code/callback#code=…&state=…) ' +
-          'or the code#state value shown after authorizing.',
+        error: 'Paste the authorization code shown after authorizing (code#state).',
       };
     }
     if ('error' in parsed) {

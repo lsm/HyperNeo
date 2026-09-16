@@ -455,7 +455,7 @@ describe('AnthropicProvider Claude subscription OAuth', () => {
 
       const result = await provider.submitOAuthCallback('not-a-callback');
       expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.error).toContain('Paste the code page URL');
+      if (!result.ok) expect(result.error).toContain('Paste the authorization code');
 
       await provider.logout();
     });
@@ -469,7 +469,7 @@ describe('AnthropicProvider Claude subscription OAuth', () => {
         'http://localhost:49279/callback?code=abc&state=def'
       );
       expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.error).toContain('Paste the code page URL');
+      if (!result.ok) expect(result.error).toContain('Paste the authorization code');
       expect(bodies).toHaveLength(0);
 
       await provider.logout();

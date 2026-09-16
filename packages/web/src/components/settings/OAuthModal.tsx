@@ -192,9 +192,8 @@ export function OAuthModal({
             <>
               <div class="text-sm text-fg-soft">
                 <p class="mb-4">
-                  A browser window has been opened for you to authenticate with {providerName}.
-                  After you approve, the page shows an authorization code — copy it and paste it
-                  below to finish.
+                  Authorize with {providerName} in the browser tab that opened. When the page shows
+                  your authorization code, paste it below to finish.
                 </p>
 
                 <div class="flex justify-center">
@@ -219,14 +218,17 @@ export function OAuthModal({
 
               {onSubmitCallback && (
                 <div class="border-t border-line pt-3">
-                  <p class="text-xs text-fg-muted mb-2">
-                    Paste the code page URL (…/oauth/code/callback#code=…&state=…) or the code#state
-                    value shown after authorizing.
-                  </p>
+                  <label
+                    for={`oauth-callback-${providerName}`}
+                    class="block text-xs uppercase tracking-wider text-fg-muted mb-2"
+                  >
+                    Authorization code
+                  </label>
                   <div class="flex gap-2">
                     <input
+                      id={`oauth-callback-${providerName}`}
                       type="text"
-                      placeholder="…/oauth/code/callback#code=…&state=… or code#state"
+                      placeholder="Paste the code shown after authorizing"
                       value={callbackInput}
                       disabled={callbackSubmitting}
                       onInput={(e) => setCallbackInput(e.currentTarget.value)}
