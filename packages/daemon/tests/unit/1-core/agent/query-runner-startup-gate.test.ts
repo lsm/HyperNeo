@@ -37,6 +37,7 @@ const { getSdkStartupGate, resetSdkStartupGateForTests } = await import(
 );
 
 import type { MessageHub, Session } from '@hyperneo/shared';
+import type { QueryRunnerContext } from '../../../../src/lib/agent/query-runner';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { AskUserQuestionHandler } from '../../../../src/lib/agent/ask-user-question-handler';
 import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
@@ -130,7 +131,7 @@ describe('QueryRunner startup gate', () => {
   function createRunner(
     sessionId: string,
     overrides: Partial<QueryRunnerContext> = {}
-  ): { runner: QueryRunner; ctx: QueryRunnerContext } {
+  ): { runner: InstanceType<typeof QueryRunner>; ctx: QueryRunnerContext } {
     const session: Session = {
       id: sessionId,
       title: sessionId,

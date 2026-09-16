@@ -124,7 +124,10 @@ describe('QueryRunner startup gate (startup-timeout path)', () => {
   let events: string[];
   let handleErrorSpy: ReturnType<typeof mock>;
 
-  function createRunner(sessionId: string): { runner: QueryRunner; ctx: QueryRunnerContext } {
+  function createRunner(sessionId: string): {
+    runner: InstanceType<typeof QueryRunner>;
+    ctx: QueryRunnerContext;
+  } {
     const session: Session = {
       id: sessionId,
       title: sessionId,
