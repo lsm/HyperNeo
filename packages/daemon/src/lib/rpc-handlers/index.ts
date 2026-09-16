@@ -10,7 +10,11 @@ import { createCompletionGateBindings } from '../tasks/complete-task-gates.ts';
 import { isCoderOwnedMergeWorkflow } from '../workflows/post-approval-router.ts';
 import { createGithubConnector } from '../github/connectors/github-connector.ts';
 import { setupOperationHandlers } from './operation-handlers.ts';
-import { createSpaceCallerScopeResolver } from '../space/runtime/space-caller-scope.ts';
+import {
+  createSpaceCallerScopeResolver,
+  resolveSessionSpaceId,
+} from '../space/runtime/space-caller-scope.ts';
+import { createScheduleOperations } from '../schedule/operations.ts';
 import type { MessageHub } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type { SpaceGoalOutcomeNotification } from '@hyperneo/shared';
@@ -1266,6 +1270,28 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   });
 
   const familyOperations: OperationDefinition[] = [];
+  const spaceCallerScopeDeps = {
+    getSession: (sessionId: string) => deps.db.getSession(sessionId),
+    taskRepo: spaceTaskRepo,
+    nodeExecutionRepo,
+    longHorizonAgentRepo,
+  };
+  familyOperations.push(
+    ...createScheduleOperations({
+      schedules: scheduleService,
+      getSession: spaceCallerScopeDeps.getSession,
+      sessionSpaceId: (session) => resolveSessionSpaceId(session, spaceCallerScopeDeps),
+      audit: (entry) => {
+        new McpAuditLogRepository(deps.db.getDatabase()).createEntry({
+          sessionId: entry.caller.sessionId,
+          agentName: entry.caller.agentName,
+          toolName: entry.toolName,
+          spaceId: entry.spaceId,
+          paramsSummary: JSON.stringify(entry.paramsSummary),
+        });
+      },
+    })
+  );
   const spaceOperationRegistryProvider = createSpaceOperationRegistryProvider(
     deps.db,
     deps.jobQueue,
