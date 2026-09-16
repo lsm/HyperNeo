@@ -40,8 +40,8 @@ import {
 import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session.ts';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { SpaceManager as SpaceMgr } from '../../../../src/lib/space/managers/space-manager.ts';
-import type { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
-import { SpaceWorkflowManager as WorkflowMgr } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
+import type { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager.ts';
+import { SpaceWorkflowManager as WorkflowMgr } from '../../../../src/lib/workflows/workflow-manager.ts';
 import type { SpaceRuntimeServiceConfig } from '../../../../src/lib/space/runtime/space-runtime-service.ts';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
 import { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-runtime-service.ts';

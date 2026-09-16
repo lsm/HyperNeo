@@ -13,7 +13,7 @@ import { createActionRegistry } from '../../../../src/lib/space/actions/registry
 import { createSpaceRegistryEntries } from '../../../../src/lib/space/actions/registry-space.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { SpaceTaskManager } from '../../../../src/lib/tasks/task-manager.ts';
-import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
+import { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager.ts';
 import { createArchiveTaskOperation } from '../../../../src/lib/tasks/archive-task.ts';
 import { createCancelTaskOperation } from '../../../../src/lib/tasks/cancel-task.ts';
 import { SpaceCreateTaskInputSchema } from '../../../../src/lib/tasks/create-task-target.ts';

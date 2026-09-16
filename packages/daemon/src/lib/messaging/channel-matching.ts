@@ -1,6 +1,6 @@
 import type { SpaceWorkflow, WorkflowChannel, WorkflowNode } from '@hyperneo/shared';
 import { isChannelCyclic, resolveNodeAgents } from '@hyperneo/shared';
-import { POST_APPROVAL_TASK_AGENT_TARGET } from '../space/workflows/post-approval-validator.ts';
+import { POST_APPROVAL_TASK_AGENT_TARGET } from '../workflows/post-approval-validator.ts';
 
 export function findNodeByAgentName(
   workflow: SpaceWorkflow,

@@ -6,7 +6,7 @@ import { recoverTaskExecution } from '../tasks/recover-task-execution.ts';
 import { McpAuditLogRepository } from '../../storage/repositories/mcp-audit-log-repository.ts';
 import { createSpaceOperationRegistryProvider } from '../tasks/operations.ts';
 import { createCompletionGateBindings } from '../tasks/complete-task-gates.ts';
-import { isCoderOwnedMergeWorkflow } from '../space/runtime/post-approval-router.ts';
+import { isCoderOwnedMergeWorkflow } from '../workflows/post-approval-router.ts';
 import { createGithubConnector } from '../github/connectors/github-connector.ts';
 import { setupOperationHandlers } from './operation-handlers.ts';
 import { createSpaceCallerScopeResolver } from '../space/runtime/space-caller-scope.ts';
@@ -50,7 +50,7 @@ import { NodeExecutionRepository } from '../../storage/repositories/node-executi
 import { TaskAgentManager } from '../space/runtime/task-agent-manager.ts';
 import { ReplyRoutingRegistry } from '../messaging/reply-routing-registry.ts';
 import { SpaceWorktreeManager } from '../workspaces/worktree-manager.ts';
-import { CodingArtifactProfile } from '../space/workflows/coding-artifact-profile.ts';
+import { CodingArtifactProfile } from '../workflows/coding-artifact-profile.ts';
 import {
   setupSpaceWorkflowHandlers,
   checkBuiltInWorkflowDriftOnStartup,
@@ -58,11 +58,8 @@ import {
 } from './space-workflow-handlers.ts';
 import type { SpaceManager } from '../space/managers/space-manager.ts';
 import { SpaceTaskManager } from '../tasks/task-manager.ts';
-import {
-  SpaceWorkflowManager,
-  createSpaceAgentLookup,
-} from '../space/managers/space-workflow-manager.ts';
-import type { SpaceAgentLookup } from '../space/managers/space-workflow-manager.ts';
+import { SpaceWorkflowManager, createSpaceAgentLookup } from '../workflows/workflow-manager.ts';
+import type { SpaceAgentLookup } from '../workflows/workflow-manager.ts';
 import { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository.ts';
 import { WorkflowRunArtifactRepository } from '../../storage/repositories/workflow-run-artifact-repository.ts';
@@ -101,7 +98,7 @@ import { SpaceAgentRepository } from '../../storage/repositories/space-agent-rep
 import { SpaceAgentReminderRepository } from '../../storage/repositories/space-agent-reminder-repository.ts';
 import { SpaceAgentSubscriptionRepository } from '../../storage/repositories/space-agent-subscription-repository.ts';
 import { SpaceAgentTemplateManager } from '../agents/template-manager.ts';
-import { createAgentTemplateResolverFactory } from '../space/workflows/run-template-snapshot.ts';
+import { createAgentTemplateResolverFactory } from '../workflows/run-template-snapshot.ts';
 import {
   deliverSpaceAgentMessage,
   type SessionInjectionOutcome,

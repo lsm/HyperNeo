@@ -76,7 +76,7 @@ import { createReactiveDatabase } from './storage/reactive-database.ts';
 import { LiveQueryEngine } from './storage/live-query.ts';
 import { installProcessFatalLogging } from './lib/process-fatal-logger.ts';
 import { startEventLoopWatchdog, type EventLoopWatchdogHandle } from './lib/event-loop-watchdog.ts';
-import { WorkflowHookRuntimeService } from './lib/space/workflow-hook-runtime-service.ts';
+import { WorkflowHookRuntimeService } from './lib/workflows/hook-runtime-service.ts';
 import { WorkflowHookStateRepository } from './storage/repositories/workflow-hook-state-repository.ts';
 import { SpaceLongHorizonAgentRepository } from './storage/repositories/space-long-horizon-agent-repository.ts';
 import { SpaceAgentReminderRepository } from './storage/repositories/space-agent-reminder-repository.ts';

@@ -4,7 +4,7 @@ import type { NodeExecution } from '@hyperneo/shared';
 import {
   runTemplateResolves,
   runTemplateSnapshotRecord,
-} from '../space/workflows/run-template-snapshot.ts';
+} from '../workflows/run-template-snapshot.ts';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository.ts';
 import type { ChannelCycleRepository } from '../../storage/repositories/channel-cycle-repository.ts';
@@ -12,8 +12,8 @@ import type { NodeExecutionRepository } from '../../storage/repositories/node-ex
 import {
   isReservedWorkflowAgentName,
   type SpaceWorkflowManager,
-} from '../space/managers/space-workflow-manager.ts';
-import { TERMINAL_NODE_EXECUTION_STATUSES } from '../space/managers/node-execution-manager.ts';
+} from '../workflows/workflow-manager.ts';
+import { TERMINAL_NODE_EXECUTION_STATUSES } from '../workflows/node-execution-manager.ts';
 import type { InternalEventBus, DaemonInternalEventMap } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
 import {
@@ -23,7 +23,7 @@ import {
   formatMissingAgentReference,
   formatMissingTemplateReference,
   validateExecutionAgainstWorkflow,
-} from '../space/runtime/workflow-node-execution-validation.ts';
+} from '../workflows/node-execution-validation.ts';
 import { reopenRun } from './activation-reopen.ts';
 import { deadLoopReason, isDeadLoopReached, notifyDeadLoop } from './channel-cycle-bookkeeping.ts';
 import {

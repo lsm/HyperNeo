@@ -25,7 +25,7 @@ import {
   createAgentTemplateResolver,
   toRunTemplateSnapshot,
   withRunTemplateSnapshots,
-} from '../../../../src/lib/space/workflows/run-template-snapshot.ts';
+} from '../../../../src/lib/workflows/run-template-snapshot.ts';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 

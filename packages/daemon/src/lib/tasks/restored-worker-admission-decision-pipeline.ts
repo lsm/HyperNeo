@@ -1,6 +1,6 @@
 import type { NodeExecution, Space, SpaceTask, SpaceWorkflowRun } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI, type Result } from 'superpipe';
-import { isCanonicalTaskTerminalForSpawn } from '../space/runtime/run-spawn-decisions.ts';
+import { isCanonicalTaskTerminalForSpawn } from '../workflows/run-spawn-decisions.ts';
 
 export interface RestoredWorkerAdmissionInput {
   settleReplayProvisioning: boolean;

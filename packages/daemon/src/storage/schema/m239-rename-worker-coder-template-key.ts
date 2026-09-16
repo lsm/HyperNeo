@@ -6,7 +6,7 @@ import {
 import {
   computeDefinitionVersion,
   verifyDefinitionVersion,
-} from '../../lib/space/workflows/definition-version.ts';
+} from '../../lib/workflows/definition-version.ts';
 import { SpaceWorkflowDefinitionVersionRepository } from '../repositories/space-workflow-definition-version-repository.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 

@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   POST_APPROVAL_TEMPLATE_KEYS,
   interpolatePostApprovalTemplate,
-} from '../../../../src/lib/space/workflows/post-approval-template.ts';
+} from '../../../../src/lib/workflows/post-approval-template.ts';
 
 describe('interpolatePostApprovalTemplate — happy path', () => {
   test('renders all documented context keys', () => {

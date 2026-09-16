@@ -48,7 +48,7 @@ mock.module('../../../../src/lib/provider-service.ts', () => ({
 describe('selectWorkflowWithLlmDefault provider env release', () => {
   it('restores the applied provider env before invoking the SDK query', async () => {
     const { selectWorkflowWithLlmDefault } = await import(
-      '../../../../src/lib/space/runtime/llm-workflow-selector'
+      '../../../../src/lib/workflows/llm-workflow-selector'
     );
     const task = {
       title: 'Ship the release',

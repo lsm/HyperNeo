@@ -10,7 +10,7 @@ import { SpaceRepository } from '../../../../src/storage/repositories/space-repo
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
 import { createSpaceTables } from '../../helpers/space-test-db';
-import { computeDefinitionVersion } from '../../../../src/lib/space/workflows/definition-version';
+import { computeDefinitionVersion } from '../../../../src/lib/workflows/definition-version';
 import type { SpaceAgentTemplate, SpaceWorkflow } from '@hyperneo/shared';
 
 describe('SpaceWorkflowRunRepository', () => {

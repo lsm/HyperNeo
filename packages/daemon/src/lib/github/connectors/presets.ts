@@ -1,5 +1,5 @@
 import type { WorkflowHookResult } from '@hyperneo/shared';
-import type { HookExecutorContext } from '../../space/runtime/hook-executor.ts';
+import type { HookExecutorContext } from '../../workflows/hook-executor.ts';
 import { spawnProcess, type SpawnFn } from '../../runtime-spawn/index.ts';
 import { getConnector, registerConnector } from './connector.ts';
 import {

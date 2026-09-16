@@ -2,10 +2,10 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { SpaceWorkflow, SpaceWorkflowRun } from '@hyperneo/shared';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { SpaceTaskManager } from '../../../../src/lib/tasks/task-manager.ts';
-import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
+import { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager.ts';
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
-import { TransientSpawnError } from '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts';
+import { TransientSpawnError } from '../../../../src/lib/workflows/node-execution-validation.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
@@ -1601,7 +1601,7 @@ describe('SpaceRuntime', () => {
       seedSpaceRow(db, newSpaceId, newWorkspacePath);
 
       const { seedBuiltInWorkflows } = await import(
-        '../../../../src/lib/space/workflows/built-in-workflows.ts'
+        '../../../../src/lib/workflows/seed-built-in-workflows.ts'
       );
 
       expect(() => seedBuiltInWorkflows(newSpaceId, workflowManager)).not.toThrow();
@@ -1624,7 +1624,7 @@ describe('SpaceRuntime', () => {
       seedSpaceRow(db, newSpaceId, newWorkspacePath);
 
       const { seedBuiltInWorkflows } = await import(
-        '../../../../src/lib/space/workflows/built-in-workflows.ts'
+        '../../../../src/lib/workflows/seed-built-in-workflows.ts'
       );
 
       seedBuiltInWorkflows(newSpaceId, workflowManager);

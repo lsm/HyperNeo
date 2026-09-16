@@ -5,7 +5,7 @@ import type {
   SpaceWorkflowRunReopenedEvent,
 } from '../../../../src/lib/internal-event-bus.ts';
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
-import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
+import { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager.ts';
 import {
   ActivationError,
   ARCHIVED_TASK_ERROR_MESSAGE,

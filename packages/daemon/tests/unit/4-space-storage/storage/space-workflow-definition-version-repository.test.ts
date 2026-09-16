@@ -5,7 +5,7 @@ import { SpaceWorkflowDefinitionVersionRepository } from '../../../../src/storag
 import {
   computeDefinitionVersion,
   stableStringify,
-} from '../../../../src/lib/space/workflows/definition-version.ts';
+} from '../../../../src/lib/workflows/definition-version.ts';
 import { createSpaceTables } from '../../helpers/space-test-db.ts';
 import type { SpaceWorkflow } from '@hyperneo/shared';
 

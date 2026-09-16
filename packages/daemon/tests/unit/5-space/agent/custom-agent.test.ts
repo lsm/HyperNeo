@@ -24,7 +24,7 @@ import {
   CODING_WORKFLOW,
   EXTERNAL_REVIEW_BOTS_GUIDANCE,
   REVIEW_POLICY_GUIDANCE,
-} from '../../../../src/lib/space/workflows/built-in-workflows.ts';
+} from '../../../../src/lib/workflows/built-in-workflows.ts';
 
 function makeAgent(overrides?: Partial<SpaceLongHorizonAgent>): SpaceLongHorizonAgent {
   return {

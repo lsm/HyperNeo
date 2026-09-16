@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
-import { CompletionDetector } from '../../../../src/lib/space/runtime/completion-detector.ts';
+import { CompletionDetector } from '../../../../src/lib/workflows/completion-detector.ts';
 
 function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');

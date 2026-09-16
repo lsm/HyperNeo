@@ -90,7 +90,7 @@ import {
 } from '../../agents/template-manager.ts';
 import type { SpaceManager } from '../managers/space-manager.ts';
 import { assertValidSpaceTaskTransition, type SpaceTaskManager } from '../../tasks/task-manager.ts';
-import type { SpaceWorkflowManager } from '../managers/space-workflow-manager.ts';
+import type { SpaceWorkflowManager } from '../../workflows/workflow-manager.ts';
 import { SpaceDeliveryFacade, translateTaskMessageTarget } from '../../messaging/space-adapter.ts';
 import {
   createBoundSpaceTaskMetadataEditor,

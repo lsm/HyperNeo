@@ -3,7 +3,7 @@ import type { SpaceWorkflow } from '@hyperneo/shared';
 import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
-import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
+import { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager.ts';
 import {
   buildPromptTooLongContinueNag,
   COMPACT_RESULT_TIMEOUT_MS,

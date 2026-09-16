@@ -12,8 +12,8 @@ import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
 import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
-import { SpawnSupersededError } from '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts';
-import { PermanentSpawnError } from '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts';
+import { SpawnSupersededError } from '../../../../src/lib/workflows/node-execution-validation.ts';
+import { PermanentSpawnError } from '../../../../src/lib/workflows/node-execution-validation.ts';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 
 const TASK_ID = 'task-1240';

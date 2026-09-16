@@ -1,13 +1,13 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
-import { NodeExecutionManager } from '../../../../src/lib/space/managers/node-execution-manager.ts';
+import { NodeExecutionManager } from '../../../../src/lib/workflows/node-execution-manager.ts';
 import {
   VALID_NODE_EXECUTION_TRANSITIONS,
   TERMINAL_NODE_EXECUTION_STATUSES,
   isValidNodeExecutionTransition,
   isNodeExecutionTerminal,
-} from '../../../../src/lib/space/managers/node-execution-manager.ts';
+} from '../../../../src/lib/workflows/node-execution-manager.ts';
 import type { NodeExecutionStatus } from '@hyperneo/shared';
 
 function makeDb(): BunDatabase {

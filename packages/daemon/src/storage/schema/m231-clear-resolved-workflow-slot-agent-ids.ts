@@ -3,7 +3,7 @@ import { SpaceWorkflowDefinitionVersionRepository } from '../repositories/space-
 import {
   computeDefinitionVersion,
   verifyDefinitionVersion,
-} from '../../lib/space/workflows/definition-version.ts';
+} from '../../lib/workflows/definition-version.ts';
 import type { SpaceWorkflow } from '@hyperneo/shared';
 import { getLongHorizonAgentTemplates } from '../../lib/agents/long-horizon-templates.ts';
 import { ensureTemplateForAgentRef } from './m228-migrate-workflow-agent-template-refs.ts';

@@ -14,8 +14,8 @@ import {
   createEndNodeHandlers,
   createMarkCompleteHandler,
   createPrMergedGate,
-} from '../../../../src/lib/space/operations/end-node-handlers.ts';
-import type { EndNodeHandlerDeps } from '../../../../src/lib/space/operations/end-node-handlers.ts';
+} from '../../../../src/lib/workflows/end-node-handlers.ts';
+import type { EndNodeHandlerDeps } from '../../../../src/lib/workflows/end-node-handlers.ts';
 import type { Space, SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
 import type {
   DaemonInternalEventMap,

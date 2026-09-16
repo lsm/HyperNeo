@@ -11,7 +11,7 @@ import { NodeExecutionRepository } from '../../../../src/storage/repositories/no
 import { createStandaloneTask } from '../../../../src/storage/tasks/create-task';
 import { SpaceTaskManager } from '../../../../src/lib/tasks/task-manager';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
-import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager';
+import { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime';
 import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager';
 import { createSpaceTaskDependencyEditor } from '../../../../src/lib/tasks/dependencies';

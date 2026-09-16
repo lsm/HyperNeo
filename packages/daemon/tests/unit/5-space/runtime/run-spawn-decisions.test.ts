@@ -7,7 +7,7 @@ import {
   isCanonicalTaskTerminalForSpawn,
   isParkedAwaitingApproval,
   selectPromotablePendingExecutions,
-} from '../../../../src/lib/space/runtime/run-spawn-decisions';
+} from '../../../../src/lib/workflows/run-spawn-decisions';
 
 function makeExecution(overrides: Partial<NodeExecution> = {}): NodeExecution {
   return {

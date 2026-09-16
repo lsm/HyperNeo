@@ -57,7 +57,7 @@ import { getLongHorizonAgentTemplate } from '../../agents/long-horizon-templates
 import { isRunnableUnifiedAgent } from '../../agents/worker-long-horizon-mapper.ts';
 import type { SpaceManager } from '../managers/space-manager.ts';
 import { SpaceTaskManager } from '../../tasks/task-manager.ts';
-import type { SpaceWorkflowManager } from '../managers/space-workflow-manager.ts';
+import type { SpaceWorkflowManager } from '../../workflows/workflow-manager.ts';
 import {
   type SpaceWorktreeManager,
   WorkspaceNotGitRepositoryError,
@@ -118,16 +118,16 @@ import {
   resolveAgentInit,
 } from '../../agents/custom-agent.ts';
 import type { EvolutionScopeService } from '../../evolution/scope-service.ts';
-import { TERMINAL_NODE_EXECUTION_STATUSES } from '../managers/node-execution-manager.ts';
+import { TERMINAL_NODE_EXECUTION_STATUSES } from '../../workflows/node-execution-manager.ts';
+import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools.ts';
 import {
   createEndNodeHandlers,
   createMarkCompleteHandler,
   createPrMergedGate,
-} from '../operations/end-node-handlers.ts';
-import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools.ts';
+} from '../../workflows/end-node-handlers.ts';
 import { jsonResult } from '../tools/tool-result.ts';
-import { POST_APPROVAL_TASK_AGENT_TARGET } from '../workflows/post-approval-validator.ts';
-import { runTemplateSnapshotRecord } from '../workflows/run-template-snapshot.ts';
+import { POST_APPROVAL_TASK_AGENT_TARGET } from '../../workflows/post-approval-validator.ts';
+import { runTemplateSnapshotRecord } from '../../workflows/run-template-snapshot.ts';
 import {
   decideActivationRouting,
   selectWorkflowNodeForAgent,
@@ -137,11 +137,11 @@ import {
   deliverAgentMessageToTarget,
 } from '../../messaging/delivery-pipeline.ts';
 import { AgentMessageRouter } from '../../messaging/agent-message-router.ts';
-import type { WorkflowArtifactProfile } from './artifact-profile.ts';
+import type { WorkflowArtifactProfile } from '../../workflows/artifact-profile.ts';
 import { ChannelResolver } from '../../messaging/channel-resolver.ts';
 import { ChannelRouter } from '../../messaging/channel-router.ts';
 import { createGithubConnector } from '../../github/connectors/github-connector.ts';
-import { HookExecutor } from './hook-executor.ts';
+import { HookExecutor } from '../../workflows/hook-executor.ts';
 import type { InjectionDeliveryRowDeps } from '../../messaging/injection-delivery-steps.ts';
 import {
   flipDeliveryRowToDeferred,
@@ -151,10 +151,10 @@ import {
 import {
   collectDispatchablePostApprovalRoutes,
   isCoderOwnedMergeWorkflow as resolveIsCoderOwnedMergeWorkflow,
-} from './post-approval-router.ts';
+} from '../../workflows/post-approval-router.ts';
 import type { ReplyRoutingRegistry } from '../../messaging/reply-routing-registry.ts';
 import { decideRestoredWorkerAdmission } from '../../tasks/restored-worker-admission-decision-pipeline.ts';
-import { isCanonicalTaskTerminalForSpawn } from './run-spawn-decisions.ts';
+import { isCanonicalTaskTerminalForSpawn } from '../../workflows/run-spawn-decisions.ts';
 import {
   isSpawnFlowReusedSession,
   isSpawnFlowWaitConcurrent,
@@ -179,7 +179,7 @@ import {
   clearAllRetryableHookActionTimers,
   QUEUED_RETRYABLE_ACTION_STATE_KEY,
   WorkflowHookEngine,
-} from './workflow-hook-engine.ts';
+} from '../../workflows/hook-engine.ts';
 import {
   assertExecutionValidAgainstWorkflow,
   formatMissingTemplateReference,
@@ -190,7 +190,7 @@ import {
   SPAWN_RESERVABLE_TASK_STATUSES,
   SpawnSupersededError,
   validateTaskAllowsSpawn,
-} from './workflow-node-execution-validation.ts';
+} from '../../workflows/node-execution-validation.ts';
 
 const log = new Logger('task-agent-manager');
 

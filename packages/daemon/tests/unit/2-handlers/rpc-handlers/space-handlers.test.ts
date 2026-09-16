@@ -13,7 +13,7 @@ import {
   WorkspaceRemovalBlockedError,
 } from '../../../../src/lib/workspaces/workspace-manager';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
-import type { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager';
+import type { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { createSpaceTables } from '../../helpers/space-test-db';

@@ -24,7 +24,7 @@ import type {
   WorkflowRunArtifactRepository,
 } from '../../storage/repositories/workflow-run-artifact-repository.ts';
 import type { SpaceGoalService } from '../goals/service.ts';
-import type { WorkflowArtifactProfile } from '../space/runtime/artifact-profile.ts';
+import type { WorkflowArtifactProfile } from '../workflows/artifact-profile.ts';
 
 export interface CreateEpisodeFromEvidenceParams {
   scopeId: string;

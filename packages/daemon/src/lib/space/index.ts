@@ -36,12 +36,12 @@ export {
   SpaceTaskManager,
   VALID_SPACE_TASK_TRANSITIONS,
 } from '../tasks/task-manager.ts';
-export type { SpaceAgentLookup } from './managers/space-workflow-manager.ts';
+export type { SpaceAgentLookup } from '../workflows/workflow-manager.ts';
 export {
   SpaceWorkflowManager,
   WorkflowDeletionBlockedError,
   WorkflowValidationError,
-} from './managers/space-workflow-manager.ts';
+} from '../workflows/workflow-manager.ts';
 export {
   SpaceWorkspaceManager,
   WorkspaceRegistrationError,
@@ -65,16 +65,16 @@ export type {
   CommandRunner,
   ConditionContext,
   ConditionResult,
-} from './runtime/workflow-executor.ts';
-export { WorkflowExecutor } from './runtime/workflow-executor.ts';
-export type { WorkflowSelectionContext } from './runtime/workflow-selector.ts';
-export { selectWorkflow } from './runtime/workflow-selector.ts';
-export { WorkflowHookRuntimeService } from './workflow-hook-runtime-service.ts';
-export { validateWorkflowHooks } from './workflow-hook-validation.ts';
+} from '../workflows/workflow-executor.ts';
+export { WorkflowExecutor } from '../workflows/workflow-executor.ts';
+export type { WorkflowSelectionContext } from '../workflows/workflow-selector.ts';
+export { selectWorkflow } from '../workflows/workflow-selector.ts';
+export { WorkflowHookRuntimeService } from '../workflows/hook-runtime-service.ts';
+export { validateWorkflowHooks } from '../workflows/hook-validation.ts';
 export {
   CODING_WORKFLOW,
   getBuiltInWorkflows,
   RESEARCH_WORKFLOW,
   REVIEW_ONLY_WORKFLOW,
-  seedBuiltInWorkflows,
-} from './workflows/built-in-workflows.ts';
+} from '../workflows/built-in-workflows.ts';
+export { seedBuiltInWorkflows } from '../workflows/seed-built-in-workflows.ts';

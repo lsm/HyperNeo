@@ -1,7 +1,7 @@
 import { PendingCompletionSupersededError } from './pending-completion-guard.ts';
 import type { SpaceTask } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import { mapPostApprovalDispatchWarning } from '../space/runtime/post-approval-router.ts';
+import { mapPostApprovalDispatchWarning } from '../workflows/post-approval-router.ts';
 
 type Awaitable<T> = T | Promise<T>;
 

@@ -11,7 +11,7 @@ import { type StagedRunOutcome, stagedRun } from '../space/runtime/staged-run.ts
 import {
   validateExecutionAgainstWorkflow,
   validateTaskAllowsSpawn,
-} from '../space/runtime/workflow-node-execution-validation.ts';
+} from '../workflows/node-execution-validation.ts';
 
 export type { SpawnExecutionFlowDeps } from './spawn-flow-contract.ts';
 

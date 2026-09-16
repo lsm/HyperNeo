@@ -6,7 +6,7 @@ import type {
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import { SpaceWorkflowRepository } from '../repositories/space-workflow-repository.ts';
 import { SpaceWorkflowDefinitionVersionRepository } from '../repositories/space-workflow-definition-version-repository.ts';
-import { computeDefinitionVersion } from '../../lib/space/workflows/definition-version.ts';
+import { computeDefinitionVersion } from '../../lib/workflows/definition-version.ts';
 import {
   migratedAgentTemplateKey,
   synthesizeAgentTemplate,

@@ -6,7 +6,7 @@ import {
 import type { z } from 'zod';
 import type { OperationRegistrySource } from '../../operations/registry.ts';
 import { hasSpaceAuthority } from '../runtime/space-mcp-session-policy.ts';
-import { canTransition as canTransitionRunStatus } from '../runtime/workflow-run-status-machine.ts';
+import { canTransition as canTransitionRunStatus } from '../../workflows/run-status-machine.ts';
 import { normalizeReplyTargetHandle } from '../../messaging/agent-handle.ts';
 import {
   HUMAN_ONLY_AUTONOMY_LEVEL,

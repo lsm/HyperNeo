@@ -20,13 +20,13 @@ import type {
 import { createInternalCommandBus } from '../../../../src/lib/internal-command-bus';
 import { createDaemonInternalEventBus } from '../../../../src/lib/internal-event-bus';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
-import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager';
-import type { WorkflowArtifactProfile } from '../../../../src/lib/space/runtime/artifact-profile';
+import { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager';
+import type { WorkflowArtifactProfile } from '../../../../src/lib/workflows/artifact-profile';
 import {
   parsePositiveIntegerEnv,
   SpaceRuntime,
 } from '../../../../src/lib/space/runtime/space-runtime';
-import { CodingArtifactProfile } from '../../../../src/lib/space/workflows/coding-artifact-profile';
+import { CodingArtifactProfile } from '../../../../src/lib/workflows/coding-artifact-profile';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';

@@ -9,8 +9,8 @@ import {
   readPendingCompletionResult,
   rejectPendingCompletion,
   type PendingCompletionDependencies,
-} from '../../../../src/lib/tasks/pending-completion';
-import { mapPostApprovalDispatchWarning } from '../../../../src/lib/space/runtime/post-approval-router';
+} from '../../../../src/lib/tasks/pending-completion.ts';
+import { mapPostApprovalDispatchWarning } from '../../../../src/lib/workflows/post-approval-router';
 
 const approved = { id: 'task', status: 'approved', spaceId: 'space' } as SpaceTask;
 const reopened = { ...approved, status: 'in_progress' } as SpaceTask;

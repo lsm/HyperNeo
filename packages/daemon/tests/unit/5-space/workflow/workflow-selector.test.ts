@@ -1,6 +1,6 @@
 import { describe, test, expect } from 'bun:test';
-import { selectWorkflow } from '../../../../src/lib/space/runtime/workflow-selector.ts';
-import type { WorkflowSelectionContext } from '../../../../src/lib/space/runtime/workflow-selector.ts';
+import { selectWorkflow } from '../../../../src/lib/workflows/workflow-selector.ts';
+import type { WorkflowSelectionContext } from '../../../../src/lib/workflows/workflow-selector.ts';
 import type { SpaceWorkflow } from '@hyperneo/shared';
 
 let idCounter = 0;

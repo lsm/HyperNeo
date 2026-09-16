@@ -4,7 +4,7 @@ import {
   resolveOperationRegistry,
 } from '../../operations/registry.ts';
 import type { SpaceMcpSessionRole } from '../runtime/space-mcp-session-policy.ts';
-import { wrapHandlerWithHooks } from '../runtime/workflow-hook-engine.ts';
+import { wrapHandlerWithHooks } from '../../workflows/hook-engine.ts';
 import type { ToolResult } from '../tools/tool-result.ts';
 import { runMarkCompleteOperation } from './mark-complete-operation.ts';
 import {

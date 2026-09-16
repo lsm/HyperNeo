@@ -12,8 +12,8 @@ import {
   clearBuiltInConnectorDeps,
   getBuiltInConnectorDeps,
   registerProductionConnectors,
-} from '../../../../../src/lib/github/connectors/production';
-import { validateWorkflowHooks } from '../../../../../src/lib/space/workflow-hook-validation';
+} from '../../../../../src/lib/github/connectors/production.ts';
+import { validateWorkflowHooks } from '../../../../../src/lib/workflows/hook-validation';
 import type { WorkflowHook, WorkflowNodeInput } from '@hyperneo/shared';
 
 function snapshotRegistry(): Connector[] {

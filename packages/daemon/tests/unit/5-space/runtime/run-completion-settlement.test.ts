@@ -9,7 +9,7 @@ import {
   resolveQuiesceSourceNodeId,
   resolveSpawnedPostApprovalSession,
   selectSiblingsToQuiesce,
-} from '../../../../src/lib/space/runtime/run-completion-settlement';
+} from '../../../../src/lib/workflows/run-completion-settlement';
 
 function makeExecution(overrides: Partial<NodeExecution> = {}): NodeExecution {
   return {
