@@ -1,3 +1,4 @@
+import { createInactivityOperations } from '../../external-events/inactivity-operations.ts';
 import { createExternalEventOperations } from '../../external-events/operations.ts';
 import type { OperationDefinition } from '../../operations/registry.ts';
 import type { FamilyOperationContext } from './context.ts';
@@ -5,11 +6,23 @@ import type { FamilyOperationContext } from './context.ts';
 export function registerExternalEventOperations(
   context: FamilyOperationContext
 ): OperationDefinition[] {
-  return createExternalEventOperations({
-    eventStore: context.deps.externalEventStore,
-    getSession: (sessionId) => context.deps.db.getSession(sessionId),
-    taskRepo: context.spaceTaskRepo,
-    nodeExecutionRepo: context.nodeExecutionRepo,
-    longHorizonAgentRepo: context.longHorizonAgentRepo,
-  });
+  return [
+    ...createExternalEventOperations({
+      eventStore: context.deps.externalEventStore,
+      getSession: (sessionId) => context.deps.db.getSession(sessionId),
+      taskRepo: context.spaceTaskRepo,
+      nodeExecutionRepo: context.nodeExecutionRepo,
+      longHorizonAgentRepo: context.longHorizonAgentRepo,
+    }),
+    ...createInactivityOperations({
+      configRepo: context.spaceAgentInactivityConfigRepo,
+      claimRepo: context.spaceAgentInactivityClaimRepo,
+      runNow: (spaceId, agentId) =>
+        context.spaceRuntimeService.runInactivityScanNow(spaceId, agentId),
+      getSession: (sessionId) => context.deps.db.getSession(sessionId),
+      taskRepo: context.spaceTaskRepo,
+      nodeExecutionRepo: context.nodeExecutionRepo,
+      longHorizonAgentRepo: context.longHorizonAgentRepo,
+    }),
+  ];
 }
