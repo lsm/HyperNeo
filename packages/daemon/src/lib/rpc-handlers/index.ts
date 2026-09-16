@@ -168,7 +168,7 @@ const EXTERNAL_EVENT_DELIVERY_STATES: ExternalEventDeliveryState[] = [
 import {
   validateCompletedTaskThreshold,
   validateGoalAutomationSelfNagPolicy,
-} from '../goals/evolution-policy-validation.ts';
+} from '../evolution/evolution-policy-validation.ts';
 export { validateCompletedTaskThreshold, validateGoalAutomationSelfNagPolicy };
 import {
   readSelfNagScheduleScopeId,
