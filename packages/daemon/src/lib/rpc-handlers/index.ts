@@ -8,6 +8,7 @@ import { createSpaceOperationRegistryProvider } from '../tasks/operations.ts';
 import type { OperationDefinition } from '../operations/registry.ts';
 import { createCompletionGateBindings } from '../tasks/complete-task-gates.ts';
 import { isCoderOwnedMergeWorkflow } from '../workflows/post-approval-router.ts';
+import { createWorkflowOperations } from '../workflows/operations.ts';
 import { createGithubConnector } from '../github/connectors/github-connector.ts';
 import { setupOperationHandlers } from './operation-handlers.ts';
 import { createSpaceCallerScopeResolver } from '../space/runtime/space-caller-scope.ts';
@@ -1266,6 +1267,12 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   });
 
   const familyOperations: OperationDefinition[] = [];
+  familyOperations.push(
+    ...createWorkflowOperations({
+      listWorkflowSummaries: (spaceId) => spaceWorkflowManager.listWorkflowSummaries(spaceId),
+    })
+  );
+
   const spaceOperationRegistryProvider = createSpaceOperationRegistryProvider(
     deps.db,
     deps.jobQueue,

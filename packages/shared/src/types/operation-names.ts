@@ -18,6 +18,8 @@ export const OPERATION_NAMES = [
   'task.submitForReview',
   'task.transition',
   'task.update',
+  'workflow.list',
+  'workflow.suggest',
 ] as const;
 
 export type OperationName = (typeof OPERATION_NAMES)[number];

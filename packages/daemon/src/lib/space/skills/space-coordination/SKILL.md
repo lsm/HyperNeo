@@ -52,11 +52,11 @@ Call the task cancel RPC with `taskId`. If the user wants the workflow run cance
 
 Call the task reassign RPC with `taskId` and either a built-in agent type or worker agent id.
 
-### list_workflows()
+### workflow.list()
 
 Call the workflow list RPC with `spaceId`. Return workflow ids, names, descriptions, tags, and node counts.
 
-### suggest_workflow(description)
+### workflow.suggest(description)
 
 The MCP tool intentionally returns all workflows and lets the model reason over them. Do the same here: list workflows, compare them against the description, and explain your recommended workflow.
 
