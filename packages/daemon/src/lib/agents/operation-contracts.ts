@@ -77,6 +77,8 @@ export const AGENT_REJECTION_REASONS = [
   'invalid_name',
   'invalid_tools',
   'invalid_model',
+  'goal_not_found',
+  'scope_not_found',
 ] as const;
 
 export const AgentRejectionSchema = z

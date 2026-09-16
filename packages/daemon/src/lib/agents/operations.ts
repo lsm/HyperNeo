@@ -1,3 +1,4 @@
+import type { SpaceAgentGoalScopeRepository } from '../../storage/repositories/space-agent-goal-scope-repository.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
 import type { OperationDefinition } from '../operations/registry.ts';
 import {
@@ -6,6 +7,13 @@ import {
 } from './create-agent-operation.ts';
 import { createGetAgentOperation } from './get-agent-operation.ts';
 import { createListAgentsOperation } from './list-agents-operation.ts';
+import {
+  createAssignAgentToForgeScopeOperation,
+  createAssignAgentToGoalOperation,
+  createUnassignAgentFromForgeScopeOperation,
+  createUnassignAgentFromGoalOperation,
+  type AgentAssignmentDependencies,
+} from './assign-agent-operation.ts';
 import type { AgentOperationDeps } from './operation-contracts.ts';
 
 export interface AgentOperationDependencies extends AgentOperationDeps {
@@ -15,6 +23,29 @@ export interface AgentOperationDependencies extends AgentOperationDeps {
   >;
   readonly publishAgentCreated: CreateAgentDependencies['publishAgentCreated'];
   readonly audit: CreateAgentDependencies['audit'];
+  readonly getGoalSpace: AgentAssignmentDependencies['getGoalSpace'];
+  readonly getForgeScopeSpace: AgentAssignmentDependencies['getForgeScopeSpace'];
+  readonly goalScopeRepo: Pick<
+    SpaceAgentGoalScopeRepository,
+    | 'assignGoal'
+    | 'deleteGoalAssignmentByRelationship'
+    | 'assignForgeScope'
+    | 'deleteForgeScopeAssignment'
+  >;
+  readonly publishGoalOwnerChanged: AgentAssignmentDependencies['publishGoalOwnerChanged'];
+}
+
+function assignmentDeps(deps: AgentOperationDependencies): AgentAssignmentDependencies {
+  return {
+    ...deps,
+    getAgent: (agentId) => deps.longHorizonAgentRepo.getById(agentId),
+    assignGoal: (agentId, goalId) => deps.goalScopeRepo.assignGoal(agentId, goalId),
+    unassignGoal: (agentId, goalId) =>
+      deps.goalScopeRepo.deleteGoalAssignmentByRelationship(agentId, goalId, 'owner'),
+    assignForgeScope: (agentId, scopeId) => deps.goalScopeRepo.assignForgeScope(agentId, scopeId),
+    unassignForgeScope: (agentId, scopeId) =>
+      deps.goalScopeRepo.deleteForgeScopeAssignment(agentId, scopeId),
+  };
 }
 
 export function createAgentOperations(deps: AgentOperationDependencies): OperationDefinition[] {
@@ -33,5 +64,9 @@ export function createAgentOperations(deps: AgentOperationDependencies): Operati
       getAgent: (agentId) => deps.longHorizonAgentRepo.getById(agentId),
       createAgent: (params) => deps.longHorizonAgentRepo.create(params),
     }),
+    createAssignAgentToGoalOperation(assignmentDeps(deps)),
+    createUnassignAgentFromGoalOperation(assignmentDeps(deps)),
+    createAssignAgentToForgeScopeOperation(assignmentDeps(deps)),
+    createUnassignAgentFromForgeScopeOperation(assignmentDeps(deps)),
   ];
 }

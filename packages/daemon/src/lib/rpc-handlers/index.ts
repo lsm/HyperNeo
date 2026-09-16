@@ -1293,6 +1293,14 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
           'created'
         );
       },
+      getGoalSpace: (goalId) => spaceGoalService.getGoal(goalId)?.spaceId ?? null,
+      getForgeScopeSpace: (scopeId) => evolutionScopeService.getScope(scopeId)?.spaceId ?? null,
+      goalScopeRepo: spaceAgentGoalScopeRepo,
+      publishGoalOwnerChanged: (spaceId, goalId, sessionId) => {
+        deps.internalEventBus
+          .publish('spaceGoal.ownerChanged', { sessionId, spaceId, goalId })
+          .catch(() => {});
+      },
       audit: (operationName, summary, caller, spaceId) => {
         new McpAuditLogRepository(deps.db.getDatabase()).createEntry({
           sessionId: caller.sessionId,

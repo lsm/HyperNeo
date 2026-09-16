@@ -1,7 +1,11 @@
 export const OPERATION_NAMES = [
+  'agent.assignForgeScope',
+  'agent.assignGoal',
   'agent.create',
   'agent.get',
   'agent.list',
+  'agent.unassignForgeScope',
+  'agent.unassignGoal',
   'externalEvent.get',
   'externalEvent.listDeliveries',
   'goal.create',
