@@ -5,6 +5,7 @@ import { createWorkflowTaskRecoveryExecutor } from '../tasks/recovery-executor.t
 import { recoverTaskExecution } from '../tasks/recover-task-execution.ts';
 import { McpAuditLogRepository } from '../../storage/repositories/mcp-audit-log-repository.ts';
 import { createSpaceOperationRegistryProvider } from '../tasks/operations.ts';
+import { createExternalEventOperations } from '../external-events/operations.ts';
 import type { OperationDefinition } from '../operations/registry.ts';
 import { createCompletionGateBindings } from '../tasks/complete-task-gates.ts';
 import { isCoderOwnedMergeWorkflow } from '../workflows/post-approval-router.ts';
@@ -1267,6 +1268,15 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   });
 
   const familyOperations: OperationDefinition[] = [];
+  familyOperations.push(
+    ...createExternalEventOperations({
+      eventStore: deps.externalEventStore,
+      getSession: (sessionId) => deps.db.getSession(sessionId),
+      taskRepo: spaceTaskRepo,
+      nodeExecutionRepo,
+      longHorizonAgentRepo,
+    })
+  );
   familyOperations.push(
     ...createWorkflowOperations({
       listWorkflowSummaries: (spaceId) => spaceWorkflowManager.listWorkflowSummaries(spaceId),
