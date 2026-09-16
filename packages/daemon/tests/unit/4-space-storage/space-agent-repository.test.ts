@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
 import type { AgentModelPoolEntry, CreateSpaceAgentParams } from '@hyperneo/shared';
-import { SPACE_MANAGER_HANDLE } from '../../../src/lib/messaging/agent-handle';
 import { SpaceAgentRepository } from '../../../src/storage/repositories/space-agent-repository';
 import { SpaceLongHorizonAgentRepository } from '../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { Database as BunDatabase } from '../../../src/storage/sqlite-compat';

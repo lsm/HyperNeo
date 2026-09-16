@@ -5,7 +5,8 @@ import {
   resolveInvokeDependencies,
   type InvokeDependenciesSource,
 } from './invoke.ts';
-import type { OperationCaller, OperationRegistrySource } from './registry.ts';
+import type { CallerIdentity } from './caller.ts';
+import type { OperationRegistrySource } from './registry.ts';
 
 export const OperationMcpInvocationSchema = z.object({
   name: z.string().min(1),
@@ -21,7 +22,7 @@ function mcpResult(value: unknown, isError = false) {
 
 export function createOperationMcpHandler(
   registry: OperationRegistrySource,
-  resolveCaller: () => Omit<OperationCaller, 'source'> | Promise<Omit<OperationCaller, 'source'>>,
+  resolveCaller: () => CallerIdentity | Promise<CallerIdentity>,
   dependencies: InvokeDependenciesSource = {}
 ) {
   return async (args: unknown) => {

@@ -232,7 +232,7 @@ describe('GlmProvider', () => {
     function installModelListFetch(respond: (call: number) => Response | Promise<Response>) {
       let call = 0;
       const fetchImpl = mock(
-        async (_url: RequestInfo | URL, _init?: RequestInit) => await respond(++call)
+        async (_url: string | URL | Request, _init?: RequestInit) => await respond(++call)
       );
       provider = new GlmProvider(process.env, fetchImpl as unknown as typeof fetch);
       return fetchImpl;
@@ -418,7 +418,7 @@ describe('GlmProvider', () => {
 
     it('getModels merges cached discovered models after the static list', async () => {
       process.env.GLM_API_KEY = 'test-key';
-      const fetchImpl = mock(async (url: RequestInfo | URL) =>
+      const fetchImpl = mock(async (url: string | URL | Request) =>
         String(url).endsWith('/models')
           ? new Response(
               JSON.stringify({
@@ -446,7 +446,7 @@ describe('GlmProvider', () => {
 
     it('falls back to the static catalog when discovery fails but the probe succeeds', async () => {
       process.env.GLM_API_KEY = 'test-key';
-      const fetchImpl = mock(async (url: RequestInfo | URL) =>
+      const fetchImpl = mock(async (url: string | URL | Request) =>
         String(url).endsWith('/models')
           ? new Response('unavailable', { status: 503 })
           : new Response('{}', { status: 200 })
