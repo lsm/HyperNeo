@@ -69,6 +69,16 @@ function makeManager(operations: OperationDefinition[] = []): TaskAgentManager {
   } as unknown as TaskAgentManagerConfig);
 }
 
+function sessionGetOperation(): OperationDefinition {
+  return defineOperation({
+    name: 'session.get',
+    description: 'session.get',
+    inputSchema: z.unknown(),
+    resultSchema: z.unknown(),
+    execute: async () => 'read',
+  }) as OperationDefinition;
+}
+
 function sendMessageOperation(): OperationDefinition {
   return defineOperation({
     name: 'send_message',
@@ -263,6 +273,12 @@ describe('TaskAgentManager — space-actions dispatcher attach', () => {
     const tam = makeManager([sendMessageOperation()]);
     const contract = contractOf(tam, 'coder', workerActionNames(tam));
     expect(contract).toContain('invoke(name="send_message")');
+  });
+
+  test('the QA contract suggests session.get now that the seed is an operation', () => {
+    const tam = makeManager([sessionGetOperation()]);
+    const contract = contractOf(tam, 'qa', workerActionNames(tam, 'qa'));
+    expect(contract).toContain('invoke(name="session.get")');
   });
 
   test('without registry names the contract omits suggestions instead of guessing', () => {
