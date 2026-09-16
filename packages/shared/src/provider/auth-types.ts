@@ -46,6 +46,16 @@ export interface ProviderRefreshResponse {
   error?: string;
 }
 
+export interface ProviderCallbackRelayRequest {
+  providerId: string;
+  callbackInput: string;
+}
+
+export interface ProviderCallbackRelayResponse {
+  success: boolean;
+  error?: string;
+}
+
 export interface ListProviderAuthStatusResponse {
   providers: ProviderAuthStatus[];
 }
