@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { SessionResolutionDeps } from '../../../../src/lib/session-resolution/deps';
-import { ensureAgentSession } from '../../../../src/lib/session-resolution/ensure-agent-session';
+import { ensureLongTermAgentSession } from '../../../../src/lib/session-resolution/ensure-long-term-agent-session';
 import {
   agentSessionIdOf,
   type SessionTargetAgent,
@@ -34,7 +34,7 @@ function makeDeps(config?: { existingSessionIds?: string[]; ensureOutcome?: 'cre
   return { deps, ensureCalls };
 }
 
-describe('ensureAgentSession', () => {
+describe('ensureLongTermAgentSession', () => {
   test('existing session resolves as not created without calling ensureLongTermAgent', async () => {
     const spaceId = 'space-1';
     const agentId = 'agent-1';
@@ -42,7 +42,7 @@ describe('ensureAgentSession', () => {
     const { deps, ensureCalls } = makeDeps({ existingSessionIds: [sessionId] });
     const target: SessionTargetAgent = { kind: 'agent', spaceId, agentId };
 
-    const outcome = await ensureAgentSession(target, deps);
+    const outcome = await ensureLongTermAgentSession(target, deps);
 
     expect(outcome).toEqual({ kind: 'resolved', sessionId, created: false });
     expect(ensureCalls).toHaveLength(0);
@@ -54,7 +54,7 @@ describe('ensureAgentSession', () => {
     const { deps, ensureCalls } = makeDeps();
     const target: SessionTargetAgent = { kind: 'agent', spaceId, agentId };
 
-    const outcome = await ensureAgentSession(target, deps);
+    const outcome = await ensureLongTermAgentSession(target, deps);
 
     expect(outcome).toEqual({
       kind: 'resolved',
@@ -70,7 +70,7 @@ describe('ensureAgentSession', () => {
     const { deps } = makeDeps({ coordinatorId: 'coordinator-alt' });
     const target: SessionTargetAgent = { kind: 'agent', spaceId, agentId };
 
-    const outcome = await ensureAgentSession(target, deps);
+    const outcome = await ensureLongTermAgentSession(target, deps);
 
     expect(outcome).toEqual({
       kind: 'resolved',
@@ -83,7 +83,7 @@ describe('ensureAgentSession', () => {
     const { deps, ensureCalls } = makeDeps({ ensureOutcome: 'fail' });
     const target: SessionTargetAgent = { kind: 'agent', spaceId: 'space-1', agentId: 'agent-1' };
 
-    const outcome = await ensureAgentSession(target, deps);
+    const outcome = await ensureLongTermAgentSession(target, deps);
 
     expect(outcome).toEqual({ kind: 'unresolved', reason: 'ensure_failed' });
     expect(ensureCalls).toEqual([['space-1', 'agent-1']]);
@@ -96,8 +96,8 @@ describe('ensureAgentSession', () => {
     const { deps, ensureCalls } = makeDeps();
     const target: SessionTargetAgent = { kind: 'agent', spaceId, agentId };
 
-    const first = await ensureAgentSession(target, deps);
-    const second = await ensureAgentSession(target, deps);
+    const first = await ensureLongTermAgentSession(target, deps);
+    const second = await ensureLongTermAgentSession(target, deps);
 
     expect(first).toEqual({ kind: 'resolved', sessionId, created: true });
     expect(second).toEqual({ kind: 'resolved', sessionId, created: false });

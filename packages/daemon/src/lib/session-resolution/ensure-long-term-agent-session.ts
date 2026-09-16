@@ -1,7 +1,7 @@
 import type { SessionResolutionDeps } from './deps.ts';
 import { agentSessionIdOf, type EnsureSessionOutcome, type SessionTargetAgent } from './target.ts';
 
-export async function ensureAgentSession(
+export async function ensureLongTermAgentSession(
   target: SessionTargetAgent,
   deps: SessionResolutionDeps
 ): Promise<EnsureSessionOutcome> {
