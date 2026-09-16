@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
-  POST_APPROVAL_TEMPLATE_KEYS,
   interpolatePostApprovalTemplate,
+  POST_APPROVAL_TEMPLATE_KEYS,
 } from '../../../../src/lib/workflows/post-approval-template.ts';
 
 describe('interpolatePostApprovalTemplate — happy path', () => {

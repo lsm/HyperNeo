@@ -60,7 +60,7 @@ Call the workflow list RPC with `spaceId`. Return workflow ids, names, descripti
 
 The MCP tool intentionally returns all workflows and lets the model reason over them. Do the same here: list workflows, compare them against the description, and explain your recommended workflow.
 
-### get_workflow_detail(workflow_id)
+### workflow.get(workflowId)
 
 Call the workflow detail RPC with `workflowId`. Return nodes, transitions, gates, completion/autonomy levels, and relevant instructions.
 

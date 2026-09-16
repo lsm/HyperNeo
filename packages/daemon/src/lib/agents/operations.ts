@@ -1,3 +1,4 @@
+import type { SpaceAgentGoalScopeRepository } from '../../storage/repositories/space-agent-goal-scope-repository.ts';
 import type { SpaceAgentReminderRepository } from '../../storage/repositories/space-agent-reminder-repository.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
 import type { OperationDefinition } from '../operations/registry.ts';
@@ -7,6 +8,13 @@ import {
 } from './create-agent-operation.ts';
 import { createGetAgentOperation } from './get-agent-operation.ts';
 import { createListAgentsOperation } from './list-agents-operation.ts';
+import {
+  createAssignAgentToForgeScopeOperation,
+  createAssignAgentToGoalOperation,
+  createUnassignAgentFromForgeScopeOperation,
+  createUnassignAgentFromGoalOperation,
+  type AgentAssignmentDependencies,
+} from './assign-agent-operation.ts';
 import type { AgentOperationDeps } from './operation-contracts.ts';
 import {
   createCreateAgentReminderOperation,
@@ -31,6 +39,29 @@ export interface AgentOperationDependencies extends AgentOperationDeps {
   readonly refreshAgentSubscriptions: UpdateAgentDependencies['refreshAgentSubscriptions'];
   readonly clearAgentSessionProvider: UpdateAgentDependencies['clearAgentSessionProvider'];
   readonly audit: CreateAgentDependencies['audit'];
+  readonly getGoalSpace: AgentAssignmentDependencies['getGoalSpace'];
+  readonly getForgeScopeSpace: AgentAssignmentDependencies['getForgeScopeSpace'];
+  readonly goalScopeRepo: Pick<
+    SpaceAgentGoalScopeRepository,
+    | 'assignGoal'
+    | 'deleteGoalAssignmentByRelationship'
+    | 'assignForgeScope'
+    | 'deleteForgeScopeAssignment'
+  >;
+  readonly publishGoalOwnerChanged: AgentAssignmentDependencies['publishGoalOwnerChanged'];
+}
+
+function assignmentDeps(deps: AgentOperationDependencies): AgentAssignmentDependencies {
+  return {
+    ...deps,
+    getAgent: (agentId) => deps.longHorizonAgentRepo.getById(agentId),
+    assignGoal: (agentId, goalId) => deps.goalScopeRepo.assignGoal(agentId, goalId),
+    unassignGoal: (agentId, goalId) =>
+      deps.goalScopeRepo.deleteGoalAssignmentByRelationship(agentId, goalId, 'owner'),
+    assignForgeScope: (agentId, scopeId) => deps.goalScopeRepo.assignForgeScope(agentId, scopeId),
+    unassignForgeScope: (agentId, scopeId) =>
+      deps.goalScopeRepo.deleteForgeScopeAssignment(agentId, scopeId),
+  };
 }
 
 function updateDeps(deps: AgentOperationDependencies): UpdateAgentDependencies {
@@ -70,6 +101,10 @@ export function createAgentOperations(deps: AgentOperationDependencies): Operati
     createUpdateAgentOperation(updateDeps(deps)),
     createPauseAgentOperation(updateDeps(deps)),
     createArchiveAgentOperation(updateDeps(deps)),
+    createAssignAgentToGoalOperation(assignmentDeps(deps)),
+    createUnassignAgentFromGoalOperation(assignmentDeps(deps)),
+    createAssignAgentToForgeScopeOperation(assignmentDeps(deps)),
+    createUnassignAgentFromForgeScopeOperation(assignmentDeps(deps)),
     createCreateAgentReminderOperation(reminderDeps(deps)),
     createListAgentRemindersOperation(reminderDeps(deps)),
   ];

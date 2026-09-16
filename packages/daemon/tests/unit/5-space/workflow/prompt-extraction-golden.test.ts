@@ -11,8 +11,6 @@ import { reviewerAgent } from '../../../../src/lib/agent/coordinator/reviewer.ts
 import { testerAgent } from '../../../../src/lib/agent/coordinator/tester.ts';
 import { vcsAgent } from '../../../../src/lib/agent/coordinator/vcs.ts';
 import { verifierAgent } from '../../../../src/lib/agent/coordinator/verifier.ts';
-import { SECURITY_AGENT_SYSTEM_PROMPT } from '../../../../src/lib/github/prompts/security-prompt.ts';
-import { buildTitleGenerationPrompt } from '../../../../src/lib/session/session-lifecycle.ts';
 import { NON_DELEGATING_GENERAL_AGENT } from '../../../../src/lib/agents/custom-agent.ts';
 import { LONG_HORIZON_SCHEDULING_GUARDRAIL } from '../../../../src/lib/agents/long-horizon-tools.ts';
 import {
@@ -23,9 +21,9 @@ import {
   QA_SYSTEM_CONTRACT,
   REVIEWER_SYSTEM_CONTRACT,
 } from '../../../../src/lib/agents/system-contracts.ts';
-import { buildSelectionPrompt } from '../../../../src/lib/workflows/llm-workflow-selector.ts';
-import { appendPostApprovalCompletionInstructions } from '../../../../src/lib/workflows/post-approval-route-selection.ts';
+import { SECURITY_AGENT_SYSTEM_PROMPT } from '../../../../src/lib/github/prompts/security-prompt.ts';
 import { buildPromptTooLongContinueNag } from '../../../../src/lib/session/prompt-too-long-recovery.ts';
+import { buildTitleGenerationPrompt } from '../../../../src/lib/session/session-lifecycle.ts';
 import {
   CODER_EXTERNAL_GATE_BLOCK,
   CODER_ONLY_MERGE_INSTRUCTIONS,
@@ -48,7 +46,9 @@ import {
   REVIEWER_POST_APPROVAL_BLOCKER_PARAGRAPH,
   REVIEWER_ZERO_FINDINGS_GATE,
 } from '../../../../src/lib/workflows/built-in-workflows.ts';
+import { buildSelectionPrompt } from '../../../../src/lib/workflows/llm-workflow-selector.ts';
 import { CODER_OWNED_MERGE_INSTRUCTIONS } from '../../../../src/lib/workflows/post-approval-merge-template.ts';
+import { appendPostApprovalCompletionInstructions } from '../../../../src/lib/workflows/post-approval-route-selection.ts';
 
 const GOLDEN: Record<string, string> = {
   CODEX_REACTION_APPROVAL_GUIDANCE:

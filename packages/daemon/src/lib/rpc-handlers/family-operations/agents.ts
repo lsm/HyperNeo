@@ -39,6 +39,15 @@ export function registerAgentOperations(context: FamilyOperationContext): Operat
       context.spaceRuntimeService.refreshLongHorizonAgentSubscriptions(spaceId, agentId),
     clearAgentSessionProvider: (spaceId, agentId) =>
       context.spaceRuntimeService.clearLongTermAgentSessionProvider(spaceId, agentId),
+    getGoalSpace: (goalId) => context.spaceGoalService.getGoal(goalId)?.spaceId ?? null,
+    getForgeScopeSpace: (scopeId) =>
+      context.evolutionScopeService.getScope(scopeId)?.spaceId ?? null,
+    goalScopeRepo: context.spaceAgentGoalScopeRepo,
+    publishGoalOwnerChanged: (spaceId, goalId, sessionId) => {
+      context.deps.internalEventBus
+        .publish('spaceGoal.ownerChanged', { sessionId, spaceId, goalId })
+        .catch(() => {});
+    },
     audit: (operationName, summary, caller, spaceId) => {
       new McpAuditLogRepository(context.deps.db.getDatabase()).createEntry({
         sessionId: caller.sessionId,
