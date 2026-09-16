@@ -1,4 +1,4 @@
-import type { SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
+import type { SpaceWorkflow } from '@hyperneo/shared';
 import {
   ARTIFACT_SHAPES,
   deriveArtifactKey,
@@ -12,7 +12,6 @@ import type { SpaceTaskRepository } from '../../../storage/repositories/space-ta
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository.ts';
 import type { ExternalEventStore } from '../../external-events/external-event-store.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
-import { Logger } from '../../logger.ts';
 import type { SpaceGoalService } from '../../goals/service.ts';
 import type { AgentMessageRouter } from '../../messaging/agent-message-router.ts';
 import type { NodeMessagingContext } from '../../messaging/node-messaging-context.ts';
@@ -24,16 +23,10 @@ import type { WorkflowHookEngine } from '../../workflows/hook-engine.ts';
 import { wrapHandlerWithHooks } from '../../workflows/hook-engine.ts';
 import type {
   CreateStandaloneTaskInput,
-  GetExternalEventInput,
   ListArtifactsInput,
   ListAuditEntriesInput,
-  ListChannelsInput,
-  ListDeliveriesInput,
   ListPeersInput,
-  ListReachableAgentsInput,
   ListSubscriptionsInput,
-  ListTasksInput,
-  RestoreNodeAgentInput,
   SaveArtifactInput,
   SendMessageInput,
   SubscribeExternalEventInput,
@@ -59,8 +52,6 @@ function decodeToolResultPayload(result: ToolResult): Record<string, unknown> | 
 }
 
 export type { ToolResult };
-
-const log = new Logger('node-agent-tools');
 
 export interface NodeAgentToolsConfig {
   mySessionId: string;
@@ -335,94 +326,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
       return deliverNodeAgentMessage(nodeMessagingContext, nodeExecutionRepo)(args);
     },
 
-    async list_reachable_agents(_args: ListReachableAgentsInput): Promise<ToolResult> {
-      const myNode = workflow?.nodes.find((n) => n.id === workflowNodeId);
-      const myNodeName = myNode?.name ?? myAgentName;
-
-      const nodeExecs = workflowRunId
-        ? nodeExecutionRepo.listByNode(workflowRunId, workflowNodeId)
-        : [];
-      const withinNodePeers = nodeExecs
-        .filter((e) => e.agentSessionId !== mySessionId)
-        .map((e) => {
-          const ts = e.status;
-          return {
-            agentName: e.agentName,
-            status:
-              ts === 'idle'
-                ? ('completed' as const)
-                : ts === 'blocked' || ts === 'cancelled'
-                  ? ('failed' as const)
-                  : ('active' as const),
-          };
-        });
-
-      const channels =
-        channelResolver.getChannels().length > 0
-          ? channelResolver.getChannels()
-          : (workflow?.channels ?? []);
-      const reachabilityDeclared = channels.length > 0;
-
-      type CrossNodeTarget = {
-        nodeName: string;
-      };
-      const crossNodeTargets: CrossNodeTarget[] = [];
-
-      if (reachabilityDeclared && myNodeName) {
-        const seen = new Set<string>();
-
-        const withinNodeAgentNames = new Set([myAgentName, ...nodeExecs.map((e) => e.agentName)]);
-
-        for (const ch of channels) {
-          if (ch.from !== myNodeName && ch.from !== myAgentName && ch.from !== '*') continue;
-          const tos = Array.isArray(ch.to) ? ch.to : [ch.to];
-          for (const toNode of tos) {
-            if (toNode === myNodeName || toNode === myAgentName) continue;
-            if (seen.has(toNode)) continue;
-            if (withinNodeAgentNames.has(toNode)) continue;
-            seen.add(toNode);
-            crossNodeTargets.push({ nodeName: toNode });
-          }
-        }
-      }
-
-      const totalReachable = withinNodePeers.length + crossNodeTargets.length;
-      const crossNodeSummary =
-        crossNodeTargets.length > 0
-          ? ` Cross-node targets: ${crossNodeTargets.map((t) => t.nodeName).join(', ')}.`
-          : '';
-
-      return jsonResult({
-        success: true,
-        myAgentName,
-        myNodeName,
-        withinNodePeers,
-        crossNodeTargets,
-        reachabilityDeclared,
-        message:
-          `You can reach ${totalReachable} target(s). ` +
-          `Within-node peers: ${withinNodePeers.length > 0 ? withinNodePeers.map((p) => p.agentName).join(', ') : 'none'}.` +
-          crossNodeSummary,
-      });
-    },
-
-    async list_channels(_args: ListChannelsInput): Promise<ToolResult> {
-      const channels = workflow?.channels ?? [];
-      const result = channels.map((ch) => ({
-        channelId: ch.id ?? null,
-        from: ch.from,
-        to: ch.to,
-        maxCycles: ch.maxCycles ?? null,
-        label: ch.label ?? null,
-      }));
-      return jsonResult({
-        success: true,
-        channels: result,
-        total: result.length,
-        message: `Found ${result.length} channel(s) in workflow "${workflow?.name ?? 'unknown'}".`,
-      });
-    },
-
     async save_artifact(args: SaveArtifactInput): Promise<ToolResult> {
       const { artifactRepo } = config;
       if (!artifactRepo) {
@@ -521,51 +424,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
       }
     },
 
-    async create_standalone_task(args: CreateStandaloneTaskInput): Promise<ToolResult> {
-      if (!config.onCreateStandaloneTask) {
-        return jsonResult({
-          success: false,
-          error: 'create_standalone_task is not available in this node-agent session.',
-        });
-      }
-      const result = await config.onCreateStandaloneTask(args);
-      const payload = decodeToolResultPayload(result);
-      const createdTask = payload?.task as { id: string } | undefined;
-      if (payload?.success && createdTask?.id) {
-        logAudit(
-          'create_standalone_task',
-          {
-            title: args.title,
-            priority: args.priority,
-            workflow_id: args.workflow_id,
-            depends_on: args.depends_on,
-            draft: args.draft,
-            workspace: args.workspace,
-          },
-          createdTask.id
-        );
-      }
-      return result;
-    },
-
-    async subscribe_external_event(args: SubscribeExternalEventInput): Promise<ToolResult> {
-      if (!config.onSubscribeExternalEvent) {
-        return jsonResult({
-          success: false,
-          error: 'External event subscriptions are not available.',
-        });
-      }
-      const result = await config.onSubscribeExternalEvent(args);
-      const payload = decodeToolResultPayload(result);
-      if (payload?.success) {
-        logAudit('subscribe_external_event', {
-          topicPattern: args.topicPattern,
-          label: args.label,
-        });
-      }
-      return result;
-    },
-
     async subscribe_pr_events(args: SubscribePrEventsInput): Promise<ToolResult> {
       if (!config.onSubscribeExternalEvent) {
         return jsonResult({
@@ -591,145 +449,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
         logAudit('subscribe_pr_events', { prUrl, topicPattern, label: args.label });
       }
       return result;
-    },
-
-    async unsubscribe_external_event(args: UnsubscribeExternalEventInput): Promise<ToolResult> {
-      if (!config.onUnsubscribeExternalEvent) {
-        return jsonResult({
-          success: false,
-          error: 'External event subscriptions are not available.',
-        });
-      }
-      const result = await config.onUnsubscribeExternalEvent(args);
-      const payload = decodeToolResultPayload(result);
-      if (payload?.success) {
-        logAudit('unsubscribe_external_event', { topicPattern: args.topicPattern });
-      }
-      return result;
-    },
-
-    async get_external_event(args: GetExternalEventInput): Promise<ToolResult> {
-      const { externalEventStore } = config;
-      if (!externalEventStore) {
-        return jsonResult({
-          success: false,
-          error: 'External event lookup is not available.',
-        });
-      }
-      const record = externalEventStore.getById(args.eventId);
-      if (!record || record.event.spaceId !== spaceId) {
-        return jsonResult({
-          success: false,
-          error: `External event not found: ${args.eventId}`,
-        });
-      }
-      return jsonResult({ success: true, event: record.event, state: record.state });
-    },
-
-    async list_deliveries(args: ListDeliveriesInput): Promise<ToolResult> {
-      const { externalEventStore } = config;
-      if (!externalEventStore) {
-        return jsonResult({
-          success: false,
-          error: 'External event delivery lookup is not available.',
-        });
-      }
-      const limit = Math.min(args.limit ?? 50, 200);
-      const offset = args.offset ?? 0;
-      const records = externalEventStore.listDeliveryLog({
-        spaceId,
-        workflowRunId: args.workflowRunId ?? workflowRunId,
-        nodeId: args.nodeId,
-        status: args.state,
-        limit,
-        offset,
-      });
-      const deliveries = records.map((record) => ({
-        eventId: record.eventId,
-        deliveryKey: record.deliveryKey,
-        workflowRunId: record.workflowRunId,
-        taskId: record.taskId,
-        nodeId: record.nodeId,
-        agentName: record.agentName,
-        state: record.state,
-        failureReason: record.failureReason,
-        deliveredAt: record.deliveredAt,
-        updatedAt: record.updatedAt,
-        event: {
-          topic: record.event.topic,
-          source: record.event.source,
-          summary: record.event.summary,
-          externalUrl: record.event.externalUrl ?? null,
-          occurredAt: record.event.occurredAt,
-          state: record.eventState,
-        },
-      }));
-      return jsonResult({ success: true, deliveries });
-    },
-
-    async list_subscriptions(args: ListSubscriptionsInput): Promise<ToolResult> {
-      if (!config.onListSubscriptions) {
-        return jsonResult({
-          success: false,
-          error: 'Subscription diagnostics are not available.',
-        });
-      }
-      return config.onListSubscriptions({
-        workflowRunId: args.workflowRunId,
-        nodeId: args.nodeId,
-      });
-    },
-
-    async approve_task(args: ApproveTaskInput): Promise<ToolResult> {
-      if (!config.onApproveTask) {
-        return jsonResult({
-          success: false,
-          error: 'approve_task is not available in this node-agent session.',
-        });
-      }
-      const result = await config.onApproveTask(args);
-      const payload = decodeToolResultPayload(result);
-      if (payload?.success) {
-        logAudit('approve_task', {}, config.taskId);
-      }
-      return result;
-    },
-
-    async list_tasks(args: ListTasksInput): Promise<ToolResult> {
-      const { taskRepo } = config;
-      if (!taskRepo) {
-        return jsonResult({ success: false, error: 'Task repository not available.' });
-      }
-      try {
-        const limit = Math.min(args.limit ?? 20, 100);
-        const offset = args.offset ?? 0;
-        const total = taskRepo.countBySpace(spaceId, args.status ?? undefined, false);
-        let tasks: SpaceTask[];
-        if (args.status) {
-          tasks = taskRepo.listByStatus(spaceId, args.status, limit, offset);
-        } else {
-          tasks = taskRepo.listBySpace(spaceId, false, limit, offset);
-        }
-        if (args.compact) {
-          const compactTasks = tasks.map((t) => ({
-            id: t.id,
-            title: t.title,
-            status: t.status,
-            priority: t.priority,
-            createdAt: t.createdAt,
-          }));
-          return jsonResult({
-            success: true,
-            total,
-            tasks: compactTasks,
-            has_more: offset + tasks.length < total,
-          });
-        }
-        return jsonResult({ success: true, total, tasks, has_more: offset + tasks.length < total });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        return jsonResult({ success: false, error: message });
-      }
     },
 
     async list_audit_entries(args: ListAuditEntriesInput): Promise<ToolResult> {
@@ -773,34 +492,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
         return jsonResult({ success: false, error: message });
       }
     },
-
-    async restore_node_agent(args: RestoreNodeAgentInput): Promise<ToolResult> {
-      const reason = args.reason?.trim();
-      log.info(
-        `node-agent.restore_node_agent invoked by session ${mySessionId} ` +
-          `(agent=${myAgentName}, task=${config.taskId}, reason=${reason ?? '<unspecified>'})`
-      );
-
-      try {
-        if (config.onRestoreNodeAgent) {
-          await config.onRestoreNodeAgent({ reason });
-        }
-      } catch (err) {
-        log.warn(
-          `node-agent.restore_node_agent: server-side reattachment callback failed for session ${mySessionId}: ${err instanceof Error ? err.message : String(err)}`
-        );
-      }
-
-      return jsonResult({
-        success: true,
-        sessionId: mySessionId,
-        agentName: myAgentName,
-        message:
-          'node-agent MCP server is registered for this session — the fact that this tool ' +
-          'call succeeded proves it. If a previous invoke(name="send_message") call on the ' +
-          'operations server returned "No such tool available", retry it now.',
-      });
-    },
   };
 
   if (config.hookEngine) {
@@ -824,11 +515,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 
     handlers.send_message = wrap('send_message', handlers.send_message);
     handlers.save_artifact = wrap('save_artifact', handlers.save_artifact);
-    handlers.approve_task = wrap('approve_task', handlers.approve_task);
-    handlers.create_standalone_task = wrap(
-      'create_standalone_task',
-      handlers.create_standalone_task
-    );
   }
 
   return handlers;

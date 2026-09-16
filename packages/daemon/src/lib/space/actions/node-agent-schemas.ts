@@ -22,6 +22,19 @@ export const SendMessageSchema = z.object({
 
 export type SendMessageInput = z.infer<typeof SendMessageSchema>;
 
+export const SubscribePrEventsSchema = z.object({
+  prUrl: z
+    .string()
+    .optional()
+    .describe(
+      "GitHub PR URL to scope events to (e.g. 'https://github.com/owner/repo/pull/123'). " +
+        "Omit to use this workflow run's current PR, resolved from hook state / artifacts."
+    ),
+  label: z.string().describe('Optional label for diagnostics').optional(),
+});
+
+export type SubscribePrEventsInput = z.infer<typeof SubscribePrEventsSchema>;
+
 export const SubscribeExternalEventSchema = z.object({
   topicPattern: z
     .string()
@@ -39,63 +52,6 @@ export const UnsubscribeExternalEventSchema = z.object({
 });
 
 export type UnsubscribeExternalEventInput = z.infer<typeof UnsubscribeExternalEventSchema>;
-
-export const SubscribePrEventsSchema = z.object({
-  prUrl: z
-    .string()
-    .optional()
-    .describe(
-      "GitHub PR URL to scope events to (e.g. 'https://github.com/owner/repo/pull/123'). " +
-        "Omit to use this workflow run's current PR, resolved from hook state / artifacts."
-    ),
-  label: z.string().describe('Optional label for diagnostics').optional(),
-});
-
-export type SubscribePrEventsInput = z.infer<typeof SubscribePrEventsSchema>;
-
-export const GetExternalEventSchema = z.object({
-  eventId: z
-    .string()
-    .min(1)
-    .describe('The id of the external event to fetch (as carried in injected event digests)'),
-});
-
-export type GetExternalEventInput = z.infer<typeof GetExternalEventSchema>;
-
-export const ListDeliveriesSchema = z.object({
-  workflowRunId: z
-    .string()
-    .min(1)
-    .describe(
-      'Filter to a single workflow run (the delivery `workflow_run_id`). ' +
-        'Defaults to this workflow run. Pass an explicit value to inspect another run in the same Space.'
-    )
-    .optional(),
-  nodeId: z
-    .string()
-    .min(1)
-    .describe('Filter to deliveries targeting a single workflow node (`node_id`).')
-    .optional(),
-  state: z
-    .enum(['pending', 'delivered', 'failed'])
-    .describe('Filter by delivery state: pending / delivered / failed.')
-    .optional(),
-  limit: z
-    .number()
-    .int()
-    .min(1)
-    .max(200)
-    .describe('Maximum deliveries to return (1-200, default 50)')
-    .optional(),
-  offset: z
-    .number()
-    .int()
-    .min(0)
-    .describe('Number of deliveries to skip for pagination (default 0)')
-    .optional(),
-});
-
-export type ListDeliveriesInput = z.infer<typeof ListDeliveriesSchema>;
 
 export const ListSubscriptionsSchema = z.object({
   workflowRunId: z
@@ -147,44 +103,6 @@ export const SaveArtifactSchema = z.object({
 });
 
 export type SaveArtifactInput = z.infer<typeof SaveArtifactSchema>;
-
-export const ListTasksSchema = z.object({
-  status: z
-    .enum([
-      'draft',
-      'open',
-      'in_progress',
-      'review',
-      'approved',
-      'done',
-      'blocked',
-      'cancelled',
-      'archived',
-    ])
-    .describe('Filter by task status')
-    .optional(),
-  compact: z
-    .boolean()
-    .describe(
-      'Return only summary fields (id, title, status, priority, createdAt) to reduce payload size'
-    )
-    .optional(),
-  limit: z
-    .number()
-    .int()
-    .min(1)
-    .max(100)
-    .describe('Maximum number of tasks to return (1-100, default 20)')
-    .optional(),
-  offset: z
-    .number()
-    .int()
-    .min(0)
-    .describe('Number of tasks to skip for pagination (default 0)')
-    .optional(),
-});
-
-export type ListTasksInput = z.infer<typeof ListTasksSchema>;
 
 export const ListAuditEntriesSchema = z.object({
   task_id: z.string().describe('Filter by task ID').optional(),
@@ -242,14 +160,6 @@ export const CreateStandaloneTaskSchema = z.object({
 
 export type CreateStandaloneTaskInput = z.infer<typeof CreateStandaloneTaskSchema>;
 
-export const ListReachableAgentsSchema = z.object({});
-
-export type ListReachableAgentsInput = z.infer<typeof ListReachableAgentsSchema>;
-
-export const ListChannelsSchema = z.object({});
-
-export type ListChannelsInput = z.infer<typeof ListChannelsSchema>;
-
 export const ListArtifactsSchema = z.object({
   nodeId: z.string().describe('Filter by node ID').optional(),
   type: z
@@ -259,35 +169,3 @@ export const ListArtifactsSchema = z.object({
 });
 
 export type ListArtifactsInput = z.infer<typeof ListArtifactsSchema>;
-
-export const RestoreNodeAgentSchema = z.object({
-  reason: z
-    .string()
-    .describe(
-      'Optional human-readable reason for invoking restore (recorded in logs for diagnosis)'
-    )
-    .optional(),
-});
-
-export type RestoreNodeAgentInput = z.infer<typeof RestoreNodeAgentSchema>;
-
-export const NODE_AGENT_TOOL_SCHEMAS = {
-  list_peers: ListPeersSchema,
-  send_message: SendMessageSchema,
-  save_artifact: SaveArtifactSchema,
-  create_standalone_task: CreateStandaloneTaskSchema,
-  list_artifacts: ListArtifactsSchema,
-  list_reachable_agents: ListReachableAgentsSchema,
-  list_channels: ListChannelsSchema,
-  subscribe_external_event: SubscribeExternalEventSchema,
-  unsubscribe_external_event: UnsubscribeExternalEventSchema,
-  subscribe_pr_events: SubscribePrEventsSchema,
-  get_external_event: GetExternalEventSchema,
-  list_deliveries: ListDeliveriesSchema,
-  list_subscriptions: ListSubscriptionsSchema,
-  restore_node_agent: RestoreNodeAgentSchema,
-  list_tasks: ListTasksSchema,
-  list_audit_entries: ListAuditEntriesSchema,
-} as const;
-
-export type NodeAgentToolName = keyof typeof NODE_AGENT_TOOL_SCHEMAS;
