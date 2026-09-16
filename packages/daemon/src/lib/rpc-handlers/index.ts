@@ -5,6 +5,7 @@ import { createWorkflowTaskRecoveryExecutor } from '../tasks/recovery-executor.t
 import { recoverTaskExecution } from '../tasks/recover-task-execution.ts';
 import { McpAuditLogRepository } from '../../storage/repositories/mcp-audit-log-repository.ts';
 import { createSpaceOperationRegistryProvider } from '../tasks/operations.ts';
+import { createAgentOperations } from '../agents/operations.ts';
 import { createExternalEventOperations } from '../external-events/operations.ts';
 import type { OperationDefinition } from '../operations/registry.ts';
 import { createCompletionGateBindings } from '../tasks/complete-task-gates.ts';
@@ -1272,6 +1273,14 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   });
 
   const familyOperations: OperationDefinition[] = [];
+  familyOperations.push(
+    ...createAgentOperations({
+      getSession: (sessionId) => deps.db.getSession(sessionId),
+      longHorizonAgentRepo,
+      taskRepo: spaceTaskRepo,
+      nodeExecutionRepo,
+    })
+  );
   familyOperations.push(
     ...createExternalEventOperations({
       eventStore: deps.externalEventStore,
