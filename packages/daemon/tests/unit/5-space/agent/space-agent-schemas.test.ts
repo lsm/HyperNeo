@@ -1,339 +1,27 @@
 import { describe, expect, test } from 'bun:test';
 import type { z } from 'zod';
 import {
-  EXTERNAL_EVENT_TOOL_SCHEMAS,
-  INACTIVITY_TOOL_SCHEMAS,
-  SPACE_AGENT_LIFECYCLE_TOOL_SCHEMAS,
-  SPACE_AGENT_TOOL_SCHEMAS,
-  SPACE_GOAL_TOOL_SCHEMAS,
-  type ExternalEventToolName,
-  type InactivityToolName,
-  type SpaceAgentLifecycleToolName,
-  type SpaceAgentToolName,
-  type SpaceGoalToolName,
+  CreateAgentFromTemplateSchema,
+  CreateAgentTemplateSchema,
+  DeleteAgentTemplateSchema,
+  ListAgentEventSubscriptionsSchema,
+  ListAgentTemplatesSchema,
+  SubscribeAgentEventSchema,
+  UnsubscribeAgentEventSchema,
+  UpdateAgentTemplateSchema,
 } from '../../../../src/lib/space/actions/space-agent-schemas.ts';
-
-const BASE_TOOL_NAMES: SpaceAgentToolName[] = [
-  'list_workflows',
-  'get_workflow_run',
-  'change_plan',
-  'get_workflow_detail',
-  'suggest_workflow',
-  'list_tasks',
-  'create_standalone_task',
-  'update_task',
-  'reassign_task',
-  'send_message_to_task',
-  'approve_task',
-  'approve_pending_completion',
-];
-
-describe('SPACE_AGENT_TOOL_SCHEMAS', () => {
-  test('contains exactly the 12 base tools', () => {
-    expect(Object.keys(SPACE_AGENT_TOOL_SCHEMAS).sort()).toEqual([...BASE_TOOL_NAMES].sort());
-    expect(Object.keys(SPACE_AGENT_TOOL_SCHEMAS)).toHaveLength(12);
-  });
-
-  test('each schema value is a zod object schema with safeParse and a shape', () => {
-    for (const schema of Object.values(SPACE_AGENT_TOOL_SCHEMAS)) {
-      expect(typeof schema.safeParse).toBe('function');
-      expect(schema.shape).toBeDefined();
-    }
-  });
-});
-
-interface SafeParsePin {
-  tool: SpaceAgentToolName;
-  accepts: Array<{ input: unknown; data?: Record<string, unknown> }>;
-  rejects: unknown[];
-}
-
-const SAFE_PARSE_PINS: SafeParsePin[] = [
-  {
-    tool: 'list_workflows',
-    accepts: [{ input: {}, data: {} }],
-    rejects: ['not-an-object'],
-  },
-  {
-    tool: 'get_workflow_run',
-    accepts: [{ input: { run_id: 'r1' }, data: { run_id: 'r1' } }],
-    rejects: [{}],
-  },
-  {
-    tool: 'change_plan',
-    accepts: [
-      { input: { run_id: 'r1', description: 'd' }, data: { run_id: 'r1', description: 'd' } },
-      {
-        input: { run_id: 'r1', workflow_handle: 'coding-with-qa' },
-        data: { run_id: 'r1', workflow_handle: 'coding-with-qa' },
-      },
-    ],
-    rejects: [{ description: 'd' }],
-  },
-  {
-    tool: 'get_workflow_detail',
-    accepts: [
-      { input: {}, data: {} },
-      { input: { workflow_handle: 'wf' }, data: { workflow_handle: 'wf' } },
-    ],
-    rejects: [{ workflow_id: 3 }],
-  },
-  {
-    tool: 'suggest_workflow',
-    accepts: [
-      {
-        input: { description: 'ship a feature' },
-        data: { description: 'ship a feature' },
-      },
-    ],
-    rejects: [{}],
-  },
-  {
-    tool: 'list_tasks',
-    accepts: [
-      { input: {}, data: { limit: 50, offset: 0, compact: false } },
-      {
-        input: { status: 'in_progress', workflow_run_id: 'r1', search: 'auth', compact: true },
-        data: {
-          status: 'in_progress',
-          workflow_run_id: 'r1',
-          search: 'auth',
-          compact: true,
-          limit: 50,
-          offset: 0,
-        },
-      },
-    ],
-    rejects: [{ status: 'rate_limited' }, { status: 'stopped' }, { limit: -1 }],
-  },
-  {
-    tool: 'create_standalone_task',
-    accepts: [
-      { input: { title: 'T', description: 'D' }, data: { title: 'T', description: 'D' } },
-      {
-        input: {
-          title: 'T',
-          description: 'D',
-          priority: 'urgent',
-          custom_agent_id: 'agent-1',
-          workflow_handle: 'coding-with-qa',
-          depends_on: ['t1', 't2'],
-          draft: true,
-          workspace: 'ws',
-        },
-        data: {
-          title: 'T',
-          description: 'D',
-          priority: 'urgent',
-          custom_agent_id: 'agent-1',
-          workflow_handle: 'coding-with-qa',
-          depends_on: ['t1', 't2'],
-          draft: true,
-          workspace: 'ws',
-        },
-      },
-    ],
-    rejects: [{ description: 'D' }, { title: 'T' }],
-  },
-  {
-    tool: 'update_task',
-    accepts: [
-      {
-        input: { task_id: 't1', status: 'rate_limited' },
-        data: { task_id: 't1', status: 'rate_limited' },
-      },
-      {
-        input: { task_id: 't1', title: 'New', depends_on: [] },
-        data: { task_id: 't1', title: 'New', depends_on: [] },
-      },
-    ],
-    rejects: [{ task_id: 't1', title: '' }, { task_id: 't1', status: 'paused' }, {}],
-  },
-  {
-    tool: 'reassign_task',
-    accepts: [
-      {
-        input: { task_id: 't1', custom_agent_id: null, assigned_agent: 'coder' },
-        data: { task_id: 't1', custom_agent_id: null, assigned_agent: 'coder' },
-      },
-      { input: { task_id: 't1' }, data: { task_id: 't1' } },
-    ],
-    rejects: [{ task_id: 't1', assigned_agent: 'qa' }],
-  },
-  {
-    tool: 'send_message_to_task',
-    accepts: [
-      { input: { message: 'hello', task_number: 37 }, data: { message: 'hello', task_number: 37 } },
-      {
-        input: { message: 'hello', task_id: 't1', node_id: 'coder', target: '@reviewer' },
-        data: { message: 'hello', task_id: 't1', node_id: 'coder', target: '@reviewer' },
-      },
-    ],
-    rejects: [{}, { message: 'hi', task_number: 0 }],
-  },
-  {
-    tool: 'approve_task',
-    accepts: [
-      { input: { task_id: 't1', reason: 'ok' }, data: { task_id: 't1', reason: 'ok' } },
-      { input: { task_id: 't1' }, data: { task_id: 't1' } },
-    ],
-    rejects: [{}],
-  },
-  {
-    tool: 'approve_pending_completion',
-    accepts: [
-      {
-        input: { task_id: 't1', approved: true },
-        data: { task_id: 't1', approved: true },
-      },
-      {
-        input: { task_id: 't1', approved: false, reason: null },
-        data: { task_id: 't1', approved: false, reason: null },
-      },
-    ],
-    rejects: [{ task_id: 't1' }, { task_id: 't1', approved: 'yes' }],
-  },
-];
-
-describe('SPACE_AGENT_TOOL_SCHEMAS safeParse pins', () => {
-  test('pins cover every base tool', () => {
-    expect(SAFE_PARSE_PINS.map((pin) => pin.tool).sort()).toEqual([...BASE_TOOL_NAMES].sort());
-  });
-
-  for (const pin of SAFE_PARSE_PINS) {
-    const schema = SPACE_AGENT_TOOL_SCHEMAS[pin.tool] as z.ZodType;
-    describe(pin.tool, () => {
-      for (const { input, data } of pin.accepts) {
-        test(`accepts ${JSON.stringify(input)}`, () => {
-          const result = schema.safeParse(input);
-          expect(result.success).toBe(true);
-          if (data && result.success) {
-            expect(result.data).toEqual(data);
-          }
-        });
-      }
-      for (const input of pin.rejects) {
-        test(`rejects ${JSON.stringify(input)}`, () => {
-          expect(schema.safeParse(input).success).toBe(false);
-        });
-      }
-    });
-  }
-});
-
-const LIFECYCLE_TOOL_NAMES: SpaceAgentLifecycleToolName[] = [
-  'list_agents',
-  'get_agent',
-  'create_agent',
-  'create_agent_from_template',
-  'create_agent_template',
-  'update_agent_template',
-  'list_agent_templates',
-  'delete_agent_template',
-  'update_agent',
-  'pause_agent',
-  'archive_agent',
-  'assign_agent_to_goal',
-  'unassign_agent_from_goal',
-  'assign_agent_to_forge_scope',
-  'unassign_agent_from_forge_scope',
-  'create_agent_reminder',
-  'list_agent_reminders',
-  'subscribe_agent_event',
-  'unsubscribe_agent_event',
-  'list_agent_event_subscriptions',
-];
-
-const GOAL_TOOL_NAMES: SpaceGoalToolName[] = [
-  'create_goal',
-  'update_goal',
-  'pause_goal',
-  'resume_goal',
-  'trigger_goal_task',
-];
-
-describe('conditional family tool schema maps', () => {
-  test('SPACE_AGENT_LIFECYCLE_TOOL_SCHEMAS contains exactly the 20 agent-lifecycle tools', () => {
-    expect(Object.keys(SPACE_AGENT_LIFECYCLE_TOOL_SCHEMAS).sort()).toEqual(
-      [...LIFECYCLE_TOOL_NAMES].sort()
-    );
-    expect(Object.keys(SPACE_AGENT_LIFECYCLE_TOOL_SCHEMAS)).toHaveLength(20);
-  });
-
-  test('SPACE_GOAL_TOOL_SCHEMAS contains exactly the 5 goal tools', () => {
-    expect(Object.keys(SPACE_GOAL_TOOL_SCHEMAS).sort()).toEqual([...GOAL_TOOL_NAMES].sort());
-    expect(Object.keys(SPACE_GOAL_TOOL_SCHEMAS)).toHaveLength(5);
-  });
-
-  test('family maps do not overlap the base map', () => {
-    const base = new Set(Object.keys(SPACE_AGENT_TOOL_SCHEMAS));
-    for (const family of [SPACE_AGENT_LIFECYCLE_TOOL_SCHEMAS, SPACE_GOAL_TOOL_SCHEMAS]) {
-      for (const name of Object.keys(family)) {
-        expect(base.has(name)).toBe(false);
-      }
-    }
-  });
-});
 
 interface FamilySafeParsePin {
   tool: string;
+  schema: z.ZodType;
   accepts: Array<{ input: unknown; data?: Record<string, unknown> }>;
   rejects: unknown[];
 }
 
-const LIFECYCLE_PINS: FamilySafeParsePin[] = [
-  {
-    tool: 'list_agents',
-    accepts: [
-      { input: {}, data: {} },
-      {
-        input: { status: 'paused', compact: true },
-        data: { status: 'paused', compact: true },
-      },
-    ],
-    rejects: [{ status: 'done' }, { status: 'completed' }, { compact: 'yes' }],
-  },
-  {
-    tool: 'get_agent',
-    accepts: [{ input: { agent_id: 'a1' }, data: { agent_id: 'a1' } }],
-    rejects: [{}, { agent_id: 5 }],
-  },
-  {
-    tool: 'create_agent',
-    accepts: [
-      { input: { name: 'Watcher' }, data: { name: 'Watcher' } },
-      {
-        input: {
-          name: 'Watcher',
-          description: 'watches',
-          model: 'glm-5.3',
-          thinking_level: 'think16k',
-          provider: 'zai',
-          custom_prompt: null,
-          tools: ['read_file'],
-          setting_sources: ['user', 'project'],
-        },
-        data: {
-          name: 'Watcher',
-          description: 'watches',
-          model: 'glm-5.3',
-          thinking_level: 'think16k',
-          provider: 'zai',
-          custom_prompt: null,
-          tools: ['read_file'],
-          setting_sources: ['user', 'project'],
-        },
-      },
-    ],
-    rejects: [
-      {},
-      { name: '' },
-      { name: 'W', thinking_level: 'think64k' },
-      { name: 'W', setting_sources: ['bogus'] },
-    ],
-  },
+const PINS: FamilySafeParsePin[] = [
   {
     tool: 'create_agent_from_template',
+    schema: CreateAgentFromTemplateSchema,
     accepts: [
       {
         input: {
@@ -356,6 +44,7 @@ const LIFECYCLE_PINS: FamilySafeParsePin[] = [
   },
   {
     tool: 'create_agent_template',
+    schema: CreateAgentTemplateSchema,
     accepts: [
       {
         input: {
@@ -409,6 +98,7 @@ const LIFECYCLE_PINS: FamilySafeParsePin[] = [
   },
   {
     tool: 'update_agent_template',
+    schema: UpdateAgentTemplateSchema,
     accepts: [
       {
         input: {
@@ -458,11 +148,13 @@ const LIFECYCLE_PINS: FamilySafeParsePin[] = [
   },
   {
     tool: 'list_agent_templates',
+    schema: ListAgentTemplatesSchema,
     accepts: [{ input: {}, data: {} }],
     rejects: ['not-an-object'],
   },
   {
     tool: 'delete_agent_template',
+    schema: DeleteAgentTemplateSchema,
     accepts: [
       { input: { key: 'reviewer.custom' }, data: { key: 'reviewer.custom' } },
       {
@@ -480,296 +172,8 @@ const LIFECYCLE_PINS: FamilySafeParsePin[] = [
     ],
   },
   {
-    tool: 'update_agent',
-    accepts: [
-      {
-        input: {
-          agent_id: 'a1',
-          status: 'disabled',
-          name: 'Renamed',
-          description: null,
-          model: null,
-          thinking_level: null,
-          provider: null,
-          custom_prompt: null,
-          tools: null,
-          setting_sources: null,
-        },
-        data: {
-          agent_id: 'a1',
-          status: 'disabled',
-          name: 'Renamed',
-          description: null,
-          model: null,
-          thinking_level: null,
-          provider: null,
-          custom_prompt: null,
-          tools: null,
-          setting_sources: null,
-        },
-      },
-      { input: { agent_id: 'a1' }, data: { agent_id: 'a1' } },
-    ],
-    rejects: [
-      {},
-      { agent_id: 'a1', status: 'completed' },
-      { agent_id: 'a1', thinking_level: 'think64k' },
-    ],
-  },
-  {
-    tool: 'pause_agent',
-    accepts: [{ input: { agent_id: 'a1' }, data: { agent_id: 'a1' } }],
-    rejects: [{}],
-  },
-  {
-    tool: 'archive_agent',
-    accepts: [{ input: { agent_id: 'a1' }, data: { agent_id: 'a1' } }],
-    rejects: [{}],
-  },
-  {
-    tool: 'assign_agent_to_goal',
-    accepts: [
-      { input: { agent_id: 'a1', goal_id: 'g1' }, data: { agent_id: 'a1', goal_id: 'g1' } },
-    ],
-    rejects: [{ agent_id: 'a1' }, { goal_id: 'g1' }],
-  },
-  {
-    tool: 'unassign_agent_from_goal',
-    accepts: [
-      { input: { agent_id: 'a1', goal_id: 'g1' }, data: { agent_id: 'a1', goal_id: 'g1' } },
-    ],
-    rejects: [{}],
-  },
-  {
-    tool: 'assign_agent_to_forge_scope',
-    accepts: [
-      { input: { agent_id: 'a1', scope_id: 'sc1' }, data: { agent_id: 'a1', scope_id: 'sc1' } },
-    ],
-    rejects: [{ agent_id: 'a1' }, { scope_id: 'sc1' }],
-  },
-  {
-    tool: 'unassign_agent_from_forge_scope',
-    accepts: [
-      { input: { agent_id: 'a1', scope_id: 'sc1' }, data: { agent_id: 'a1', scope_id: 'sc1' } },
-    ],
-    rejects: [{}],
-  },
-  {
-    tool: 'create_agent_reminder',
-    accepts: [
-      {
-        input: { agent_id: 'a1', message: 'check in', remind_at: 1700000000000 },
-        data: { agent_id: 'a1', message: 'check in', remind_at: 1700000000000 },
-      },
-    ],
-    rejects: [
-      {},
-      { agent_id: 'a1', message: '', remind_at: 1 },
-      { agent_id: 'a1', message: 'm', remind_at: 1.5 },
-    ],
-  },
-  {
-    tool: 'list_agent_reminders',
-    accepts: [
-      { input: { agent_id: 'a1' }, data: { agent_id: 'a1' } },
-      { input: { agent_id: 'a1', status: 'done' }, data: { agent_id: 'a1', status: 'done' } },
-    ],
-    rejects: [{ agent_id: 'a1', status: 'archived' }, {}],
-  },
-  {
     tool: 'subscribe_agent_event',
-    accepts: [
-      {
-        input: { agent_id: 'a1', topic_pattern: 'github/*/*/pull_request/*', label: 'PRs' },
-        data: { agent_id: 'a1', topic_pattern: 'github/*/*/pull_request/*', label: 'PRs' },
-      },
-    ],
-    rejects: [{ agent_id: 'a1' }, { topic_pattern: 't' }],
-  },
-  {
-    tool: 'unsubscribe_agent_event',
-    accepts: [
-      {
-        input: { agent_id: 'a1', topic_pattern: 'github/*/*/pull_request/*' },
-        data: { agent_id: 'a1', topic_pattern: 'github/*/*/pull_request/*' },
-      },
-    ],
-    rejects: [{}],
-  },
-  {
-    tool: 'list_agent_event_subscriptions',
-    accepts: [{ input: { agent_id: 'a1' }, data: { agent_id: 'a1' } }],
-    rejects: [{}],
-  },
-];
-
-const GOAL_PINS: FamilySafeParsePin[] = [
-  {
-    tool: 'create_goal',
-    accepts: [
-      {
-        input: {
-          title: 'Ship v2',
-          description: 'd',
-          type: 'measurable',
-          priority: 'urgent',
-          labels: ['infra'],
-          metrics: { deploys: 3 },
-          summary: 'rolling',
-          progress: 40,
-          next_steps: ['step'],
-          preferred_workflow_id: 'wf1',
-          auto_trigger_next: true,
-          check_in_cron_expression: '0 9 * * 1',
-          check_in_timezone: 'UTC',
-          trigger_immediately: true,
-          owner_agent_id: null,
-          workspace_path: null,
-        },
-        data: {
-          title: 'Ship v2',
-          description: 'd',
-          type: 'measurable',
-          priority: 'urgent',
-          labels: ['infra'],
-          metrics: { deploys: 3 },
-          summary: 'rolling',
-          progress: 40,
-          next_steps: ['step'],
-          preferred_workflow_id: 'wf1',
-          auto_trigger_next: true,
-          check_in_cron_expression: '0 9 * * 1',
-          check_in_timezone: 'UTC',
-          trigger_immediately: true,
-          owner_agent_id: null,
-          workspace_path: null,
-        },
-      },
-    ],
-    rejects: [
-      {},
-      { title: '' },
-      { title: 'T', type: 'recurring_forever' },
-      { title: 'T', progress: 101 },
-      { title: 'T', metrics: { bad: {} } },
-    ],
-  },
-  {
-    tool: 'update_goal',
-    accepts: [
-      { input: { goal_id: 'g1' }, data: { goal_id: 'g1' } },
-      {
-        input: {
-          goal_id: 'g1',
-          status: 'archived',
-          check_in_cron_expression: null,
-          workspace_path: null,
-          metrics: { ratio: 0.5 },
-          progress: 100,
-        },
-        data: {
-          goal_id: 'g1',
-          status: 'archived',
-          check_in_cron_expression: null,
-          workspace_path: null,
-          metrics: { ratio: 0.5 },
-          progress: 100,
-        },
-      },
-    ],
-    rejects: [
-      {},
-      { goal_id: 'g1', status: 'disabled' },
-      { goal_id: 'g1', progress: -1 },
-      { goal_id: 'g1', metrics: { bad: [] } },
-    ],
-  },
-  {
-    tool: 'pause_goal',
-    accepts: [{ input: { goal_id: 'g1' }, data: { goal_id: 'g1' } }],
-    rejects: [{}],
-  },
-  {
-    tool: 'resume_goal',
-    accepts: [{ input: { goal_id: 'g1' }, data: { goal_id: 'g1' } }],
-    rejects: [{}],
-  },
-  {
-    tool: 'trigger_goal_task',
-    accepts: [{ input: { goal_id: 'g1' }, data: { goal_id: 'g1' } }],
-    rejects: [{}],
-  },
-];
-
-function runFamilyPins(
-  suiteName: string,
-  schemasMap: Record<string, z.ZodType>,
-  pins: FamilySafeParsePin[]
-) {
-  describe(suiteName, () => {
-    test('pins cover every tool', () => {
-      expect(pins.map((pin) => pin.tool).sort()).toEqual(Object.keys(schemasMap).sort());
-    });
-
-    for (const pin of pins) {
-      const schema = schemasMap[pin.tool];
-      describe(pin.tool, () => {
-        for (const { input, data } of pin.accepts) {
-          test(`accepts ${JSON.stringify(input)}`, () => {
-            const result = schema.safeParse(input);
-            expect(result.success).toBe(true);
-            if (data && result.success) {
-              expect(result.data).toEqual(data);
-            }
-          });
-        }
-        for (const input of pin.rejects) {
-          test(`rejects ${JSON.stringify(input)}`, () => {
-            expect(schema.safeParse(input).success).toBe(false);
-          });
-        }
-      });
-    }
-  });
-}
-
-runFamilyPins(
-  'SPACE_AGENT_LIFECYCLE_TOOL_SCHEMAS safeParse pins',
-  SPACE_AGENT_LIFECYCLE_TOOL_SCHEMAS as unknown as Record<string, z.ZodType>,
-  LIFECYCLE_PINS
-);
-
-runFamilyPins(
-  'SPACE_GOAL_TOOL_SCHEMAS safeParse pins',
-  SPACE_GOAL_TOOL_SCHEMAS as unknown as Record<string, z.ZodType>,
-  GOAL_PINS
-);
-
-const EXTERNAL_EVENT_TOOL_NAMES: ExternalEventToolName[] = [
-  'subscribe_agent_event',
-  'unsubscribe_agent_event',
-  'list_agent_event_subscriptions',
-  'get_external_event',
-];
-
-const INACTIVITY_TOOL_NAMES: InactivityToolName[] = [
-  'inactivity_config_get',
-  'inactivity_config_set_enabled',
-  'inactivity_config_set',
-  'inactivity_run_now',
-];
-
-interface ConditionalSafeParsePin {
-  tool: string;
-  schema: z.ZodType;
-  accepts: Array<{ input: unknown; data?: Record<string, unknown> }>;
-  rejects: unknown[];
-}
-
-const CONDITIONAL_SAFE_PARSE_PINS: ConditionalSafeParsePin[] = [
-  {
-    tool: 'subscribe_agent_event',
-    schema: EXTERNAL_EVENT_TOOL_SCHEMAS.subscribe_agent_event,
+    schema: SubscribeAgentEventSchema,
     accepts: [
       {
         input: { agent_id: 'a1', topic_pattern: 'github/*' },
@@ -784,7 +188,7 @@ const CONDITIONAL_SAFE_PARSE_PINS: ConditionalSafeParsePin[] = [
   },
   {
     tool: 'unsubscribe_agent_event',
-    schema: EXTERNAL_EVENT_TOOL_SCHEMAS.unsubscribe_agent_event,
+    schema: UnsubscribeAgentEventSchema,
     accepts: [
       {
         input: { agent_id: 'a1', topic_pattern: 'github/*' },
@@ -795,88 +199,14 @@ const CONDITIONAL_SAFE_PARSE_PINS: ConditionalSafeParsePin[] = [
   },
   {
     tool: 'list_agent_event_subscriptions',
-    schema: EXTERNAL_EVENT_TOOL_SCHEMAS.list_agent_event_subscriptions,
+    schema: ListAgentEventSubscriptionsSchema,
     accepts: [{ input: { agent_id: 'a1' }, data: { agent_id: 'a1' } }],
     rejects: [{}],
   },
-  {
-    tool: 'get_external_event',
-    schema: EXTERNAL_EVENT_TOOL_SCHEMAS.get_external_event,
-    accepts: [{ input: { eventId: 'e1' }, data: { eventId: 'e1' } }],
-    rejects: [{}, { eventId: '' }],
-  },
-  {
-    tool: 'inactivity_config_get',
-    schema: INACTIVITY_TOOL_SCHEMAS.inactivity_config_get,
-    accepts: [{ input: {}, data: {} }],
-    rejects: [1],
-  },
-  {
-    tool: 'inactivity_config_set_enabled',
-    schema: INACTIVITY_TOOL_SCHEMAS.inactivity_config_set_enabled,
-    accepts: [{ input: { enabled: true }, data: { enabled: true } }],
-    rejects: [{}, { enabled: 'yes' }],
-  },
-  {
-    tool: 'inactivity_config_set',
-    schema: INACTIVITY_TOOL_SCHEMAS.inactivity_config_set,
-    accepts: [
-      { input: {}, data: {} },
-      { input: { threshold_ms: 1000 }, data: { threshold_ms: 1000 } },
-      { input: { prompt: 'ping' }, data: { prompt: 'ping' } },
-      {
-        input: { threshold_ms: 2000, prompt: 'poke' },
-        data: { threshold_ms: 2000, prompt: 'poke' },
-      },
-    ],
-    rejects: [{ threshold_ms: -1 }, { threshold_ms: 1.5 }],
-  },
-  {
-    tool: 'inactivity_run_now',
-    schema: INACTIVITY_TOOL_SCHEMAS.inactivity_run_now,
-    accepts: [{ input: {}, data: {} }],
-    rejects: [1],
-  },
 ];
 
-describe('EXTERNAL_EVENT_TOOL_SCHEMAS', () => {
-  test('contains exactly the external-event tools', () => {
-    expect(Object.keys(EXTERNAL_EVENT_TOOL_SCHEMAS).sort()).toEqual(
-      [...EXTERNAL_EVENT_TOOL_NAMES].sort()
-    );
-    expect(Object.keys(EXTERNAL_EVENT_TOOL_SCHEMAS)).toHaveLength(4);
-  });
-
-  test('each schema value is a zod object schema with safeParse and a shape', () => {
-    for (const schema of Object.values(EXTERNAL_EVENT_TOOL_SCHEMAS)) {
-      expect(typeof schema.safeParse).toBe('function');
-      expect(schema.shape).toBeDefined();
-    }
-  });
-});
-
-describe('INACTIVITY_TOOL_SCHEMAS', () => {
-  test('contains exactly the inactivity tools', () => {
-    expect(Object.keys(INACTIVITY_TOOL_SCHEMAS).sort()).toEqual([...INACTIVITY_TOOL_NAMES].sort());
-    expect(Object.keys(INACTIVITY_TOOL_SCHEMAS)).toHaveLength(4);
-  });
-
-  test('each schema value is a zod object schema with safeParse and a shape', () => {
-    for (const schema of Object.values(INACTIVITY_TOOL_SCHEMAS)) {
-      expect(typeof schema.safeParse).toBe('function');
-      expect(schema.shape).toBeDefined();
-    }
-  });
-});
-
-describe('conditional tool schema safeParse pins', () => {
-  test('pins cover every conditional tool', () => {
-    expect(CONDITIONAL_SAFE_PARSE_PINS.map((pin) => pin.tool).sort()).toEqual(
-      [...EXTERNAL_EVENT_TOOL_NAMES, ...INACTIVITY_TOOL_NAMES].sort()
-    );
-  });
-
-  for (const pin of CONDITIONAL_SAFE_PARSE_PINS) {
+describe('space agent tool schemas safeParse pins', () => {
+  for (const pin of PINS) {
     describe(pin.tool, () => {
       for (const { input, data } of pin.accepts) {
         test(`accepts ${JSON.stringify(input)}`, () => {

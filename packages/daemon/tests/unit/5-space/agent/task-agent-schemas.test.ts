@@ -1,12 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import {
   ApproveTaskSchema,
-  ListGroupMembersSchema,
   MarkCompleteSchema,
-  RequestHumanInputSchema,
   SubmitForApprovalSchema,
-  UpdateTaskSchema,
-  TASK_AGENT_TOOL_SCHEMAS,
 } from '../../../../src/lib/space/actions/task-agent-schemas.ts';
 
 describe('ApproveTaskSchema', () => {
@@ -70,104 +66,6 @@ describe('SubmitForApprovalSchema', () => {
   });
 });
 
-describe('RequestHumanInputSchema', () => {
-  test('accepts valid input with question only', () => {
-    const result = RequestHumanInputSchema.safeParse({ question: 'Should I proceed?' });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.question).toBe('Should I proceed?');
-      expect(result.data.context).toBeUndefined();
-    }
-  });
-
-  test('accepts valid input with question and context', () => {
-    const result = RequestHumanInputSchema.safeParse({
-      question: 'Which environment should I deploy to?',
-      context: 'The staging build passed all tests.',
-    });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.context).toBe('The staging build passed all tests.');
-    }
-  });
-
-  test('rejects missing question', () => {
-    const result = RequestHumanInputSchema.safeParse({ context: 'some context' });
-    expect(result.success).toBe(false);
-  });
-
-  test('rejects non-string question', () => {
-    const result = RequestHumanInputSchema.safeParse({ question: 123 });
-    expect(result.success).toBe(false);
-  });
-
-  test('rejects non-string context', () => {
-    const result = RequestHumanInputSchema.safeParse({ question: 'ok?', context: false });
-    expect(result.success).toBe(false);
-  });
-
-  test('rejects empty object', () => {
-    const result = RequestHumanInputSchema.safeParse({});
-    expect(result.success).toBe(false);
-  });
-});
-
-describe('UpdateTaskSchema', () => {
-  test('accepts an optional status', () => {
-    const result = UpdateTaskSchema.safeParse({ task_id: 't1', status: 'cancelled' });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.status).toBe('cancelled');
-    }
-  });
-
-  test('status stays optional', () => {
-    const result = UpdateTaskSchema.safeParse({ task_id: 't1', title: 'T' });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.status).toBeUndefined();
-    }
-  });
-
-  test('rejects unknown status values', () => {
-    expect(UpdateTaskSchema.safeParse({ task_id: 't1', status: 'paused' }).success).toBe(false);
-  });
-
-  test('status description documents the review/approved restrictions', () => {
-    const description = UpdateTaskSchema.shape.status.description ?? '';
-    expect(description).toContain('submit_for_approval');
-    expect(description).toContain('approved');
-    expect(description).toContain('review→done');
-    expect(description).toContain('stopped');
-  });
-});
-
-describe('TASK_AGENT_TOOL_SCHEMAS', () => {
-  test('contains all 6 tool schemas', () => {
-    const keys = Object.keys(TASK_AGENT_TOOL_SCHEMAS);
-    expect(keys).toContain('approve_task');
-    expect(keys).toContain('submit_for_approval');
-    expect(keys).toContain('request_human_input');
-    expect(keys).toContain('list_group_members');
-    expect(keys).toContain('mark_complete');
-    expect(keys).toContain('update_task');
-    expect(keys).toHaveLength(6);
-  });
-
-  test('each schema value is a valid Zod schema with safeParse', () => {
-    for (const schema of Object.values(TASK_AGENT_TOOL_SCHEMAS)) {
-      expect(typeof schema.safeParse).toBe('function');
-    }
-  });
-
-  test('does not contain removed tools', () => {
-    const keys = Object.keys(TASK_AGENT_TOOL_SCHEMAS);
-    expect(keys).not.toContain('spawn_node_agent');
-    expect(keys).not.toContain('check_node_status');
-    expect(keys).not.toContain('advance_workflow');
-  });
-});
-
 describe('MarkCompleteSchema', () => {
   test('accepts empty object', () => {
     const result = MarkCompleteSchema.safeParse({});
@@ -201,17 +99,5 @@ describe('MarkCompleteSchema', () => {
   test('rejects non-object input', () => {
     const result = MarkCompleteSchema.safeParse('done');
     expect(result.success).toBe(false);
-  });
-});
-
-describe('ListGroupMembersSchema', () => {
-  test('accepts empty object', () => {
-    const result = ListGroupMembersSchema.safeParse({});
-    expect(result.success).toBe(true);
-  });
-
-  test('accepts object with extra fields (passthrough)', () => {
-    const result = ListGroupMembersSchema.safeParse({ extra: 'ignored' });
-    expect(result.success).toBe(true);
   });
 });

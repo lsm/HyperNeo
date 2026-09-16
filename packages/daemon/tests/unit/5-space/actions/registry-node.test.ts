@@ -9,19 +9,13 @@ import { AgentMessageRouter } from '../../../../src/lib/messaging/agent-message-
 import { ChannelResolver } from '../../../../src/lib/messaging/channel-resolver.ts';
 import type { WorkflowHookEngine } from '../../../../src/lib/workflows/hook-engine.ts';
 import type { SpaceMcpSessionRole } from '../../../../src/lib/space/runtime/space-mcp-session-policy.ts';
-import {
-  createOperationRegistry,
-  defineOperation,
-} from '../../../../src/lib/operations/registry.ts';
 import type { NodeAgentToolsConfig } from '../../../../src/lib/space/actions/node-handlers.ts';
-import { NODE_AGENT_TOOL_SCHEMAS } from '../../../../src/lib/space/actions/node-agent-schemas.ts';
 import {
-  ApproveTaskSchema,
-  MarkCompleteSchema,
-  SubmitForApprovalSchema,
-  TASK_AGENT_TOOL_SCHEMAS,
-} from '../../../../src/lib/space/actions/task-agent-schemas.ts';
-import type { SpaceWorkflow } from '@hyperneo/shared';
+  ListArtifactsSchema,
+  ListAuditEntriesSchema,
+  SaveArtifactSchema,
+  SubscribePrEventsSchema,
+} from '../../../../src/lib/space/actions/node-agent-schemas.ts';
 import { jsonResult } from '../../../../src/lib/space/tools/tool-result.ts';
 import {
   createActionRegistry,
@@ -37,43 +31,17 @@ import { z } from 'zod';
 const SPACE_ID = 'space-registry-node-test';
 
 const FULL_ENTRIES: ReadonlyArray<readonly [string, string]> = [
-  ['list_peers', 'read'],
-  ['list_reachable_agents', 'read'],
-  ['list_channels', 'read'],
-  ['subscribe_external_event', 'mutate'],
-  ['unsubscribe_external_event', 'mutate'],
   ['subscribe_pr_events', 'mutate'],
-  ['list_subscriptions', 'read'],
-  ['get_external_event', 'read'],
-  ['list_deliveries', 'read'],
-  ['restore_node_agent', 'mutate'],
   ['save_artifact', 'mutate'],
   ['list_artifacts', 'read'],
-  ['create_standalone_task', 'mutate'],
-  ['approve_task', 'mutate'],
-  ['submit_for_approval', 'mutate'],
-  ['mark_complete', 'mutate'],
-  ['list_tasks', 'read'],
   ['list_audit_entries', 'read'],
 ];
 
-const ALWAYS_ON_NAMES = [
-  'list_peers',
-  'list_reachable_agents',
-  'list_channels',
-  'restore_node_agent',
-];
-
 const NODE_SCHEMA_BY_NAME: Record<string, z.ZodType<unknown>> = {
-  ...Object.fromEntries(
-    Object.entries(NODE_AGENT_TOOL_SCHEMAS).map(([name, schema]) => [
-      name,
-      schema as z.ZodType<unknown>,
-    ])
-  ),
-  approve_task: ApproveTaskSchema,
-  submit_for_approval: SubmitForApprovalSchema,
-  mark_complete: MarkCompleteSchema,
+  subscribe_pr_events: SubscribePrEventsSchema,
+  save_artifact: SaveArtifactSchema,
+  list_artifacts: ListArtifactsSchema,
+  list_audit_entries: ListAuditEntriesSchema,
 };
 
 interface TestCtx {
@@ -118,16 +86,7 @@ function makeConfig(
     artifactRepo: new WorkflowRunArtifactRepository(ctx.db),
     taskRepo: new SpaceTaskRepository(ctx.db),
     auditLogRepo: new McpAuditLogRepository(ctx.db),
-    externalEventStore: {
-      getById: () => null,
-    } as unknown as NodeAgentToolsConfig['externalEventStore'],
     onSubscribeExternalEvent: async () => record('subscribe'),
-    onUnsubscribeExternalEvent: async () => record('unsubscribe'),
-    onListSubscriptions: async () => record('list_subscriptions'),
-    onCreateStandaloneTask: async () => record('create_standalone_task'),
-    onApproveTask: async () => record('approve_task'),
-    onSubmitForApproval: async () => record('submit_for_approval'),
-    onMarkComplete: async () => record('mark_complete'),
     ...overrides,
   };
 }
@@ -140,16 +99,8 @@ function makeBareConfig(
   return {
     ...config,
     artifactRepo: undefined,
-    taskRepo: undefined,
     auditLogRepo: undefined,
-    externalEventStore: undefined,
     onSubscribeExternalEvent: undefined,
-    onUnsubscribeExternalEvent: undefined,
-    onListSubscriptions: undefined,
-    onCreateStandaloneTask: undefined,
-    onApproveTask: undefined,
-    onSubmitForApproval: undefined,
-    onMarkComplete: undefined,
     ...overrides,
   };
 }
@@ -207,7 +158,7 @@ function makeSpaceEntries(spaceApproveCalls: string[]): ActionDefinition[] {
 }
 
 describe('createNodeRegistryEntries — composition', () => {
-  test('builds the node-family entries in typed-surface order with authored safety classes', () => {
+  test('builds the surviving node-family entries in authored order with authored safety classes', () => {
     const ctx = makeCtx();
     try {
       const entries = createNodeRegistryEntries(makeConfig(ctx));
@@ -230,12 +181,6 @@ describe('createNodeRegistryEntries — composition', () => {
       for (const entry of entries) {
         expect(entry.paramsSchema).toBe(NODE_SCHEMA_BY_NAME[entry.name]);
       }
-      const byName = new Map(entries.map((entry) => [entry.name, entry]));
-      expect(byName.get('approve_task')?.paramsSchema).toBe(TASK_AGENT_TOOL_SCHEMAS.approve_task);
-      expect(byName.get('submit_for_approval')?.paramsSchema).toBe(
-        TASK_AGENT_TOOL_SCHEMAS.submit_for_approval
-      );
-      expect(byName.get('mark_complete')?.paramsSchema).toBe(TASK_AGENT_TOOL_SCHEMAS.mark_complete);
     } finally {
       ctx.db.close();
     }
@@ -246,7 +191,9 @@ describe('createNodeRegistryEntries — composition', () => {
     try {
       const registry = createActionRegistry(createNodeRegistryEntries(makeConfig(ctx)));
       expect(registry.entries).toHaveLength(FULL_ENTRIES.length);
-      expect(registry.get('list_peers')?.family).toBe('node');
+      expect(registry.get('save_artifact')?.family).toBe('node');
+      expect(registry.get('list_peers')).toBeUndefined();
+      expect(registry.get('mark_complete')).toBeUndefined();
     } finally {
       ctx.db.close();
     }
@@ -254,37 +201,10 @@ describe('createNodeRegistryEntries — composition', () => {
 });
 
 describe('createNodeRegistryEntries — conditional entries', () => {
-  test('a bare config advertises only the always-on entries', () => {
+  test('a bare config advertises no entries', () => {
     const ctx = makeCtx();
     try {
-      const entries = createNodeRegistryEntries(makeBareConfig(ctx));
-      expect(entries.map((entry) => entry.name)).toEqual(ALWAYS_ON_NAMES);
-    } finally {
-      ctx.db.close();
-    }
-  });
-
-  test('the subscribe trio requires both subscribe and unsubscribe callbacks', () => {
-    const ctx = makeCtx();
-    try {
-      const halfPair = createNodeRegistryEntries(
-        makeBareConfig(ctx, { onSubscribeExternalEvent: async () => jsonResult({ success: true }) })
-      );
-      expect(halfPair.map((entry) => entry.name)).toEqual(ALWAYS_ON_NAMES);
-
-      const fullPair = createNodeRegistryEntries(
-        makeBareConfig(ctx, {
-          onSubscribeExternalEvent: async () => jsonResult({ success: true }),
-          onUnsubscribeExternalEvent: async () => jsonResult({ success: true }),
-        })
-      );
-      expect(fullPair.map((entry) => entry.name)).toEqual([
-        ...ALWAYS_ON_NAMES.slice(0, 3),
-        'subscribe_external_event',
-        'unsubscribe_external_event',
-        'subscribe_pr_events',
-        'restore_node_agent',
-      ]);
+      expect(createNodeRegistryEntries(makeBareConfig(ctx))).toEqual([]);
     } finally {
       ctx.db.close();
     }
@@ -293,28 +213,16 @@ describe('createNodeRegistryEntries — conditional entries', () => {
   test('each absent dep keeps exactly its entries out', () => {
     const ctx = makeCtx();
     try {
-      const full = new Set(createNodeRegistryEntries(makeConfig(ctx)).map((entry) => entry.name));
       const gated: ReadonlyArray<readonly [keyof NodeAgentToolsConfig, readonly string[]]> = [
-        ['onListSubscriptions', ['list_subscriptions']],
-        ['externalEventStore', ['get_external_event', 'list_deliveries']],
+        ['onSubscribeExternalEvent', ['subscribe_pr_events']],
         ['artifactRepo', ['save_artifact', 'list_artifacts']],
-        ['onCreateStandaloneTask', ['create_standalone_task']],
-        ['onApproveTask', ['approve_task']],
-        ['onSubmitForApproval', ['submit_for_approval']],
-        ['onMarkComplete', ['mark_complete']],
-        ['taskRepo', ['list_tasks']],
         ['auditLogRepo', ['list_audit_entries']],
       ];
-      const bareNames = new Set(ALWAYS_ON_NAMES);
       for (const [dep, names] of gated) {
-        const present = new Set(
-          createNodeRegistryEntries(makeBareConfig(ctx, { [dep]: makeConfig(ctx)[dep] })).map(
-            (entry) => entry.name
-          )
-        );
-        expect([...present].sort()).toEqual(
-          [...bareNames, ...names.filter((name) => full.has(name))].sort()
-        );
+        const present = createNodeRegistryEntries(
+          makeBareConfig(ctx, { [dep]: makeConfig(ctx)[dep] })
+        ).map((entry) => entry.name);
+        expect(present).toEqual(names);
       }
     } finally {
       ctx.db.close();
@@ -322,151 +230,7 @@ describe('createNodeRegistryEntries — conditional entries', () => {
   });
 });
 
-describe('createNodeRegistryEntries — approve_task autonomy', () => {
-  test('defaults to completion autonomy level 5 without a workflow', () => {
-    const ctx = makeCtx();
-    try {
-      const byName = new Map(
-        createNodeRegistryEntries(
-          makeBareConfig(ctx, { onApproveTask: async () => jsonResult({ success: true }) })
-        ).map((entry) => [entry.name, entry])
-      );
-      expect(byName.get('approve_task')?.autonomyRequirement).toBe(5);
-    } finally {
-      ctx.db.close();
-    }
-  });
-
-  test('mirrors the workflow completionAutonomyLevel when declared', () => {
-    const ctx = makeCtx();
-    try {
-      const workflow = { completionAutonomyLevel: 3 } as SpaceWorkflow;
-      const byName = new Map(
-        createNodeRegistryEntries(
-          makeBareConfig(ctx, {
-            workflow,
-            onApproveTask: async () => jsonResult({ success: true }),
-          })
-        ).map((entry) => [entry.name, entry])
-      );
-      expect(byName.get('approve_task')?.autonomyRequirement).toBe(3);
-    } finally {
-      ctx.db.close();
-    }
-  });
-});
-
-describe('composeRoleActionEntries — approve_task collision resolution', () => {
-  test('workflow_worker gets node-family precedence on colliding names', () => {
-    const spaceApproveCalls: string[] = [];
-    const nodeNames = ['list_peers', 'approve_task'];
-    const composed = composeRoleActionEntries(
-      'workflow_worker',
-      makeSpaceEntries(spaceApproveCalls),
-      nodeNames.map((name) =>
-        defineAction({
-          name,
-          family: 'node',
-          safetyClass: 'read',
-          description: 'node entry',
-          paramsDoc: 'none',
-          paramsSchema: z.object({}),
-          handler: async () => null,
-        })
-      )
-    );
-    expect(composed.map((entry) => entry.name)).toEqual([
-      'list_peers',
-      'approve_task',
-      'list_workflows',
-    ]);
-    const registry = createActionRegistry(composed);
-    expect(registry.get('approve_task')?.family).toBe('node');
-    expect(registry.get('approve_task')?.paramsSchema).not.toBe(
-      makeSpaceEntries([]).find((entry) => entry.name === 'approve_task')?.paramsSchema
-    );
-  });
-
-  test('workflow_worker never falls back to the space approve_task entry', () => {
-    const spaceApproveCalls: string[] = [];
-    const composed = composeRoleActionEntries(
-      'workflow_worker',
-      makeSpaceEntries(spaceApproveCalls),
-      [
-        defineAction({
-          name: 'list_peers',
-          family: 'node',
-          safetyClass: 'read',
-          description: 'node entry',
-          paramsDoc: 'none',
-          paramsSchema: z.object({}),
-          handler: async () => null,
-        }),
-      ]
-    );
-    expect(composed.map((entry) => entry.name)).toEqual(['list_peers', 'list_workflows']);
-    const registry = createActionRegistry(composed);
-    expect(registry.get('approve_task')).toBeUndefined();
-  });
-
-  test('workflow_worker never falls back to the space end-node entries', () => {
-    const spaceEntries = [
-      defineAction({
-        name: 'approve_task',
-        family: 'space',
-        safetyClass: 'mutate',
-        description: 'space approve',
-        paramsDoc: 'task_id',
-        paramsSchema: z.object({ task_id: z.string() }),
-        handler: async () => null,
-      }),
-      defineAction({
-        name: 'submit_for_approval',
-        family: 'space',
-        safetyClass: 'mutate',
-        description: 'space submit',
-        paramsDoc: 'none',
-        paramsSchema: z.object({}),
-        handler: async () => null,
-      }),
-      defineAction({
-        name: 'mark_complete',
-        family: 'space',
-        safetyClass: 'mutate',
-        description: 'space mark',
-        paramsDoc: 'none',
-        paramsSchema: z.object({}),
-        handler: async () => null,
-      }),
-      defineAction({
-        name: 'list_workflows',
-        family: 'space',
-        safetyClass: 'read',
-        description: 'space list',
-        paramsDoc: 'none',
-        paramsSchema: z.object({}),
-        handler: async () => null,
-      }),
-    ];
-    const composed = composeRoleActionEntries('workflow_worker', spaceEntries, [
-      defineAction({
-        name: 'list_peers',
-        family: 'node',
-        safetyClass: 'read',
-        description: 'node entry',
-        paramsDoc: 'none',
-        paramsSchema: z.object({}),
-        handler: async () => null,
-      }),
-    ]);
-    const registry = createActionRegistry(composed);
-    expect(registry.get('list_peers')).toBeDefined();
-    expect(registry.get('list_workflows')).toBeDefined();
-    expect(registry.get('approve_task')).toBeUndefined();
-    expect(registry.get('submit_for_approval')).toBeUndefined();
-    expect(registry.get('mark_complete')).toBeUndefined();
-  });
-
+describe('composeRoleActionEntries — composition', () => {
   test('space entries are normalized to the dispatcher family before dispatch', () => {
     const spaceEntry = defineAction({
       name: 'list_workflows',
@@ -485,9 +249,9 @@ describe('composeRoleActionEntries — approve_task collision resolution', () =>
 
   test('coordinator, member, long-term, and non-space registries never include node family', () => {
     const nodeEntry = defineAction({
-      name: 'list_peers',
+      name: 'save_artifact',
       family: 'node',
-      safetyClass: 'read',
+      safetyClass: 'mutate',
       description: 'node entry',
       paramsDoc: 'none',
       paramsSchema: z.object({}),
@@ -507,10 +271,10 @@ describe('composeRoleActionEntries — approve_task collision resolution', () =>
     }
   });
 
-  test('composed worker registry keeps non-colliding space entries alongside node entries', () => {
+  test('composed worker registry keeps allowlisted space reads alongside node entries', () => {
     const ctx = makeCtx();
     try {
-      const nodeEntries = createNodeRegistryEntries(makeBareConfig(ctx));
+      const nodeEntries = createNodeRegistryEntries(makeConfig(ctx));
       const composed = composeRoleActionEntries(
         'workflow_worker',
         makeSpaceEntries([]),
@@ -518,19 +282,19 @@ describe('composeRoleActionEntries — approve_task collision resolution', () =>
       );
       const registry = createActionRegistry(composed);
       expect(registry.get('list_workflows')?.family).toBe('space');
-      expect(registry.get('list_peers')?.family).toBe('node');
+      expect(registry.get('save_artifact')?.family).toBe('node');
       expect(registry.get('approve_task')).toBeUndefined();
-      expect(registry.entries).toHaveLength(ALWAYS_ON_NAMES.length + 1);
+      expect(registry.entries).toHaveLength(nodeEntries.length + 1);
     } finally {
       ctx.db.close();
     }
   });
 
-  test('composed worker registry excludes mutating and destructive space actions', () => {
+  test('composed worker registry excludes non-allowlisted space actions', () => {
     const nodeEntry = defineAction({
-      name: 'list_peers',
+      name: 'save_artifact',
       family: 'node',
-      safetyClass: 'read',
+      safetyClass: 'mutate',
       description: 'node entry',
       paramsDoc: 'none',
       paramsSchema: z.object({}),
@@ -567,493 +331,9 @@ describe('composeRoleActionEntries — approve_task collision resolution', () =>
     ];
     const composed = composeRoleActionEntries('workflow_worker', spaceEntries, [nodeEntry]);
     const registry = createActionRegistry(composed);
-    expect(registry.get('list_peers')).toBeDefined();
+    expect(registry.get('save_artifact')).toBeDefined();
     expect(registry.get('list_workflows')).toBeDefined();
     expect(registry.get('change_plan')).toBeUndefined();
     expect(registry.get('delete_agent_template')).toBeUndefined();
-  });
-
-  test('invoking approve_task on a worker registry routes to the node handler', async () => {
-    const ctx = makeCtx();
-    try {
-      const nodeEntries = createNodeRegistryEntries(
-        makeBareConfig(ctx, keepCallbacks(ctx, ['onApproveTask']))
-      );
-      const spaceApproveCalls: string[] = [];
-      const registry = createActionRegistry(
-        composeRoleActionEntries(
-          'workflow_worker',
-          makeSpaceEntries(spaceApproveCalls),
-          nodeEntries
-        )
-      );
-
-      await registry.get('approve_task')!.handler({});
-      expect(ctx.calls.get('approve_task')).toBe(1);
-      expect(spaceApproveCalls).toEqual([]);
-    } finally {
-      ctx.db.close();
-    }
-  });
-
-  test('the coordinator registry resolves the space approve_task, not the node one', async () => {
-    const ctx = makeCtx();
-    try {
-      const spaceApproveCalls: string[] = [];
-      const registry = createActionRegistry(
-        composeRoleActionEntries(
-          'coordinator',
-          makeSpaceEntries(spaceApproveCalls),
-          createNodeRegistryEntries(makeBareConfig(ctx))
-        )
-      );
-      await registry.get('approve_task')!.handler({ task_id: 'task-9' });
-      expect(spaceApproveCalls).toEqual(['space']);
-      expect(ctx.calls.get('approve_task')).toBeUndefined();
-    } finally {
-      ctx.db.close();
-    }
-  });
-});
-
-describe('createNodeRegistryEntries — end-node callbacks', () => {
-  test('submit_for_approval and mark_complete invoke their config callbacks', async () => {
-    const ctx = makeCtx();
-    try {
-      const byName = new Map(
-        createNodeRegistryEntries(
-          makeBareConfig(ctx, keepCallbacks(ctx, ['onSubmitForApproval', 'onMarkComplete']))
-        ).map((entry) => [entry.name, entry])
-      );
-      const submit = byName.get('submit_for_approval');
-      const mark = byName.get('mark_complete');
-      if (!submit || !mark) throw new Error('end-node entries missing');
-      await submit.handler({});
-      await mark.handler({});
-      expect(ctx.calls.get('submit_for_approval')).toBe(1);
-      expect(ctx.calls.get('mark_complete')).toBe(1);
-    } finally {
-      ctx.db.close();
-    }
-  });
-
-  test('a hook engine wraps the end-node callbacks without changing their outcomes', async () => {
-    const ctx = makeCtx();
-    try {
-      const executeCalls: string[] = [];
-      const byName = new Map(
-        createNodeRegistryEntries(
-          makeBareConfig(ctx, {
-            hookEngine: makeStubEngine(executeCalls),
-            ...keepCallbacks(ctx, ['onSubmitForApproval', 'onMarkComplete']),
-          })
-        ).map((entry) => [entry.name, entry])
-      );
-      const submit = byName.get('submit_for_approval');
-      const mark = byName.get('mark_complete');
-      if (!submit || !mark) throw new Error('end-node entries missing');
-      const submitResult = (await submit.handler({})) as { content: Array<{ text: string }> };
-      const markResult = (await mark.handler({})) as { content: Array<{ text: string }> };
-      expect(JSON.parse(submitResult.content[0].text)).toEqual({
-        success: true,
-        key: 'submit_for_approval',
-      });
-      expect(JSON.parse(markResult.content[0].text)).toEqual({
-        success: true,
-        key: 'mark_complete',
-      });
-      expect(executeCalls).toEqual(['submit_for_approval', 'mark_complete']);
-      expect(ctx.calls.get('submit_for_approval')).toBe(1);
-      expect(ctx.calls.get('mark_complete')).toBe(1);
-    } finally {
-      ctx.db.close();
-    }
-  });
-});
-
-function makeSubmitForReviewOperation(
-  execute: (
-    input: { taskId: string; reason: string | null },
-    caller: { source: string; sessionId?: string }
-  ) => Promise<{ accepted: true; jobId: string | null } | { accepted: false; reason: string }>
-) {
-  return createOperationRegistry([
-    defineOperation({
-      name: 'task.submitForReview',
-      description: 'Submit a task for review',
-      inputSchema: z.object({ taskId: z.string(), reason: z.string().nullable().optional() }),
-      resultSchema: z.union([
-        z.object({ accepted: z.literal(true), jobId: z.string().nullable() }),
-        z.object({ accepted: z.literal(false), reason: z.string() }),
-      ]),
-      execute: execute as never,
-    }),
-  ]);
-}
-
-describe('submit_for_approval — operation-backed', () => {
-  test('invokes task.submitForReview with taskId and forwarded reason, returning its result', async () => {
-    const ctx = makeCtx();
-    try {
-      const calls: Array<{ input: unknown; caller: unknown }> = [];
-      const operations = makeSubmitForReviewOperation(async (input, caller) => {
-        calls.push({ input, caller });
-        return { accepted: true, jobId: null };
-      });
-      const config = makeBareConfig(ctx, keepCallbacks(ctx, ['onSubmitForApproval']));
-      const entry = createNodeRegistryEntries(config, operations).find(
-        (candidate) => candidate.name === 'submit_for_approval'
-      );
-      if (!entry) throw new Error('submit_for_approval entry missing');
-      const result = (await entry.handler({ reason: 'looks done' })) as {
-        content: Array<{ text: string }>;
-        isError?: boolean;
-      };
-      expect(result.isError).toBeUndefined();
-      expect(JSON.parse(result.content[0].text)).toEqual({ accepted: true, jobId: null });
-      await entry.handler({});
-      expect(calls).toEqual([
-        {
-          input: { taskId: config.taskId, reason: 'looks done' },
-          caller: { source: 'mcp', sessionId: config.mySessionId },
-        },
-        {
-          input: { taskId: config.taskId, reason: null },
-          caller: { source: 'mcp', sessionId: config.mySessionId },
-        },
-      ]);
-      expect(ctx.calls.get('submit_for_approval')).toBeUndefined();
-    } finally {
-      ctx.db.close();
-    }
-  });
-
-  test('the hook wrapper still runs around the operation-backed handler', async () => {
-    const ctx = makeCtx();
-    try {
-      const executeCalls: string[] = [];
-      const operations = makeSubmitForReviewOperation(async () => ({
-        accepted: true,
-        jobId: null,
-      }));
-      const entry = createNodeRegistryEntries(
-        makeBareConfig(ctx, {
-          hookEngine: makeStubEngine(executeCalls),
-          ...keepCallbacks(ctx, ['onSubmitForApproval']),
-        }),
-        operations
-      ).find((candidate) => candidate.name === 'submit_for_approval');
-      if (!entry) throw new Error('submit_for_approval entry missing');
-      const result = (await entry.handler({})) as { content: Array<{ text: string }> };
-      expect(JSON.parse(result.content[0].text)).toEqual({ accepted: true, jobId: null });
-      expect(executeCalls).toEqual(['submit_for_approval']);
-    } finally {
-      ctx.db.close();
-    }
-  });
-
-  test('without an operations registry, the typed onSubmitForApproval handler runs unchanged', async () => {
-    const ctx = makeCtx();
-    try {
-      const entry = createNodeRegistryEntries(
-        makeBareConfig(ctx, keepCallbacks(ctx, ['onSubmitForApproval']))
-      ).find((candidate) => candidate.name === 'submit_for_approval');
-      if (!entry) throw new Error('submit_for_approval entry missing');
-      const result = (await entry.handler({})) as { content: Array<{ text: string }> };
-      expect(JSON.parse(result.content[0].text)).toEqual({
-        success: true,
-        key: 'submit_for_approval',
-      });
-      expect(ctx.calls.get('submit_for_approval')).toBe(1);
-    } finally {
-      ctx.db.close();
-    }
-  });
-
-  test('operation failures surface as isError with { code, message }', async () => {
-    const ctx = makeCtx();
-    try {
-      const operations = makeSubmitForReviewOperation(async () => {
-        throw new Error('review_submission_unavailable');
-      });
-      const entry = createNodeRegistryEntries(
-        makeBareConfig(ctx, keepCallbacks(ctx, ['onSubmitForApproval'])),
-        operations
-      ).find((candidate) => candidate.name === 'submit_for_approval');
-      if (!entry) throw new Error('submit_for_approval entry missing');
-      const result = (await entry.handler({})) as {
-        content: Array<{ text: string }>;
-        isError?: boolean;
-      };
-      expect(result.isError).toBe(true);
-      expect(JSON.parse(result.content[0].text)).toEqual({
-        code: 'execution_failed',
-        message: 'review_submission_unavailable',
-      });
-    } finally {
-      ctx.db.close();
-    }
-  });
-});
-
-function seedSpaceRow(db: BunDatabase, spaceId: string): void {
-  db.prepare(
-    `INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions,
-     allowed_models, session_ids, slug, status, autonomy_level, created_at, updated_at)
-     VALUES (?, '/tmp', ?, '', '', '', '[]', '[]', ?, 'active', 1, ?, ?)`
-  ).run(spaceId, `Space ${spaceId}`, spaceId, Date.now(), Date.now());
-}
-
-function makeCompleteTaskOperation(
-  execute: (
-    input: { taskId: string },
-    caller: { source: string; sessionId?: string }
-  ) => Promise<{ accepted: true; task: unknown } | { accepted: false; reason: string }>
-) {
-  return createOperationRegistry([
-    defineOperation({
-      name: 'task.complete',
-      description: 'Complete a task',
-      inputSchema: z.object({ taskId: z.string(), result: z.string().optional() }).strict(),
-      resultSchema: z.union([
-        z.object({ accepted: z.literal(true), task: z.unknown() }),
-        z.object({ accepted: z.literal(false), reason: z.string() }),
-      ]),
-      execute: execute as never,
-    }),
-  ]);
-}
-
-describe('mark_complete — operation-backed', () => {
-  test('invokes task.complete with the config task id, returning its result', async () => {
-    const ctx = makeCtx();
-    try {
-      const calls: Array<{ input: unknown; caller: unknown }> = [];
-      const operations = makeCompleteTaskOperation(async (input, caller) => {
-        calls.push({ input, caller });
-        return { accepted: true, task: { id: 'task-1', status: 'done' } };
-      });
-      const config = makeBareConfig(ctx, keepCallbacks(ctx, ['onMarkComplete']));
-      const entry = createNodeRegistryEntries(config, operations).find(
-        (candidate) => candidate.name === 'mark_complete'
-      );
-      if (!entry) throw new Error('mark_complete entry missing');
-      const result = (await entry.handler({})) as {
-        content: Array<{ text: string }>;
-        isError?: boolean;
-      };
-      expect(result.isError).toBeUndefined();
-      expect(JSON.parse(result.content[0].text)).toEqual({
-        accepted: true,
-        task: { id: 'task-1', status: 'done' },
-      });
-      await entry.handler({});
-      expect(calls).toEqual([
-        {
-          input: { taskId: config.taskId },
-          caller: { source: 'mcp', sessionId: config.mySessionId },
-        },
-        {
-          input: { taskId: config.taskId },
-          caller: { source: 'mcp', sessionId: config.mySessionId },
-        },
-      ]);
-      expect(ctx.calls.get('mark_complete')).toBeUndefined();
-    } finally {
-      ctx.db.close();
-    }
-  });
-
-  test('the hook wrapper still runs around the operation-backed handler', async () => {
-    const ctx = makeCtx();
-    try {
-      const executeCalls: string[] = [];
-      const operations = makeCompleteTaskOperation(async () => ({
-        accepted: true,
-        task: { id: 'task-1', status: 'done' },
-      }));
-      const entry = createNodeRegistryEntries(
-        makeBareConfig(ctx, {
-          hookEngine: makeStubEngine(executeCalls),
-          ...keepCallbacks(ctx, ['onMarkComplete']),
-        }),
-        operations
-      ).find((candidate) => candidate.name === 'mark_complete');
-      if (!entry) throw new Error('mark_complete entry missing');
-      const result = (await entry.handler({})) as { content: Array<{ text: string }> };
-      expect(JSON.parse(result.content[0].text)).toEqual({
-        accepted: true,
-        task: { id: 'task-1', status: 'done' },
-      });
-      expect(executeCalls).toEqual(['mark_complete']);
-    } finally {
-      ctx.db.close();
-    }
-  });
-
-  test('without an operations registry, the typed onMarkComplete handler runs unchanged', async () => {
-    const ctx = makeCtx();
-    try {
-      const entry = createNodeRegistryEntries(
-        makeBareConfig(ctx, keepCallbacks(ctx, ['onMarkComplete']))
-      ).find((candidate) => candidate.name === 'mark_complete');
-      if (!entry) throw new Error('mark_complete entry missing');
-      const result = (await entry.handler({})) as { content: Array<{ text: string }> };
-      expect(JSON.parse(result.content[0].text)).toEqual({
-        success: true,
-        key: 'mark_complete',
-      });
-      expect(ctx.calls.get('mark_complete')).toBe(1);
-    } finally {
-      ctx.db.close();
-    }
-  });
-
-  test('an accepted completion applies the goal update through the goal service', async () => {
-    const ctx = makeCtx();
-    try {
-      seedSpaceRow(ctx.db, SPACE_ID);
-      const taskRepo = new SpaceTaskRepository(ctx.db);
-      const task = taskRepo.createTask({
-        spaceId: SPACE_ID,
-        title: 'T',
-        description: '',
-        status: 'approved',
-        goalId: 'goal-1',
-      });
-      const updateCalls: Array<{ goalId: string; params: unknown; context: unknown }> = [];
-      const goalService = {
-        getGoal: (goalId: string) =>
-          goalId === 'goal-1' ? { id: 'goal-1', spaceId: SPACE_ID } : null,
-        updateGoal: (goalId: string, params: unknown, context: unknown) => {
-          updateCalls.push({ goalId, params, context });
-          return {};
-        },
-      };
-      const operations = makeCompleteTaskOperation(async () => ({
-        accepted: true,
-        task: { id: task.id, status: 'done' },
-      }));
-      const config = makeBareConfig(ctx, {
-        taskId: task.id,
-        taskRepo,
-        goalService: goalService as unknown as NodeAgentToolsConfig['goalService'],
-        ...keepCallbacks(ctx, ['onMarkComplete']),
-      });
-      const entry = createNodeRegistryEntries(config, operations).find(
-        (candidate) => candidate.name === 'mark_complete'
-      );
-      if (!entry) throw new Error('mark_complete entry missing');
-
-      const out = await entry.handler({ goal_update: { summary: 'Shipped', progress: 80 } });
-      expect(JSON.parse(out.content[0].text)).toEqual({
-        accepted: true,
-        task: { id: task.id, status: 'done' },
-      });
-      expect(updateCalls).toEqual([
-        {
-          goalId: 'goal-1',
-          params: { summary: 'Shipped', progress: 80, metrics: undefined, nextSteps: undefined },
-          context: { source: 'workflow_node_agent', sourceTaskId: task.id },
-        },
-      ]);
-    } finally {
-      ctx.db.close();
-    }
-  });
-
-  test('a goal-update failure after an accepted completion is reported in the result, not thrown', async () => {
-    const ctx = makeCtx();
-    try {
-      seedSpaceRow(ctx.db, SPACE_ID);
-      const taskRepo = new SpaceTaskRepository(ctx.db);
-      const task = taskRepo.createTask({
-        spaceId: SPACE_ID,
-        title: 'T',
-        description: '',
-        status: 'approved',
-        goalId: 'goal-1',
-      });
-      const goalService = {
-        getGoal: (goalId: string) =>
-          goalId === 'goal-1' ? { id: 'goal-1', spaceId: SPACE_ID } : null,
-        updateGoal: () => {
-          throw new Error('goal db locked');
-        },
-      };
-      const operations = makeCompleteTaskOperation(async () => ({
-        accepted: true,
-        task: { id: task.id, status: 'done' },
-      }));
-      const config = makeBareConfig(ctx, {
-        taskId: task.id,
-        taskRepo,
-        goalService: goalService as unknown as NodeAgentToolsConfig['goalService'],
-        ...keepCallbacks(ctx, ['onMarkComplete']),
-      });
-      const entry = createNodeRegistryEntries(config, operations).find(
-        (candidate) => candidate.name === 'mark_complete'
-      );
-      if (!entry) throw new Error('mark_complete entry missing');
-
-      const out = (await entry.handler({ goal_update: { summary: 'Shipped' } })) as {
-        content: Array<{ text: string }>;
-        isError?: boolean;
-      };
-      expect(out.isError).toBeUndefined();
-      expect(JSON.parse(out.content[0].text)).toEqual({
-        accepted: true,
-        task: { id: task.id, status: 'done' },
-        goalUpdateError: 'goal db locked',
-      });
-    } finally {
-      ctx.db.close();
-    }
-  });
-
-  test('a goal validation failure rejects with the existing message and leaves the task untouched', async () => {
-    const ctx = makeCtx();
-    try {
-      seedSpaceRow(ctx.db, SPACE_ID);
-      const taskRepo = new SpaceTaskRepository(ctx.db);
-      const task = taskRepo.createTask({
-        spaceId: SPACE_ID,
-        title: 'T',
-        description: '',
-        status: 'approved',
-        goalId: 'goal-missing',
-      });
-      let operationCalls = 0;
-      const operations = makeCompleteTaskOperation(async () => {
-        operationCalls += 1;
-        return { accepted: true, task: { id: task.id, status: 'done' } };
-      });
-      const goalService = {
-        getGoal: () => null,
-        updateGoal: () => {
-          throw new Error('updateGoal should not be called');
-        },
-      };
-      const config = makeBareConfig(ctx, {
-        taskId: task.id,
-        taskRepo,
-        goalService: goalService as unknown as NodeAgentToolsConfig['goalService'],
-        ...keepCallbacks(ctx, ['onMarkComplete']),
-      });
-      const entry = createNodeRegistryEntries(config, operations).find(
-        (candidate) => candidate.name === 'mark_complete'
-      );
-      if (!entry) throw new Error('mark_complete entry missing');
-
-      const out = await entry.handler({ goal_update: { summary: 'Should not apply' } });
-      expect(JSON.parse(out.content[0].text)).toEqual({
-        success: false,
-        error: 'Goal not found: goal-missing',
-      });
-      expect(operationCalls).toBe(0);
-      expect(taskRepo.getTask(task.id)?.status).toBe('approved');
-    } finally {
-      ctx.db.close();
-    }
   });
 });
