@@ -36,17 +36,17 @@ If `/rpc` is not available in the current build, inspect the daemon's RPC route 
 
 Call the Space task creation RPC with `spaceId`, `title`, `description`, `priority`, optional `workflowId`, and optional worker agent assignment. Use this for all new work.
 
-### get_task_detail(task_id)
+### task.get(taskId)
 
-Call the task detail RPC with `taskId` and present the task status, result, assigned agent, workflow run id, and error/blocking fields.
+Invoke the `task.get` operation with `taskId` and present the task status, result, assigned agent, workflow run id, and error/blocking fields.
 
-### retry_task(task_id, updated_description?)
+### task.retry(taskId, updatedDescription?)
 
-Call the task retry RPC with `taskId` and optional replacement/updated description. Only use after confirming the retry is valid for the current task status.
+Invoke the `task.retry` operation with `taskId` and optional replacement/updated description. Only use after confirming the retry is valid for the current task status.
 
-### cancel_task(task_id)
+### task.cancel(taskId)
 
-Call the task cancel RPC with `taskId`. If the user wants the workflow run cancelled too, include the API's cancel-workflow flag when available.
+Invoke the `task.cancel` operation with `taskId`. If the user wants the workflow run cancelled too, include the operation's cancel-workflow flag when available.
 
 ### reassign_task(task_id, agent)
 

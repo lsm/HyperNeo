@@ -176,14 +176,6 @@ export const CreateStandaloneTaskSchema = z.object({
     ),
 });
 
-export const GetTaskDetailSchema = z.object({
-  task_id: z.string().optional().describe('UUID of the task to retrieve'),
-  task_number: z
-    .number()
-    .optional()
-    .describe('Numeric task ID (e.g. 5 for task #5) — preferred over task_id'),
-});
-
 export const UpdateTaskSchema = z.object({
   task_id: z.string().describe('UUID of the task to update'),
   title: z.string().min(1).optional().describe('New title for the task'),
@@ -196,19 +188,6 @@ export const UpdateTaskSchema = z.object({
       'New dependency list (replaces existing). All must be in the same space. Cycles and non-existent IDs are rejected.'
     ),
   status: SpaceTaskStatusSchema.optional().describe(UpdateTaskStatusParamDescription),
-});
-
-export const RetryTaskSchema = z.object({
-  task_id: z.string().describe('ID of the task to retry'),
-  description: z.string().optional().describe('Updated task description for the retry attempt'),
-});
-
-export const CancelTaskSchema = z.object({
-  task_id: z.string().describe('ID of the task to cancel'),
-  cancel_workflow_run: z
-    .boolean()
-    .optional()
-    .describe('If true and the task belongs to a workflow run, also cancel that workflow run'),
 });
 
 export const ReassignTaskSchema = z.object({
@@ -224,14 +203,6 @@ export const ReassignTaskSchema = z.object({
     .enum(['coder', 'general'])
     .optional()
     .describe('Agent type to assign (coder or general)'),
-});
-
-export const PublishTaskSchema = z.object({
-  task_id: z.string().describe('UUID of the draft task to publish'),
-});
-
-export const ArchiveTaskSchema = z.object({
-  task_id: z.string().describe('UUID of the task to archive'),
 });
 
 export const SendMessageToTaskSchema = z.object({
@@ -260,10 +231,6 @@ export const SendMessageToTaskSchema = z.object({
     .describe(
       'Explicit generic target such as @handle, @role:task-manager, @session:<id>, or @worker:<node>/<agent>. Takes precedence over node_id when supported.'
     ),
-});
-
-export const ListTaskMembersSchema = z.object({
-  task_id: z.string().describe('ID of the task to inspect'),
 });
 
 export const ApproveTaskSchema = z.object({
@@ -299,15 +266,9 @@ export const SPACE_AGENT_TOOL_SCHEMAS = {
   suggest_workflow: SuggestWorkflowSchema,
   list_tasks: ListTasksSchema,
   create_standalone_task: CreateStandaloneTaskSchema,
-  get_task_detail: GetTaskDetailSchema,
   update_task: UpdateTaskSchema,
-  retry_task: RetryTaskSchema,
-  cancel_task: CancelTaskSchema,
   reassign_task: ReassignTaskSchema,
-  publish_task: PublishTaskSchema,
-  archive_task: ArchiveTaskSchema,
   send_message_to_task: SendMessageToTaskSchema,
-  list_task_members: ListTaskMembersSchema,
   approve_task: ApproveTaskSchema,
   approve_pending_completion: ApprovePendingCompletionSchema,
 } as const;

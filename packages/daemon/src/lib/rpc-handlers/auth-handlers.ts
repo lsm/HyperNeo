@@ -4,6 +4,8 @@ import type {
   ProviderAuthStatus,
   ProviderAuthResponse,
   ProviderAuthRequest,
+  ProviderCallbackRelayRequest,
+  ProviderCallbackRelayResponse,
   ProviderLogoutRequest,
   ProviderLogoutResponse,
   ProviderRefreshRequest,
@@ -281,6 +283,41 @@ export function setupAuthHandlers(
         return {
           success: false,
           error: error instanceof Error ? error.message : 'OAuth login failed',
+        };
+      }
+    }
+  );
+
+  messageHub.onRequest(
+    'auth.submitCallback',
+    async (req: ProviderCallbackRelayRequest): Promise<ProviderCallbackRelayResponse> => {
+      const { providerId, callbackInput } = req;
+      const registry = getProviderRegistry();
+      await registerBuiltInProvider(registry, providerId);
+
+      const provider = registry.get(providerId);
+      if (!provider) {
+        return {
+          success: false,
+          error: `Provider not found: ${providerId}`,
+        };
+      }
+
+      if (!provider.submitOAuthCallback) {
+        return {
+          success: false,
+          error: `Provider ${providerId} does not support callback relay login`,
+        };
+      }
+
+      try {
+        const result = await provider.submitOAuthCallback(callbackInput);
+        return result.ok ? { success: true } : { success: false, error: result.error };
+      } catch (error) {
+        log.error(`OAuth callback relay failed for ${providerId}:`, error);
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Callback relay failed',
         };
       }
     }

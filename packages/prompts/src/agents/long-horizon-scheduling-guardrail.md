@@ -5,7 +5,7 @@ id: LONG_HORIZON_SCHEDULING_GUARDRAIL
 
 You have two scheduling surfaces and two task systems. Pick by horizon and durability, not by guess:
 
-- **Durable / >7-day / goal- or forge-linked schedules** → `invoke(name="create_scheduled_task", input={...})` on the `operations` MCP server. These persist across sessions and daemon restarts.
+- **Durable / >7-day / goal- or forge-linked schedules** → `invoke(name="schedule.create", input={...})` on the `operations` MCP server. These persist across sessions and daemon restarts.
 - **Transient self-pacing / short self-checks / live background-watch** → `Cron*` / `ScheduleWakeup` / `Monitor` (SDK built-ins). These live only within this turn's session.
 
 Distinguish the two task systems:
