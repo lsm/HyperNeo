@@ -10,6 +10,7 @@ import type { McpAuditLogRepository } from '../../../storage/repositories/mcp-au
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository.ts';
+import { listAuditEntries } from '../../audit/list-audit-entries.ts';
 import type { ExternalEventStore } from '../../external-events/external-event-store.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
 import type { SpaceGoalService } from '../../goals/service.ts';
@@ -452,45 +453,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
     },
 
     async list_audit_entries(args: ListAuditEntriesInput): Promise<ToolResult> {
-      const { auditLogRepo } = config;
-      if (!auditLogRepo) {
-        return jsonResult({ success: false, error: 'Audit log repository not available.' });
-      }
-      try {
-        const limit = Math.min(args.limit ?? 20, 100);
-        const offset = args.offset ?? 0;
-        let entries: ReturnType<typeof auditLogRepo.listBySpace>;
-        let total: number;
-        if (args.task_id) {
-          entries = auditLogRepo.listByTaskAndSpace(args.task_id, spaceId, limit, offset);
-          total = auditLogRepo.countByTaskAndSpace(args.task_id, spaceId);
-        } else if (args.session_id) {
-          entries = auditLogRepo.listBySessionAndSpace(args.session_id, spaceId, limit, offset);
-          total = auditLogRepo.countBySessionAndSpace(args.session_id, spaceId);
-        } else {
-          entries = auditLogRepo.listBySpace(spaceId, limit, offset);
-          total = auditLogRepo.countBySpace(spaceId);
-        }
-        return jsonResult({
-          success: true,
-          entries: entries.map((e) => ({
-            id: e.id,
-            timestamp: e.timestamp,
-            agentName: e.agentName,
-            sessionId: e.sessionId,
-            toolName: e.toolName,
-            paramsSummary: e.paramsSummary,
-            spaceId: e.spaceId,
-            taskId: e.taskId,
-            workflowRunId: e.workflowRunId,
-          })),
-          total,
-          has_more: offset + entries.length < total,
-        });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        return jsonResult({ success: false, error: message });
-      }
+      return listAuditEntries({ auditLogRepo: config.auditLogRepo, spaceId }, args);
     },
   };
 
