@@ -571,6 +571,8 @@ describe('forge.proposal.createTask', () => {
       };
       expect(second.task.id).toBe(first.task.id);
       expect(ctx.taskRepo.listBySpace(SPACE_ID, true)).toHaveLength(1);
+      const entry = ctx.audited.find((row) => row.toolName === 'forge.proposal.createTask');
+      expect(entry?.spaceId).toBe(SPACE_ID);
     } finally {
       ctx.db.close();
     }

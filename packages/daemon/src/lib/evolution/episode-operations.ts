@@ -440,6 +440,7 @@ export function applyForgeProposalTask(
       toolName: 'forge.proposal.createTask',
       paramsSummary: { proposalId: existing.id, dependsOn: input.dependsOn },
       caller,
+      spaceId: result.task.spaceId,
       taskId: result.task.id,
     });
     return { value: { accepted: true, ...result } };
