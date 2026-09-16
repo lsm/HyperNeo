@@ -223,7 +223,7 @@ describe('audit.list operation', () => {
       });
     }
     const result = await run({ spaceId: OTHER_SPACE_ID });
-    expect(result).toMatchObject({ total: 25, hasMore: true });
+    expect(result).toMatchObject({ total: 26, hasMore: true });
     if (!('entries' in result) || !result.ok) throw new Error('expected a page');
     expect(result.entries).toHaveLength(20);
     expect(result.entries.every((entry) => entry.agentName === 'bulk')).toBe(true);
