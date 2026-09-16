@@ -106,7 +106,7 @@ import {
   sanitizeAgentNameForId,
   taskIdFromSubSessionIdentity,
 } from '../../session/sub-session-identity.ts';
-import { actionsAsOperations } from '../actions/action-operations.ts';
+import { mergeActionOperations } from '../actions/action-operations.ts';
 import type { NodeAgentToolsConfig } from '../actions/node-handlers.ts';
 import type { ActionRegistry } from '../actions/registry.ts';
 import { createSessionActionRegistry } from '../actions/session-action-registry.ts';
@@ -139,6 +139,7 @@ import {
 import { AgentMessageRouter } from '../../messaging/agent-message-router.ts';
 import type { WorkflowArtifactProfile } from '../../workflows/artifact-profile.ts';
 import { ChannelResolver } from '../../messaging/channel-resolver.ts';
+import type { NodeMessagingRuntime } from '../../messaging/node-messaging-context.ts';
 import { ChannelRouter } from '../../messaging/channel-router.ts';
 import { createGithubConnector } from '../../github/connectors/github-connector.ts';
 import { HookExecutor } from '../../workflows/hook-executor.ts';
@@ -4539,6 +4540,7 @@ export class TaskAgentManager {
       this.completionCallbacks.delete(sessionId);
     }
     this.workerRegistryBySession.delete(sessionId);
+    this.nodeMessagingBySession.delete(sessionId);
   }
 
   private getWorkflowRunId(taskId: string): string | null {
@@ -4917,6 +4919,12 @@ export class TaskAgentManager {
 
   private workerRegistryBySession = new Map<string, ActionRegistry>();
 
+  private nodeMessagingBySession = new Map<string, NodeMessagingRuntime>();
+
+  nodeMessagingRuntimeFor(sessionId: string): NodeMessagingRuntime | null {
+    return this.nodeMessagingBySession.get(sessionId) ?? null;
+  }
+
   workerActionRegistryFor(sessionId: string): ActionRegistry | undefined {
     return this.workerRegistryBySession.get(sessionId);
   }
@@ -5256,6 +5264,18 @@ export class TaskAgentManager {
       });
     }
 
+    this.nodeMessagingBySession.set(subSessionId, {
+      spaceId,
+      taskId,
+      workflow,
+      channelResolver,
+      agentMessageRouter,
+      artifactRepo: this.config.artifactRepo,
+      replyRoutingLookup: (fromAgentName) =>
+        this.config.replyRoutingRegistry?.get(taskId, fromAgentName) ?? null,
+      hookEngine,
+    });
+
     const nodeConfig: NodeAgentToolsConfig = {
       mySessionId: subSessionId,
       myAgentName: agentName,
@@ -5342,10 +5362,9 @@ export class TaskAgentManager {
     if (!registry) return;
     const sessionManager = this.config.sessionManager;
     agentSession.setOperationRegistryProvider(() =>
-      createOperationRegistry([
-        ...sessionManager.getOperationRegistry().entries,
-        ...actionsAsOperations(registry),
-      ])
+      createOperationRegistry(
+        mergeActionOperations(sessionManager.getOperationRegistry().entries, registry)
+      )
     );
     data.config = { ...data.config, workerOperations: true };
   }
