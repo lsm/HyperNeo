@@ -47,17 +47,19 @@ export interface CreateAgentDependencies extends AgentOperationDeps {
   ) => void;
 }
 
+function nameTaken(name: string): AgentRejection {
+  return rejectAgent(
+    'invalid_name',
+    `Agent name "${name}" is already used by another agent in this space`
+  );
+}
+
 export function gateAgentName(spaceId: string, input: Input, deps: CreateAgentDependencies): Gate {
   if (input.name.trim() === '') {
     return { reason: rejectAgent('invalid_name', 'Agent name cannot be empty') };
   }
   return displayNameTaken(deps.listAgents(spaceId), input.name)
-    ? {
-        reason: rejectAgent(
-          'invalid_name',
-          `Agent name "${input.name}" is already used by another agent in this space`
-        ),
-      }
+    ? { reason: nameTaken(input.name) }
     : { value: spaceId };
 }
 
@@ -79,9 +81,11 @@ export function persistNewAgent(
   caller: OperationCaller,
   deps: CreateAgentDependencies
 ): Result {
+  const existing = deps.listAgents(spaceId);
+  if (displayNameTaken(existing, input.name)) return nameTaken(input.name);
   const agent = deps.createAgent({
     spaceId,
-    handle: uniqueAgentHandle(deps.listAgents(spaceId), input.name),
+    handle: uniqueAgentHandle(existing, input.name),
     displayName: input.name,
     instructions: input.customPrompt ?? '',
     description: input.description,
