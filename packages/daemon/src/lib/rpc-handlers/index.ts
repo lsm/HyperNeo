@@ -1279,6 +1279,12 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       getWorkflow: (workflowId) => spaceWorkflowManager.getWorkflow(workflowId),
       isWorkflowRunActive: (workflowRunId) =>
         spaceRuntimeService.isWorkflowRunActive(workflowRunId),
+      recoverWorkflowTask: (spaceId, taskId, targetStatus, options) =>
+        recoverTaskExecution(
+          createWorkflowTaskRecoveryExecutor(spaceId, spaceRuntimeService, options),
+          taskId,
+          targetStatus
+        ),
       taskRepo: spaceTaskRepo,
       nodeExecutionRepo,
       longHorizonAgentRepo,
