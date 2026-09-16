@@ -74,6 +74,9 @@ export const AGENT_REJECTION_REASONS = [
   'space_mismatch',
   'agent_denied',
   'agent_not_found',
+  'invalid_name',
+  'invalid_tools',
+  'invalid_model',
 ] as const;
 
 export const AgentRejectionSchema = z
@@ -112,6 +115,11 @@ export const AGENT_ROLES = [
 
 export const AGENT_READ_POLICY: OperationPolicy = {
   safetyClass: 'read',
+  roles: AGENT_ROLES,
+};
+
+export const AGENT_MUTATE_POLICY: OperationPolicy = {
+  safetyClass: 'mutate',
   roles: AGENT_ROLES,
 };
 
