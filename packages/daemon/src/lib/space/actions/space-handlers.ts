@@ -124,7 +124,7 @@ import {
   resolveHandleForTaskRouting,
   resolveNodeExecution,
   resolveWorkerTargetExecution,
-} from './task-message-delivery.ts';
+} from '../../tasks/task-message-delivery.ts';
 import { decideUpdateTask } from '../tools/space-tool-pipeline.ts';
 import {
   routeApproveTask,

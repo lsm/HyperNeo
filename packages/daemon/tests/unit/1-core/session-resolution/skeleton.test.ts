@@ -5,7 +5,6 @@ import {
   type SessionTarget,
 } from '../../../../src/lib/session-resolution/target';
 import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session';
-import {} from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 
 describe('session-resolution type assignment tests', () => {
   test('new types accept their literal shapes', () => {

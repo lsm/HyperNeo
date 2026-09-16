@@ -9,7 +9,7 @@ import {
   resolveHandleForTaskRouting,
   resolveNodeExecution,
   resolveWorkerTargetExecution,
-} from '../../../../src/lib/space/actions/task-message-delivery.ts';
+} from '../../../../src/lib/tasks/task-message-delivery.ts';
 
 function nodeExecution(partial: {
   id: string;
@@ -270,15 +270,15 @@ describe('createDeliverTaskWorkerMessagePipeline', () => {
       workspacePath: null,
       checklist: [],
       tags: [],
-    }) as unknown as import('../../../../src/lib/space/actions/task-message-delivery.ts').TaskWorkerDeliveryCtx['task'];
+    }) as unknown as import('../../../../src/lib/tasks/task-message-delivery.ts').TaskWorkerDeliveryCtx['task'];
 
   function makeCtx(
     overrides: {
       resolved?: Partial<ReturnType<typeof nodeExecution>>;
       sessionSelector?: string;
-      doorOutcome?: import('../../../../src/lib/space/actions/task-message-delivery.ts').TaskWorkerDeliveryCtx['doorOutcome'];
+      doorOutcome?: import('../../../../src/lib/tasks/task-message-delivery.ts').TaskWorkerDeliveryCtx['doorOutcome'];
     } = {}
-  ): import('../../../../src/lib/space/actions/task-message-delivery.ts').TaskWorkerDeliveryCtx {
+  ): import('../../../../src/lib/tasks/task-message-delivery.ts').TaskWorkerDeliveryCtx {
     const { resolved: resolvedOverride, ...rest } = overrides;
     return {
       task: makeTask(),
@@ -290,7 +290,7 @@ describe('createDeliverTaskWorkerMessagePipeline', () => {
         workflowRunId: 'run-1',
         agentSessionId: null,
         ...resolvedOverride,
-      }) as unknown as import('../../../../src/lib/space/actions/task-message-delivery.ts').TaskWorkerDeliveryCtx['resolved'],
+      }) as unknown as import('../../../../src/lib/tasks/task-message-delivery.ts').TaskWorkerDeliveryCtx['resolved'],
       message: 'hello',
       audit: mock(() => {}),
       ...rest,
@@ -301,10 +301,10 @@ describe('createDeliverTaskWorkerMessagePipeline', () => {
     const injected = mock(async () => 'sdk-msg-1');
     const taskAgentManager = {
       injectSubSessionMessage: injected,
-    } as unknown as import('../../../../src/lib/space/actions/task-message-delivery.ts').TaskWorkerDeliveryConfig['taskAgentManager'];
+    } as unknown as import('../../../../src/lib/tasks/task-message-delivery.ts').TaskWorkerDeliveryConfig['taskAgentManager'];
     const nodeExecutionRepo = {
       getById: () => null,
-    } as unknown as import('../../../../src/lib/space/actions/task-message-delivery.ts').TaskWorkerDeliveryConfig['nodeExecutionRepo'];
+    } as unknown as import('../../../../src/lib/tasks/task-message-delivery.ts').TaskWorkerDeliveryConfig['nodeExecutionRepo'];
     const pipeline = createDeliverTaskWorkerMessagePipeline({
       taskAgentManager,
       nodeExecutionRepo,
@@ -325,7 +325,7 @@ describe('createDeliverTaskWorkerMessagePipeline', () => {
     const injected = mock(async (_sessionId: string) => 'sdk-msg-2');
     const taskAgentManager = {
       injectSubSessionMessage: injected,
-    } as unknown as import('../../../../src/lib/space/actions/task-message-delivery.ts').TaskWorkerDeliveryConfig['taskAgentManager'];
+    } as unknown as import('../../../../src/lib/tasks/task-message-delivery.ts').TaskWorkerDeliveryConfig['taskAgentManager'];
     const refreshed = nodeExecution({
       id: 'exec-1',
       agentName: 'coder',
@@ -335,7 +335,7 @@ describe('createDeliverTaskWorkerMessagePipeline', () => {
     });
     const nodeExecutionRepo = {
       getById: () => refreshed,
-    } as unknown as import('../../../../src/lib/space/actions/task-message-delivery.ts').TaskWorkerDeliveryConfig['nodeExecutionRepo'];
+    } as unknown as import('../../../../src/lib/tasks/task-message-delivery.ts').TaskWorkerDeliveryConfig['nodeExecutionRepo'];
     const activateNode = mock(async () => {});
     const ensureTargetSession = mock(async () => ({
       kind: 'unresolved' as const,
@@ -364,10 +364,10 @@ describe('createDeliverTaskWorkerMessagePipeline', () => {
     const injected = mock(async () => 'sdk-msg-3');
     const taskAgentManager = {
       injectSubSessionMessage: injected,
-    } as unknown as import('../../../../src/lib/space/actions/task-message-delivery.ts').TaskWorkerDeliveryConfig['taskAgentManager'];
+    } as unknown as import('../../../../src/lib/tasks/task-message-delivery.ts').TaskWorkerDeliveryConfig['taskAgentManager'];
     const nodeExecutionRepo = {
       getById: () => null,
-    } as unknown as import('../../../../src/lib/space/actions/task-message-delivery.ts').TaskWorkerDeliveryConfig['nodeExecutionRepo'];
+    } as unknown as import('../../../../src/lib/tasks/task-message-delivery.ts').TaskWorkerDeliveryConfig['nodeExecutionRepo'];
     const activateNode = mock(async () => {});
     const ensureTargetSession = mock(async () => ({
       kind: 'unresolved' as const,
