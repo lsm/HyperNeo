@@ -94,15 +94,11 @@ function makeCtx(overrides: Partial<SpaceAgentToolsConfig> = {}): GoalsCtx {
 }
 
 const GOAL_ENTRIES: ReadonlyArray<readonly [string, string, string]> = [
-  ['list_goals', 'goals', 'read'],
-  ['get_goal', 'goals', 'read'],
   ['create_goal', 'goals', 'mutate'],
   ['update_goal', 'goals', 'mutate'],
   ['pause_goal', 'goals', 'mutate'],
   ['resume_goal', 'goals', 'mutate'],
   ['trigger_goal_task', 'goals', 'mutate'],
-  ['list_goal_tasks', 'goals', 'read'],
-  ['list_goal_events', 'goals', 'read'],
   ['review_goal_outcome', 'goals', 'mutate'],
 ];
 
@@ -151,7 +147,7 @@ describe('createSpaceRegistryEntries — goals composition', () => {
     const ctx = makeCtx();
     try {
       const registry = createActionRegistry(createSpaceRegistryEntries(ctx.config));
-      expect(registry.get('list_goals')?.family).toBe('goals');
+      expect(registry.get('create_goal')?.family).toBe('goals');
       expect(registry.get('review_goal_outcome')?.safetyClass).toBe('mutate');
       expect(registry.get('archive_goal' as string)).toBeUndefined();
     } finally {
@@ -161,7 +157,7 @@ describe('createSpaceRegistryEntries — goals composition', () => {
 });
 
 describe('createSpaceRegistryEntries — goals conditional entries', () => {
-  test('omits the nine goal entries when goalService is absent; review_goal_outcome follows only the caller role', () => {
+  test('omits the five goal entries when goalService is absent; review_goal_outcome follows only the caller role', () => {
     const ctx = makeCtx({ goalService: undefined });
     try {
       const entries = createSpaceRegistryEntries(ctx.config);
@@ -196,13 +192,13 @@ describe('createSpaceRegistryEntries — goals conditional entries', () => {
     }
   });
 
-  test('keeps the nine goal entries but drops review_goal_outcome for non-owning caller roles', () => {
+  test('keeps the five goal entries but drops review_goal_outcome for non-owning caller roles', () => {
     for (const callerRole of ['ad_hoc_member', 'workflow_worker', undefined] as const) {
       const ctx = makeCtx({ callerRole });
       try {
         const entries = createSpaceRegistryEntries(ctx.config);
         expect(entries.some((entry) => entry.name === 'review_goal_outcome')).toBe(false);
-        expect(entries.filter((entry) => entry.family === 'goals')).toHaveLength(9);
+        expect(entries.filter((entry) => entry.family === 'goals')).toHaveLength(5);
       } finally {
         ctx.db.close();
       }
@@ -214,7 +210,7 @@ describe('createSpaceRegistryEntries — goals conditional entries', () => {
     try {
       const entries = createSpaceRegistryEntries(ctx.config);
       expect(entries.some((entry) => entry.name === 'review_goal_outcome')).toBe(true);
-      expect(entries.filter((entry) => entry.family === 'goals')).toHaveLength(10);
+      expect(entries.filter((entry) => entry.family === 'goals')).toHaveLength(6);
     } finally {
       ctx.db.close();
     }
@@ -242,8 +238,6 @@ describe('createSpaceRegistryEntries — goals handler wiring', () => {
       const goalId = createdPayload.goal.id;
 
       const cases: Array<{ name: string; params: Record<string, unknown>; success: boolean }> = [
-        { name: 'list_goals', params: {}, success: true },
-        { name: 'get_goal', params: { goal_id: goalId }, success: true },
         {
           name: 'update_goal',
           params: { goal_id: goalId, summary: 'Updated via the registry' },
@@ -252,8 +246,6 @@ describe('createSpaceRegistryEntries — goals handler wiring', () => {
         { name: 'pause_goal', params: { goal_id: goalId }, success: true },
         { name: 'resume_goal', params: { goal_id: goalId }, success: true },
         { name: 'trigger_goal_task', params: { goal_id: goalId }, success: true },
-        { name: 'list_goal_tasks', params: { goal_id: goalId }, success: true },
-        { name: 'list_goal_events', params: { goal_id: goalId }, success: true },
         { name: 'review_goal_outcome', params: {}, success: true },
       ];
 
