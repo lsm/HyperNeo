@@ -1,4 +1,6 @@
 export const OPERATION_NAMES = [
+  'externalEvent.get',
+  'externalEvent.listDeliveries',
   'message.send',
   'node.channels.list',
   'node.reachableAgents.list',
