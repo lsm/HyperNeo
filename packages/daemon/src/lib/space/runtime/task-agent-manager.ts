@@ -4962,7 +4962,16 @@ export class TaskAgentManager {
 
   workerActionNamesFor(sessionId: string): ReadonlySet<string> | undefined {
     const registry = this.workerRegistryBySession.get(sessionId);
-    return registry ? new Set(registry.entries.map((entry) => entry.name)) : undefined;
+    if (!registry) return undefined;
+    const sessionManager = this.config.sessionManager;
+    const operations =
+      typeof sessionManager?.getOperationRegistry === 'function'
+        ? mergeActionOperations(sessionManager.getOperationRegistry().entries, registry)
+        : [];
+    return new Set([
+      ...registry.entries.map((entry) => entry.name),
+      ...operations.map((entry) => entry.name),
+    ]);
   }
 
   buildNodeAgentMcpServersForSession(

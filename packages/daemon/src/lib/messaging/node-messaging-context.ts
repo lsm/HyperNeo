@@ -20,12 +20,17 @@ export interface NodeMessagingRuntime {
 
 export type NodeMessagingRuntimeLookup = (sessionId: string) => NodeMessagingRuntime | null;
 
+export interface NodeMessagingSessionRow {
+  readonly status: string;
+}
+
 export interface NodeMessagingDependencies {
   readonly nodeExecutionRepo: Pick<
     NodeExecutionRepository,
     'getByAgentSessionId' | 'listByNode' | 'listByWorkflowRun'
   >;
   readonly runtimeForSession: NodeMessagingRuntimeLookup;
+  readonly getSession?: (sessionId: string) => NodeMessagingSessionRow | null;
 }
 
 export const NODE_CONTEXT_REJECTIONS = ['not_a_node_agent', 'node_caller_denied'] as const;
@@ -72,6 +77,16 @@ export function resolveNodeContext(
       runtime,
     },
   };
+}
+
+export function requireActiveNodeSession(
+  context: NodeMessagingContext,
+  caller: OperationCaller,
+  deps: NodeMessagingDependencies
+): { value: NodeMessagingContext } | { reason: NodeContextRejection } {
+  if (caller.source !== 'mcp') return { value: context };
+  const session = deps.getSession?.(context.sessionId) ?? null;
+  return session?.status === 'active' ? { value: context } : { reason: 'node_caller_denied' };
 }
 
 export function nodeName(
