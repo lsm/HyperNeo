@@ -1,6 +1,6 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { SessionResolutionDeps } from './deps.ts';
-import { ensureAgentSession } from './ensure-agent-session.ts';
+import { ensureLongTermAgentSession } from './ensure-long-term-agent-session.ts';
 import { ensureWorkerSession } from './ensure-worker-session.ts';
 import { findSessionForTarget } from './find-session-for-target.ts';
 import type { EnsureSessionOutcome, SessionTarget } from './target.ts';
@@ -24,7 +24,7 @@ export async function ensureStage(
     return { kind: 'unresolved', reason: 'not_found' };
   }
   if (target.kind === 'agent') {
-    return ensureAgentSession(target, deps);
+    return ensureLongTermAgentSession(target, deps);
   }
   return ensureWorkerSession(target, deps);
 }
