@@ -23,15 +23,9 @@ const BASE_TOOL_NAMES: SpaceAgentToolName[] = [
   'suggest_workflow',
   'list_tasks',
   'create_standalone_task',
-  'get_task_detail',
   'update_task',
-  'retry_task',
-  'cancel_task',
   'reassign_task',
-  'publish_task',
-  'archive_task',
   'send_message_to_task',
-  'list_task_members',
   'approve_task',
   'approve_pending_completion',
 ];
@@ -144,15 +138,6 @@ const SAFE_PARSE_PINS: SafeParsePin[] = [
     rejects: [{ description: 'D' }, { title: 'T' }],
   },
   {
-    tool: 'get_task_detail',
-    accepts: [
-      { input: {}, data: {} },
-      { input: { task_number: 5 }, data: { task_number: 5 } },
-      { input: { task_id: 'u1' }, data: { task_id: 'u1' } },
-    ],
-    rejects: [{ task_number: 'five' }],
-  },
-  {
     tool: 'update_task',
     accepts: [
       {
@@ -167,28 +152,6 @@ const SAFE_PARSE_PINS: SafeParsePin[] = [
     rejects: [{ task_id: 't1', title: '' }, { task_id: 't1', status: 'paused' }, {}],
   },
   {
-    tool: 'retry_task',
-    accepts: [
-      {
-        input: { task_id: 't1', description: 'retry harder' },
-        data: { task_id: 't1', description: 'retry harder' },
-      },
-      { input: { task_id: 't1' }, data: { task_id: 't1' } },
-    ],
-    rejects: [{}],
-  },
-  {
-    tool: 'cancel_task',
-    accepts: [
-      {
-        input: { task_id: 't1', cancel_workflow_run: true },
-        data: { task_id: 't1', cancel_workflow_run: true },
-      },
-      { input: { task_id: 't1' }, data: { task_id: 't1' } },
-    ],
-    rejects: [{}],
-  },
-  {
     tool: 'reassign_task',
     accepts: [
       {
@@ -200,16 +163,6 @@ const SAFE_PARSE_PINS: SafeParsePin[] = [
     rejects: [{ task_id: 't1', assigned_agent: 'qa' }],
   },
   {
-    tool: 'publish_task',
-    accepts: [{ input: { task_id: 't1' }, data: { task_id: 't1' } }],
-    rejects: [{}],
-  },
-  {
-    tool: 'archive_task',
-    accepts: [{ input: { task_id: 't1' }, data: { task_id: 't1' } }],
-    rejects: [{}],
-  },
-  {
     tool: 'send_message_to_task',
     accepts: [
       { input: { message: 'hello', task_number: 37 }, data: { message: 'hello', task_number: 37 } },
@@ -219,11 +172,6 @@ const SAFE_PARSE_PINS: SafeParsePin[] = [
       },
     ],
     rejects: [{}, { message: 'hi', task_number: 0 }],
-  },
-  {
-    tool: 'list_task_members',
-    accepts: [{ input: { task_id: 't1' }, data: { task_id: 't1' } }],
-    rejects: [{}],
   },
   {
     tool: 'approve_task',

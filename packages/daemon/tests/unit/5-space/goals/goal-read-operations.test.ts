@@ -35,10 +35,11 @@ function makeCtx() {
   insertSpace(db, SPACE_ID);
   insertSpace(db, OTHER_SPACE_ID);
   const spaceRepo = new SpaceRepository(db);
+  const taskRepo = new SpaceTaskRepository(db);
   const goalService = new SpaceGoalService({
     goalRepo: new SpaceGoalRepository(db),
     goalEventRepo: new SpaceGoalEventRepository(db),
-    taskRepo: new SpaceTaskRepository(db),
+    taskRepo,
     spaceRepo,
     scheduleService: new ScheduleService({
       db,
@@ -51,6 +52,7 @@ function makeCtx() {
   const registry = createOperationRegistry(
     createGoalOperations({
       goalService,
+      taskRepo,
       longHorizonAgentRepo: { getById: () => null },
       getSession: (): Session | null => null,
     })

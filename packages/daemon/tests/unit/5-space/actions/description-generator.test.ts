@@ -21,9 +21,9 @@ describe('role hot action seeds', () => {
     ]);
   });
 
-  test('each role has 4-6 hot actions', () => {
+  test('each role has 3-6 hot actions', () => {
     for (const [, actions] of Object.entries(ROLE_HOT_ACTIONS)) {
-      expect(actions.length).toBeGreaterThanOrEqual(4);
+      expect(actions.length).toBeGreaterThanOrEqual(3);
       expect(actions.length).toBeLessThanOrEqual(6);
     }
   });

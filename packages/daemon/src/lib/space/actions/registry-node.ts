@@ -6,12 +6,10 @@ import {
 import type { SpaceMcpSessionRole } from '../runtime/space-mcp-session-policy.ts';
 import { wrapHandlerWithHooks } from '../../workflows/hook-engine.ts';
 import type { ToolResult } from '../tools/tool-result.ts';
-import { runMarkCompleteOperation } from './mark-complete-operation.ts';
+import { runMarkCompleteOperation } from '../../tasks/mark-complete-operation.ts';
 import {
-  ArchiveTaskSchema,
   CreateStandaloneTaskSchema,
   GetExternalEventSchema,
-  GetTaskSchema,
   ListArtifactsSchema,
   ListAuditEntriesSchema,
   ListChannelsSchema,
@@ -20,7 +18,6 @@ import {
   ListReachableAgentsSchema,
   ListSubscriptionsSchema,
   ListTasksSchema,
-  PublishTaskSchema,
   RestoreNodeAgentSchema,
   SaveArtifactSchema,
   SendMessageSchema,
@@ -29,7 +26,6 @@ import {
   UnsubscribeExternalEventSchema,
 } from './node-agent-schemas.ts';
 import { createNodeAgentToolHandlers, type NodeAgentToolsConfig } from './node-handlers.ts';
-import { mapArchiveTaskParams, mapArchiveTaskResult } from './archive-task-operation.ts';
 import { createOperationActionHandler } from './operation-action.ts';
 import { type ActionDefinition, type ActionEntry, defineAction } from './registry.ts';
 import {
@@ -73,8 +69,6 @@ export function createNodeRegistryEntries(
     externalEventStore,
     artifactRepo,
     onCreateStandaloneTask,
-    onPublishTask,
-    onArchiveTask,
     onApproveTask,
     taskRepo,
     auditLogRepo,
@@ -242,74 +236,6 @@ export function createNodeRegistryEntries(
           }),
         ]
       : []),
-    ...(onPublishTask || operations
-      ? [
-          nodeAction({
-            name: 'publish_task',
-            safetyClass: 'mutate',
-            description: 'Publish a draft task (draft to open) so orchestration can pick it up.',
-            paramsDoc: 'task_id',
-            paramsSchema: PublishTaskSchema,
-            handler: operations
-              ? createOperationActionHandler(
-                  operations,
-                  { sessionId: config.mySessionId },
-                  'task.transition',
-                  (params) => ({
-                    taskId: (params as { task_id: string }).task_id,
-                    status: 'open',
-                    expectedStatus: 'draft',
-                  }),
-                  (value, originalParams) => {
-                    if (value && typeof value === 'object' && 'id' in value) {
-                      return { success: true, task: value };
-                    }
-                    const typed = originalParams as { task_id: string };
-                    if (value === null) {
-                      return {
-                        success: false,
-                        error: `Task not found or not in this space: ${typed.task_id}`,
-                      };
-                    }
-                    const reason = value as string;
-                    const errorByReason: Record<string, string> = {
-                      invalid_transition:
-                        `Task is not in 'draft' status, or it cannot be published. ` +
-                        `Only draft tasks can be published.`,
-                      unsupported_status: 'Unsupported target status for publish_task.',
-                    };
-                    return {
-                      success: false,
-                      error: errorByReason[reason] ?? `Task publish failed: ${reason}`,
-                    };
-                  }
-                )
-              : handlers.publish_task,
-          }),
-        ]
-      : []),
-    ...(onArchiveTask || operations
-      ? [
-          nodeAction({
-            name: 'archive_task',
-            safetyClass: 'destructive',
-            description:
-              'Archive a task; archived tasks are excluded from most queries and cannot be reactivated.',
-            paramsDoc: 'task_id',
-            paramsSchema: ArchiveTaskSchema,
-            autonomyRequirement: 4,
-            handler: operations
-              ? createOperationActionHandler(
-                  operations,
-                  { sessionId: config.mySessionId },
-                  'task.archive',
-                  mapArchiveTaskParams,
-                  mapArchiveTaskResult
-                )
-              : handlers.archive_task,
-          }),
-        ]
-      : []),
     ...(onApproveTask
       ? [
           nodeAction({
@@ -381,15 +307,6 @@ export function createNodeRegistryEntries(
             paramsDoc: 'status?, compact?, limit?, offset?',
             paramsSchema: ListTasksSchema,
             handler: handlers.list_tasks,
-          }),
-          nodeAction({
-            name: 'get_task',
-            safetyClass: 'read',
-            description: 'Read one task with status, result, and metadata.',
-            paramsDoc: 'task_number? or task_id? (one required)',
-            taskIdPreference: 'task_number',
-            paramsSchema: GetTaskSchema,
-            handler: handlers.get_task,
           }),
         ]
       : []),
