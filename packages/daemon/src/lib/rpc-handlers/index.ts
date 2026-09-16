@@ -1279,12 +1279,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   });
 
   const familyOperations: OperationDefinition[] = [];
-  const spaceCallerScopeDeps = {
-    getSession: (sessionId: string) => deps.db.getSession(sessionId),
-    taskRepo: spaceTaskRepo,
-    nodeExecutionRepo,
-    longHorizonAgentRepo,
-  };
   familyOperations.push(
     ...createAgentOperations({
       getSession: (sessionId) => deps.db.getSession(sessionId),
@@ -1354,6 +1348,13 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
         }),
     })
   );
+
+  const spaceCallerScopeDeps = {
+    getSession: (sessionId: string) => deps.db.getSession(sessionId),
+    taskRepo: spaceTaskRepo,
+    nodeExecutionRepo,
+    longHorizonAgentRepo,
+  };
   familyOperations.push(
     ...createScheduleOperations({
       schedules: scheduleService,
