@@ -1,5 +1,13 @@
-import { ARTIFACT_SHAPES } from '@hyperneo/shared';
 import { z } from 'zod';
+
+export {
+  ListArtifactsSchema,
+  type ListArtifactsInput,
+} from '../../artifacts/node-artifacts.ts';
+export {
+  SaveArtifactSchema,
+  type SaveArtifactInput,
+} from '../../artifacts/node-artifacts.ts';
 
 export const ListPeersSchema = z.object({});
 
@@ -71,39 +79,6 @@ export const ListSubscriptionsSchema = z.object({
 
 export type ListSubscriptionsInput = z.infer<typeof ListSubscriptionsSchema>;
 
-export const SaveArtifactSchema = z.object({
-  shape: z
-    .enum(ARTIFACT_SHAPES)
-    .describe(
-      "Structured shape from the closed set: 'link' | 'commit_set' | 'check' | 'metric' | 'decision' | 'note'. Required."
-    ),
-  kind: z
-    .string()
-    .min(1)
-    .describe(
-      "Semantic hint (freeform): 'pr', 'issue', 'preview', 'ci', 'review', etc. Used for the UI label/icon and folds into the identity key."
-    )
-    .optional(),
-  key: z
-    .string()
-    .describe(
-      "Identity key override. Derived from the shape by default. Pass an explicit value only for multi-instance shapes — multi-round history (decision key: 'round-0') or per-attempt audit trails (note key: 'attempt-0')."
-    )
-    .optional(),
-  summary: z
-    .string()
-    .describe('Short human note (≤1 sentence). Stored as data.summary for note/decision shapes.')
-    .optional(),
-  data: z
-    .record(z.string(), z.unknown())
-    .describe(
-      'Shape-specific structured payload. Required fields vary by shape (link.url, check.name+status, decision.recommendation, etc.).'
-    )
-    .optional(),
-});
-
-export type SaveArtifactInput = z.infer<typeof SaveArtifactSchema>;
-
 export const ListAuditEntriesSchema = z.object({
   task_id: z.string().describe('Filter by task ID').optional(),
   session_id: z.string().describe('Filter by session ID').optional(),
@@ -159,13 +134,3 @@ export const CreateStandaloneTaskSchema = z.object({
 });
 
 export type CreateStandaloneTaskInput = z.infer<typeof CreateStandaloneTaskSchema>;
-
-export const ListArtifactsSchema = z.object({
-  nodeId: z.string().describe('Filter by node ID').optional(),
-  type: z
-    .string()
-    .describe('Filter by artifact shape (e.g. "link", "decision", "note")')
-    .optional(),
-});
-
-export type ListArtifactsInput = z.infer<typeof ListArtifactsSchema>;
