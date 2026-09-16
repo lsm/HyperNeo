@@ -1,6 +1,6 @@
 import { describe, expect, it, mock, beforeEach } from 'bun:test';
 import { configureLogger, LogLevel, MessageHub, subscribeToStructuredLogs } from '@hyperneo/shared';
-import type { Space, SpaceWorkflow } from '@hyperneo/shared';
+import type { DuplicateDriftReport, Space, SpaceWorkflow } from '@hyperneo/shared';
 import {
   setupSpaceWorkflowHandlers,
   checkBuiltInWorkflowDriftOnStartup,

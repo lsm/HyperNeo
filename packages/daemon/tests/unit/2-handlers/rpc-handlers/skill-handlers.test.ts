@@ -1,6 +1,7 @@
 import { describe, expect, it, beforeEach, mock, afterEach } from 'bun:test';
 import { MessageHub } from '@hyperneo/shared';
 import { registerSkillHandlers } from '../../../../src/lib/rpc-handlers/skill-handlers';
+import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { SkillsManager } from '../../../../src/lib/skills-manager';
 import type { AppSkill, CreateSkillParams, UpdateSkillParams } from '@hyperneo/shared';
 
@@ -95,7 +96,7 @@ describe('Skill RPC Handlers', () => {
   let hubData: ReturnType<typeof createMockMessageHub>;
   let skillsManager: ReturnType<typeof createMockSkillsManager>;
   let daemonHub: ReturnType<typeof createMockDaemonHub>;
-  let internalEventBus: { publish: any; publish: any; subscribe: any };
+  let internalEventBus: { publish: any; subscribe: any };
 
   beforeEach(() => {
     hubData = createMockMessageHub();

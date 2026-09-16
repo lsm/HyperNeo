@@ -333,7 +333,7 @@ describe('voice transcribe pipeline', () => {
           },
         }) as GlobalSettings,
     };
-    const captured: { url?: string; model?: FormDataEntryValue | null } = {};
+    const captured: { url?: string; model?: ReturnType<FormData['get']> } = {};
     globalThis.fetch = mock(async (url: string | URL | Request, requestInit?: RequestInit) => {
       captured.url = url.toString();
       captured.model = (requestInit?.body as FormData)?.get('model');
@@ -361,7 +361,7 @@ describe('voice transcribe pipeline', () => {
     ) as typeof fetch;
     const originalSetTimeout = globalThis.setTimeout;
     const originalClearTimeout = globalThis.clearTimeout;
-    globalThis.setTimeout = ((callback: TimerHandler) => {
+    globalThis.setTimeout = ((callback: Parameters<typeof setTimeout>[0]) => {
       if (typeof callback === 'function') queueMicrotask(callback);
       return 1 as unknown as ReturnType<typeof setTimeout>;
     }) as typeof setTimeout;
