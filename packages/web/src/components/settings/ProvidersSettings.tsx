@@ -364,7 +364,7 @@ export function ProvidersSettings() {
   };
 
   useEffect(() => {
-    if (!oauthFlow || oauthFlow.authUrl) return;
+    if (!oauthFlow || (oauthFlow.authUrl && oauthFlow.providerId === 'anthropic')) return;
     const pollInterval = setInterval(async () => {
       try {
         const response = await listProviderAuthStatus();
@@ -1376,7 +1376,11 @@ export function ProvidersSettings() {
             toast.success(`${oauthFlow.providerName} authenticated successfully`);
             loadProviders();
           }}
-          onSubmitCallback={(input) => submitProviderCallback(oauthFlow.providerId, input)}
+          onSubmitCallback={
+            oauthFlow.providerId === 'anthropic'
+              ? (input) => submitProviderCallback(oauthFlow.providerId, input)
+              : undefined
+          }
         />
       )}
 

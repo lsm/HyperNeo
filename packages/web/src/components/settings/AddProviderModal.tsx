@@ -531,7 +531,11 @@ export function AddProviderModal({
           verificationUri={oauthFlow.verificationUri}
           onCancel={handleOAuthCancel}
           onComplete={handleOAuthComplete}
-          onSubmitCallback={(input) => submitProviderCallback(oauthFlow.providerId, input)}
+          onSubmitCallback={
+            oauthFlow.providerId === 'anthropic'
+              ? (input) => submitProviderCallback(oauthFlow.providerId, input)
+              : undefined
+          }
         />
       )}
     </>

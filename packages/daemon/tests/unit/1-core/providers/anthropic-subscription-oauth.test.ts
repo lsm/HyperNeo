@@ -269,7 +269,11 @@ describe('AnthropicProvider Claude subscription OAuth', () => {
 
   it('refreshes stored subscription tokens and keeps the previous refresh token', async () => {
     const { provider, bodies } = makeProvider(async () =>
-      jsonResponse({ ...TOKEN_RESPONSE, access_token: 'refreshed-access-token' })
+      jsonResponse({
+        ...TOKEN_RESPONSE,
+        access_token: 'refreshed-access-token',
+        refresh_token: undefined,
+      })
     );
 
     provider.setCredentials({
