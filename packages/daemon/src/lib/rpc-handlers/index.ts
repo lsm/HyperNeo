@@ -6,6 +6,10 @@ import { recoverTaskExecution } from '../tasks/recover-task-execution.ts';
 import { McpAuditLogRepository } from '../../storage/repositories/mcp-audit-log-repository.ts';
 import { createSpaceOperationRegistryProvider } from '../tasks/operations.ts';
 import { createAgentOperations } from '../agents/operations.ts';
+import {
+  publishSpaceAgentV2Mirror,
+  publishUnifiedAgentCreated,
+} from '../agents/unified-agent-events.ts';
 import type { OperationDefinition } from '../operations/registry.ts';
 import { createCompletionGateBindings } from '../tasks/complete-task-gates.ts';
 import { isCoderOwnedMergeWorkflow } from '../workflows/post-approval-router.ts';
@@ -1273,6 +1277,25 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       longHorizonAgentRepo,
       taskRepo: spaceTaskRepo,
       nodeExecutionRepo,
+      publishAgentCreated: (agent, sessionId) => {
+        void publishUnifiedAgentCreated(deps.internalEventBus, agent, sessionId);
+        void publishSpaceAgentV2Mirror(
+          deps.internalEventBus,
+          spaceAgentRepo,
+          agent.spaceId,
+          agent.id,
+          'created'
+        );
+      },
+      audit: (operationName, summary, caller, spaceId) => {
+        new McpAuditLogRepository(deps.db.getDatabase()).createEntry({
+          sessionId: caller.sessionId,
+          agentName: caller.agentName,
+          toolName: operationName,
+          spaceId,
+          paramsSummary: JSON.stringify(summary),
+        });
+      },
     })
   );
 
