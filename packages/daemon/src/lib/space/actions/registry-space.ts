@@ -13,9 +13,12 @@ import {
   SESSION_WRITE_AUTONOMY_LEVEL,
 } from '../tools/tool-admission-gates.ts';
 import { jsonResult } from '../tools/tool-result.ts';
-import { type CreateStandaloneTaskParams, mapCreateTaskParams } from './create-task-params.ts';
+import {
+  type CreateStandaloneTaskParams,
+  mapCreateTaskParams,
+} from '../../tasks/create-task-params.ts';
 import { RestoreNodeAgentSchema } from './node-agent-schemas.ts';
-import { mapArchiveTaskParams, mapArchiveTaskResult } from './archive-task-operation.ts';
+import { mapArchiveTaskParams, mapArchiveTaskResult } from '../../tasks/archive-task-operation.ts';
 import { createOperationActionHandler } from './operation-action.ts';
 import { type ActionDefinition, defineAction } from './registry.ts';
 import {
