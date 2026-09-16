@@ -2,6 +2,7 @@ export const OPERATION_NAMES = [
   'externalEvent.get',
   'externalEvent.listDeliveries',
   'message.send',
+  'nodeAgent.restore',
   'operations.describe',
   'operations.list',
   'session.message.send',
