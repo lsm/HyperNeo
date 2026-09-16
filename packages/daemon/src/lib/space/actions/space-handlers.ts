@@ -20,7 +20,8 @@ import type { SpaceTaskRepository } from '../../../storage/repositories/space-ta
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
 import type { ExternalEventStore } from '../../external-events/external-event-store.ts';
-import { validateGlobPattern, validateSource } from '../../external-events/topic-validator.ts';
+import { createAgentEventSubscriptionImpls } from '../../external-events/agent-event-subscription-impls.ts';
+import { validateSource } from '../../external-events/topic-validator.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
 import type { SessionManager } from '../../session/session-manager.ts';
 import type { EnsureSessionOutcome, SessionTarget } from '../../session-resolution/target.ts';
@@ -341,6 +342,16 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     mySessionId,
   } = config;
 
+  const agentEventSubscriptions = createAgentEventSubscriptionImpls({
+    spaceId,
+    runtime,
+    longHorizonAgentRepo: config.longHorizonAgentRepo,
+    subscriptionRepo: config.subscriptionRepo,
+    auditLogRepo: config.auditLogRepo,
+    myAgentName,
+    mySessionId,
+  });
+
   function getCallingAgentAutonomyLevel(): SpaceAgentAutonomyLevel | null {
     if (!myAgentId) return null;
     const repo = config.longHorizonAgentRepo;
@@ -418,10 +429,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         .map((agent) => agent.handle),
       ...RESERVED_SPACE_AGENT_HANDLES,
     ]);
-  }
-
-  function sourceFromTopicPattern(topicPattern: string): string {
-    return topicPattern.split('/')[0] ?? '';
   }
 
   function emitLongHorizonAgentCreated(agent: SpaceLongHorizonAgent): void {
@@ -776,31 +783,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       topic_pattern: string;
       label?: string;
     }): Promise<ToolResult> {
-      try {
-        requireLongHorizonAgentInSpace(args.agent_id);
-        const validation = validateGlobPattern(args.topic_pattern);
-        if (!validation.valid) {
-          return jsonResult({ success: false, error: validation.reason ?? 'invalid pattern' });
-        }
-        const repo = requireSubscriptionRepo();
-        const subscription = repo.upsertSubscription({
-          spaceId,
-          agentId: args.agent_id,
-          source: sourceFromTopicPattern(args.topic_pattern),
-          topic: args.topic_pattern,
-          filter: args.label ? { label: args.label } : {},
-          status: 'active',
-        });
-        const refresh = runtime.refreshLongHorizonSubscription(spaceId, subscription.id);
-        if (!refresh.success) {
-          return jsonResult({ success: false, error: refresh.error ?? 'invalid pattern' });
-        }
-        logAudit('subscribe_agent_event', args);
-        return jsonResult({ success: true, subscription });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        return jsonResult({ success: false, error: message });
-      }
+      return agentEventSubscriptions.subscribeAgentEvent(args);
     },
 
     async unsubscribe_agent_event(args: {
@@ -808,37 +791,11 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       topic_pattern: string;
       label?: string;
     }): Promise<ToolResult> {
-      try {
-        const agent = getLongHorizonAgentInSpace(args.agent_id);
-        if (!agent) return jsonResult({ success: true });
-        const repo = requireSubscriptionRepo();
-        const source = sourceFromTopicPattern(args.topic_pattern);
-        const subscription = repo.getSubscriptionByRoute(
-          spaceId,
-          args.agent_id,
-          source,
-          args.topic_pattern
-        );
-        repo.deleteSubscriptionByRoute(spaceId, args.agent_id, source, args.topic_pattern);
-        if (subscription) runtime.removeLongHorizonSubscription(spaceId, subscription.id);
-        logAudit('unsubscribe_agent_event', args);
-        return jsonResult({ success: true });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        return jsonResult({ success: false, error: message });
-      }
+      return agentEventSubscriptions.unsubscribeAgentEvent(args);
     },
 
     async list_agent_event_subscriptions(args: { agent_id: string }): Promise<ToolResult> {
-      try {
-        const agent = getLongHorizonAgentInSpace(args.agent_id);
-        if (!agent) return jsonResult({ success: true, subscriptions: [] });
-        const subscriptions = requireSubscriptionRepo().listSubscriptions(args.agent_id);
-        return jsonResult({ success: true, subscriptions });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        return jsonResult({ success: false, error: message });
-      }
+      return agentEventSubscriptions.listAgentEventSubscriptions(args);
     },
   };
 }
