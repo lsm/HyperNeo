@@ -34,7 +34,12 @@ export const REVIEWER_HOT_ACTIONS: readonly string[] = [
   'list_artifacts',
 ];
 
-export const QA_HOT_ACTIONS: readonly string[] = ['list_tasks', 'list_workflows', 'update_task'];
+export const QA_HOT_ACTIONS: readonly string[] = [
+  'list_tasks',
+  'list_workflows',
+  'session.get',
+  'update_task',
+];
 
 export const ROLE_HOT_ACTIONS: Record<string, readonly string[]> = {
   coder: CODER_HOT_ACTIONS,
