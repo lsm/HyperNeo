@@ -12,6 +12,7 @@ export type OperationCallerRole =
 
 export interface OperationCaller {
   readonly source: 'rpc' | 'mcp' | 'internal';
+  readonly principal?: string;
   readonly sessionId?: string;
   readonly spaceId?: string;
   readonly role?: OperationCallerRole;

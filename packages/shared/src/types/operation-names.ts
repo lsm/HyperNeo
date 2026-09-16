@@ -38,6 +38,8 @@ export const OPERATION_NAMES = [
   'goal.triggerTask',
   'goal.update',
   'message.send',
+  'node.channels.list',
+  'node.reachableAgents.list',
   'operations.describe',
   'operations.list',
   'schedule.create',
