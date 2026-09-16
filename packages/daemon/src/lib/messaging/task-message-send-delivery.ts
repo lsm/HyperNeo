@@ -1,6 +1,6 @@
 import type { NodeExecution, SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
 import type { DeliveryRecord, MessageRecord } from '../../../../messaging/src/types.ts';
-import { createDeliverTaskWorkerMessagePipeline } from '../space/actions/task-message-delivery.ts';
+import { createDeliverTaskWorkerMessagePipeline } from '../tasks/task-message-delivery.ts';
 import type { TaskAgentManager } from '../space/runtime/task-agent-manager.ts';
 import type { ToolResult } from '../space/tools/tool-result.ts';
 import { SpaceDeliveryFacade } from './delivery-facade.ts';

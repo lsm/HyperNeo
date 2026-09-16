@@ -6,7 +6,7 @@ import {
 import type { SpaceMcpSessionRole } from '../runtime/space-mcp-session-policy.ts';
 import { wrapHandlerWithHooks } from '../../workflows/hook-engine.ts';
 import type { ToolResult } from '../tools/tool-result.ts';
-import { runMarkCompleteOperation } from './mark-complete-operation.ts';
+import { runMarkCompleteOperation } from '../../tasks/mark-complete-operation.ts';
 import {
   CreateStandaloneTaskSchema,
   GetExternalEventSchema,
