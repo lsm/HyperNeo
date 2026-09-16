@@ -195,10 +195,10 @@ function makeSpaceEntries(spaceApproveCalls: string[]): ActionDefinition[] {
       },
     }),
     defineAction({
-      name: 'list_sessions',
+      name: 'list_workflows',
       family: 'space',
       safetyClass: 'read',
-      description: 'Lists sessions in the space',
+      description: 'Lists workflows in the space',
       paramsDoc: 'none',
       paramsSchema: z.object({}),
       handler: async () => [],
@@ -378,7 +378,7 @@ describe('composeRoleActionEntries — approve_task collision resolution', () =>
     expect(composed.map((entry) => entry.name)).toEqual([
       'list_peers',
       'approve_task',
-      'list_sessions',
+      'list_workflows',
     ]);
     const registry = createActionRegistry(composed);
     expect(registry.get('approve_task')?.family).toBe('node');
@@ -404,7 +404,7 @@ describe('composeRoleActionEntries — approve_task collision resolution', () =>
         }),
       ]
     );
-    expect(composed.map((entry) => entry.name)).toEqual(['list_peers', 'list_sessions']);
+    expect(composed.map((entry) => entry.name)).toEqual(['list_peers', 'list_workflows']);
     const registry = createActionRegistry(composed);
     expect(registry.get('approve_task')).toBeUndefined();
   });
@@ -439,7 +439,7 @@ describe('composeRoleActionEntries — approve_task collision resolution', () =>
         handler: async () => null,
       }),
       defineAction({
-        name: 'list_sessions',
+        name: 'list_workflows',
         family: 'space',
         safetyClass: 'read',
         description: 'space list',
@@ -461,7 +461,7 @@ describe('composeRoleActionEntries — approve_task collision resolution', () =>
     ]);
     const registry = createActionRegistry(composed);
     expect(registry.get('list_peers')).toBeDefined();
-    expect(registry.get('list_sessions')).toBeDefined();
+    expect(registry.get('list_workflows')).toBeDefined();
     expect(registry.get('approve_task')).toBeUndefined();
     expect(registry.get('submit_for_approval')).toBeUndefined();
     expect(registry.get('mark_complete')).toBeUndefined();
@@ -469,10 +469,10 @@ describe('composeRoleActionEntries — approve_task collision resolution', () =>
 
   test('space entries are normalized to the dispatcher family before dispatch', () => {
     const spaceEntry = defineAction({
-      name: 'list_sessions',
-      family: 'sessions',
+      name: 'list_workflows',
+      family: 'workflows',
       safetyClass: 'read',
-      description: 'Lists sessions in the space',
+      description: 'Lists workflows in the space',
       paramsDoc: 'none',
       paramsSchema: z.object({}),
       handler: async () => [],
@@ -480,7 +480,7 @@ describe('composeRoleActionEntries — approve_task collision resolution', () =>
     const composed = composeRoleActionEntries('coordinator', [spaceEntry], []);
     expect(composed[0].family).toBe('space');
     const registry = createActionRegistry(composed);
-    expect(registry.get('list_sessions')?.family).toBe('space');
+    expect(registry.get('list_workflows')?.family).toBe('space');
   });
 
   test('coordinator, member, long-term, and non-space registries never include node family', () => {
@@ -503,7 +503,7 @@ describe('composeRoleActionEntries — approve_task collision resolution', () =>
     ] as SpaceMcpSessionRole[]) {
       const composed = composeRoleActionEntries(role, spaceEntries, [nodeEntry]);
       expect(composed.every((entry) => entry.family !== 'node')).toBe(true);
-      expect(composed.map((entry) => entry.name)).toEqual(['approve_task', 'list_sessions']);
+      expect(composed.map((entry) => entry.name)).toEqual(['approve_task', 'list_workflows']);
     }
   });
 
@@ -517,7 +517,7 @@ describe('composeRoleActionEntries — approve_task collision resolution', () =>
         nodeEntries
       );
       const registry = createActionRegistry(composed);
-      expect(registry.get('list_sessions')?.family).toBe('space');
+      expect(registry.get('list_workflows')?.family).toBe('space');
       expect(registry.get('list_peers')?.family).toBe('node');
       expect(registry.get('approve_task')).toBeUndefined();
       expect(registry.entries).toHaveLength(ALWAYS_ON_NAMES.length + 1);
@@ -538,7 +538,7 @@ describe('composeRoleActionEntries — approve_task collision resolution', () =>
     });
     const spaceEntries = [
       defineAction({
-        name: 'list_sessions',
+        name: 'list_workflows',
         family: 'space',
         safetyClass: 'read',
         description: 'space list',
@@ -556,10 +556,10 @@ describe('composeRoleActionEntries — approve_task collision resolution', () =>
         handler: async () => null,
       }),
       defineAction({
-        name: 'delete_scheduled_task',
+        name: 'delete_agent_template',
         family: 'space',
         safetyClass: 'destructive',
-        description: 'space delete schedule',
+        description: 'space delete template',
         paramsDoc: 'none',
         paramsSchema: z.object({}),
         handler: async () => null,
@@ -568,9 +568,9 @@ describe('composeRoleActionEntries — approve_task collision resolution', () =>
     const composed = composeRoleActionEntries('workflow_worker', spaceEntries, [nodeEntry]);
     const registry = createActionRegistry(composed);
     expect(registry.get('list_peers')).toBeDefined();
-    expect(registry.get('list_sessions')).toBeDefined();
+    expect(registry.get('list_workflows')).toBeDefined();
     expect(registry.get('change_plan')).toBeUndefined();
-    expect(registry.get('delete_scheduled_task')).toBeUndefined();
+    expect(registry.get('delete_agent_template')).toBeUndefined();
   });
 
   test('invoking approve_task on a worker registry routes to the node handler', async () => {

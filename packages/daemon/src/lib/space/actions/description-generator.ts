@@ -37,7 +37,7 @@ export const REVIEWER_HOT_ACTIONS: readonly string[] = [
 export const QA_HOT_ACTIONS: readonly string[] = [
   'list_tasks',
   'list_workflows',
-  'get_session_detail',
+  'session.get',
   'update_task',
 ];
 
