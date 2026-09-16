@@ -797,8 +797,8 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
         agentName: myAgentName,
         message:
           'node-agent MCP server is registered for this session — the fact that this tool ' +
-          'call succeeded proves it. If a previous mcp__node-agent__send_message call ' +
-          'returned "No such tool available", retry it now.',
+          'call succeeded proves it. If a previous invoke(name="send_message") call on the ' +
+          'operations server returned "No such tool available", retry it now.',
       });
     },
   };

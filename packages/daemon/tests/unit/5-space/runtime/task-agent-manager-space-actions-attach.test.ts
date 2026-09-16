@@ -12,6 +12,7 @@ import { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
 import {
   createOperationRegistry,
   defineOperation,
+  type OperationDefinition,
   type OperationRegistry,
 } from '../../../../src/lib/operations/registry.ts';
 import { SessionManager } from '../../../../src/lib/session/session-manager.ts';
@@ -31,7 +32,7 @@ const TASK_ID = 'task-actions-attach';
 const EXEC_ID = 'exec-actions-attach';
 const SUB_SESSION_ID = `space:${SPACE_ID}:task:${TASK_ID}:exec:${EXEC_ID}`;
 
-function makeManager(): TaskAgentManager {
+function makeManager(operations: OperationDefinition[] = []): TaskAgentManager {
   const execution = {
     id: EXEC_ID,
     workflowRunId: RUN_ID,
@@ -45,7 +46,7 @@ function makeManager(): TaskAgentManager {
   return new TaskAgentManager({
     db: { getDatabase: () => new BunDatabase(':memory:') },
     internalEventBus: { subscribe: () => () => {} },
-    sessionManager: { getOperationRegistry: () => createOperationRegistry([]) },
+    sessionManager: { getOperationRegistry: () => createOperationRegistry(operations) },
     taskRepo: {
       getTask: () => task,
       getTaskByNumber: () => task,
@@ -66,6 +67,16 @@ function makeManager(): TaskAgentManager {
         }) as import('../../../../src/lib/session-resolution/target.ts').EnsureSessionOutcome,
     },
   } as unknown as TaskAgentManagerConfig);
+}
+
+function sendMessageOperation(): OperationDefinition {
+  return defineOperation({
+    name: 'send_message',
+    description: 'send_message',
+    inputSchema: z.unknown(),
+    resultSchema: z.unknown(),
+    execute: async () => 'sent',
+  }) as OperationDefinition;
 }
 
 function buildServers(tam: TaskAgentManager, agentName = 'coder'): Record<string, McpServerConfig> {
@@ -238,6 +249,20 @@ describe('TaskAgentManager — space-actions dispatcher attach', () => {
         expect(names.has(name)).toBe(true);
       }
     }
+  });
+
+  test('worker action names carry operations the action registry no longer defines', () => {
+    const tam = makeManager([sendMessageOperation()]);
+    const names = workerActionNames(tam);
+    const actions = tam.workerActionRegistryFor(SUB_SESSION_ID);
+    expect(actions?.entries.some((entry) => entry.name === 'send_message')).toBe(false);
+    expect(names.has('send_message')).toBe(true);
+  });
+
+  test('the contract still suggests send_message once it is only an operation', () => {
+    const tam = makeManager([sendMessageOperation()]);
+    const contract = contractOf(tam, 'coder', workerActionNames(tam));
+    expect(contract).toContain('invoke(name="send_message")');
   });
 
   test('without registry names the contract omits suggestions instead of guessing', () => {
