@@ -9,6 +9,7 @@ import { createAgentOperations } from '../agents/operations.ts';
 import {
   publishSpaceAgentV2Mirror,
   publishUnifiedAgentCreated,
+  publishUnifiedAgentUpdated,
 } from '../agents/unified-agent-events.ts';
 import type { OperationDefinition } from '../operations/registry.ts';
 import { createCompletionGateBindings } from '../tasks/complete-task-gates.ts';
@@ -1287,6 +1288,20 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
           'created'
         );
       },
+      publishAgentUpdated: (agent, sessionId) => {
+        void publishUnifiedAgentUpdated(deps.internalEventBus, agent, sessionId);
+        void publishSpaceAgentV2Mirror(
+          deps.internalEventBus,
+          spaceAgentRepo,
+          agent.spaceId,
+          agent.id,
+          'updated'
+        );
+      },
+      refreshAgentSubscriptions: (spaceId, agentId) =>
+        spaceRuntimeService.refreshLongHorizonAgentSubscriptions(spaceId, agentId),
+      clearAgentSessionProvider: (spaceId, agentId) =>
+        spaceRuntimeService.clearLongTermAgentSessionProvider(spaceId, agentId),
       audit: (operationName, summary, caller, spaceId) => {
         new McpAuditLogRepository(deps.db.getDatabase()).createEntry({
           sessionId: caller.sessionId,

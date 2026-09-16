@@ -1,7 +1,10 @@
 export const OPERATION_NAMES = [
+  'agent.archive',
   'agent.create',
   'agent.get',
   'agent.list',
+  'agent.pause',
+  'agent.update',
   'message.send',
   'operations.describe',
   'operations.list',
