@@ -12,6 +12,7 @@ import {
   loginProvider,
   logoutProvider,
   refreshProvider,
+  submitProviderCallback,
   listProviderRemoteModels,
 } from '../../lib/api-helpers.ts';
 import { toast } from '../../lib/toast.ts';
@@ -363,7 +364,7 @@ export function ProvidersSettings() {
   };
 
   useEffect(() => {
-    if (!oauthFlow) return;
+    if (!oauthFlow || (oauthFlow.authUrl && oauthFlow.providerId === 'anthropic')) return;
     const pollInterval = setInterval(async () => {
       try {
         const response = await listProviderAuthStatus();
@@ -1031,11 +1032,12 @@ export function ProvidersSettings() {
 
                     {isExpanded && (
                       <div class="px-4 pb-4 border-t border-white/[0.06] space-y-4">
-                        <div class="pt-3">
+                        <div class="pt-3 space-y-2">
                           <h5 class="text-xs font-semibold uppercase tracking-wider text-fg-muted mb-2">
                             Authentication
                           </h5>
-                          {provider.authType === 'api_key' && (
+                          {(provider.authType === 'api_key' ||
+                            provider.providerId === 'anthropic') && (
                             <div class="flex gap-2">
                               <input
                                 type="password"
@@ -1060,7 +1062,8 @@ export function ProvidersSettings() {
                               </Button>
                             </div>
                           )}
-                          {provider.authType === 'oauth' && (
+                          {(provider.authType === 'oauth' ||
+                            provider.providerId === 'anthropic') && (
                             <div class="flex gap-2">
                               {needsRefresh && (
                                 <Button
@@ -1073,7 +1076,7 @@ export function ProvidersSettings() {
                                   Refresh Login
                                 </Button>
                               )}
-                              {isAuthenticated || needsRefresh ? (
+                              {(isAuthenticated || needsRefresh) && (
                                 <Button
                                   size="sm"
                                   variant="secondary"
@@ -1083,7 +1086,8 @@ export function ProvidersSettings() {
                                 >
                                   Logout
                                 </Button>
-                              ) : (
+                              )}
+                              {(!isAuthenticated || provider.providerId === 'anthropic') && (
                                 <Button
                                   size="sm"
                                   variant="primary"
@@ -1369,8 +1373,14 @@ export function ProvidersSettings() {
           }}
           onComplete={() => {
             setOauthFlow(null);
+            toast.success(`${oauthFlow.providerName} authenticated successfully`);
             loadProviders();
           }}
+          onSubmitCallback={
+            oauthFlow.providerId === 'anthropic'
+              ? (input) => submitProviderCallback(oauthFlow.providerId, input)
+              : undefined
+          }
         />
       )}
 
