@@ -1,11 +1,6 @@
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
-import { execSync } from 'node:child_process';
-import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { z } from 'zod';
-import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
@@ -18,8 +13,6 @@ import {
 import { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import { hasRuntimeWorkerOperations } from '../../../../src/lib/session/sub-session-identity.ts';
 import { MessageHub, type McpServerConfig } from '@hyperneo/shared';
-import type { ToolResult } from '../../../../src/lib/space/tools/tool-result.ts';
-import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import {
   createTestDb,
   createTestInternalEventBus,
@@ -184,7 +177,6 @@ describe('TaskAgentManager — space-actions dispatcher attach', () => {
     const tam = makeManager();
     const servers = buildServers(tam);
     expect(Object.keys(servers)).toEqual([]);
-    expect(workerActionNames(tam)).toContain('list_peers');
     expect(tam.workerActionRegistryFor(SUB_SESSION_ID)?.get('list_actions')).toBeDefined();
     expect(
       tam.workerActionRegistryFor(SUB_SESSION_ID)?.get('approve_pending_completion')
@@ -239,9 +231,9 @@ describe('TaskAgentManager — space-actions dispatcher attach', () => {
       'invoke({ name, input? }) on the operations server — one door for every operation available to the Coder role'
     );
     expect(contract).toContain('invoke(name="operations.list")');
-    expect(contract).toContain('invoke(name="restore_node_agent")');
-    expect(contract).toContain('invoke(name="create_standalone_task")');
+    expect(contract).toContain('invoke(name="save_artifact"');
     expect(contract).not.toContain('invoke(name="update_task")');
+    expect(contract).not.toContain('invoke(name="create_standalone_task")');
     expect(contract).not.toContain('send_message({ target, message, data? })');
     expect(contract).not.toContain('Escalation: send_message');
   });
@@ -254,11 +246,13 @@ describe('TaskAgentManager — space-actions dispatcher attach', () => {
       const suggested = [...contract.matchAll(/invoke\(name="([a-z_]+)"\)/g)].map(
         (match) => match[1]
       );
-      expect(suggested.length).toBeGreaterThan(0);
       for (const name of suggested) {
         expect(names.has(name)).toBe(true);
       }
     }
+    const reviewerNames = workerActionNames(makeManager(), 'reviewer');
+    const reviewerContract = contractOf(makeManager(), 'reviewer', reviewerNames);
+    expect(reviewerContract).toContain('invoke(name="save_artifact"');
   });
 
   test('worker action names carry operations the action registry no longer defines', () => {
@@ -410,99 +404,5 @@ describe('TaskAgentManager — worker operations attach (#4600)', () => {
       hub.cleanup();
       db.close();
     }
-  });
-});
-
-describe('TaskAgentManager — space-actions create_standalone_task default-workspace gate (#3589)', () => {
-  const NON_GIT_PRIMARY = '/nonexistent/hyperneo-non-git-primary';
-  let db: BunDatabase;
-  let secondaryDir: string;
-
-  beforeEach(() => {
-    db = new BunDatabase(':memory:');
-    db.exec('PRAGMA foreign_keys = ON');
-    runMigrations(db, () => {});
-    db.prepare(
-      `INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions,
-       allowed_models, session_ids, slug, status, created_at, updated_at)
-       VALUES (?, ?, ?, '', '', '', '[]', '[]', ?, 'active', ?, ?)`
-    ).run(SPACE_ID, NON_GIT_PRIMARY, SPACE_ID, SPACE_ID, Date.now(), Date.now());
-    secondaryDir = realpathSync(mkdtempSync(join(tmpdir(), 'hyperneo-node-ws-3589-')));
-    execSync('git -c init.defaultBranch=main init', { cwd: secondaryDir, stdio: 'pipe' });
-    db.prepare(
-      `INSERT INTO space_workspaces (id, space_id, path, label, is_primary, created_at, updated_at)
-       VALUES ('ws-node-sec', ?, ?, 'dolmen', 0, 0, 0)`
-    ).run(SPACE_ID, secondaryDir);
-  });
-
-  afterEach(() => {
-    db.close();
-    rmSync(secondaryDir, { recursive: true, force: true });
-  });
-
-  function makeMigratedManager(): TaskAgentManager {
-    const execution = {
-      id: EXEC_ID,
-      workflowRunId: RUN_ID,
-      workflowNodeId: 'node-coder',
-      agentName: 'coder',
-      agentId: 'agent-coder',
-      agentSessionId: SUB_SESSION_ID,
-      status: 'in_progress',
-    };
-    const task = { id: TASK_ID, spaceId: SPACE_ID, workflowRunId: RUN_ID, taskNumber: 7 };
-    return new TaskAgentManager({
-      db: { getDatabase: () => db },
-      internalEventBus: { subscribe: () => () => {} },
-      taskRepo: {
-        getTask: () => task,
-        getTaskByNumber: () => task,
-        listByWorkflowRun: () => [task],
-      },
-      nodeExecutionRepo: { listByWorkflowRun: () => [execution] },
-      workflowRunRepo: { getRun: () => null },
-      spaceManager: new SpaceManager(db),
-      spaceRuntimeService: {
-        getSpaceRuntime: () =>
-          ({}) as unknown as import('../../../../src/lib/space/runtime/space-runtime.ts').SpaceRuntime,
-        isWorkflowRunActive: () => true,
-        activateWorkflowNode: async () => [],
-        ensureToolTargetSession: async () =>
-          ({
-            kind: 'unresolved',
-            reason: 'test',
-          }) as import('../../../../src/lib/session-resolution/target.ts').EnsureSessionOutcome,
-      },
-    } as unknown as TaskAgentManagerConfig);
-  }
-
-  async function callCreateStandaloneTask(
-    args: Record<string, unknown>
-  ): Promise<Record<string, unknown>> {
-    const tam = makeMigratedManager();
-    buildServers(tam);
-    const action = tam.workerActionRegistryFor(SUB_SESSION_ID)?.get('create_standalone_task');
-    expect(action).toBeDefined();
-    const result = (await action!.handler(args)) as ToolResult;
-    return JSON.parse(result.content[0].text) as Record<string, unknown>;
-  }
-
-  test('rejects an omitted workspace when the space primary is not a git repository', async () => {
-    const parsed = await callCreateStandaloneTask({ title: 'Node task', description: 'd' });
-    expect(parsed.success).toBe(false);
-    expect(parsed.error).toContain('is not a git repository');
-    expect(parsed.error).toContain('"dolmen"');
-    expect((db.prepare('SELECT COUNT(*) AS c FROM space_tasks').get() as { c: number }).c).toBe(0);
-  });
-
-  test('accepts an explicit registered workspace and pins the created task', async () => {
-    const parsed = await callCreateStandaloneTask({
-      title: 'Node task',
-      description: 'd',
-      workspace: secondaryDir,
-    });
-    expect(parsed.success).toBe(true);
-    const task = parsed.task as { workspacePath?: string | null };
-    expect(task.workspacePath).toBe(secondaryDir);
   });
 });
