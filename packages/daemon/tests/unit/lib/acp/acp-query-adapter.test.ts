@@ -88,7 +88,7 @@ describe('AcpQueryAdapter', () => {
           AcpQueryAdapter as unknown as new (
             client: unknown,
             prompt: unknown
-          ) => AcpQueryAdapter
+          ) => InstanceType<typeof AcpQueryAdapter>
         )(new EmptyClient(), [])
     ).toThrow('AcpClient has no active session');
   });
