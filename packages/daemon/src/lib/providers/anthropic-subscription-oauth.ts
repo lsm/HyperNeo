@@ -4,7 +4,7 @@ export const CLAUDE_SUBSCRIPTION_OAUTH_CONFIG = {
   clientId: '9d1c250a-e61b-44d9-88ed-5944d1962f5e',
   authorizeUrl: 'https://claude.com/cai/oauth/authorize',
   tokenUrl: 'https://platform.claude.com/v1/oauth/token',
-  callbackPath: '/callback',
+  manualRedirectUrl: 'https://platform.claude.com/oauth/code/callback',
   allScopes: [
     'org:create_api_key',
     'user:profile',
@@ -138,6 +138,23 @@ export type ClaudeSubscriptionRefreshResult =
 
 export type ClaudeSubscriptionCallback = { code: string; state: string } | { error: string } | null;
 
+function callbackParams(source: string): URLSearchParams | null {
+  const queryIndex = source.indexOf('?');
+  const fragmentIndex = source.indexOf('#');
+  const parts: string[] = [];
+  if (queryIndex >= 0) {
+    parts.push(
+      source.slice(queryIndex + 1, fragmentIndex > queryIndex ? fragmentIndex : undefined)
+    );
+  }
+  if (fragmentIndex >= 0) {
+    parts.push(source.slice(fragmentIndex + 1));
+  }
+  if (parts.length === 0) return null;
+  const params = new URLSearchParams(parts.join('&'));
+  return [...params.keys()].length > 0 ? params : null;
+}
+
 export function parseClaudeSubscriptionCallback(input: string): ClaudeSubscriptionCallback {
   const trimmed = input.trim();
   if (!trimmed) return null;
@@ -148,11 +165,13 @@ export function parseClaudeSubscriptionCallback(input: string): ClaudeSubscripti
     } catch {
       return null;
     }
-    const error = url.searchParams.get('error');
+    const params = callbackParams(trimmed);
+    const error = params?.get('error');
     if (error) return { error };
-    const code = url.searchParams.get('code');
-    const state = url.searchParams.get('state');
+    const code = params?.get('code');
+    const state = params?.get('state');
     if (!code || !state) return null;
+    if (url.pathname !== '/oauth/code/callback') return null;
     return { code, state };
   }
   const hashIndex = trimmed.indexOf('#');

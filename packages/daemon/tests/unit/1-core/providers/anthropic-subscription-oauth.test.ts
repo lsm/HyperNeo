@@ -41,6 +41,9 @@ describe('anthropic-subscription-oauth helpers', () => {
     expect(CLAUDE_SUBSCRIPTION_OAUTH_CONFIG.tokenUrl).toBe(
       'https://platform.claude.com/v1/oauth/token'
     );
+    expect(CLAUDE_SUBSCRIPTION_OAUTH_CONFIG.manualRedirectUrl).toBe(
+      'https://platform.claude.com/oauth/code/callback'
+    );
     expect(CLAUDE_SUBSCRIPTION_OAUTH_CONFIG.allScopes).toEqual([
       'org:create_api_key',
       'user:profile',
@@ -235,67 +238,21 @@ describe('AnthropicProvider Claude subscription OAuth', () => {
     return { provider, bodies };
   }
 
-  it('completes the redirect flow end to end from the loopback callback', async () => {
-    const { provider, bodies } = makeProvider(async () => jsonResponse(TOKEN_RESPONSE));
-
-    const credentialsPromise = new Promise<ProviderCredentials>((resolve) =>
-      provider.onCredentialsChanged(resolve)
-    );
+  it('authorizes against the Anthropic code page with the manual redirect', async () => {
+    const { provider } = makeProvider(async () => jsonResponse(TOKEN_RESPONSE));
 
     const flow = await provider.startOAuthFlow();
     expect(flow.type).toBe('redirect');
     expect(flow.authUrl).toBeTruthy();
 
     const authUrl = new URL(flow.authUrl!);
-    const state = authUrl.searchParams.get('state')!;
-    const redirectUri = authUrl.searchParams.get('redirect_uri')!;
-    expect(redirectUri).toMatch(/^http:\/\/localhost:\d+\/callback$/);
-    const callbackUrl =
-      `http://127.0.0.1:${new URL(redirectUri).port}/callback` +
-      `?code=auth-code-123&state=${encodeURIComponent(state)}`;
-
-    const callback = await fetch(callbackUrl);
-    expect(callback.status).toBe(200);
-
-    const credentials = await credentialsPromise;
-    expect(credentials.type).toBe('oauth');
-    expect(credentials.accessToken).toBe('subscription-access-token');
-    expect(credentials.refreshToken).toBe('subscription-refresh-token');
-    expect(credentials.expiresAt).toBeGreaterThan(Date.now() + 3500_000);
-    expect((credentials.raw?.account as { email_address?: string }).email_address).toBe(
-      'user@example.com'
+    expect(`${authUrl.origin}${authUrl.pathname}`).toBe(
+      CLAUDE_SUBSCRIPTION_OAUTH_CONFIG.authorizeUrl
     );
-
-    expect(bodies).toHaveLength(1);
-    expect(bodies[0]).toEqual({
-      grant_type: 'authorization_code',
-      code: 'auth-code-123',
-      redirect_uri: redirectUri,
-      client_id: CLAUDE_SUBSCRIPTION_OAUTH_CONFIG.clientId,
-      code_verifier: expect.any(String),
-      state,
-    });
-    expect(sha256Base64Url(String(bodies[0].code_verifier))).toBe(
-      authUrl.searchParams.get('code_challenge')
+    expect(authUrl.searchParams.get('redirect_uri')).toBe(
+      CLAUDE_SUBSCRIPTION_OAUTH_CONFIG.manualRedirectUrl
     );
-
-    expect(provider.getApiKey()).toBe('subscription-access-token');
-    expect(provider.getCredentials()).toEqual(credentials);
-    await provider.logout();
-  });
-
-  it('rejects a callback with a mismatched state parameter', async () => {
-    const { provider, bodies } = makeProvider(async () => jsonResponse(TOKEN_RESPONSE));
-
-    const flow = await provider.startOAuthFlow();
-    const authUrl = new URL(flow.authUrl!);
-    const redirectUri = authUrl.searchParams.get('redirect_uri')!;
-    const callbackUrl = `http://127.0.0.1:${new URL(redirectUri).port}/callback`;
-
-    const callback = await fetch(`${callbackUrl}?code=auth-code&state=wrong-state`);
-    expect(callback.status).toBe(400);
-    expect(provider.getCredentials()).toBeNull();
-    expect(bodies).toHaveLength(0);
+    expect(flow.message).toContain('paste the code');
     await provider.logout();
   });
 
@@ -429,7 +386,7 @@ describe('AnthropicProvider Claude subscription OAuth', () => {
   });
 
   describe('submitOAuthCallback', () => {
-    it('completes the flow from a pasted callback URL', async () => {
+    it('completes the flow from a pasted code page URL', async () => {
       const { provider, bodies } = makeProvider(async () => jsonResponse(TOKEN_RESPONSE));
 
       const credentialsPromise = new Promise<ProviderCredentials>((resolve) =>
@@ -439,8 +396,8 @@ describe('AnthropicProvider Claude subscription OAuth', () => {
       const authUrl = new URL(flow.authUrl!);
       const state = authUrl.searchParams.get('state')!;
       const pasted =
-        `http://localhost:${new URL(authUrl.searchParams.get('redirect_uri')!).port}/callback` +
-        `?code=relayed-code&state=${encodeURIComponent(state)}`;
+        `${CLAUDE_SUBSCRIPTION_OAUTH_CONFIG.manualRedirectUrl}` +
+        `#code=relayed-code&state=${encodeURIComponent(state)}`;
 
       const result = await provider.submitOAuthCallback(pasted);
       expect(result).toEqual({ ok: true });
@@ -455,8 +412,12 @@ describe('AnthropicProvider Claude subscription OAuth', () => {
         grant_type: 'authorization_code',
         code: 'relayed-code',
         state,
-        redirect_uri: authUrl.searchParams.get('redirect_uri'),
+        redirect_uri: CLAUDE_SUBSCRIPTION_OAUTH_CONFIG.manualRedirectUrl,
+        code_verifier: expect.any(String),
       });
+      expect(sha256Base64Url(String(bodies[0].code_verifier))).toBe(
+        authUrl.searchParams.get('code_challenge')
+      );
     });
 
     it('accepts the code#state paste format', async () => {
@@ -476,7 +437,7 @@ describe('AnthropicProvider Claude subscription OAuth', () => {
       await provider.startOAuthFlow();
 
       const result = await provider.submitOAuthCallback(
-        'http://localhost:1234/callback?code=some-code&state=wrong-state'
+        `${CLAUDE_SUBSCRIPTION_OAUTH_CONFIG.manualRedirectUrl}#code=some-code&state=wrong-state`
       );
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toContain('does not match');
@@ -494,7 +455,22 @@ describe('AnthropicProvider Claude subscription OAuth', () => {
 
       const result = await provider.submitOAuthCallback('not-a-callback');
       expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.error).toContain('Paste the full callback URL');
+      if (!result.ok) expect(result.error).toContain('Paste the code page URL');
+
+      await provider.logout();
+    });
+
+    it('rejects pasted URLs that are not the Anthropic code page', async () => {
+      const { provider, bodies } = makeProvider(async () => jsonResponse(TOKEN_RESPONSE));
+
+      await provider.startOAuthFlow();
+
+      const result = await provider.submitOAuthCallback(
+        'http://localhost:49279/callback?code=abc&state=def'
+      );
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toContain('Paste the code page URL');
+      expect(bodies).toHaveLength(0);
 
       await provider.logout();
     });
@@ -502,9 +478,7 @@ describe('AnthropicProvider Claude subscription OAuth', () => {
     it('fails when no flow is active', async () => {
       const { provider } = makeProvider(async () => jsonResponse(TOKEN_RESPONSE));
 
-      const result = await provider.submitOAuthCallback(
-        'http://localhost:1/callback?code=a&state=b'
-      );
+      const result = await provider.submitOAuthCallback('some-code#some-state');
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toContain('No active OAuth login flow');
     });
@@ -531,7 +505,7 @@ describe('AnthropicProvider Claude subscription OAuth', () => {
       await provider.startOAuthFlow();
 
       const result = await provider.submitOAuthCallback(
-        'http://localhost:1234/callback?error=access_denied'
+        `${CLAUDE_SUBSCRIPTION_OAUTH_CONFIG.manualRedirectUrl}#error=access_denied`
       );
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toContain('access_denied');
@@ -543,15 +517,27 @@ describe('AnthropicProvider Claude subscription OAuth', () => {
   });
 
   describe('parseClaudeSubscriptionCallback', () => {
-    it('parses a full callback URL', () => {
+    it('parses the code page URL with the code in the fragment', () => {
       expect(
-        parseClaudeSubscriptionCallback('http://localhost:49279/callback?code=abc&state=def')
+        parseClaudeSubscriptionCallback(
+          'https://platform.claude.com/oauth/code/callback#code=abc&state=def'
+        )
+      ).toEqual({ code: 'abc', state: 'def' });
+    });
+
+    it('parses the code page URL with the code in the query', () => {
+      expect(
+        parseClaudeSubscriptionCallback(
+          'https://platform.claude.com/oauth/code/callback?code=abc&state=def'
+        )
       ).toEqual({ code: 'abc', state: 'def' });
     });
 
     it('surfaces the authorization error parameter', () => {
       expect(
-        parseClaudeSubscriptionCallback('http://localhost:1/callback?error=access_denied')
+        parseClaudeSubscriptionCallback(
+          'https://platform.claude.com/oauth/code/callback#error=access_denied'
+        )
       ).toEqual({ error: 'access_denied' });
     });
 
@@ -562,10 +548,15 @@ describe('AnthropicProvider Claude subscription OAuth', () => {
       });
     });
 
-    it('rejects inputs without a state', () => {
-      expect(parseClaudeSubscriptionCallback('http://localhost:1/callback?code=abc')).toBeNull();
+    it('rejects inputs without a state and non-code-page URLs', () => {
+      expect(
+        parseClaudeSubscriptionCallback('https://platform.claude.com/oauth/code/callback?code=abc')
+      ).toBeNull();
       expect(parseClaudeSubscriptionCallback('just-a-code')).toBeNull();
       expect(parseClaudeSubscriptionCallback('  ')).toBeNull();
+      expect(
+        parseClaudeSubscriptionCallback('http://localhost:1/callback?code=abc&state=def')
+      ).toBeNull();
     });
   });
 });

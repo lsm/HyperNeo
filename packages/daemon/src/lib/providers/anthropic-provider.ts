@@ -1,4 +1,3 @@
-import * as http from 'http';
 import type { QueryLike } from '../agent/query-like.ts';
 import type {
   Provider,
@@ -110,9 +109,7 @@ export class AnthropicProvider implements Provider {
     state: string;
     verifier: string;
     authUrl: string;
-    redirectUri: string;
     completed: boolean;
-    server: http.Server | null;
     finish: ((error?: Error) => void) | null;
   } | null = null;
 
@@ -165,10 +162,12 @@ export class AnthropicProvider implements Provider {
     const flow = {
       state,
       verifier,
-      authUrl: '',
-      redirectUri: '',
+      authUrl: buildClaudeSubscriptionAuthorizeUrl({
+        state,
+        codeChallenge: challenge,
+        redirectUri: CLAUDE_SUBSCRIPTION_OAUTH_CONFIG.manualRedirectUrl,
+      }),
       completed: false,
-      server: null as http.Server | null,
       finish: null as ((error?: Error) => void) | null,
     };
     this.activeOAuthFlow = flow;
@@ -176,37 +175,11 @@ export class AnthropicProvider implements Provider {
       logger.error('Claude subscription OAuth flow failed:', error);
     });
 
-    const port = await new Promise<number>((resolve, reject) => {
-      const server = http.createServer((req, res) =>
-        this.handleOAuthCallbackRequest(req, res, flow)
-      );
-      flow.server = server;
-      server.once('error', (error) => {
-        flow.finish?.(error);
-        reject(new Error(`Failed to start OAuth callback server: ${error.message}`));
-      });
-      server.listen(0, '127.0.0.1', () => {
-        const address = server.address();
-        if (address && typeof address === 'object') {
-          resolve(address.port);
-        } else {
-          reject(new Error('OAuth callback server bound without a port'));
-        }
-      });
-    });
-
-    const redirectUri = `http://localhost:${port}${CLAUDE_SUBSCRIPTION_OAUTH_CONFIG.callbackPath}`;
-    flow.redirectUri = redirectUri;
-    flow.authUrl = buildClaudeSubscriptionAuthorizeUrl({
-      state,
-      codeChallenge: challenge,
-      redirectUri,
-    });
-
     return {
       type: 'redirect',
       authUrl: flow.authUrl,
-      message: 'Opening browser for Claude subscription authentication...',
+      message:
+        'Authorize in your browser, then paste the code shown on the Anthropic page to finish.',
     };
   }
 
@@ -220,7 +193,6 @@ export class AnthropicProvider implements Provider {
       flow.finish = (error?: Error) => {
         clearTimeout(timer);
         flow.completed = true;
-        flow.server?.close();
         flow.finish = null;
         if (this.activeOAuthFlow === flow) {
           this.activeOAuthFlow = null;
@@ -234,72 +206,6 @@ export class AnthropicProvider implements Provider {
     });
   }
 
-  private handleOAuthCallbackRequest(
-    req: http.IncomingMessage,
-    res: http.ServerResponse,
-    flow: NonNullable<AnthropicProvider['activeOAuthFlow']>
-  ): void {
-    const url = new URL(req.url ?? '/', 'http://localhost');
-    if (url.pathname !== CLAUDE_SUBSCRIPTION_OAUTH_CONFIG.callbackPath) {
-      res.writeHead(404, { 'Content-Type': 'text/plain' });
-      res.end('Not found');
-      return;
-    }
-
-    const finishWith = (status: number, message: string, error: Error) => {
-      res.writeHead(status, { 'Content-Type': 'text/plain' });
-      res.end(message);
-      flow.finish?.(error);
-    };
-
-    const oauthError = url.searchParams.get('error');
-    if (oauthError) {
-      finishWith(400, `Authorization failed: ${oauthError}`, new Error(oauthError));
-      return;
-    }
-    const state = url.searchParams.get('state');
-    if (state !== flow.state) {
-      finishWith(400, 'Invalid state parameter', new Error('Invalid state parameter'));
-      return;
-    }
-    const code = url.searchParams.get('code');
-    if (!code) {
-      finishWith(
-        400,
-        'No authorization code received',
-        new Error('No authorization code received')
-      );
-      return;
-    }
-
-    res.writeHead(200, { 'Content-Type': 'text/html' });
-    res.end(
-      '<html><body><h1>Authentication successful!</h1><p>You can close this window and return to HyperNeo.</p><script>window.close();</script></body></html>'
-    );
-
-    this.completeClaudeSubscriptionFlow(flow, code);
-  }
-
-  private completeClaudeSubscriptionFlow(
-    flow: NonNullable<AnthropicProvider['activeOAuthFlow']>,
-    code: string
-  ): void {
-    exchangeClaudeSubscriptionCode({
-      code,
-      state: flow.state,
-      codeVerifier: flow.verifier,
-      redirectUri: flow.redirectUri,
-      fetchImpl: this.fetchImpl,
-    })
-      .then((tokens) => {
-        this.applyClaudeSubscriptionTokens(tokens);
-        flow.finish?.();
-      })
-      .catch((error) => {
-        flow.finish?.(error instanceof Error ? error : new Error(String(error)));
-      });
-  }
-
   async submitOAuthCallback(
     callbackInput: string
   ): Promise<{ ok: true } | { ok: false; error: string }> {
@@ -307,7 +213,7 @@ export class AnthropicProvider implements Provider {
     if (!flow || flow.completed) {
       return {
         ok: false,
-        error: 'No active OAuth login flow. Start the login again and paste the callback URL.',
+        error: 'No active OAuth login flow. Start the login again and paste the code.',
       };
     }
     const parsed = parseClaudeSubscriptionCallback(callbackInput);
@@ -315,7 +221,7 @@ export class AnthropicProvider implements Provider {
       return {
         ok: false,
         error:
-          'Paste the full callback URL (http://localhost:…/callback?code=…&state=…) ' +
+          'Paste the code page URL (…/oauth/code/callback#code=…&state=…) ' +
           'or the code#state value shown after authorizing.',
       };
     }
@@ -327,7 +233,7 @@ export class AnthropicProvider implements Provider {
       return {
         ok: false,
         error:
-          'The pasted code does not match the current login flow. Restart the login and paste the new callback URL.',
+          'The pasted code does not match the current login flow. Restart the login and paste the new code.',
       };
     }
     try {
@@ -335,7 +241,7 @@ export class AnthropicProvider implements Provider {
         code: parsed.code,
         state: flow.state,
         codeVerifier: flow.verifier,
-        redirectUri: flow.redirectUri,
+        redirectUri: CLAUDE_SUBSCRIPTION_OAUTH_CONFIG.manualRedirectUrl,
         fetchImpl: this.fetchImpl,
       });
       this.applyClaudeSubscriptionTokens(tokens);

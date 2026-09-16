@@ -287,7 +287,7 @@ describe('OAuthModal', () => {
         />
       );
 
-      const pasteInput = document.body.querySelector('input[placeholder^="http://localhost"]');
+      const pasteInput = document.body.querySelector('input[placeholder*="oauth/code/callback"]');
       expect(pasteInput).toBeNull();
     });
 
@@ -305,7 +305,7 @@ describe('OAuthModal', () => {
       );
 
       const pasteInput = document.body.querySelector(
-        'input[placeholder^="http://localhost"]'
+        'input[placeholder*="oauth/code/callback"]'
       ) as HTMLInputElement;
       expect(pasteInput).toBeTruthy();
 
@@ -340,7 +340,7 @@ describe('OAuthModal', () => {
       );
 
       const pasteInput = document.body.querySelector(
-        'input[placeholder^="http://localhost"]'
+        'input[placeholder*="oauth/code/callback"]'
       ) as HTMLInputElement;
       pasteInput.value = 'http://localhost:1/callback?code=a&state=b';
       pasteInput.dispatchEvent(new Event('input', { bubbles: true }));

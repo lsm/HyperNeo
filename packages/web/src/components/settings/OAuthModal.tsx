@@ -193,7 +193,8 @@ export function OAuthModal({
               <div class="text-sm text-fg-soft">
                 <p class="mb-4">
                   A browser window has been opened for you to authenticate with {providerName}.
-                  Complete the authentication in that window.
+                  After you approve, the page shows an authorization code — copy it and paste it
+                  below to finish.
                 </p>
 
                 <div class="flex justify-center">
@@ -219,15 +220,13 @@ export function OAuthModal({
               {onSubmitCallback && (
                 <div class="border-t border-line pt-3">
                   <p class="text-xs text-fg-muted mb-2">
-                    Browser on another machine? After authorizing, your browser lands on a localhost
-                    URL that fails to load — copy the full URL from the address bar
-                    (http://localhost:…/callback?code=…&state=…) and paste it here to finish the
-                    login.
+                    Paste the code page URL (…/oauth/code/callback#code=…&state=…) or the code#state
+                    value shown after authorizing.
                   </p>
                   <div class="flex gap-2">
                     <input
                       type="text"
-                      placeholder="http://localhost:…/callback?code=…&state=…"
+                      placeholder="…/oauth/code/callback#code=…&state=… or code#state"
                       value={callbackInput}
                       disabled={callbackSubmitting}
                       onInput={(e) => setCallbackInput(e.currentTarget.value)}
