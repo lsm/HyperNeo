@@ -155,6 +155,7 @@ import { EvolutionConversationAnalysisService } from '../evolution/conversation-
 import { EvolutionEpisodeService } from '../evolution/episode-service.ts';
 import { EvolutionScopeService } from '../evolution/scope-service.ts';
 import { EvolutionTraceEvidenceService } from '../evolution/trace-evidence-service.ts';
+import { createForgeOperations } from '../evolution/operations.ts';
 import { ScheduleService } from '../schedule/schedule-service.ts';
 import { SpaceGoalEventRepository } from '../../storage/repositories/space-goal-event-repository.ts';
 import { SpaceGoalOutcomeNotificationRepository } from '../../storage/repositories/space-goal-outcome-notification-repository.ts';
@@ -1331,6 +1332,29 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     })
   );
   familyOperations.push(
+    ...createForgeOperations({
+      getSession: (sessionId) => deps.db.getSession(sessionId),
+      longHorizonAgentRepo,
+      nodeExecutionRepo,
+      taskRepo: spaceTaskRepo,
+      workflowRunRepo: spaceWorkflowRunRepo,
+      scopeService: evolutionScopeService,
+      getGoal: (goalId) => spaceGoalService.getGoal(goalId),
+      db: deps.db.getDatabase(),
+      goalRepo: spaceGoalRepo,
+      scheduleService,
+      audit: (entry) =>
+        new McpAuditLogRepository(deps.db.getDatabase()).createEntry({
+          agentName: entry.caller.agentName,
+          sessionId: entry.caller.sessionId,
+          toolName: entry.toolName,
+          paramsSummary: JSON.stringify(entry.paramsSummary),
+          spaceId: entry.spaceId,
+          taskId: entry.taskId,
+        }),
+    })
+  );
+  familyOperations.push(
     ...createScheduleOperations({
       schedules: scheduleService,
       getSession: spaceCallerScopeDeps.getSession,
@@ -1348,6 +1372,12 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
           log.warn('schedule audit write failed:', err);
         }
       },
+    })
+  );
+  familyOperations.push(
+    ...createNodeMessagingOperations({
+      nodeExecutionRepo,
+      runtimeForSession: (sessionId) => taskAgentManager.nodeMessagingRuntimeFor(sessionId),
     })
   );
   familyOperations.push(
