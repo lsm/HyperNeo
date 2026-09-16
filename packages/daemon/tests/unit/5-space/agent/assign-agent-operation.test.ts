@@ -90,6 +90,12 @@ function registry() {
     createAgentOperations({
       getSession: (sessionId) => sessions.get(sessionId) ?? null,
       longHorizonAgentRepo: agentRepo,
+      reminderRepo: {
+        createReminder: () => {
+          throw new Error('reminders are not exercised by this suite');
+        },
+        listReminders: () => [],
+      },
       goalScopeRepo,
       getGoalSpace: (goalId) => readSpaceId('space_goals', goalId),
       getForgeScopeSpace: (scopeId) => readSpaceId('evolution_scopes', scopeId),

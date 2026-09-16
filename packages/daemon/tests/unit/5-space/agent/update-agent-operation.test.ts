@@ -47,6 +47,12 @@ function registry() {
     createAgentOperations({
       getSession: (sessionId) => sessions.get(sessionId) ?? null,
       longHorizonAgentRepo: agentRepo,
+      reminderRepo: {
+        createReminder: () => {
+          throw new Error('reminders are not exercised by this suite');
+        },
+        listReminders: () => [],
+      },
       publishAgentCreated: () => {},
       publishAgentUpdated: (record) => updated.push(record.id),
       refreshAgentSubscriptions: () => refreshOutcome,

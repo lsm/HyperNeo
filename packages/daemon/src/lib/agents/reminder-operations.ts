@@ -132,9 +132,9 @@ export function selectReminders(
 const SCOPE_DOC =
   'Human (RPC) callers pass spaceId; agent callers act in their own Space. Rejects agent_not_found when the agent belongs to another Space.';
 
-const CREATE_DESCRIPTION = `Schedule a one-shot reminder delivered to a long-horizon agent at remindAt, a millisecond epoch timestamp, and return the created reminder. The reminder starts in the active state and moves to done once it fires. ${SCOPE_DOC} Admitted for ad-hoc members and long-term agents whose session is active in the owning Space; read-only and worker sessions are rejected with agent_denied.`;
+const CREATE_DESCRIPTION = `Schedule a one-shot reminder delivered to a long-horizon agent at remindAt, a millisecond epoch timestamp, and return the created reminder. The reminder starts in the active state and moves to done once it fires. ${SCOPE_DOC} Admitted for ad-hoc members and long-term agents whose session is active in the owning Space. Read-only and worker sessions are refused by the operations door with forbidden before the call runs; an admitted role whose session is not active in that Space is rejected with agent_denied.`;
 
-const LIST_DESCRIPTION = `List the reminders of a long-horizon agent, soonest due first, each with its message, state, and delivery time. Pass state to keep only reminders in that state: active, paused, done, or cancelled. ${SCOPE_DOC} Read access is admitted for ad-hoc members and long-term agents; other sessions are rejected with agent_denied.`;
+const LIST_DESCRIPTION = `List the reminders of a long-horizon agent, soonest due first, each with its message, state, and delivery time. Pass state to keep only reminders in that state: active, paused, done, or cancelled. ${SCOPE_DOC} Read access is admitted for ad-hoc members and long-term agents; other sessions are refused by the operations door with forbidden before the call runs.`;
 
 export function createCreateAgentReminderOperation(deps: AgentReminderDependencies) {
   const access = 'mutate' as const;
