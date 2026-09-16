@@ -15,7 +15,6 @@ import { ScheduleService } from '../../../../src/lib/schedule/schedule-service.t
 import {
   EXTERNAL_EVENT_TOOL_SCHEMAS,
   INACTIVITY_TOOL_SCHEMAS,
-  SCHEDULED_TOOL_SCHEMAS,
 } from '../../../../src/lib/space/actions/space-agent-schemas.ts';
 import type { SpaceAgentToolsConfig } from '../../../../src/lib/space/actions/space-handlers.ts';
 import { DEFAULT_INACTIVITY_THRESHOLD_MS } from '../../../../src/lib/space/actions/space-handlers.ts';
@@ -150,12 +149,6 @@ const EXPECTED_BASE: Array<[string, string, string]> = [
   ['subscribe_agent_event', 'agents', 'mutate'],
   ['unsubscribe_agent_event', 'agents', 'mutate'],
   ['list_agent_event_subscriptions', 'agents', 'read'],
-  ['list_sessions', 'sessions', 'read'],
-  ['get_session_detail', 'sessions', 'read'],
-  ['get_session_messages', 'sessions', 'read'],
-  ['send_session_message', 'sessions', 'mutate'],
-  ['update_session_state', 'sessions', 'mutate'],
-  ['interrupt_session', 'sessions', 'destructive'],
   ['list_workflows', 'workflows', 'read'],
   ['get_workflow_run', 'workflows', 'read'],
   ['change_plan', 'workflows', 'destructive'],
@@ -177,12 +170,6 @@ const EXPECTED_BASE: Array<[string, string, string]> = [
 ];
 
 const EXPECTED_PART_C: Array<[string, string, string]> = [
-  ['create_scheduled_task', 'scheduled', 'mutate'],
-  ['list_scheduled_tasks', 'scheduled', 'read'],
-  ['get_scheduled_task', 'scheduled', 'read'],
-  ['pause_scheduled_task', 'scheduled', 'mutate'],
-  ['resume_scheduled_task', 'scheduled', 'mutate'],
-  ['delete_scheduled_task', 'scheduled', 'destructive'],
   ['get_external_event', 'external_events', 'read'],
   ['inactivity_config_get', 'inactivity', 'read'],
   ['inactivity_config_set_enabled', 'inactivity', 'mutate'],
@@ -191,12 +178,11 @@ const EXPECTED_PART_C: Array<[string, string, string]> = [
 ];
 
 const SCHEMA_GROUPS: Record<string, ActionDefinition['paramsSchema']> = {
-  ...SCHEDULED_TOOL_SCHEMAS,
   ...EXTERNAL_EVENT_TOOL_SCHEMAS,
   ...INACTIVITY_TOOL_SCHEMAS,
 };
 
-const PART_C_FAMILIES = new Set(['scheduled', 'external_events', 'inactivity']);
+const PART_C_FAMILIES = new Set(['external_events', 'inactivity']);
 
 function withExternalEventStore(overrides: Partial<SpaceAgentToolsConfig> = {}) {
   return makeCtx({
@@ -245,26 +231,22 @@ describe('createSpaceRegistryEntries — composition', () => {
     try {
       const registry = createActionRegistry(createSpaceRegistryEntries(ctx.config));
       expect(registry.entries).toHaveLength(EXPECTED_BASE.length + EXPECTED_PART_C.length);
-      expect(registry.get('delete_scheduled_task')?.safetyClass).toBe('destructive');
       expect(registry.get('get_external_event')?.family).toBe('external_events');
     } finally {
       ctx.db.close();
     }
   });
 
-  test('gates only the destructive schedule deletion — the typed path gates none of part C', () => {
+  test('the typed path gates none of part C', () => {
     const ctx = withExternalEventStore({ inactivityRunNow: async () => {} });
     try {
       const partC = createSpaceRegistryEntries(ctx.config).filter((entry) =>
         PART_C_FAMILIES.has(entry.family)
       );
+      expect(partC.length).toBeGreaterThan(0);
       for (const entry of partC) {
-        if (entry.name === 'delete_scheduled_task') continue;
         expect(entry.autonomyRequirement).toBeUndefined();
       }
-      expect(
-        partC.find((entry) => entry.name === 'delete_scheduled_task')?.autonomyRequirement
-      ).toBe(SESSION_WRITE_AUTONOMY_LEVEL);
     } finally {
       ctx.db.close();
     }
@@ -272,20 +254,6 @@ describe('createSpaceRegistryEntries — composition', () => {
 });
 
 describe('createSpaceRegistryEntries — conditional entries', () => {
-  test('omits every scheduled entry when scheduleService is absent', () => {
-    const ctx = withExternalEventStore({
-      scheduleService: undefined,
-      inactivityRunNow: async () => {},
-    });
-    try {
-      const entries = createSpaceRegistryEntries(ctx.config);
-      expect(entries.filter((entry) => entry.family === 'scheduled')).toEqual([]);
-      expect(entries).toHaveLength(EXPECTED_BASE.length + EXPECTED_PART_C.length - 6);
-    } finally {
-      ctx.db.close();
-    }
-  });
-
   test('omits get_external_event when externalEventStore is absent', () => {
     const ctx = makeCtx({ inactivityRunNow: async () => {} });
     try {
@@ -327,104 +295,6 @@ async function textPayload(result: unknown): Promise<Record<string, unknown>> {
   const content = (result as { content: Array<{ text: string }> }).content;
   return JSON.parse(content[0].text) as Record<string, unknown>;
 }
-
-describe('createSpaceRegistryEntries — scheduled handler wiring', () => {
-  test('walks a full schedule lifecycle through the registry handlers', async () => {
-    const ctx = withExternalEventStore();
-    try {
-      const byName = new Map(
-        createSpaceRegistryEntries(ctx.config).map((entry) => [entry.name, entry])
-      );
-      const create = byName.get('create_scheduled_task');
-      const list = byName.get('list_scheduled_tasks');
-      const get = byName.get('get_scheduled_task');
-      const pause = byName.get('pause_scheduled_task');
-      const resume = byName.get('resume_scheduled_task');
-      const remove = byName.get('delete_scheduled_task');
-      if (!create || !list || !get || !pause || !resume || !remove) {
-        throw new Error('scheduled entries missing');
-      }
-
-      const created = (await textPayload(
-        await create.handler({
-          title: 'Daily review',
-          description: 'Recurring review',
-          trigger_type: 'cron',
-          cron_expression: '@daily',
-        })
-      )) as { success: boolean; schedule: { id: string; status: string } };
-      expect(created.success).toBe(true);
-      const scheduleId = created.schedule.id;
-
-      const listed = (await textPayload(await list.handler({}))) as {
-        success: boolean;
-        schedules: Array<{ id: string }>;
-      };
-      expect(listed.success).toBe(true);
-      expect(listed.schedules.map((schedule) => schedule.id)).toContain(scheduleId);
-
-      const detail = (await textPayload(await get.handler({ schedule_id: scheduleId }))) as {
-        success: boolean;
-        schedule: { id: string };
-      };
-      expect(detail.success).toBe(true);
-      expect(detail.schedule.id).toBe(scheduleId);
-
-      const paused = (await textPayload(await pause.handler({ schedule_id: scheduleId }))) as {
-        success: boolean;
-        schedule: { status: string };
-      };
-      expect(paused.success).toBe(true);
-      expect(paused.schedule.status).toBe('paused');
-
-      const resumed = (await textPayload(await resume.handler({ schedule_id: scheduleId }))) as {
-        success: boolean;
-        schedule: { status: string };
-      };
-      expect(resumed.success).toBe(true);
-      expect(resumed.schedule.status).toBe('active');
-
-      const deleted = (await textPayload(await remove.handler({ schedule_id: scheduleId }))) as {
-        success: boolean;
-      };
-      expect(deleted.success).toBe(true);
-
-      const missing = (await textPayload(await get.handler({ schedule_id: scheduleId }))) as {
-        success: boolean;
-      };
-      expect(missing.success).toBe(false);
-    } finally {
-      ctx.db.close();
-    }
-  });
-
-  test('registry-dispatched scheduled handlers write no legacy audit rows — audit belongs to the dispatcher choke point', async () => {
-    const auditRows: Array<Record<string, unknown>> = [];
-    const auditLogRepo = {
-      createEntry: (entry: Record<string, unknown>) => {
-        auditRows.push(entry);
-      },
-    } as unknown as McpAuditLogRepository;
-    const ctx = withExternalEventStore({ auditLogRepo });
-    try {
-      const byName = new Map(
-        createSpaceRegistryEntries(ctx.config).map((entry) => [entry.name, entry])
-      );
-      const created = (await textPayload(
-        await byName.get('create_scheduled_task')!.handler({
-          title: 'Audited',
-          description: '',
-          trigger_type: 'cron',
-          cron_expression: '@daily',
-        })
-      )) as { success: boolean };
-      expect(created.success).toBe(true);
-      expect(auditRows).toEqual([]);
-    } finally {
-      ctx.db.close();
-    }
-  });
-});
 
 describe('createSpaceRegistryEntries — get_external_event wiring', () => {
   test('returns the record for a known event and not-found for unknown ids', async () => {

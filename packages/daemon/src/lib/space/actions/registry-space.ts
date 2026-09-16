@@ -41,19 +41,14 @@ import {
   CreateForgeScopeSchema,
   CreateForgeTaskProposalSchema,
   CreateGoalSchema,
-  CreateScheduledTaskSchema,
   CreateStandaloneTaskSchema,
   CreateTaskFromForgeProposalSchema,
   DeleteAgentTemplateSchema,
-  DeleteScheduledTaskSchema,
   GetAgentSchema,
   GetExternalEventSchema,
   GetForgeScopeSchema,
   GetForgeTimelineSchema,
   GetGoalSchema,
-  GetScheduledTaskSchema,
-  GetSessionDetailSchema,
-  GetSessionMessagesSchema,
   GetTaskDetailSchema,
   GetWorkflowDetailSchema,
   GetWorkflowRunSchema,
@@ -61,7 +56,6 @@ import {
   InactivityConfigSetEnabledSchema,
   InactivityConfigSetSchema,
   InactivityRunNowSchema,
-  InterruptSessionSchema,
   ListAgentEventSubscriptionsSchema,
   ListAgentRemindersSchema,
   ListAgentsSchema,
@@ -75,23 +69,18 @@ import {
   ListGoalEventsSchema,
   ListGoalsSchema,
   ListGoalTasksSchema,
-  ListScheduledTasksSchema,
-  ListSessionsSchema,
   ListTaskMembersSchema,
   ListTasksSchema,
   ListWorkflowsSchema,
   PauseAgentSchema,
   PauseGoalSchema,
-  PauseScheduledTaskSchema,
   PublishTaskSchema,
   ReassignTaskSchema,
   ResolveForgeScopeSchema,
   ResumeGoalSchema,
-  ResumeScheduledTaskSchema,
   RetryTaskSchema,
   ReviewGoalOutcomeSchema,
   SendMessageToTaskSchema,
-  SendSessionMessageSchema,
   SubscribeAgentEventSchema,
   SuggestWorkflowSchema,
   TriggerGoalTaskSchema,
@@ -105,7 +94,6 @@ import {
   UpdateForgeScopeSchema,
   UpdateForgeTaskProposalSchema,
   UpdateGoalSchema,
-  UpdateSessionStateSchema,
   UpdateTaskSchema,
 } from './space-agent-schemas.ts';
 import {
@@ -486,96 +474,6 @@ export function createSpaceRegistryEntries(
     }),
   ];
 
-  const sessionEntries: ActionDefinition[] = [
-    defineAction({
-      name: 'list_sessions',
-      family: 'sessions',
-      safetyClass: 'read',
-      description:
-        'List ad-hoc and worker sessions in this space; returns summaries with derived status, type, workspace, and git branch.',
-      paramsDoc: 'status?, type?, limit? (max 100, default 50), offset? (default 0)',
-      paramsSchema: ListSessionsSchema,
-      handler: (args) => handlers.list_sessions(args),
-    }),
-    defineAction({
-      name: 'get_session_detail',
-      family: 'sessions',
-      safetyClass: 'read',
-      description:
-        'Inspect one session including parsed processing_state and its last messages; returns the full session summary.',
-      paramsDoc: 'session_id',
-      paramsSchema: GetSessionDetailSchema,
-      handler: (args) => handlers.get_session_detail(args),
-    }),
-    defineAction({
-      name: 'get_session_messages',
-      family: 'sessions',
-      safetyClass: 'read',
-      description:
-        'Read one session conversation with per-message summaries; returns newest-first messages and a pagination cursor.',
-      paramsDoc:
-        'session_id, limit? (max 100, default 20), before? (timestamp or timestamp|id cursor)',
-      paramsSchema: GetSessionMessagesSchema,
-      handler: (args) => handlers.get_session_messages(args),
-    }),
-    defineAction({
-      name: 'send_session_message',
-      family: 'sessions',
-      safetyClass: 'mutate',
-      description:
-        'Send a user message to an ad-hoc session and optionally clear a pending question; returns the delivery result.',
-      paramsDoc: 'session_id, message, answer_question?',
-      paramsSchema: SendSessionMessageSchema,
-      auditRedactKeys: ['message'],
-      autonomyRequirement: async (params: z.infer<typeof SendSessionMessageSchema>) => {
-        if (params.answer_question) return SESSION_WRITE_AUTONOMY_LEVEL;
-        if (config.mySessionId && params.session_id !== config.mySessionId) {
-          return SESSION_WRITE_AUTONOMY_LEVEL;
-        }
-        return 1;
-      },
-      handler: operations
-        ? createOperationActionHandler(
-            operations,
-            { sessionId: config.mySessionId },
-            'session.message.send',
-            (params) => {
-              const typed = params as z.infer<typeof SendSessionMessageSchema>;
-              return {
-                spaceId: config.spaceId,
-                sessionId: typed.session_id,
-                message: typed.message,
-                answerQuestion: typed.answer_question,
-              };
-            }
-          )
-        : (args) => handlers.send_session_message(args),
-    }),
-    defineAction({
-      name: 'update_session_state',
-      family: 'sessions',
-      safetyClass: 'mutate',
-      description:
-        'Force a stuck session processing_state to idle, running, or waiting_for_input; returns previous and new state.',
-      paramsDoc:
-        'session_id, processing_state (idle|running|waiting_for_input), clear_pending_question?',
-      paramsSchema: UpdateSessionStateSchema,
-      autonomyRequirement: SESSION_WRITE_AUTONOMY_LEVEL,
-      handler: (args) => handlers.update_session_state(args),
-    }),
-    defineAction({
-      name: 'interrupt_session',
-      family: 'sessions',
-      safetyClass: 'destructive',
-      description:
-        'Force-interrupt a running or stuck session and reset it to idle; returns whether the interrupt was delivered.',
-      paramsDoc: 'session_id, reason?',
-      paramsSchema: InterruptSessionSchema,
-      autonomyRequirement: SESSION_WRITE_AUTONOMY_LEVEL,
-      handler: (args) => handlers.interrupt_session(args),
-    }),
-  ];
-
   const workflowEntries: ActionDefinition[] = [
     defineAction({
       name: 'list_workflows',
@@ -639,74 +537,6 @@ export function createSpaceRegistryEntries(
       throw new Error('No agent identity available for inactivity config');
     }
     return config.myAgentId;
-  }
-
-  if (config.scheduleService) {
-    partCEntries.push(
-      defineAction({
-        name: 'create_scheduled_task',
-        family: 'scheduled',
-        safetyClass: 'mutate',
-        description:
-          'Create a recurring (cron) or one-shot (at) schedule that spawns a real Space task each time it fires; returns the created schedule.',
-        paramsDoc:
-          'title, description, trigger_type (cron|at), cron_expression? (required for cron), run_at? ms (required for at), priority?, workflow_id?, labels?, timezone?',
-        auditRedactKeys: ['description'],
-        paramsSchema: CreateScheduledTaskSchema,
-        handler: (args) => handlers.create_scheduled_task(args),
-      }),
-      defineAction({
-        name: 'list_scheduled_tasks',
-        family: 'scheduled',
-        safetyClass: 'read',
-        description:
-          'List every task schedule in this space; returns schedules with trigger, next run time, and status.',
-        paramsDoc: 'status? (active|paused|completed)',
-        paramsSchema: ListScheduledTasksSchema,
-        handler: (args) => handlers.list_scheduled_tasks(args),
-      }),
-      defineAction({
-        name: 'get_scheduled_task',
-        family: 'scheduled',
-        safetyClass: 'read',
-        description:
-          'Inspect one schedule including its last spawned task and next run time; returns the schedule record.',
-        paramsDoc: 'schedule_id',
-        paramsSchema: GetScheduledTaskSchema,
-        handler: (args) => handlers.get_scheduled_task(args),
-      }),
-      defineAction({
-        name: 'pause_scheduled_task',
-        family: 'scheduled',
-        safetyClass: 'mutate',
-        description:
-          'Pause a schedule so it stops creating tasks until resumed; returns the paused schedule.',
-        paramsDoc: 'schedule_id',
-        paramsSchema: PauseScheduledTaskSchema,
-        handler: (args) => handlers.pause_scheduled_task(args),
-      }),
-      defineAction({
-        name: 'resume_scheduled_task',
-        family: 'scheduled',
-        safetyClass: 'mutate',
-        description:
-          'Resume a paused schedule, recomputing the next run time and re-enqueueing the job; returns the resumed schedule.',
-        paramsDoc: 'schedule_id',
-        paramsSchema: ResumeScheduledTaskSchema,
-        handler: (args) => handlers.resume_scheduled_task(args),
-      }),
-      defineAction({
-        name: 'delete_scheduled_task',
-        family: 'scheduled',
-        safetyClass: 'destructive',
-        description:
-          'Permanently delete a schedule and cancel its pending fire job; returns success, or a retry hint when modified concurrently.',
-        paramsDoc: 'schedule_id',
-        paramsSchema: DeleteScheduledTaskSchema,
-        autonomyRequirement: DESTRUCTIVE_ACTION_AUTONOMY_LEVEL,
-        handler: (args) => handlers.delete_scheduled_task(args),
-      })
-    );
   }
 
   if (config.externalEventStore) {
@@ -1549,13 +1379,7 @@ export function createSpaceRegistryEntries(
   ];
 
   const entries = config.db
-    ? [
-        ...agentLifecycleEntries,
-        ...sessionEntries,
-        ...workflowEntries,
-        ...taskEntries,
-        ...partCEntries,
-      ]
+    ? [...agentLifecycleEntries, ...workflowEntries, ...taskEntries, ...partCEntries]
     : [...workflowEntries, ...taskEntries, ...partCEntries];
   if (config.goalService) entries.push(...goalEntries);
   if (config.evolutionScopeService && config.evolutionEpisodeService) entries.push(...forgeEntries);

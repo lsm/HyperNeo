@@ -42,7 +42,6 @@ export const QA_HOT_ACTIONS: readonly string[] = [
   'list_tasks',
   'get_task_detail',
   'list_workflows',
-  'get_session_detail',
   'update_task',
 ];
 

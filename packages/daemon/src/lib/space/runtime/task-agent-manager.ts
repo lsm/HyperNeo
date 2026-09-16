@@ -5446,7 +5446,6 @@ export class TaskAgentManager {
       isWorkflowRunActive: (runId) => this.config.spaceRuntimeService.isWorkflowRunActive(runId),
       taskManager,
       sessionManager: this.config.sessionManager,
-      getRuntimeSession: (sid) => this.getCachedAgentSessionById(sid) ?? undefined,
       taskAgentManager: this,
       internalEventBus: this.config.internalEventBus,
       activateNode: async (runId, nodeId) => {

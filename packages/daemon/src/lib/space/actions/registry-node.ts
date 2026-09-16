@@ -412,14 +412,9 @@ export function createNodeRegistryEntries(
 
 const WORKER_SPACE_ACTION_ALLOWLIST = new Set([
   'get_external_event',
-  'get_scheduled_task',
-  'get_session_detail',
-  'get_session_messages',
   'get_workflow_detail',
   'get_workflow_run',
   'inactivity_config_get',
-  'list_scheduled_tasks',
-  'list_sessions',
   'list_workflows',
   'suggest_workflow',
 ]);

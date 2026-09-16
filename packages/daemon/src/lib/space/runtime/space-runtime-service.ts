@@ -965,8 +965,6 @@ export class SpaceRuntimeService {
       sessionManager: this.config.sessionManager,
       clearLongTermAgentSessionProvider: (sid, aid) =>
         this.clearLongTermAgentSessionProvider(sid, aid),
-      getRuntimeSession: (sid) =>
-        this.taskAgentManager?.getCachedAgentSessionById(sid) ?? undefined,
       taskAgentManager: this.taskAgentManager ?? undefined,
       internalEventBus: this.config.internalEventBus,
       ensureTargetSession: (target) => this.ensureToolTargetSession(target),
@@ -1536,8 +1534,6 @@ export class SpaceRuntimeService {
       sessionManager: this.config.sessionManager,
       clearLongTermAgentSessionProvider: (sid, aid) =>
         this.clearLongTermAgentSessionProvider(sid, aid),
-      getRuntimeSession: (sid) =>
-        this.taskAgentManager?.getCachedAgentSessionById(sid) ?? undefined,
       taskAgentManager: this.taskAgentManager ?? undefined,
       internalEventBus: this.config.internalEventBus,
       ensureTargetSession: (target) => this.ensureToolTargetSession(target),
@@ -1726,8 +1722,6 @@ export class SpaceRuntimeService {
       sessionManager: this.config.sessionManager,
       clearLongTermAgentSessionProvider: (sid, aid) =>
         this.clearLongTermAgentSessionProvider(sid, aid),
-      getRuntimeSession: (sid) =>
-        this.taskAgentManager?.getCachedAgentSessionById(sid) ?? undefined,
       taskAgentManager: this.taskAgentManager ?? undefined,
       internalEventBus: this.config.internalEventBus,
       activateNode: async (runId, nodeId) => {

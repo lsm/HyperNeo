@@ -25,7 +25,7 @@ import {
   SPACE_AGENT_TOOL_SCHEMAS,
   type SpaceAgentLifecycleToolName,
   type SpaceAgentToolName,
-  UpdateSessionStateSchema,
+  CreateAgentReminderSchema,
 } from '../../../../src/lib/space/actions/space-agent-schemas.ts';
 import type { SpaceAgentToolsConfig } from '../../../../src/lib/space/actions/space-handlers.ts';
 import { SESSION_WRITE_AUTONOMY_LEVEL } from '../../../../src/lib/space/tools/tool-admission-gates.ts';
@@ -154,12 +154,6 @@ const EXPECTED_ENTRIES: ReadonlyArray<readonly [string, string, string]> = [
   ['subscribe_agent_event', 'agents', 'mutate'],
   ['unsubscribe_agent_event', 'agents', 'mutate'],
   ['list_agent_event_subscriptions', 'agents', 'read'],
-  ['list_sessions', 'sessions', 'read'],
-  ['get_session_detail', 'sessions', 'read'],
-  ['get_session_messages', 'sessions', 'read'],
-  ['send_session_message', 'sessions', 'mutate'],
-  ['update_session_state', 'sessions', 'mutate'],
-  ['interrupt_session', 'sessions', 'destructive'],
   ['list_workflows', 'workflows', 'read'],
   ['get_workflow_run', 'workflows', 'read'],
   ['change_plan', 'workflows', 'destructive'],
@@ -227,7 +221,7 @@ describe('createSpaceRegistryEntries — composition', () => {
       expect(registry.get('list_agents')?.family).toBe('agents');
       expect(registry.get('archive_agent')?.safetyClass).toBe('mutate');
       expect(registry.get('list_workflows')?.family).toBe('workflows');
-      expect(registry.get('interrupt_session')?.safetyClass).toBe('destructive');
+      expect(registry.get('change_plan')?.safetyClass).toBe('destructive');
       expect(registry.get('list_tasks')?.family).toBe('tasks');
       expect(registry.get('archive_task')?.safetyClass).toBe('destructive');
       expect(registry.get('approve_pending_completion')?.safetyClass).toBe('human_only');
@@ -242,18 +236,16 @@ describe('createSpaceRegistryEntries — composition', () => {
       const byName = new Map(
         createSpaceRegistryEntries(ctx.config).map((entry) => [entry.name, entry])
       );
-      for (const name of ['update_session_state', 'interrupt_session']) {
-        expect(byName.get(name)?.autonomyRequirement).toBe(SESSION_WRITE_AUTONOMY_LEVEL);
-      }
+      expect(byName.get('delete_agent_template')?.autonomyRequirement).toBe(
+        SESSION_WRITE_AUTONOMY_LEVEL
+      );
       expect(byName.get('approve_pending_completion')?.autonomyRequirement).toBe(5);
-      const sendSessionMessageAutonomy = byName.get('send_session_message')?.autonomyRequirement;
-      expect(sendSessionMessageAutonomy).toBeDefined();
-      expect(typeof sendSessionMessageAutonomy).toBe('function');
+      const changePlanAutonomy = byName.get('change_plan')?.autonomyRequirement;
+      expect(changePlanAutonomy).toBeDefined();
+      expect(typeof changePlanAutonomy).toBe('function');
       for (const [name] of EXPECTED_ENTRIES) {
         if (
           [
-            'update_session_state',
-            'interrupt_session',
             'archive_task',
             'change_plan',
             'update_task',
@@ -261,7 +253,6 @@ describe('createSpaceRegistryEntries — composition', () => {
             'approve_task',
             'approve_pending_completion',
             'delete_agent_template',
-            'send_session_message',
           ].includes(name)
         )
           continue;
@@ -1362,13 +1353,12 @@ describe('createSpaceRegistryEntries — composition', () => {
 });
 
 describe('createSpaceRegistryEntries — conditional entries', () => {
-  test('omits every agents and sessions entry when db is absent', () => {
+  test('omits every agents entry when db is absent', () => {
     const ctx = makeCtx({ db: undefined });
     try {
       const entries = createSpaceRegistryEntries(ctx.config);
       expect(entries.filter((entry) => entry.family === 'agents')).toEqual([]);
-      expect(entries.filter((entry) => entry.family === 'sessions')).toEqual([]);
-      expect(entries).toHaveLength(EXPECTED_ENTRIES.length - 26);
+      expect(entries).toHaveLength(EXPECTED_ENTRIES.length - 20);
       expect(entries.map((entry) => entry.name)).toContain('list_tasks');
     } finally {
       ctx.db.close();
@@ -1381,7 +1371,7 @@ describe('createSpaceRegistryEntries — conditional entries', () => {
       const entries = createSpaceRegistryEntries(ctx.config);
       expect(entries.map((entry) => entry.name)).not.toContain('send_message_to_task');
       expect(entries).toHaveLength(EXPECTED_ENTRIES.length - 1);
-      expect(entries.map((entry) => entry.name)).toContain('list_sessions');
+      expect(entries.map((entry) => entry.name)).toContain('list_workflows');
     } finally {
       ctx.db.close();
     }
@@ -1398,24 +1388,27 @@ describe('createSpaceRegistryEntries — handler wiring', () => {
     } as unknown as McpAuditLogRepository;
     const ctx = makeCtx({ auditLogRepo, getSpaceAutonomyLevel: async () => 5 });
     try {
-      const now = new Date().toISOString();
-      ctx.db
-        .prepare(
-          `INSERT INTO sessions (id, title, created_at, last_active_at, status, config, metadata, session_context)
-           VALUES ('sess-1', 'Stuck', ?, ?, 'active', '{}', '{}', ?)`
-        )
-        .run(now, now, JSON.stringify({ spaceId: SPACE_ID }));
+      const repo = ctx.config.longHorizonAgentRepo;
+      if (!repo) throw new Error('longHorizonAgentRepo missing');
+      const seeded = repo.create({
+        spaceId: SPACE_ID,
+        handle: '@audit-agent',
+        displayName: 'Audit Agent',
+      });
 
       const entries = createSpaceRegistryEntries(ctx.config);
-      const updateSessionState = entries.find((entry) => entry.name === 'update_session_state');
-      if (!updateSessionState) throw new Error('update_session_state entry missing');
-      const result = (await updateSessionState.handler(
-        UpdateSessionStateSchema.parse({ session_id: 'sess-1', processing_state: 'running' })
+      const createReminder = entries.find((entry) => entry.name === 'create_agent_reminder');
+      if (!createReminder) throw new Error('create_agent_reminder entry missing');
+      const result = (await createReminder.handler(
+        CreateAgentReminderSchema.parse({
+          agent_id: seeded.id,
+          message: 'Check in',
+          remind_at: Date.now() + 60_000,
+        })
       )) as { content: Array<{ text: string }> };
-      const payload = JSON.parse(result.content[0].text) as { success: boolean; updated: boolean };
+      const payload = JSON.parse(result.content[0].text) as { success: boolean };
 
       expect(payload.success).toBe(true);
-      expect(payload.updated).toBe(true);
       expect(auditRows).toEqual([]);
     } finally {
       ctx.db.close();

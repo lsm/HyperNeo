@@ -3,14 +3,12 @@ import type { z } from 'zod';
 import {
   EXTERNAL_EVENT_TOOL_SCHEMAS,
   INACTIVITY_TOOL_SCHEMAS,
-  SCHEDULED_TOOL_SCHEMAS,
   SPACE_AGENT_LIFECYCLE_TOOL_SCHEMAS,
   SPACE_AGENT_TOOL_SCHEMAS,
   SPACE_FORGE_TOOL_SCHEMAS,
   SPACE_GOAL_TOOL_SCHEMAS,
   type ExternalEventToolName,
   type InactivityToolName,
-  type ScheduledToolName,
   type SpaceAgentLifecycleToolName,
   type SpaceAgentToolName,
   type SpaceForgeToolName,
@@ -18,12 +16,6 @@ import {
 } from '../../../../src/lib/space/actions/space-agent-schemas.ts';
 
 const BASE_TOOL_NAMES: SpaceAgentToolName[] = [
-  'list_sessions',
-  'get_session_detail',
-  'get_session_messages',
-  'send_session_message',
-  'update_session_state',
-  'interrupt_session',
   'list_workflows',
   'get_workflow_run',
   'change_plan',
@@ -45,9 +37,9 @@ const BASE_TOOL_NAMES: SpaceAgentToolName[] = [
 ];
 
 describe('SPACE_AGENT_TOOL_SCHEMAS', () => {
-  test('contains exactly the 24 base tools', () => {
+  test('contains exactly the 18 base tools', () => {
     expect(Object.keys(SPACE_AGENT_TOOL_SCHEMAS).sort()).toEqual([...BASE_TOOL_NAMES].sort());
-    expect(Object.keys(SPACE_AGENT_TOOL_SCHEMAS)).toHaveLength(24);
+    expect(Object.keys(SPACE_AGENT_TOOL_SCHEMAS)).toHaveLength(18);
   });
 
   test('each schema value is a zod object schema with safeParse and a shape', () => {
@@ -65,72 +57,6 @@ interface SafeParsePin {
 }
 
 const SAFE_PARSE_PINS: SafeParsePin[] = [
-  {
-    tool: 'list_sessions',
-    accepts: [
-      { input: {}, data: { limit: 50, offset: 0 } },
-      {
-        input: { status: 'idle', type: 'worker', limit: 10, offset: 5 },
-        data: { status: 'idle', type: 'worker', limit: 10, offset: 5 },
-      },
-    ],
-    rejects: [{ status: 'paused' }, { limit: 101 }, { limit: 0 }, { offset: -1 }],
-  },
-  {
-    tool: 'get_session_detail',
-    accepts: [{ input: { session_id: 's1' }, data: { session_id: 's1' } }],
-    rejects: [{}, { session_id: 5 }],
-  },
-  {
-    tool: 'get_session_messages',
-    accepts: [
-      { input: { session_id: 's1' }, data: { session_id: 's1', limit: 20 } },
-      {
-        input: { session_id: 's1', limit: 100, before: '2026-01-01' },
-        data: { session_id: 's1', limit: 100, before: '2026-01-01' },
-      },
-    ],
-    rejects: [{}, { session_id: 's1', limit: 101 }],
-  },
-  {
-    tool: 'send_session_message',
-    accepts: [
-      {
-        input: { session_id: 's1', message: 'hello' },
-        data: { session_id: 's1', message: 'hello' },
-      },
-      {
-        input: { session_id: 's1', message: 'hello', answer_question: true },
-        data: { session_id: 's1', message: 'hello', answer_question: true },
-      },
-    ],
-    rejects: [{ session_id: 's1', message: '' }, { session_id: 's1' }],
-  },
-  {
-    tool: 'update_session_state',
-    accepts: [
-      {
-        input: { session_id: 's1', processing_state: 'running' },
-        data: { session_id: 's1', processing_state: 'running' },
-      },
-      {
-        input: { session_id: 's1', processing_state: 'idle', clear_pending_question: true },
-        data: { session_id: 's1', processing_state: 'idle', clear_pending_question: true },
-      },
-    ],
-    rejects: [{ session_id: 's1', processing_state: 'archived' }, { processing_state: 'idle' }],
-  },
-  {
-    tool: 'interrupt_session',
-    accepts: [
-      {
-        input: { session_id: 's1', reason: 'stuck' },
-        data: { session_id: 's1', reason: 'stuck' },
-      },
-      { input: { session_id: 's1' }, data: { session_id: 's1' } },
-    ],
-    rejects: [{ reason: 'stuck' }],
-  },
   {
     tool: 'list_workflows',
     accepts: [{ input: {}, data: {} }],
@@ -1347,15 +1273,6 @@ runFamilyPins(
   FORGE_PINS
 );
 
-const SCHEDULED_TOOL_NAMES: ScheduledToolName[] = [
-  'create_scheduled_task',
-  'list_scheduled_tasks',
-  'get_scheduled_task',
-  'pause_scheduled_task',
-  'resume_scheduled_task',
-  'delete_scheduled_task',
-];
-
 const EXTERNAL_EVENT_TOOL_NAMES: ExternalEventToolName[] = [
   'subscribe_agent_event',
   'unsubscribe_agent_event',
@@ -1378,74 +1295,6 @@ interface ConditionalSafeParsePin {
 }
 
 const CONDITIONAL_SAFE_PARSE_PINS: ConditionalSafeParsePin[] = [
-  {
-    tool: 'create_scheduled_task',
-    schema: SCHEDULED_TOOL_SCHEMAS.create_scheduled_task,
-    accepts: [
-      {
-        input: {
-          title: 'T',
-          description: 'D',
-          trigger_type: 'at',
-          run_at: 1,
-        },
-        data: {
-          title: 'T',
-          description: 'D',
-          trigger_type: 'at',
-          run_at: 1,
-        },
-      },
-      {
-        input: {
-          title: 'T',
-          description: 'D',
-          trigger_type: 'cron',
-          cron_expression: '0 9 * * 1',
-        },
-        data: {
-          title: 'T',
-          description: 'D',
-          trigger_type: 'cron',
-          cron_expression: '0 9 * * 1',
-        },
-      },
-    ],
-    rejects: [{}, { title: 'T' }],
-  },
-  {
-    tool: 'list_scheduled_tasks',
-    schema: SCHEDULED_TOOL_SCHEMAS.list_scheduled_tasks,
-    accepts: [
-      { input: {}, data: {} },
-      { input: { status: 'active' }, data: { status: 'active' } },
-    ],
-    rejects: [{ status: 'invalid' }],
-  },
-  {
-    tool: 'get_scheduled_task',
-    schema: SCHEDULED_TOOL_SCHEMAS.get_scheduled_task,
-    accepts: [{ input: { schedule_id: 's1' }, data: { schedule_id: 's1' } }],
-    rejects: [{}],
-  },
-  {
-    tool: 'pause_scheduled_task',
-    schema: SCHEDULED_TOOL_SCHEMAS.pause_scheduled_task,
-    accepts: [{ input: { schedule_id: 's1' }, data: { schedule_id: 's1' } }],
-    rejects: [{}],
-  },
-  {
-    tool: 'resume_scheduled_task',
-    schema: SCHEDULED_TOOL_SCHEMAS.resume_scheduled_task,
-    accepts: [{ input: { schedule_id: 's1' }, data: { schedule_id: 's1' } }],
-    rejects: [{}],
-  },
-  {
-    tool: 'delete_scheduled_task',
-    schema: SCHEDULED_TOOL_SCHEMAS.delete_scheduled_task,
-    accepts: [{ input: { schedule_id: 's1' }, data: { schedule_id: 's1' } }],
-    rejects: [{}],
-  },
   {
     tool: 'subscribe_agent_event',
     schema: EXTERNAL_EVENT_TOOL_SCHEMAS.subscribe_agent_event,
@@ -1518,20 +1367,6 @@ const CONDITIONAL_SAFE_PARSE_PINS: ConditionalSafeParsePin[] = [
   },
 ];
 
-describe('SCHEDULED_TOOL_SCHEMAS', () => {
-  test('contains exactly the scheduled tools', () => {
-    expect(Object.keys(SCHEDULED_TOOL_SCHEMAS).sort()).toEqual([...SCHEDULED_TOOL_NAMES].sort());
-    expect(Object.keys(SCHEDULED_TOOL_SCHEMAS)).toHaveLength(6);
-  });
-
-  test('each schema value is a zod object schema with safeParse and a shape', () => {
-    for (const schema of Object.values(SCHEDULED_TOOL_SCHEMAS)) {
-      expect(typeof schema.safeParse).toBe('function');
-      expect(schema.shape).toBeDefined();
-    }
-  });
-});
-
 describe('EXTERNAL_EVENT_TOOL_SCHEMAS', () => {
   test('contains exactly the external-event tools', () => {
     expect(Object.keys(EXTERNAL_EVENT_TOOL_SCHEMAS).sort()).toEqual(
@@ -1565,7 +1400,7 @@ describe('INACTIVITY_TOOL_SCHEMAS', () => {
 describe('conditional tool schema safeParse pins', () => {
   test('pins cover every conditional tool', () => {
     expect(CONDITIONAL_SAFE_PARSE_PINS.map((pin) => pin.tool).sort()).toEqual(
-      [...SCHEDULED_TOOL_NAMES, ...EXTERNAL_EVENT_TOOL_NAMES, ...INACTIVITY_TOOL_NAMES].sort()
+      [...EXTERNAL_EVENT_TOOL_NAMES, ...INACTIVITY_TOOL_NAMES].sort()
     );
   });
 

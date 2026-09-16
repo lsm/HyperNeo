@@ -1,59 +1,6 @@
 import { z } from 'zod';
 import { SpaceTaskStatusSchema, UpdateTaskStatusParamDescription } from './task-agent-schemas.ts';
 
-export const SpaceSessionStatusSchema = z.enum([
-  'active',
-  'idle',
-  'waiting_for_input',
-  'error',
-  'archived',
-]);
-
-export const SpaceSessionTypeSchema = z.enum(['worker', 'ad-hoc']);
-
-export const MutableProcessingStateSchema = z.enum(['idle', 'running', 'waiting_for_input']);
-
-export const SPACE_SESSION_MAX_LIMIT = 100;
-
-export const SESSION_MESSAGE_MAX_LIMIT = 100;
-
-export const ListSessionsSchema = z.object({
-  status: SpaceSessionStatusSchema.optional().describe('Filter by status'),
-  type: SpaceSessionTypeSchema.optional().describe('Filter by session type'),
-  limit: z.number().int().positive().max(SPACE_SESSION_MAX_LIMIT).optional().default(50),
-  offset: z.number().int().min(0).optional().default(0),
-});
-
-export const GetSessionDetailSchema = z.object({
-  session_id: z.string().describe('Session ID'),
-});
-
-export const GetSessionMessagesSchema = z.object({
-  session_id: z.string().describe('Session ID'),
-  limit: z.number().int().positive().max(SESSION_MESSAGE_MAX_LIMIT).optional().default(20),
-  before: z.string().optional().describe('Return messages before this timestamp'),
-});
-
-export const SendSessionMessageSchema = z.object({
-  session_id: z.string().describe('Target session ID'),
-  message: z.string().min(1).describe('Message text'),
-  answer_question: z
-    .boolean()
-    .optional()
-    .describe('Clear pending question state while delivering this message'),
-});
-
-export const UpdateSessionStateSchema = z.object({
-  session_id: z.string().describe('Target session ID'),
-  processing_state: MutableProcessingStateSchema.describe('New processing state'),
-  clear_pending_question: z.boolean().optional().describe('Clear stale pendingQuestion'),
-});
-
-export const InterruptSessionSchema = z.object({
-  session_id: z.string().describe('Target session ID'),
-  reason: z.string().optional().describe('Reason recorded in the terminal result'),
-});
-
 export const ListWorkflowsSchema = z.object({});
 
 export const GetWorkflowRunSchema = z.object({
@@ -286,12 +233,6 @@ export const ApprovePendingCompletionSchema = z.object({
 });
 
 export const SPACE_AGENT_TOOL_SCHEMAS = {
-  list_sessions: ListSessionsSchema,
-  get_session_detail: GetSessionDetailSchema,
-  get_session_messages: GetSessionMessagesSchema,
-  send_session_message: SendSessionMessageSchema,
-  update_session_state: UpdateSessionStateSchema,
-  interrupt_session: InterruptSessionSchema,
   list_workflows: ListWorkflowsSchema,
   get_workflow_run: GetWorkflowRunSchema,
   change_plan: ChangePlanSchema,
@@ -1036,71 +977,6 @@ export const SPACE_FORGE_TOOL_SCHEMAS = {
 } as const;
 
 export type SpaceForgeToolName = keyof typeof SPACE_FORGE_TOOL_SCHEMAS;
-
-export const TaskScheduleStatusSchema = z.enum(['active', 'paused', 'completed']);
-
-export const TaskScheduleTriggerTypeSchema = z.enum(['cron', 'at']);
-
-export const CreateScheduledTaskSchema = z.object({
-  title: z.string().describe('Short title for the task template'),
-  description: z.string().describe('Detailed description for the task template'),
-  priority: z
-    .enum(['low', 'normal', 'high', 'urgent'])
-    .optional()
-    .describe('Task priority (default: normal)'),
-  workflow_id: z.string().optional().describe('Preferred workflow ID to attach to created tasks'),
-  labels: z.array(z.string()).optional().describe('Labels to apply to created tasks'),
-  trigger_type: TaskScheduleTriggerTypeSchema.describe(
-    'Trigger type: "cron" for recurring, "at" for one-shot'
-  ),
-  cron_expression: z
-    .string()
-    .optional()
-    .describe(
-      'Cron expression (e.g. "0 9 * * 1" for every Monday at 9am, "@daily", "@hourly"). Required when trigger_type is "cron".'
-    ),
-  run_at: z
-    .number()
-    .optional()
-    .describe(
-      'Unix timestamp in ms when the task should fire. Required when trigger_type is "at".'
-    ),
-  timezone: z
-    .string()
-    .optional()
-    .describe('IANA timezone string (default: "UTC"). Example: "America/New_York"'),
-});
-
-export const ListScheduledTasksSchema = z.object({
-  status: TaskScheduleStatusSchema.optional().describe('Filter by schedule status (default: all)'),
-});
-
-export const GetScheduledTaskSchema = z.object({
-  schedule_id: z.string().describe('ID of the scheduled task to retrieve'),
-});
-
-export const PauseScheduledTaskSchema = z.object({
-  schedule_id: z.string().describe('ID of the scheduled task to pause'),
-});
-
-export const ResumeScheduledTaskSchema = z.object({
-  schedule_id: z.string().describe('ID of the scheduled task to resume'),
-});
-
-export const DeleteScheduledTaskSchema = z.object({
-  schedule_id: z.string().describe('ID of the scheduled task to delete'),
-});
-
-export const SCHEDULED_TOOL_SCHEMAS = {
-  create_scheduled_task: CreateScheduledTaskSchema,
-  list_scheduled_tasks: ListScheduledTasksSchema,
-  get_scheduled_task: GetScheduledTaskSchema,
-  pause_scheduled_task: PauseScheduledTaskSchema,
-  resume_scheduled_task: ResumeScheduledTaskSchema,
-  delete_scheduled_task: DeleteScheduledTaskSchema,
-} as const;
-
-export type ScheduledToolName = keyof typeof SCHEDULED_TOOL_SCHEMAS;
 
 export const GetExternalEventSchema = z.object({
   eventId: z.string().min(1).describe('The id of the external event to fetch'),
