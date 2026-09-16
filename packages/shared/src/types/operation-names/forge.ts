@@ -1,1 +1,15 @@
-export const FORGE_OPERATION_NAMES = [] as const;
+export const FORGE_OPERATION_NAMES = [
+  'forge.evidence.attachTask',
+  'forge.evidence.attachWorkflowRun',
+  'forge.evidence.list',
+  'forge.metric.add',
+  'forge.metric.list',
+  'forge.note.add',
+  'forge.scope.create',
+  'forge.scope.createFromGoal',
+  'forge.scope.get',
+  'forge.scope.list',
+  'forge.scope.resolve',
+  'forge.scope.update',
+  'forge.timeline.get',
+] as const;

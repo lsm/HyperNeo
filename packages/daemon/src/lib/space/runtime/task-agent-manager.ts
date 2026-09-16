@@ -139,6 +139,7 @@ import {
 import { AgentMessageRouter } from '../../messaging/agent-message-router.ts';
 import type { WorkflowArtifactProfile } from '../../workflows/artifact-profile.ts';
 import { ChannelResolver } from '../../messaging/channel-resolver.ts';
+import type { NodeMessagingRuntime } from '../../messaging/node-messaging-context.ts';
 import { ChannelRouter } from '../../messaging/channel-router.ts';
 import { createGithubConnector } from '../../github/connectors/github-connector.ts';
 import { HookExecutor } from '../../workflows/hook-executor.ts';
@@ -4539,6 +4540,7 @@ export class TaskAgentManager {
       this.completionCallbacks.delete(sessionId);
     }
     this.workerRegistryBySession.delete(sessionId);
+    this.nodeMessagingBySession.delete(sessionId);
   }
 
   private getWorkflowRunId(taskId: string): string | null {
@@ -4917,6 +4919,12 @@ export class TaskAgentManager {
 
   private workerRegistryBySession = new Map<string, ActionRegistry>();
 
+  private nodeMessagingBySession = new Map<string, NodeMessagingRuntime>();
+
+  nodeMessagingRuntimeFor(sessionId: string): NodeMessagingRuntime | null {
+    return this.nodeMessagingBySession.get(sessionId) ?? null;
+  }
+
   workerActionRegistryFor(sessionId: string): ActionRegistry | undefined {
     return this.workerRegistryBySession.get(sessionId);
   }
@@ -5205,63 +5213,6 @@ export class TaskAgentManager {
       }
     };
 
-    const onPublishTask = async (args: { task_id: string }) => {
-      try {
-        const updated = await boundTaskManager.publishTask(args.task_id);
-        this.config.internalEventBus
-          ?.publish('space.task.updated', {
-            sessionId: 'global',
-            spaceId,
-            taskId: updated.id,
-            task: updated,
-          })
-          .catch((err: unknown) => {
-            log.warn(
-              `Failed to emit space.task.updated (publish) for task ${updated.id}: ${err instanceof Error ? err.message : String(err)}`
-            );
-          });
-        return jsonResult({ success: true, task: updated });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        return jsonResult({ success: false, error: message });
-      }
-    };
-
-    const onArchiveTask = async (args: { task_id: string }) => {
-      try {
-        const task = await boundTaskManager.getTask(args.task_id);
-        if (
-          task?.workflowRunId &&
-          this.config.spaceRuntimeService.isWorkflowRunActive(task.workflowRunId)
-        ) {
-          return jsonResult({
-            success: false,
-            error:
-              `Cannot archive task ${args.task_id}: it belongs to an active workflow run ` +
-              `(${task.workflowRunId}). Cancel the run instead so its agents and ` +
-              `lifecycle are torn down — archiving would leave the run stranded.`,
-          });
-        }
-        const updated = await boundTaskManager.archiveTask(args.task_id);
-        this.config.internalEventBus
-          ?.publish('space.task.updated', {
-            sessionId: 'global',
-            spaceId,
-            taskId: updated.id,
-            task: updated,
-          })
-          .catch((err: unknown) => {
-            log.warn(
-              `Failed to emit space.task.updated (archive) for task ${updated.id}: ${err instanceof Error ? err.message : String(err)}`
-            );
-          });
-        return jsonResult({ success: true, task: updated });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        return jsonResult({ success: false, error: message });
-      }
-    };
-
     let hookEngine: WorkflowHookEngine | undefined;
     if (workflow?.hooks && workflow.hooks.length > 0) {
       const hookExecutor = new HookExecutor({ workspacePath });
@@ -5313,6 +5264,18 @@ export class TaskAgentManager {
       });
     }
 
+    this.nodeMessagingBySession.set(subSessionId, {
+      spaceId,
+      taskId,
+      workflow,
+      channelResolver,
+      agentMessageRouter,
+      artifactRepo: this.config.artifactRepo,
+      replyRoutingLookup: (fromAgentName) =>
+        this.config.replyRoutingRegistry?.get(taskId, fromAgentName) ?? null,
+      hookEngine,
+    });
+
     const nodeConfig: NodeAgentToolsConfig = {
       mySessionId: subSessionId,
       myAgentName: agentName,
@@ -5331,8 +5294,6 @@ export class TaskAgentManager {
       onSubmitForApproval,
       onMarkComplete,
       onCreateStandaloneTask,
-      onPublishTask,
-      onArchiveTask,
       onSubscribeExternalEvent,
       onUnsubscribeExternalEvent,
       onListSubscriptions,

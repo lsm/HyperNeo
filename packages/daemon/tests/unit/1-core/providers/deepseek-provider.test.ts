@@ -127,7 +127,7 @@ describe('DeepSeekProvider', () => {
     function installModelListFetch(respond: (call: number) => Response | Promise<Response>) {
       let call = 0;
       const fetchImpl = mock(
-        async (_url: RequestInfo | URL, _init?: RequestInit) => await respond(++call)
+        async (_url: string | URL | Request, _init?: RequestInit) => await respond(++call)
       );
       global.fetch = fetchImpl as unknown as typeof fetch;
       return fetchImpl;

@@ -186,16 +186,6 @@ export const ListTasksSchema = z.object({
 
 export type ListTasksInput = z.infer<typeof ListTasksSchema>;
 
-export const GetTaskSchema = z.object({
-  task_id: z.string().describe('UUID of the task to retrieve').optional(),
-  task_number: z
-    .number()
-    .describe('Numeric task ID (e.g. 5 for task #5) — preferred over task_id')
-    .optional(),
-});
-
-export type GetTaskInput = z.infer<typeof GetTaskSchema>;
-
 export const ListAuditEntriesSchema = z.object({
   task_id: z.string().describe('Filter by task ID').optional(),
   session_id: z.string().describe('Filter by session ID').optional(),
@@ -281,18 +271,6 @@ export const RestoreNodeAgentSchema = z.object({
 
 export type RestoreNodeAgentInput = z.infer<typeof RestoreNodeAgentSchema>;
 
-export const PublishTaskSchema = z.object({
-  task_id: z.string().describe('UUID of the draft task to publish (draft → open)'),
-});
-
-export type PublishTaskInput = z.infer<typeof PublishTaskSchema>;
-
-export const ArchiveTaskSchema = z.object({
-  task_id: z.string().describe('UUID of the task to archive'),
-});
-
-export type ArchiveTaskInput = z.infer<typeof ArchiveTaskSchema>;
-
 export const NODE_AGENT_TOOL_SCHEMAS = {
   list_peers: ListPeersSchema,
   send_message: SendMessageSchema,
@@ -309,10 +287,7 @@ export const NODE_AGENT_TOOL_SCHEMAS = {
   list_subscriptions: ListSubscriptionsSchema,
   restore_node_agent: RestoreNodeAgentSchema,
   list_tasks: ListTasksSchema,
-  get_task: GetTaskSchema,
   list_audit_entries: ListAuditEntriesSchema,
-  publish_task: PublishTaskSchema,
-  archive_task: ArchiveTaskSchema,
 } as const;
 
 export type NodeAgentToolName = keyof typeof NODE_AGENT_TOOL_SCHEMAS;
