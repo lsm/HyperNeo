@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
 import type { NodeExecution, Session, SpaceLongHorizonAgent, SpaceTask } from '@hyperneo/shared';
+import { buildOperationAuditRecord } from '../../../../src/lib/operations/audit';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry';
 import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session';
@@ -391,3 +392,19 @@ test.each([true, false])(
     expect(dependencies.warn).not.toHaveBeenCalled();
   }
 );
+
+test('writes no door audit row, leaving its own richer entry as the only one', () => {
+  const operation = createOwnedPendingCompletionOperation(dependencies);
+  const registry = createOperationRegistry([operation]);
+  expect(operation.policy?.audit?.exempt).toBe(true);
+  expect(
+    buildOperationAuditRecord(
+      registry,
+      'task.resolvePendingCompletion',
+      { taskId: task.id, approved: true },
+      { source: 'mcp', sessionId: 'space:chat:member', spaceId },
+      { kind: 'completed', value: task },
+      1
+    )
+  ).toBeNull();
+});
