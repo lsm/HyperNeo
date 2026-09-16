@@ -33,21 +33,11 @@ function makeAgent(
 
 function makeDeps(config?: {
   longHorizonAgents?: SpaceLongHorizonAgent[];
-  coordinatorId?: string;
 }): ResolveAgentRecordDeps {
   const longHorizonAgents = config?.longHorizonAgents ?? [];
-  const coordinatorRecord = (spaceId: string) =>
-    longHorizonAgents.find(
-      (agent) => agent.handle === 'coordinator' && agent.spaceId === spaceId
-    ) ?? null;
   return {
     getLongHorizonAgent: (agentId) =>
       longHorizonAgents.find((agent) => agent.id === agentId) ?? null,
-    getCoordinator: (spaceId) => {
-      const record = coordinatorRecord(spaceId);
-      return record != null && record.status !== 'archived' ? record : null;
-    },
-    getCoordinatorRecord: coordinatorRecord,
   };
 }
 
@@ -71,26 +61,16 @@ describe('resolveAgentRecord', () => {
     ).toEqual({ kind: 'missing' });
   });
 
-  test('inactive coordinator row resolves missing through every alias form', () => {
-    const coordinator = makeAgent('discovered-coordinator', {
-      handle: 'coordinator',
-      status: 'paused',
-    });
-    const deps = makeDeps({ longHorizonAgents: [coordinator], coordinatorId: coordinator.id });
-
-    expect(resolveAgentRecord('space-1', 'coordinator', deps)).toEqual({ kind: 'missing' });
-    expect(resolveAgentRecord('space-1', 'coordinator:space-1', deps)).toEqual({ kind: 'missing' });
-  });
-
-  test('archived coordinator row resolves missing through every alias form', () => {
-    const coordinator = makeAgent('space-lh-agent:coordinator:space-1', {
-      handle: 'coordinator',
-      status: 'archived',
-    });
+  test('coordinator alias forms resolve nothing — only the row id resolves', () => {
+    const coordinator = makeAgent('space-lh-agent:coordinator:space-1', { handle: 'coordinator' });
     const deps = makeDeps({ longHorizonAgents: [coordinator] });
 
     expect(resolveAgentRecord('space-1', 'coordinator', deps)).toEqual({ kind: 'missing' });
     expect(resolveAgentRecord('space-1', 'coordinator:space-1', deps)).toEqual({ kind: 'missing' });
+    expect(resolveAgentRecord('space-1', coordinator.id, deps)).toEqual({
+      kind: 'long_horizon',
+      agent: coordinator,
+    });
   });
 
   test('plain long-horizon agent in the space resolves long_horizon', () => {
