@@ -18,6 +18,9 @@ export const GOAL_REJECTION_REASONS = [
   'goal_not_found',
   'owner_not_found',
   'owner_denied',
+  'review_input_invalid',
+  'review_denied',
+  'notification_not_found',
 ] as const;
 
 export type GoalRejectionReason = (typeof GOAL_REJECTION_REASONS)[number];
@@ -44,6 +47,11 @@ export const GOAL_READ_POLICY = {
 export const GOAL_WRITE_POLICY = {
   safetyClass: 'mutate',
   roles: GOAL_ACCESS_ROLE_LISTS.mutate,
+} as const satisfies OperationPolicy;
+
+export const GOAL_OWNER_POLICY = {
+  safetyClass: 'mutate',
+  roles: GOAL_ACCESS_ROLE_LISTS.owner,
 } as const satisfies OperationPolicy;
 
 export const GoalRejectionSchema = z.object({

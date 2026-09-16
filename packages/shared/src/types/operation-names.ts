@@ -5,6 +5,7 @@ export const OPERATION_NAMES = [
   'goal.list',
   'goal.pause',
   'goal.resume',
+  'goal.reviewOutcome',
   'goal.tasks.list',
   'goal.triggerTask',
   'goal.update',

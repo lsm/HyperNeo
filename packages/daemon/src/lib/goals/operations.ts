@@ -11,6 +11,7 @@ import {
 import { createListGoalEventsOperation } from './list-goal-events-operation.ts';
 import { createListGoalTasksOperation } from './list-goal-tasks-operation.ts';
 import { createListGoalsOperation } from './list-goals-operation.ts';
+import { createReviewGoalOutcomeOperation } from './review-goal-outcome-operation.ts';
 import type { SpaceGoalService } from './service.ts';
 import { createUpdateGoalOperation } from './update-goal-operation.ts';
 
@@ -30,5 +31,6 @@ export function createGoalOperations(deps: GoalOperationDependencies): Operation
     createPauseGoalOperation(deps),
     createResumeGoalOperation(deps),
     createTriggerGoalTaskOperation(deps),
+    createReviewGoalOutcomeOperation(deps),
   ];
 }
