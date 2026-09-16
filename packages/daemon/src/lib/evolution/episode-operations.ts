@@ -282,6 +282,7 @@ export function applyForgeEpisodeUpdate(
     toolName: 'forge.episode.update',
     paramsSummary: { episodeId: existing.id, status: input.status },
     caller,
+    spaceId: forge.scopeService.getScope(existing.scopeId)?.spaceId,
   });
   return episode
     ? { value: { accepted: true, episode } }
@@ -320,6 +321,7 @@ export function applyForgeLessonUpdate(
     toolName: 'forge.lesson.update',
     paramsSummary: { lessonId: existing.id, status: input.status },
     caller,
+    spaceId: forge.scopeService.getScope(existing.scopeId)?.spaceId,
   });
   return lesson
     ? { value: { accepted: true, lesson } }
@@ -401,6 +403,7 @@ export function applyForgeProposalUpdate(
     toolName: 'forge.proposal.update',
     paramsSummary: { proposalId: existing.id, status: input.status },
     caller,
+    spaceId: forge.scopeService.getScope(existing.scopeId)?.spaceId,
   });
   return proposal
     ? { value: { accepted: true, proposal } }

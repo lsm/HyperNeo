@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { Session } from '@hyperneo/shared';
-import { createForgeOperations } from '../../../../src/lib/evolution/operations.ts';
+import { createForgeScopeOperations } from '../../../../src/lib/evolution/scope-operations.ts';
 import type {
   ForgeAuditEntry,
   ForgeAuditWriter,
@@ -99,7 +99,7 @@ function makeCtx() {
     audited.push(entry);
   };
 
-  const operations = createForgeOperations({
+  const operations = createForgeScopeOperations({
     getSession: (sessionId) => sessions.get(sessionId) ?? null,
     longHorizonAgentRepo: new SpaceLongHorizonAgentRepository(db),
     nodeExecutionRepo: new NodeExecutionRepository(db),
