@@ -18,7 +18,6 @@ import type { NodeMessagingContext } from '../../messaging/node-messaging-contex
 import { deliverNodeAgentMessage } from '../../messaging/node-send-message.ts';
 import type { WorkflowArtifactProfile } from '../../workflows/artifact-profile.ts';
 import type { ChannelResolver } from '../../messaging/channel-resolver.ts';
-import { buildPrEventTopicPattern, parsePrUrl } from '../../github/parse-pr-url.ts';
 import type { WorkflowHookEngine } from '../../workflows/hook-engine.ts';
 import { wrapHandlerWithHooks } from '../../workflows/hook-engine.ts';
 import type {
@@ -30,7 +29,6 @@ import type {
   SaveArtifactInput,
   SendMessageInput,
   SubscribeExternalEventInput,
-  SubscribePrEventsInput,
   UnsubscribeExternalEventInput,
 } from './node-agent-schemas.ts';
 import type {
@@ -40,16 +38,6 @@ import type {
 } from './task-agent-schemas.ts';
 import type { ToolResult } from '../tools/tool-result.ts';
 import { jsonResult } from '../tools/tool-result.ts';
-
-function decodeToolResultPayload(result: ToolResult): Record<string, unknown> | null {
-  try {
-    const text = result.content?.[0]?.text;
-    if (typeof text === 'string') {
-      return JSON.parse(text) as Record<string, unknown>;
-    }
-  } catch {}
-  return null;
-}
 
 export type { ToolResult };
 
@@ -422,33 +410,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
         const message = err instanceof Error ? err.message : String(err);
         return jsonResult({ success: false, error: message });
       }
-    },
-
-    async subscribe_pr_events(args: SubscribePrEventsInput): Promise<ToolResult> {
-      if (!config.onSubscribeExternalEvent) {
-        return jsonResult({
-          success: false,
-          error: 'External event subscriptions are not available.',
-        });
-      }
-      const prUrl =
-        args.prUrl || config.artifactProfile?.resolvePrimaryLinkUrl(workflowRunId) || '';
-      const parsed = prUrl ? parsePrUrl(prUrl) : null;
-      if (!parsed) {
-        return jsonResult({
-          success: false,
-          error: args.prUrl
-            ? `Could not parse GitHub PR URL: ${args.prUrl}`
-            : 'No PR URL found for this workflow run. Open a PR first or pass prUrl explicitly.',
-        });
-      }
-      const topicPattern = buildPrEventTopicPattern(parsed);
-      const result = await config.onSubscribeExternalEvent({ topicPattern, label: args.label });
-      const payload = decodeToolResultPayload(result);
-      if (payload?.success) {
-        logAudit('subscribe_pr_events', { prUrl, topicPattern, label: args.label });
-      }
-      return result;
     },
 
     async list_audit_entries(args: ListAuditEntriesInput): Promise<ToolResult> {
