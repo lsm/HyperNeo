@@ -119,6 +119,8 @@ export interface Provider {
 
   startOAuthFlow?(): Promise<ProviderOAuthFlowData>;
 
+  submitOAuthCallback?(callbackInput: string): Promise<{ ok: true } | { ok: false; error: string }>;
+
   logout?(): Promise<void>;
 
   refreshToken?(): Promise<boolean>;

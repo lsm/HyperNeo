@@ -16,6 +16,7 @@ interface OAuthModalProps {
   verificationUri?: string;
   onCancel: () => void;
   onComplete: () => void;
+  onSubmitCallback?: (input: string) => Promise<{ success: boolean; error?: string }>;
 }
 
 export function OAuthModal({
@@ -24,9 +25,13 @@ export function OAuthModal({
   userCode,
   verificationUri,
   onCancel,
-  onComplete: _onComplete,
+  onComplete,
+  onSubmitCallback,
 }: OAuthModalProps) {
   const [copied, setCopied] = useState(false);
+  const [callbackInput, setCallbackInput] = useState('');
+  const [callbackSubmitting, setCallbackSubmitting] = useState(false);
+  const [callbackError, setCallbackError] = useState<string | null>(null);
   const isDeviceFlow = !!userCode && !!verificationUri;
   const isRedirectFlow = !!authUrl;
 
@@ -60,6 +65,24 @@ export function OAuthModal({
   const openAuthUrl = () => {
     if (authUrl) {
       window.open(authUrl, '_blank');
+    }
+  };
+
+  const submitCallback = async () => {
+    if (!onSubmitCallback || !callbackInput.trim() || callbackSubmitting) return;
+    setCallbackSubmitting(true);
+    setCallbackError(null);
+    try {
+      const response = await onSubmitCallback(callbackInput.trim());
+      if (response.success) {
+        onComplete();
+        return;
+      }
+      setCallbackError(response.error || 'Callback relay failed');
+    } catch (err) {
+      setCallbackError(err instanceof Error ? err.message : 'Callback relay failed');
+    } finally {
+      setCallbackSubmitting(false);
     }
   };
 
@@ -170,8 +193,8 @@ export function OAuthModal({
             <>
               <div class="text-sm text-fg-soft">
                 <p class="mb-4">
-                  A browser window has been opened for you to authenticate with {providerName}.
-                  Complete the authentication in that window.
+                  Authorize with {providerName} in the browser tab that opened. When the page shows
+                  your authorization code, paste it below to finish.
                 </p>
 
                 <div class="flex justify-center">
@@ -193,6 +216,46 @@ export function OAuthModal({
                   </Button>
                 </div>
               </div>
+
+              {onSubmitCallback && (
+                <div class="border-t border-line pt-3">
+                  <label
+                    for={`oauth-callback-${providerName}`}
+                    class="block text-xs uppercase tracking-wider text-fg-muted mb-2"
+                  >
+                    Authorization code
+                  </label>
+                  <div class="flex gap-2">
+                    <input
+                      id={`oauth-callback-${providerName}`}
+                      type="text"
+                      placeholder="Paste the code shown after authorizing"
+                      value={callbackInput}
+                      disabled={callbackSubmitting}
+                      onInput={(e) => setCallbackInput(e.currentTarget.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          void submitCallback();
+                        }
+                      }}
+                      class="flex-1 min-w-0 bg-bg border border-line rounded px-2 py-1.5 text-xs text-fg focus:outline-none focus:border-accent font-mono"
+                    />
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => void submitCallback()}
+                      loading={callbackSubmitting}
+                      disabled={callbackSubmitting || !callbackInput.trim()}
+                    >
+                      Submit
+                    </Button>
+                  </div>
+                  {callbackError && (
+                    <p class="text-xs text-danger-soft mt-2 break-words">{callbackError}</p>
+                  )}
+                </div>
+              )}
             </>
           )}
 

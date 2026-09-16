@@ -1,3 +1,4 @@
+import { realpathSync } from 'node:fs';
 import { describe, expect, test } from 'bun:test';
 import { createNodeSpawn } from '../../../src/lib/runtime-spawn/node-backend';
 import { spawnProcess } from '../../../src/lib/runtime-spawn';
@@ -15,6 +16,8 @@ async function readStream(stream: ReadableStream<Uint8Array> | null): Promise<st
   }
   return text;
 }
+
+const SPAWN_CWD = '/tmp';
 
 const backends: Array<[string, SpawnFn]> = [
   ['bun', spawnProcess],
@@ -46,14 +49,14 @@ for (const [label, spawnImpl] of backends) {
           PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin',
           SEAM_TEST_VAR: 'seam-value',
         },
-        cwd: '/tmp',
+        cwd: SPAWN_CWD,
         stdout: 'pipe',
         stderr: 'pipe',
       });
       const [stdout, exitCode] = await Promise.all([readStream(proc.stdout), proc.exited]);
       const lines = stdout.trim().split('\n');
       expect(lines[0]).toBe('seam-value');
-      expect(lines[1]).toBe('/tmp');
+      expect(realpathSync(lines[1])).toBe(realpathSync(SPAWN_CWD));
       expect(exitCode).toBe(0);
     });
 
