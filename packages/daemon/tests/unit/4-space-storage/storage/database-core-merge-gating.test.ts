@@ -24,7 +24,7 @@ const { DatabaseCore } = await import('../../../../src/storage/database-core');
 
 const INTERVAL_MS = 20;
 
-const shrinkInterval = (core: DatabaseCore): void => {
+const shrinkInterval = (core: InstanceType<typeof DatabaseCore>): void => {
   (core as unknown as Record<string, unknown>).messageSearchMergeIntervalMs = INTERVAL_MS;
 };
 
@@ -41,7 +41,7 @@ const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
 describe('DatabaseCore message search merge gating', () => {
   let testDir: string;
   let dbPath: string;
-  let dbCore: DatabaseCore | null = null;
+  let dbCore: InstanceType<typeof DatabaseCore> | null = null;
 
   beforeEach(() => {
     testDir = join(

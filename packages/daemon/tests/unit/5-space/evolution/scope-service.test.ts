@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import type { EvolutionLesson, SpaceTask } from '@hyperneo/shared';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import {
   EvolutionScopeService,

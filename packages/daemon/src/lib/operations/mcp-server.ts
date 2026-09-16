@@ -1,10 +1,11 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { createOperationMcpHandler, OperationMcpInvocationSchema } from './mcp-adapter.ts';
-import type { OperationCaller, OperationRegistrySource } from './registry.ts';
+import type { CallerIdentity } from './caller.ts';
+import type { OperationRegistrySource } from './registry.ts';
 
 export function createOperationMcpServer(
   registry: OperationRegistrySource,
-  resolveCaller: () => Omit<OperationCaller, 'source'> | Promise<Omit<OperationCaller, 'source'>>
+  resolveCaller: () => CallerIdentity | Promise<CallerIdentity>
 ) {
   const tools = [
     tool(
