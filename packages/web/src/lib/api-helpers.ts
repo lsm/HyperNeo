@@ -25,6 +25,7 @@ import type {
 } from '@hyperneo/shared';
 import type {
   ProviderAuthResponse,
+  ProviderCallbackRelayResponse,
   ProviderLogoutResponse,
   ListProviderAuthStatusResponse,
   ProviderRefreshResponse,
@@ -139,6 +140,17 @@ export async function listProviderAuthStatus(): Promise<ListProviderAuthStatusRe
 export async function loginProvider(providerId: string): Promise<ProviderAuthResponse> {
   const hub = getHubOrThrow();
   return await hub.request<ProviderAuthResponse>('auth.login', { providerId });
+}
+
+export async function submitProviderCallback(
+  providerId: string,
+  callbackInput: string
+): Promise<ProviderCallbackRelayResponse> {
+  const hub = getHubOrThrow();
+  return await hub.request<ProviderCallbackRelayResponse>('auth.submitCallback', {
+    providerId,
+    callbackInput,
+  });
 }
 
 export async function logoutProvider(providerId: string): Promise<ProviderLogoutResponse> {

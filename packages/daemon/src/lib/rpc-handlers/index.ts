@@ -5,14 +5,23 @@ import { createWorkflowTaskRecoveryExecutor } from '../tasks/recovery-executor.t
 import { recoverTaskExecution } from '../tasks/recover-task-execution.ts';
 import { McpAuditLogRepository } from '../../storage/repositories/mcp-audit-log-repository.ts';
 import { createSpaceOperationRegistryProvider } from '../tasks/operations.ts';
+import { createAgentOperations } from '../agents/operations.ts';
+import {
+  publishSpaceAgentV2Mirror,
+  publishUnifiedAgentCreated,
+} from '../agents/unified-agent-events.ts';
 import { createExternalEventOperations } from '../external-events/operations.ts';
 import type { OperationDefinition } from '../operations/registry.ts';
 import { createCompletionGateBindings } from '../tasks/complete-task-gates.ts';
 import { isCoderOwnedMergeWorkflow } from '../workflows/post-approval-router.ts';
 import { createGithubConnector } from '../github/connectors/github-connector.ts';
 import { setupOperationHandlers } from './operation-handlers.ts';
-import { createSpaceCallerScopeResolver } from '../space/runtime/space-caller-scope.ts';
 import { createNodeMessagingOperations } from '../messaging/node-messaging-operations.ts';
+import {
+  createSpaceCallerScopeResolver,
+  resolveSessionSpaceId,
+} from '../space/runtime/space-caller-scope.ts';
+import { createScheduleOperations } from '../schedule/operations.ts';
 import type { MessageHub } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type { SpaceGoalOutcomeNotification } from '@hyperneo/shared';
@@ -1270,6 +1279,33 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
   const familyOperations: OperationDefinition[] = [];
   familyOperations.push(
+    ...createAgentOperations({
+      getSession: (sessionId) => deps.db.getSession(sessionId),
+      longHorizonAgentRepo,
+      taskRepo: spaceTaskRepo,
+      nodeExecutionRepo,
+      publishAgentCreated: (agent, sessionId) => {
+        void publishUnifiedAgentCreated(deps.internalEventBus, agent, sessionId);
+        void publishSpaceAgentV2Mirror(
+          deps.internalEventBus,
+          spaceAgentRepo,
+          agent.spaceId,
+          agent.id,
+          'created'
+        );
+      },
+      audit: (operationName, summary, caller, spaceId) => {
+        new McpAuditLogRepository(deps.db.getDatabase()).createEntry({
+          sessionId: caller.sessionId,
+          agentName: caller.agentName,
+          toolName: operationName,
+          spaceId,
+          paramsSummary: JSON.stringify(summary),
+        });
+      },
+    })
+  );
+  familyOperations.push(
     ...createExternalEventOperations({
       eventStore: deps.externalEventStore,
       getSession: (sessionId) => deps.db.getSession(sessionId),
@@ -1285,6 +1321,34 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       nodeExecutionRepo,
       taskRepo: spaceTaskRepo,
       getSession: (sessionId) => deps.db.getSession(sessionId),
+      auditLogRepo: new McpAuditLogRepository(deps.db.getDatabase()),
+    })
+  );
+
+  const spaceCallerScopeDeps = {
+    getSession: (sessionId: string) => deps.db.getSession(sessionId),
+    taskRepo: spaceTaskRepo,
+    nodeExecutionRepo,
+    longHorizonAgentRepo,
+  };
+  familyOperations.push(
+    ...createScheduleOperations({
+      schedules: scheduleService,
+      getSession: spaceCallerScopeDeps.getSession,
+      sessionSpaceId: (session) => resolveSessionSpaceId(session, spaceCallerScopeDeps),
+      audit: (entry) => {
+        try {
+          new McpAuditLogRepository(deps.db.getDatabase()).createEntry({
+            sessionId: entry.caller.sessionId,
+            agentName: entry.caller.agentName,
+            toolName: entry.toolName,
+            spaceId: entry.spaceId,
+            paramsSummary: JSON.stringify(entry.paramsSummary),
+          });
+        } catch (err) {
+          log.warn('schedule audit write failed:', err);
+        }
+      },
     })
   );
   familyOperations.push(
@@ -1307,6 +1371,12 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       getWorkflow: (workflowId) => spaceWorkflowManager.getWorkflow(workflowId),
       isWorkflowRunActive: (workflowRunId) =>
         spaceRuntimeService.isWorkflowRunActive(workflowRunId),
+      recoverWorkflowTask: (spaceId, taskId, targetStatus, options) =>
+        recoverTaskExecution(
+          createWorkflowTaskRecoveryExecutor(spaceId, spaceRuntimeService, options),
+          taskId,
+          targetStatus
+        ),
       taskRepo: spaceTaskRepo,
       nodeExecutionRepo,
       longHorizonAgentRepo,

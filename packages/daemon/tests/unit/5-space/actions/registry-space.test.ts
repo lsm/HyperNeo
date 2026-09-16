@@ -8,7 +8,7 @@ import {
   buildCreateTaskInput,
   resolveWorkspacePath,
   routeWorkflowReference,
-} from '../../../../src/lib/space/actions/create-task-params.ts';
+} from '../../../../src/lib/tasks/create-task-params.ts';
 import { createActionRegistry } from '../../../../src/lib/space/actions/registry.ts';
 import { createSpaceRegistryEntries } from '../../../../src/lib/space/actions/registry-space.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';

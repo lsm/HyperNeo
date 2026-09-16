@@ -9,7 +9,7 @@ import {
   resolveNodeExecution,
   resolveWorkerTargetExecution,
   type TaskRoutingTargetResolution,
-} from '../space/actions/task-message-delivery.ts';
+} from '../tasks/task-message-delivery.ts';
 import { normalizeAgentNameToken } from './agent-handle.ts';
 import { translateTaskMessageTarget } from './target-translation.ts';
 import type { TaskMessageSendDependencies, TaskMessageSendInput } from './task-message-send.ts';
