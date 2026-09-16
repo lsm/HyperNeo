@@ -13,6 +13,7 @@ export function registerEvolutionOperations(
     taskRepo: context.spaceTaskRepo,
     workflowRunRepo: context.spaceWorkflowRunRepo,
     scopeService: context.evolutionScopeService,
+    episodeService: context.evolutionEpisodeService,
     getGoal: (goalId) => context.spaceGoalService.getGoal(goalId),
     db: context.deps.db.getDatabase(),
     goalRepo: context.spaceGoalRepo,
