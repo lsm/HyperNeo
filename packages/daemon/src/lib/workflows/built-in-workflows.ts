@@ -32,6 +32,12 @@ import { RESEARCH_WORKFLOW, REVIEW_ONLY_WORKFLOW } from './built-in-research-wor
 import { CODER_OWNED_MERGE_INSTRUCTIONS } from './post-approval-merge-template.ts';
 
 export {
+  CODER_ONLY_WORKFLOW,
+  CODING_WITH_QA_WORKFLOW,
+  CODING_WORKFLOW,
+} from './built-in-coding-workflows.ts';
+export { RESEARCH_WORKFLOW, REVIEW_ONLY_WORKFLOW } from './built-in-research-workflows.ts';
+export {
   CODER_EXTERNAL_GATE_BLOCK,
   CODER_ONLY_MERGE_INSTRUCTIONS,
   CODER_ONLY_PROMPT,
@@ -55,13 +61,6 @@ export {
   REVIEWER_POST_APPROVAL_BLOCKER_PARAGRAPH,
   REVIEWER_ZERO_FINDINGS_GATE,
 };
-
-export {
-  CODER_ONLY_WORKFLOW,
-  CODING_WITH_QA_WORKFLOW,
-  CODING_WORKFLOW,
-} from './built-in-coding-workflows.ts';
-export { RESEARCH_WORKFLOW, REVIEW_ONLY_WORKFLOW } from './built-in-research-workflows.ts';
 
 export const LEGACY_CODING_TEMPLATE_IDENTITIES = [
   {

@@ -4540,6 +4540,7 @@ export class TaskAgentManager {
       this.completionCallbacks.delete(sessionId);
     }
     this.workerRegistryBySession.delete(sessionId);
+    this.nodeAgentRestoreContextBySession.delete(sessionId);
     this.nodeMessagingBySession.delete(sessionId);
   }
 
@@ -4919,6 +4920,36 @@ export class TaskAgentManager {
 
   private workerRegistryBySession = new Map<string, ActionRegistry>();
 
+  private nodeAgentRestoreContextBySession = new Map<
+    string,
+    Parameters<TaskAgentManager['reinjectNodeAgentMcpServer']>[1]
+  >();
+
+  async restoreNodeAgentSession(sessionId: string, reason?: string): Promise<boolean> {
+    const ctx = this.nodeAgentRestoreContextBySession.get(sessionId);
+    const liveSession = ctx ? this.getSubSession(sessionId) : null;
+    if (!ctx || !liveSession) {
+      log.warn(
+        `TaskAgentManager.restoreNodeAgentSession: no live AgentSession found for sub-session ${sessionId}. ` +
+          `Reason: ${reason ?? '<unspecified>'}`
+      );
+      return false;
+    }
+    try {
+      await this.reinjectNodeAgentMcpServer(liveSession, ctx);
+      log.info(
+        `TaskAgentManager.restoreNodeAgentSession: re-attached node-agent for sub-session ${sessionId} ` +
+          `(task=${ctx.taskId}, agent=${ctx.agentName}, reason=${reason ?? '<unspecified>'})`
+      );
+      return true;
+    } catch (err) {
+      log.error(
+        `TaskAgentManager.restoreNodeAgentSession: failed to re-attach node-agent for sub-session ${sessionId}: ${err instanceof Error ? err.message : String(err)}`
+      );
+      return false;
+    }
+  }
+
   private nodeMessagingBySession = new Map<string, NodeMessagingRuntime>();
 
   nodeMessagingRuntimeFor(sessionId: string): NodeMessagingRuntime | null {
@@ -5104,34 +5135,17 @@ export class TaskAgentManager {
         : undefined,
     });
 
+    this.nodeAgentRestoreContextBySession.set(subSessionId, {
+      taskId,
+      subSessionId,
+      agentName,
+      spaceId,
+      workflowRunId,
+      workspacePath,
+      workflowNodeId,
+    });
     const onRestoreNodeAgent = async (args: { reason?: string }): Promise<void> => {
-      const liveSession = this.getSubSession(subSessionId);
-      if (!liveSession) {
-        log.warn(
-          `TaskAgentManager.onRestoreNodeAgent: no live AgentSession found for sub-session ${subSessionId} ` +
-            `(task=${taskId}, agent=${agentName}). Reason: ${args.reason ?? '<unspecified>'}`
-        );
-        return;
-      }
-      try {
-        await this.reinjectNodeAgentMcpServer(liveSession, {
-          taskId,
-          subSessionId,
-          agentName,
-          spaceId,
-          workflowRunId,
-          workspacePath,
-          workflowNodeId,
-        });
-        log.info(
-          `TaskAgentManager.onRestoreNodeAgent: re-attached node-agent for sub-session ${subSessionId} ` +
-            `(task=${taskId}, agent=${agentName}, reason=${args.reason ?? '<unspecified>'})`
-        );
-      } catch (err) {
-        log.error(
-          `TaskAgentManager.onRestoreNodeAgent: failed to re-attach node-agent for sub-session ${subSessionId}: ${err instanceof Error ? err.message : String(err)}`
-        );
-      }
+      await this.restoreNodeAgentSession(subSessionId, args.reason);
     };
 
     const onSubscribeExternalEvent = async (args: { topicPattern: string; label?: string }) => {

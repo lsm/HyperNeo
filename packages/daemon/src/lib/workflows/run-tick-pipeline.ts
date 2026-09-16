@@ -7,10 +7,10 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import type { RunTickContext } from '../space/runtime/space-runtime.ts';
 import {
   continued,
-  skipped,
   type RunTickCtx,
   type SpaceWorkflowRunTickDeps,
   type SpaceWorkflowRunTickOutcome,
+  skipped,
   type TickResult,
 } from './run-tick-contract.ts';
 

@@ -1,15 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { WorkflowNode } from '@hyperneo/shared';
 import { resolveNodeAgents } from '@hyperneo/shared';
-import { NodeExecutionManager } from '../../../../src/lib/workflows/node-execution-manager.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
+import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
+import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
+import { NodeExecutionManager } from '../../../../src/lib/workflows/node-execution-manager.ts';
 import type { SpaceAgentLookup } from '../../../../src/lib/workflows/workflow-manager.ts';
 import {
   SpaceWorkflowManager,
   WorkflowValidationError,
 } from '../../../../src/lib/workflows/workflow-manager.ts';
-import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
-import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';

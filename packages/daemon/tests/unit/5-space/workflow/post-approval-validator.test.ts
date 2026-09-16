@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import type { PostApprovalRoute, WorkflowNode } from '@hyperneo/shared';
 import {
-  POST_APPROVAL_TASK_AGENT_TARGET,
   collectEligiblePostApprovalTargets,
+  POST_APPROVAL_TASK_AGENT_TARGET,
   validatePostApproval,
   validatePostApprovalRoutes,
 } from '../../../../src/lib/workflows/post-approval-validator.ts';

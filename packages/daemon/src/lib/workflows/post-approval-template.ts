@@ -45,7 +45,7 @@ export function interpolatePostApprovalTemplate(
       }
       return shellQuoteSingleQuoted(String(raw));
     }
-    if (Object.prototype.hasOwnProperty.call(context, key)) {
+    if (Object.hasOwn(context, key)) {
       const value = (context as Record<string, unknown>)[key];
       if (value === undefined || value === null) {
         if (!missingSeen.has(key)) {

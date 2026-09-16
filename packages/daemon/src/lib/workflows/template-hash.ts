@@ -1,5 +1,5 @@
-import type { SpaceWorkflow } from '@hyperneo/shared';
 import { createHash } from 'node:crypto';
+import type { SpaceWorkflow } from '@hyperneo/shared';
 
 interface WorkflowFingerprint {
   description: string;

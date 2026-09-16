@@ -1,6 +1,6 @@
 import type { WorkflowHookResult } from '@hyperneo/shared';
-import type { SpawnFn } from '../../runtime-spawn/index.ts';
 import { buildGitHubLookupEnv, fetchRateLimitResetEpoch } from '../../github/gh-lookup-helpers.ts';
+import type { SpawnFn } from '../../runtime-spawn/index.ts';
 import {
   computeRateLimitRetryMs,
   isRateLimitError,

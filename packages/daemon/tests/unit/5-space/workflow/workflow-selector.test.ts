@@ -1,7 +1,7 @@
-import { describe, test, expect } from 'bun:test';
-import { selectWorkflow } from '../../../../src/lib/workflows/workflow-selector.ts';
-import type { WorkflowSelectionContext } from '../../../../src/lib/workflows/workflow-selector.ts';
+import { describe, expect, test } from 'bun:test';
 import type { SpaceWorkflow } from '@hyperneo/shared';
+import type { WorkflowSelectionContext } from '../../../../src/lib/workflows/workflow-selector.ts';
+import { selectWorkflow } from '../../../../src/lib/workflows/workflow-selector.ts';
 
 let idCounter = 0;
 function makeId(): string {

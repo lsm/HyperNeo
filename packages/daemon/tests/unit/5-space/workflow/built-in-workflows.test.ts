@@ -24,7 +24,6 @@ import {
   exportWorkflow,
   validateExportedWorkflow,
 } from '../../../../src/lib/space/export-format.ts';
-import { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager.ts';
 import { isWorkflowTerminalNode } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import {
   LEGACY_CODING_SLOT_PROMPTS,
@@ -82,9 +81,10 @@ import {
   REVIEWER_ZERO_FINDINGS_GATE,
   CODING_WORKFLOW as STABLE_CODING_WORKFLOW,
 } from '../../../../src/lib/workflows/built-in-workflows.ts';
-import { seedBuiltInWorkflows } from '../../../../src/lib/workflows/seed-built-in-workflows.ts';
 import { CODER_OWNED_MERGE_INSTRUCTIONS } from '../../../../src/lib/workflows/post-approval-merge-template.ts';
+import { seedBuiltInWorkflows } from '../../../../src/lib/workflows/seed-built-in-workflows.ts';
 import { computeWorkflowHash } from '../../../../src/lib/workflows/template-hash.ts';
+import { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
