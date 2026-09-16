@@ -1,5 +1,6 @@
 import type { Session, SpaceGoal } from '@hyperneo/shared';
 import { z } from 'zod';
+import type { McpAuditLogRepository } from '../../storage/repositories/mcp-audit-log-repository.ts';
 import type {
   OperationCaller,
   OperationCallerRole,
@@ -7,6 +8,7 @@ import type {
 } from '../operations/registry.ts';
 import { resolveSessionSpaceId } from '../space/runtime/space-caller-scope.ts';
 import type { SpaceMcpSessionPolicyContext } from '../space/runtime/space-mcp-session-policy.ts';
+import type { SpaceGoalMutationContext } from './service.ts';
 
 export const GOAL_REJECTION_REASONS = [
   'space_unresolved',
@@ -37,6 +39,11 @@ export const GOAL_READ_POLICY = {
   roles: GOAL_ACCESS_ROLE_LISTS.read,
 } as const satisfies OperationPolicy;
 
+export const GOAL_WRITE_POLICY = {
+  safetyClass: 'mutate',
+  roles: GOAL_ACCESS_ROLE_LISTS.mutate,
+} as const satisfies OperationPolicy;
+
 export const GoalRejectionSchema = z.object({
   accepted: z.literal(false),
   reason: z.enum(GOAL_REJECTION_REASONS),
@@ -55,6 +62,35 @@ export const GoalSpaceScopeShape = {
 
 export interface GoalCallerContext extends SpaceMcpSessionPolicyContext {
   readonly getSession: (sessionId: string) => Session | null;
+  readonly auditLogRepo?: Pick<McpAuditLogRepository, 'createEntry'>;
+}
+
+export function goalMutationContext(caller: OperationCaller): SpaceGoalMutationContext {
+  return {
+    source: caller.source === 'mcp' ? 'space_agent_tool' : 'rpc',
+    sourceSessionId: caller.sessionId ?? null,
+  };
+}
+
+export function recordGoalAudit(
+  deps: GoalCallerContext,
+  caller: OperationCaller,
+  spaceId: string,
+  toolName: string,
+  paramsSummary: Record<string, unknown>,
+  taskId?: string
+): void {
+  if (!deps.auditLogRepo) return;
+  try {
+    deps.auditLogRepo.createEntry({
+      agentName: caller.agentName,
+      sessionId: caller.sessionId,
+      toolName,
+      paramsSummary: JSON.stringify(paramsSummary),
+      spaceId,
+      taskId,
+    });
+  } catch {}
 }
 
 function denied(reason: GoalRejectionReason, message: string): { reason: GoalRejection } {
