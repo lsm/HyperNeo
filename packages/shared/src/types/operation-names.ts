@@ -1,6 +1,10 @@
 export const OPERATION_NAMES = [
   'agent.get',
   'agent.list',
+  'externalEvent.get',
+  'externalEvent.listDeliveries',
+  'goal.get',
+  'goal.list',
   'message.send',
   'operations.describe',
   'operations.list',
