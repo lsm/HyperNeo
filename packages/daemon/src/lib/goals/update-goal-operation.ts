@@ -5,12 +5,12 @@ import { defineOperation, type OperationCaller } from '../operations/registry.ts
 import {
   admitGoalAccess,
   GOAL_WRITE_POLICY,
-  goalMutationContext,
-  GoalRejectionSchema,
-  GoalSpaceScopeShape,
-  recordGoalAudit,
   type GoalCallerContext,
   type GoalRejection,
+  GoalRejectionSchema,
+  GoalSpaceScopeShape,
+  goalMutationContext,
+  recordGoalAudit,
 } from './goal-operation-scope.ts';
 import {
   GoalMetricsSchema,
@@ -95,7 +95,8 @@ export async function applyGoalUpdate(
   caller: OperationCaller,
   deps: UpdateGoalDependencies
 ): Promise<Result> {
-  const { goalId: _goalId, spaceId: _spaceId, workspacePath, ...fields } = input;
+  const { goalId: _goalId, spaceId: _spaceId, ...updates } = input;
+  const { workspacePath, ...fields } = updates;
   const updated = deps.goalService.updateGoal(
     goal.id,
     {
@@ -106,7 +107,7 @@ export async function applyGoalUpdate(
   );
   recordGoalAudit(deps, caller, goal.spaceId, 'goal.update', {
     goalId: goal.id,
-    fields: Object.keys(fields),
+    fields: Object.keys(updates),
   });
   return { accepted: true, goal: updated };
 }
