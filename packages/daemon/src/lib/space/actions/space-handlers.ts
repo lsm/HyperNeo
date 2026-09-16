@@ -21,9 +21,7 @@ import type {
 import {
   generateUUID,
   getWorkflowRunExecutionStatusLabel,
-  isKnownToolEntry,
   isWorkflowRecoveryTransition,
-  KNOWN_TOOLS,
 } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { parseAddress } from '../../../../../messaging/src/address.ts';
@@ -44,12 +42,6 @@ import type { ExternalEventStore } from '../../external-events/external-event-st
 import { validateGlobPattern, validateSource } from '../../external-events/topic-validator.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
 import { Logger } from '../../logger.ts';
-import {
-  getAvailableModels,
-  getModelInfoUnfiltered,
-  getModelsCache,
-  isValidModel,
-} from '../../model-service.ts';
 import type { SessionManager } from '../../session/session-manager.ts';
 import type { EnsureSessionOutcome, SessionTarget } from '../../session-resolution/target.ts';
 import { parkTaskExecution } from '../../tasks/park-task-execution.ts';
@@ -66,6 +58,10 @@ import {
   getLongHorizonAgentTemplates,
 } from '../../agents/long-horizon-templates.ts';
 import { deriveAgentTemplate } from '../../agents/template-derivation.ts';
+import {
+  validateAgentModel as validateLongHorizonModel,
+  validateAgentTools as validateTools,
+} from '../../agents/agent-validation.ts';
 import {
   type OwnedAgentLookup,
   publishSpaceAgentV2Mirror,
@@ -252,32 +248,6 @@ function normalizeGoalUpdateArgs(args: GoalToolUpdateArgs) {
     checkInCronExpression: args.check_in_cron_expression,
     checkInTimezone: args.check_in_timezone,
   };
-}
-
-function validateTools(tools: string[]): string | null {
-  const invalid = tools.filter((toolName) => !isKnownToolEntry(toolName));
-  if (invalid.length === 0) return null;
-  return `Unknown tool${invalid.length > 1 ? 's' : ''}: ${invalid
-    .map((toolName) => `"${toolName}"`)
-    .join(
-      ', '
-    )}. Valid tools: ${KNOWN_TOOLS.join(', ')} or scoped Bash entries like 'Bash(gh pr view:*)'`;
-}
-
-async function validateLongHorizonModel(
-  model: string,
-  provider?: string | null
-): Promise<string | null> {
-  const available = getAvailableModels('global');
-  if (available.length === 0 && !getModelsCache().has('global')) return null;
-
-  if (provider) {
-    const valid = await isValidModel(model, 'global', provider);
-    return valid ? null : `Unrecognized model "${model}" for provider "${provider}"`;
-  }
-
-  const info = await getModelInfoUnfiltered(model, 'global');
-  return info ? null : `Unrecognized model: "${model}"`;
 }
 
 function longHorizonAgentTools(agent: SpaceLongHorizonAgent): string[] | null {
