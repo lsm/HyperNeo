@@ -1281,6 +1281,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     ...createAgentOperations({
       getSession: (sessionId) => deps.db.getSession(sessionId),
       longHorizonAgentRepo,
+      reminderRepo: spaceAgentReminderRepo,
       taskRepo: spaceTaskRepo,
       nodeExecutionRepo,
       publishAgentCreated: (agent, sessionId) => {
