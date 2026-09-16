@@ -1,6 +1,7 @@
 import { describe, expect, mock, test } from 'bun:test';
 import { ErrorCode, MessageHubHandlerError, type CallContext } from '@hyperneo/shared';
 import { z } from 'zod';
+import { LOCAL_RPC_PRINCIPAL } from '../../../../src/lib/operations/caller';
 import { createOperationRpcHandler } from '../../../../src/lib/operations/rpc-adapter';
 import { createOperationRegistry, defineOperation } from '../../../../src/lib/operations/registry';
 
@@ -41,7 +42,11 @@ describe('generic operation RPC adapter', () => {
       await handler({ name: 'example', input: 'hello', caller: { sessionId: 'spoofed' } }, context)
     ).toEqual({ text: 'hello' });
     expect(caller).toHaveBeenCalledWith(context);
-    expect(execute).toHaveBeenCalledWith('hello', { source: 'rpc', sessionId: 'trusted-sender' });
+    expect(execute).toHaveBeenCalledWith('hello', {
+      source: 'rpc',
+      sessionId: 'trusted-sender',
+      principal: LOCAL_RPC_PRINCIPAL,
+    });
     expect(execute).toHaveBeenCalledTimes(1);
   });
 

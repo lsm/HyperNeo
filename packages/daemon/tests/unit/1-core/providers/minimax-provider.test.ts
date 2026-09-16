@@ -178,10 +178,10 @@ describe('MinimaxProvider', () => {
   describe('listRemoteModels', () => {
     function installModelListFetch(responses: unknown[]): {
       fetchMock: ReturnType<typeof mock>;
-      calls: Array<[RequestInfo | URL, RequestInit | undefined]>;
+      calls: Array<[string | URL | Request, RequestInit | undefined]>;
     } {
-      const calls: Array<[RequestInfo | URL, RequestInit | undefined]> = [];
-      const fetchMock = mock(async (url: RequestInfo | URL, init?: RequestInit) => {
+      const calls: Array<[string | URL | Request, RequestInit | undefined]> = [];
+      const fetchMock = mock(async (url: string | URL | Request, init?: RequestInit) => {
         calls.push([url, init]);
         const body = responses.shift();
         return new Response(JSON.stringify(body), { status: 200 });
