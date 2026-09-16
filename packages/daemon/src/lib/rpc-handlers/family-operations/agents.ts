@@ -3,6 +3,7 @@ import { createAgentOperations } from '../../agents/operations.ts';
 import {
   publishSpaceAgentV2Mirror,
   publishUnifiedAgentCreated,
+  publishUnifiedAgentUpdated,
 } from '../../agents/unified-agent-events.ts';
 import type { OperationDefinition } from '../../operations/registry.ts';
 import type { FamilyOperationContext } from './context.ts';
@@ -23,6 +24,20 @@ export function registerAgentOperations(context: FamilyOperationContext): Operat
         'created'
       );
     },
+    publishAgentUpdated: (agent, sessionId) => {
+      void publishUnifiedAgentUpdated(context.deps.internalEventBus, agent, sessionId);
+      void publishSpaceAgentV2Mirror(
+        context.deps.internalEventBus,
+        context.spaceAgentRepo,
+        agent.spaceId,
+        agent.id,
+        'updated'
+      );
+    },
+    refreshAgentSubscriptions: (spaceId, agentId) =>
+      context.spaceRuntimeService.refreshLongHorizonAgentSubscriptions(spaceId, agentId),
+    clearAgentSessionProvider: (spaceId, agentId) =>
+      context.spaceRuntimeService.clearLongTermAgentSessionProvider(spaceId, agentId),
     getGoalSpace: (goalId) => context.spaceGoalService.getGoal(goalId)?.spaceId ?? null,
     getForgeScopeSpace: (scopeId) =>
       context.evolutionScopeService.getScope(scopeId)?.spaceId ?? null,

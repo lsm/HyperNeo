@@ -15,13 +15,22 @@ import {
   type AgentAssignmentDependencies,
 } from './assign-agent-operation.ts';
 import type { AgentOperationDeps } from './operation-contracts.ts';
+import {
+  createArchiveAgentOperation,
+  createPauseAgentOperation,
+  createUpdateAgentOperation,
+  type UpdateAgentDependencies,
+} from './update-agent-operation.ts';
 
 export interface AgentOperationDependencies extends AgentOperationDeps {
   readonly longHorizonAgentRepo: Pick<
     SpaceLongHorizonAgentRepository,
-    'getById' | 'listBySpaceId' | 'create'
+    'getById' | 'listBySpaceId' | 'create' | 'update'
   >;
   readonly publishAgentCreated: CreateAgentDependencies['publishAgentCreated'];
+  readonly publishAgentUpdated: UpdateAgentDependencies['publishAgentUpdated'];
+  readonly refreshAgentSubscriptions: UpdateAgentDependencies['refreshAgentSubscriptions'];
+  readonly clearAgentSessionProvider: UpdateAgentDependencies['clearAgentSessionProvider'];
   readonly audit: CreateAgentDependencies['audit'];
   readonly getGoalSpace: AgentAssignmentDependencies['getGoalSpace'];
   readonly getForgeScopeSpace: AgentAssignmentDependencies['getForgeScopeSpace'];
@@ -48,6 +57,15 @@ function assignmentDeps(deps: AgentOperationDependencies): AgentAssignmentDepend
   };
 }
 
+function updateDeps(deps: AgentOperationDependencies): UpdateAgentDependencies {
+  return {
+    ...deps,
+    listAgents: (spaceId) => deps.longHorizonAgentRepo.listBySpaceId(spaceId),
+    getAgent: (agentId) => deps.longHorizonAgentRepo.getById(agentId),
+    updateAgent: (agentId, params) => deps.longHorizonAgentRepo.update(agentId, params),
+  };
+}
+
 export function createAgentOperations(deps: AgentOperationDependencies): OperationDefinition[] {
   return [
     createListAgentsOperation({
@@ -64,6 +82,9 @@ export function createAgentOperations(deps: AgentOperationDependencies): Operati
       getAgent: (agentId) => deps.longHorizonAgentRepo.getById(agentId),
       createAgent: (params) => deps.longHorizonAgentRepo.create(params),
     }),
+    createUpdateAgentOperation(updateDeps(deps)),
+    createPauseAgentOperation(updateDeps(deps)),
+    createArchiveAgentOperation(updateDeps(deps)),
     createAssignAgentToGoalOperation(assignmentDeps(deps)),
     createUnassignAgentFromGoalOperation(assignmentDeps(deps)),
     createAssignAgentToForgeScopeOperation(assignmentDeps(deps)),
