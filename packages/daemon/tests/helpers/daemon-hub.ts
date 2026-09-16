@@ -210,7 +210,7 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
   };
   'github.eventReceived': {
     sessionId: string;
-    event: import('./github/types').GitHubEvent;
+    event: import('../../src/lib/github/types').GitHubEvent;
   };
   'github.eventFiltered': {
     sessionId: string;
@@ -270,33 +270,6 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
     roomId: string;
     goalId: string;
     goal: RoomGoal;
-  };
-
-  'lobby.messageReceived': {
-    sessionId: string;
-    message: import('./lobby/types').ExternalMessage;
-  };
-  'lobby.messageRouted': {
-    sessionId: string;
-    messageId: string;
-    roomId: string;
-    confidence: 'high' | 'medium' | 'low';
-    reason: string;
-  };
-  'lobby.messageToInbox': {
-    sessionId: string;
-    messageId: string;
-    reason: string;
-  };
-  'lobby.messageRejected': {
-    sessionId: string;
-    messageId: string;
-    reason: string;
-  };
-  'lobby.messageSecurityFailed': {
-    sessionId: string;
-    messageId: string;
-    securityCheck: import('./lobby/types').ExternalSecurityCheck;
   };
 
   'promptTemplate.updated': {

@@ -410,7 +410,7 @@ describe('Auth RPC Handlers', () => {
         accessToken: 'new-token',
         refreshToken: 'refresh-token',
       };
-      let listener: ((credentials: typeof credentials) => void | Promise<void>) | undefined;
+      let listener: ((changed: typeof credentials) => void | Promise<void>) | undefined;
       const mockProvider = createMockProvider({
         getCredentials: mock(() => ({ type: 'oauth' as const, accessToken: 'stale-token' })),
         onCredentialsChanged: mock((handler) => {
@@ -474,7 +474,7 @@ describe('Auth RPC Handlers', () => {
         accessToken: 'new-token',
         refreshToken: 'refresh-token',
       };
-      let listener: ((credentials: typeof credentials) => void | Promise<void>) | undefined;
+      let listener: ((changed: typeof credentials) => void | Promise<void>) | undefined;
       const mockProvider = createMockProvider({
         onCredentialsChanged: mock((handler) => {
           listener = handler as typeof listener;
@@ -522,7 +522,7 @@ describe('Auth RPC Handlers', () => {
         accessToken: 'new-token',
         refreshToken: 'refresh-token',
       };
-      let listener: ((credentials: typeof credentials) => void | Promise<void>) | undefined;
+      let listener: ((changed: typeof credentials) => void | Promise<void>) | undefined;
       const mockProvider = createMockProvider({
         onCredentialsChanged: mock((handler) => {
           listener = handler as typeof listener;

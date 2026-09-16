@@ -377,7 +377,7 @@ describe('OpenRouterProvider', () => {
     process.env.OPENROUTER_API_KEY = 'sk-or-test';
     let resolveFetch: ((response: Response) => void) | undefined;
     const fetchMock = mock(
-      (_url: RequestInfo | URL, _init?: RequestInit) =>
+      (_url: string | URL | Request, _init?: RequestInit) =>
         new Promise<Response>((resolve) => {
           resolveFetch = resolve;
         })
