@@ -1,48 +1,41 @@
+import { AGENT_OPERATION_NAMES } from './operation-names/agent.ts';
+import { CORE_OPERATION_NAMES } from './operation-names/core.ts';
+import { EXTERNAL_EVENT_OPERATION_NAMES } from './operation-names/external-event.ts';
+import { FORGE_OPERATION_NAMES } from './operation-names/forge.ts';
+import { GOAL_OPERATION_NAMES } from './operation-names/goal.ts';
+import { MESSAGING_OPERATION_NAMES } from './operation-names/messaging.ts';
+import { NODE_OPERATION_NAMES } from './operation-names/node.ts';
+import { SCHEDULE_OPERATION_NAMES } from './operation-names/schedule.ts';
+import { SESSION_OPERATION_NAMES } from './operation-names/session.ts';
+import { TASK_OPERATION_NAMES } from './operation-names/task.ts';
+import { WORKFLOW_OPERATION_NAMES } from './operation-names/workflow.ts';
+
+export const OPERATION_NAME_FAMILIES = {
+  agent: AGENT_OPERATION_NAMES,
+  core: CORE_OPERATION_NAMES,
+  externalEvent: EXTERNAL_EVENT_OPERATION_NAMES,
+  forge: FORGE_OPERATION_NAMES,
+  goal: GOAL_OPERATION_NAMES,
+  messaging: MESSAGING_OPERATION_NAMES,
+  node: NODE_OPERATION_NAMES,
+  schedule: SCHEDULE_OPERATION_NAMES,
+  session: SESSION_OPERATION_NAMES,
+  task: TASK_OPERATION_NAMES,
+  workflow: WORKFLOW_OPERATION_NAMES,
+} as const;
+
 export const OPERATION_NAMES = [
-  'agent.archive',
-  'agent.create',
-  'agent.get',
-  'agent.list',
-  'agent.pause',
-  'agent.update',
-  'externalEvent.get',
-  'externalEvent.listDeliveries',
-  'goal.create',
-  'goal.events.list',
-  'goal.get',
-  'goal.list',
-  'goal.pause',
-  'goal.resume',
-  'goal.reviewOutcome',
-  'goal.tasks.list',
-  'goal.triggerTask',
-  'goal.update',
-  'message.send',
-  'operations.describe',
-  'operations.list',
-  'schedule.create',
-  'schedule.delete',
-  'schedule.get',
-  'schedule.list',
-  'schedule.pause',
-  'schedule.resume',
-  'session.message.send',
-  'task.archive',
-  'task.cancel',
-  'task.complete',
-  'task.create',
-  'task.dependencies.set',
-  'task.get',
-  'task.list',
-  'task.members.list',
-  'task.message.send',
-  'task.resolvePendingCompletion',
-  'task.retry',
-  'task.setPreferredWorkflow',
-  'task.start',
-  'task.submitForReview',
-  'task.transition',
-  'task.update',
+  ...AGENT_OPERATION_NAMES,
+  ...CORE_OPERATION_NAMES,
+  ...EXTERNAL_EVENT_OPERATION_NAMES,
+  ...FORGE_OPERATION_NAMES,
+  ...GOAL_OPERATION_NAMES,
+  ...MESSAGING_OPERATION_NAMES,
+  ...NODE_OPERATION_NAMES,
+  ...SCHEDULE_OPERATION_NAMES,
+  ...SESSION_OPERATION_NAMES,
+  ...TASK_OPERATION_NAMES,
+  ...WORKFLOW_OPERATION_NAMES,
 ] as const;
 
 export type OperationName = (typeof OPERATION_NAMES)[number];

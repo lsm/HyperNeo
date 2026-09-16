@@ -4,7 +4,9 @@ export type CallerScope = Pick<OperationCaller, 'spaceId' | 'role' | 'agentId' |
 
 export type CallerScopeResolver = (sessionId: string) => CallerScope | null;
 
-export type CallerIdentity = Omit<OperationCaller, 'source'>;
+export type CallerIdentity = Omit<OperationCaller, 'source' | 'principal'>;
+
+export const LOCAL_RPC_PRINCIPAL = 'local';
 
 export const NO_CALLER_SCOPE: CallerScopeResolver = () => null;
 

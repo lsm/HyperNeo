@@ -3,8 +3,8 @@ import type {
   AcpJsonRpcNotification,
   AcpJsonRpcRequest,
   AcpJsonRpcResponse,
-  AcpTransportOptions,
 } from '@hyperneo/shared';
+import type { AcpTransportOptions } from '../../../../src/lib/acp/acp-transport';
 
 let lastMockTransport: MockAcpTransport | null = null;
 
