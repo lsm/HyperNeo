@@ -134,7 +134,7 @@ describe('fetchRemoteModelList', () => {
     respond: (url: string, init?: RequestInit) => Promise<unknown>
   ): Array<{ url: string; init?: RequestInit }> {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
-    global.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
+    global.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
       const target = String(url);
       calls.push({ url: target, init });
       return respond(target, init);

@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test';
 import type { CallContext } from '@hyperneo/shared';
 import { z } from 'zod';
+import { LOCAL_RPC_PRINCIPAL } from '../../../../src/lib/operations/caller';
 import { createDiscoveryOperations } from '../../../../src/lib/operations/discovery';
 import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-adapter';
 import { createOperationRpcHandler } from '../../../../src/lib/operations/rpc-adapter';
@@ -54,5 +55,9 @@ test('cached transport handlers resolve current registry for discovery and invoc
   });
   expect(await mcpValue({ name: 'first' })).toMatchObject({ code: 'unknown_operation' });
   expect(await mcpValue({ name: 'second' })).toEqual({ source: 'mcp', sessionId: 'trusted' });
-  expect(await rpc({ name: 'second' }, context)).toEqual({ source: 'rpc', sessionId: 'trusted' });
+  expect(await rpc({ name: 'second' }, context)).toEqual({
+    source: 'rpc',
+    sessionId: 'trusted',
+    principal: LOCAL_RPC_PRINCIPAL,
+  });
 });
