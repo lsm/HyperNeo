@@ -373,7 +373,12 @@ export function applyForgeScopeUpdate(
   forge: ForgeScopeOperationDependencies
 ): ForgeGate<{ accepted: true; scope: EvolutionScope }, ScopeIdRejection> {
   const scope = forge.scopeService.updateScope(scopeId, params);
-  forge.audit?.({ toolName: 'forge.scope.update', paramsSummary: { scopeId }, caller });
+  forge.audit?.({
+    toolName: 'forge.scope.update',
+    paramsSummary: { scopeId },
+    caller,
+    spaceId: scope?.spaceId,
+  });
   if (!scope) return denyForge('scope_not_found', `EvolutionScope not found: ${scopeId}`);
   syncForgeScopeAutomation(scope, forge);
   return { value: { accepted: true, scope } };

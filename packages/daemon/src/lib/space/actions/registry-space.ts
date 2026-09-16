@@ -47,7 +47,6 @@ import {
   GetExternalEventSchema,
   GetForgeScopeSchema,
   GetForgeTimelineSchema,
-  GetGoalSchema,
   GetWorkflowDetailSchema,
   GetWorkflowRunSchema,
   InactivityConfigGetSchema,
@@ -64,9 +63,6 @@ import {
   ListForgeProposalsSchema,
   ListForgeReviewBundleSchema,
   ListForgeScopesSchema,
-  ListGoalEventsSchema,
-  ListGoalsSchema,
-  ListGoalTasksSchema,
   ListTasksSchema,
   ListWorkflowsSchema,
   PauseAgentSchema,
@@ -789,26 +785,6 @@ export function createSpaceRegistryEntries(
 
   const goalEntries: ActionDefinition[] = [
     defineAction({
-      name: 'list_goals',
-      family: 'goals',
-      safetyClass: 'read',
-      description:
-        'List long-horizon goals in this space with rolling summary and progress; read this before changing goal state; returns goal records.',
-      paramsDoc: 'status?',
-      paramsSchema: ListGoalsSchema,
-      handler: (args) => handlers.list_goals(args),
-    }),
-    defineAction({
-      name: 'get_goal',
-      family: 'goals',
-      safetyClass: 'read',
-      description:
-        'Get one goal with rolling state, active task pointers, next check-in, metrics, and next steps; returns the full goal record.',
-      paramsDoc: 'goal_id',
-      paramsSchema: GetGoalSchema,
-      handler: (args) => handlers.get_goal(args),
-    }),
-    defineAction({
       name: 'create_goal',
       family: 'goals',
       safetyClass: 'mutate',
@@ -859,26 +835,6 @@ export function createSpaceRegistryEntries(
       paramsDoc: 'goal_id',
       paramsSchema: TriggerGoalTaskSchema,
       handler: (args) => handlers.trigger_goal_task(args),
-    }),
-    defineAction({
-      name: 'list_goal_tasks',
-      family: 'goals',
-      safetyClass: 'read',
-      description:
-        'List tasks linked to a goal as a bounded page of compact summaries ordered newest-first; paginate with before/before_id.',
-      paramsDoc: 'goal_id, status?, limit? (default 20, max 100), before?, before_id?',
-      paramsSchema: ListGoalTasksSchema,
-      handler: (args) => handlers.list_goal_tasks(args),
-    }),
-    defineAction({
-      name: 'list_goal_events',
-      family: 'goals',
-      safetyClass: 'read',
-      description:
-        'List append-only history events for a goal to understand why its rolling state changed; returns newest-first events.',
-      paramsDoc: 'goal_id, limit?, before?, before_id?',
-      paramsSchema: ListGoalEventsSchema,
-      handler: (args) => handlers.list_goal_events(args),
     }),
   ];
 

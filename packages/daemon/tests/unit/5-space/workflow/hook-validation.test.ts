@@ -1,8 +1,8 @@
-import { describe, test, expect, beforeAll } from 'bun:test';
+import { beforeAll, describe, expect, test } from 'bun:test';
 import type { WorkflowHook, WorkflowNodeInput } from '@hyperneo/shared';
-import { validateWorkflowHooks } from '../../../../src/lib/workflows/hook-validation.ts';
-import { WorkflowHookRuntimeService } from '../../../../src/lib/workflows/hook-runtime-service.ts';
 import { registerProductionConnectors } from '../../../../src/lib/github/connectors/production.ts';
+import { WorkflowHookRuntimeService } from '../../../../src/lib/workflows/hook-runtime-service.ts';
+import { validateWorkflowHooks } from '../../../../src/lib/workflows/hook-validation.ts';
 
 const runtimeService = new WorkflowHookRuntimeService();
 

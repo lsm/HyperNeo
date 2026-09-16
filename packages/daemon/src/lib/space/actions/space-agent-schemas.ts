@@ -526,14 +526,6 @@ export const GOAL_UPDATE_FIELDS = {
     ),
 };
 
-export const ListGoalsSchema = z.object({
-  status: GoalStatusSchema.optional().describe('Filter by goal status'),
-});
-
-export const GetGoalSchema = z.object({
-  goal_id: z.string().describe('Goal ID'),
-});
-
 export const CreateGoalSchema = z.object({
   title: z.string().min(1).describe('Goal title'),
   description: z.string().optional().describe('Goal description'),
@@ -592,48 +584,12 @@ export const TriggerGoalTaskSchema = z.object({
   goal_id: z.string().describe('Goal ID'),
 });
 
-export const ListGoalTasksSchema = z.object({
-  goal_id: z.string().describe('Goal ID'),
-  status: z
-    .enum([
-      'draft',
-      'open',
-      'in_progress',
-      'review',
-      'approved',
-      'done',
-      'blocked',
-      'cancelled',
-      'archived',
-    ])
-    .optional()
-    .describe('Filter by linked task status'),
-  limit: z.number().int().min(1).max(100).optional().describe('Max tasks to return (default 20)'),
-  before: z
-    .number()
-    .int()
-    .optional()
-    .describe('Return tasks created before this timestamp (cursor)'),
-  before_id: z.string().optional().describe('Cursor id for same-timestamp pagination'),
-});
-
-export const ListGoalEventsSchema = z.object({
-  goal_id: z.string().describe('Goal ID'),
-  limit: z.number().int().min(1).max(100).optional().describe('Max events to return'),
-  before: z.number().int().optional().describe('Return events before this timestamp'),
-  before_id: z.string().optional().describe('Cursor event ID for same-timestamp pagination'),
-});
-
 export const SPACE_GOAL_TOOL_SCHEMAS = {
-  list_goals: ListGoalsSchema,
-  get_goal: GetGoalSchema,
   create_goal: CreateGoalSchema,
   update_goal: UpdateGoalSchema,
   pause_goal: PauseGoalSchema,
   resume_goal: ResumeGoalSchema,
   trigger_goal_task: TriggerGoalTaskSchema,
-  list_goal_tasks: ListGoalTasksSchema,
-  list_goal_events: ListGoalEventsSchema,
 } as const;
 
 export type SpaceGoalToolName = keyof typeof SPACE_GOAL_TOOL_SCHEMAS;

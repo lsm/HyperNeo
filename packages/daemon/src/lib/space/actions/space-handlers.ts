@@ -2484,26 +2484,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       }
     },
 
-    async list_goals(args: { status?: SpaceGoalStatus } = {}): Promise<ToolResult> {
-      try {
-        const goals = requireGoalService().listGoals({ spaceId, status: args.status });
-        return jsonResult({ success: true, goals });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        return jsonResult({ success: false, error: message });
-      }
-    },
-
-    async get_goal(args: { goal_id: string }): Promise<ToolResult> {
-      try {
-        const goal = requireGoalInSpace(args.goal_id);
-        return jsonResult({ success: true, goal });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        return jsonResult({ success: false, error: message });
-      }
-    },
-
     async review_goal_outcome(args: {
       goal_id?: string;
       task_id?: string;
@@ -2741,62 +2721,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         const result = requireGoalService().createImmediateTask(args.goal_id, goalToolContext);
         logAudit('trigger_goal_task', { goal_id: args.goal_id }, result.task?.id);
         return jsonResult({ success: true, ...result });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        return jsonResult({ success: false, error: message });
-      }
-    },
-
-    async list_goal_tasks(args: {
-      goal_id: string;
-      status?: SpaceTaskStatus;
-      limit?: number;
-      before?: number;
-      before_id?: string;
-    }): Promise<ToolResult> {
-      try {
-        requireGoalInSpace(args.goal_id);
-        const page = taskRepo.listByGoal(spaceId, args.goal_id, {
-          status: args.status,
-          limit: args.limit,
-          before: args.before,
-          beforeId: args.before_id,
-        });
-        const tasks = page.tasks.map((task) => ({
-          id: task.id,
-          taskNumber: task.taskNumber,
-          title: task.title,
-          status: task.status,
-          priority: task.priority,
-          createdAt: task.createdAt,
-          updatedAt: task.updatedAt,
-        }));
-        return jsonResult({
-          success: true,
-          total: page.total,
-          tasks,
-          has_more: page.hasMore,
-        });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        return jsonResult({ success: false, error: message });
-      }
-    },
-
-    async list_goal_events(args: {
-      goal_id: string;
-      limit?: number;
-      before?: number;
-      before_id?: string;
-    }): Promise<ToolResult> {
-      try {
-        requireGoalInSpace(args.goal_id);
-        const events = requireGoalService().listGoalEvents(args.goal_id, {
-          limit: args.limit,
-          before: args.before,
-          beforeId: args.before_id,
-        });
-        return jsonResult({ success: true, total: events.length, events });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         return jsonResult({ success: false, error: message });
