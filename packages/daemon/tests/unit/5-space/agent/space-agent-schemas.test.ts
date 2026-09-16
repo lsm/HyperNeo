@@ -7,14 +7,12 @@ import {
   SPACE_AGENT_LIFECYCLE_TOOL_SCHEMAS,
   SPACE_AGENT_TOOL_SCHEMAS,
   SPACE_FORGE_TOOL_SCHEMAS,
-  SPACE_GOAL_TOOL_SCHEMAS,
   type ExternalEventToolName,
   type InactivityToolName,
   type ScheduledToolName,
   type SpaceAgentLifecycleToolName,
   type SpaceAgentToolName,
   type SpaceForgeToolName,
-  type SpaceGoalToolName,
 } from '../../../../src/lib/space/actions/space-agent-schemas.ts';
 
 const BASE_TOOL_NAMES: SpaceAgentToolName[] = [
@@ -372,18 +370,6 @@ const LIFECYCLE_TOOL_NAMES: SpaceAgentLifecycleToolName[] = [
   'list_agent_event_subscriptions',
 ];
 
-const GOAL_TOOL_NAMES: SpaceGoalToolName[] = [
-  'list_goals',
-  'get_goal',
-  'create_goal',
-  'update_goal',
-  'pause_goal',
-  'resume_goal',
-  'trigger_goal_task',
-  'list_goal_tasks',
-  'list_goal_events',
-];
-
 const FORGE_TOOL_NAMES: SpaceForgeToolName[] = [
   'create_forge_scope',
   'create_forge_scope_from_goal',
@@ -418,11 +404,6 @@ describe('conditional family tool schema maps', () => {
     expect(Object.keys(SPACE_AGENT_LIFECYCLE_TOOL_SCHEMAS)).toHaveLength(20);
   });
 
-  test('SPACE_GOAL_TOOL_SCHEMAS contains exactly the 9 goal tools', () => {
-    expect(Object.keys(SPACE_GOAL_TOOL_SCHEMAS).sort()).toEqual([...GOAL_TOOL_NAMES].sort());
-    expect(Object.keys(SPACE_GOAL_TOOL_SCHEMAS)).toHaveLength(9);
-  });
-
   test('SPACE_FORGE_TOOL_SCHEMAS contains exactly the 23 Forge tools', () => {
     expect(Object.keys(SPACE_FORGE_TOOL_SCHEMAS).sort()).toEqual([...FORGE_TOOL_NAMES].sort());
     expect(Object.keys(SPACE_FORGE_TOOL_SCHEMAS)).toHaveLength(23);
@@ -430,11 +411,7 @@ describe('conditional family tool schema maps', () => {
 
   test('family maps do not overlap the base map', () => {
     const base = new Set(Object.keys(SPACE_AGENT_TOOL_SCHEMAS));
-    for (const family of [
-      SPACE_AGENT_LIFECYCLE_TOOL_SCHEMAS,
-      SPACE_GOAL_TOOL_SCHEMAS,
-      SPACE_FORGE_TOOL_SCHEMAS,
-    ]) {
+    for (const family of [SPACE_AGENT_LIFECYCLE_TOOL_SCHEMAS, SPACE_FORGE_TOOL_SCHEMAS]) {
       for (const name of Object.keys(family)) {
         expect(base.has(name)).toBe(false);
       }
@@ -767,156 +744,6 @@ const LIFECYCLE_PINS: FamilySafeParsePin[] = [
     tool: 'list_agent_event_subscriptions',
     accepts: [{ input: { agent_id: 'a1' }, data: { agent_id: 'a1' } }],
     rejects: [{}],
-  },
-];
-
-const GOAL_PINS: FamilySafeParsePin[] = [
-  {
-    tool: 'list_goals',
-    accepts: [
-      { input: {}, data: {} },
-      { input: { status: 'completed' }, data: { status: 'completed' } },
-    ],
-    rejects: [{ status: 'disabled' }, { status: 'done' }],
-  },
-  {
-    tool: 'get_goal',
-    accepts: [{ input: { goal_id: 'g1' }, data: { goal_id: 'g1' } }],
-    rejects: [{}],
-  },
-  {
-    tool: 'create_goal',
-    accepts: [
-      {
-        input: {
-          title: 'Ship v2',
-          description: 'd',
-          type: 'measurable',
-          priority: 'urgent',
-          labels: ['infra'],
-          metrics: { deploys: 3 },
-          summary: 'rolling',
-          progress: 40,
-          next_steps: ['step'],
-          preferred_workflow_id: 'wf1',
-          auto_trigger_next: true,
-          check_in_cron_expression: '0 9 * * 1',
-          check_in_timezone: 'UTC',
-          trigger_immediately: true,
-          owner_agent_id: null,
-          workspace_path: null,
-        },
-        data: {
-          title: 'Ship v2',
-          description: 'd',
-          type: 'measurable',
-          priority: 'urgent',
-          labels: ['infra'],
-          metrics: { deploys: 3 },
-          summary: 'rolling',
-          progress: 40,
-          next_steps: ['step'],
-          preferred_workflow_id: 'wf1',
-          auto_trigger_next: true,
-          check_in_cron_expression: '0 9 * * 1',
-          check_in_timezone: 'UTC',
-          trigger_immediately: true,
-          owner_agent_id: null,
-          workspace_path: null,
-        },
-      },
-    ],
-    rejects: [
-      {},
-      { title: '' },
-      { title: 'T', type: 'recurring_forever' },
-      { title: 'T', progress: 101 },
-      { title: 'T', metrics: { bad: {} } },
-    ],
-  },
-  {
-    tool: 'update_goal',
-    accepts: [
-      { input: { goal_id: 'g1' }, data: { goal_id: 'g1' } },
-      {
-        input: {
-          goal_id: 'g1',
-          status: 'archived',
-          check_in_cron_expression: null,
-          workspace_path: null,
-          metrics: { ratio: 0.5 },
-          progress: 100,
-        },
-        data: {
-          goal_id: 'g1',
-          status: 'archived',
-          check_in_cron_expression: null,
-          workspace_path: null,
-          metrics: { ratio: 0.5 },
-          progress: 100,
-        },
-      },
-    ],
-    rejects: [
-      {},
-      { goal_id: 'g1', status: 'disabled' },
-      { goal_id: 'g1', progress: -1 },
-      { goal_id: 'g1', metrics: { bad: [] } },
-    ],
-  },
-  {
-    tool: 'pause_goal',
-    accepts: [{ input: { goal_id: 'g1' }, data: { goal_id: 'g1' } }],
-    rejects: [{}],
-  },
-  {
-    tool: 'resume_goal',
-    accepts: [{ input: { goal_id: 'g1' }, data: { goal_id: 'g1' } }],
-    rejects: [{}],
-  },
-  {
-    tool: 'trigger_goal_task',
-    accepts: [{ input: { goal_id: 'g1' }, data: { goal_id: 'g1' } }],
-    rejects: [{}],
-  },
-  {
-    tool: 'list_goal_tasks',
-    accepts: [
-      { input: { goal_id: 'g1' }, data: { goal_id: 'g1' } },
-      {
-        input: {
-          goal_id: 'g1',
-          status: 'blocked',
-          limit: 100,
-          before: 1700000000000,
-          before_id: 't1',
-        },
-        data: {
-          goal_id: 'g1',
-          status: 'blocked',
-          limit: 100,
-          before: 1700000000000,
-          before_id: 't1',
-        },
-      },
-    ],
-    rejects: [
-      { goal_id: 'g1', status: 'paused' },
-      { goal_id: 'g1', limit: 101 },
-      { goal_id: 'g1', limit: 0 },
-      {},
-    ],
-  },
-  {
-    tool: 'list_goal_events',
-    accepts: [
-      { input: { goal_id: 'g1' }, data: { goal_id: 'g1' } },
-      {
-        input: { goal_id: 'g1', limit: 100, before: 123, before_id: 'e1' },
-        data: { goal_id: 'g1', limit: 100, before: 123, before_id: 'e1' },
-      },
-    ],
-    rejects: [{ goal_id: 'g1', limit: 101 }, {}],
   },
 ];
 
@@ -1333,12 +1160,6 @@ runFamilyPins(
   'SPACE_AGENT_LIFECYCLE_TOOL_SCHEMAS safeParse pins',
   SPACE_AGENT_LIFECYCLE_TOOL_SCHEMAS as unknown as Record<string, z.ZodType>,
   LIFECYCLE_PINS
-);
-
-runFamilyPins(
-  'SPACE_GOAL_TOOL_SCHEMAS safeParse pins',
-  SPACE_GOAL_TOOL_SCHEMAS as unknown as Record<string, z.ZodType>,
-  GOAL_PINS
 );
 
 runFamilyPins(
