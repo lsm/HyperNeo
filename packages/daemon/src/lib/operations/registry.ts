@@ -19,11 +19,19 @@ export interface OperationCaller {
   readonly agentName?: string;
 }
 
+export type OperationSafetyClass = 'read' | 'mutate' | 'destructive' | 'human_only';
+
+export interface OperationPolicy {
+  readonly safetyClass: OperationSafetyClass;
+  readonly roles?: readonly OperationCallerRole[];
+}
+
 export interface OperationEntry<Input, Output> {
   readonly name: OperationName | (string & {});
   readonly description: string;
   readonly inputSchema: z.ZodType<Input>;
   readonly resultSchema: z.ZodType<Output>;
+  readonly policy?: OperationPolicy;
   readonly execute: (input: Input, caller: OperationCaller) => Promise<Output>;
 }
 

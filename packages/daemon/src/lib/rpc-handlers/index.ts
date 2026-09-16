@@ -5,6 +5,7 @@ import { createWorkflowTaskRecoveryExecutor } from '../tasks/recovery-executor.t
 import { recoverTaskExecution } from '../tasks/recover-task-execution.ts';
 import { McpAuditLogRepository } from '../../storage/repositories/mcp-audit-log-repository.ts';
 import { createSpaceOperationRegistryProvider } from '../tasks/operations.ts';
+import type { OperationDefinition } from '../operations/registry.ts';
 import { createCompletionGateBindings } from '../tasks/complete-task-gates.ts';
 import { isCoderOwnedMergeWorkflow } from '../workflows/post-approval-router.ts';
 import { createGithubConnector } from '../github/connectors/github-connector.ts';
@@ -1264,6 +1265,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     }
   });
 
+  const familyOperations: OperationDefinition[] = [];
   const spaceOperationRegistryProvider = createSpaceOperationRegistryProvider(
     deps.db,
     deps.jobQueue,
@@ -1372,7 +1374,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
         spaceRuntimeService.stopWorkflowBackedTaskForStatus(spaceId, taskId, params),
       parkStopped: (spaceId, taskId) =>
         spaceRuntimeService.parkStoppedWorkflowTask(spaceId, taskId),
-    }
+    },
+    familyOperations
   );
 
   deps.sessionManager.setDefaultOperationRegistryProvider(spaceOperationRegistryProvider);

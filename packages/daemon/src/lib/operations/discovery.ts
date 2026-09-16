@@ -1,6 +1,12 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
-import { defineOperation, type OperationDefinition, type OperationRegistry } from './registry.ts';
+import { isOperationAdmitted } from './invoke.ts';
+import {
+  defineOperation,
+  type OperationCaller,
+  type OperationDefinition,
+  type OperationRegistry,
+} from './registry.ts';
 
 const SummarySchema = z.object({ name: z.string(), description: z.string() });
 const DescriptionSchema = z.discriminatedUnion('found', [
@@ -15,16 +21,21 @@ const DescriptionSchema = z.discriminatedUnion('found', [
 ]);
 type Description = z.infer<typeof DescriptionSchema>;
 
-export function listOperationSummaries(registry: OperationRegistry) {
-  return registry.entries.map(({ name, description }) => ({ name, description }));
+export function listOperationSummaries(registry: OperationRegistry, caller: OperationCaller) {
+  return registry.entries
+    .filter((entry) => isOperationAdmitted(entry, caller))
+    .map(({ name, description }) => ({ name, description }));
 }
 
 export function findDescribedOperation(
   registry: OperationRegistry,
-  name: string
+  name: string,
+  caller: OperationCaller
 ): { value: OperationDefinition } | { reason: Extract<Description, { found: false }> } {
   const operation = registry.get(name);
-  return operation ? { value: operation } : { reason: { found: false, name } };
+  return operation && isOperationAdmitted(operation, caller)
+    ? { value: operation }
+    : { reason: { found: false, name } };
 }
 
 export function describeOperationDefinition(operation: OperationDefinition): Description {
@@ -38,10 +49,14 @@ export function describeOperationDefinition(operation: OperationDefinition): Des
 }
 
 const describeOperation = (superpipe({})('describe-operation') as PipelineAPI)
-  .input(['registry', 'name'])
-  .pipe(findDescribedOperation, ['registry', 'name'], 'result:description')
+  .input(['registry', 'name', 'caller'])
+  .pipe(findDescribedOperation, ['registry', 'name', 'caller'], 'result:description')
   .pipe(describeOperationDefinition, 'description', 'description')
-  .end('description') as (registry: OperationRegistry, name: string) => Description;
+  .end('description') as (
+  registry: OperationRegistry,
+  name: string,
+  caller: OperationCaller
+) => Description;
 
 export function createDiscoveryOperations(
   getRegistry: () => OperationRegistry
@@ -52,14 +67,14 @@ export function createDiscoveryOperations(
       description: 'List operations available in this catalog.',
       inputSchema: z.object({}).default({}),
       resultSchema: z.array(SummarySchema),
-      execute: async () => listOperationSummaries(getRegistry()),
+      execute: async (_input, caller) => listOperationSummaries(getRegistry(), caller),
     }),
     defineOperation({
       name: 'operations.describe',
       description: 'Describe an operation and its input and result schemas.',
       inputSchema: z.object({ name: z.string().min(1) }),
       resultSchema: DescriptionSchema,
-      execute: async ({ name }) => describeOperation(getRegistry(), name),
+      execute: async ({ name }, caller) => describeOperation(getRegistry(), name, caller),
     }),
   ];
 }

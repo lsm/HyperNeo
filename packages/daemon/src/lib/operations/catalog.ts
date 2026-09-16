@@ -41,7 +41,8 @@ export interface TaskOperationDependencies {
 
 export function createDaemonOperationCatalog(
   jobQueue: JobQueueRepository,
-  tasks: TaskOperationDependencies
+  tasks: TaskOperationDependencies,
+  extra: readonly OperationDefinition[] = []
 ): OperationRegistry {
   const registry: OperationRegistry = createOperationRegistry([
     createSendMessageOperation(jobQueue),
@@ -61,6 +62,7 @@ export function createDaemonOperationCatalog(
     ...(tasks.setPreferredWorkflow ? [tasks.setPreferredWorkflow] : []),
     ...(tasks.sendSessionMessage ? [tasks.sendSessionMessage] : []),
     ...(tasks.sendTaskMessage ? [tasks.sendTaskMessage] : []),
+    ...extra,
     ...createDiscoveryOperations(() => registry),
   ]);
   return registry;
