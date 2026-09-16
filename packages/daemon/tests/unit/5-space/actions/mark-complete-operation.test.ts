@@ -8,7 +8,7 @@ import {
   requireTaskGoalLink,
   runMarkCompleteOperation,
   type MarkCompleteOperationDeps,
-} from '../../../../src/lib/space/actions/mark-complete-operation.ts';
+} from '../../../../src/lib/tasks/mark-complete-operation.ts';
 
 const TASK_ID = 'task-1';
 const SESSION_ID = 'session-1';

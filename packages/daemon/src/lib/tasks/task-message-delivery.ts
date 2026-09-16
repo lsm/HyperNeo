@@ -1,16 +1,16 @@
 import type { NodeExecution, SpaceTask } from '@hyperneo/shared';
-import { parseAddress } from '../../../../../messaging/src/address.ts';
-import type { ActorResolver } from '../../../../../messaging/src/contracts.ts';
-import type { ActorRef } from '../../../../../messaging/src/types.ts';
-import { normalizeAgentNameToken } from '../../messaging/agent-handle.ts';
-import { formatAgentMessage, type AgentMessageLevel } from '../../messaging/envelope.ts';
-import { MIGRATED_WORKER_TEMPLATE_KEY } from '../../agents/worker-long-horizon-mapper.ts';
-import type { TaskAgentManager } from '../runtime/task-agent-manager.ts';
-import type { EnsureSessionOutcome, SessionTarget } from '../../session-resolution/target.ts';
-import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
-import { jsonResult, type ToolResult } from '../tools/tool-result.ts';
+import { parseAddress } from '../../../../messaging/src/address.ts';
+import type { ActorResolver } from '../../../../messaging/src/contracts.ts';
+import type { ActorRef } from '../../../../messaging/src/types.ts';
+import { normalizeAgentNameToken } from '../messaging/agent-handle.ts';
+import { formatAgentMessage, type AgentMessageLevel } from '../messaging/envelope.ts';
+import { MIGRATED_WORKER_TEMPLATE_KEY } from '../agents/worker-long-horizon-mapper.ts';
+import type { TaskAgentManager } from '../space/runtime/task-agent-manager.ts';
+import type { EnsureSessionOutcome, SessionTarget } from '../session-resolution/target.ts';
+import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
+import { jsonResult, type ToolResult } from '../space/tools/tool-result.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
+import type { NodeExecutionRepository } from '../../storage/repositories/node-execution-repository.ts';
 
 export type TaskRoutingTargetResolution =
   | { kind: 'task-worker'; exec: NodeExecution }
