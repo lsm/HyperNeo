@@ -1275,6 +1275,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       taskRepo: spaceTaskRepo,
       workflowRunRepo: spaceWorkflowRunRepo,
       scopeService: evolutionScopeService,
+      episodeService: evolutionEpisodeService,
       getGoal: (goalId) => spaceGoalService.getGoal(goalId),
       db: deps.db.getDatabase(),
       goalRepo: spaceGoalRepo,

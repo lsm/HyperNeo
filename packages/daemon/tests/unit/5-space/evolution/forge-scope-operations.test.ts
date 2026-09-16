@@ -166,25 +166,28 @@ const scopeInput = {
   objective: 'Reduce flakes',
 };
 
+const SCOPE_OPERATION_NAMES = [
+  'forge.evidence.attachTask',
+  'forge.evidence.attachWorkflowRun',
+  'forge.evidence.list',
+  'forge.metric.add',
+  'forge.metric.list',
+  'forge.note.add',
+  'forge.scope.create',
+  'forge.scope.createFromGoal',
+  'forge.scope.get',
+  'forge.scope.list',
+  'forge.scope.resolve',
+  'forge.scope.update',
+  'forge.timeline.get',
+];
+
 describe('Forge operation catalog', () => {
   test('registers every scope, timeline, evidence, and metric operation name', () => {
     const ctx = makeCtx();
     try {
-      expect(ctx.operations.map((entry) => entry.name).sort()).toEqual([
-        'forge.evidence.attachTask',
-        'forge.evidence.attachWorkflowRun',
-        'forge.evidence.list',
-        'forge.metric.add',
-        'forge.metric.list',
-        'forge.note.add',
-        'forge.scope.create',
-        'forge.scope.createFromGoal',
-        'forge.scope.get',
-        'forge.scope.list',
-        'forge.scope.resolve',
-        'forge.scope.update',
-        'forge.timeline.get',
-      ]);
+      const registered = new Set(ctx.operations.map((entry) => entry.name));
+      expect(SCOPE_OPERATION_NAMES.filter((name) => !registered.has(name))).toEqual([]);
     } finally {
       ctx.db.close();
     }
