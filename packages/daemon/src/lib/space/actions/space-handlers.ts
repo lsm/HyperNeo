@@ -244,7 +244,6 @@ type SpaceSessionSummary = {
 const SPACE_SESSION_DEFAULT_LIMIT = 50;
 const SESSION_DETAIL_MESSAGE_LIMIT = 5;
 const SESSION_MESSAGE_DEFAULT_LIMIT = 20;
-export const DEFAULT_INACTIVITY_THRESHOLD_MS = 24 * 60 * 60 * 1000;
 
 function normalizeGoalUpdateArgs(args: GoalToolUpdateArgs) {
   return {

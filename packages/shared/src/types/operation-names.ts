@@ -1,6 +1,10 @@
 export const OPERATION_NAMES = [
   'externalEvent.get',
   'externalEvent.listDeliveries',
+  'inactivity.config.get',
+  'inactivity.config.set',
+  'inactivity.config.setEnabled',
+  'inactivity.runNow',
   'message.send',
   'operations.describe',
   'operations.list',

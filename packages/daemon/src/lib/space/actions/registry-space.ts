@@ -108,11 +108,8 @@ import {
   UpdateSessionStateSchema,
   UpdateTaskSchema,
 } from './space-agent-schemas.ts';
-import {
-  createSpaceAgentToolHandlers,
-  DEFAULT_INACTIVITY_THRESHOLD_MS,
-  type SpaceAgentToolsConfig,
-} from './space-handlers.ts';
+import { DEFAULT_INACTIVITY_THRESHOLD_MS } from '../../external-events/inactivity-operations.ts';
+import { createSpaceAgentToolHandlers, type SpaceAgentToolsConfig } from './space-handlers.ts';
 
 const DEFAULT_COMPLETION_AUTONOMY_LEVEL = 5;
 
