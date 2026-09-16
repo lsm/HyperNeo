@@ -5148,25 +5148,6 @@ export class TaskAgentManager {
       await this.restoreNodeAgentSession(subSessionId, args.reason);
     };
 
-    const onSubscribeExternalEvent = async (args: { topicPattern: string; label?: string }) => {
-      const validation = validateGlobPattern(args.topicPattern.trim());
-      if (!validation.valid) {
-        return jsonResult({ success: false, error: validation.reason });
-      }
-      try {
-        const result = this.config.spaceRuntimeService.registerSubscription(
-          workflowRunId,
-          taskId,
-          workflowNodeId,
-          agentName,
-          args.topicPattern
-        );
-        return jsonResult(result);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        return jsonResult({ success: false, error: message });
-      }
-    };
     const onUnsubscribeExternalEvent = async (args: { topicPattern: string }) => {
       const validation = validateGlobPattern(args.topicPattern.trim());
       if (!validation.valid) {
@@ -5317,11 +5298,9 @@ export class TaskAgentManager {
       onSubmitForApproval,
       onMarkComplete,
       onCreateStandaloneTask,
-      onSubscribeExternalEvent,
       onUnsubscribeExternalEvent,
       onListSubscriptions,
       artifactRepo: this.config.artifactRepo,
-      artifactProfile: this.config.artifactProfile,
       taskRepo: this.config.taskRepo,
       auditLogRepo: this.auditLogRepo,
       externalEventStore: this.config.externalEventStore,

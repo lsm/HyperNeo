@@ -14,9 +14,7 @@ import {
   ListArtifactsSchema,
   ListAuditEntriesSchema,
   SaveArtifactSchema,
-  SubscribePrEventsSchema,
 } from '../../../../src/lib/space/actions/node-agent-schemas.ts';
-import { jsonResult } from '../../../../src/lib/space/tools/tool-result.ts';
 import {
   createActionRegistry,
   defineAction,
@@ -31,14 +29,12 @@ import { z } from 'zod';
 const SPACE_ID = 'space-registry-node-test';
 
 const FULL_ENTRIES: ReadonlyArray<readonly [string, string]> = [
-  ['subscribe_pr_events', 'mutate'],
   ['save_artifact', 'mutate'],
   ['list_artifacts', 'read'],
   ['list_audit_entries', 'read'],
 ];
 
 const NODE_SCHEMA_BY_NAME: Record<string, z.ZodType<unknown>> = {
-  subscribe_pr_events: SubscribePrEventsSchema,
   save_artifact: SaveArtifactSchema,
   list_artifacts: ListArtifactsSchema,
   list_audit_entries: ListAuditEntriesSchema,
@@ -46,14 +42,13 @@ const NODE_SCHEMA_BY_NAME: Record<string, z.ZodType<unknown>> = {
 
 interface TestCtx {
   db: BunDatabase;
-  calls: Map<string, number>;
 }
 
 function makeCtx(): TestCtx {
   const db = new BunDatabase(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
   runMigrations(db, () => {});
-  return { db, calls: new Map() };
+  return { db };
 }
 
 function makeConfig(
@@ -63,10 +58,6 @@ function makeConfig(
   const nodeExecutionRepo = new NodeExecutionRepository(ctx.db);
   const channelResolver = new ChannelResolver([]);
   const workflowRunId = 'run-registry-node-test';
-  const record = (key: string) => {
-    ctx.calls.set(key, (ctx.calls.get(key) ?? 0) + 1);
-    return jsonResult({ success: true, key });
-  };
   return {
     mySessionId: 'session-coder',
     myAgentName: 'coder',
@@ -86,7 +77,6 @@ function makeConfig(
     artifactRepo: new WorkflowRunArtifactRepository(ctx.db),
     taskRepo: new SpaceTaskRepository(ctx.db),
     auditLogRepo: new McpAuditLogRepository(ctx.db),
-    onSubscribeExternalEvent: async () => record('subscribe'),
     ...overrides,
   };
 }
@@ -100,7 +90,6 @@ function makeBareConfig(
     ...config,
     artifactRepo: undefined,
     auditLogRepo: undefined,
-    onSubscribeExternalEvent: undefined,
     ...overrides,
   };
 }
@@ -214,7 +203,6 @@ describe('createNodeRegistryEntries — conditional entries', () => {
     const ctx = makeCtx();
     try {
       const gated: ReadonlyArray<readonly [keyof NodeAgentToolsConfig, readonly string[]]> = [
-        ['onSubscribeExternalEvent', ['subscribe_pr_events']],
         ['artifactRepo', ['save_artifact', 'list_artifacts']],
         ['auditLogRepo', ['list_audit_entries']],
       ];

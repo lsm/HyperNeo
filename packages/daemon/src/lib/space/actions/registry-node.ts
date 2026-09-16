@@ -4,7 +4,6 @@ import {
   ListArtifactsSchema,
   ListAuditEntriesSchema,
   SaveArtifactSchema,
-  SubscribePrEventsSchema,
 } from './node-agent-schemas.ts';
 import { createNodeAgentToolHandlers, type NodeAgentToolsConfig } from './node-handlers.ts';
 import { type ActionDefinition, type ActionEntry, defineAction } from './registry.ts';
@@ -18,22 +17,9 @@ export function createNodeRegistryEntries(
   _operations?: OperationRegistrySource
 ): ActionDefinition[] {
   const handlers = createNodeAgentToolHandlers({ ...config, disableAuditLogWrites: true });
-  const { onSubscribeExternalEvent, artifactRepo, auditLogRepo } = config;
+  const { artifactRepo, auditLogRepo } = config;
 
   return [
-    ...(onSubscribeExternalEvent
-      ? [
-          nodeAction({
-            name: 'subscribe_pr_events',
-            safetyClass: 'mutate',
-            description:
-              "Subscribe to GitHub PR events scoped to this run's PR (or an explicit prUrl).",
-            paramsDoc: 'prUrl?, label?',
-            paramsSchema: SubscribePrEventsSchema,
-            handler: handlers.subscribe_pr_events,
-          }),
-        ]
-      : []),
     ...(artifactRepo
       ? [
           nodeAction({
