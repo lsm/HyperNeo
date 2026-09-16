@@ -1,5 +1,7 @@
 export const OPERATION_NAMES = [
   'message.send',
+  'node.channels.list',
+  'node.reachableAgents.list',
   'operations.describe',
   'operations.list',
   'session.message.send',

@@ -11,6 +11,7 @@ import { isCoderOwnedMergeWorkflow } from '../workflows/post-approval-router.ts'
 import { createGithubConnector } from '../github/connectors/github-connector.ts';
 import { setupOperationHandlers } from './operation-handlers.ts';
 import { createSpaceCallerScopeResolver } from '../space/runtime/space-caller-scope.ts';
+import { createNodeMessagingOperations } from '../messaging/node-messaging-operations.ts';
 import type { MessageHub } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type { SpaceGoalOutcomeNotification } from '@hyperneo/shared';
@@ -1266,6 +1267,12 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   });
 
   const familyOperations: OperationDefinition[] = [];
+  familyOperations.push(
+    ...createNodeMessagingOperations({
+      nodeExecutionRepo,
+      runtimeForSession: (sessionId) => taskAgentManager.nodeMessagingRuntimeFor(sessionId),
+    })
+  );
   const spaceOperationRegistryProvider = createSpaceOperationRegistryProvider(
     deps.db,
     deps.jobQueue,
