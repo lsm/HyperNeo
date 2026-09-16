@@ -12,6 +12,7 @@ import {
   type OperationCallerRole,
 } from '../../../../src/lib/operations/registry';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
+import { resolveSessionCallerScope } from '../../../../src/lib/space/runtime/space-caller-scope';
 
 let db: Database;
 let agentRepo: SpaceLongHorizonAgentRepository;
@@ -21,9 +22,19 @@ let agent: SpaceLongHorizonAgent;
 let sessions: Map<string, Session>;
 
 const MEMBER_SESSION = 'space:chat:member';
+const READ_ONLY_SESSION = 'chat:read-only';
 
 function memberCaller(role: OperationCallerRole = 'ad_hoc_member'): OperationCaller {
   return { source: 'mcp', sessionId: MEMBER_SESSION, spaceId, role };
+}
+
+function readOnlyCaller(): OperationCaller {
+  const session = sessions.get(READ_ONLY_SESSION) as Session;
+  return {
+    source: 'mcp',
+    sessionId: READ_ONLY_SESSION,
+    ...resolveSessionCallerScope(session, { longHorizonAgentRepo: agentRepo }),
+  };
 }
 
 function sessionRow(overrides: Partial<Session> & { id: string }): Session {
@@ -84,7 +95,13 @@ beforeEach(() => {
     displayName: 'Stranger',
     instructions: '',
   });
-  sessions = new Map([[MEMBER_SESSION, sessionRow({ id: MEMBER_SESSION })]]);
+  sessions = new Map([
+    [MEMBER_SESSION, sessionRow({ id: MEMBER_SESSION })],
+    [
+      READ_ONLY_SESSION,
+      sessionRow({ id: READ_ONLY_SESSION, type: 'chat', context: {}, metadata: {} }),
+    ],
+  ]);
 });
 
 describe('the agent.list and agent.get operations', () => {
@@ -132,15 +149,18 @@ describe('the agent.list and agent.get operations', () => {
     ]);
   });
 
-  test('a read-only session may list agents', async () => {
-    const outcome = await invokeOperation(
-      registry(),
-      'agent.list',
-      {},
-      memberCaller('universal_read')
-    );
-    const value = outcome as { kind: 'completed'; value: { agents: SpaceLongHorizonAgent[] } };
-    expect(value.value.agents).toHaveLength(2);
+  test('a read-only session carries no Space, so it is denied the agent catalog', async () => {
+    expect(readOnlyCaller()).toEqual({
+      source: 'mcp',
+      sessionId: READ_ONLY_SESSION,
+      role: 'universal_read',
+    });
+    const outcome = await invokeOperation(registry(), 'agent.list', { spaceId }, readOnlyCaller());
+    expect(outcome).toEqual({
+      kind: 'failed',
+      code: 'forbidden',
+      message: 'Operation agent.list is not available to this caller',
+    });
   });
 
   test('a workflow worker is denied the agent catalog at the door', async () => {
@@ -240,7 +260,7 @@ describe('admitAgentCaller', () => {
   });
 
   test('a read-only session may not mutate', () => {
-    const outcome = admitAgentCaller({}, memberCaller('universal_read'), deps(), 'mutate');
+    const outcome = admitAgentCaller({ spaceId }, readOnlyCaller(), deps(), 'mutate');
     expect(outcome).toEqual({
       reason: {
         rejected: true,

@@ -36,7 +36,7 @@ export function readAgentInSpace(
 }
 
 const GET_AGENT_DESCRIPTION =
-  'Read one long-horizon agent of a Space by its ID and return the full record: lifecycle status, instructions, autonomy level, model, provider, thinking level, setting sources, and tool permissions. Rejects agent_not_found when no such agent exists in the Space, which is also the answer for an agent that lives in another Space. Human (RPC) callers pass spaceId; agent callers act in their own Space. Read access is admitted for ad-hoc members, long-term agents, and read-only sessions; other sessions are rejected with agent_denied.';
+  'Read one long-horizon agent of a Space by its ID and return the full record: lifecycle status, instructions, autonomy level, model, provider, thinking level, setting sources, and tool permissions. Rejects agent_not_found when no such agent exists in the Space, which is also the answer for an agent that lives in another Space. Human (RPC) callers pass spaceId; agent callers act in their own Space. Read access is admitted for ad-hoc members and long-term agents; other sessions are rejected with agent_denied.';
 
 export function createGetAgentOperation(deps: GetAgentDependencies) {
   const access = 'read' as const;
