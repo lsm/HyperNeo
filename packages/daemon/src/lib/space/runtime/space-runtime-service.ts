@@ -1003,6 +1003,10 @@ export class SpaceRuntimeService {
     };
   }
 
+  runInactivityScanNow(spaceId: string, agentId: string): Promise<void> {
+    return this.config.inactivityRunNow?.(spaceId, agentId) ?? Promise.resolve();
+  }
+
   registerSubscription(
     workflowRunId: string,
     taskId: string,
