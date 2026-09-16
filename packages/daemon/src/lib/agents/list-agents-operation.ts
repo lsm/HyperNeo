@@ -50,7 +50,7 @@ export function selectAgents(spaceId: string, input: Input, deps: ListAgentsDepe
 }
 
 const LIST_AGENTS_DESCRIPTION =
-  'List the long-horizon agents of a Space, newest state first, with lifecycle status, model, provider, and tool permissions. Pass compact to get id/handle/name/status summaries instead of full records, and status to keep only agents in that lifecycle state. Human (RPC) callers pass spaceId; agent callers act in their own Space and are rejected with space_mismatch when they pass a different one. Read access is admitted for ad-hoc members, long-term agents, and read-only sessions; other sessions are rejected with agent_denied.';
+  'List the long-horizon agents of a Space in creation order, oldest first, with lifecycle status, model, provider, and tool permissions. Pass compact to get id/handle/name/status summaries instead of full records, and status to keep only agents in that lifecycle state. Human (RPC) callers pass spaceId; agent callers act in their own Space and are rejected with space_mismatch when they pass a different one. Read access is admitted for ad-hoc members and long-term agents; other sessions are rejected with agent_denied.';
 
 export function createListAgentsOperation(deps: ListAgentsDependencies) {
   const access = 'read' as const;
