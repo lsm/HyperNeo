@@ -14,8 +14,9 @@ import type { ExternalEventStore } from '../../external-events/external-event-st
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
 import { Logger } from '../../logger.ts';
 import type { SpaceGoalService } from '../../goals/service.ts';
-import { translateLegacyNodeTargets } from '../../messaging/space-adapter.ts';
 import type { AgentMessageRouter } from '../../messaging/agent-message-router.ts';
+import type { NodeMessagingContext } from '../../messaging/node-messaging-context.ts';
+import { deliverNodeAgentMessage } from '../../messaging/node-send-message.ts';
 import type { WorkflowArtifactProfile } from '../../workflows/artifact-profile.ts';
 import type { ChannelResolver } from '../../messaging/channel-resolver.ts';
 import { buildPrEventTopicPattern, parsePrUrl } from '../../github/parse-pr-url.ts';
@@ -130,6 +131,23 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
       } catch {}
     }
   }
+
+  const nodeMessagingContext: NodeMessagingContext = {
+    sessionId: mySessionId,
+    agentName: myAgentName,
+    workflowRunId,
+    workflowNodeId,
+    runtime: {
+      spaceId,
+      taskId: config.taskId,
+      workflow,
+      channelResolver,
+      agentMessageRouter,
+      artifactRepo: config.artifactRepo,
+      replyRoutingLookup: config.replyRoutingLookup,
+      hookEngine: config.hookEngine,
+    },
+  };
 
   const handlers = {
     async list_peers(_args: ListPeersInput): Promise<ToolResult> {
@@ -319,118 +337,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
     },
 
     async send_message(args: SendMessageInput): Promise<ToolResult> {
-      const { target, message, data } = args;
-      let translatedTargets: string[] = [];
-      if (workflow) {
-        try {
-          translatedTargets = translateLegacyNodeTargets(target, {
-            spaceId,
-            workflowRunId,
-            workflowNodeId,
-            agentName: myAgentName,
-            workflow,
-            actors: nodeExecutionRepo.listByWorkflowRun(workflowRunId).map((execution) => ({
-              actorId: `worker:${[workflowRunId, execution.workflowNodeId, execution.agentName].map(encodeURIComponent).join(':')}`,
-              kind: 'worker' as const,
-              spaceId,
-              status: execution.agentSessionId ? ('active' as const) : ('inactive' as const),
-            })),
-            replyRoutingLookup: config.replyRoutingLookup,
-          });
-        } catch (err) {
-          return jsonResult({
-            success: false,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
-      }
-
-      const routedTarget =
-        translatedTargets.length > 0
-          ? translatedTargets.length === 1
-            ? translatedTargets[0]
-            : translatedTargets
-          : target;
-      const result = await agentMessageRouter.deliverMessage({
-        fromAgentName: myAgentName,
-        fromSessionId: mySessionId,
-        target: routedTarget,
-        message,
-        data,
-      });
-
-      if (!result.success) {
-        const reason = result.reason ?? 'Message delivery failed.';
-        return jsonResult({
-          success: false,
-          error: reason,
-          delivered: result.delivered.length > 0 ? result.delivered : undefined,
-          failed: result.failed.length > 0 ? result.failed : undefined,
-          queued: result.queued,
-          unauthorizedAgentNames: result.unauthorizedAgentNames,
-          permittedTargets: result.permittedTargets,
-          notFoundAgentNames: result.notFoundAgentNames,
-        });
-      }
-
-      if (result.success === 'partial') {
-        const summaryParts: string[] = [];
-        if (result.delivered.length > 0) {
-          summaryParts.push(
-            `delivered to ${result.delivered.length} peer(s): ` +
-              result.delivered.map((t) => t.agentName).join(', ')
-          );
-        }
-        if (result.queued && result.queued.length > 0) {
-          summaryParts.push(
-            `queued for ${result.queued.length} peer(s): ` +
-              result.queued.map((t) => t.agentName).join(', ')
-          );
-        }
-        if (result.failed.length > 0) {
-          summaryParts.push(`failed for ${result.failed.length} peer(s)`);
-        }
-        if (result.notFoundAgentNames && result.notFoundAgentNames.length > 0) {
-          summaryParts.push(`not found: ${result.notFoundAgentNames.join(', ')}`);
-        }
-        return jsonResult({
-          success: 'partial',
-          delivered: result.delivered,
-          failed: result.failed,
-          queued: result.queued,
-          notFoundAgentNames: result.notFoundAgentNames,
-          ...(result.unauthorizedAgentNames
-            ? { unauthorizedAgentNames: result.unauthorizedAgentNames }
-            : {}),
-          ...(result.permittedTargets ? { permittedTargets: result.permittedTargets } : {}),
-          ...(result.reason ? { reason: result.reason } : {}),
-          message:
-            `Message ${summaryParts.join('; ')}.` +
-            (result.reason ? ` Reason: ${result.reason}` : ''),
-        });
-      }
-
-      const summaryParts: string[] = [];
-      if (result.delivered.length > 0) {
-        summaryParts.push(
-          `delivered to ${result.delivered.length} peer(s): ` +
-            result.delivered.map((t) => `${t.agentName} (${t.sessionId})`).join(', ')
-        );
-      }
-      if (result.queued && result.queued.length > 0) {
-        summaryParts.push(
-          `queued for durable delivery to ${result.queued.length} peer(s): ` +
-            result.queued.map((t) => t.agentName).join(', ')
-        );
-      }
-
-      return jsonResult({
-        success: true,
-        delivered: result.delivered,
-        queued: result.queued,
-        notFoundAgentNames: result.notFoundAgentNames,
-        message: summaryParts.length > 0 ? `Message ${summaryParts.join('; ')}.` : 'No action.',
-      });
+      return deliverNodeAgentMessage(nodeMessagingContext, nodeExecutionRepo)(args);
     },
 
     async list_reachable_agents(_args: ListReachableAgentsInput): Promise<ToolResult> {

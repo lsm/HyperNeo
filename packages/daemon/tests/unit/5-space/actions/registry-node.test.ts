@@ -40,7 +40,6 @@ const FULL_ENTRIES: ReadonlyArray<readonly [string, string]> = [
   ['list_peers', 'read'],
   ['list_reachable_agents', 'read'],
   ['list_channels', 'read'],
-  ['send_message', 'mutate'],
   ['subscribe_external_event', 'mutate'],
   ['unsubscribe_external_event', 'mutate'],
   ['subscribe_pr_events', 'mutate'],
@@ -65,7 +64,6 @@ const ALWAYS_ON_NAMES = [
   'list_peers',
   'list_reachable_agents',
   'list_channels',
-  'send_message',
   'restore_node_agent',
 ];
 
@@ -216,7 +214,7 @@ function makeSpaceEntries(spaceApproveCalls: string[]): ActionDefinition[] {
 }
 
 describe('createNodeRegistryEntries — composition', () => {
-  test('builds the 22 node-family entries in typed-surface order with authored safety classes', () => {
+  test('builds the 21 node-family entries in typed-surface order with authored safety classes', () => {
     const ctx = makeCtx();
     try {
       const entries = createNodeRegistryEntries(makeConfig(ctx));
@@ -255,7 +253,7 @@ describe('createNodeRegistryEntries — composition', () => {
     try {
       const registry = createActionRegistry(createNodeRegistryEntries(makeConfig(ctx)));
       expect(registry.entries).toHaveLength(FULL_ENTRIES.length);
-      expect(registry.get('send_message')?.family).toBe('node');
+      expect(registry.get('list_peers')?.family).toBe('node');
       expect(registry.get('archive_task')?.safetyClass).toBe('destructive');
     } finally {
       ctx.db.close();
@@ -301,7 +299,7 @@ describe('createNodeRegistryEntries — conditional entries', () => {
         })
       );
       expect(fullPair.map((entry) => entry.name)).toEqual([
-        ...ALWAYS_ON_NAMES.slice(0, 4),
+        ...ALWAYS_ON_NAMES.slice(0, 3),
         'subscribe_external_event',
         'unsubscribe_external_event',
         'subscribe_pr_events',
@@ -542,7 +540,7 @@ describe('composeRoleActionEntries — approve_task collision resolution', () =>
       );
       const registry = createActionRegistry(composed);
       expect(registry.get('list_sessions')?.family).toBe('space');
-      expect(registry.get('send_message')?.family).toBe('node');
+      expect(registry.get('list_peers')?.family).toBe('node');
       expect(registry.get('approve_task')).toBeUndefined();
       expect(registry.entries).toHaveLength(ALWAYS_ON_NAMES.length + 1);
     } finally {

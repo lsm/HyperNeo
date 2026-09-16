@@ -1271,6 +1271,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     ...createNodeMessagingOperations({
       nodeExecutionRepo,
       runtimeForSession: (sessionId) => taskAgentManager.nodeMessagingRuntimeFor(sessionId),
+      getSession: (sessionId) => deps.db.getSession(sessionId),
     })
   );
   const spaceOperationRegistryProvider = createSpaceOperationRegistryProvider(

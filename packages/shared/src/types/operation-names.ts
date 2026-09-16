@@ -5,6 +5,7 @@ export const OPERATION_NAMES = [
   'node.reachableAgents.list',
   'operations.describe',
   'operations.list',
+  'send_message',
   'session.message.send',
   'task.archive',
   'task.cancel',
