@@ -1,5 +1,6 @@
 import { AGENT_OPERATION_NAMES } from './operation-names/agent.ts';
 import { ARTIFACT_OPERATION_NAMES } from './operation-names/artifacts.ts';
+import { AUDIT_OPERATION_NAMES } from './operation-names/audit.ts';
 import { CORE_OPERATION_NAMES } from './operation-names/core.ts';
 import { EXTERNAL_EVENT_OPERATION_NAMES } from './operation-names/external-event.ts';
 import { FORGE_OPERATION_NAMES } from './operation-names/forge.ts';
@@ -14,6 +15,7 @@ import { WORKFLOW_OPERATION_NAMES } from './operation-names/workflow.ts';
 export const OPERATION_NAME_FAMILIES = {
   agent: AGENT_OPERATION_NAMES,
   artifacts: ARTIFACT_OPERATION_NAMES,
+  audit: AUDIT_OPERATION_NAMES,
   core: CORE_OPERATION_NAMES,
   externalEvent: EXTERNAL_EVENT_OPERATION_NAMES,
   forge: FORGE_OPERATION_NAMES,
@@ -29,6 +31,7 @@ export const OPERATION_NAME_FAMILIES = {
 export const OPERATION_NAMES = [
   ...AGENT_OPERATION_NAMES,
   ...ARTIFACT_OPERATION_NAMES,
+  ...AUDIT_OPERATION_NAMES,
   ...CORE_OPERATION_NAMES,
   ...EXTERNAL_EVENT_OPERATION_NAMES,
   ...FORGE_OPERATION_NAMES,
