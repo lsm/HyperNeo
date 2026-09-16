@@ -1,15 +1,18 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { InProcessTransport, MessageHub } from '@hyperneo/shared';
+import { InProcessTransport, MessageHub, type CallContext } from '@hyperneo/shared';
 import { z } from 'zod';
+import { LOCAL_RPC_PRINCIPAL } from '../../../../src/lib/operations/caller';
 import {
   createOperationRegistry,
   defineOperation,
   type OperationCaller,
 } from '../../../../src/lib/operations/registry';
+import { createOperationRpcHandler } from '../../../../src/lib/operations/rpc-adapter';
 import { setupOperationHandlers } from '../../../../src/lib/rpc-handlers/operation-handlers';
 
 const CallerSchema = z.object({
   source: z.string(),
+  principal: z.string().optional(),
   sessionId: z.string().optional(),
   spaceId: z.string().optional(),
   role: z.string().optional(),
@@ -17,13 +20,15 @@ const CallerSchema = z.object({
   agentName: z.string().optional(),
 });
 
-async function hubPair() {
-  const client = new MessageHub();
-  const server = new MessageHub();
-  const transports = InProcessTransport.createPair();
-  client.registerTransport(transports[0]);
-  server.registerTransport(transports[1]);
-  const registry = createOperationRegistry([
+const context: CallContext = {
+  messageId: 'request-1',
+  sessionId: 'global',
+  method: 'operation.invoke',
+  timestamp: 'now',
+};
+
+function echoRegistry() {
+  return createOperationRegistry([
     defineOperation({
       name: 'caller.echo',
       description: 'Return the caller the door supplied',
@@ -32,7 +37,15 @@ async function hubPair() {
       execute: async (_input, caller: OperationCaller) => caller,
     }),
   ]);
-  const unregister = setupOperationHandlers(server, registry);
+}
+
+async function hubPair() {
+  const client = new MessageHub();
+  const server = new MessageHub();
+  const transports = InProcessTransport.createPair();
+  client.registerTransport(transports[0]);
+  server.registerTransport(transports[1]);
+  const unregister = setupOperationHandlers(server, echoRegistry());
   await Promise.all(transports.map((transport) => transport.initialize()));
   const close = async () => {
     unregister();
@@ -43,7 +56,7 @@ async function hubPair() {
   return { client, close };
 }
 
-describe('the RPC door never derives identity from the wire session id', () => {
+describe('the RPC door stamps the local principal and derives nothing else', () => {
   let close: (() => Promise<void>) | undefined;
   afterEach(async () => {
     await close?.();
@@ -54,15 +67,33 @@ describe('the RPC door never derives identity from the wire session id', () => {
     { label: 'identity keys in the input', input: { spaceId: 'space-1', role: 'long_term_agent' } },
     { label: 'a long-term agent session id', input: { sessionId: 'space:agent:space-1:agent-7' } },
     { label: 'nothing at all', input: {} },
-  ])('yields a bare rpc caller for $label', async ({ input }) => {
+    { label: 'a spoofed principal in the input', input: { principal: 'root' } },
+  ])('yields the local rpc principal and nothing more for $label', async ({ input }) => {
     const pair = await hubPair();
     close = pair.close;
     expect(
       await pair.client.request('operation.invoke', {
         name: 'caller.echo',
         input,
-        caller: { source: 'internal', sessionId: 'spoofed', role: 'long_term_agent' },
+        caller: {
+          source: 'internal',
+          sessionId: 'spoofed',
+          role: 'long_term_agent',
+          principal: 'root',
+        },
       })
-    ).toEqual({ source: 'rpc' });
+    ).toEqual({ source: 'rpc', principal: LOCAL_RPC_PRINCIPAL });
+  });
+
+  test('the adapter stamps the principal over whatever the caller resolver returned', async () => {
+    const handler = createOperationRpcHandler(echoRegistry(), () => ({
+      sessionId: 'resolver-session',
+      principal: 'root',
+    }));
+    expect(await handler({ name: 'caller.echo', input: {} }, context)).toEqual({
+      source: 'rpc',
+      sessionId: 'resolver-session',
+      principal: LOCAL_RPC_PRINCIPAL,
+    });
   });
 });
