@@ -197,6 +197,12 @@ function auditSpaceId(caller: OperationCaller, input: { spaceId?: string }): str
   return caller.spaceId ?? input.spaceId ?? '';
 }
 
+function recordSessionAudit(deps: SessionOperationDependencies, entry: SessionAuditEntry): void {
+  try {
+    deps.audit?.(entry);
+  } catch {}
+}
+
 function asRecord(value: string | null | undefined): Record<string, unknown> | null {
   const parsed = parseJsonValue(value);
   return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
@@ -314,43 +320,43 @@ export function applySessionState(
   caller: OperationCaller,
   deps: SessionOperationDependencies
 ): SessionStateResult {
+  if (deps.getLiveSession(input.sessionId)) {
+    return reject(
+      'live_session_present',
+      'session.state.update cannot mutate live sessions. Interrupt or message the live session instead.'
+    );
+  }
+  const previousState = parseProcessingState(row.processing_state);
+  const newStatus = input.processingState === 'running' ? 'processing' : input.processingState;
+  const newState: Record<string, unknown> = { ...previousState, status: newStatus };
+  if (input.clearPendingQuestion || input.processingState !== 'waiting_for_input') {
+    delete newState.pendingQuestion;
+  }
+  if (input.processingState === 'waiting_for_input' && !newState.pendingQuestion) {
+    return reject(
+      'invalid_state',
+      'Cannot set waiting_for_input without an existing pending question'
+    );
+  }
   try {
-    if (deps.getLiveSession(input.sessionId)) {
-      return reject(
-        'live_session_present',
-        'session.state.update cannot mutate live sessions. Interrupt or message the live session instead.'
-      );
-    }
-    const previousState = parseProcessingState(row.processing_state);
-    const newStatus = input.processingState === 'running' ? 'processing' : input.processingState;
-    const newState: Record<string, unknown> = { ...previousState, status: newStatus };
-    if (input.clearPendingQuestion || input.processingState !== 'waiting_for_input') {
-      delete newState.pendingQuestion;
-    }
-    if (input.processingState === 'waiting_for_input' && !newState.pendingQuestion) {
-      return reject(
-        'invalid_state',
-        'Cannot set waiting_for_input without an existing pending question'
-      );
-    }
     deps
       .getDatabase()
       .prepare(`UPDATE sessions SET processing_state = ?, last_active_at = ? WHERE id = ?`)
       .run(JSON.stringify(newState), new Date().toISOString(), input.sessionId);
-    deps.audit?.({
-      toolName: 'session.state.update',
-      spaceId: auditSpaceId(caller, input),
-      caller,
-      paramsSummary: {
-        session_id: input.sessionId,
-        processing_state: input.processingState,
-        clear_pending_question: input.clearPendingQuestion ?? false,
-      },
-    });
-    return { ok: true, previous_state: previousState, new_state: newState };
   } catch (err) {
     return reject('rejected', failureMessage(err));
   }
+  recordSessionAudit(deps, {
+    toolName: 'session.state.update',
+    spaceId: auditSpaceId(caller, input),
+    caller,
+    paramsSummary: {
+      session_id: input.sessionId,
+      processing_state: input.processingState,
+      clear_pending_question: input.clearPendingQuestion ?? false,
+    },
+  });
+  return { ok: true, previous_state: previousState, new_state: newState };
 }
 
 export async function interruptSpaceSession(
@@ -358,25 +364,25 @@ export async function interruptSpaceSession(
   caller: OperationCaller,
   deps: SessionOperationDependencies
 ): Promise<SessionInterruptResult> {
+  const liveSession = deps.getLiveSession(input.sessionId);
+  if (!liveSession) {
+    return reject(
+      'live_session_required',
+      'session.interrupt requires a live cached session. Use session.state.update for cold session recovery.'
+    );
+  }
   try {
-    const liveSession = deps.getLiveSession(input.sessionId);
-    if (!liveSession) {
-      return reject(
-        'live_session_required',
-        'session.interrupt requires a live cached session. Use session.state.update for cold session recovery.'
-      );
-    }
     await liveSession.handleInterrupt();
-    deps.audit?.({
-      toolName: 'session.interrupt',
-      spaceId: auditSpaceId(caller, input),
-      caller,
-      paramsSummary: { session_id: input.sessionId, reason: input.reason },
-    });
-    return { ok: true, interrupted: true };
   } catch (err) {
     return reject('rejected', failureMessage(err));
   }
+  recordSessionAudit(deps, {
+    toolName: 'session.interrupt',
+    spaceId: auditSpaceId(caller, input),
+    caller,
+    paramsSummary: { session_id: input.sessionId, reason: input.reason },
+  });
+  return { ok: true, interrupted: true };
 }
 
 const READ_ADMISSION: SpaceCallerAdmission = { readOnly: true, workerAllowed: true };

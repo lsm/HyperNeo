@@ -1286,13 +1286,17 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       getSession: spaceCallerScopeDeps.getSession,
       sessionSpaceId: (session) => resolveSessionSpaceId(session, spaceCallerScopeDeps),
       audit: (entry) => {
-        new McpAuditLogRepository(deps.db.getDatabase()).createEntry({
-          sessionId: entry.caller.sessionId,
-          agentName: entry.caller.agentName,
-          toolName: entry.toolName,
-          spaceId: entry.spaceId,
-          paramsSummary: JSON.stringify(entry.paramsSummary),
-        });
+        try {
+          new McpAuditLogRepository(deps.db.getDatabase()).createEntry({
+            sessionId: entry.caller.sessionId,
+            agentName: entry.caller.agentName,
+            toolName: entry.toolName,
+            spaceId: entry.spaceId,
+            paramsSummary: JSON.stringify(entry.paramsSummary),
+          });
+        } catch (err) {
+          log.warn('session audit write failed:', err);
+        }
       },
     })
   );

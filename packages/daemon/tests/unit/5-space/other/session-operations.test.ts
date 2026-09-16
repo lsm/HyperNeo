@@ -102,6 +102,7 @@ interface Harness {
   sessions: Map<string, Session>;
   live: Map<string, AgentSession>;
   interrupts: string[];
+  auditThrows: boolean;
 }
 
 function fakeLiveSession(state: Harness, sessionId: string): AgentSession {
@@ -123,6 +124,7 @@ function harness(): Harness {
     sessions: new Map([['member-1', callerSession('active', SPACE_ID)]]),
     live: new Map(),
     interrupts: [],
+    auditThrows: false,
   };
   const operations = createSessionOperations({
     getDatabase: () => db,
@@ -130,7 +132,10 @@ function harness(): Harness {
     getSession: (sessionId) => state.sessions.get(sessionId) ?? null,
     sessionSpaceId: (session) =>
       (session.context as { spaceId?: string } | undefined)?.spaceId ?? undefined,
-    audit: (entry) => state.audits.push(entry),
+    audit: (entry) => {
+      if (state.auditThrows) throw new Error('audit down');
+      state.audits.push(entry);
+    },
   });
   for (const operation of operations) state.operations.set(operation.name, operation);
   return state;
@@ -389,6 +394,23 @@ describe('session state mutations', () => {
     ).toEqual({ ok: true, interrupted: true });
     expect(h.interrupts).toEqual([TARGET]);
     expect(h.audits.map((entry) => entry.toolName)).toEqual(['session.interrupt']);
+  });
+
+  test('a failing audit write does not fail a committed mutation', async () => {
+    h.auditThrows = true;
+    expect(
+      await run(
+        'session.state.update',
+        { sessionId: TARGET, processingState: 'running' },
+        mcpCaller('ad_hoc_member')
+      )
+    ).toMatchObject({ ok: true });
+    expect(JSON.parse(storedProcessingState())).toEqual({ status: 'processing' });
+    h.live.set(TARGET, fakeLiveSession(h, TARGET));
+    expect(
+      await run('session.interrupt', { sessionId: TARGET }, mcpCaller('ad_hoc_member'))
+    ).toEqual({ ok: true, interrupted: true });
+    expect(h.interrupts).toEqual([TARGET]);
   });
 
   test('interrupt without a live session points at the cold-recovery path', async () => {
