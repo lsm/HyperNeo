@@ -6,7 +6,6 @@ import type {
   SpaceWorkflowRun,
   WorkflowRunStatus,
 } from '@hyperneo/shared';
-import { createTestSession } from '../../../helpers/database.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   createOperationRegistry,
@@ -18,6 +17,7 @@ import {
   createWorkflowRunOperations,
   type WorkflowRunDependencies,
 } from '../../../../src/lib/workflows/workflow-run-operations.ts';
+import { createTestSession } from '../../../helpers/database.ts';
 
 const SPACE_ID = 'space-workflow-runs';
 const SESSION_ID = 'session-1';

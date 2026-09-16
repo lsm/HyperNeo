@@ -1,14 +1,14 @@
-import { describe, test, expect } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import type { SpaceWorkflow } from '@hyperneo/shared';
+import { ChannelResolver } from '../../../../src/lib/messaging/channel-resolver.ts';
 import {
-  CODING_WORKFLOW,
   CODING_WITH_QA_WORKFLOW,
+  CODING_WORKFLOW,
   RESEARCH_WORKFLOW,
   REVIEW_ONLY_WORKFLOW,
 } from '../../../../src/lib/workflows/built-in-workflows.ts';
 import { CODER_OWNED_MERGE_INSTRUCTIONS } from '../../../../src/lib/workflows/post-approval-merge-template.ts';
 import { interpolatePostApprovalTemplate } from '../../../../src/lib/workflows/post-approval-template.ts';
-import { ChannelResolver } from '../../../../src/lib/messaging/channel-resolver.ts';
 
 function endNodePrompt(wf: SpaceWorkflow): string {
   const endNode = wf.nodes.find((n) => n.id === wf.endNodeId);

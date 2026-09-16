@@ -1,5 +1,6 @@
 import type { SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
+import type { SpaceGoalService } from '../goals/service.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
 import type {
@@ -7,12 +8,11 @@ import type {
   MarkCompleteInput,
   SubmitForApprovalInput,
 } from '../space/actions/task-agent-schemas.ts';
-import type { SpaceGoalService } from '../goals/service.ts';
 import type { SpaceManager } from '../space/managers/space-manager.ts';
-import type { SpaceTaskManager } from '../tasks/task-manager.ts';
-import { normalizeMeaningfulTaskResult } from '../tasks/result-utils.ts';
 import type { ToolResult } from '../space/tools/tool-result.ts';
 import { jsonResult } from '../space/tools/tool-result.ts';
+import { normalizeMeaningfulTaskResult } from '../tasks/result-utils.ts';
+import type { SpaceTaskManager } from '../tasks/task-manager.ts';
 
 const log = new Logger('end-node-handlers');
 
