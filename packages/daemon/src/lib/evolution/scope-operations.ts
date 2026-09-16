@@ -126,6 +126,11 @@ function runForgeScopeWrite<T>(forge: ForgeScopeOperationDependencies, write: ()
   return forge.db ? forge.db.transaction(write)() : write();
 }
 
+const ForgeMetricDefinitionInputSchema = ForgeMetricDefinitionSchema.extend({
+  key: z.string().min(1),
+  label: z.string().min(1),
+});
+
 function syncForgeScopeAutomation(
   scope: EvolutionScope,
   forge: ForgeScopeOperationDependencies
@@ -164,10 +169,10 @@ const ScopeCreateInputSchema = z
     ...SpaceScoped,
     kind: ForgeScopeKindSchema,
     name: z.string().min(1),
-    objective: z.string(),
+    objective: z.string().min(1),
     goalId: z.string().min(1).nullable().optional(),
     parentScopeId: z.string().min(1).nullable().optional(),
-    metricDefinitions: z.array(ForgeMetricDefinitionSchema).optional(),
+    metricDefinitions: z.array(ForgeMetricDefinitionInputSchema).optional(),
     policy: ForgePolicySchema.optional(),
   })
   .strict();
@@ -226,8 +231,8 @@ const ScopeCreateFromGoalInputSchema = z
     ...SpaceScoped,
     goalId: z.string().min(1),
     name: z.string().min(1).optional(),
-    objective: z.string().optional(),
-    metricDefinitions: z.array(ForgeMetricDefinitionSchema).optional(),
+    objective: z.string().min(1).optional(),
+    metricDefinitions: z.array(ForgeMetricDefinitionInputSchema).optional(),
     policy: ForgePolicySchema.optional(),
   })
   .strict();
@@ -307,9 +312,9 @@ const ScopeUpdateInputSchema = z
     goalId: z.string().min(1).nullable().optional(),
     kind: ForgeScopeKindSchema.optional(),
     name: z.string().min(1).optional(),
-    objective: z.string().optional(),
+    objective: z.string().min(1).optional(),
     parentScopeId: z.string().min(1).nullable().optional(),
-    metricDefinitions: z.array(ForgeMetricDefinitionSchema).optional(),
+    metricDefinitions: z.array(ForgeMetricDefinitionInputSchema).optional(),
     policy: ForgePolicySchema.optional(),
     policyPatch: ForgePolicySchema.optional(),
     episodeJudgeModel: z.string().nullable().optional(),

@@ -434,6 +434,99 @@ describe('forge.scope.update', () => {
   });
 });
 
+describe('forge scope input min-length parity', () => {
+  test('forge.scope.create rejects a blank objective and a blank metric key or label', async () => {
+    const ctx = makeCtx();
+    try {
+      expect(
+        await invokeOperation(
+          ctx.registry,
+          'forge.scope.create',
+          { ...scopeInput, objective: '' },
+          memberCaller
+        )
+      ).toMatchObject({ kind: 'failed', code: 'invalid_input' });
+      expect(
+        await invokeOperation(
+          ctx.registry,
+          'forge.scope.create',
+          {
+            ...scopeInput,
+            metricDefinitions: [{ key: '', label: 'Flake rate', direction: 'decrease' }],
+          },
+          memberCaller
+        )
+      ).toMatchObject({ kind: 'failed', code: 'invalid_input' });
+      expect(
+        await invokeOperation(
+          ctx.registry,
+          'forge.scope.create',
+          {
+            ...scopeInput,
+            metricDefinitions: [{ key: 'flake_rate', label: '', direction: 'decrease' }],
+          },
+          memberCaller
+        )
+      ).toMatchObject({ kind: 'failed', code: 'invalid_input' });
+      expect(ctx.scopeService.listScopes({ spaceId: SPACE_ID })).toHaveLength(0);
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('forge.scope.update rejects a blank objective and leaves the stored scope intact', async () => {
+    const ctx = makeCtx();
+    try {
+      const created = (await ctx.op('forge.scope.create').execute(scopeInput, memberCaller)) as {
+        accepted: true;
+        scope: { id: string };
+      };
+      expect(
+        await invokeOperation(
+          ctx.registry,
+          'forge.scope.update',
+          { scopeId: created.scope.id, objective: '' },
+          memberCaller
+        )
+      ).toMatchObject({ kind: 'failed', code: 'invalid_input' });
+      expect(ctx.evolutionRepo.getScope(created.scope.id)?.objective).toBe('Reduce flakes');
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('forge.scope.createFromGoal rejects a blank name or objective override', async () => {
+    const ctx = makeCtx();
+    try {
+      const goal = ctx.goalRepo.create({
+        spaceId: SPACE_ID,
+        title: 'Ship reliability',
+        description: 'Cut the flake rate',
+        type: 'measurable',
+      });
+      expect(
+        await invokeOperation(
+          ctx.registry,
+          'forge.scope.createFromGoal',
+          { goalId: goal.id, objective: '' },
+          memberCaller
+        )
+      ).toMatchObject({ kind: 'failed', code: 'invalid_input' });
+      expect(
+        await invokeOperation(
+          ctx.registry,
+          'forge.scope.createFromGoal',
+          { goalId: goal.id, name: '' },
+          memberCaller
+        )
+      ).toMatchObject({ kind: 'failed', code: 'invalid_input' });
+      expect(ctx.scopeService.listScopes({ spaceId: SPACE_ID })).toHaveLength(0);
+    } finally {
+      ctx.db.close();
+    }
+  });
+});
+
 describe('forge.scope.resolve', () => {
   test('resolves the scope linked to a goal and demands a target otherwise', async () => {
     const ctx = makeCtx();
