@@ -11,6 +11,10 @@ export function actionAsOperation(action: RegisteredAction): OperationDefinition
     description: `${action.description} Params: ${action.paramsDoc}`,
     inputSchema: action.paramsSchema,
     resultSchema: passthroughResult,
+    policy: {
+      safetyClass: action.safetyClass,
+      audit: { redactKeys: action.auditRedactKeys ?? [], exempt: action.auditExempt ?? false },
+    },
     execute: async (input) => action.handler(input),
   });
 }

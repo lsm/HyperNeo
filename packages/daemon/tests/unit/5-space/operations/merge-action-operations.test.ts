@@ -4,7 +4,11 @@ import {
   createOperationRegistry,
   defineOperation,
 } from '../../../../src/lib/operations/registry.ts';
-import { mergeActionOperations } from '../../../../src/lib/space/actions/action-operations.ts';
+import {
+  actionAsOperation,
+  mergeActionOperations,
+} from '../../../../src/lib/space/actions/action-operations.ts';
+import { summarizeAuditInput } from '../../../../src/lib/operations/audit.ts';
 import { createActionRegistry, defineAction } from '../../../../src/lib/space/actions/registry.ts';
 
 const rpcCaller = { source: 'rpc' as const };
@@ -53,5 +57,40 @@ describe('mergeActionOperations', () => {
     const actions = createActionRegistry([legacyAction('a', 'x'), legacyAction('b', 'y')]);
     const merged = mergeActionOperations([bootOperation('task.get', 'z')], actions);
     expect(merged.map((operation) => operation.name)).toEqual(['task.get', 'a', 'b']);
+  });
+});
+
+describe('actionAsOperation audit policy', () => {
+  test("carries an action's declared redaction keys so the door does not log them", () => {
+    const action = defineAction({
+      name: 'send_message_to_task',
+      family: 'tasks',
+      safetyClass: 'mutate',
+      description: 'legacy send',
+      paramsDoc: 'task_id, message',
+      paramsSchema: z.object({ task_id: z.string(), message: z.string() }),
+      auditRedactKeys: ['message'],
+      handler: async () => 'sent',
+    });
+    const operation = actionAsOperation(createActionRegistry([action]).entries[0]);
+    expect(operation.policy?.audit?.redactKeys).toEqual(['message']);
+    expect(summarizeAuditInput(operation, { task_id: 't-1', message: 'private body' })).toBe(
+      JSON.stringify({ task_id: 't-1', message: '[redacted]' })
+    );
+  });
+
+  test("carries an action's audit exemption", () => {
+    const action = defineAction({
+      name: 'list_channels',
+      family: 'node',
+      safetyClass: 'read',
+      description: 'legacy list',
+      paramsDoc: 'none',
+      paramsSchema: z.object({}),
+      auditExempt: true,
+      handler: async () => 'listed',
+    });
+    const operation = actionAsOperation(createActionRegistry([action]).entries[0]);
+    expect(operation.policy?.audit?.exempt).toBe(true);
   });
 });
