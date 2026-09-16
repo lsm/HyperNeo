@@ -1,4 +1,9 @@
-import type { SpaceGoal, SpaceGoalEventSnapshot, SpaceTaskCompact } from '@hyperneo/shared';
+import type {
+  SpaceGoal,
+  SpaceGoalEventSnapshot,
+  SpaceGoalOutcomeNotification,
+  SpaceTaskCompact,
+} from '@hyperneo/shared';
 import { z } from 'zod';
 import { TaskCoreSchema } from '../tasks/get-operation.ts';
 
@@ -79,6 +84,24 @@ export const SpaceGoalEventSchema = z.object({
   note: z.string().nullable(),
   createdAt: z.number(),
 });
+
+export const GoalOutcomeNotificationSchema = z.object({
+  id: z.string(),
+  spaceId: z.string(),
+  goalId: z.string(),
+  taskId: z.string(),
+  terminalGeneration: z.number(),
+  goalRevision: z.number(),
+  status: z.enum(['pending', 'superseded', 'acknowledged', 'rejected']),
+  payload: z.object({
+    summary: z.string(),
+    taskStatus: TaskCoreSchema.shape.status,
+    taskTitle: z.string(),
+    goalTitle: z.string(),
+  }),
+  createdAt: z.number(),
+  updatedAt: z.number(),
+}) satisfies z.ZodType<SpaceGoalOutcomeNotification>;
 
 export const SpaceTaskCompactSchema = z.object({
   id: z.string(),
