@@ -31,9 +31,9 @@ const BASE_TOOL_NAMES: SpaceAgentToolName[] = [
 ];
 
 describe('SPACE_AGENT_TOOL_SCHEMAS', () => {
-  test('contains exactly the 18 base tools', () => {
+  test('contains exactly the 12 base tools', () => {
     expect(Object.keys(SPACE_AGENT_TOOL_SCHEMAS).sort()).toEqual([...BASE_TOOL_NAMES].sort());
-    expect(Object.keys(SPACE_AGENT_TOOL_SCHEMAS)).toHaveLength(18);
+    expect(Object.keys(SPACE_AGENT_TOOL_SCHEMAS)).toHaveLength(12);
   });
 
   test('each schema value is a zod object schema with safeParse and a shape', () => {
