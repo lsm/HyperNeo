@@ -16,6 +16,7 @@ import { createCompletionGateBindings } from '../tasks/complete-task-gates.ts';
 import { isCoderOwnedMergeWorkflow } from '../workflows/post-approval-router.ts';
 import { createGithubConnector } from '../github/connectors/github-connector.ts';
 import { setupOperationHandlers } from './operation-handlers.ts';
+import { createNodeMessagingOperations } from '../messaging/node-messaging-operations.ts';
 import {
   createSpaceCallerScopeResolver,
   resolveSessionSpaceId,
@@ -1374,6 +1375,13 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       },
     })
   );
+  familyOperations.push(
+    ...createNodeMessagingOperations({
+      nodeExecutionRepo,
+      runtimeForSession: (sessionId) => taskAgentManager.nodeMessagingRuntimeFor(sessionId),
+    })
+  );
+
   const spaceOperationRegistryProvider = createSpaceOperationRegistryProvider(
     deps.db,
     deps.jobQueue,
