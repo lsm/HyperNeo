@@ -24,6 +24,7 @@ import {
   withSessionLock,
 } from '../../../../src/lib/agent/message-delivery';
 import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
+import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import { getModelsCache, setModelsCache } from '../../../../src/lib/model-service';
 import type { Database } from '../../../../src/storage/database';
 import {
@@ -834,13 +835,8 @@ describe('AgentSession', () => {
         publish: mock(async () => {}),
         publishAsync: mock(() => {}),
         subscribe: mock(
-          (_event: string, handler: (payload: Record<string, unknown>) => void, _opts: object) => {
-            if (_event === 'session.updated') {
-              captured = onListener(handler);
-              return captured.unsubscribe;
-            }
-            return () => {};
-          }
+          (_event: string, _handler: (payload: Record<string, unknown>) => void, _opts: object) =>
+            () => {}
         ),
       } as unknown as InternalEventBus<any>;
 
@@ -960,13 +956,8 @@ describe('AgentSession', () => {
         publish: mock(async () => {}),
         publishAsync: mock(() => {}),
         subscribe: mock(
-          (event: string, handler: (payload: Record<string, unknown>) => void, _opts: object) => {
-            if (event === 'session.updated') {
-              captured = onListener(handler);
-              return captured.unsubscribe;
-            }
-            return () => {};
-          }
+          (_event: string, _handler: (payload: Record<string, unknown>) => void, _opts: object) =>
+            () => {}
         ),
       } as unknown as InternalEventBus<any>;
 

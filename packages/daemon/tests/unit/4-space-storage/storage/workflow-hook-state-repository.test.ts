@@ -10,7 +10,7 @@ import { createSpaceTables } from '../../helpers/space-test-db.ts';
 
 describe('WorkflowHookStateRepository', () => {
   let db: Database;
-  let repo: WorkflowHookStateRepository;
+  let repo: InstanceType<typeof WorkflowHookStateRepository>;
 
   beforeEach(() => {
     db = new Database(':memory:');
