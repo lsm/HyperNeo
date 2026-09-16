@@ -52,7 +52,7 @@ export const ListArtifactsSchema = z.object({
 export type ListArtifactsInput = z.infer<typeof ListArtifactsSchema>;
 
 export interface NodeArtifactContext {
-  readonly artifactRepo?: WorkflowRunArtifactRepository;
+  readonly artifactRepo?: Pick<WorkflowRunArtifactRepository, 'upsert' | 'listByRun'>;
   readonly workflowRunId: string;
   readonly workflowNodeId: string;
   logAudit: (toolName: string, paramsSummary: Record<string, unknown>) => void;
