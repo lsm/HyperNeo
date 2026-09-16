@@ -1,8 +1,5 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
-import type {
-  ExternalEventDeliveryRecord,
-  ExternalEventRecord,
-} from '../../external-events/types.ts';
+import type { ExternalEventDeliveryRecord, ExternalEventRecord } from '../external-events/types.ts';
 
 export interface RequeueWorkflowDeliveryTarget {
   workflowRunId: string;

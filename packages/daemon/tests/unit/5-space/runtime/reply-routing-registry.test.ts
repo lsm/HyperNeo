@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { ReplyRoutingRegistry } from '../../../../src/lib/space/runtime/reply-routing-registry.ts';
+import { ReplyRoutingRegistry } from '../../../../src/lib/messaging/reply-routing-registry.ts';
 
 describe('ReplyRoutingRegistry', () => {
   test('returns null when no entry exists', () => {

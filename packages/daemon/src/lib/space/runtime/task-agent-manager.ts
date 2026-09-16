@@ -135,24 +135,24 @@ import {
 import {
   type AgentMessageDeliveryDeps,
   deliverAgentMessageToTarget,
-} from './agent-message-delivery-pipeline.ts';
-import { AgentMessageRouter } from './agent-message-router.ts';
+} from '../../messaging/delivery-pipeline.ts';
+import { AgentMessageRouter } from '../../messaging/agent-message-router.ts';
 import type { WorkflowArtifactProfile } from '../../workflows/artifact-profile.ts';
-import { ChannelResolver } from './channel-resolver.ts';
-import { ChannelRouter } from './channel-router.ts';
+import { ChannelResolver } from '../../messaging/channel-resolver.ts';
+import { ChannelRouter } from '../../messaging/channel-router.ts';
 import { createGithubConnector } from '../../github/connectors/github-connector.ts';
 import { HookExecutor } from '../../workflows/hook-executor.ts';
-import type { InjectionDeliveryRowDeps } from './injection-delivery-steps.ts';
+import type { InjectionDeliveryRowDeps } from '../../messaging/injection-delivery-steps.ts';
 import {
   flipDeliveryRowToDeferred,
   reopenFailedDeliveryRow,
   settleDeliveryRowStatus,
-} from './injection-delivery-steps.ts';
+} from '../../messaging/injection-delivery-steps.ts';
 import {
   collectDispatchablePostApprovalRoutes,
   isCoderOwnedMergeWorkflow as resolveIsCoderOwnedMergeWorkflow,
 } from '../../workflows/post-approval-router.ts';
-import type { ReplyRoutingRegistry } from './reply-routing-registry.ts';
+import type { ReplyRoutingRegistry } from '../../messaging/reply-routing-registry.ts';
 import { decideRestoredWorkerAdmission } from '../../tasks/restored-worker-admission-decision-pipeline.ts';
 import { isCanonicalTaskTerminalForSpawn } from '../../workflows/run-spawn-decisions.ts';
 import {
@@ -273,11 +273,11 @@ export interface TaskAgentManagerConfig {
     explicitMessageId?: string,
     options?: {
       onConsumed?: (settledSessionId: string) => void;
-      lateSettlement?: import('./session-message-delivery.ts').SessionLateSettlementOwner;
+      lateSettlement?: import('../../messaging/session-message-delivery.ts').SessionLateSettlementOwner;
       onLateFailure?: () => void;
       disposeSignal?: AbortSignal;
     }
-  ) => Promise<import('./session-message-delivery.ts').SessionInjectionOutcome>;
+  ) => Promise<import('../../messaging/session-message-delivery.ts').SessionInjectionOutcome>;
   scheduleService?: import('../../schedule/schedule-service.ts').ScheduleService;
   replyRoutingRegistry?: ReplyRoutingRegistry;
   memoryRepo?: AgentMemoryRepository;

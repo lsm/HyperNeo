@@ -4,8 +4,8 @@ import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
-import { AgentMessageRouter } from '../../../../src/lib/space/runtime/agent-message-router.ts';
-import type { AgentMessageRouterConfig } from '../../../../src/lib/space/runtime/agent-message-router.ts';
+import { AgentMessageRouter } from '../../../../src/lib/messaging/agent-message-router.ts';
+import type { AgentMessageRouterConfig } from '../../../../src/lib/messaging/agent-message-router.ts';
 import type { WorkflowChannel } from '@hyperneo/shared';
 import type { SessionTarget } from '../../../../src/lib/session-resolution/target.ts';
 

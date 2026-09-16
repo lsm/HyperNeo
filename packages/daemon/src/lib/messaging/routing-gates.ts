@@ -1,4 +1,4 @@
-import { formatAddress, type ParsedAddress } from '../../../../../messaging/src/address.ts';
+import { formatAddress, type ParsedAddress } from '../../../../messaging/src/address.ts';
 
 export interface ResolveNodeAgentTargetsInput {
   target: string | string[];

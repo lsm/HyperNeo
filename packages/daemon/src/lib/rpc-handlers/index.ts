@@ -48,7 +48,7 @@ import { createDefaultSessionResolutionDeps } from '../session-resolution/defaul
 import { ensureSession } from '../session-resolution/ensure-session.ts';
 import { NodeExecutionRepository } from '../../storage/repositories/node-execution-repository.ts';
 import { TaskAgentManager } from '../space/runtime/task-agent-manager.ts';
-import { ReplyRoutingRegistry } from '../space/runtime/reply-routing-registry.ts';
+import { ReplyRoutingRegistry } from '../messaging/reply-routing-registry.ts';
 import { SpaceWorktreeManager } from '../workspaces/worktree-manager.ts';
 import { CodingArtifactProfile } from '../workflows/coding-artifact-profile.ts';
 import {
@@ -102,7 +102,7 @@ import { createAgentTemplateResolverFactory } from '../workflows/run-template-sn
 import {
   deliverSpaceAgentMessage,
   type SessionInjectionOutcome,
-} from '../space/runtime/session-message-delivery.ts';
+} from '../messaging/session-message-delivery.ts';
 import { resolveDeliverySession } from '../session-resolution/resolve-delivery-session.ts';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import type { JobQueueProcessor } from '../../storage/job-queue-processor.ts';
@@ -1161,7 +1161,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     explicitMessageId?: string,
     injectorOptions?: {
       onConsumed?: (settledSessionId: string) => void;
-      lateSettlement?: import('../space/runtime/session-message-delivery.ts').SessionLateSettlementOwner;
+      lateSettlement?: import('../messaging/session-message-delivery.ts').SessionLateSettlementOwner;
       onLateFailure?: () => void;
     }
   ): Promise<SessionInjectionOutcome> => {

@@ -7,7 +7,10 @@ import { MIGRATED_WORKER_TEMPLATE_KEY } from '../agents/worker-long-horizon-mapp
 import type { SpaceRepository } from '../../storage/repositories/space-repository.ts';
 import type { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository.ts';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository.ts';
-import { encodeActorIdComponent, longTermAgentSessionId } from './long-term-agent-session.ts';
+import {
+  encodeActorIdComponent,
+  longTermAgentSessionId,
+} from '../space/long-term-agent-session.ts';
 
 export const SPACE_SYSTEM_ACTORS = [
   { actorId: 'system:runtime', handle: '@system-runtime', roles: ['runtime'] },

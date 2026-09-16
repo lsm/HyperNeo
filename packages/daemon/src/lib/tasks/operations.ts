@@ -39,11 +39,11 @@ import {
   createSetPreferredWorkflowOperation,
   type SetPreferredWorkflowDependencies,
 } from './set-preferred-workflow.ts';
-import { createSendSessionMessageOperation } from '../space/operations/session-message-send.ts';
+import { createSendSessionMessageOperation } from '../messaging/session-message-send.ts';
 import {
   createSendTaskMessageOperation,
   type TaskMessageSendDependencies,
-} from '../space/operations/task-message-send.ts';
+} from '../messaging/task-message-send.ts';
 
 interface ArchiveTaskCapability {
   getTaskManager: ArchiveTaskDependencies['getTaskManager'];

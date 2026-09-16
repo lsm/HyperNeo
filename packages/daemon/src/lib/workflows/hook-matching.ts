@@ -1,6 +1,6 @@
 import type { SpaceWorkflow, WorkflowHook } from '@hyperneo/shared';
 import { parseAddress } from '../../../../messaging/src/address.ts';
-import { ChannelResolver } from '../space/runtime/channel-resolver.ts';
+import { ChannelResolver } from '../messaging/channel-resolver.ts';
 import type { HookActionMeta } from './hook-engine.ts';
 
 export function resolveMatchingHooks(

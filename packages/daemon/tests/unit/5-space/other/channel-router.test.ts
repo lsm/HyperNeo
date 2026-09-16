@@ -3,10 +3,7 @@ import type { SpaceWorkflow, WorkflowChannel } from '@hyperneo/shared';
 import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager.ts';
-import {
-  ActivationError,
-  ChannelRouter,
-} from '../../../../src/lib/space/runtime/channel-router.ts';
+import { ActivationError, ChannelRouter } from '../../../../src/lib/messaging/channel-router.ts';
 import {
   MissingWorkflowAgentError,
   PermanentSpawnError,

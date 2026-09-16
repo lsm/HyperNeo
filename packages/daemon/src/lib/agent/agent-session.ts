@@ -386,7 +386,7 @@ export class AgentSession
     sessionId: string,
     taskId?: string
   ) => Promise<
-    import('../space/runtime/render-pending-digest-pipeline.ts').RenderPendingDigestOutcome | null
+    import('../messaging/render-pending-digest-pipeline.ts').RenderPendingDigestOutcome | null
   >;
 
   get mcpEnablementRepo(): import('../../storage/repositories/mcp-enablement-repository.ts').McpEnablementRepository {

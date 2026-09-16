@@ -1,7 +1,7 @@
 import { describe, expect, mock, test } from 'bun:test';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
-import { createSendSessionMessageOperation } from '../../../../src/lib/space/operations/session-message-send';
+import { createSendSessionMessageOperation } from '../../../../src/lib/messaging/session-message-send';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session';
 
 type Row = { status: string; processing_state: string | null };

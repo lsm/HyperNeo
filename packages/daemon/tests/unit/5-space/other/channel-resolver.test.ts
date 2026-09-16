@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test';
-import { ChannelResolver } from '../../../../src/lib/space/runtime/channel-resolver.ts';
+import { ChannelResolver } from '../../../../src/lib/messaging/channel-resolver.ts';
 import type { WorkflowChannel } from '@hyperneo/shared';
 
 function ch(from: string, to: string | string[], gateId?: string): WorkflowChannel {

@@ -69,7 +69,7 @@ import type {
   InternalEventPayload,
 } from '../../internal-event-bus.ts';
 import { Logger } from '../../logger.ts';
-import type { SpaceActorRegistryAdapter } from '../actor-registry.ts';
+import type { SpaceActorRegistryAdapter } from '../../messaging/actor-registry.ts';
 import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../export-format.ts';
 import { unifiedAgentRecordExists } from '../../agents/worker-long-horizon-mapper.ts';
 import type { SpaceManager } from '../managers/space-manager.ts';
@@ -122,7 +122,7 @@ import {
 import {
   type RequeuePendingDeliveryDeps,
   runRequeuePendingDelivery,
-} from './requeue-pending-delivery-pipeline.ts';
+} from '../../messaging/requeue-pending-delivery-pipeline.ts';
 import {
   type RestoreIdleSessionsDeps,
   type RestoreIdleSessionsOutcome,
@@ -133,7 +133,7 @@ import {
   type RenderPendingDigestDeps,
   type RenderPendingDigestOutcome,
   runRenderPendingDigest,
-} from './render-pending-digest-pipeline.ts';
+} from '../../messaging/render-pending-digest-pipeline.ts';
 import { classifyLastMessageForIdleAgent } from '../../session/last-message-classifier.ts';
 import type { SelectWorkflowWithLlm } from '../../workflows/llm-workflow-selector.ts';
 import {

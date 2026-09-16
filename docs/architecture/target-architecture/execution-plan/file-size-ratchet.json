@@ -59,10 +59,6 @@
       "maxLines": 1607,
       "followUp": "M8/UI focused view split"
     },
-    "packages/daemon/src/lib/space/runtime/channel-router.ts": {
-      "maxLines": 1582,
-      "followUp": "M9 runtime component extraction"
-    },
     "packages/daemon/src/lib/agent/agent-session.ts": {
       "maxLines": 1562,
       "followUp": "M7 agent runtime boundary split"
@@ -163,10 +159,6 @@
       "maxLines": 1019,
       "followUp": "UI design-system primitive split"
     },
-    "packages/daemon/src/lib/space/runtime/agent-message-router.ts": {
-      "maxLines": 1013,
-      "followUp": "M9 runtime component extraction"
-    },
     "packages/daemon/src/lib/providers/anthropic-copilot/provider.ts": {
       "maxLines": 1007,
       "followUp": "M7 agent runtime boundary split"
@@ -242,10 +234,6 @@
     "packages/daemon/src/lib/tasks/task-manager.ts": {
       "maxLines": 847,
       "followUp": "M9 space service extraction"
-    },
-    "packages/daemon/src/lib/space/messaging-adapter.ts": {
-      "maxLines": 837,
-      "followUp": "M10 cleanup split when touched"
     },
     "packages/daemon/src/lib/agent/query-lifecycle-manager.ts": {
       "maxLines": 833,
