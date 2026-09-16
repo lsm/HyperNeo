@@ -3,8 +3,8 @@ import type {
   AcpJsonRpcNotification,
   AcpJsonRpcRequest,
   AcpJsonRpcResponse,
-  AcpTransportOptions,
 } from '@hyperneo/shared';
+import type { AcpTransportOptions } from '../../../../src/lib/acp/acp-transport';
 import { AcpClient } from '../../../../src/lib/acp/acp-client';
 import { AcpQueryAdapter } from '../../../../src/lib/acp/acp-query-adapter';
 
