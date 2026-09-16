@@ -31,6 +31,14 @@
       "namePattern": "preserve both provider entries for shared model IDs",
       "reason": "Known intermittent shared model ID provider cache/registry isolation failure.",
       "addedAt": "2026-05-28"
+    },
+    {
+      "id": "daemon-online-steer-timestamp-ordering",
+      "suite": "daemon-online",
+      "path": "packages/daemon/tests/online/features/message-delivery-mode-queue.test.ts",
+      "namePattern": "timestamp between assistant messages",
+      "reason": "Known intermittent steer-vs-result ordering failure: the immediate steer can be persisted after the steered turn's result, so the last result in the snapshot predates it.",
+      "addedAt": "2026-09-15"
     }
   ]
 }

@@ -22,10 +22,8 @@ import { buildPrEventTopicPattern, parsePrUrl } from '../../github/parse-pr-url.
 import type { WorkflowHookEngine } from '../../workflows/hook-engine.ts';
 import { wrapHandlerWithHooks } from '../../workflows/hook-engine.ts';
 import type {
-  ArchiveTaskInput,
   CreateStandaloneTaskInput,
   GetExternalEventInput,
-  GetTaskInput,
   ListArtifactsInput,
   ListAuditEntriesInput,
   ListChannelsInput,
@@ -34,7 +32,6 @@ import type {
   ListReachableAgentsInput,
   ListSubscriptionsInput,
   ListTasksInput,
-  PublishTaskInput,
   RestoreNodeAgentInput,
   SaveArtifactInput,
   SendMessageInput,
@@ -85,8 +82,6 @@ export interface NodeAgentToolsConfig {
   onSubscribeExternalEvent?: (args: SubscribeExternalEventInput) => Promise<ToolResult>;
   onUnsubscribeExternalEvent?: (args: UnsubscribeExternalEventInput) => Promise<ToolResult>;
   onListSubscriptions?: (args: ListSubscriptionsInput) => Promise<ToolResult>;
-  onPublishTask?: (args: PublishTaskInput) => Promise<ToolResult>;
-  onArchiveTask?: (args: ArchiveTaskInput) => Promise<ToolResult>;
   replyRoutingLookup?: (agentName?: string | null) => string | null;
   artifactRepo?: WorkflowRunArtifactRepository;
   artifactProfile?: WorkflowArtifactProfile;
@@ -646,38 +641,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
       return result;
     },
 
-    async publish_task(args: PublishTaskInput): Promise<ToolResult> {
-      if (!config.onPublishTask) {
-        return jsonResult({
-          success: false,
-          error: 'publish_task is not available in this node-agent session.',
-        });
-      }
-      const result = await config.onPublishTask(args);
-      const payload = decodeToolResultPayload(result);
-      if (payload?.success) {
-        const publishedTask = payload?.task as { id: string } | undefined;
-        logAudit('publish_task', { task_id: args.task_id }, publishedTask?.id);
-      }
-      return result;
-    },
-
-    async archive_task(args: ArchiveTaskInput): Promise<ToolResult> {
-      if (!config.onArchiveTask) {
-        return jsonResult({
-          success: false,
-          error: 'archive_task is not available in this node-agent session.',
-        });
-      }
-      const result = await config.onArchiveTask(args);
-      const payload = decodeToolResultPayload(result);
-      if (payload?.success) {
-        const archivedTask = payload?.task as { id: string } | undefined;
-        logAudit('archive_task', { task_id: args.task_id }, archivedTask?.id);
-      }
-      return result;
-    },
-
     async subscribe_external_event(args: SubscribeExternalEventInput): Promise<ToolResult> {
       if (!config.onSubscribeExternalEvent) {
         return jsonResult({
@@ -860,32 +823,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
         const message = err instanceof Error ? err.message : String(err);
         return jsonResult({ success: false, error: message });
       }
-    },
-
-    async get_task(args: GetTaskInput): Promise<ToolResult> {
-      const { taskRepo } = config;
-      if (!taskRepo) {
-        return jsonResult({ success: false, error: 'Task repository not available.' });
-      }
-      let task: SpaceTask | null = null;
-      if (args.task_number !== undefined) {
-        task = taskRepo.getTaskByNumber(spaceId, args.task_number);
-      } else if (args.task_id) {
-        task = taskRepo.getTask(args.task_id);
-        if (task && task.spaceId !== spaceId) {
-          task = null;
-        }
-      } else {
-        return jsonResult({
-          success: false,
-          error: 'Either task_id or task_number is required',
-        });
-      }
-      if (!task) {
-        const ref = args.task_number !== undefined ? `#${args.task_number}` : args.task_id;
-        return jsonResult({ success: false, error: `Task not found: ${ref}` });
-      }
-      return jsonResult({ success: true, task });
     },
 
     async list_audit_entries(args: ListAuditEntriesInput): Promise<ToolResult> {

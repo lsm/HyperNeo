@@ -1,5 +1,5 @@
 import { useState } from 'preact/hooks';
-import { createProvider, loginProvider } from '../../lib/api-helpers.ts';
+import { createProvider, loginProvider, submitProviderCallback } from '../../lib/api-helpers.ts';
 import { toast } from '../../lib/toast.ts';
 import { Button } from '../ui/Button.tsx';
 import { OAuthModal, type OAuthFlowState } from './OAuthModal.tsx';
@@ -210,6 +210,7 @@ export function AddProviderModal({
   };
 
   const handleOAuthComplete = () => {
+    toast.success(`${oauthFlow?.providerName ?? 'Provider'} authenticated successfully`);
     setOauthFlow(null);
     onProviderAdded();
     onClose();
@@ -333,23 +334,37 @@ export function AddProviderModal({
         {added ? (
           <div class="text-xs text-fg-faint">Already added</div>
         ) : preset.authType === 'api_key' ? (
-          <div class="flex gap-2">
-            <input
-              type="password"
-              placeholder="API key"
-              value={apiKeys[preset.providerId] ?? ''}
-              onInput={(e) => handleApiKeyChange(preset.providerId, e.currentTarget.value)}
-              class="flex-1 min-w-0 bg-bg border border-line rounded px-2 py-1 text-xs text-fg focus:outline-none focus:border-accent font-mono"
-            />
-            <Button
-              size="xs"
-              variant="primary"
-              onClick={() => handleAddBuiltIn(preset)}
-              loading={addingId === preset.providerId}
-              disabled={addingId !== null}
-            >
-              Add
-            </Button>
+          <div class="flex flex-col gap-2">
+            <div class="flex gap-2">
+              <input
+                type="password"
+                placeholder="API key"
+                value={apiKeys[preset.providerId] ?? ''}
+                onInput={(e) => handleApiKeyChange(preset.providerId, e.currentTarget.value)}
+                class="flex-1 min-w-0 bg-bg border border-line rounded px-2 py-1 text-xs text-fg focus:outline-none focus:border-accent font-mono"
+              />
+              <Button
+                size="xs"
+                variant="primary"
+                onClick={() => handleAddBuiltIn(preset)}
+                loading={addingId === preset.providerId}
+                disabled={addingId !== null}
+              >
+                Add
+              </Button>
+            </div>
+            {preset.providerId === 'anthropic' && (
+              <Button
+                size="xs"
+                variant="secondary"
+                onClick={() => handleOAuthLogin(preset)}
+                loading={addingId === preset.providerId}
+                disabled={addingId !== null}
+                fullWidth
+              >
+                Login with Claude subscription
+              </Button>
+            )}
           </div>
         ) : preset.configField === 'command' ? (
           <div class="flex gap-2">
@@ -516,6 +531,11 @@ export function AddProviderModal({
           verificationUri={oauthFlow.verificationUri}
           onCancel={handleOAuthCancel}
           onComplete={handleOAuthComplete}
+          onSubmitCallback={
+            oauthFlow.providerId === 'anthropic'
+              ? (input) => submitProviderCallback(oauthFlow.providerId, input)
+              : undefined
+          }
         />
       )}
     </>
