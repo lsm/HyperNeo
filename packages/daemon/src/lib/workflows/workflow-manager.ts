@@ -8,8 +8,8 @@ import type {
 import { generateUUID } from '@hyperneo/shared';
 import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
 import type { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository.ts';
-import { Logger } from '../logger.ts';
 import { isRunnableUnifiedAgent } from '../agents/worker-long-horizon-mapper.ts';
+import { Logger } from '../logger.ts';
 import { patchPinnedBuiltInPromptDrift } from './built-in-prompt-drift.ts';
 import { validatePostApproval, validatePostApprovalRoutes } from './post-approval-validator.ts';
 import '../github/connectors/production.ts';
@@ -57,11 +57,11 @@ export function createSpaceAgentLookup(
   };
 }
 
+export { isReservedWorkflowAgentName } from './workflow-node-validation.ts';
 export {
   WorkflowDeletionBlockedError,
   WorkflowValidationError,
 } from './workflow-validation-error.ts';
-export { isReservedWorkflowAgentName } from './workflow-node-validation.ts';
 
 export class SpaceWorkflowManager {
   constructor(

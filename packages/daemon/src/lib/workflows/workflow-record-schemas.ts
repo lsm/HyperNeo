@@ -1,4 +1,9 @@
-import type { SpaceWorkflow, SpaceWorkflowSummary } from '@hyperneo/shared';
+import type {
+  NodeExecution,
+  SpaceWorkflow,
+  SpaceWorkflowRun,
+  SpaceWorkflowSummary,
+} from '@hyperneo/shared';
 import { z } from 'zod';
 
 export const AutonomyLevelSchema = z.union([
@@ -213,3 +218,37 @@ export const WorkflowDetailSchema = z.object({
   handle: z.string().optional(),
   templateSnapshots: z.record(z.string(), TemplateSnapshotSchema).optional(),
 }) satisfies z.ZodType<SpaceWorkflow>;
+
+export const WorkflowRunSchema = z.object({
+  id: z.string(),
+  spaceId: z.string(),
+  workflowId: z.string(),
+  definitionVersion: z.string().nullable(),
+  title: z.string(),
+  description: z.string().optional(),
+  status: z.enum(['pending', 'in_progress', 'done', 'blocked', 'cancelled']),
+  failureReason: z
+    .enum(['humanRejected', 'maxIterationsReached', 'nodeTimeout', 'agentCrash'])
+    .optional(),
+  createdAt: z.number(),
+  startedAt: z.number().nullable(),
+  updatedAt: z.number(),
+  completedAt: z.number().nullable(),
+}) satisfies z.ZodType<SpaceWorkflowRun>;
+
+export const NodeExecutionSchema = z.object({
+  id: z.string(),
+  workflowRunId: z.string(),
+  workflowNodeId: z.string(),
+  agentName: z.string(),
+  agentId: z.string().nullable(),
+  agentSessionId: z.string().nullable(),
+  status: z.enum(['pending', 'in_progress', 'idle', 'waiting_rebind', 'blocked', 'cancelled']),
+  result: z.string().nullable(),
+  data: z.record(z.string(), z.unknown()).nullable(),
+  createdAt: z.number(),
+  startedAt: z.number().nullable(),
+  completedAt: z.number().nullable(),
+  updatedAt: z.number(),
+  lastActivityAt: z.number().nullable(),
+}) satisfies z.ZodType<NodeExecution>;

@@ -1,9 +1,9 @@
-import { registerBuiltInValidator } from '../built-in-validator-registry.ts';
 import {
   createCodexApprovalValidator,
   createPrMergedValidator,
   createReviewPostedValidator,
 } from '../../github/connectors/presets.ts';
+import { registerBuiltInValidator } from '../built-in-validator-registry.ts';
 import { createPostApprovalOnlyValidator } from './post-approval-only-validator.ts';
 import { createPrReadyValidator } from './pr-ready-validator.ts';
 
