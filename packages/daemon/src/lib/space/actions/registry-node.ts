@@ -6,7 +6,7 @@ import {
 import type { SpaceMcpSessionRole } from '../runtime/space-mcp-session-policy.ts';
 import { wrapHandlerWithHooks } from '../../workflows/hook-engine.ts';
 import type { ToolResult } from '../tools/tool-result.ts';
-import { runMarkCompleteOperation } from './mark-complete-operation.ts';
+import { runMarkCompleteOperation } from '../../tasks/mark-complete-operation.ts';
 import {
   ArchiveTaskSchema,
   CreateStandaloneTaskSchema,
@@ -29,7 +29,7 @@ import {
   UnsubscribeExternalEventSchema,
 } from './node-agent-schemas.ts';
 import { createNodeAgentToolHandlers, type NodeAgentToolsConfig } from './node-handlers.ts';
-import { mapArchiveTaskParams, mapArchiveTaskResult } from './archive-task-operation.ts';
+import { mapArchiveTaskParams, mapArchiveTaskResult } from '../../tasks/archive-task-operation.ts';
 import { createOperationActionHandler } from './operation-action.ts';
 import { type ActionDefinition, type ActionEntry, defineAction } from './registry.ts';
 import {
