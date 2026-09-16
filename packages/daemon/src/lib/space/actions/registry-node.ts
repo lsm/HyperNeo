@@ -20,7 +20,6 @@ import {
   ListTasksSchema,
   RestoreNodeAgentSchema,
   SaveArtifactSchema,
-  SendMessageSchema,
   SubscribeExternalEventSchema,
   SubscribePrEventsSchema,
   UnsubscribeExternalEventSchema,
@@ -114,16 +113,6 @@ export function createNodeRegistryEntries(
       paramsDoc: 'none',
       paramsSchema: ListChannelsSchema,
       handler: handlers.list_channels,
-    }),
-    nodeAction({
-      name: 'send_message',
-      auditRedactKeys: ['message', 'data'],
-      safetyClass: 'mutate',
-      description:
-        'Send a DM by agent name, fan out by node name, multicast by array, or broadcast with "*"; validates against channel topology.',
-      paramsDoc: 'target (agent | node | agent[] | "*"), message, data?',
-      paramsSchema: SendMessageSchema,
-      handler: handlers.send_message,
     }),
     ...(externalEventSubscriptions
       ? [

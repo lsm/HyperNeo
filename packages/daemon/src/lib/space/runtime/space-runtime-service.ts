@@ -166,7 +166,6 @@ export interface SpaceRuntimeServiceConfig {
   };
   goalService?: import('../../goals/service.ts').SpaceGoalService;
   evolutionScopeService?: import('../../evolution/scope-service.ts').EvolutionScopeService;
-  evolutionEpisodeService?: import('../../evolution/episode-service.ts').EvolutionEpisodeService;
   outcomeNotificationRepo?: SpaceGoalOutcomeNotificationRepository;
   enableGoalOutcomeWake?: boolean;
   inactivityConfigRepo?: import('../../../storage/repositories/space-agent-inactivity-repository.ts').SpaceAgentInactivityConfigRepository;
@@ -980,7 +979,6 @@ export class SpaceRuntimeService {
       goalService: this.config.goalService,
       evolutionScopeService: this.config.evolutionScopeService,
       goalRepo: new SpaceGoalRepository(this.config.db),
-      evolutionEpisodeService: this.config.evolutionEpisodeService,
       replyRoutingRegistry: this.config.replyRoutingRegistry,
       messageResolver: this.createMessageResolver(space.id),
       longTermAgentDelivery: this.longTermAgentDeliveryCallbacks(),
@@ -1550,7 +1548,6 @@ export class SpaceRuntimeService {
       goalService: this.config.goalService,
       evolutionScopeService: this.config.evolutionScopeService,
       goalRepo: new SpaceGoalRepository(this.config.db),
-      evolutionEpisodeService: this.config.evolutionEpisodeService,
       replyRoutingRegistry: this.config.replyRoutingRegistry,
       messageResolver: this.createMessageResolver(space.id),
       longTermAgentDelivery: this.longTermAgentDeliveryCallbacks(),
@@ -1741,7 +1738,6 @@ export class SpaceRuntimeService {
       goalService: this.config.goalService,
       evolutionScopeService: this.config.evolutionScopeService,
       goalRepo: new SpaceGoalRepository(this.config.db),
-      evolutionEpisodeService: this.config.evolutionEpisodeService,
       replyRoutingRegistry: this.config.replyRoutingRegistry,
       messageResolver: this.createMessageResolver(space.id),
       longTermAgentDelivery: this.longTermAgentDeliveryCallbacks(),
