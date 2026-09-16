@@ -1,5 +1,6 @@
 import type { OperationDefinition } from '../../operations/registry.ts';
 import { registerAgentOperations } from './agents.ts';
+import { registerArtifactOperations } from './artifacts.ts';
 import type { FamilyOperationContext } from './context.ts';
 import { registerEvolutionOperations } from './evolution.ts';
 import { registerExternalEventOperations } from './external-events.ts';
@@ -14,6 +15,7 @@ export type { FamilyOperationContext } from './context.ts';
 export function collectFamilyOperations(context: FamilyOperationContext): OperationDefinition[] {
   return [
     ...registerAgentOperations(context),
+    ...registerArtifactOperations(context),
     ...registerEvolutionOperations(context),
     ...registerExternalEventOperations(context),
     ...registerGoalOperations(context),
