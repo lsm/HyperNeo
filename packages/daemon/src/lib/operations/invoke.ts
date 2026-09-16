@@ -3,7 +3,7 @@ import type { OperationCaller, OperationDefinition, OperationRegistry } from './
 
 export type OperationFailure = {
   kind: 'failed';
-  code: 'unknown_operation' | 'invalid_input' | 'execution_failed' | 'invalid_result';
+  code: 'unknown_operation' | 'invalid_input' | 'forbidden' | 'execution_failed' | 'invalid_result';
   message: string;
 };
 
@@ -47,6 +47,33 @@ export async function parseOperationInput(
       },
     };
   }
+}
+
+export function isOperationAdmitted(
+  operation: OperationDefinition,
+  caller: OperationCaller
+): boolean {
+  if (caller.source !== 'mcp') return true;
+  const policy = operation.policy;
+  if (!policy) return true;
+  if (policy.safetyClass === 'human_only') return false;
+  if (policy.roles && (!caller.role || !policy.roles.includes(caller.role))) return false;
+  return caller.role !== 'universal_read' || policy.safetyClass === 'read';
+}
+
+export function admitOperationCaller(
+  prepared: PreparedOperation,
+  caller: OperationCaller
+): Gate<PreparedOperation> {
+  return isOperationAdmitted(prepared.operation, caller)
+    ? { value: prepared }
+    : {
+        reason: {
+          kind: 'failed',
+          code: 'forbidden',
+          message: `Operation ${prepared.operation.name} is not available to this caller`,
+        },
+      };
 }
 
 export async function executeOperation(
@@ -94,6 +121,7 @@ export const invokeOperation = (superpipe({})('invoke-operation') as PipelineAPI
   .input(['registry', 'name', 'input', 'caller'])
   .pipe(resolveOperation, ['registry', 'name'], 'result:invocation')
   .pipe(parseOperationInput, ['invocation', 'input'], 'result:invocation')
+  .pipe(admitOperationCaller, ['invocation', 'caller'], 'result:invocation')
   .pipe(executeOperation, ['invocation', 'caller'], 'result:invocation')
   .pipe(validateOperationResult, 'invocation', 'result:invocation')
   .endAsync('invocation') as (

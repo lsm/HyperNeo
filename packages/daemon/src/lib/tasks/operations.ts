@@ -26,7 +26,7 @@ import { listTaskCores } from '../../storage/tasks/list-tasks.ts';
 import { readTaskCore } from '../../storage/tasks/task-reader.ts';
 import { listTasksWithSpaceFields, spaceTaskBatchReader } from './list-tasks-with-space-fields.ts';
 import { createDatabaseOperationCatalog } from '../operations/database-catalog.ts';
-import type { OperationRegistry } from '../operations/registry.ts';
+import type { OperationDefinition, OperationRegistry } from '../operations/registry.ts';
 import { createSpaceTaskMetadataEditor, type SpaceTaskMetadataDependencies } from './metadata.ts';
 import {
   createListTaskMembersOperation,
@@ -97,153 +97,160 @@ export function createSpaceOperationRegistryProvider(
     Required<Pick<CompleteTaskDependencies, 'requiresPostApprovalOwner' | 'completionGate'>>,
   pendingCompletion?: OwnedPendingCompletionDependencies,
   directStart?: DirectStartOperationDependencies,
-  transition?: Omit<SpaceTransitionTaskDependencies, 'db'>
+  transition?: Omit<SpaceTransitionTaskDependencies, 'db'>,
+  extra: readonly OperationDefinition[] = []
 ) {
   let registry: OperationRegistry | undefined;
   return () =>
-    (registry ??= createDatabaseOperationCatalog(database, jobQueue, {
-      readTask: (taskId, caller) =>
-        stampActiveAttempt(
-          database.getDatabase(),
-          readScopedTask(
+    (registry ??= createDatabaseOperationCatalog(
+      database,
+      jobQueue,
+      {
+        readTask: (taskId, caller) =>
+          stampActiveAttempt(
             database.getDatabase(),
-            caller,
-            tasks,
-            (id) => tasks.taskRepo?.getTask(id) ?? readTaskCore(database.getDatabase(), id),
-            taskId
-          )
-        ),
-      readTaskByNumber: tasks.taskRepo?.getTaskByNumber
-        ? (spaceId, taskNumber, caller) =>
-            stampActiveAttempt(
+            readScopedTask(
               database.getDatabase(),
-              readScopedTaskByNumber(
-                caller,
-                tasks,
-                (id, number) => tasks.taskRepo?.getTaskByNumber(id, number) ?? null,
-                spaceId,
-                taskNumber
-              )
+              caller,
+              tasks,
+              (id) => tasks.taskRepo?.getTask(id) ?? readTaskCore(database.getDatabase(), id),
+              taskId
             )
-        : undefined,
-      listTasks: (input, caller) =>
-        stampActiveAttempts(
-          database.getDatabase(),
-          listScopedTasks(
-            caller,
-            tasks,
-            (listInput) =>
-              listTasksWithSpaceFields(
-                (coreInput) => listTaskCores(database.getDatabase(), coreInput),
-                listInput,
-                spaceTaskBatchReader(tasks.taskRepo)
-              ),
-            input
-          )
-        ),
-      create: createSpaceCreateTaskOperation({
-        ...tasks,
-        get db() {
-          return database.getDatabase();
-        },
-      }),
-      start: directStart
-        ? createStartTaskOperation(() => database.getDatabase(), jobQueue, tasks, directStart)
-        : undefined,
-      cancel: createCancelTaskOperation(() => database.getDatabase(), jobQueue, tasks),
-      setPreferredWorkflow: tasks.getWorkflow
-        ? createSetPreferredWorkflowOperation({
-            ...tasks,
-            getWorkflow: tasks.getWorkflow,
-            db: database.getDatabase(),
-          })
-        : undefined,
-      archive: createArchiveTaskOperation(() => database.getDatabase(), tasks),
-      members:
-        tasks.taskRepo && tasks.nodeExecutionRepo
-          ? createListTaskMembersOperation({
-              taskRepo: tasks.taskRepo,
-              nodeExecutionRepo: tasks.nodeExecutionRepo,
-              readCoreTask: (taskId) => readTaskCore(database.getDatabase(), taskId),
-            })
-          : undefined,
-      submitForReview: createSubmitTaskForReviewOperation(
-        () => database.getDatabase(),
-        jobQueue,
-        tasks
-      ),
-      complete: createCompleteTaskOperation(() => database.getDatabase(), tasks),
-      transition: transition
-        ? createSpaceTransitionTaskOperation({
-            ...transition,
-            get db() {
-              return database.getDatabase();
-            },
-          })
-        : undefined,
-      pendingCompletion: pendingCompletion
-        ? createOwnedPendingCompletionOperation(pendingCompletion)
-        : undefined,
-      editTask: (input, caller) =>
-        createSpaceTaskMetadataEditor({
-          ...tasks,
-          db: database.getDatabase(),
-        })(input, caller),
-      setDependencies: (input, caller) =>
-        createSpaceTaskDependencyEditor({
-          ...tasks,
-          db: database.getDatabase(),
-        })(input, caller),
-      sendSessionMessage: tasks.sessionManager
-        ? createSendSessionMessageOperation({
-            getSessionRow: (spaceId, sessionId) => {
-              const row = database
-                .getDatabase()
-                .prepare(
-                  `SELECT status, processing_state FROM sessions WHERE id = ? AND space_id = ?`
+          ),
+        readTaskByNumber: tasks.taskRepo?.getTaskByNumber
+          ? (spaceId, taskNumber, caller) =>
+              stampActiveAttempt(
+                database.getDatabase(),
+                readScopedTaskByNumber(
+                  caller,
+                  tasks,
+                  (id, number) => tasks.taskRepo?.getTaskByNumber(id, number) ?? null,
+                  spaceId,
+                  taskNumber
                 )
-                .get(sessionId, spaceId) as {
-                status: string;
-                processing_state: string | null;
-              } | null;
-              return row ?? null;
-            },
-            getLiveSession: async (sessionId) => {
-              const cached = tasks.sessionManager!.getCachedSession(sessionId);
-              if (cached) return cached;
-              return (await tasks.sessionManager!.getSessionAsync(sessionId)) ?? null;
-            },
-            sendUserMessage: (data) => tasks.sessionManager!.sendUserMessage(data),
-          })
-        : undefined,
-      sendTaskMessage:
-        tasks.taskRepo &&
-        tasks.workflowRunRepo &&
-        tasks.nodeExecutionRepo &&
-        tasks.getWorkflowForRun &&
-        tasks.taskAgentManager &&
-        tasks.ensureTargetSession &&
-        tasks.activateNode &&
-        tasks.messageResolverFactory &&
-        tasks.longTermAgentDelivery
-          ? createSendTaskMessageOperation({
-              getTask: (taskId) => tasks.taskRepo!.getTask(taskId),
-              getTaskByNumber: (spaceId, taskNumber) =>
-                tasks.taskRepo!.getTaskByNumber(spaceId, taskNumber),
-              getWorkflowRun: (workflowRunId) => tasks.workflowRunRepo!.getRun(workflowRunId),
-              getWorkflowForRun: tasks.getWorkflowForRun,
-              listNodeExecutions: (workflowRunId) =>
-                tasks.nodeExecutionRepo!.listByWorkflowRun(workflowRunId),
-              getNodeExecutionById: (executionId) => tasks.nodeExecutionRepo!.getById(executionId),
-              ensureTargetSession: tasks.ensureTargetSession,
-              activateNode: tasks.activateNode,
-              taskAgentManager: tasks.taskAgentManager,
-              messageResolverFactory: tasks.messageResolverFactory,
-              longHorizonAgentRepo: tasks.longHorizonAgentRepo,
-              longTermAgentDelivery: tasks.longTermAgentDelivery,
-              replyRoutingRegistry: tasks.replyRoutingRegistry,
-              audit: tasks.audit,
+              )
+          : undefined,
+        listTasks: (input, caller) =>
+          stampActiveAttempts(
+            database.getDatabase(),
+            listScopedTasks(
+              caller,
+              tasks,
+              (listInput) =>
+                listTasksWithSpaceFields(
+                  (coreInput) => listTaskCores(database.getDatabase(), coreInput),
+                  listInput,
+                  spaceTaskBatchReader(tasks.taskRepo)
+                ),
+              input
+            )
+          ),
+        create: createSpaceCreateTaskOperation({
+          ...tasks,
+          get db() {
+            return database.getDatabase();
+          },
+        }),
+        start: directStart
+          ? createStartTaskOperation(() => database.getDatabase(), jobQueue, tasks, directStart)
+          : undefined,
+        cancel: createCancelTaskOperation(() => database.getDatabase(), jobQueue, tasks),
+        setPreferredWorkflow: tasks.getWorkflow
+          ? createSetPreferredWorkflowOperation({
+              ...tasks,
+              getWorkflow: tasks.getWorkflow,
+              db: database.getDatabase(),
             })
           : undefined,
-    }));
+        archive: createArchiveTaskOperation(() => database.getDatabase(), tasks),
+        members:
+          tasks.taskRepo && tasks.nodeExecutionRepo
+            ? createListTaskMembersOperation({
+                taskRepo: tasks.taskRepo,
+                nodeExecutionRepo: tasks.nodeExecutionRepo,
+                readCoreTask: (taskId) => readTaskCore(database.getDatabase(), taskId),
+              })
+            : undefined,
+        submitForReview: createSubmitTaskForReviewOperation(
+          () => database.getDatabase(),
+          jobQueue,
+          tasks
+        ),
+        complete: createCompleteTaskOperation(() => database.getDatabase(), tasks),
+        transition: transition
+          ? createSpaceTransitionTaskOperation({
+              ...transition,
+              get db() {
+                return database.getDatabase();
+              },
+            })
+          : undefined,
+        pendingCompletion: pendingCompletion
+          ? createOwnedPendingCompletionOperation(pendingCompletion)
+          : undefined,
+        editTask: (input, caller) =>
+          createSpaceTaskMetadataEditor({
+            ...tasks,
+            db: database.getDatabase(),
+          })(input, caller),
+        setDependencies: (input, caller) =>
+          createSpaceTaskDependencyEditor({
+            ...tasks,
+            db: database.getDatabase(),
+          })(input, caller),
+        sendSessionMessage: tasks.sessionManager
+          ? createSendSessionMessageOperation({
+              getSessionRow: (spaceId, sessionId) => {
+                const row = database
+                  .getDatabase()
+                  .prepare(
+                    `SELECT status, processing_state FROM sessions WHERE id = ? AND space_id = ?`
+                  )
+                  .get(sessionId, spaceId) as {
+                  status: string;
+                  processing_state: string | null;
+                } | null;
+                return row ?? null;
+              },
+              getLiveSession: async (sessionId) => {
+                const cached = tasks.sessionManager!.getCachedSession(sessionId);
+                if (cached) return cached;
+                return (await tasks.sessionManager!.getSessionAsync(sessionId)) ?? null;
+              },
+              sendUserMessage: (data) => tasks.sessionManager!.sendUserMessage(data),
+            })
+          : undefined,
+        sendTaskMessage:
+          tasks.taskRepo &&
+          tasks.workflowRunRepo &&
+          tasks.nodeExecutionRepo &&
+          tasks.getWorkflowForRun &&
+          tasks.taskAgentManager &&
+          tasks.ensureTargetSession &&
+          tasks.activateNode &&
+          tasks.messageResolverFactory &&
+          tasks.longTermAgentDelivery
+            ? createSendTaskMessageOperation({
+                getTask: (taskId) => tasks.taskRepo!.getTask(taskId),
+                getTaskByNumber: (spaceId, taskNumber) =>
+                  tasks.taskRepo!.getTaskByNumber(spaceId, taskNumber),
+                getWorkflowRun: (workflowRunId) => tasks.workflowRunRepo!.getRun(workflowRunId),
+                getWorkflowForRun: tasks.getWorkflowForRun,
+                listNodeExecutions: (workflowRunId) =>
+                  tasks.nodeExecutionRepo!.listByWorkflowRun(workflowRunId),
+                getNodeExecutionById: (executionId) =>
+                  tasks.nodeExecutionRepo!.getById(executionId),
+                ensureTargetSession: tasks.ensureTargetSession,
+                activateNode: tasks.activateNode,
+                taskAgentManager: tasks.taskAgentManager,
+                messageResolverFactory: tasks.messageResolverFactory,
+                longHorizonAgentRepo: tasks.longHorizonAgentRepo,
+                longTermAgentDelivery: tasks.longTermAgentDelivery,
+                replyRoutingRegistry: tasks.replyRoutingRegistry,
+                audit: tasks.audit,
+              })
+            : undefined,
+      },
+      extra
+    ));
 }
