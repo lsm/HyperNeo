@@ -2,12 +2,12 @@ import { describe, expect, test } from 'bun:test';
 import type { Session, SpaceGoal, SpaceTask } from '@hyperneo/shared';
 import { createGoalOperations } from '../../../../src/lib/goals/operations.ts';
 import { SpaceGoalService } from '../../../../src/lib/goals/service.ts';
-import { ScheduleService } from '../../../../src/lib/schedule/schedule-service.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   createOperationRegistry,
   type OperationCaller,
 } from '../../../../src/lib/operations/registry.ts';
+import { ScheduleService } from '../../../../src/lib/schedule/schedule-service.ts';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import { McpAuditLogRepository } from '../../../../src/storage/repositories/mcp-audit-log-repository.ts';
 import { SpaceGoalEventRepository } from '../../../../src/storage/repositories/space-goal-event-repository.ts';
@@ -60,6 +60,7 @@ function makeCtx(sessionStatus = 'active') {
       jobQueue: new JobQueueRepository(db),
       spaceRepo,
     }),
+    resolveWorkspacePath: async (_spaceId: string, rawPath: string) => rawPath,
     db,
   });
   const registry = createOperationRegistry(
@@ -234,6 +235,27 @@ describe('goal.update through the operations door', () => {
         goalId: goal.id,
         fields: ['summary', 'progress', 'nextSteps'],
       });
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('records workspacePath among the audited fields when a repin is requested', async () => {
+    const ctx = makeCtx();
+    try {
+      const goal = ctx.seed(SPACE_ID, 'Repinnable');
+      const result = await invoke(
+        ctx,
+        'goal.update',
+        { goalId: goal.id, summary: 'Moved', workspacePath: '/tmp/workspace/other-repo' },
+        agent('ad_hoc_member')
+      );
+      expect(result.accepted).toBe(true);
+      expect(result.goal?.workspacePath).toBe('/tmp/workspace/other-repo');
+      expect(JSON.parse(ctx.auditRows()[0].params_summary).fields).toEqual([
+        'summary',
+        'workspacePath',
+      ]);
     } finally {
       ctx.db.close();
     }
