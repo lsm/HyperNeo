@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { SpaceWorkflowSummary } from '@hyperneo/shared';
+import type { SpaceWorkflow, SpaceWorkflowSummary } from '@hyperneo/shared';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   createOperationRegistry,
@@ -28,8 +28,36 @@ function summary(overrides: Partial<SpaceWorkflowSummary> = {}): SpaceWorkflowSu
   };
 }
 
+function workflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
+  return {
+    id: 'wf-1',
+    spaceId: SPACE_ID,
+    name: 'Ship it',
+    nodes: [
+      {
+        id: 'node-1',
+        name: 'implement',
+        agents: [{ agentId: 'agent-1', name: 'coder' }],
+        transitions: [{ id: 't-1', target: 'review' }],
+      },
+    ],
+    startNodeId: 'node-1',
+    tags: ['coding'],
+    createdAt: 1,
+    updatedAt: 2,
+    completionAutonomyLevel: 3,
+    handle: 'ship-it',
+    ...overrides,
+  };
+}
+
 function deps(overrides: Partial<WorkflowReadDependencies> = {}): WorkflowReadDependencies {
-  return { listWorkflowSummaries: () => [summary()], ...overrides };
+  return {
+    listWorkflowSummaries: () => [summary()],
+    getWorkflow: () => workflow(),
+    getWorkflowByHandle: () => null,
+    ...overrides,
+  };
 }
 
 function mcpCaller(role: OperationCallerRole, spaceId: string | null = SPACE_ID) {
@@ -153,5 +181,100 @@ describe('workflow catalog read operations', () => {
       mcpCaller('legacy_task_agent')
     );
     expect(outcome).toMatchObject({ kind: 'failed', code: 'forbidden' });
+  });
+
+  test('workflow.get returns the workflow named by workflowId', async () => {
+    const value = await invoke(
+      deps(),
+      'workflow.get',
+      { workflowId: 'wf-1' },
+      mcpCaller('ad_hoc_member')
+    );
+    expect(value).toEqual(workflow());
+  });
+
+  test('workflow.get keeps every nested field of the workflow record', async () => {
+    const rich = workflow({
+      instructions: 'Follow the plan',
+      channels: [{ id: 'c-1', from: 'implement', to: ['review'], maxCycles: 2 }],
+      hooks: [
+        {
+          id: 'h-1',
+          enabled: true,
+          sourceNode: 'implement',
+          method: 'save_artifact',
+          validator: { kind: 'built_in', id: 'pr_open' },
+          templateData: { shape: 'link' },
+          retry: { maxAttempts: 2, delayMs: 100 },
+        },
+      ],
+      layout: { 'node-1': { x: 10, y: 20 } },
+      postApproval: { targetAgent: 'coder', instructions: 'merge it' },
+    });
+    const value = await invoke(
+      deps({ getWorkflow: () => rich }),
+      'workflow.get',
+      { workflowId: 'wf-1' },
+      mcpCaller('workflow_worker')
+    );
+    expect(value).toEqual(rich);
+  });
+
+  test('workflow.get falls back to workflowHandle when the id names a disabled workflow', async () => {
+    const byHandle = workflow({ id: 'wf-2', handle: 'other' });
+    const value = await invoke(
+      deps({
+        getWorkflow: () => workflow({ disabled: true }),
+        getWorkflowByHandle: (_spaceId, handle) => (handle === 'other' ? byHandle : null),
+      }),
+      'workflow.get',
+      { workflowId: 'wf-1', workflowHandle: 'other' },
+      mcpCaller('ad_hoc_member')
+    );
+    expect(value).toEqual(byHandle);
+  });
+
+  test('workflow.get keeps a disabled in-Space workflow when no handle resolves', async () => {
+    const disabled = workflow({ disabled: true });
+    const value = await invoke(
+      deps({ getWorkflow: () => disabled }),
+      'workflow.get',
+      { workflowId: 'wf-1' },
+      mcpCaller('ad_hoc_member')
+    );
+    expect(value).toEqual(disabled);
+  });
+
+  test('workflow.get hides a workflow owned by another Space', async () => {
+    const value = await invoke(
+      deps({ getWorkflow: () => workflow({ spaceId: 'other-space' }) }),
+      'workflow.get',
+      { workflowId: 'wf-1' },
+      mcpCaller('ad_hoc_member')
+    );
+    expect(value).toBe('workflow_not_found');
+  });
+
+  test('workflow.get denies an outside_space caller before reading anything', async () => {
+    let reads = 0;
+    const dependencies = deps({
+      getWorkflow: () => {
+        reads += 1;
+        return workflow();
+      },
+    });
+    const caller = mcpCaller('outside_space');
+    const outcome = await outcomeOf(dependencies, 'workflow.get', { workflowId: 'wf-1' }, caller);
+    expect(outcome).toMatchObject({ kind: 'failed', code: 'forbidden' });
+    expect(
+      await operation(dependencies, 'workflow.get').execute({ workflowId: 'wf-1' }, caller)
+    ).toBe('caller_not_admitted');
+    expect(reads).toBe(0);
+  });
+
+  test('workflow.get rejects a call naming neither a workflowId nor a workflowHandle', async () => {
+    const registry = createOperationRegistry(createWorkflowReadOperations(deps()));
+    const outcome = await invokeOperation(registry, 'workflow.get', {}, mcpCaller('ad_hoc_member'));
+    expect(outcome.kind).toBe('failed');
   });
 });
