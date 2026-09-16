@@ -7,15 +7,14 @@ import {
 import type { SessionResolutionDeps } from '../../../../src/lib/session-resolution/deps';
 
 interface FakeSession {
-  getSessionData: () => { status: string; config?: { mcpServers?: Record<string, unknown> } };
+  getSessionData: () => { status: string; config?: { workerOperations?: boolean } };
 }
 
 type WorkerRef = { sessionId: string; agentName: string; nodeId?: string | null };
 
-const sessionOf = (
-  status: string,
-  config?: { mcpServers?: Record<string, unknown> }
-): FakeSession => ({ getSessionData: () => ({ status, config }) });
+const sessionOf = (status: string, config?: { workerOperations?: boolean }): FakeSession => ({
+  getSessionData: () => ({ status, config }),
+});
 
 const WORKFLOW_ID = 'space:space-1:task:task-1:exec:e1';
 const WORKER_OPERATIONS_CONFIG = { workerOperations: true };
@@ -196,7 +195,7 @@ describe('createDefaultSessionResolutionDeps', () => {
     });
 
     test('indexed workflow sub-session gates on runtime worker operations', async () => {
-      const bare = sessionOf('active', { mcpServers: {} });
+      const bare = sessionOf('active', { workerOperations: false });
       const bareHarness = makeHarness({ indexed: () => bare, cached: () => bare });
       expect(await bareHarness.deps.getSession(WORKFLOW_ID)).toBeNull();
       const attached = sessionOf('active', WORKER_OPERATIONS_CONFIG);
@@ -205,7 +204,7 @@ describe('createDefaultSessionResolutionDeps', () => {
     });
 
     test('non-indexed session falls through to exactly one async lookup', async () => {
-      const bare = sessionOf('active', { mcpServers: {} });
+      const bare = sessionOf('active', { workerOperations: false });
       const { deps, calls } = makeHarness({ asyncSession: () => bare });
       expect(await deps.getSession('sess-1')).toBe(bare);
       expect(calls.getSessionAsync).toEqual(['sess-1']);
@@ -216,7 +215,7 @@ describe('createDefaultSessionResolutionDeps', () => {
         const { deps } = makeHarness({ asyncSession: () => session });
         expect(await deps.getSession('sess-1')).toBeNull();
       }
-      const bare = sessionOf('active', { mcpServers: {} });
+      const bare = sessionOf('active', { workerOperations: false });
       const workflow = makeHarness({ asyncSession: () => bare });
       expect(await workflow.deps.getSession(WORKFLOW_ID)).toBeNull();
     });
@@ -232,7 +231,7 @@ describe('createDefaultSessionResolutionDeps', () => {
         null,
         sessionOf('ended'),
         sessionOf('archived'),
-        sessionOf('active', { mcpServers: {} }),
+        sessionOf('active', { workerOperations: false }),
       ];
       for (const rehydrated of unavailable) {
         const dead = makeHarness({ rehydrated });
