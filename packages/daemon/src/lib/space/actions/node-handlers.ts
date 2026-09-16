@@ -16,7 +16,6 @@ import type { SpaceGoalService } from '../../goals/service.ts';
 import type { AgentMessageRouter } from '../../messaging/agent-message-router.ts';
 import type { NodeMessagingContext } from '../../messaging/node-messaging-context.ts';
 import { deliverNodeAgentMessage } from '../../messaging/node-send-message.ts';
-import type { WorkflowArtifactProfile } from '../../workflows/artifact-profile.ts';
 import type { ChannelResolver } from '../../messaging/channel-resolver.ts';
 import type { WorkflowHookEngine } from '../../workflows/hook-engine.ts';
 import { wrapHandlerWithHooks } from '../../workflows/hook-engine.ts';
@@ -28,7 +27,6 @@ import type {
   ListSubscriptionsInput,
   SaveArtifactInput,
   SendMessageInput,
-  SubscribeExternalEventInput,
   UnsubscribeExternalEventInput,
 } from './node-agent-schemas.ts';
 import type {
@@ -59,12 +57,10 @@ export interface NodeAgentToolsConfig {
   onSubmitForApproval?: (args: SubmitForApprovalInput) => Promise<ToolResult>;
   onMarkComplete?: (args: MarkCompleteInput) => Promise<ToolResult>;
   onCreateStandaloneTask?: (args: CreateStandaloneTaskInput) => Promise<ToolResult>;
-  onSubscribeExternalEvent?: (args: SubscribeExternalEventInput) => Promise<ToolResult>;
   onUnsubscribeExternalEvent?: (args: UnsubscribeExternalEventInput) => Promise<ToolResult>;
   onListSubscriptions?: (args: ListSubscriptionsInput) => Promise<ToolResult>;
   replyRoutingLookup?: (agentName?: string | null) => string | null;
   artifactRepo?: WorkflowRunArtifactRepository;
-  artifactProfile?: WorkflowArtifactProfile;
   taskRepo?: SpaceTaskRepository;
   auditLogRepo?: McpAuditLogRepository;
   disableAuditLogWrites?: boolean;
