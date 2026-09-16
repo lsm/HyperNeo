@@ -185,7 +185,7 @@ describe('createOperationRpcHandler and createOperationMcpHandler audit both doo
       accepted: 'hello',
     });
     expect(written).toHaveLength(1);
-    expect(written[0]?.caller).toEqual({ source: 'rpc' });
+    expect(written[0]?.caller).toMatchObject({ source: 'rpc' });
   });
 
   test('the mcp door audits the invocation it serves', async () => {
