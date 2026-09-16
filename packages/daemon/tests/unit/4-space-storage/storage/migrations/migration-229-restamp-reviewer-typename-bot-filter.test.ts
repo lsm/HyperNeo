@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { REVIEWER_SYSTEM_CONTRACT } from '../../../../../src/lib/space/agents/system-contracts.ts';
+import { REVIEWER_SYSTEM_CONTRACT } from '../../../../../src/lib/agents/system-contracts.ts';
 import {
   runMigration229,
   STALE_PRE_TYPENAME_REVIEWER_CONTRACT_SHA256,

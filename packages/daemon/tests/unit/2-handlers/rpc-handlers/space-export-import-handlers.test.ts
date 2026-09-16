@@ -15,7 +15,7 @@ import {
   createSpaceAgentLookup,
   type SpaceAgentLookup,
   SpaceWorkflowManager,
-} from '../../../../src/lib/space/managers/space-workflow-manager';
+} from '../../../../src/lib/workflows/workflow-manager';
 import { slugifyWithinLimit } from '../../../../src/lib/space/slug';
 import { SpaceAgentTemplateRepository } from '../../../../src/storage/repositories/space-agent-template-repository';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';

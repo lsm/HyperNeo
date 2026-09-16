@@ -7,15 +7,15 @@ import { SpaceGoalRepository } from '../../../../src/storage/repositories/space-
 import { TaskScheduleRepository } from '../../../../src/storage/repositories/task-schedule-repository.ts';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository.ts';
-import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
-import { ScheduleService } from '../../../../src/lib/space/schedule/schedule-service.ts';
-import { SpaceGoalService } from '../../../../src/lib/space/goals/goal-service.ts';
+import { SpaceTaskManager } from '../../../../src/lib/tasks/task-manager.ts';
+import { ScheduleService } from '../../../../src/lib/schedule/schedule-service.ts';
+import { SpaceGoalService } from '../../../../src/lib/goals/service.ts';
 import {
   createEndNodeHandlers,
   createMarkCompleteHandler,
   createPrMergedGate,
-} from '../../../../src/lib/space/operations/end-node-handlers.ts';
-import type { EndNodeHandlerDeps } from '../../../../src/lib/space/operations/end-node-handlers.ts';
+} from '../../../../src/lib/workflows/end-node-handlers.ts';
+import type { EndNodeHandlerDeps } from '../../../../src/lib/workflows/end-node-handlers.ts';
 import type { Space, SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
 import type {
   DaemonInternalEventMap,

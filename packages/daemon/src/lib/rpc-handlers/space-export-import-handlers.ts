@@ -24,16 +24,16 @@ import {
   isRelocationMarkerLabel,
   normalizeLegacyWorkerTemplateKey,
   RELOCATED_FROM_LABEL_PREFIX,
-} from '../space/agents/long-horizon-agent-templates.ts';
+} from '../agents/long-horizon-templates.ts';
 import {
   publishSpaceAgentV2Mirror,
   publishUnifiedAgentCreated,
   publishUnifiedAgentUpdated,
-} from '../space/agents/unified-agent-events.ts';
-import { isRunnableUnifiedAgent } from '../space/agents/worker-long-horizon-mapper.ts';
+} from '../agents/unified-agent-events.ts';
+import { isRunnableUnifiedAgent } from '../agents/worker-long-horizon-mapper.ts';
 import { exportBundle, normalizeOverride, validateExportBundle } from '../space/export-format.ts';
 import type { SpaceManager } from '../space/managers/space-manager.ts';
-import type { SpaceWorkflowManager } from '../space/managers/space-workflow-manager.ts';
+import type { SpaceWorkflowManager } from '../workflows/workflow-manager.ts';
 import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit } from '../space/slug.ts';
 
 const log = new Logger('space-export-import-handlers');

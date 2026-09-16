@@ -9,8 +9,8 @@ import {
   type PostApprovalRetryDeps,
   runPostApprovalRetry,
   TaskScopedRetrySerializer,
-} from '../../../../src/lib/space/runtime/post-approval-retry.ts';
-import { PostApprovalRouter } from '../../../../src/lib/space/runtime/post-approval-router.ts';
+} from '../../../../src/lib/workflows/post-approval-retry.ts';
+import { PostApprovalRouter } from '../../../../src/lib/workflows/post-approval-router.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';

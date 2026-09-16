@@ -20,7 +20,7 @@ import { getProviderCatalogEpoch, setModelsCache } from '../../../../src/lib/mod
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import type { Database } from '../../../../src/storage/database';
-import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
+import type { DaemonHub } from '../../../helpers/daemon-hub';
 
 class TranslatingMockProvider implements Provider {
   readonly id = 'anthropic-codex';

@@ -2,15 +2,12 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { SpaceWorkflow, WorkflowChannel } from '@hyperneo/shared';
 import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
-import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
-import {
-  ActivationError,
-  ChannelRouter,
-} from '../../../../src/lib/space/runtime/channel-router.ts';
+import { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager.ts';
+import { ActivationError, ChannelRouter } from '../../../../src/lib/messaging/channel-router.ts';
 import {
   MissingWorkflowAgentError,
   PermanentSpawnError,
-} from '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts';
+} from '../../../../src/lib/workflows/node-execution-validation.ts';
 import { ChannelCycleRepository } from '../../../../src/storage/repositories/channel-cycle-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';

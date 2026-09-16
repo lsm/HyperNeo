@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { NodeExecution } from '@hyperneo/shared';
-import { selectTimedOutExecutions } from '../../../../src/lib/space/runtime/run-tick-admission-gates';
+import { selectTimedOutExecutions } from '../../../../src/lib/workflows/run-tick-admission-gates';
 
 function makeExecution(overrides: Partial<NodeExecution> = {}): NodeExecution {
   return {

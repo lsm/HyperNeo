@@ -1,5 +1,5 @@
 import type { TaskCore } from '@hyperneo/shared/types/task-core';
-import { stampActiveAttempt } from './lib/space/operations/direct-attempt-flag.ts';
+import { stampActiveAttempt } from './lib/tasks/direct-attempt-flag.ts';
 import { homedir } from 'os';
 import { parsePositiveInt, type Config } from './config.ts';
 import type { WebSocketData } from './types/websocket.ts';
@@ -11,7 +11,7 @@ import {
 } from './storage/repositories/agent-memory-transformers.ts';
 import { SessionManager } from './lib/session-manager.ts';
 import {
-  hasRuntimeNodeAgentServer,
+  hasRuntimeWorkerOperations,
   isWorkflowSubSessionIdentity,
 } from './lib/session/sub-session-identity.ts';
 import { AuthManager } from './lib/auth-manager.ts';
@@ -76,7 +76,7 @@ import { createReactiveDatabase } from './storage/reactive-database.ts';
 import { LiveQueryEngine } from './storage/live-query.ts';
 import { installProcessFatalLogging } from './lib/process-fatal-logger.ts';
 import { startEventLoopWatchdog, type EventLoopWatchdogHandle } from './lib/event-loop-watchdog.ts';
-import { WorkflowHookRuntimeService } from './lib/space/workflow-hook-runtime-service.ts';
+import { WorkflowHookRuntimeService } from './lib/workflows/hook-runtime-service.ts';
 import { WorkflowHookStateRepository } from './storage/repositories/workflow-hook-state-repository.ts';
 import { SpaceLongHorizonAgentRepository } from './storage/repositories/space-long-horizon-agent-repository.ts';
 import { SpaceAgentReminderRepository } from './storage/repositories/space-agent-reminder-repository.ts';
@@ -84,7 +84,7 @@ import { SpaceAgentRepository } from './storage/repositories/space-agent-reposit
 import { SpaceManager } from './lib/space/managers/space-manager.ts';
 import type { SpaceRuntimeService } from './lib/space/runtime/space-runtime-service.ts';
 import type { TaskAgentManager } from './lib/space/runtime/task-agent-manager.ts';
-import type { SpaceWorktreeManager } from './lib/space/managers/space-worktree-manager.ts';
+import type { SpaceWorktreeManager } from './lib/workspaces/worktree-manager.ts';
 import { JobQueueRepository } from './storage/repositories/job-queue-repository.ts';
 import { JobQueueProcessor, applyStaleReclaimJitter } from './storage/job-queue-processor.ts';
 import { createCleanupHandler } from './lib/job-handlers/cleanup.handler.ts';
@@ -129,7 +129,7 @@ import { FileIndex } from './lib/file-index.ts';
 import { installConsoleLogCapture, subscribeToStructuredLogs } from './lib/logger.ts';
 import { createStartupPhaseTimer } from './lib/startup-phase-timer.ts';
 import { StructuredLogFileSink } from './lib/structured-log-file-sink.ts';
-import { EvolutionLogEvidenceService } from './lib/space/evolution-log-evidence-service.ts';
+import { EvolutionLogEvidenceService } from './lib/evolution/log-evidence-service.ts';
 import { SkillsManager } from './lib/skills-manager.ts';
 import {
   cleanupSuspiciousProcesses,
@@ -982,7 +982,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           if (
             session &&
             isWorkflowSubSessionIdentity(sessionId) &&
-            !hasRuntimeNodeAgentServer(session.getSessionData().config)
+            !hasRuntimeWorkerOperations(session.getSessionData().config)
           ) {
             return null;
           }

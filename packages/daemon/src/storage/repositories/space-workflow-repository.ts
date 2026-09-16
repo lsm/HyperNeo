@@ -18,7 +18,7 @@ import {
   computeDefinitionVersion,
   stableVersionTimestamp,
   verifyDefinitionVersion,
-} from '../../lib/space/workflows/definition-version.ts';
+} from '../../lib/workflows/definition-version.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import {
   type DefinitionVersionSource,

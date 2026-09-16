@@ -3,15 +3,15 @@ import { Database as BunDatabase } from 'bun:sqlite';
 import { configureLogger, LogLevel, subscribeToStructuredLogs } from '../../../../src/lib/logger';
 import type { SpaceTask, Space } from '@hyperneo/shared';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
-import type { SpawnExecutionFlowDeps } from '../../../../src/lib/space/runtime/spawn-flow.ts';
+import type { SpawnExecutionFlowDeps } from '../../../../src/lib/tasks/spawn-flow.ts';
 import {
   WorkspaceNotGitRepositoryError,
   type SpaceWorktreeManager,
-} from '../../../../src/lib/space/managers/space-worktree-manager.ts';
+} from '../../../../src/lib/workspaces/worktree-manager.ts';
 import {
   isPermanentSpawnError,
   PermanentSpawnError,
-} from '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts';
+} from '../../../../src/lib/workflows/node-execution-validation.ts';
 
 describe('TaskAgentManager resolveWorkspacePath — spawn callback decision table (WS02a)', () => {
   const SPACE_ID = 'space-ws02a';

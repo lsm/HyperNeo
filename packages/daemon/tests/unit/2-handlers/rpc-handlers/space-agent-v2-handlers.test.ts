@@ -4,7 +4,7 @@ import {
   setupSpaceAgentV2Handlers,
   type SpaceAgentV2Deps,
 } from '../../../../src/lib/rpc-handlers/space-agent-v2-handlers';
-import { MIGRATED_WORKER_TEMPLATE_KEY } from '../../../../src/lib/space/agents/worker-long-horizon-mapper';
+import { MIGRATED_WORKER_TEMPLATE_KEY } from '../../../../src/lib/agents/worker-long-horizon-mapper';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
 import { SpaceAgentReminderRepository } from '../../../../src/storage/repositories/space-agent-reminder-repository';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';

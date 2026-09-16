@@ -112,7 +112,7 @@ All 6 tests in `visual-workflow-editor.e2e.ts` fail with a 60-second timeout wai
 - `packages/e2e/tests/helpers/` -- test helpers including `navigateToSpace`
 - `packages/web/src/islands/SpaceIsland.tsx` -- space view component (line 108: loading spinner, line 66: selectSpace call)
 - `packages/web/src/lib/space-store.ts` -- space store with `selectSpace`/`doSelect`/`startSubscriptions`
-- `packages/daemon/src/lib/space/agents/seed-agents.ts` -- agent seeding on space creation (no git dependency)
+- `packages/daemon/src/lib/agents/seed-agents.ts` -- agent seeding on space creation (no git dependency)
 
 **Subtasks:**
 1. Run the visual-workflow-editor test locally to reproduce the failure: `make run-e2e TEST=tests/features/visual-workflow-editor.e2e.ts`.

@@ -5,27 +5,27 @@ import {
   setupSpaceWorkflowHandlers,
   checkBuiltInWorkflowDriftOnStartup,
 } from '../../../../src/lib/rpc-handlers/space-workflow-handlers';
-import type { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager';
+import type { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager';
 import type { SpaceWorkflowSummary } from '@hyperneo/shared';
 import {
   WorkflowValidationError,
   WorkflowDeletionBlockedError,
-} from '../../../../src/lib/space/managers/space-workflow-manager';
+} from '../../../../src/lib/workflows/workflow-manager';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { SpaceWorkflowRepository as RealSpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
-import { SpaceWorkflowManager as RealSpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager';
+import { SpaceWorkflowManager as RealSpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { createSpaceTables } from '../../helpers/space-test-db';
-import { getPresetAgentTemplates } from '../../../../src/lib/space/agents/seed-agents';
+import { getPresetAgentTemplates } from '../../../../src/lib/agents/seed-agents';
 import { restampBuiltInWorkflowsOnStartup } from '../../../../src/lib/rpc-handlers/space-workflow-handlers';
 import type { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import type {
   DaemonInternalEventMap,
   InternalEventBus,
 } from '../../../../src/lib/internal-event-bus';
-import { computeWorkflowHash } from '../../../../src/lib/space/workflows/template-hash';
-import { getBuiltInWorkflows } from '../../../../src/lib/space/workflows/built-in-workflows';
+import { computeWorkflowHash } from '../../../../src/lib/workflows/template-hash';
+import { getBuiltInWorkflows } from '../../../../src/lib/workflows/built-in-workflows';
 
 type RequestHandler = (data: unknown) => Promise<unknown>;
 

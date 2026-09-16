@@ -2,8 +2,8 @@ import { describe, expect, test } from 'bun:test';
 import type { AgentProcessingState } from '@hyperneo/shared';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session';
 import type { StagedRunOutcome } from '../../../../src/lib/space/runtime/staged-run';
-import type { VerifiedStopFlowDeps } from '../../../../src/lib/space/runtime/verified-stop-flow';
-import { runVerifiedStopFlow } from '../../../../src/lib/space/runtime/verified-stop-flow';
+import type { VerifiedStopFlowDeps } from '../../../../src/lib/tasks/verified-stop-flow';
+import { runVerifiedStopFlow } from '../../../../src/lib/tasks/verified-stop-flow';
 
 const SESSION_ID = 'sess-1';
 

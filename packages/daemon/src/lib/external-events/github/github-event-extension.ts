@@ -2,7 +2,7 @@ import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts'
 import { createHash } from 'node:crypto';
 import type { MessageHub } from '@hyperneo/shared';
 import { Logger } from '../../logger.ts';
-import { isRateLimitError } from '../../space/runtime/rate-limit-detector.ts';
+import { isRateLimitError } from '../../session/rate-limit-detector.ts';
 import { type CredentialStore } from '../../credentials/credential-store.js';
 import type {
   ExternalEventExtensionContext,
@@ -2351,8 +2351,8 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     };
     const base = `https://api.github.com/repos/${gitHubRepoPath(watched.owner, watched.repo)}`;
     const endpoints = [
-      { key: 'issue_comments', path: '/issues/comments' },
-      { key: 'review_comments', path: '/pulls/comments' },
+      { key: 'issue_comments', path: '/issues/comments', extra: 'sort=updated&direction=desc' },
+      { key: 'review_comments', path: '/pulls/comments', extra: 'sort=updated&direction=desc' },
       { key: 'pulls', path: '/pulls', extra: 'state=all&sort=updated&direction=desc' },
     ];
     const pullRequestNumbersByHeadRef = new Map<string, number[]>();

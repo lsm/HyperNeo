@@ -1,12 +1,12 @@
 import type { SpaceTask } from '@hyperneo/shared';
-import { resolveTaskWorkspace } from '../space/runtime/spawn-slot-resolution.ts';
+import { resolveTaskWorkspace } from '../tasks/spawn-slot-resolution.ts';
 import { worktreePathScopedCacheKey } from '../space/artifact-git-ops.ts';
 import type { Job } from '../../storage/repositories/job-queue-repository.ts';
 import type { WorkflowRunArtifactCacheRepository } from '../../storage/repositories/workflow-run-artifact-cache-repository.ts';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository.ts';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
 import type { SpaceManager } from '../space/managers/space-manager.ts';
-import type { SpaceWorktreeManager } from '../space/managers/space-worktree-manager.ts';
+import type { SpaceWorktreeManager } from '../workspaces/worktree-manager.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import {
   execGit,

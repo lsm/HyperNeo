@@ -5,7 +5,7 @@ import { runMigration226 } from '../../../../../src/storage/schema/m226-space-ag
 import { runMigration227 } from '../../../../../src/storage/schema/m227-space-agent-template-version-seq.ts';
 import { runMigration238 } from '../../../../../src/storage/schema/m238-space-agent-template-labels.ts';
 import { runMigration231 } from '../../../../../src/storage/schema/m231-clear-resolved-workflow-slot-agent-ids.ts';
-import { computeDefinitionVersion } from '../../../../../src/lib/space/workflows/definition-version.ts';
+import { computeDefinitionVersion } from '../../../../../src/lib/workflows/definition-version.ts';
 import type { SpaceWorkflow } from '@hyperneo/shared';
 import {
   createSpaceAgentSchema,

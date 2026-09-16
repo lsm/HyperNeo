@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { classifyLastMessageForIdleAgent } from '../../../../src/lib/space/runtime/last-message-classifier';
+import { classifyLastMessageForIdleAgent } from '../../../../src/lib/session/last-message-classifier';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 
 describe('classifyLastMessageForIdleAgent', () => {

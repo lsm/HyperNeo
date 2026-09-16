@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { SettingSource, ThinkingLevel } from '@hyperneo/shared';
-import { workerAgentToLongHorizonParams } from '../../../../../src/lib/space/agents/worker-long-horizon-mapper.ts';
+import { workerAgentToLongHorizonParams } from '../../../../../src/lib/agents/worker-long-horizon-mapper.ts';
 import { SpaceLongHorizonAgentRepository } from '../../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import { runMigration223 } from '../../../../../src/storage/schema/m223-unify-space-agents-copy.ts';
 import { createTables, runMigrations } from '../../../../../src/storage/schema/index.ts';

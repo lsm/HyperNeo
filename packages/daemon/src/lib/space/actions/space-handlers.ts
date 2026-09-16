@@ -67,45 +67,42 @@ import {
   isReservedAgentHandle,
   normalizeAgentNameToken,
   normalizeReplyTargetHandle,
-} from '../agent-handle.ts';
-import { formatAgentMessage } from '../agent-message-envelope.ts';
+} from '../../messaging/agent-handle.ts';
+import { formatAgentMessage } from '../../messaging/envelope.ts';
 import {
   getLongHorizonAgentTemplate,
   getLongHorizonAgentTemplates,
-} from '../agents/long-horizon-agent-templates.ts';
-import { deriveAgentTemplate } from '../agents/template-derivation.ts';
+} from '../../agents/long-horizon-templates.ts';
+import { deriveAgentTemplate } from '../../agents/template-derivation.ts';
 import {
   type OwnedAgentLookup,
   publishSpaceAgentV2Mirror,
   publishUnifiedAgentCreated,
   publishUnifiedAgentUpdated,
-} from '../agents/unified-agent-events.ts';
-import { mergeEvolutionPolicy } from '../evolution-scope-service.ts';
-import { validateGoalAutomationSelfNagPolicy } from '../goals/evolution-policy-validation.ts';
-import { syncGoalAutomationSelfNagScheduleForScope } from '../goals/goal-automation-schedule-sync.ts';
-import { decideGoalOwnershipMutationAdmission } from '../goals/goal-ownership-gates.ts';
+} from '../../agents/unified-agent-events.ts';
+import { mergeEvolutionPolicy } from '../../evolution/scope-service.ts';
+import { validateGoalAutomationSelfNagPolicy } from '../../evolution/evolution-policy-validation.ts';
+import { syncGoalAutomationSelfNagScheduleForScope } from '../../goals/automation-schedule-sync.ts';
+import { decideGoalOwnershipMutationAdmission } from '../../goals/ownership-gates.ts';
 import {
   getBuiltInSpaceAgentTemplates,
   SpaceAgentTemplateManager,
-} from '../managers/space-agent-template-manager.ts';
+} from '../../agents/template-manager.ts';
 import type { SpaceManager } from '../managers/space-manager.ts';
-import {
-  assertValidSpaceTaskTransition,
-  type SpaceTaskManager,
-} from '../managers/space-task-manager.ts';
-import type { SpaceWorkflowManager } from '../managers/space-workflow-manager.ts';
-import { SpaceDeliveryFacade, translateTaskMessageTarget } from '../messaging-adapter.ts';
+import { assertValidSpaceTaskTransition, type SpaceTaskManager } from '../../tasks/task-manager.ts';
+import type { SpaceWorkflowManager } from '../../workflows/workflow-manager.ts';
+import { SpaceDeliveryFacade, translateTaskMessageTarget } from '../../messaging/space-adapter.ts';
 import {
   createBoundSpaceTaskMetadataEditor,
   isTaskMetadataOnlyUpdate,
-} from '../operations/bound-task-metadata.ts';
-import { createPendingCompletionOperation } from '../operations/pending-completion.ts';
+} from '../../tasks/bound-metadata.ts';
+import { createPendingCompletionOperation } from '../../tasks/pending-completion.ts';
 import {
   createBoundSpaceTaskDependencyEditor,
   isTaskDependenciesOnlyUpdate,
-} from '../operations/task-dependencies.ts';
-import { createSpaceTaskFieldUpdater } from '../operations/task-field-effects.ts';
-import type { ReplyRoutingRegistry } from '../runtime/reply-routing-registry.ts';
+} from '../../tasks/dependencies.ts';
+import { createSpaceTaskFieldUpdater } from '../../tasks/field-effects.ts';
+import type { ReplyRoutingRegistry } from '../../messaging/reply-routing-registry.ts';
 import {
   hasSpaceAuthority,
   type SpaceMcpSessionRole,
@@ -114,14 +111,14 @@ import type { SpaceRuntime } from '../runtime/space-runtime.ts';
 import {
   type NodeAgentTemplateSource,
   spaceAgentTemplateToNodeSource,
-} from '../runtime/spawn-slot-resolution.ts';
+} from '../../tasks/spawn-slot-resolution.ts';
 import type { TaskAgentManager } from '../runtime/task-agent-manager.ts';
-import { createWorkflowTaskParkingExecutor } from '../runtime/task-parking-executor.ts';
-import { createWorkflowTaskRecoveryExecutor } from '../runtime/task-recovery-executor.ts';
-import { createWorkflowTaskStoppingExecutor } from '../runtime/task-stopping-executor.ts';
-import { getNextRunAt, isValidCronExpression } from '../schedule/cron-utils.ts';
+import { createWorkflowTaskParkingExecutor } from '../../tasks/parking-executor.ts';
+import { createWorkflowTaskRecoveryExecutor } from '../../tasks/recovery-executor.ts';
+import { createWorkflowTaskStoppingExecutor } from '../../tasks/stopping-executor.ts';
+import { getNextRunAt, isValidCronExpression } from '../../schedule/cron-utils.ts';
 import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit } from '../slug.ts';
-import { normalizeMeaningfulTaskResult } from '../task-result-utils.ts';
+import { normalizeMeaningfulTaskResult } from '../../tasks/result-utils.ts';
 import { SESSION_MESSAGE_MAX_LIMIT, SPACE_SESSION_MAX_LIMIT } from './space-agent-schemas.ts';
 import {
   createDeliverTaskWorkerMessagePipeline,
@@ -409,12 +406,12 @@ export interface SpaceAgentToolsConfig {
 
   onRestoreNodeAgent?: (args: { reason?: string }) => Promise<void> | void;
   auditLogRepo?: McpAuditLogRepository;
-  scheduleService?: import('../schedule/schedule-service.ts').ScheduleService;
+  scheduleService?: import('../../schedule/schedule-service.ts').ScheduleService;
   replyRoutingRegistry?: ReplyRoutingRegistry;
-  goalService?: import('../goals/goal-service.ts').SpaceGoalService;
-  evolutionScopeService?: import('../evolution-scope-service.ts').EvolutionScopeService;
+  goalService?: import('../../goals/service.ts').SpaceGoalService;
+  evolutionScopeService?: import('../../evolution/scope-service.ts').EvolutionScopeService;
   goalRepo?: import('../../../storage/repositories/space-goal-repository.ts').SpaceGoalRepository;
-  evolutionEpisodeService?: import('../evolution-episode-service.ts').EvolutionEpisodeService;
+  evolutionEpisodeService?: import('../../evolution/episode-service.ts').EvolutionEpisodeService;
   messageResolver?: ActorResolver;
   longTermAgentDelivery?: {
     deliverToSession?: (
@@ -430,7 +427,7 @@ export interface SpaceAgentToolsConfig {
   inactivityConfigRepo?: import('../../../storage/repositories/space-agent-inactivity-repository.ts').SpaceAgentInactivityConfigRepository;
   inactivityClaimRepo?: import('../../../storage/repositories/space-agent-inactivity-repository.ts').SpaceAgentInactivityClaimRepository;
   inactivityRunNow?: (spaceId: string, agentId: string) => Promise<void>;
-  templateManager?: import('../managers/space-agent-template-manager.ts').SpaceAgentTemplateManager;
+  templateManager?: import('../../agents/template-manager.ts').SpaceAgentTemplateManager;
 }
 
 type AgentTemplateLibrary = {
@@ -1650,7 +1647,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         if (getLongHorizonAgentTemplate(args.key)) {
           return jsonResult({
             success: false,
-            error: `Template "${args.key}" is built-in and cannot be updated; built-ins live in the code registry (packages/daemon/src/lib/space/agents/long-horizon-agent-templates.ts)`,
+            error: `Template "${args.key}" is built-in and cannot be updated; built-ins live in the code registry (packages/daemon/src/lib/agents/long-horizon-templates.ts)`,
           });
         }
         const result = await requireTemplateManager().casUpdateIn(
@@ -3631,7 +3628,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           args.episode_judge_provider !== undefined;
 
         const serviceParams: Parameters<
-          import('../evolution-scope-service.ts').EvolutionScopeService['updateScope']
+          import('../../evolution/scope-service.ts').EvolutionScopeService['updateScope']
         >[1] = {
           spaceGoalId: args.goal_id,
           kind: args.kind,

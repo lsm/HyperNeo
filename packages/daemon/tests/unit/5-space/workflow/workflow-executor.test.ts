@@ -3,11 +3,11 @@ import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
-import { WorkflowExecutor } from '../../../../src/lib/space/runtime/workflow-executor.ts';
+import { WorkflowExecutor } from '../../../../src/lib/workflows/workflow-executor.ts';
 import type {
   CommandRunner,
   ConditionContext,
-} from '../../../../src/lib/space/runtime/workflow-executor.ts';
+} from '../../../../src/lib/workflows/workflow-executor.ts';
 import type { SpaceWorkflow, SpaceWorkflowRun, WorkflowCondition } from '@hyperneo/shared';
 
 function makeDb(): BunDatabase {

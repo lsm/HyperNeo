@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   runRestoreIdleSessions,
   type RestoreIdleSessionsDeps,
-} from '../../../../src/lib/space/runtime/restore-idle-sessions-pipeline.ts';
+} from '../../../../src/lib/tasks/restore-idle-sessions-pipeline.ts';
 import type {
   ExternalEventDeliveryRecord,
   ExternalEventRecord,

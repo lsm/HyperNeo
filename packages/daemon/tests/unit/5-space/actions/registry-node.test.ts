@@ -5,9 +5,9 @@ import { NodeExecutionRepository } from '../../../../src/storage/repositories/no
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository.ts';
 import { McpAuditLogRepository } from '../../../../src/storage/repositories/mcp-audit-log-repository.ts';
-import { AgentMessageRouter } from '../../../../src/lib/space/runtime/agent-message-router.ts';
-import { ChannelResolver } from '../../../../src/lib/space/runtime/channel-resolver.ts';
-import type { WorkflowHookEngine } from '../../../../src/lib/space/runtime/workflow-hook-engine.ts';
+import { AgentMessageRouter } from '../../../../src/lib/messaging/agent-message-router.ts';
+import { ChannelResolver } from '../../../../src/lib/messaging/channel-resolver.ts';
+import type { WorkflowHookEngine } from '../../../../src/lib/workflows/hook-engine.ts';
 import type { SpaceMcpSessionRole } from '../../../../src/lib/space/runtime/space-mcp-session-policy.ts';
 import {
   createOperationRegistry,
@@ -28,7 +28,6 @@ import {
   defineAction,
   type ActionDefinition,
 } from '../../../../src/lib/space/actions/registry.ts';
-import { runDispatchAction } from '../../../../src/lib/space/actions/dispatcher-pipeline.ts';
 import {
   composeRoleActionEntries,
   createNodeRegistryEntries,
@@ -508,31 +507,6 @@ describe('composeRoleActionEntries — approve_task collision resolution', () =>
     expect(registry.get('list_sessions')?.family).toBe('space');
   });
 
-  test('runDispatchAction accepts composed space entries from non-space families', async () => {
-    const spaceEntry = defineAction({
-      name: 'list_sessions',
-      family: 'sessions',
-      safetyClass: 'read',
-      description: 'Lists sessions in the space',
-      paramsDoc: 'none',
-      paramsSchema: z.object({}),
-      handler: async () => [],
-    });
-    const registry = createActionRegistry(
-      composeRoleActionEntries('coordinator', [spaceEntry], [])
-    );
-    const outcome = await runDispatchAction(
-      { registry },
-      {
-        actionName: 'list_sessions',
-        params: {},
-        role: 'ad_hoc_member',
-        spaceId: SPACE_ID,
-      }
-    );
-    expect(outcome.action).toBe('dispatched');
-  });
-
   test('coordinator, member, long-term, and non-space registries never include node family', () => {
     const nodeEntry = defineAction({
       name: 'list_peers',
@@ -623,7 +597,7 @@ describe('composeRoleActionEntries — approve_task collision resolution', () =>
     expect(registry.get('delete_scheduled_task')).toBeUndefined();
   });
 
-  test('end-to-end: dispatched approve_task on a worker registry routes to the node handler', async () => {
+  test('invoking approve_task on a worker registry routes to the node handler', async () => {
     const ctx = makeCtx();
     try {
       const nodeEntries = createNodeRegistryEntries(
@@ -638,19 +612,7 @@ describe('composeRoleActionEntries — approve_task collision resolution', () =>
         )
       );
 
-      const outcome = await runDispatchAction(
-        { registry },
-        {
-          actionName: 'approve_task',
-          params: {},
-          role: 'workflow_worker',
-          spaceId: SPACE_ID,
-          taskId: 'task-1',
-          workflowRunId: 'run-registry-node-test',
-          spaceLevel: 5,
-        }
-      );
-      expect(outcome.action).toBe('dispatched');
+      await registry.get('approve_task')!.handler({});
       expect(ctx.calls.get('approve_task')).toBe(1);
       expect(spaceApproveCalls).toEqual([]);
     } finally {
@@ -658,63 +620,7 @@ describe('composeRoleActionEntries — approve_task collision resolution', () =>
     }
   });
 
-  test('end-to-end: default autonomy 5 denies approve_task below level 5 and allows at the workflow level', async () => {
-    const ctx = makeCtx();
-    try {
-      const registry = createActionRegistry(
-        composeRoleActionEntries(
-          'workflow_worker',
-          makeSpaceEntries([]),
-          createNodeRegistryEntries(makeBareConfig(ctx, keepCallbacks(ctx, ['onApproveTask'])))
-        )
-      );
-      const denied = await runDispatchAction(
-        { registry },
-        {
-          actionName: 'approve_task',
-          params: {},
-          role: 'workflow_worker',
-          spaceId: SPACE_ID,
-          spaceLevel: 4,
-        }
-      );
-      expect(denied).toEqual({
-        action: 'denied',
-        reason: 'autonomy_denied',
-        message: expect.stringContaining('space autonomy level 4'),
-      });
-      expect(ctx.calls.get('approve_task')).toBeUndefined();
-
-      const workflow = { completionAutonomyLevel: 3 } as SpaceWorkflow;
-      const lowered = createActionRegistry(
-        composeRoleActionEntries(
-          'workflow_worker',
-          makeSpaceEntries([]),
-          createNodeRegistryEntries(
-            makeBareConfig(ctx, {
-              workflow,
-              ...keepCallbacks(ctx, ['onApproveTask']),
-            })
-          )
-        )
-      );
-      const allowed = await runDispatchAction(
-        { registry: lowered },
-        {
-          actionName: 'approve_task',
-          params: {},
-          role: 'workflow_worker',
-          spaceId: SPACE_ID,
-          spaceLevel: 4,
-        }
-      );
-      expect(allowed.action).toBe('dispatched');
-    } finally {
-      ctx.db.close();
-    }
-  });
-
-  test('end-to-end: the coordinator registry dispatches the space approve_task, not the node one', async () => {
+  test('the coordinator registry resolves the space approve_task, not the node one', async () => {
     const ctx = makeCtx();
     try {
       const spaceApproveCalls: string[] = [];
@@ -725,58 +631,9 @@ describe('composeRoleActionEntries — approve_task collision resolution', () =>
           createNodeRegistryEntries(makeBareConfig(ctx))
         )
       );
-      const outcome = await runDispatchAction(
-        { registry },
-        {
-          actionName: 'approve_task',
-          params: { task_id: 'task-9' },
-          role: 'ad_hoc_member',
-          spaceId: SPACE_ID,
-        }
-      );
-      expect(outcome.action).toBe('dispatched');
+      await registry.get('approve_task')!.handler({ task_id: 'task-9' });
       expect(spaceApproveCalls).toEqual(['space']);
       expect(ctx.calls.get('approve_task')).toBeUndefined();
-    } finally {
-      ctx.db.close();
-    }
-  });
-});
-
-describe('createNodeRegistryEntries — dispatcher audit chokepoint', () => {
-  test('a dispatched mutating node action writes exactly one audit row', async () => {
-    const ctx = makeCtx();
-    try {
-      const auditRepo = new McpAuditLogRepository(ctx.db);
-      const registry = createActionRegistry(
-        composeRoleActionEntries(
-          'workflow_worker',
-          makeSpaceEntries([]),
-          createNodeRegistryEntries(
-            makeConfig(ctx, {
-              auditLogRepo: auditRepo,
-              ...keepCallbacks(ctx, ['onApproveTask']),
-            })
-          )
-        )
-      );
-
-      await runDispatchAction(
-        { registry, auditLogRepo: auditRepo },
-        {
-          actionName: 'approve_task',
-          params: {},
-          role: 'workflow_worker',
-          spaceId: SPACE_ID,
-          taskId: 'task-1',
-          workflowRunId: 'run-registry-node-test',
-          spaceLevel: 5,
-        }
-      );
-
-      const rows = auditRepo.listBySpace(SPACE_ID, 10, 0);
-      expect(rows).toHaveLength(1);
-      expect(rows[0].toolName).toBe('approve_task');
     } finally {
       ctx.db.close();
     }
@@ -1342,6 +1199,90 @@ describe('publish_task — operation-backed', () => {
       };
       expect(payload.success).toBe(false);
       expect(payload.error).toContain('Only draft tasks can be published');
+    } finally {
+      ctx.db.close();
+    }
+  });
+});
+
+function makeArchiveTaskOperation(
+  execute: (input: { taskId: string }) => Promise<{ id: string } | string>
+) {
+  return createOperationRegistry([
+    defineOperation({
+      name: 'task.archive',
+      description: 'Archive a task',
+      inputSchema: z.object({ taskId: z.string() }),
+      resultSchema: z.union([z.object({ id: z.string() }), z.string()]),
+      execute: execute as never,
+    }),
+  ]);
+}
+
+describe('archive_task — operation-backed', () => {
+  test('archive_task is present through the operation registry even without onArchiveTask', () => {
+    const ctx = makeCtx();
+    try {
+      const operations = makeArchiveTaskOperation(async () => ({ id: 'task-1' }));
+      const entry = createNodeRegistryEntries(makeBareConfig(ctx), operations).find(
+        (candidate) => candidate.name === 'archive_task'
+      );
+      if (!entry) throw new Error('archive_task entry missing');
+      expect(entry.safetyClass).toBe('destructive');
+      expect(entry.autonomyRequirement).toBe(4);
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('invokes task.archive with the action task_id and maps a task result to { success, task }', async () => {
+    const ctx = makeCtx();
+    try {
+      const calls: Array<{ input: unknown }> = [];
+      const operations = makeArchiveTaskOperation(async (input) => {
+        calls.push({ input });
+        return { id: 'task-1', title: 'Archived' };
+      });
+      const config = makeBareConfig(ctx);
+      const entry = createNodeRegistryEntries(config, operations).find(
+        (candidate) => candidate.name === 'archive_task'
+      );
+      if (!entry) throw new Error('archive_task entry missing');
+      const result = (await entry.handler({ task_id: 'task-1' })) as {
+        content: Array<{ text: string }>;
+        isError?: boolean;
+      };
+      expect(result.isError).toBeUndefined();
+      expect(JSON.parse(result.content[0].text)).toEqual({
+        success: true,
+        task: { id: 'task-1' },
+      });
+      expect(calls).toEqual([{ input: { taskId: 'task-1' } }]);
+      expect(ctx.calls.get('archive_task')).toBeUndefined();
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('maps a string rejection to the legacy { success: false, error } shape', async () => {
+    const ctx = makeCtx();
+    try {
+      const operations = makeArchiveTaskOperation(async () => 'archive_active_run');
+      const entry = createNodeRegistryEntries(makeBareConfig(ctx), operations).find(
+        (candidate) => candidate.name === 'archive_task'
+      );
+      if (!entry) throw new Error('archive_task entry missing');
+      const result = (await entry.handler({ task_id: 'task-1' })) as {
+        content: Array<{ text: string }>;
+        isError?: boolean;
+      };
+      expect(result.isError).toBeUndefined();
+      const payload = JSON.parse(result.content[0].text) as {
+        success: boolean;
+        error: string;
+      };
+      expect(payload.success).toBe(false);
+      expect(payload.error).toContain('active workflow run');
     } finally {
       ctx.db.close();
     }

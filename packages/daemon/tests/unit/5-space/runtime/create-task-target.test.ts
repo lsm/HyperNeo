@@ -3,7 +3,7 @@ import type { OperationCaller } from '../../../../src/lib/operations/registry';
 import {
   resolveCreateTaskTarget,
   resolveCreatedBy,
-} from '../../../../src/lib/space/operations/create-task-target';
+} from '../../../../src/lib/tasks/create-task-target';
 import { createTestSession } from '../../../helpers/database';
 
 const rpc: OperationCaller = { source: 'rpc' };

@@ -5,7 +5,7 @@ import {
   type ActivationRoutingInput,
   decideActivationRouting,
   selectWorkflowNodeForAgent,
-} from '../../../../src/lib/space/runtime/activation-routing';
+} from '../../../../src/lib/tasks/activation-routing';
 
 const ALL_STATUSES: NodeExecutionStatus[] = [
   'pending',

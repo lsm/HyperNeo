@@ -3,7 +3,7 @@ import {
   buildWorkflowFingerprint,
   computeWorkflowHash,
   workflowsMatchFingerprint,
-} from '../../../../src/lib/space/workflows/template-hash';
+} from '../../../../src/lib/workflows/template-hash';
 import type { SpaceWorkflow } from '@hyperneo/shared';
 
 function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {

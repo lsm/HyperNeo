@@ -5,14 +5,14 @@ import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-
 import {
   SpawnSupersededError,
   TransientSpawnError,
-} from '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts';
+} from '../../../../src/lib/workflows/node-execution-validation.ts';
 import {
-  PostApprovalRouter,
   isPostApprovalRoutingEnabled,
-  POST_APPROVAL_ROUTING_FLAG_ENV,
   mapPostApprovalDispatchWarning,
+  POST_APPROVAL_ROUTING_FLAG_ENV,
   selectFirstDispatchablePostApprovalRoute,
-} from '../../../../src/lib/space/runtime/post-approval-router.ts';
+} from '../../../../src/lib/workflows/post-approval-route-selection.ts';
+import { PostApprovalRouter } from '../../../../src/lib/workflows/post-approval-router.ts';
 import type { SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
 
 const SPACE_ID = 'space-par-test';

@@ -18,25 +18,17 @@ import type {
 import { generateUUID, isRateOrUsageLimited, resolveNodeAgents } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { UUID } from 'crypto';
-import {
-  inferAvailableSpawnRoute,
-  inferProviderForModel,
-  type SpawnRouteDecision,
-} from '../../providers/registry.js';
 import type { ActorResolver } from '../../../../../messaging/src/contracts.ts';
 import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types.ts';
-import type { AgentSessionInit } from '../../../lib/agent/agent-session.ts';
-import { AgentSession, ClearConversationCancelledError } from '../../../lib/agent/agent-session.ts';
+import type { AgentSessionInit } from '../../agent/agent-session.ts';
+import { AgentSession, ClearConversationCancelledError } from '../../agent/agent-session.ts';
 import {
   acquireContextClearBoundary,
   type ContextClearBoundaryOwner,
   withSessionOperationLock,
-} from '../../../lib/agent/message-delivery.ts';
-import {
-  activatePrompts,
-  verifyPromptContent,
-} from '../../../lib/agent/message-delivery-outbox.ts';
-import { decideInjectDelivery } from '../../../lib/agent/message-delivery-pipeline.ts';
+} from '../../agent/message-delivery.ts';
+import { activatePrompts, verifyPromptContent } from '../../agent/message-delivery-outbox.ts';
+import { decideInjectDelivery } from '../../agent/message-delivery-pipeline.ts';
 import type { Database } from '../../../storage/database.ts';
 import type { ReactiveDatabase } from '../../../storage/reactive-database.ts';
 import type { AppMcpServerRepository } from '../../../storage/repositories/app-mcp-server-repository.ts';
@@ -44,27 +36,32 @@ import type { ChannelCycleRepository } from '../../../storage/repositories/chann
 import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository.ts';
 import { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository.ts';
 import type { SpaceAgentTemplateRepository } from '../../../storage/repositories/space-agent-template-repository.ts';
+import { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
 import type { ToolContinuationRecoveryRepository } from '../../../storage/repositories/tool-continuation-recovery-repository.ts';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
+import {
+  inferAvailableSpawnRoute,
+  inferProviderForModel,
+  type SpawnRouteDecision,
+} from '../../providers/registry.js';
 import { validateImageSizes } from '../../session/message-persistence.ts';
 import { CleanupState, type SessionManager } from '../../session-manager.ts';
 import { createDefaultSessionResolutionDeps } from '../../session-resolution/default-deps.ts';
 import { ensureSession } from '../../session-resolution/ensure-session.ts';
 import type { SkillsManager } from '../../skills-manager.ts';
-import { getLongHorizonAgentTemplate } from '../agents/long-horizon-agent-templates.ts';
-import { isRunnableUnifiedAgent } from '../agents/worker-long-horizon-mapper.ts';
+import { getLongHorizonAgentTemplate } from '../../agents/long-horizon-templates.ts';
+import { isRunnableUnifiedAgent } from '../../agents/worker-long-horizon-mapper.ts';
 import type { SpaceManager } from '../managers/space-manager.ts';
-import { SpaceTaskManager } from '../managers/space-task-manager.ts';
-import { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository.ts';
-import type { SpaceWorkflowManager } from '../managers/space-workflow-manager.ts';
+import { SpaceTaskManager } from '../../tasks/task-manager.ts';
+import type { SpaceWorkflowManager } from '../../workflows/workflow-manager.ts';
 import {
   type SpaceWorktreeManager,
   WorkspaceNotGitRepositoryError,
-} from '../managers/space-worktree-manager.ts';
+} from '../../workspaces/worktree-manager.ts';
 import {
   activateModelPoolReservation,
   applyModelPoolToSlot,
@@ -72,10 +69,10 @@ import {
   raiseModelPoolDeferred,
   releaseModelPoolReservation,
   reserveModelPoolSlot,
-} from './model-pool-scheduler.ts';
-import { readRestartRecoveryNote } from './restart-recovery-note.ts';
+} from '../../session/model-pool-scheduler.ts';
+import { readRestartRecoveryNote } from '../../tasks/restart-recovery-note.ts';
 import type { SpaceRuntimeService } from './space-runtime-service.ts';
-import type { NodeAgentTemplateSource } from './spawn-slot-resolution.ts';
+import type { NodeAgentTemplateSource } from '../../tasks/spawn-slot-resolution.ts';
 export interface SubSessionMemberInfo {
   agentId?: string;
   agentName?: string;
@@ -99,68 +96,71 @@ import { renderAddress } from '../../mailbox/address.ts';
 import { assertNoPendingMailboxContentConflict } from '../../mailbox/enqueue.ts';
 import type { MailboxMessage } from '../../mailbox/entry.ts';
 import { handoffPromptToMailbox } from '../../mailbox/handoff.ts';
+import { createOperationRegistry } from '../../operations/registry.ts';
 import { sanitizeAssistantUsageInSDKSessionFile } from '../../sdk-session-file-manager.ts';
 import {
   buildExecutionBaseSessionId,
   buildPostApprovalSessionId,
-  hasRuntimeNodeAgentServer,
+  hasRuntimeWorkerOperations,
   isWorkflowSubSessionIdentity,
   sanitizeAgentNameForId,
   taskIdFromSubSessionIdentity,
 } from '../../session/sub-session-identity.ts';
+import { actionsAsOperations } from '../actions/action-operations.ts';
 import type { NodeAgentToolsConfig } from '../actions/node-handlers.ts';
+import type { ActionRegistry } from '../actions/registry.ts';
+import { createSessionActionRegistry } from '../actions/session-action-registry.ts';
 import type { SpaceAgentToolsConfig } from '../actions/space-handlers.ts';
-import {
-  buildWorkerDispatcherContractTools,
-  createSpaceActionsMcpServer,
-  type SpaceActionsMcpServer,
-} from '../actions/space-actions-server.ts';
+import { buildWorkerDispatcherContractTools } from '../actions/worker-contract-tools.ts';
 import {
   buildCustomAgentTaskMessage,
   DEFAULT_CUSTOM_AGENT_MODEL,
   resolveAgentInit,
-} from '../agents/custom-agent.ts';
-import type { EvolutionScopeService } from '../evolution-scope-service.ts';
-import { TERMINAL_NODE_EXECUTION_STATUSES } from '../managers/node-execution-manager.ts';
+} from '../../agents/custom-agent.ts';
+import type { EvolutionScopeService } from '../../evolution/scope-service.ts';
+import { TERMINAL_NODE_EXECUTION_STATUSES } from '../../workflows/node-execution-manager.ts';
 import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools.ts';
 import {
   createEndNodeHandlers,
   createMarkCompleteHandler,
   createPrMergedGate,
-} from '../operations/end-node-handlers.ts';
+} from '../../workflows/end-node-handlers.ts';
 import { jsonResult } from '../tools/tool-result.ts';
-import { POST_APPROVAL_TASK_AGENT_TARGET } from '../workflows/post-approval-validator.ts';
-import { runTemplateSnapshotRecord } from '../workflows/run-template-snapshot.ts';
-import { decideActivationRouting, selectWorkflowNodeForAgent } from './activation-routing.ts';
+import { POST_APPROVAL_TASK_AGENT_TARGET } from '../../workflows/post-approval-validator.ts';
+import { runTemplateSnapshotRecord } from '../../workflows/run-template-snapshot.ts';
+import {
+  decideActivationRouting,
+  selectWorkflowNodeForAgent,
+} from '../../tasks/activation-routing.ts';
 import {
   type AgentMessageDeliveryDeps,
   deliverAgentMessageToTarget,
-} from './agent-message-delivery-pipeline.ts';
-import { AgentMessageRouter } from './agent-message-router.ts';
-import type { WorkflowArtifactProfile } from './artifact-profile.ts';
-import { ChannelResolver } from './channel-resolver.ts';
-import { ChannelRouter } from './channel-router.ts';
-import { createGithubConnector } from './connectors/github-connector.ts';
-import { HookExecutor } from './hook-executor.ts';
-import type { InjectionDeliveryRowDeps } from './injection-delivery-steps.ts';
+} from '../../messaging/delivery-pipeline.ts';
+import { AgentMessageRouter } from '../../messaging/agent-message-router.ts';
+import type { WorkflowArtifactProfile } from '../../workflows/artifact-profile.ts';
+import { ChannelResolver } from '../../messaging/channel-resolver.ts';
+import { ChannelRouter } from '../../messaging/channel-router.ts';
+import { createGithubConnector } from '../../github/connectors/github-connector.ts';
+import { HookExecutor } from '../../workflows/hook-executor.ts';
+import type { InjectionDeliveryRowDeps } from '../../messaging/injection-delivery-steps.ts';
 import {
   flipDeliveryRowToDeferred,
   reopenFailedDeliveryRow,
   settleDeliveryRowStatus,
-} from './injection-delivery-steps.ts';
+} from '../../messaging/injection-delivery-steps.ts';
 import {
   collectDispatchablePostApprovalRoutes,
   isCoderOwnedMergeWorkflow as resolveIsCoderOwnedMergeWorkflow,
-} from './post-approval-router.ts';
-import type { ReplyRoutingRegistry } from './reply-routing-registry.ts';
-import { decideRestoredWorkerAdmission } from './restored-worker-admission-decision-pipeline.ts';
-import { isCanonicalTaskTerminalForSpawn } from './run-spawn-decisions.ts';
+} from '../../workflows/post-approval-router.ts';
+import type { ReplyRoutingRegistry } from '../../messaging/reply-routing-registry.ts';
+import { decideRestoredWorkerAdmission } from '../../tasks/restored-worker-admission-decision-pipeline.ts';
+import { isCanonicalTaskTerminalForSpawn } from '../../workflows/run-spawn-decisions.ts';
 import {
   isSpawnFlowReusedSession,
   isSpawnFlowWaitConcurrent,
   runSpawnExecutionFlow,
   type SpawnExecutionFlowDeps,
-} from './spawn-flow.ts';
+} from '../../tasks/spawn-flow.ts';
 import {
   assembleNodeAgentSessionInit,
   buildSlotOverrides,
@@ -172,14 +172,14 @@ import {
   resolveTaskWorkspace,
   resolveWorkflowNodeSlot,
   spaceAgentTemplateToNodeSource,
-} from './spawn-slot-resolution.ts';
+} from '../../tasks/spawn-slot-resolution.ts';
 import { stagedRun } from './staged-run.ts';
-import { runVerifiedStopFlow, type VerifiedStopFlowDeps } from './verified-stop-flow.ts';
+import { runVerifiedStopFlow, type VerifiedStopFlowDeps } from '../../tasks/verified-stop-flow.ts';
 import {
   clearAllRetryableHookActionTimers,
   QUEUED_RETRYABLE_ACTION_STATE_KEY,
   WorkflowHookEngine,
-} from './workflow-hook-engine.ts';
+} from '../../workflows/hook-engine.ts';
 import {
   assertExecutionValidAgainstWorkflow,
   formatMissingTemplateReference,
@@ -190,7 +190,7 @@ import {
   SPAWN_RESERVABLE_TASK_STATUSES,
   SpawnSupersededError,
   validateTaskAllowsSpawn,
-} from './workflow-node-execution-validation.ts';
+} from '../../workflows/node-execution-validation.ts';
 
 const log = new Logger('task-agent-manager');
 
@@ -273,12 +273,12 @@ export interface TaskAgentManagerConfig {
     explicitMessageId?: string,
     options?: {
       onConsumed?: (settledSessionId: string) => void;
-      lateSettlement?: import('./session-message-delivery.ts').SessionLateSettlementOwner;
+      lateSettlement?: import('../../messaging/session-message-delivery.ts').SessionLateSettlementOwner;
       onLateFailure?: () => void;
       disposeSignal?: AbortSignal;
     }
-  ) => Promise<import('./session-message-delivery.ts').SessionInjectionOutcome>;
-  scheduleService?: import('../schedule/schedule-service.ts').ScheduleService;
+  ) => Promise<import('../../messaging/session-message-delivery.ts').SessionInjectionOutcome>;
+  scheduleService?: import('../../schedule/schedule-service.ts').ScheduleService;
   replyRoutingRegistry?: ReplyRoutingRegistry;
   memoryRepo?: AgentMemoryRepository;
   messageResolverFactory?: (
@@ -295,7 +295,7 @@ export interface TaskAgentManagerConfig {
       message: MessageRecord
     ) => Promise<string | null | undefined>;
   };
-  goalService?: import('../goals/goal-service.ts').SpaceGoalService;
+  goalService?: import('../../goals/service.ts').SpaceGoalService;
   evolutionScopeService?: EvolutionScopeService;
   externalEventStore?: import('../../external-events/external-event-store.ts').ExternalEventStore;
 }
@@ -309,8 +309,6 @@ interface RateLimitSessionEntry {
 }
 
 const RATE_LIMIT_FALLBACK_RESET_AT_MS = 60 * 60 * 1000;
-
-const WORKER_REINJECTABLE_MCP_SERVERS = ['space-actions'] as const;
 
 const VERIFIED_STOP_PROCESS_EXIT_SETTLE_MS = 500;
 
@@ -1018,12 +1016,7 @@ export class TaskAgentManager {
             request.workspacePath,
             request.execution.workflowNodeId
           );
-          const spaceActionsServer = nodeAgentMcpServers['space-actions'] as unknown as
-            | SpaceActionsMcpServer
-            | undefined;
-          spawnState.dispatcherActionNames = spaceActionsServer
-            ? new Set(spaceActionsServer.registry.entries.map((entry) => entry.name))
-            : undefined;
+          spawnState.dispatcherActionNames = this.workerActionNamesFor(request.sessionId);
 
           init = assembleNodeAgentSessionInit({
             baseInit: init,
@@ -1325,7 +1318,6 @@ export class TaskAgentManager {
                   workflowNodeId: reuseNodeId,
                 };
                 const previousReuseWorkspacePath = existing.getSessionData().workspacePath;
-                const previousWorkerMcpServers = this.captureWorkerMcpServers(existing);
                 const workspaceChanged =
                   !!reuseWorkspacePath && previousReuseWorkspacePath !== reuseWorkspacePath;
                 if (workspaceChanged) {
@@ -1337,7 +1329,6 @@ export class TaskAgentManager {
                   if (workspaceChanged) {
                     existing.updateMetadata({ workspacePath: previousReuseWorkspacePath });
                   }
-                  this.restoreWorkerMcpServers(existing, previousWorkerMcpServers);
                   throw err;
                 }
                 await this.ensureRequiredMcpServersAttached(existing, {
@@ -1395,6 +1386,7 @@ export class TaskAgentManager {
     this.subSessions.get(taskId)!.set(sessionId, subSession);
     this.agentSessionIndex.set(sessionId, subSession);
 
+    this.attachWorkerOperations(subSession);
     this.config.sessionManager.registerSession(subSession);
 
     if (memberInfo?.nodeId && memberInfo.agentName) {
@@ -1622,30 +1614,6 @@ export class TaskAgentManager {
 
   private withSessionInjectLock<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
     return withSessionOperationLock(sessionId, fn);
-  }
-
-  private captureWorkerMcpServers(session: AgentSession): Record<string, McpServerConfig> {
-    const servers = session.session.config?.mcpServers as
-      | Record<string, McpServerConfig>
-      | undefined;
-    const captured: Record<string, McpServerConfig> = {};
-    for (const name of WORKER_REINJECTABLE_MCP_SERVERS) {
-      if (servers?.[name]) captured[name] = servers[name];
-    }
-    return captured;
-  }
-
-  private restoreWorkerMcpServers(
-    session: AgentSession,
-    previous: Record<string, McpServerConfig>
-  ): void {
-    for (const name of WORKER_REINJECTABLE_MCP_SERVERS) {
-      if (previous[name]) {
-        session.mergeRuntimeMcpServers({ [name]: previous[name] });
-      } else {
-        session.detachRuntimeMcpServer(name);
-      }
-    }
   }
 
   private async withSessionRestoreLock<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
@@ -2308,6 +2276,7 @@ export class TaskAgentManager {
       ...this.buildAgentMemoryMcpServers(task.spaceId, sessionId),
     };
     agentSession.mergeRuntimeMcpServers(mergedMcpServers);
+    this.attachWorkerOperations(agentSession);
 
     await this.ensureNodeAgentAttached(agentSession, {
       taskId,
@@ -2710,7 +2679,6 @@ export class TaskAgentManager {
               if (!live) return;
               const workspacePath = view.workspacePath!;
               const previousWorkspacePath = live.getSessionData().workspacePath;
-              const previousWorkerMcpServers = this.captureWorkerMcpServers(live);
               live.updateMetadata({ workspacePath });
               try {
                 await this.reinjectNodeAgentMcpServer(live, {
@@ -2726,7 +2694,6 @@ export class TaskAgentManager {
                 if (previousWorkspacePath !== undefined) {
                   live.updateMetadata({ workspacePath: previousWorkspacePath });
                 }
-                this.restoreWorkerMcpServers(live, previousWorkerMcpServers);
                 throw err;
               }
             },
@@ -2774,7 +2741,7 @@ export class TaskAgentManager {
     if (!this.isSessionAlive(sessionId)) return false;
     const session = this.getAgentSessionById(sessionId);
     if (!session) return false;
-    await this.mcpSelfHeal(session, ['space-actions']);
+    await this.mcpSelfHeal(session, this.requiredWorkflowSubSessionMcpServers());
     await this.startRestoredWorkerForResume(session);
     return true;
   }
@@ -3287,7 +3254,7 @@ export class TaskAgentManager {
       `Role: "${execution.agentName}"`,
       'Tools available:',
       ...dispatcherTools,
-      'If you hit a hard blocker: record it via call_action(name="save_artifact", params={ shape: "note", kind: "blocked", summary: "<what blocks you>" }) and stop. Do NOT wait for a reply — there is no Space-level recipient, and the unfinished task carrying that artifact is the signal a human acts on.',
+      'If you hit a hard blocker: record it via invoke(name="save_artifact", input={ shape: "note", kind: "blocked", summary: "<what blocks you>" }) and stop. Do NOT wait for a reply — there is no Space-level recipient, and the unfinished task carrying that artifact is the signal a human acts on.',
     ].join('\n');
 
     if (!workflow) {
@@ -3308,16 +3275,16 @@ export class TaskAgentManager {
     ];
 
     lines.push(
-      'If you hit a hard blocker: record it via call_action(name="save_artifact", params={ shape: "note", kind: "blocked", summary: "<what blocks you>" }) and stop. Do NOT wait for a reply — there is no Space-level recipient, and the unfinished task carrying that artifact is the signal a human acts on.'
+      'If you hit a hard blocker: record it via invoke(name="save_artifact", input={ shape: "note", kind: "blocked", summary: "<what blocks you>" }) and stop. Do NOT wait for a reply — there is no Space-level recipient, and the unfinished task carrying that artifact is the signal a human acts on.'
     );
     if (isEndNode) {
       if (approveUnlocked) {
         lines.push(
-          'When your work is complete: (1) call call_action(name="save_artifact", params={ shape: "decision", key: "outcome", summary: "...", data: { recommendation: "completed" } }) to record the outcome, then (2) call call_action(name="approve_task") as your FINAL action to close the task. The runtime — not your artifact — decides the terminal status via completion actions.'
+          'When your work is complete: (1) call invoke(name="save_artifact", input={ shape: "decision", key: "outcome", summary: "...", data: { recommendation: "completed" } }) to record the outcome, then (2) call invoke(name="approve_task") as your FINAL action to close the task. The runtime — not your artifact — decides the terminal status via completion actions.'
         );
       } else {
         lines.push(
-          'When your work is complete: (1) call call_action(name="save_artifact", params={ shape: "decision", key: "outcome", summary: "...", data: { recommendation: "completed" } }) to record the outcome, then (2) call call_action(name="submit_for_approval", params={ reason: "..." }) as your FINAL action. approve_task is NOT available at this autonomy level; only a human can finalize.'
+          'When your work is complete: (1) call invoke(name="save_artifact", input={ shape: "decision", key: "outcome", summary: "...", data: { recommendation: "completed" } }) to record the outcome, then (2) call invoke(name="submit_for_approval", input={ reason: "..." }) as your FINAL action. approve_task is NOT available at this autonomy level; only a human can finalize.'
         );
       }
     }
@@ -4011,6 +3978,7 @@ export class TaskAgentManager {
     };
 
     agentSession.mergeRuntimeMcpServers(mergedMcpServers);
+    this.attachWorkerOperations(agentSession);
 
     const rehydrateCtx = {
       taskId,
@@ -4570,6 +4538,7 @@ export class TaskAgentManager {
       this.sessionListeners.delete(sessionId);
       this.completionCallbacks.delete(sessionId);
     }
+    this.workerRegistryBySession.delete(sessionId);
   }
 
   private getWorkflowRunId(taskId: string): string | null {
@@ -4602,8 +4571,7 @@ export class TaskAgentManager {
   }
 
   requiredWorkflowSubSessionMcpServers(): string[] {
-    const required = ['space-actions'];
-    return this.config.memoryRepo ? [...required, 'agent-memory'] : required;
+    return this.config.memoryRepo ? ['agent-memory'] : [];
   }
 
   async ensureNodeAgentAttached(
@@ -4640,9 +4608,6 @@ export class TaskAgentManager {
         `Self-healing by re-injecting before first turn — but this indicates a regression in the spawn/rehydrate merge logic.`
     );
 
-    if (missing.includes('space-actions')) {
-      await this.reinjectNodeAgentMcpServer(session, ctx);
-    }
     if (missing.includes('agent-memory')) {
       await this.reinjectAgentMemoryMcpServer(session, ctx);
     }
@@ -4778,7 +4743,6 @@ export class TaskAgentManager {
                 agentSession.getSessionData().workspacePath !== healWorkspacePath
               ) {
                 const previousHealWorkspacePath = agentSession.getSessionData().workspacePath;
-                const previousWorkerMcpServers = this.captureWorkerMcpServers(agentSession);
                 agentSession.updateMetadata({ workspacePath: healWorkspacePath });
                 try {
                   await this.reinjectNodeAgentMcpServer(agentSession, healCtx);
@@ -4786,7 +4750,6 @@ export class TaskAgentManager {
                   if (previousHealWorkspacePath !== undefined) {
                     agentSession.updateMetadata({ workspacePath: previousHealWorkspacePath });
                   }
-                  this.restoreWorkerMcpServers(agentSession, previousWorkerMcpServers);
                   throw err;
                 }
               }
@@ -4841,6 +4804,7 @@ export class TaskAgentManager {
       ctx.workflowNodeId
     );
     session.mergeRuntimeMcpServers(rebuilt);
+    this.attachWorkerOperations(session);
 
     await session.restartQuery();
   }
@@ -4949,6 +4913,17 @@ export class TaskAgentManager {
         (row) =>
           typeof row.uuid === 'string' && row.uuid.length > 0 && row.uuid !== excludeMessageId
       );
+  }
+
+  private workerRegistryBySession = new Map<string, ActionRegistry>();
+
+  workerActionRegistryFor(sessionId: string): ActionRegistry | undefined {
+    return this.workerRegistryBySession.get(sessionId);
+  }
+
+  workerActionNamesFor(sessionId: string): ReadonlySet<string> | undefined {
+    const registry = this.workerRegistryBySession.get(sessionId);
+    return registry ? new Set(registry.entries.map((entry) => entry.name)) : undefined;
   }
 
   buildNodeAgentMcpServersForSession(
@@ -5382,31 +5357,56 @@ export class TaskAgentManager {
       agentNameAliases,
       subSessionId,
     });
-    const spaceActions = this.buildSpaceActionsDispatcherServer(nodeConfig, spaceConfig);
-    return { 'space-actions': spaceActions };
+    this.installWorkerOperations(nodeConfig, spaceConfig);
+    return {};
   }
 
-  buildSpaceActionsDispatcherServer(
+  buildWorkerActionRegistry(
     nodeConfig: NodeAgentToolsConfig,
     spaceConfig?: SpaceAgentToolsConfig
-  ): McpServerConfig {
-    const server = createSpaceActionsMcpServer({
+  ): ActionRegistry {
+    return createSessionActionRegistry({
       role: 'workflow_worker',
-      nodeRole: nodeConfig.myAgentName,
       spaceId: nodeConfig.spaceId,
-      taskId: nodeConfig.taskId,
-      workflowRunId: nodeConfig.workflowRunId,
-      agentName: nodeConfig.myAgentName,
       sessionId: nodeConfig.mySessionId,
       nodeConfig,
       spaceConfig,
-      dispatchDeps: {
-        getSpaceAutonomyLevel: async (spaceId) =>
-          (await this.config.spaceManager.getSpace(spaceId))?.autonomyLevel ?? 1,
-      },
       operationRegistry: () => this.config.sessionManager.getOperationRegistry(),
-    }) as unknown as McpServerConfig;
-    return server;
+    });
+  }
+
+  installWorkerOperations(
+    nodeConfig: NodeAgentToolsConfig,
+    spaceConfig?: SpaceAgentToolsConfig
+  ): ActionRegistry {
+    const registry = this.buildWorkerActionRegistry(nodeConfig, spaceConfig);
+    if (nodeConfig.mySessionId) {
+      this.workerRegistryBySession.set(nodeConfig.mySessionId, registry);
+    }
+    const sessionManager = this.config.sessionManager;
+    const agentSession =
+      sessionManager &&
+      nodeConfig.mySessionId &&
+      typeof sessionManager.getSession === 'function' &&
+      typeof sessionManager.getOperationRegistry === 'function'
+        ? sessionManager.getSession(nodeConfig.mySessionId)
+        : null;
+    if (agentSession) this.attachWorkerOperations(agentSession);
+    return registry;
+  }
+
+  attachWorkerOperations(agentSession: AgentSession): void {
+    const data = agentSession.getSessionData();
+    const registry = this.workerActionRegistryFor(data.id);
+    if (!registry) return;
+    const sessionManager = this.config.sessionManager;
+    agentSession.setOperationRegistryProvider(() =>
+      createOperationRegistry([
+        ...sessionManager.getOperationRegistry().entries,
+        ...actionsAsOperations(registry),
+      ])
+    );
+    data.config = { ...data.config, workerOperations: true };
   }
 
   private buildWorkerSpaceToolsConfig(ctx: {
@@ -5564,7 +5564,6 @@ export class TaskAgentManager {
         }).workspacePath;
         if (reuseWorkspacePath && existing.getSessionData().workspacePath !== reuseWorkspacePath) {
           const previousReuseWorkspacePath = existing.getSessionData().workspacePath;
-          const previousWorkerMcpServers = this.captureWorkerMcpServers(existing);
           existing.updateMetadata({ workspacePath: reuseWorkspacePath });
           try {
             await this.reinjectNodeAgentMcpServer(existing, {
@@ -5580,7 +5579,6 @@ export class TaskAgentManager {
             if (previousReuseWorkspacePath !== undefined) {
               existing.updateMetadata({ workspacePath: previousReuseWorkspacePath });
             }
-            this.restoreWorkerMcpServers(existing, previousWorkerMcpServers);
             throw err;
           }
         }
@@ -5870,7 +5868,7 @@ export class TaskAgentManager {
     if (!candidate) return null;
     const data = candidate.getSessionData();
     if (data.status === 'ended' || data.status === 'archived') return null;
-    if (isWorkflowSubSessionIdentity(candidateId) && !hasRuntimeNodeAgentServer(data.config)) {
+    if (isWorkflowSubSessionIdentity(candidateId) && !hasRuntimeWorkerOperations(data.config)) {
       return null;
     }
     return candidateId;

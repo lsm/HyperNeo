@@ -30,7 +30,6 @@ const EXPECTED_ENV_BY_FAMILY: Record<string, string[]> = {
     'HYPERNEO_PROVIDER_RETRY_BASE_DELAY_MS',
     'HYPERNEO_TASK_NOTIFICATION_REQUERY_BASE_DELAY_MS',
     'HYPERNEO_FILE_INDEX_POLL_MS',
-    'HYPERNEO_SPACE_ACTIONS_RATE_LIMIT_PER_MINUTE',
   ],
   spaceEvents: [
     'HYPERNEO_EXTERNAL_EVENT_DIGEST_IDLE_DEBOUNCE_MS',
@@ -87,12 +86,12 @@ describe('DAEMON_CONFIG_KEY_CATALOG', () => {
       deliveryTiming: 5,
       deliveryPolicy: 3,
       sdkAcp: 4,
-      providersMisc: 5,
+      providersMisc: 4,
       spaceEvents: 4,
       startup: 11,
       flags: 2,
     });
-    expect(DAEMON_CONFIG_KEY_CATALOG).toHaveLength(34);
+    expect(DAEMON_CONFIG_KEY_CATALOG).toHaveLength(33);
   });
 
   it('has globally unique keys and legacy env names', () => {
@@ -127,7 +126,6 @@ describe('DAEMON_CONFIG_KEY_CATALOG', () => {
       appliesAt: 'live',
     });
     expect(entryByKey('providerMaxRetries')).toMatchObject({ default: 3, min: 0 });
-    expect(entryByKey('spaceActionsRateLimitPerMinute')).toMatchObject({ default: 0, min: 0 });
     expect(entryByKey('logRetainedFiles')).toMatchObject({ default: 5, min: 1, max: 1000 });
     expect(entryByKey('sqlQueryObservability')).toMatchObject({
       type: 'boolean',
@@ -200,13 +198,11 @@ describe('resolveDaemonConfig', () => {
     const resolved = resolveDaemonConfig({
       providersMisc: {
         providerMaxRetries: -3,
-        spaceActionsRateLimitPerMinute: 0,
         providerRetryBaseDelayMs: 0,
       },
       startup: { logRetainedFiles: 5000 },
     });
     expect(resolved.providersMisc?.providerMaxRetries).toBe(3);
-    expect(resolved.providersMisc?.spaceActionsRateLimitPerMinute).toBe(0);
     expect(resolved.providersMisc?.providerRetryBaseDelayMs).toBe(0);
     expect(resolved.startup?.logRetainedFiles).toBe(1000);
   });

@@ -6,7 +6,7 @@ import {
   SpaceWorkflowManager,
   WorkflowDeletionBlockedError,
   WorkflowValidationError,
-} from '../../../../src/lib/space/managers/space-workflow-manager.ts';
+} from '../../../../src/lib/workflows/workflow-manager.ts';
 import { getProviderRegistry } from '../../../../src/lib/providers/registry';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';

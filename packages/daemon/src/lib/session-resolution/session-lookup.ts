@@ -1,5 +1,5 @@
 import {
-  hasRuntimeNodeAgentServer,
+  hasRuntimeWorkerOperations,
   isWorkflowSubSessionIdentity,
 } from '../session/sub-session-identity.ts';
 import type { SessionManager } from '../session-manager.ts';
@@ -17,7 +17,7 @@ export async function resolveLiveSession(
   if (indexed !== undefined && sessionManager.getCachedSession(sessionId) === indexed) {
     const data = indexed.getSessionData();
     if (sessionUnavailable(data.status)) return null;
-    if (isWorkflowSubSessionIdentity(sessionId) && !hasRuntimeNodeAgentServer(data.config)) {
+    if (isWorkflowSubSessionIdentity(sessionId) && !hasRuntimeWorkerOperations(data.config)) {
       return null;
     }
     return indexed;
@@ -26,7 +26,7 @@ export async function resolveLiveSession(
   if (session === null || sessionUnavailable(session.getSessionData().status)) return null;
   if (
     isWorkflowSubSessionIdentity(sessionId) &&
-    !hasRuntimeNodeAgentServer(session.getSessionData().config)
+    !hasRuntimeWorkerOperations(session.getSessionData().config)
   ) {
     return null;
   }

@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   runRequeuePendingDelivery,
   type RequeuePendingDeliveryDeps,
-} from '../../../../src/lib/space/runtime/requeue-pending-delivery-pipeline.ts';
+} from '../../../../src/lib/messaging/requeue-pending-delivery-pipeline.ts';
 import type {
   ExternalEventDeliveryRecord,
   ExternalEventRecord,

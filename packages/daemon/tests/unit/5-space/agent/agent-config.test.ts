@@ -5,11 +5,8 @@ import {
   createCustomAgentInit,
   expandPrompt,
   type SlotOverrides,
-} from '../../../../src/lib/space/agents/custom-agent';
-import {
-  PRESET_AGENT_TOOLS,
-  SUB_SESSION_FEATURES,
-} from '../../../../src/lib/space/agents/seed-agents';
+} from '../../../../src/lib/agents/custom-agent';
+import { PRESET_AGENT_TOOLS, SUB_SESSION_FEATURES } from '../../../../src/lib/agents/seed-agents';
 
 function makeAgent(overrides?: Partial<SpaceLongHorizonAgent>): SpaceLongHorizonAgent {
   return {

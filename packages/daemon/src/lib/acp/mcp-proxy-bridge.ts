@@ -37,7 +37,7 @@ type ProxyRequest = {
   arguments?: unknown;
 };
 
-const PROXIED_SERVER_NAMES = new Set(['space-actions', 'agent-memory', 'db-query']);
+const PROXIED_SERVER_NAMES = new Set(['agent-memory', 'db-query']);
 
 export class AcpMcpProxyBridge {
   socketPath: string;

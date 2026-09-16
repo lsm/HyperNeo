@@ -7,7 +7,7 @@ import {
   canTransition,
   assertValidTransition,
   VALID_TRANSITIONS,
-} from '../../../../src/lib/space/runtime/workflow-run-status-machine.ts';
+} from '../../../../src/lib/workflows/run-status-machine.ts';
 import type { WorkflowRunStatus } from '@hyperneo/shared';
 
 function makeDb(): BunDatabase {

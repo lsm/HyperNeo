@@ -1,19 +1,19 @@
 import { afterEach, beforeAll, describe, expect, test } from 'bun:test';
-import type { Connector } from '../../../../../src/lib/space/runtime/connectors/connector';
+import type { Connector } from '../../../../../src/lib/github/connectors/connector';
 import {
   clearConnectorRegistry,
   getConnector,
   getRegisteredConnectorIds,
   isRegisteredConnector,
   registerConnector,
-} from '../../../../../src/lib/space/runtime/connectors/connector';
-import { GITHUB_CONNECTOR_ID } from '../../../../../src/lib/space/runtime/connectors/github-connector';
+} from '../../../../../src/lib/github/connectors/connector';
+import { GITHUB_CONNECTOR_ID } from '../../../../../src/lib/github/connectors/github-connector';
 import {
   clearBuiltInConnectorDeps,
   getBuiltInConnectorDeps,
   registerProductionConnectors,
-} from '../../../../../src/lib/space/runtime/connectors/production';
-import { validateWorkflowHooks } from '../../../../../src/lib/space/workflow-hook-validation';
+} from '../../../../../src/lib/github/connectors/production.ts';
+import { validateWorkflowHooks } from '../../../../../src/lib/workflows/hook-validation';
 import type { WorkflowHook, WorkflowNodeInput } from '@hyperneo/shared';
 
 function snapshotRegistry(): Connector[] {

@@ -16,11 +16,11 @@ import {
   createDirectOutcomeHandler,
   registerDirectOutcomeJobs,
   DIRECT_TASK_OUTCOME,
-} from '../../../../src/lib/space/runtime/direct-outcome-jobs';
+} from '../../../../src/lib/tasks/direct-outcome-jobs';
 import {
   requestDirectTaskFinalization,
   type DirectFinalizationInput,
-} from '../../../../src/lib/space/runtime/finalize-direct-attempt';
+} from '../../../../src/lib/tasks/finalize-direct-attempt';
 
 let db: Database;
 let jobs: JobQueueRepository;

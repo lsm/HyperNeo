@@ -2,7 +2,7 @@ import type { MessageHub } from '@hyperneo/shared';
 import { withSessionOperationLock } from '../agent/message-delivery.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import {
-  hasRuntimeNodeAgentServer,
+  hasRuntimeWorkerOperations,
   isWorkflowSubSessionIdentity,
 } from '../session/sub-session-identity.ts';
 import type { SessionManager } from '../session-manager.ts';
@@ -10,9 +10,9 @@ import type { RewindMode, SelectiveRewindRequest } from '@hyperneo/shared';
 
 function workflowReplayAdmitted(data: {
   id: string;
-  config: { mcpServers?: Record<string, unknown> };
+  config: { workerOperations?: boolean };
 }): boolean {
-  return !isWorkflowSubSessionIdentity(data.id) || hasRuntimeNodeAgentServer(data.config);
+  return !isWorkflowSubSessionIdentity(data.id) || hasRuntimeWorkerOperations(data.config);
 }
 
 export function setupRewindHandlers(

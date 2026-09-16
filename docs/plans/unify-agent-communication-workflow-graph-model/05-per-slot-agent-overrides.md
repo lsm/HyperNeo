@@ -58,7 +58,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 **Subtasks:**
 1. Run `bun install` at worktree root.
-2. In `packages/daemon/src/lib/space/agents/custom-agent.ts`:
+2. In `packages/daemon/src/lib/agents/custom-agent.ts`:
    - Update `resolveAgentInit` to accept optional `model` and `systemPrompt` overrides
    - When overrides are provided, merge them with the base agent config:
      - `model` override replaces agent's default model

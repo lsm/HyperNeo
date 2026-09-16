@@ -59,6 +59,7 @@ import {
   type MailboxMessage,
   toMailboxMessage,
 } from '../../mailbox/entry.ts';
+import { createOperationRegistry, type OperationRegistry } from '../../operations/registry.ts';
 import type { SessionManager } from '../../session-manager.ts';
 import { buildAgentSessionConfig } from '../../session-resolution/agent-session-config.ts';
 import { createDefaultSessionResolutionDeps } from '../../session-resolution/default-deps.ts';
@@ -67,38 +68,38 @@ import { ensureSession } from '../../session-resolution/ensure-session.ts';
 import { resolveAgentDeliverySession } from '../../session-resolution/resolve-agent-delivery-session.ts';
 import type { ResolveAgentRecordDeps } from '../../session-resolution/resolve-agent-record.ts';
 import type { EnsureSessionOutcome, SessionTarget } from '../../session-resolution/target.ts';
+import { actionsAsOperations } from '../actions/action-operations.ts';
 import {
-  createSpaceActionsMcpServer,
-  type SpaceActionsMcpServer,
-  type SpaceActionsServerConfig,
-} from '../actions/space-actions-server.ts';
+  createSessionActionRegistry,
+  type SessionActionRegistryConfig,
+} from '../actions/session-action-registry.ts';
 import type { SpaceAgentToolsConfig } from '../actions/space-handlers.ts';
-import { SpaceActorRegistryAdapter } from '../actor-registry.ts';
-import { LONG_HORIZON_AGENT_BUILTIN_TOOLS } from '../agents/long-horizon-agent-tools.ts';
-import type { OwnedAgentLookup } from '../agents/unified-agent-events.ts';
-import { unifiedAgentRecordExists } from '../agents/worker-long-horizon-mapper.ts';
+import { SpaceActorRegistryAdapter } from '../../messaging/actor-registry.ts';
+import { LONG_HORIZON_AGENT_BUILTIN_TOOLS } from '../../agents/long-horizon-tools.ts';
+import type { OwnedAgentLookup } from '../../agents/unified-agent-events.ts';
+import { unifiedAgentRecordExists } from '../../agents/worker-long-horizon-mapper.ts';
 import { encodeActorIdComponent, longTermAgentSessionId } from '../long-term-agent-session.ts';
-import { SpaceAgentTemplateManager } from '../managers/space-agent-template-manager.ts';
+import { SpaceAgentTemplateManager } from '../../agents/template-manager.ts';
 import type { SpaceManager } from '../managers/space-manager.ts';
-import { SpaceTaskManager } from '../managers/space-task-manager.ts';
-import type { SpaceWorkflowManager } from '../managers/space-workflow-manager.ts';
-import { SpaceMessageResolver } from '../messaging-adapter.ts';
+import { SpaceTaskManager } from '../../tasks/task-manager.ts';
+import type { SpaceWorkflowManager } from '../../workflows/workflow-manager.ts';
+import { SpaceMessageResolver } from '../../messaging/space-adapter.ts';
 import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools.ts';
-import type { WorkflowArtifactProfile } from './artifact-profile.ts';
-import { ChannelRouter } from './channel-router.ts';
-import { createDatabaseDirectTaskWorkerResolver } from './direct-task-worker-identity.ts';
+import type { WorkflowArtifactProfile } from '../../workflows/artifact-profile.ts';
+import { ChannelRouter } from '../../messaging/channel-router.ts';
+import { createDatabaseDirectTaskWorkerResolver } from '../../tasks/direct-task-worker-identity.ts';
 import {
   type EnsureAgentSessionDeps,
   type EnsuredSession,
   isAgentTargetLifecycleEligible,
   runEnsureAgentSession,
-} from './ensure-agent-session.ts';
-import type { SelectWorkflowWithLlm } from './llm-workflow-selector.ts';
-import { selectWorkflowWithLlmDefault } from './llm-workflow-selector.ts';
-import type { PostApprovalRouteResult } from './post-approval-router.ts';
-import { createDirectKickoffReconciler } from './reconcile-direct-kickoff.ts';
-import type { RenderPendingDigestOutcome } from './render-pending-digest-pipeline.ts';
-import type { ReplyRoutingRegistry } from './reply-routing-registry.ts';
+} from '../../session/ensure-agent-session.ts';
+import type { SelectWorkflowWithLlm } from '../../workflows/llm-workflow-selector.ts';
+import { selectWorkflowWithLlmDefault } from '../../workflows/llm-workflow-selector.ts';
+import type { PostApprovalRouteResult } from '../../workflows/post-approval-router.ts';
+import { createDirectKickoffReconciler } from '../../tasks/reconcile-direct-kickoff.ts';
+import type { RenderPendingDigestOutcome } from '../../messaging/render-pending-digest-pipeline.ts';
+import type { ReplyRoutingRegistry } from '../../messaging/reply-routing-registry.ts';
 import {
   FAIL_CLOSED_LONG_HORIZON_AGENT_REPO,
   resolveSpaceMcpSessionPolicy,
@@ -106,7 +107,7 @@ import {
 } from './space-mcp-session-policy.ts';
 import { SpaceRuntime } from './space-runtime.ts';
 import type { TaskAgentManager } from './task-agent-manager.ts';
-import { canTransition as canTransitionRunStatus } from './workflow-run-status-machine.ts';
+import { canTransition as canTransitionRunStatus } from '../../workflows/run-status-machine.ts';
 
 const log = new Logger('space-runtime-service');
 
@@ -147,7 +148,7 @@ export interface SpaceRuntimeServiceConfig {
   artifactRepo?: WorkflowRunArtifactRepository;
   artifactProfile?: WorkflowArtifactProfile;
   selectWorkflowWithLlm?: SelectWorkflowWithLlm;
-  scheduleService?: import('../schedule/schedule-service.ts').ScheduleService;
+  scheduleService?: import('../../schedule/schedule-service.ts').ScheduleService;
   internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
   commandBus?: InternalCommandBus<DaemonCommandMap>;
   externalEventStore?: ExternalEventStore;
@@ -163,9 +164,9 @@ export interface SpaceRuntimeServiceConfig {
     workflowRunRepo: SpaceWorkflowRunRepository;
     nodeExecutionRepo: NodeExecutionRepository;
   };
-  goalService?: import('../goals/goal-service.ts').SpaceGoalService;
-  evolutionScopeService?: import('../evolution-scope-service.ts').EvolutionScopeService;
-  evolutionEpisodeService?: import('../evolution-episode-service.ts').EvolutionEpisodeService;
+  goalService?: import('../../goals/service.ts').SpaceGoalService;
+  evolutionScopeService?: import('../../evolution/scope-service.ts').EvolutionScopeService;
+  evolutionEpisodeService?: import('../../evolution/episode-service.ts').EvolutionEpisodeService;
   outcomeNotificationRepo?: SpaceGoalOutcomeNotificationRepository;
   enableGoalOutcomeWake?: boolean;
   inactivityConfigRepo?: import('../../../storage/repositories/space-agent-inactivity-repository.ts').SpaceAgentInactivityConfigRepository;
@@ -816,7 +817,7 @@ export class SpaceRuntimeService {
     );
     agentSession.onMissingMemberSpaceMcpServers = async (_sessionId, missing) => {
       log.warn(
-        `Long-term Space agent session ${session.id} missing MCP servers [${missing.join(', ')}]; re-attaching space-actions before query start`
+        `Long-term Space agent session ${session.id} missing MCP servers [${missing.join(', ')}]; re-installing Space operations before query start`
       );
       await this.attachLongTermAgentMcpServersForSession(session, {
         replayPendingMessages: false,
@@ -873,21 +874,44 @@ export class SpaceRuntimeService {
   }
 
   private attachSpaceActionsMcpServer(
-    mcpServers: Record<string, McpServerConfig>,
-    buildConfig: () => SpaceActionsServerConfig
+    _mcpServers: Record<string, McpServerConfig>,
+    buildConfig: () => SessionActionRegistryConfig
   ): void {
     const sessionManager = this.config.sessionManager;
-    mcpServers['space-actions'] = createSpaceActionsMcpServer({
-      ...buildConfig(),
-      operationRegistry: sessionManager ? () => sessionManager.getOperationRegistry() : undefined,
-    }) as unknown as McpServerConfig;
+    const config = buildConfig();
+    const sessionId =
+      config.sessionId ?? config.spaceConfig?.mySessionId ?? config.nodeConfig?.mySessionId;
+    if (!sessionManager || !sessionId || typeof sessionManager.getSession !== 'function') return;
+    const agentSession = sessionManager.getSession(sessionId);
+    if (!agentSession?.setOperationRegistryProvider) return;
+    const actionRegistry = createSessionActionRegistry({
+      ...config,
+      operationRegistry: () => sessionManager.getOperationRegistry(),
+    });
+    agentSession.setOperationRegistryProvider(() =>
+      createOperationRegistry([
+        ...sessionManager.getOperationRegistry().entries,
+        ...actionsAsOperations(actionRegistry),
+      ])
+    );
   }
 
-  buildUniversalReadDispatcherServer(): SpaceActionsMcpServer {
-    return createSpaceActionsMcpServer({
+  installUniversalReadOperations(agentSession: {
+    setOperationRegistryProvider?: (provider: () => OperationRegistry) => void;
+  }): void {
+    const sessionManager = this.config.sessionManager;
+    if (!sessionManager || !agentSession.setOperationRegistryProvider) return;
+    const actionRegistry = createSessionActionRegistry({
       role: 'universal_read',
       spaceId: '',
+      operationRegistry: () => sessionManager.getOperationRegistry(),
     });
+    agentSession.setOperationRegistryProvider(() =>
+      createOperationRegistry([
+        ...sessionManager.getOperationRegistry().entries,
+        ...actionsAsOperations(actionRegistry),
+      ])
+    );
   }
 
   private releaseLongTermAgentDbQuery(sessionId: string): void {
@@ -1595,7 +1619,7 @@ export class SpaceRuntimeService {
 
     agentSession.onMissingMemberSpaceMcpServers = async (_sessionId, missing) => {
       log.warn(
-        `Space member session ${session.id} missing MCP servers [${missing.join(', ')}]; re-attaching space-actions before query start`
+        `Space member session ${session.id} missing MCP servers [${missing.join(', ')}]; re-installing Space operations before query start`
       );
       await this.attachSpaceToolsToMemberSession(session, { replayPendingMessages: false });
     };
@@ -1605,7 +1629,7 @@ export class SpaceRuntimeService {
     }
 
     log.info(
-      `Attached space-actions to member session ${session.id} (space ${space.id}, role ${policy.role}, type ${session.type ?? 'worker'})`
+      `Installed Space operations on member session ${session.id} (space ${space.id}, role ${policy.role}, type ${session.type ?? 'worker'})`
     );
   }
 
@@ -1763,7 +1787,7 @@ export class SpaceRuntimeService {
     session.mergeRuntimeMcpServers(mcpServers);
     session.onMissingSpaceChatMcpServers = async (_sessionId, missing) => {
       log.warn(
-        `Space chat session ${spaceChatSessionId} missing MCP servers [${missing.join(', ')}]; re-attaching space-actions before query start`
+        `Space chat session ${spaceChatSessionId} missing MCP servers [${missing.join(', ')}]; re-installing Space operations before query start`
       );
       await this.setupSpaceAgentSession(space);
     };

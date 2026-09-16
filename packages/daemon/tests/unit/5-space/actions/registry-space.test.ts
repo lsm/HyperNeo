@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, mock, test } from 'bun:test';
 import { z } from 'zod';
 import {
   createOperationRegistry,
@@ -12,11 +12,12 @@ import {
 import { createActionRegistry } from '../../../../src/lib/space/actions/registry.ts';
 import { createSpaceRegistryEntries } from '../../../../src/lib/space/actions/registry-space.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
-import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
-import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
-import { createCancelTaskOperation } from '../../../../src/lib/space/operations/cancel-task.ts';
-import { SpaceCreateTaskInputSchema } from '../../../../src/lib/space/operations/create-task-target.ts';
-import { createSpaceTransitionTaskOperation } from '../../../../src/lib/space/operations/transition-task.ts';
+import { SpaceTaskManager } from '../../../../src/lib/tasks/task-manager.ts';
+import { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager.ts';
+import { createArchiveTaskOperation } from '../../../../src/lib/tasks/archive-task.ts';
+import { createCancelTaskOperation } from '../../../../src/lib/tasks/cancel-task.ts';
+import { SpaceCreateTaskInputSchema } from '../../../../src/lib/tasks/create-task-target.ts';
+import { createSpaceTransitionTaskOperation } from '../../../../src/lib/tasks/transition-task.ts';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import {
@@ -739,6 +740,93 @@ describe('createSpaceRegistryEntries — composition', () => {
       expect(invalidPayload.success).toBe(false);
       expect(invalidPayload.error).toContain('Only draft tasks can be published');
       expect(ctx.taskRepo.getTask(openTask.id)?.status).toBe('open');
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('archive_task archives a plain open task through the shared task.archive operation', async () => {
+    const ctx = makeCtx({ mySessionId: 'space-chat-1' });
+    try {
+      const now = new Date().toISOString();
+      ctx.db
+        .prepare(
+          `INSERT INTO sessions (id, title, created_at, last_active_at, status, config, metadata, type, session_context)
+           VALUES ('space-chat-1', 'Space Chat', ?, ?, 'active', '{}', '{}', 'space_chat', ?)`
+        )
+        .run(now, now, JSON.stringify({ spaceId: SPACE_ID }));
+      const plainTask = ctx.taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Plain task',
+        description: '',
+      });
+      const sessions = new SessionRepository(ctx.db);
+      const emit = mock(async () => {});
+      const operations = createOperationRegistry([
+        createArchiveTaskOperation(() => ctx.db, {
+          getSession: (id) => sessions.getSession(id),
+          getTaskManager: (spaceId) => new SpaceTaskManager(ctx.db, spaceId),
+          isWorkflowRunActive: () => false,
+          emitTaskUpdated: emit,
+          longHorizonAgentRepo: ctx.config.longHorizonAgentRepo,
+          taskRepo: ctx.taskRepo,
+          nodeExecutionRepo: ctx.config.nodeExecutionRepo,
+        }),
+      ]);
+      const entry = createSpaceRegistryEntries(ctx.config, operations).find(
+        (candidate) => candidate.name === 'archive_task'
+      );
+      if (!entry) throw new Error('archive_task entry missing');
+      const result = (await entry.handler({ task_id: plainTask.id })) as {
+        content: Array<{ text: string }>;
+        isError?: boolean;
+      };
+      expect(result.isError).toBeUndefined();
+      expect(JSON.parse(result.content[0].text)).toMatchObject({
+        success: true,
+        task: { id: plainTask.id },
+      });
+      expect(ctx.taskRepo.getTask(plainTask.id)?.archivedAt).not.toBeNull();
+      expect(emit).toHaveBeenCalledTimes(1);
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('archive_task maps task.archive rejections to the legacy { success, error } shape', async () => {
+    const ctx = makeCtx({ mySessionId: 'space-chat-1' });
+    try {
+      const now = new Date().toISOString();
+      ctx.db
+        .prepare(
+          `INSERT INTO sessions (id, title, created_at, last_active_at, status, config, metadata, type, session_context)
+           VALUES ('space-chat-1', 'Space Chat', ?, ?, 'active', '{}', '{}', 'space_chat', ?)`
+        )
+        .run(now, now, JSON.stringify({ spaceId: SPACE_ID }));
+      const operations = createOperationRegistry([
+        defineOperation({
+          name: 'task.archive',
+          description: 'Stub archive operation',
+          inputSchema: z.object({ taskId: z.string() }),
+          resultSchema: z.union([z.object({ id: z.string() }), z.string()]),
+          execute: async () => 'archive_active_run',
+        }),
+      ]);
+      const entry = createSpaceRegistryEntries(ctx.config, operations).find(
+        (candidate) => candidate.name === 'archive_task'
+      );
+      if (!entry) throw new Error('archive_task entry missing');
+      const result = (await entry.handler({ task_id: 'task-1' })) as {
+        content: Array<{ text: string }>;
+        isError?: boolean;
+      };
+      expect(result.isError).toBeUndefined();
+      const payload = JSON.parse(result.content[0].text) as {
+        success: boolean;
+        error: string;
+      };
+      expect(payload.success).toBe(false);
+      expect(payload.error).toContain('active workflow run');
     } finally {
       ctx.db.close();
     }

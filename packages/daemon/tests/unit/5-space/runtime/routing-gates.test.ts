@@ -1,0 +1,564 @@
+import { describe, expect, test } from 'bun:test';
+import { parseAddress } from '../../../../../messaging/src/address';
+import {
+  buildNodeNameResolver,
+  buildSlotToNodeMap,
+  decideGenericAddressRouting,
+  decideNodeTargetDelivery,
+  foldAgentMessageResult,
+  type GenericAddressRoutingConfig,
+  type NodeTargetDeliverySnapshot,
+  type ResolveNodeAgentTargetsInput,
+  resolveNodeAgentTargets,
+} from '../../../../src/lib/messaging/routing-gates';
+
+function makeInput(
+  overrides: Partial<ResolveNodeAgentTargetsInput> = {}
+): ResolveNodeAgentTargetsInput {
+  return {
+    target: 'reviewer',
+    fromAgentName: 'coder',
+    fromNodeName: 'coder',
+    peerAgentNames: [],
+    declaredAgentNames: [],
+    permittedTargets: [],
+    canSend: () => true,
+    ...overrides,
+  };
+}
+
+describe('resolveNodeAgentTargets: broadcast * target', () => {
+  test('resolves to the permitted targets', () => {
+    const outcome = resolveNodeAgentTargets(
+      makeInput({ target: '*', permittedTargets: ['reviewer', 'security'] })
+    );
+
+    expect(outcome).toEqual({
+      status: 'resolved',
+      targetAgentNames: ['reviewer', 'security'],
+    });
+  });
+
+  test('fails with the exact no-permitted-targets reason when permitted targets are empty', () => {
+    const outcome = resolveNodeAgentTargets(makeInput({ target: '*', permittedTargets: [] }));
+
+    expect(outcome).toEqual({
+      status: 'noPermittedTargets',
+      reason: `No permitted targets for agent 'coder' in the declared channel topology.`,
+    });
+  });
+
+  test('filters broadcast targets through the authorization predicate', () => {
+    const outcome = resolveNodeAgentTargets(
+      makeInput({
+        target: '*',
+        permittedTargets: ['reviewer', 'security'],
+        canSend: (_fromNode, toNode) => toNode === 'reviewer',
+      })
+    );
+
+    expect(outcome).toEqual({
+      status: 'unauthorized',
+      unauthorized: ['security'],
+      permittedTargets: ['reviewer', 'security'],
+      reason:
+        `Channel topology does not permit 'coder' to send to: security. ` +
+        `Permitted targets: reviewer, security.`,
+    });
+  });
+});
+
+describe('resolveNodeAgentTargets: array target', () => {
+  test('uses array targets verbatim without resolving them', () => {
+    const outcome = resolveNodeAgentTargets(
+      makeInput({
+        target: ['ghost-a', 'reviewer', 'ghost-b'],
+        peerAgentNames: ['reviewer'],
+        declaredAgentNames: ['reviewer'],
+      })
+    );
+
+    expect(outcome).toEqual({
+      status: 'resolved',
+      targetAgentNames: ['ghost-a', 'reviewer', 'ghost-b'],
+    });
+  });
+
+  test('filters array targets through the authorization predicate', () => {
+    const outcome = resolveNodeAgentTargets(
+      makeInput({
+        target: ['reviewer', 'security'],
+        permittedTargets: ['reviewer'],
+        canSend: (_fromNode, toNode) => toNode === 'reviewer',
+      })
+    );
+
+    expect(outcome).toEqual({
+      status: 'unauthorized',
+      unauthorized: ['security'],
+      permittedTargets: ['reviewer'],
+      reason:
+        `Channel topology does not permit 'coder' to send to: security. ` +
+        `Permitted targets: reviewer.`,
+    });
+  });
+});
+
+describe('resolveNodeAgentTargets: plain-name precedence', () => {
+  test('live-peer match wins over node-group expansion', () => {
+    const outcome = resolveNodeAgentTargets(
+      makeInput({
+        target: 'review-node',
+        peerAgentNames: ['review-node'],
+        nodeGroups: { 'review-node': ['reviewer', 'security'] },
+      })
+    );
+
+    expect(outcome).toEqual({ status: 'resolved', targetAgentNames: ['review-node'] });
+  });
+
+  test('node-group expansion wins over declared agent names', () => {
+    const outcome = resolveNodeAgentTargets(
+      makeInput({
+        target: 'review-node',
+        nodeGroups: { 'review-node': ['reviewer'] },
+        declaredAgentNames: ['review-node'],
+      })
+    );
+
+    expect(outcome).toEqual({ status: 'resolved', targetAgentNames: ['reviewer'] });
+  });
+
+  test('declared agent name resolves without a live session', () => {
+    const outcome = resolveNodeAgentTargets(
+      makeInput({ target: 'reviewer', declaredAgentNames: new Set(['reviewer']) })
+    );
+
+    expect(outcome).toEqual({ status: 'resolved', targetAgentNames: ['reviewer'] });
+  });
+
+  test('topology-declared target resolves directly from permitted targets', () => {
+    const outcome = resolveNodeAgentTargets(
+      makeInput({ target: 'reviewer', permittedTargets: ['reviewer'] })
+    );
+
+    expect(outcome).toEqual({ status: 'resolved', targetAgentNames: ['reviewer'] });
+  });
+
+  test('topology-declared node target resolves directly with node groups present', () => {
+    const outcome = resolveNodeAgentTargets(
+      makeInput({
+        target: 'Review',
+        fromNodeName: 'Coding',
+        nodeGroups: { Coding: ['coder'] },
+        permittedTargets: ['Review'],
+      })
+    );
+
+    expect(outcome).toEqual({ status: 'resolved', targetAgentNames: ['Review'] });
+  });
+
+  test('node-group expansion preempts slot-resolved topology declaration', () => {
+    const outcome = resolveNodeAgentTargets(
+      makeInput({
+        target: 'Review',
+        nodeGroups: { Review: ['reviewer'] },
+        permittedTargets: ['reviewer'],
+      })
+    );
+
+    expect(outcome).toEqual({ status: 'resolved', targetAgentNames: ['reviewer'] });
+  });
+
+  test('expands a node group with an empty slot list to zero targets', () => {
+    const outcome = resolveNodeAgentTargets(
+      makeInput({
+        target: 'Review',
+        nodeGroups: { Review: [] },
+        permittedTargets: ['Review'],
+      })
+    );
+
+    expect(outcome).toEqual({ status: 'resolved', targetAgentNames: [] });
+  });
+});
+
+describe('resolveNodeAgentTargets: unknown target', () => {
+  test('reports no reachable targets when every source is empty', () => {
+    const outcome = resolveNodeAgentTargets(makeInput({ target: 'ghost' }));
+
+    expect(outcome).toEqual({
+      status: 'unknownTarget',
+      target: 'ghost',
+      allTargets: [],
+      reason:
+        `Unknown target 'ghost': no agent or node found with this name. ` +
+        `No reachable targets available.`,
+    });
+  });
+});
+
+describe('resolveNodeAgentTargets: authorization filter', () => {
+  test('reports unauthorized resolved targets with the exact reason', () => {
+    const outcome = resolveNodeAgentTargets(
+      makeInput({
+        target: 'reviewer',
+        declaredAgentNames: ['reviewer'],
+        permittedTargets: ['qa'],
+        canSend: () => false,
+      })
+    );
+
+    expect(outcome).toEqual({
+      status: 'unauthorized',
+      unauthorized: ['reviewer'],
+      permittedTargets: ['qa'],
+      reason:
+        `Channel topology does not permit 'coder' to send to: reviewer. ` +
+        `Permitted targets: qa.`,
+    });
+  });
+
+  test('renders the permitted-targets fallback as none when the list is empty', () => {
+    const outcome = resolveNodeAgentTargets(
+      makeInput({
+        target: 'reviewer',
+        declaredAgentNames: ['reviewer'],
+        permittedTargets: [],
+        canSend: () => false,
+      })
+    );
+
+    expect(outcome).toEqual({
+      status: 'unauthorized',
+      unauthorized: ['reviewer'],
+      permittedTargets: [],
+      reason:
+        `Channel topology does not permit 'coder' to send to: reviewer. ` +
+        `Permitted targets: none.`,
+    });
+  });
+
+  test('resolves slot targets through the node-name resolver before authorization', () => {
+    const calls: Array<[string, string]> = [];
+    const outcome = resolveNodeAgentTargets(
+      makeInput({
+        target: 'reviewer',
+        nodeGroups: { Review: ['reviewer'] },
+        declaredAgentNames: ['reviewer'],
+        canSend: (fromNode, toNode) => {
+          calls.push([fromNode, toNode]);
+          return true;
+        },
+      })
+    );
+
+    expect(outcome).toEqual({ status: 'resolved', targetAgentNames: ['reviewer'] });
+    expect(calls).toEqual([['coder', 'Review']]);
+  });
+});
+
+describe('buildSlotToNodeMap', () => {
+  test('maps every slot of each node group', () => {
+    expect(buildSlotToNodeMap({ 'review-node': ['reviewer', 'security'], qa: ['qa'] })).toEqual(
+      new Map([
+        ['reviewer', 'review-node'],
+        ['security', 'review-node'],
+        ['qa', 'qa'],
+      ])
+    );
+  });
+
+  test('returns an empty map without node groups', () => {
+    expect(buildSlotToNodeMap(undefined)).toEqual(new Map());
+  });
+
+  test('keeps the last mapping for a slot declared in two node groups', () => {
+    expect(buildSlotToNodeMap({ 'node-a': ['shared'], 'node-b': ['shared'] })).toEqual(
+      new Map([['shared', 'node-b']])
+    );
+  });
+});
+
+describe('buildNodeNameResolver', () => {
+  test('resolves slots and passes node names through', () => {
+    const resolveNodeName = buildNodeNameResolver(
+      buildSlotToNodeMap({ Coding: ['coder'], Review: ['reviewer'] })
+    );
+
+    expect(resolveNodeName('coder')).toBe('Coding');
+    expect(resolveNodeName('reviewer')).toBe('Review');
+    expect(resolveNodeName('Coding')).toBe('Coding');
+    expect(resolveNodeName('unmapped')).toBe('unmapped');
+  });
+});
+
+function makeSnapshot(
+  overrides: Partial<NodeTargetDeliverySnapshot> = {}
+): NodeTargetDeliverySnapshot {
+  return {
+    isSpaceAgent: false,
+    hasLiveSessions: false,
+    ...overrides,
+  };
+}
+
+describe('decideNodeTargetDelivery', () => {
+  test('routes agents with live sessions to session injection', () => {
+    expect(decideNodeTargetDelivery('reviewer', makeSnapshot({ hasLiveSessions: true }))).toBe(
+      'injectLiveSessions'
+    );
+  });
+
+  test('reports not-found for agents without live sessions', () => {
+    expect(decideNodeTargetDelivery('reviewer', makeSnapshot())).toBe('notFound');
+  });
+});
+
+describe('foldAgentMessageResult', () => {
+  test('not-found only results in failure with the exact reason and queued passthrough', () => {
+    const queued = [{ agentName: 'reviewer', messageId: 'msg_1' }];
+    expect(
+      foldAgentMessageResult({ delivered: [], queued, failed: [], notFound: ['reviewer'] })
+    ).toEqual({
+      success: false,
+      delivered: [],
+      failed: [],
+      reason:
+        `Could not deliver message to target agent(s): reviewer. ` +
+        `The target is not reachable: it has no live session, or it is not a routable address.`,
+      queued,
+      notFoundAgentNames: ['reviewer'],
+    });
+  });
+
+  test('not-found only without queued entries omits the queued field', () => {
+    expect(
+      foldAgentMessageResult({ delivered: [], queued: [], failed: [], notFound: ['a', 'b'] })
+    ).toEqual({
+      success: false,
+      delivered: [],
+      failed: [],
+      reason:
+        `Could not deliver message to target agent(s): a, b. ` +
+        `The target is not reachable: it has no live session, or it is not a routable address.`,
+      notFoundAgentNames: ['a', 'b'],
+    });
+  });
+
+  test('not-found with deliveries falls through to partial success', () => {
+    const delivered = [{ agentName: 'qa', sessionId: 's1' }];
+    expect(
+      foldAgentMessageResult({ delivered, queued: [], failed: [], notFound: ['reviewer'] })
+    ).toEqual({
+      success: 'partial',
+      delivered,
+      failed: [],
+      notFoundAgentNames: ['reviewer'],
+    });
+  });
+
+  test('failed only without deliveries or queued entries results in failure', () => {
+    const failed = [{ agentName: 'reviewer', sessionId: 's1', error: 'boom' }];
+    expect(foldAgentMessageResult({ delivered: [], queued: [], failed, notFound: [] })).toEqual({
+      success: false,
+      delivered: [],
+      failed,
+    });
+  });
+
+  test('failed only with not-found entries keeps the not-found agent names', () => {
+    const failed = [{ agentName: 'reviewer', sessionId: 's1', error: 'boom' }];
+    expect(
+      foldAgentMessageResult({ delivered: [], queued: [], failed, notFound: ['ghost'] })
+    ).toEqual({
+      success: false,
+      delivered: [],
+      failed,
+      notFoundAgentNames: ['ghost'],
+    });
+  });
+
+  test('failed with queued entries but no deliveries is partial', () => {
+    const failed = [{ agentName: 'reviewer', sessionId: 's1', error: 'boom' }];
+    const queued = [{ agentName: 'ghost', messageId: 'msg_1' }];
+    expect(foldAgentMessageResult({ delivered: [], queued, failed, notFound: [] })).toEqual({
+      success: 'partial',
+      delivered: [],
+      failed,
+      queued,
+    });
+  });
+
+  test('failed with deliveries is partial', () => {
+    const delivered = [{ agentName: 'qa', sessionId: 's1' }];
+    const failed = [{ agentName: 'reviewer', sessionId: 's2', error: 'boom' }];
+    expect(foldAgentMessageResult({ delivered, queued: [], failed, notFound: [] })).toEqual({
+      success: 'partial',
+      delivered,
+      failed,
+    });
+  });
+
+  test('deliveries without failures succeed and pass queued entries through', () => {
+    const delivered = [{ agentName: 'qa', sessionId: 's1' }];
+    const queued = [{ agentName: 'ghost', messageId: 'msg_1' }];
+    expect(foldAgentMessageResult({ delivered, queued, failed: [], notFound: [] })).toEqual({
+      success: true,
+      delivered,
+      failed: [],
+      queued,
+    });
+  });
+
+  test('an empty delivery set succeeds', () => {
+    expect(foldAgentMessageResult({ delivered: [], queued: [], failed: [], notFound: [] })).toEqual(
+      {
+        success: true,
+        delivered: [],
+        failed: [],
+      }
+    );
+  });
+});
+
+function makeGenericConfig(
+  overrides: Partial<GenericAddressRoutingConfig> = {}
+): GenericAddressRoutingConfig {
+  return {
+    sessionDeliveryAvailable: true,
+    messagingFacadeAvailable: true,
+    replyToSessionId: null,
+    workflowRunId: 'run-1',
+    ...overrides,
+  };
+}
+
+describe('decideGenericAddressRouting: @session', () => {
+  test('delivers to the authorized reply-route session', () => {
+    expect(
+      decideGenericAddressRouting(
+        parseAddress('@session:session-origin'),
+        makeGenericConfig({ replyToSessionId: 'session-origin' })
+      )
+    ).toEqual({
+      action: 'deliverToSession',
+      sessionId: 'session-origin',
+      replyAuthorized: true,
+    });
+  });
+
+  test('fails as unauthorized without a reply route', () => {
+    expect(
+      decideGenericAddressRouting(parseAddress('@session:other-session'), makeGenericConfig())
+    ).toEqual({ action: 'failSessionUnauthorized', target: '@session:other-session' });
+  });
+
+  test('fails as unauthorized when the reply route names another session', () => {
+    expect(
+      decideGenericAddressRouting(
+        parseAddress('@session:other-session'),
+        makeGenericConfig({ replyToSessionId: 'session-origin' })
+      )
+    ).toEqual({ action: 'failSessionUnauthorized', target: '@session:other-session' });
+  });
+
+  test('checks availability before authorization', () => {
+    expect(
+      decideGenericAddressRouting(
+        parseAddress('@session:session-origin'),
+        makeGenericConfig({ sessionDeliveryAvailable: false, replyToSessionId: 'session-origin' })
+      )
+    ).toEqual({ action: 'notFound', target: '@session:session-origin' });
+  });
+});
+
+describe('decideGenericAddressRouting: @handle and @role', () => {
+  test('delivers plain handles through the messaging facade', () => {
+    expect(decideGenericAddressRouting(parseAddress('@neo'), makeGenericConfig())).toEqual({
+      action: 'deliverViaMessagingFacade',
+    });
+  });
+
+  test('delivers roles through the messaging facade', () => {
+    expect(
+      decideGenericAddressRouting(parseAddress('@role:reviewer'), makeGenericConfig())
+    ).toEqual({ action: 'deliverViaMessagingFacade' });
+  });
+
+  test('fails handles as unsupported without facade wiring', () => {
+    expect(
+      decideGenericAddressRouting(
+        parseAddress('@neo'),
+        makeGenericConfig({ messagingFacadeAvailable: false })
+      )
+    ).toEqual({ action: 'failUnsupported', target: '@neo' });
+  });
+
+  test('fails roles as unsupported without facade wiring', () => {
+    expect(
+      decideGenericAddressRouting(
+        parseAddress('@role:reviewer'),
+        makeGenericConfig({ messagingFacadeAvailable: false })
+      )
+    ).toEqual({ action: 'failUnsupported', target: '@role:reviewer' });
+  });
+});
+
+describe('decideGenericAddressRouting: unsupported kinds', () => {
+  test('fails channel addresses with the unsupported-kind action', () => {
+    expect(decideGenericAddressRouting(parseAddress('#general'), makeGenericConfig())).toEqual({
+      action: 'failUnsupportedKind',
+      target: '#general',
+    });
+  });
+});
+
+describe('decideGenericAddressRouting: @worker', () => {
+  test('delivers to the decoded node and agent for the current run', () => {
+    expect(
+      decideGenericAddressRouting(
+        parseAddress('@worker:run-1/Review%20A/reviewer'),
+        makeGenericConfig()
+      )
+    ).toEqual({ action: 'deliverToWorker', nodeName: 'Review A', agentName: 'reviewer' });
+  });
+
+  test('delivers two-segment addresses without a run id against the current run', () => {
+    expect(
+      decideGenericAddressRouting(parseAddress('@worker:Review%20A/reviewer'), makeGenericConfig())
+    ).toEqual({ action: 'deliverToWorker', nodeName: 'Review A', agentName: 'reviewer' });
+  });
+
+  test('marks foreign-run workers not found with the raw encoded target', () => {
+    expect(
+      decideGenericAddressRouting(
+        parseAddress('@worker:other-run/Review%20A/reviewer'),
+        makeGenericConfig()
+      )
+    ).toEqual({ action: 'notFound', target: '@worker:other-run/Review%20A/reviewer' });
+  });
+
+  test('marks node-only worker addresses not found', () => {
+    expect(
+      decideGenericAddressRouting(parseAddress('@worker:Review'), makeGenericConfig())
+    ).toEqual({ action: 'notFound', target: '@worker:Review' });
+  });
+
+  test('fails malformed worker segments with the decode error', () => {
+    let decodeError = '';
+    try {
+      decodeURIComponent('%GG');
+    } catch (err) {
+      decodeError = err instanceof Error ? err.message : String(err);
+    }
+
+    expect(
+      decideGenericAddressRouting(parseAddress('@worker:Review/%GG'), makeGenericConfig())
+    ).toEqual({
+      action: 'failInvalidWorker',
+      target: '@worker:Review/%GG',
+      reason: decodeError,
+    });
+  });
+});

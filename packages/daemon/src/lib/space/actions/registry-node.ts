@@ -4,7 +4,7 @@ import {
   resolveOperationRegistry,
 } from '../../operations/registry.ts';
 import type { SpaceMcpSessionRole } from '../runtime/space-mcp-session-policy.ts';
-import { wrapHandlerWithHooks } from '../runtime/workflow-hook-engine.ts';
+import { wrapHandlerWithHooks } from '../../workflows/hook-engine.ts';
 import type { ToolResult } from '../tools/tool-result.ts';
 import { runMarkCompleteOperation } from './mark-complete-operation.ts';
 import {
@@ -29,6 +29,7 @@ import {
   UnsubscribeExternalEventSchema,
 } from './node-agent-schemas.ts';
 import { createNodeAgentToolHandlers, type NodeAgentToolsConfig } from './node-handlers.ts';
+import { mapArchiveTaskParams, mapArchiveTaskResult } from './archive-task-operation.ts';
 import { createOperationActionHandler } from './operation-action.ts';
 import { type ActionDefinition, type ActionEntry, defineAction } from './registry.ts';
 import {
@@ -287,7 +288,7 @@ export function createNodeRegistryEntries(
           }),
         ]
       : []),
-    ...(onArchiveTask
+    ...(onArchiveTask || operations
       ? [
           nodeAction({
             name: 'archive_task',
@@ -297,7 +298,15 @@ export function createNodeRegistryEntries(
             paramsDoc: 'task_id',
             paramsSchema: ArchiveTaskSchema,
             autonomyRequirement: 4,
-            handler: handlers.archive_task,
+            handler: operations
+              ? createOperationActionHandler(
+                  operations,
+                  { sessionId: config.mySessionId },
+                  'task.archive',
+                  mapArchiveTaskParams,
+                  mapArchiveTaskResult
+                )
+              : handlers.archive_task,
           }),
         ]
       : []),

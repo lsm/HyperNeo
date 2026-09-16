@@ -700,7 +700,7 @@ This is a natural place to attach strategy selection before a run starts.
 
 Custom task messages are built in:
 
-- `packages/daemon/src/lib/space/agents/custom-agent.ts:239`
+- `packages/daemon/src/lib/agents/custom-agent.ts:239`
 
 This is the safest place to inject:
 

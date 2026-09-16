@@ -2,11 +2,11 @@ import type { SpaceWorkflow } from '@hyperneo/shared';
 import {
   getLongHorizonAgentTemplate,
   RELOCATED_FROM_LABEL_PREFIX,
-} from '../../lib/space/agents/long-horizon-agent-templates.ts';
+} from '../../lib/agents/long-horizon-templates.ts';
 import {
   computeDefinitionVersion,
   verifyDefinitionVersion,
-} from '../../lib/space/workflows/definition-version.ts';
+} from '../../lib/workflows/definition-version.ts';
 import { SpaceWorkflowDefinitionVersionRepository } from '../repositories/space-workflow-definition-version-repository.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 

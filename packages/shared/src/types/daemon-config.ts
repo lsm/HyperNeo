@@ -47,7 +47,6 @@ export interface DaemonBehaviorConfig {
     providerRetryBaseDelayMs?: number;
     taskNotificationRequeryBaseDelayMs?: number;
     fileIndexPollMs?: number;
-    spaceActionsRateLimitPerMinute?: number;
   };
   spaceEvents?: {
     externalEventDigestIdleDebounceMs?: number;
@@ -104,7 +103,6 @@ const FAMILY_ROWS: FamilyRows = {
     providerRetryBaseDelayMs: [2_000, 'base delay for provider retry backoff'],
     taskNotificationRequeryBaseDelayMs: [500, 'base delay for task-notification requery backoff'],
     fileIndexPollMs: [60_000, 'poll interval for the workspace file index'],
-    spaceActionsRateLimitPerMinute: [0, 'space-actions dispatches per minute; 0 disables'],
   },
   spaceEvents: {
     externalEventDigestIdleDebounceMs: [30_000, 'idle debounce before digest pulls'],
@@ -139,7 +137,6 @@ const RANGE_OVERRIDES: Record<string, { min?: number; max?: number }> = {
   providerMaxRetries: { min: 0 },
   providerRetryBaseDelayMs: { min: 0 },
   taskNotificationRequeryBaseDelayMs: { min: 0 },
-  spaceActionsRateLimitPerMinute: { min: 0 },
   logRetainedFiles: { max: 1000 },
 };
 

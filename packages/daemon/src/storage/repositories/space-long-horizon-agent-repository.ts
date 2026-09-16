@@ -13,12 +13,12 @@ import type {
   UpdateSpaceLongHorizonAgentSubscriptionParams,
 } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
-import { MIGRATED_WORKER_TEMPLATE_KEY } from '../../lib/space/agents/worker-long-horizon-mapper.ts';
+import { MIGRATED_WORKER_TEMPLATE_KEY } from '../../lib/agents/worker-long-horizon-mapper.ts';
 import {
   decideGoalOwnerResolution,
   type GoalOwnerAgentState,
   type GoalOwnerResolutionDecision,
-} from '../../lib/space/goals/goal-owner-resolution.ts';
+} from '../../lib/goals/owner-resolution.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import type { SQLiteValue } from '../types.ts';
 

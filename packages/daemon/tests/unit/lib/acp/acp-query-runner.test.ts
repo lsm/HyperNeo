@@ -387,9 +387,9 @@ describe('AcpQueryRunner', () => {
 
   test('converts Space SDK MCP servers to ACP proxy stdio servers', () => {
     const mcpServers = {
-      'space-actions': {
+      'db-query': {
         type: 'sdk',
-        name: 'space-actions',
+        name: 'db-query',
         instance: {
           _registeredTools: {
             create_standalone_task: {
@@ -408,7 +408,7 @@ describe('AcpQueryRunner', () => {
     expect(converted).toHaveLength(1);
     expect(converted[0]).toMatchObject({
       type: 'stdio',
-      name: 'space-actions',
+      name: 'db-query',
       command: process.execPath,
     });
     expect(converted[0].args).toContain('--token');
@@ -418,9 +418,9 @@ describe('AcpQueryRunner', () => {
 
   test('rejects proxy requests with invalid tokens', async () => {
     const mcpServers = {
-      'space-actions': {
+      'db-query': {
         type: 'sdk',
-        name: 'space-actions',
+        name: 'db-query',
         instance: {
           _registeredTools: {
             create_standalone_task: {
@@ -438,7 +438,7 @@ describe('AcpQueryRunner', () => {
       bridge.handleLineForTest(
         JSON.stringify({
           token: 'wrong',
-          serverName: 'space-actions',
+          serverName: 'db-query',
           toolName: 'create_standalone_task',
           arguments: {},
         })
@@ -448,9 +448,9 @@ describe('AcpQueryRunner', () => {
 
   test('writes per-server tool catalogs for proxy subprocesses', async () => {
     const mcpServers = {
-      'space-actions': {
+      'db-query': {
         type: 'sdk',
-        name: 'space-actions',
+        name: 'db-query',
         tools: [
           {
             name: 'send_message',
@@ -481,7 +481,7 @@ describe('AcpQueryRunner', () => {
     try {
       const fs = await import('node:fs/promises');
       const nodeTools = JSON.parse(
-        await fs.readFile(bridge.getToolsPathForServer('space-actions'), 'utf8')
+        await fs.readFile(bridge.getToolsPathForServer('db-query'), 'utf8')
       );
       const memoryTools = JSON.parse(
         await fs.readFile(bridge.getToolsPathForServer('agent-memory'), 'utf8')
@@ -497,9 +497,9 @@ describe('AcpQueryRunner', () => {
   test('collects tools from registered MCP callbacks', async () => {
     const callback = mock(async () => ({ content: [{ type: 'text', text: 'ok' }] }));
     const mcpServers = {
-      'space-actions': {
+      'db-query': {
         type: 'sdk',
-        name: 'space-actions',
+        name: 'db-query',
         instance: {
           _registeredTools: {
             create_standalone_task: {
@@ -513,13 +513,13 @@ describe('AcpQueryRunner', () => {
     } as never;
     const bridge = new AcpMcpProxyBridge(mcpServers);
 
-    expect(bridge.getToolsForServer('space-actions')).toEqual([
+    expect(bridge.getToolsForServer('db-query')).toEqual([
       expect.objectContaining({ name: 'create_standalone_task', description: 'Create a task' }),
     ]);
     await bridge.handleLineForTest(
       JSON.stringify({
         token: bridge.token,
-        serverName: 'space-actions',
+        serverName: 'db-query',
         toolName: 'create_standalone_task',
         arguments: { title: 'Task' },
       })
@@ -527,11 +527,11 @@ describe('AcpQueryRunner', () => {
     expect(callback).toHaveBeenCalledWith({ title: 'Task' });
   });
 
-  test('collects tools from the space-actions dispatcher server', () => {
+  test('collects tools from the db-query dispatcher server', () => {
     const mcpServers = {
-      'space-actions': {
+      'db-query': {
         type: 'sdk',
-        name: 'space-actions',
+        name: 'db-query',
         instance: {
           _registeredTools: {
             call_action: {
@@ -545,16 +545,16 @@ describe('AcpQueryRunner', () => {
     } as never;
     const bridge = new AcpMcpProxyBridge(mcpServers);
 
-    expect(bridge.getToolsForServer('space-actions')).toEqual([
+    expect(bridge.getToolsForServer('db-query')).toEqual([
       expect.objectContaining({ name: 'call_action' }),
     ]);
   });
 
   test('collects tools from production tools array fallback', () => {
     const mcpServers = {
-      'space-actions': {
+      'db-query': {
         type: 'sdk',
-        name: 'space-actions',
+        name: 'db-query',
         tools: [
           {
             name: 'create_standalone_task',
@@ -568,16 +568,16 @@ describe('AcpQueryRunner', () => {
     } as never;
     const bridge = new AcpMcpProxyBridge(mcpServers);
 
-    expect(bridge.getToolsForServer('space-actions')).toEqual([
+    expect(bridge.getToolsForServer('db-query')).toEqual([
       expect.objectContaining({ name: 'create_standalone_task', description: 'Create a task' }),
     ]);
   });
 
   test('wraps raw SDK tool input shapes before schema conversion', () => {
     const mcpServers = {
-      'space-actions': {
+      'db-query': {
         type: 'sdk',
-        name: 'space-actions',
+        name: 'db-query',
         instance: {
           _registeredTools: {
             create_standalone_task: {
@@ -591,7 +591,7 @@ describe('AcpQueryRunner', () => {
     } as never;
     const bridge = new AcpMcpProxyBridge(mcpServers);
 
-    const [tool] = bridge.getToolsForServer('space-actions');
+    const [tool] = bridge.getToolsForServer('db-query');
 
     expect(tool.inputSchema).toEqual(
       expect.objectContaining({
@@ -626,9 +626,9 @@ describe('AcpQueryRunner', () => {
       queryOptions: {
         cwd: '/tmp/acp-session',
         mcpServers: {
-          'space-actions': {
+          'db-query': {
             type: 'sdk',
-            name: 'space-actions',
+            name: 'db-query',
             instance: {
               _registeredTools: {
                 create_standalone_task: {
@@ -649,20 +649,10 @@ describe('AcpQueryRunner', () => {
     expect(mockClient.createSession.mock.calls[0][1]).toEqual([
       expect.objectContaining({
         type: 'stdio',
-        name: 'space-actions',
+        name: 'db-query',
         command: process.execPath,
       }),
     ]);
-  });
-
-  test('starts a non-Space session missing the space-actions dispatcher without refusing', async () => {
-    const { runner, ctx, mockClient } = createRunnerFixture();
-
-    await runner.start();
-    await ctx.queryPromise;
-
-    expect(mockClient.createSession).toHaveBeenCalled();
-    expect(ctx.logger.info).toHaveBeenCalledWith(expect.stringContaining('space-actions'));
   });
 
   test('runs ACP lifecycle and forwards translated SDK messages', async () => {
@@ -3886,9 +3876,9 @@ describe('AcpQueryRunner', () => {
       queryOptions: {
         cwd: '/tmp/acp-session',
         mcpServers: {
-          'space-actions': {
+          'db-query': {
             type: 'sdk',
-            name: 'space-actions',
+            name: 'db-query',
             instance: {
               _registeredTools: {
                 call_action: {

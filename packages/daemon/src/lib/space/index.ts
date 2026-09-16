@@ -12,15 +12,15 @@ export { SpaceWorktreeRepository } from '../../storage/repositories/space-worktr
 export { WorkflowHookStateRepository } from '../../storage/repositories/workflow-hook-state-repository.ts';
 export type { SpaceAgentToolsConfig } from './actions/space-handlers.ts';
 export { createSpaceAgentToolHandlers } from './actions/space-handlers.ts';
-export type { SpaceActorRegistryRepositories } from './actor-registry.ts';
-export { SPACE_SYSTEM_ACTORS, SpaceActorRegistryAdapter } from './actor-registry.ts';
-export type { CustomAgentConfig, ResolveAgentInitConfig } from './agents/custom-agent.ts';
+export type { SpaceActorRegistryRepositories } from '../messaging/actor-registry.ts';
+export { SPACE_SYSTEM_ACTORS, SpaceActorRegistryAdapter } from '../messaging/actor-registry.ts';
+export type { CustomAgentConfig, ResolveAgentInitConfig } from '../agents/custom-agent.ts';
 export {
   buildCustomAgentSystemPrompt,
   buildCustomAgentTaskMessage,
   createCustomAgentInit,
   resolveAgentInit,
-} from './agents/custom-agent.ts';
+} from '../agents/custom-agent.ts';
 export type { ValidationResult } from './export-format.ts';
 export {
   exportAgent,
@@ -35,26 +35,26 @@ export {
   isValidSpaceTaskTransition,
   SpaceTaskManager,
   VALID_SPACE_TASK_TRANSITIONS,
-} from './managers/space-task-manager.ts';
-export type { SpaceAgentLookup } from './managers/space-workflow-manager.ts';
+} from '../tasks/task-manager.ts';
+export type { SpaceAgentLookup } from '../workflows/workflow-manager.ts';
 export {
   SpaceWorkflowManager,
   WorkflowDeletionBlockedError,
   WorkflowValidationError,
-} from './managers/space-workflow-manager.ts';
+} from '../workflows/workflow-manager.ts';
 export {
   SpaceWorkspaceManager,
   WorkspaceRegistrationError,
   WorkspaceRemovalBlockedError,
-} from './managers/space-workspace-manager.ts';
-export type { SpaceWorktreeInfo } from './managers/space-worktree-manager.ts';
-export { SpaceWorktreeManager } from './managers/space-worktree-manager.ts';
+} from '../workspaces/workspace-manager.ts';
+export type { SpaceWorktreeInfo } from '../workspaces/worktree-manager.ts';
+export { SpaceWorktreeManager } from '../workspaces/worktree-manager.ts';
 export type {
   SpaceDeliveryFacadeConfig,
   SpaceMessageResolverConfig,
   SpaceMessageResolverContext,
-} from './messaging-adapter.ts';
-export { SpaceDeliveryFacade, SpaceMessageResolver } from './messaging-adapter.ts';
+} from '../messaging/space-adapter.ts';
+export { SpaceDeliveryFacade, SpaceMessageResolver } from '../messaging/space-adapter.ts';
 export type { SpaceRuntimeConfig } from './runtime/space-runtime.ts';
 export { SpaceRuntime } from './runtime/space-runtime.ts';
 export type { SpaceRuntimeServiceConfig } from './runtime/space-runtime-service.ts';
@@ -65,16 +65,16 @@ export type {
   CommandRunner,
   ConditionContext,
   ConditionResult,
-} from './runtime/workflow-executor.ts';
-export { WorkflowExecutor } from './runtime/workflow-executor.ts';
-export type { WorkflowSelectionContext } from './runtime/workflow-selector.ts';
-export { selectWorkflow } from './runtime/workflow-selector.ts';
-export { WorkflowHookRuntimeService } from './workflow-hook-runtime-service.ts';
-export { validateWorkflowHooks } from './workflow-hook-validation.ts';
+} from '../workflows/workflow-executor.ts';
+export { WorkflowExecutor } from '../workflows/workflow-executor.ts';
+export type { WorkflowSelectionContext } from '../workflows/workflow-selector.ts';
+export { selectWorkflow } from '../workflows/workflow-selector.ts';
+export { WorkflowHookRuntimeService } from '../workflows/hook-runtime-service.ts';
+export { validateWorkflowHooks } from '../workflows/hook-validation.ts';
 export {
   CODING_WORKFLOW,
   getBuiltInWorkflows,
   RESEARCH_WORKFLOW,
   REVIEW_ONLY_WORKFLOW,
-  seedBuiltInWorkflows,
-} from './workflows/built-in-workflows.ts';
+} from '../workflows/built-in-workflows.ts';
+export { seedBuiltInWorkflows } from '../workflows/seed-built-in-workflows.ts';

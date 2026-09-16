@@ -5,10 +5,10 @@ import {
   CODING_WITH_QA_WORKFLOW,
   RESEARCH_WORKFLOW,
   REVIEW_ONLY_WORKFLOW,
-} from '../../../../src/lib/space/workflows/built-in-workflows.ts';
-import { CODER_OWNED_MERGE_INSTRUCTIONS } from '../../../../src/lib/space/workflows/post-approval-merge-template.ts';
-import { interpolatePostApprovalTemplate } from '../../../../src/lib/space/workflows/post-approval-template.ts';
-import { ChannelResolver } from '../../../../src/lib/space/runtime/channel-resolver.ts';
+} from '../../../../src/lib/workflows/built-in-workflows.ts';
+import { CODER_OWNED_MERGE_INSTRUCTIONS } from '../../../../src/lib/workflows/post-approval-merge-template.ts';
+import { interpolatePostApprovalTemplate } from '../../../../src/lib/workflows/post-approval-template.ts';
+import { ChannelResolver } from '../../../../src/lib/messaging/channel-resolver.ts';
 
 function endNodePrompt(wf: SpaceWorkflow): string {
   const endNode = wf.nodes.find((n) => n.id === wf.endNodeId);

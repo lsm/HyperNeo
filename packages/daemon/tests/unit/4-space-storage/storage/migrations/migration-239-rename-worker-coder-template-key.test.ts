@@ -3,7 +3,7 @@ import type { SpaceWorkflow } from '@hyperneo/shared';
 import {
   computeDefinitionVersion,
   verifyDefinitionVersion,
-} from '../../../../../src/lib/space/workflows/definition-version.ts';
+} from '../../../../../src/lib/workflows/definition-version.ts';
 import { runMigration239 } from '../../../../../src/storage/schema/m239-rename-worker-coder-template-key.ts';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat.ts';
 import {

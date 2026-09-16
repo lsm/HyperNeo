@@ -5,8 +5,8 @@ import {
   type DaemonInternalEventMap,
   type InternalEventBus,
 } from '../../../../src/lib/internal-event-bus.ts';
-import { subscribeGoalOwnerChangeOutcomeRedelivery } from '../../../../src/lib/space/goals/goal-owner-change-outcome-redelivery.ts';
-import type { SpaceGoalService } from '../../../../src/lib/space/goals/goal-service.ts';
+import { subscribeGoalOwnerChangeOutcomeRedelivery } from '../../../../src/lib/goals/owner-change-outcome-redelivery.ts';
+import type { SpaceGoalService } from '../../../../src/lib/goals/service.ts';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { setupSpaceGoalHandlers } from '../../../../src/lib/rpc-handlers/space-goal-handlers.ts';
 

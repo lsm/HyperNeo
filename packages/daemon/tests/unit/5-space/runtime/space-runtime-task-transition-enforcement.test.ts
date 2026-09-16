@@ -12,9 +12,9 @@ import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
-import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
+import { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
-import { VALID_SPACE_TASK_TRANSITIONS } from '../../../../src/lib/space/managers/space-task-manager.ts';
+import { VALID_SPACE_TASK_TRANSITIONS } from '../../../../src/lib/tasks/task-manager.ts';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import { seedUnifiedAgentMirror } from '../../helpers/seed-unified-agent';

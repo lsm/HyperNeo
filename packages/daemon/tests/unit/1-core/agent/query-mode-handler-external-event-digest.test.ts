@@ -6,7 +6,7 @@ import {
   QueryModeHandler,
   type QueryModeHandlerContext,
 } from '../../../../src/lib/agent/query-mode-handler';
-import type { RenderPendingDigestOutcome } from '../../../../src/lib/space/runtime/render-pending-digest-pipeline';
+import type { RenderPendingDigestOutcome } from '../../../../src/lib/messaging/render-pending-digest-pipeline';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { Logger } from '../../../../src/lib/logger';
 import type { Database } from '../../../../src/storage/database';

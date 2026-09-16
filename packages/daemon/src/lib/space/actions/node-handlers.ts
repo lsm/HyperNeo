@@ -13,14 +13,14 @@ import type { WorkflowRunArtifactRepository } from '../../../storage/repositorie
 import type { ExternalEventStore } from '../../external-events/external-event-store.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
 import { Logger } from '../../logger.ts';
-import type { SpaceGoalService } from '../goals/goal-service.ts';
-import { translateLegacyNodeTargets } from '../messaging-adapter.ts';
-import type { AgentMessageRouter } from '../runtime/agent-message-router.ts';
-import type { WorkflowArtifactProfile } from '../runtime/artifact-profile.ts';
-import type { ChannelResolver } from '../runtime/channel-resolver.ts';
-import { buildPrEventTopicPattern, parsePrUrl } from '../runtime/parse-pr-url.ts';
-import type { WorkflowHookEngine } from '../runtime/workflow-hook-engine.ts';
-import { wrapHandlerWithHooks } from '../runtime/workflow-hook-engine.ts';
+import type { SpaceGoalService } from '../../goals/service.ts';
+import { translateLegacyNodeTargets } from '../../messaging/space-adapter.ts';
+import type { AgentMessageRouter } from '../../messaging/agent-message-router.ts';
+import type { WorkflowArtifactProfile } from '../../workflows/artifact-profile.ts';
+import type { ChannelResolver } from '../../messaging/channel-resolver.ts';
+import { buildPrEventTopicPattern, parsePrUrl } from '../../github/parse-pr-url.ts';
+import type { WorkflowHookEngine } from '../../workflows/hook-engine.ts';
+import { wrapHandlerWithHooks } from '../../workflows/hook-engine.ts';
 import type {
   ArchiveTaskInput,
   CreateStandaloneTaskInput,

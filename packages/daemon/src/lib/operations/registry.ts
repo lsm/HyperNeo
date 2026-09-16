@@ -1,16 +1,37 @@
 import type { OperationName } from '@hyperneo/shared/types/operation-names';
 import type { z } from 'zod';
 
+export type OperationCallerRole =
+  | 'ad_hoc_member'
+  | 'workflow_worker'
+  | 'direct_task_worker'
+  | 'long_term_agent'
+  | 'universal_read'
+  | 'legacy_task_agent'
+  | 'outside_space';
+
 export interface OperationCaller {
-  source: 'rpc' | 'mcp' | 'internal';
-  sessionId?: string;
+  readonly source: 'rpc' | 'mcp' | 'internal';
+  readonly sessionId?: string;
+  readonly spaceId?: string;
+  readonly role?: OperationCallerRole;
+  readonly agentId?: string;
+  readonly agentName?: string;
+}
+
+export type OperationSafetyClass = 'read' | 'mutate' | 'destructive' | 'human_only';
+
+export interface OperationPolicy {
+  readonly safetyClass: OperationSafetyClass;
+  readonly roles?: readonly OperationCallerRole[];
 }
 
 export interface OperationEntry<Input, Output> {
-  readonly name: OperationName;
+  readonly name: OperationName | (string & {});
   readonly description: string;
   readonly inputSchema: z.ZodType<Input>;
   readonly resultSchema: z.ZodType<Output>;
+  readonly policy?: OperationPolicy;
   readonly execute: (input: Input, caller: OperationCaller) => Promise<Output>;
 }
 
@@ -36,7 +57,7 @@ export function createOperationRegistry(
 ): OperationRegistry {
   const byName = new Map<string, OperationDefinition>();
   for (const definition of definitions) {
-    if (!/^[a-zA-Z][a-zA-Z0-9]*(?:\.[a-zA-Z][a-zA-Z0-9]*)*$/.test(definition.name)) {
+    if (!/^[a-zA-Z][a-zA-Z0-9_]*(?:\.[a-zA-Z][a-zA-Z0-9_]*)*$/.test(definition.name)) {
       throw new Error(`Invalid operation name: ${definition.name}`);
     }
     if (byName.has(definition.name)) {

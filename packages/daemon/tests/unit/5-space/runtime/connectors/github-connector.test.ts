@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test';
-import { createGithubConnector } from '../../../../../src/lib/space/runtime/connectors/github-connector';
+import { createGithubConnector } from '../../../../../src/lib/github/connectors/github-connector';
 import type { SpawnFn, SpawnProcess } from '../../../../../src/lib/runtime-spawn';
-import type { ConnectorContext } from '../../../../../src/lib/space/runtime/connectors/connector';
-import { RATE_LIMIT_MIN_BACKOFF_MS } from '../../../../../src/lib/space/runtime/rate-limit-detector';
+import type { ConnectorContext } from '../../../../../src/lib/github/connectors/connector';
+import { RATE_LIMIT_MIN_BACKOFF_MS } from '../../../../../src/lib/session/rate-limit-detector';
 
 const PR_URL = 'https://github.com/acme/corp/pull/42';
 

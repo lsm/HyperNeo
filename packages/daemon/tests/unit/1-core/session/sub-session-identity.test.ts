@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import {
   buildExecutionBaseSessionId,
   buildPostApprovalSessionId,
-  hasRuntimeNodeAgentServer,
+  hasRuntimeWorkerOperations,
   isWorkflowSubSessionIdentity,
   taskIdFromSubSessionIdentity,
 } from '../../../../src/lib/session/sub-session-identity';
@@ -31,20 +31,14 @@ describe('sub-session identity', () => {
   });
 });
 
-describe('hasRuntimeNodeAgentServer', () => {
-  it('accepts the runtime SDK space-actions server', () => {
-    expect(hasRuntimeNodeAgentServer({ mcpServers: { 'space-actions': { type: 'sdk' } } })).toBe(
-      true
-    );
+describe('hasRuntimeWorkerOperations', () => {
+  it('accepts a session whose worker operations were attached at runtime', () => {
+    expect(hasRuntimeWorkerOperations({ workerOperations: true })).toBe(true);
   });
 
-  it('rejects a user-configured server named space-actions', () => {
-    expect(
-      hasRuntimeNodeAgentServer({
-        mcpServers: { 'space-actions': { type: 'stdio', command: 'npx' } },
-      })
-    ).toBe(false);
-    expect(hasRuntimeNodeAgentServer({ mcpServers: {} })).toBe(false);
-    expect(hasRuntimeNodeAgentServer(undefined)).toBe(false);
+  it('rejects sessions without the runtime marker', () => {
+    expect(hasRuntimeWorkerOperations({ workerOperations: false })).toBe(false);
+    expect(hasRuntimeWorkerOperations({})).toBe(false);
+    expect(hasRuntimeWorkerOperations(undefined)).toBe(false);
   });
 });
