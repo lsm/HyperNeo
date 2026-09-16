@@ -210,6 +210,7 @@ export function AddProviderModal({
   };
 
   const handleOAuthComplete = () => {
+    toast.success(`${oauthFlow?.providerName ?? 'Provider'} authenticated successfully`);
     setOauthFlow(null);
     onProviderAdded();
     onClose();

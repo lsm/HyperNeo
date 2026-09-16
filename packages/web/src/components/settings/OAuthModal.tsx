@@ -7,7 +7,6 @@ export interface OAuthFlowState {
   authUrl?: string;
   userCode?: string;
   verificationUri?: string;
-  authSignature?: string;
 }
 
 interface OAuthModalProps {
@@ -26,7 +25,7 @@ export function OAuthModal({
   userCode,
   verificationUri,
   onCancel,
-  onComplete: _onComplete,
+  onComplete,
   onSubmitCallback,
 }: OAuthModalProps) {
   const [copied, setCopied] = useState(false);
@@ -75,9 +74,11 @@ export function OAuthModal({
     setCallbackError(null);
     try {
       const response = await onSubmitCallback(callbackInput.trim());
-      if (!response.success) {
-        setCallbackError(response.error || 'Callback relay failed');
+      if (response.success) {
+        onComplete();
+        return;
       }
+      setCallbackError(response.error || 'Callback relay failed');
     } catch (err) {
       setCallbackError(err instanceof Error ? err.message : 'Callback relay failed');
     } finally {

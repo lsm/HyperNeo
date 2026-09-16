@@ -323,6 +323,7 @@ describe('OAuthModal', () => {
       expect(submitCallback).toHaveBeenCalledWith(
         'http://localhost:49279/callback?code=abc&state=def'
       );
+      expect(mockOnComplete).toHaveBeenCalledTimes(1);
     });
 
     it('should surface a relay error under the paste input', async () => {
@@ -355,6 +356,7 @@ describe('OAuthModal', () => {
 
       const errorText = document.body.querySelector('.text-danger-soft');
       expect(errorText?.textContent).toContain('does not match');
+      expect(mockOnComplete).not.toHaveBeenCalled();
     });
   });
 

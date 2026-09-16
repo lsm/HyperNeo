@@ -364,18 +364,15 @@ export function ProvidersSettings() {
   };
 
   useEffect(() => {
-    if (!oauthFlow) return;
+    if (!oauthFlow || oauthFlow.authUrl) return;
     const pollInterval = setInterval(async () => {
       try {
         const response = await listProviderAuthStatus();
         const provider = response.providers.find((p) => p.id === oauthFlow.providerId);
         if (provider?.isAuthenticated) {
-          const signature = `${provider.method ?? ''}:${provider.expiresAt ?? 0}`;
-          if (!oauthFlow.authSignature || oauthFlow.authSignature !== signature) {
-            setOauthFlow(null);
-            toast.success(`${oauthFlow.providerName} authenticated successfully`);
-            await loadProviders();
-          }
+          setOauthFlow(null);
+          toast.success(`${oauthFlow.providerName} authenticated successfully`);
+          await loadProviders();
         }
       } catch {}
     }, 2000);
@@ -490,14 +487,12 @@ export function ProvidersSettings() {
       if (response.authUrl) {
         window.open(response.authUrl, '_blank');
       }
-      const existing = providers.find((p) => p.providerId === provider.providerId)?.authStatus;
       setOauthFlow({
         providerId: provider.providerId,
         providerName: provider.displayName,
         authUrl: response.authUrl,
         userCode: response.userCode,
         verificationUri: response.verificationUri,
-        authSignature: existing ? `${existing.method ?? ''}:${existing.expiresAt ?? 0}` : undefined,
       });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Login failed');
@@ -1378,6 +1373,7 @@ export function ProvidersSettings() {
           }}
           onComplete={() => {
             setOauthFlow(null);
+            toast.success(`${oauthFlow.providerName} authenticated successfully`);
             loadProviders();
           }}
           onSubmitCallback={(input) => submitProviderCallback(oauthFlow.providerId, input)}
