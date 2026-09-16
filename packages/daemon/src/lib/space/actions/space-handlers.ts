@@ -128,12 +128,8 @@ import {
 import { decideUpdateTask } from '../tools/space-tool-pipeline.ts';
 import {
   routeApproveTask,
-  routeArchiveTask,
-  routeCancelTask,
   routeCreateTaskWorkflowRef,
-  routePublishTask,
   routeReassignTask,
-  routeRetryTask,
 } from '../tools/task-transition-routing.ts';
 import {
   decideAutonomyAdmission,
@@ -2440,146 +2436,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       }
     },
 
-    async get_task_detail(args: { task_id?: string; task_number?: number }): Promise<ToolResult> {
-      let task: SpaceTask | null = null;
-      if (args.task_number !== undefined) {
-        task = await taskManager.getTaskByNumber(args.task_number);
-      } else if (args.task_id) {
-        task = await taskManager.getTask(args.task_id);
-      } else {
-        return jsonResult({
-          success: false,
-          error: 'Either task_id or task_number is required',
-        });
-      }
-      if (!task) {
-        const ref = args.task_number !== undefined ? `#${args.task_number}` : args.task_id;
-        return jsonResult({ success: false, error: `Task not found: ${ref}` });
-      }
-      return jsonResult({ success: true, task });
-    },
-
-    async retry_task(args: { task_id: string; description?: string }): Promise<ToolResult> {
-      try {
-        const existing = taskRepo.getTask(args.task_id);
-        const plan = routeRetryTask({
-          taskExists: existing !== null,
-          taskInSpace: existing?.spaceId === spaceId,
-          currentStatus: existing?.status ?? '',
-          hasWorkflowRun: existing?.workflowRunId != null,
-          taskId: args.task_id,
-        });
-        if (plan.action === 'reject') {
-          return jsonResult({ success: false, error: plan.message });
-        }
-        let task: SpaceTask;
-        if (plan.action === 'recover_workflow_task') {
-          const recovered = await recoverTaskExecution(
-            createWorkflowTaskRecoveryExecutor(spaceId, runtime, { description: args.description }),
-            args.task_id,
-            plan.targetStatus
-          );
-          if (typeof recovered === 'string') throw new Error(recovered);
-          task = recovered;
-        } else {
-          task = await taskManager.retryTask(args.task_id, { description: args.description });
-        }
-        return jsonResult({ success: true, task });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        return jsonResult({ success: false, error: message });
-      }
-    },
-
-    async cancel_task(args: {
-      task_id: string;
-      cancel_workflow_run?: boolean;
-    }): Promise<ToolResult> {
-      try {
-        const cancelled = await taskManager.cancelTaskCascade(args.task_id);
-        const task = cancelled[0]!;
-        for (const cancelledTask of cancelled) {
-          emitTaskUpdated(cancelledTask);
-        }
-        const existingRun = task.workflowRunId ? workflowRunRepo.getRun(task.workflowRunId) : null;
-        const plan = routeCancelTask({
-          cancelWorkflowRunRequested: args.cancel_workflow_run === true,
-          hasWorkflowRun: task.workflowRunId != null,
-          runExists: existingRun !== null,
-        });
-        if (plan.action === 'cancel_run') {
-          if (plan.runExists) {
-            await runtime.cancelWorkflowRun(spaceId, task.workflowRunId!);
-          }
-          return jsonResult({
-            success: true,
-            task,
-            workflowRunCancelled: true,
-            workflowRunId: task.workflowRunId,
-          });
-        }
-        return jsonResult({ success: true, task });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        return jsonResult({ success: false, error: message });
-      }
-    },
-
-    async publish_task(args: { task_id: string }): Promise<ToolResult> {
-      const task = taskRepo.getTask(args.task_id);
-      const plan = routePublishTask({
-        taskExists: task !== null,
-        taskInSpace: task?.spaceId === spaceId,
-        currentStatus: task?.status ?? '',
-        taskId: args.task_id,
-      });
-      if (plan.action === 'reject') {
-        return jsonResult({ success: false, error: plan.message });
-      }
-      try {
-        const updated = await taskManager.publishTask(args.task_id);
-
-        logAudit('publish_task', { previousStatus: task?.status }, args.task_id);
-
-        emitTaskUpdated(updated);
-
-        return jsonResult({ success: true, task: updated });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        return jsonResult({ success: false, error: message });
-      }
-    },
-
-    async archive_task(args: { task_id: string }): Promise<ToolResult> {
-      const task = taskRepo.getTask(args.task_id);
-      const plan = routeArchiveTask({
-        taskExists: task !== null,
-        taskInSpace: task?.spaceId === spaceId,
-        hasWorkflowRun: task?.workflowRunId != null,
-        runActive:
-          task?.workflowRunId != null
-            ? (config.isWorkflowRunActive?.(task.workflowRunId) ?? false)
-            : false,
-        taskId: args.task_id,
-        workflowRunId: task?.workflowRunId ?? undefined,
-      });
-      if (plan.action === 'reject') {
-        return jsonResult({ success: false, error: plan.message });
-      }
-      try {
-        const updated = await taskManager.archiveTask(args.task_id);
-
-        logAudit('archive_task', { previousStatus: task?.status }, args.task_id);
-
-        emitTaskUpdated(updated);
-
-        return jsonResult({ success: true, task: updated });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        return jsonResult({ success: false, error: message });
-      }
-    },
-
     async reassign_task(args: {
       task_id: string;
       custom_agent_id?: string | null;
@@ -2962,29 +2818,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         audit,
       });
       return delivered.result!;
-    },
-
-    async list_task_members(args: { task_id: string }): Promise<ToolResult> {
-      const task = taskRepo.getTask(args.task_id);
-      if (!task) {
-        return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
-      }
-      if (task.spaceId !== spaceId) {
-        return jsonResult({
-          success: false,
-          error: `Task ${args.task_id} does not belong to this space.`,
-        });
-      }
-      if (!task.workflowRunId) {
-        return jsonResult({
-          success: true,
-          task_id: args.task_id,
-          executions: [],
-          message: 'This task has no associated workflow run.',
-        });
-      }
-      const executions = nodeExecutionRepo.listByWorkflowRun(task.workflowRunId);
-      return jsonResult({ success: true, task_id: args.task_id, executions });
     },
 
     async approve_task(args: { task_id: string; reason?: string }): Promise<ToolResult> {
