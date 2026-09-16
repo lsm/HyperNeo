@@ -1,11 +1,10 @@
 import type { SpaceWorkflow } from '@hyperneo/shared';
+import { resolveNodeAgents } from '@hyperneo/shared';
 import {
-  ARTIFACT_SHAPES,
-  deriveArtifactKey,
-  normalizeLinkData,
-  resolveNodeAgents,
-  validateArtifactShape,
-} from '@hyperneo/shared';
+  listNodeArtifacts,
+  type NodeArtifactContext,
+  saveNodeArtifact,
+} from '../../artifacts/node-artifacts.ts';
 import type { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository.ts';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
@@ -133,6 +132,13 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
       replyRoutingLookup: config.replyRoutingLookup,
       hookEngine: config.hookEngine,
     },
+  };
+
+  const artifactContext: NodeArtifactContext = {
+    artifactRepo: config.artifactRepo,
+    workflowRunId,
+    workflowNodeId,
+    logAudit,
   };
 
   const handlers = {
@@ -327,101 +333,11 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
     },
 
     async save_artifact(args: SaveArtifactInput): Promise<ToolResult> {
-      const { artifactRepo } = config;
-      if (!artifactRepo) {
-        return jsonResult({ success: false, error: 'Artifact repository not available.' });
-      }
-
-      const { shape, kind, key: keyArg, summary, data } = args;
-
-      if (!shape) {
-        return jsonResult({
-          success: false,
-          error: `shape is required. Known shapes: ${ARTIFACT_SHAPES.join(', ')}.`,
-        });
-      }
-
-      const artifactData: Record<string, unknown> = {};
-      if (summary !== undefined) artifactData.summary = summary;
-      if (data !== undefined) Object.assign(artifactData, data);
-      if (kind !== undefined) artifactData.kind = kind;
-      const normalized = shape === 'link' ? normalizeLinkData(artifactData) : artifactData;
-
-      if (Object.keys(normalized).length === 0) {
-        return jsonResult({
-          success: false,
-          error: 'At least one of `summary` or `data` must be provided.',
-        });
-      }
-
-      const validation = validateArtifactShape(shape, normalized);
-      if (!validation.ok) {
-        return jsonResult({ success: false, error: validation.error });
-      }
-
-      try {
-        const artifactKey = deriveArtifactKey(shape, normalized, keyArg);
-
-        const record = artifactRepo.upsert({
-          id: crypto.randomUUID(),
-          runId: workflowRunId,
-          nodeId: workflowNodeId,
-          artifactType: shape,
-          artifactKey,
-          data: normalized,
-        });
-
-        logAudit('save_artifact', {
-          shape,
-          kind: kind ?? undefined,
-          key: artifactKey,
-          summary: summary ?? undefined,
-          dataKeys: data ? Object.keys(data) : undefined,
-        });
-
-        return jsonResult({
-          success: true,
-          artifact: {
-            id: record.id,
-            runId: record.runId,
-            nodeId: record.nodeId,
-            shape: record.artifactType,
-            key: record.artifactKey,
-          },
-          message: `Artifact "${shape}" saved (upsert).`,
-        });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        return jsonResult({ success: false, error: message });
-      }
+      return saveNodeArtifact(artifactContext, args);
     },
 
     async list_artifacts(args: ListArtifactsInput): Promise<ToolResult> {
-      const { artifactRepo } = config;
-      if (!artifactRepo) {
-        return jsonResult({ success: false, error: 'Artifact repository not available.' });
-      }
-      try {
-        const artifacts = artifactRepo.listByRun(workflowRunId, {
-          nodeId: args.nodeId,
-          artifactType: args.type,
-        });
-        return jsonResult({
-          success: true,
-          artifacts: artifacts.map((a) => ({
-            id: a.id,
-            nodeId: a.nodeId,
-            type: a.artifactType,
-            key: a.artifactKey,
-            data: a.data,
-            createdAt: a.createdAt,
-            updatedAt: a.updatedAt,
-          })),
-        });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        return jsonResult({ success: false, error: message });
-      }
+      return listNodeArtifacts(artifactContext, args);
     },
 
     async subscribe_pr_events(args: SubscribePrEventsInput): Promise<ToolResult> {
