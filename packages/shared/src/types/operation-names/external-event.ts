@@ -1,4 +1,7 @@
 export const EXTERNAL_EVENT_OPERATION_NAMES = [
+  'externalEvent.agent.listSubscriptions',
+  'externalEvent.agent.subscribe',
+  'externalEvent.agent.unsubscribe',
   'externalEvent.get',
   'externalEvent.listDeliveries',
   'externalEvent.listSubscriptions',
