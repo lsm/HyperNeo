@@ -108,30 +108,22 @@ export interface AgentOperationDeps extends SpaceMcpSessionPolicyContext {
   readonly getSession: (sessionId: string) => Session | null;
 }
 
-const AGENT_READ_ROLES = [
-  'ad_hoc_member',
-  'long_term_agent',
-  'universal_read',
-] as const satisfies readonly OperationCallerRole[];
-
-const AGENT_WRITE_ROLES = [
+export const AGENT_ROLES = [
   'ad_hoc_member',
   'long_term_agent',
 ] as const satisfies readonly OperationCallerRole[];
 
 export const AGENT_READ_POLICY: OperationPolicy = {
   safetyClass: 'read',
-  roles: AGENT_READ_ROLES,
+  roles: AGENT_ROLES,
 };
 
 export const AGENT_MUTATE_POLICY: OperationPolicy = {
   safetyClass: 'mutate',
-  roles: AGENT_WRITE_ROLES,
+  roles: AGENT_ROLES,
 };
 
-const READ_ROLES: ReadonlySet<OperationCallerRole> = new Set(AGENT_READ_ROLES);
-
-const MUTATE_ROLES: ReadonlySet<OperationCallerRole> = new Set(AGENT_WRITE_ROLES);
+const ADMITTED_ROLES: ReadonlySet<OperationCallerRole> = new Set(AGENT_ROLES);
 
 const DENIED_MESSAGE =
   'Agent operations require a human caller or an active Space member session in the owning Space.';
@@ -147,8 +139,7 @@ export function admitAgentCaller(
       ? { value: input.spaceId }
       : { reason: rejectAgent('space_required', 'spaceId is required for this caller') };
   }
-  const roles = access === 'read' ? READ_ROLES : MUTATE_ROLES;
-  if (!caller.role || !roles.has(caller.role) || !caller.spaceId) {
+  if (!caller.role || !ADMITTED_ROLES.has(caller.role) || !caller.spaceId) {
     return { reason: rejectAgent('agent_denied', DENIED_MESSAGE) };
   }
   if (input.spaceId !== undefined && input.spaceId !== caller.spaceId) {
