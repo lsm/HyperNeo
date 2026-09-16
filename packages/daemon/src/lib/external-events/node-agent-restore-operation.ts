@@ -42,12 +42,12 @@ export async function applyRestore(
     sessionId,
     message: reattached
       ? 'node-agent MCP server re-attached and the query restarted; retry the failed tool call in the next turn.'
-      : 'no live node-agent session was found to re-attach; the session may have already ended.',
+      : 'the node-agent MCP server was not re-attached — either no live session remains for this worker, or the re-attach itself failed; check the daemon log for this session before retrying.',
   };
 }
 
 const RESTORE_DESCRIPTION =
-  'Self-heal: re-attach the node-agent MCP server for the calling worker session and restart its query so the restored tool surface takes effect. The current turn is interrupted, so retry the failed call afterwards. The session is taken from the caller, never from input. Rejects caller_denied when the caller is not a workflow worker and session_inactive when that session is not active in its Space; a call that finds no live session returns reattached: false rather than failing.';
+  'Self-heal: re-attach the node-agent MCP server for the calling worker session and restart its query so the restored tool surface takes effect. The current turn is interrupted, so retry the failed call afterwards. The session is taken from the caller, never from input. Rejects caller_denied when the caller is not a workflow worker and session_inactive when that session is not active in its Space; a call that cannot re-attach returns reattached: false rather than failing, and that covers both a session that already ended and a re-attach that failed, so read the message rather than assuming the session is gone.';
 
 export function createNodeAgentRestoreOperation(agents: NodeAgentRestoreDependencies) {
   const restore = (superpipe({ agents })('restore-node-agent') as PipelineAPI)

@@ -68,7 +68,7 @@ describe('node agent restore operation', () => {
     expect(restores).toEqual([{ sessionId, reason: 'no such tool' }]);
   });
 
-  test('reports reattached: false when no live session was found', async () => {
+  test('reports reattached: false without blaming a missing session for a failed re-attach', async () => {
     restoreResult = false;
     const sessionId = workerSession('s-gone');
     const result = (await operation.execute({}, worker(sessionId))) as {
@@ -76,7 +76,8 @@ describe('node agent restore operation', () => {
       message: string;
     };
     expect(result.reattached).toBe(false);
-    expect(result.message).toContain('no live node-agent session');
+    expect(result.message).toContain('not re-attached');
+    expect(result.message).toContain('the re-attach itself failed');
   });
 
   test('denies a space member that is not a workflow worker', async () => {
