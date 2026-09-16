@@ -1298,6 +1298,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       nodeExecutionRepo,
       taskRepo: spaceTaskRepo,
       getSession: (sessionId) => deps.db.getSession(sessionId),
+      auditLogRepo: new McpAuditLogRepository(deps.db.getDatabase()),
     })
   );
   familyOperations.push(
