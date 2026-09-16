@@ -7,7 +7,7 @@ import {
 
 function fakeContext(): FamilyOperationContext {
   return {
-    deps: { db: { getSession: () => null }, externalEventStore: {} },
+    deps: { db: { getSession: () => null, getDatabase: () => ({}) }, externalEventStore: {} },
     spaceGoalService: {},
     longHorizonAgentRepo: {},
     nodeExecutionRepo: {},
