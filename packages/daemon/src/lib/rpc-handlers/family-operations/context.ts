@@ -1,0 +1,65 @@
+import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository.ts';
+import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
+import type { SpaceAgentGoalScopeRepository } from '../../../storage/repositories/space-agent-goal-scope-repository.ts';
+import type {
+  SpaceAgentInactivityClaimRepository,
+  SpaceAgentInactivityConfigRepository,
+} from '../../../storage/repositories/space-agent-inactivity-repository.ts';
+import type { SpaceAgentReminderRepository } from '../../../storage/repositories/space-agent-reminder-repository.ts';
+import type { SpaceAgentRepository } from '../../../storage/repositories/space-agent-repository.ts';
+import type { SpaceAgentSubscriptionRepository } from '../../../storage/repositories/space-agent-subscription-repository.ts';
+import type { SpaceAgentTemplateRepository } from '../../../storage/repositories/space-agent-template-repository.ts';
+import type { SpaceGoalEventRepository } from '../../../storage/repositories/space-goal-event-repository.ts';
+import type { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository.ts';
+import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
+import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
+import type { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository.ts';
+import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
+import type { TaskScheduleRepository } from '../../../storage/repositories/task-schedule-repository.ts';
+import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository.ts';
+import type { SpaceAgentTemplateManager } from '../../agents/template-manager.ts';
+import type { EvolutionEpisodeService } from '../../evolution/episode-service.ts';
+import type { EvolutionScopeService } from '../../evolution/scope-service.ts';
+import type { GoalAutomationService } from '../../goals/automation-service.ts';
+import type { SpaceGoalService } from '../../goals/service.ts';
+import type { ReplyRoutingRegistry } from '../../messaging/reply-routing-registry.ts';
+import type { ScheduleService } from '../../schedule/schedule-service.ts';
+import type { SpaceRuntimeService } from '../../space/runtime/space-runtime-service.ts';
+import type { TaskAgentManager } from '../../space/runtime/task-agent-manager.ts';
+import type { SpaceTaskManager } from '../../tasks/task-manager.ts';
+import type { CodingArtifactProfile } from '../../workflows/coding-artifact-profile.ts';
+import type { SpaceWorkflowManager } from '../../workflows/workflow-manager.ts';
+import type { RPCHandlerDependencies } from '../index.ts';
+
+export interface FamilyOperationContext {
+  readonly deps: RPCHandlerDependencies;
+  readonly spaceRuntimeService: SpaceRuntimeService;
+  readonly taskAgentManager: TaskAgentManager;
+  readonly spaceTaskManagerFactory: (spaceId: string) => SpaceTaskManager;
+  readonly spaceTaskRepo: SpaceTaskRepository;
+  readonly nodeExecutionRepo: NodeExecutionRepository;
+  readonly longHorizonAgentRepo: SpaceLongHorizonAgentRepository;
+  readonly spaceAgentRepo: SpaceAgentRepository;
+  readonly spaceAgentGoalScopeRepo: SpaceAgentGoalScopeRepository;
+  readonly spaceAgentTemplateRepo: SpaceAgentTemplateRepository;
+  readonly spaceAgentTemplateManager: SpaceAgentTemplateManager;
+  readonly spaceAgentReminderRepo: SpaceAgentReminderRepository;
+  readonly spaceAgentSubscriptionRepo: SpaceAgentSubscriptionRepository;
+  readonly spaceAgentInactivityConfigRepo: SpaceAgentInactivityConfigRepository;
+  readonly spaceAgentInactivityClaimRepo: SpaceAgentInactivityClaimRepository;
+  readonly spaceGoalService: SpaceGoalService;
+  readonly spaceGoalRepo: SpaceGoalRepository;
+  readonly spaceGoalEventRepo: SpaceGoalEventRepository;
+  readonly goalAutomationService: GoalAutomationService;
+  readonly evolutionScopeService: EvolutionScopeService;
+  readonly evolutionEpisodeService: EvolutionEpisodeService;
+  readonly scheduleService: ScheduleService;
+  readonly taskScheduleRepo: TaskScheduleRepository;
+  readonly spaceWorkflowRepo: SpaceWorkflowRepository;
+  readonly spaceWorkflowRunRepo: SpaceWorkflowRunRepository;
+  readonly spaceWorkflowManager: SpaceWorkflowManager;
+  readonly artifactRepo: WorkflowRunArtifactRepository;
+  readonly artifactProfile: CodingArtifactProfile;
+  readonly channelCycleRepo: ChannelCycleRepository;
+  readonly replyRoutingRegistry: ReplyRoutingRegistry;
+}
