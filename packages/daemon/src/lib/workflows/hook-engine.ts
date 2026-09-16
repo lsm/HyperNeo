@@ -1,18 +1,18 @@
 import type {
+  SpaceWorkflow,
   WorkflowHook,
   WorkflowHookResult,
-  WorkflowHookUserState,
-  SpaceWorkflow,
-  WorkflowRunStatus,
   WorkflowHookStateSnapshot,
+  WorkflowHookUserState,
+  WorkflowRunStatus,
 } from '@hyperneo/shared';
 import type { NodeExecutionRepository } from '../../storage/repositories/node-execution-repository.ts';
-import type { WorkflowRunArtifactRepository } from '../../storage/repositories/workflow-run-artifact-repository.ts';
 import type { WorkflowHookStateRepository } from '../../storage/repositories/workflow-hook-state-repository.ts';
-import type { HookExecutor } from './hook-executor.ts';
-import { isRateLimitError } from '../session/rate-limit-detector.ts';
+import type { WorkflowRunArtifactRepository } from '../../storage/repositories/workflow-run-artifact-repository.ts';
 import { Logger } from '../logger.ts';
+import { isRateLimitError } from '../session/rate-limit-detector.ts';
 import { type AnyToolResult, scheduleRetryableAction } from './hook-binding.ts';
+import type { HookExecutor } from './hook-executor.ts';
 import {
   buildExecutorContext,
   PR_READY_VALIDATED_IDENTITY_HOOK_ID,
@@ -415,8 +415,7 @@ export class WorkflowHookEngine {
                     hook.id
                   );
                   const nextRetryAt =
-                    Date.now() +
-                    delayMs * Math.pow(backoffMultiplier, currentState?.retryCount ?? 0);
+                    Date.now() + delayMs * backoffMultiplier ** (currentState?.retryCount ?? 0);
                   try {
                     const updateResult = this.config.hookStateRepo.update(
                       this.config.workflowRunId,

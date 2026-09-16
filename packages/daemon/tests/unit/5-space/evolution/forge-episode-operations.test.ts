@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import type { Session } from '@hyperneo/shared';
 import { createForgeOperations } from '../../../../src/lib/evolution/operations.ts';
+import type {
+  ForgeAuditEntry,
+  ForgeAuditWriter,
+} from '../../../../src/lib/evolution/forge-admission.ts';
 import { EvolutionEpisodeService } from '../../../../src/lib/evolution/episode-service.ts';
 import { EvolutionScopeService } from '../../../../src/lib/evolution/scope-service.ts';
 import { SpaceGoalService } from '../../../../src/lib/goals/service.ts';
@@ -127,6 +131,11 @@ function makeCtx() {
     ['session-archived', makeSession('session-archived', SPACE_ID, 'archived')],
   ]);
 
+  const audited: ForgeAuditEntry[] = [];
+  const audit: ForgeAuditWriter = (entry) => {
+    audited.push(entry);
+  };
+
   const operations = createForgeOperations({
     getSession: (sessionId) => sessions.get(sessionId) ?? null,
     longHorizonAgentRepo: new SpaceLongHorizonAgentRepository(db),
@@ -139,6 +148,7 @@ function makeCtx() {
     db,
     goalRepo,
     scheduleService,
+    audit,
   });
   const registry = createOperationRegistry(operations);
   const op = (name: string): OperationDefinition => {
@@ -146,7 +156,17 @@ function makeCtx() {
     if (!found) throw new Error(`operation missing: ${name}`);
     return found;
   };
-  return { db, goalRepo, taskRepo, evolutionRepo, scopeService, episodeService, registry, op };
+  return {
+    db,
+    goalRepo,
+    taskRepo,
+    evolutionRepo,
+    scopeService,
+    episodeService,
+    audited,
+    registry,
+    op,
+  };
 }
 
 const memberCaller: OperationCaller = {
@@ -394,6 +414,24 @@ describe('forge.episode.update', () => {
     }
   });
 
+  test('records the Space on the update audit entry so space-scoped views keep it', async () => {
+    const ctx = makeCtx();
+    try {
+      const scope = seedScope(ctx);
+      const episode = ctx.episodeService.createEpisode({
+        scopeId: scope.id,
+        title: 'Audited episode',
+      });
+      await ctx
+        .op('forge.episode.update')
+        .execute({ episodeId: episode.id, title: 'renamed' }, memberCaller);
+      const entry = ctx.audited.find((row) => row.toolName === 'forge.episode.update');
+      expect(entry?.spaceId).toBe(SPACE_ID);
+    } finally {
+      ctx.db.close();
+    }
+  });
+
   test('hides an episode owned by another Space behind episode_not_found', async () => {
     const ctx = makeCtx();
     try {
@@ -533,6 +571,8 @@ describe('forge.proposal.createTask', () => {
       };
       expect(second.task.id).toBe(first.task.id);
       expect(ctx.taskRepo.listBySpace(SPACE_ID, true)).toHaveLength(1);
+      const entry = ctx.audited.find((row) => row.toolName === 'forge.proposal.createTask');
+      expect(entry?.spaceId).toBe(SPACE_ID);
     } finally {
       ctx.db.close();
     }

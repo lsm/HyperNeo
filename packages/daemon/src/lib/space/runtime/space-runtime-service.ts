@@ -68,7 +68,7 @@ import { ensureSession } from '../../session-resolution/ensure-session.ts';
 import { resolveAgentDeliverySession } from '../../session-resolution/resolve-agent-delivery-session.ts';
 import type { ResolveAgentRecordDeps } from '../../session-resolution/resolve-agent-record.ts';
 import type { EnsureSessionOutcome, SessionTarget } from '../../session-resolution/target.ts';
-import { actionsAsOperations } from '../actions/action-operations.ts';
+import { mergeActionOperations } from '../actions/action-operations.ts';
 import {
   createSessionActionRegistry,
   type SessionActionRegistryConfig,
@@ -888,10 +888,9 @@ export class SpaceRuntimeService {
       operationRegistry: () => sessionManager.getOperationRegistry(),
     });
     agentSession.setOperationRegistryProvider(() =>
-      createOperationRegistry([
-        ...sessionManager.getOperationRegistry().entries,
-        ...actionsAsOperations(actionRegistry),
-      ])
+      createOperationRegistry(
+        mergeActionOperations(sessionManager.getOperationRegistry().entries, actionRegistry)
+      )
     );
   }
 
@@ -906,10 +905,9 @@ export class SpaceRuntimeService {
       operationRegistry: () => sessionManager.getOperationRegistry(),
     });
     agentSession.setOperationRegistryProvider(() =>
-      createOperationRegistry([
-        ...sessionManager.getOperationRegistry().entries,
-        ...actionsAsOperations(actionRegistry),
-      ])
+      createOperationRegistry(
+        mergeActionOperations(sessionManager.getOperationRegistry().entries, actionRegistry)
+      )
     );
   }
 
@@ -1001,6 +999,10 @@ export class SpaceRuntimeService {
           : undefined,
       templateManager: this.templateManager,
     };
+  }
+
+  runInactivityScanNow(spaceId: string, agentId: string): Promise<void> {
+    return this.config.inactivityRunNow?.(spaceId, agentId) ?? Promise.resolve();
   }
 
   registerSubscription(

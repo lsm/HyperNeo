@@ -1,8 +1,8 @@
 import type { WorkflowHook } from '@hyperneo/shared';
 import {
   isWorkflowHookCallerAuthorized,
-  type WorkflowHookInvocationContext,
   validateWorkflowHookResult,
+  type WorkflowHookInvocationContext,
 } from './hook-validation.ts';
 
 export class WorkflowHookRuntimeService {

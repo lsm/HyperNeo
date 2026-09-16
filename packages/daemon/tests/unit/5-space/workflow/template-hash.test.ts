@@ -1,10 +1,10 @@
-import { describe, it, expect } from 'bun:test';
+import { describe, expect, it } from 'bun:test';
+import type { SpaceWorkflow } from '@hyperneo/shared';
 import {
   buildWorkflowFingerprint,
   computeWorkflowHash,
   workflowsMatchFingerprint,
 } from '../../../../src/lib/workflows/template-hash';
-import type { SpaceWorkflow } from '@hyperneo/shared';
 
 function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
   return {
