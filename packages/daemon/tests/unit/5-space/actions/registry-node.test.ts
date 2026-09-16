@@ -50,13 +50,10 @@ const FULL_ENTRIES: ReadonlyArray<readonly [string, string]> = [
   ['save_artifact', 'mutate'],
   ['list_artifacts', 'read'],
   ['create_standalone_task', 'mutate'],
-  ['publish_task', 'mutate'],
-  ['archive_task', 'destructive'],
   ['approve_task', 'mutate'],
   ['submit_for_approval', 'mutate'],
   ['mark_complete', 'mutate'],
   ['list_tasks', 'read'],
-  ['get_task', 'read'],
   ['list_audit_entries', 'read'],
 ];
 
@@ -128,8 +125,6 @@ function makeConfig(
     onUnsubscribeExternalEvent: async () => record('unsubscribe'),
     onListSubscriptions: async () => record('list_subscriptions'),
     onCreateStandaloneTask: async () => record('create_standalone_task'),
-    onPublishTask: async () => record('publish_task'),
-    onArchiveTask: async () => record('archive_task'),
     onApproveTask: async () => record('approve_task'),
     onSubmitForApproval: async () => record('submit_for_approval'),
     onMarkComplete: async () => record('mark_complete'),
@@ -152,8 +147,6 @@ function makeBareConfig(
     onUnsubscribeExternalEvent: undefined,
     onListSubscriptions: undefined,
     onCreateStandaloneTask: undefined,
-    onPublishTask: undefined,
-    onArchiveTask: undefined,
     onApproveTask: undefined,
     onSubmitForApproval: undefined,
     onMarkComplete: undefined,
@@ -214,7 +207,7 @@ function makeSpaceEntries(spaceApproveCalls: string[]): ActionDefinition[] {
 }
 
 describe('createNodeRegistryEntries — composition', () => {
-  test('builds the 21 node-family entries in typed-surface order with authored safety classes', () => {
+  test('builds the node-family entries in typed-surface order with authored safety classes', () => {
     const ctx = makeCtx();
     try {
       const entries = createNodeRegistryEntries(makeConfig(ctx));
@@ -254,19 +247,6 @@ describe('createNodeRegistryEntries — composition', () => {
       const registry = createActionRegistry(createNodeRegistryEntries(makeConfig(ctx)));
       expect(registry.entries).toHaveLength(FULL_ENTRIES.length);
       expect(registry.get('list_peers')?.family).toBe('node');
-      expect(registry.get('archive_task')?.safetyClass).toBe('destructive');
-    } finally {
-      ctx.db.close();
-    }
-  });
-
-  test('archive_task requires autonomy clearance despite its destructive safety class', () => {
-    const ctx = makeCtx();
-    try {
-      const byName = new Map(
-        createNodeRegistryEntries(makeConfig(ctx)).map((entry) => [entry.name, entry])
-      );
-      expect(byName.get('archive_task')?.autonomyRequirement).toBe(4);
     } finally {
       ctx.db.close();
     }
@@ -319,12 +299,10 @@ describe('createNodeRegistryEntries — conditional entries', () => {
         ['externalEventStore', ['get_external_event', 'list_deliveries']],
         ['artifactRepo', ['save_artifact', 'list_artifacts']],
         ['onCreateStandaloneTask', ['create_standalone_task']],
-        ['onPublishTask', ['publish_task']],
-        ['onArchiveTask', ['archive_task']],
         ['onApproveTask', ['approve_task']],
         ['onSubmitForApproval', ['submit_for_approval']],
         ['onMarkComplete', ['mark_complete']],
-        ['taskRepo', ['list_tasks', 'get_task']],
+        ['taskRepo', ['list_tasks']],
         ['auditLogRepo', ['list_audit_entries']],
       ];
       const bareNames = new Set(ALWAYS_ON_NAMES);
@@ -1074,213 +1052,6 @@ describe('mark_complete — operation-backed', () => {
       });
       expect(operationCalls).toBe(0);
       expect(taskRepo.getTask(task.id)?.status).toBe('approved');
-    } finally {
-      ctx.db.close();
-    }
-  });
-});
-
-function makePublishTaskOperation(
-  execute: (
-    input: { taskId: string; status: string; expectedStatus?: string },
-    caller: { source: string; sessionId?: string }
-  ) => Promise<{ id: string } | null | string>
-) {
-  return createOperationRegistry([
-    defineOperation({
-      name: 'task.transition',
-      description: 'Transition a task',
-      inputSchema: z.object({
-        taskId: z.string(),
-        status: z.string(),
-        expectedStatus: z.string().optional(),
-      }),
-      resultSchema: z.union([
-        z.object({ id: z.string() }),
-        z.enum([
-          'unsupported_status',
-          'invalid_transition',
-          'result_requires_done',
-          'block_reason_requires_blocked',
-        ]),
-        z.null(),
-      ]),
-      execute: execute as never,
-    }),
-  ]);
-}
-
-describe('publish_task — operation-backed', () => {
-  test('publish_task is present through the operation registry even without onPublishTask', () => {
-    const ctx = makeCtx();
-    try {
-      const operations = makePublishTaskOperation(async () => ({ id: 'task-1' }));
-      const entry = createNodeRegistryEntries(makeBareConfig(ctx), operations).find(
-        (candidate) => candidate.name === 'publish_task'
-      );
-      if (!entry) throw new Error('publish_task entry missing');
-      expect(entry.safetyClass).toBe('mutate');
-    } finally {
-      ctx.db.close();
-    }
-  });
-
-  test('invokes task.transition with the action task_id, status, and expectedStatus and maps a task result to { success, task }', async () => {
-    const ctx = makeCtx();
-    try {
-      const calls: Array<{ input: unknown; caller: unknown }> = [];
-      const operations = makePublishTaskOperation(async (input, caller) => {
-        calls.push({ input, caller });
-        return { id: 'task-1' };
-      });
-      const entry = createNodeRegistryEntries(makeBareConfig(ctx), operations).find(
-        (candidate) => candidate.name === 'publish_task'
-      );
-      if (!entry) throw new Error('publish_task entry missing');
-      const result = (await entry.handler({ task_id: 'task-1' })) as {
-        content: Array<{ text: string }>;
-        isError?: boolean;
-      };
-      expect(result.isError).toBeUndefined();
-      expect(JSON.parse(result.content[0].text)).toEqual({
-        success: true,
-        task: { id: 'task-1' },
-      });
-      expect(calls).toEqual([
-        {
-          input: { taskId: 'task-1', status: 'open', expectedStatus: 'draft' },
-          caller: { source: 'mcp', sessionId: 'session-coder' },
-        },
-      ]);
-      expect(ctx.calls.get('publish_task')).toBeUndefined();
-    } finally {
-      ctx.db.close();
-    }
-  });
-
-  test('maps a null rejection to the legacy { success, false, error } shape', async () => {
-    const ctx = makeCtx();
-    try {
-      const operations = makePublishTaskOperation(async () => null);
-      const entry = createNodeRegistryEntries(makeBareConfig(ctx), operations).find(
-        (candidate) => candidate.name === 'publish_task'
-      );
-      if (!entry) throw new Error('publish_task entry missing');
-      const result = (await entry.handler({ task_id: 'task-1' })) as {
-        content: Array<{ text: string }>;
-      };
-      const payload = JSON.parse(result.content[0].text) as {
-        success: boolean;
-        error: string;
-      };
-      expect(payload.success).toBe(false);
-      expect(payload.error).toContain('Task not found');
-    } finally {
-      ctx.db.close();
-    }
-  });
-
-  test('maps an invalid_transition rejection to the legacy { success, false, error } shape', async () => {
-    const ctx = makeCtx();
-    try {
-      const operations = makePublishTaskOperation(async () => 'invalid_transition');
-      const entry = createNodeRegistryEntries(makeBareConfig(ctx), operations).find(
-        (candidate) => candidate.name === 'publish_task'
-      );
-      if (!entry) throw new Error('publish_task entry missing');
-      const result = (await entry.handler({ task_id: 'task-1' })) as {
-        content: Array<{ text: string }>;
-      };
-      const payload = JSON.parse(result.content[0].text) as {
-        success: boolean;
-        error: string;
-      };
-      expect(payload.success).toBe(false);
-      expect(payload.error).toContain('Only draft tasks can be published');
-    } finally {
-      ctx.db.close();
-    }
-  });
-});
-
-function makeArchiveTaskOperation(
-  execute: (input: { taskId: string }) => Promise<{ id: string } | string>
-) {
-  return createOperationRegistry([
-    defineOperation({
-      name: 'task.archive',
-      description: 'Archive a task',
-      inputSchema: z.object({ taskId: z.string() }),
-      resultSchema: z.union([z.object({ id: z.string() }), z.string()]),
-      execute: execute as never,
-    }),
-  ]);
-}
-
-describe('archive_task — operation-backed', () => {
-  test('archive_task is present through the operation registry even without onArchiveTask', () => {
-    const ctx = makeCtx();
-    try {
-      const operations = makeArchiveTaskOperation(async () => ({ id: 'task-1' }));
-      const entry = createNodeRegistryEntries(makeBareConfig(ctx), operations).find(
-        (candidate) => candidate.name === 'archive_task'
-      );
-      if (!entry) throw new Error('archive_task entry missing');
-      expect(entry.safetyClass).toBe('destructive');
-      expect(entry.autonomyRequirement).toBe(4);
-    } finally {
-      ctx.db.close();
-    }
-  });
-
-  test('invokes task.archive with the action task_id and maps a task result to { success, task }', async () => {
-    const ctx = makeCtx();
-    try {
-      const calls: Array<{ input: unknown }> = [];
-      const operations = makeArchiveTaskOperation(async (input) => {
-        calls.push({ input });
-        return { id: 'task-1', title: 'Archived' };
-      });
-      const config = makeBareConfig(ctx);
-      const entry = createNodeRegistryEntries(config, operations).find(
-        (candidate) => candidate.name === 'archive_task'
-      );
-      if (!entry) throw new Error('archive_task entry missing');
-      const result = (await entry.handler({ task_id: 'task-1' })) as {
-        content: Array<{ text: string }>;
-        isError?: boolean;
-      };
-      expect(result.isError).toBeUndefined();
-      expect(JSON.parse(result.content[0].text)).toEqual({
-        success: true,
-        task: { id: 'task-1' },
-      });
-      expect(calls).toEqual([{ input: { taskId: 'task-1' } }]);
-      expect(ctx.calls.get('archive_task')).toBeUndefined();
-    } finally {
-      ctx.db.close();
-    }
-  });
-
-  test('maps a string rejection to the legacy { success: false, error } shape', async () => {
-    const ctx = makeCtx();
-    try {
-      const operations = makeArchiveTaskOperation(async () => 'archive_active_run');
-      const entry = createNodeRegistryEntries(makeBareConfig(ctx), operations).find(
-        (candidate) => candidate.name === 'archive_task'
-      );
-      if (!entry) throw new Error('archive_task entry missing');
-      const result = (await entry.handler({ task_id: 'task-1' })) as {
-        content: Array<{ text: string }>;
-        isError?: boolean;
-      };
-      expect(result.isError).toBeUndefined();
-      const payload = JSON.parse(result.content[0].text) as {
-        success: boolean;
-        error: string;
-      };
-      expect(payload.success).toBe(false);
-      expect(payload.error).toContain('active workflow run');
     } finally {
       ctx.db.close();
     }

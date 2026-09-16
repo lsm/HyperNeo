@@ -6,16 +6,17 @@ import {
 import type { z } from 'zod';
 import type { OperationRegistrySource } from '../../operations/registry.ts';
 import { hasSpaceAuthority } from '../runtime/space-mcp-session-policy.ts';
-import { canTransition as canTransitionRunStatus } from '../../workflows/run-status-machine.ts';
 import { normalizeReplyTargetHandle } from '../../messaging/agent-handle.ts';
 import {
   HUMAN_ONLY_AUTONOMY_LEVEL,
   SESSION_WRITE_AUTONOMY_LEVEL,
 } from '../tools/tool-admission-gates.ts';
 import { jsonResult } from '../tools/tool-result.ts';
-import { type CreateStandaloneTaskParams, mapCreateTaskParams } from './create-task-params.ts';
+import {
+  type CreateStandaloneTaskParams,
+  mapCreateTaskParams,
+} from '../../tasks/create-task-params.ts';
 import { RestoreNodeAgentSchema } from './node-agent-schemas.ts';
-import { mapArchiveTaskParams, mapArchiveTaskResult } from './archive-task-operation.ts';
 import { createOperationActionHandler } from './operation-action.ts';
 import { type ActionDefinition, defineAction } from './registry.ts';
 import {
@@ -25,12 +26,10 @@ import {
   ApprovePendingCompletionSchema,
   ApproveTaskSchema,
   ArchiveAgentSchema,
-  ArchiveTaskSchema,
   AssignAgentToForgeScopeSchema,
   AssignAgentToGoalSchema,
   AttachForgeTaskEvidenceSchema,
   AttachForgeWorkflowRunEvidenceSchema,
-  CancelTaskSchema,
   ChangePlanSchema,
   CreateAgentFromTemplateSchema,
   CreateAgentReminderSchema,
@@ -54,7 +53,6 @@ import {
   GetScheduledTaskSchema,
   GetSessionDetailSchema,
   GetSessionMessagesSchema,
-  GetTaskDetailSchema,
   GetWorkflowDetailSchema,
   GetWorkflowRunSchema,
   InactivityConfigGetSchema,
@@ -77,18 +75,15 @@ import {
   ListGoalTasksSchema,
   ListScheduledTasksSchema,
   ListSessionsSchema,
-  ListTaskMembersSchema,
   ListTasksSchema,
   ListWorkflowsSchema,
   PauseAgentSchema,
   PauseGoalSchema,
   PauseScheduledTaskSchema,
-  PublishTaskSchema,
   ReassignTaskSchema,
   ResolveForgeScopeSchema,
   ResumeGoalSchema,
   ResumeScheduledTaskSchema,
-  RetryTaskSchema,
   ReviewGoalOutcomeSchema,
   SendMessageToTaskSchema,
   SendSessionMessageSchema,
@@ -192,46 +187,6 @@ export function createSpaceRegistryEntries(
     if (hasLiveExecution) return true;
     const runTaskIds = config.taskRepo.listByWorkflowRun(workflowRunId).map((t) => t.id);
     return (config.taskAgentManager?.getLiveSubSessionIdsForTasks(runTaskIds).length ?? 0) > 0;
-  };
-
-  const cancelTaskAutonomy = async (params: { task_id: string }) => {
-    const task = taskInSpace(params.task_id);
-    if (task?.pendingCheckpointType === 'task_completion') return HUMAN_ONLY_AUTONOMY_LEVEL;
-    if (task?.workflowRunId) {
-      const run = config.workflowRunRepo.getRun(task.workflowRunId);
-      if (run && canTransitionRunStatus(run.status, 'cancelled')) {
-        if (
-          config.taskRepo
-            .listByWorkflowRun(task.workflowRunId)
-            .some((sibling) => sibling.pendingCheckpointType === 'task_completion')
-        ) {
-          return HUMAN_ONLY_AUTONOMY_LEVEL;
-        }
-        return DESTRUCTIVE_ACTION_AUTONOMY_LEVEL;
-      }
-      if (
-        task.taskAgentSessionId ||
-        task.postApprovalSessionId ||
-        runHasLiveSessions(task.workflowRunId)
-      ) {
-        return DESTRUCTIVE_ACTION_AUTONOMY_LEVEL;
-      }
-    }
-    if (task?.taskAgentSessionId && !task.workflowRunId) {
-      return DESTRUCTIVE_ACTION_AUTONOMY_LEVEL;
-    }
-    return 1;
-  };
-
-  const cancelTaskUnavailable = async () => ({
-    ...jsonResult({ success: false, error: 'task.cancel is unavailable: no operation registry' }),
-    isError: true,
-  });
-
-  const archiveTaskAutonomy = async (params: z.infer<typeof ArchiveTaskSchema>) => {
-    const task = taskInSpace(params.task_id);
-    if (task?.pendingCheckpointType === 'task_completion') return HUMAN_ONLY_AUTONOMY_LEVEL;
-    return DESTRUCTIVE_ACTION_AUTONOMY_LEVEL;
   };
 
   const changePlanAutonomy = async (params: z.infer<typeof ChangePlanSchema>) => {
@@ -909,49 +864,6 @@ export function createSpaceRegistryEntries(
         : (args) => handlers.create_standalone_task(args),
     }),
     defineAction({
-      name: 'get_task_detail',
-      family: 'tasks',
-      safetyClass: 'read',
-      description:
-        'Read one task including status, result, and metadata; returns the full task record.',
-      paramsDoc: 'task_number (preferred) or task_id',
-      paramsSchema: GetTaskDetailSchema,
-      taskIdPreference: 'task_number',
-      handler: operations
-        ? createOperationActionHandler(
-            operations,
-            { sessionId: config.mySessionId },
-            'task.get',
-            (params) => {
-              const typed = params as { task_id?: string; task_number?: number };
-              if (typed.task_number !== undefined) {
-                if (!Number.isInteger(typed.task_number) || typed.task_number <= 0) {
-                  return { reject: 'task_number must be a positive integer' };
-                }
-                return { spaceId: config.spaceId, taskNumber: typed.task_number };
-              }
-              if (typed.task_id !== undefined && typed.task_id !== '') {
-                return { taskId: typed.task_id };
-              }
-              return { reject: 'Either task_id or task_number is required' };
-            },
-            (value, originalParams) => {
-              const original = originalParams as { task_id?: string; task_number?: number };
-              const ref =
-                original.task_number !== undefined ? `#${original.task_number}` : original.task_id;
-              if (value === null) {
-                return { success: false, error: `Task not found: ${ref}` };
-              }
-              const typed = value as { spaceId?: string };
-              if (typed.spaceId === undefined || typed.spaceId !== config.spaceId) {
-                return { success: false, error: `Task not found: ${ref}` };
-              }
-              return { success: true, task: value };
-            }
-          )
-        : (args) => handlers.get_task_detail(args),
-    }),
-    defineAction({
       name: 'update_task',
       family: 'tasks',
       safetyClass: 'mutate',
@@ -964,39 +876,6 @@ export function createSpaceRegistryEntries(
       handler: (args) => handlers.update_task(args),
     }),
     defineAction({
-      name: 'retry_task',
-      family: 'tasks',
-      safetyClass: 'mutate',
-      description:
-        'Retry a blocked, cancelled, or done task, optionally with an updated description; returns the restarted task.',
-      paramsDoc: 'task_id, description? (retryable statuses: blocked, cancelled, done)',
-      auditRedactKeys: ['description'],
-      paramsSchema: RetryTaskSchema,
-      handler: (args) => handlers.retry_task(args),
-    }),
-    defineAction({
-      name: 'cancel_task',
-      family: 'tasks',
-      safetyClass: 'mutate',
-      description:
-        'Cancel exactly one task through the shared task.cancel operation: no cascade to ' +
-        'dependent tasks, but cancelling a workflow-owned task with an active run also ' +
-        'cancels that run and stops its agents. Returns { accepted: true, jobId } (jobId ' +
-        'null when the cancellation completed synchronously, a job id when a direct-execution ' +
-        'worker will finalize it) or { accepted: false, reason }.',
-      paramsDoc: 'task_id',
-      paramsSchema: CancelTaskSchema.omit({ cancel_workflow_run: true }).strict(),
-      autonomyRequirement: cancelTaskAutonomy,
-      handler: operations
-        ? createOperationActionHandler(
-            operations,
-            { sessionId: config.mySessionId },
-            'task.cancel',
-            (params) => ({ taskId: (params as { task_id: string }).task_id })
-          )
-        : cancelTaskUnavailable,
-    }),
-    defineAction({
       name: 'reassign_task',
       family: 'tasks',
       safetyClass: 'mutate',
@@ -1005,69 +884,6 @@ export function createSpaceRegistryEntries(
       paramsDoc: 'task_id, custom_agent_id? (null clears), assigned_agent? (coder|general)',
       paramsSchema: ReassignTaskSchema,
       handler: (args) => handlers.reassign_task(args),
-    }),
-    defineAction({
-      name: 'publish_task',
-      family: 'tasks',
-      safetyClass: 'mutate',
-      description:
-        'Publish a draft task to open so orchestration can pick it up; returns the updated task.',
-      paramsDoc: 'task_id',
-      paramsSchema: PublishTaskSchema,
-      handler: operations
-        ? createOperationActionHandler(
-            operations,
-            { sessionId: config.mySessionId },
-            'task.transition',
-            (params) => ({
-              taskId: (params as { task_id: string }).task_id,
-              status: 'open',
-              expectedStatus: 'draft',
-            }),
-            (value, originalParams) => {
-              if (value && typeof value === 'object' && 'id' in value) {
-                return { success: true, task: value };
-              }
-              const typed = originalParams as { task_id: string };
-              if (value === null) {
-                return {
-                  success: false,
-                  error: `Task not found or not in this space: ${typed.task_id}`,
-                };
-              }
-              const reason = value as string;
-              const errorByReason: Record<string, string> = {
-                invalid_transition:
-                  `Task is not in 'draft' status, or it cannot be published. ` +
-                  `Only draft tasks can be published.`,
-                unsupported_status: 'Unsupported target status for publish_task.',
-              };
-              return {
-                success: false,
-                error: errorByReason[reason] ?? `Task publish failed: ${reason}`,
-              };
-            }
-          )
-        : (args) => handlers.publish_task(args),
-    }),
-    defineAction({
-      name: 'archive_task',
-      family: 'tasks',
-      safetyClass: 'destructive',
-      description:
-        'Archive a task — the true terminal state; archived tasks are excluded from default task listings and cannot be reactivated.',
-      paramsDoc: 'task_id',
-      paramsSchema: ArchiveTaskSchema,
-      autonomyRequirement: archiveTaskAutonomy,
-      handler: operations
-        ? createOperationActionHandler(
-            operations,
-            { sessionId: config.mySessionId },
-            'task.archive',
-            mapArchiveTaskParams,
-            mapArchiveTaskResult
-          )
-        : (args) => handlers.archive_task(args),
     }),
     defineAction({
       name: 'send_message_to_task',
@@ -1119,53 +935,6 @@ export function createSpaceRegistryEntries(
             }
           )
         : (args) => handlers.send_message_to_task(args),
-    }),
-    defineAction({
-      name: 'list_task_members',
-      family: 'tasks',
-      safetyClass: 'read',
-      description:
-        "List a task's workflow node executions with status, result, and saved data; returns the execution list.",
-      paramsDoc: 'task_id',
-      paramsSchema: ListTaskMembersSchema,
-      handler: operations
-        ? createOperationActionHandler(
-            operations,
-            { sessionId: config.mySessionId },
-            'task.members.list',
-            (params) => {
-              const typed = params as { task_id: string };
-              const task = config.taskRepo.getTask(typed.task_id);
-              if (!task) {
-                return { reject: `Task not found: ${typed.task_id}` };
-              }
-              if (task.spaceId !== config.spaceId) {
-                return { reject: `Task ${typed.task_id} does not belong to this space.` };
-              }
-              return { taskId: typed.task_id };
-            },
-            (value, originalParams) => {
-              const typed = originalParams as { task_id: string };
-              if (value === null) {
-                return { success: false, error: `Task not found: ${typed.task_id}` };
-              }
-              const result = value as {
-                taskId: string;
-                workflowRunId: string | null;
-                members: unknown[];
-              };
-              if (result.workflowRunId === null && result.members.length === 0) {
-                return {
-                  success: true,
-                  task_id: result.taskId,
-                  executions: result.members,
-                  message: 'This task has no associated workflow run.',
-                };
-              }
-              return { success: true, task_id: result.taskId, executions: result.members };
-            }
-          )
-        : (args) => handlers.list_task_members(args),
     }),
     defineAction({
       name: 'approve_task',

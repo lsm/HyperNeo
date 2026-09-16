@@ -1,7 +1,6 @@
 export const CODER_HOT_ACTIONS: readonly string[] = [
   'create_standalone_task',
   'list_tasks',
-  'get_task_detail',
   'update_task',
   'send_message_to_task',
 ];
@@ -9,7 +8,6 @@ export const CODER_HOT_ACTIONS: readonly string[] = [
 export const GENERAL_HOT_ACTIONS: readonly string[] = [
   'create_standalone_task',
   'list_tasks',
-  'get_task_detail',
   'list_workflows',
   'send_message_to_task',
 ];
@@ -25,14 +23,12 @@ export const PLANNER_HOT_ACTIONS: readonly string[] = [
 export const RESEARCH_HOT_ACTIONS: readonly string[] = [
   'create_standalone_task',
   'list_tasks',
-  'get_task_detail',
   'list_workflows',
   'send_message_to_task',
 ];
 
 export const REVIEWER_HOT_ACTIONS: readonly string[] = [
   'list_tasks',
-  'get_task_detail',
   'list_workflows',
   'send_message_to_task',
   'list_artifacts',
@@ -40,7 +36,6 @@ export const REVIEWER_HOT_ACTIONS: readonly string[] = [
 
 export const QA_HOT_ACTIONS: readonly string[] = [
   'list_tasks',
-  'get_task_detail',
   'list_workflows',
   'get_session_detail',
   'update_task',
