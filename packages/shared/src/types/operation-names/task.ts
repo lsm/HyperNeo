@@ -1,0 +1,17 @@
+export const TASK_OPERATION_NAMES = [
+  'task.archive',
+  'task.cancel',
+  'task.complete',
+  'task.create',
+  'task.dependencies.set',
+  'task.get',
+  'task.list',
+  'task.members.list',
+  'task.message.send',
+  'task.resolvePendingCompletion',
+  'task.setPreferredWorkflow',
+  'task.start',
+  'task.submitForReview',
+  'task.transition',
+  'task.update',
+] as const;
