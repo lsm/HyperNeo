@@ -1,4 +1,5 @@
 export const OPERATION_NAMES = [
+  'goal.create',
   'goal.events.list',
   'goal.get',
   'goal.list',

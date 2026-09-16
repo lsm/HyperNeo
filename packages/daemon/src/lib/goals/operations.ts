@@ -1,5 +1,6 @@
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
 import type { OperationDefinition } from '../operations/registry.ts';
+import { createCreateGoalOperation } from './create-goal-operation.ts';
 import { createGetGoalOperation } from './get-goal-operation.ts';
 import type { GoalCallerContext } from './goal-operation-scope.ts';
 import {
@@ -24,6 +25,7 @@ export function createGoalOperations(deps: GoalOperationDependencies): Operation
     createGetGoalOperation(deps),
     createListGoalTasksOperation(deps),
     createListGoalEventsOperation(deps),
+    createCreateGoalOperation(deps),
     createUpdateGoalOperation(deps),
     createPauseGoalOperation(deps),
     createResumeGoalOperation(deps),

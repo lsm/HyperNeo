@@ -16,6 +16,8 @@ export const GOAL_REJECTION_REASONS = [
   'role_denied',
   'session_not_admitted',
   'goal_not_found',
+  'owner_not_found',
+  'owner_denied',
 ] as const;
 
 export type GoalRejectionReason = (typeof GOAL_REJECTION_REASONS)[number];
@@ -93,7 +95,10 @@ export function recordGoalAudit(
   } catch {}
 }
 
-function denied(reason: GoalRejectionReason, message: string): { reason: GoalRejection } {
+export function goalDenial(
+  reason: GoalRejectionReason,
+  message: string
+): { reason: GoalRejection } {
   return { reason: { accepted: false, reason, message } };
 }
 
@@ -104,7 +109,7 @@ export function admitGoalRole(
   if (caller.source !== 'mcp') return { value: true };
   return caller.role !== undefined && GOAL_ACCESS_ROLES[access].has(caller.role)
     ? { value: true }
-    : denied('role_denied', `Role "${caller.role ?? 'unknown'}" may not ${access} goals.`);
+    : goalDenial('role_denied', `Role "${caller.role ?? 'unknown'}" may not ${access} goals.`);
 }
 
 export function admitGoalSession(
@@ -116,7 +121,10 @@ export function admitGoalSession(
   const session = caller.sessionId ? deps.getSession(caller.sessionId) : null;
   return session?.status === 'active' && resolveSessionSpaceId(session, deps) === spaceId
     ? { value: true }
-    : denied('session_not_admitted', 'Goal writes require an active session in the owning Space.');
+    : goalDenial(
+        'session_not_admitted',
+        'Goal writes require an active session in the owning Space.'
+      );
 }
 
 export function resolveGoalSpaceId(
@@ -126,14 +134,14 @@ export function resolveGoalSpaceId(
   if (caller.source !== 'mcp') {
     return requestedSpaceId
       ? { value: requestedSpaceId }
-      : denied('space_unresolved', 'spaceId is required for this caller.');
+      : goalDenial('space_unresolved', 'spaceId is required for this caller.');
   }
   if (!caller.spaceId) {
-    return denied('space_unresolved', 'The calling session is not scoped to a Space.');
+    return goalDenial('space_unresolved', 'The calling session is not scoped to a Space.');
   }
   return requestedSpaceId === undefined || requestedSpaceId === caller.spaceId
     ? { value: caller.spaceId }
-    : denied('space_mismatch', 'spaceId does not match the Space of the calling session.');
+    : goalDenial('space_mismatch', 'spaceId does not match the Space of the calling session.');
 }
 
 export function admitGoalSpace(
@@ -167,7 +175,7 @@ export function admitGoalAccess(
   }
   const goal = getGoal(input.goalId);
   if (!goal || (scopeSpaceId !== undefined && goal.spaceId !== scopeSpaceId)) {
-    return denied('goal_not_found', `Goal not found: ${input.goalId}`);
+    return goalDenial('goal_not_found', `Goal not found: ${input.goalId}`);
   }
   if (access === 'read') return { value: goal };
   const session = admitGoalSession(caller, goal.spaceId, deps);
