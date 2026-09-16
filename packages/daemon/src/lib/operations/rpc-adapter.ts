@@ -6,7 +6,11 @@ import {
   type RequestHandler,
 } from '@hyperneo/shared';
 import { z } from 'zod';
-import { invokeOperation } from './invoke.ts';
+import {
+  invokeOperation,
+  resolveInvokeDependencies,
+  type InvokeDependenciesSource,
+} from './invoke.ts';
 import type { OperationCaller, OperationRegistrySource } from './registry.ts';
 
 const InvocationSchema = z.object({ name: z.string().min(1), input: z.unknown().optional() });
@@ -15,7 +19,8 @@ export function createOperationRpcHandler(
   registry: OperationRegistrySource,
   resolveCaller: (
     context: CallContext
-  ) => Omit<OperationCaller, 'source'> | Promise<Omit<OperationCaller, 'source'>>
+  ) => Omit<OperationCaller, 'source'> | Promise<Omit<OperationCaller, 'source'>>,
+  dependencies: InvokeDependenciesSource = {}
 ): RequestHandler {
   return async (data, context) => {
     const parsed = InvocationSchema.safeParse(data);
@@ -30,7 +35,8 @@ export function createOperationRpcHandler(
       {
         ...caller,
         source: 'rpc',
-      }
+      },
+      resolveInvokeDependencies(dependencies)
     );
     if (outcome.kind === 'completed') return outcome.value;
     const code =

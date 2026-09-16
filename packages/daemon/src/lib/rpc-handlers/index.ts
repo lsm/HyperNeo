@@ -6,6 +6,8 @@ import { recoverTaskExecution } from '../tasks/recover-task-execution.ts';
 import { McpAuditLogRepository } from '../../storage/repositories/mcp-audit-log-repository.ts';
 import { createSpaceOperationRegistryProvider } from '../tasks/operations.ts';
 import { createExternalEventOperations } from '../external-events/operations.ts';
+import { createOperationAuditWriter } from '../operations/audit.ts';
+import type { InvokeDependencies } from '../operations/invoke.ts';
 import type { OperationDefinition } from '../operations/registry.ts';
 import { createCompletionGateBindings } from '../tasks/complete-task-gates.ts';
 import { isCoderOwnedMergeWorkflow } from '../workflows/post-approval-router.ts';
@@ -339,7 +341,16 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   let inactivityRunNowCancelled = false;
   let inactivityAborted = false;
   setupMessageHandlers(deps.messageHub, deps.sessionManager, deps.db);
-  setupOperationHandlers(deps.messageHub, () => deps.sessionManager.getOperationRegistry());
+  const operationAuditRepo = new McpAuditLogRepository(deps.db.getDatabase());
+  const invokeDependencies: InvokeDependencies = {
+    audit: createOperationAuditWriter((params) => operationAuditRepo.createEntry(params)),
+  };
+  deps.sessionManager.setInvokeDependencies(invokeDependencies);
+  setupOperationHandlers(
+    deps.messageHub,
+    () => deps.sessionManager.getOperationRegistry(),
+    invokeDependencies
+  );
   setupSystemHandlers(deps.messageHub, deps.sessionManager);
   setupAuthHandlers(
     deps.messageHub,
@@ -669,7 +680,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       });
     },
     audit: (session, previous, input) => {
-      new McpAuditLogRepository(deps.db.getDatabase()).createEntry({
+      operationAuditRepo.createEntry({
         sessionId: session.id,
         agentName: session.metadata.promptProvenance?.agentName,
         toolName: 'task.resolvePendingCompletion',

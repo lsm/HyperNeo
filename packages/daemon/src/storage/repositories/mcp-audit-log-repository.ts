@@ -11,6 +11,12 @@ export interface McpAuditLogEntry {
   spaceId: string | null;
   taskId: string | null;
   workflowRunId: string | null;
+  callerSource: string | null;
+  callerRole: string | null;
+  callerAgentId: string | null;
+  outcome: string | null;
+  failureCode: string | null;
+  durationMs: number | null;
 }
 
 export interface CreateMcpAuditLogParams {
@@ -21,6 +27,12 @@ export interface CreateMcpAuditLogParams {
   spaceId?: string | null;
   taskId?: string | null;
   workflowRunId?: string | null;
+  callerSource?: string | null;
+  callerRole?: string | null;
+  callerAgentId?: string | null;
+  outcome?: string | null;
+  failureCode?: string | null;
+  durationMs?: number | null;
 }
 
 export class McpAuditLogRepository {
@@ -32,8 +44,8 @@ export class McpAuditLogRepository {
 
     this.db
       .prepare(
-        `INSERT INTO mcp_audit_log (id, timestamp, agent_name, session_id, tool_name, params_summary, space_id, task_id, workflow_run_id)
-				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO mcp_audit_log (id, timestamp, agent_name, session_id, tool_name, params_summary, space_id, task_id, workflow_run_id, caller_source, caller_role, caller_agent_id, outcome, failure_code, duration_ms)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -44,7 +56,13 @@ export class McpAuditLogRepository {
         params.paramsSummary ?? null,
         params.spaceId ?? null,
         params.taskId ?? null,
-        params.workflowRunId ?? null
+        params.workflowRunId ?? null,
+        params.callerSource ?? null,
+        params.callerRole ?? null,
+        params.callerAgentId ?? null,
+        params.outcome ?? null,
+        params.failureCode ?? null,
+        params.durationMs ?? null
       );
 
     return {
@@ -57,6 +75,12 @@ export class McpAuditLogRepository {
       spaceId: params.spaceId ?? null,
       taskId: params.taskId ?? null,
       workflowRunId: params.workflowRunId ?? null,
+      callerSource: params.callerSource ?? null,
+      callerRole: params.callerRole ?? null,
+      callerAgentId: params.callerAgentId ?? null,
+      outcome: params.outcome ?? null,
+      failureCode: params.failureCode ?? null,
+      durationMs: params.durationMs ?? null,
     };
   }
 
@@ -156,6 +180,12 @@ export class McpAuditLogRepository {
       spaceId: (row.space_id as string | null) ?? null,
       taskId: (row.task_id as string | null) ?? null,
       workflowRunId: (row.workflow_run_id as string | null) ?? null,
+      callerSource: (row.caller_source as string | null) ?? null,
+      callerRole: (row.caller_role as string | null) ?? null,
+      callerAgentId: (row.caller_agent_id as string | null) ?? null,
+      outcome: (row.outcome as string | null) ?? null,
+      failureCode: (row.failure_code as string | null) ?? null,
+      durationMs: (row.duration_ms as number | null) ?? null,
     };
   }
 }

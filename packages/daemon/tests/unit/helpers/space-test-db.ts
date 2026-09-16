@@ -823,7 +823,13 @@ export function createSpaceTables(db: BunDatabase): void {
 			params_summary TEXT,
 			space_id TEXT,
 			task_id TEXT,
-			workflow_run_id TEXT
+			workflow_run_id TEXT,
+			caller_source TEXT,
+			caller_role TEXT,
+			caller_agent_id TEXT,
+			outcome TEXT,
+			failure_code TEXT,
+			duration_ms INTEGER
 		)
 	`);
   db.exec(

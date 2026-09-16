@@ -21,9 +21,15 @@ export interface OperationCaller {
 
 export type OperationSafetyClass = 'read' | 'mutate' | 'destructive' | 'human_only';
 
+export interface OperationAuditPolicy {
+  readonly redactKeys?: readonly string[];
+  readonly exempt?: boolean;
+}
+
 export interface OperationPolicy {
   readonly safetyClass: OperationSafetyClass;
   readonly roles?: readonly OperationCallerRole[];
+  readonly audit?: OperationAuditPolicy;
 }
 
 export interface OperationEntry<Input, Output> {
