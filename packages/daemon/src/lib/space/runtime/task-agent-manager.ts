@@ -139,6 +139,7 @@ import {
 import { AgentMessageRouter } from '../../messaging/agent-message-router.ts';
 import type { WorkflowArtifactProfile } from '../../workflows/artifact-profile.ts';
 import { ChannelResolver } from '../../messaging/channel-resolver.ts';
+import type { NodeMessagingRuntime } from '../../messaging/node-messaging-context.ts';
 import { ChannelRouter } from '../../messaging/channel-router.ts';
 import { createGithubConnector } from '../../github/connectors/github-connector.ts';
 import { HookExecutor } from '../../workflows/hook-executor.ts';
@@ -4540,6 +4541,7 @@ export class TaskAgentManager {
     }
     this.workerRegistryBySession.delete(sessionId);
     this.nodeAgentRestoreContextBySession.delete(sessionId);
+    this.nodeMessagingBySession.delete(sessionId);
   }
 
   private getWorkflowRunId(taskId: string): string | null {
@@ -4948,6 +4950,12 @@ export class TaskAgentManager {
     }
   }
 
+  private nodeMessagingBySession = new Map<string, NodeMessagingRuntime>();
+
+  nodeMessagingRuntimeFor(sessionId: string): NodeMessagingRuntime | null {
+    return this.nodeMessagingBySession.get(sessionId) ?? null;
+  }
+
   workerActionRegistryFor(sessionId: string): ActionRegistry | undefined {
     return this.workerRegistryBySession.get(sessionId);
   }
@@ -5269,6 +5277,18 @@ export class TaskAgentManager {
         },
       });
     }
+
+    this.nodeMessagingBySession.set(subSessionId, {
+      spaceId,
+      taskId,
+      workflow,
+      channelResolver,
+      agentMessageRouter,
+      artifactRepo: this.config.artifactRepo,
+      replyRoutingLookup: (fromAgentName) =>
+        this.config.replyRoutingRegistry?.get(taskId, fromAgentName) ?? null,
+      hookEngine,
+    });
 
     const nodeConfig: NodeAgentToolsConfig = {
       mySessionId: subSessionId,
