@@ -192,8 +192,6 @@ type GoalToolUpdateArgs = {
   workspace_path?: string | null;
 };
 
-export const DEFAULT_INACTIVITY_THRESHOLD_MS = 24 * 60 * 60 * 1000;
-
 function normalizeGoalUpdateArgs(args: GoalToolUpdateArgs) {
   return {
     title: args.title,
