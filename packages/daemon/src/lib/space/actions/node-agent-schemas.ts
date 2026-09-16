@@ -1,6 +1,10 @@
 import { ARTIFACT_SHAPES } from '@hyperneo/shared';
 import { z } from 'zod';
 
+export const ListPeersSchema = z.object({});
+
+export type ListPeersInput = z.infer<typeof ListPeersSchema>;
+
 export const SendMessageSchema = z.object({
   target: z
     .union([z.string(), z.array(z.string())])
