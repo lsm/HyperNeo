@@ -1,4 +1,5 @@
 import type { SpaceAgentGoalScopeRepository } from '../../storage/repositories/space-agent-goal-scope-repository.ts';
+import type { SpaceAgentReminderRepository } from '../../storage/repositories/space-agent-reminder-repository.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
 import type { OperationDefinition } from '../operations/registry.ts';
 import {
@@ -16,6 +17,11 @@ import {
 } from './assign-agent-operation.ts';
 import type { AgentOperationDeps } from './operation-contracts.ts';
 import {
+  createCreateAgentReminderOperation,
+  createListAgentRemindersOperation,
+  type AgentReminderDependencies,
+} from './reminder-operations.ts';
+import {
   createArchiveAgentOperation,
   createPauseAgentOperation,
   createUpdateAgentOperation,
@@ -27,6 +33,7 @@ export interface AgentOperationDependencies extends AgentOperationDeps {
     SpaceLongHorizonAgentRepository,
     'getById' | 'listBySpaceId' | 'create' | 'update'
   >;
+  readonly reminderRepo: Pick<SpaceAgentReminderRepository, 'createReminder' | 'listReminders'>;
   readonly publishAgentCreated: CreateAgentDependencies['publishAgentCreated'];
   readonly publishAgentUpdated: UpdateAgentDependencies['publishAgentUpdated'];
   readonly refreshAgentSubscriptions: UpdateAgentDependencies['refreshAgentSubscriptions'];
@@ -66,6 +73,15 @@ function updateDeps(deps: AgentOperationDependencies): UpdateAgentDependencies {
   };
 }
 
+function reminderDeps(deps: AgentOperationDependencies): AgentReminderDependencies {
+  return {
+    ...deps,
+    getAgent: (agentId) => deps.longHorizonAgentRepo.getById(agentId),
+    createReminder: (params) => deps.reminderRepo.createReminder(params),
+    listReminders: (agentId) => deps.reminderRepo.listReminders(agentId),
+  };
+}
+
 export function createAgentOperations(deps: AgentOperationDependencies): OperationDefinition[] {
   return [
     createListAgentsOperation({
@@ -89,5 +105,7 @@ export function createAgentOperations(deps: AgentOperationDependencies): Operati
     createUnassignAgentFromGoalOperation(assignmentDeps(deps)),
     createAssignAgentToForgeScopeOperation(assignmentDeps(deps)),
     createUnassignAgentFromForgeScopeOperation(assignmentDeps(deps)),
+    createCreateAgentReminderOperation(reminderDeps(deps)),
+    createListAgentRemindersOperation(reminderDeps(deps)),
   ];
 }

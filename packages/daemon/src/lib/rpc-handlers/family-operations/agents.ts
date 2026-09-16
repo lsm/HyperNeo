@@ -12,6 +12,7 @@ export function registerAgentOperations(context: FamilyOperationContext): Operat
   return createAgentOperations({
     getSession: (sessionId) => context.deps.db.getSession(sessionId),
     longHorizonAgentRepo: context.longHorizonAgentRepo,
+    reminderRepo: context.spaceAgentReminderRepo,
     taskRepo: context.spaceTaskRepo,
     nodeExecutionRepo: context.nodeExecutionRepo,
     publishAgentCreated: (agent, sessionId) => {
