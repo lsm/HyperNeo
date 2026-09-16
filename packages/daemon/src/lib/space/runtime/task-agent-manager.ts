@@ -106,7 +106,7 @@ import {
   sanitizeAgentNameForId,
   taskIdFromSubSessionIdentity,
 } from '../../session/sub-session-identity.ts';
-import { actionsAsOperations } from '../actions/action-operations.ts';
+import { mergeActionOperations } from '../actions/action-operations.ts';
 import type { NodeAgentToolsConfig } from '../actions/node-handlers.ts';
 import type { ActionRegistry } from '../actions/registry.ts';
 import { createSessionActionRegistry } from '../actions/session-action-registry.ts';
@@ -5362,10 +5362,9 @@ export class TaskAgentManager {
     if (!registry) return;
     const sessionManager = this.config.sessionManager;
     agentSession.setOperationRegistryProvider(() =>
-      createOperationRegistry([
-        ...sessionManager.getOperationRegistry().entries,
-        ...actionsAsOperations(registry),
-      ])
+      createOperationRegistry(
+        mergeActionOperations(sessionManager.getOperationRegistry().entries, registry)
+      )
     );
     data.config = { ...data.config, workerOperations: true };
   }
