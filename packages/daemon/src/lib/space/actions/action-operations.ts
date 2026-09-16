@@ -18,3 +18,14 @@ export function actionAsOperation(action: RegisteredAction): OperationDefinition
 export function actionsAsOperations(registry: ActionRegistry): OperationDefinition[] {
   return registry.entries.map(actionAsOperation);
 }
+
+export function mergeActionOperations(
+  operations: readonly OperationDefinition[],
+  registry: ActionRegistry
+): OperationDefinition[] {
+  const registered = new Set(operations.map((operation) => operation.name));
+  return [
+    ...operations,
+    ...actionsAsOperations(registry).filter((operation) => !registered.has(operation.name)),
+  ];
+}
