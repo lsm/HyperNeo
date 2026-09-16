@@ -1,8 +1,8 @@
 import type { Session, SpaceLongHorizonAgent } from '@hyperneo/shared';
 import { z } from 'zod';
 import type {
-  OperationCallerRole,
   OperationCaller,
+  OperationCallerRole,
   OperationPolicy,
 } from '../operations/registry.ts';
 import { resolveSessionSpaceId } from '../space/runtime/space-caller-scope.ts';
@@ -80,6 +80,7 @@ export const AGENT_REJECTION_REASONS = [
   'runtime_refresh_failed',
   'goal_not_found',
   'scope_not_found',
+  'template_rejected',
 ] as const;
 
 export const AgentRejectionSchema = z
