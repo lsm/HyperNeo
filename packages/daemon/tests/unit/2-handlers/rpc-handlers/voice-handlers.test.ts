@@ -998,7 +998,7 @@ describe('voice RPC handlers', () => {
 
     const originalSetTimeout = globalThis.setTimeout;
     const originalClearTimeout = globalThis.clearTimeout;
-    globalThis.setTimeout = ((callback: TimerHandler) => {
+    globalThis.setTimeout = ((callback: Parameters<typeof setTimeout>[0]) => {
       if (typeof callback === 'function') queueMicrotask(callback);
       return 1 as unknown as ReturnType<typeof setTimeout>;
     }) as typeof setTimeout;
