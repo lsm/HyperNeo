@@ -1270,6 +1270,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   familyOperations.push(
     ...createWorkflowOperations({
       listWorkflowSummaries: (spaceId) => spaceWorkflowManager.listWorkflowSummaries(spaceId),
+      getWorkflow: (workflowId) => spaceWorkflowManager.getWorkflow(workflowId),
+      getWorkflowByHandle: (spaceId, handle) =>
+        spaceWorkflowManager.getWorkflowByHandle(spaceId, handle),
     })
   );
 
