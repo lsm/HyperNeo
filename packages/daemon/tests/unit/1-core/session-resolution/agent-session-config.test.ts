@@ -50,7 +50,7 @@ describe('buildAgentSessionConfig — long-horizon arm', () => {
   test('deterministic fixture produces the expected literal config', async () => {
     const agent = makeAgent('lh-set', {
       model: 'model-x',
-      provider: 'provider-x',
+      provider: 'openrouter',
       thinkingLevel: 'think8k',
       instructions: '  Own the goal.  ',
       toolPermissions: { tools: ['Read'] },
@@ -59,7 +59,7 @@ describe('buildAgentSessionConfig — long-horizon arm', () => {
     const config = await buildAgentSessionConfig({ agent }, mockSpace);
 
     expect(config.model).toBe('model-x');
-    expect(config.provider).toBe('provider-x');
+    expect(config.provider).toBe('openrouter');
     expect(config.thinkingLevel).toBe('think8k');
     expect(config.systemPrompt).toMatchObject({ type: 'preset', preset: 'claude_code' });
   });

@@ -1,4 +1,6 @@
 export const OPERATION_NAMES = [
+  'agent.get',
+  'agent.list',
   'externalEvent.get',
   'externalEvent.listDeliveries',
   'forge.evidence.attachTask',
@@ -14,8 +16,10 @@ export const OPERATION_NAMES = [
   'forge.scope.resolve',
   'forge.scope.update',
   'forge.timeline.get',
+  'goal.events.list',
   'goal.get',
   'goal.list',
+  'goal.tasks.list',
   'message.send',
   'operations.describe',
   'operations.list',
