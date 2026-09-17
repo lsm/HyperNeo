@@ -2471,7 +2471,7 @@ describe('Session RPC Handlers — session.create universal-read operations inje
     });
   }
 
-  it('installs the read-only operation registry on a non-space session', async () => {
+  it('leaves a non-space session on the default operation registry', async () => {
     const fixture = makeSessionFixture({});
     await setupWith(fixture.sessionManager, buildRuntimeService(fixture.sessionManager));
 
@@ -2479,26 +2479,15 @@ describe('Session RPC Handlers — session.create universal-read operations inje
     expect(handler).toBeDefined();
     await handler!({ workspacePath: '/tmp/hyperneo-ws' }, {});
 
-    expect(fixture.setOperationRegistryProvider).toHaveBeenCalledTimes(1);
+    expect(fixture.setOperationRegistryProvider).not.toHaveBeenCalled();
     expect(fixture.mergeRuntimeMcpServers).not.toHaveBeenCalled();
-
-    const registry = fixture.installedProviders.at(-1)!();
-    expect(registry.entries.map((entry) => entry.name).sort()).toEqual([
-      'describe_action',
-      'list_actions',
-    ]);
-    expect(registry.get('list_actions')).toBeDefined();
   });
 
-  it('routes space sessions through attachSpaceToolsToMemberSession instead of the universal read surface', async () => {
+  it('routes space sessions through attachSpaceToolsToMemberSession', async () => {
     const fixture = makeSessionFixture({ context: { spaceId: 'space-1' } });
     const attachSpaceToolsToMemberSession = mock(async () => {});
-    const installUniversalReadOperations = mock(() => {
-      throw new Error('installUniversalReadOperations must not be called');
-    });
     await setupWith(fixture.sessionManager, {
       attachSpaceToolsToMemberSession,
-      installUniversalReadOperations,
     });
 
     const handler = messageHubData.handlers.get('session.create');
@@ -2506,7 +2495,6 @@ describe('Session RPC Handlers — session.create universal-read operations inje
     await handler!({ workspacePath: '/tmp/hyperneo-ws' }, {});
 
     expect(attachSpaceToolsToMemberSession).toHaveBeenCalledTimes(1);
-    expect(installUniversalReadOperations).not.toHaveBeenCalled();
     expect(fixture.setOperationRegistryProvider).not.toHaveBeenCalled();
     expect(fixture.mergeRuntimeMcpServers).not.toHaveBeenCalled();
   });

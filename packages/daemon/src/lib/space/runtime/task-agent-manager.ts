@@ -36,7 +36,6 @@ import type { ChannelCycleRepository } from '../../../storage/repositories/chann
 import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository.ts';
 import { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository.ts';
 import type { SpaceAgentTemplateRepository } from '../../../storage/repositories/space-agent-template-repository.ts';
-import { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
@@ -56,7 +55,6 @@ import type { SkillsManager } from '../../skills-manager.ts';
 import { getLongHorizonAgentTemplate } from '../../agents/long-horizon-templates.ts';
 import { isRunnableUnifiedAgent } from '../../agents/worker-long-horizon-mapper.ts';
 import type { SpaceManager } from '../managers/space-manager.ts';
-import { SpaceTaskManager } from '../../tasks/task-manager.ts';
 import type { SpaceWorkflowManager } from '../../workflows/workflow-manager.ts';
 import {
   type SpaceWorktreeManager,
@@ -90,13 +88,11 @@ export interface VerifiedSessionStop {
 import type { AgentMemoryRepository } from '../../../storage/repositories/agent-memory-repository.ts';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
 import { WorkflowHookStateRepository } from '../../../storage/repositories/workflow-hook-state-repository.ts';
-import { validateGlobPattern } from '../../external-events/topic-validator.ts';
 import { Logger } from '../../logger.ts';
 import { renderAddress } from '../../mailbox/address.ts';
 import { assertNoPendingMailboxContentConflict } from '../../mailbox/enqueue.ts';
 import type { MailboxMessage } from '../../mailbox/entry.ts';
 import { handoffPromptToMailbox } from '../../mailbox/handoff.ts';
-import { createOperationRegistry } from '../../operations/registry.ts';
 import { sanitizeAssistantUsageInSDKSessionFile } from '../../sdk-session-file-manager.ts';
 import {
   buildExecutionBaseSessionId,
@@ -106,11 +102,6 @@ import {
   sanitizeAgentNameForId,
   taskIdFromSubSessionIdentity,
 } from '../../session/sub-session-identity.ts';
-import { mergeActionOperations } from '../actions/action-operations.ts';
-import type { NodeAgentToolsConfig } from '../actions/node-handlers.ts';
-import type { ActionRegistry } from '../actions/registry.ts';
-import { createSessionActionRegistry } from '../actions/session-action-registry.ts';
-import type { SpaceAgentToolsConfig } from '../actions/space-handlers.ts';
 import { buildWorkerDispatcherContractTools } from '../actions/worker-contract-tools.ts';
 import {
   buildCustomAgentTaskMessage,
@@ -120,12 +111,6 @@ import {
 import type { EvolutionScopeService } from '../../evolution/scope-service.ts';
 import { TERMINAL_NODE_EXECUTION_STATUSES } from '../../workflows/node-execution-manager.ts';
 import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools.ts';
-import {
-  createEndNodeHandlers,
-  createMarkCompleteHandler,
-  createPrMergedGate,
-} from '../../workflows/end-node-handlers.ts';
-import { jsonResult } from '../tools/tool-result.ts';
 import { POST_APPROVAL_TASK_AGENT_TARGET } from '../../workflows/post-approval-validator.ts';
 import { runTemplateSnapshotRecord } from '../../workflows/run-template-snapshot.ts';
 import {
@@ -141,7 +126,6 @@ import type { WorkflowArtifactProfile } from '../../workflows/artifact-profile.t
 import { ChannelResolver } from '../../messaging/channel-resolver.ts';
 import type { NodeMessagingRuntime } from '../../messaging/node-messaging-context.ts';
 import { ChannelRouter } from '../../messaging/channel-router.ts';
-import { createGithubConnector } from '../../github/connectors/github-connector.ts';
 import { HookExecutor } from '../../workflows/hook-executor.ts';
 import type { InjectionDeliveryRowDeps } from '../../messaging/injection-delivery-steps.ts';
 import {
@@ -149,10 +133,7 @@ import {
   reopenFailedDeliveryRow,
   settleDeliveryRowStatus,
 } from '../../messaging/injection-delivery-steps.ts';
-import {
-  collectDispatchablePostApprovalRoutes,
-  isCoderOwnedMergeWorkflow as resolveIsCoderOwnedMergeWorkflow,
-} from '../../workflows/post-approval-router.ts';
+import { collectDispatchablePostApprovalRoutes } from '../../workflows/post-approval-router.ts';
 import type { ReplyRoutingRegistry } from '../../messaging/reply-routing-registry.ts';
 import { decideRestoredWorkerAdmission } from '../../tasks/restored-worker-admission-decision-pipeline.ts';
 import { isCanonicalTaskTerminalForSpawn } from '../../workflows/run-spawn-decisions.ts';
@@ -1017,7 +998,13 @@ export class TaskAgentManager {
             request.workspacePath,
             request.execution.workflowNodeId
           );
-          spawnState.dispatcherActionNames = this.workerActionNamesFor(request.sessionId);
+          const sessionManager = this.config.sessionManager;
+          spawnState.dispatcherActionNames =
+            typeof sessionManager?.getOperationRegistry === 'function'
+              ? new Set(
+                  sessionManager.getOperationRegistry().entries.map((operation) => operation.name)
+                )
+              : undefined;
 
           init = assembleNodeAgentSessionInit({
             baseInit: init,
@@ -3292,18 +3279,6 @@ export class TaskAgentManager {
     return lines.join('\n');
   }
 
-  private agentNameVariants(value: string): string[] {
-    const trimmed = value.trim();
-    if (!trimmed) return [];
-    const variants = new Set<string>([trimmed]);
-    const kebab = trimmed
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '');
-    if (kebab) variants.add(kebab);
-    return [...variants];
-  }
-
   private isTerminalNode(
     workflow: SpaceWorkflow | null | undefined,
     workflowNodeId: string
@@ -3450,51 +3425,6 @@ export class TaskAgentManager {
     if (builtIn) return builtIn;
     const stored = this.config.templateRepo?.getOwned(spaceId, key);
     return stored ? spaceAgentTemplateToNodeSource(stored) : null;
-  }
-
-  private buildAgentNameAliasesForExecution(
-    workflow: SpaceWorkflow | null,
-    execution: NodeExecution,
-    workflowRun?: Pick<SpaceWorkflowRun, 'workflowId' | 'definitionVersion'> | null
-  ): string[] {
-    const aliases = new Set<string>(this.agentNameVariants(execution.agentName));
-    if (!workflow) return [...aliases];
-
-    const node = workflow.nodes.find((candidate) => candidate.id === execution.workflowNodeId);
-    if (!node) return [...aliases];
-
-    if (node.name) {
-      for (const variant of this.agentNameVariants(node.name)) {
-        aliases.add(variant);
-      }
-    }
-
-    const nodeAgents = resolveNodeAgents(node);
-    const slot =
-      nodeAgents.find((agent) => agent.name === execution.agentName) ??
-      (execution.agentId
-        ? nodeAgents.find((agent) => agent.agentId === execution.agentId)
-        : undefined);
-    if (slot?.name) {
-      for (const variant of this.agentNameVariants(slot.name)) {
-        aliases.add(variant);
-      }
-    }
-
-    let spaceAgent: SpaceLongHorizonAgent | null = null;
-    if (execution.agentId) {
-      spaceAgent = this.resolveUnifiedSlotAgent(workflow.spaceId, execution.agentId);
-    } else if (slot) {
-      const spawnConfig = this.resolveSlotSpawnConfig(workflow.spaceId, slot, workflowRun);
-      spaceAgent = spawnConfig?.agent ?? null;
-    }
-    if (spaceAgent?.displayName) {
-      for (const variant of this.agentNameVariants(spaceAgent.displayName)) {
-        aliases.add(variant);
-      }
-    }
-
-    return [...aliases];
   }
 
   private resolveSessionId(baseId: string): string {
@@ -4539,7 +4469,6 @@ export class TaskAgentManager {
       this.sessionListeners.delete(sessionId);
       this.completionCallbacks.delete(sessionId);
     }
-    this.workerRegistryBySession.delete(sessionId);
     this.nodeAgentRestoreContextBySession.delete(sessionId);
     this.nodeMessagingBySession.delete(sessionId);
   }
@@ -4918,8 +4847,6 @@ export class TaskAgentManager {
       );
   }
 
-  private workerRegistryBySession = new Map<string, ActionRegistry>();
-
   private nodeAgentRestoreContextBySession = new Map<
     string,
     Parameters<TaskAgentManager['reinjectNodeAgentMcpServer']>[1]
@@ -4954,24 +4881,6 @@ export class TaskAgentManager {
 
   nodeMessagingRuntimeFor(sessionId: string): NodeMessagingRuntime | null {
     return this.nodeMessagingBySession.get(sessionId) ?? null;
-  }
-
-  workerActionRegistryFor(sessionId: string): ActionRegistry | undefined {
-    return this.workerRegistryBySession.get(sessionId);
-  }
-
-  workerActionNamesFor(sessionId: string): ReadonlySet<string> | undefined {
-    const registry = this.workerRegistryBySession.get(sessionId);
-    if (!registry) return undefined;
-    const sessionManager = this.config.sessionManager;
-    const operations =
-      typeof sessionManager?.getOperationRegistry === 'function'
-        ? mergeActionOperations(sessionManager.getOperationRegistry().entries, registry)
-        : [];
-    return new Set([
-      ...registry.entries.map((entry) => entry.name),
-      ...operations.map((entry) => entry.name),
-    ]);
   }
 
   buildNodeAgentMcpServersForSession(
@@ -5064,77 +4973,6 @@ export class TaskAgentManager {
       taskNumber: this.config.taskRepo.getTask(taskId)?.taskNumber ?? null,
     });
 
-    const agentNameAliases = execution
-      ? this.buildAgentNameAliasesForExecution(workflow, execution, run)
-      : this.agentNameVariants(agentName);
-
-    const isEndNode = this.isTerminalNode(workflow, workflowNodeId);
-    const boundTaskManager = new SpaceTaskManager(
-      this.config.db.getDatabase(),
-      spaceId,
-      this.config.reactiveDb,
-      this.config.evolutionScopeService,
-      (taskId) => this.config.goalService?.supersedeOutcomeNotificationsForTask(taskId),
-      (taskId, fromStatus) =>
-        this.config.goalService?.handleTaskTerminal(taskId, {
-          fromStatus,
-          deferPostCommitEffects: true,
-        }),
-      (rawPath) => this.config.spaceManager.resolveRegisteredWorkspacePath(spaceId, rawPath)
-    );
-    const endNodeHandlers = isEndNode
-      ? createEndNodeHandlers({
-          taskId,
-          spaceId,
-          workflow,
-          workflowNodeId,
-          agentName,
-          taskRepo: this.config.taskRepo,
-          taskManager: boundTaskManager,
-          spaceManager: this.config.spaceManager,
-          internalEventBus: this.config.internalEventBus,
-        })
-      : undefined;
-    const onApproveTask = endNodeHandlers?.onApproveTask;
-    const onSubmitForApproval = endNodeHandlers?.onSubmitForApproval;
-
-    const dispatchedPostApprovalRoute = collectDispatchablePostApprovalRoutes(workflow ?? null)[0];
-    const isCoderOwnedMergeWorkflow = resolveIsCoderOwnedMergeWorkflow(workflow ?? null);
-    const onMarkComplete = createMarkCompleteHandler({
-      taskId,
-      spaceId,
-      taskRepo: this.config.taskRepo,
-      taskManager: boundTaskManager,
-      internalEventBus: this.config.internalEventBus,
-      goalService: this.config.goalService,
-      callerSessionId: subSessionId,
-      requiresPostApprovalOwner: dispatchedPostApprovalRoute !== undefined,
-      resolveResultArtifactSummary: (task) => {
-        if (!task.workflowRunId) return null;
-        return this.config.artifactProfile?.summarizeRunOutcome(task.workflowRunId) ?? null;
-      },
-      assertPrMerged: isCoderOwnedMergeWorkflow
-        ? createPrMergedGate({
-            requirePrUrl: true,
-            resolvePrUrl: (task) =>
-              task.workflowRunId
-                ? (this.config.artifactProfile?.resolveInitialPrimaryLinkUrl?.(
-                    task.workflowRunId
-                  ) ?? '')
-                : '',
-            getPrState: async (prUrl) => {
-              const outcome = await createGithubConnector().ops.getPr(
-                { prUrl },
-                { workspacePath: '', params: {}, rawParams: {}, hookLocalState: {} }
-              );
-              if (!outcome.ok) throw new Error(outcome.error);
-              const state = (outcome.data as { state?: unknown } | null)?.state;
-              return typeof state === 'string' ? state : 'UNKNOWN';
-            },
-          })
-        : undefined,
-    });
-
     this.nodeAgentRestoreContextBySession.set(subSessionId, {
       taskId,
       subSessionId,
@@ -5144,79 +4982,6 @@ export class TaskAgentManager {
       workspacePath,
       workflowNodeId,
     });
-    const onRestoreNodeAgent = async (args: { reason?: string }): Promise<void> => {
-      await this.restoreNodeAgentSession(subSessionId, args.reason);
-    };
-
-    const onUnsubscribeExternalEvent = async (args: { topicPattern: string }) => {
-      const validation = validateGlobPattern(args.topicPattern.trim());
-      if (!validation.valid) {
-        return jsonResult({ success: false, error: validation.reason });
-      }
-      const result = this.config.spaceRuntimeService.unregisterSubscription(
-        workflowRunId,
-        taskId,
-        workflowNodeId,
-        agentName,
-        args.topicPattern
-      );
-      return jsonResult(result);
-    };
-    const onListSubscriptions = async (args: { workflowRunId?: string; nodeId?: string }) => {
-      try {
-        const result = this.config.spaceRuntimeService.listSubscriptions(
-          args.workflowRunId ?? workflowRunId,
-          spaceId,
-          args.nodeId
-        );
-        return jsonResult(result);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        return jsonResult({ success: false, error: message });
-      }
-    };
-    const onCreateStandaloneTask = async (args: {
-      title: string;
-      description: string;
-      priority?: 'low' | 'normal' | 'high' | 'urgent';
-      custom_agent_id?: string;
-      workflow_id?: string;
-      depends_on?: string[];
-      draft?: boolean;
-      workspace?: string;
-    }) => {
-      try {
-        let workspacePath: string | undefined;
-        if (args.workspace !== undefined) {
-          workspacePath = await this.config.spaceManager.resolveWorkspaceSelection(
-            spaceId,
-            args.workspace
-          );
-        } else {
-          const defaultWorkspaceError =
-            await this.config.spaceManager.validateDefaultTaskWorkspace(spaceId);
-          if (defaultWorkspaceError) {
-            return jsonResult({ success: false, error: defaultWorkspaceError });
-          }
-        }
-        const task = await boundTaskManager.createTask({
-          title: args.title,
-          description: args.description,
-          priority: args.priority,
-          preferredWorkflowId: args.workflow_id ?? null,
-          dependsOn: args.depends_on,
-          status: args.draft ? 'draft' : undefined,
-          workspacePath,
-          createdBy: agentName,
-          createdBySession: subSessionId,
-        });
-        return jsonResult({ success: true, task });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        return jsonResult({ success: false, error: message });
-      }
-    };
-
     let hookEngine: WorkflowHookEngine | undefined;
     if (workflow?.hooks && workflow.hooks.length > 0) {
       const hookExecutor = new HookExecutor({ workspacePath });
@@ -5279,160 +5044,12 @@ export class TaskAgentManager {
         this.config.replyRoutingRegistry?.get(taskId, fromAgentName) ?? null,
       hookEngine,
     });
-
-    const nodeConfig: NodeAgentToolsConfig = {
-      mySessionId: subSessionId,
-      myAgentName: agentName,
-      myAgentNameAliases: agentNameAliases,
-      taskId,
-      spaceId,
-      channelResolver,
-      workflowRunId,
-      workflowNodeId,
-      nodeExecutionRepo: this.config.nodeExecutionRepo,
-      agentMessageRouter,
-      internalEventBus: this.config.internalEventBus,
-      workflow,
-      goalService: this.config.goalService,
-      onApproveTask,
-      onSubmitForApproval,
-      onMarkComplete,
-      onCreateStandaloneTask,
-      onUnsubscribeExternalEvent,
-      onListSubscriptions,
-      artifactRepo: this.config.artifactRepo,
-      taskRepo: this.config.taskRepo,
-      externalEventStore: this.config.externalEventStore,
-      onRestoreNodeAgent,
-      replyRoutingLookup: (fromAgentName) => {
-        const registry = this.config.replyRoutingRegistry;
-        return registry ? registry.get(taskId, fromAgentName) : null;
-      },
-      hookEngine,
-    };
-    const spaceConfig = this.buildWorkerSpaceToolsConfig({
-      spaceId,
-      taskId,
-      workflowRunId,
-      workflowNodeId,
-      agentName,
-      agentNameAliases,
-      subSessionId,
-    });
-    this.installWorkerOperations(nodeConfig, spaceConfig);
     return {};
-  }
-
-  buildWorkerActionRegistry(
-    nodeConfig: NodeAgentToolsConfig,
-    spaceConfig?: SpaceAgentToolsConfig
-  ): ActionRegistry {
-    return createSessionActionRegistry({
-      role: 'workflow_worker',
-      spaceId: nodeConfig.spaceId,
-      sessionId: nodeConfig.mySessionId,
-      nodeConfig,
-      spaceConfig,
-      operationRegistry: () => this.config.sessionManager.getOperationRegistry(),
-    });
-  }
-
-  installWorkerOperations(
-    nodeConfig: NodeAgentToolsConfig,
-    spaceConfig?: SpaceAgentToolsConfig
-  ): ActionRegistry {
-    const registry = this.buildWorkerActionRegistry(nodeConfig, spaceConfig);
-    if (nodeConfig.mySessionId) {
-      this.workerRegistryBySession.set(nodeConfig.mySessionId, registry);
-    }
-    const sessionManager = this.config.sessionManager;
-    const agentSession =
-      sessionManager &&
-      nodeConfig.mySessionId &&
-      typeof sessionManager.getSession === 'function' &&
-      typeof sessionManager.getOperationRegistry === 'function'
-        ? sessionManager.getSession(nodeConfig.mySessionId)
-        : null;
-    if (agentSession) this.attachWorkerOperations(agentSession);
-    return registry;
   }
 
   attachWorkerOperations(agentSession: AgentSession): void {
     const data = agentSession.getSessionData();
-    const registry = this.workerActionRegistryFor(data.id);
-    if (!registry) return;
-    const sessionManager = this.config.sessionManager;
-    agentSession.setOperationRegistryProvider(() =>
-      createOperationRegistry(
-        mergeActionOperations(sessionManager.getOperationRegistry().entries, registry)
-      )
-    );
     data.config = { ...data.config, workerOperations: true };
-  }
-
-  private buildWorkerSpaceToolsConfig(ctx: {
-    spaceId: string;
-    taskId: string;
-    workflowRunId: string;
-    workflowNodeId: string;
-    agentName: string;
-    agentNameAliases: string[] | undefined;
-    subSessionId: string;
-  }): SpaceAgentToolsConfig {
-    const { spaceId, workflowRunId, workflowNodeId, agentName, agentNameAliases, subSessionId } =
-      ctx;
-    const taskManager = new SpaceTaskManager(
-      this.config.db.getDatabase(),
-      spaceId,
-      this.config.reactiveDb,
-      this.config.evolutionScopeService,
-      (tid) => this.config.goalService?.supersedeOutcomeNotificationsForTask(tid),
-      (tid, fromStatus) =>
-        this.config.goalService?.handleTaskTerminal(tid, {
-          fromStatus,
-          deferPostCommitEffects: true,
-        }),
-      (rawPath) => this.config.spaceManager.resolveRegisteredWorkspacePath(spaceId, rawPath)
-    );
-    return {
-      spaceId,
-      db: this.config.db.getDatabase(),
-      longHorizonAgentRepo: this.config.longHorizonAgentRepo,
-      runtime: this.config.spaceRuntimeService.getSpaceRuntime(),
-      workflowManager: this.config.spaceWorkflowManager,
-      spaceManager: this.config.spaceManager,
-      taskRepo: this.config.taskRepo,
-      nodeExecutionRepo: this.config.nodeExecutionRepo,
-      workflowRunRepo: this.config.workflowRunRepo,
-      isWorkflowRunActive: (runId) => this.config.spaceRuntimeService.isWorkflowRunActive(runId),
-      taskManager,
-      sessionManager: this.config.sessionManager,
-      taskAgentManager: this,
-      internalEventBus: this.config.internalEventBus,
-      activateNode: async (runId, nodeId) => {
-        await this.config.spaceRuntimeService.activateWorkflowNode(runId, nodeId);
-      },
-      ensureTargetSession: (target) =>
-        this.config.spaceRuntimeService.ensureToolTargetSession(target),
-      getSpaceAutonomyLevel: async (sid) =>
-        (await this.config.spaceManager.getSpace(sid))?.autonomyLevel ?? 1,
-      myAgentName: agentName,
-      myAgentNameAliases: agentNameAliases,
-      mySessionId: subSessionId,
-      callerRole: 'workflow_worker',
-      auditLogRepo: this.auditLogRepo,
-      scheduleService: this.config.scheduleService,
-      goalService: this.config.goalService,
-      evolutionScopeService: this.config.evolutionScopeService,
-      goalRepo: new SpaceGoalRepository(this.config.db.getDatabase()),
-      replyRoutingRegistry: this.config.replyRoutingRegistry,
-      messageResolver: this.config.messageResolverFactory?.(spaceId, {
-        workflowRunId,
-        nodeId: workflowNodeId,
-        agentName,
-      }),
-      externalEventStore: this.config.externalEventStore,
-    };
   }
 
   async spawnPostApprovalSubSession(args: {

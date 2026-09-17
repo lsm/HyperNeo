@@ -172,17 +172,6 @@ export function setupSessionHandlers(
       }
     }
 
-    if (session && !session.context?.spaceId && spaceRuntimeService && agentSession) {
-      try {
-        spaceRuntimeService.installUniversalReadOperations(agentSession);
-      } catch (err) {
-        log.warn(
-          `Failed to attach universal-read operations to non-space session ${sessionId}:`,
-          err
-        );
-      }
-    }
-
     if (session) {
       internalEventBus.publish('session.created', { sessionId, session }).catch(() => {});
     }

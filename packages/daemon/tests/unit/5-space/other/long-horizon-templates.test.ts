@@ -72,7 +72,7 @@ describe('long-horizon agent templates', () => {
     expect(taskManager?.suggestedAutonomyLevel).toBe(2);
     expect(taskManager?.suggestedEventSubscriptions).toEqual([]);
     expect(taskManager?.instructions).toContain('Triage');
-    expect(taskManager?.instructions).toContain('send_message_to_task');
+    expect(taskManager?.instructions).toContain('task.message.send');
     expect(taskManager?.instructions).toContain('mark it `blocked`');
     expect(taskManager?.instructions).toContain(
       'append a short note to the task description saying what is stuck and what you recommend'

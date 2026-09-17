@@ -937,7 +937,7 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
     expect(fromInitSpy).toHaveBeenCalledTimes(1);
   });
 
-  test('fresh spawn installs the worker operations on the created session (#4600)', async () => {
+  test('fresh spawn marks the created session with runtime worker operations (#4600)', async () => {
     const tam = makeManager([execOnNode(OTHER_NODE, OTHER_SESSION_ID)]);
     seedLiveSession(tam, OTHER_SESSION_ID);
     stubFreshCreateSpawnPath(tam);
@@ -951,15 +951,7 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
       registerSession: () => {},
       getOperationRegistry: () => createOperationRegistry([]),
     };
-    const providers: Array<() => OperationRegistry> = [];
     const fresh = makeFakeSession(FRESH_PA_SESSION_ID);
-    (
-      fresh.session as unknown as {
-        setOperationRegistryProvider: (provider: () => OperationRegistry) => void;
-      }
-    ).setOperationRegistryProvider = (provider) => {
-      providers.push(provider);
-    };
     fromInitSpy.mockImplementation(
       (() => fresh.session) as unknown as typeof AgentSession.fromInit
     );
@@ -970,10 +962,6 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
 
     expect(result.sessionId).toBe(FRESH_PA_SESSION_ID);
     expect(fromInitSpy).toHaveBeenCalledTimes(1);
-    const names = tam.workerActionNamesFor(FRESH_PA_SESSION_ID);
-    expect(names?.size).toBeGreaterThan(0);
-    const installed = new Set(providers.at(-1)!().entries.map((entry) => entry.name));
-    for (const name of names!) expect(installed.has(name)).toBe(true);
     expect(fresh.session.getSessionData().config).toMatchObject({ workerOperations: true });
   });
 

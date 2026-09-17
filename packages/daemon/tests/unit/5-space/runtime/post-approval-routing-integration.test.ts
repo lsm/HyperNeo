@@ -10,7 +10,9 @@ import {
 } from '../../../../src/lib/workflows/post-approval-route-selection.ts';
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
-import { createMarkCompleteHandler } from '../../../../src/lib/workflows/end-node-handlers.ts';
+import { createCompleteTaskOperation } from '../../../../src/lib/tasks/complete-task.ts';
+import { SessionRepository } from '../../../../src/storage/repositories/session-repository.ts';
+import { createTestSession } from '../../../helpers/database';
 import {
   CODING_WORKFLOW,
   REVIEW_ONLY_WORKFLOW,
@@ -23,7 +25,7 @@ import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
 import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository.ts';
-import { runMigrations } from '../../../../src/storage/schema/index.ts';
+import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { seedWorkerMirror } from '../../helpers/seed-worker-mirror';
 
@@ -32,6 +34,7 @@ const SPACE_ID = 'space-par-int';
 function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
+  createTables(db);
   runMigrations(db, () => {});
   db.prepare(
     `INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions,
@@ -232,18 +235,24 @@ describe('PR 3/5 integration — dispatchPostApproval → spawn → mark_complet
     expect(mid.postApprovalSessionId).toBe(result.postApprovalSessionId);
     expect(mid.postApprovalStartedAt).toBe(result.postApprovalStartedAt);
 
-    const markComplete = createMarkCompleteHandler({
-      taskId,
-      spaceId: SPACE_ID,
-      taskRepo: h.taskRepo,
-      taskManager: h.taskManager,
-      callerSessionId: result.postApprovalSessionId,
+    new SessionRepository(h.db).createSession(
+      {
+        ...createTestSession(result.postApprovalSessionId!),
+        workspacePath: '/tmp/par-int',
+        type: 'worker',
+        context: { taskId, spaceId: SPACE_ID },
+      },
+      { enforceWorkspaceOwnership: false }
+    );
+    const complete = createCompleteTaskOperation(() => h.db, {
+      getTaskManager: () => h.taskManager,
+      emitTaskUpdated: async () => {},
     });
-    const toolResult = await markComplete({});
-    const parsed = JSON.parse(
-      toolResult.content.map((c) => ('text' in c ? c.text : '')).join('')
-    ) as { success: boolean; error?: string };
-    expect(parsed.success).toBe(true);
+    const outcome = await complete.execute(
+      { taskId },
+      { source: 'mcp', sessionId: result.postApprovalSessionId! }
+    );
+    expect(outcome).toMatchObject({ accepted: true, task: { id: taskId, status: 'done' } });
 
     const finalTask = h.taskRepo.getTask(taskId)!;
     expect(finalTask.status).toBe('done');
