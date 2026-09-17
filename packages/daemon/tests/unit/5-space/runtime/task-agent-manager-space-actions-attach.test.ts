@@ -1,6 +1,7 @@
 import { describe, test, expect } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { z } from 'zod';
+import { createAuditOperations } from '../../../../src/lib/audit/operations.ts';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
@@ -12,12 +13,16 @@ import {
 } from '../../../../src/lib/operations/registry.ts';
 import { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import { hasRuntimeWorkerOperations } from '../../../../src/lib/session/sub-session-identity.ts';
+import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
+import { McpAuditLogRepository } from '../../../../src/storage/repositories/mcp-audit-log-repository.ts';
+import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { MessageHub, type McpServerConfig } from '@hyperneo/shared';
 import {
   createTestDb,
   createTestInternalEventBus,
   createTestSession,
 } from '../../../helpers/database';
+import { createSpaceTables } from '../../helpers/space-test-db';
 
 const SPACE_ID = 'space-actions-attach';
 const RUN_ID = 'run-actions-attach';
@@ -300,6 +305,38 @@ describe('TaskAgentManager — worker operations attach (#4600)', () => {
     for (const name of names!) expect(installed.has(name)).toBe(true);
     expect(hasRuntimeWorkerOperations(fake.state.session.config)).toBe(true);
     expect(fake.state.session.config.mcpServers).toEqual({});
+  });
+
+  test('a worker session registry carries audit.list through the operations door', async () => {
+    const auditDb = new Database(':memory:');
+    createSpaceTables(auditDb);
+    const auditOperations = createAuditOperations({
+      auditLogRepo: new McpAuditLogRepository(auditDb),
+    });
+    const tam = makeManager(auditOperations);
+    buildServers(tam);
+    const fake = makeFakeSession();
+
+    tam.attachWorkerOperations(fake.agentSession);
+
+    const installed = fake.state.providers.at(-1)!();
+    expect(tam.workerActionNamesFor(SUB_SESSION_ID)?.has('audit.list')).toBe(true);
+    const outcome = await invokeOperation(
+      installed,
+      'audit.list',
+      { spaceId: SPACE_ID },
+      {
+        source: 'mcp',
+        sessionId: SUB_SESSION_ID,
+        spaceId: SPACE_ID,
+        role: 'workflow_worker',
+      }
+    );
+    expect(outcome).toEqual({
+      kind: 'completed',
+      value: { ok: true, entries: [], total: 0, hasMore: false },
+    });
+    auditDb.close();
   });
 
   test('attachWorkerOperations leaves a session with no worker registry untouched', () => {
