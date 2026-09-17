@@ -45,11 +45,6 @@ import { SpaceWorkflowManager as WorkflowMgr } from '../../../../src/lib/workflo
 import type { SpaceRuntimeServiceConfig } from '../../../../src/lib/space/runtime/space-runtime-service.ts';
 import { createAgentSubscriptionOperations } from '../../../../src/lib/external-events/agent-subscription-operations.ts';
 import { isOperationAdmitted } from '../../../../src/lib/operations/invoke.ts';
-import {
-  createOperationRegistry,
-  type OperationCaller,
-  type OperationRegistry,
-} from '../../../../src/lib/operations/registry.ts';
 import { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-runtime-service.ts';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import { DirectTaskExecutionRepository } from '../../../../src/storage/repositories/direct-task-execution-repository';
@@ -66,6 +61,7 @@ import type { SpaceWorkflowRunRepository } from '../../../../src/storage/reposit
 import { SpaceWorkflowRunRepository as SpaceWorkflowRunRepo } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
 import { z } from 'zod';
 import {
+  createOperationRegistry,
   defineOperation,
   type OperationCaller,
   type OperationDefinition,
@@ -2670,7 +2666,7 @@ describe('SpaceRuntimeService', () => {
             agentId: 'agent-1',
             agentName: 'Long Term',
           },
-        },
+        } as Session['metadata'],
       });
       const sessionManager = makeSessionManager(agent);
       (
