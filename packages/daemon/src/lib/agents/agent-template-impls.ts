@@ -342,7 +342,7 @@ export async function createAgentFromTemplate(
 
   return jsonResult({
     success: false,
-    error: `Agent template not found: ${args.template_name}. Call list_agent_templates to discover available templates.`,
+    error: `Agent template not found: ${args.template_name}. Call agentTemplate.list to discover available templates.`,
   });
 }
 
