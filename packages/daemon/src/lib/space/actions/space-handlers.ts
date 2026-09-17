@@ -10,7 +10,6 @@ import type { SpaceTaskRepository } from '../../../storage/repositories/space-ta
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
 import type { ExternalEventStore } from '../../external-events/external-event-store.ts';
-import { createAgentEventSubscriptionImpls } from '../../external-events/agent-event-subscription-impls.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
 import type { SessionManager } from '../../session/session-manager.ts';
 import type { EnsureSessionOutcome, SessionTarget } from '../../session-resolution/target.ts';
@@ -22,7 +21,6 @@ import type { ReplyRoutingRegistry } from '../../messaging/reply-routing-registr
 import type { SpaceMcpSessionRole } from '../runtime/space-mcp-session-policy.ts';
 import type { SpaceRuntime } from '../runtime/space-runtime.ts';
 import type { TaskAgentManager } from '../runtime/task-agent-manager.ts';
-import type { ToolResult } from '../tools/tool-result.ts';
 
 export interface SpaceAgentToolsConfig {
   spaceId: string;
@@ -79,40 +77,4 @@ export interface SpaceAgentToolsConfig {
   inactivityClaimRepo?: import('../../../storage/repositories/space-agent-inactivity-repository.ts').SpaceAgentInactivityClaimRepository;
   inactivityRunNow?: (spaceId: string, agentId: string) => Promise<void>;
   templateManager?: import('../../agents/template-manager.ts').SpaceAgentTemplateManager;
-}
-
-export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
-  const { spaceId, runtime, myAgentName, mySessionId } = config;
-
-  const agentEventSubscriptions = createAgentEventSubscriptionImpls({
-    spaceId,
-    runtime,
-    longHorizonAgentRepo: config.longHorizonAgentRepo,
-    subscriptionRepo: config.subscriptionRepo,
-    auditLogRepo: config.auditLogRepo,
-    myAgentName,
-    mySessionId,
-  });
-
-  return {
-    async subscribe_agent_event(args: {
-      agent_id: string;
-      topic_pattern: string;
-      label?: string;
-    }): Promise<ToolResult> {
-      return agentEventSubscriptions.subscribeAgentEvent(args);
-    },
-
-    async unsubscribe_agent_event(args: {
-      agent_id: string;
-      topic_pattern: string;
-      label?: string;
-    }): Promise<ToolResult> {
-      return agentEventSubscriptions.unsubscribeAgentEvent(args);
-    },
-
-    async list_agent_event_subscriptions(args: { agent_id: string }): Promise<ToolResult> {
-      return agentEventSubscriptions.listAgentEventSubscriptions(args);
-    },
-  };
 }
