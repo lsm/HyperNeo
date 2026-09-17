@@ -12,6 +12,7 @@ import {
   type OperationDefinition,
   type OperationRegistry,
 } from '../../../../src/lib/operations/registry.ts';
+import { createDiscoveryOperations } from '../../../../src/lib/operations/discovery.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import { hasRuntimeWorkerOperations } from '../../../../src/lib/session/sub-session-identity.ts';
@@ -31,6 +32,14 @@ const TASK_ID = 'task-actions-attach';
 const EXEC_ID = 'exec-actions-attach';
 const SUB_SESSION_ID = `space:${SPACE_ID}:task:${TASK_ID}:exec:${EXEC_ID}`;
 
+function catalogRegistry(operations: OperationDefinition[]): OperationRegistry {
+  const registry = createOperationRegistry([
+    ...operations,
+    ...createDiscoveryOperations(() => registry),
+  ]);
+  return registry;
+}
+
 function makeManager(operations: OperationDefinition[] = []): TaskAgentManager {
   const execution = {
     id: EXEC_ID,
@@ -45,7 +54,7 @@ function makeManager(operations: OperationDefinition[] = []): TaskAgentManager {
   return new TaskAgentManager({
     db: { getDatabase: () => new BunDatabase(':memory:') },
     internalEventBus: { subscribe: () => () => {} },
-    sessionManager: { getOperationRegistry: () => createOperationRegistry(operations) },
+    sessionManager: { getOperationRegistry: () => catalogRegistry(operations) },
     taskRepo: {
       getTask: () => task,
       getTaskByNumber: () => task,
@@ -95,6 +104,16 @@ function artifactSaveOperation(): OperationDefinition {
     inputSchema: z.unknown(),
     resultSchema: z.unknown(),
     execute: async () => 'saved',
+  }) as OperationDefinition;
+}
+
+function artifactListOperation(): OperationDefinition {
+  return defineOperation({
+    name: 'artifact.list',
+    description: 'artifact.list',
+    inputSchema: z.unknown(),
+    resultSchema: z.unknown(),
+    execute: async () => [],
   }) as OperationDefinition;
 }
 
@@ -256,12 +275,14 @@ describe('TaskAgentManager — space-actions dispatcher attach', () => {
 
   test('every suggested contract action resolves through the attached worker registry', () => {
     for (const agentName of ['coder', 'reviewer']) {
-      const tam = makeManager();
+      const tam = makeManager([artifactSaveOperation(), artifactListOperation()]);
       const names = workerActionNames(tam, agentName);
       const contract = contractOf(tam, agentName, names);
-      const suggested = [...contract.matchAll(/invoke\(name="([a-z_]+)"\)/g)].map(
+      const suggested = [...contract.matchAll(/invoke\(name="([a-z_.]+)"/g)].map(
         (match) => match[1]
       );
+      expect(suggested).toContain('artifact.save');
+      expect(suggested).toContain('operations.list');
       for (const name of suggested) {
         expect(names.has(name)).toBe(true);
       }

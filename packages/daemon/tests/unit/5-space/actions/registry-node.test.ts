@@ -198,11 +198,10 @@ describe('composeRoleActionEntries — composition', () => {
     const ctx = makeCtx();
     try {
       const nodeEntries = createNodeRegistryEntries(makeConfig(ctx));
-      const composed = composeRoleActionEntries(
-        'workflow_worker',
-        makeSpaceEntries([]),
-        [...nodeEntries, makeNodeEntry()]
-      );
+      const composed = composeRoleActionEntries('workflow_worker', makeSpaceEntries([]), [
+        ...nodeEntries,
+        makeNodeEntry(),
+      ]);
       const registry = createActionRegistry(composed);
       expect(registry.get('list_workflows')?.family).toBe('space');
       expect(registry.get('sample_node_action')?.family).toBe('node');
