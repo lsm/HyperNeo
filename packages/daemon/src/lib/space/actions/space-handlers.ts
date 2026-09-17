@@ -52,7 +52,6 @@ import {
   resolveEffectiveAutonomyLevel,
 } from '../tools/tool-admission-gates.ts';
 import type { ToolResult } from '../tools/tool-result.ts';
-import { jsonResult } from '../tools/tool-result.ts';
 
 type SkippedTemplateSubscription = {
   source: string;
