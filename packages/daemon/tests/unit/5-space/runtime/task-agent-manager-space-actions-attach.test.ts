@@ -15,7 +15,6 @@ import {
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import { hasRuntimeWorkerOperations } from '../../../../src/lib/session/sub-session-identity.ts';
-import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import { McpAuditLogRepository } from '../../../../src/storage/repositories/mcp-audit-log-repository.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { MessageHub, type McpServerConfig } from '@hyperneo/shared';
