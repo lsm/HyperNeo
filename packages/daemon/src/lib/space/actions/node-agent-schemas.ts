@@ -66,26 +66,6 @@ export const ListSubscriptionsSchema = z.object({
 
 export type ListSubscriptionsInput = z.infer<typeof ListSubscriptionsSchema>;
 
-export const ListAuditEntriesSchema = z.object({
-  task_id: z.string().describe('Filter by task ID').optional(),
-  session_id: z.string().describe('Filter by session ID').optional(),
-  limit: z
-    .number()
-    .int()
-    .min(1)
-    .max(100)
-    .describe('Maximum number of entries to return (1-100, default 20)')
-    .optional(),
-  offset: z
-    .number()
-    .int()
-    .min(0)
-    .describe('Number of entries to skip for pagination (default 0)')
-    .optional(),
-});
-
-export type ListAuditEntriesInput = z.infer<typeof ListAuditEntriesSchema>;
-
 export const CreateStandaloneTaskSchema = z.object({
   title: z.string().describe('Short title for the task'),
   description: z.string().describe('Detailed description of the work to be done'),

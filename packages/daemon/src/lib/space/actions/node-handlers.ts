@@ -9,7 +9,6 @@ import type { McpAuditLogRepository } from '../../../storage/repositories/mcp-au
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository.ts';
-import { listAuditEntries } from '../../audit/list-audit-entries.ts';
 import type { ExternalEventStore } from '../../external-events/external-event-store.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
 import type { SpaceGoalService } from '../../goals/service.ts';
@@ -22,7 +21,6 @@ import { wrapHandlerWithHooks } from '../../workflows/hook-engine.ts';
 import type {
   CreateStandaloneTaskInput,
   ListArtifactsInput,
-  ListAuditEntriesInput,
   ListPeersInput,
   ListSubscriptionsInput,
   SaveArtifactInput,
@@ -323,10 +321,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 
     async list_artifacts(args: ListArtifactsInput): Promise<ToolResult> {
       return listNodeArtifacts(artifactContext, args);
-    },
-
-    async list_audit_entries(args: ListAuditEntriesInput): Promise<ToolResult> {
-      return listAuditEntries({ auditLogRepo: config.auditLogRepo, spaceId }, args);
     },
   };
 

@@ -12,7 +12,6 @@ import type { SpaceMcpSessionRole } from '../../../../src/lib/space/runtime/spac
 import type { NodeAgentToolsConfig } from '../../../../src/lib/space/actions/node-handlers.ts';
 import {
   ListArtifactsSchema,
-  ListAuditEntriesSchema,
   SaveArtifactSchema,
 } from '../../../../src/lib/space/actions/node-agent-schemas.ts';
 import {
@@ -31,13 +30,11 @@ const SPACE_ID = 'space-registry-node-test';
 const FULL_ENTRIES: ReadonlyArray<readonly [string, string]> = [
   ['save_artifact', 'mutate'],
   ['list_artifacts', 'read'],
-  ['list_audit_entries', 'read'],
 ];
 
 const NODE_SCHEMA_BY_NAME: Record<string, z.ZodType<unknown>> = {
   save_artifact: SaveArtifactSchema,
   list_artifacts: ListArtifactsSchema,
-  list_audit_entries: ListAuditEntriesSchema,
 };
 
 interface TestCtx {
@@ -204,7 +201,6 @@ describe('createNodeRegistryEntries — conditional entries', () => {
     try {
       const gated: ReadonlyArray<readonly [keyof NodeAgentToolsConfig, readonly string[]]> = [
         ['artifactRepo', ['save_artifact', 'list_artifacts']],
-        ['auditLogRepo', ['list_audit_entries']],
       ];
       for (const [dep, names] of gated) {
         const present = createNodeRegistryEntries(
