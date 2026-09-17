@@ -6,7 +6,6 @@ import type { NodeAgentToolsConfig } from './node-handlers.ts';
 import type { ActionDefinition, ActionRegistry, RegisteredAction } from './registry.ts';
 import { createActionRegistry, defineAction } from './registry.ts';
 import { composeRoleActionEntries, createNodeRegistryEntries } from './registry-node.ts';
-import { createSpaceRegistryEntries } from './registry-space.ts';
 import type { SpaceAgentToolsConfig } from './space-handlers.ts';
 
 export const SPACE_AUTHORITY_ONLY_ACTIONS = new Set(['approve_pending_completion']);
@@ -100,9 +99,6 @@ export function createSessionActionRegistry(config: SessionActionRegistryConfig)
   const spaceConfig = config.spaceConfig
     ? { ...config.spaceConfig, callerRole: config.role }
     : undefined;
-  const spaceEntries = spaceConfig
-    ? createSpaceRegistryEntries(spaceConfig, config.operationRegistry)
-    : [];
   const nodeEntries = config.nodeConfig
     ? createNodeRegistryEntries(config.nodeConfig, config.operationRegistry)
     : [];
@@ -114,7 +110,7 @@ export function createSessionActionRegistry(config: SessionActionRegistryConfig)
   let registry: ActionRegistry;
   const metaEntries = createRegistryMetaEntries(() => registry);
   registry = createActionRegistry([
-    ...composeRoleActionEntries(config.role, spaceEntries, nodeEntries)
+    ...composeRoleActionEntries(config.role, [], nodeEntries)
       .filter(isRoleAdmittedEntry)
       .filter(isNotDeniedEntry)
       .filter(isUniversalReadFiltered),
