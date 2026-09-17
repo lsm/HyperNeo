@@ -1,7 +1,4 @@
 import type { McpAuditLogRepository } from '../../storage/repositories/mcp-audit-log-repository.ts';
-import type { ListAuditEntriesInput } from '../space/actions/node-agent-schemas.ts';
-import type { ToolResult } from '../space/tools/tool-result.ts';
-import { jsonResult } from '../space/tools/tool-result.ts';
 
 interface AuditEntriesQuery {
   task_id?: string;
@@ -62,28 +59,4 @@ export function queryAuditEntriesPage(
     total,
     has_more: offset + entries.length < total,
   };
-}
-
-interface ListAuditEntriesDeps {
-  auditLogRepo?: McpAuditLogRepository;
-  spaceId: string;
-}
-
-export function listAuditEntries(
-  deps: ListAuditEntriesDeps,
-  args: ListAuditEntriesInput
-): ToolResult {
-  const { auditLogRepo, spaceId } = deps;
-  if (!auditLogRepo) {
-    return jsonResult({ success: false, error: 'Audit log repository not available.' });
-  }
-  try {
-    return jsonResult({
-      success: true,
-      ...queryAuditEntriesPage(auditLogRepo, spaceId, args),
-    });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return jsonResult({ success: false, error: message });
-  }
 }

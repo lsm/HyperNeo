@@ -1,10 +1,6 @@
 import type { OperationRegistrySource } from '../../operations/registry.ts';
 import type { SpaceMcpSessionRole } from '../runtime/space-mcp-session-policy.ts';
-import {
-  ListArtifactsSchema,
-  ListAuditEntriesSchema,
-  SaveArtifactSchema,
-} from './node-agent-schemas.ts';
+import { ListArtifactsSchema, SaveArtifactSchema } from './node-agent-schemas.ts';
 import { createNodeAgentToolHandlers, type NodeAgentToolsConfig } from './node-handlers.ts';
 import { type ActionDefinition, type ActionEntry, defineAction } from './registry.ts';
 
@@ -17,7 +13,7 @@ export function createNodeRegistryEntries(
   _operations?: OperationRegistrySource
 ): ActionDefinition[] {
   const handlers = createNodeAgentToolHandlers({ ...config, disableAuditLogWrites: true });
-  const { artifactRepo, auditLogRepo } = config;
+  const { artifactRepo } = config;
 
   return [
     ...(artifactRepo
@@ -40,20 +36,6 @@ export function createNodeRegistryEntries(
             paramsDoc: 'nodeId?, type?',
             paramsSchema: ListArtifactsSchema,
             handler: handlers.list_artifacts,
-          }),
-        ]
-      : []),
-    ...(auditLogRepo
-      ? [
-          nodeAction({
-            name: 'list_audit_entries',
-            safetyClass: 'read',
-            description:
-              'List MCP audit log entries for this space, optionally filtered by task or session.',
-            paramsDoc: 'task_id?, session_id?, limit?, offset?',
-            auditExempt: true,
-            paramsSchema: ListAuditEntriesSchema,
-            handler: handlers.list_audit_entries,
           }),
         ]
       : []),
