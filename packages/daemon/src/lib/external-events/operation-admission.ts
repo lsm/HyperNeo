@@ -16,6 +16,11 @@ export const EXTERNAL_EVENT_READ_ROLES: readonly OperationCallerRole[] = [
 
 export const NODE_EVENT_ROLES: readonly OperationCallerRole[] = ['workflow_worker'];
 
+export const AGENT_EVENT_ROLES: readonly OperationCallerRole[] = [
+  'ad_hoc_member',
+  'long_term_agent',
+];
+
 export interface EventCallerDependencies extends SpaceMcpSessionPolicyContext {
   getSession: (sessionId: string) => Session | null;
 }

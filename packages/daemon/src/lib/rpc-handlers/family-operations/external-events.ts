@@ -1,3 +1,5 @@
+import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository.ts';
+import { createAgentSubscriptionOperations } from '../../external-events/agent-subscription-operations.ts';
 import { createInactivityOperations } from '../../external-events/inactivity-operations.ts';
 import { createNodeAgentRestoreOperation } from '../../external-events/node-agent-restore-operation.ts';
 import { createExternalEventOperations } from '../../external-events/operations.ts';
@@ -11,6 +13,18 @@ export function registerExternalEventOperations(
   return [
     ...createExternalEventOperations({
       eventStore: context.deps.externalEventStore,
+      getSession: (sessionId) => context.deps.db.getSession(sessionId),
+      taskRepo: context.spaceTaskRepo,
+      nodeExecutionRepo: context.nodeExecutionRepo,
+      longHorizonAgentRepo: context.longHorizonAgentRepo,
+    }),
+    ...createAgentSubscriptionOperations({
+      subscriptionRepo: context.spaceAgentSubscriptionRepo,
+      refreshSubscription: (spaceId, subscriptionId) =>
+        context.spaceRuntimeService.refreshLongHorizonSubscription(spaceId, subscriptionId),
+      removeSubscription: (spaceId, subscriptionId) =>
+        context.spaceRuntimeService.removeLongHorizonSubscription(spaceId, subscriptionId),
+      auditLogRepo: new McpAuditLogRepository(context.deps.db.getDatabase()),
       getSession: (sessionId) => context.deps.db.getSession(sessionId),
       taskRepo: context.spaceTaskRepo,
       nodeExecutionRepo: context.nodeExecutionRepo,
