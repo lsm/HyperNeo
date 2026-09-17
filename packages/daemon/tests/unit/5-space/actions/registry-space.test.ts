@@ -8,17 +8,11 @@ import { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-man
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import {
-  CreateAgentFromTemplateSchema,
-  CreateAgentTemplateSchema,
-  DeleteAgentTemplateSchema,
   ListAgentEventSubscriptionsSchema,
-  ListAgentTemplatesSchema,
   SubscribeAgentEventSchema,
   UnsubscribeAgentEventSchema,
-  UpdateAgentTemplateSchema,
 } from '../../../../src/lib/space/actions/space-agent-schemas.ts';
 import type { SpaceAgentToolsConfig } from '../../../../src/lib/space/actions/space-handlers.ts';
-import { SESSION_WRITE_AUTONOMY_LEVEL } from '../../../../src/lib/space/tools/tool-admission-gates.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import { SpaceAgentReminderRepository } from '../../../../src/storage/repositories/space-agent-reminder-repository.ts';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
@@ -121,29 +115,19 @@ function makeCtx(overrides: Partial<SpaceAgentToolsConfig> = {}): RegistryCtx {
 }
 
 const EXPECTED_ENTRIES: ReadonlyArray<readonly [string, string, string]> = [
-  ['create_agent_from_template', 'agents', 'mutate'],
-  ['create_agent_template', 'agents', 'mutate'],
-  ['update_agent_template', 'agents', 'mutate'],
-  ['list_agent_templates', 'agents', 'read'],
-  ['delete_agent_template', 'agents', 'destructive'],
   ['subscribe_agent_event', 'agents', 'mutate'],
   ['unsubscribe_agent_event', 'agents', 'mutate'],
   ['list_agent_event_subscriptions', 'agents', 'read'],
 ];
 
 const SCHEMA_BY_NAME: Record<string, z.ZodType<unknown>> = {
-  create_agent_from_template: CreateAgentFromTemplateSchema,
-  create_agent_template: CreateAgentTemplateSchema,
-  update_agent_template: UpdateAgentTemplateSchema,
-  list_agent_templates: ListAgentTemplatesSchema,
-  delete_agent_template: DeleteAgentTemplateSchema,
   subscribe_agent_event: SubscribeAgentEventSchema,
   unsubscribe_agent_event: UnsubscribeAgentEventSchema,
   list_agent_event_subscriptions: ListAgentEventSubscriptionsSchema,
 };
 
 describe('createSpaceRegistryEntries — composition', () => {
-  test('builds the surviving agent-template and subscription entries in authored order', () => {
+  test('builds the surviving subscription entries in authored order', () => {
     const ctx = makeCtx();
     try {
       const entries = createSpaceRegistryEntries(ctx.config);
@@ -178,9 +162,11 @@ describe('createSpaceRegistryEntries — composition', () => {
     try {
       const registry = createActionRegistry(createSpaceRegistryEntries(ctx.config));
       expect(registry.entries).toHaveLength(EXPECTED_ENTRIES.length);
-      expect(registry.get('list_agent_templates')?.family).toBe('agents');
-      expect(registry.get('delete_agent_template')?.safetyClass).toBe('destructive');
       expect(registry.get('subscribe_agent_event')?.safetyClass).toBe('mutate');
+      expect(registry.get('list_agent_event_subscriptions')?.family).toBe('agents');
+      expect(registry.get('create_agent_template')).toBeUndefined();
+      expect(registry.get('list_agent_templates')).toBeUndefined();
+      expect(registry.get('delete_agent_template')).toBeUndefined();
       expect(registry.get('list_agents')).toBeUndefined();
       expect(registry.get('list_workflows')).toBeUndefined();
       expect(registry.get('approve_task')).toBeUndefined();
@@ -189,17 +175,13 @@ describe('createSpaceRegistryEntries — composition', () => {
     }
   });
 
-  test('only delete_agent_template carries clearance; the rest gate in their handlers', () => {
+  test('no entry carries clearance; the survivors gate in their handlers', () => {
     const ctx = makeCtx();
     try {
       const byName = new Map(
         createSpaceRegistryEntries(ctx.config).map((entry) => [entry.name, entry])
       );
-      expect(byName.get('delete_agent_template')?.autonomyRequirement).toBe(
-        SESSION_WRITE_AUTONOMY_LEVEL
-      );
       for (const [name] of EXPECTED_ENTRIES) {
-        if (name === 'delete_agent_template') continue;
         expect(byName.get(name)?.autonomyRequirement).toBeUndefined();
       }
     } finally {
@@ -234,12 +216,6 @@ describe('createSpaceRegistryEntries — handler wiring', () => {
       const entries = createSpaceRegistryEntries(ctx.config);
       const byName = new Map(entries.map((entry) => [entry.name, entry]));
       const cases: Array<{ name: string; params: Record<string, unknown>; success: boolean }> = [
-        {
-          name: 'create_agent_from_template',
-          params: { template_name: 'worker.research' },
-          success: true,
-        },
-        { name: 'list_agent_templates', params: {}, success: true },
         {
           name: 'subscribe_agent_event',
           params: { agent_id: seeded.id, topic_pattern: 'github/*/*/pull_request/*' },
