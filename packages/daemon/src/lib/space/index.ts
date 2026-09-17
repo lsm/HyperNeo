@@ -10,7 +10,6 @@ export type { SpaceWorkspaceRecord } from '../../storage/repositories/space-work
 export type { SpaceWorktreeRecord } from '../../storage/repositories/space-worktree-repository.ts';
 export { SpaceWorktreeRepository } from '../../storage/repositories/space-worktree-repository.ts';
 export { WorkflowHookStateRepository } from '../../storage/repositories/workflow-hook-state-repository.ts';
-export type { SpaceAgentToolsConfig } from './actions/space-handlers.ts';
 export type { SpaceActorRegistryRepositories } from '../messaging/actor-registry.ts';
 export { SPACE_SYSTEM_ACTORS, SpaceActorRegistryAdapter } from '../messaging/actor-registry.ts';
 export type { CustomAgentConfig, ResolveAgentInitConfig } from '../agents/custom-agent.ts';

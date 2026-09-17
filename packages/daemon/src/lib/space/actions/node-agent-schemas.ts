@@ -1,9 +1,5 @@
 import { z } from 'zod';
 
-export const ListPeersSchema = z.object({});
-
-export type ListPeersInput = z.infer<typeof ListPeersSchema>;
-
 export const SendMessageSchema = z.object({
   target: z
     .union([z.string(), z.array(z.string())])
@@ -20,42 +16,6 @@ export const SendMessageSchema = z.object({
 });
 
 export type SendMessageInput = z.infer<typeof SendMessageSchema>;
-
-export const SubscribeExternalEventSchema = z.object({
-  topicPattern: z
-    .string()
-    .min(1)
-    .describe(
-      'Glob pattern matching event topics (e.g. github/lsm/neokai/pull_request/*.review_*)'
-    ),
-  label: z.string().describe('Optional label for diagnostics').optional(),
-});
-
-export type SubscribeExternalEventInput = z.infer<typeof SubscribeExternalEventSchema>;
-
-export const UnsubscribeExternalEventSchema = z.object({
-  topicPattern: z.string().min(1).describe('The topic pattern to unsubscribe'),
-});
-
-export type UnsubscribeExternalEventInput = z.infer<typeof UnsubscribeExternalEventSchema>;
-
-export const ListSubscriptionsSchema = z.object({
-  workflowRunId: z
-    .string()
-    .min(1)
-    .describe(
-      'Filter to a single workflow run. Defaults to this workflow run. ' +
-        'Pass an explicit value to inspect another run in the same Space.'
-    )
-    .optional(),
-  nodeId: z
-    .string()
-    .min(1)
-    .describe('Filter to a single workflow node (matches declared/persisted/active entries).')
-    .optional(),
-});
-
-export type ListSubscriptionsInput = z.infer<typeof ListSubscriptionsSchema>;
 
 export const CreateStandaloneTaskSchema = z.object({
   title: z.string().describe('Short title for the task'),

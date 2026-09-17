@@ -935,18 +935,7 @@ describe('SpaceRuntimeService', () => {
       const [mcpArg] = (
         session.mergeRuntimeMcpServers as Mock<typeof session.mergeRuntimeMcpServers>
       ).mock.calls[0];
-      expect(session.setOperationRegistryProvider).toHaveBeenCalled();
       expect(typeof session.onMissingSpaceChatMcpServers).toBe('function');
-    });
-
-    test('space chat: installs the operations registry provider', async () => {
-      const session = makeSession();
-      const sessionManager = makeSessionManager(session);
-      const svc = new SpaceRuntimeService(buildConfigWithSession(sessionManager));
-
-      await svc.setupSpaceAgentSession(mockSpace);
-
-      expect(session.setOperationRegistryProvider).toHaveBeenCalled();
     });
 
     test('provisions the space:chat session with the 24-tool sdkToolsPreset (Task #794)', async () => {
@@ -994,7 +983,6 @@ describe('SpaceRuntimeService', () => {
       const [repairedMcpArg] = (
         session.mergeRuntimeMcpServers as Mock<typeof session.mergeRuntimeMcpServers>
       ).mock.calls[1];
-      expect(session.setOperationRegistryProvider).toHaveBeenCalled();
     });
 
     test('no-op when session does not exist in DB', async () => {
@@ -1096,7 +1084,6 @@ describe('SpaceRuntimeService', () => {
       const [mcpArg] = (
         session.mergeRuntimeMcpServers as Mock<typeof session.mergeRuntimeMcpServers>
       ).mock.calls.at(-1)!;
-      expect(session.setOperationRegistryProvider).toHaveBeenCalled();
       expect(typeof session.onMissingSpaceChatMcpServers).toBe('function');
 
       await svc.stop();
@@ -2064,7 +2051,6 @@ describe('SpaceRuntimeService', () => {
       const [mcpArg] = (
         agentSession.mergeRuntimeMcpServers as Mock<typeof agentSession.mergeRuntimeMcpServers>
       ).mock.calls.at(-1)!;
-      expect(agentSession.setOperationRegistryProvider).toHaveBeenCalled();
       expect(typeof agentSession.onMissingMemberSpaceMcpServers).toBe('function');
 
       await svc.stop();
@@ -2598,7 +2584,7 @@ describe('SpaceRuntimeService', () => {
       } as unknown as Session;
     }
 
-    test('installs the operations registry provider for an ad-hoc Space member session', async () => {
+    test('attaches the member MCP servers for an ad-hoc Space member session', async () => {
       const agent = makeMemberAgentSession();
       const sessionManager = makeSessionManager(agent);
       const svc = new SpaceRuntimeService(buildMemberConfig({ sessionManager }));
@@ -2608,12 +2594,11 @@ describe('SpaceRuntimeService', () => {
       const mergeMock = agent.mergeRuntimeMcpServers as Mock<typeof agent.mergeRuntimeMcpServers>;
       expect(mergeMock).toHaveBeenCalledTimes(1);
       const [additional] = mergeMock.mock.calls[0];
-      expect(agent.setOperationRegistryProvider).toHaveBeenCalled();
       expect(additional).not.toHaveProperty('db-query');
       expect(agent.setRuntimeSystemPrompt).not.toHaveBeenCalled();
     });
 
-    test('long-term agent session: installs the operations registry provider', async () => {
+    test('long-term agent session: attaches its member MCP servers', async () => {
       const agent = makeMemberAgentSession({
         id: longTermAgentSessionId(mockSpace.id, 'agent-1'),
         metadata: {
@@ -2636,8 +2621,7 @@ describe('SpaceRuntimeService', () => {
         }
       ).attachLongTermAgentMcpServersForSession(agent.getSessionData());
 
-      const serverNames = Object.keys(agent.getSessionData().config.mcpServers ?? {});
-      expect(agent.setOperationRegistryProvider).toHaveBeenCalled();
+      expect(agent.mergeRuntimeMcpServers).toHaveBeenCalled();
     });
 
     test('long-term agent session registry exposes the externalEvent.agent.* operations', async () => {
@@ -2674,14 +2658,6 @@ describe('SpaceRuntimeService', () => {
           getOperationRegistry: Mock<() => OperationRegistry>;
         }
       ).getOperationRegistry = mock(() => createOperationRegistry(agentOperations));
-      let provider: (() => OperationRegistry) | undefined;
-      (
-        agent as unknown as {
-          setOperationRegistryProvider: Mock<(p: () => OperationRegistry) => void>;
-        }
-      ).setOperationRegistryProvider = mock((p) => {
-        provider = p;
-      });
       const svc = new SpaceRuntimeService(
         buildMemberConfig({ sessionManager, longHorizonAgentRepo: makeActiveLhAgentRepo() })
       );
@@ -2692,7 +2668,7 @@ describe('SpaceRuntimeService', () => {
         }
       ).attachLongTermAgentMcpServersForSession(agent.getSessionData());
 
-      const registry = provider!();
+      const registry = sessionManager.getOperationRegistry();
       const caller: OperationCaller = {
         source: 'mcp',
         sessionId: agent.getSessionData().id,
@@ -2742,7 +2718,6 @@ describe('SpaceRuntimeService', () => {
       ).attachLongTermAgentMcpServersForSession(agent.getSessionData());
 
       expect(agent.mergeRuntimeMcpServers).not.toHaveBeenCalled();
-      const serverNames = Object.keys(agent.getSessionData().config.mcpServers ?? {});
       expect(agent.setOperationRegistryProvider).not.toHaveBeenCalled();
     });
 
@@ -2784,7 +2759,6 @@ describe('SpaceRuntimeService', () => {
         const mergeMock = agent.mergeRuntimeMcpServers as Mock<typeof agent.mergeRuntimeMcpServers>;
         expect(mergeMock).toHaveBeenCalledTimes(1);
         const [additional] = mergeMock.mock.calls[0];
-        expect(agent.setOperationRegistryProvider).toHaveBeenCalled();
         expect(additional).toHaveProperty('db-query');
 
         await svc.stop();
@@ -2836,12 +2810,8 @@ describe('SpaceRuntimeService', () => {
         );
       }
 
-      function registryOf(agent: AgentSession): OperationRegistry {
-        const provider = (
-          agent.setOperationRegistryProvider as Mock<(provider: () => OperationRegistry) => void>
-        ).mock.calls.at(-1)?.[0];
-        if (!provider) throw new Error('no operation registry provider installed');
-        return provider();
+      function registryOf(sessionManager: SessionManager): OperationRegistry {
+        return sessionManager.getOperationRegistry();
       }
 
       const memberCaller: OperationCaller = {
@@ -2863,7 +2833,7 @@ describe('SpaceRuntimeService', () => {
 
         await svc.attachSpaceToolsToMemberSession(makeMemberSession());
 
-        const registry = registryOf(agent);
+        const registry = registryOf(sessionManager);
         for (const name of TEMPLATE_OP_NAMES) {
           expect(registry.get(name)).toBeDefined();
           const outcome = await invokeOperation(registry, name, {}, memberCaller);
@@ -2883,7 +2853,7 @@ describe('SpaceRuntimeService', () => {
 
         await svc.attachSpaceToolsToMemberSession(makeMemberSession());
 
-        const registry = registryOf(agent);
+        const registry = registryOf(sessionManager);
         const outcome = await invokeOperation(
           registry,
           'agentTemplate.list',
@@ -2986,7 +2956,6 @@ describe('SpaceRuntimeService', () => {
 
       const mergeMock = agent.mergeRuntimeMcpServers as Mock<typeof agent.mergeRuntimeMcpServers>;
       expect(mergeMock).toHaveBeenCalledTimes(3);
-      expect(agent.setOperationRegistryProvider).toHaveBeenCalled();
 
       await svc.stop();
     });
@@ -3090,7 +3059,6 @@ describe('SpaceRuntimeService', () => {
         includeSpaceSessions: true,
       });
       expect(agent.mergeRuntimeMcpServers).toHaveBeenCalledTimes(1);
-      expect(agent.setOperationRegistryProvider).toHaveBeenCalled();
 
       await svc.stop();
     });
@@ -3129,9 +3097,6 @@ describe('SpaceRuntimeService', () => {
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
       expect(agent.mergeRuntimeMcpServers).toHaveBeenCalledTimes(1);
-      const [mcpArg] = (agent.mergeRuntimeMcpServers as Mock<typeof agent.mergeRuntimeMcpServers>)
-        .mock.calls[0];
-      expect(agent.setOperationRegistryProvider).toHaveBeenCalled();
 
       await svc.stop();
     });
@@ -3249,7 +3214,6 @@ describe('SpaceRuntimeService', () => {
       expect(longHorizonAgentRepo.getById).toHaveBeenCalledWith('agent-lh');
       const mergeMock = agent.mergeRuntimeMcpServers as Mock<typeof agent.mergeRuntimeMcpServers>;
       expect(mergeMock).toHaveBeenCalledTimes(1);
-      expect(agent.setOperationRegistryProvider).toHaveBeenCalled();
     });
 
     test('long-term agent deleted sessions release db-query runtime server handles', async () => {
@@ -3366,8 +3330,6 @@ describe('SpaceRuntimeService', () => {
 
       const mergeMock = agent.mergeRuntimeMcpServers as Mock<typeof agent.mergeRuntimeMcpServers>;
       expect(mergeMock).toHaveBeenCalledTimes(1);
-      const [additional] = mergeMock.mock.calls[0];
-      expect(agent.setOperationRegistryProvider).toHaveBeenCalled();
 
       await svc.stop();
     });

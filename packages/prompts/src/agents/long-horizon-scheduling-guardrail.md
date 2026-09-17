@@ -10,4 +10,4 @@ You have two scheduling surfaces and two task systems. Pick by horizon and durab
 
 Distinguish the two task systems:
 - **Local `Task*`** (`TaskCreate`/`TaskGet`/`TaskUpdate`/`TaskList`) = within-turn planning scratchpad; not durable, not visible to other agents.
-- **MCP SpaceTasks** (`create_standalone_task`) = durable, dispatched work that other agents execute and that survives restarts.
+- **Space tasks** (`invoke(name="task.create")` on the `operations` MCP server) = durable, dispatched work that other agents execute and that survives restarts.
