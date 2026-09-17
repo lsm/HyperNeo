@@ -31,7 +31,7 @@ export const REVIEWER_HOT_ACTIONS: readonly string[] = [
   'list_tasks',
   'list_workflows',
   'send_message_to_task',
-  'list_artifacts',
+  'artifact.list',
 ];
 
 export const QA_HOT_ACTIONS: readonly string[] = [

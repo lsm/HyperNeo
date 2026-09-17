@@ -12,6 +12,7 @@ import {
   type OperationDefinition,
   type OperationRegistry,
 } from '../../../../src/lib/operations/registry.ts';
+import { createDiscoveryOperations } from '../../../../src/lib/operations/discovery.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import { hasRuntimeWorkerOperations } from '../../../../src/lib/session/sub-session-identity.ts';
@@ -31,6 +32,14 @@ const TASK_ID = 'task-actions-attach';
 const EXEC_ID = 'exec-actions-attach';
 const SUB_SESSION_ID = `space:${SPACE_ID}:task:${TASK_ID}:exec:${EXEC_ID}`;
 
+function catalogRegistry(operations: OperationDefinition[]): OperationRegistry {
+  const registry = createOperationRegistry([
+    ...operations,
+    ...createDiscoveryOperations(() => registry),
+  ]);
+  return registry;
+}
+
 function makeManager(operations: OperationDefinition[] = []): TaskAgentManager {
   const execution = {
     id: EXEC_ID,
@@ -45,7 +54,7 @@ function makeManager(operations: OperationDefinition[] = []): TaskAgentManager {
   return new TaskAgentManager({
     db: { getDatabase: () => new BunDatabase(':memory:') },
     internalEventBus: { subscribe: () => () => {} },
-    sessionManager: { getOperationRegistry: () => createOperationRegistry(operations) },
+    sessionManager: { getOperationRegistry: () => catalogRegistry(operations) },
     taskRepo: {
       getTask: () => task,
       getTaskByNumber: () => task,
@@ -85,6 +94,26 @@ function sendMessageOperation(): OperationDefinition {
     inputSchema: z.unknown(),
     resultSchema: z.unknown(),
     execute: async () => 'sent',
+  }) as OperationDefinition;
+}
+
+function artifactSaveOperation(): OperationDefinition {
+  return defineOperation({
+    name: 'artifact.save',
+    description: 'artifact.save',
+    inputSchema: z.unknown(),
+    resultSchema: z.unknown(),
+    execute: async () => 'saved',
+  }) as OperationDefinition;
+}
+
+function artifactListOperation(): OperationDefinition {
+  return defineOperation({
+    name: 'artifact.list',
+    description: 'artifact.list',
+    inputSchema: z.unknown(),
+    resultSchema: z.unknown(),
+    execute: async () => [],
   }) as OperationDefinition;
 }
 
@@ -237,7 +266,7 @@ describe('TaskAgentManager — space-actions dispatcher attach', () => {
       'invoke({ name, input? }) on the operations server — one door for every operation available to the Coder role'
     );
     expect(contract).toContain('invoke(name="operations.list")');
-    expect(contract).toContain('invoke(name="save_artifact"');
+    expect(contract).toContain('invoke(name="artifact.save"');
     expect(contract).not.toContain('invoke(name="update_task")');
     expect(contract).not.toContain('invoke(name="create_standalone_task")');
     expect(contract).not.toContain('send_message({ target, message, data? })');
@@ -246,27 +275,30 @@ describe('TaskAgentManager — space-actions dispatcher attach', () => {
 
   test('every suggested contract action resolves through the attached worker registry', () => {
     for (const agentName of ['coder', 'reviewer']) {
-      const tam = makeManager();
+      const tam = makeManager([artifactSaveOperation(), artifactListOperation()]);
       const names = workerActionNames(tam, agentName);
       const contract = contractOf(tam, agentName, names);
-      const suggested = [...contract.matchAll(/invoke\(name="([a-z_]+)"\)/g)].map(
+      const suggested = [...contract.matchAll(/invoke\(name="([a-z_.]+)"/g)].map(
         (match) => match[1]
       );
+      expect(suggested).toContain('artifact.save');
+      expect(suggested).toContain('operations.list');
       for (const name of suggested) {
         expect(names.has(name)).toBe(true);
       }
     }
     const reviewerNames = workerActionNames(makeManager(), 'reviewer');
     const reviewerContract = contractOf(makeManager(), 'reviewer', reviewerNames);
-    expect(reviewerContract).toContain('invoke(name="save_artifact"');
+    expect(reviewerContract).toContain('invoke(name="artifact.save"');
   });
 
   test('worker action names carry operations the action registry no longer defines', () => {
-    const tam = makeManager([sendMessageOperation()]);
+    const tam = makeManager([sendMessageOperation(), artifactSaveOperation()]);
     const names = workerActionNames(tam);
     const actions = tam.workerActionRegistryFor(SUB_SESSION_ID);
     expect(actions?.entries.some((entry) => entry.name === 'send_message')).toBe(false);
     expect(names.has('send_message')).toBe(true);
+    expect(names.has('artifact.save')).toBe(true);
   });
 
   test('the contract still suggests send_message once it is only an operation', () => {

@@ -1,6 +1,6 @@
+import { SaveArtifactSchema } from '../artifacts/node-artifacts.ts';
 import {
   CreateStandaloneTaskSchema,
-  SaveArtifactSchema,
   SendMessageSchema,
 } from '../space/actions/node-agent-schemas.ts';
 import {

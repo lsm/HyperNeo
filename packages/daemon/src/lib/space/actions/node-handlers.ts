@@ -1,11 +1,5 @@
 import type { SpaceWorkflow } from '@hyperneo/shared';
 import { resolveNodeAgents } from '@hyperneo/shared';
-import {
-  listNodeArtifacts,
-  type NodeArtifactContext,
-  saveNodeArtifact,
-} from '../../artifacts/node-artifacts.ts';
-import type { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository.ts';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository.ts';
@@ -20,10 +14,8 @@ import type { WorkflowHookEngine } from '../../workflows/hook-engine.ts';
 import { wrapHandlerWithHooks } from '../../workflows/hook-engine.ts';
 import type {
   CreateStandaloneTaskInput,
-  ListArtifactsInput,
   ListPeersInput,
   ListSubscriptionsInput,
-  SaveArtifactInput,
   SendMessageInput,
   UnsubscribeExternalEventInput,
 } from './node-agent-schemas.ts';
@@ -60,8 +52,6 @@ export interface NodeAgentToolsConfig {
   replyRoutingLookup?: (agentName?: string | null) => string | null;
   artifactRepo?: WorkflowRunArtifactRepository;
   taskRepo?: SpaceTaskRepository;
-  auditLogRepo?: McpAuditLogRepository;
-  disableAuditLogWrites?: boolean;
   externalEventStore?: ExternalEventStore;
   onRestoreNodeAgent?: (args: { reason?: string }) => Promise<void> | void;
   hookEngine?: WorkflowHookEngine;
@@ -80,26 +70,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
     workflow,
   } = config;
 
-  function logAudit(
-    toolName: string,
-    paramsSummary: Record<string, unknown>,
-    taskId?: string
-  ): void {
-    if (config.auditLogRepo && !config.disableAuditLogWrites) {
-      try {
-        config.auditLogRepo.createEntry({
-          agentName: myAgentName,
-          sessionId: mySessionId,
-          toolName,
-          paramsSummary: JSON.stringify(paramsSummary),
-          spaceId,
-          taskId: taskId ?? config.taskId,
-          workflowRunId,
-        });
-      } catch {}
-    }
-  }
-
   const nodeMessagingContext: NodeMessagingContext = {
     sessionId: mySessionId,
     agentName: myAgentName,
@@ -115,13 +85,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
       replyRoutingLookup: config.replyRoutingLookup,
       hookEngine: config.hookEngine,
     },
-  };
-
-  const artifactContext: NodeArtifactContext = {
-    artifactRepo: config.artifactRepo,
-    workflowRunId,
-    workflowNodeId,
-    logAudit,
   };
 
   const handlers = {
@@ -314,14 +277,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
     async send_message(args: SendMessageInput): Promise<ToolResult> {
       return deliverNodeAgentMessage(nodeMessagingContext, nodeExecutionRepo)(args);
     },
-
-    async save_artifact(args: SaveArtifactInput): Promise<ToolResult> {
-      return saveNodeArtifact(artifactContext, args);
-    },
-
-    async list_artifacts(args: ListArtifactsInput): Promise<ToolResult> {
-      return listNodeArtifacts(artifactContext, args);
-    },
   };
 
   if (config.hookEngine) {
@@ -344,7 +299,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
     config.hookEngine.scheduleQueuedRetryableActions(handlerMap, meta);
 
     handlers.send_message = wrap('send_message', handlers.send_message);
-    handlers.save_artifact = wrap('save_artifact', handlers.save_artifact);
   }
 
   return handlers;

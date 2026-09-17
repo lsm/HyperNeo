@@ -1,45 +1,13 @@
 import type { OperationRegistrySource } from '../../operations/registry.ts';
 import type { SpaceMcpSessionRole } from '../runtime/space-mcp-session-policy.ts';
-import { ListArtifactsSchema, SaveArtifactSchema } from './node-agent-schemas.ts';
-import { createNodeAgentToolHandlers, type NodeAgentToolsConfig } from './node-handlers.ts';
-import { type ActionDefinition, type ActionEntry, defineAction } from './registry.ts';
-
-function nodeAction<P>(entry: Omit<ActionEntry<P>, 'family'>): ActionDefinition {
-  return defineAction({ ...entry, family: 'node' });
-}
+import type { NodeAgentToolsConfig } from './node-handlers.ts';
+import type { ActionDefinition } from './registry.ts';
 
 export function createNodeRegistryEntries(
-  config: NodeAgentToolsConfig,
+  _config: NodeAgentToolsConfig,
   _operations?: OperationRegistrySource
 ): ActionDefinition[] {
-  const handlers = createNodeAgentToolHandlers({ ...config, disableAuditLogWrites: true });
-  const { artifactRepo } = config;
-
-  return [
-    ...(artifactRepo
-      ? [
-          nodeAction({
-            name: 'save_artifact',
-            safetyClass: 'mutate',
-            description:
-              'Persist a structured fact to the run artifact store as one of link/commit_set/check/metric/decision/note.',
-            paramsDoc: 'shape, kind?, key?, summary?, data?',
-            auditRedactKeys: ['data'],
-            paramsSchema: SaveArtifactSchema,
-            handler: handlers.save_artifact,
-          }),
-          nodeAction({
-            name: 'list_artifacts',
-            safetyClass: 'read',
-            description:
-              'List artifacts for the current run, optionally filtered by nodeId or shape.',
-            paramsDoc: 'nodeId?, type?',
-            paramsSchema: ListArtifactsSchema,
-            handler: handlers.list_artifacts,
-          }),
-        ]
-      : []),
-  ];
+  return [];
 }
 
 const WORKER_SPACE_ACTION_ALLOWLIST = new Set([

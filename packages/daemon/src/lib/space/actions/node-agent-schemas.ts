@@ -1,14 +1,5 @@
 import { z } from 'zod';
 
-export {
-  ListArtifactsSchema,
-  type ListArtifactsInput,
-} from '../../artifacts/node-artifacts.ts';
-export {
-  SaveArtifactSchema,
-  type SaveArtifactInput,
-} from '../../artifacts/node-artifacts.ts';
-
 export const ListPeersSchema = z.object({});
 
 export type ListPeersInput = z.infer<typeof ListPeersSchema>;
