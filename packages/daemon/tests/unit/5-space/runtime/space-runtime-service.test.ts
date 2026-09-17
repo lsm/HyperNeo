@@ -43,7 +43,8 @@ import { SpaceManager as SpaceMgr } from '../../../../src/lib/space/managers/spa
 import type { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager.ts';
 import { SpaceWorkflowManager as WorkflowMgr } from '../../../../src/lib/workflows/workflow-manager.ts';
 import type { SpaceRuntimeServiceConfig } from '../../../../src/lib/space/runtime/space-runtime-service.ts';
-import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
+import { createAgentSubscriptionOperations } from '../../../../src/lib/external-events/agent-subscription-operations.ts';
+import { isOperationAdmitted } from '../../../../src/lib/operations/invoke.ts';
 import { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-runtime-service.ts';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import { DirectTaskExecutionRepository } from '../../../../src/storage/repositories/direct-task-execution-repository';
@@ -60,6 +61,7 @@ import type { SpaceWorkflowRunRepository } from '../../../../src/storage/reposit
 import { SpaceWorkflowRunRepository as SpaceWorkflowRunRepo } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
 import { z } from 'zod';
 import {
+  createOperationRegistry,
   defineOperation,
   type OperationCaller,
   type OperationDefinition,
@@ -2636,6 +2638,77 @@ describe('SpaceRuntimeService', () => {
 
       const serverNames = Object.keys(agent.getSessionData().config.mcpServers ?? {});
       expect(agent.setOperationRegistryProvider).toHaveBeenCalled();
+    });
+
+    test('long-term agent session registry exposes the externalEvent.agent.* operations', async () => {
+      const agentOperations = createAgentSubscriptionOperations({
+        subscriptionRepo: {
+          upsertSubscription: mock(() => {
+            throw new Error('not used');
+          }),
+          getSubscriptionByRoute: mock(() => null),
+          deleteSubscriptionByRoute: mock(() => {}),
+          listSubscriptions: mock(() => []),
+        },
+        refreshSubscription: mock(() => ({ success: true })),
+        removeSubscription: mock(() => {}),
+        getSession: mock(() => null),
+        taskRepo: {} as SpaceTaskRepository,
+        nodeExecutionRepo: makeNoopNodeExecutionRepo(),
+        longHorizonAgentRepo: makeActiveLhAgentRepo()!,
+      });
+      const agent = makeMemberAgentSession({
+        id: longTermAgentSessionId(mockSpace.id, 'agent-1'),
+        metadata: {
+          promptProvenance: {
+            source: 'test',
+            hash: 'hash',
+            agentId: 'agent-1',
+            agentName: 'Long Term',
+          },
+        } as Session['metadata'],
+      });
+      const sessionManager = makeSessionManager(agent);
+      (
+        sessionManager as unknown as {
+          getOperationRegistry: Mock<() => OperationRegistry>;
+        }
+      ).getOperationRegistry = mock(() => createOperationRegistry(agentOperations));
+      let provider: (() => OperationRegistry) | undefined;
+      (
+        agent as unknown as {
+          setOperationRegistryProvider: Mock<(p: () => OperationRegistry) => void>;
+        }
+      ).setOperationRegistryProvider = mock((p) => {
+        provider = p;
+      });
+      const svc = new SpaceRuntimeService(
+        buildMemberConfig({ sessionManager, longHorizonAgentRepo: makeActiveLhAgentRepo() })
+      );
+
+      await (
+        svc as unknown as {
+          attachLongTermAgentMcpServersForSession(session: Session): Promise<void>;
+        }
+      ).attachLongTermAgentMcpServersForSession(agent.getSessionData());
+
+      const registry = provider!();
+      const caller: OperationCaller = {
+        source: 'mcp',
+        sessionId: agent.getSessionData().id,
+        spaceId: mockSpace.id,
+        role: 'long_term_agent',
+        agentName: 'Long Term',
+      };
+      for (const name of [
+        'externalEvent.agent.subscribe',
+        'externalEvent.agent.unsubscribe',
+        'externalEvent.agent.listSubscriptions',
+      ]) {
+        const operation = registry.get(name);
+        expect(operation, `expected ${name} in the long-term agent session registry`).toBeDefined();
+        expect(isOperationAdmitted(operation!, caller)).toBe(true);
+      }
     });
 
     test('long-term agent session: withholds Space tools when the backing agent is paused', async () => {
