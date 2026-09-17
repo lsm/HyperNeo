@@ -58,6 +58,14 @@ import { SpaceTaskRepository as SpaceTaskRepo } from '../../../../src/storage/re
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import type { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
 import { SpaceWorkflowRunRepository as SpaceWorkflowRunRepo } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
+import { z } from 'zod';
+import {
+  defineOperation,
+  type OperationCaller,
+  type OperationDefinition,
+  type OperationRegistry,
+} from '../../../../src/lib/operations/registry.ts';
+import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { createTestInternalEventBus } from '../../../helpers/database.ts';
@@ -2722,6 +2730,98 @@ describe('SpaceRuntimeService', () => {
       );
 
       expect(agent.mergeRuntimeMcpServers).not.toHaveBeenCalled();
+    });
+
+    describe('agentTemplate operations reach the member session registry', () => {
+      const TEMPLATE_OP_NAMES = [
+        'agentTemplate.create',
+        'agentTemplate.update',
+        'agentTemplate.delete',
+        'agentTemplate.list',
+        'agent.createFromTemplate',
+      ];
+
+      function templateOps(): OperationDefinition[] {
+        const roles = ['ad_hoc_member', 'long_term_agent'] as const;
+        return TEMPLATE_OP_NAMES.map((name) =>
+          defineOperation({
+            name,
+            description: name,
+            inputSchema: z.object({}).passthrough(),
+            resultSchema: z.unknown(),
+            policy: {
+              safetyClass:
+                name === 'agentTemplate.list'
+                  ? 'read'
+                  : name === 'agentTemplate.delete'
+                    ? 'destructive'
+                    : 'mutate',
+              roles,
+            },
+            execute: async () => `ran ${name}`,
+          })
+        );
+      }
+
+      function registryOf(agent: AgentSession): OperationRegistry {
+        const provider = (
+          agent.setOperationRegistryProvider as Mock<(provider: () => OperationRegistry) => void>
+        ).mock.calls.at(-1)?.[0];
+        if (!provider) throw new Error('no operation registry provider installed');
+        return provider();
+      }
+
+      const memberCaller: OperationCaller = {
+        source: 'mcp',
+        sessionId: 'worker-session-1',
+        spaceId: mockSpace.id,
+        role: 'ad_hoc_member',
+      };
+
+      test('each of the five template operations is invocable by a member caller', async () => {
+        const agent = makeMemberAgentSession();
+        const sessionManager = {
+          getSessionAsync: mock(async () => agent),
+          getSession: mock(() => agent),
+          getOperationRegistry: mock(() => createOperationRegistry(templateOps())),
+          listSessions: mock(() => [] as Session[]),
+        } as unknown as SessionManager;
+        const svc = new SpaceRuntimeService(buildMemberConfig({ sessionManager }));
+
+        await svc.attachSpaceToolsToMemberSession(makeMemberSession());
+
+        const registry = registryOf(agent);
+        for (const name of TEMPLATE_OP_NAMES) {
+          expect(registry.get(name)).toBeDefined();
+          const outcome = await invokeOperation(registry, name, {}, memberCaller);
+          expect(outcome.kind).toBe('completed');
+        }
+      });
+
+      test('a workflow worker caller is refused the template operations', async () => {
+        const agent = makeMemberAgentSession();
+        const sessionManager = {
+          getSessionAsync: mock(async () => agent),
+          getSession: mock(() => agent),
+          getOperationRegistry: mock(() => createOperationRegistry(templateOps())),
+          listSessions: mock(() => [] as Session[]),
+        } as unknown as SessionManager;
+        const svc = new SpaceRuntimeService(buildMemberConfig({ sessionManager }));
+
+        await svc.attachSpaceToolsToMemberSession(makeMemberSession());
+
+        const registry = registryOf(agent);
+        const outcome = await invokeOperation(
+          registry,
+          'agentTemplate.list',
+          {},
+          {
+            ...memberCaller,
+            role: 'workflow_worker',
+          }
+        );
+        expect(outcome.kind).toBe('failed');
+      });
     });
 
     test('skips space_chat sessions (handled by setupSpaceAgentSession)', async () => {

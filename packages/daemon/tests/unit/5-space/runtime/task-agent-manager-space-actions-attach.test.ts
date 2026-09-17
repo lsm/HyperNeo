@@ -7,9 +7,11 @@ import { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
 import {
   createOperationRegistry,
   defineOperation,
+  type OperationCaller,
   type OperationDefinition,
   type OperationRegistry,
 } from '../../../../src/lib/operations/registry.ts';
+import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import { hasRuntimeWorkerOperations } from '../../../../src/lib/session/sub-session-identity.ts';
 import { MessageHub, type McpServerConfig } from '@hyperneo/shared';
@@ -343,6 +345,45 @@ describe('TaskAgentManager — worker operations attach (#4600)', () => {
     expect(fake.state.calls).toEqual(['handleInterrupt', 'cleanup']);
     expect(tam.workerActionRegistryFor(SUB_SESSION_ID)).toBeUndefined();
     expect(tam.workerActionNamesFor(SUB_SESSION_ID)).toBeUndefined();
+  });
+
+  test('attachWorkerOperations installs the global template operations on the worker session', async () => {
+    const TEMPLATE_OPS = [
+      'agentTemplate.create',
+      'agentTemplate.update',
+      'agentTemplate.delete',
+      'agentTemplate.list',
+      'agent.createFromTemplate',
+    ];
+    const ops = TEMPLATE_OPS.map((name) =>
+      defineOperation({
+        name,
+        description: name,
+        inputSchema: z.object({}).passthrough(),
+        resultSchema: z.unknown(),
+        policy: { safetyClass: 'mutate', roles: ['ad_hoc_member', 'long_term_agent'] },
+        execute: async () => `ran ${name}`,
+      })
+    );
+    const tam = makeManager(ops);
+    buildServers(tam);
+    const fake = makeFakeSession();
+
+    tam.attachWorkerOperations(fake.agentSession);
+
+    const registry = fake.state.providers.at(-1)!();
+    const workerCaller: OperationCaller = {
+      source: 'mcp',
+      sessionId: SUB_SESSION_ID,
+      spaceId: SPACE_ID,
+      role: 'workflow_worker',
+    };
+    for (const name of TEMPLATE_OPS) {
+      expect(registry.get(name)).toBeDefined();
+      const outcome = await invokeOperation(registry, name, {}, workerCaller);
+      expect(outcome.kind).toBe('failed');
+      expect(outcome.code).toBe('forbidden');
+    }
   });
 
   test('registerSession keeps a session-scoped provider installed ahead of it', async () => {
