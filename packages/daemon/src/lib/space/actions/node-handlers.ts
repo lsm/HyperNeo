@@ -1,6 +1,5 @@
 import type { SpaceWorkflow } from '@hyperneo/shared';
 import { resolveNodeAgents } from '@hyperneo/shared';
-import type { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository.ts';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository.ts';
@@ -53,7 +52,6 @@ export interface NodeAgentToolsConfig {
   replyRoutingLookup?: (agentName?: string | null) => string | null;
   artifactRepo?: WorkflowRunArtifactRepository;
   taskRepo?: SpaceTaskRepository;
-  auditLogRepo?: McpAuditLogRepository;
   externalEventStore?: ExternalEventStore;
   onRestoreNodeAgent?: (args: { reason?: string }) => Promise<void> | void;
   hookEngine?: WorkflowHookEngine;

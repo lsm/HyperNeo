@@ -5302,7 +5302,6 @@ export class TaskAgentManager {
       onListSubscriptions,
       artifactRepo: this.config.artifactRepo,
       taskRepo: this.config.taskRepo,
-      auditLogRepo: this.auditLogRepo,
       externalEventStore: this.config.externalEventStore,
       onRestoreNodeAgent,
       replyRoutingLookup: (fromAgentName) => {

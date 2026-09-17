@@ -4,7 +4,6 @@ import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository.ts';
-import { McpAuditLogRepository } from '../../../../src/storage/repositories/mcp-audit-log-repository.ts';
 import { AgentMessageRouter } from '../../../../src/lib/messaging/agent-message-router.ts';
 import { ChannelResolver } from '../../../../src/lib/messaging/channel-resolver.ts';
 import type { WorkflowHookEngine } from '../../../../src/lib/workflows/hook-engine.ts';
@@ -59,7 +58,6 @@ function makeConfig(
     workflow: null,
     artifactRepo: new WorkflowRunArtifactRepository(ctx.db),
     taskRepo: new SpaceTaskRepository(ctx.db),
-    auditLogRepo: new McpAuditLogRepository(ctx.db),
     ...overrides,
   };
 }
@@ -72,7 +70,6 @@ function makeBareConfig(
   return {
     ...config,
     artifactRepo: undefined,
-    auditLogRepo: undefined,
     ...overrides,
   };
 }
