@@ -88,6 +88,16 @@ function sendMessageOperation(): OperationDefinition {
   }) as OperationDefinition;
 }
 
+function artifactSaveOperation(): OperationDefinition {
+  return defineOperation({
+    name: 'artifact.save',
+    description: 'artifact.save',
+    inputSchema: z.unknown(),
+    resultSchema: z.unknown(),
+    execute: async () => 'saved',
+  }) as OperationDefinition;
+}
+
 function buildServers(tam: TaskAgentManager, agentName = 'coder'): Record<string, McpServerConfig> {
   return tam.buildNodeAgentMcpServersForSession(
     TASK_ID,
@@ -237,7 +247,7 @@ describe('TaskAgentManager — space-actions dispatcher attach', () => {
       'invoke({ name, input? }) on the operations server — one door for every operation available to the Coder role'
     );
     expect(contract).toContain('invoke(name="operations.list")');
-    expect(contract).toContain('invoke(name="save_artifact"');
+    expect(contract).toContain('invoke(name="artifact.save"');
     expect(contract).not.toContain('invoke(name="update_task")');
     expect(contract).not.toContain('invoke(name="create_standalone_task")');
     expect(contract).not.toContain('send_message({ target, message, data? })');
@@ -258,15 +268,16 @@ describe('TaskAgentManager — space-actions dispatcher attach', () => {
     }
     const reviewerNames = workerActionNames(makeManager(), 'reviewer');
     const reviewerContract = contractOf(makeManager(), 'reviewer', reviewerNames);
-    expect(reviewerContract).toContain('invoke(name="save_artifact"');
+    expect(reviewerContract).toContain('invoke(name="artifact.save"');
   });
 
   test('worker action names carry operations the action registry no longer defines', () => {
-    const tam = makeManager([sendMessageOperation()]);
+    const tam = makeManager([sendMessageOperation(), artifactSaveOperation()]);
     const names = workerActionNames(tam);
     const actions = tam.workerActionRegistryFor(SUB_SESSION_ID);
     expect(actions?.entries.some((entry) => entry.name === 'send_message')).toBe(false);
     expect(names.has('send_message')).toBe(true);
+    expect(names.has('artifact.save')).toBe(true);
   });
 
   test('the contract still suggests send_message once it is only an operation', () => {

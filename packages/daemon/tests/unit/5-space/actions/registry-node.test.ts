@@ -11,10 +11,6 @@ import type { WorkflowHookEngine } from '../../../../src/lib/workflows/hook-engi
 import type { SpaceMcpSessionRole } from '../../../../src/lib/space/runtime/space-mcp-session-policy.ts';
 import type { NodeAgentToolsConfig } from '../../../../src/lib/space/actions/node-handlers.ts';
 import {
-  ListArtifactsSchema,
-  SaveArtifactSchema,
-} from '../../../../src/lib/space/actions/node-agent-schemas.ts';
-import {
   createActionRegistry,
   defineAction,
   type ActionDefinition,
@@ -26,16 +22,6 @@ import {
 import { z } from 'zod';
 
 const SPACE_ID = 'space-registry-node-test';
-
-const FULL_ENTRIES: ReadonlyArray<readonly [string, string]> = [
-  ['save_artifact', 'mutate'],
-  ['list_artifacts', 'read'],
-];
-
-const NODE_SCHEMA_BY_NAME: Record<string, z.ZodType<unknown>> = {
-  save_artifact: SaveArtifactSchema,
-  list_artifacts: ListArtifactsSchema,
-};
 
 interface TestCtx {
   db: BunDatabase;
@@ -143,71 +129,32 @@ function makeSpaceEntries(spaceApproveCalls: string[]): ActionDefinition[] {
   ];
 }
 
-describe('createNodeRegistryEntries — composition', () => {
-  test('builds the surviving node-family entries in authored order with authored safety classes', () => {
+function makeNodeEntry(): ActionDefinition {
+  return defineAction({
+    name: 'sample_node_action',
+    family: 'node',
+    safetyClass: 'mutate',
+    description: 'node entry',
+    paramsDoc: 'none',
+    paramsSchema: z.object({}),
+    handler: async () => null,
+  });
+}
+
+describe('createNodeRegistryEntries — empty node family', () => {
+  test('a fully-populated config advertises no node entries', () => {
     const ctx = makeCtx();
     try {
-      const entries = createNodeRegistryEntries(makeConfig(ctx));
-      expect(entries.map((entry) => [entry.name, entry.safetyClass])).toEqual(FULL_ENTRIES);
-      for (const entry of entries) {
-        expect(entry.family).toBe('node');
-        expect(entry.description.length).toBeGreaterThan(0);
-        expect(entry.paramsDoc.length).toBeGreaterThan(0);
-      }
+      expect(createNodeRegistryEntries(makeConfig(ctx))).toEqual([]);
     } finally {
       ctx.db.close();
     }
   });
 
-  test('shares the schema objects with the typed servers — one parse path', () => {
-    const ctx = makeCtx();
-    try {
-      const entries = createNodeRegistryEntries(makeConfig(ctx));
-      expect(entries).toHaveLength(FULL_ENTRIES.length);
-      for (const entry of entries) {
-        expect(entry.paramsSchema).toBe(NODE_SCHEMA_BY_NAME[entry.name]);
-      }
-    } finally {
-      ctx.db.close();
-    }
-  });
-
-  test('composes into a valid action registry', () => {
-    const ctx = makeCtx();
-    try {
-      const registry = createActionRegistry(createNodeRegistryEntries(makeConfig(ctx)));
-      expect(registry.entries).toHaveLength(FULL_ENTRIES.length);
-      expect(registry.get('save_artifact')?.family).toBe('node');
-      expect(registry.get('list_peers')).toBeUndefined();
-      expect(registry.get('mark_complete')).toBeUndefined();
-    } finally {
-      ctx.db.close();
-    }
-  });
-});
-
-describe('createNodeRegistryEntries — conditional entries', () => {
   test('a bare config advertises no entries', () => {
     const ctx = makeCtx();
     try {
       expect(createNodeRegistryEntries(makeBareConfig(ctx))).toEqual([]);
-    } finally {
-      ctx.db.close();
-    }
-  });
-
-  test('each absent dep keeps exactly its entries out', () => {
-    const ctx = makeCtx();
-    try {
-      const gated: ReadonlyArray<readonly [keyof NodeAgentToolsConfig, readonly string[]]> = [
-        ['artifactRepo', ['save_artifact', 'list_artifacts']],
-      ];
-      for (const [dep, names] of gated) {
-        const present = createNodeRegistryEntries(
-          makeBareConfig(ctx, { [dep]: makeConfig(ctx)[dep] })
-        ).map((entry) => entry.name);
-        expect(present).toEqual(names);
-      }
     } finally {
       ctx.db.close();
     }
@@ -232,15 +179,7 @@ describe('composeRoleActionEntries — composition', () => {
   });
 
   test('coordinator, member, long-term, and non-space registries never include node family', () => {
-    const nodeEntry = defineAction({
-      name: 'save_artifact',
-      family: 'node',
-      safetyClass: 'mutate',
-      description: 'node entry',
-      paramsDoc: 'none',
-      paramsSchema: z.object({}),
-      handler: async () => null,
-    });
+    const nodeEntry = makeNodeEntry();
     const spaceEntries = makeSpaceEntries([]);
     for (const role of [
       'coordinator',
@@ -262,28 +201,20 @@ describe('composeRoleActionEntries — composition', () => {
       const composed = composeRoleActionEntries(
         'workflow_worker',
         makeSpaceEntries([]),
-        nodeEntries
+        [...nodeEntries, makeNodeEntry()]
       );
       const registry = createActionRegistry(composed);
       expect(registry.get('list_workflows')?.family).toBe('space');
-      expect(registry.get('save_artifact')?.family).toBe('node');
+      expect(registry.get('sample_node_action')?.family).toBe('node');
       expect(registry.get('approve_task')).toBeUndefined();
-      expect(registry.entries).toHaveLength(nodeEntries.length + 1);
+      expect(registry.entries).toHaveLength(2);
     } finally {
       ctx.db.close();
     }
   });
 
   test('composed worker registry excludes non-allowlisted space actions', () => {
-    const nodeEntry = defineAction({
-      name: 'save_artifact',
-      family: 'node',
-      safetyClass: 'mutate',
-      description: 'node entry',
-      paramsDoc: 'none',
-      paramsSchema: z.object({}),
-      handler: async () => null,
-    });
+    const nodeEntry = makeNodeEntry();
     const spaceEntries = [
       defineAction({
         name: 'list_workflows',
@@ -315,7 +246,7 @@ describe('composeRoleActionEntries — composition', () => {
     ];
     const composed = composeRoleActionEntries('workflow_worker', spaceEntries, [nodeEntry]);
     const registry = createActionRegistry(composed);
-    expect(registry.get('save_artifact')).toBeDefined();
+    expect(registry.get('sample_node_action')).toBeDefined();
     expect(registry.get('list_workflows')).toBeDefined();
     expect(registry.get('change_plan')).toBeUndefined();
     expect(registry.get('delete_agent_template')).toBeUndefined();
