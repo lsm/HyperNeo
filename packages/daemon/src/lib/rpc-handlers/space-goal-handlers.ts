@@ -8,6 +8,8 @@ import type { SpaceAgentGoalScopeRepository } from '../../storage/repositories/s
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { decideGoalOwnershipMutationAdmission } from '../goals/ownership-gates.ts';
 import type { PublicSpaceGoalUpdateParams, SpaceGoalService } from '../goals/service.ts';
+import { invokeOperationFromHandler } from '../operations/handler-invoker.ts';
+import type { OperationRegistrySource } from '../operations/registry.ts';
 import type { SpaceManager } from '../space/managers/space-manager.ts';
 
 export interface SpaceGoalHandlerDeps {
@@ -17,11 +19,12 @@ export interface SpaceGoalHandlerDeps {
     SpaceAgentGoalScopeRepository,
     'getPrimaryGoalOwner' | 'assignGoal' | 'deleteGoalAssignmentByRelationship'
   >;
+  operations: OperationRegistrySource;
   internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
 }
 
 export function setupSpaceGoalHandlers(messageHub: MessageHub, deps: SpaceGoalHandlerDeps): void {
-  const { goalService, spaceManager, goalScopeRepo, internalEventBus } = deps;
+  const { goalService, spaceManager, goalScopeRepo, operations, internalEventBus } = deps;
 
   function publishOwnerChanged(sessionId: string, spaceId: string, goalId: string): void {
     internalEventBus
@@ -144,11 +147,15 @@ export function setupSpaceGoalHandlers(messageHub: MessageHub, deps: SpaceGoalHa
     return { events: goalService.listGoalEvents(params.goalId, params) };
   });
 
-  messageHub.onRequest('spaceGoal.getOwner', async (data) => {
+  messageHub.onRequest('spaceGoal.getOwner', async (data, context) => {
     const params = data as { spaceId: string; goalId: string };
     await requireSpace(params.spaceId);
-    requireGoalInSpace(params.goalId, params.spaceId);
-    return { owner: resolveOwner(params.goalId, params.spaceId) };
+    if (!params.goalId) throw new Error('goalId is required');
+    const result = await invokeOperationFromHandler<{
+      accepted: true;
+      owner: SpaceGoalOwnerResolution;
+    }>(operations, 'goal.owner.get', params, context);
+    return { owner: result.owner };
   });
 
   messageHub.onRequest('spaceGoal.assignOwner', async (data, context) => {
