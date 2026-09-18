@@ -1,6 +1,6 @@
 import { describe, test, expect } from 'bun:test';
 import { createPostApprovalOnlyValidator } from '../../../../src/lib/workflows/built-in-validators/post-approval-only-validator';
-import type { HookExecutorContext } from '../../../../src/lib/workflows/hook-executor';
+import type { HookExecutorContext } from '../../../../src/lib/hooks/hook-executor';
 
 function makeContext(overrides: Partial<HookExecutorContext> = {}): HookExecutorContext {
   return {

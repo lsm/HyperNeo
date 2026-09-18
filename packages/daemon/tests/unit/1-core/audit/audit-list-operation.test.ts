@@ -337,7 +337,7 @@ describe('audit.list operation', () => {
     });
   });
 
-  test('the door refuses a caller role outside the policy', async () => {
+  test('the family scope gate refuses a caller role outside the policy', async () => {
     const registry = createOperationRegistry([...h.operations.values()]);
     const outcome = await invokeOperation(
       registry,
@@ -346,9 +346,12 @@ describe('audit.list operation', () => {
       mcpCaller('legacy_task_agent')
     );
     expect(outcome).toEqual({
-      kind: 'failed',
-      code: 'forbidden',
-      message: 'Operation audit.list is not available to this caller',
+      kind: 'completed',
+      value: {
+        ok: false,
+        reason: 'denied',
+        message: 'This caller may not read the Space audit log.',
+      },
     });
   });
 });

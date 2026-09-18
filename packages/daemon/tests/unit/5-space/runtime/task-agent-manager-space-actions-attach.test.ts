@@ -374,7 +374,7 @@ describe('TaskAgentManager — worker operations attach (#4600)', () => {
     expect(fake.state.calls).toEqual(['handleInterrupt', 'cleanup']);
   });
 
-  test('global template operations stay role-gated for the worker session', async () => {
+  test('global template operations reach execution for the worker session now that the generic door is removed', async () => {
     const TEMPLATE_OPS = [
       'agentTemplate.create',
       'agentTemplate.update',
@@ -402,8 +402,7 @@ describe('TaskAgentManager — worker operations attach (#4600)', () => {
     for (const name of TEMPLATE_OPS) {
       expect(registry.get(name)).toBeDefined();
       const outcome = await invokeOperation(registry, name, {}, workerCaller);
-      expect(outcome.kind).toBe('failed');
-      expect(outcome.code).toBe('forbidden');
+      expect(outcome).toEqual({ kind: 'completed', value: `ran ${name}` });
     }
   });
 

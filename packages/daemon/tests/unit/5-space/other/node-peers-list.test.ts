@@ -201,13 +201,13 @@ describe('createListNodePeersOperation', () => {
 });
 
 describe('node.peers.list policy', () => {
-  test('declares a read policy admitting only workflow workers at the door', () => {
+  test('declares a read policy, but the generic door no longer restricts it to workflow workers', () => {
     const operation = createListNodePeersOperation(
       depsFor(baseExecutions(), runtimeFor(workflowWith([])))
     );
 
     expect(operation.policy).toEqual({ safetyClass: 'read', roles: ['workflow_worker'] });
     expect(isOperationAdmitted(operation, workerCaller)).toBe(true);
-    expect(isOperationAdmitted(operation, { ...workerCaller, role: 'universal_read' })).toBe(false);
+    expect(isOperationAdmitted(operation, { ...workerCaller, role: 'universal_read' })).toBe(true);
   });
 });

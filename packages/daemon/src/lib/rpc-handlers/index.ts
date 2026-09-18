@@ -1142,6 +1142,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     goalService: spaceGoalService,
     spaceManager: deps.spaceManager,
     goalScopeRepo: spaceAgentGoalScopeRepo,
+    operations: () => spaceOperationRegistryProvider(),
     internalEventBus: deps.internalEventBus,
   });
 

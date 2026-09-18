@@ -155,7 +155,7 @@ describe('the agent.list and agent.get operations', () => {
     ]);
   });
 
-  test('a read-only session carries no Space, so it is denied the agent catalog', async () => {
+  test('a read-only session carries no Space, so admitAgentCaller denies it inside the operation', async () => {
     expect(readOnlyCaller()).toEqual({
       source: 'mcp',
       sessionId: READ_ONLY_SESSION,
@@ -163,13 +163,17 @@ describe('the agent.list and agent.get operations', () => {
     });
     const outcome = await invokeOperation(registry(), 'agent.list', { spaceId }, readOnlyCaller());
     expect(outcome).toEqual({
-      kind: 'failed',
-      code: 'forbidden',
-      message: 'Operation agent.list is not available to this caller',
+      kind: 'completed',
+      value: {
+        rejected: true,
+        reason: 'agent_denied',
+        message:
+          'Agent operations require a human caller or an active Space member session in the owning Space.',
+      },
     });
   });
 
-  test('a workflow worker is denied the agent catalog at the door', async () => {
+  test('a workflow worker is denied the agent catalog by admitAgentCaller inside the operation', async () => {
     const outcome = await invokeOperation(
       registry(),
       'agent.list',
@@ -177,9 +181,13 @@ describe('the agent.list and agent.get operations', () => {
       memberCaller('workflow_worker')
     );
     expect(outcome).toEqual({
-      kind: 'failed',
-      code: 'forbidden',
-      message: 'Operation agent.list is not available to this caller',
+      kind: 'completed',
+      value: {
+        rejected: true,
+        reason: 'agent_denied',
+        message:
+          'Agent operations require a human caller or an active Space member session in the owning Space.',
+      },
     });
   });
 

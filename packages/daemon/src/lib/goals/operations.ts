@@ -1,5 +1,9 @@
 import type { OperationDefinition } from '../operations/registry.ts';
 import { type CreateGoalDependencies, createCreateGoalOperation } from './create-goal-operation.ts';
+import {
+  createGetGoalOwnerOperation,
+  type GetGoalOwnerDependencies,
+} from './get-goal-owner-operation.ts';
 import { createGetGoalOperation, type GetGoalDependencies } from './get-goal-operation.ts';
 import {
   createPauseGoalOperation,
@@ -24,6 +28,7 @@ import { createUpdateGoalOperation, type UpdateGoalDependencies } from './update
 
 export type GoalOperationDependencies = ListGoalsDependencies &
   GetGoalDependencies &
+  GetGoalOwnerDependencies &
   ListGoalTasksDependencies &
   ListGoalEventsDependencies &
   CreateGoalDependencies &
@@ -35,6 +40,7 @@ export function createGoalOperations(deps: GoalOperationDependencies): Operation
   return [
     createListGoalsOperation(deps),
     createGetGoalOperation(deps),
+    createGetGoalOwnerOperation(deps),
     createListGoalTasksOperation(deps),
     createListGoalEventsOperation(deps),
     createCreateGoalOperation(deps),

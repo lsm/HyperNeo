@@ -186,7 +186,7 @@ describe('createListNodeChannelsOperation', () => {
 });
 
 describe('node topology read policy', () => {
-  test('declares a read policy admitting only workflow workers at the door', () => {
+  test('declares a read policy, but the generic door no longer restricts it to workflow workers', () => {
     const deps = depsFor(baseExecutions(), runtimeFor(workflowWith([])));
     const operations = [
       createListNodeReachableAgentsOperation(deps),
@@ -196,11 +196,9 @@ describe('node topology read policy', () => {
     for (const operation of operations) {
       expect(operation.policy).toEqual({ safetyClass: 'read', roles: ['workflow_worker'] });
       expect(isOperationAdmitted(operation, workerCaller)).toBe(true);
-      expect(isOperationAdmitted(operation, { ...workerCaller, role: 'ad_hoc_member' })).toBe(
-        false
-      );
+      expect(isOperationAdmitted(operation, { ...workerCaller, role: 'ad_hoc_member' })).toBe(true);
       expect(isOperationAdmitted(operation, { ...workerCaller, role: 'universal_read' })).toBe(
-        false
+        true
       );
     }
   });

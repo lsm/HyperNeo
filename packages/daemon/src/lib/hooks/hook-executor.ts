@@ -13,10 +13,10 @@ import {
   MAX_BUFFER_BYTES,
   parseJsonStdout,
 } from '../utils/script-utils.ts';
-import { validateWorkflowHookResult } from './hook-validation.ts';
+import { validateWorkflowHookResult } from '../workflows/hook-validation.ts';
 import '../github/connectors/production.ts';
-import './built-in-validators/index.ts';
-import { getBuiltInValidator } from './built-in-validator-registry.ts';
+import '../workflows/built-in-validators/index.ts';
+import { getBuiltInValidator } from '../workflows/built-in-validator-registry.ts';
 import { buildHookRestrictedEnv } from './hook-script-env.ts';
 
 export interface HookExecutorContext {

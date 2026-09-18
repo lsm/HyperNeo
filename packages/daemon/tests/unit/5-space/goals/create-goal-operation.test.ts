@@ -72,6 +72,7 @@ function makeCtx(sessionStatus = 'active') {
       goalService,
       taskRepo,
       longHorizonAgentRepo,
+      goalScopeRepo,
       getSession: (id) => (id === SESSION_ID ? session(sessionStatus) : null),
       auditLogRepo,
     })
@@ -118,6 +119,21 @@ describe('goal.create through the operations door', () => {
       expect(result.accepted).toBe(true);
       expect(result.goal?.spaceId).toBe(SPACE_ID);
       expect(ctx.goalService.getGoal(result.goal?.id as string)?.title).toBe('Human goal');
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('accepts a null checkInCronExpression, as the create dialog sends when the cron is blank', async () => {
+    const ctx = makeCtx();
+    try {
+      const result = await invoke(
+        ctx,
+        { spaceId: SPACE_ID, title: 'No schedule', checkInCronExpression: null },
+        HUMAN
+      );
+      expect(result.accepted).toBe(true);
+      expect(ctx.goalService.getGoal(result.goal?.id as string)?.taskScheduleId).toBe(null);
     } finally {
       ctx.db.close();
     }
@@ -225,7 +241,7 @@ describe('goal.create through the operations door', () => {
     }
   });
 
-  test('stops universal_read at the door policy', async () => {
+  test('stops universal_read via admitGoalRole inside the operation', async () => {
     const ctx = makeCtx();
     try {
       const outcome = await invokeOperation(
@@ -234,8 +250,10 @@ describe('goal.create through the operations door', () => {
         { title: 'Read only' },
         agent('universal_read')
       );
-      expect(outcome.kind).toBe('failed');
-      expect(outcome.kind === 'failed' && outcome.code).toBe('forbidden');
+      expect(outcome).toMatchObject({
+        kind: 'completed',
+        value: { accepted: false, reason: 'role_denied' },
+      });
       expect(ctx.goalService.listGoals({ spaceId: SPACE_ID })).toEqual([]);
     } finally {
       ctx.db.close();

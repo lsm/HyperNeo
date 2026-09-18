@@ -3,6 +3,7 @@ export const GOAL_OPERATION_NAMES = [
   'goal.events.list',
   'goal.get',
   'goal.list',
+  'goal.owner.get',
   'goal.pause',
   'goal.resume',
   'goal.reviewOutcome',

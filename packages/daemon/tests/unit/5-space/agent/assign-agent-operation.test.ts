@@ -226,7 +226,7 @@ describe('the agent.assignGoal and agent.unassignGoal operations', () => {
     expect(ownerChanges).toEqual([]);
   });
 
-  test('a read-only session is refused at the door', async () => {
+  test('a read-only session is refused by admitAgentCaller inside the operation', async () => {
     expect(readOnlyCaller()).toEqual({
       source: 'mcp',
       sessionId: READ_ONLY_SESSION,
@@ -237,8 +237,8 @@ describe('the agent.assignGoal and agent.unassignGoal operations', () => {
       { spaceId, agentId: agent.id, goalId: GOAL_ID },
       readOnlyCaller()
     );
-    expect(outcome.kind).toBe('failed');
-    expect(outcome.code).toBe('forbidden');
+    expect(outcome.kind).toBe('completed');
+    expect(outcome.value?.reason).toBe('agent_denied');
     expect(agentRepo.listGoals(agent.id)).toHaveLength(0);
   });
 });

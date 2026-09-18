@@ -126,7 +126,7 @@ import type { WorkflowArtifactProfile } from '../../workflows/artifact-profile.t
 import { ChannelResolver } from '../../messaging/channel-resolver.ts';
 import type { NodeMessagingRuntime } from '../../messaging/node-messaging-context.ts';
 import { ChannelRouter } from '../../messaging/channel-router.ts';
-import { HookExecutor } from '../../workflows/hook-executor.ts';
+import { HookExecutor } from '../../hooks/hook-executor.ts';
 import type { InjectionDeliveryRowDeps } from '../../messaging/injection-delivery-steps.ts';
 import {
   flipDeliveryRowToDeferred,

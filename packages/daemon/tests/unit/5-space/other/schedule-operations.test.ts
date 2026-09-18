@@ -183,7 +183,7 @@ describe('schedule operation catalog', () => {
     ]);
   });
 
-  test('the door refuses a workflow worker before a schedule mutation runs', async () => {
+  test('the family scope gate refuses a workflow worker inside a schedule mutation', async () => {
     const registry = createOperationRegistry([...h.operations.values()]);
     const outcome = await invokeOperation(
       registry,
@@ -192,9 +192,12 @@ describe('schedule operation catalog', () => {
       mcpCaller('workflow_worker')
     );
     expect(outcome).toEqual({
-      kind: 'failed',
-      code: 'forbidden',
-      message: 'Operation schedule.delete is not available to this caller',
+      kind: 'completed',
+      value: {
+        ok: false,
+        reason: 'denied',
+        message: 'This caller may not use Space schedules.',
+      },
     });
     expect(h.calls).toEqual([]);
   });
