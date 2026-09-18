@@ -374,3 +374,199 @@ describe('spaceGoal workspacePath resolution', () => {
     expect(result).toEqual({ goal: { id: GOAL_ID, workspacePath: '/resolved/secondary' } });
   });
 });
+
+describe('spaceGoal handler gates', () => {
+  const GOAL = { id: GOAL_ID, spaceId: SPACE_ID, title: 'G' };
+
+  function makeGateHarness(
+    overrides: {
+      goalService?: Record<string, unknown>;
+      getSpace?: (spaceId: string) => Promise<unknown>;
+    } = {}
+  ) {
+    const { hub, handlers } = createMockHub();
+    const goalService = {
+      getGoal: mock(() => GOAL),
+      resolveGoalWorkspacePath: mock(async (_spaceId: string, path?: string) => path),
+      createGoal: mock(() => GOAL),
+      updateGoal: mock(() => GOAL),
+      pauseGoal: mock(() => ({ ...GOAL, status: 'paused' })),
+      resumeGoal: mock(() => ({ ...GOAL, status: 'active' })),
+      createImmediateTask: mock(() => ({ taskId: 'task-1' })),
+      listGoals: mock(() => [GOAL]),
+      listGoalEvents: mock(() => [{ id: 'event-1' }]),
+      ...overrides.goalService,
+    };
+    const getSpace = mock(overrides.getSpace ?? (async () => ({ id: SPACE_ID, status: 'active' })));
+    setupSpaceGoalHandlers(hub, {
+      goalService: goalService as unknown as SpaceGoalService,
+      spaceManager: { getSpace } as unknown as SpaceManager,
+      goalScopeRepo: makeRepoMock({ action: 'no_recipient' }),
+    });
+    return { handlers, goalService, getSpace };
+  }
+
+  const goalScoped = [
+    'spaceGoal.get',
+    'spaceGoal.update',
+    'spaceGoal.pause',
+    'spaceGoal.resume',
+    'spaceGoal.createImmediateTask',
+    'spaceGoal.listEvents',
+    'spaceGoal.getOwner',
+  ];
+  const spaceScoped = ['spaceGoal.create', 'spaceGoal.list', ...goalScoped];
+
+  it.each(spaceScoped)('%s rejects a missing spaceId before touching the space', async (method) => {
+    const { handlers, getSpace } = makeGateHarness();
+    await expect(
+      handlers.get(method)!({ spaceId: '', goalId: GOAL_ID }, makeContext())
+    ).rejects.toThrow('spaceId is required');
+    expect(getSpace).not.toHaveBeenCalled();
+  });
+
+  it.each(spaceScoped)('%s rejects an unknown space', async (method) => {
+    const { handlers, goalService } = makeGateHarness({ getSpace: async () => null });
+    await expect(
+      handlers.get(method)!({ spaceId: SPACE_ID, goalId: GOAL_ID }, makeContext())
+    ).rejects.toThrow(`Space not found: ${SPACE_ID}`);
+    expect(goalService.getGoal).not.toHaveBeenCalled();
+  });
+
+  it.each(goalScoped)('%s rejects a missing goalId', async (method) => {
+    const { handlers } = makeGateHarness();
+    await expect(
+      handlers.get(method)!({ spaceId: SPACE_ID, goalId: '' }, makeContext())
+    ).rejects.toThrow('goalId is required');
+  });
+
+  it.each(goalScoped)('%s rejects an unknown goal', async (method) => {
+    const { handlers } = makeGateHarness({ goalService: { getGoal: mock(() => null) } });
+    await expect(
+      handlers.get(method)!({ spaceId: SPACE_ID, goalId: GOAL_ID }, makeContext())
+    ).rejects.toThrow(`Goal not found: ${GOAL_ID}`);
+  });
+
+  it.each(goalScoped)('%s rejects a goal owned by another space', async (method) => {
+    const { handlers } = makeGateHarness({
+      goalService: { getGoal: mock(() => ({ id: GOAL_ID, spaceId: 'other-space' })) },
+    });
+    await expect(
+      handlers.get(method)!({ spaceId: SPACE_ID, goalId: GOAL_ID }, makeContext())
+    ).rejects.toThrow(`Goal not found: ${GOAL_ID}`);
+  });
+
+  it('spaceGoal.create passes the resolved workspacePath and rpc source through', async () => {
+    const { handlers, goalService } = makeGateHarness();
+    const result = await handlers.get('spaceGoal.create')!(
+      { spaceId: SPACE_ID, title: 'G', type: 'outcome' },
+      makeContext()
+    );
+    expect(goalService.resolveGoalWorkspacePath).toHaveBeenCalledWith(SPACE_ID, undefined);
+    expect(goalService.createGoal).toHaveBeenCalledWith(
+      { spaceId: SPACE_ID, title: 'G', type: 'outcome', workspacePath: undefined },
+      { source: 'rpc' }
+    );
+    expect(result).toEqual({ goal: GOAL });
+  });
+
+  it('spaceGoal.list forwards the whole filter payload and wraps the rows', async () => {
+    const { handlers, goalService } = makeGateHarness();
+    const params = {
+      spaceId: SPACE_ID,
+      status: 'active',
+      includeArchived: true,
+      label: 'infra',
+      search: 'db',
+    };
+    const result = await handlers.get('spaceGoal.list')!(params, makeContext());
+    expect(goalService.listGoals).toHaveBeenCalledWith(params);
+    expect(result).toEqual({ goals: [GOAL] });
+  });
+
+  it('spaceGoal.get returns the goal the space gate resolved', async () => {
+    const { handlers } = makeGateHarness();
+    const result = await handlers.get('spaceGoal.get')!(
+      { spaceId: SPACE_ID, goalId: GOAL_ID },
+      makeContext()
+    );
+    expect(result).toEqual({ goal: GOAL });
+  });
+
+  it('spaceGoal.update forwards only the public update fields and drops unknown keys', async () => {
+    const { handlers, goalService } = makeGateHarness();
+    await handlers.get('spaceGoal.update')!(
+      { spaceId: SPACE_ID, goalId: GOAL_ID, title: 'New', archived: true },
+      makeContext()
+    );
+    const [goalId, updates] = (goalService.updateGoal as ReturnType<typeof mock>).mock.calls[0];
+    expect(goalId).toBe(GOAL_ID);
+    expect(updates.title).toBe('New');
+    expect(Object.keys(updates).sort()).toEqual([
+      'autoTriggerNext',
+      'checkInCronExpression',
+      'checkInTimezone',
+      'description',
+      'labels',
+      'metrics',
+      'nextSteps',
+      'preferredWorkflowId',
+      'priority',
+      'progress',
+      'status',
+      'summary',
+      'title',
+      'type',
+      'workspacePath',
+    ]);
+  });
+
+  it('spaceGoal.pause and spaceGoal.resume delegate with the rpc source', async () => {
+    const { handlers, goalService } = makeGateHarness();
+    const paused = await handlers.get('spaceGoal.pause')!(
+      { spaceId: SPACE_ID, goalId: GOAL_ID },
+      makeContext()
+    );
+    expect(goalService.pauseGoal).toHaveBeenCalledWith(GOAL_ID, { source: 'rpc' });
+    expect(paused).toEqual({ goal: { ...GOAL, status: 'paused' } });
+    const resumed = await handlers.get('spaceGoal.resume')!(
+      { spaceId: SPACE_ID, goalId: GOAL_ID },
+      makeContext()
+    );
+    expect(goalService.resumeGoal).toHaveBeenCalledWith(GOAL_ID, { source: 'rpc' });
+    expect(resumed).toEqual({ goal: { ...GOAL, status: 'active' } });
+  });
+
+  it('spaceGoal.createImmediateTask returns the service result unwrapped', async () => {
+    const { handlers, goalService } = makeGateHarness();
+    const result = await handlers.get('spaceGoal.createImmediateTask')!(
+      { spaceId: SPACE_ID, goalId: GOAL_ID },
+      makeContext()
+    );
+    expect(goalService.createImmediateTask).toHaveBeenCalledWith(GOAL_ID, { source: 'rpc' });
+    expect(result).toEqual({ taskId: 'task-1' });
+  });
+
+  it('spaceGoal.listEvents forwards the pagination payload and wraps the rows', async () => {
+    const { handlers, goalService } = makeGateHarness();
+    const params = {
+      spaceId: SPACE_ID,
+      goalId: GOAL_ID,
+      limit: 10,
+      before: 123,
+      beforeId: 'event-9',
+    };
+    const result = await handlers.get('spaceGoal.listEvents')!(params, makeContext());
+    expect(goalService.listGoalEvents).toHaveBeenCalledWith(GOAL_ID, params);
+    expect(result).toEqual({ events: [{ id: 'event-1' }] });
+  });
+
+  it('spaceGoal.getOwner does not require an authorized owner-mutation caller', async () => {
+    const { handlers } = makeGateHarness();
+    const result = await handlers.get('spaceGoal.getOwner')!(
+      { spaceId: SPACE_ID, goalId: GOAL_ID },
+      makeContext('space:agent:space-1:agent-1')
+    );
+    expect(result).toEqual({ owner: { action: 'no_recipient' } });
+  });
+});
