@@ -73,10 +73,14 @@ export function applyModelPoolToSlot(input: {
   now: number;
 }): ModelPoolApplication {
   const overrideKey = `${input.node.id}:${input.slot.name}`;
-  if (input.slot.model || input.agent.model || input.task.workflowModelOverrides?.[overrideKey]) {
+  const slotPool = input.slot.modelPool?.length ? input.slot.modelPool : undefined;
+  if (input.slot.model || input.task.workflowModelOverrides?.[overrideKey]) {
     return { slot: input.slot, model: input.slot.model ?? '' };
   }
-  const pool = input.agent.modelPool;
+  if (!slotPool && input.agent.model) {
+    return { slot: input.slot, model: input.slot.model ?? '' };
+  }
+  const pool = slotPool ?? input.agent.modelPool;
   if (!pool || pool.length === 0) {
     return { slot: input.slot, model: input.slot.model ?? '' };
   }
