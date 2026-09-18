@@ -82,6 +82,24 @@ describe('AnthropicProvider', () => {
       delete process.env.ANTHROPIC_AUTH_TOKEN;
       expect(provider.getApiKey()).toBeUndefined();
     });
+
+    it('should prefer a stored OAuth token over an ambient OAuth token', () => {
+      process.env.CLAUDE_CODE_OAUTH_TOKEN = 'ambient-oauth-token';
+      provider.setCredentials({ type: 'oauth', accessToken: 'stored-oauth-token' });
+      expect(provider.getApiKey()).toBe('stored-oauth-token');
+    });
+
+    it('should prefer a stored API key over an ambient API key', () => {
+      process.env.ANTHROPIC_API_KEY = 'ambient-api-key';
+      provider.setCredentials({ type: 'api_key', apiKey: 'stored-api-key' });
+      expect(provider.getApiKey()).toBe('stored-api-key');
+    });
+
+    it('should fall back to ambient env when the stored credential is empty', () => {
+      process.env.ANTHROPIC_API_KEY = 'ambient-api-key';
+      provider.setCredentials({ type: 'api_key', apiKey: '' });
+      expect(provider.getApiKey()).toBe('ambient-api-key');
+    });
   });
 
   describe('getModels without credentials', () => {
@@ -439,14 +457,51 @@ describe('AnthropicProvider', () => {
       expect(config.apiVersion).toBe('v1');
     });
 
-    it('should skip stored API key injection when any Anthropic auth env var is set', () => {
-      process.env.CLAUDE_CODE_OAUTH_TOKEN = 'oauth-token';
+    it('should inject a stored API key over an ambient OAuth token and suppress it', () => {
+      process.env.CLAUDE_CODE_OAUTH_TOKEN = 'ambient-oauth-token';
       const providerWithStoredKey = new AnthropicProvider();
       providerWithStoredKey.setCredentials({ type: 'api_key', apiKey: 'stored-key' });
 
       const config = providerWithStoredKey.buildSdkConfig('default');
 
-      expect(config.envVars.ANTHROPIC_API_KEY).toBeUndefined();
+      expect(config.envVars.ANTHROPIC_API_KEY).toBe('stored-key');
+      expect(config.envVars.CLAUDE_CODE_OAUTH_TOKEN).toBe('');
+    });
+
+    it('should inject a stored OAuth token over an ambient OAuth token', () => {
+      process.env.CLAUDE_CODE_OAUTH_TOKEN = 'ambient-oauth-token';
+      const providerWithStoredToken = new AnthropicProvider();
+      providerWithStoredToken.setCredentials({
+        type: 'oauth',
+        accessToken: 'stored-oauth-token',
+      });
+
+      const config = providerWithStoredToken.buildSdkConfig('default');
+
+      expect(config.envVars.CLAUDE_CODE_OAUTH_TOKEN).toBe('stored-oauth-token');
+    });
+
+    it('should suppress an ambient API key when a stored OAuth token is used', () => {
+      process.env.ANTHROPIC_API_KEY = 'ambient-api-key';
+      const providerWithStoredToken = new AnthropicProvider();
+      providerWithStoredToken.setCredentials({
+        type: 'oauth',
+        accessToken: 'stored-oauth-token',
+      });
+
+      const config = providerWithStoredToken.buildSdkConfig('default');
+
+      expect(config.envVars.CLAUDE_CODE_OAUTH_TOKEN).toBe('stored-oauth-token');
+      expect(config.envVars.ANTHROPIC_API_KEY).toBe('');
+    });
+
+    it('should leave ambient env untouched when no credential is stored', () => {
+      process.env.CLAUDE_CODE_OAUTH_TOKEN = 'ambient-oauth-token';
+      const providerWithoutStored = new AnthropicProvider();
+
+      const config = providerWithoutStored.buildSdkConfig('default');
+
+      expect(config.envVars).toEqual({});
     });
   });
 
