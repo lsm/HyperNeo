@@ -210,34 +210,16 @@ describe('goal.list through the operations door', () => {
     }
   });
 
-  test('admits universal_read but stops workflow_worker via admitGoalRole inside the operation', async () => {
+  test('admits universal_read and workflow_worker alike inside the operation', async () => {
     const ctx = makeCtx();
     try {
-      ctx.seed(SPACE_ID, 'Readable');
+      const goal = ctx.seed(SPACE_ID, 'Readable');
       const read = await invoke(ctx, 'goal.list', {}, agent('universal_read'));
       expect(read.accepted).toBe(true);
       const worker = await invokeOperation(ctx.registry, 'goal.list', {}, agent('workflow_worker'));
-      expect(worker).toMatchObject({
-        kind: 'completed',
-        value: { accepted: false, reason: 'role_denied' },
-      });
-    } finally {
-      ctx.db.close();
-    }
-  });
-
-  test('denies workflow_worker inside the operation even when the door lets it through', async () => {
-    const ctx = makeCtx();
-    try {
-      ctx.seed(SPACE_ID, 'Readable');
-      const operation = ctx.registry.get('goal.list');
-      if (!operation) throw new Error('goal.list is not registered');
-      const result = (await operation.execute({}, agent('workflow_worker'))) as {
-        accepted: boolean;
-        reason?: string;
-      };
-      expect(result.accepted).toBe(false);
-      expect(result.reason).toBe('role_denied');
+      expect(worker).toMatchObject({ kind: 'completed', value: { accepted: true } });
+      const workerGoals = (worker as { value: { goals: SpaceGoal[] } }).value.goals;
+      expect(workerGoals.map((entry) => entry.id)).toEqual([goal.id]);
     } finally {
       ctx.db.close();
     }
@@ -328,10 +310,10 @@ describe('goal.get through the operations door', () => {
     }
   });
 
-  test('denies a workflow_worker caller via admitGoalRole inside the operation', async () => {
+  test('reads a goal of its own Space for a workflow_worker caller', async () => {
     const ctx = makeCtx();
     try {
-      const goal = ctx.seed(SPACE_ID, 'Worker denied');
+      const goal = ctx.seed(SPACE_ID, 'Worker readable');
       const outcome = await invokeOperation(
         ctx.registry,
         'goal.get',
@@ -340,7 +322,7 @@ describe('goal.get through the operations door', () => {
       );
       expect(outcome).toMatchObject({
         kind: 'completed',
-        value: { accepted: false, reason: 'role_denied' },
+        value: { accepted: true, goal: { id: goal.id } },
       });
     } finally {
       ctx.db.close();

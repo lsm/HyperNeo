@@ -47,7 +47,7 @@ function admitReader(
   input: ScopedInput,
   caller: OperationCaller
 ): { value: string } | { reason: WorkflowScopeRejection } {
-  return admitWorkflowScope(caller, input.spaceId, WORKFLOW_READ_ROLES);
+  return admitWorkflowScope(caller, input.spaceId);
 }
 
 function listSummaries(spaceId: string, deps: WorkflowReadDependencies): WorkflowList {

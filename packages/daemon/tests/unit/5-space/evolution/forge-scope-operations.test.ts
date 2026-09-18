@@ -158,6 +158,11 @@ const archivedCaller: OperationCaller = {
   spaceId: SPACE_ID,
   role: 'ad_hoc_member',
 };
+const spacelessCaller: OperationCaller = {
+  source: 'mcp',
+  sessionId: 'session-member',
+  role: 'ad_hoc_member',
+};
 const rpcCaller: OperationCaller = { source: 'rpc' };
 
 const scopeInput = {
@@ -227,29 +232,27 @@ describe('forge.scope.create', () => {
     }
   });
 
-  test('denies a workflow_worker caller and leaves the Space without scopes', async () => {
+  test('admits a workflow_worker caller and creates the scope in its Space', async () => {
     const ctx = makeCtx();
     try {
-      const denied = (await ctx.op('forge.scope.create').execute(scopeInput, workerCaller)) as {
-        accepted: false;
-        reason: string;
+      const created = (await ctx.op('forge.scope.create').execute(scopeInput, workerCaller)) as {
+        accepted: true;
       };
-      expect(denied).toMatchObject({ accepted: false, reason: 'forge_denied' });
-      expect(ctx.scopeService.listScopes({ spaceId: SPACE_ID })).toHaveLength(0);
+      expect(created).toMatchObject({ accepted: true });
+      expect(ctx.scopeService.listScopes({ spaceId: SPACE_ID })).toHaveLength(1);
     } finally {
       ctx.db.close();
     }
   });
 
-  test('denies a universal_read caller because the operation mutates', async () => {
+  test('admits a universal_read caller to the mutation as well', async () => {
     const ctx = makeCtx();
     try {
-      const denied = (await ctx.op('forge.scope.create').execute(scopeInput, readerCaller)) as {
-        accepted: false;
-        reason: string;
+      const created = (await ctx.op('forge.scope.create').execute(scopeInput, readerCaller)) as {
+        accepted: true;
       };
-      expect(denied).toMatchObject({ accepted: false, reason: 'forge_denied' });
-      expect(ctx.scopeService.listScopes({ spaceId: SPACE_ID })).toHaveLength(0);
+      expect(created).toMatchObject({ accepted: true });
+      expect(ctx.scopeService.listScopes({ spaceId: SPACE_ID })).toHaveLength(1);
     } finally {
       ctx.db.close();
     }
@@ -754,15 +757,15 @@ describe('invokeOperation', () => {
         ctx.registry,
         'forge.timeline.get',
         { scopeId: created.scope.id },
-        workerCaller
+        spacelessCaller
       );
       expect(denied).toMatchObject({
         kind: 'completed',
-        value: { accepted: false, reason: 'forge_denied' },
+        value: { accepted: false, reason: 'space_required' },
       });
       expect(
-        await ctx.op('forge.timeline.get').execute({ scopeId: created.scope.id }, workerCaller)
-      ).toMatchObject({ accepted: false, reason: 'forge_denied' });
+        await ctx.op('forge.timeline.get').execute({ scopeId: created.scope.id }, spacelessCaller)
+      ).toMatchObject({ accepted: false, reason: 'space_required' });
     } finally {
       ctx.db.close();
     }

@@ -80,14 +80,23 @@ describe('node agent restore operation', () => {
     expect(result.message).toContain('the re-attach itself failed');
   });
 
-  test('denies a space member that is not a workflow worker', async () => {
+  test('re-attaches the session of a space member that is not a workflow worker', async () => {
+    const sessionId = workerSession('s-member');
     const caller: OperationCaller = {
       source: 'mcp',
-      sessionId: workerSession('s-member'),
+      sessionId,
       spaceId: SPACE,
       role: 'ad_hoc_member',
     };
-    expect(await operation.execute({}, caller)).toBe('caller_denied');
+    expect(await operation.execute({}, caller)).toMatchObject({ reattached: true, sessionId });
+    expect(restores).toEqual([{ sessionId, reason: undefined }]);
+  });
+
+  test('denies an MCP caller that carries no Space', async () => {
+    const sessionId = workerSession('s-spaceless');
+    expect(await operation.execute({}, { source: 'mcp', sessionId, role: 'workflow_worker' })).toBe(
+      'caller_denied'
+    );
     expect(restores).toEqual([]);
   });
 

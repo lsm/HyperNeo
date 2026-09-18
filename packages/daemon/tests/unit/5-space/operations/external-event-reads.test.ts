@@ -121,7 +121,7 @@ describe('createGetExternalEventOperation', () => {
     expect(await run('externalEvent.get', { eventId: 'evt-2' }, caller)).toBe('event_not_found');
   });
 
-  test('rejects caller_denied for a role outside the read allowlist', async () => {
+  test('reads an event of its own space for a role outside the old read allowlist', async () => {
     store.store(event('evt-3', SPACE));
     const caller: OperationCaller = {
       source: 'mcp',
@@ -129,7 +129,10 @@ describe('createGetExternalEventOperation', () => {
       spaceId: SPACE,
       role: 'universal_read',
     };
-    expect(await run('externalEvent.get', { eventId: 'evt-3' }, caller)).toBe('caller_denied');
+    expect(await run('externalEvent.get', { eventId: 'evt-3' }, caller)).toEqual({
+      event: expect.objectContaining({ id: 'evt-3' }),
+      state: 'published',
+    });
   });
 
   test('rejects caller_denied when an MCP caller asks for another space explicitly', async () => {
@@ -193,7 +196,7 @@ describe('createListDeliveriesOperation', () => {
     expect(await run('externalEvent.listDeliveries', {}, worker(sessionId))).toBe('run_unresolved');
   });
 
-  test('rejects caller_denied for a space member that is not a workflow worker', async () => {
+  test('lists a named run for a space member that is not a workflow worker', async () => {
     delivery('evt-d3', 'node-c', 'task-3');
     const caller: OperationCaller = {
       source: 'mcp',
@@ -201,9 +204,10 @@ describe('createListDeliveriesOperation', () => {
       spaceId: SPACE,
       role: 'ad_hoc_member',
     };
-    expect(await run('externalEvent.listDeliveries', { workflowRunId: RUN }, caller)).toBe(
-      'caller_denied'
-    );
+    const result = (await run('externalEvent.listDeliveries', { workflowRunId: RUN }, caller)) as {
+      deliveries: Array<{ eventId: string }>;
+    };
+    expect(result.deliveries.map((entry) => entry.eventId)).toContain('evt-d3');
   });
 
   test('filters by node id', async () => {

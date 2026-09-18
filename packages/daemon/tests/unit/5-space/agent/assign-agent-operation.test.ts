@@ -226,7 +226,7 @@ describe('the agent.assignGoal and agent.unassignGoal operations', () => {
     expect(ownerChanges).toEqual([]);
   });
 
-  test('a read-only session is refused by admitAgentCaller inside the operation', async () => {
+  test('a session carrying no Space is refused by admitAgentCaller inside the operation', async () => {
     expect(readOnlyCaller()).toEqual({
       source: 'mcp',
       sessionId: READ_ONLY_SESSION,

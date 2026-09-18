@@ -60,7 +60,7 @@ interface DeliveryScope {
 }
 
 export function admitDeliveryReader(input: Input, caller: OperationCaller) {
-  return admitEventCallerSpace(input, caller, NODE_EVENT_ROLES);
+  return admitEventCallerSpace(input, caller);
 }
 
 export function resolveDeliveryScope(
@@ -111,7 +111,7 @@ export function readDeliveryLog(
 }
 
 const LIST_DELIVERIES_DESCRIPTION =
-  'List recent external-event deliveries for a workflow run with delivery state and event essence. Defaults to the calling worker own run; pass workflowRunId to inspect another run in the same Space. Only workflow workers are admitted over MCP; RPC callers pass spaceId and workflowRunId explicitly. Rejects caller_denied without an admitted Space scope and run_unresolved when no workflow run can be determined.';
+  'List recent external-event deliveries for a workflow run with delivery state and event essence. Defaults to the calling worker own run; pass workflowRunId to inspect another run in the same Space. MCP callers are scoped to their own Space; RPC callers pass spaceId and workflowRunId explicitly. Rejects caller_denied without an admitted Space scope and run_unresolved when no workflow run can be determined.';
 
 export function createListDeliveriesOperation(events: ListDeliveriesDependencies) {
   const list = (superpipe({ events })('list-external-event-deliveries') as PipelineAPI)

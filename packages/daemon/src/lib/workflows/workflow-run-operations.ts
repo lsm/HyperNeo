@@ -103,7 +103,7 @@ function admitRunReader(
   input: GetRunInput,
   caller: OperationCaller
 ): { value: string } | { reason: WorkflowScopeRejection } {
-  return admitWorkflowScope(caller, input.spaceId, WORKFLOW_READ_ROLES);
+  return admitWorkflowScope(caller, input.spaceId);
 }
 
 function loadRunDetail(
@@ -121,7 +121,7 @@ export function admitPlanChanger(
   caller: OperationCaller,
   deps: WorkflowRunDependencies
 ): { value: string } | { reason: WorkflowScopeRejection } {
-  const scope = admitWorkflowScope(caller, input.spaceId, WORKFLOW_MUTATE_ROLES);
+  const scope = admitWorkflowScope(caller, input.spaceId);
   return 'reason' in scope ? scope : admitActiveWorkflowSession(scope.value, caller, deps);
 }
 

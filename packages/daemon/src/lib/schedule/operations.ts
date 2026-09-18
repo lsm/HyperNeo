@@ -282,7 +282,7 @@ export function deleteScheduleRecord(
   return { ok: true };
 }
 
-const READ_ADMISSION: SpaceCallerAdmission = { readOnly: true, workerAllowed: true };
+const READ_ADMISSION: SpaceCallerAdmission = { readOnly: true };
 const WRITE_ADMISSION: SpaceCallerAdmission = { readOnly: false };
 
 const READ_ROLES: readonly OperationCallerRole[] = [

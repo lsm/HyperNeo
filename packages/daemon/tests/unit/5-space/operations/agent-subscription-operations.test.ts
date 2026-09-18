@@ -216,20 +216,30 @@ describe('agent external-event subscription operations', () => {
     });
   });
 
-  test('denies callers outside the admitted roles or Space', async () => {
-    const sessionId = memberSession('s-denied');
+  test('admits a workflow_worker caller of the same Space', async () => {
+    const sessionId = memberSession('s-worker');
     const worker: OperationCaller = {
       source: 'mcp',
       sessionId,
       spaceId: SPACE,
       role: 'workflow_worker',
     };
-    expect(
-      await run('externalEvent.agent.subscribe', { agent_id: AGENT, topic_pattern: TOPIC }, worker)
-    ).toBe('caller_denied');
-    expect(await run('externalEvent.agent.listSubscriptions', { agent_id: AGENT }, worker)).toBe(
-      'caller_denied'
-    );
+    const subscribed = (await run(
+      'externalEvent.agent.subscribe',
+      { agent_id: AGENT, topic_pattern: TOPIC },
+      worker
+    )) as { subscription: { agentId: string; status: string } };
+    expect(subscribed.subscription).toMatchObject({ agentId: AGENT, status: 'active' });
+    const listed = (await run(
+      'externalEvent.agent.listSubscriptions',
+      { agent_id: AGENT },
+      worker
+    )) as { subscriptions: unknown[] };
+    expect(listed.subscriptions).toHaveLength(1);
+  });
+
+  test('denies a caller that names another Space', async () => {
+    const sessionId = memberSession('s-denied');
     expect(
       await run(
         'externalEvent.agent.subscribe',
@@ -237,6 +247,7 @@ describe('agent external-event subscription operations', () => {
         member(sessionId)
       )
     ).toBe('caller_denied');
+    expect(subscriptionRepo.listSubscriptions(AGENT)).toEqual([]);
   });
 
   test('rejects a writer whose session is not active in the Space', async () => {

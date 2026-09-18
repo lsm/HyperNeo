@@ -13,7 +13,6 @@ import type { SpaceGoalMutationContext } from './service.ts';
 export const GOAL_REJECTION_REASONS = [
   'space_unresolved',
   'space_mismatch',
-  'role_denied',
   'session_not_admitted',
   'goal_not_found',
   'owner_not_found',
@@ -31,12 +30,6 @@ const GOAL_ACCESS_ROLE_LISTS: Record<GoalAccess, readonly OperationCallerRole[]>
   read: ['ad_hoc_member', 'long_term_agent', 'universal_read'],
   mutate: ['ad_hoc_member', 'long_term_agent'],
   owner: ['long_term_agent'],
-};
-
-const GOAL_ACCESS_ROLES: Record<GoalAccess, ReadonlySet<OperationCallerRole>> = {
-  read: new Set(GOAL_ACCESS_ROLE_LISTS.read),
-  mutate: new Set(GOAL_ACCESS_ROLE_LISTS.mutate),
-  owner: new Set(GOAL_ACCESS_ROLE_LISTS.owner),
 };
 
 export const GOAL_READ_POLICY = {
@@ -110,16 +103,6 @@ export function goalDenial(
   return { reason: { accepted: false, reason, message } };
 }
 
-export function admitGoalRole(
-  caller: OperationCaller,
-  access: GoalAccess
-): { value: true } | { reason: GoalRejection } {
-  if (caller.source !== 'mcp') return { value: true };
-  return caller.role !== undefined && GOAL_ACCESS_ROLES[access].has(caller.role)
-    ? { value: true }
-    : goalDenial('role_denied', `Role "${caller.role ?? 'unknown'}" may not ${access} goals.`);
-}
-
 export function admitGoalSession(
   caller: OperationCaller,
   spaceId: string,
@@ -158,8 +141,6 @@ export function admitGoalSpace(
   access: GoalAccess,
   deps: GoalCallerContext
 ): { value: string } | { reason: GoalRejection } {
-  const role = admitGoalRole(caller, access);
-  if ('reason' in role) return role;
   const space = resolveGoalSpaceId(caller, requestedSpaceId);
   if ('reason' in space || access === 'read') return space;
   const session = admitGoalSession(caller, space.value, deps);
@@ -173,8 +154,6 @@ export function admitGoalAccess(
   deps: GoalCallerContext,
   getGoal: (goalId: string) => SpaceGoal | null
 ): { value: SpaceGoal } | { reason: GoalRejection } {
-  const role = admitGoalRole(caller, access);
-  if ('reason' in role) return role;
   let scopeSpaceId = input.spaceId;
   if (caller.source === 'mcp') {
     const space = resolveGoalSpaceId(caller, input.spaceId);

@@ -199,7 +199,7 @@ describe('session operation catalog', () => {
     ]);
   });
 
-  test('the family scope gate refuses a workflow worker inside a session mutation', async () => {
+  test('the family scope gate admits a workflow worker inside a session mutation', async () => {
     const registry = createOperationRegistry([...h.operations.values()]);
     const outcome = await invokeOperation(
       registry,
@@ -210,9 +210,28 @@ describe('session operation catalog', () => {
     expect(outcome).toEqual({
       kind: 'completed',
       value: {
+        ok: true,
+        previous_state: { status: 'idle' },
+        new_state: { status: 'processing' },
+      },
+    });
+    expect(JSON.parse(storedProcessingState())).toEqual({ status: 'processing' });
+  });
+
+  test('the family scope gate still refuses a caller that carries no Space', async () => {
+    const registry = createOperationRegistry([...h.operations.values()]);
+    const outcome = await invokeOperation(
+      registry,
+      'session.state.update',
+      { sessionId: TARGET, processingState: 'running' },
+      mcpCaller('ad_hoc_member', { spaceId: undefined })
+    );
+    expect(outcome).toEqual({
+      kind: 'completed',
+      value: {
         ok: false,
-        reason: 'denied',
-        message: 'This caller may not use Space sessions.',
+        reason: 'space_scope_required',
+        message: 'A Space is required: pass spaceId, or call from a session inside a Space.',
       },
     });
     expect(JSON.parse(storedProcessingState())).toEqual({ status: 'idle' });
@@ -440,30 +459,25 @@ describe('session operation role admission', () => {
     ).toMatchObject({ ok: true });
   });
 
-  test('workflow workers may not change session state', async () => {
+  test('workflow workers may change session state', async () => {
     expect(
       await run(
         'session.state.update',
-        { sessionId: TARGET, processingState: 'idle' },
+        { sessionId: TARGET, processingState: 'running' },
         mcpCaller('workflow_worker')
       )
-    ).toEqual({
-      ok: false,
-      reason: 'denied',
-      message: 'This caller may not use Space sessions.',
-    });
+    ).toMatchObject({ ok: true, new_state: { status: 'processing' } });
+    expect(JSON.parse(storedProcessingState())).toEqual({ status: 'processing' });
+    h.live.set(TARGET, fakeLiveSession(h, TARGET));
     expect(
       await run('session.interrupt', { sessionId: TARGET }, mcpCaller('workflow_worker'))
-    ).toEqual({ ok: false, reason: 'denied', message: 'This caller may not use Space sessions.' });
+    ).toEqual({ ok: true, interrupted: true });
+    expect(h.interrupts).toEqual([TARGET]);
   });
 
-  test('roles outside the space family are denied even for reads', async () => {
+  test('roles outside the space family may read as well', async () => {
     for (const role of ['outside_space', 'legacy_task_agent', 'direct_task_worker'] as const) {
-      expect(await run('session.list', {}, mcpCaller(role))).toEqual({
-        ok: false,
-        reason: 'denied',
-        message: 'This caller may not use Space sessions.',
-      });
+      expect(await run('session.list', {}, mcpCaller(role))).toMatchObject({ ok: true });
     }
   });
 

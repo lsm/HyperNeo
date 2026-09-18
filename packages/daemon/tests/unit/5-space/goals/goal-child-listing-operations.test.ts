@@ -152,10 +152,11 @@ describe('goal.tasks.list through the operations door', () => {
     }
   });
 
-  test('stops a workflow_worker caller via admitGoalRole inside the operation', async () => {
+  test('lists the tasks of a goal in its own Space for a workflow_worker caller', async () => {
     const ctx = makeCtx();
     try {
-      const goal = ctx.seed(SPACE_ID, 'Worker denied');
+      const goal = ctx.seed(SPACE_ID, 'Worker readable');
+      ctx.goalService.createImmediateTask(goal.id);
       const outcome = await invokeOperation(
         ctx.registry,
         'goal.tasks.list',
@@ -164,25 +165,25 @@ describe('goal.tasks.list through the operations door', () => {
       );
       expect(outcome).toMatchObject({
         kind: 'completed',
-        value: { accepted: false, reason: 'role_denied' },
+        value: { accepted: true, total: 1 },
       });
     } finally {
       ctx.db.close();
     }
   });
 
-  test('denies a workflow_worker caller inside the operation as well', async () => {
+  test('hides a goal from another Space from a workflow_worker caller', async () => {
     const ctx = makeCtx();
     try {
-      const goal = ctx.seed(SPACE_ID, 'Worker denied');
-      const operation = ctx.registry.get('goal.tasks.list');
-      if (!operation) throw new Error('goal.tasks.list is not registered');
-      const result = (await operation.execute(
-        { goalId: goal.id },
+      const foreign = ctx.seed(OTHER_SPACE_ID, 'Worker denied');
+      const result = await invoke(
+        ctx,
+        'goal.tasks.list',
+        { goalId: foreign.id },
         agent('workflow_worker')
-      )) as ChildPage;
+      );
       expect(result.accepted).toBe(false);
-      expect(result.reason).toBe('role_denied');
+      expect(result.reason).toBe('goal_not_found');
     } finally {
       ctx.db.close();
     }

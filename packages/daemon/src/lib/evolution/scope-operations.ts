@@ -711,7 +711,7 @@ export function createForgeScopeOperations(forge: ForgeScopeOperationDependencie
       name: 'forge.scope.create',
       policy: FORGE_MUTATE_POLICY,
       description:
-        'Create a Forge scope in a Space, optionally linked to a goal and a parent scope, with metric definitions and judge policy. MCP callers are scoped to their own Space; RPC callers pass spaceId. Rejects goal_not_found, scope_not_found (parent), invalid_policy, and forge_denied for roles or sessions without Forge write access.',
+        'Create a Forge scope in a Space, optionally linked to a goal and a parent scope, with metric definitions and judge policy. MCP callers are scoped to their own Space; RPC callers pass spaceId. Rejects goal_not_found, scope_not_found (parent), invalid_policy, and forge_denied for sessions without Forge write access.',
       inputSchema: ScopeCreateInputSchema,
       resultSchema: z.union([scopeResult, forgeDenialSchema(SCOPE_CREATE_REJECTIONS)]),
       execute: async (input, caller) => create(input, caller),

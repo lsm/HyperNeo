@@ -126,7 +126,7 @@ describe('task.retry operation', () => {
     }
   });
 
-  test('denies a workflow_worker role even with an active session in the space', async () => {
+  test('admits a workflow_worker role with an active session in the space', async () => {
     const harness = makeHarness();
     try {
       const task = harness.taskRepo.createTask({
@@ -139,9 +139,8 @@ describe('task.retry operation', () => {
         { taskId: task.id },
         memberCaller({ role: 'workflow_worker' })
       );
-      expect(result).toBe('retry_denied');
-      expect(harness.retryTask).not.toHaveBeenCalled();
-      expect(harness.taskRepo.getTask(task.id)?.status).toBe('blocked');
+      expect((result as SpaceTask).id).toBe(task.id);
+      expect(harness.retryTask).toHaveBeenCalledTimes(1);
     } finally {
       harness.db.close();
     }
