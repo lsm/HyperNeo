@@ -1,6 +1,10 @@
 import type { WorkflowHook, WorkflowHookResult, WorkflowHookUserState } from '@hyperneo/shared';
-import { DEFAULT_RETRYABLE_ACTION_DELAY_MS } from './hook-binding.ts';
-import type { HookActionMeta, HookActionOutcome, HookExecutionRecord } from './hook-engine.ts';
+import { DEFAULT_RETRYABLE_ACTION_DELAY_MS } from '../workflows/hook-binding.ts';
+import type {
+  HookActionMeta,
+  HookActionOutcome,
+  HookExecutionRecord,
+} from '../workflows/hook-engine.ts';
 
 export function buildBlockUserState(
   hook: WorkflowHook,
