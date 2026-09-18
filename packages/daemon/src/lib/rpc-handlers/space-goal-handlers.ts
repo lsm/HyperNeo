@@ -18,7 +18,10 @@ import type { SpaceManager } from '../space/managers/space-manager.ts';
 export interface SpaceGoalHandlerDeps {
   goalService: SpaceGoalService;
   spaceManager: SpaceManager;
-  goalScopeRepo: Pick<SpaceAgentGoalScopeRepository, 'getPrimaryGoalOwner'>;
+  goalScopeRepo: Pick<
+    SpaceAgentGoalScopeRepository,
+    'getPrimaryGoalOwner' | 'deleteGoalAssignmentByRelationship'
+  >;
   operations: OperationRegistrySource;
   internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
 }
@@ -206,11 +209,19 @@ export function setupSpaceGoalHandlers(messageHub: MessageHub, deps: SpaceGoalHa
     assertOwnerMutationAuthorized(context);
     const resolution = resolveOwner(params.goalId, params.spaceId);
     if (resolution.action === 'resolved' || resolution.action === 'degraded') {
-      await mutateGoalOwner('agent.unassignGoal', {
-        spaceId: params.spaceId,
-        goalId: params.goalId,
-        agentId: resolution.owner.agentId,
-      });
+      if (resolution.action === 'degraded' && resolution.reason === 'missing') {
+        goalScopeRepo.deleteGoalAssignmentByRelationship(
+          resolution.owner.agentId,
+          params.goalId,
+          'owner'
+        );
+      } else {
+        await mutateGoalOwner('agent.unassignGoal', {
+          spaceId: params.spaceId,
+          goalId: params.goalId,
+          agentId: resolution.owner.agentId,
+        });
+      }
       publishOwnerChanged(context.sessionId, params.spaceId, params.goalId);
     }
     return { owner: resolveOwner(params.goalId, params.spaceId) };

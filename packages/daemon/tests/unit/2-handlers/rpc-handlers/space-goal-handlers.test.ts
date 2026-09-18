@@ -127,7 +127,9 @@ function makeRepoMock(initial: SpaceGoalOwnerResolution) {
 function makeOperations(
   goalService: SpaceGoalService,
   goalScopeRepo: ReturnType<typeof makeRepoMock>,
-  internalEventBus?: InternalEventBus<DaemonInternalEventMap>
+  internalEventBus?: InternalEventBus<DaemonInternalEventMap>,
+  getAgent: (agentId: string) => SpaceLongHorizonAgent | null = (agentId) =>
+    ({ id: agentId, spaceId: SPACE_ID, status: 'active' }) as SpaceLongHorizonAgent
 ) {
   const writeDeps = {
     goalService,
@@ -137,8 +139,7 @@ function makeOperations(
   const assignmentDeps = {
     getSession: () => null,
     longHorizonAgentRepo: { getById: () => null } as never,
-    getAgent: (agentId: string) =>
-      ({ id: agentId, spaceId: SPACE_ID, status: 'active' }) as SpaceLongHorizonAgent,
+    getAgent,
     getGoalSpace: (goalId: string) => goalService.getGoal(goalId)?.spaceId ?? null,
     getForgeScopeSpace: () => null,
     assignGoal: (agentId: string, goalId: string) => goalScopeRepo.assignGoal(agentId, goalId),
@@ -172,7 +173,10 @@ function makeOperations(
   ]);
 }
 
-function makeHarness(repo: ReturnType<typeof makeRepoMock>) {
+function makeHarness(
+  repo: ReturnType<typeof makeRepoMock>,
+  getAgent?: (agentId: string) => SpaceLongHorizonAgent | null
+) {
   const { hub, handlers } = createMockHub();
   const goalService = {
     getGoal: mock(() => ({ id: GOAL_ID, spaceId: SPACE_ID })),
@@ -184,7 +188,7 @@ function makeHarness(repo: ReturnType<typeof makeRepoMock>) {
     goalService,
     spaceManager,
     goalScopeRepo: repo,
-    operations: makeOperations(goalService, repo),
+    operations: makeOperations(goalService, repo, undefined, getAgent),
   });
   return { handlers };
 }
@@ -379,6 +383,49 @@ describe('spaceGoal owner handlers', () => {
       conflicts: [],
     });
     const { handlers } = makeHarness(repo);
+    const result = await handlers.get('spaceGoal.unassignOwner')!(
+      { spaceId: SPACE_ID, goalId: GOAL_ID },
+      makeContext('global')
+    );
+    expect(repo.deleteGoalAssignmentByRelationship).toHaveBeenCalledWith(
+      'agent-1',
+      GOAL_ID,
+      'owner'
+    );
+    expect(result).toEqual({ owner: { action: 'no_recipient' } });
+  });
+
+  it('clears an owner row whose agent record no longer exists', async () => {
+    const repo = makeRepoMock({
+      action: 'degraded',
+      reason: 'missing',
+      owner: { agentId: 'agent-gone', relationship: 'owner', createdAt: 1 },
+      conflicts: [],
+    });
+    const { handlers } = makeHarness(repo, () => null);
+    const result = await handlers.get('spaceGoal.unassignOwner')!(
+      { spaceId: SPACE_ID, goalId: GOAL_ID },
+      makeContext('global')
+    );
+    expect(repo.deleteGoalAssignmentByRelationship).toHaveBeenCalledWith(
+      'agent-gone',
+      GOAL_ID,
+      'owner'
+    );
+    expect(result).toEqual({ owner: { action: 'no_recipient' } });
+  });
+
+  it('unassigns a degraded owner whose agent record survives', async () => {
+    const repo = makeRepoMock({
+      action: 'degraded',
+      reason: 'archived',
+      owner: { agentId: 'agent-1', relationship: 'owner', createdAt: 1 },
+      conflicts: [],
+    });
+    const { handlers } = makeHarness(
+      repo,
+      (agentId) => ({ id: agentId, spaceId: SPACE_ID, status: 'archived' }) as SpaceLongHorizonAgent
+    );
     const result = await handlers.get('spaceGoal.unassignOwner')!(
       { spaceId: SPACE_ID, goalId: GOAL_ID },
       makeContext('global')
