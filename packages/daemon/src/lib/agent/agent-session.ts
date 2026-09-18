@@ -121,6 +121,7 @@ export interface AgentSessionInit {
 export interface AgentSessionRuntimeOptions {
   operationRegistryProvider?: () => OperationRegistry | undefined;
   callerScopeResolver?: CallerScopeResolver;
+  invokeDependenciesProvider?: () => InvokeDependencies;
   autoReplayPendingMessages?: boolean;
 
   hardReset?: (
@@ -414,6 +415,8 @@ export class AgentSession
   ) {
     this.operationRegistryProvider = runtimeOptions.operationRegistryProvider;
     this.callerScopeResolver = runtimeOptions.callerScopeResolver ?? NO_CALLER_SCOPE;
+    if (runtimeOptions.invokeDependenciesProvider)
+      this.resolveInvokeDependencies = runtimeOptions.invokeDependenciesProvider;
     this.errorManager = new ErrorManager(this.messageHub, this.internalEventBus);
     this.logger = new Logger(`AgentSession ${session.id}`);
 

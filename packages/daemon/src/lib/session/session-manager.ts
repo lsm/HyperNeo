@@ -176,6 +176,7 @@ export class SessionManager {
         ...runtimeOptions,
         operationRegistryProvider: () => this.getOperationRegistry(),
         callerScopeResolver: (sessionId) => this.resolveCallerScope(sessionId),
+        invokeDependenciesProvider: () => this.getInvokeDependencies(),
         hardReset: (agentSession, options) => this.hardResetAgentSession(agentSession, options),
       }
     );

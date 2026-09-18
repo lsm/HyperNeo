@@ -50,10 +50,18 @@ export function summarizeAuditInput(
 }
 
 function isDomainRejection(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) return false;
+  const envelope = value as {
+    accepted?: unknown;
+    ok?: unknown;
+    success?: unknown;
+    rejected?: unknown;
+  };
   return (
-    typeof value === 'object' &&
-    value !== null &&
-    (value as { accepted?: unknown }).accepted === false
+    envelope.accepted === false ||
+    envelope.ok === false ||
+    envelope.success === false ||
+    envelope.rejected === true
   );
 }
 

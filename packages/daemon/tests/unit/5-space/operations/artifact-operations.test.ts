@@ -12,7 +12,13 @@ import {
   type ArtifactOperationDependencies,
   createArtifactOperations,
 } from '../../../../src/lib/artifacts/artifact-operations';
-import type { OperationCaller, OperationDefinition } from '../../../../src/lib/operations/registry';
+import type { OperationAuditRecord } from '../../../../src/lib/operations/audit';
+import { invokeOperation } from '../../../../src/lib/operations/invoke';
+import {
+  createOperationRegistry,
+  type OperationCaller,
+  type OperationDefinition,
+} from '../../../../src/lib/operations/registry';
 import { createSpaceTables } from '../../helpers/space-test-db';
 import { createTestSession } from '../../../helpers/database';
 
@@ -281,6 +287,32 @@ describe('artifact operations', () => {
     )) as { success: boolean; artifact: { nodeId: string } };
     expect(result.success).toBe(true);
     expect(result.artifact.nodeId).toBe('node-c');
+  });
+
+  test('the door audits a bare-string denial of artifact.save', async () => {
+    const sessionId = workerSession('s-door-denied', { withExecution: false });
+    const caller: OperationCaller = {
+      source: 'mcp',
+      sessionId,
+      spaceId: SPACE,
+      role: 'ad_hoc_member',
+    };
+    const registry = createOperationRegistry([...operations.values()]);
+    const written: OperationAuditRecord[] = [];
+    const outcome = await invokeOperation(
+      registry,
+      'artifact.save',
+      { shape: 'note', summary: 'x' },
+      caller,
+      {
+        audit: (record) => {
+          written.push(record);
+        },
+      }
+    );
+    expect(outcome).toEqual({ kind: 'completed', value: 'node_caller_denied' });
+    expect(written).toHaveLength(1);
+    expect(written[0]).toMatchObject({ operation: 'artifact.save', outcome: 'completed' });
   });
 
   test('saves without an audit repository', async () => {

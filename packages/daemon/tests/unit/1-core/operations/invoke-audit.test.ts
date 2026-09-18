@@ -148,27 +148,53 @@ describe('auditInvocation through invokeOperation', () => {
     expect(written).toHaveLength(0);
   });
 
-  test('a self-audited operation still writes a door row for a domain rejection', async () => {
-    const execute = mock(async () => ({ accepted: false, reason: 'owner_denied' }));
+  function selfAuditedReturning(value: unknown) {
     const registry = createOperationRegistry([
       defineOperation({
         name: 'task.act',
         description: 'Act on a task',
         inputSchema: z.object({ content: z.string().min(1) }),
-        resultSchema: z.object({ accepted: z.literal(false), reason: z.string() }),
+        resultSchema: z.unknown(),
         policy: { safetyClass: 'mutate', audit: { selfAudited: true } },
-        execute,
+        execute: mock(async () => value),
       }),
     ]);
     const written: OperationAuditRecord[] = [];
-    const outcome = await invokeOperation(registry, 'task.act', { content: 'hello' }, mcpCaller, {
-      audit: (record) => {
-        written.push(record);
-      },
-    });
-    expect(outcome.kind).toBe('completed');
-    expect(written).toHaveLength(1);
-    expect(written[0]?.outcome).toBe('completed');
+    return {
+      written,
+      invoke: () =>
+        invokeOperation(registry, 'task.act', { content: 'hello' }, mcpCaller, {
+          audit: (record) => {
+            written.push(record);
+          },
+        }),
+    };
+  }
+
+  test.each([
+    { label: 'accepted:false', value: { accepted: false, reason: 'owner_denied' } },
+    { label: 'ok:false', value: { ok: false, reason: 'denied', message: 'no write access' } },
+    { label: 'success:false', value: { success: false, error: 'node_caller_denied' } },
+    { label: 'rejected:true', value: { rejected: true, reason: 'agent_not_found', message: 'no' } },
+  ])(
+    'a self-audited operation still writes a door row for a $label rejection',
+    async ({ value }) => {
+      const { written, invoke } = selfAuditedReturning(value);
+      expect((await invoke()).kind).toBe('completed');
+      expect(written).toHaveLength(1);
+      expect(written[0]?.outcome).toBe('completed');
+    }
+  );
+
+  test.each([
+    { label: 'accepted:true', value: { accepted: true, goal: 'g-1' } },
+    { label: 'ok:true', value: { ok: true, schedule: 's-1' } },
+    { label: 'success:true', value: { success: true, artifact: 'a-1' } },
+    { label: 'a plain payload', value: { agent: 'a-1' } },
+  ])('a self-audited operation writes no door row for a $label success', async ({ value }) => {
+    const { written, invoke } = selfAuditedReturning(value);
+    expect((await invoke()).kind).toBe('completed');
+    expect(written).toHaveLength(0);
   });
 
   test('a self-audited operation still writes a door row when the call is refused', async () => {
