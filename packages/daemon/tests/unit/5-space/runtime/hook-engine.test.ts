@@ -2258,6 +2258,9 @@ describe('hook method coverage', () => {
     expect(outcome.executionLog).toHaveLength(1);
   });
 
+  const wrappedWith = (method: string) => new RegExp(`wrapHandlerWithHooks\\(\\s*'${method}'`);
+  const drivenWith = (method: string) => new RegExp(`executeAction\\(\\s*'${method}'`);
+
   test('send_message is the only production action wrapped with hooks', () => {
     const wrapping = readDaemonSources()
       .filter(({ text }) => text.includes('wrapHandlerWithHooks'))
@@ -2270,15 +2273,14 @@ describe('hook method coverage', () => {
       'lib/workflows/hook-engine.ts',
     ]);
     const sendMessage = readFileSync(join(srcRoot, 'lib/messaging/node-send-message.ts'), 'utf8');
-    expect(sendMessage).toContain("wrapHandlerWithHooks(\n    'send_message',");
+    expect(sendMessage).toMatch(wrappedWith('send_message'));
   });
 
   for (const method of inertMethods) {
     test(`configures but never fires: no ${method} handler reaches the hook engine`, () => {
       for (const { text } of readDaemonSources()) {
-        expect(text).not.toContain(`wrapHandlerWithHooks(\n    '${method}'`);
-        expect(text).not.toContain(`wrapHandlerWithHooks('${method}'`);
-        expect(text).not.toContain(`executeAction('${method}'`);
+        expect(text).not.toMatch(wrappedWith(method));
+        expect(text).not.toMatch(drivenWith(method));
       }
     });
   }
