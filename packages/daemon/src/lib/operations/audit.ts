@@ -49,6 +49,18 @@ export function summarizeAuditInput(
   );
 }
 
+function isDomainRejection(value: unknown): boolean {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    (value as { accepted?: unknown }).accepted === false
+  );
+}
+
+function isSelfAuditedOutcome(outcome: OperationOutcome): boolean {
+  return outcome.kind === 'completed' && !isDomainRejection(outcome.value);
+}
+
 export function buildOperationAuditRecord(
   registry: OperationRegistry,
   name: string,
@@ -58,7 +70,7 @@ export function buildOperationAuditRecord(
   durationMs: number
 ): OperationAuditRecord | null {
   const operation = registry.get(name);
-  if (operation?.policy?.audit?.selfAudited && outcome.kind === 'completed') return null;
+  if (operation?.policy?.audit?.selfAudited && isSelfAuditedOutcome(outcome)) return null;
   return {
     operation: name,
     caller,

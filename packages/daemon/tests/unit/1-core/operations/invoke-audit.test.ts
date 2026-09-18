@@ -156,6 +156,29 @@ describe('auditInvocation through invokeOperation', () => {
     expect(written).toHaveLength(0);
   });
 
+  test('a self-audited operation still writes a door row for a domain rejection', async () => {
+    const execute = mock(async () => ({ accepted: false, reason: 'owner_denied' }));
+    const registry = createOperationRegistry([
+      defineOperation({
+        name: 'task.act',
+        description: 'Act on a task',
+        inputSchema: z.object({ content: z.string().min(1) }),
+        resultSchema: z.object({ accepted: z.literal(false), reason: z.string() }),
+        policy: { safetyClass: 'mutate', audit: { selfAudited: true } },
+        execute,
+      }),
+    ]);
+    const written: OperationAuditRecord[] = [];
+    const outcome = await invokeOperation(registry, 'task.act', { content: 'hello' }, mcpCaller, {
+      audit: (record) => {
+        written.push(record);
+      },
+    });
+    expect(outcome.kind).toBe('completed');
+    expect(written).toHaveLength(1);
+    expect(written[0]?.outcome).toBe('completed');
+  });
+
   test('a self-audited operation still writes a door row when the call is refused', async () => {
     const { registry, written, dependencies, execute } = fixture({
       safetyClass: 'read',

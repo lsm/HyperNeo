@@ -214,7 +214,7 @@ export function createSendSessionMessageOperation(deps: SendSessionMessageDepend
     name: 'session.message.send',
     policy: { safetyClass: 'mutate', audit: { redactKeys: ['message'] } },
     description:
-      'Send a user message to an ad-hoc session in a Space and optionally clear a pending question; returns the delivery result.',
+      'Send a user message to an ad-hoc session in a Space and optionally clear a pending question; returns the delivery result. Declared mutate, so a universal_read caller — the role every session outside a Space resolves to — is refused at the door.',
     inputSchema: SendSessionMessageInputSchema,
     resultSchema: SendSessionMessageResultSchema,
     execute: async (input) => {
