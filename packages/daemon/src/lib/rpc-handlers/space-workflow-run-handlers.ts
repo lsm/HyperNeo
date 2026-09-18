@@ -17,7 +17,7 @@ import type { WorkflowRunStatus } from '@hyperneo/shared';
 import {
   QUEUED_RETRYABLE_ACTION_STATE_KEY,
   triggerRetryableHookAction,
-} from '../workflows/hook-engine.ts';
+} from '../hooks/hook-engine.ts';
 import {
   execGit,
   isGitRepo,

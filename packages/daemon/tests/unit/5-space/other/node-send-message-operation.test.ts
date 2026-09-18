@@ -1,10 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { NodeExecution, SpaceWorkflow, WorkflowChannel } from '@hyperneo/shared';
 import { ChannelResolver } from '../../../../src/lib/messaging/channel-resolver.ts';
-import type {
-  HookActionMeta,
-  WorkflowHookEngine,
-} from '../../../../src/lib/workflows/hook-engine.ts';
+import type { HookActionMeta, HookEngine } from '../../../../src/lib/hooks/hook-engine.ts';
 import type {
   NodeMessagingDependencies,
   NodeMessagingRuntime,
@@ -78,7 +75,7 @@ interface HookCall {
   meta: HookActionMeta;
 }
 
-function hookEngineStub(outcome: Record<string, unknown>, calls: HookCall[]): WorkflowHookEngine {
+function hookEngineStub(outcome: Record<string, unknown>, calls: HookCall[]): HookEngine {
   return {
     executeAction: async (method: string, args: Record<string, unknown>, meta: HookActionMeta) => {
       calls.push({ method, args, meta });
@@ -88,7 +85,7 @@ function hookEngineStub(outcome: Record<string, unknown>, calls: HookCall[]): Wo
     clearQueuedRetryableActionsForOwner: () => [],
     clearQueuedRetryableActionsForKey: () => {},
     isRetryableActionCancelled: () => false,
-  } as unknown as WorkflowHookEngine;
+  } as unknown as HookEngine;
 }
 
 function harness(options: {
@@ -96,7 +93,7 @@ function harness(options: {
   runtime?: boolean;
   sessionStatus?: string;
   workflow?: SpaceWorkflow;
-  hookEngine?: WorkflowHookEngine;
+  hookEngine?: HookEngine;
 }): Harness {
   const sent: AgentMessageParams[] = [];
   const workflow =

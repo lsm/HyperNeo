@@ -2,7 +2,7 @@ import type { SpaceWorkflow } from '@hyperneo/shared';
 import { z } from 'zod';
 import type { NodeExecutionRepository } from '../../storage/repositories/node-execution-repository.ts';
 import type { WorkflowRunArtifactRepository } from '../../storage/repositories/workflow-run-artifact-repository.ts';
-import type { WorkflowHookEngine } from '../workflows/hook-engine.ts';
+import type { HookEngine } from '../hooks/hook-engine.ts';
 import type { OperationCaller } from '../operations/registry.ts';
 import type { AgentMessageRouter } from './agent-message-router.ts';
 import type { ChannelResolver } from './channel-resolver.ts';
@@ -15,7 +15,7 @@ export interface NodeMessagingRuntime {
   readonly agentMessageRouter: Pick<AgentMessageRouter, 'deliverMessage'>;
   readonly artifactRepo?: Pick<WorkflowRunArtifactRepository, 'listByRun'>;
   readonly replyRoutingLookup?: (agentName?: string | null) => string | null;
-  readonly hookEngine?: WorkflowHookEngine;
+  readonly hookEngine?: HookEngine;
 }
 
 export type NodeMessagingRuntimeLookup = (sessionId: string) => NodeMessagingRuntime | null;
