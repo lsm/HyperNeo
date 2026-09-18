@@ -26,8 +26,9 @@ const inputSchema = z
     title: z.string().min(1).describe('Goal title'),
     checkInCronExpression: z
       .string()
+      .nullable()
       .optional()
-      .describe('Cron expression for recurring check-in task creation'),
+      .describe('Cron expression for recurring check-in task creation; null creates no schedule'),
     triggerImmediately: z.boolean().optional().describe('Create the first goal task immediately'),
     ownerAgentId: z
       .string()
