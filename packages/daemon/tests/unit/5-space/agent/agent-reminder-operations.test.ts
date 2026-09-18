@@ -170,7 +170,7 @@ describe('the agent.reminders.create operation', () => {
     expect(reminderRepo.listReminders(agent.id)).toHaveLength(0);
   });
 
-  test('a read-only session is refused at the door', async () => {
+  test('a read-only session is refused by admitAgentCaller inside the operation', async () => {
     expect(readOnlyCaller()).toEqual({
       source: 'mcp',
       sessionId: READ_ONLY_SESSION,
@@ -181,8 +181,8 @@ describe('the agent.reminders.create operation', () => {
       { spaceId, agentId: agent.id, message: 'x', remindAt: 1 },
       readOnlyCaller()
     );
-    expect(outcome.kind).toBe('failed');
-    expect(outcome.code).toBe('forbidden');
+    expect(outcome.kind).toBe('completed');
+    expect(outcome.value?.reason).toBe('agent_denied');
     expect(reminderRepo.listReminders(agent.id)).toHaveLength(0);
   });
 
@@ -244,14 +244,14 @@ describe('the agent.reminders.list operation', () => {
     expect(outcome.value?.reason).toBe('agent_not_found');
   });
 
-  test('a workflow worker is denied the reminder list at the door', async () => {
+  test('a workflow worker is denied the reminder list by admitAgentCaller inside the operation', async () => {
     const outcome = await run(
       'agent.reminders.list',
       { agentId: agent.id },
       memberCaller('workflow_worker')
     );
-    expect(outcome.kind).toBe('failed');
-    expect(outcome.code).toBe('forbidden');
+    expect(outcome.kind).toBe('completed');
+    expect(outcome.value?.reason).toBe('agent_denied');
   });
 
   test('a human caller naming the Space reads the reminders', async () => {

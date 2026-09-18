@@ -210,15 +210,17 @@ describe('goal.list through the operations door', () => {
     }
   });
 
-  test('admits universal_read but stops workflow_worker at the door policy', async () => {
+  test('admits universal_read but stops workflow_worker via admitGoalRole inside the operation', async () => {
     const ctx = makeCtx();
     try {
       ctx.seed(SPACE_ID, 'Readable');
       const read = await invoke(ctx, 'goal.list', {}, agent('universal_read'));
       expect(read.accepted).toBe(true);
       const worker = await invokeOperation(ctx.registry, 'goal.list', {}, agent('workflow_worker'));
-      expect(worker.kind).toBe('failed');
-      expect(worker.kind === 'failed' && worker.code).toBe('forbidden');
+      expect(worker).toMatchObject({
+        kind: 'completed',
+        value: { accepted: false, reason: 'role_denied' },
+      });
     } finally {
       ctx.db.close();
     }
@@ -326,7 +328,7 @@ describe('goal.get through the operations door', () => {
     }
   });
 
-  test('denies a workflow_worker caller', async () => {
+  test('denies a workflow_worker caller via admitGoalRole inside the operation', async () => {
     const ctx = makeCtx();
     try {
       const goal = ctx.seed(SPACE_ID, 'Worker denied');
@@ -336,8 +338,10 @@ describe('goal.get through the operations door', () => {
         { goalId: goal.id },
         agent('workflow_worker')
       );
-      expect(outcome.kind).toBe('failed');
-      expect(outcome.kind === 'failed' && outcome.code).toBe('forbidden');
+      expect(outcome).toMatchObject({
+        kind: 'completed',
+        value: { accepted: false, reason: 'role_denied' },
+      });
     } finally {
       ctx.db.close();
     }

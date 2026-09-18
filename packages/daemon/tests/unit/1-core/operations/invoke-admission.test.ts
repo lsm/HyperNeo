@@ -1,6 +1,10 @@
 import { describe, expect, mock, test } from 'bun:test';
 import { z } from 'zod';
-import { admitOperationCaller, invokeOperation } from '../../../../src/lib/operations/invoke';
+import {
+  admitOperationCaller,
+  invokeOperation,
+  isOperationAdmitted,
+} from '../../../../src/lib/operations/invoke';
 import {
   createOperationRegistry,
   defineOperation,
@@ -42,110 +46,63 @@ async function invoke(policy: OperationPolicy | undefined, caller: OperationCall
   return { outcome, execute };
 }
 
-describe('admitOperationCaller', () => {
-  test('carries the prepared operation through when the caller is admitted', () => {
-    const { operation } = fixture({ safetyClass: 'read' });
-    const prepared = { operation, input: { content: 'hello' } };
-    expect(admitOperationCaller(prepared, mcpCaller('workflow_worker'))).toEqual({
-      value: prepared,
-    });
+describe('isOperationAdmitted', () => {
+  test('admits every caller regardless of policy, role, or source; capability gating is removed', () => {
+    const policies: (OperationPolicy | undefined)[] = [
+      undefined,
+      { safetyClass: 'read' },
+      { safetyClass: 'mutate' },
+      { safetyClass: 'destructive' },
+      { safetyClass: 'human_only' },
+      { safetyClass: 'mutate', roles: ['long_term_agent'] },
+    ];
+    for (const policy of policies) {
+      const { operation } = fixture(policy);
+      expect(isOperationAdmitted(operation, { source: 'rpc' })).toBe(true);
+      expect(isOperationAdmitted(operation, { source: 'internal' })).toBe(true);
+      for (const role of [...MCP_ROLES, undefined]) {
+        expect(isOperationAdmitted(operation, mcpCaller(role))).toBe(true);
+      }
+    }
   });
+});
 
-  test('names the rejected operation in the forbidden reason', () => {
+describe('admitOperationCaller', () => {
+  test('carries the prepared operation through for every caller, including one a human_only policy used to reject', () => {
     const { operation } = fixture({ safetyClass: 'human_only' });
-    expect(admitOperationCaller({ operation, input: {} }, mcpCaller('ad_hoc_member'))).toEqual({
-      reason: {
-        kind: 'failed',
-        code: 'forbidden',
-        message: 'Operation task.act is not available to this caller',
-      },
+    const prepared = { operation, input: { content: 'hello' } };
+    expect(admitOperationCaller(prepared, mcpCaller('ad_hoc_member'))).toEqual({
+      value: prepared,
     });
   });
 });
 
 describe('invokeOperation caller admission', () => {
-  test('rpc callers pass every policy, including human_only and role lists', async () => {
-    const rpc: OperationCaller = { source: 'rpc' };
-    for (const policy of [
-      { safetyClass: 'human_only' } as const,
-      { safetyClass: 'destructive', roles: ['long_term_agent'] } as const,
-      { safetyClass: 'mutate' } as const,
-    ]) {
-      const { outcome, execute } = await invoke(policy, rpc);
-      expect(outcome).toEqual({ kind: 'completed', value: { accepted: 'hello' } });
-      expect(execute).toHaveBeenCalledTimes(1);
-    }
-  });
-
-  test('internal callers pass a human_only policy', async () => {
-    const { outcome } = await invoke({ safetyClass: 'human_only' }, { source: 'internal' });
-    expect(outcome).toEqual({ kind: 'completed', value: { accepted: 'hello' } });
-  });
-
-  test('an operation without a policy is admitted for every mcp role', async () => {
-    for (const role of MCP_ROLES) {
-      const { outcome, execute } = await invoke(undefined, mcpCaller(role));
-      expect(outcome).toEqual({ kind: 'completed', value: { accepted: 'hello' } });
-      expect(execute).toHaveBeenCalledTimes(1);
-    }
-  });
-
-  test('a roles list admits the listed role and denies workflow_worker', async () => {
-    const policy = { safetyClass: 'mutate', roles: ['ad_hoc_member', 'long_term_agent'] } as const;
-    const allowed = await invoke(policy, mcpCaller('ad_hoc_member'));
-    expect(allowed.outcome).toEqual({ kind: 'completed', value: { accepted: 'hello' } });
-    const denied = await invoke(policy, mcpCaller('workflow_worker'));
-    expect(denied.outcome).toEqual({
-      kind: 'failed',
-      code: 'forbidden',
-      message: 'Operation task.act is not available to this caller',
-    });
-    expect(denied.execute).not.toHaveBeenCalled();
-  });
-
-  test('a roles list denies an mcp caller carrying no role at all', async () => {
-    const { outcome, execute } = await invoke(
+  test('every caller and policy combination reaches execution now that the generic door is removed', async () => {
+    const policies: (OperationPolicy | undefined)[] = [
+      undefined,
+      { safetyClass: 'read' },
+      { safetyClass: 'mutate' },
+      { safetyClass: 'destructive', roles: ['long_term_agent'] },
+      { safetyClass: 'human_only' },
       { safetyClass: 'read', roles: ['workflow_worker'] },
-      mcpCaller()
-    );
-    expect(outcome).toMatchObject({ kind: 'failed', code: 'forbidden' });
-    expect(execute).not.toHaveBeenCalled();
-  });
-
-  test('universal_read is denied a mutate policy and admitted a read policy', async () => {
-    const denied = await invoke({ safetyClass: 'mutate' }, mcpCaller('universal_read'));
-    expect(denied.outcome).toMatchObject({ kind: 'failed', code: 'forbidden' });
-    expect(denied.execute).not.toHaveBeenCalled();
-    const admitted = await invoke({ safetyClass: 'read' }, mcpCaller('universal_read'));
-    expect(admitted.outcome).toEqual({ kind: 'completed', value: { accepted: 'hello' } });
-    expect(admitted.execute).toHaveBeenCalledTimes(1);
-  });
-
-  test.each(['destructive', 'human_only'] as const)(
-    'universal_read is denied a %s policy',
-    async (safetyClass) => {
-      const { outcome, execute } = await invoke({ safetyClass }, mcpCaller('universal_read'));
-      expect(outcome).toMatchObject({ kind: 'failed', code: 'forbidden' });
-      expect(execute).not.toHaveBeenCalled();
-    }
-  );
-
-  test('human_only is denied for every mcp role even when the role is listed', async () => {
-    for (const role of MCP_ROLES) {
-      const { outcome, execute } = await invoke(
-        { safetyClass: 'human_only', roles: [role] },
-        mcpCaller(role)
-      );
-      expect(outcome).toEqual({
-        kind: 'failed',
-        code: 'forbidden',
-        message: 'Operation task.act is not available to this caller',
-      });
-      expect(execute).not.toHaveBeenCalled();
+    ];
+    const callers: OperationCaller[] = [
+      { source: 'rpc' },
+      { source: 'internal' },
+      ...MCP_ROLES.map((role) => mcpCaller(role)),
+      mcpCaller(undefined),
+    ];
+    for (const policy of policies) {
+      for (const caller of callers) {
+        const { outcome, execute } = await invoke(policy, caller);
+        expect(outcome).toEqual({ kind: 'completed', value: { accepted: 'hello' } });
+        expect(execute).toHaveBeenCalledTimes(1);
+      }
     }
   });
 
-  test('admission runs after input parsing, so bad input still reports invalid_input', async () => {
+  test('admission no longer runs before input parsing; bad input still reports invalid_input', async () => {
     const { registry, execute } = fixture({ safetyClass: 'human_only' });
     expect(
       await invokeOperation(registry, 'task.act', { content: '' }, mcpCaller('ad_hoc_member'))

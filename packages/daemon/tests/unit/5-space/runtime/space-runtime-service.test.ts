@@ -2841,7 +2841,7 @@ describe('SpaceRuntimeService', () => {
         }
       });
 
-      test('a workflow worker caller is refused the template operations', async () => {
+      test('a workflow worker caller reaches execution now that the generic door is removed', async () => {
         const agent = makeMemberAgentSession();
         const sessionManager = {
           getSessionAsync: mock(async () => agent),
@@ -2863,7 +2863,7 @@ describe('SpaceRuntimeService', () => {
             role: 'workflow_worker',
           }
         );
-        expect(outcome.kind).toBe('failed');
+        expect(outcome).toEqual({ kind: 'completed', value: 'ran agentTemplate.list' });
       });
     });
 

@@ -167,7 +167,7 @@ describe('task.retry operation', () => {
     }
   });
 
-  test('declares a mutate policy that keeps other MCP roles out at the door', async () => {
+  test('declares a mutate policy, but the generic door no longer enforces roles', async () => {
     const harness = makeHarness();
     try {
       expect(harness.operation.policy).toEqual({
@@ -177,9 +177,9 @@ describe('task.retry operation', () => {
       expect(isOperationAdmitted(harness.operation, memberCaller())).toBe(true);
       expect(
         isOperationAdmitted(harness.operation, memberCaller({ role: 'workflow_worker' }))
-      ).toBe(false);
+      ).toBe(true);
       expect(isOperationAdmitted(harness.operation, memberCaller({ role: 'universal_read' }))).toBe(
-        false
+        true
       );
       expect(isOperationAdmitted(harness.operation, { source: 'rpc' })).toBe(true);
     } finally {

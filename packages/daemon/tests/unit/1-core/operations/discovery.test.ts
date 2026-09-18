@@ -169,60 +169,54 @@ describe('shared operation discovery', () => {
 });
 
 describe('discovery admission filtering', () => {
-  test('rpc callers see every policed operation', async () => {
-    expect(await listedNames(policyFixture(), { source: 'rpc' })).toEqual([
-      'family.read',
-      'family.mutate',
-      'family.human',
-      'family.unpoliced',
-      'operations.list',
-      'operations.describe',
-    ]);
+  const ALL_NAMES = [
+    'family.read',
+    'family.mutate',
+    'family.human',
+    'family.unpoliced',
+    'operations.list',
+    'operations.describe',
+  ];
+
+  test('rpc callers see every operation', async () => {
+    expect(await listedNames(policyFixture(), { source: 'rpc' })).toEqual(ALL_NAMES);
   });
 
-  test('a workflow_worker sees its roles entry but never the human_only one', async () => {
+  test('a workflow_worker sees every operation, including human_only, now that the door is removed', async () => {
     const names = await listedNames(policyFixture(), {
       source: 'mcp',
       sessionId: 'worker',
       role: 'workflow_worker',
     });
-    expect(names).toEqual([
-      'family.read',
-      'family.mutate',
-      'family.unpoliced',
-      'operations.list',
-      'operations.describe',
-    ]);
+    expect(names).toEqual(ALL_NAMES);
   });
 
-  test('a role outside the roles list loses that operation from the catalog', async () => {
+  test('a role outside the roles list still sees every operation in the catalog', async () => {
     const names = await listedNames(policyFixture(), {
       source: 'mcp',
       sessionId: 'member',
       role: 'ad_hoc_member',
     });
-    expect(names).not.toContain('family.mutate');
-    expect(names).toContain('family.read');
-    expect(names).toContain('family.unpoliced');
+    expect(names).toEqual(ALL_NAMES);
   });
 
-  test('universal_read sees only read-class and unpoliced operations', async () => {
+  test('universal_read sees every operation, including mutate and human_only', async () => {
     expect(
       await listedNames(policyFixture(), {
         source: 'mcp',
         sessionId: 'reader',
         role: 'universal_read',
       })
-    ).toEqual(['family.read', 'family.unpoliced', 'operations.list', 'operations.describe']);
+    ).toEqual(ALL_NAMES);
   });
 
-  test('an operation that exists but is not admitted describes as not found', async () => {
+  test('every operation now describes as found regardless of caller role', async () => {
     const registry = policyFixture();
     const worker: OperationCaller = { source: 'mcp', sessionId: 'worker', role: 'workflow_worker' };
     expect(registry.get('family.human')).toBeDefined();
     expect(
       await invokeOperation(registry, 'operations.describe', { name: 'family.human' }, worker)
-    ).toEqual({ kind: 'completed', value: { found: false, name: 'family.human' } });
+    ).toMatchObject({ kind: 'completed', value: { found: true, name: 'family.human' } });
     expect(
       await invokeOperation(registry, 'operations.describe', { name: 'family.mutate' }, worker)
     ).toMatchObject({ kind: 'completed', value: { found: true, name: 'family.mutate' } });
@@ -238,14 +232,14 @@ describe('discovery admission filtering', () => {
     ).toMatchObject({ kind: 'completed', value: { found: true, name: 'family.human' } });
   });
 
-  test('findDescribedOperation hides an unadmitted operation from the caller', () => {
+  test('findDescribedOperation no longer hides any operation from a caller', () => {
     const registry = policyFixture();
     expect(
       findDescribedOperation(registry, 'family.mutate', {
         source: 'mcp',
         role: 'ad_hoc_member',
       })
-    ).toEqual({ reason: { found: false, name: 'family.mutate' } });
+    ).toEqual({ value: registry.get('family.mutate')! });
     expect(
       findDescribedOperation(registry, 'family.mutate', {
         source: 'mcp',

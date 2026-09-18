@@ -144,14 +144,14 @@ describe('workflow run read operation', () => {
     expect(value).toBe('run_not_found');
   });
 
-  test('workflow.run.get refuses a direct_task_worker at the door', async () => {
+  test('workflow.run.get refuses a direct_task_worker via the family scope gate', async () => {
     const outcome = await outcomeOf(
       deps(),
       'workflow.run.get',
       { runId: 'run-1' },
       mcpCaller('direct_task_worker')
     );
-    expect(outcome).toMatchObject({ kind: 'failed', code: 'forbidden' });
+    expect(outcome).toMatchObject({ kind: 'completed', value: 'caller_not_admitted' });
   });
 });
 
@@ -288,14 +288,14 @@ describe('workflow plan change operation', () => {
     expect(value).toBe('caller_not_admitted');
   });
 
-  test('workflow.changePlan is closed to workflow_worker at the door', async () => {
+  test('workflow.changePlan is closed to workflow_worker via the family scope gate', async () => {
     const outcome = await outcomeOf(
       deps(),
       'workflow.changePlan',
       { runId: 'run-1', description: 'reworded' },
       mcpCaller('workflow_worker')
     );
-    expect(outcome).toMatchObject({ kind: 'failed', code: 'forbidden' });
+    expect(outcome).toMatchObject({ kind: 'completed', value: 'caller_not_admitted' });
   });
 
   test('workflow.changePlan rejects a call that names no change', async () => {

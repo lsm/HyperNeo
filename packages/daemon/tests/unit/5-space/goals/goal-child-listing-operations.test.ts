@@ -152,7 +152,7 @@ describe('goal.tasks.list through the operations door', () => {
     }
   });
 
-  test('stops a workflow_worker caller at the door policy', async () => {
+  test('stops a workflow_worker caller via admitGoalRole inside the operation', async () => {
     const ctx = makeCtx();
     try {
       const goal = ctx.seed(SPACE_ID, 'Worker denied');
@@ -162,8 +162,10 @@ describe('goal.tasks.list through the operations door', () => {
         { goalId: goal.id },
         agent('workflow_worker')
       );
-      expect(outcome.kind).toBe('failed');
-      expect(outcome.kind === 'failed' && outcome.code).toBe('forbidden');
+      expect(outcome).toMatchObject({
+        kind: 'completed',
+        value: { accepted: false, reason: 'role_denied' },
+      });
     } finally {
       ctx.db.close();
     }

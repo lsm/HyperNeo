@@ -247,10 +247,10 @@ describe('the agentTemplate.list operation', () => {
     expect(outcome.value?.reason).toBe('space_mismatch');
   });
 
-  test('a workflow worker is refused at the door', async () => {
+  test('a workflow worker is refused by admitAgentCaller inside the operation', async () => {
     const outcome = await run('agentTemplate.list', {}, memberCaller('workflow_worker'));
-    expect(outcome.kind).toBe('failed');
-    expect(outcome.code).toBe('forbidden');
+    expect(outcome.kind).toBe('completed');
+    expect(outcome.value?.reason).toBe('agent_denied');
   });
 });
 

@@ -138,7 +138,7 @@ describe('goal.pause through the operations door', () => {
     }
   });
 
-  test('stops universal_read at the door policy and leaves the goal active', async () => {
+  test('stops universal_read via admitGoalRole inside the operation, leaving the goal active', async () => {
     const ctx = makeCtx();
     try {
       const goal = ctx.seed(SPACE_ID, 'Read only');
@@ -148,8 +148,10 @@ describe('goal.pause through the operations door', () => {
         { goalId: goal.id },
         agent('universal_read')
       );
-      expect(outcome.kind).toBe('failed');
-      expect(outcome.kind === 'failed' && outcome.code).toBe('forbidden');
+      expect(outcome).toMatchObject({
+        kind: 'completed',
+        value: { accepted: false, reason: 'role_denied' },
+      });
       expect(ctx.goalService.getGoal(goal.id)?.status).toBe('active');
     } finally {
       ctx.db.close();
