@@ -5,11 +5,12 @@ import type {
   SpaceGoalEvent,
   SpaceGoalOwnerResolution,
   SpaceGoalStatus,
+  SpaceTask,
 } from '@hyperneo/shared';
 import type { SpaceAgentGoalScopeRepository } from '../../storage/repositories/space-agent-goal-scope-repository.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { decideGoalOwnershipMutationAdmission } from '../goals/ownership-gates.ts';
-import type { PublicSpaceGoalUpdateParams, SpaceGoalService } from '../goals/service.ts';
+import type { SpaceGoalService } from '../goals/service.ts';
 import { invokeOperationFromHandler } from '../operations/handler-invoker.ts';
 import type { OperationRegistrySource } from '../operations/registry.ts';
 import type { SpaceManager } from '../space/managers/space-manager.ts';
@@ -63,13 +64,14 @@ export function setupSpaceGoalHandlers(messageHub: MessageHub, deps: SpaceGoalHa
   }
 
   messageHub.onRequest('spaceGoal.create', async (data) => {
-    const params = data as Parameters<SpaceGoalService['createGoal']>[0];
+    const params = data as { spaceId: string };
     await requireSpace(params.spaceId);
-    const workspacePath = await goalService.resolveGoalWorkspacePath(
-      params.spaceId,
-      params.workspacePath
+    const result = await invokeOperationFromHandler<{ accepted: true; goal: SpaceGoal }>(
+      operations,
+      'goal.create',
+      params
     );
-    return { goal: goalService.createGoal({ ...params, workspacePath }, { source: 'rpc' }) };
+    return { goal: result.goal };
   });
 
   messageHub.onRequest('spaceGoal.list', async (data) => {
@@ -97,53 +99,52 @@ export function setupSpaceGoalHandlers(messageHub: MessageHub, deps: SpaceGoalHa
   });
 
   messageHub.onRequest('spaceGoal.update', async (data) => {
-    const params = data as { spaceId: string; goalId: string } & Parameters<
-      SpaceGoalService['updateGoal']
-    >[1];
+    const params = data as { spaceId: string; goalId: string };
     await requireSpace(params.spaceId);
-    requireGoalInSpace(params.goalId, params.spaceId);
-    const updates: PublicSpaceGoalUpdateParams = {
-      title: params.title,
-      description: params.description,
-      status: params.status,
-      type: params.type,
-      priority: params.priority,
-      labels: params.labels,
-      metrics: params.metrics,
-      summary: params.summary,
-      progress: params.progress,
-      nextSteps: params.nextSteps,
-      preferredWorkflowId: params.preferredWorkflowId,
-      autoTriggerNext: params.autoTriggerNext,
-      checkInCronExpression: params.checkInCronExpression,
-      checkInTimezone: params.checkInTimezone,
-      workspacePath: await goalService.resolveGoalWorkspacePath(
-        params.spaceId,
-        params.workspacePath
-      ),
-    };
-    return { goal: goalService.updateGoal(params.goalId, updates, { source: 'rpc' }) };
+    requireGoalId(params.goalId);
+    const result = await invokeOperationFromHandler<{ accepted: true; goal: SpaceGoal }>(
+      operations,
+      'goal.update',
+      params
+    );
+    return { goal: result.goal };
   });
 
   messageHub.onRequest('spaceGoal.pause', async (data) => {
     const params = data as { spaceId: string; goalId: string };
     await requireSpace(params.spaceId);
-    requireGoalInSpace(params.goalId, params.spaceId);
-    return { goal: goalService.pauseGoal(params.goalId, { source: 'rpc' }) };
+    requireGoalId(params.goalId);
+    const result = await invokeOperationFromHandler<{ accepted: true; goal: SpaceGoal }>(
+      operations,
+      'goal.pause',
+      params
+    );
+    return { goal: result.goal };
   });
 
   messageHub.onRequest('spaceGoal.resume', async (data) => {
     const params = data as { spaceId: string; goalId: string };
     await requireSpace(params.spaceId);
-    requireGoalInSpace(params.goalId, params.spaceId);
-    return { goal: goalService.resumeGoal(params.goalId, { source: 'rpc' }) };
+    requireGoalId(params.goalId);
+    const result = await invokeOperationFromHandler<{ accepted: true; goal: SpaceGoal }>(
+      operations,
+      'goal.resume',
+      params
+    );
+    return { goal: result.goal };
   });
 
   messageHub.onRequest('spaceGoal.createImmediateTask', async (data) => {
     const params = data as { spaceId: string; goalId: string };
     await requireSpace(params.spaceId);
-    requireGoalInSpace(params.goalId, params.spaceId);
-    return goalService.createImmediateTask(params.goalId, { source: 'rpc' });
+    requireGoalId(params.goalId);
+    const result = await invokeOperationFromHandler<{
+      accepted: true;
+      goal: SpaceGoal;
+      task: SpaceTask | null;
+      queued: boolean;
+    }>(operations, 'goal.triggerTask', params);
+    return { goal: result.goal, task: result.task, queued: result.queued };
   });
 
   messageHub.onRequest('spaceGoal.listEvents', async (data) => {
