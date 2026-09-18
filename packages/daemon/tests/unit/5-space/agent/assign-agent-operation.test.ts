@@ -167,17 +167,33 @@ describe('the agent.assignGoal and agent.unassignGoal operations', () => {
     expect(agentRepo.listGoals(agent.id)).toHaveLength(1);
   });
 
-  test('an ad-hoc member session may not reassign goal ownership', async () => {
+  test('an ad-hoc member session carrying no agent identity may reassign goal ownership', async () => {
     const outcome = await run(
       'agent.assignGoal',
       { agentId: agent.id, goalId: GOAL_ID },
       caller('ad_hoc_member')
     );
+    expect(outcome.value).toEqual({ accepted: true, assigned: true });
+    expect(agentRepo.listGoals(agent.id).map((entry) => entry.goalId)).toEqual([GOAL_ID]);
+  });
+
+  test('any caller presenting an agent identity from another Space is denied', async () => {
+    const stranger = agentRepo.create({
+      spaceId: otherSpace(),
+      handle: 'stranger',
+      displayName: 'Stranger',
+      instructions: '',
+    });
+    const outcome = await run(
+      'agent.assignGoal',
+      { agentId: agent.id, goalId: GOAL_ID },
+      caller('ad_hoc_member', stranger.id)
+    );
     expect(outcome.value?.reason).toBe('agent_denied');
     expect(agentRepo.listGoals(agent.id)).toHaveLength(0);
   });
 
-  test('a long-term agent whose own record is paused may not reassign ownership', async () => {
+  test('a caller whose own agent record is paused may not reassign ownership', async () => {
     agentRepo.update(agent.id, { status: 'paused' });
     const outcome = await run(
       'agent.assignGoal',
