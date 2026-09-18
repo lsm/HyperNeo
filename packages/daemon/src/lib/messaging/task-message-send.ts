@@ -171,6 +171,7 @@ export async function sendTaskMessage(
 export function createSendTaskMessageOperation(deps: TaskMessageSendDependencies) {
   return defineOperation({
     name: 'task.message.send',
+    policy: { safetyClass: 'mutate', audit: { redactKeys: ['message'] } },
     description:
       'Send a message to a workflow node agent or long-horizon agent on a task, resolving the target by node_id, @handle, @role, @worker, or @session. The node is activated automatically if it has no live session.',
     inputSchema: TaskMessageSendInputSchema,
