@@ -54,6 +54,7 @@ function makeCtx() {
       goalService,
       taskRepo,
       longHorizonAgentRepo: { getById: () => null },
+      goalScopeRepo: { getPrimaryGoalOwner: () => ({ action: 'no_recipient' }) },
       getSession: (): Session | null => null,
     })
   );

@@ -68,6 +68,7 @@ function makeCtx(sessionStatus = 'active') {
       goalService,
       taskRepo,
       longHorizonAgentRepo: { getById: () => null },
+      goalScopeRepo: { getPrimaryGoalOwner: () => ({ action: 'no_recipient' }) },
       getSession: (id) => (id === SESSION_ID ? session(sessionStatus) : null),
       auditLogRepo,
     })

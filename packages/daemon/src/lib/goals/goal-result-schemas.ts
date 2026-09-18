@@ -2,6 +2,7 @@ import type {
   SpaceGoal,
   SpaceGoalEventSnapshot,
   SpaceGoalOutcomeNotification,
+  SpaceGoalOwnerResolution,
   SpaceTaskCompact,
 } from '@hyperneo/shared';
 import { z } from 'zod';
@@ -112,3 +113,24 @@ export const SpaceTaskCompactSchema = z.object({
   createdAt: z.number(),
   updatedAt: z.number(),
 }) satisfies z.ZodType<SpaceTaskCompact>;
+
+const GoalOwnerCandidateSchema = z.object({
+  agentId: z.string(),
+  relationship: z.enum(['owner', 'manager', 'watcher']),
+  createdAt: z.number(),
+});
+
+export const GoalOwnerResolutionSchema = z.discriminatedUnion('action', [
+  z.object({
+    action: z.literal('resolved'),
+    owner: GoalOwnerCandidateSchema,
+    conflicts: z.array(GoalOwnerCandidateSchema),
+  }),
+  z.object({
+    action: z.literal('degraded'),
+    reason: z.enum(['active', 'missing', 'paused', 'disabled', 'archived']),
+    owner: GoalOwnerCandidateSchema,
+    conflicts: z.array(GoalOwnerCandidateSchema),
+  }),
+  z.object({ action: z.literal('no_recipient') }),
+]) satisfies z.ZodType<SpaceGoalOwnerResolution>;
