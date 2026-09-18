@@ -31,6 +31,7 @@ const noSessionManager = {
 type RemoteDaemon = {
   mailbox: MailboxTestDb;
   url: string;
+  clientCount: () => number;
   stop: () => Promise<void>;
 };
 
@@ -64,12 +65,21 @@ async function startRemoteDaemon(knownSessionId: string): Promise<RemoteDaemon> 
   return {
     mailbox,
     url: `ws://127.0.0.1:${server.port}/ws`,
+    clientCount: () => transport.getClientCount(),
     stop: async () => {
       await transport.close();
       server.stop(true);
       mailbox.close();
     },
   };
+}
+
+async function waitFor(condition: () => boolean, timeoutMs = 2000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() > deadline) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
 }
 
 describe('forwarding message.send to an attached daemon', () => {
@@ -120,6 +130,18 @@ describe('forwarding message.send to an attached daemon', () => {
       value: { kind: 'accepted', mailboxId: entry?.id, messageId: entry?.messageUuid },
     });
     expect(local.rowCount()).toBe(0);
+  });
+
+  test('closes the previous socket when the same daemon is attached again', async () => {
+    daemons.attach('b', remote.url);
+    await send('daemon:b::session:session-on-b');
+    expect(remote.clientCount()).toBe(1);
+
+    daemons.attach('b', remote.url);
+    await send('daemon:b::session:session-on-b');
+
+    await waitFor(() => remote.clientCount() === 1);
+    expect(remote.clientCount()).toBe(1);
   });
 
   test('returns the remote daemon own rejection for a session it does not know', async () => {
