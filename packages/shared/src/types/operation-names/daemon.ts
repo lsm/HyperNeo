@@ -1,1 +1,1 @@
-export const DAEMON_OPERATION_NAMES = ['daemon.attach'] as const;
+export const DAEMON_OPERATION_NAMES = ['daemon.attach', 'daemon.detach', 'daemon.list'] as const;

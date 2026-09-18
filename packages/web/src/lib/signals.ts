@@ -97,6 +97,7 @@ export type SettingsSection =
   | 'providers'
   | 'voice'
   | 'app-mcp-servers'
+  | 'remote-daemons'
   | 'skills'
   | 'models'
   | 'usage'

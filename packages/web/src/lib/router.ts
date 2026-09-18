@@ -52,6 +52,7 @@ const SETTINGS_SECTIONS = new Set<SettingsSection>([
   'providers',
   'voice',
   'app-mcp-servers',
+  'remote-daemons',
   'skills',
   'models',
   'usage',

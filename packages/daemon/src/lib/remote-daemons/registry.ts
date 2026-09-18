@@ -46,6 +46,16 @@ export class RemoteDaemonRegistry {
     this.forget(daemonId);
   }
 
+  list(): { daemonId: string; url: string }[] {
+    return [...this.urls].map(([daemonId, url]) => ({ daemonId, url }));
+  }
+
+  detach(daemonId: string): boolean {
+    const wasAttached = this.urls.delete(daemonId);
+    this.forget(daemonId);
+    return wasAttached;
+  }
+
   private open(daemonId: string, url: string): RemoteAttempt {
     const existing = this.attempts.get(daemonId);
     if (existing) return existing;
