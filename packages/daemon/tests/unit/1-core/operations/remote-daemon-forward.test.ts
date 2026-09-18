@@ -296,7 +296,7 @@ describe('attaching a remote daemon', () => {
       );
       expect(attached).toMatchObject({
         kind: 'completed',
-        value: { kind: 'rejected', reason: expect.stringContaining('human-only') },
+        value: { kind: 'rejected', reason: expect.stringContaining('restricted to the RPC door') },
       });
 
       const sent = await invokeOperation(

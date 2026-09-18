@@ -31,7 +31,7 @@ export const AttachDaemonResultSchema = z.discriminatedUnion('kind', [
 type AttachInput = z.infer<typeof AttachDaemonInputSchema>;
 type AttachResult = z.infer<typeof AttachDaemonResultSchema>;
 
-export function requireHumanAttachCaller(
+export function requireRpcAttachCaller(
   input: AttachInput,
   caller: OperationCaller
 ): { value: AttachInput } | { reason: AttachResult } {
@@ -41,7 +41,7 @@ export function requireHumanAttachCaller(
         reason: {
           kind: 'rejected',
           reason:
-            'Attaching a remote daemon is a human-only action; an agent can address a daemon that is already attached but cannot add one.',
+            'Attaching a remote daemon is restricted to the RPC door; an agent can address a daemon that is already attached but cannot add one.',
         },
       };
 }
@@ -65,7 +65,7 @@ export function attachRemoteDaemon(
 
 const runAttachDaemon = (superpipe({})('attach-remote-daemon') as PipelineAPI)
   .input(['input', 'caller', 'registry'])
-  .pipe(requireHumanAttachCaller, ['input', 'caller'], 'result:outcome')
+  .pipe(requireRpcAttachCaller, ['input', 'caller'], 'result:outcome')
   .pipe(attachRemoteDaemon, ['outcome', 'registry'], 'outcome')
   .endAsync('outcome') as (
   input: AttachInput,
@@ -78,7 +78,7 @@ export function createAttachDaemonOperation(registry: RemoteDaemonRegistry) {
     name: 'daemon.attach',
     policy: { safetyClass: 'human_only' },
     description:
-      'Attach a remote HyperNeo daemon by MessageHub websocket URL so its sessions become addressable as "daemon:<daemonId>::session:<sessionId>". Only a human acting over RPC can attach a daemon; agents are rejected. The attachment lives in memory for the life of this daemon process and is replaced when the same id is attached again. No connection is opened until the first forwarded call.',
+      'Attach a remote HyperNeo daemon by MessageHub websocket URL so its sessions become addressable as "daemon:<daemonId>::session:<sessionId>". Only a caller on the RPC door can attach a daemon; agent callers are rejected. The attachment lives in memory for the life of this daemon process and is replaced when the same id is attached again. No connection is opened until the first forwarded call.',
     inputSchema: AttachDaemonInputSchema,
     resultSchema: AttachDaemonResultSchema,
     execute: (input, caller) => runAttachDaemon(input, caller, registry),
