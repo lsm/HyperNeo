@@ -173,7 +173,7 @@ export function createSendTaskMessageOperation(deps: TaskMessageSendDependencies
     name: 'task.message.send',
     policy: { safetyClass: 'mutate', audit: { redactKeys: ['message'] } },
     description:
-      'Send a message to a workflow node agent or long-horizon agent on a task, resolving the target by node_id, @handle, @role, @worker, or @session. The node is activated automatically if it has no live session. Declared mutate, so a universal_read caller — the role every session outside a Space resolves to — is refused at the door.',
+      'Send a message to a workflow node agent or long-horizon agent on a task, resolving the target by node_id, @handle, @role, @worker, or @session. The node is activated automatically if it has no live session.',
     inputSchema: TaskMessageSendInputSchema,
     resultSchema: TaskMessageSendResultSchema,
     execute: (input, caller) => sendTaskMessage(input, caller, deps),
