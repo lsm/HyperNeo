@@ -6,8 +6,9 @@ import type {
 import { useState } from 'preact/hooks';
 import { Button } from '../ui/Button';
 import { AUTONOMY_LABELS, toolPermissionsToolsList } from './agent-page-labels';
+import { poolFromModelConfig } from './agent-model-pool';
 import { LineNumberedTextarea } from './LineNumberedTextarea';
-import { ModelPoolEditor, type ModelPoolEditorMode } from './ModelPoolEditor';
+import { ModelPoolEditor } from './ModelPoolEditor';
 import { SettingSourcesEditor } from './SettingSourcesEditor';
 import { extraToolsOf, withExtraTool, withoutExtraTool } from './template-extra-tools';
 import { runTemplateSave } from './template-save-pipeline';
@@ -43,11 +44,13 @@ export function TemplateEditor({
   const [settingSources, setSettingSources] = useState<SettingSource[] | null>(
     template?.settingSources ?? null
   );
-  const [modelPool, setModelPool] = useState<AgentModelPoolEntry[]>(template?.modelPool ?? []);
-  const initialModelMode: ModelPoolEditorMode =
-    (template?.modelPool ?? []).length > 0 ? 'pool' : 'single';
-  const [modelMode, setModelMode] = useState<ModelPoolEditorMode>(initialModelMode);
-  const [poolEdited, setPoolEdited] = useState(false);
+  const [modelPool, setModelPool] = useState<AgentModelPoolEntry[]>(() =>
+    poolFromModelConfig({
+      model: template?.model,
+      provider: template?.provider,
+      modelPool: template?.modelPool,
+    })
+  );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [extraToolDraft, setExtraToolDraft] = useState('');
@@ -80,11 +83,6 @@ export function TemplateEditor({
           suggestedAutonomyLevel: autonomyLevel,
           tools: toolsSelection.tools,
           pendingTool: extraToolDraft,
-          model: modelFields.model,
-          provider: modelFields.provider,
-          modelMode,
-          initialModelMode,
-          poolEdited,
           modelPool,
           thinkingLevel: modelFields.thinkingLevel,
           settingSources,
@@ -199,27 +197,9 @@ export function TemplateEditor({
           <div>
             <label class="mb-2 block text-sm font-medium text-fg-soft">Model</label>
             <ModelPoolEditor
-              mode={modelMode}
-              model={modelFields.model ?? ''}
-              provider={modelFields.provider ?? ''}
               modelPool={modelPool}
-              onModeChange={(nextMode) => {
-                setModelMode(nextMode);
-                if (nextMode === 'pool') {
-                  setModelFields((fields) => ({ ...fields, model: null, provider: null }));
-                }
-              }}
-              onModelChange={(nextModel, nextProvider) =>
-                setModelFields((fields) => ({
-                  ...fields,
-                  model: nextModel || null,
-                  provider: nextProvider || null,
-                }))
-              }
-              onModelPoolChange={(next) => {
-                setModelPool(next);
-                setPoolEdited(JSON.stringify(next) !== JSON.stringify(template?.modelPool ?? []));
-              }}
+              emptyHint="No models — agents from this template use the space default until one is added."
+              onModelPoolChange={setModelPool}
             />
           </div>
           <TemplateModelFields value={modelFields} onChange={setModelFields} hideModelSelect />

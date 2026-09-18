@@ -4,8 +4,15 @@ export { FileDiffView, parseDiff } from './FileDiffView';
 export { ImportPreviewDialog } from './ImportPreviewDialog';
 export type { LineNumberedTextareaProps } from './LineNumberedTextarea';
 export { LineNumberedTextarea } from './LineNumberedTextarea';
-export { ModelPoolEditor } from './ModelPoolEditor';
-export type { ModelPoolEditorMode, ModelPoolEditorProps } from './ModelPoolEditor';
+export { ModelPoolEditor, POOL_EMPTY_HINT_SPACE_DEFAULT } from './ModelPoolEditor';
+export type { ModelPoolEditorProps } from './ModelPoolEditor';
+export {
+  modelConfigFromPool,
+  poolFromModelConfig,
+  sameModelConfig,
+  storedModelConfig,
+} from './agent-model-pool';
+export type { ModelConfigSource, ResolvedModelConfig } from './agent-model-pool';
 export { SpaceCreateDialog } from './SpaceCreateDialog';
 export { SpaceCreateTaskDialog } from './SpaceCreateTaskDialog';
 export { SpaceMemories } from './SpaceMemories';

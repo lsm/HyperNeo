@@ -7,7 +7,7 @@ import type {
 } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { spaceStore } from '../../lib/space-store';
-import type { ModelPoolEditorMode } from './ModelPoolEditor';
+import { modelConfigFromPool, sameModelConfig, storedModelConfig } from './agent-model-pool';
 
 export interface TemplateSaveForm {
   displayName: string;
@@ -18,11 +18,6 @@ export interface TemplateSaveForm {
   suggestedAutonomyLevel: number;
   tools: string[];
   pendingTool: string;
-  model: string | null;
-  provider: string | null;
-  modelMode: ModelPoolEditorMode;
-  initialModelMode: ModelPoolEditorMode;
-  poolEdited: boolean;
   modelPool: AgentModelPoolEntry[];
   thinkingLevel: ThinkingLevel | null;
   settingSources: SettingSource[] | null;
@@ -52,16 +47,7 @@ function templateSaveParseToolsStage(ctx: TemplateSaveCtx): TemplateSaveCtx {
 
 async function templateSavePersistStage(ctx: TemplateSaveCtx): Promise<TemplateSaveCtx> {
   const { form, parsedTools } = ctx;
-  const modeSwitched =
-    form.modelMode !== form.initialModelMode || (form.poolEdited && form.modelMode === 'pool');
-  const effectiveModel = form.modelMode === 'single' || !modeSwitched ? form.model : '';
-  const cleanedModelPool = form.modelPool
-    .map((entry) => ({ ...entry, model: entry.model.trim() }))
-    .filter((entry) => entry.model.length > 0);
-  const activeModelPool =
-    (form.modelMode === 'pool' || !modeSwitched) && cleanedModelPool.length > 0
-      ? cleanedModelPool
-      : null;
+  const modelConfig = modelConfigFromPool(form.modelPool);
   const fields = {
     handle: form.handle.trim(),
     displayName: form.displayName.trim(),
@@ -69,18 +55,15 @@ async function templateSavePersistStage(ctx: TemplateSaveCtx): Promise<TemplateS
     instructions: ctx.template ? form.instructions : form.instructions.trim(),
     suggestedAutonomyLevel: form.suggestedAutonomyLevel as SpaceAgentAutonomyLevel,
     tools: parsedTools,
-    model: effectiveModel || null,
-    provider: form.provider,
-    modelPool: activeModelPool,
-    thinkingLevel: form.thinkingLevel,
+    model: modelConfig.model,
+    provider: modelConfig.provider,
+    modelPool: modelConfig.modelPool,
+    thinkingLevel: modelConfig.thinkingLevel ?? form.thinkingLevel,
     settingSources: form.settingSources,
   };
   if (ctx.template) {
     const { model, provider, modelPool, ...rest } = fields;
-    const modelConfigUnchanged =
-      (effectiveModel || null) === (ctx.template.model ?? null) &&
-      (form.provider ?? null) === (ctx.template.provider ?? null) &&
-      JSON.stringify(activeModelPool ?? null) === JSON.stringify(ctx.template.modelPool ?? null);
+    const modelConfigUnchanged = sameModelConfig(modelConfig, storedModelConfig(ctx.template));
     await spaceStore.updateTemplate(
       ctx.template.key,
       modelConfigUnchanged

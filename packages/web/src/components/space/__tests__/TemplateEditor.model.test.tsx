@@ -105,27 +105,44 @@ describe('TemplateEditor model configuration', () => {
     mockUpdateTemplate.mockReset().mockResolvedValue(undefined);
   });
 
-  it('omits modelPool when creating in single mode', async () => {
+  it('omits modelPool when the pool is left empty', async () => {
     const view = renderEditor(null);
     fillRequiredFields(view);
 
-    fireEvent.click(view.getByTestId('agent-model-mode-pool'));
-    fireEvent.click(view.getByTestId('agent-model-mode-single'));
     fireEvent.click(view.getByRole('button', { name: 'Create template' }));
 
     await waitFor(() => expect(mockCreateTemplate).toHaveBeenCalledTimes(1));
     expect(mockCreateTemplate.mock.calls[0][0].modelPool).toBeNull();
+    expect(mockCreateTemplate.mock.calls[0][0].model).toBeNull();
   });
 
-  it('clears the pinned model when creating in pool mode', async () => {
+  it('stores a lone default pool entry as the scalar model, not a pool', async () => {
     const view = renderEditor(null);
     fillRequiredFields(view);
 
-    const modelSelect = view.getByTestId('space-agent-model-select') as HTMLSelectElement;
-    modelSelect.value = 'claude-sonnet-4-6';
-    fireEvent.change(modelSelect);
-    fireEvent.click(view.getByTestId('agent-model-mode-pool'));
+    fireEvent.click(view.getByTestId('pool-add-model-button'));
     fireEvent.change(view.getByTestId('pool-entry-model-select'), {
+      target: { value: 'claude-sonnet-4-6' },
+    });
+    fireEvent.click(view.getByRole('button', { name: 'Create template' }));
+
+    await waitFor(() => expect(mockCreateTemplate).toHaveBeenCalledTimes(1));
+    const params = mockCreateTemplate.mock.calls[0][0];
+    expect(params.model).toBe('claude-sonnet-4-6');
+    expect(params.provider).toBe('anthropic');
+    expect(params.modelPool).toBeNull();
+  });
+
+  it('clears the pinned model once a second pool entry exists', async () => {
+    const view = renderEditor(null);
+    fillRequiredFields(view);
+
+    fireEvent.click(view.getByTestId('pool-add-model-button'));
+    fireEvent.change(view.getAllByTestId('pool-entry-model-select')[0], {
+      target: { value: 'claude-sonnet-4-6' },
+    });
+    fireEvent.click(view.getByTestId('pool-add-model-button'));
+    fireEvent.change(view.getAllByTestId('pool-entry-model-select')[1], {
       target: { value: 'claude-haiku-4-5' },
     });
     fireEvent.click(view.getByRole('button', { name: 'Create template' }));
@@ -135,6 +152,7 @@ describe('TemplateEditor model configuration', () => {
     expect(params.model).toBeNull();
     expect(params.provider).toBeNull();
     expect(params.modelPool).toEqual([
+      { model: 'claude-sonnet-4-6', provider: 'anthropic', maxConcurrent: 1, weight: 100 },
       { model: 'claude-haiku-4-5', provider: 'anthropic', maxConcurrent: 1, weight: 100 },
     ]);
   });
@@ -142,9 +160,10 @@ describe('TemplateEditor model configuration', () => {
   it('sends the model fields when the model changes on an existing template', async () => {
     const view = renderEditor(makeTemplate({ key: 'scribe', displayName: 'Scribe', version: 4 }));
 
-    const modelSelect = view.getByTestId('space-agent-model-select') as HTMLSelectElement;
-    modelSelect.value = 'claude-sonnet-4-6';
-    fireEvent.change(modelSelect);
+    fireEvent.click(view.getByTestId('pool-add-model-button'));
+    fireEvent.change(view.getByTestId('pool-entry-model-select'), {
+      target: { value: 'claude-sonnet-4-6' },
+    });
     fireEvent.click(view.getByRole('button', { name: 'Save changes' }));
 
     await waitFor(() => expect(mockUpdateTemplate).toHaveBeenCalledTimes(1));
