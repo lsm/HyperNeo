@@ -396,7 +396,7 @@ test.each([true, false])(
 test('writes no door audit row, leaving its own richer entry as the only one', () => {
   const operation = createOwnedPendingCompletionOperation(dependencies);
   const registry = createOperationRegistry([operation]);
-  expect(operation.policy?.audit?.exempt).toBe(true);
+  expect(operation.policy?.audit?.selfAudited).toBe(true);
   expect(
     buildOperationAuditRecord(
       registry,

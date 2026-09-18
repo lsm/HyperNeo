@@ -273,7 +273,7 @@ export function createReviewGoalOutcomeOperation(deps: ReviewGoalOutcomeDependen
   return defineOperation({
     name: 'goal.reviewOutcome',
     description: DESCRIPTION,
-    policy: { ...GOAL_OWNER_POLICY, audit: { exempt: true } },
+    policy: { ...GOAL_OWNER_POLICY, audit: { selfAudited: true } },
     inputSchema,
     resultSchema: z.discriminatedUnion('kind', [
       z.object({

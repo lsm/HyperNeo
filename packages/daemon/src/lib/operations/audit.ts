@@ -58,7 +58,7 @@ export function buildOperationAuditRecord(
   durationMs: number
 ): OperationAuditRecord | null {
   const operation = registry.get(name);
-  if (operation?.policy?.audit?.exempt) return null;
+  if (operation?.policy?.audit?.selfAudited && outcome.kind === 'completed') return null;
   return {
     operation: name,
     caller,

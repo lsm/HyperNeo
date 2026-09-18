@@ -24,7 +24,7 @@ export type OperationSafetyClass = 'read' | 'mutate' | 'destructive' | 'human_on
 
 export interface OperationAuditPolicy {
   readonly redactKeys?: readonly string[];
-  readonly exempt?: boolean;
+  readonly selfAudited?: boolean;
 }
 
 export interface OperationPolicy {

@@ -229,7 +229,7 @@ export function createOwnedPendingCompletionOperation(
   ) => Promise<SpaceTask | Error>;
   return defineOperation({
     name: 'task.resolvePendingCompletion',
-    policy: { safetyClass: 'mutate', audit: { exempt: true } },
+    policy: { safetyClass: 'mutate', audit: { selfAudited: true } },
     description:
       'Approve or reject a Space task awaiting completion review. MCP requires a Space agent session in the owning space or a legacy task-agent session. Both transports use human approval semantics. Standalone tasks are unsupported. Approval may return postApprovalBlockedReason when post-approval work could not dispatch.',
     inputSchema: z

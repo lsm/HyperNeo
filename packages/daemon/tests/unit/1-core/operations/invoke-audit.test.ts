@@ -144,16 +144,35 @@ describe('auditInvocation through invokeOperation', () => {
     );
   });
 
-  test('an exempt operation writes no audit row but still runs', async () => {
+  test('a self-audited operation writes no door row on success but still runs', async () => {
     const { registry, written, dependencies, execute } = fixture({
       safetyClass: 'read',
-      audit: { exempt: true },
+      audit: { selfAudited: true },
     });
     expect(
       await invokeOperation(registry, 'task.act', { content: 'hello' }, mcpCaller, dependencies)
     ).toEqual({ kind: 'completed', value: { accepted: 'hello' } });
     expect(execute).toHaveBeenCalledTimes(1);
     expect(written).toHaveLength(0);
+  });
+
+  test('a self-audited operation still writes a door row when the call is refused', async () => {
+    const { registry, written, dependencies, execute } = fixture({
+      safetyClass: 'read',
+      audit: { selfAudited: true },
+    });
+    const outcome = await invokeOperation(
+      registry,
+      'task.act',
+      { content: '' },
+      mcpCaller,
+      dependencies
+    );
+    expect(outcome.kind).toBe('failed');
+    expect(execute).not.toHaveBeenCalled();
+    expect(written).toHaveLength(1);
+    expect(written[0]?.outcome).toBe('failed');
+    expect(written[0]?.failureCode).toBe('invalid_input');
   });
 
   test('a throwing audit writer does not change the outcome', async () => {
