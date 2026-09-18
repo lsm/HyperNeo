@@ -1,7 +1,7 @@
 import type { WorkflowHookResult } from '@hyperneo/shared';
 import { parsePrUrl } from '../../github/parse-pr-url.ts';
 import { type SpawnFn, spawnProcess } from '../../runtime-spawn/index.ts';
-import type { HookExecutorContext } from '../hook-executor.ts';
+import type { HookExecutorContext } from '../../hooks/hook-executor.ts';
 import {
   type CommandFailure,
   commandFailureToHookResult,

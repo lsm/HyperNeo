@@ -5,7 +5,7 @@ import {
   createExternalStateValidator,
 } from '../../../../../src/lib/github/connectors';
 import type { ConnectorOp, ConnectorOutcome } from '../../../../../src/lib/github/connectors';
-import type { HookExecutorContext } from '../../../../../src/lib/workflows/hook-executor';
+import type { HookExecutorContext } from '../../../../../src/lib/hooks/hook-executor';
 
 function ctxWithData(prUrl?: string, extra?: Record<string, unknown>): HookExecutorContext {
   return {

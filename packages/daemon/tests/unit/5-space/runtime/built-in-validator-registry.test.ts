@@ -1,6 +1,6 @@
 import { afterEach, beforeAll, describe, expect, test } from 'bun:test';
-import type { BuiltInValidatorFn } from '../../../../src/lib/workflows/hook-executor';
-import type { HookExecutorContext } from '../../../../src/lib/workflows/hook-executor';
+import type { BuiltInValidatorFn } from '../../../../src/lib/hooks/hook-executor';
+import type { HookExecutorContext } from '../../../../src/lib/hooks/hook-executor';
 import {
   clearBuiltInValidatorRegistry,
   getBuiltInValidator,
