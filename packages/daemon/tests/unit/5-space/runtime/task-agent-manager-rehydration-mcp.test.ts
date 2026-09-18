@@ -237,7 +237,7 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     expect(rehydrated).toBe(fake.agentSession);
     expect(restoreSpy).toHaveBeenCalledTimes(1);
     expect(restoreSpy.mock.calls[0]?.[0]).toBe(SUB_SESSION_ID);
-    expect(tam.workerActionNamesFor(SUB_SESSION_ID)?.size ?? 0).toBeGreaterThan(0);
+    expect(fake.state.session.config.workerOperations).toBe(true);
     expect(typeof fake.state.onMissingWorkflowMcpServers).toBe('function');
     expect(fake.state.calls).toEqual([
       'mergeRuntimeMcpServers',
@@ -265,7 +265,7 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     const rehydrated = await rehydrateOf(tam)(SUB_SESSION_ID);
 
     expect(rehydrated).toBe(fake.agentSession);
-    expect(tam.workerActionNamesFor(SUB_SESSION_ID)?.size ?? 0).toBeGreaterThan(0);
+    expect(fake.state.session.config.workerOperations).toBe(true);
     expect(fake.state.calls).toEqual(['mergeRuntimeMcpServers']);
     const index = (tam as unknown as { agentSessionIndex: Map<string, AgentSessionType> })
       .agentSessionIndex;
@@ -285,7 +285,7 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
 
     await expect(tam.prepareSubSessionForWorkflowResume(SUB_SESSION_ID)).resolves.toBe(true);
 
-    expect(tam.workerActionNamesFor(SUB_SESSION_ID)?.size ?? 0).toBeGreaterThan(0);
+    expect(fake.state.session.config.workerOperations).toBe(true);
     expect(fake.state.calls).toEqual([
       'mergeRuntimeMcpServers',
       'restartQuery',
@@ -372,8 +372,6 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
 
     await tam.provisionWorkflowSession(fake.agentSession, { startQuery: false });
 
-    expect(tam.workerActionNamesFor(SUB_SESSION_ID)?.size ?? 0).toBeGreaterThan(0);
-    expect(fake.state.providers).toHaveLength(1);
     expect(fake.state.session.config.workerOperations).toBe(true);
     expect(fake.state.calls).toEqual(['mergeRuntimeMcpServers']);
     expect(restoreSpy).toHaveBeenCalledTimes(0);
@@ -396,7 +394,7 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
 
     await tam.provisionWorkflowSession(fake.agentSession, {});
 
-    expect(tam.workerActionNamesFor(SUB_SESSION_ID)?.size ?? 0).toBeGreaterThan(0);
+    expect(fake.state.session.config.workerOperations).toBe(true);
     expect(fake.state.calls).not.toContain('startStreamingQuery');
     expect(fake.state.calls).not.toContain('replayPendingMessagesForImmediateMode');
   });
@@ -455,7 +453,7 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
 
     await tam.provisionWorkflowSession(fake.agentSession, { replayPendingMessages: false });
 
-    expect(tam.workerActionNamesFor(SUB_SESSION_ID)?.size ?? 0).toBeGreaterThan(0);
+    expect(fake.state.session.config.workerOperations).toBe(true);
     expect(fake.state.calls).toEqual(['mergeRuntimeMcpServers', 'startStreamingQuery']);
     expect(fake.state.calls).not.toContain('replayPendingMessagesForImmediateMode');
   });
@@ -477,7 +475,7 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
 
     expect(rehydrated).toBe(cachedFake.agentSession);
     expect(restoreSpy).toHaveBeenCalledTimes(0);
-    expect(tam.workerActionNamesFor(SUB_SESSION_ID)?.size ?? 0).toBeGreaterThan(0);
+    expect(cachedFake.state.session.config.workerOperations).toBe(true);
     expect(typeof cachedFake.state.onMissingWorkflowMcpServers).toBe('function');
     expect(cachedFake.state.calls).toContain('startStreamingQuery');
     expect(registered.get(SUB_SESSION_ID)).toBe(cachedFake.agentSession);
@@ -539,7 +537,7 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
 
     await tam.mcpSelfHeal(started.agentSession, ['worker-operations']);
 
-    expect(tam.workerActionNamesFor(SUB_SESSION_ID)?.size ?? 0).toBeGreaterThan(0);
+    expect(started.state.session.config.workerOperations).toBe(true);
     expect(index.get(SUB_SESSION_ID)).toBe(started.agentSession);
     expect(registered.get(SUB_SESSION_ID)).toBe(started.agentSession);
     expect(started.state.calls).toContain('restartQuery');
@@ -565,8 +563,6 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     fake.state.session.config.mcpServers = {};
     await callback!(fake.agentSession, ['worker-operations']);
 
-    expect(tam.workerActionNamesFor(SUB_SESSION_ID)?.size ?? 0).toBeGreaterThan(0);
-    expect(fake.state.providers.length).toBeGreaterThan(0);
     expect(fake.state.session.config.workerOperations).toBe(true);
   });
 

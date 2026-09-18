@@ -8,5 +8,6 @@ export function registerMessagingOperations(
   return createNodeMessagingOperations({
     nodeExecutionRepo: context.nodeExecutionRepo,
     runtimeForSession: (sessionId) => context.taskAgentManager.nodeMessagingRuntimeFor(sessionId),
+    getSession: (sessionId) => context.deps.db.getSession(sessionId),
   });
 }

@@ -1,44 +1,44 @@
 export const CODER_HOT_ACTIONS: readonly string[] = [
-  'create_standalone_task',
-  'list_tasks',
-  'update_task',
-  'send_message_to_task',
+  'task.create',
+  'task.list',
+  'task.update',
+  'task.message.send',
 ];
 
 export const GENERAL_HOT_ACTIONS: readonly string[] = [
-  'create_standalone_task',
-  'list_tasks',
-  'list_workflows',
-  'send_message_to_task',
+  'task.create',
+  'task.list',
+  'workflow.list',
+  'task.message.send',
 ];
 
 export const PLANNER_HOT_ACTIONS: readonly string[] = [
-  'create_standalone_task',
-  'list_tasks',
-  'list_workflows',
-  'get_workflow_detail',
-  'suggest_workflow',
+  'task.create',
+  'task.list',
+  'workflow.list',
+  'workflow.get',
+  'workflow.suggest',
 ];
 
 export const RESEARCH_HOT_ACTIONS: readonly string[] = [
-  'create_standalone_task',
-  'list_tasks',
-  'list_workflows',
-  'send_message_to_task',
+  'task.create',
+  'task.list',
+  'workflow.list',
+  'task.message.send',
 ];
 
 export const REVIEWER_HOT_ACTIONS: readonly string[] = [
-  'list_tasks',
-  'list_workflows',
-  'send_message_to_task',
-  'list_artifacts',
+  'task.list',
+  'workflow.list',
+  'task.message.send',
+  'artifact.list',
 ];
 
 export const QA_HOT_ACTIONS: readonly string[] = [
-  'list_tasks',
-  'list_workflows',
-  'get_session_detail',
-  'update_task',
+  'task.list',
+  'workflow.list',
+  'session.get',
+  'task.update',
 ];
 
 export const ROLE_HOT_ACTIONS: Record<string, readonly string[]> = {

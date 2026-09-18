@@ -1,11 +1,11 @@
 import type { WorkflowNodeInput } from '@hyperneo/shared';
 import type { SpaceAgentTemplateRepository } from '../../storage/repositories/space-agent-template-repository.ts';
+import { getLongHorizonAgentTemplate } from '../agents/long-horizon-templates.ts';
 import { validateGlobPattern } from '../external-events/topic-validator.ts';
+import { KNOWN_TOPIC_FROM_SOURCES } from '../github/parse-pr-url.ts';
 import { Logger } from '../logger.ts';
 import { getProviderRegistry, providerMayOfferModel } from '../providers/registry.js';
-import { getLongHorizonAgentTemplate } from '../agents/long-horizon-templates.ts';
 import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../space/export-format.ts';
-import { KNOWN_TOPIC_FROM_SOURCES } from '../github/parse-pr-url.ts';
 import type { SpaceAgentLookup } from './workflow-manager.ts';
 import { WorkflowValidationError } from './workflow-validation-error.ts';
 

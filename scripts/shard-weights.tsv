@@ -67,14 +67,12 @@
 6	packages/daemon/tests/unit/5-space/other/channel-resolver.test.ts
 608	packages/daemon/tests/unit/5-space/other/channel-router-reopen.test.ts
 4216	packages/daemon/tests/unit/5-space/other/channel-router.test.ts
-2904	packages/daemon/tests/unit/5-space/other/cross-agent-messaging-integration.test.ts
 34	packages/daemon/tests/unit/5-space/other/export-format.test.ts
 423	packages/daemon/tests/unit/5-space/other/export-import-round-trip.test.ts
 51	packages/daemon/tests/unit/5-space/other/long-horizon-agent-lifecycle-integration.test.ts
 9	packages/daemon/tests/unit/5-space/other/long-horizon-templates.test.ts
 27	packages/daemon/tests/unit/5-space/other/retry-utils.test.ts
 135	packages/daemon/tests/unit/5-space/other/seed-agents.test.ts
-1430	packages/daemon/tests/unit/5-space/other/send-message-unified.test.ts
 8	packages/daemon/tests/unit/5-space/other/slug.test.ts
 7	packages/daemon/tests/unit/5-space/other/worktree-slug.test.ts
 8	packages/daemon/tests/unit/5-space/runtime/activation-routing.test.ts
@@ -109,8 +107,6 @@
 7	packages/daemon/tests/unit/5-space/runtime/run-completion-settlement.test.ts
 9	packages/daemon/tests/unit/5-space/runtime/run-spawn-decisions.test.ts
 10	packages/daemon/tests/unit/5-space/runtime/run-tick-admission-gates.test.ts
-698	packages/daemon/tests/unit/5-space/runtime/space-agent-autonomy.test.ts
-1052	packages/daemon/tests/unit/5-space/runtime/space-agent-task-creation-flow.test.ts
 8	packages/daemon/tests/unit/5-space/runtime/space-mcp-session-policy.test.ts
 5696	packages/daemon/tests/unit/5-space/runtime/space-runtime-completion.test.ts
 591	packages/daemon/tests/unit/5-space/runtime/space-runtime-disabled-workflow.test.ts

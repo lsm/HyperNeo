@@ -1,14 +1,14 @@
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
-import { runMigrations } from '../../../../src/storage/schema/index.ts';
-import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
-import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import type { WorkflowRunStatus } from '@hyperneo/shared';
 import {
-  canTransition,
   assertValidTransition,
+  canTransition,
   VALID_TRANSITIONS,
 } from '../../../../src/lib/workflows/run-status-machine.ts';
-import type { WorkflowRunStatus } from '@hyperneo/shared';
+import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
+import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
+import { runMigrations } from '../../../../src/storage/schema/index.ts';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 
 function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');

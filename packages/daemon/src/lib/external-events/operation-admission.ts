@@ -1,5 +1,6 @@
 import type { Session } from '@hyperneo/shared';
 import type { OperationCaller, OperationCallerRole } from '../operations/registry.ts';
+import { resolveSessionSpaceId } from '../space/runtime/space-caller-scope.ts';
 import {
   resolveWorkflowExecution,
   type SpaceMcpSessionPolicyContext,
@@ -14,6 +15,11 @@ export const EXTERNAL_EVENT_READ_ROLES: readonly OperationCallerRole[] = [
 ];
 
 export const NODE_EVENT_ROLES: readonly OperationCallerRole[] = ['workflow_worker'];
+
+export const AGENT_EVENT_ROLES: readonly OperationCallerRole[] = [
+  'ad_hoc_member',
+  'long_term_agent',
+];
 
 export interface EventCallerDependencies extends SpaceMcpSessionPolicyContext {
   getSession: (sessionId: string) => Session | null;
@@ -34,6 +40,17 @@ export function admitEventCallerSpace(
     return { reason: 'caller_denied' };
   }
   return { value: caller.spaceId };
+}
+
+export function callerSessionActiveIn(
+  caller: OperationCaller,
+  spaceId: string,
+  deps: EventCallerDependencies
+): boolean {
+  if (caller.source !== 'mcp') return true;
+  const session = caller.sessionId ? deps.getSession(caller.sessionId) : null;
+  if (!session || session.status !== 'active') return false;
+  return resolveSessionSpaceId(session, deps) === spaceId;
 }
 
 export interface WorkerNodeSlot {

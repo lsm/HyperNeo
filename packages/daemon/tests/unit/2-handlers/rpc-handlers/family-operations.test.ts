@@ -25,6 +25,14 @@ describe('collectFamilyOperations', () => {
         'goal.list',
         'externalEvent.get',
         'externalEvent.listDeliveries',
+        'externalEvent.agent.subscribe',
+        'externalEvent.agent.unsubscribe',
+        'externalEvent.agent.listSubscriptions',
+        'agentTemplate.create',
+        'agentTemplate.update',
+        'agentTemplate.delete',
+        'agentTemplate.list',
+        'agent.createFromTemplate',
       ])
     );
   });

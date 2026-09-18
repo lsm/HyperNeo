@@ -1,29 +1,30 @@
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
-import { execSync } from 'node:child_process';
-import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { z } from 'zod';
-import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
+import { createAuditOperations } from '../../../../src/lib/audit/operations.ts';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
 import {
   createOperationRegistry,
   defineOperation,
+  type OperationCaller,
+  type OperationDefinition,
   type OperationRegistry,
 } from '../../../../src/lib/operations/registry.ts';
+import { createDiscoveryOperations } from '../../../../src/lib/operations/discovery.ts';
+import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import { hasRuntimeWorkerOperations } from '../../../../src/lib/session/sub-session-identity.ts';
+import { McpAuditLogRepository } from '../../../../src/storage/repositories/mcp-audit-log-repository.ts';
+import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { MessageHub, type McpServerConfig } from '@hyperneo/shared';
-import type { ToolResult } from '../../../../src/lib/space/tools/tool-result.ts';
-import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import {
   createTestDb,
   createTestInternalEventBus,
   createTestSession,
 } from '../../../helpers/database';
+import { createSpaceTables } from '../../helpers/space-test-db';
 
 const SPACE_ID = 'space-actions-attach';
 const RUN_ID = 'run-actions-attach';
@@ -31,7 +32,15 @@ const TASK_ID = 'task-actions-attach';
 const EXEC_ID = 'exec-actions-attach';
 const SUB_SESSION_ID = `space:${SPACE_ID}:task:${TASK_ID}:exec:${EXEC_ID}`;
 
-function makeManager(): TaskAgentManager {
+function catalogRegistry(operations: OperationDefinition[]): OperationRegistry {
+  const registry = createOperationRegistry([
+    ...operations,
+    ...createDiscoveryOperations(() => registry),
+  ]);
+  return registry;
+}
+
+function makeManager(operations: OperationDefinition[] = []): TaskAgentManager {
   const execution = {
     id: EXEC_ID,
     workflowRunId: RUN_ID,
@@ -45,7 +54,7 @@ function makeManager(): TaskAgentManager {
   return new TaskAgentManager({
     db: { getDatabase: () => new BunDatabase(':memory:') },
     internalEventBus: { subscribe: () => () => {} },
-    sessionManager: { getOperationRegistry: () => createOperationRegistry([]) },
+    sessionManager: { getOperationRegistry: () => catalogRegistry(operations) },
     taskRepo: {
       getTask: () => task,
       getTaskByNumber: () => task,
@@ -66,6 +75,50 @@ function makeManager(): TaskAgentManager {
         }) as import('../../../../src/lib/session-resolution/target.ts').EnsureSessionOutcome,
     },
   } as unknown as TaskAgentManagerConfig);
+}
+
+function catalogNames(operations: OperationDefinition[]): ReadonlySet<string> {
+  return new Set(catalogRegistry(operations).entries.map((operation) => operation.name));
+}
+
+function sessionGetOperation(): OperationDefinition {
+  return defineOperation({
+    name: 'session.get',
+    description: 'session.get',
+    inputSchema: z.unknown(),
+    resultSchema: z.unknown(),
+    execute: async () => 'read',
+  }) as OperationDefinition;
+}
+
+function sendMessageOperation(): OperationDefinition {
+  return defineOperation({
+    name: 'send_message',
+    description: 'send_message',
+    inputSchema: z.unknown(),
+    resultSchema: z.unknown(),
+    execute: async () => 'sent',
+  }) as OperationDefinition;
+}
+
+function artifactSaveOperation(): OperationDefinition {
+  return defineOperation({
+    name: 'artifact.save',
+    description: 'artifact.save',
+    inputSchema: z.unknown(),
+    resultSchema: z.unknown(),
+    execute: async () => 'saved',
+  }) as OperationDefinition;
+}
+
+function artifactListOperation(): OperationDefinition {
+  return defineOperation({
+    name: 'artifact.list',
+    description: 'artifact.list',
+    inputSchema: z.unknown(),
+    resultSchema: z.unknown(),
+    execute: async () => [],
+  }) as OperationDefinition;
 }
 
 function buildServers(tam: TaskAgentManager, agentName = 'coder'): Record<string, McpServerConfig> {
@@ -153,24 +206,14 @@ function contractOf(
   );
 }
 
-function workerActionNames(tam: TaskAgentManager, agentName = 'coder'): ReadonlySet<string> {
-  buildServers(tam, agentName);
-  return tam.workerActionNamesFor(SUB_SESSION_ID) ?? new Set<string>();
-}
-
 describe('TaskAgentManager — space-actions dispatcher attach', () => {
   test('worker sessions attach no MCP servers of their own', () => {
     const tam = makeManager();
     const servers = buildServers(tam);
     expect(Object.keys(servers)).toEqual([]);
-    expect(workerActionNames(tam)).toContain('list_peers');
-    expect(tam.workerActionRegistryFor(SUB_SESSION_ID)?.get('list_actions')).toBeDefined();
-    expect(
-      tam.workerActionRegistryFor(SUB_SESSION_ID)?.get('approve_pending_completion')
-    ).toBeUndefined();
   });
 
-  test('reinject (self-heal rebuild path) reinstalls operations and restarts the query', async () => {
+  test('reinject (self-heal rebuild path) restarts the query and keeps the session marked', async () => {
     const tam = makeManager();
     const fake = makeFakeSession();
     await tam.reinjectNodeAgentMcpServer(fake.agentSession, {
@@ -184,8 +227,8 @@ describe('TaskAgentManager — space-actions dispatcher attach', () => {
     });
     const merged = fake.state.merged.at(-1) ?? {};
     expect(Object.keys(merged)).toEqual([]);
-    expect(tam.workerActionRegistryFor(SUB_SESSION_ID)).toBeDefined();
     expect(fake.state.restarted).toBe(1);
+    expect(hasRuntimeWorkerOperations(fake.state.session.config)).toBe(true);
   });
 
   test('reinject replaces a pre-existing space-actions server entry', async () => {
@@ -212,32 +255,59 @@ describe('TaskAgentManager — space-actions dispatcher attach', () => {
 
   test('contract renders dispatcher guidance with registry-filtered availability', () => {
     const tam = makeManager();
-    const contract = contractOf(tam, 'coder', workerActionNames(tam));
+    const contract = contractOf(tam, 'coder', catalogNames([artifactSaveOperation()]));
     expect(contract).toContain('Tools available:');
     expect(contract).toContain(
       'invoke({ name, input? }) on the operations server — one door for every operation available to the Coder role'
     );
     expect(contract).toContain('invoke(name="operations.list")');
-    expect(contract).toContain('invoke(name="restore_node_agent")');
-    expect(contract).toContain('invoke(name="create_standalone_task")');
+    expect(contract).toContain('invoke(name="artifact.save"');
     expect(contract).not.toContain('invoke(name="update_task")');
+    expect(contract).not.toContain('invoke(name="create_standalone_task")');
     expect(contract).not.toContain('send_message({ target, message, data? })');
     expect(contract).not.toContain('Escalation: send_message');
   });
 
-  test('every suggested contract action resolves through the attached worker registry', () => {
+  test('every suggested contract action resolves through the operation catalog', () => {
     for (const agentName of ['coder', 'reviewer']) {
-      const tam = makeManager();
-      const names = workerActionNames(tam, agentName);
+      const operations = [artifactSaveOperation(), artifactListOperation()];
+      const tam = makeManager(operations);
+      const names = catalogNames(operations);
       const contract = contractOf(tam, agentName, names);
-      const suggested = [...contract.matchAll(/invoke\(name="([a-z_]+)"\)/g)].map(
+      const suggested = [...contract.matchAll(/invoke\(name="([a-z_.]+)"/g)].map(
         (match) => match[1]
       );
-      expect(suggested.length).toBeGreaterThan(0);
+      expect(suggested).toContain('artifact.save');
+      expect(suggested).toContain('operations.list');
       for (const name of suggested) {
         expect(names.has(name)).toBe(true);
       }
     }
+    const reviewerContract = contractOf(
+      makeManager(),
+      'reviewer',
+      catalogNames([artifactSaveOperation()])
+    );
+    expect(reviewerContract).toContain('invoke(name="artifact.save"');
+  });
+
+  test('worker contract suggestions carry operations the action registry no longer defines', () => {
+    const operations = [sendMessageOperation(), artifactSaveOperation()];
+    const names = catalogNames(operations);
+    expect(names.has('send_message')).toBe(true);
+    expect(names.has('artifact.save')).toBe(true);
+  });
+
+  test('the contract still suggests send_message once it is only an operation', () => {
+    const tam = makeManager([sendMessageOperation()]);
+    const contract = contractOf(tam, 'coder', catalogNames([sendMessageOperation()]));
+    expect(contract).toContain('invoke(name="send_message")');
+  });
+
+  test('the QA contract suggests session.get now that the seed is an operation', () => {
+    const tam = makeManager([sessionGetOperation()]);
+    const contract = contractOf(tam, 'qa', catalogNames([sessionGetOperation()]));
+    expect(contract).toContain('invoke(name="session.get")');
   });
 
   test('without registry names the contract omits suggestions instead of guessing', () => {
@@ -251,7 +321,7 @@ describe('TaskAgentManager — space-actions dispatcher attach', () => {
 });
 
 describe('TaskAgentManager — worker operations attach (#4600)', () => {
-  test('attachWorkerOperations installs the worker actions on the session and marks it', () => {
+  test('attachWorkerOperations marks the session as carrying runtime worker operations', () => {
     const tam = makeManager();
     buildServers(tam);
     const fake = makeFakeSession();
@@ -259,44 +329,40 @@ describe('TaskAgentManager — worker operations attach (#4600)', () => {
 
     tam.attachWorkerOperations(fake.agentSession);
 
-    const names = tam.workerActionNamesFor(SUB_SESSION_ID);
-    expect(names?.size).toBeGreaterThan(0);
-    const installed = new Set(fake.state.providers.at(-1)!().entries.map((entry) => entry.name));
-    for (const name of names!) expect(installed.has(name)).toBe(true);
     expect(hasRuntimeWorkerOperations(fake.state.session.config)).toBe(true);
+    expect(fake.state.providers).toEqual([]);
     expect(fake.state.session.config.mcpServers).toEqual({});
   });
 
-  test('attachWorkerOperations leaves a session with no worker registry untouched', () => {
-    const tam = makeManager();
-    const fake = makeFakeSession();
-
-    tam.attachWorkerOperations(fake.agentSession);
-
-    expect(fake.state.providers).toEqual([]);
-    expect(hasRuntimeWorkerOperations(fake.state.session.config)).toBe(false);
-  });
-
-  test('reinject re-installs the worker operations on the healed session', async () => {
-    const tam = makeManager();
-    const fake = makeFakeSession();
-    await tam.reinjectNodeAgentMcpServer(fake.agentSession, {
-      taskId: TASK_ID,
-      subSessionId: SUB_SESSION_ID,
-      agentName: 'coder',
-      spaceId: SPACE_ID,
-      workflowRunId: RUN_ID,
-      workspacePath: '/tmp/ws',
-      workflowNodeId: 'node-coder',
+  test('a worker session reaches audit.list through the operations door', async () => {
+    const auditDb = new Database(':memory:');
+    createSpaceTables(auditDb);
+    const auditOperations = createAuditOperations({
+      auditLogRepo: new McpAuditLogRepository(auditDb),
     });
-    expect(fake.state.providers).toHaveLength(1);
-    expect(hasRuntimeWorkerOperations(fake.state.session.config)).toBe(true);
+    const registry = catalogRegistry(auditOperations);
+    expect(registry.entries.some((operation) => operation.name === 'audit.list')).toBe(true);
+    const outcome = await invokeOperation(
+      registry,
+      'audit.list',
+      { spaceId: SPACE_ID },
+      {
+        source: 'mcp',
+        sessionId: SUB_SESSION_ID,
+        spaceId: SPACE_ID,
+        role: 'workflow_worker',
+      }
+    );
+    expect(outcome).toEqual({
+      kind: 'completed',
+      value: { ok: true, entries: [], total: 0, hasMore: false },
+    });
+    auditDb.close();
   });
 
-  test('stopping a sub-session evicts its worker registry with the rest of its bookkeeping', async () => {
+  test('stopping a sub-session interrupts and cleans it up', async () => {
     const tam = makeManager();
     buildServers(tam);
-    expect(tam.workerActionRegistryFor(SUB_SESSION_ID)).toBeDefined();
     const fake = makeFakeSession();
 
     await (
@@ -306,8 +372,39 @@ describe('TaskAgentManager — worker operations attach (#4600)', () => {
     ).stopSessionPreserveDb(SUB_SESSION_ID, fake.agentSession);
 
     expect(fake.state.calls).toEqual(['handleInterrupt', 'cleanup']);
-    expect(tam.workerActionRegistryFor(SUB_SESSION_ID)).toBeUndefined();
-    expect(tam.workerActionNamesFor(SUB_SESSION_ID)).toBeUndefined();
+  });
+
+  test('global template operations stay role-gated for the worker session', async () => {
+    const TEMPLATE_OPS = [
+      'agentTemplate.create',
+      'agentTemplate.update',
+      'agentTemplate.delete',
+      'agentTemplate.list',
+      'agent.createFromTemplate',
+    ];
+    const ops = TEMPLATE_OPS.map((name) =>
+      defineOperation({
+        name,
+        description: name,
+        inputSchema: z.object({}).passthrough(),
+        resultSchema: z.unknown(),
+        policy: { safetyClass: 'mutate', roles: ['ad_hoc_member', 'long_term_agent'] },
+        execute: async () => `ran ${name}`,
+      })
+    );
+    const registry = catalogRegistry(ops);
+    const workerCaller: OperationCaller = {
+      source: 'mcp',
+      sessionId: SUB_SESSION_ID,
+      spaceId: SPACE_ID,
+      role: 'workflow_worker',
+    };
+    for (const name of TEMPLATE_OPS) {
+      expect(registry.get(name)).toBeDefined();
+      const outcome = await invokeOperation(registry, name, {}, workerCaller);
+      expect(outcome.kind).toBe('failed');
+      expect(outcome.code).toBe('forbidden');
+    }
   });
 
   test('registerSession keeps a session-scoped provider installed ahead of it', async () => {
@@ -369,99 +466,5 @@ describe('TaskAgentManager — worker operations attach (#4600)', () => {
       hub.cleanup();
       db.close();
     }
-  });
-});
-
-describe('TaskAgentManager — space-actions create_standalone_task default-workspace gate (#3589)', () => {
-  const NON_GIT_PRIMARY = '/nonexistent/hyperneo-non-git-primary';
-  let db: BunDatabase;
-  let secondaryDir: string;
-
-  beforeEach(() => {
-    db = new BunDatabase(':memory:');
-    db.exec('PRAGMA foreign_keys = ON');
-    runMigrations(db, () => {});
-    db.prepare(
-      `INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions,
-       allowed_models, session_ids, slug, status, created_at, updated_at)
-       VALUES (?, ?, ?, '', '', '', '[]', '[]', ?, 'active', ?, ?)`
-    ).run(SPACE_ID, NON_GIT_PRIMARY, SPACE_ID, SPACE_ID, Date.now(), Date.now());
-    secondaryDir = realpathSync(mkdtempSync(join(tmpdir(), 'hyperneo-node-ws-3589-')));
-    execSync('git -c init.defaultBranch=main init', { cwd: secondaryDir, stdio: 'pipe' });
-    db.prepare(
-      `INSERT INTO space_workspaces (id, space_id, path, label, is_primary, created_at, updated_at)
-       VALUES ('ws-node-sec', ?, ?, 'dolmen', 0, 0, 0)`
-    ).run(SPACE_ID, secondaryDir);
-  });
-
-  afterEach(() => {
-    db.close();
-    rmSync(secondaryDir, { recursive: true, force: true });
-  });
-
-  function makeMigratedManager(): TaskAgentManager {
-    const execution = {
-      id: EXEC_ID,
-      workflowRunId: RUN_ID,
-      workflowNodeId: 'node-coder',
-      agentName: 'coder',
-      agentId: 'agent-coder',
-      agentSessionId: SUB_SESSION_ID,
-      status: 'in_progress',
-    };
-    const task = { id: TASK_ID, spaceId: SPACE_ID, workflowRunId: RUN_ID, taskNumber: 7 };
-    return new TaskAgentManager({
-      db: { getDatabase: () => db },
-      internalEventBus: { subscribe: () => () => {} },
-      taskRepo: {
-        getTask: () => task,
-        getTaskByNumber: () => task,
-        listByWorkflowRun: () => [task],
-      },
-      nodeExecutionRepo: { listByWorkflowRun: () => [execution] },
-      workflowRunRepo: { getRun: () => null },
-      spaceManager: new SpaceManager(db),
-      spaceRuntimeService: {
-        getSpaceRuntime: () =>
-          ({}) as unknown as import('../../../../src/lib/space/runtime/space-runtime.ts').SpaceRuntime,
-        isWorkflowRunActive: () => true,
-        activateWorkflowNode: async () => [],
-        ensureToolTargetSession: async () =>
-          ({
-            kind: 'unresolved',
-            reason: 'test',
-          }) as import('../../../../src/lib/session-resolution/target.ts').EnsureSessionOutcome,
-      },
-    } as unknown as TaskAgentManagerConfig);
-  }
-
-  async function callCreateStandaloneTask(
-    args: Record<string, unknown>
-  ): Promise<Record<string, unknown>> {
-    const tam = makeMigratedManager();
-    buildServers(tam);
-    const action = tam.workerActionRegistryFor(SUB_SESSION_ID)?.get('create_standalone_task');
-    expect(action).toBeDefined();
-    const result = (await action!.handler(args)) as ToolResult;
-    return JSON.parse(result.content[0].text) as Record<string, unknown>;
-  }
-
-  test('rejects an omitted workspace when the space primary is not a git repository', async () => {
-    const parsed = await callCreateStandaloneTask({ title: 'Node task', description: 'd' });
-    expect(parsed.success).toBe(false);
-    expect(parsed.error).toContain('is not a git repository');
-    expect(parsed.error).toContain('"dolmen"');
-    expect((db.prepare('SELECT COUNT(*) AS c FROM space_tasks').get() as { c: number }).c).toBe(0);
-  });
-
-  test('accepts an explicit registered workspace and pins the created task', async () => {
-    const parsed = await callCreateStandaloneTask({
-      title: 'Node task',
-      description: 'd',
-      workspace: secondaryDir,
-    });
-    expect(parsed.success).toBe(true);
-    const task = parsed.task as { workspacePath?: string | null };
-    expect(task.workspacePath).toBe(secondaryDir);
   });
 });

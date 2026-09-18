@@ -49,63 +49,9 @@ export const GoalUpdateSchema = z
 export const MarkCompleteSchema = z
   .object({
     goal_update: GoalUpdateSchema.describe(
-      'Legacy field. Goal rolling state is owned by the goal owner, who reviews this outcome and applies updates via review_goal_outcome. Record your outcome in the task result instead of providing this.'
+      'Legacy field. Goal rolling state is owned by the goal owner, who reviews this outcome and applies updates via goal.reviewOutcome. Record your outcome in the task result instead of providing this.'
     ).optional(),
   })
   .strict();
 
 export type MarkCompleteInput = z.infer<typeof MarkCompleteSchema>;
-
-export const RequestHumanInputSchema = z.object({
-  question: z.string().describe('The question to surface to the human user'),
-  context: z
-    .string()
-    .describe('Optional context explaining why this question is being asked')
-    .optional(),
-});
-
-export type RequestHumanInputInput = z.infer<typeof RequestHumanInputSchema>;
-
-export const ListGroupMembersSchema = z.object({});
-
-export type ListGroupMembersInput = z.infer<typeof ListGroupMembersSchema>;
-
-export const SpaceTaskStatusSchema = z.enum([
-  'draft',
-  'open',
-  'in_progress',
-  'review',
-  'approved',
-  'done',
-  'blocked',
-  'cancelled',
-  'archived',
-  'rate_limited',
-  'usage_limited',
-  'stopped',
-]);
-
-export const UpdateTaskStatusParamDescription =
-  "New task status, validated against the same transition table as the UI (e.g. open→in_progress, in_progress→open, cancelled→open, done→in_progress, →cancelled, →blocked, →archived). Invalid transitions are rejected with the allowed list. 'review' cannot be set (use submit_for_approval so pending-completion metadata is stamped), 'approved' and review→done are owned by the approval pipeline (approve_task / human approval, which stamp the approval metadata and dispatch the post-approval step), 'stopped' parks a running task the same way the human Stop action does (workflow-backed tasks park their run's agents and in-flight executions), and archiving is rejected while the task's workflow run is still active (use the task.cancel operation).";
-
-export const UpdateTaskSchema = z.object({
-  task_id: z.string().describe('UUID of the task to update'),
-  title: z.string().min(1).describe('New title for the task').optional(),
-  description: z.string().describe('New description for the task').optional(),
-  priority: z.enum(['low', 'normal', 'high', 'urgent']).describe('New priority').optional(),
-  depends_on: z.array(z.string()).describe('New dependency list (replaces existing)').optional(),
-  status: SpaceTaskStatusSchema.optional().describe(UpdateTaskStatusParamDescription),
-});
-
-export type UpdateTaskInput = z.infer<typeof UpdateTaskSchema>;
-
-export const TASK_AGENT_TOOL_SCHEMAS = {
-  approve_task: ApproveTaskSchema,
-  submit_for_approval: SubmitForApprovalSchema,
-  mark_complete: MarkCompleteSchema,
-  request_human_input: RequestHumanInputSchema,
-  list_group_members: ListGroupMembersSchema,
-  update_task: UpdateTaskSchema,
-} as const;
-
-export type TaskAgentToolName = keyof typeof TASK_AGENT_TOOL_SCHEMAS;

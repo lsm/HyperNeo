@@ -3,7 +3,6 @@ import type {
   Session,
   Space,
   SpaceGoalOutcomeNotification,
-  SpaceLongHorizonAgent,
   SpaceTask,
   UpdateSpaceTaskParams,
 } from '@hyperneo/shared';
@@ -22,7 +21,6 @@ import type { SpaceAgentReminderRepository } from '../../../storage/repositories
 import type { SpaceAgentSubscriptionRepository } from '../../../storage/repositories/space-agent-subscription-repository.ts';
 import { SpaceAgentTemplateRepository } from '../../../storage/repositories/space-agent-template-repository.ts';
 import type { SpaceGoalOutcomeNotificationRepository } from '../../../storage/repositories/space-goal-outcome-notification-repository.ts';
-import { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository.ts';
 import {
   SpaceLongHorizonAgentRepository,
   templateInstanceScanFromRepo,
@@ -59,7 +57,6 @@ import {
   type MailboxMessage,
   toMailboxMessage,
 } from '../../mailbox/entry.ts';
-import { createOperationRegistry, type OperationRegistry } from '../../operations/registry.ts';
 import type { SessionManager } from '../../session-manager.ts';
 import { buildAgentSessionConfig } from '../../session-resolution/agent-session-config.ts';
 import { createDefaultSessionResolutionDeps } from '../../session-resolution/default-deps.ts';
@@ -68,12 +65,6 @@ import { ensureSession } from '../../session-resolution/ensure-session.ts';
 import { resolveAgentDeliverySession } from '../../session-resolution/resolve-agent-delivery-session.ts';
 import type { ResolveAgentRecordDeps } from '../../session-resolution/resolve-agent-record.ts';
 import type { EnsureSessionOutcome, SessionTarget } from '../../session-resolution/target.ts';
-import { mergeActionOperations } from '../actions/action-operations.ts';
-import {
-  createSessionActionRegistry,
-  type SessionActionRegistryConfig,
-} from '../actions/session-action-registry.ts';
-import type { SpaceAgentToolsConfig } from '../actions/space-handlers.ts';
 import { SpaceActorRegistryAdapter } from '../../messaging/actor-registry.ts';
 import { LONG_HORIZON_AGENT_BUILTIN_TOOLS } from '../../agents/long-horizon-tools.ts';
 import type { OwnedAgentLookup } from '../../agents/unified-agent-events.ts';
@@ -81,7 +72,6 @@ import { unifiedAgentRecordExists } from '../../agents/worker-long-horizon-mappe
 import { encodeActorIdComponent, longTermAgentSessionId } from '../long-term-agent-session.ts';
 import { SpaceAgentTemplateManager } from '../../agents/template-manager.ts';
 import type { SpaceManager } from '../managers/space-manager.ts';
-import { SpaceTaskManager } from '../../tasks/task-manager.ts';
 import type { SpaceWorkflowManager } from '../../workflows/workflow-manager.ts';
 import { SpaceMessageResolver } from '../../messaging/space-adapter.ts';
 import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools.ts';
@@ -166,7 +156,6 @@ export interface SpaceRuntimeServiceConfig {
   };
   goalService?: import('../../goals/service.ts').SpaceGoalService;
   evolutionScopeService?: import('../../evolution/scope-service.ts').EvolutionScopeService;
-  evolutionEpisodeService?: import('../../evolution/episode-service.ts').EvolutionEpisodeService;
   outcomeNotificationRepo?: SpaceGoalOutcomeNotificationRepository;
   enableGoalOutcomeWake?: boolean;
   inactivityConfigRepo?: import('../../../storage/repositories/space-agent-inactivity-repository.ts').SpaceAgentInactivityConfigRepository;
@@ -699,15 +688,7 @@ export class SpaceRuntimeService {
         },
       },
     });
-    this.attachLongTermAgentMcpServers(
-      session,
-      space,
-      agent.displayName,
-      sessionId,
-      null,
-      agentId,
-      [`@${agent.handle}`]
-    );
+    this.attachLongTermAgentMcpServers(session, space, sessionId);
     return session;
   }
 
@@ -784,10 +765,9 @@ export class SpaceRuntimeService {
     if (!policy.attachLongTermAgentTools || !policy.spaceId) return;
     const agentId = session.metadata.promptProvenance?.agentId;
     if (!agentId) return;
-    const [space, agentSession, longHorizonAgent] = await Promise.all([
+    const [space, agentSession] = await Promise.all([
       this.config.spaceManager.getSpace(policy.spaceId),
       sessionManager.getSessionAsync(session.id),
-      this.config.longHorizonAgentRepo?.getById(agentId) ?? null,
     ]);
     if (!space) {
       log.warn(
@@ -801,20 +781,7 @@ export class SpaceRuntimeService {
       );
       return;
     }
-    const agentName =
-      session.metadata.promptProvenance?.agentName ??
-      longHorizonAgent?.displayName ??
-      'Space Agent';
-    const agentHandleAliases = longHorizonAgent ? [`@${longHorizonAgent.handle}`] : undefined;
-    this.attachLongTermAgentMcpServers(
-      agentSession,
-      space,
-      agentName,
-      session.id,
-      longHorizonAgent,
-      agentId,
-      agentHandleAliases
-    );
+    this.attachLongTermAgentMcpServers(agentSession, space, session.id);
     agentSession.onMissingMemberSpaceMcpServers = async (_sessionId, missing) => {
       log.warn(
         `Long-term Space agent session ${session.id} missing MCP servers [${missing.join(', ')}]; re-installing Space operations before query start`
@@ -833,26 +800,9 @@ export class SpaceRuntimeService {
       mergeRuntimeMcpServers(mcpServers: Record<string, McpServerConfig>): void;
     },
     space: Space,
-    agentName: string,
-    sessionId: string,
-    agent: SpaceLongHorizonAgent | null,
-    agentId: string | null,
-    agentHandleAliases?: string[]
+    sessionId: string
   ): void {
-    const spaceToolsConfig = this.buildLongTermAgentSpaceToolsConfig(
-      space,
-      agentName,
-      sessionId,
-      agent,
-      agentId,
-      agentHandleAliases
-    );
     const mcpServers: Record<string, McpServerConfig> = {};
-    this.attachSpaceActionsMcpServer(mcpServers, () => ({
-      role: 'long_term_agent',
-      spaceId: space.id,
-      spaceConfig: spaceToolsConfig,
-    }));
     if (this.config.memoryRepo) {
       mcpServers['agent-memory'] = createAgentMemoryMcpServer({
         spaceId: space.id,
@@ -873,45 +823,6 @@ export class SpaceRuntimeService {
     session.mergeRuntimeMcpServers(mcpServers);
   }
 
-  private attachSpaceActionsMcpServer(
-    _mcpServers: Record<string, McpServerConfig>,
-    buildConfig: () => SessionActionRegistryConfig
-  ): void {
-    const sessionManager = this.config.sessionManager;
-    const config = buildConfig();
-    const sessionId =
-      config.sessionId ?? config.spaceConfig?.mySessionId ?? config.nodeConfig?.mySessionId;
-    if (!sessionManager || !sessionId || typeof sessionManager.getSession !== 'function') return;
-    const agentSession = sessionManager.getSession(sessionId);
-    if (!agentSession?.setOperationRegistryProvider) return;
-    const actionRegistry = createSessionActionRegistry({
-      ...config,
-      operationRegistry: () => sessionManager.getOperationRegistry(),
-    });
-    agentSession.setOperationRegistryProvider(() =>
-      createOperationRegistry(
-        mergeActionOperations(sessionManager.getOperationRegistry().entries, actionRegistry)
-      )
-    );
-  }
-
-  installUniversalReadOperations(agentSession: {
-    setOperationRegistryProvider?: (provider: () => OperationRegistry) => void;
-  }): void {
-    const sessionManager = this.config.sessionManager;
-    if (!sessionManager || !agentSession.setOperationRegistryProvider) return;
-    const actionRegistry = createSessionActionRegistry({
-      role: 'universal_read',
-      spaceId: '',
-      operationRegistry: () => sessionManager.getOperationRegistry(),
-    });
-    agentSession.setOperationRegistryProvider(() =>
-      createOperationRegistry(
-        mergeActionOperations(sessionManager.getOperationRegistry().entries, actionRegistry)
-      )
-    );
-  }
-
   private releaseLongTermAgentDbQuery(sessionId: string): void {
     const server = this.longTermAgentDbQueryServers.get(sessionId);
     if (!server) return;
@@ -923,84 +834,8 @@ export class SpaceRuntimeService {
     this.longTermAgentDbQueryServers.delete(sessionId);
   }
 
-  private buildLongTermAgentSpaceToolsConfig(
-    space: Space,
-    agentName: string,
-    sessionId: string,
-    agent: SpaceLongHorizonAgent | null,
-    agentId: string | null,
-    agentHandleAliases?: string[]
-  ): SpaceAgentToolsConfig {
-    const aliases = agentHandleAliases ?? (agent ? [`@${agent.handle}`] : undefined);
-    return {
-      spaceId: space.id,
-      db: this.config.db,
-      longHorizonAgentRepo: this.config.longHorizonAgentRepo,
-      goalScopeRepo: this.config.goalScopeRepo,
-      subscriptionRepo: this.config.subscriptionRepo,
-      reminderRepo: this.config.reminderRepo,
-      ownedAgents: this.config.ownedAgents,
-      runtime: this.runtime,
-      workflowManager: this.config.spaceWorkflowManager,
-      spaceManager: this.config.spaceManager,
-      taskRepo: this.config.taskRepo,
-      nodeExecutionRepo: this.nodeExecutionRepo,
-      workflowRunRepo: this.config.workflowRunRepo,
-      isWorkflowRunActive: (runId: string) => this.isWorkflowRunActive(runId),
-      taskManager: new SpaceTaskManager(
-        this.config.db,
-        space.id,
-        this.config.reactiveDb,
-        this.config.evolutionScopeService,
-        (taskId) => this.config.goalService?.supersedeOutcomeNotificationsForTask(taskId),
-        (taskId, fromStatus) =>
-          this.config.goalService?.handleTaskTerminal(taskId, {
-            fromStatus,
-            deferPostCommitEffects: true,
-          }),
-        (rawPath) => this.config.spaceManager.resolveRegisteredWorkspacePath(space.id, rawPath)
-      ),
-      sessionManager: this.config.sessionManager,
-      clearLongTermAgentSessionProvider: (sid, aid) =>
-        this.clearLongTermAgentSessionProvider(sid, aid),
-      getRuntimeSession: (sid) =>
-        this.taskAgentManager?.getCachedAgentSessionById(sid) ?? undefined,
-      taskAgentManager: this.taskAgentManager ?? undefined,
-      internalEventBus: this.config.internalEventBus,
-      ensureTargetSession: (target) => this.ensureToolTargetSession(target),
-      getSpaceAutonomyLevel: async (sid) => {
-        const s = await this.config.spaceManager.getSpace(sid);
-        return s?.autonomyLevel ?? 1;
-      },
-      myAgentName: agentName,
-      myAgentNameAliases: aliases,
-      myAgentId: agentId ?? undefined,
-      mySessionId: sessionId,
-      callerRole: 'long_term_agent',
-      auditLogRepo: this.auditLogRepo,
-      scheduleService: this.config.scheduleService,
-      goalService: this.config.goalService,
-      evolutionScopeService: this.config.evolutionScopeService,
-      goalRepo: new SpaceGoalRepository(this.config.db),
-      evolutionEpisodeService: this.config.evolutionEpisodeService,
-      replyRoutingRegistry: this.config.replyRoutingRegistry,
-      messageResolver: this.createMessageResolver(space.id),
-      longTermAgentDelivery: this.longTermAgentDeliveryCallbacks(),
-      externalEventStore: this.config.externalEventStore,
-      inactivityConfigRepo:
-        agentId !== null && this.config.longHorizonAgentRepo?.getById(agentId)
-          ? this.config.inactivityConfigRepo
-          : undefined,
-      inactivityClaimRepo:
-        agentId !== null && this.config.longHorizonAgentRepo?.getById(agentId)
-          ? this.config.inactivityClaimRepo
-          : undefined,
-      inactivityRunNow:
-        agentId !== null && this.config.longHorizonAgentRepo?.getById(agentId)
-          ? this.config.inactivityRunNow
-          : undefined,
-      templateManager: this.templateManager,
-    };
+  runInactivityScanNow(spaceId: string, agentId: string): Promise<void> {
+    return this.config.inactivityRunNow?.(spaceId, agentId) ?? Promise.resolve();
   }
 
   registerSubscription(
@@ -1501,64 +1336,6 @@ export class SpaceRuntimeService {
     return repo.listBySpaceId(spaceId).some((agent) => agent.sessionId === sessionId);
   }
 
-  private buildMemberSpaceToolsConfig(space: Space, sessionId: string): SpaceAgentToolsConfig {
-    const spaceManagerForApproval = this.config.spaceManager;
-    return {
-      spaceId: space.id,
-      db: this.config.db,
-      longHorizonAgentRepo: this.config.longHorizonAgentRepo,
-      goalScopeRepo: this.config.goalScopeRepo,
-      subscriptionRepo: this.config.subscriptionRepo,
-      reminderRepo: this.config.reminderRepo,
-      ownedAgents: this.config.ownedAgents,
-      runtime: this.runtime,
-      workflowManager: this.config.spaceWorkflowManager,
-      spaceManager: this.config.spaceManager,
-      taskRepo: this.config.taskRepo,
-      nodeExecutionRepo: this.nodeExecutionRepo,
-      workflowRunRepo: this.config.workflowRunRepo,
-      isWorkflowRunActive: (runId: string) => this.isWorkflowRunActive(runId),
-      taskManager: new SpaceTaskManager(
-        this.config.db,
-        space.id,
-        this.config.reactiveDb,
-        this.config.evolutionScopeService,
-        (taskId) => this.config.goalService?.supersedeOutcomeNotificationsForTask(taskId),
-        (taskId, fromStatus) =>
-          this.config.goalService?.handleTaskTerminal(taskId, {
-            fromStatus,
-            deferPostCommitEffects: true,
-          }),
-        (rawPath) => this.config.spaceManager.resolveRegisteredWorkspacePath(space.id, rawPath)
-      ),
-      sessionManager: this.config.sessionManager,
-      clearLongTermAgentSessionProvider: (sid, aid) =>
-        this.clearLongTermAgentSessionProvider(sid, aid),
-      getRuntimeSession: (sid) =>
-        this.taskAgentManager?.getCachedAgentSessionById(sid) ?? undefined,
-      taskAgentManager: this.taskAgentManager ?? undefined,
-      internalEventBus: this.config.internalEventBus,
-      ensureTargetSession: (target) => this.ensureToolTargetSession(target),
-      getSpaceAutonomyLevel: async (sid) => {
-        const s = await spaceManagerForApproval.getSpace(sid);
-        return s?.autonomyLevel ?? 1;
-      },
-      mySessionId: sessionId,
-      callerRole: 'ad_hoc_member',
-      auditLogRepo: this.auditLogRepo,
-      scheduleService: this.config.scheduleService,
-      goalService: this.config.goalService,
-      evolutionScopeService: this.config.evolutionScopeService,
-      goalRepo: new SpaceGoalRepository(this.config.db),
-      evolutionEpisodeService: this.config.evolutionEpisodeService,
-      replyRoutingRegistry: this.config.replyRoutingRegistry,
-      messageResolver: this.createMessageResolver(space.id),
-      longTermAgentDelivery: this.longTermAgentDeliveryCallbacks(),
-      externalEventStore: this.config.externalEventStore,
-      templateManager: this.templateManager,
-    };
-  }
-
   async attachSpaceToolsToMemberSession(
     session: Session,
     options: { replayPendingMessages?: boolean } = {}
@@ -1606,12 +1383,6 @@ export class SpaceRuntimeService {
       this.memberSessionDbQueryServers.set(session.id, dbQueryServer);
       additional['db-query'] = dbQueryServer as unknown as McpServerConfig;
     }
-
-    this.attachSpaceActionsMcpServer(additional, () => ({
-      role: 'ad_hoc_member',
-      spaceId: space.id,
-      spaceConfig: this.buildMemberSpaceToolsConfig(space, session.id),
-    }));
 
     agentSession.mergeRuntimeMcpServers(additional);
 
@@ -1681,7 +1452,7 @@ export class SpaceRuntimeService {
     space: Space,
     options: { replayPendingMessages?: boolean } = {}
   ): Promise<void> {
-    const { sessionManager, db, spaceWorkflowManager, taskRepo, workflowRunRepo } = this.config;
+    const { sessionManager, db } = this.config;
     if (!sessionManager) return;
 
     const spaceChatSessionId = `space:chat:${space.id}`;
@@ -1692,64 +1463,6 @@ export class SpaceRuntimeService {
       return;
     }
 
-    const spaceManagerForApproval = this.config.spaceManager;
-    const spaceToolsConfig: SpaceAgentToolsConfig = {
-      spaceId: space.id,
-      db: this.config.db,
-      longHorizonAgentRepo: this.config.longHorizonAgentRepo,
-      goalScopeRepo: this.config.goalScopeRepo,
-      subscriptionRepo: this.config.subscriptionRepo,
-      reminderRepo: this.config.reminderRepo,
-      ownedAgents: this.config.ownedAgents,
-      runtime: this.runtime,
-      workflowManager: spaceWorkflowManager,
-      spaceManager: this.config.spaceManager,
-      taskRepo,
-      nodeExecutionRepo: this.nodeExecutionRepo,
-      workflowRunRepo,
-      isWorkflowRunActive: (runId: string) => this.isWorkflowRunActive(runId),
-      taskManager: new SpaceTaskManager(
-        db,
-        space.id,
-        this.config.reactiveDb,
-        this.config.evolutionScopeService,
-        (taskId) => this.config.goalService?.supersedeOutcomeNotificationsForTask(taskId),
-        (taskId, fromStatus) =>
-          this.config.goalService?.handleTaskTerminal(taskId, {
-            fromStatus,
-            deferPostCommitEffects: true,
-          }),
-        (rawPath) => this.config.spaceManager.resolveRegisteredWorkspacePath(space.id, rawPath)
-      ),
-      sessionManager: this.config.sessionManager,
-      clearLongTermAgentSessionProvider: (sid, aid) =>
-        this.clearLongTermAgentSessionProvider(sid, aid),
-      getRuntimeSession: (sid) =>
-        this.taskAgentManager?.getCachedAgentSessionById(sid) ?? undefined,
-      taskAgentManager: this.taskAgentManager ?? undefined,
-      internalEventBus: this.config.internalEventBus,
-      activateNode: async (runId, nodeId) => {
-        await this.activateWorkflowNode(runId, nodeId);
-      },
-      ensureTargetSession: (target) => this.ensureToolTargetSession(target),
-      getSpaceAutonomyLevel: async (sid) => {
-        const s = await spaceManagerForApproval.getSpace(sid);
-        return s?.autonomyLevel ?? 1;
-      },
-      mySessionId: spaceChatSessionId,
-      callerRole: 'ad_hoc_member',
-      auditLogRepo: this.auditLogRepo,
-      scheduleService: this.config.scheduleService,
-      goalService: this.config.goalService,
-      evolutionScopeService: this.config.evolutionScopeService,
-      goalRepo: new SpaceGoalRepository(this.config.db),
-      evolutionEpisodeService: this.config.evolutionEpisodeService,
-      replyRoutingRegistry: this.config.replyRoutingRegistry,
-      messageResolver: this.createMessageResolver(space.id),
-      longTermAgentDelivery: this.longTermAgentDeliveryCallbacks(),
-      externalEventStore: this.config.externalEventStore,
-      templateManager: this.templateManager,
-    };
     const existingDbQueryServer = this.spaceDbQueryServers.get(space.id);
     if (existingDbQueryServer) {
       try {
@@ -1776,11 +1489,6 @@ export class SpaceRuntimeService {
       this.spaceDbQueryServers.set(space.id, dbQueryServer);
       mcpServers['db-query'] = dbQueryServer as unknown as McpServerConfig;
     }
-    this.attachSpaceActionsMcpServer(mcpServers, () => ({
-      role: 'ad_hoc_member',
-      spaceId: space.id,
-      spaceConfig: spaceToolsConfig,
-    }));
 
     session.mergeRuntimeMcpServers(mcpServers);
     session.onMissingSpaceChatMcpServers = async (_sessionId, missing) => {

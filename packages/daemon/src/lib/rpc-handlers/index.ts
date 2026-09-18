@@ -815,7 +815,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     memoryRepo: deps.db.agentMemory,
     goalService: spaceGoalService,
     evolutionScopeService,
-    evolutionEpisodeService,
     artifactProfile,
     outcomeNotificationRepo,
     enableGoalOutcomeWake: GOAL_OUTCOME_WAKE_ENABLED,

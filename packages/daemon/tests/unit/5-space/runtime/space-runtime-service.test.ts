@@ -43,7 +43,8 @@ import { SpaceManager as SpaceMgr } from '../../../../src/lib/space/managers/spa
 import type { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager.ts';
 import { SpaceWorkflowManager as WorkflowMgr } from '../../../../src/lib/workflows/workflow-manager.ts';
 import type { SpaceRuntimeServiceConfig } from '../../../../src/lib/space/runtime/space-runtime-service.ts';
-import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
+import { createAgentSubscriptionOperations } from '../../../../src/lib/external-events/agent-subscription-operations.ts';
+import { isOperationAdmitted } from '../../../../src/lib/operations/invoke.ts';
 import { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-runtime-service.ts';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import { DirectTaskExecutionRepository } from '../../../../src/storage/repositories/direct-task-execution-repository';
@@ -58,6 +59,15 @@ import { SpaceTaskRepository as SpaceTaskRepo } from '../../../../src/storage/re
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import type { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
 import { SpaceWorkflowRunRepository as SpaceWorkflowRunRepo } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
+import { z } from 'zod';
+import {
+  createOperationRegistry,
+  defineOperation,
+  type OperationCaller,
+  type OperationDefinition,
+  type OperationRegistry,
+} from '../../../../src/lib/operations/registry.ts';
+import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { createTestInternalEventBus } from '../../../helpers/database.ts';
@@ -925,18 +935,7 @@ describe('SpaceRuntimeService', () => {
       const [mcpArg] = (
         session.mergeRuntimeMcpServers as Mock<typeof session.mergeRuntimeMcpServers>
       ).mock.calls[0];
-      expect(session.setOperationRegistryProvider).toHaveBeenCalled();
       expect(typeof session.onMissingSpaceChatMcpServers).toBe('function');
-    });
-
-    test('space chat: installs the operations registry provider', async () => {
-      const session = makeSession();
-      const sessionManager = makeSessionManager(session);
-      const svc = new SpaceRuntimeService(buildConfigWithSession(sessionManager));
-
-      await svc.setupSpaceAgentSession(mockSpace);
-
-      expect(session.setOperationRegistryProvider).toHaveBeenCalled();
     });
 
     test('provisions the space:chat session with the 24-tool sdkToolsPreset (Task #794)', async () => {
@@ -984,7 +983,6 @@ describe('SpaceRuntimeService', () => {
       const [repairedMcpArg] = (
         session.mergeRuntimeMcpServers as Mock<typeof session.mergeRuntimeMcpServers>
       ).mock.calls[1];
-      expect(session.setOperationRegistryProvider).toHaveBeenCalled();
     });
 
     test('no-op when session does not exist in DB', async () => {
@@ -1086,7 +1084,6 @@ describe('SpaceRuntimeService', () => {
       const [mcpArg] = (
         session.mergeRuntimeMcpServers as Mock<typeof session.mergeRuntimeMcpServers>
       ).mock.calls.at(-1)!;
-      expect(session.setOperationRegistryProvider).toHaveBeenCalled();
       expect(typeof session.onMissingSpaceChatMcpServers).toBe('function');
 
       await svc.stop();
@@ -2054,7 +2051,6 @@ describe('SpaceRuntimeService', () => {
       const [mcpArg] = (
         agentSession.mergeRuntimeMcpServers as Mock<typeof agentSession.mergeRuntimeMcpServers>
       ).mock.calls.at(-1)!;
-      expect(agentSession.setOperationRegistryProvider).toHaveBeenCalled();
       expect(typeof agentSession.onMissingMemberSpaceMcpServers).toBe('function');
 
       await svc.stop();
@@ -2588,7 +2584,7 @@ describe('SpaceRuntimeService', () => {
       } as unknown as Session;
     }
 
-    test('installs the operations registry provider for an ad-hoc Space member session', async () => {
+    test('attaches the member MCP servers for an ad-hoc Space member session', async () => {
       const agent = makeMemberAgentSession();
       const sessionManager = makeSessionManager(agent);
       const svc = new SpaceRuntimeService(buildMemberConfig({ sessionManager }));
@@ -2598,12 +2594,11 @@ describe('SpaceRuntimeService', () => {
       const mergeMock = agent.mergeRuntimeMcpServers as Mock<typeof agent.mergeRuntimeMcpServers>;
       expect(mergeMock).toHaveBeenCalledTimes(1);
       const [additional] = mergeMock.mock.calls[0];
-      expect(agent.setOperationRegistryProvider).toHaveBeenCalled();
       expect(additional).not.toHaveProperty('db-query');
       expect(agent.setRuntimeSystemPrompt).not.toHaveBeenCalled();
     });
 
-    test('long-term agent session: installs the operations registry provider', async () => {
+    test('long-term agent session: attaches its member MCP servers', async () => {
       const agent = makeMemberAgentSession({
         id: longTermAgentSessionId(mockSpace.id, 'agent-1'),
         metadata: {
@@ -2626,8 +2621,70 @@ describe('SpaceRuntimeService', () => {
         }
       ).attachLongTermAgentMcpServersForSession(agent.getSessionData());
 
-      const serverNames = Object.keys(agent.getSessionData().config.mcpServers ?? {});
-      expect(agent.setOperationRegistryProvider).toHaveBeenCalled();
+      expect(agent.mergeRuntimeMcpServers).toHaveBeenCalled();
+    });
+
+    test('long-term agent session registry exposes the externalEvent.agent.* operations', async () => {
+      const agentOperations = createAgentSubscriptionOperations({
+        subscriptionRepo: {
+          upsertSubscription: mock(() => {
+            throw new Error('not used');
+          }),
+          getSubscriptionByRoute: mock(() => null),
+          deleteSubscriptionByRoute: mock(() => {}),
+          listSubscriptions: mock(() => []),
+        },
+        refreshSubscription: mock(() => ({ success: true })),
+        removeSubscription: mock(() => {}),
+        getSession: mock(() => null),
+        taskRepo: {} as SpaceTaskRepository,
+        nodeExecutionRepo: makeNoopNodeExecutionRepo(),
+        longHorizonAgentRepo: makeActiveLhAgentRepo()!,
+      });
+      const agent = makeMemberAgentSession({
+        id: longTermAgentSessionId(mockSpace.id, 'agent-1'),
+        metadata: {
+          promptProvenance: {
+            source: 'test',
+            hash: 'hash',
+            agentId: 'agent-1',
+            agentName: 'Long Term',
+          },
+        } as Session['metadata'],
+      });
+      const sessionManager = makeSessionManager(agent);
+      (
+        sessionManager as unknown as {
+          getOperationRegistry: Mock<() => OperationRegistry>;
+        }
+      ).getOperationRegistry = mock(() => createOperationRegistry(agentOperations));
+      const svc = new SpaceRuntimeService(
+        buildMemberConfig({ sessionManager, longHorizonAgentRepo: makeActiveLhAgentRepo() })
+      );
+
+      await (
+        svc as unknown as {
+          attachLongTermAgentMcpServersForSession(session: Session): Promise<void>;
+        }
+      ).attachLongTermAgentMcpServersForSession(agent.getSessionData());
+
+      const registry = sessionManager.getOperationRegistry();
+      const caller: OperationCaller = {
+        source: 'mcp',
+        sessionId: agent.getSessionData().id,
+        spaceId: mockSpace.id,
+        role: 'long_term_agent',
+        agentName: 'Long Term',
+      };
+      for (const name of [
+        'externalEvent.agent.subscribe',
+        'externalEvent.agent.unsubscribe',
+        'externalEvent.agent.listSubscriptions',
+      ]) {
+        const operation = registry.get(name);
+        expect(operation, `expected ${name} in the long-term agent session registry`).toBeDefined();
+        expect(isOperationAdmitted(operation!, caller)).toBe(true);
+      }
     });
 
     test('long-term agent session: withholds Space tools when the backing agent is paused', async () => {
@@ -2661,7 +2718,6 @@ describe('SpaceRuntimeService', () => {
       ).attachLongTermAgentMcpServersForSession(agent.getSessionData());
 
       expect(agent.mergeRuntimeMcpServers).not.toHaveBeenCalled();
-      const serverNames = Object.keys(agent.getSessionData().config.mcpServers ?? {});
       expect(agent.setOperationRegistryProvider).not.toHaveBeenCalled();
     });
 
@@ -2703,7 +2759,6 @@ describe('SpaceRuntimeService', () => {
         const mergeMock = agent.mergeRuntimeMcpServers as Mock<typeof agent.mergeRuntimeMcpServers>;
         expect(mergeMock).toHaveBeenCalledTimes(1);
         const [additional] = mergeMock.mock.calls[0];
-        expect(agent.setOperationRegistryProvider).toHaveBeenCalled();
         expect(additional).toHaveProperty('db-query');
 
         await svc.stop();
@@ -2722,6 +2777,94 @@ describe('SpaceRuntimeService', () => {
       );
 
       expect(agent.mergeRuntimeMcpServers).not.toHaveBeenCalled();
+    });
+
+    describe('agentTemplate operations reach the member session registry', () => {
+      const TEMPLATE_OP_NAMES = [
+        'agentTemplate.create',
+        'agentTemplate.update',
+        'agentTemplate.delete',
+        'agentTemplate.list',
+        'agent.createFromTemplate',
+      ];
+
+      function templateOps(): OperationDefinition[] {
+        const roles = ['ad_hoc_member', 'long_term_agent'] as const;
+        return TEMPLATE_OP_NAMES.map((name) =>
+          defineOperation({
+            name,
+            description: name,
+            inputSchema: z.object({}).passthrough(),
+            resultSchema: z.unknown(),
+            policy: {
+              safetyClass:
+                name === 'agentTemplate.list'
+                  ? 'read'
+                  : name === 'agentTemplate.delete'
+                    ? 'destructive'
+                    : 'mutate',
+              roles,
+            },
+            execute: async () => `ran ${name}`,
+          })
+        );
+      }
+
+      function registryOf(sessionManager: SessionManager): OperationRegistry {
+        return sessionManager.getOperationRegistry();
+      }
+
+      const memberCaller: OperationCaller = {
+        source: 'mcp',
+        sessionId: 'worker-session-1',
+        spaceId: mockSpace.id,
+        role: 'ad_hoc_member',
+      };
+
+      test('each of the five template operations is invocable by a member caller', async () => {
+        const agent = makeMemberAgentSession();
+        const sessionManager = {
+          getSessionAsync: mock(async () => agent),
+          getSession: mock(() => agent),
+          getOperationRegistry: mock(() => createOperationRegistry(templateOps())),
+          listSessions: mock(() => [] as Session[]),
+        } as unknown as SessionManager;
+        const svc = new SpaceRuntimeService(buildMemberConfig({ sessionManager }));
+
+        await svc.attachSpaceToolsToMemberSession(makeMemberSession());
+
+        const registry = registryOf(sessionManager);
+        for (const name of TEMPLATE_OP_NAMES) {
+          expect(registry.get(name)).toBeDefined();
+          const outcome = await invokeOperation(registry, name, {}, memberCaller);
+          expect(outcome.kind).toBe('completed');
+        }
+      });
+
+      test('a workflow worker caller is refused the template operations', async () => {
+        const agent = makeMemberAgentSession();
+        const sessionManager = {
+          getSessionAsync: mock(async () => agent),
+          getSession: mock(() => agent),
+          getOperationRegistry: mock(() => createOperationRegistry(templateOps())),
+          listSessions: mock(() => [] as Session[]),
+        } as unknown as SessionManager;
+        const svc = new SpaceRuntimeService(buildMemberConfig({ sessionManager }));
+
+        await svc.attachSpaceToolsToMemberSession(makeMemberSession());
+
+        const registry = registryOf(sessionManager);
+        const outcome = await invokeOperation(
+          registry,
+          'agentTemplate.list',
+          {},
+          {
+            ...memberCaller,
+            role: 'workflow_worker',
+          }
+        );
+        expect(outcome.kind).toBe('failed');
+      });
     });
 
     test('skips space_chat sessions (handled by setupSpaceAgentSession)', async () => {
@@ -2813,7 +2956,6 @@ describe('SpaceRuntimeService', () => {
 
       const mergeMock = agent.mergeRuntimeMcpServers as Mock<typeof agent.mergeRuntimeMcpServers>;
       expect(mergeMock).toHaveBeenCalledTimes(3);
-      expect(agent.setOperationRegistryProvider).toHaveBeenCalled();
 
       await svc.stop();
     });
@@ -2917,7 +3059,6 @@ describe('SpaceRuntimeService', () => {
         includeSpaceSessions: true,
       });
       expect(agent.mergeRuntimeMcpServers).toHaveBeenCalledTimes(1);
-      expect(agent.setOperationRegistryProvider).toHaveBeenCalled();
 
       await svc.stop();
     });
@@ -2956,9 +3097,6 @@ describe('SpaceRuntimeService', () => {
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
       expect(agent.mergeRuntimeMcpServers).toHaveBeenCalledTimes(1);
-      const [mcpArg] = (agent.mergeRuntimeMcpServers as Mock<typeof agent.mergeRuntimeMcpServers>)
-        .mock.calls[0];
-      expect(agent.setOperationRegistryProvider).toHaveBeenCalled();
 
       await svc.stop();
     });
@@ -3076,7 +3214,6 @@ describe('SpaceRuntimeService', () => {
       expect(longHorizonAgentRepo.getById).toHaveBeenCalledWith('agent-lh');
       const mergeMock = agent.mergeRuntimeMcpServers as Mock<typeof agent.mergeRuntimeMcpServers>;
       expect(mergeMock).toHaveBeenCalledTimes(1);
-      expect(agent.setOperationRegistryProvider).toHaveBeenCalled();
     });
 
     test('long-term agent deleted sessions release db-query runtime server handles', async () => {
@@ -3193,8 +3330,6 @@ describe('SpaceRuntimeService', () => {
 
       const mergeMock = agent.mergeRuntimeMcpServers as Mock<typeof agent.mergeRuntimeMcpServers>;
       expect(mergeMock).toHaveBeenCalledTimes(1);
-      const [additional] = mergeMock.mock.calls[0];
-      expect(agent.setOperationRegistryProvider).toHaveBeenCalled();
 
       await svc.stop();
     });
@@ -3867,7 +4002,7 @@ describe('buildLongHorizonAgentSessionConfig — owner-review contract injection
     const append = systemPromptAppend(config);
     expect(append).toContain(staleInstructions);
     expect(append).toContain('## Goal Ownership & Outcome Review Contract');
-    expect(append).toContain('review_goal_outcome');
+    expect(append).toContain('goal.reviewOutcome');
   });
 
   test('user-customized instructions are preserved, not replaced, by the contract append', async () => {
