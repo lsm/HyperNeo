@@ -180,16 +180,20 @@ describe('the agent.update operation', () => {
     expect(updated).toEqual([]);
   });
 
-  test('a read-only session is refused at the door', async () => {
+  test('a read-only session is refused by admitAgentCaller inside the operation', async () => {
     const outcome = await run(
       'agent.update',
       { agentId: agent.id, name: 'Chief' },
       memberCaller('universal_read')
     );
     expect(outcome).toEqual({
-      kind: 'failed',
-      code: 'forbidden',
-      message: 'Operation agent.update is not available to this caller',
+      kind: 'completed',
+      value: {
+        rejected: true,
+        reason: 'agent_denied',
+        message:
+          'Agent operations require a human caller or an active Space member session in the owning Space.',
+      },
     });
     expect(agentRepo.getById(agent.id)?.displayName).toBe('Planner');
   });
@@ -242,16 +246,20 @@ describe('the agent.pause and agent.archive operations', () => {
     expect(agentRepo.getById(agent.id)?.status).toBe('active');
   });
 
-  test('a read-only session is refused agent.archive at the door', async () => {
+  test('a read-only session is refused agent.archive by admitAgentCaller inside the operation', async () => {
     const outcome = await run(
       'agent.archive',
       { agentId: agent.id },
       memberCaller('universal_read')
     );
     expect(outcome).toEqual({
-      kind: 'failed',
-      code: 'forbidden',
-      message: 'Operation agent.archive is not available to this caller',
+      kind: 'completed',
+      value: {
+        rejected: true,
+        reason: 'agent_denied',
+        message:
+          'Agent operations require a human caller or an active Space member session in the owning Space.',
+      },
     });
     expect(agentRepo.getById(agent.id)?.status).toBe('active');
   });

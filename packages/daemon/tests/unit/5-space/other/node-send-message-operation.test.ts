@@ -291,15 +291,13 @@ describe('createNodeSendMessageOperation', () => {
     expect(createNodeSendMessageOperation(deps).name).toBe('send_message');
   });
 
-  test('declares a mutate policy admitting only workflow workers at the door', () => {
+  test('declares a mutate policy, but the generic door no longer restricts it to workflow workers', () => {
     const { deps } = harness({});
     const operation = createNodeSendMessageOperation(deps);
 
     expect(operation.policy).toEqual({ safetyClass: 'mutate', roles: ['workflow_worker'] });
     expect(isOperationAdmitted(operation, workerCaller)).toBe(true);
-    expect(isOperationAdmitted(operation, { ...workerCaller, role: 'long_term_agent' })).toBe(
-      false
-    );
+    expect(isOperationAdmitted(operation, { ...workerCaller, role: 'long_term_agent' })).toBe(true);
   });
 
   test('refuses caller identity supplied through input', async () => {

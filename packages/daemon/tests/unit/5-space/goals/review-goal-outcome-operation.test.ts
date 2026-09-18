@@ -303,7 +303,7 @@ describe('goal.reviewOutcome through the operations door', () => {
     }
   });
 
-  test('stops an ad_hoc_member caller at the door policy', async () => {
+  test('stops an ad_hoc_member caller via admitGoalRole inside the operation', async () => {
     const ctx = makeCtx();
     try {
       const outcome = await invokeOperation(
@@ -318,8 +318,10 @@ describe('goal.reviewOutcome through the operations door', () => {
           agentId: ctx.owner.id,
         }
       );
-      expect(outcome.kind).toBe('failed');
-      expect(outcome.kind === 'failed' && outcome.code).toBe('forbidden');
+      expect(outcome).toMatchObject({
+        kind: 'completed',
+        value: { kind: 'rejected', accepted: false, reason: 'role_denied' },
+      });
     } finally {
       ctx.db.close();
     }

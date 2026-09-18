@@ -208,7 +208,7 @@ describe('the agent.create operation', () => {
     expect(value.value.agent.autonomyLevel).toBeNull();
   });
 
-  test('a read-only session is refused at the door', async () => {
+  test('a read-only session is refused by admitAgentCaller inside the operation', async () => {
     expect(readOnlyCaller()).toEqual({
       source: 'mcp',
       sessionId: READ_ONLY_SESSION,
@@ -216,9 +216,13 @@ describe('the agent.create operation', () => {
     });
     const outcome = await create({ spaceId, name: 'Planner' }, readOnlyCaller());
     expect(outcome).toEqual({
-      kind: 'failed',
-      code: 'forbidden',
-      message: 'Operation agent.create is not available to this caller',
+      kind: 'completed',
+      value: {
+        rejected: true,
+        reason: 'agent_denied',
+        message:
+          'Agent operations require a human caller or an active Space member session in the owning Space.',
+      },
     });
     expect(agentRepo.listBySpaceId(spaceId)).toHaveLength(0);
   });

@@ -119,10 +119,10 @@ describe('workflow catalog read operations', () => {
     expect(worker).toEqual({ workflows: [summary()] });
   });
 
-  test('workflow.list is closed to a direct_task_worker at the door and in the operation', async () => {
+  test('workflow.list is closed to a direct_task_worker by the family scope gate in the operation', async () => {
     const caller = mcpCaller('direct_task_worker');
     const outcome = await outcomeOf(deps(), 'workflow.list', {}, caller);
-    expect(outcome).toMatchObject({ kind: 'failed', code: 'forbidden' });
+    expect(outcome).toMatchObject({ kind: 'completed', value: 'caller_not_admitted' });
     expect(await operation(deps(), 'workflow.list').execute({}, caller)).toBe(
       'caller_not_admitted'
     );
@@ -173,14 +173,14 @@ describe('workflow catalog read operations', () => {
     expect(value).toEqual({ workflows: [summary()] });
   });
 
-  test('workflow.suggest denies a legacy_task_agent caller', async () => {
+  test('workflow.suggest denies a legacy_task_agent caller via the family scope gate', async () => {
     const outcome = await outcomeOf(
       deps(),
       'workflow.suggest',
       { description: 'fix a bug' },
       mcpCaller('legacy_task_agent')
     );
-    expect(outcome).toMatchObject({ kind: 'failed', code: 'forbidden' });
+    expect(outcome).toMatchObject({ kind: 'completed', value: 'caller_not_admitted' });
   });
 
   test('workflow.get returns the workflow named by workflowId', async () => {
@@ -265,7 +265,7 @@ describe('workflow catalog read operations', () => {
     });
     const caller = mcpCaller('outside_space');
     const outcome = await outcomeOf(dependencies, 'workflow.get', { workflowId: 'wf-1' }, caller);
-    expect(outcome).toMatchObject({ kind: 'failed', code: 'forbidden' });
+    expect(outcome).toMatchObject({ kind: 'completed', value: 'caller_not_admitted' });
     expect(
       await operation(dependencies, 'workflow.get').execute({ workflowId: 'wf-1' }, caller)
     ).toBe('caller_not_admitted');

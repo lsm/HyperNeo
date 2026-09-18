@@ -756,7 +756,10 @@ describe('invokeOperation', () => {
         { scopeId: created.scope.id },
         workerCaller
       );
-      expect(denied).toMatchObject({ kind: 'failed', code: 'forbidden' });
+      expect(denied).toMatchObject({
+        kind: 'completed',
+        value: { accepted: false, reason: 'forge_denied' },
+      });
       expect(
         await ctx.op('forge.timeline.get').execute({ scopeId: created.scope.id }, workerCaller)
       ).toMatchObject({ accepted: false, reason: 'forge_denied' });
