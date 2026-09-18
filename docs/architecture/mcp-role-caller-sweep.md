@@ -65,15 +65,17 @@ see **What this method could not verify** below.
 
 Counting every `defineOperation({...})` call site with a `policy.roles` array (not just the
 ones the issue happened to sample), **89 of the 108 registered operations declare a roles
-list**, not "roughly 25." The 25 figure in the issue and the 25 test files #4726 touched
-undercount the surface; #4726's test fixes only touched the files whose *assertions* named
-the door explicitly, and that is a per-operation property, not a per-family one: within
-families that declare `roles`, `57723b053` rewrote exactly three such assertions —
-`schedule.delete` ("the door refuses a workflow worker before a schedule mutation runs"),
-`session.state.update`, and one forge scope mutation whose `code: 'forbidden'` became
-`{ accepted: false, reason: 'forge_denied' }`. The remaining operations in those families
-had no door-naming assertion and so needed no diff, but all of them are role-declaring and
-in scope for this sweep. Counts by family (`packages/shared/src/types/operation-names/*.ts`):
+list**, not "roughly 25." The 25 figure in the issue undercounts the surface, and the
+count of test files #4726 touched is not a proxy for it either way: `57723b053`'s test churn
+was broad, not narrow. `git show 57723b053 -- 'packages/daemon/tests/**'` removes 55 lines
+naming the door or `code: 'forbidden'` across 23 test files, spanning the agent, goal,
+workflow, node, schedule, session, forge, audit and `task.retry` families — so "which
+families had door-asserting tests" is not a useful axis to reason on. Most of them did. What
+the test churn measures is where an assertion happened to name the door in its wording, which
+is a property of how each test was written, not of which operations declare `roles`. The
+roles count below is taken from the `defineOperation` call sites directly.
+
+Counts by family (`packages/shared/src/types/operation-names/*.ts`):
 
 | Family | Total ops | Declare `roles` | Gate function (family-owned, independent of the door) | Denial shape |
 |---|---|---|---|---|
