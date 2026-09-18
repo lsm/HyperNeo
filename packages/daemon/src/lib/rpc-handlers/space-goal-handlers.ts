@@ -147,14 +147,14 @@ export function setupSpaceGoalHandlers(messageHub: MessageHub, deps: SpaceGoalHa
     return { events: goalService.listGoalEvents(params.goalId, params) };
   });
 
-  messageHub.onRequest('spaceGoal.getOwner', async (data, context) => {
+  messageHub.onRequest('spaceGoal.getOwner', async (data) => {
     const params = data as { spaceId: string; goalId: string };
     await requireSpace(params.spaceId);
     if (!params.goalId) throw new Error('goalId is required');
     const result = await invokeOperationFromHandler<{
       accepted: true;
       owner: SpaceGoalOwnerResolution;
-    }>(operations, 'goal.owner.get', params, context);
+    }>(operations, 'goal.owner.get', params);
     return { owner: result.owner };
   });
 

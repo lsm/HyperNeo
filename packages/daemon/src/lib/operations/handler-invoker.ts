@@ -1,4 +1,3 @@
-import type { CallContext } from '@hyperneo/shared';
 import { LOCAL_RPC_PRINCIPAL } from './caller.ts';
 import { invokeOperation } from './invoke.ts';
 import { resolveOperationRegistry, type OperationRegistrySource } from './registry.ts';
@@ -16,13 +15,11 @@ function isRejectionEnvelope(value: unknown): value is OperationRejectionEnvelop
 export async function invokeOperationFromHandler<Result extends OperationAcceptanceEnvelope>(
   registry: OperationRegistrySource,
   name: string,
-  input: unknown,
-  context: CallContext
+  input: unknown
 ): Promise<Result> {
   const outcome = await invokeOperation(resolveOperationRegistry(registry), name, input, {
     source: 'rpc',
     principal: LOCAL_RPC_PRINCIPAL,
-    sessionId: context.sessionId,
   });
   if (outcome.kind !== 'completed') throw new Error(outcome.message);
   if (isRejectionEnvelope(outcome.value)) throw new Error(outcome.value.message);
