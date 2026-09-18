@@ -9,6 +9,8 @@ import { subscribeGoalOwnerChangeOutcomeRedelivery } from '../../../../src/lib/g
 import type { SpaceGoalService } from '../../../../src/lib/goals/service.ts';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { setupSpaceGoalHandlers } from '../../../../src/lib/rpc-handlers/space-goal-handlers.ts';
+import { createGetGoalOwnerOperation } from '../../../../src/lib/goals/get-goal-owner-operation.ts';
+import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
 
 const SPACE_ID = 'space-1';
 const GOAL_ID = 'goal-1';
@@ -60,6 +62,20 @@ function makeRepoMock(initial: SpaceGoalOwnerResolution) {
   };
 }
 
+function makeOperations(
+  goalService: SpaceGoalService,
+  goalScopeRepo: { getPrimaryGoalOwner: (goalId: string, spaceId: string) => unknown }
+) {
+  return createOperationRegistry([
+    createGetGoalOwnerOperation({
+      goalService,
+      goalScopeRepo: goalScopeRepo as never,
+      getSession: () => null,
+      longHorizonAgentRepo: { getById: () => null } as never,
+    }),
+  ]);
+}
+
 function makeHarness(repo: ReturnType<typeof makeRepoMock>) {
   const { hub, handlers } = createMockHub();
   const goalService = {
@@ -72,6 +88,7 @@ function makeHarness(repo: ReturnType<typeof makeRepoMock>) {
     goalService,
     spaceManager,
     goalScopeRepo: repo,
+    operations: makeOperations(goalService, repo),
   });
   return { handlers };
 }
@@ -198,12 +215,14 @@ describe('spaceGoal owner handlers', () => {
     const goalService = {
       getGoal: mock(() => ({ id: GOAL_ID, spaceId: SPACE_ID })),
     } as unknown as SpaceGoalService;
+    const goalScopeRepo = makeRepoMock({ action: 'no_recipient' });
     setupSpaceGoalHandlers(hub, {
       goalService,
       spaceManager: {
         getSpace: mock(async () => ({ id: SPACE_ID })),
       } as unknown as SpaceManager,
-      goalScopeRepo: makeRepoMock({ action: 'no_recipient' }),
+      goalScopeRepo,
+      operations: makeOperations(goalService, goalScopeRepo),
       internalEventBus: eventBus,
     });
     await handlers.get('spaceGoal.assignOwner')!(
@@ -235,14 +254,17 @@ describe('spaceGoal owner handlers', () => {
       recoverPendingOutcomeNotificationsForGoal,
     });
     const { hub, handlers } = createMockHub();
+    const assignGoalService = {
+      getGoal: mock(() => ({ id: GOAL_ID, spaceId: SPACE_ID })),
+    } as unknown as SpaceGoalService;
+    const assignScopeRepo = makeRepoMock({ action: 'no_recipient' });
     setupSpaceGoalHandlers(hub, {
-      goalService: {
-        getGoal: mock(() => ({ id: GOAL_ID, spaceId: SPACE_ID })),
-      } as unknown as SpaceGoalService,
+      goalService: assignGoalService,
       spaceManager: {
         getSpace: mock(async () => ({ id: SPACE_ID })),
       } as unknown as SpaceManager,
-      goalScopeRepo: makeRepoMock({ action: 'no_recipient' }),
+      goalScopeRepo: assignScopeRepo,
+      operations: makeOperations(assignGoalService, assignScopeRepo),
       internalEventBus,
     });
 
@@ -289,10 +311,12 @@ describe('spaceGoal owner handlers', () => {
     const goalService = {
       getGoal: mock(() => ({ id: GOAL_ID, spaceId: 'other-space' })),
     } as unknown as SpaceGoalService;
+    const outsideScopeRepo = makeRepoMock({ action: 'no_recipient' });
     setupSpaceGoalHandlers(hub, {
       goalService,
       spaceManager: { getSpace: mock(async () => ({ id: SPACE_ID })) } as unknown as SpaceManager,
-      goalScopeRepo: makeRepoMock({ action: 'no_recipient' }),
+      goalScopeRepo: outsideScopeRepo,
+      operations: makeOperations(goalService, outsideScopeRepo),
     });
     await expect(
       handlers.get('spaceGoal.getOwner')!({ spaceId: SPACE_ID, goalId: GOAL_ID }, makeContext())
@@ -303,12 +327,14 @@ describe('spaceGoal owner handlers', () => {
 describe('spaceGoal workspacePath resolution', () => {
   function makeGoalHarness(goalService: Record<string, unknown>) {
     const { hub, handlers } = createMockHub();
+    const workspaceScopeRepo = makeRepoMock({ action: 'no_recipient' });
     setupSpaceGoalHandlers(hub, {
       goalService: goalService as unknown as SpaceGoalService,
       spaceManager: {
         getSpace: mock(async () => ({ id: SPACE_ID, status: 'active' })),
       } as unknown as SpaceManager,
-      goalScopeRepo: makeRepoMock({ action: 'no_recipient' }),
+      goalScopeRepo: workspaceScopeRepo,
+      operations: makeOperations(goalService as unknown as SpaceGoalService, workspaceScopeRepo),
     });
     return { handlers };
   }
@@ -398,10 +424,12 @@ describe('spaceGoal handler gates', () => {
       ...overrides.goalService,
     };
     const getSpace = mock(overrides.getSpace ?? (async () => ({ id: SPACE_ID, status: 'active' })));
+    const gateScopeRepo = makeRepoMock({ action: 'no_recipient' });
     setupSpaceGoalHandlers(hub, {
       goalService: goalService as unknown as SpaceGoalService,
       spaceManager: { getSpace } as unknown as SpaceManager,
-      goalScopeRepo: makeRepoMock({ action: 'no_recipient' }),
+      goalScopeRepo: gateScopeRepo,
+      operations: makeOperations(goalService as unknown as SpaceGoalService, gateScopeRepo),
     });
     return { handlers, goalService, getSpace };
   }
