@@ -189,7 +189,7 @@ const resultSchema = z.union([
 ]);
 
 const REJECTION_DOC =
-  'Rejects agent_not_found when the agent is absent or belongs to another Space, invalid_name when the new name is blank or already used by a non-archived peer, invalid_tools for a tool outside the known allowlist, invalid_model when the resulting model and provider pair is unrecognized, and runtime_refresh_failed when the stored change landed but its event subscriptions could not be reloaded. Admitted for ad-hoc members and long-term agents whose session is active in the owning Space; read-only and worker sessions are rejected with agent_denied.';
+  'Rejects agent_not_found when the agent is absent or belongs to another Space, invalid_name when the new name is blank or already used by a non-archived peer, invalid_tools for a tool outside the known allowlist, invalid_model when the resulting model and provider pair is unrecognized, and runtime_refresh_failed when the stored change landed but its event subscriptions could not be reloaded. Admitted for MCP callers whose session is active in the owning Space; a caller with no Space, or one whose session is not active in it, is rejected with agent_denied.';
 
 const UPDATE_AGENT_DESCRIPTION = `Update a long-horizon agent: name, lifecycle status, description, operator prompt, model, provider, thinking level, setting sources, or tool allowlist. Fields left out are untouched; null clears a clearable override, and tools set to null clears the allowlist. Clearing the provider also clears it from the agent's live session. Reviving an archived agent re-checks its name against live peers. ${REJECTION_DOC}`;
 

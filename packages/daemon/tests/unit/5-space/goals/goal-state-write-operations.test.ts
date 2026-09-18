@@ -138,7 +138,7 @@ describe('goal.pause through the operations door', () => {
     }
   });
 
-  test('stops universal_read via admitGoalRole inside the operation, leaving the goal active', async () => {
+  test('pauses the goal for a universal_read caller with an active session', async () => {
     const ctx = makeCtx();
     try {
       const goal = ctx.seed(SPACE_ID, 'Read only');
@@ -148,29 +148,26 @@ describe('goal.pause through the operations door', () => {
         { goalId: goal.id },
         agent('universal_read')
       );
-      expect(outcome).toMatchObject({
-        kind: 'completed',
-        value: { accepted: false, reason: 'role_denied' },
-      });
-      expect(ctx.goalService.getGoal(goal.id)?.status).toBe('active');
+      expect(outcome).toMatchObject({ kind: 'completed', value: { accepted: true } });
+      expect(ctx.goalService.getGoal(goal.id)?.status).toBe('paused');
     } finally {
       ctx.db.close();
     }
   });
 
-  test('denies universal_read inside the operation as well', async () => {
+  test('hides a goal owned by another Space from a universal_read caller', async () => {
     const ctx = makeCtx();
     try {
-      const goal = ctx.seed(SPACE_ID, 'Read only');
-      const operation = ctx.registry.get('goal.pause');
-      if (!operation) throw new Error('goal.pause is not registered');
-      const result = (await operation.execute(
-        { goalId: goal.id },
+      const foreign = ctx.seed(OTHER_SPACE_ID, 'Read only');
+      const result = await invoke(
+        ctx,
+        'goal.pause',
+        { goalId: foreign.id },
         agent('universal_read')
-      )) as WriteResult;
+      );
       expect(result.accepted).toBe(false);
-      expect(result.reason).toBe('role_denied');
-      expect(ctx.goalService.getGoal(goal.id)?.status).toBe('active');
+      expect(result.reason).toBe('goal_not_found');
+      expect(ctx.goalService.getGoal(foreign.id)?.status).toBe('active');
     } finally {
       ctx.db.close();
     }

@@ -102,7 +102,7 @@ export function admitSubscriptionWriter(
   caller: OperationCaller,
   subs: SubscriptionDependencies
 ): { value: SubscriptionSlot } | { reason: Rejection } {
-  const space = admitEventCallerSpace(input, caller, NODE_EVENT_ROLES);
+  const space = admitEventCallerSpace(input, caller);
   if ('reason' in space) return { reason: 'caller_denied' };
   if (!callerSessionActiveIn(caller, space.value, subs)) return { reason: 'session_inactive' };
   const slot = resolveWorkerNodeSlot(caller, subs);
@@ -114,7 +114,7 @@ export function admitSubscriptionReader(
   caller: OperationCaller,
   subs: SubscriptionDependencies
 ): { value: { spaceId: string; workflowRunId: string } } | { reason: Rejection } {
-  const space = admitEventCallerSpace(input, caller, NODE_EVENT_ROLES);
+  const space = admitEventCallerSpace(input, caller);
   if ('reason' in space) return { reason: 'caller_denied' };
   const workflowRunId = input.workflowRunId ?? resolveWorkerNodeSlot(caller, subs)?.workflowRunId;
   return workflowRunId
@@ -238,7 +238,7 @@ export function createSubscriptionOperations(
       name: 'externalEvent.listSubscriptions',
       policy: { safetyClass: 'read', roles: NODE_EVENT_ROLES },
       description:
-        'Snapshot a workflow run external-event subscriptions across the declared, persisted, and active layers, with the mismatch counts between them. Defaults to the calling worker own run. Rejects caller_denied when the caller is not a workflow worker in that Space and node_unresolved when no run can be determined.',
+        'Snapshot a workflow run external-event subscriptions across the declared, persisted, and active layers, with the mismatch counts between them. Defaults to the calling worker own run. Rejects caller_denied when the caller carries no Space scope and node_unresolved when no run can be determined.',
       inputSchema: ListInput,
       resultSchema: z.union([
         z.object({ ok: z.literal(true), subscriptions: SubscriptionListSchema }),

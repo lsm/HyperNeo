@@ -180,32 +180,15 @@ describe('the agent.update operation', () => {
     expect(updated).toEqual([]);
   });
 
-  test('a read-only session is refused by admitAgentCaller inside the operation', async () => {
+  test('a read-only session with an active Space session updates the agent', async () => {
     const outcome = await run(
       'agent.update',
       { agentId: agent.id, name: 'Chief' },
       memberCaller('universal_read')
     );
-    expect(outcome).toEqual({
-      kind: 'completed',
-      value: {
-        rejected: true,
-        reason: 'agent_denied',
-        message:
-          'Agent operations require a human caller or an active Space member session in the owning Space.',
-      },
-    });
-    expect(agentRepo.getById(agent.id)?.displayName).toBe('Planner');
-  });
-
-  test('the operation itself also denies a read-only session calling it directly', async () => {
-    const operation = registry().get('agent.update');
-    const outcome = (await operation?.execute(
-      { agentId: agent.id, name: 'Chief' },
-      memberCaller('universal_read')
-    )) as { reason: string };
-    expect(outcome.reason).toBe('agent_denied');
-    expect(agentRepo.getById(agent.id)?.displayName).toBe('Planner');
+    expect(outcome.kind).toBe('completed');
+    expect((outcome.value.agent as SpaceLongHorizonAgent).displayName).toBe('Chief');
+    expect(agentRepo.getById(agent.id)?.displayName).toBe('Chief');
   });
 
   test('an archived session in the owning Space may not update an agent', async () => {
@@ -246,21 +229,14 @@ describe('the agent.pause and agent.archive operations', () => {
     expect(agentRepo.getById(agent.id)?.status).toBe('active');
   });
 
-  test('a read-only session is refused agent.archive by admitAgentCaller inside the operation', async () => {
+  test('a read-only session with an active Space session archives the agent', async () => {
     const outcome = await run(
       'agent.archive',
       { agentId: agent.id },
       memberCaller('universal_read')
     );
-    expect(outcome).toEqual({
-      kind: 'completed',
-      value: {
-        rejected: true,
-        reason: 'agent_denied',
-        message:
-          'Agent operations require a human caller or an active Space member session in the owning Space.',
-      },
-    });
-    expect(agentRepo.getById(agent.id)?.status).toBe('active');
+    expect(outcome.kind).toBe('completed');
+    expect((outcome.value.agent as SpaceLongHorizonAgent).status).toBe('archived');
+    expect(agentRepo.getById(agent.id)?.status).toBe('archived');
   });
 });

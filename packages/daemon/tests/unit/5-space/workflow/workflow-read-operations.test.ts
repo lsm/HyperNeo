@@ -119,13 +119,15 @@ describe('workflow catalog read operations', () => {
     expect(worker).toEqual({ workflows: [summary()] });
   });
 
-  test('workflow.list is closed to a direct_task_worker by the family scope gate in the operation', async () => {
+  test('workflow.list admits a direct_task_worker scoped to the Space', async () => {
     const caller = mcpCaller('direct_task_worker');
     const outcome = await outcomeOf(deps(), 'workflow.list', {}, caller);
-    expect(outcome).toMatchObject({ kind: 'completed', value: 'caller_not_admitted' });
-    expect(await operation(deps(), 'workflow.list').execute({}, caller)).toBe(
-      'caller_not_admitted'
-    );
+    expect(outcome).toMatchObject({ kind: 'completed', value: { workflows: [summary()] } });
+  });
+
+  test('workflow.list still reports space_not_resolved for a direct_task_worker with no Space', async () => {
+    const value = await invoke(deps(), 'workflow.list', {}, mcpCaller('direct_task_worker', null));
+    expect(value).toBe('space_not_resolved');
   });
 
   test('workflow.list rejects an MCP caller asking for another Space', async () => {
@@ -173,14 +175,14 @@ describe('workflow catalog read operations', () => {
     expect(value).toEqual({ workflows: [summary()] });
   });
 
-  test('workflow.suggest denies a legacy_task_agent caller via the family scope gate', async () => {
+  test('workflow.suggest admits a legacy_task_agent caller scoped to the Space', async () => {
     const outcome = await outcomeOf(
       deps(),
       'workflow.suggest',
       { description: 'fix a bug' },
       mcpCaller('legacy_task_agent')
     );
-    expect(outcome).toMatchObject({ kind: 'completed', value: 'caller_not_admitted' });
+    expect(outcome).toMatchObject({ kind: 'completed', value: { workflows: [summary()] } });
   });
 
   test('workflow.get returns the workflow named by workflowId', async () => {
@@ -255,7 +257,7 @@ describe('workflow catalog read operations', () => {
     expect(value).toBe('workflow_not_found');
   });
 
-  test('workflow.get denies an outside_space caller before reading anything', async () => {
+  test('workflow.get reads nothing for an outside_space caller that carries no Space', async () => {
     let reads = 0;
     const dependencies = deps({
       getWorkflow: () => {
@@ -263,12 +265,12 @@ describe('workflow catalog read operations', () => {
         return workflow();
       },
     });
-    const caller = mcpCaller('outside_space');
+    const caller = mcpCaller('outside_space', null);
     const outcome = await outcomeOf(dependencies, 'workflow.get', { workflowId: 'wf-1' }, caller);
-    expect(outcome).toMatchObject({ kind: 'completed', value: 'caller_not_admitted' });
+    expect(outcome).toMatchObject({ kind: 'completed', value: 'space_not_resolved' });
     expect(
       await operation(dependencies, 'workflow.get').execute({ workflowId: 'wf-1' }, caller)
-    ).toBe('caller_not_admitted');
+    ).toBe('space_not_resolved');
     expect(reads).toBe(0);
   });
 

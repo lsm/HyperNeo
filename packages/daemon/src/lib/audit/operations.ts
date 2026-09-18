@@ -115,7 +115,7 @@ export function listAuditEntriesPage(
   }
 }
 
-const READ_ADMISSION: SpaceCallerAdmission = { readOnly: true, workerAllowed: true };
+const READ_ADMISSION: SpaceCallerAdmission = { readOnly: true };
 
 const READ_ROLES: readonly OperationCallerRole[] = [
   'ad_hoc_member',

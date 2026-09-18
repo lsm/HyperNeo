@@ -144,14 +144,27 @@ describe('workflow run read operation', () => {
     expect(value).toBe('run_not_found');
   });
 
-  test('workflow.run.get refuses a direct_task_worker via the family scope gate', async () => {
+  test('workflow.run.get admits a direct_task_worker scoped to the Space', async () => {
     const outcome = await outcomeOf(
       deps(),
       'workflow.run.get',
       { runId: 'run-1' },
       mcpCaller('direct_task_worker')
     );
-    expect(outcome).toMatchObject({ kind: 'completed', value: 'caller_not_admitted' });
+    expect(outcome).toMatchObject({
+      kind: 'completed',
+      value: { run: run(), executions: [execution()] },
+    });
+  });
+
+  test('workflow.run.get refuses a direct_task_worker that carries no Space', async () => {
+    const outcome = await outcomeOf(
+      deps(),
+      'workflow.run.get',
+      { runId: 'run-1' },
+      mcpCaller('direct_task_worker', null)
+    );
+    expect(outcome).toMatchObject({ kind: 'completed', value: 'space_not_resolved' });
   });
 });
 
@@ -288,14 +301,24 @@ describe('workflow plan change operation', () => {
     expect(value).toBe('caller_not_admitted');
   });
 
-  test('workflow.changePlan is closed to workflow_worker via the family scope gate', async () => {
+  test('workflow.changePlan admits a workflow_worker whose session is active in the Space', async () => {
+    const written: string[] = [];
     const outcome = await outcomeOf(
-      deps(),
+      deps({
+        updateRunDescription: (_runId, description) => {
+          written.push(description);
+          return run({ description });
+        },
+      }),
       'workflow.changePlan',
       { runId: 'run-1', description: 'reworded' },
       mcpCaller('workflow_worker')
     );
-    expect(outcome).toMatchObject({ kind: 'completed', value: 'caller_not_admitted' });
+    expect(outcome).toMatchObject({
+      kind: 'completed',
+      value: { outcome: 'described', run: run({ description: 'reworded' }) },
+    });
+    expect(written).toEqual(['reworded']);
   });
 
   test('workflow.changePlan rejects a call that names no change', async () => {

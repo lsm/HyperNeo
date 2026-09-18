@@ -65,7 +65,7 @@ export function admitInactivityCaller(
   caller: OperationCaller,
   agents: InactivityDependencies
 ): { value: Scope } | { reason: Rejection } {
-  const space = admitEventCallerSpace(input, caller, INACTIVITY_ROLES);
+  const space = admitEventCallerSpace(input, caller);
   if ('reason' in space) return { reason: 'caller_denied' };
   const agentId = caller.source === 'mcp' ? caller.agentId : input.agentId;
   if (!agentId) return { reason: 'caller_denied' };

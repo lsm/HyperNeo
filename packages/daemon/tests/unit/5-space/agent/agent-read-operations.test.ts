@@ -173,30 +173,16 @@ describe('the agent.list and agent.get operations', () => {
     });
   });
 
-  test('a workflow worker is denied the agent catalog by admitAgentCaller inside the operation', async () => {
+  test('a workflow worker reads the agent catalog of its own Space', async () => {
     const outcome = await invokeOperation(
       registry(),
       'agent.list',
       {},
       memberCaller('workflow_worker')
     );
-    expect(outcome).toEqual({
-      kind: 'completed',
-      value: {
-        rejected: true,
-        reason: 'agent_denied',
-        message:
-          'Agent operations require a human caller or an active Space member session in the owning Space.',
-      },
-    });
-  });
-
-  test('the operation itself also denies a workflow worker calling it directly', async () => {
-    const operation = registry().get('agent.list');
-    const outcome = (await operation?.execute({}, memberCaller('workflow_worker'))) as {
-      reason: string;
-    };
-    expect(outcome.reason).toBe('agent_denied');
+    const value = outcome as { kind: 'completed'; value: { agents: SpaceLongHorizonAgent[] } };
+    expect(value.kind).toBe('completed');
+    expect(value.value.agents.map((entry) => entry.handle).sort()).toEqual(['planner', 'retired']);
   });
 
   test('an agent caller naming another Space is rejected rather than scoped to it', async () => {
@@ -273,7 +259,7 @@ describe('admitAgentCaller', () => {
     expect(agentRepo.listBySpaceId(spaceId)).toHaveLength(2);
   });
 
-  test('a read-only session may not mutate', () => {
+  test('a session carrying no Space may not mutate', () => {
     const outcome = admitAgentCaller({ spaceId }, readOnlyCaller(), deps(), 'mutate');
     expect(outcome).toEqual({
       reason: {

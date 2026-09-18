@@ -52,9 +52,6 @@ export function admitRetrier(
   if (owner === null) return { reason: 'task_not_found' };
   if (owner.kind === 'standalone') return { reason: 'task_not_in_space' };
   if (caller.source === 'mcp') {
-    if (caller.role === undefined || !RETRY_ROLES.includes(caller.role)) {
-      return { reason: 'retry_denied' };
-    }
     const session = caller.sessionId ? tasks.getSession(caller.sessionId) : null;
     if (
       session?.status !== 'active' ||
@@ -106,7 +103,7 @@ export async function applyRetry(
 }
 
 const RETRY_TASK_DESCRIPTION =
-  'Retry a Space task that stopped in blocked, cancelled, or done so it runs again — blocked tasks reopen as open, cancelled and done tasks resume as in_progress, and an optional description replaces the task brief for the new attempt. Workflow-backed tasks are handed to the workflow runtime for recovery; every other task is retried directly. RPC and internal callers, and MCP sessions that are active in the owning Space and carry the ad_hoc_member or long_term_agent role, are admitted; other MCP callers are rejected with retry_denied. Rejects task_not_found when the task is absent, task_not_in_space when it is standalone rather than Space-owned, status_not_retryable when the task is in any other status, and retry_unavailable when the workflow runtime cannot recover it. Returns the retried task on success.';
+  'Retry a Space task that stopped in blocked, cancelled, or done so it runs again — blocked tasks reopen as open, cancelled and done tasks resume as in_progress, and an optional description replaces the task brief for the new attempt. Workflow-backed tasks are handed to the workflow runtime for recovery; every other task is retried directly. RPC and internal callers, and MCP sessions that are active in the owning Space, are admitted; other MCP callers are rejected with retry_denied. Rejects task_not_found when the task is absent, task_not_in_space when it is standalone rather than Space-owned, status_not_retryable when the task is in any other status, and retry_unavailable when the workflow runtime cannot recover it. Returns the retried task on success.';
 
 export function createRetryTaskOperation(
   getDatabase: () => Database,

@@ -267,7 +267,7 @@ describe('forge.episode.create', () => {
     }
   });
 
-  test('denies a workflow_worker caller and leaves the scope without episodes', async () => {
+  test('admits a workflow_worker caller and records the episode on the scope', async () => {
     const ctx = makeCtx();
     try {
       const scope = seedScope(ctx);
@@ -278,9 +278,12 @@ describe('forge.episode.create', () => {
       expect(
         await ctx
           .op('forge.episode.create')
-          .execute({ scopeId: scope.id, evidenceIds: [evidence.id] }, workerCaller)
-      ).toMatchObject({ accepted: false, reason: 'forge_denied' });
-      expect(ctx.episodeService.listReviewBundle(scope.id).episodes).toHaveLength(0);
+          .execute(
+            { scopeId: scope.id, evidenceIds: [evidence.id], confirmLowConfidence: true },
+            workerCaller
+          )
+      ).toMatchObject({ accepted: true });
+      expect(ctx.episodeService.listReviewBundle(scope.id).episodes).toHaveLength(1);
     } finally {
       ctx.db.close();
     }

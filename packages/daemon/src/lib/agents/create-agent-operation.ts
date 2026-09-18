@@ -102,7 +102,7 @@ export function persistNewAgent(
 }
 
 const CREATE_AGENT_DESCRIPTION =
-  'Create a long-horizon agent in a Space with optional model, provider, thinking level, operator prompt, setting sources, and tool allowlist. The handle is slugified from the name and made unique against existing and reserved handles; the new agent inherits the calling agent autonomy level, or none for a human caller. Rejects invalid_name when the name is blank or already used by a non-archived agent in the Space, invalid_tools when a tool is outside the known allowlist, and invalid_model when the model (with its provider) is unrecognized. Human (RPC) callers pass spaceId; agent callers act in their own Space. Admitted for ad-hoc members and long-term agents whose session is active in the owning Space; read-only and worker sessions are rejected with agent_denied.';
+  'Create a long-horizon agent in a Space with optional model, provider, thinking level, operator prompt, setting sources, and tool allowlist. The handle is slugified from the name and made unique against existing and reserved handles; the new agent inherits the calling agent autonomy level, or none for a human caller. Rejects invalid_name when the name is blank or already used by a non-archived agent in the Space, invalid_tools when a tool is outside the known allowlist, and invalid_model when the model (with its provider) is unrecognized. Human (RPC) callers pass spaceId; agent callers act in their own Space. Admitted for MCP callers whose session is active in the owning Space; a caller with no Space, or one whose session is not active in it, is rejected with agent_denied.';
 
 export function createCreateAgentOperation(deps: CreateAgentDependencies) {
   const access = 'mutate' as const;

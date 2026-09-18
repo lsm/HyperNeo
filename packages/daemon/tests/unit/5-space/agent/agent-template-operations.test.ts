@@ -247,10 +247,10 @@ describe('the agentTemplate.list operation', () => {
     expect(outcome.value?.reason).toBe('space_mismatch');
   });
 
-  test('a workflow worker is refused by admitAgentCaller inside the operation', async () => {
+  test('a workflow worker reads the template list of its own Space', async () => {
     const outcome = await run('agentTemplate.list', {}, memberCaller('workflow_worker'));
     expect(outcome.kind).toBe('completed');
-    expect(outcome.value?.reason).toBe('agent_denied');
+    expect(outcome.value?.templates?.length).toBeGreaterThan(0);
   });
 });
 
