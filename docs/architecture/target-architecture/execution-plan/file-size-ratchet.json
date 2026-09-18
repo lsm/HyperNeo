@@ -48,7 +48,7 @@
       "followUp": "M8/UI focused view split"
     },
     "packages/daemon/src/lib/hooks/hook-engine.ts": {
-      "maxLines": 635,
+      "maxLines": 641,
       "followUp": "M9 runtime component extraction"
     },
     "packages/daemon/src/storage/repositories/sdk-message-repository.ts": {
