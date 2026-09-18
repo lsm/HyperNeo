@@ -133,6 +133,83 @@ describe('goal.list through the operations door', () => {
     }
   });
 
+  test('excludes archived goals unless the caller asks for them', async () => {
+    const ctx = makeCtx();
+    try {
+      const active = ctx.seed(SPACE_ID, 'Still running');
+      const archived = ctx.goalService.updateGoal(ctx.seed(SPACE_ID, 'Old goal').id, {
+        status: 'archived',
+      });
+      const byDefault = await invoke(ctx, 'goal.list', {}, agent('ad_hoc_member'));
+      expect((byDefault.goals as SpaceGoal[]).map((goal) => goal.id)).toEqual([active.id]);
+      const withArchived = await invoke(
+        ctx,
+        'goal.list',
+        { includeArchived: true },
+        agent('ad_hoc_member')
+      );
+      expect((withArchived.goals as SpaceGoal[]).map((goal) => goal.id).sort()).toEqual(
+        [active.id, archived.id].sort()
+      );
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('lets an explicit status win over includeArchived', async () => {
+    const ctx = makeCtx();
+    try {
+      ctx.seed(SPACE_ID, 'Still running');
+      const archived = ctx.goalService.updateGoal(ctx.seed(SPACE_ID, 'Old goal').id, {
+        status: 'archived',
+      });
+      const result = await invoke(
+        ctx,
+        'goal.list',
+        { status: 'archived', includeArchived: false },
+        agent('ad_hoc_member')
+      );
+      expect((result.goals as SpaceGoal[]).map((goal) => goal.id)).toEqual([archived.id]);
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('filters by label', async () => {
+    const ctx = makeCtx();
+    try {
+      const labelled = ctx.goalService.createGoal({
+        spaceId: SPACE_ID,
+        title: 'Labelled goal',
+        labels: ['infra'],
+      });
+      ctx.goalService.createGoal({ spaceId: SPACE_ID, title: 'Other goal', labels: ['docs'] });
+      const result = await invoke(ctx, 'goal.list', { label: 'infra' }, agent('ad_hoc_member'));
+      expect((result.goals as SpaceGoal[]).map((goal) => goal.id)).toEqual([labelled.id]);
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('matches search against title and description, ignoring case', async () => {
+    const ctx = makeCtx();
+    try {
+      const byTitle = ctx.seed(SPACE_ID, 'Ship the Door');
+      const byDescription = ctx.goalService.createGoal({
+        spaceId: SPACE_ID,
+        title: 'Unrelated',
+        description: 'Widen the door frame',
+      });
+      ctx.seed(SPACE_ID, 'Nothing to see');
+      const result = await invoke(ctx, 'goal.list', { search: 'DOOR' }, agent('ad_hoc_member'));
+      expect((result.goals as SpaceGoal[]).map((goal) => goal.id).sort()).toEqual(
+        [byTitle.id, byDescription.id].sort()
+      );
+    } finally {
+      ctx.db.close();
+    }
+  });
+
   test('admits universal_read but stops workflow_worker at the door policy', async () => {
     const ctx = makeCtx();
     try {
