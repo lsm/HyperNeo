@@ -8,6 +8,10 @@ import { createStandaloneTaskMetadataEditor } from '../tasks/metadata-standalone
 import { createDaemonOperationCatalog, type TaskOperationDependencies } from './catalog.ts';
 import type { OperationDefinition } from './registry.ts';
 
+function sessionRowExists(db: Database, sessionId: string): boolean {
+  return db.getDatabase().prepare('SELECT 1 FROM sessions WHERE id = ?').get(sessionId) != null;
+}
+
 export function createDatabaseOperationCatalog(
   db: Database,
   jobQueue = db.getJobQueueRepo(),
@@ -34,6 +38,7 @@ export function createDatabaseOperationCatalog(
         setStandaloneTaskDependencies(db.getDatabase(), input, () =>
           db.notifyChange('space_tasks')
         ),
+      sessionExists: (sessionId) => sessionRowExists(db, sessionId),
       ...overrides,
     },
     extra

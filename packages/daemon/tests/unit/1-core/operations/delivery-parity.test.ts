@@ -53,6 +53,8 @@ describe('shared operation delivery parity', () => {
     setupOperationHandlers(
       server,
       createDaemonOperationCatalog(mailbox.jobQueue, {
+        sessionExists: (id: string) =>
+          mailbox.db.prepare('SELECT 1 FROM sessions WHERE id = ?').get(id) != null,
         readTask: (taskId) => readTaskCore(mailbox.db, taskId),
         createTask: (input, creatorSessionId) =>
           createStandaloneTask(mailbox.db, input, creatorSessionId, () => {}),
@@ -94,6 +96,8 @@ describe('shared operation delivery parity', () => {
       } else {
         const mcp = createOperationMcpServer(
           createDaemonOperationCatalog(mailbox.jobQueue, {
+            sessionExists: (id: string) =>
+              mailbox.db.prepare('SELECT 1 FROM sessions WHERE id = ?').get(id) != null,
             readTask: (taskId) => readTaskCore(mailbox.db, taskId),
             createTask: (input, creatorSessionId) =>
               createStandaloneTask(mailbox.db, input, creatorSessionId, () => {}),

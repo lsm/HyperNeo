@@ -36,6 +36,7 @@ describe('operation.invoke RPC registration', () => {
     unregister = setupOperationHandlers(
       server,
       createDaemonOperationCatalog(mailbox.jobQueue, {
+        sessionExists: () => true,
         readTask: (taskId) => readTaskCore(taskDb, taskId),
         createTask: (input, creatorSessionId) =>
           createStandaloneTask(taskDb, input, creatorSessionId, () => {}),

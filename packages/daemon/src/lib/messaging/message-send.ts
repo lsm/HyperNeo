@@ -64,6 +64,22 @@ export const SendMessageResultSchema = z.discriminatedUnion('kind', [
 type SendInput = z.infer<typeof SendMessageInputSchema>;
 type SendResult = z.infer<typeof SendMessageResultSchema>;
 
+export type SessionExistenceCheck = (sessionId: string) => boolean;
+
+export function requireTargetSession(
+  input: SendInput,
+  sessionExists: SessionExistenceCheck
+): { value: SendInput } | { reason: SendResult } {
+  return sessionExists(input.sessionId)
+    ? { value: input }
+    : {
+        reason: {
+          kind: 'rejected',
+          reason: `Unknown session: ${input.sessionId}`,
+        },
+      };
+}
+
 function admitOperationMessage(
   input: SendInput,
   caller: OperationCaller
@@ -101,8 +117,9 @@ export function mapMessageReceipt(outcome: MailboxHandoffOutcome, messageId: str
 }
 
 const runSendMessage = (superpipe({})('send-operation-message') as PipelineAPI)
-  .input(['input', 'caller', 'jobQueue'])
+  .input(['input', 'caller', 'jobQueue', 'sessionExists'])
   .pipe(admitOperationMessage, ['input', 'caller'], 'result:receipt')
+  .pipe(requireTargetSession, ['receipt', 'sessionExists'], 'result:receipt')
   .pipe(generateUUID, undefined, 'messageId')
   .pipe(selectMessageOrigin, 'caller', 'origin')
   .pipe(persistOperationMessage, ['receipt', 'origin', 'messageId', 'jobQueue'], 'handoff')
@@ -110,16 +127,20 @@ const runSendMessage = (superpipe({})('send-operation-message') as PipelineAPI)
   .endAsync('receipt') as (
   input: SendInput,
   caller: OperationCaller,
-  jobQueue: JobQueueRepository
+  jobQueue: JobQueueRepository,
+  sessionExists: SessionExistenceCheck
 ) => Promise<SendResult>;
 
-export function createSendMessageOperation(jobQueue: JobQueueRepository) {
+export function createSendMessageOperation(
+  jobQueue: JobQueueRepository,
+  sessionExists: SessionExistenceCheck
+) {
   return defineOperation({
     name: 'message.send',
     description:
-      'Persist a message for a session in this daemon. Acceptance does not mean the session has processed it or replied.',
+      'Persist a message for a session in this daemon, addressed by session id and not restricted to the caller Space. Rejects an unknown session id. Acceptance means the message is queued for that session, not that the session has processed it or replied.',
     inputSchema: SendMessageInputSchema,
     resultSchema: SendMessageResultSchema,
-    execute: (input, caller) => runSendMessage(input, caller, jobQueue),
+    execute: (input, caller) => runSendMessage(input, caller, jobQueue, sessionExists),
   });
 }
