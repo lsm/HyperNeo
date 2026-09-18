@@ -206,7 +206,11 @@ export function createArtifactSaveOperation(deps: ArtifactOperationDependencies)
   ) => Promise<SaveArtifactResult>;
   return defineOperation({
     name: 'artifact.save',
-    policy: { safetyClass: 'mutate', roles: ['workflow_worker'], audit: { selfAudited: true } },
+    policy: {
+      safetyClass: 'mutate',
+      roles: ['workflow_worker'],
+      audit: { selfAudited: true, redactKeys: ['data', 'summary'] },
+    },
     description: SAVE_DESCRIPTION,
     inputSchema: SaveArtifactSchema,
     resultSchema: SaveArtifactResultSchema,

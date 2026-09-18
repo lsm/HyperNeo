@@ -296,7 +296,11 @@ export function createNodeSendMessageOperation(deps: NodeMessagingDependencies) 
   ) => Promise<Result>;
   return defineOperation({
     name: 'send_message',
-    policy: { safetyClass: 'mutate', roles: ['workflow_worker'] },
+    policy: {
+      safetyClass: 'mutate',
+      roles: ['workflow_worker'],
+      audit: { redactKeys: ['message', 'data'] },
+    },
     description: SEND_MESSAGE_DESCRIPTION,
     inputSchema,
     resultSchema,

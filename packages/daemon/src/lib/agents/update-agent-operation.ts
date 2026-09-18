@@ -201,7 +201,7 @@ export function createUpdateAgentOperation(deps: UpdateAgentDependencies) {
   const update = buildUpdatePipeline(deps);
   return defineOperation({
     name: 'agent.update',
-    policy: AGENT_MUTATE_POLICY,
+    policy: { ...AGENT_MUTATE_POLICY, audit: { selfAudited: true } },
     description: UPDATE_AGENT_DESCRIPTION,
     inputSchema,
     resultSchema,
@@ -218,7 +218,7 @@ export function createPauseAgentOperation(deps: UpdateAgentDependencies) {
   const pause = statusSetter(deps, 'paused');
   return defineOperation({
     name: 'agent.pause',
-    policy: AGENT_MUTATE_POLICY,
+    policy: { ...AGENT_MUTATE_POLICY, audit: { selfAudited: true } },
     description: PAUSE_AGENT_DESCRIPTION,
     inputSchema: targetOnlySchema,
     resultSchema,
@@ -230,7 +230,7 @@ export function createArchiveAgentOperation(deps: UpdateAgentDependencies) {
   const archive = statusSetter(deps, 'archived');
   return defineOperation({
     name: 'agent.archive',
-    policy: AGENT_MUTATE_POLICY,
+    policy: { ...AGENT_MUTATE_POLICY, audit: { selfAudited: true } },
     description: ARCHIVE_AGENT_DESCRIPTION,
     inputSchema: targetOnlySchema,
     resultSchema,

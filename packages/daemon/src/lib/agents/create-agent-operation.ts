@@ -116,7 +116,7 @@ export function createCreateAgentOperation(deps: CreateAgentDependencies) {
     .endAsync('outcome') as (input: Input, caller: OperationCaller) => Promise<Result>;
   return defineOperation({
     name: 'agent.create',
-    policy: AGENT_MUTATE_POLICY,
+    policy: { ...AGENT_MUTATE_POLICY, audit: { selfAudited: true } },
     description: CREATE_AGENT_DESCRIPTION,
     inputSchema,
     resultSchema: z.union([z.object({ agent: AgentRecordSchema }).strict(), AgentRejectionSchema]),
