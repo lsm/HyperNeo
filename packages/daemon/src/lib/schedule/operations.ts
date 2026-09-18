@@ -364,7 +364,7 @@ export function createScheduleOperations(
   return [
     defineOperation({
       name: 'schedule.create',
-      policy: MUTATE_POLICY,
+      policy: { ...MUTATE_POLICY, audit: { selfAudited: true } },
       description: `Create a recurring (cron) or one-shot (at) schedule that spawns a real Space task each time it fires. ${SCOPE_NOTE} Returns the created schedule, or a rejection: denied for callers without Space write access, space_scope_required or space_mismatch for scope problems, rejected when the trigger is invalid or the Space is not active.`,
       inputSchema: CreateScheduleInputSchema,
       resultSchema: ScheduleResultSchema,
@@ -388,7 +388,7 @@ export function createScheduleOperations(
     }),
     defineOperation({
       name: 'schedule.pause',
-      policy: MUTATE_POLICY,
+      policy: { ...MUTATE_POLICY, audit: { selfAudited: true } },
       description: `Pause a schedule so it stops creating tasks until resumed. ${SCOPE_NOTE} Returns the paused schedule, schedule_not_found, or rejected when the schedule is not active.`,
       inputSchema: ScheduleRefInputSchema,
       resultSchema: ScheduleResultSchema,
@@ -396,7 +396,7 @@ export function createScheduleOperations(
     }),
     defineOperation({
       name: 'schedule.resume',
-      policy: MUTATE_POLICY,
+      policy: { ...MUTATE_POLICY, audit: { selfAudited: true } },
       description: `Resume a paused schedule, recomputing the next run time and re-enqueueing the fire job. ${SCOPE_NOTE} Returns the resumed schedule, schedule_not_found, or rejected when the schedule is not paused.`,
       inputSchema: ScheduleRefInputSchema,
       resultSchema: ScheduleResultSchema,
@@ -404,7 +404,7 @@ export function createScheduleOperations(
     }),
     defineOperation({
       name: 'schedule.delete',
-      policy: DESTRUCTIVE_POLICY,
+      policy: { ...DESTRUCTIVE_POLICY, audit: { selfAudited: true } },
       description: `Permanently delete a schedule and cancel its pending fire job. ${SCOPE_NOTE} Documented autonomy requirement: level 4 (destructive); autonomy enforcement is a later subsystem and is not applied here. Returns ok, schedule_not_found, or modified_concurrently when a fire job advanced the schedule — retry in that case.`,
       inputSchema: ScheduleRefInputSchema,
       resultSchema: ScheduleDeleteResultSchema,

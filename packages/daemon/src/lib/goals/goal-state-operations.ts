@@ -111,7 +111,7 @@ export function createPauseGoalOperation(deps: GoalStateDependencies) {
     name: 'goal.pause',
     description:
       'Pause an active goal and its linked check-in schedule if present. Requires an active session in the owning Space. Returns { accepted: true, goal } or { accepted: false, reason }.',
-    policy: GOAL_WRITE_POLICY,
+    policy: { ...GOAL_WRITE_POLICY, audit: { selfAudited: true } },
     inputSchema,
     resultSchema: goalResultSchema,
     execute: async (input, caller) => pause(input, caller),
@@ -124,7 +124,7 @@ export function createResumeGoalOperation(deps: GoalStateDependencies) {
     name: 'goal.resume',
     description:
       'Resume a paused goal and re-enable its linked check-in schedule if present. Requires an active session in the owning Space. Returns { accepted: true, goal } or { accepted: false, reason }.',
-    policy: GOAL_WRITE_POLICY,
+    policy: { ...GOAL_WRITE_POLICY, audit: { selfAudited: true } },
     inputSchema,
     resultSchema: goalResultSchema,
     execute: async (input, caller) => resume(input, caller),
@@ -137,7 +137,7 @@ export function createTriggerGoalTaskOperation(deps: GoalStateDependencies) {
     name: 'goal.triggerTask',
     description:
       'Create an immediate task for a goal, queueing one follow-up instead when another goal task is active and autoTriggerNext is set. Requires an active session in the owning Space. Returns { accepted: true, goal, task, queued } or { accepted: false, reason }.',
-    policy: GOAL_WRITE_POLICY,
+    policy: { ...GOAL_WRITE_POLICY, audit: { selfAudited: true } },
     inputSchema,
     resultSchema: z.discriminatedUnion('accepted', [
       z.object({

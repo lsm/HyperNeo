@@ -146,7 +146,7 @@ export function createCreateAgentReminderOperation(deps: AgentReminderDependenci
     .endAsync('outcome') as (input: CreateInput, caller: OperationCaller) => Promise<CreateResult>;
   return defineOperation({
     name: 'agent.reminders.create',
-    policy: AGENT_MUTATE_POLICY,
+    policy: { ...AGENT_MUTATE_POLICY, audit: { selfAudited: true } },
     description: CREATE_DESCRIPTION,
     inputSchema: createInputSchema,
     resultSchema: z.union([

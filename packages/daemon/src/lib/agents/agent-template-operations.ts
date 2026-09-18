@@ -650,7 +650,7 @@ export function createCreateAgentTemplateOperation(deps: AgentTemplateOperationD
   ) => Promise<TemplateMutationResult>;
   return defineOperation({
     name: 'agentTemplate.create',
-    policy: AGENT_MUTATE_POLICY,
+    policy: { ...AGENT_MUTATE_POLICY, audit: { selfAudited: true } },
     description: CREATE_TEMPLATE_DESCRIPTION,
     inputSchema: createTemplateInputSchema,
     resultSchema: z.union([
@@ -673,7 +673,7 @@ export function createUpdateAgentTemplateOperation(deps: AgentTemplateOperationD
   ) => Promise<TemplateMutationResult>;
   return defineOperation({
     name: 'agentTemplate.update',
-    policy: AGENT_MUTATE_POLICY,
+    policy: { ...AGENT_MUTATE_POLICY, audit: { selfAudited: true } },
     description: UPDATE_TEMPLATE_DESCRIPTION,
     inputSchema: updateTemplateInputSchema,
     resultSchema: z.union([
@@ -696,7 +696,7 @@ export function createDeleteAgentTemplateOperation(deps: AgentTemplateOperationD
   ) => Promise<DeleteTemplateResult>;
   return defineOperation({
     name: 'agentTemplate.delete',
-    policy: AGENT_TEMPLATE_DELETE_POLICY,
+    policy: { ...AGENT_TEMPLATE_DELETE_POLICY, audit: { selfAudited: true } },
     description: DELETE_TEMPLATE_DESCRIPTION,
     inputSchema: deleteTemplateInputSchema,
     resultSchema: z.union([z.object({ deleted: z.string() }).strict(), AgentRejectionSchema]),
@@ -739,7 +739,7 @@ export function createCreateAgentFromTemplateOperation(deps: AgentTemplateOperat
   ) => Promise<CreateFromTemplateResult>;
   return defineOperation({
     name: 'agent.createFromTemplate',
-    policy: AGENT_MUTATE_POLICY,
+    policy: { ...AGENT_MUTATE_POLICY, audit: { selfAudited: true } },
     description: CREATE_FROM_TEMPLATE_DESCRIPTION,
     inputSchema: createFromTemplateInputSchema,
     resultSchema: z.union([
