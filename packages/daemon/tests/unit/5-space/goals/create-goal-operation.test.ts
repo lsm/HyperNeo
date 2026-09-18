@@ -124,6 +124,23 @@ describe('goal.create through the operations door', () => {
     }
   });
 
+  test('accepts a null checkInCronExpression, as the create dialog sends when the cron is blank', async () => {
+    const ctx = makeCtx();
+    try {
+      const result = await invoke(
+        ctx,
+        { spaceId: SPACE_ID, title: 'No schedule', checkInCronExpression: null },
+        HUMAN
+      );
+      expect(result.accepted).toBe(true);
+      expect(
+        ctx.goalService.getGoal(result.goal?.id as string)?.checkInCronExpression ?? null
+      ).toBe(null);
+    } finally {
+      ctx.db.close();
+    }
+  });
+
   test('rejects a human caller that names no Space', async () => {
     const ctx = makeCtx();
     try {
