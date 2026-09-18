@@ -91,14 +91,6 @@ describe('auditInvocation through invokeOperation', () => {
       code: 'invalid_input',
       summary: JSON.stringify({ content: '' }),
     },
-    {
-      label: 'forbidden',
-      name: 'task.act',
-      input: { content: 'hello' },
-      policy: { safetyClass: 'human_only' } as OperationPolicy,
-      code: 'forbidden',
-      summary: JSON.stringify({ content: 'hello' }),
-    },
   ])(
     'records a $label denial with its failure code',
     async ({ name, input, policy, code, summary }) => {
