@@ -6,6 +6,7 @@ import {
   refreshQueryEnvFromProcess,
   resolveAvailableQueryProvider,
   resolveQueryProvider,
+  shouldPreserveAnthropicOAuthToken,
   type QueryRunnerContext,
 } from '../../../../src/lib/agent/query-runner';
 import { inferAvailableSpawnRoute } from '../../../../src/lib/providers/registry';
@@ -7222,6 +7223,31 @@ describe('QueryRunner environment variable handling', () => {
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe('session-oauth-token');
   });
 
+  it('should drop the ambient OAuth token when the provider blanked it for a stored API key', () => {
+    const env = refreshQueryEnvFromProcess(
+      {
+        CLAUDE_CODE_OAUTH_TOKEN: 'ambient-discovered-token',
+        KEEP_SESSION: 'session',
+      },
+      {
+        ANTHROPIC_API_KEY: 'user-supplied-key',
+      },
+      {
+        clearProviderManaged: true,
+        preserveAnthropicAuthToken: true,
+        preserveAnthropicOAuthToken: shouldPreserveAnthropicOAuthToken('anthropic', {
+          ANTHROPIC_API_KEY: 'user-supplied-key',
+          CLAUDE_CODE_OAUTH_TOKEN: '',
+        }),
+        skipAmbientAnthropicApiKey: false,
+      }
+    );
+
+    expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+    expect(env.ANTHROPIC_API_KEY).toBe('user-supplied-key');
+    expect(env.KEEP_SESSION).toBe('session');
+  });
+
   it('should not copy ambient Anthropic API keys for bridge providers', () => {
     const env = refreshQueryEnvFromProcess(
       {
@@ -7292,6 +7318,33 @@ describe('QueryRunner environment variable handling', () => {
     expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
     expect(env.KEEP_SESSION).toBe('session');
     expect(env.KEEP_PROCESS).toBe('process');
+  });
+});
+
+describe('shouldPreserveAnthropicOAuthToken', () => {
+  it('preserves the session OAuth token for an ordinary Anthropic session', () => {
+    expect(shouldPreserveAnthropicOAuthToken('anthropic', {})).toBe(true);
+  });
+
+  it('preserves a stored OAuth token the provider is injecting', () => {
+    expect(
+      shouldPreserveAnthropicOAuthToken('anthropic', {
+        CLAUDE_CODE_OAUTH_TOKEN: 'user-supplied-token',
+      })
+    ).toBe(true);
+  });
+
+  it('does not preserve an OAuth token the provider explicitly blanked', () => {
+    expect(
+      shouldPreserveAnthropicOAuthToken('anthropic', {
+        ANTHROPIC_API_KEY: 'user-supplied-key',
+        CLAUDE_CODE_OAUTH_TOKEN: '',
+      })
+    ).toBe(false);
+  });
+
+  it('does not preserve Anthropic OAuth tokens for bridge providers', () => {
+    expect(shouldPreserveAnthropicOAuthToken('glm', {})).toBe(false);
   });
 });
 
