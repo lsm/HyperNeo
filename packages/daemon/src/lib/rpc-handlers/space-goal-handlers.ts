@@ -60,12 +60,7 @@ export function setupSpaceGoalHandlers(messageHub: MessageHub, deps: SpaceGoalHa
     operationName: 'agent.assignGoal' | 'agent.unassignGoal',
     input: { spaceId: string; goalId: string; agentId: string }
   ): Promise<void> {
-    const result = await invokeOperationFromHandler<{
-      accepted: true;
-      rejected?: true;
-      message: string;
-    }>(operations, operationName, input);
-    if (result.rejected) throw new Error(result.message);
+    await invokeOperationFromHandler<{ accepted: true }>(operations, operationName, input);
   }
 
   function requireGoalInSpace(goalId: string, spaceId: string) {

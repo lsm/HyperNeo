@@ -25,7 +25,7 @@ const scopeInputSchema = AgentSpaceScopeSchema.extend({
 
 type GoalInput = z.infer<typeof goalInputSchema>;
 type ScopeInput = z.infer<typeof scopeInputSchema>;
-type Result = { assigned: true } | AgentRejection;
+type Result = { accepted: true; assigned: true } | AgentRejection;
 type Gate<T> = { value: T } | { reason: AgentRejection };
 
 export interface AgentAssignmentDependencies extends AgentOperationDeps {
@@ -132,7 +132,7 @@ function goalWriter(operationName: 'agent.assignGoal' | 'agent.unassignGoal') {
     else deps.unassignGoal(input.agentId, input.goalId);
     deps.publishGoalOwnerChanged(spaceId, input.goalId, caller.sessionId ?? 'space-agent-tools');
     deps.audit(operationName, { agentId: input.agentId, goalId: input.goalId }, caller, spaceId);
-    return { assigned: true };
+    return { accepted: true, assigned: true };
   };
 }
 
@@ -147,7 +147,7 @@ function scopeWriter(operationName: 'agent.assignForgeScope' | 'agent.unassignFo
       deps.assignForgeScope(input.agentId, input.scopeId);
     else deps.unassignForgeScope(input.agentId, input.scopeId);
     deps.audit(operationName, { agentId: input.agentId, scopeId: input.scopeId }, caller, spaceId);
-    return { assigned: true };
+    return { accepted: true, assigned: true };
   };
 }
 
@@ -179,7 +179,7 @@ function buildScopePipeline(
 }
 
 const resultSchema = z.union([
-  z.object({ assigned: z.literal(true) }).strict(),
+  z.object({ accepted: z.literal(true), assigned: z.literal(true) }).strict(),
   AgentRejectionSchema,
 ]);
 
