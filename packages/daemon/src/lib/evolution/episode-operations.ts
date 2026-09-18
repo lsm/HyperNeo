@@ -568,7 +568,7 @@ export function createForgeEpisodeOperations(forge: ForgeEpisodeOperationDepende
   return [
     defineOperation({
       name: 'forge.episode.create',
-      policy: FORGE_MUTATE_POLICY,
+      policy: { ...FORGE_MUTATE_POLICY, audit: { selfAudited: true } },
       description:
         'Generate a draft Forge episode from selected evidence through the episode judge, returning the episode with its candidate lessons, task proposals, and the evidence-quality preflight. Set confirmLowConfidence when the preflight warns that evidence is thin. Rejects scope_not_found, and episode_not_generated when the judge, model, or credentials fail (the cause is in detail).',
       inputSchema: EpisodeCreateInputSchema,
@@ -601,7 +601,7 @@ export function createForgeEpisodeOperations(forge: ForgeEpisodeOperationDepende
     }),
     defineOperation({
       name: 'forge.lesson.list',
-      policy: FORGE_READ_POLICY,
+      policy: { ...FORGE_READ_POLICY, audit: { selfAudited: true } },
       description:
         'List the lessons a Forge scope has accumulated, optionally filtered by status (candidate, active, dismissed). Rejects scope_not_found when the scope is absent or outside the caller Space.',
       inputSchema: LessonListInputSchema,
@@ -613,7 +613,7 @@ export function createForgeEpisodeOperations(forge: ForgeEpisodeOperationDepende
     }),
     defineOperation({
       name: 'forge.proposal.list',
-      policy: FORGE_READ_POLICY,
+      policy: { ...FORGE_READ_POLICY, audit: { selfAudited: true } },
       description:
         'List the task proposals on a Forge scope, optionally filtered by status (proposed, accepted, dismissed, created). Rejects scope_not_found when the scope is absent or outside the caller Space.',
       inputSchema: ProposalListInputSchema,
@@ -625,7 +625,7 @@ export function createForgeEpisodeOperations(forge: ForgeEpisodeOperationDepende
     }),
     defineOperation({
       name: 'forge.episode.update',
-      policy: FORGE_MUTATE_POLICY,
+      policy: { ...FORGE_MUTATE_POLICY, audit: { selfAudited: true } },
       description:
         'Accept, dismiss, or edit a Forge episode draft — accept and dismiss are terminal, so use them only after an explicit decision. Rejects episode_not_found and episode_terminal when the episode already left draft. Autonomy metadata: editing a draft needs the Space session-write level, and changing a terminal episode is destructive; enforcement lands with the autonomy subsystem.',
       inputSchema: EpisodeUpdateInputSchema,
@@ -637,7 +637,7 @@ export function createForgeEpisodeOperations(forge: ForgeEpisodeOperationDepende
     }),
     defineOperation({
       name: 'forge.lesson.update',
-      policy: FORGE_MUTATE_POLICY,
+      policy: { ...FORGE_MUTATE_POLICY, audit: { selfAudited: true } },
       description:
         'Activate, dismiss, or edit a candidate Forge lesson — activation is never implicit, it takes this call. Rejects lesson_not_found and lesson_dismissed, since a dismissed lesson cannot be reactivated. Autonomy metadata: editing a candidate needs the Space session-write level, and changing an active or dismissed lesson is destructive; enforcement lands with the autonomy subsystem.',
       inputSchema: LessonUpdateInputSchema,
@@ -649,7 +649,7 @@ export function createForgeEpisodeOperations(forge: ForgeEpisodeOperationDepende
     }),
     defineOperation({
       name: 'forge.proposal.create',
-      policy: FORGE_MUTATE_POLICY,
+      policy: { ...FORGE_MUTATE_POLICY, audit: { selfAudited: true } },
       description:
         'Create a Forge task proposal on a scope by hand. This does not create a Space task; forge.proposal.createTask does that in a separate, explicit step. Rejects scope_not_found and episode_not_found when a cited evidence episode is missing or belongs to another scope.',
       inputSchema: ProposalCreateInputSchema,
@@ -661,7 +661,7 @@ export function createForgeEpisodeOperations(forge: ForgeEpisodeOperationDepende
     }),
     defineOperation({
       name: 'forge.proposal.update',
-      policy: FORGE_MUTATE_POLICY,
+      policy: { ...FORGE_MUTATE_POLICY, audit: { selfAudited: true } },
       description:
         'Edit, accept, or dismiss a Forge task proposal. The created status is not settable here — call forge.proposal.createTask to turn a proposal into a real task. Rejects proposal_not_found, proposal_created, and proposal_dismissed, since neither terminal state reopens. Autonomy metadata: editing a proposed record needs the Space session-write level, and changing an accepted or dismissed one is destructive; enforcement lands with the autonomy subsystem.',
       inputSchema: ProposalUpdateInputSchema,
@@ -673,7 +673,7 @@ export function createForgeEpisodeOperations(forge: ForgeEpisodeOperationDepende
     }),
     defineOperation({
       name: 'forge.proposal.createTask',
-      policy: FORGE_DESTRUCTIVE_POLICY,
+      policy: { ...FORGE_DESTRUCTIVE_POLICY, audit: { selfAudited: true } },
       description:
         'Create a real Space task from a Forge proposal, preserving the linked goal and scope bindings and attaching dependencies during creation. Idempotent: a proposal already marked created returns its existing task. Rejects proposal_not_found, and task_not_created when the proposal was dismissed, a dependency is invalid, or a concurrent call already claimed it (the cause is in detail). Autonomy metadata: this is a destructive action at the Space session-write level; enforcement lands with the autonomy subsystem.',
       inputSchema: ProposalCreateTaskInputSchema,
@@ -685,7 +685,7 @@ export function createForgeEpisodeOperations(forge: ForgeEpisodeOperationDepende
     }),
     defineOperation({
       name: 'forge.rollup.apply',
-      policy: FORGE_DESTRUCTIVE_POLICY,
+      policy: { ...FORGE_DESTRUCTIVE_POLICY, audit: { selfAudited: true } },
       description:
         "Accept a Forge episode and roll its summary, next steps, and metrics into the recurring goal behind the episode's scope. Progress is not rolled up. Rejects episode_not_found, rollup_already_applied, episode_dismissed, and goal_not_recurring when the scope has no recurring goal. Autonomy metadata: this is a destructive action at the Space session-write level; enforcement lands with the autonomy subsystem.",
       inputSchema: RollupApplyInputSchema,

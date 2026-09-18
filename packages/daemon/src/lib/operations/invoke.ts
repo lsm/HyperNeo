@@ -1,5 +1,17 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
+import { auditInvocation, type OperationAuditWriter } from './audit.ts';
 import type { OperationCaller, OperationDefinition, OperationRegistry } from './registry.ts';
+
+export interface InvokeDependencies {
+  readonly audit?: OperationAuditWriter;
+  readonly now?: () => number;
+}
+
+export type InvokeDependenciesSource = InvokeDependencies | (() => InvokeDependencies);
+
+export function resolveInvokeDependencies(source: InvokeDependenciesSource): InvokeDependencies {
+  return typeof source === 'function' ? source() : source;
+}
 
 export type OperationFailure = {
   kind: 'failed';
@@ -112,7 +124,11 @@ export async function validateOperationResult(
   }
 }
 
-export const invokeOperation = (superpipe({})('invoke-operation') as PipelineAPI)
+export function startInvocationClock(dependencies?: InvokeDependencies): number {
+  return dependencies?.now?.() ?? Date.now();
+}
+
+const runInvocationGates = (superpipe({})('invoke-operation-gates') as PipelineAPI)
   .input(['registry', 'name', 'input', 'caller'])
   .pipe(resolveOperation, ['registry', 'name'], 'result:invocation')
   .pipe(parseOperationInput, ['invocation', 'input'], 'result:invocation')
@@ -124,4 +140,25 @@ export const invokeOperation = (superpipe({})('invoke-operation') as PipelineAPI
   name: string,
   input: unknown,
   caller: OperationCaller
+) => Promise<OperationOutcome>;
+
+export const invokeOperation = (superpipe({})('invoke-operation') as PipelineAPI)
+  .input(['registry', 'name', 'input', 'caller', 'dependencies'])
+  .pipe(startInvocationClock, 'dependencies', 'startedAt')
+  .pipe(runInvocationGates, ['registry', 'name', 'input', 'caller'], 'invocation')
+  .pipe(auditInvocation, [
+    'dependencies',
+    'registry',
+    'name',
+    'input',
+    'caller',
+    'invocation',
+    'startedAt',
+  ])
+  .endAsync('invocation') as (
+  registry: OperationRegistry,
+  name: string,
+  input: unknown,
+  caller: OperationCaller,
+  dependencies?: InvokeDependencies
 ) => Promise<OperationOutcome>;

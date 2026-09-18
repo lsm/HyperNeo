@@ -2,6 +2,7 @@ import { createDirectQueryStartGuard } from '../tasks/direct-query-start-guard.t
 import { createDatabaseOperationCatalog } from '../operations/database-catalog.ts';
 import type { OperationRegistry, OperationRegistryProvider } from '../operations/registry.ts';
 import { createOperationMcpServer } from '../operations/mcp-server.ts';
+import type { InvokeDependencies } from '../operations/invoke.ts';
 import {
   NO_CALLER_SCOPE,
   resolveCallerIdentity,
@@ -120,6 +121,7 @@ export interface AgentSessionInit {
 export interface AgentSessionRuntimeOptions {
   operationRegistryProvider?: () => OperationRegistry | undefined;
   callerScopeResolver?: CallerScopeResolver;
+  invokeDependenciesProvider?: () => InvokeDependencies;
   autoReplayPendingMessages?: boolean;
 
   hardReset?: (
@@ -255,6 +257,7 @@ export class AgentSession
 
   private operationRegistryProvider?: () => OperationRegistry | undefined;
   private callerScopeResolver: CallerScopeResolver = NO_CALLER_SCOPE;
+  private resolveInvokeDependencies: () => InvokeDependencies = () => ({});
   private defaultOperationRegistry?: OperationRegistry;
 
   setOperationRegistryProvider(provider: OperationRegistryProvider): void {
@@ -269,12 +272,17 @@ export class AgentSession
     this.callerScopeResolver = resolver;
   }
 
+  setInvokeDependenciesProvider(provider: () => InvokeDependencies): void {
+    this.resolveInvokeDependencies = provider;
+  }
+
   getOperationMcpServer(): ReturnType<typeof createOperationMcpServer> {
     return (this.operationMcpServer ??= createOperationMcpServer(
       () =>
         this.operationRegistryProvider?.() ??
         (this.defaultOperationRegistry ??= createDatabaseOperationCatalog(this.db)),
-      () => resolveCallerIdentity(this.callerScopeResolver, this.session.id)
+      () => resolveCallerIdentity(this.callerScopeResolver, this.session.id),
+      () => this.resolveInvokeDependencies()
     ));
   }
 
@@ -407,6 +415,8 @@ export class AgentSession
   ) {
     this.operationRegistryProvider = runtimeOptions.operationRegistryProvider;
     this.callerScopeResolver = runtimeOptions.callerScopeResolver ?? NO_CALLER_SCOPE;
+    if (runtimeOptions.invokeDependenciesProvider)
+      this.resolveInvokeDependencies = runtimeOptions.invokeDependenciesProvider;
     this.errorManager = new ErrorManager(this.messageHub, this.internalEventBus);
     this.logger = new Logger(`AgentSession ${session.id}`);
 

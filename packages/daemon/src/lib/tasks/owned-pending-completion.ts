@@ -54,7 +54,11 @@ export interface OwnedPendingCompletionDependencies {
   ) => Promise<unknown>;
   warn: (taskId: string, detail: string) => void;
   emitTaskUpdated: (spaceId: string, task: SpaceTask) => Promise<void>;
-  audit: (session: Session, previousTask: SpaceTask, input: PendingCompletionInput) => void;
+  audit: (
+    actor: { source: OperationCaller['source']; session?: Session },
+    previousTask: SpaceTask,
+    input: PendingCompletionInput
+  ) => void;
 }
 
 export function resolveCompletionActor(
@@ -173,11 +177,9 @@ async function notifyOwnedCompletion(
   await emitTaskUpdated(task.spaceId, task).catch((error: unknown) =>
     log.warn('Failed to emit space.task.updated:', error)
   );
-  if (actor.source === 'mcp' && actor.session) {
-    try {
-      audit(actor.session, previous, input);
-    } catch {}
-  }
+  try {
+    audit(actor, previous, input);
+  } catch {}
 }
 
 export function createOwnedPendingCompletionOperation(
@@ -229,6 +231,7 @@ export function createOwnedPendingCompletionOperation(
   ) => Promise<SpaceTask | Error>;
   return defineOperation({
     name: 'task.resolvePendingCompletion',
+    policy: { safetyClass: 'mutate', audit: { selfAudited: true } },
     description:
       'Approve or reject a Space task awaiting completion review. MCP requires a Space agent session in the owning space or a legacy task-agent session. Both transports use human approval semantics. Standalone tasks are unsupported. Approval may return postApprovalBlockedReason when post-approval work could not dispatch.',
     inputSchema: z

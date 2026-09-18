@@ -6,11 +6,14 @@ import type { AuthManager } from '../../../../src/lib/auth-manager';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { ProcessSnapshot } from '../../../../src/lib/process-watchdog';
 import * as processWatchdog from '../../../../src/lib/process-watchdog';
+import type { OperationAuditRecord } from '../../../../src/lib/operations/audit';
+import { createOperationRegistry, defineOperation } from '../../../../src/lib/operations/registry';
 import { CleanupState, SessionManager } from '../../../../src/lib/session/session-manager';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
 import type { Database } from '../../../../src/storage/database';
 import type { JobQueueProcessor } from '../../../../src/storage/job-queue-processor';
 import type { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
+import { z } from 'zod';
 
 function markWorkerOperations(session: AgentSession): void {
   const data = session.getSessionData();
@@ -443,6 +446,7 @@ describe('SessionManager', () => {
         setOperationRegistryProvider: mock(() => {}),
         ensureOperationRegistryProvider: mock(() => {}),
         setCallerScopeResolver: mock(() => {}),
+        setInvokeDependenciesProvider: mock(() => {}),
         getSessionData: mock(() => data),
         mergeRuntimeMcpServers: mock((additional: Record<string, McpServerConfig>) => {
           data.config = {
@@ -991,6 +995,46 @@ describe('SessionManager', () => {
     });
   });
 
+  describe('invoke dependencies reach sessions built by the factory', () => {
+    it('audits an operations-door invocation from a session the factory constructed', async () => {
+      const mockSession: Session = {
+        id: 'factory-session',
+        title: 'Factory',
+        workspacePath: '/test',
+        status: 'active',
+        config: {},
+        metadata: {},
+      };
+      (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue(mockSession);
+      const written: OperationAuditRecord[] = [];
+      sessionManager.setInvokeDependencies({
+        audit: (record) => {
+          written.push(record);
+        },
+      });
+      sessionManager.setOperationRegistryProvider(() =>
+        createOperationRegistry([
+          defineOperation({
+            name: 'example.echo',
+            description: 'Echo text',
+            inputSchema: z.string().min(1),
+            resultSchema: z.string(),
+            execute: async (input) => input,
+          }),
+        ])
+      );
+
+      const session = sessionManager.getSession('factory-session');
+      expect(session).not.toBeNull();
+      await session!
+        .getOperationMcpServer()
+        .tools[0]!.handler({ name: 'example.echo', input: 'hi' }, {});
+
+      expect(written).toHaveLength(1);
+      expect(written[0]).toMatchObject({ operation: 'example.echo', outcome: 'completed' });
+    });
+  });
+
   describe('registerSession / unregisterSession', () => {
     it('control loading a Space worker with queued input does not provision or replay', async () => {
       const row = AgentSession.createSessionFromInit(
@@ -1040,6 +1084,7 @@ describe('SessionManager', () => {
           setOperationRegistryProvider: mock(() => {}),
           ensureOperationRegistryProvider: mock(() => {}),
           setCallerScopeResolver: mock(() => {}),
+          setInvokeDependenciesProvider: mock(() => {}),
         }) as unknown as AgentSession;
       const original = make();
       const replacement = make();
@@ -1084,6 +1129,7 @@ describe('SessionManager', () => {
         setOperationRegistryProvider: mock(() => {}),
         ensureOperationRegistryProvider: mock(() => {}),
         setCallerScopeResolver: mock(() => {}),
+        setInvokeDependenciesProvider: mock(() => {}),
         getSessionData: mock(() => mockSession),
         cleanup: mock(async () => {}),
       } as unknown as import('../../../../src/lib/agent/agent-session').AgentSession;
@@ -1108,6 +1154,7 @@ describe('SessionManager', () => {
         setOperationRegistryProvider: mock(() => {}),
         ensureOperationRegistryProvider: mock(() => {}),
         setCallerScopeResolver: mock(() => {}),
+        setInvokeDependenciesProvider: mock(() => {}),
         getSessionData: mock(() => mockSession),
         cleanup: mock(async () => {}),
       } as unknown as import('../../../../src/lib/agent/agent-session').AgentSession;
@@ -1133,6 +1180,7 @@ describe('SessionManager', () => {
         setOperationRegistryProvider: mock(() => {}),
         ensureOperationRegistryProvider: mock(() => {}),
         setCallerScopeResolver: mock(() => {}),
+        setInvokeDependenciesProvider: mock(() => {}),
         getSessionData: mock(() => mockSession),
         cleanup: mock(async () => {}),
       } as unknown as import('../../../../src/lib/agent/agent-session').AgentSession;
@@ -1158,6 +1206,7 @@ describe('SessionManager', () => {
         setOperationRegistryProvider: mock(() => {}),
         ensureOperationRegistryProvider: mock(() => {}),
         setCallerScopeResolver: mock(() => {}),
+        setInvokeDependenciesProvider: mock(() => {}),
         getSessionData: mock(() => mockSession),
         cleanup: mock(async () => {}),
         getTrackedAgentRootPidsSplit: mock(() => ({ live: [], exited: [] })),
@@ -1185,6 +1234,7 @@ describe('SessionManager', () => {
         setOperationRegistryProvider: mock(() => {}),
         ensureOperationRegistryProvider: mock(() => {}),
         setCallerScopeResolver: mock(() => {}),
+        setInvokeDependenciesProvider: mock(() => {}),
         getSessionData: mock(() => mockSession),
         cleanup: mock(async () => {}),
         getTrackedAgentRootPidsSplit: mock(() => ({
@@ -1312,6 +1362,7 @@ describe('SessionManager', () => {
         setOperationRegistryProvider: mock(() => {}),
         ensureOperationRegistryProvider: mock(() => {}),
         setCallerScopeResolver: mock(() => {}),
+        setInvokeDependenciesProvider: mock(() => {}),
         getSessionData: mock(() => cachedSession),
         cleanup: mock(async () => {}),
         getTrackedAgentRootPidsSplit: mock(() => ({ live: [], exited: [] })),
@@ -1346,6 +1397,7 @@ describe('SessionManager', () => {
         setOperationRegistryProvider: mock(() => {}),
         ensureOperationRegistryProvider: mock(() => {}),
         setCallerScopeResolver: mock(() => {}),
+        setInvokeDependenciesProvider: mock(() => {}),
         getSessionData: mock(() => cachedSession),
         cleanup: mock(async () => {}),
         getTrackedAgentRootPidsSplit: mock(() => ({ live: [], exited: [] })),
@@ -1389,6 +1441,7 @@ describe('SessionManager', () => {
         setOperationRegistryProvider: mock(() => {}),
         ensureOperationRegistryProvider: mock(() => {}),
         setCallerScopeResolver: mock(() => {}),
+        setInvokeDependenciesProvider: mock(() => {}),
         getSessionData: mock(() => cachedSession),
         cleanup: mock(async () => {}),
         getTrackedAgentRootPidsSplit: mock(() => ({ live: [], exited: [] })),
@@ -1425,6 +1478,7 @@ describe('SessionManager', () => {
         setOperationRegistryProvider: mock(() => {}),
         ensureOperationRegistryProvider: mock(() => {}),
         setCallerScopeResolver: mock(() => {}),
+        setInvokeDependenciesProvider: mock(() => {}),
         getSessionData: mock(() => mockSession),
         cleanup: mock(async () => {
           getSplit.mockImplementation(() => ({
@@ -1475,6 +1529,7 @@ describe('SessionManager', () => {
         setOperationRegistryProvider: mock(() => {}),
         ensureOperationRegistryProvider: mock(() => {}),
         setCallerScopeResolver: mock(() => {}),
+        setInvokeDependenciesProvider: mock(() => {}),
         getSessionData: mock(() => mockSession),
         cleanup: mock(async () => {
           getSplit.mockImplementation(() => ({
@@ -1519,6 +1574,7 @@ describe('SessionManager', () => {
       setOperationRegistryProvider: mock(() => {}),
       ensureOperationRegistryProvider: mock(() => {}),
       setCallerScopeResolver: mock(() => {}),
+      setInvokeDependenciesProvider: mock(() => {}),
       getSessionData: mock(() => mockSession),
       cleanup: mock(async () => {
         getSplit.mockImplementation(() => ({
@@ -1567,6 +1623,7 @@ describe('SessionManager', () => {
       setOperationRegistryProvider: mock(() => {}),
       ensureOperationRegistryProvider: mock(() => {}),
       setCallerScopeResolver: mock(() => {}),
+      setInvokeDependenciesProvider: mock(() => {}),
       getSessionData: mock(() => mockSession),
       cleanup: mock(async () => {
         getSplit.mockImplementation(() => ({
@@ -1607,6 +1664,7 @@ describe('SessionManager', () => {
       setOperationRegistryProvider: mock(() => {}),
       ensureOperationRegistryProvider: mock(() => {}),
       setCallerScopeResolver: mock(() => {}),
+      setInvokeDependenciesProvider: mock(() => {}),
       getSessionData: mock(() => mockSession),
       cleanup: mock(async () => {
         getSplit.mockImplementation(() => ({
@@ -1655,6 +1713,7 @@ describe('SessionManager', () => {
       setOperationRegistryProvider: mock(() => {}),
       ensureOperationRegistryProvider: mock(() => {}),
       setCallerScopeResolver: mock(() => {}),
+      setInvokeDependenciesProvider: mock(() => {}),
       getSessionData: mock(() => mockSession),
       cleanup: mock(async () => {
         getSplit.mockImplementation(() => ({
@@ -1698,6 +1757,7 @@ describe('SessionManager', () => {
       setOperationRegistryProvider: mock(() => {}),
       ensureOperationRegistryProvider: mock(() => {}),
       setCallerScopeResolver: mock(() => {}),
+      setInvokeDependenciesProvider: mock(() => {}),
       getSessionData: mock(() => mockSession),
       cleanup: mock(async () => {
         getSplit.mockImplementation(() => ({
@@ -1747,6 +1807,7 @@ describe('SessionManager', () => {
       setOperationRegistryProvider: mock(() => {}),
       ensureOperationRegistryProvider: mock(() => {}),
       setCallerScopeResolver: mock(() => {}),
+      setInvokeDependenciesProvider: mock(() => {}),
       getSessionData: mock(() => mockSession),
       cleanup: mock(async () => {}),
       getTrackedAgentRootPidsSplit: getSplit1,
@@ -1770,6 +1831,7 @@ describe('SessionManager', () => {
       setOperationRegistryProvider: mock(() => {}),
       ensureOperationRegistryProvider: mock(() => {}),
       setCallerScopeResolver: mock(() => {}),
+      setInvokeDependenciesProvider: mock(() => {}),
       getSessionData: mock(() => ({ ...mockSession, id: 'session-reevict-2' })),
       cleanup: mock(async () => {}),
       getTrackedAgentRootPidsSplit: getSplit2,
@@ -1804,6 +1866,7 @@ describe('SessionManager', () => {
       setOperationRegistryProvider: mock(() => {}),
       ensureOperationRegistryProvider: mock(() => {}),
       setCallerScopeResolver: mock(() => {}),
+      setInvokeDependenciesProvider: mock(() => {}),
       getSessionData: mock(() => mockSession),
       cleanup: mock(async () => {}),
       getTrackedAgentRootPidsSplit: getSplit,
@@ -2208,6 +2271,7 @@ describe('SessionManager', () => {
         setOperationRegistryProvider: mock(() => {}),
         ensureOperationRegistryProvider: mock(() => {}),
         setCallerScopeResolver: mock(() => {}),
+        setInvokeDependenciesProvider: mock(() => {}),
         getSessionData: mock(() => ({
           id: sessionId,
           status: 'active',
@@ -2225,6 +2289,7 @@ describe('SessionManager', () => {
         setOperationRegistryProvider: mock(() => {}),
         ensureOperationRegistryProvider: mock(() => {}),
         setCallerScopeResolver: mock(() => {}),
+        setInvokeDependenciesProvider: mock(() => {}),
         getSessionData: mock(() => ({
           id: blockedSessionId,
           status: 'active',
@@ -2523,6 +2588,7 @@ describe('SessionManager', () => {
           setOperationRegistryProvider: mock(() => {}),
           ensureOperationRegistryProvider: mock(() => {}),
           setCallerScopeResolver: mock(() => {}),
+          setInvokeDependenciesProvider: mock(() => {}),
           getSessionData: mock(() => ({ id })),
           reconcileEffectiveMcpServers: mock(() => {}),
           cleanup: mock(async () => {}),

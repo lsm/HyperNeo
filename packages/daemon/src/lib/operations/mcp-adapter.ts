@@ -1,6 +1,10 @@
 import { resolveOperationRegistry } from './registry.ts';
 import { z } from 'zod';
-import { invokeOperation } from './invoke.ts';
+import {
+  invokeOperation,
+  resolveInvokeDependencies,
+  type InvokeDependenciesSource,
+} from './invoke.ts';
 import type { CallerIdentity } from './caller.ts';
 import type { OperationRegistrySource } from './registry.ts';
 
@@ -18,7 +22,8 @@ function mcpResult(value: unknown, isError = false) {
 
 export function createOperationMcpHandler(
   registry: OperationRegistrySource,
-  resolveCaller: () => CallerIdentity | Promise<CallerIdentity>
+  resolveCaller: () => CallerIdentity | Promise<CallerIdentity>,
+  dependencies: InvokeDependenciesSource = {}
 ) {
   return async (args: unknown) => {
     const parsed = OperationMcpInvocationSchema.safeParse(args);
@@ -34,7 +39,8 @@ export function createOperationMcpHandler(
         {
           ...caller,
           source: 'mcp',
-        }
+        },
+        resolveInvokeDependencies(dependencies)
       );
       return outcome.kind === 'completed'
         ? mcpResult(outcome.value)

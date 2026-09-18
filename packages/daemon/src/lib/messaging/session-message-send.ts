@@ -212,6 +212,7 @@ async function deliverSessionMessage(
 export function createSendSessionMessageOperation(deps: SendSessionMessageDependencies) {
   return defineOperation({
     name: 'session.message.send',
+    policy: { safetyClass: 'mutate', audit: { redactKeys: ['message'] } },
     description:
       'Send a user message to an ad-hoc session in a Space and optionally clear a pending question; returns the delivery result.',
     inputSchema: SendSessionMessageInputSchema,

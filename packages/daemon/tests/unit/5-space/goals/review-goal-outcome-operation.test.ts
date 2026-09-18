@@ -3,6 +3,7 @@ import type { Session, SpaceGoal, SpaceGoalOutcomeNotification } from '@hyperneo
 import { createGoalOperations } from '../../../../src/lib/goals/operations.ts';
 import { SpaceGoalService } from '../../../../src/lib/goals/service.ts';
 import { ScheduleService } from '../../../../src/lib/schedule/schedule-service.ts';
+import { buildOperationAuditRecord } from '../../../../src/lib/operations/audit.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   createOperationRegistry,
@@ -197,7 +198,25 @@ describe('goal.reviewOutcome through the operations door', () => {
       expect(result.kind).toBe('claimed');
       expect(result.status).toBe('claimed');
       expect(ctx.goalService.getGoal(ctx.goal.id)?.summary).toBe('Outcome reviewed');
-      expect(ctx.auditRows()[0].tool_name).toBe('goal.reviewOutcome');
+      expect(ctx.auditRows().map((row) => row.tool_name)).toEqual(['goal.reviewOutcome']);
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('writes no door audit row, leaving its own richer entry as the only one', () => {
+    const ctx = makeCtx();
+    try {
+      expect(
+        buildOperationAuditRecord(
+          ctx.registry,
+          'goal.reviewOutcome',
+          { goalId: ctx.goal.id },
+          ownerCaller(ctx),
+          { kind: 'completed', value: {} },
+          1
+        )
+      ).toBeNull();
     } finally {
       ctx.db.close();
     }

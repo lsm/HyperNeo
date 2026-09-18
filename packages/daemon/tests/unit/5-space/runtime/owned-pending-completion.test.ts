@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
 import type { NodeExecution, Session, SpaceLongHorizonAgent, SpaceTask } from '@hyperneo/shared';
+import { buildOperationAuditRecord } from '../../../../src/lib/operations/audit';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry';
 import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session';
@@ -130,7 +131,10 @@ test.each(['default-agent', 'legacy-task'] as const)(
     });
     expect(order).toEqual(['dispatch', 'event', 'audit']);
     expect(dependencies.audit).toHaveBeenCalledWith(
-      expect.objectContaining({ id: session.id }),
+      expect.objectContaining({
+        source: 'mcp',
+        session: expect.objectContaining({ id: session.id }),
+      }),
       expect.objectContaining({ status: 'review' }),
       { taskId: task.id, approved: true, reason: '  raw  ' }
     );
@@ -139,11 +143,36 @@ test.each(['default-agent', 'legacy-task'] as const)(
 );
 
 test.each(['rpc', 'internal'] as const)(
-  'trusted %s caller needs no session and creates no MCP audit',
+  'trusted %s caller needs no session and is still audited',
   async (source) => {
     expect((await invoke(undefined, undefined, source)).kind).toBe('completed');
-    expect(order).toEqual(['dispatch', 'event']);
-    expect(dependencies.audit).not.toHaveBeenCalled();
+    expect(order).toEqual(['dispatch', 'event', 'audit']);
+    expect(dependencies.audit).toHaveBeenCalledWith(
+      { source },
+      expect.objectContaining({ status: 'review' }),
+      {
+        taskId: task.id,
+        approved: true,
+      }
+    );
+  }
+);
+
+test.each(['rpc', 'internal'] as const)(
+  'audits a %s rejection as well as an approval',
+  async (source) => {
+    expect(
+      (await invoke(undefined, { taskId: task.id, approved: false, reason: 'no' }, source)).kind
+    ).toBe('completed');
+    expect(dependencies.audit).toHaveBeenCalledWith(
+      { source },
+      expect.objectContaining({ status: 'review' }),
+      {
+        taskId: task.id,
+        approved: false,
+        reason: 'no',
+      }
+    );
   }
 );
 
@@ -301,7 +330,7 @@ test('committed dispatch warning survives catalog result validation', async () =
     },
   });
   expect(dependencies.warn).toHaveBeenCalledWith(task.id, 'interrupted');
-  expect(order).toEqual(['event']);
+  expect(order).toEqual(['event', 'audit']);
 });
 
 test('pre-commit failure produces no event or audit', async () => {
@@ -389,5 +418,28 @@ test.each([true, false])(
     expect(dependencies.emitTaskUpdated).not.toHaveBeenCalled();
     expect(dependencies.audit).not.toHaveBeenCalled();
     expect(dependencies.warn).not.toHaveBeenCalled();
+  }
+);
+
+test.each([
+  { source: 'mcp', sessionId: 'space:chat:member', spaceId },
+  { source: 'rpc' },
+  { source: 'internal' },
+] as const)(
+  'writes no door audit row for $source, leaving its own entry as the only one',
+  (caller) => {
+    const operation = createOwnedPendingCompletionOperation(dependencies);
+    const registry = createOperationRegistry([operation]);
+    expect(operation.policy?.audit?.selfAudited).toBe(true);
+    expect(
+      buildOperationAuditRecord(
+        registry,
+        'task.resolvePendingCompletion',
+        { taskId: task.id, approved: true },
+        caller,
+        { kind: 'completed', value: task },
+        1
+      )
+    ).toBeNull();
   }
 );

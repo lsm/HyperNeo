@@ -2,6 +2,7 @@ import type { DirectStopVerificationResult } from '../tasks/stop-direct-attempt.
 import { createDatabaseOperationCatalog } from '../operations/database-catalog.ts';
 import type { OperationRegistry, OperationRegistryProvider } from '../operations/registry.ts';
 import { NO_CALLER_SCOPE, type CallerScopeResolver } from '../operations/caller.ts';
+import type { InvokeDependencies } from '../operations/invoke.ts';
 import type {
   ImageContent,
   MessageDeliveryMode,
@@ -88,6 +89,7 @@ export class SessionManager {
   private spaceRuntimeMcpProvider?: SpaceRuntimeMcpProvider;
   private operationRegistryProvider?: OperationRegistryProvider;
   private callerScopeResolver: CallerScopeResolver = NO_CALLER_SCOPE;
+  private invokeDependencies: InvokeDependencies = {};
   private defaultOperationRegistryProvider?: OperationRegistryProvider;
   private defaultOperationRegistry?: OperationRegistry;
   private mailboxDeferredReplaySuppressor?: (sessionId: string) => void;
@@ -174,6 +176,7 @@ export class SessionManager {
         ...runtimeOptions,
         operationRegistryProvider: () => this.getOperationRegistry(),
         callerScopeResolver: (sessionId) => this.resolveCallerScope(sessionId),
+        invokeDependenciesProvider: () => this.getInvokeDependencies(),
         hardReset: (agentSession, options) => this.hardResetAgentSession(agentSession, options),
       }
     );
@@ -526,6 +529,14 @@ export class SessionManager {
     this.callerScopeResolver = resolver;
   }
 
+  getInvokeDependencies(): InvokeDependencies {
+    return this.invokeDependencies;
+  }
+
+  setInvokeDependencies(dependencies: InvokeDependencies): void {
+    this.invokeDependencies = dependencies;
+  }
+
   setSpaceRuntimeMcpProvider(provider: SpaceRuntimeMcpProvider): void {
     this.spaceRuntimeMcpProvider = provider;
   }
@@ -673,6 +684,7 @@ export class SessionManager {
   registerSession(agentSession: AgentSession): void {
     agentSession.ensureOperationRegistryProvider(() => this.getOperationRegistry());
     agentSession.setCallerScopeResolver((sessionId) => this.resolveCallerScope(sessionId));
+    agentSession.setInvokeDependenciesProvider(() => this.getInvokeDependencies());
     if (this.mailboxDeferredReplaySuppressor) {
       const suppressor = this.mailboxDeferredReplaySuppressor;
       agentSession.suppressDeferredReplay = (sessionId) => suppressor(sessionId);

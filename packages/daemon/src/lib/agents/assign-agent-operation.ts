@@ -185,7 +185,7 @@ export function createAssignAgentToGoalOperation(deps: AgentAssignmentDependenci
   return defineOperation({
     name: 'agent.assignGoal',
     description: `Make a long-horizon agent the owner of a goal in its Space, and announce the ownership change. ${GOAL_OWNERSHIP_DOC}`,
-    policy: AGENT_MUTATE_POLICY,
+    policy: { ...AGENT_MUTATE_POLICY, audit: { selfAudited: true } },
     inputSchema: goalInputSchema,
     resultSchema,
     execute: async (input, caller) => assign(input, caller),
@@ -197,7 +197,7 @@ export function createUnassignAgentFromGoalOperation(deps: AgentAssignmentDepend
   return defineOperation({
     name: 'agent.unassignGoal',
     description: `Drop a long-horizon agent owner relationship on a goal in its Space, and announce the ownership change. Removing an assignment that is not there succeeds. ${GOAL_OWNERSHIP_DOC}`,
-    policy: AGENT_MUTATE_POLICY,
+    policy: { ...AGENT_MUTATE_POLICY, audit: { selfAudited: true } },
     inputSchema: goalInputSchema,
     resultSchema,
     execute: async (input, caller) => unassign(input, caller),
@@ -212,7 +212,7 @@ export function createAssignAgentToForgeScopeOperation(deps: AgentAssignmentDepe
   return defineOperation({
     name: 'agent.assignForgeScope',
     description: `Assign a long-horizon agent to a Forge scope in its Space, so the scope evidence loop routes to it. ${FORGE_SCOPE_DOC}`,
-    policy: AGENT_MUTATE_POLICY,
+    policy: { ...AGENT_MUTATE_POLICY, audit: { selfAudited: true } },
     inputSchema: scopeInputSchema,
     resultSchema,
     execute: async (input, caller) => assign(input, caller),
@@ -224,7 +224,7 @@ export function createUnassignAgentFromForgeScopeOperation(deps: AgentAssignment
   return defineOperation({
     name: 'agent.unassignForgeScope',
     description: `Remove a long-horizon agent Forge scope assignment in its Space. Removing an assignment that is not there succeeds. ${FORGE_SCOPE_DOC}`,
-    policy: AGENT_MUTATE_POLICY,
+    policy: { ...AGENT_MUTATE_POLICY, audit: { selfAudited: true } },
     inputSchema: scopeInputSchema,
     resultSchema,
     execute: async (input, caller) => unassign(input, caller),

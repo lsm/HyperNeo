@@ -486,7 +486,7 @@ export function createSessionOperations(deps: SessionOperationDependencies): Ope
     }),
     defineOperation({
       name: 'session.state.update',
-      policy: MUTATE_POLICY,
+      policy: { ...MUTATE_POLICY, audit: { selfAudited: true } },
       description: `Force a stuck Space session processing_state to idle, running, or waiting_for_input, for cold-session recovery only. ${SCOPE_NOTE} Documented autonomy requirement: level 4; autonomy enforcement is a later subsystem and is not applied here. Returns the previous and new state, or live_session_present when the session is live (interrupt or message it instead), session_archived, session_not_found, or invalid_state when waiting_for_input is requested without an existing pending question.`,
       inputSchema: UpdateSessionStateInputSchema,
       resultSchema: SessionStateResultSchema,
@@ -494,7 +494,7 @@ export function createSessionOperations(deps: SessionOperationDependencies): Ope
     }),
     defineOperation({
       name: 'session.interrupt',
-      policy: DESTRUCTIVE_POLICY,
+      policy: { ...DESTRUCTIVE_POLICY, audit: { selfAudited: true } },
       description: `Force-interrupt a running or stuck Space session and reset it to idle. ${SCOPE_NOTE} Documented autonomy requirement: level 4 (destructive); autonomy enforcement is a later subsystem and is not applied here. Returns interrupted, or live_session_required when no live session is cached — use session.state.update for cold session recovery — plus session_archived and session_not_found.`,
       inputSchema: InterruptSessionInputSchema,
       resultSchema: SessionInterruptResultSchema,

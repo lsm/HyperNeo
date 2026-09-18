@@ -292,7 +292,11 @@ describe('createNodeSendMessageOperation', () => {
     const { deps } = harness({});
     const operation = createNodeSendMessageOperation(deps);
 
-    expect(operation.policy).toEqual({ safetyClass: 'mutate', roles: ['workflow_worker'] });
+    expect(operation.policy).toEqual({
+      safetyClass: 'mutate',
+      roles: ['workflow_worker'],
+      audit: { redactKeys: ['message', 'data'] },
+    });
     expect(isOperationAdmitted(operation, workerCaller)).toBe(true);
     expect(isOperationAdmitted(operation, { ...workerCaller, role: 'long_term_agent' })).toBe(true);
   });

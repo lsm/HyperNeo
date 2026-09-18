@@ -11,7 +11,13 @@ import {
   type AgentSubscriptionDependencies,
   createAgentSubscriptionOperations,
 } from '../../../../src/lib/external-events/agent-subscription-operations';
-import type { OperationCaller, OperationDefinition } from '../../../../src/lib/operations/registry';
+import type { OperationAuditRecord } from '../../../../src/lib/operations/audit';
+import { invokeOperation } from '../../../../src/lib/operations/invoke';
+import {
+  createOperationRegistry,
+  type OperationCaller,
+  type OperationDefinition,
+} from '../../../../src/lib/operations/registry';
 import { createSpaceTables } from '../../helpers/space-test-db';
 import { createTestSession } from '../../../helpers/database';
 
@@ -248,6 +254,49 @@ describe('agent external-event subscription operations', () => {
       )
     ).toBe('caller_denied');
     expect(subscriptionRepo.listSubscriptions(AGENT)).toEqual([]);
+  });
+
+  test('the door audits a bare-string denial of externalEvent.agent.subscribe', async () => {
+    const sessionId = memberSession('s-door-denied');
+    const registry = createOperationRegistry([...operations.values()]);
+    const written: OperationAuditRecord[] = [];
+    const outcome = await invokeOperation(
+      registry,
+      'externalEvent.agent.subscribe',
+      { agent_id: AGENT, topic_pattern: TOPIC, spaceId: OTHER_SPACE },
+      member(sessionId),
+      {
+        audit: (record) => {
+          written.push(record);
+        },
+      }
+    );
+    expect(outcome).toEqual({ kind: 'completed', value: 'caller_denied' });
+    expect(written).toHaveLength(1);
+    expect(written[0]).toMatchObject({
+      operation: 'externalEvent.agent.subscribe',
+      outcome: 'completed',
+    });
+  });
+
+  test('the door writes no second row for a successful externalEvent.agent.subscribe', async () => {
+    const sessionId = memberSession('s-door-success');
+    const registry = createOperationRegistry([...operations.values()]);
+    const written: OperationAuditRecord[] = [];
+    const outcome = await invokeOperation(
+      registry,
+      'externalEvent.agent.subscribe',
+      { agent_id: AGENT, topic_pattern: TOPIC },
+      member(sessionId),
+      {
+        audit: (record) => {
+          written.push(record);
+        },
+      }
+    );
+    expect(outcome.kind).toBe('completed');
+    expect(written).toHaveLength(0);
+    expect(auditLogRepo.listBySession(sessionId)).toHaveLength(1);
   });
 
   test('rejects a writer whose session is not active in the Space', async () => {

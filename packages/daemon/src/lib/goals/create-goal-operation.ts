@@ -145,7 +145,7 @@ export function createCreateGoalOperation(deps: CreateGoalDependencies) {
   return defineOperation({
     name: 'goal.create',
     description: DESCRIPTION,
-    policy: GOAL_WRITE_POLICY,
+    policy: { ...GOAL_WRITE_POLICY, audit: { selfAudited: true } },
     inputSchema,
     resultSchema: z.discriminatedUnion('accepted', [
       z.object({ accepted: z.literal(true), goal: SpaceGoalSchema }),

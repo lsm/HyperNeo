@@ -709,7 +709,7 @@ export function createForgeScopeOperations(forge: ForgeScopeOperationDependencie
   return [
     defineOperation({
       name: 'forge.scope.create',
-      policy: FORGE_MUTATE_POLICY,
+      policy: { ...FORGE_MUTATE_POLICY, audit: { selfAudited: true } },
       description:
         'Create a Forge scope in a Space, optionally linked to a goal and a parent scope, with metric definitions and judge policy. MCP callers are scoped to their own Space; RPC callers pass spaceId. Rejects goal_not_found, scope_not_found (parent), invalid_policy, and forge_denied for sessions without Forge write access.',
       inputSchema: ScopeCreateInputSchema,
@@ -718,7 +718,7 @@ export function createForgeScopeOperations(forge: ForgeScopeOperationDependencie
     }),
     defineOperation({
       name: 'forge.scope.createFromGoal',
-      policy: FORGE_MUTATE_POLICY,
+      policy: { ...FORGE_MUTATE_POLICY, audit: { selfAudited: true } },
       description:
         'Create a mission Forge scope linked to an existing goal, defaulting name and objective from the goal. Rejects goal_not_found when the goal is absent or outside the caller Space, and invalid_policy when the judge policy fails validation.',
       inputSchema: ScopeCreateFromGoalInputSchema,
@@ -748,7 +748,7 @@ export function createForgeScopeOperations(forge: ForgeScopeOperationDependencie
     }),
     defineOperation({
       name: 'forge.scope.update',
-      policy: FORGE_MUTATE_POLICY,
+      policy: { ...FORGE_MUTATE_POLICY, audit: { selfAudited: true } },
       description:
         'Update a Forge scope: link or unlink a goal, rename, re-parent, replace metric definitions, and change judge policy. Prefer policyPatch to deep-merge policy fields without clobbering the rest; episodeJudgeModel and episodeJudgeProvider are patched the same way. Rejects scope_not_found, goal_not_found, and invalid_policy.',
       inputSchema: ScopeUpdateInputSchema,
@@ -757,7 +757,7 @@ export function createForgeScopeOperations(forge: ForgeScopeOperationDependencie
     }),
     defineOperation({
       name: 'forge.scope.resolve',
-      policy: FORGE_READ_POLICY,
+      policy: { ...FORGE_READ_POLICY, audit: { selfAudited: true } },
       description:
         'Resolve the Forge scope behind a goal or a task when the scope id is unknown. Rejects resolve_target_required when neither goalId nor taskId is given, goal_not_found or task_not_found when the target is absent or outside the caller Space, and scope_not_found when nothing is linked.',
       inputSchema: ScopeResolveInputSchema,
@@ -782,7 +782,7 @@ export function createForgeScopeOperations(forge: ForgeScopeOperationDependencie
     }),
     defineOperation({
       name: 'forge.note.add',
-      policy: FORGE_MUTATE_POLICY,
+      policy: { ...FORGE_MUTATE_POLICY, audit: { selfAudited: true } },
       description:
         'Attach a manual-note evidence item to a Forge scope. Rejects scope_not_found when the scope is absent or outside the caller Space.',
       inputSchema: NoteAddInputSchema,
@@ -791,7 +791,7 @@ export function createForgeScopeOperations(forge: ForgeScopeOperationDependencie
     }),
     defineOperation({
       name: 'forge.evidence.attachTask',
-      policy: FORGE_MUTATE_POLICY,
+      policy: { ...FORGE_MUTATE_POLICY, audit: { selfAudited: true } },
       description:
         'Attach a task as Forge evidence, resolving the scope from the task when scopeId is omitted. Rejects task_not_found, scope_not_found, and evidence_not_attached when no scope can be resolved for the task.',
       inputSchema: EvidenceAttachTaskInputSchema,
@@ -800,7 +800,7 @@ export function createForgeScopeOperations(forge: ForgeScopeOperationDependencie
     }),
     defineOperation({
       name: 'forge.evidence.attachWorkflowRun',
-      policy: FORGE_MUTATE_POLICY,
+      policy: { ...FORGE_MUTATE_POLICY, audit: { selfAudited: true } },
       description:
         "Attach a workflow run as Forge evidence, resolving the scope via the run's tasks when scopeId is omitted. Rejects workflow_run_not_found, scope_not_found, and evidence_not_attached when no scope can be resolved for the run.",
       inputSchema: EvidenceAttachRunInputSchema,
@@ -821,7 +821,7 @@ export function createForgeScopeOperations(forge: ForgeScopeOperationDependencie
     }),
     defineOperation({
       name: 'forge.metric.add',
-      policy: FORGE_MUTATE_POLICY,
+      policy: { ...FORGE_MUTATE_POLICY, audit: { selfAudited: true } },
       description:
         'Record a metric snapshot on a Forge scope and attach it as evidence. Rejects scope_not_found when the scope is absent or outside the caller Space.',
       inputSchema: MetricAddInputSchema,
