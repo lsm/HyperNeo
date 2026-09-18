@@ -229,7 +229,7 @@ describe('SpaceLongHorizonAgents', () => {
     cleanup();
   });
 
-  it('renders the Glass Workspace summary with Templates above the Agents section', () => {
+  it('renders the Glass Workspace summary with Agents above the Templates section', () => {
     mockAgents.value = [makeLongHorizonAgent()];
     mockTemplates.value = [
       {
@@ -254,7 +254,7 @@ describe('SpaceLongHorizonAgents', () => {
     const templatesHeading = getByRole('heading', { name: 'Templates · 1' });
     const agentsHeading = getByRole('heading', { name: 'Agents · 1' });
     expect(
-      templatesHeading.compareDocumentPosition(agentsHeading) & Node.DOCUMENT_POSITION_FOLLOWING
+      agentsHeading.compareDocumentPosition(templatesHeading) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy();
     expect(getByText('Research Long Horizon')).toBeTruthy();
     expect(getByText('QA Engineer')).toBeTruthy();
@@ -1682,11 +1682,11 @@ describe('SpaceLongHorizonAgents', () => {
     );
   });
 
-  it('renders a readable empty agents state pointing at the templates above', () => {
+  it('renders a readable empty agents state pointing at the templates below', () => {
     const { getByText } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
 
     expect(getByText('No agents yet')).toBeTruthy();
-    expect(getByText('Add a custom agent or choose a template above.')).toBeTruthy();
+    expect(getByText('Add a custom agent or choose a template below.')).toBeTruthy();
   });
 
   it('shows the unified record for a shared handle (worker record no longer wins)', () => {
