@@ -420,7 +420,7 @@ describe('spaceGoal workspacePath resolution', () => {
     expect(resolveGoalWorkspacePath).toHaveBeenCalledWith(SPACE_ID, '/raw/secondary');
     expect(createGoal).toHaveBeenCalledWith(
       expect.objectContaining({ title: 'T', workspacePath: '/resolved/secondary' }),
-      { source: 'rpc' }
+      { source: 'rpc', sourceSessionId: null }
     );
     expect(result).toEqual({ goal: created });
   });
@@ -460,7 +460,7 @@ describe('spaceGoal workspacePath resolution', () => {
     expect(updateGoal).toHaveBeenCalledWith(
       GOAL_ID,
       expect.objectContaining({ workspacePath: '/resolved/secondary' }),
-      { source: 'rpc' }
+      { source: 'rpc', sourceSessionId: null }
     );
     expect(result).toEqual({ goal: updated });
   });
@@ -570,8 +570,14 @@ describe('spaceGoal handler gates', () => {
     );
     expect(goalService.resolveGoalWorkspacePath).toHaveBeenCalledWith(SPACE_ID, undefined);
     expect(goalService.createGoal).toHaveBeenCalledWith(
-      { spaceId: SPACE_ID, title: 'G', type: 'measurable', workspacePath: undefined },
-      { source: 'rpc' }
+      {
+        spaceId: SPACE_ID,
+        title: 'G',
+        type: 'measurable',
+        workspacePath: undefined,
+        primaryOwnerAgentId: null,
+      },
+      { source: 'rpc', sourceSessionId: null }
     );
     expect(result).toEqual({ goal: GOAL });
   });
@@ -624,13 +630,19 @@ describe('spaceGoal handler gates', () => {
       { spaceId: SPACE_ID, goalId: GOAL_ID },
       makeContext()
     );
-    expect(goalService.pauseGoal).toHaveBeenCalledWith(GOAL_ID, { source: 'rpc' });
+    expect(goalService.pauseGoal).toHaveBeenCalledWith(GOAL_ID, {
+      source: 'rpc',
+      sourceSessionId: null,
+    });
     expect(paused).toEqual({ goal: { ...GOAL, status: 'paused' } });
     const resumed = await handlers.get('spaceGoal.resume')!(
       { spaceId: SPACE_ID, goalId: GOAL_ID },
       makeContext()
     );
-    expect(goalService.resumeGoal).toHaveBeenCalledWith(GOAL_ID, { source: 'rpc' });
+    expect(goalService.resumeGoal).toHaveBeenCalledWith(GOAL_ID, {
+      source: 'rpc',
+      sourceSessionId: null,
+    });
     expect(resumed).toEqual({ goal: { ...GOAL, status: 'active' } });
   });
 
@@ -640,7 +652,10 @@ describe('spaceGoal handler gates', () => {
       { spaceId: SPACE_ID, goalId: GOAL_ID },
       makeContext()
     );
-    expect(goalService.createImmediateTask).toHaveBeenCalledWith(GOAL_ID, { source: 'rpc' });
+    expect(goalService.createImmediateTask).toHaveBeenCalledWith(GOAL_ID, {
+      source: 'rpc',
+      sourceSessionId: null,
+    });
     expect(result).toEqual({ goal: GOAL, task: TRIGGERED_TASK, queued: false });
   });
 
