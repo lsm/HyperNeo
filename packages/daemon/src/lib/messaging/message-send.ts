@@ -137,6 +137,7 @@ export function createSendMessageOperation(
 ) {
   return defineOperation({
     name: 'message.send',
+    policy: { safetyClass: 'mutate', audit: { redactKeys: ['message'] } },
     description:
       'Persist a message for a session in this daemon, addressed by session id and not restricted to the caller Space. Rejects an unknown session id. Acceptance means the message is queued for that session, not that the session has processed it or replied.',
     inputSchema: SendMessageInputSchema,

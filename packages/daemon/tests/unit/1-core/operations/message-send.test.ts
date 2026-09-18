@@ -8,6 +8,7 @@ import {
   mapMessageReceipt,
 } from '../../../../src/lib/messaging/message-send';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry';
+import { summarizeAuditInput } from '../../../../src/lib/operations/audit';
 import { parseMailboxEntry } from '../../../../src/lib/mailbox/entry';
 import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db';
 
@@ -149,6 +150,16 @@ describe('shared message.send operation', () => {
       kind: 'rejected',
       reason: 'unavailable',
     });
+  });
+
+  test('keeps the message body out of the audit summary', () => {
+    const operation = createSendMessageOperation(mailbox.jobQueue, () => true);
+    const summary = summarizeAuditInput(operation, {
+      sessionId: 'destination',
+      message: { ...message, message: { content: 'secret plans' } },
+    });
+    expect(summary).not.toContain('secret plans');
+    expect(JSON.parse(summary as string).message).toBe('[redacted]');
   });
 
   test('rejects a send to a session id that does not exist', async () => {
