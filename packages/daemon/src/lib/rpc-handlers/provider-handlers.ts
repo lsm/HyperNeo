@@ -497,11 +497,9 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
       }
 
       if (record.kind === 'built_in') {
-        providerRepo.updateProvider(data.id, { isEnabled: false });
         markBuiltInProviderDisabled(record.providerId);
-      } else {
-        providerRepo.deleteProvider(data.id);
       }
+      providerRepo.deleteProvider(data.id);
       await removeProviderFromRegistry(record.providerId);
       await clearCacheAndNotifyProvidersChanged(internalEventBus);
       return { success: true };
