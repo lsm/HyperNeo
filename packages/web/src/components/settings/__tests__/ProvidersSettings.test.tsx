@@ -151,6 +151,9 @@ vi.mock('../AddProviderModal.tsx', () => ({
       <button data-testid="add-modal-close" onClick={onClose}>
         Close
       </button>
+      <button data-testid="add-modal-refresh" onClick={onProviderAdded}>
+        Refresh
+      </button>
       <button
         data-testid="add-modal-done"
         onClick={() => {
@@ -409,6 +412,31 @@ describe('ProvidersSettings', () => {
     await waitFor(() => expect(mockListProviders).toHaveBeenCalledTimes(3));
     expect(screen.getByTestId('add-provider-modal')).toBeTruthy();
     expect((screen.getByTestId('add-modal-input') as HTMLInputElement).value).toBe('draft key');
+  });
+
+  it('keeps the add-provider modal mounted while refreshing after it adds a provider', async () => {
+    connectionState.value = 'connected';
+    mockListProviders.mockResolvedValueOnce({ providers: [] }).mockResolvedValueOnce({
+      providers: [createMockProvider('1', 'anthropic', { displayName: 'Anthropic' })],
+    });
+
+    const { container } = render(<ProvidersSettings />);
+    await waitFor(() => expect(container.textContent).toContain('Add Provider'));
+    fireEvent.click(screen.getByText('Add Provider'));
+    const input = screen.getByTestId('add-modal-input') as HTMLInputElement;
+    fireEvent.input(input, { target: { value: 'oauth in progress' } });
+
+    fireEvent.click(screen.getByTestId('add-modal-refresh'));
+    expect(container.textContent).not.toContain('Loading providers...');
+
+    await waitFor(() => {
+      expect(mockListProviders).toHaveBeenCalledTimes(2);
+      expect(container.textContent).toContain('Anthropic');
+    });
+    expect(screen.getByTestId('add-provider-modal')).toBeTruthy();
+    expect((screen.getByTestId('add-modal-input') as HTMLInputElement).value).toBe(
+      'oauth in progress'
+    );
   });
 
   it('silently reconciles provider state after reconnecting', async () => {
