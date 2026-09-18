@@ -4,6 +4,7 @@ export const AGENT_OPERATION_NAMES = [
   'agent.assignGoal',
   'agent.create',
   'agent.createFromTemplate',
+  'agent.ensureSession',
   'agent.get',
   'agent.list',
   'agent.pause',

@@ -63,6 +63,8 @@ export function registerAgentOperations(context: FamilyOperationContext): Operat
         context.spaceRuntimeService.refreshLongHorizonAgentSubscriptions(spaceId, agentId),
       clearAgentSessionProvider: (spaceId, agentId) =>
         context.spaceRuntimeService.clearLongTermAgentSessionProvider(spaceId, agentId),
+      ensureAgentSession: (spaceId, agentId) =>
+        context.spaceRuntimeService.ensureAgentSession(spaceId, agentId),
       getGoalSpace: (goalId) => context.spaceGoalService.getGoal(goalId)?.spaceId ?? null,
       getForgeScopeSpace: (scopeId) =>
         context.evolutionScopeService.getScope(scopeId)?.spaceId ?? null,

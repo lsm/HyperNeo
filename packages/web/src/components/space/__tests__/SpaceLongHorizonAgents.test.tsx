@@ -16,6 +16,7 @@ const {
   mockUpdateTemplate,
   mockDeleteTemplate,
   mockUpdateAgent,
+  mockEnsureAgentSession,
   mockNavigateToSpaceSession,
 } = vi.hoisted(() => {
   function makeSignal<T>(initial: T) {
@@ -33,6 +34,7 @@ const {
     mockUpdateTemplate: vi.fn().mockResolvedValue(undefined),
     mockDeleteTemplate: vi.fn().mockResolvedValue(undefined),
     mockUpdateAgent: vi.fn().mockResolvedValue(undefined),
+    mockEnsureAgentSession: vi.fn().mockResolvedValue('space:agent:space-1:lh-1'),
     mockNavigateToSpaceSession: vi.fn(),
   };
 });
@@ -52,6 +54,7 @@ vi.mock('../../../lib/space-store', () => ({
       updateTemplate: mockUpdateTemplate,
       deleteTemplate: mockDeleteTemplate,
       updateAgent: mockUpdateAgent,
+      ensureAgentSession: mockEnsureAgentSession,
     };
   },
 }));
@@ -216,7 +219,10 @@ describe('SpaceLongHorizonAgents', () => {
     mockUpdateTemplate.mockClear();
     mockDeleteTemplate.mockClear();
     mockUpdateAgent.mockClear();
+    mockEnsureAgentSession.mockClear();
+    mockEnsureAgentSession.mockResolvedValue('space:agent:space-1:lh-1');
     mockNavigateToSpaceSession.mockClear();
+    vi.mocked(toast.error).mockClear();
   });
 
   afterEach(() => {
@@ -1723,17 +1729,66 @@ describe('SpaceLongHorizonAgents', () => {
 
     const liveCard = getByText('Research Long Horizon').closest('[role="button"]');
     expect(liveCard?.textContent).toContain('Session');
-    expect(getByText('Draft Agent').closest('[role="button"]')).toBeNull();
-    expect(getByText('No session')).toBeTruthy();
+    expect(getByText('Draft Agent').closest('[role="button"]')).toBeTruthy();
+    expect(getByText('Start session')).toBeTruthy();
   });
 
-  it('keeps a sessionless instance card inert', () => {
+  it('opens the first session of a sessionless agent and navigates to it', async () => {
     mockAgents.value = [makeLongHorizonAgent({ sessionId: null })];
+    mockEnsureAgentSession.mockResolvedValue('space:agent:space-1:lh-1');
+
+    const { getByText } = render(
+      <SpaceLongHorizonAgents spaceId="space-1" navigationSpaceId="space-slug" />
+    );
+
+    fireEvent.click(getByText('Research Long Horizon').closest('[role="button"]')!);
+
+    await waitFor(() => {
+      expect(mockNavigateToSpaceSession).toHaveBeenCalledWith(
+        'space-slug',
+        'space:agent:space-1:lh-1'
+      );
+    });
+    expect(mockEnsureAgentSession).toHaveBeenCalledWith('lh-1');
+  });
+
+  it('ignores Enter on a nested action button instead of opening the session', () => {
+    mockAgents.value = [makeLongHorizonAgent({ sessionId: null })];
+
+    const { getByRole } = render(
+      <SpaceLongHorizonAgents spaceId="space-1" navigationSpaceId="space-slug" />
+    );
+
+    fireEvent.keyDown(getByRole('button', { name: 'Edit Research Long Horizon' }), {
+      key: 'Enter',
+    });
+
+    expect(mockEnsureAgentSession).not.toHaveBeenCalled();
+    expect(mockNavigateToSpaceSession).not.toHaveBeenCalled();
+  });
+
+  it('navigates to an existing session without opening a new one', () => {
+    mockAgents.value = [makeLongHorizonAgent()];
 
     const { getByText } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
 
-    fireEvent.click(getByText('Research Long Horizon'));
+    fireEvent.click(getByText('Research Long Horizon').closest('[role="button"]')!);
 
+    expect(mockNavigateToSpaceSession).toHaveBeenCalledWith('space-1', 'session-research');
+    expect(mockEnsureAgentSession).not.toHaveBeenCalled();
+  });
+
+  it('reports a failed session start instead of navigating nowhere', async () => {
+    mockAgents.value = [makeLongHorizonAgent({ sessionId: null })];
+    mockEnsureAgentSession.mockRejectedValue(new Error('Space is paused'));
+
+    const { getByText } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByText('Research Long Horizon').closest('[role="button"]')!);
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith('Space is paused');
+    });
     expect(mockNavigateToSpaceSession).not.toHaveBeenCalled();
   });
 
