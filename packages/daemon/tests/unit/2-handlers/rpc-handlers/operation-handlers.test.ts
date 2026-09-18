@@ -78,6 +78,7 @@ describe('operation.invoke RPC registration', () => {
     });
     expect(listed.map(({ name }) => name)).toEqual([
       'message.send',
+      'daemon.attach',
       'task.get',
       'task.create',
       'task.list',

@@ -12,6 +12,9 @@ import {
   createSendMessageOperation,
   type SessionExistenceCheck,
 } from '../messaging/message-send.ts';
+import { createAttachDaemonOperation } from '../remote-daemons/attach-operation.ts';
+import { createRemoteSendForwarder } from '../remote-daemons/forward-send.ts';
+import { remoteDaemons } from '../remote-daemons/registry.ts';
 import {
   createOperationRegistry,
   type OperationRegistry,
@@ -50,7 +53,12 @@ export function createDaemonOperationCatalog(
   extra: readonly OperationDefinition[] = []
 ): OperationRegistry {
   const registry: OperationRegistry = createOperationRegistry([
-    createSendMessageOperation(jobQueue, tasks.sessionExists),
+    createSendMessageOperation(
+      jobQueue,
+      tasks.sessionExists,
+      createRemoteSendForwarder(remoteDaemons)
+    ),
+    createAttachDaemonOperation(remoteDaemons),
     createGetTaskOperation(tasks.readTask, tasks.readTaskByNumber),
     tasks.create ?? createCreateTaskOperation(tasks.createTask),
     createListTasksOperation(tasks.listTasks),

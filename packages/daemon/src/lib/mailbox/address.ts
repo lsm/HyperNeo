@@ -110,3 +110,29 @@ export function isValidAddress(addr: MailboxAddress): boolean {
   }
   return false;
 }
+
+export type RemoteSessionAddress = {
+  kind: 'remote-session';
+  daemonId: string;
+  sessionId: string;
+};
+
+const REMOTE_SEPARATOR = '::';
+
+export function parseRemoteAddress(raw: string): RemoteSessionAddress | null {
+  const schemeSeparator = raw.indexOf(':');
+  if (schemeSeparator === -1 || raw.slice(0, schemeSeparator) !== 'daemon') return null;
+  const rest = raw.slice(schemeSeparator + 1);
+  const targetSeparator = rest.indexOf(REMOTE_SEPARATOR);
+  if (targetSeparator === -1) return null;
+  const daemonId = decodeSegment(rest.slice(0, targetSeparator));
+  if (daemonId === null || !isNonEmptyString(daemonId)) return null;
+  const target = parseAddress(rest.slice(targetSeparator + REMOTE_SEPARATOR.length));
+  if (target === null || target.kind !== 'session') return null;
+  return { kind: 'remote-session', daemonId, sessionId: target.sessionId };
+}
+
+export function renderRemoteAddress(addr: RemoteSessionAddress): string {
+  const target = renderAddress({ kind: 'session', sessionId: addr.sessionId });
+  return `daemon:${encodeURIComponent(addr.daemonId)}${REMOTE_SEPARATOR}${target}`;
+}

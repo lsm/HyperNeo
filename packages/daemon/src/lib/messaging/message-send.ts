@@ -2,7 +2,12 @@ import { generateUUID } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
-import { isValidAddress, renderAddress } from '../mailbox/address.ts';
+import {
+  isValidAddress,
+  parseRemoteAddress,
+  renderAddress,
+  type RemoteSessionAddress,
+} from '../mailbox/address.ts';
 import { toMailboxMessage } from '../mailbox/entry.ts';
 import { handoffPromptToMailbox, type MailboxHandoffOutcome } from '../mailbox/handoff.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
@@ -66,6 +71,24 @@ type SendResult = z.infer<typeof SendMessageResultSchema>;
 
 export type SessionExistenceCheck = (sessionId: string) => boolean;
 
+export type RemoteSendForwarder = (
+  target: RemoteSessionAddress,
+  input: SendInput
+) => Promise<SendResult>;
+
+const rejectUnattachedDaemon: RemoteSendForwarder = (target) =>
+  Promise.resolve({ kind: 'rejected', reason: `No attached daemon: ${target.daemonId}` });
+
+export function forwardRemoteMessage(
+  input: SendInput,
+  forwardRemote: RemoteSendForwarder
+): Promise<{ value: SendInput } | { reason: SendResult }> {
+  const target = parseRemoteAddress(input.sessionId);
+  return target === null
+    ? Promise.resolve({ value: input })
+    : forwardRemote(target, input).then((reason) => ({ reason }));
+}
+
 export function requireTargetSession(
   input: SendInput,
   sessionExists: SessionExistenceCheck
@@ -117,8 +140,9 @@ export function mapMessageReceipt(outcome: MailboxHandoffOutcome, messageId: str
 }
 
 const runSendMessage = (superpipe({})('send-operation-message') as PipelineAPI)
-  .input(['input', 'caller', 'jobQueue', 'sessionExists'])
+  .input(['input', 'caller', 'jobQueue', 'sessionExists', 'forwardRemote'])
   .pipe(admitOperationMessage, ['input', 'caller'], 'result:receipt')
+  .pipe(forwardRemoteMessage, ['receipt', 'forwardRemote'], 'result:receipt')
   .pipe(requireTargetSession, ['receipt', 'sessionExists'], 'result:receipt')
   .pipe(generateUUID, undefined, 'messageId')
   .pipe(selectMessageOrigin, 'caller', 'origin')
@@ -128,19 +152,22 @@ const runSendMessage = (superpipe({})('send-operation-message') as PipelineAPI)
   input: SendInput,
   caller: OperationCaller,
   jobQueue: JobQueueRepository,
-  sessionExists: SessionExistenceCheck
+  sessionExists: SessionExistenceCheck,
+  forwardRemote: RemoteSendForwarder
 ) => Promise<SendResult>;
 
 export function createSendMessageOperation(
   jobQueue: JobQueueRepository,
-  sessionExists: SessionExistenceCheck
+  sessionExists: SessionExistenceCheck,
+  forwardRemote: RemoteSendForwarder = rejectUnattachedDaemon
 ) {
   return defineOperation({
     name: 'message.send',
     description:
-      'Persist a message for a session in this daemon, addressed by session id and not restricted to the caller Space. Rejects an unknown session id. Acceptance means the message is queued for that session, not that the session has processed it or replied.',
+      'Persist a message for a session, addressed by session id and not restricted to the caller Space. Rejects an unknown session id. A session on an attached remote daemon is addressed as "daemon:<daemonId>::session:<sessionId>"; that send is forwarded to the remote daemon, whose mailbox owns the message, and fails if the daemon is unattached or unreachable. Acceptance means the message is queued for that session, not that the session has processed it or replied.',
     inputSchema: SendMessageInputSchema,
     resultSchema: SendMessageResultSchema,
-    execute: (input, caller) => runSendMessage(input, caller, jobQueue, sessionExists),
+    execute: (input, caller) =>
+      runSendMessage(input, caller, jobQueue, sessionExists, forwardRemote),
   });
 }
