@@ -43,7 +43,7 @@ export interface GetExternalEventDependencies {
 }
 
 export function admitEventReader(input: Input, caller: OperationCaller) {
-  return admitEventCallerSpace(input, caller, EXTERNAL_EVENT_READ_ROLES);
+  return admitEventCallerSpace(input, caller);
 }
 
 export function readScopedEvent(

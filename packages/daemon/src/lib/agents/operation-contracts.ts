@@ -127,8 +127,6 @@ export const AGENT_MUTATE_POLICY: OperationPolicy = {
   roles: AGENT_ROLES,
 };
 
-const ADMITTED_ROLES: ReadonlySet<OperationCallerRole> = new Set(AGENT_ROLES);
-
 const DENIED_MESSAGE =
   'Agent operations require a human caller or an active Space member session in the owning Space.';
 
@@ -143,7 +141,7 @@ export function admitAgentCaller(
       ? { value: input.spaceId }
       : { reason: rejectAgent('space_required', 'spaceId is required for this caller') };
   }
-  if (!caller.role || !ADMITTED_ROLES.has(caller.role) || !caller.spaceId) {
+  if (!caller.spaceId) {
     return { reason: rejectAgent('agent_denied', DENIED_MESSAGE) };
   }
   if (input.spaceId !== undefined && input.spaceId !== caller.spaceId) {

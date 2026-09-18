@@ -183,7 +183,7 @@ describe('schedule operation catalog', () => {
     ]);
   });
 
-  test('the family scope gate refuses a workflow worker inside a schedule mutation', async () => {
+  test('the family scope gate admits a workflow worker inside a schedule mutation', async () => {
     const registry = createOperationRegistry([...h.operations.values()]);
     const outcome = await invokeOperation(
       registry,
@@ -191,12 +191,24 @@ describe('schedule operation catalog', () => {
       { scheduleId: 'sched-1' },
       mcpCaller('workflow_worker')
     );
+    expect(outcome).toEqual({ kind: 'completed', value: { ok: true } });
+    expect(h.stored.map((entry) => entry.id)).not.toContain('sched-1');
+  });
+
+  test('the family scope gate still refuses a caller that carries no Space', async () => {
+    const registry = createOperationRegistry([...h.operations.values()]);
+    const outcome = await invokeOperation(
+      registry,
+      'schedule.delete',
+      { scheduleId: 'sched-1' },
+      mcpCaller('ad_hoc_member', { spaceId: undefined })
+    );
     expect(outcome).toEqual({
       kind: 'completed',
       value: {
         ok: false,
-        reason: 'denied',
-        message: 'This caller may not use Space schedules.',
+        reason: 'space_scope_required',
+        message: 'A Space is required: pass spaceId, or call from a session inside a Space.',
       },
     });
     expect(h.calls).toEqual([]);
@@ -335,37 +347,22 @@ describe('schedule operation role admission', () => {
     ).toEqual({ ok: true, schedule: schedule() });
   });
 
-  test('workflow workers may not mutate schedules', async () => {
-    for (const name of [
-      'schedule.create',
-      'schedule.pause',
-      'schedule.resume',
-      'schedule.delete',
-    ]) {
+  test('workflow workers may mutate schedules', async () => {
+    for (const name of ['schedule.pause', 'schedule.resume', 'schedule.delete']) {
       expect(
-        await run(
-          name,
-          { scheduleId: 'sched-1', title: 't', description: 'd', triggerType: 'cron' },
-          mcpCaller('workflow_worker')
-        )
-      ).toEqual({
-        ok: false,
-        reason: 'denied',
-        message: 'This caller may not use Space schedules.',
-      });
+        await run(name, { scheduleId: 'sched-1' }, mcpCaller('workflow_worker'))
+      ).toMatchObject({ ok: true });
     }
-    expect(h.calls).toEqual([]);
+    expect(h.calls).toEqual(['pauseSchedule', 'resumeSchedule', 'deleteSchedule']);
   });
 
-  test('roles outside the space family are denied even for reads', async () => {
+  test('roles outside the space family may read as well', async () => {
     for (const role of ['outside_space', 'legacy_task_agent', 'direct_task_worker'] as const) {
       expect(await run('schedule.list', {}, mcpCaller(role))).toEqual({
-        ok: false,
-        reason: 'denied',
-        message: 'This caller may not use Space schedules.',
+        ok: true,
+        schedules: [schedule()],
       });
     }
-    expect(h.calls).toEqual([]);
   });
 
   test('an archived caller session may not mutate, and nothing changes', async () => {

@@ -114,7 +114,7 @@ export function admitAgentSubscriptionWriter(
   caller: OperationCaller,
   deps: AgentSubscriptionDependencies
 ): { value: string } | { reason: Rejection } {
-  const space = admitEventCallerSpace(input, caller, AGENT_EVENT_ROLES);
+  const space = admitEventCallerSpace(input, caller);
   if ('reason' in space) return { reason: 'caller_denied' };
   if (!callerSessionActiveIn(caller, space.value, deps)) return { reason: 'session_inactive' };
   return { value: space.value };
@@ -124,7 +124,7 @@ export function admitAgentSubscriptionReader(
   input: { spaceId?: string },
   caller: OperationCaller
 ): { value: string } | { reason: Rejection } {
-  const space = admitEventCallerSpace(input, caller, AGENT_EVENT_ROLES);
+  const space = admitEventCallerSpace(input, caller);
   if ('reason' in space) return { reason: 'caller_denied' };
   return { value: space.value };
 }

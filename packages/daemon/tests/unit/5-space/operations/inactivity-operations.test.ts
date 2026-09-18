@@ -135,7 +135,8 @@ describe('inactivity watchdog operations', () => {
     expect(scans).toEqual([{ spaceId: SPACE, agentId: AGENT }]);
   });
 
-  test('denies a workflow worker, which is not a long-term agent', async () => {
+  test('reads the config of its own agent for a workflow worker caller', async () => {
+    configRepo.upsert({ spaceId: SPACE, agentId: AGENT, enabled: true, thresholdMs: 5000 });
     const caller: OperationCaller = {
       source: 'mcp',
       sessionId: longTermSession('s-worker', SPACE),
@@ -143,7 +144,10 @@ describe('inactivity watchdog operations', () => {
       role: 'workflow_worker',
       agentId: AGENT,
     };
-    expect(await run('inactivity.config.get', {}, caller)).toBe('caller_denied');
+    const result = (await run('inactivity.config.get', {}, caller)) as {
+      config: { thresholdMs: number | null } | null;
+    };
+    expect(result.config?.thresholdMs).toBe(5000);
   });
 
   test('denies an MCP caller that names another agent', async () => {

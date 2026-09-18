@@ -1,6 +1,6 @@
 import type { Session } from '@hyperneo/shared';
 import { z } from 'zod';
-import type { OperationCaller, OperationCallerRole } from '../operations/registry.ts';
+import type { OperationCaller } from '../operations/registry.ts';
 import { resolveSessionSpaceId } from '../space/runtime/space-caller-scope.ts';
 import type { SpaceMcpSessionPolicyContext } from '../space/runtime/space-mcp-session-policy.ts';
 
@@ -60,29 +60,11 @@ export interface ForgeAuditEntry {
 
 export type ForgeAuditWriter = (entry: ForgeAuditEntry) => void;
 
-const FORGE_READ_ROLES: ReadonlySet<OperationCallerRole> = new Set([
-  'ad_hoc_member',
-  'long_term_agent',
-  'universal_read',
-]);
-
-const FORGE_MUTATE_ROLES: ReadonlySet<OperationCallerRole> = new Set([
-  'ad_hoc_member',
-  'long_term_agent',
-]);
-
-function admitForgeCaller(
+export function admitForgeReader(
   input: ForgeSpaceScope,
-  caller: OperationCaller,
-  roles: ReadonlySet<OperationCallerRole>
+  caller: OperationCaller
 ): ForgeGate<ForgeSpaceScope, ForgeCallerRejection> {
   if (caller.source !== 'mcp') return { value: { spaceId: input.spaceId } };
-  if (!caller.role || !roles.has(caller.role)) {
-    return denyForge(
-      'forge_denied',
-      `Forge is not available to role "${caller.role ?? 'unknown'}"`
-    );
-  }
   if (!caller.spaceId)
     return denyForge('space_required', 'Caller session is not scoped to a Space');
   if (input.spaceId && input.spaceId !== caller.spaceId) {
@@ -91,19 +73,12 @@ function admitForgeCaller(
   return { value: { spaceId: caller.spaceId } };
 }
 
-export function admitForgeReader(
-  input: ForgeSpaceScope,
-  caller: OperationCaller
-): ForgeGate<ForgeSpaceScope, ForgeCallerRejection> {
-  return admitForgeCaller(input, caller, FORGE_READ_ROLES);
-}
-
 export function admitForgeMutator(
   input: ForgeSpaceScope,
   caller: OperationCaller,
   forge: ForgeAdmissionDependencies
 ): ForgeGate<ForgeSpaceScope, ForgeCallerRejection> {
-  const admitted = admitForgeCaller(input, caller, FORGE_MUTATE_ROLES);
+  const admitted = admitForgeReader(input, caller);
   if ('reason' in admitted || caller.source !== 'mcp') return admitted;
   const session = caller.sessionId ? forge.getSession(caller.sessionId) : null;
   return session?.status === 'active' &&

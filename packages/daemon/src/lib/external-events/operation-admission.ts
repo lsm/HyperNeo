@@ -27,13 +27,12 @@ export interface EventCallerDependencies extends SpaceMcpSessionPolicyContext {
 
 export function admitEventCallerSpace(
   input: { spaceId?: string },
-  caller: OperationCaller,
-  roles: readonly OperationCallerRole[]
+  caller: OperationCaller
 ): { value: string } | { reason: EventCallerRejection } {
   if (caller.source !== 'mcp') {
     return input.spaceId ? { value: input.spaceId } : { reason: 'caller_denied' };
   }
-  if (!caller.role || !roles.includes(caller.role) || !caller.spaceId) {
+  if (!caller.spaceId) {
     return { reason: 'caller_denied' };
   }
   if (input.spaceId !== undefined && input.spaceId !== caller.spaceId) {

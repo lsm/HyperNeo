@@ -208,7 +208,7 @@ describe('node external-event subscription operations', () => {
     });
   });
 
-  test('denies a space member that is not a workflow worker', async () => {
+  test('reports node_unresolved for a space member with no node execution', async () => {
     const sessionId = workerSession('s-member', { withExecution: false });
     const caller: OperationCaller = {
       source: 'mcp',
@@ -217,7 +217,7 @@ describe('node external-event subscription operations', () => {
       role: 'ad_hoc_member',
     };
     expect(await run('externalEvent.subscribe', { topicPattern: 'github/a/b/*' }, caller)).toBe(
-      'caller_denied'
+      'node_unresolved'
     );
     expect(registered).toEqual([]);
   });

@@ -303,9 +303,10 @@ describe('goal.reviewOutcome through the operations door', () => {
     }
   });
 
-  test('stops an ad_hoc_member caller via admitGoalRole inside the operation', async () => {
+  test('lists the owned notifications for an ad_hoc_member caller as well', async () => {
     const ctx = makeCtx();
     try {
+      const notification = ctx.notify();
       const outcome = await invokeOperation(
         ctx.registry,
         'goal.reviewOutcome',
@@ -320,7 +321,7 @@ describe('goal.reviewOutcome through the operations door', () => {
       );
       expect(outcome).toMatchObject({
         kind: 'completed',
-        value: { kind: 'rejected', accepted: false, reason: 'role_denied' },
+        value: { kind: 'discovery', notifications: [{ id: notification.id }] },
       });
     } finally {
       ctx.db.close();

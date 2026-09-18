@@ -1,7 +1,6 @@
 import type { SpaceLongHorizonAgent } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
-import { decideGoalOwnershipMutationAdmission } from '../goals/ownership-gates.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import {
   admitAgentCaller,
@@ -51,22 +50,17 @@ export function admitGoalOwnershipCaller(
   deps: AgentAssignmentDependencies
 ): Gate<string> {
   if (caller.source !== 'mcp') return { value: spaceId };
-  const hasSpaceAuthority = caller.role === 'long_term_agent';
-  if (hasSpaceAuthority) {
-    const agent = caller.agentId ? deps.getAgent(caller.agentId) : null;
-    if (agent?.spaceId !== spaceId || agent.status !== 'active') {
-      return {
-        reason: rejectAgent(
-          'agent_denied',
-          'This action requires an active Space agent identity; the provenance agent is missing or inactive.'
-        ),
-      };
-    }
+  if (!caller.agentId) return { value: spaceId };
+  const agent = deps.getAgent(caller.agentId);
+  if (agent?.spaceId !== spaceId || agent.status !== 'active') {
+    return {
+      reason: rejectAgent(
+        'agent_denied',
+        'This action requires an active Space agent identity; the provenance agent is missing or inactive.'
+      ),
+    };
   }
-  const admission = decideGoalOwnershipMutationAdmission({ hasSpaceAuthority, hasSession: true });
-  return admission.action === 'deny'
-    ? { reason: rejectAgent('agent_denied', admission.message) }
-    : { value: spaceId };
+  return { value: spaceId };
 }
 
 export function gateAssignmentTargets(

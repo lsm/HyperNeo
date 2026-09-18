@@ -208,7 +208,7 @@ describe('the agent.create operation', () => {
     expect(value.value.agent.autonomyLevel).toBeNull();
   });
 
-  test('a read-only session is refused by admitAgentCaller inside the operation', async () => {
+  test('a session carrying no Space is refused by admitAgentCaller inside the operation', async () => {
     expect(readOnlyCaller()).toEqual({
       source: 'mcp',
       sessionId: READ_ONLY_SESSION,
@@ -227,7 +227,7 @@ describe('the agent.create operation', () => {
     expect(agentRepo.listBySpaceId(spaceId)).toHaveLength(0);
   });
 
-  test('the operation itself also denies a read-only session calling it directly', async () => {
+  test('the operation itself also denies a session carrying no Space', async () => {
     const operation = registry().get('agent.create');
     const outcome = (await operation?.execute({ spaceId, name: 'Planner' }, readOnlyCaller())) as {
       reason: string;

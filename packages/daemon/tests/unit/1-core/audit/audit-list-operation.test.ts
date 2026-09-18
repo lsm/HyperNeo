@@ -337,7 +337,7 @@ describe('audit.list operation', () => {
     });
   });
 
-  test('the family scope gate refuses a caller role outside the policy', async () => {
+  test('the family scope gate admits a caller role outside the policy', async () => {
     const registry = createOperationRegistry([...h.operations.values()]);
     const outcome = await invokeOperation(
       registry,
@@ -345,28 +345,20 @@ describe('audit.list operation', () => {
       { spaceId: SPACE_ID },
       mcpCaller('legacy_task_agent')
     );
-    expect(outcome).toEqual({
-      kind: 'completed',
-      value: {
-        ok: false,
-        reason: 'denied',
-        message: 'This caller may not read the Space audit log.',
-      },
-    });
+    expect(outcome).toMatchObject({ kind: 'completed', value: { ok: true } });
   });
 });
 
 describe('resolveAuditScope', () => {
-  test('maps an unadmitted MCP role to a denied rejection', () => {
-    const scope = resolveAuditScope({}, mcpCaller('legacy_task_agent'), {
+  test('maps an MCP caller carrying no Space to a space_scope_required rejection', () => {
+    const scope = resolveAuditScope({}, mcpCaller('legacy_task_agent', { spaceId: undefined }), {
       readOnly: true,
-      workerAllowed: true,
     });
     expect(scope).toEqual({
       reason: {
         ok: false,
-        reason: 'denied',
-        message: 'This caller may not read the Space audit log.',
+        reason: 'space_scope_required',
+        message: 'A Space is required: pass spaceId, or call from a session inside a Space.',
       },
     });
   });

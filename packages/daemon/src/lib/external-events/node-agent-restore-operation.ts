@@ -24,7 +24,7 @@ export function admitRestoreCaller(
   caller: OperationCaller,
   agents: NodeAgentRestoreDependencies
 ): { value: string } | { reason: Rejection } {
-  const space = admitEventCallerSpace({}, caller, NODE_EVENT_ROLES);
+  const space = admitEventCallerSpace({}, caller);
   if ('reason' in space || !caller.sessionId) return { reason: 'caller_denied' };
   return callerSessionActiveIn(caller, space.value, agents)
     ? { value: caller.sessionId }
@@ -47,7 +47,7 @@ export async function applyRestore(
 }
 
 const RESTORE_DESCRIPTION =
-  'Self-heal: re-attach the node-agent MCP server for the calling worker session and restart its query so the restored tool surface takes effect. The current turn is interrupted, so retry the failed call afterwards. The session is taken from the caller, never from input. Rejects caller_denied when the caller is not a workflow worker and session_inactive when that session is not active in its Space; a call that cannot re-attach returns reattached: false rather than failing, and that covers both a session that already ended and a re-attach that failed, so read the message rather than assuming the session is gone.';
+  'Self-heal: re-attach the node-agent MCP server for the calling worker session and restart its query so the restored tool surface takes effect. The current turn is interrupted, so retry the failed call afterwards. The session is taken from the caller, never from input. Rejects caller_denied when the caller carries no Space and session_inactive when that session is not active in its Space; a call that cannot re-attach returns reattached: false rather than failing, and that covers both a session that already ended and a re-attach that failed, so read the message rather than assuming the session is gone.';
 
 export function createNodeAgentRestoreOperation(agents: NodeAgentRestoreDependencies) {
   const restore = (superpipe({ agents })('restore-node-agent') as PipelineAPI)
