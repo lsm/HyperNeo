@@ -74,6 +74,19 @@ async function startRemoteDaemon(knownSessionId: string): Promise<RemoteDaemon> 
   };
 }
 
+async function startSilentServer(): Promise<{ url: string; stop: () => void }> {
+  const server: ServerHandle = await createHttpWsServer({
+    hostname: '127.0.0.1',
+    port: 0,
+    fetch: () => new Promise<Response>(() => {}),
+  });
+  return { url: `ws://127.0.0.1:${server.port}/ws`, stop: () => server.stop(true) };
+}
+
+async function settled(promise: Promise<unknown>): Promise<unknown> {
+  return promise.then(() => null).catch((error) => error);
+}
+
 async function waitFor(condition: () => boolean, timeoutMs = 2000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!condition()) {
@@ -214,6 +227,53 @@ describe('forwarding message.send to an attached daemon', () => {
     expect(entry?.to).toEqual({ kind: 'session', sessionId: 'session-on-a' });
     expect(outcome).toMatchObject({ kind: 'completed', value: { kind: 'accepted' } });
     expect(remote.mailbox.rowCount()).toBe(0);
+  });
+});
+
+describe('connect deadline on a forwarded send', () => {
+  test('rejects a send to a daemon that accepts the socket but never answers the upgrade', async () => {
+    const silent = await startSilentServer();
+    const local = createMailboxTestDb();
+    const daemons = new RemoteDaemonRegistry({ connectTimeoutMs: 100 });
+    daemons.attach('stuck', silent.url);
+    const registry = createOperationRegistry([
+      createSendMessageOperation(
+        local.jobQueue,
+        (sessionId) => sessionId === 'session-on-a',
+        createRemoteSendForwarder(daemons)
+      ),
+    ]);
+
+    const outcome = await invokeOperation(
+      registry,
+      'message.send',
+      { sessionId: 'daemon:stuck::session:session-on-b', message },
+      { source: 'mcp', sessionId: 'agent-on-a' }
+    );
+
+    expect(outcome).toMatchObject({
+      kind: 'completed',
+      value: {
+        kind: 'rejected',
+        reason: expect.stringContaining(`Timed out connecting to ${silent.url} after 100ms`),
+      },
+    });
+    expect(local.rowCount()).toBe(0);
+    local.close();
+    silent.stop();
+  });
+
+  test('abandons a connect still in flight when the same daemon is attached again', async () => {
+    const silent = await startSilentServer();
+    const daemons = new RemoteDaemonRegistry({ connectTimeoutMs: 30000 });
+    daemons.attach('stuck', silent.url);
+    const inFlight = settled(daemons.invoke('stuck', 'message.send', {}));
+
+    daemons.attach('stuck', silent.url);
+
+    expect(await inFlight).toBeInstanceOf(Error);
+    daemons.forget('stuck');
+    silent.stop();
   });
 });
 

@@ -1,13 +1,45 @@
 import { MessageHub, WebSocketClientTransport } from '@hyperneo/shared';
 
+const DEFAULT_CONNECT_TIMEOUT_MS = 5000;
+
 interface RemoteConnection {
   readonly hub: MessageHub;
   readonly transport: WebSocketClientTransport;
 }
 
+interface RemoteAttempt {
+  readonly transport: WebSocketClientTransport;
+  readonly connection: Promise<RemoteConnection>;
+}
+
+async function withConnectDeadline<T>(
+  opening: Promise<T>,
+  timeoutMs: number,
+  url: string,
+  abandon: () => void
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      abandon();
+      reject(new Error(`Timed out connecting to ${url} after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([opening, expired]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 export class RemoteDaemonRegistry {
   private readonly urls = new Map<string, string>();
-  private readonly connections = new Map<string, Promise<RemoteConnection>>();
+  private readonly attempts = new Map<string, RemoteAttempt>();
+  private readonly connectTimeoutMs: number;
+
+  constructor(options: { connectTimeoutMs?: number } = {}) {
+    this.connectTimeoutMs = options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS;
+  }
 
   attach(daemonId: string, url: string): void {
     this.urls.set(daemonId, url);
@@ -15,36 +47,32 @@ export class RemoteDaemonRegistry {
   }
 
   private open(daemonId: string, url: string): Promise<RemoteConnection> {
-    const existing = this.connections.get(daemonId);
-    if (existing) return existing;
-    const opening = (async () => {
-      const hub = new MessageHub({ defaultSessionId: 'global' });
-      const transport = new WebSocketClientTransport({
-        url,
-        autoReconnect: false,
-        pingInterval: 0,
-      });
-      hub.registerTransport(transport);
-      await transport.initialize();
-      return { hub, transport };
-    })();
-    this.connections.set(daemonId, opening);
-    opening.catch(() => {
-      if (this.connections.get(daemonId) === opening) this.connections.delete(daemonId);
+    const existing = this.attempts.get(daemonId);
+    if (existing) return existing.connection;
+    const hub = new MessageHub({ defaultSessionId: 'global' });
+    const transport = new WebSocketClientTransport({ url, autoReconnect: false, pingInterval: 0 });
+    hub.registerTransport(transport);
+    const opening = transport.initialize();
+    opening.catch(() => {});
+    const connection = withConnectDeadline(opening, this.connectTimeoutMs, url, () => {
+      void transport.close();
+    }).then(() => ({ hub, transport }));
+    const attempt: RemoteAttempt = { transport, connection };
+    this.attempts.set(daemonId, attempt);
+    connection.catch(() => {
+      if (this.attempts.get(daemonId) === attempt) this.attempts.delete(daemonId);
+      hub.cleanup();
+      void transport.close();
     });
-    return opening;
+    return connection;
   }
 
   forget(daemonId: string): void {
-    const pending = this.connections.get(daemonId);
-    this.connections.delete(daemonId);
-    if (!pending) return;
-    void pending
-      .then(async (connection) => {
-        connection.hub.cleanup();
-        await connection.transport.close();
-      })
-      .catch(() => {});
+    const attempt = this.attempts.get(daemonId);
+    this.attempts.delete(daemonId);
+    if (!attempt) return;
+    void attempt.transport.close();
+    void attempt.connection.then((connection) => connection.hub.cleanup()).catch(() => {});
   }
 
   readonly invoke = async (daemonId: string, name: string, input: unknown): Promise<unknown> => {
