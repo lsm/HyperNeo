@@ -54,31 +54,17 @@ vi.mock('../visual-editor/WorkflowModelSelect', () => ({
 import { ModelPoolEditor } from '../ModelPoolEditor';
 
 interface HostState {
-  mode: 'single' | 'pool';
-  model: string;
-  provider: string;
   modelPool: AgentModelPoolEntry[];
 }
 
 let hostState: HostState;
 
 function TestHost({ initial }: { initial: Partial<HostState> }) {
-  const [state, setState] = useState<HostState>({
-    mode: 'single',
-    model: '',
-    provider: '',
-    modelPool: [],
-    ...initial,
-  });
+  const [state, setState] = useState<HostState>({ modelPool: [], ...initial });
   hostState = state;
   return (
     <ModelPoolEditor
-      mode={state.mode}
-      model={state.model}
-      provider={state.provider}
       modelPool={state.modelPool}
-      onModeChange={(mode) => setState((prev) => ({ ...prev, mode }))}
-      onModelChange={(model, provider) => setState((prev) => ({ ...prev, model, provider }))}
       onModelPoolChange={(modelPool) => setState((prev) => ({ ...prev, modelPool }))}
     />
   );
@@ -98,41 +84,24 @@ describe('ModelPoolEditor', () => {
     cleanup();
   });
 
-  it('defaults to single mode with no pool controls', () => {
+  it('always renders the pool with no single/pool mode toggle', () => {
     const { getByTestId, queryByTestId } = renderEditor();
-    expect(getByTestId('space-agent-model-select')).toBeTruthy();
-    expect(queryByTestId('agent-model-pool')).toBeNull();
+    expect(getByTestId('agent-model-pool')).toBeTruthy();
+    expect(queryByTestId('agent-model-mode-single')).toBeNull();
+    expect(queryByTestId('agent-model-mode-pool')).toBeNull();
+    expect(queryByTestId('space-agent-model-select')).toBeNull();
   });
 
-  it('shows pool controls and hides the single select in pool mode', () => {
-    const { getByTestId, queryByTestId } = renderEditor({
-      mode: 'pool',
+  it('renders a stored single-entry pool as one entry', () => {
+    const { getByTestId, getAllByTestId } = renderEditor({
       modelPool: [{ model: 'claude-haiku-4-5', maxConcurrent: 2, weight: 40 }],
     });
-    expect(queryByTestId('space-agent-model-select')).toBeNull();
     expect(getByTestId('agent-model-pool')).toBeTruthy();
-  });
-
-  it('seeds one empty entry when switching to pool mode', () => {
-    const { getByTestId, getAllByTestId } = renderEditor();
-    fireEvent.click(getByTestId('agent-model-mode-pool'));
-    expect(hostState.mode).toBe('pool');
-    expect(getAllByTestId('pool-entry')).toHaveLength(1);
-    expect(hostState.modelPool).toEqual([{ model: '', maxConcurrent: 1, weight: 100 }]);
-  });
-
-  it('does not reseed existing entries when switching to pool mode', () => {
-    const existing: AgentModelPoolEntry[] = [
-      { model: 'claude-haiku-4-5', maxConcurrent: 2, weight: 40 },
-    ];
-    const { getByTestId, getAllByTestId } = renderEditor({ mode: 'single', modelPool: existing });
-    fireEvent.click(getByTestId('agent-model-mode-pool'));
-    expect(hostState.modelPool).toEqual(existing);
     expect(getAllByTestId('pool-entry')).toHaveLength(1);
   });
 
-  it('appends entries with the add button in pool mode', () => {
-    const { getByTestId, getAllByTestId } = renderEditor({ mode: 'pool', modelPool: [] });
+  it('appends entries with the add button', () => {
+    const { getByTestId, getAllByTestId } = renderEditor({ modelPool: [] });
     fireEvent.click(getByTestId('pool-add-model-button'));
     expect(getAllByTestId('pool-entry')).toHaveLength(1);
     expect(hostState.modelPool).toEqual([{ model: '', maxConcurrent: 1, weight: 100 }]);
@@ -142,7 +111,7 @@ describe('ModelPoolEditor', () => {
   });
 
   it('updates the entry model and provider through the select', () => {
-    const { getByTestId } = renderEditor({ mode: 'pool', modelPool: [] });
+    const { getByTestId } = renderEditor({ modelPool: [] });
     fireEvent.click(getByTestId('pool-add-model-button'));
     fireEvent.change(getByTestId('pool-entry-model-select'), {
       target: { value: 'claude-sonnet-4-6' },
@@ -154,7 +123,6 @@ describe('ModelPoolEditor', () => {
 
   it('clearing an entry select resets the model and provider', () => {
     const { getByTestId } = renderEditor({
-      mode: 'pool',
       modelPool: [
         { model: 'claude-sonnet-4-6', provider: 'anthropic', maxConcurrent: 1, weight: 100 },
       ],
@@ -166,7 +134,6 @@ describe('ModelPoolEditor', () => {
 
   it('accepts max values of 1 or more and floors them', () => {
     const { getByTestId } = renderEditor({
-      mode: 'pool',
       modelPool: [{ model: 'claude-haiku-4-5', maxConcurrent: 2, weight: 40 }],
     });
     fireEvent.input(getByTestId('pool-entry-max-input'), { target: { value: '8' } });
@@ -177,7 +144,6 @@ describe('ModelPoolEditor', () => {
 
   it('ignores invalid max input and restores the retained value on blur', () => {
     const { getByTestId } = renderEditor({
-      mode: 'pool',
       modelPool: [{ model: 'claude-haiku-4-5', maxConcurrent: 2, weight: 40 }],
     });
     const maxInput = getByTestId('pool-entry-max-input') as HTMLInputElement;
@@ -197,7 +163,6 @@ describe('ModelPoolEditor', () => {
 
   it('preserves fractional text while editing the max input', () => {
     const { getByTestId } = renderEditor({
-      mode: 'pool',
       modelPool: [{ model: 'claude-haiku-4-5', maxConcurrent: 4, weight: 40 }],
     });
     const maxInput = getByTestId('pool-entry-max-input') as HTMLInputElement;
@@ -213,7 +178,6 @@ describe('ModelPoolEditor', () => {
 
   it('accepts weights of 0 or more and preserves non-integer values', () => {
     const { getByTestId } = renderEditor({
-      mode: 'pool',
       modelPool: [{ model: 'claude-haiku-4-5', maxConcurrent: 2, weight: 40 }],
     });
     const weightInput = getByTestId('pool-entry-weight-input') as HTMLInputElement;
@@ -229,7 +193,6 @@ describe('ModelPoolEditor', () => {
 
   it('rejects negative and invalid weight input, restoring the retained value on blur', () => {
     const { getByTestId } = renderEditor({
-      mode: 'pool',
       modelPool: [{ model: 'claude-haiku-4-5', maxConcurrent: 2, weight: 40 }],
     });
     const weightInput = getByTestId('pool-entry-weight-input') as HTMLInputElement;
@@ -245,7 +208,6 @@ describe('ModelPoolEditor', () => {
 
   it('preserves fractional text while editing the weight input', () => {
     const { getByTestId } = renderEditor({
-      mode: 'pool',
       modelPool: [{ model: 'claude-haiku-4-5', maxConcurrent: 2, weight: 40 }],
     });
     const weightInput = getByTestId('pool-entry-weight-input') as HTMLInputElement;
@@ -261,7 +223,6 @@ describe('ModelPoolEditor', () => {
 
   it('clearing a numeric input snaps back to the retained entry value on blur', () => {
     const { getByTestId } = renderEditor({
-      mode: 'pool',
       modelPool: [{ model: 'claude-haiku-4-5', maxConcurrent: 2, weight: 40 }],
     });
     const maxInput = getByTestId('pool-entry-max-input') as HTMLInputElement;
@@ -278,7 +239,6 @@ describe('ModelPoolEditor', () => {
 
   it('marks the numeric inputs required so an empty draft blocks keyboard submit', () => {
     const { getByTestId } = renderEditor({
-      mode: 'pool',
       modelPool: [{ model: 'claude-haiku-4-5', maxConcurrent: 2, weight: 40 }],
     });
     expect((getByTestId('pool-entry-max-input') as HTMLInputElement).required).toBe(true);
@@ -287,7 +247,6 @@ describe('ModelPoolEditor', () => {
 
   it('removes only the entry at the removed index', () => {
     const { getAllByTestId } = renderEditor({
-      mode: 'pool',
       modelPool: [
         { model: 'claude-haiku-4-5', maxConcurrent: 2, weight: 40 },
         { model: 'claude-sonnet-4-6', maxConcurrent: 3, weight: 60 },
@@ -299,65 +258,31 @@ describe('ModelPoolEditor', () => {
     ]);
   });
 
-  it('shows the empty-pool hint when no entries are configured', () => {
-    const { getByText, queryAllByTestId } = renderEditor({ mode: 'pool', modelPool: [] });
+  it('shows the default empty-pool hint when no entries are configured', () => {
+    const { getByText, queryAllByTestId } = renderEditor({ modelPool: [] });
     expect(
-      getByText('No pool models — this agent uses the space default until one is added.')
+      getByText('No models — this agent uses the space default until one is added.')
     ).toBeTruthy();
     expect(queryAllByTestId('pool-entry')).toHaveLength(0);
   });
 
-  it('switches back to single mode and hides pool controls', () => {
-    const { getByTestId, queryByTestId } = renderEditor({
-      mode: 'pool',
-      modelPool: [{ model: 'claude-haiku-4-5', maxConcurrent: 2, weight: 40 }],
-    });
-    fireEvent.click(getByTestId('agent-model-mode-single'));
-    expect(hostState.mode).toBe('single');
-    expect(queryByTestId('agent-model-pool')).toBeNull();
-    expect(getByTestId('space-agent-model-select')).toBeTruthy();
-  });
-
-  it('emits model and provider changes in single mode', () => {
-    const { getByTestId } = renderEditor({ mode: 'single', model: '', provider: '' });
-    fireEvent.change(getByTestId('space-agent-model-select'), {
-      target: { value: 'claude-sonnet-4-6' },
-    });
-    expect(hostState.model).toBe('claude-sonnet-4-6');
-    expect(hostState.provider).toBe('anthropic');
-  });
-
-  it('clearing the single select resets model and provider to empty strings', () => {
-    const { getByTestId } = renderEditor({
-      mode: 'single',
-      model: 'claude-sonnet-4-6',
-      provider: 'anthropic',
-    });
-    fireEvent.change(getByTestId('space-agent-model-select'), { target: { value: '' } });
-    expect(hostState.model).toBe('');
-    expect(hostState.provider).toBe('');
-  });
-
-  it('renders the model error message when provided', () => {
-    const { getByText } = render(
+  it('shows a caller-supplied empty-pool hint instead of the default', () => {
+    const { getByText, queryByText } = render(
       <ModelPoolEditor
-        mode="single"
-        model=""
-        provider=""
         modelPool={[]}
-        error="Model is required"
-        onModeChange={vi.fn()}
-        onModelChange={vi.fn()}
+        emptyHint="Inherit the agent's models."
         onModelPoolChange={vi.fn()}
       />
     );
-    expect(getByText('Model is required')).toBeTruthy();
+    expect(getByText("Inherit the agent's models.")).toBeTruthy();
+    expect(
+      queryByText('No models — this agent uses the space default until one is added.')
+    ).toBeNull();
   });
   it('defaults a pool entry to the agent thinking level', () => {
     const onModelPoolChange = vi.fn();
     const { getAllByTestId } = render(
       <ModelPoolEditor
-        mode="pool"
         modelPool={[{ model: 'claude-opus-5', maxConcurrent: 1, weight: 100 }]}
         onModelPoolChange={onModelPoolChange}
       />
@@ -370,7 +295,6 @@ describe('ModelPoolEditor', () => {
   it('shows the stored thinking level for an entry', () => {
     const { getAllByTestId } = render(
       <ModelPoolEditor
-        mode="pool"
         modelPool={[
           { model: 'claude-opus-5', maxConcurrent: 1, weight: 100, thinkingLevel: 'think16k' },
         ]}
@@ -386,7 +310,6 @@ describe('ModelPoolEditor', () => {
     const onModelPoolChange = vi.fn();
     const { getAllByTestId } = render(
       <ModelPoolEditor
-        mode="pool"
         modelPool={[
           { model: 'claude-opus-5', maxConcurrent: 1, weight: 100 },
           { model: 'claude-sonnet-5', maxConcurrent: 2, weight: 50 },
@@ -406,7 +329,6 @@ describe('ModelPoolEditor', () => {
     const onModelPoolChange = vi.fn();
     const { getAllByTestId } = render(
       <ModelPoolEditor
-        mode="pool"
         modelPool={[
           { model: 'claude-opus-5', maxConcurrent: 1, weight: 100, thinkingLevel: 'think8k' },
         ]}
@@ -422,7 +344,6 @@ describe('ModelPoolEditor', () => {
   it("uses the selected model's own thinking modes, not the provider default", () => {
     const { getAllByTestId } = render(
       <ModelPoolEditor
-        mode="pool"
         modelPool={[{ model: 'kimi-k3', provider: 'kimi', maxConcurrent: 1, weight: 100 }]}
         onModelPoolChange={vi.fn()}
       />
@@ -437,7 +358,6 @@ describe('ModelPoolEditor', () => {
   it('falls back to the provider default for a model with no granular modes', () => {
     const { getAllByTestId } = render(
       <ModelPoolEditor
-        mode="pool"
         modelPool={[{ model: 'kimi-k2', provider: 'kimi', maxConcurrent: 1, weight: 100 }]}
         onModelPoolChange={vi.fn()}
       />
@@ -451,7 +371,6 @@ describe('ModelPoolEditor', () => {
   it('retains a stored level the current model no longer offers', () => {
     const { getAllByTestId } = render(
       <ModelPoolEditor
-        mode="pool"
         modelPool={[
           {
             model: 'kimi-k2',
@@ -472,7 +391,6 @@ describe('ModelPoolEditor', () => {
     const onModelPoolChange = vi.fn();
     const { getAllByTestId } = render(
       <ModelPoolEditor
-        mode="pool"
         modelPool={[
           {
             model: 'kimi-k3',
@@ -503,7 +421,6 @@ describe('ModelPoolEditor', () => {
     const onModelPoolChange = vi.fn();
     const { getAllByTestId } = render(
       <ModelPoolEditor
-        mode="pool"
         modelPool={[
           {
             model: 'kimi-k2',
@@ -526,7 +443,6 @@ describe('ModelPoolEditor', () => {
     const onModelPoolChange = vi.fn();
     const { getAllByTestId } = render(
       <ModelPoolEditor
-        mode="pool"
         modelPool={[{ model: 'kimi-k3', provider: 'kimi', maxConcurrent: 1, weight: 100 }]}
         onModelPoolChange={onModelPoolChange}
       />

@@ -173,6 +173,54 @@ test('agent without a pool keeps the slot unchanged', () => {
   expect(apply({ agent: makeAgent(undefined) })).toEqual({ slot, model: '' });
 });
 
+describe('slot model pool', () => {
+  const slotPool = [{ model: 'glm-5', maxConcurrent: 2, weight: 100 }];
+  const pooledSlot: WorkflowNodeAgent = { ...slot, modelPool: slotPool };
+
+  test('a slot pool is scored instead of the agent pool', () => {
+    expect(apply({ slot: pooledSlot })).toEqual({
+      slot: { ...pooledSlot, model: 'glm-5' },
+      model: 'glm-5',
+    });
+  });
+
+  test('a slot pool overrides an agent model pin', () => {
+    const agent = { ...makeAgent(pool), model: 'sonnet-fixed' };
+    expect(apply({ slot: pooledSlot, agent })).toEqual({
+      slot: { ...pooledSlot, model: 'glm-5' },
+      model: 'glm-5',
+    });
+  });
+
+  test('a slot model pin still beats the slot pool', () => {
+    const pinned: WorkflowNodeAgent = { ...pooledSlot, model: 'kimi-k3[1m]' };
+    expect(apply({ slot: pinned })).toEqual({ slot: pinned, model: 'kimi-k3[1m]' });
+  });
+
+  test('a task model override still beats the slot pool', () => {
+    const overridden = {
+      workflowModelOverrides: { 'node-1:coder': 'kimi-k3[1m]' },
+    } as unknown as SpaceTask;
+    expect(apply({ slot: pooledSlot, task: overridden })).toEqual({ slot: pooledSlot, model: '' });
+  });
+
+  test('an empty slot pool falls back to the agent pool', () => {
+    const emptyPoolSlot: WorkflowNodeAgent = { ...slot, modelPool: [] };
+    expect(apply({ slot: emptyPoolSlot })).toEqual({
+      slot: { ...emptyPoolSlot, model: 'sonnet' },
+      model: 'sonnet',
+    });
+  });
+
+  test('an exhausted slot pool defers instead of falling through', () => {
+    const assignments = new Map<string, ModelPoolAssignment>([
+      ['s1', makeAssignment({ model: 'glm-5' })],
+      ['s2', makeAssignment({ model: 'glm-5', taskId: 'task-2' })],
+    ]);
+    expect(apply({ slot: pooledSlot, assignments })).toEqual({ deferred: true });
+  });
+});
+
 test('pool at capacity defers instead of throwing', () => {
   const assignments = new Map<string, ModelPoolAssignment>([
     ['s1', makeAssignment()],

@@ -78,6 +78,7 @@ export const AGENT_REJECTION_REASONS = [
   'invalid_tools',
   'invalid_model',
   'runtime_refresh_failed',
+  'session_unavailable',
   'goal_not_found',
   'scope_not_found',
   'template_rejected',

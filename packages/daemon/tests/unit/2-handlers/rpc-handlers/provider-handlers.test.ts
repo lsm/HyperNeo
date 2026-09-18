@@ -860,7 +860,7 @@ describe('Provider RPC handlers', () => {
   });
 
   describe('providers.delete', () => {
-    it('disables a built-in provider instead of deleting the row', async () => {
+    it('removes a built-in provider row', async () => {
       const created = repo.createProvider({
         providerId: 'anthropic',
         displayName: 'Anthropic',
@@ -873,9 +873,8 @@ describe('Provider RPC handlers', () => {
       };
 
       expect(result.success).toBe(true);
-      const after = repo.getProvider(created.id);
-      expect(after).not.toBeNull();
-      expect(after?.isEnabled).toBe(false);
+      expect(repo.getProvider(created.id)).toBeNull();
+      expect(repo.listProviders().map((p) => p.providerId)).not.toContain('anthropic');
     });
 
     it('throws when provider not found', async () => {
@@ -1232,7 +1231,7 @@ describe('Provider RPC handlers', () => {
   });
 
   describe('providers.delete', () => {
-    it('disables a built-in provider instead of deleting the row', async () => {
+    it('removes a built-in provider row', async () => {
       const created = repo.createProvider({
         providerId: 'anthropic',
         displayName: 'Anthropic',
@@ -1245,9 +1244,8 @@ describe('Provider RPC handlers', () => {
       };
 
       expect(result.success).toBe(true);
-      const after = repo.getProvider(created.id);
-      expect(after).not.toBeNull();
-      expect(after?.isEnabled).toBe(false);
+      expect(repo.getProvider(created.id)).toBeNull();
+      expect(repo.listProviders().map((p) => p.providerId)).not.toContain('anthropic');
     });
 
     it('throws when provider not found', async () => {

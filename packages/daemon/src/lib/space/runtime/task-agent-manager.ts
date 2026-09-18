@@ -895,13 +895,14 @@ export class TaskAgentManager {
         const taskModelOverride = request.node
           ? request.task.workflowModelOverrides?.[`${request.node.id}:${request.slot.name}`]
           : undefined;
+        const slotModelPool = request.slot.modelPool?.length ? request.slot.modelPool : undefined;
         const routingCandidates = new Set<string>();
-        if (taskModelOverride || request.slot.model || customAgent?.model) {
+        if (taskModelOverride || request.slot.model || (!slotModelPool && customAgent?.model)) {
           const fixedModel =
             taskModelOverride ?? request.slot.model ?? customAgent?.model ?? undefined;
           if (fixedModel) routingCandidates.add(fixedModel);
         } else {
-          for (const entry of customAgent?.modelPool ?? []) {
+          for (const entry of slotModelPool ?? customAgent?.modelPool ?? []) {
             if (entry.model) routingCandidates.add(entry.model);
           }
           if (request.space.defaultModel) routingCandidates.add(request.space.defaultModel);
@@ -916,12 +917,12 @@ export class TaskAgentManager {
         let slot = request.slot;
         let poolProvider: string | undefined;
         let poolApplied = false;
-        if (customAgent) {
+        if (customAgent || slotModelPool) {
           const poolApplication = applyModelPoolToSlot({
             slot: request.slot,
             task: request.task,
             node: request.node,
-            agent: customAgent,
+            agent: customAgent ?? {},
             spaceId: request.space.id,
             assignments: this.modelPoolAssignments,
             getSessionStatus: (sessionId: string) =>
@@ -929,7 +930,7 @@ export class TaskAgentManager {
             now: Date.now(),
           });
           if ('deferred' in poolApplication) {
-            raiseModelPoolDeferred(customAgent.displayName, request.space.id);
+            raiseModelPoolDeferred(customAgent?.displayName ?? request.slot.name, request.space.id);
           }
           slot = poolApplication.slot;
           poolProvider = poolApplication.provider;
@@ -5200,13 +5201,14 @@ export class TaskAgentManager {
     const postApprovalModelOverride = matchedNodeId
       ? task.workflowModelOverrides?.[`${matchedNodeId}:${matchedSlot.name}`]
       : undefined;
+    const slotModelPool = matchedSlot.modelPool?.length ? matchedSlot.modelPool : undefined;
     const routingCandidates = new Set<string>();
-    if (postApprovalModelOverride || matchedSlot.model || poolAgent?.model) {
+    if (postApprovalModelOverride || matchedSlot.model || (!slotModelPool && poolAgent?.model)) {
       const fixedModel =
         postApprovalModelOverride ?? matchedSlot.model ?? poolAgent?.model ?? undefined;
       if (fixedModel) routingCandidates.add(fixedModel);
     } else {
-      for (const entry of poolAgent?.modelPool ?? []) {
+      for (const entry of slotModelPool ?? poolAgent?.modelPool ?? []) {
         if (entry.model) routingCandidates.add(entry.model);
       }
       if (space.defaultModel) routingCandidates.add(space.defaultModel);
@@ -5221,12 +5223,12 @@ export class TaskAgentManager {
     let slot = matchedSlot;
     let poolProvider: string | undefined;
     let poolApplied = false;
-    if (poolAgent) {
+    if (poolAgent || slotModelPool) {
       const poolApplication = applyModelPoolToSlot({
         slot: matchedSlot,
         task,
         node: { id: matchedNodeId },
-        agent: poolAgent,
+        agent: poolAgent ?? {},
         spaceId,
         assignments: this.modelPoolAssignments,
         getSessionStatus: (sessionId: string) =>
@@ -5234,7 +5236,7 @@ export class TaskAgentManager {
         now: Date.now(),
       });
       if ('deferred' in poolApplication) {
-        raiseModelPoolDeferred(poolAgent.displayName, spaceId);
+        raiseModelPoolDeferred(poolAgent?.displayName ?? matchedSlot.name, spaceId);
       }
       slot = poolApplication.slot;
       poolProvider = poolApplication.provider;

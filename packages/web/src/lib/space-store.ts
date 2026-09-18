@@ -2688,6 +2688,23 @@ class SpaceStore {
     this.agents.value = this.agents.value.filter((agent) => agent.id !== agentId);
   }
 
+  async ensureAgentSession(agentId: string): Promise<string> {
+    const spaceId = this.spaceId.value;
+    if (!spaceId) throw new Error('No space selected');
+
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) throw new Error('Not connected');
+
+    const result = await invokeOperation<
+      { sessionId: string } | { rejected: true; message: string }
+    >(hub, 'agent.ensureSession', { spaceId, agentId });
+    if ('rejected' in result) throw new Error(result.message);
+    this.agents.value = this.agents.value.map((agent) =>
+      agent.id === agentId ? { ...agent, sessionId: result.sessionId } : agent
+    );
+    return result.sessionId;
+  }
+
   async listAgentReminderCounts(agentIds: string[]): Promise<Record<string, number>> {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');

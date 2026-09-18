@@ -1,4 +1,5 @@
 import type {
+  AgentModelPoolEntry,
   SpaceLongHorizonAgent,
   SpaceLongHorizonAgentTemplate,
   ThinkingLevel,
@@ -10,11 +11,20 @@ import { generateUUID, normalizeThinkingLevel } from '@hyperneo/shared';
 import { useComputed } from '@preact/signals';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { skillsStore } from '../../../lib/skills-store';
+import type { ModelConfigSource, ResolvedModelConfig } from '../agent-model-pool';
+import {
+  isStoredAsPool,
+  modelConfigFromPool,
+  poolFromModelConfig,
+  sameModelConfig,
+  storedModelConfig,
+  withoutInheritedThinkingLevel,
+} from '../agent-model-pool';
+import { ModelPoolEditor } from '../ModelPoolEditor';
 import type { NodeDraft } from '../WorkflowNodeCard';
 import { buildOverride, extractOverrideValue, isMultiAgentNode } from '../WorkflowNodeCard';
 import { ChannelRelationConfigPanel } from './ChannelRelationConfigPanel';
 import { HookEditorPanel } from './HookEditorPanel';
-import { WorkflowModelSelect, type WorkflowModelSelection } from './WorkflowModelSelect';
 
 function isLongHorizonTemplate(template: SpaceLongHorizonAgentTemplate): boolean {
   return template.labels?.includes('long-horizon') ?? false;
@@ -61,6 +71,55 @@ function normalizeNodeDraftThinkingLevel(draft: NodeDraft): NodeDraft {
     ...draft,
     thinkingLevel: stepThinkingLevel as ThinkingLevel,
     agents: normalizedAgents,
+  };
+}
+
+const POOL_EMPTY_HINT_INHERIT = 'No models — this slot inherits the agent’s models.';
+
+interface PoolDraft {
+  pool: AgentModelPoolEntry[];
+  keepAsPool: boolean;
+}
+
+function poolDraftFor(source: ModelConfigSource): PoolDraft {
+  const stored = withoutInheritedThinkingLevel(source);
+  return { pool: poolFromModelConfig(stored), keepAsPool: isStoredAsPool(stored) };
+}
+
+interface SlotModelPoolFieldProps {
+  source: ModelConfigSource;
+  onChange: (config: ResolvedModelConfig) => void;
+}
+
+function SlotModelPoolField({ source, onChange }: SlotModelPoolFieldProps) {
+  const [draft, setDraft] = useState<PoolDraft>(() => poolDraftFor(source));
+
+  useEffect(() => {
+    setDraft((prev) => {
+      const applied = modelConfigFromPool(prev.pool, prev.keepAsPool);
+      const stored = storedModelConfig(withoutInheritedThinkingLevel(source));
+      return sameModelConfig(applied, stored) ? prev : poolDraftFor(source);
+    });
+  }, [source]);
+
+  return (
+    <ModelPoolEditor
+      modelPool={draft.pool}
+      emptyHint={POOL_EMPTY_HINT_INHERIT}
+      onModelPoolChange={(next) => {
+        setDraft({ pool: next, keepAsPool: draft.keepAsPool });
+        onChange(modelConfigFromPool(next, draft.keepAsPool));
+      }}
+    />
+  );
+}
+
+function modelConfigPatch(config: ResolvedModelConfig, source: ModelConfigSource) {
+  return {
+    model: config.model ?? undefined,
+    provider: config.provider ?? undefined,
+    modelPool: config.modelPool ?? undefined,
+    thinkingLevel: config.thinkingLevel ?? source.thinkingLevel ?? undefined,
   };
 }
 
@@ -197,6 +256,7 @@ function AgentsSection({
   const selectedSingleAgentId = singleSlot?.agentId ?? step.agentId;
   const selectedSingleModel = singleSlot?.model ?? step.model;
   const selectedSingleProvider = singleSlot?.provider ?? step.provider;
+  const selectedSingleModelPool = singleSlot?.modelPool ?? step.modelPool;
   const selectedSingleThinkingLevel = safeNodeThinkingLevel(
     singleSlot?.thinkingLevel ?? step.thinkingLevel
   );
@@ -234,6 +294,7 @@ function AgentsSection({
         agentId: survivor?.agentId ?? '',
         model: survivor?.model,
         provider: survivor?.provider,
+        modelPool: survivor?.modelPool,
         thinkingLevel: survivor?.thinkingLevel,
         customPrompt: survivor?.customPrompt,
         replaceAgentPrompt: survivor?.replaceAgentPrompt,
@@ -265,11 +326,9 @@ function AgentsSection({
     );
   }
 
-  function updateAgentModel(role: string, model: string | undefined, provider?: string) {
+  function updateAgentModelConfig(role: string, config: ResolvedModelConfig) {
     updateAgents(
-      nodeAgents.map((a) =>
-        a.name === role ? { ...a, model: model || undefined, provider: provider || undefined } : a
-      )
+      nodeAgents.map((a) => (a.name === role ? { ...a, ...modelConfigPatch(config, a) } : a))
     );
   }
 
@@ -302,13 +361,13 @@ function AgentsSection({
     [singleSlot, step, onUpdate]
   );
 
-  const updateSingleModel = useCallback(
-    (model: string | undefined, selection?: WorkflowModelSelection) => {
+  const updateSingleModelConfig = useCallback(
+    (config: ResolvedModelConfig) => {
       if (singleSlot) {
-        updateAgentModel(singleSlot.name, model, selection?.provider);
+        updateAgentModelConfig(singleSlot.name, config);
         return;
       }
-      onUpdate({ ...step, model, provider: selection?.provider || undefined });
+      onUpdate({ ...step, ...modelConfigPatch(config, step) });
     },
     [singleSlot, step, onUpdate]
   );
@@ -372,6 +431,7 @@ function AgentsSection({
                 name: buildUniqueRole(primaryBaseRole),
                 model: selectedSingleModel,
                 provider: selectedSingleProvider,
+                modelPool: selectedSingleModelPool,
                 thinkingLevel: selectedSingleThinkingLevel,
                 customPrompt: selectedSingleCustomPrompt,
                 replaceAgentPrompt: selectedSingleReplaceAgentPrompt,
@@ -397,6 +457,7 @@ function AgentsSection({
                 agents: [primarySlot, secondarySlot],
                 agentId: '',
                 model: undefined,
+                modelPool: undefined,
                 thinkingLevel: undefined,
                 customPrompt: undefined,
                 replaceAgentPrompt: undefined,
@@ -437,11 +498,10 @@ function AgentsSection({
           <label class="text-xs font-medium text-fg-muted">
             LLM Model <span class="font-normal text-fg-muted">(optional override)</span>
           </label>
-          <WorkflowModelSelect
-            testId="single-agent-model-input"
-            value={selectedSingleModel}
-            provider={selectedSingleProvider}
-            onChange={updateSingleModel}
+          <SlotModelPoolField
+            key={`${step.localId}:${singleSlot?.name ?? ''}`}
+            source={singleSlot ?? step}
+            onChange={updateSingleModelConfig}
           />
         </div>
         <div class="space-y-1">
@@ -485,6 +545,7 @@ function AgentsSection({
                     name: step.name || 'agent',
                     model: selectedSingleModel,
                     provider: selectedSingleProvider,
+                    modelPool: selectedSingleModelPool,
                     thinkingLevel: selectedSingleThinkingLevel,
                     customPrompt: selectedSingleCustomPrompt,
                     replaceAgentPrompt: selectedSingleReplaceAgentPrompt,
@@ -495,6 +556,7 @@ function AgentsSection({
                 agentId: '',
                 model: undefined,
                 provider: undefined,
+                modelPool: undefined,
                 thinkingLevel: undefined,
                 customPrompt: undefined,
                 replaceAgentPrompt: undefined,
@@ -625,13 +687,10 @@ function AgentsSection({
                 <label class="text-[11px] font-medium uppercase tracking-[0.16em] text-fg-muted">
                   Model
                 </label>
-                <WorkflowModelSelect
-                  testId="agent-slot-model-input"
-                  value={sa.model}
-                  provider={sa.provider}
-                  onChange={(model, selection) =>
-                    updateAgentModel(sa.name, model, selection?.provider)
-                  }
+                <SlotModelPoolField
+                  key={`${step.localId}:${sa.name}`}
+                  source={sa}
+                  onChange={(config) => updateAgentModelConfig(sa.name, config)}
                 />
               </div>
               <div class="space-y-1">
@@ -1137,17 +1196,10 @@ export function NodeConfigPanel({
             <label class="text-xs font-medium text-fg-muted">
               LLM Model <span class="font-normal text-fg-muted">(optional override)</span>
             </label>
-            <WorkflowModelSelect
-              testId="slot-prompts-model-input"
-              value={slot.model}
-              provider={slot.provider}
-              onChange={(model, selection) =>
-                updateSlot({
-                  ...slot,
-                  model: model || undefined,
-                  provider: selection?.provider || undefined,
-                })
-              }
+            <SlotModelPoolField
+              key={`${step.localId}:${panelView.role}`}
+              source={slot}
+              onChange={(config) => updateSlot({ ...slot, ...modelConfigPatch(config, slot) })}
             />
           </div>
           <div class="space-y-1">

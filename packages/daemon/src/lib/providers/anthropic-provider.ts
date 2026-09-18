@@ -32,6 +32,10 @@ const logger = new Logger('anthropic-provider');
 const OAUTH_FLOW_TIMEOUT_MS = 5 * 60 * 1000;
 const OAUTH_REFRESH_WINDOW_MS = 10 * 60 * 1000;
 
+const STORED_CREDENTIAL_ENV_KEYS = ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN'] as const;
+
+type StoredCredentialEnvKey = (typeof STORED_CREDENTIAL_ENV_KEYS)[number];
+
 function isFullVersionId(modelId: string): boolean {
   return /^claude-(sonnet|opus|haiku|fable)-[\d-]+$/.test(modelId);
 }
@@ -303,13 +307,23 @@ export class AnthropicProvider implements Provider {
     return !!this.getApiKey();
   }
 
+  private storedCredentialEnvVar(): { key: StoredCredentialEnvKey; value: string } | null {
+    const credentials = this.credentials;
+    if (credentials?.type === 'api_key' && credentials.apiKey) {
+      return { key: 'ANTHROPIC_API_KEY', value: credentials.apiKey };
+    }
+    if (credentials?.type === 'oauth' && credentials.accessToken) {
+      return { key: 'CLAUDE_CODE_OAUTH_TOKEN', value: credentials.accessToken };
+    }
+    return null;
+  }
+
   getApiKey(): string | undefined {
     return (
+      this.storedCredentialEnvVar()?.value ||
       this.env.ANTHROPIC_API_KEY ||
       this.env.CLAUDE_CODE_OAUTH_TOKEN ||
-      this.env.ANTHROPIC_AUTH_TOKEN ||
-      (this.credentials?.type === 'api_key' ? this.credentials.apiKey : undefined) ||
-      (this.credentials?.type === 'oauth' ? this.credentials.accessToken : undefined)
+      this.env.ANTHROPIC_AUTH_TOKEN
     );
   }
 
@@ -525,15 +539,13 @@ export class AnthropicProvider implements Provider {
 
   buildSdkConfig(): ProviderSdkConfig {
     const envVars: Record<string, string> = {};
-    const hasEnvAuth =
-      !!this.env.ANTHROPIC_API_KEY ||
-      !!this.env.CLAUDE_CODE_OAUTH_TOKEN ||
-      (!!this.env.ANTHROPIC_AUTH_TOKEN &&
-        !this.env.ANTHROPIC_AUTH_TOKEN.startsWith('anthropic-copilot-proxy:'));
-    if (!hasEnvAuth && this.credentials?.type === 'api_key') {
-      envVars.ANTHROPIC_API_KEY = this.credentials.apiKey;
-    } else if (!hasEnvAuth && this.credentials?.type === 'oauth' && this.credentials.accessToken) {
-      envVars.CLAUDE_CODE_OAUTH_TOKEN = this.credentials.accessToken;
+    const stored = this.storedCredentialEnvVar();
+    if (stored) {
+      envVars[stored.key] = stored.value;
+      const ambient = STORED_CREDENTIAL_ENV_KEYS.find((key) => key !== stored.key);
+      if (ambient && this.env[ambient]) {
+        envVars[ambient] = '';
+      }
     }
 
     return {
@@ -559,7 +571,11 @@ export class AnthropicProvider implements Provider {
 
     for (const [key, value] of Object.entries(envVars)) {
       originals.set(key, process.env[key]);
-      process.env[key] = value;
+      if (value === '') {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
     }
 
     return () => {

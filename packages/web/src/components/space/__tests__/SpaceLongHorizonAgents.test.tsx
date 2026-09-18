@@ -16,6 +16,7 @@ const {
   mockUpdateTemplate,
   mockDeleteTemplate,
   mockUpdateAgent,
+  mockEnsureAgentSession,
   mockNavigateToSpaceSession,
 } = vi.hoisted(() => {
   function makeSignal<T>(initial: T) {
@@ -33,6 +34,7 @@ const {
     mockUpdateTemplate: vi.fn().mockResolvedValue(undefined),
     mockDeleteTemplate: vi.fn().mockResolvedValue(undefined),
     mockUpdateAgent: vi.fn().mockResolvedValue(undefined),
+    mockEnsureAgentSession: vi.fn().mockResolvedValue('space:agent:space-1:lh-1'),
     mockNavigateToSpaceSession: vi.fn(),
   };
 });
@@ -52,6 +54,7 @@ vi.mock('../../../lib/space-store', () => ({
       updateTemplate: mockUpdateTemplate,
       deleteTemplate: mockDeleteTemplate,
       updateAgent: mockUpdateAgent,
+      ensureAgentSession: mockEnsureAgentSession,
     };
   },
 }));
@@ -216,14 +219,17 @@ describe('SpaceLongHorizonAgents', () => {
     mockUpdateTemplate.mockClear();
     mockDeleteTemplate.mockClear();
     mockUpdateAgent.mockClear();
+    mockEnsureAgentSession.mockClear();
+    mockEnsureAgentSession.mockResolvedValue('space:agent:space-1:lh-1');
     mockNavigateToSpaceSession.mockClear();
+    vi.mocked(toast.error).mockClear();
   });
 
   afterEach(() => {
     cleanup();
   });
 
-  it('renders the Glass Workspace summary with Templates above the Agents section', () => {
+  it('renders the Glass Workspace summary with Agents above the Templates section', () => {
     mockAgents.value = [makeLongHorizonAgent()];
     mockTemplates.value = [
       {
@@ -248,7 +254,7 @@ describe('SpaceLongHorizonAgents', () => {
     const templatesHeading = getByRole('heading', { name: 'Templates · 1' });
     const agentsHeading = getByRole('heading', { name: 'Agents · 1' });
     expect(
-      templatesHeading.compareDocumentPosition(agentsHeading) & Node.DOCUMENT_POSITION_FOLLOWING
+      agentsHeading.compareDocumentPosition(templatesHeading) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy();
     expect(getByText('Research Long Horizon')).toBeTruthy();
     expect(getByText('QA Engineer')).toBeTruthy();
@@ -460,7 +466,7 @@ describe('SpaceLongHorizonAgents', () => {
     );
   });
 
-  it('clears the fixed model when a dual-state template pool entry is edited', async () => {
+  it('shows the fixed model, not the inert pool, for a dual-state template', () => {
     mockTemplates.value = [
       makeTemplate({
         key: 'scribe',
@@ -478,8 +484,34 @@ describe('SpaceLongHorizonAgents', () => {
     const { getByRole, getAllByTestId } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
 
     fireEvent.click(getByRole('button', { name: 'Edit template Scribe' }));
-    fireEvent.change(getAllByTestId('pool-entry-model-select')[0], {
-      target: { value: 'claude-sonnet-4-6' },
+    const entries = getAllByTestId('pool-entry-model-select') as HTMLSelectElement[];
+    expect(entries).toHaveLength(1);
+    expect(entries[0].value).toBe('claude-sonnet-4-6');
+  });
+
+  it('clears the fixed model when a dual-state template grows a second entry', async () => {
+    mockTemplates.value = [
+      makeTemplate({
+        key: 'scribe',
+        handle: 'scribe',
+        displayName: 'Scribe',
+        model: 'claude-sonnet-4-6',
+        provider: 'anthropic',
+        modelPool: [
+          { model: 'claude-haiku-4-5', provider: 'anthropic', maxConcurrent: 1, weight: 100 },
+        ],
+      }),
+    ];
+    mockUserTemplateKeys.value = new Set(['scribe']);
+
+    const { getByRole, getByTestId, getAllByTestId } = render(
+      <SpaceLongHorizonAgents spaceId="space-1" />
+    );
+
+    fireEvent.click(getByRole('button', { name: 'Edit template Scribe' }));
+    fireEvent.click(getByTestId('pool-add-model-button'));
+    fireEvent.change(getAllByTestId('pool-entry-model-select')[1], {
+      target: { value: 'claude-haiku-4-5' },
     });
     fireEvent.click(getByRole('button', { name: 'Save changes' }));
 
@@ -490,6 +522,7 @@ describe('SpaceLongHorizonAgents', () => {
         model: null,
         modelPool: [
           { model: 'claude-sonnet-4-6', provider: 'anthropic', maxConcurrent: 1, weight: 100 },
+          { model: 'claude-haiku-4-5', provider: 'anthropic', maxConcurrent: 1, weight: 100 },
         ],
       })
     );
@@ -504,9 +537,10 @@ describe('SpaceLongHorizonAgents', () => {
     const { getByRole, getByTestId } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
 
     fireEvent.click(getByRole('button', { name: 'Edit template Scribe' }));
-    const modelSelect = getByTestId('space-agent-model-select') as HTMLSelectElement;
-    modelSelect.value = 'claude-sonnet-4-6';
-    fireEvent.change(modelSelect);
+    fireEvent.click(getByTestId('pool-add-model-button'));
+    fireEvent.change(getByTestId('pool-entry-model-select'), {
+      target: { value: 'claude-sonnet-4-6' },
+    });
     fireEvent.click(getByRole('button', { name: 'Save changes' }));
 
     await waitFor(() => expect(mockUpdateTemplate).toHaveBeenCalledTimes(1));
@@ -745,9 +779,10 @@ describe('SpaceLongHorizonAgents', () => {
     fireEvent.input(getByPlaceholderText('e.g. release-readiness'), {
       target: { value: 'release-readiness' },
     });
-    const modelSelect = getByTestId('space-agent-model-select') as HTMLSelectElement;
-    modelSelect.value = 'claude-sonnet-4-6';
-    fireEvent.change(modelSelect);
+    fireEvent.click(getByTestId('pool-add-model-button'));
+    fireEvent.change(getByTestId('pool-entry-model-select'), {
+      target: { value: 'claude-sonnet-4-6' },
+    });
     const thinkingSelect = getByTestId('template-model-fields-thinking-level') as HTMLSelectElement;
     thinkingSelect.value = 'think16k';
     fireEvent.change(thinkingSelect);
@@ -815,8 +850,8 @@ describe('SpaceLongHorizonAgents', () => {
     expect(mockCreateTemplate.mock.calls[0][0].settingSources).toBeNull();
   });
 
-  it('creates a template with a model pool and no pinned model', async () => {
-    const { getByRole, getByTestId, getByPlaceholderText } = render(
+  it('creates a template with a multi-model pool and no pinned model', async () => {
+    const { getByRole, getByTestId, getAllByTestId, getByPlaceholderText } = render(
       <SpaceLongHorizonAgents spaceId="space-1" />
     );
 
@@ -830,9 +865,13 @@ describe('SpaceLongHorizonAgents', () => {
     fireEvent.input(getByPlaceholderText('e.g. release-readiness'), {
       target: { value: 'release-readiness' },
     });
-    fireEvent.click(getByTestId('agent-model-mode-pool'));
-    fireEvent.change(getByTestId('pool-entry-model-select'), {
+    fireEvent.click(getByTestId('pool-add-model-button'));
+    fireEvent.change(getAllByTestId('pool-entry-model-select')[0], {
       target: { value: 'claude-sonnet-4-6' },
+    });
+    fireEvent.click(getByTestId('pool-add-model-button'));
+    fireEvent.change(getAllByTestId('pool-entry-model-select')[1], {
+      target: { value: 'claude-haiku-4-5' },
     });
     fireEvent.click(getByRole('button', { name: 'Create template' }));
 
@@ -840,13 +879,14 @@ describe('SpaceLongHorizonAgents', () => {
     const params = mockCreateTemplate.mock.calls[0][0];
     expect(params.modelPool).toEqual([
       { model: 'claude-sonnet-4-6', provider: 'anthropic', maxConcurrent: 1, weight: 100 },
+      { model: 'claude-haiku-4-5', provider: 'anthropic', maxConcurrent: 1, weight: 100 },
     ]);
     expect(params.model).toBeNull();
     expect(params.provider).toBeNull();
   });
 
-  it('omits modelPool when creating a template in single mode', async () => {
-    const { getByRole, getByTestId, getByPlaceholderText } = render(
+  it('omits modelPool when the template pool is left empty', async () => {
+    const { getByRole, getByPlaceholderText } = render(
       <SpaceLongHorizonAgents spaceId="space-1" />
     );
 
@@ -860,12 +900,11 @@ describe('SpaceLongHorizonAgents', () => {
     fireEvent.input(getByPlaceholderText('e.g. release-readiness'), {
       target: { value: 'release-readiness' },
     });
-    fireEvent.click(getByTestId('agent-model-mode-pool'));
-    fireEvent.click(getByTestId('agent-model-mode-single'));
     fireEvent.click(getByRole('button', { name: 'Create template' }));
 
     await waitFor(() => expect(mockCreateTemplate).toHaveBeenCalledTimes(1));
     expect(mockCreateTemplate.mock.calls[0][0].modelPool).toBeNull();
+    expect(mockCreateTemplate.mock.calls[0][0].model).toBeNull();
   });
 
   it('drops unnamed pool entries when creating a template', async () => {
@@ -883,20 +922,25 @@ describe('SpaceLongHorizonAgents', () => {
     fireEvent.input(getByPlaceholderText('e.g. release-readiness'), {
       target: { value: 'release-readiness' },
     });
-    fireEvent.click(getByTestId('agent-model-mode-pool'));
     fireEvent.click(getByTestId('pool-add-model-button'));
-    fireEvent.change(getAllByTestId('pool-entry-model-select')[1], {
+    fireEvent.click(getByTestId('pool-add-model-button'));
+    fireEvent.click(getByTestId('pool-add-model-button'));
+    fireEvent.change(getAllByTestId('pool-entry-model-select')[0], {
       target: { value: 'claude-haiku-4-5' },
+    });
+    fireEvent.change(getAllByTestId('pool-entry-model-select')[2], {
+      target: { value: 'claude-sonnet-4-6' },
     });
     fireEvent.click(getByRole('button', { name: 'Create template' }));
 
     await waitFor(() => expect(mockCreateTemplate).toHaveBeenCalledTimes(1));
     expect(mockCreateTemplate.mock.calls[0][0].modelPool).toEqual([
       { model: 'claude-haiku-4-5', provider: 'anthropic', maxConcurrent: 1, weight: 100 },
+      { model: 'claude-sonnet-4-6', provider: 'anthropic', maxConcurrent: 1, weight: 100 },
     ]);
   });
 
-  it('clears the pinned model when creating a template in pool mode', async () => {
+  it('replaces an earlier pool choice when the entry model is changed', async () => {
     const { getByRole, getByTestId, getByPlaceholderText } = render(
       <SpaceLongHorizonAgents spaceId="space-1" />
     );
@@ -911,10 +955,10 @@ describe('SpaceLongHorizonAgents', () => {
     fireEvent.input(getByPlaceholderText('e.g. release-readiness'), {
       target: { value: 'release-readiness' },
     });
-    const modelSelect = getByTestId('space-agent-model-select') as HTMLSelectElement;
-    modelSelect.value = 'claude-sonnet-4-6';
-    fireEvent.change(modelSelect);
-    fireEvent.click(getByTestId('agent-model-mode-pool'));
+    fireEvent.click(getByTestId('pool-add-model-button'));
+    fireEvent.change(getByTestId('pool-entry-model-select'), {
+      target: { value: 'claude-sonnet-4-6' },
+    });
     fireEvent.change(getByTestId('pool-entry-model-select'), {
       target: { value: 'claude-haiku-4-5' },
     });
@@ -922,14 +966,12 @@ describe('SpaceLongHorizonAgents', () => {
 
     await waitFor(() => expect(mockCreateTemplate).toHaveBeenCalledTimes(1));
     const params = mockCreateTemplate.mock.calls[0][0];
-    expect(params.model).toBeNull();
-    expect(params.provider).toBeNull();
-    expect(params.modelPool).toEqual([
-      { model: 'claude-haiku-4-5', provider: 'anthropic', maxConcurrent: 1, weight: 100 },
-    ]);
+    expect(params.model).toBe('claude-haiku-4-5');
+    expect(params.provider).toBe('anthropic');
+    expect(params.modelPool).toBeNull();
   });
 
-  it('discards the single-model selection when switching to pool mode', async () => {
+  it('clears the model when the last pool entry is removed', async () => {
     const { getByRole, getByTestId, getByPlaceholderText } = render(
       <SpaceLongHorizonAgents spaceId="space-1" />
     );
@@ -944,18 +986,18 @@ describe('SpaceLongHorizonAgents', () => {
     fireEvent.input(getByPlaceholderText('e.g. release-readiness'), {
       target: { value: 'release-readiness' },
     });
-    const modelSelect = getByTestId('space-agent-model-select') as HTMLSelectElement;
-    modelSelect.value = 'claude-sonnet-4-6';
-    fireEvent.change(modelSelect);
-    fireEvent.click(getByTestId('agent-model-mode-pool'));
-    fireEvent.click(getByTestId('agent-model-mode-single'));
-    expect((getByTestId('space-agent-model-select') as HTMLSelectElement).value).toBe('');
+    fireEvent.click(getByTestId('pool-add-model-button'));
+    fireEvent.change(getByTestId('pool-entry-model-select'), {
+      target: { value: 'claude-sonnet-4-6' },
+    });
+    fireEvent.click(getByTestId('pool-entry-remove-button'));
     const thinkingSelect = getByTestId('template-model-fields-thinking-level') as HTMLSelectElement;
     expect(thinkingSelect.value).toBe('');
     fireEvent.click(getByRole('button', { name: 'Create template' }));
 
     await waitFor(() => expect(mockCreateTemplate).toHaveBeenCalledTimes(1));
     expect(mockCreateTemplate.mock.calls[0][0].model).toBeNull();
+    expect(mockCreateTemplate.mock.calls[0][0].modelPool).toBeNull();
   });
 
   it('shows the store error and keeps the modal open when create fails', async () => {
@@ -1163,7 +1205,35 @@ describe('SpaceLongHorizonAgents', () => {
     expect(chipInput(container, 'Bash').disabled).toBe(true);
   });
 
-  it('creates an agent with a model pool and no pinned model', async () => {
+  it('creates an agent with a multi-model pool and no pinned model', async () => {
+    const { getByRole, getByTestId, getAllByTestId, container } = render(
+      <SpaceLongHorizonAgents spaceId="space-1" />
+    );
+
+    fireEvent.click(getByRole('button', { name: '+ Custom agent' }));
+    const textInputs = container.querySelectorAll('input[type="text"]');
+    fireEvent.input(textInputs[0], { target: { value: 'Runner' } });
+    fireEvent.input(textInputs[1], { target: { value: 'runner' } });
+    fireEvent.click(getByTestId('pool-add-model-button'));
+    fireEvent.change(getAllByTestId('pool-entry-model-select')[0], {
+      target: { value: 'claude-sonnet-4-6' },
+    });
+    fireEvent.click(getByTestId('pool-add-model-button'));
+    fireEvent.change(getAllByTestId('pool-entry-model-select')[1], {
+      target: { value: 'claude-haiku-4-5' },
+    });
+    fireEvent.click(getByRole('button', { name: 'Create agent' }));
+
+    await waitFor(() => expect(mockCreateAgent).toHaveBeenCalledTimes(1));
+    const params = mockCreateAgent.mock.calls[0][0];
+    expect(params.modelPool).toEqual([
+      { model: 'claude-sonnet-4-6', provider: 'anthropic', maxConcurrent: 1, weight: 100 },
+      { model: 'claude-haiku-4-5', provider: 'anthropic', maxConcurrent: 1, weight: 100 },
+    ]);
+    expect(params.model).toBeNull();
+  });
+
+  it('stores a lone default pool entry as the scalar model, not a pool', async () => {
     const { getByRole, getByTestId, container } = render(
       <SpaceLongHorizonAgents spaceId="space-1" />
     );
@@ -1172,7 +1242,7 @@ describe('SpaceLongHorizonAgents', () => {
     const textInputs = container.querySelectorAll('input[type="text"]');
     fireEvent.input(textInputs[0], { target: { value: 'Runner' } });
     fireEvent.input(textInputs[1], { target: { value: 'runner' } });
-    fireEvent.click(getByTestId('agent-model-mode-pool'));
+    fireEvent.click(getByTestId('pool-add-model-button'));
     fireEvent.change(getByTestId('pool-entry-model-select'), {
       target: { value: 'claude-sonnet-4-6' },
     });
@@ -1180,13 +1250,36 @@ describe('SpaceLongHorizonAgents', () => {
 
     await waitFor(() => expect(mockCreateAgent).toHaveBeenCalledTimes(1));
     const params = mockCreateAgent.mock.calls[0][0];
-    expect(params.modelPool).toEqual([
-      { model: 'claude-sonnet-4-6', provider: 'anthropic', maxConcurrent: 1, weight: 100 },
-    ]);
-    expect(params.model).toBeNull();
+    expect(params.model).toBe('claude-sonnet-4-6');
+    expect(params.provider).toBe('anthropic');
+    expect(params.modelPool).toBeUndefined();
   });
 
-  it('omits modelPool when creating an agent in single mode', async () => {
+  it('keeps a lone pool entry as a pool when its concurrency cap is not the default', async () => {
+    const { getByRole, getByTestId, container } = render(
+      <SpaceLongHorizonAgents spaceId="space-1" />
+    );
+
+    fireEvent.click(getByRole('button', { name: '+ Custom agent' }));
+    const textInputs = container.querySelectorAll('input[type="text"]');
+    fireEvent.input(textInputs[0], { target: { value: 'Runner' } });
+    fireEvent.input(textInputs[1], { target: { value: 'runner' } });
+    fireEvent.click(getByTestId('pool-add-model-button'));
+    fireEvent.change(getByTestId('pool-entry-model-select'), {
+      target: { value: 'claude-sonnet-4-6' },
+    });
+    fireEvent.input(getByTestId('pool-entry-max-input'), { target: { value: '3' } });
+    fireEvent.click(getByRole('button', { name: 'Create agent' }));
+
+    await waitFor(() => expect(mockCreateAgent).toHaveBeenCalledTimes(1));
+    const params = mockCreateAgent.mock.calls[0][0];
+    expect(params.model).toBeNull();
+    expect(params.modelPool).toEqual([
+      { model: 'claude-sonnet-4-6', provider: 'anthropic', maxConcurrent: 3, weight: 100 },
+    ]);
+  });
+
+  it('omits modelPool when the agent pool is left empty', async () => {
     const { getByRole, container } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
 
     fireEvent.click(getByRole('button', { name: '+ Custom agent' }));
@@ -1213,7 +1306,61 @@ describe('SpaceLongHorizonAgents', () => {
     expect(mockUpdateAgent.mock.calls[0][1].modelPool).toEqual(pool);
   });
 
-  it('clears the pool when saving after switching to single mode', async () => {
+  it('keeps a stored lone default pool entry as a pool on an untouched save', async () => {
+    const pool = [
+      { model: 'claude-haiku-4-5', provider: 'anthropic', maxConcurrent: 1, weight: 100 },
+    ];
+    mockAgents.value = [makeLongHorizonAgent({ model: null, modelPool: pool })];
+    const { getByRole } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByRole('button', { name: 'Edit Research Long Horizon' }));
+    fireEvent.click(getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
+    const params = mockUpdateAgent.mock.calls[0][1];
+    expect(params.modelPool).toEqual(pool);
+    expect(params.model).toBeNull();
+  });
+
+  it('preserves the agent thinking level when the model stays a pool', async () => {
+    mockAgents.value = [
+      makeLongHorizonAgent({
+        model: null,
+        thinkingLevel: 'think16k',
+        modelPool: [
+          { model: 'claude-haiku-4-5', provider: 'anthropic', maxConcurrent: 2, weight: 40 },
+          { model: 'claude-sonnet-4-6', provider: 'anthropic', maxConcurrent: 2, weight: 60 },
+        ],
+      }),
+    ];
+    const { getByRole } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByRole('button', { name: 'Edit Research Long Horizon' }));
+    fireEvent.click(getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
+    const params = mockUpdateAgent.mock.calls[0][1];
+    expect(params.thinkingLevel).toBe('think16k');
+    expect(params.modelPool).toHaveLength(2);
+  });
+
+  it('preserves the agent thinking level when no model is pinned at all', async () => {
+    mockAgents.value = [
+      makeLongHorizonAgent({ model: null, modelPool: null, thinkingLevel: 'think32k' }),
+    ];
+    const { getByRole } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByRole('button', { name: 'Edit Research Long Horizon' }));
+    fireEvent.click(getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
+    const params = mockUpdateAgent.mock.calls[0][1];
+    expect(params.thinkingLevel).toBe('think32k');
+    expect(params.model).toBeNull();
+    expect(params.modelPool).toBeNull();
+  });
+
+  it('clears the pool when its only entry is removed', async () => {
     mockAgents.value = [
       makeLongHorizonAgent({
         modelPool: [
@@ -1224,25 +1371,78 @@ describe('SpaceLongHorizonAgents', () => {
     const { getByRole, getByTestId } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
 
     fireEvent.click(getByRole('button', { name: 'Edit Research Long Horizon' }));
-    fireEvent.click(getByTestId('agent-model-mode-single'));
+    fireEvent.click(getByTestId('pool-entry-remove-button'));
     fireEvent.click(getByRole('button', { name: 'Save changes' }));
 
     await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
     expect(mockUpdateAgent.mock.calls[0][1].modelPool).toBeNull();
+    expect(mockUpdateAgent.mock.calls[0][1].model).toBeNull();
   });
 
-  it('clears the pinned model when switching to pool mode', async () => {
-    mockAgents.value = [makeLongHorizonAgent({ model: 'claude-sonnet-4-6' })];
-    const { getByRole, getByTestId } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+  it('seeds a one-entry pool from an existing scalar model and saves it back unchanged', async () => {
+    mockAgents.value = [
+      makeLongHorizonAgent({ model: 'claude-sonnet-4-6', provider: 'anthropic' }),
+    ];
+    const { getByRole, getAllByTestId, getByTestId } = render(
+      <SpaceLongHorizonAgents spaceId="space-1" />
+    );
 
     fireEvent.click(getByRole('button', { name: 'Edit Research Long Horizon' }));
-    fireEvent.click(getByTestId('agent-model-mode-pool'));
+    expect(getAllByTestId('pool-entry')).toHaveLength(1);
+    expect((getByTestId('pool-entry-model-select') as HTMLSelectElement).value).toBe(
+      'claude-sonnet-4-6'
+    );
     fireEvent.click(getByRole('button', { name: 'Save changes' }));
 
     await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
     const params = mockUpdateAgent.mock.calls[0][1];
-    expect(params.model).toBeNull();
+    expect(params.model).toBe('claude-sonnet-4-6');
     expect(params.modelPool).toBeNull();
+  });
+
+  it('migrates an agent-level thinking level onto the seeded pool entry', async () => {
+    mockAgents.value = [
+      makeLongHorizonAgent({
+        model: 'claude-sonnet-4-6',
+        provider: 'anthropic',
+        thinkingLevel: 'think16k',
+      }),
+    ];
+    const { getByRole, getByTestId } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByRole('button', { name: 'Edit Research Long Horizon' }));
+    expect((getByTestId('pool-entry-thinking-select') as HTMLSelectElement).value).toBe('think16k');
+    fireEvent.click(getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
+    const params = mockUpdateAgent.mock.calls[0][1];
+    expect(params.model).toBe('claude-sonnet-4-6');
+    expect(params.thinkingLevel).toBe('think16k');
+    expect(params.modelPool).toBeNull();
+  });
+
+  it('drops the standalone agent thinking-level control', () => {
+    mockAgents.value = [makeLongHorizonAgent({ model: 'claude-sonnet-4-6' })];
+    const { getByRole, getAllByTestId, queryAllByRole } = render(
+      <SpaceLongHorizonAgents spaceId="space-1" />
+    );
+
+    fireEvent.click(getByRole('button', { name: 'Edit Research Long Horizon' }));
+    expect(getAllByTestId('pool-entry-thinking-select')).toHaveLength(1);
+    expect(queryAllByRole('option', { name: 'Use app default' })).toHaveLength(0);
+  });
+
+  it('drops the single/pool mode toggle from the agent editor', () => {
+    mockAgents.value = [makeLongHorizonAgent({ model: 'claude-sonnet-4-6' })];
+    const { getByRole, getByTestId, queryByTestId } = render(
+      <SpaceLongHorizonAgents spaceId="space-1" />
+    );
+
+    fireEvent.click(getByRole('button', { name: 'Edit Research Long Horizon' }));
+    expect(getByTestId('agent-model-pool')).toBeTruthy();
+    expect(queryByTestId('agent-model-mode-single')).toBeNull();
+    expect(queryByTestId('agent-model-mode-pool')).toBeNull();
+    expect(queryByTestId('space-agent-model-select')).toBeNull();
   });
 
   it('drops unnamed pool entries when saving', async () => {
@@ -1252,25 +1452,30 @@ describe('SpaceLongHorizonAgents', () => {
     );
 
     fireEvent.click(getByRole('button', { name: 'Edit Research Long Horizon' }));
-    fireEvent.click(getByTestId('agent-model-mode-pool'));
     fireEvent.click(getByTestId('pool-add-model-button'));
-    fireEvent.change(getAllByTestId('pool-entry-model-select')[1], {
+    fireEvent.click(getByTestId('pool-add-model-button'));
+    fireEvent.click(getByTestId('pool-add-model-button'));
+    fireEvent.change(getAllByTestId('pool-entry-model-select')[0], {
       target: { value: 'claude-haiku-4-5' },
+    });
+    fireEvent.change(getAllByTestId('pool-entry-model-select')[2], {
+      target: { value: 'claude-sonnet-4-6' },
     });
     fireEvent.click(getByRole('button', { name: 'Save changes' }));
 
     await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
     expect(mockUpdateAgent.mock.calls[0][1].modelPool).toEqual([
       { model: 'claude-haiku-4-5', provider: 'anthropic', maxConcurrent: 1, weight: 100 },
+      { model: 'claude-sonnet-4-6', provider: 'anthropic', maxConcurrent: 1, weight: 100 },
     ]);
   });
 
-  it('persists the selected provider when changing the single model', async () => {
+  it('persists the selected provider when changing the sole pool entry model', async () => {
     mockAgents.value = [makeLongHorizonAgent({ model: 'claude-sonnet-4-6', provider: null })];
     const { getByRole, getByTestId } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
 
     fireEvent.click(getByRole('button', { name: 'Edit Research Long Horizon' }));
-    fireEvent.change(getByTestId('space-agent-model-select'), {
+    fireEvent.change(getByTestId('pool-entry-model-select'), {
       target: { value: 'claude-haiku-4-5' },
     });
     fireEvent.click(getByRole('button', { name: 'Save changes' }));
@@ -1294,21 +1499,26 @@ describe('SpaceLongHorizonAgents', () => {
     expect(mockUpdateAgent.mock.calls[0][1].provider).toBeUndefined();
   });
 
-  it('clears the provider when switching a provider-qualified model to pool mode', async () => {
+  it('clears the provider when a provider-qualified model grows into a pool', async () => {
     mockAgents.value = [
       makeLongHorizonAgent({ model: 'claude-sonnet-4-6', provider: 'anthropic' }),
     ];
-    const { getByRole, getByTestId } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+    const { getByRole, getByTestId, getAllByTestId } = render(
+      <SpaceLongHorizonAgents spaceId="space-1" />
+    );
 
     fireEvent.click(getByRole('button', { name: 'Edit Research Long Horizon' }));
-    fireEvent.click(getByTestId('agent-model-mode-pool'));
+    fireEvent.click(getByTestId('pool-add-model-button'));
+    fireEvent.change(getAllByTestId('pool-entry-model-select')[1], {
+      target: { value: 'claude-haiku-4-5' },
+    });
     fireEvent.click(getByRole('button', { name: 'Save changes' }));
 
     await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
     const params = mockUpdateAgent.mock.calls[0][1];
     expect(params.model).toBeNull();
     expect(params.provider).toBeNull();
-    expect(params.modelPool).toBeNull();
+    expect(params.modelPool).toHaveLength(2);
   });
 
   it('omits the provider key on an untouched pool-mode save', async () => {
@@ -1676,11 +1886,11 @@ describe('SpaceLongHorizonAgents', () => {
     );
   });
 
-  it('renders a readable empty agents state pointing at the templates above', () => {
+  it('renders a readable empty agents state pointing at the templates below', () => {
     const { getByText } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
 
     expect(getByText('No agents yet')).toBeTruthy();
-    expect(getByText('Add a custom agent or choose a template above.')).toBeTruthy();
+    expect(getByText('Add a custom agent or choose a template below.')).toBeTruthy();
   });
 
   it('shows the unified record for a shared handle (worker record no longer wins)', () => {
@@ -1723,17 +1933,66 @@ describe('SpaceLongHorizonAgents', () => {
 
     const liveCard = getByText('Research Long Horizon').closest('[role="button"]');
     expect(liveCard?.textContent).toContain('Session');
-    expect(getByText('Draft Agent').closest('[role="button"]')).toBeNull();
-    expect(getByText('No session')).toBeTruthy();
+    expect(getByText('Draft Agent').closest('[role="button"]')).toBeTruthy();
+    expect(getByText('Start session')).toBeTruthy();
   });
 
-  it('keeps a sessionless instance card inert', () => {
+  it('opens the first session of a sessionless agent and navigates to it', async () => {
     mockAgents.value = [makeLongHorizonAgent({ sessionId: null })];
+    mockEnsureAgentSession.mockResolvedValue('space:agent:space-1:lh-1');
+
+    const { getByText } = render(
+      <SpaceLongHorizonAgents spaceId="space-1" navigationSpaceId="space-slug" />
+    );
+
+    fireEvent.click(getByText('Research Long Horizon').closest('[role="button"]')!);
+
+    await waitFor(() => {
+      expect(mockNavigateToSpaceSession).toHaveBeenCalledWith(
+        'space-slug',
+        'space:agent:space-1:lh-1'
+      );
+    });
+    expect(mockEnsureAgentSession).toHaveBeenCalledWith('lh-1');
+  });
+
+  it('ignores Enter on a nested action button instead of opening the session', () => {
+    mockAgents.value = [makeLongHorizonAgent({ sessionId: null })];
+
+    const { getByRole } = render(
+      <SpaceLongHorizonAgents spaceId="space-1" navigationSpaceId="space-slug" />
+    );
+
+    fireEvent.keyDown(getByRole('button', { name: 'Edit Research Long Horizon' }), {
+      key: 'Enter',
+    });
+
+    expect(mockEnsureAgentSession).not.toHaveBeenCalled();
+    expect(mockNavigateToSpaceSession).not.toHaveBeenCalled();
+  });
+
+  it('navigates to an existing session without opening a new one', () => {
+    mockAgents.value = [makeLongHorizonAgent()];
 
     const { getByText } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
 
-    fireEvent.click(getByText('Research Long Horizon'));
+    fireEvent.click(getByText('Research Long Horizon').closest('[role="button"]')!);
 
+    expect(mockNavigateToSpaceSession).toHaveBeenCalledWith('space-1', 'session-research');
+    expect(mockEnsureAgentSession).not.toHaveBeenCalled();
+  });
+
+  it('reports a failed session start instead of navigating nowhere', async () => {
+    mockAgents.value = [makeLongHorizonAgent({ sessionId: null })];
+    mockEnsureAgentSession.mockRejectedValue(new Error('Space is paused'));
+
+    const { getByText } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByText('Research Long Horizon').closest('[role="button"]')!);
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith('Space is paused');
+    });
     expect(mockNavigateToSpaceSession).not.toHaveBeenCalled();
   });
 

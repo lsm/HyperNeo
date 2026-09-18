@@ -84,6 +84,16 @@ describe('SpaceTemplatesPanel', () => {
     expect(getByTestId('agent-template-group-custom')).toBeTruthy();
   });
 
+  it('stacks templates as list rows rather than a multi-column card grid', () => {
+    const { getByTestId } = renderPanel({
+      templates: [makeTemplate('a'), makeTemplate('b')],
+    });
+
+    const rows = getByTestId('agent-template-group-custom').lastElementChild as HTMLElement;
+    expect(rows.children).toHaveLength(2);
+    expect(rows.className).not.toContain('grid');
+  });
+
   it('hands a clicked template back to the host rather than handling it', () => {
     const { props, getByText } = renderPanel();
 
