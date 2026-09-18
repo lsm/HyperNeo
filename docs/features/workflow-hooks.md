@@ -1,6 +1,6 @@
 # Workflow hooks
 
-Workflow hooks replace legacy workflow gate polling for MCP action checks. They run inside the daemon before a node-agent MCP action such as `send_message`, `save_artifact`, or `approve_task`. Hook results are persisted before the underlying action handler runs, so `side_effect` classification means "non-blocking pre-action side effect", not post-success handling.
+Workflow hooks replace legacy workflow gate polling for MCP action checks. They run inside the daemon before the node-agent `send_message` MCP action. Hook results are persisted before the underlying action handler runs, so `side_effect` classification means "non-blocking pre-action side effect", not post-success handling.
 
 ## Configure hooks
 
@@ -23,7 +23,7 @@ Fields:
 
 - `sourceNode`: workflow node name, not node ID.
 - `targetNode`: workflow node name used for `send_message` target matching. Omit it for non-`send_message` methods, because those actions have no target node to compare and target-specific hooks will not match.
-- `method`: MCP method that triggers hook.
+- `method`: MCP method that triggers hook. `save_artifact`, `create_standalone_task`, `mark_complete`, `submit_for_approval`, and `approve_task` are accepted by validation and persisted, but no handler for them runs hooks, so a hook configured on one of them never fires.
 - `classification`: `validation` blocks or patches action before handler; `side_effect` records state or emits follow-up after validation.
 - `authorizedCallers`: fail-closed caller allowlist. Include node name and optional agent slots.
 - `validator`: script validator or built-in `pr_ready` validator. Other built-in IDs exist in shared types but create/update validation rejects them until implemented.

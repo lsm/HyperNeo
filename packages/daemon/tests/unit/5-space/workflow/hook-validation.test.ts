@@ -3,6 +3,7 @@ import type { WorkflowHook, WorkflowNodeInput } from '@hyperneo/shared';
 import { registerProductionConnectors } from '../../../../src/lib/github/connectors/production.ts';
 import { WorkflowHookRuntimeService } from '../../../../src/lib/workflows/hook-runtime-service.ts';
 import { validateWorkflowHooks } from '../../../../src/lib/workflows/hook-validation.ts';
+import { WorkflowDetailSchema } from '../../../../src/lib/workflows/workflow-record-schemas.ts';
 
 const runtimeService = new WorkflowHookRuntimeService();
 
@@ -25,6 +26,22 @@ function validHook(overrides: Partial<WorkflowHook> = {}): WorkflowHook {
     validator: { kind: 'script', interpreter: 'bash', source: 'echo \'{"type":"allow"}\'' },
     authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
     ...overrides,
+  };
+}
+
+function makeWorkflowRecord(hooks: WorkflowHook[]): Record<string, unknown> {
+  return {
+    id: 'wf-1',
+    spaceId: 'space-1',
+    name: 'Test Workflow',
+    nodes,
+    startNodeId: 'n1',
+    endNodeId: 'n2',
+    hooks,
+    tags: [],
+    createdAt: 1,
+    updatedAt: 1,
+    completionAutonomyLevel: 1,
   };
 }
 
@@ -166,4 +183,30 @@ describe('workflow hook validation', () => {
     ).join('\n');
     expect(badType).toContain('recentResultRef: expected object');
   });
+});
+
+describe('workflow hook method coverage', () => {
+  const inertMethods = [
+    'save_artifact',
+    'create_standalone_task',
+    'mark_complete',
+    'submit_for_approval',
+    'approve_task',
+  ] as const;
+
+  test('send_message hooks validate and persist', () => {
+    const hook = validHook();
+    expect(validateWorkflowHooks([hook], nodes)).toEqual([]);
+    const parsed = WorkflowDetailSchema.parse(makeWorkflowRecord([hook]));
+    expect(parsed.hooks?.[0]?.method).toBe('send_message');
+  });
+
+  for (const method of inertMethods) {
+    test(`configures but never fires: ${method} hooks validate and persist`, () => {
+      const hook = validHook({ method, targetNode: undefined });
+      expect(validateWorkflowHooks([hook], nodes)).toEqual([]);
+      const parsed = WorkflowDetailSchema.parse(makeWorkflowRecord([hook]));
+      expect(parsed.hooks?.[0]?.method).toBe(method);
+    });
+  }
 });
