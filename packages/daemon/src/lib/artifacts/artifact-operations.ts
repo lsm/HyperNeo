@@ -209,7 +209,7 @@ export function createArtifactSaveOperation(deps: ArtifactOperationDependencies)
     policy: {
       safetyClass: 'mutate',
       roles: ['workflow_worker'],
-      audit: { redactKeys: ['data', 'summary'] },
+      audit: { redactKeys: ['data', 'summary'], selfAudited: true },
     },
     description: SAVE_DESCRIPTION,
     inputSchema: SaveArtifactSchema,

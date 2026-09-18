@@ -65,8 +65,12 @@ function isDomainRejection(value: unknown): boolean {
   );
 }
 
+function isRecognizedSuccessShape(value: unknown): boolean {
+  return typeof value === 'object' && value !== null && !isDomainRejection(value);
+}
+
 function isSelfAuditedOutcome(outcome: OperationOutcome): boolean {
-  return outcome.kind === 'completed' && !isDomainRejection(outcome.value);
+  return outcome.kind === 'completed' && isRecognizedSuccessShape(outcome.value);
 }
 
 export function buildOperationAuditRecord(

@@ -259,7 +259,7 @@ export function createAgentSubscriptionOperations(
   return [
     defineOperation({
       name: 'externalEvent.agent.subscribe',
-      policy: { safetyClass: 'mutate', roles: AGENT_EVENT_ROLES },
+      policy: { safetyClass: 'mutate', roles: AGENT_EVENT_ROLES, audit: { selfAudited: true } },
       description: `Subscribe a long-horizon agent to external events matching a topic glob (e.g. github/lsm/neokai/pull_request/*.review_*), upserting the stored subscription and refreshing the live delivery trie. ${SCOPE_DOC} Returns the stored subscription record; rejects refresh_failed when the live trie could not be refreshed.`,
       inputSchema: SubscribeInput,
       resultSchema: SubscribeResultSchema,
@@ -272,7 +272,7 @@ export function createAgentSubscriptionOperations(
     }),
     defineOperation({
       name: 'externalEvent.agent.unsubscribe',
-      policy: { safetyClass: 'mutate', roles: AGENT_EVENT_ROLES },
+      policy: { safetyClass: 'mutate', roles: AGENT_EVENT_ROLES, audit: { selfAudited: true } },
       description: `Remove a long-horizon agent subscription for a topic glob, deleting the stored record and its live delivery-trie entry. Idempotent: removing a pattern the agent never subscribed to still succeeds. ${SCOPE_DOC}`,
       inputSchema: UnsubscribeInput,
       resultSchema: UnsubscribeResultSchema,

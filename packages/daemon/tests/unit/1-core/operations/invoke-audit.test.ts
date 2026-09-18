@@ -176,6 +176,7 @@ describe('auditInvocation through invokeOperation', () => {
     { label: 'ok:false', value: { ok: false, reason: 'denied', message: 'no write access' } },
     { label: 'success:false', value: { success: false, error: 'node_caller_denied' } },
     { label: 'rejected:true', value: { rejected: true, reason: 'agent_not_found', message: 'no' } },
+    { label: 'a bare enum string', value: 'node_caller_denied' },
   ])(
     'a self-audited operation still writes a door row for a $label rejection',
     async ({ value }) => {

@@ -258,19 +258,13 @@ describe('agent external-event subscription operations', () => {
 
   test('the door audits a bare-string denial of externalEvent.agent.subscribe', async () => {
     const sessionId = memberSession('s-door-denied');
-    const worker: OperationCaller = {
-      source: 'mcp',
-      sessionId,
-      spaceId: SPACE,
-      role: 'workflow_worker',
-    };
     const registry = createOperationRegistry([...operations.values()]);
     const written: OperationAuditRecord[] = [];
     const outcome = await invokeOperation(
       registry,
       'externalEvent.agent.subscribe',
-      { agent_id: AGENT, topic_pattern: TOPIC },
-      worker,
+      { agent_id: AGENT, topic_pattern: TOPIC, spaceId: OTHER_SPACE },
+      member(sessionId),
       {
         audit: (record) => {
           written.push(record);
@@ -283,6 +277,26 @@ describe('agent external-event subscription operations', () => {
       operation: 'externalEvent.agent.subscribe',
       outcome: 'completed',
     });
+  });
+
+  test('the door writes no second row for a successful externalEvent.agent.subscribe', async () => {
+    const sessionId = memberSession('s-door-success');
+    const registry = createOperationRegistry([...operations.values()]);
+    const written: OperationAuditRecord[] = [];
+    const outcome = await invokeOperation(
+      registry,
+      'externalEvent.agent.subscribe',
+      { agent_id: AGENT, topic_pattern: TOPIC },
+      member(sessionId),
+      {
+        audit: (record) => {
+          written.push(record);
+        },
+      }
+    );
+    expect(outcome.kind).toBe('completed');
+    expect(written).toHaveLength(0);
+    expect(auditLogRepo.listBySession(sessionId)).toHaveLength(1);
   });
 
   test('rejects a writer whose session is not active in the Space', async () => {
