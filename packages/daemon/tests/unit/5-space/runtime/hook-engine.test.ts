@@ -1,4 +1,7 @@
 import { describe, test, expect, beforeEach } from 'bun:test';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   clearAllRetryableHookActionTimers,
   QUEUED_RETRYABLE_ACTION_STATE_KEY,
@@ -2210,4 +2213,75 @@ describe.skipIf(!isBun)('HookExecutor script execution', () => {
 
     expect(killCalls.some((c) => c.pid < 0 && c.signal === 'SIGKILL')).toBe(true);
   });
+});
+
+describe('hook method coverage', () => {
+  const inertMethods = [
+    'save_artifact',
+    'create_standalone_task',
+    'mark_complete',
+    'submit_for_approval',
+    'approve_task',
+  ];
+
+  const srcRoot = fileURLToPath(new URL('../../../../src', import.meta.url));
+
+  function readDaemonSources(): { path: string; text: string }[] {
+    const root = srcRoot;
+    return readdirSync(root, { recursive: true, encoding: 'utf8' })
+      .filter((entry) => entry.endsWith('.ts'))
+      .map((entry) => ({ path: entry, text: readFileSync(join(root, entry), 'utf8') }));
+  }
+
+  test('send_message hooks fire: a configured hook blocks the wrapped handler', async () => {
+    const { engine, mockExecutor } = makeEngine([
+      makeHook({ id: 'hook-1', classification: 'validation' }),
+    ]);
+    mockExecutor.setResult('hook-1', { type: 'block', reason: 'not ready' });
+
+    const handler = async () => ({
+      content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }],
+    });
+    const wrapped = wrapHandlerWithHooks('send_message', handler, engine, {}, defaultMeta);
+    const blocked = JSON.parse((await wrapped({ target: 'Review' })).content[0].text);
+
+    expect(blocked.success).toBe(false);
+    expect(blocked.hookStatus).toBe('blocked_by_hook');
+
+    mockExecutor.setResult('hook-1', { type: 'allow' });
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: 'Review', message: 'hi' },
+      defaultMeta
+    );
+    expect(outcome.decision).toBe('allow');
+    expect(outcome.executionLog).toHaveLength(1);
+  });
+
+  const wrappedWith = (method: string) => new RegExp(`wrapHandlerWithHooks\\(\\s*'${method}'`);
+  const drivenWith = (method: string) => new RegExp(`executeAction\\(\\s*'${method}'`);
+
+  test('send_message is the only production action wrapped with hooks', () => {
+    const wrapping = readDaemonSources()
+      .filter(({ text }) => text.includes('wrapHandlerWithHooks'))
+      .map(({ path }) => path.replaceAll('\\', '/'))
+      .sort();
+
+    expect(wrapping).toEqual([
+      'lib/messaging/node-send-message.ts',
+      'lib/workflows/hook-binding.ts',
+      'lib/workflows/hook-engine.ts',
+    ]);
+    const sendMessage = readFileSync(join(srcRoot, 'lib/messaging/node-send-message.ts'), 'utf8');
+    expect(sendMessage).toMatch(wrappedWith('send_message'));
+  });
+
+  for (const method of inertMethods) {
+    test(`configures but never fires: no ${method} handler reaches the hook engine`, () => {
+      for (const { text } of readDaemonSources()) {
+        expect(text).not.toMatch(wrappedWith(method));
+        expect(text).not.toMatch(drivenWith(method));
+      }
+    });
+  }
 });
