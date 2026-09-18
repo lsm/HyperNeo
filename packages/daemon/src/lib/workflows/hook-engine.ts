@@ -12,21 +12,21 @@ import type { WorkflowRunArtifactRepository } from '../../storage/repositories/w
 import { Logger } from '../logger.ts';
 import { isRateLimitError } from '../session/rate-limit-detector.ts';
 import { type AnyToolResult, scheduleRetryableAction } from './hook-binding.ts';
-import type { HookExecutor } from './hook-executor.ts';
+import type { HookExecutor } from '../hooks/hook-executor.ts';
 import {
   buildExecutorContext,
   PR_READY_VALIDATED_IDENTITY_HOOK_ID,
-} from './hook-executor-context.ts';
+} from '../hooks/hook-executor-context.ts';
 import { resolveMatchingHooks, sortHooks } from './hook-matching.ts';
-import { shallowEqual, validatePatchedParams } from './hook-param-bounds.ts';
-import { buildAllowUserState, buildBlockUserState } from './hook-user-state.ts';
+import { shallowEqual, validatePatchedParams } from '../hooks/hook-param-bounds.ts';
+import { buildAllowUserState, buildBlockUserState } from '../hooks/hook-user-state.ts';
 
 export {
   clearAllRetryableHookActionTimers,
   triggerRetryableHookAction,
   wrapHandlerWithHooks,
 } from './hook-binding.ts';
-export { PR_READY_VALIDATED_IDENTITY_HOOK_ID } from './hook-executor-context.ts';
+export { PR_READY_VALIDATED_IDENTITY_HOOK_ID } from '../hooks/hook-executor-context.ts';
 
 export interface HookActionMeta {
   sessionId: string;

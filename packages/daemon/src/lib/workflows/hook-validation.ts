@@ -13,9 +13,9 @@ import {
   getRegisteredBuiltInValidatorIds,
   isRegisteredBuiltInValidator,
 } from './built-in-validator-registry.ts';
-import { isRecord, jsonByteLength } from './hook-result-validation.ts';
+import { isRecord, jsonByteLength } from '../hooks/hook-result-validation.ts';
 
-export { validateWorkflowHookResult } from './hook-result-validation.ts';
+export { validateWorkflowHookResult } from '../hooks/hook-result-validation.ts';
 
 const VALID_METHODS = new Set([
   'send_message',

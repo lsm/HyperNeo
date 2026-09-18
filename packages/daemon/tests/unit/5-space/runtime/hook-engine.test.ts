@@ -11,7 +11,7 @@ import {
   type HookActionMeta,
   type HookActionOutcome,
 } from '../../../../src/lib/workflows/hook-engine';
-import { HookExecutor } from '../../../../src/lib/workflows/hook-executor';
+import { HookExecutor } from '../../../../src/lib/hooks/hook-executor';
 import type {
   WorkflowHook,
   WorkflowHookResult,

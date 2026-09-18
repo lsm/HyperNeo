@@ -6,7 +6,7 @@ import {
   createPrReadyValidatorV2,
   createReviewPostedValidator,
 } from '../../../../../src/lib/github/connectors';
-import type { HookExecutorContext } from '../../../../../src/lib/workflows/hook-executor';
+import type { HookExecutorContext } from '../../../../../src/lib/hooks/hook-executor';
 import { runGhJson } from '../../../../../src/lib/github/gh-lookup-helpers.ts';
 import type { SpawnFn, SpawnProcess } from '../../../../../src/lib/runtime-spawn';
 import { MAX_BUFFER_BYTES } from '../../../../../src/lib/utils/script-utils';
