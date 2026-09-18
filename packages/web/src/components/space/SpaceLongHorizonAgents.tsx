@@ -500,22 +500,35 @@ function AgentCard({ agent, navigationSpaceId, reminderCount, onEdit, onDelete }
     archived: 'bg-fill-strong',
   };
 
+  const [opening, setOpening] = useState(false);
   const sessionId = agent.sessionId ?? null;
+
+  const openSession = () => {
+    if (opening) return;
+    if (sessionId) {
+      navigateToSpaceSession(navigationSpaceId, sessionId);
+      return;
+    }
+    setOpening(true);
+    spaceStore
+      .ensureAgentSession(agent.id)
+      .then((ensuredSessionId) => navigateToSpaceSession(navigationSpaceId, ensuredSessionId))
+      .catch((err) =>
+        toast.error(err instanceof Error ? err.message : 'Failed to open the agent session')
+      )
+      .finally(() => setOpening(false));
+  };
 
   return (
     <div
-      role={sessionId ? 'button' : undefined}
-      tabIndex={sessionId ? 0 : undefined}
-      onClick={sessionId ? () => navigateToSpaceSession(navigationSpaceId, sessionId) : undefined}
-      onKeyDown={
-        sessionId
-          ? (e) => {
-              if (e.key === 'Enter' || e.key === ' ')
-                navigateToSpaceSession(navigationSpaceId, sessionId);
-            }
-          : undefined
-      }
-      class={`group flex min-h-32 flex-col rounded-xl border border-line bg-surface-overlay/90 px-4 py-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-all hover:-translate-y-0.5 hover:border-line-strong hover:bg-surface-raised/95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 ${sessionId ? 'cursor-pointer' : ''}`}
+      role="button"
+      tabIndex={0}
+      aria-busy={opening}
+      onClick={openSession}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') openSession();
+      }}
+      class="group flex min-h-32 cursor-pointer flex-col rounded-xl border border-line bg-surface-overlay/90 px-4 py-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-all hover:-translate-y-0.5 hover:border-line-strong hover:bg-surface-raised/95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
     >
       <div class="flex items-start justify-between gap-3">
         <div class="flex min-w-0 flex-1 items-start gap-3">
@@ -534,7 +547,7 @@ function AgentCard({ agent, navigationSpaceId, reminderCount, onEdit, onDelete }
               />
               <span>{agent.status}</span>
               <span>·</span>
-              <span>{sessionId ? 'Session' : 'No session'}</span>
+              <span>{opening ? 'Opening…' : sessionId ? 'Session' : 'Start session'}</span>
               {agent.autonomyLevel && (
                 <>
                   <span>·</span>
