@@ -678,10 +678,11 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
         task,
       });
     },
-    audit: (session, previous, input) => {
+    audit: (actor, previous, input) => {
       operationAuditRepo.createEntry({
-        sessionId: session.id,
-        agentName: session.metadata.promptProvenance?.agentName,
+        sessionId: actor.session?.id ?? null,
+        agentName: actor.session?.metadata.promptProvenance?.agentName ?? null,
+        callerSource: actor.source,
         toolName: 'task.resolvePendingCompletion',
         spaceId: previous.spaceId,
         taskId: input.taskId,
