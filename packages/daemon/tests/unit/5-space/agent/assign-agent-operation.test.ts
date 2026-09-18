@@ -150,7 +150,7 @@ describe('the agent.assignGoal and agent.unassignGoal operations', () => {
       { agentId: agent.id, goalId: GOAL_ID },
       caller('long_term_agent', agent.id)
     );
-    expect(outcome.value).toEqual({ assigned: true });
+    expect(outcome.value).toEqual({ accepted: true, assigned: true });
     expect(agentRepo.listGoals(agent.id).map((entry) => entry.goalId)).toEqual([GOAL_ID]);
     expect(ownerChanges).toEqual([GOAL_ID]);
   });
@@ -163,7 +163,7 @@ describe('the agent.assignGoal and agent.unassignGoal operations', () => {
         source: 'rpc',
       }
     );
-    expect(outcome.value).toEqual({ assigned: true });
+    expect(outcome.value).toEqual({ accepted: true, assigned: true });
     expect(agentRepo.listGoals(agent.id)).toHaveLength(1);
   });
 
@@ -210,7 +210,7 @@ describe('the agent.assignGoal and agent.unassignGoal operations', () => {
       { agentId: agent.id, goalId: GOAL_ID },
       caller('long_term_agent', agent.id)
     );
-    expect(outcome.value).toEqual({ assigned: true });
+    expect(outcome.value).toEqual({ accepted: true, assigned: true });
     expect(agentRepo.listGoals(agent.id)).toHaveLength(0);
   });
 
@@ -250,7 +250,7 @@ describe('the agent.assignForgeScope and agent.unassignForgeScope operations', (
       { agentId: agent.id, scopeId: SCOPE_ID },
       caller('ad_hoc_member')
     );
-    expect(outcome.value).toEqual({ assigned: true });
+    expect(outcome.value).toEqual({ accepted: true, assigned: true });
     expect(agentRepo.listForgeScopes(agent.id).map((entry) => entry.scopeId)).toEqual([SCOPE_ID]);
   });
 
@@ -285,7 +285,7 @@ describe('the agent.assignForgeScope and agent.unassignForgeScope operations', (
       { agentId: agent.id, scopeId: SCOPE_ID },
       caller('ad_hoc_member')
     );
-    expect(outcome.value).toEqual({ assigned: true });
+    expect(outcome.value).toEqual({ accepted: true, assigned: true });
     expect(agentRepo.listForgeScopes(agent.id)).toHaveLength(0);
   });
 
