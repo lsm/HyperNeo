@@ -72,6 +72,7 @@ function makeCtx(sessionStatus = 'active') {
       goalService,
       taskRepo,
       longHorizonAgentRepo,
+      goalScopeRepo,
       getSession: (id) => (id === SESSION_ID ? session(sessionStatus) : null),
       auditLogRepo,
     })

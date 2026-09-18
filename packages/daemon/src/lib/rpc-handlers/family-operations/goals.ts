@@ -9,6 +9,7 @@ export function registerGoalOperations(context: FamilyOperationContext): Operati
     longHorizonAgentRepo: context.longHorizonAgentRepo,
     nodeExecutionRepo: context.nodeExecutionRepo,
     taskRepo: context.spaceTaskRepo,
+    goalScopeRepo: context.spaceAgentGoalScopeRepo,
     getSession: (sessionId) => context.deps.db.getSession(sessionId),
     auditLogRepo: new McpAuditLogRepository(context.deps.db.getDatabase()),
   });
