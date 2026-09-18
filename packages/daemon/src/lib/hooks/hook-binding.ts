@@ -1,8 +1,8 @@
 import type { WorkflowHookResult } from '@hyperneo/shared';
 import { Logger } from '../logger.ts';
-import type { HookActionMeta, WorkflowHookEngine } from './hook-engine.ts';
+import type { HookActionMeta, HookEngine } from './hook-engine.ts';
 
-const log = new Logger('workflow-hook-engine');
+const log = new Logger('hook-binding');
 
 const FOLLOW_UP_METHODS = new Set(['send_message']);
 
@@ -16,7 +16,7 @@ interface PendingRetryableHookAction {
   methodName: string;
   args: Record<string, unknown>;
   handler: (args: Record<string, unknown>) => Promise<AnyToolResult>;
-  engine: WorkflowHookEngine;
+  engine: HookEngine;
   handlers: Record<string, (...args: unknown[]) => Promise<AnyToolResult> | AnyToolResult>;
   meta: HookActionMeta;
   isFollowUp: boolean;
@@ -62,7 +62,7 @@ export function scheduleRetryableAction<T extends Record<string, unknown>>(optio
   methodName: string;
   args: T;
   handler: (args: T) => Promise<AnyToolResult>;
-  engine: WorkflowHookEngine;
+  engine: HookEngine;
   handlers: Record<string, (...args: unknown[]) => Promise<AnyToolResult> | AnyToolResult>;
   meta: HookActionMeta;
   isFollowUp: boolean;
@@ -120,7 +120,7 @@ async function replayRetryableAction<T extends Record<string, unknown>>(options:
   methodName: string;
   args: T;
   handler: (args: T) => Promise<AnyToolResult>;
-  engine: WorkflowHookEngine;
+  engine: HookEngine;
   handlers: Record<string, (...args: unknown[]) => Promise<AnyToolResult> | AnyToolResult>;
   meta: HookActionMeta;
   isFollowUp: boolean;
@@ -195,7 +195,7 @@ function getToolResultFailure(
 export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
   methodName: string,
   handler: (args: T) => Promise<AnyToolResult>,
-  engine: WorkflowHookEngine | undefined,
+  engine: HookEngine | undefined,
   handlers: Record<string, (...args: unknown[]) => Promise<AnyToolResult> | AnyToolResult>,
   meta: HookActionMeta,
   isFollowUp = false

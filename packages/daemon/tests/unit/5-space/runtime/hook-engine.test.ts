@@ -5,12 +5,13 @@ import { fileURLToPath } from 'node:url';
 import {
   clearAllRetryableHookActionTimers,
   QUEUED_RETRYABLE_ACTION_STATE_KEY,
-  WorkflowHookEngine,
+  HookEngine,
   wrapHandlerWithHooks,
   PR_READY_VALIDATED_IDENTITY_HOOK_ID,
   type HookActionMeta,
   type HookActionOutcome,
-} from '../../../../src/lib/workflows/hook-engine';
+} from '../../../../src/lib/hooks/hook-engine';
+import { workflowHookAddressing } from '../../../../src/lib/workflows/hook-matching';
 import { HookExecutor } from '../../../../src/lib/hooks/hook-executor';
 import type {
   WorkflowHook,
@@ -206,27 +207,26 @@ function makeEngine(
   hooks: WorkflowHook[],
   options: {
     hookStateRepo?: WorkflowHookStateRepository;
-    getWorkflowRunStatus?: (runId: string) => WorkflowRunStatus | undefined;
+    getScopeStatus?: (runId: string) => WorkflowRunStatus | undefined;
     getTaskStatus?: (taskId: string) => string | undefined;
     getSourceNodeExecutionStatus?: (meta: HookActionMeta) => string | undefined;
     notifySourceSession?: (sessionId: string, message: string) => Promise<void>;
   } = {}
 ): {
-  engine: WorkflowHookEngine;
+  engine: HookEngine;
   mockExecutor: MockHookExecutor;
   hookStateRepo: WorkflowHookStateRepository;
 } {
   const mockExecutor = new MockHookExecutor();
   const hookStateRepo = options.hookStateRepo ?? makeMockHookStateRepo();
-  const engine = new WorkflowHookEngine({
-    workflow: makeWorkflow(hooks),
-    workflowRunId: 'run-1',
+  const engine = new HookEngine({
+    addressing: workflowHookAddressing(makeWorkflow(hooks), 'run-1'),
     nodeExecutionRepo: makeMockNodeExecutionRepo(),
     artifactRepo: makeMockArtifactRepo(),
     hookStateRepo,
     hookExecutor: mockExecutor,
     workspacePath: '/tmp',
-    getWorkflowRunStatus: options.getWorkflowRunStatus,
+    getScopeStatus: options.getScopeStatus,
     getTaskStatus: options.getTaskStatus,
     getSourceNodeExecutionStatus: options.getSourceNodeExecutionStatus,
     notifySourceSession: options.notifySourceSession,
@@ -241,7 +241,7 @@ const defaultMeta: HookActionMeta = {
   taskId: 'task-1',
 };
 
-describe('WorkflowHookEngine', () => {
+describe('HookEngine', () => {
   test('persistStateUpdate retries version conflicts', () => {
     let attempts = 0;
     const stateRepo = makeMockHookStateRepo();
@@ -546,9 +546,11 @@ describe('WorkflowHookEngine', () => {
 
     hookStateRepo.ensure('run-1', 'hook-1', { counter: 5 });
 
-    const engine = new WorkflowHookEngine({
-      workflow: makeWorkflow([makeHook({ id: 'hook-1', classification: 'side_effect' })]),
-      workflowRunId: 'run-1',
+    const engine = new HookEngine({
+      addressing: workflowHookAddressing(
+        makeWorkflow([makeHook({ id: 'hook-1', classification: 'side_effect' })]),
+        'run-1'
+      ),
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
       artifactRepo: makeMockArtifactRepo(),
       hookStateRepo,
@@ -579,18 +581,20 @@ describe('WorkflowHookEngine', () => {
       lastResult: { type: 'block', reason: 'Prior block' },
     });
 
-    const engine = new WorkflowHookEngine({
-      workflow: makeWorkflow([
-        makeHook({
-          id: 'hook-1',
-          classification: 'side_effect',
-          localState: {
-            defaults: { foo: 'bar' },
-            recentResultRef: { hookId: 'ref-hook', key: 'priorResult' },
-          },
-        }),
-      ]),
-      workflowRunId: 'run-1',
+    const engine = new HookEngine({
+      addressing: workflowHookAddressing(
+        makeWorkflow([
+          makeHook({
+            id: 'hook-1',
+            classification: 'side_effect',
+            localState: {
+              defaults: { foo: 'bar' },
+              recentResultRef: { hookId: 'ref-hook', key: 'priorResult' },
+            },
+          }),
+        ]),
+        'run-1'
+      ),
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
       artifactRepo: makeMockArtifactRepo(),
       hookStateRepo,
@@ -754,9 +758,8 @@ describe('WorkflowHookEngine', () => {
     workflow.channels = [{ id: 'ch-1', from: 'Coding', to: 'reviewer' }];
 
     const mockExecutor = new MockHookExecutor();
-    const engine = new WorkflowHookEngine({
-      workflow,
-      workflowRunId: 'run-1',
+    const engine = new HookEngine({
+      addressing: workflowHookAddressing(workflow, 'run-1'),
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
       artifactRepo: makeMockArtifactRepo(),
       hookStateRepo: makeMockHookStateRepo(),
@@ -782,9 +785,8 @@ describe('WorkflowHookEngine', () => {
     workflow.channels = [{ id: 'ch-1', from: 'coder', to: 'Review' }];
 
     const mockExecutor = new MockHookExecutor();
-    const engine = new WorkflowHookEngine({
-      workflow,
-      workflowRunId: 'run-1',
+    const engine = new HookEngine({
+      addressing: workflowHookAddressing(workflow, 'run-1'),
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
       artifactRepo: makeMockArtifactRepo(),
       hookStateRepo: makeMockHookStateRepo(),
@@ -882,9 +884,8 @@ describe('WorkflowHookEngine', () => {
     ];
 
     const mockExecutor = new MockHookExecutor();
-    const engine = new WorkflowHookEngine({
-      workflow,
-      workflowRunId: 'run-1',
+    const engine = new HookEngine({
+      addressing: workflowHookAddressing(workflow, 'run-1'),
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
       artifactRepo: makeMockArtifactRepo(),
       hookStateRepo: makeMockHookStateRepo(),
@@ -907,9 +908,11 @@ describe('WorkflowHookEngine', () => {
     const hookStateRepo = makeMockHookStateRepo();
     const mockExecutor = new MockHookExecutor();
 
-    const engine = new WorkflowHookEngine({
-      workflow: makeWorkflow([makeHook({ id: 'hook-1', classification: 'side_effect' })]),
-      workflowRunId: 'run-1',
+    const engine = new HookEngine({
+      addressing: workflowHookAddressing(
+        makeWorkflow([makeHook({ id: 'hook-1', classification: 'side_effect' })]),
+        'run-1'
+      ),
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
       artifactRepo: makeMockArtifactRepo(),
       hookStateRepo,
@@ -937,9 +940,11 @@ describe('WorkflowHookEngine', () => {
     const hookStateRepo = makeMockHookStateRepo();
     const mockExecutor = new MockHookExecutor();
 
-    const engine = new WorkflowHookEngine({
-      workflow: makeWorkflow([makeHook({ id: 'hook-1', classification: 'side_effect' })]),
-      workflowRunId: 'run-1',
+    const engine = new HookEngine({
+      addressing: workflowHookAddressing(
+        makeWorkflow([makeHook({ id: 'hook-1', classification: 'side_effect' })]),
+        'run-1'
+      ),
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
       artifactRepo: makeMockArtifactRepo(),
       hookStateRepo,
@@ -968,9 +973,11 @@ describe('WorkflowHookEngine', () => {
     const hookStateRepo = makeMockHookStateRepo();
     const mockExecutor = new MockHookExecutor();
 
-    const engine = new WorkflowHookEngine({
-      workflow: makeWorkflow([makeHook({ id: 'hook-1', classification: 'side_effect' })]),
-      workflowRunId: 'run-1',
+    const engine = new HookEngine({
+      addressing: workflowHookAddressing(
+        makeWorkflow([makeHook({ id: 'hook-1', classification: 'side_effect' })]),
+        'run-1'
+      ),
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
       artifactRepo: makeMockArtifactRepo(),
       hookStateRepo,
@@ -1001,9 +1008,11 @@ describe('WorkflowHookEngine', () => {
     const hookStateRepo = makeMockHookStateRepo();
     const mockExecutor = new MockHookExecutor();
 
-    const engine = new WorkflowHookEngine({
-      workflow: makeWorkflow([makeHook({ id: 'hook-1', classification: 'side_effect' })]),
-      workflowRunId: 'run-1',
+    const engine = new HookEngine({
+      addressing: workflowHookAddressing(
+        makeWorkflow([makeHook({ id: 'hook-1', classification: 'side_effect' })]),
+        'run-1'
+      ),
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
       artifactRepo: makeMockArtifactRepo(),
       hookStateRepo,
@@ -1037,9 +1046,11 @@ describe('WorkflowHookEngine', () => {
     const hookStateRepo = makeMockHookStateRepo();
     const mockExecutor = new MockHookExecutor();
 
-    const engine = new WorkflowHookEngine({
-      workflow: makeWorkflow([makeHook({ id: 'hook-1', classification: 'side_effect' })]),
-      workflowRunId: 'run-1',
+    const engine = new HookEngine({
+      addressing: workflowHookAddressing(
+        makeWorkflow([makeHook({ id: 'hook-1', classification: 'side_effect' })]),
+        'run-1'
+      ),
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
       artifactRepo: makeMockArtifactRepo(),
       hookStateRepo,
@@ -1075,15 +1086,17 @@ describe('WorkflowHookEngine', () => {
       nextRetryAt: Date.now() - 1,
     });
 
-    const engine = new WorkflowHookEngine({
-      workflow: makeWorkflow([
-        makeHook({
-          id: 'hook-1',
-          classification: 'validation',
-          retry: { maxAttempts: 3, delayMs: 1000 },
-        }),
-      ]),
-      workflowRunId: 'run-1',
+    const engine = new HookEngine({
+      addressing: workflowHookAddressing(
+        makeWorkflow([
+          makeHook({
+            id: 'hook-1',
+            classification: 'validation',
+            retry: { maxAttempts: 3, delayMs: 1000 },
+          }),
+        ]),
+        'run-1'
+      ),
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
       artifactRepo: makeMockArtifactRepo(),
       hookStateRepo,
@@ -1126,15 +1139,17 @@ describe('WorkflowHookEngine', () => {
     const mockExecutor = new MockHookExecutor();
     hookStateRepo.ensure('run-1', 'hook-1');
 
-    const engine = new WorkflowHookEngine({
-      workflow: makeWorkflow([
-        makeHook({
-          id: 'hook-1',
-          classification: 'validation',
-          retry: { maxAttempts: 3, delayMs: 1000 },
-        }),
-      ]),
-      workflowRunId: 'run-1',
+    const engine = new HookEngine({
+      addressing: workflowHookAddressing(
+        makeWorkflow([
+          makeHook({
+            id: 'hook-1',
+            classification: 'validation',
+            retry: { maxAttempts: 3, delayMs: 1000 },
+          }),
+        ]),
+        'run-1'
+      ),
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
       artifactRepo: makeMockArtifactRepo(),
       hookStateRepo,
@@ -1207,15 +1222,17 @@ describe('WorkflowHookEngine', () => {
       retryCount: 2,
     });
 
-    const engine = new WorkflowHookEngine({
-      workflow: makeWorkflow([
-        makeHook({
-          id: 'hook-1',
-          classification: 'validation',
-          retry: { maxAttempts: 2, delayMs: 1000 },
-        }),
-      ]),
-      workflowRunId: 'run-1',
+    const engine = new HookEngine({
+      addressing: workflowHookAddressing(
+        makeWorkflow([
+          makeHook({
+            id: 'hook-1',
+            classification: 'validation',
+            retry: { maxAttempts: 2, delayMs: 1000 },
+          }),
+        ]),
+        'run-1'
+      ),
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
       artifactRepo: makeMockArtifactRepo(),
       hookStateRepo,
@@ -1242,15 +1259,17 @@ describe('WorkflowHookEngine', () => {
       nextRetryAt: Date.now() + 100_000,
     });
 
-    const engine = new WorkflowHookEngine({
-      workflow: makeWorkflow([
-        makeHook({
-          id: 'hook-1',
-          classification: 'validation',
-          retry: { maxAttempts: 3, delayMs: 1000 },
-        }),
-      ]),
-      workflowRunId: 'run-1',
+    const engine = new HookEngine({
+      addressing: workflowHookAddressing(
+        makeWorkflow([
+          makeHook({
+            id: 'hook-1',
+            classification: 'validation',
+            retry: { maxAttempts: 3, delayMs: 1000 },
+          }),
+        ]),
+        'run-1'
+      ),
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
       artifactRepo: makeMockArtifactRepo(),
       hookStateRepo,
@@ -1285,9 +1304,11 @@ describe('WorkflowHookEngine', () => {
       ],
     } as unknown as WorkflowRunArtifactRepository;
 
-    const engine = new WorkflowHookEngine({
-      workflow: makeWorkflow([makeHook({ id: 'hook-1', classification: 'side_effect' })]),
-      workflowRunId: 'run-1',
+    const engine = new HookEngine({
+      addressing: workflowHookAddressing(
+        makeWorkflow([makeHook({ id: 'hook-1', classification: 'side_effect' })]),
+        'run-1'
+      ),
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
       artifactRepo,
       hookStateRepo,
@@ -1328,9 +1349,11 @@ describe('WorkflowHookEngine', () => {
       listByRun: () => bigArtifacts,
     } as unknown as WorkflowRunArtifactRepository;
 
-    const engine = new WorkflowHookEngine({
-      workflow: makeWorkflow([makeHook({ id: 'hook-1', classification: 'side_effect' })]),
-      workflowRunId: 'run-1',
+    const engine = new HookEngine({
+      addressing: workflowHookAddressing(
+        makeWorkflow([makeHook({ id: 'hook-1', classification: 'side_effect' })]),
+        'run-1'
+      ),
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
       artifactRepo,
       hookStateRepo,
@@ -1538,15 +1561,17 @@ describe('wrapHandlerWithHooks', () => {
     const hookStateRepo = makeMockHookStateRepo();
     const mockExecutor = new MockHookExecutor();
 
-    const engine = new WorkflowHookEngine({
-      workflow: makeWorkflow([
-        makeHook({
-          id: 'hook-1',
-          classification: 'validation',
-          validator: { kind: 'built_in', id: 'pr_ready' },
-        }),
-      ]),
-      workflowRunId: 'run-1',
+    const engine = new HookEngine({
+      addressing: workflowHookAddressing(
+        makeWorkflow([
+          makeHook({
+            id: 'hook-1',
+            classification: 'validation',
+            validator: { kind: 'built_in', id: 'pr_ready' },
+          }),
+        ]),
+        'run-1'
+      ),
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
       artifactRepo: makeMockArtifactRepo(),
       hookStateRepo,
@@ -1579,9 +1604,11 @@ describe('wrapHandlerWithHooks', () => {
     const hookStateRepo = makeMockHookStateRepo();
     const mockExecutor = new MockHookExecutor();
 
-    const engine = new WorkflowHookEngine({
-      workflow: makeWorkflow([makeHook({ id: 'hook-1', classification: 'validation' })]),
-      workflowRunId: 'run-1',
+    const engine = new HookEngine({
+      addressing: workflowHookAddressing(
+        makeWorkflow([makeHook({ id: 'hook-1', classification: 'validation' })]),
+        'run-1'
+      ),
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
       artifactRepo: makeMockArtifactRepo(),
       hookStateRepo,
@@ -1608,9 +1635,11 @@ describe('wrapHandlerWithHooks', () => {
   test('rejects hook stateForHook/record_state writes to the reserved pr_ready-identity key', async () => {
     const hookStateRepo = makeMockHookStateRepo();
     const mockExecutor = new MockHookExecutor();
-    const engine = new WorkflowHookEngine({
-      workflow: makeWorkflow([makeHook({ id: 'hook-1', classification: 'validation' })]),
-      workflowRunId: 'run-1',
+    const engine = new HookEngine({
+      addressing: workflowHookAddressing(
+        makeWorkflow([makeHook({ id: 'hook-1', classification: 'validation' })]),
+        'run-1'
+      ),
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
       artifactRepo: makeMockArtifactRepo(),
       hookStateRepo,
@@ -1635,12 +1664,14 @@ describe('wrapHandlerWithHooks', () => {
     const hookStateRepo = makeMockHookStateRepo();
     const mockExecutor = new MockHookExecutor();
 
-    const engine = new WorkflowHookEngine({
-      workflow: makeWorkflow([
-        makeHook({ id: 'hook-1', classification: 'validation' }),
-        makeHook({ id: 'hook-2', classification: 'side_effect' }),
-      ]),
-      workflowRunId: 'run-1',
+    const engine = new HookEngine({
+      addressing: workflowHookAddressing(
+        makeWorkflow([
+          makeHook({ id: 'hook-1', classification: 'validation' }),
+          makeHook({ id: 'hook-2', classification: 'side_effect' }),
+        ]),
+        'run-1'
+      ),
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
       artifactRepo: makeMockArtifactRepo(),
       hookStateRepo,
@@ -2268,9 +2299,9 @@ describe('hook method coverage', () => {
       .sort();
 
     expect(wrapping).toEqual([
+      'lib/hooks/hook-binding.ts',
+      'lib/hooks/hook-engine.ts',
       'lib/messaging/node-send-message.ts',
-      'lib/workflows/hook-binding.ts',
-      'lib/workflows/hook-engine.ts',
     ]);
     const sendMessage = readFileSync(join(srcRoot, 'lib/messaging/node-send-message.ts'), 'utf8');
     expect(sendMessage).toMatch(wrappedWith('send_message'));

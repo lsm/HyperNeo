@@ -159,9 +159,10 @@ import { stagedRun } from './staged-run.ts';
 import { runVerifiedStopFlow, type VerifiedStopFlowDeps } from '../../tasks/verified-stop-flow.ts';
 import {
   clearAllRetryableHookActionTimers,
+  HookEngine,
   QUEUED_RETRYABLE_ACTION_STATE_KEY,
-  WorkflowHookEngine,
-} from '../../workflows/hook-engine.ts';
+} from '../../hooks/hook-engine.ts';
+import { workflowHookAddressing } from '../../workflows/hook-matching.ts';
 import {
   assertExecutionValidAgainstWorkflow,
   formatMissingTemplateReference,
@@ -4982,19 +4983,18 @@ export class TaskAgentManager {
       workspacePath,
       workflowNodeId,
     });
-    let hookEngine: WorkflowHookEngine | undefined;
+    let hookEngine: HookEngine | undefined;
     if (workflow?.hooks && workflow.hooks.length > 0) {
       const hookExecutor = new HookExecutor({ workspacePath });
-      hookEngine = new WorkflowHookEngine({
-        workflow,
-        workflowRunId,
+      hookEngine = new HookEngine({
+        addressing: workflowHookAddressing(workflow, workflowRunId),
         workflowRunCreatedAt: this.config.workflowRunRepo.getRun(workflowRunId)?.createdAt,
         nodeExecutionRepo: this.config.nodeExecutionRepo,
         artifactRepo: this.config.artifactRepo,
         hookStateRepo: new WorkflowHookStateRepository(this.config.db.getDatabase()),
         hookExecutor,
         workspacePath,
-        getWorkflowRunStatus: (runId) => this.config.workflowRunRepo.getRun(runId)?.status,
+        getScopeStatus: (runId) => this.config.workflowRunRepo.getRun(runId)?.status,
         getTaskStatus: (tid) => this.config.taskRepo.getTask(tid)?.status,
         getSourceNodeExecutionStatus: (actionMeta) =>
           this.config.nodeExecutionRepo
