@@ -8,7 +8,10 @@ import type { CreateStandaloneTaskInput } from '../../storage/tasks/create-task.
 import type { TransitionStandaloneTaskInput } from '../../storage/tasks/transition-task.ts';
 import { createGetTaskOperation } from '../tasks/get-operation.ts';
 import { createDiscoveryOperations } from './discovery.ts';
-import { createSendMessageOperation } from '../messaging/message-send.ts';
+import {
+  createSendMessageOperation,
+  type SessionExistenceCheck,
+} from '../messaging/message-send.ts';
 import {
   createOperationRegistry,
   type OperationRegistry,
@@ -38,6 +41,7 @@ export interface TaskOperationDependencies {
     typeof createTransitionTaskOperation<TransitionStandaloneTaskInput>
   >[0];
   setDependencies: Parameters<typeof createSetTaskDependenciesOperation>[0];
+  sessionExists: SessionExistenceCheck;
 }
 
 export function createDaemonOperationCatalog(
@@ -46,7 +50,7 @@ export function createDaemonOperationCatalog(
   extra: readonly OperationDefinition[] = []
 ): OperationRegistry {
   const registry: OperationRegistry = createOperationRegistry([
-    createSendMessageOperation(jobQueue),
+    createSendMessageOperation(jobQueue, tasks.sessionExists),
     createGetTaskOperation(tasks.readTask, tasks.readTaskByNumber),
     tasks.create ?? createCreateTaskOperation(tasks.createTask),
     createListTasksOperation(tasks.listTasks),

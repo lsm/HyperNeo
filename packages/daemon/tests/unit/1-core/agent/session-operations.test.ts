@@ -274,6 +274,7 @@ describe('session operation MCP attachment', () => {
     async (type) => {
       const source: Session = { ...createTestSession('sender'), type };
       db.createSession(source);
+      db.createSession(createTestSession('destination'));
       const session = await restore(source.id);
       const operationServer = session.getOperationMcpServer();
       expect(session.optionsBuilder.getEffectiveMcpServers()).toHaveProperty(

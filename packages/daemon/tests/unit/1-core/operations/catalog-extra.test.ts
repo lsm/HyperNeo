@@ -19,6 +19,7 @@ const tasks = {
   editTask: unused,
   transitionTask: unused,
   setDependencies: unused,
+  sessionExists: () => true,
 } as unknown as TaskOperationDependencies;
 
 function familyOperation(execute = mock(async () => ({ ok: true }))) {
