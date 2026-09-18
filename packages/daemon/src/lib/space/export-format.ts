@@ -80,6 +80,20 @@ const thinkingLevelSchema = z.preprocess(
   z.enum(['off', 'think8k', 'think16k', 'think24k', 'think32k'])
 );
 
+const exportedModelPoolSchema = z
+  .array(
+    z.object({
+      model: z.string().min(1),
+      provider: z.string().optional(),
+      maxConcurrent: z.number().int().min(1),
+      weight: z.number().min(0),
+      thinkingLevel: thinkingLevelSchema.nullish(),
+    })
+  )
+  .refine((pool) => new Set(pool.map((entry) => modelPoolEntryKey(entry))).size === pool.length, {
+    message: 'modelPool contains duplicate entries for the same model on the same provider',
+  });
+
 const exportedWorkflowNodeAgentSchema = z
   .object({
     agentRef: z.string().optional(),
@@ -87,6 +101,7 @@ const exportedWorkflowNodeAgentSchema = z
     name: z.string().min(1),
     model: z.string().min(1).optional(),
     provider: z.string().min(1).optional(),
+    modelPool: exportedModelPoolSchema.optional(),
     thinkingLevel: thinkingLevelSchema.optional(),
     systemPrompt: overrideOrStringSchema.optional(),
     replaceAgentPrompt: z.boolean().optional(),
@@ -240,20 +255,7 @@ const exportedAgentBaseSchema = z.object({
   instructions: z.string().optional(),
   tools: z.array(z.string()).optional(),
   settingSources: z.array(z.enum(['user', 'project', 'local'])).optional(),
-  modelPool: z
-    .array(
-      z.object({
-        model: z.string().min(1),
-        provider: z.string().optional(),
-        maxConcurrent: z.number().int().min(1),
-        weight: z.number().min(0),
-        thinkingLevel: thinkingLevelSchema.nullish(),
-      })
-    )
-    .refine((pool) => new Set(pool.map((entry) => modelPoolEntryKey(entry))).size === pool.length, {
-      message: 'modelPool contains duplicate entries for the same model on the same provider',
-    })
-    .optional(),
+  modelPool: exportedModelPoolSchema.optional(),
 });
 
 const exportedWorkflowBaseSchema = z.object({
@@ -347,6 +349,7 @@ export function exportWorkflow(
         entry.agentRef = agentIdToName.get(a.agentId) ?? a.agentId;
       }
       if (a.model !== undefined) entry.model = a.model;
+      if (a.modelPool !== undefined) entry.modelPool = a.modelPool;
       const slotProvider = a.provider?.trim();
       if (slotProvider) entry.provider = slotProvider;
       if (a.thinkingLevel !== undefined) entry.thinkingLevel = a.thinkingLevel;

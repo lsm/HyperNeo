@@ -1,10 +1,11 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, fireEvent, cleanup, act, waitFor } from '@testing-library/preact';
+import { render, fireEvent, cleanup, act, waitFor, within } from '@testing-library/preact';
 import { useState } from 'preact/hooks';
 import type {
   SpaceLongHorizonAgent,
   SpaceLongHorizonAgentTemplate,
   WorkflowHook,
+  WorkflowNodeAgent,
 } from '@hyperneo/shared';
 
 const mockModels = [
@@ -205,26 +206,28 @@ describe('NodeConfigPanel', () => {
       expect(queryByTestId('instructions-textarea')).toBeNull();
     });
 
-    it('renders the single-agent model selector', async () => {
-      const { getByTestId } = render(<NodeConfigPanel {...makeProps()} />);
-      const input = getByTestId('single-agent-model-input') as HTMLSelectElement;
-      await waitFor(() => expect(input.options.length).toBeGreaterThan(1));
-      expect(input.value).toBe('');
+    it('renders the single-agent model pool with no entries by default', () => {
+      const { getByTestId, queryByTestId } = render(<NodeConfigPanel {...makeProps()} />);
+      expect(getByTestId('agent-model-pool')).toBeTruthy();
+      expect(queryByTestId('pool-entry')).toBeNull();
+      expect(getByTestId('pool-add-model-button')).toBeTruthy();
     });
 
     it('shows selected single-agent model when provider is omitted', async () => {
       const { getByTestId } = render(
         <NodeConfigPanel {...makeProps({ step: makeStep({ model: 'gpt-5.4' }) })} />
       );
-      const input = getByTestId('single-agent-model-input') as HTMLSelectElement;
+      const input = getByTestId('pool-entry-model-select') as HTMLSelectElement;
       await waitFor(() => expect(input.options.length).toBeGreaterThan(1));
       expect(input.value).toBe('%5B%22openai%22%2C%22gpt-5.4%22%5D');
     });
 
     it('preserves provider-qualified selections containing colons', async () => {
       const onUpdate = vi.fn();
-      const { getByTestId } = render(<NodeConfigPanel {...makeProps({ onUpdate })} />);
-      const input = getByTestId('single-agent-model-input') as HTMLSelectElement;
+      const { getByTestId } = render(
+        <NodeConfigPanel {...makeProps({ onUpdate, step: makeStep({ model: 'gpt-5.4' }) })} />
+      );
+      const input = getByTestId('pool-entry-model-select') as HTMLSelectElement;
       await waitFor(() => expect(input.options.length).toBeGreaterThan(1));
       input.value = '%5B%22custom%3Aendpoint-1%22%2C%22custom%2Fmodel%3Awith%3Acolon%22%5D';
       fireEvent.change(input);
@@ -235,8 +238,10 @@ describe('NodeConfigPanel', () => {
 
     it('stores the selected model provider alongside the model', async () => {
       const onUpdate = vi.fn();
-      const { getByTestId } = render(<NodeConfigPanel {...makeProps({ onUpdate })} />);
-      const input = getByTestId('single-agent-model-input') as HTMLSelectElement;
+      const { getByTestId } = render(
+        <NodeConfigPanel {...makeProps({ onUpdate, step: makeStep({ model: 'gpt-5.4' }) })} />
+      );
+      const input = getByTestId('pool-entry-model-select') as HTMLSelectElement;
       await waitFor(() => expect(input.options.length).toBeGreaterThan(1));
       input.value = '%5B%22custom%3Aendpoint-1%22%2C%22custom%2Fmodel%3Awith%3Acolon%22%5D';
       fireEvent.change(input);
@@ -262,7 +267,7 @@ describe('NodeConfigPanel', () => {
         ],
       });
       const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
-      const input = getByTestId('single-agent-model-input') as HTMLSelectElement;
+      const input = getByTestId('pool-entry-model-select') as HTMLSelectElement;
       await waitFor(() => expect(input.options.length).toBeGreaterThan(1));
       input.value = '%5B%22custom%3Aendpoint-2%22%2C%22gpt-5.4%22%5D';
       fireEvent.change(input);
@@ -293,7 +298,7 @@ describe('NodeConfigPanel', () => {
         ],
       });
       const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
-      const input = getByTestId('single-agent-model-input') as HTMLSelectElement;
+      const input = getByTestId('pool-entry-model-select') as HTMLSelectElement;
       await waitFor(() => expect(input.options.length).toBeGreaterThan(1));
       input.value = '';
       fireEvent.change(input);
@@ -362,11 +367,11 @@ describe('NodeConfigPanel', () => {
 
     it('keeps selected provider for duplicate model IDs without provider prop', async () => {
       function Wrapper() {
-        const [step, setStep] = useState(makeStep());
+        const [step, setStep] = useState(makeStep({ model: 'claude-sonnet-4-6' }));
         return <NodeConfigPanel {...makeProps({ step, onUpdate: setStep })} />;
       }
       const { getByTestId } = render(<Wrapper />);
-      const input = getByTestId('single-agent-model-input') as HTMLSelectElement;
+      const input = getByTestId('pool-entry-model-select') as HTMLSelectElement;
       await waitFor(() => expect(input.options.length).toBeGreaterThan(1));
       input.value = '%5B%22custom%3Aendpoint-2%22%2C%22gpt-5.4%22%5D';
       fireEvent.change(input);
@@ -375,7 +380,7 @@ describe('NodeConfigPanel', () => {
 
     it('resets cached provider when providerless value changes', async () => {
       function Wrapper() {
-        const [step, setStep] = useState(makeStep());
+        const [step, setStep] = useState(makeStep({ model: 'gpt-5.4' }));
         return (
           <div>
             <button type="button" onClick={() => setStep(makeStep({ model: 'claude-sonnet-4-6' }))}>
@@ -386,7 +391,7 @@ describe('NodeConfigPanel', () => {
         );
       }
       const { getByTestId, getByText } = render(<Wrapper />);
-      const input = getByTestId('single-agent-model-input') as HTMLSelectElement;
+      const input = getByTestId('pool-entry-model-select') as HTMLSelectElement;
       await waitFor(() => expect(input.options.length).toBeGreaterThan(1));
       input.value = '%5B%22custom%3Aendpoint-2%22%2C%22gpt-5.4%22%5D';
       fireEvent.change(input);
@@ -421,15 +426,17 @@ describe('NodeConfigPanel', () => {
     });
 
     it('keeps provider/model pairs distinct when colon-delimited keys collide', async () => {
-      const { getByTestId } = render(<NodeConfigPanel {...makeProps()} />);
-      const input = getByTestId('single-agent-model-input') as HTMLSelectElement;
+      const { getByTestId } = render(
+        <NodeConfigPanel {...makeProps({ step: makeStep({ model: 'gpt-5.4' }) })} />
+      );
+      const input = getByTestId('pool-entry-model-select') as HTMLSelectElement;
       await waitFor(() => expect(input.options.length).toBeGreaterThan(1));
       const optionValues = Array.from(input.options).map((option) => option.value);
       expect(optionValues).toContain('%5B%22custom%22%2C%22endpoint-1%3Ashared%22%5D');
       expect(optionValues).toContain('%5B%22custom%3Aendpoint-1%22%2C%22shared%22%5D');
     });
 
-    it('offers Z.ai models in the single-agent model selector', async () => {
+    it('offers Z.ai models in the single-agent model pool selector', async () => {
       mockModelsResponse.models = [
         ...mockModels,
         {
@@ -446,8 +453,10 @@ describe('NodeConfigPanel', () => {
         },
       ];
       const onUpdate = vi.fn();
-      const { getByTestId } = render(<NodeConfigPanel {...makeProps({ onUpdate })} />);
-      const input = getByTestId('single-agent-model-input') as HTMLSelectElement;
+      const { getByTestId } = render(
+        <NodeConfigPanel {...makeProps({ onUpdate, step: makeStep({ model: 'gpt-5.4' }) })} />
+      );
+      const input = getByTestId('pool-entry-model-select') as HTMLSelectElement;
       await waitFor(() => expect(input.options.length).toBeGreaterThan(1));
 
       const glmGroup = input.querySelector('optgroup[label="Z.ai"]');
@@ -471,18 +480,18 @@ describe('NodeConfigPanel', () => {
       const { getByTestId, unmount } = render(
         <NodeConfigPanel {...makeProps({ step: makeStep({ model: 'gpt-5.4' }) })} />
       );
-      const input = getByTestId('single-agent-model-input') as HTMLSelectElement;
+      const input = getByTestId('pool-entry-model-select') as HTMLSelectElement;
       await waitFor(() => expect(input.options.length).toBeGreaterThan(1));
       expect(input.value).toBe('%5B%22openai%22%2C%22gpt-5.4%22%5D');
       unmount();
 
       function Wrapper() {
-        const [step, setStep] = useState(makeStep());
+        const [step, setStep] = useState(makeStep({ model: 'claude-sonnet-4-6' }));
         return <NodeConfigPanel {...makeProps({ step, onUpdate: setStep })} />;
       }
       mockModelsResponse.models = mockModels.map((model) => ({ ...model }));
       const { getByTestId: getByTestIdWithCustom } = render(<Wrapper />);
-      const customInput = getByTestIdWithCustom('single-agent-model-input') as HTMLSelectElement;
+      const customInput = getByTestIdWithCustom('pool-entry-model-select') as HTMLSelectElement;
       await waitFor(() => expect(customInput.options.length).toBeGreaterThan(1));
       customInput.value = '%5B%22custom%3Aendpoint-2%22%2C%22gpt-5.4%22%5D';
       fireEvent.change(customInput);
@@ -658,13 +667,17 @@ describe('NodeConfigPanel', () => {
 
     it('calls onUpdate with new single-agent model when model selector changes', async () => {
       const onUpdate = vi.fn();
-      const { getByTestId } = render(<NodeConfigPanel {...makeProps({ onUpdate })} />);
+      const { getByTestId } = render(
+        <NodeConfigPanel
+          {...makeProps({ onUpdate, step: makeStep({ model: 'claude-sonnet-4-6' }) })}
+        />
+      );
       await waitFor(() =>
         expect(
-          (getByTestId('single-agent-model-input') as HTMLSelectElement).options.length
+          (getByTestId('pool-entry-model-select') as HTMLSelectElement).options.length
         ).toBeGreaterThan(1)
       );
-      const input = getByTestId('single-agent-model-input') as HTMLSelectElement;
+      const input = getByTestId('pool-entry-model-select') as HTMLSelectElement;
       input.value = '%5B%22openai%22%2C%22gpt-5.4%22%5D';
       fireEvent.change(input);
       expect(onUpdate).toHaveBeenCalledWith(expect.objectContaining({ model: 'gpt-5.4' }));
@@ -677,10 +690,10 @@ describe('NodeConfigPanel', () => {
       );
       await waitFor(() =>
         expect(
-          (getByTestId('single-agent-model-input') as HTMLSelectElement).options.length
+          (getByTestId('pool-entry-model-select') as HTMLSelectElement).options.length
         ).toBeGreaterThan(1)
       );
-      fireEvent.change(getByTestId('single-agent-model-input'), {
+      fireEvent.change(getByTestId('pool-entry-model-select'), {
         target: { value: '' },
       });
       expect(onUpdate).toHaveBeenCalledWith(expect.objectContaining({ model: undefined }));
@@ -1142,7 +1155,7 @@ describe('NodeConfigPanel', () => {
       expect(queryByTestId('override-badge')).toBeNull();
     });
 
-    it('renders a per-slot model selector for each agent', () => {
+    it('renders a per-slot model pool for each agent', () => {
       const step = makeStep({
         agentId: '',
         agents: [
@@ -1151,7 +1164,7 @@ describe('NodeConfigPanel', () => {
         ],
       });
       const { getAllByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
-      expect(getAllByTestId('agent-slot-model-input')).toHaveLength(2);
+      expect(getAllByTestId('agent-model-pool')).toHaveLength(2);
     });
 
     it('editing agent selection calls onUpdate with updated templateKey', () => {
@@ -1181,7 +1194,7 @@ describe('NodeConfigPanel', () => {
       const { getAllByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
       const entries = getAllByTestId('agent-entry');
       const thinkingSelects = entries.map(
-        (entry) => entry.querySelectorAll('select')[2] as HTMLSelectElement
+        (entry) => entry.querySelectorAll('select')[1] as HTMLSelectElement
       );
       expect(thinkingSelects[0].value).toBe('think16k');
       expect(thinkingSelects[1].value).toBe('');
@@ -1197,10 +1210,12 @@ describe('NodeConfigPanel', () => {
         ],
       });
       const { getAllByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
-      const modelInputs = getAllByTestId('agent-slot-model-input') as HTMLSelectElement[];
-      await waitFor(() => expect(modelInputs[0].options.length).toBeGreaterThan(1));
-      modelInputs[0].value = '%5B%22openai%22%2C%22gpt-5.4%22%5D';
-      fireEvent.change(modelInputs[0]);
+      const firstSlot = within(getAllByTestId('agent-entry')[0]);
+      fireEvent.click(firstSlot.getByTestId('pool-add-model-button'));
+      const modelInput = firstSlot.getByTestId('pool-entry-model-select') as HTMLSelectElement;
+      await waitFor(() => expect(modelInput.options.length).toBeGreaterThan(1));
+      modelInput.value = '%5B%22openai%22%2C%22gpt-5.4%22%5D';
+      fireEvent.change(modelInput);
       const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
       expect(updatedStep.agents[0].model).toBe('gpt-5.4');
       expect(updatedStep.agents[1].model).toBeUndefined();
@@ -1216,7 +1231,7 @@ describe('NodeConfigPanel', () => {
         ],
       });
       const { getAllByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
-      const thinkingSelect = getAllByTestId('agent-entry')[0].querySelectorAll('select')[2];
+      const thinkingSelect = getAllByTestId('agent-entry')[0].querySelectorAll('select')[1];
       fireEvent.change(thinkingSelect, { target: { value: 'think32k' } });
       const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
       expect(updatedStep.agents[0].thinkingLevel).toBe('think32k');
@@ -1233,7 +1248,7 @@ describe('NodeConfigPanel', () => {
         ],
       });
       const { getAllByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
-      const thinkingSelect = getAllByTestId('agent-entry')[0].querySelectorAll('select')[2];
+      const thinkingSelect = getAllByTestId('agent-entry')[0].querySelectorAll('select')[1];
       fireEvent.change(thinkingSelect, { target: { value: '' } });
       const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
       expect(updatedStep.agents[0].thinkingLevel).toBeUndefined();
@@ -1299,7 +1314,7 @@ describe('NodeConfigPanel', () => {
       const { getAllByTestId, getByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
       fireEvent.click(getAllByTestId('edit-slot-prompts-button')[0]);
       expect(getByTestId('slot-prompts-system-prompt')).toBeTruthy();
-      expect(getByTestId('slot-prompts-model-input')).toBeTruthy();
+      expect(getByTestId('agent-model-pool')).toBeTruthy();
     });
 
     it('adding same agent twice with different roles: both slots shown', () => {
@@ -1762,6 +1777,168 @@ describe('NodeConfigPanel', () => {
           ],
         })
       );
+    });
+  });
+
+  describe('slot model pool override', () => {
+    function ControlledPanel({
+      initial,
+      onUpdate,
+    }: {
+      initial: NodeDraft;
+      onUpdate: (next: NodeDraft) => void;
+    }) {
+      const [step, setStep] = useState(initial);
+      return (
+        <NodeConfigPanel
+          {...makeProps({
+            step,
+            onUpdate: (next: NodeDraft) => {
+              setStep(next);
+              onUpdate(next);
+            },
+          })}
+        />
+      );
+    }
+
+    function slotStep(overrides: Partial<WorkflowNodeAgent> = {}): NodeDraft {
+      return makeStep({
+        agentId: '',
+        agents: [{ agentId: '', templateKey: 'coder-v1', name: 'coder', ...overrides }],
+      });
+    }
+
+    function lastSlot(onUpdate: ReturnType<typeof vi.fn>): WorkflowNodeAgent {
+      return onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0].agents[0];
+    }
+
+    it('defaults an override-free slot to inherit and keeps it there', () => {
+      const onUpdate = vi.fn();
+      const { getByTestId, queryByTestId } = render(
+        <ControlledPanel initial={slotStep()} onUpdate={onUpdate} />
+      );
+      expect(queryByTestId('pool-entry')).toBeNull();
+      expect(onUpdate).not.toHaveBeenCalled();
+
+      fireEvent.click(getByTestId('pool-add-model-button'));
+      expect(lastSlot(onUpdate).model).toBeUndefined();
+      expect(lastSlot(onUpdate).modelPool).toBeUndefined();
+    });
+
+    it('round-trips a stored single model back as a single model', async () => {
+      const onUpdate = vi.fn();
+      const stored: Partial<WorkflowNodeAgent> = {
+        model: 'gpt-5.4',
+        provider: 'openai',
+        thinkingLevel: 'think16k',
+      };
+      const { getByTestId } = render(
+        <ControlledPanel initial={slotStep(stored)} onUpdate={onUpdate} />
+      );
+      const select = getByTestId('pool-entry-model-select') as HTMLSelectElement;
+      await waitFor(() => expect(select.options.length).toBeGreaterThan(1));
+      expect(select.value).toBe('%5B%22openai%22%2C%22gpt-5.4%22%5D');
+
+      fireEvent.click(getByTestId('pool-add-model-button'));
+      expect(lastSlot(onUpdate)).toEqual({
+        agentId: '',
+        templateKey: 'coder-v1',
+        name: 'coder',
+        model: 'gpt-5.4',
+        provider: 'openai',
+        thinkingLevel: 'think16k',
+        modelPool: undefined,
+      });
+    });
+
+    it('stores a second model as a slot pool and clears the single model', async () => {
+      const onUpdate = vi.fn();
+      const { getByTestId, getAllByTestId } = render(
+        <ControlledPanel
+          initial={slotStep({ model: 'gpt-5.4', provider: 'openai' })}
+          onUpdate={onUpdate}
+        />
+      );
+      await waitFor(() =>
+        expect(
+          (getByTestId('pool-entry-model-select') as HTMLSelectElement).options.length
+        ).toBeGreaterThan(1)
+      );
+      fireEvent.click(getByTestId('pool-add-model-button'));
+      const selects = getAllByTestId('pool-entry-model-select') as HTMLSelectElement[];
+      await waitFor(() => expect(selects[1].options.length).toBeGreaterThan(1));
+      selects[1].value = '%5B%22anthropic%22%2C%22claude-sonnet-4-6%22%5D';
+      fireEvent.change(selects[1]);
+
+      const slot = lastSlot(onUpdate);
+      expect(slot.model).toBeUndefined();
+      expect(slot.provider).toBeUndefined();
+      expect(slot.modelPool).toEqual([
+        { model: 'gpt-5.4', provider: 'openai', maxConcurrent: 1, weight: 100 },
+        { model: 'claude-sonnet-4-6', provider: 'anthropic', maxConcurrent: 1, weight: 100 },
+      ]);
+    });
+
+    it('returns the slot to inherit when the last pool entry is removed', async () => {
+      const onUpdate = vi.fn();
+      const { getByTestId } = render(
+        <ControlledPanel
+          initial={slotStep({ model: 'gpt-5.4', provider: 'openai' })}
+          onUpdate={onUpdate}
+        />
+      );
+      await waitFor(() =>
+        expect(
+          (getByTestId('pool-entry-model-select') as HTMLSelectElement).options.length
+        ).toBeGreaterThan(1)
+      );
+      fireEvent.click(getByTestId('pool-entry-remove-button'));
+
+      const slot = lastSlot(onUpdate);
+      expect(slot.model).toBeUndefined();
+      expect(slot.provider).toBeUndefined();
+      expect(slot.modelPool).toBeUndefined();
+    });
+
+    it('keeps a stored pool a pool when it is trimmed back to one entry', async () => {
+      const onUpdate = vi.fn();
+      const modelPool = [
+        { model: 'gpt-5.4', provider: 'openai', maxConcurrent: 1, weight: 100 },
+        { model: 'claude-sonnet-4-6', provider: 'anthropic', maxConcurrent: 1, weight: 100 },
+      ];
+      const { getAllByTestId } = render(
+        <ControlledPanel initial={slotStep({ modelPool })} onUpdate={onUpdate} />
+      );
+      await waitFor(() => expect(getAllByTestId('pool-entry')).toHaveLength(2));
+      fireEvent.click(getAllByTestId('pool-entry-remove-button')[1]);
+
+      const slot = lastSlot(onUpdate);
+      expect(slot.model).toBeUndefined();
+      expect(slot.modelPool).toEqual([
+        { model: 'gpt-5.4', provider: 'openai', maxConcurrent: 1, weight: 100 },
+      ]);
+    });
+
+    it('re-seeds the editor when the slot config changes outside the panel', async () => {
+      function Wrapper() {
+        const [step, setStep] = useState(slotStep({ model: 'gpt-5.4', provider: 'openai' }));
+        return (
+          <div>
+            <button type="button" onClick={() => setStep(slotStep({ model: 'claude-sonnet-4-6' }))}>
+              Reload node
+            </button>
+            <NodeConfigPanel {...makeProps({ step, onUpdate: setStep })} />
+          </div>
+        );
+      }
+      const { getByTestId, getByText } = render(<Wrapper />);
+      const select = getByTestId('pool-entry-model-select') as HTMLSelectElement;
+      await waitFor(() => expect(select.options.length).toBeGreaterThan(1));
+      expect(select.value).toBe('%5B%22openai%22%2C%22gpt-5.4%22%5D');
+
+      fireEvent.click(getByText('Reload node'));
+      expect(select.value).toBe('%5B%22anthropic%22%2C%22claude-sonnet-4-6%22%5D');
     });
   });
 });

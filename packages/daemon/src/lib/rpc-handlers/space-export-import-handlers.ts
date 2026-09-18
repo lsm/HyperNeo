@@ -407,6 +407,7 @@ export function buildWorkflowCreateParams(
         name: string;
         model?: string;
         provider?: string;
+        modelPool?: import('@hyperneo/shared').AgentModelPoolEntry[];
         thinkingLevel?: import('@hyperneo/shared').ThinkingLevel;
         customPrompt?: import('@hyperneo/shared').WorkflowNodeAgentOverride;
         replaceAgentPrompt?: boolean;
@@ -457,6 +458,7 @@ export function buildWorkflowCreateParams(
         entry.agentId = agentId ?? '';
       }
       if (typeof a.model === 'string' && a.model.trim()) entry.model = a.model.trim();
+      if (a.modelPool !== undefined && a.modelPool.length > 0) entry.modelPool = a.modelPool;
       if (typeof a.provider === 'string' && a.provider.trim()) entry.provider = a.provider.trim();
       if (entry.provider) {
         const provider = getProviderRegistry().get(entry.provider);

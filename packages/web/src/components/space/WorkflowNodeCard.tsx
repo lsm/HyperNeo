@@ -1,4 +1,5 @@
 import type {
+  AgentModelPoolEntry,
   HandoffTransition,
   NodeExecutionStatus,
   SpaceLongHorizonAgent,
@@ -18,6 +19,7 @@ export interface NodeDraft {
   templateKey?: string | null;
   model?: string;
   provider?: string;
+  modelPool?: AgentModelPoolEntry[];
   thinkingLevel?: ThinkingLevel;
   customPrompt?: WorkflowNodeAgentOverride;
   replaceAgentPrompt?: boolean;
