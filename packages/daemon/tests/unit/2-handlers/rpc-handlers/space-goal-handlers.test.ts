@@ -1,5 +1,10 @@
 import { describe, expect, it, mock } from 'bun:test';
-import type { MessageHub, RequestHandler, SpaceGoalOwnerResolution } from '@hyperneo/shared';
+import type {
+  MessageHub,
+  RequestHandler,
+  SpaceGoalOwnerResolution,
+  SpaceLongHorizonAgent,
+} from '@hyperneo/shared';
 import {
   createDaemonInternalEventBus,
   type DaemonInternalEventMap,
@@ -20,6 +25,10 @@ import {
 import { createListGoalEventsOperation } from '../../../../src/lib/goals/list-goal-events-operation.ts';
 import { createUpdateGoalOperation } from '../../../../src/lib/goals/update-goal-operation.ts';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
+import {
+  createAssignAgentToGoalOperation,
+  createUnassignAgentFromGoalOperation,
+} from '../../../../src/lib/agents/assign-agent-operation.ts';
 
 const SPACE_ID = 'space-1';
 const GOAL_ID = 'goal-1';
@@ -117,14 +126,36 @@ function makeRepoMock(initial: SpaceGoalOwnerResolution) {
 
 function makeOperations(
   goalService: SpaceGoalService,
-  goalScopeRepo: { getPrimaryGoalOwner: (goalId: string, spaceId: string) => unknown }
+  goalScopeRepo: ReturnType<typeof makeRepoMock>,
+  internalEventBus?: InternalEventBus<DaemonInternalEventMap>
 ) {
   const writeDeps = {
     goalService,
     getSession: () => null,
     longHorizonAgentRepo: { getById: () => null } as never,
   };
+  const assignmentDeps = {
+    getSession: () => null,
+    longHorizonAgentRepo: { getById: () => null } as never,
+    getAgent: (agentId: string) =>
+      ({ id: agentId, spaceId: SPACE_ID, status: 'active' }) as SpaceLongHorizonAgent,
+    getGoalSpace: (goalId: string) => goalService.getGoal(goalId)?.spaceId ?? null,
+    getForgeScopeSpace: () => null,
+    assignGoal: (agentId: string, goalId: string) => goalScopeRepo.assignGoal(agentId, goalId),
+    unassignGoal: (agentId: string, goalId: string) =>
+      goalScopeRepo.deleteGoalAssignmentByRelationship(agentId, goalId, 'owner'),
+    assignForgeScope: () => {},
+    unassignForgeScope: () => {},
+    publishGoalOwnerChanged: (spaceId: string, goalId: string, sessionId: string) => {
+      internalEventBus
+        ?.publish('spaceGoal.ownerChanged', { sessionId, spaceId, goalId })
+        .catch(() => {});
+    },
+    audit: () => {},
+  };
   return createOperationRegistry([
+    createAssignAgentToGoalOperation(assignmentDeps),
+    createUnassignAgentFromGoalOperation(assignmentDeps),
     createGetGoalOwnerOperation({
       goalService,
       goalScopeRepo: goalScopeRepo as never,
@@ -287,7 +318,7 @@ describe('spaceGoal owner handlers', () => {
         getSpace: mock(async () => ({ id: SPACE_ID })),
       } as unknown as SpaceManager,
       goalScopeRepo,
-      operations: makeOperations(goalService, goalScopeRepo),
+      operations: makeOperations(goalService, goalScopeRepo, eventBus),
       internalEventBus: eventBus,
     });
     await handlers.get('spaceGoal.assignOwner')!(
@@ -329,7 +360,7 @@ describe('spaceGoal owner handlers', () => {
         getSpace: mock(async () => ({ id: SPACE_ID })),
       } as unknown as SpaceManager,
       goalScopeRepo: assignScopeRepo,
-      operations: makeOperations(assignGoalService, assignScopeRepo),
+      operations: makeOperations(assignGoalService, assignScopeRepo, internalEventBus),
       internalEventBus,
     });
 
