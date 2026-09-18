@@ -1357,7 +1357,7 @@ export function ProvidersSettings() {
         <AddProviderModal
           existingProviderIds={providers.map((p) => p.providerId)}
           onClose={() => setShowAddModal(false)}
-          onProviderAdded={loadProviders}
+          onProviderAdded={() => loadProviders(false)}
         />
       )}
 
