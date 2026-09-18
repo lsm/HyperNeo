@@ -58,12 +58,21 @@ const ToolGuardSchema = z.object({
   reason: z.string(),
 });
 
+const ModelPoolEntrySchema = z.object({
+  model: z.string(),
+  provider: z.string().optional(),
+  maxConcurrent: z.number(),
+  weight: z.number(),
+  thinkingLevel: ThinkingLevelSchema.nullable().optional(),
+});
+
 const NodeAgentSchema = z.object({
   agentId: z.string(),
   templateKey: z.string().nullable().optional(),
   name: z.string(),
   model: z.string().optional(),
   provider: z.string().optional(),
+  modelPool: z.array(ModelPoolEntrySchema).optional(),
   thinkingLevel: ThinkingLevelSchema.optional(),
   customPrompt: z.object({ value: z.string() }).optional(),
   replaceAgentPrompt: z.boolean().optional(),
@@ -177,17 +186,7 @@ const TemplateSnapshotSchema = z.looseObject({
   suggestedAutonomyLevel: AutonomyLevelSchema,
   model: z.string().nullable(),
   provider: z.string().nullable(),
-  modelPool: z
-    .array(
-      z.object({
-        model: z.string(),
-        provider: z.string().optional(),
-        maxConcurrent: z.number(),
-        weight: z.number(),
-        thinkingLevel: ThinkingLevelSchema.nullable().optional(),
-      })
-    )
-    .nullable(),
+  modelPool: z.array(ModelPoolEntrySchema).nullable(),
   thinkingLevel: ThinkingLevelSchema.nullable(),
   settingSources: z.array(z.enum(['user', 'project', 'local'])).nullable(),
   tools: z.array(z.string()).nullable(),

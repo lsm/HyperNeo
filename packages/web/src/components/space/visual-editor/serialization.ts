@@ -268,6 +268,7 @@ function buildWorkflowFields(state: VisualEditorState): {
               name: deriveSingleAgentRoleName(node, i),
               model: node.step.model,
               provider: node.step.provider,
+              modelPool: node.step.modelPool,
               thinkingLevel: node.step.thinkingLevel
                 ? normalizeThinkingLevel(node.step.thinkingLevel)
                 : undefined,

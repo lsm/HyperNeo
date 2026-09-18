@@ -13,6 +13,7 @@ import {
   markBuiltInProviderDisabled,
   resetProviderFactory,
 } from '../../../../src/lib/providers/factory';
+import { AnthropicProvider } from '../../../../src/lib/providers/anthropic-provider';
 import {
   ProviderRegistry,
   getProviderRegistry,
@@ -1652,6 +1653,40 @@ describe('ProviderService', () => {
       const envVars = service.getProviderEnvVars(session);
 
       expect(envVars.ANTHROPIC_API_KEY).toBe('stored-key');
+    });
+
+    it('sends the stored Anthropic OAuth token, not a discovered ambient one', async () => {
+      process.env.CLAUDE_CODE_OAUTH_TOKEN = 'ambient-discovered-token';
+      registry.clear();
+      const anthropic = new AnthropicProvider();
+      anthropic.setCredentials({ type: 'oauth', accessToken: 'user-supplied-token' });
+      registry.register(anthropic);
+      const session: Session = {
+        id: 'test-session',
+        title: 'Test',
+        workspacePath: '/test',
+        createdAt: new Date().toISOString(),
+        lastActiveAt: new Date().toISOString(),
+        status: 'active',
+        config: {
+          model: 'claude-3-opus',
+          maxTokens: 8192,
+          temperature: 1.0,
+          provider: 'anthropic',
+        },
+        metadata: {
+          messageCount: 0,
+          totalTokens: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          totalCost: 0,
+          toolCallCount: 0,
+        },
+      };
+
+      const envVars = service.getProviderEnvVars(session);
+
+      expect(envVars.CLAUDE_CODE_OAUTH_TOKEN).toBe('user-supplied-token');
     });
 
     it('returns stored Anthropic OAuth env for Anthropic session', async () => {

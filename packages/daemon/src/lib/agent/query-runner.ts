@@ -252,6 +252,13 @@ export function refreshQueryEnvFromProcess(
   return refreshedEnv;
 }
 
+export function shouldPreserveAnthropicOAuthToken(
+  providerId: string,
+  providerEnvVars: ProviderEnvVars
+): boolean {
+  return providerId === 'anthropic' && providerEnvVars.CLAUDE_CODE_OAUTH_TOKEN !== '';
+}
+
 function applyProviderEnvToFlagSettings(queryOptions: Options, envVars: ProviderEnvVars): void {
   const flagEnv: Record<string, string> = {};
   const providerManagedEnvVars = new Set(PROVIDER_MANAGED_ENV_VARS);
@@ -905,7 +912,10 @@ export class QueryRunner {
           refreshAutoCompactWindow: true,
           clearProviderManaged: true,
           preserveAnthropicAuthToken: resolvedProviderId === 'anthropic',
-          preserveAnthropicOAuthToken: resolvedProviderId === 'anthropic',
+          preserveAnthropicOAuthToken: shouldPreserveAnthropicOAuthToken(
+            resolvedProviderId,
+            providerEnvVars
+          ),
           skipAmbientAnthropicApiKey: resolvedProviderId !== 'anthropic',
           extraProviderManagedEnvVars,
         }) as Record<string, string>;

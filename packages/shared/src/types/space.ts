@@ -1102,6 +1102,7 @@ export interface WorkflowNodeAgent {
   name: string;
   model?: string;
   provider?: string;
+  modelPool?: AgentModelPoolEntry[];
   thinkingLevel?: ThinkingLevel;
   customPrompt?: WorkflowNodeAgentOverride;
   replaceAgentPrompt?: boolean;
@@ -1262,6 +1263,7 @@ export interface ExportedWorkflowNodeAgent {
   name: string;
   model?: string;
   provider?: string;
+  modelPool?: AgentModelPoolEntry[];
   thinkingLevel?: ThinkingLevel;
   systemPrompt?: WorkflowNodeAgentOverride | string;
   replaceAgentPrompt?: boolean;
