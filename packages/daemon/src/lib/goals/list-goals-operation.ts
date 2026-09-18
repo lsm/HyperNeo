@@ -1,4 +1,4 @@
-import type { SpaceGoal } from '@hyperneo/shared';
+import type { SpaceGoal, SpaceGoalListParams } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
@@ -17,6 +17,12 @@ const inputSchema = z
   .object({
     ...GoalSpaceScopeShape,
     status: GoalStatusSchema.optional().describe('Filter by goal status'),
+    includeArchived: z
+      .boolean()
+      .optional()
+      .describe('Include archived goals; ignored when status is given'),
+    label: z.string().min(1).optional().describe('Filter by goal label'),
+    search: z.string().min(1).optional().describe('Case-insensitive match on title or description'),
   })
   .strict()
   .default({});
@@ -41,7 +47,14 @@ export function readGoalListing(
   input: Input,
   deps: ListGoalsDependencies
 ): Result {
-  return { accepted: true, goals: deps.goalService.listGoals({ spaceId, status: input.status }) };
+  const params: SpaceGoalListParams = {
+    spaceId,
+    status: input.status,
+    includeArchived: input.includeArchived,
+    label: input.label,
+    search: input.search,
+  };
+  return { accepted: true, goals: deps.goalService.listGoals(params) };
 }
 
 const DESCRIPTION =
