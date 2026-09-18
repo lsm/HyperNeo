@@ -133,9 +133,7 @@ describe('goal.create through the operations door', () => {
         HUMAN
       );
       expect(result.accepted).toBe(true);
-      expect(
-        ctx.goalService.getGoal(result.goal?.id as string)?.checkInCronExpression ?? null
-      ).toBe(null);
+      expect(ctx.goalService.getGoal(result.goal?.id as string)?.taskScheduleId).toBe(null);
     } finally {
       ctx.db.close();
     }
