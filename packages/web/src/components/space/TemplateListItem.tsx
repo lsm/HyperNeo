@@ -1,6 +1,6 @@
 import type { SpaceLongHorizonAgentTemplate } from '@hyperneo/shared';
 
-export function TemplateCard({
+export function TemplateListItem({
   template,
   isUserTemplate,
   onClick,
@@ -14,30 +14,32 @@ export function TemplateCard({
   onDelete: () => void;
 }) {
   return (
-    <div class="group flex min-h-28 items-start gap-2 rounded-xl border border-line bg-surface-overlay/85 px-4 py-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-all hover:-translate-y-0.5 hover:border-blue-400/30 hover:bg-surface-raised/95">
+    <div class="group flex items-center gap-2 px-3 py-2 transition-colors hover:bg-surface-raised/80">
       <button
         type="button"
         onClick={onClick}
-        class="min-w-0 flex-1 rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+        class="flex min-w-0 flex-1 flex-col gap-0.5 rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 sm:flex-row sm:items-baseline sm:gap-2"
       >
-        <div class="flex min-w-0 flex-wrap items-center gap-2">
-          <span class="text-sm font-semibold tracking-tight text-fg">{template.displayName}</span>
+        <span class="flex min-w-0 items-center gap-2">
+          <span class="truncate text-sm font-medium tracking-tight text-fg">
+            {template.displayName}
+          </span>
           {!isUserTemplate && (
-            <span class="flex-shrink-0 rounded-full border border-line bg-fill-soft px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-fg-muted">
+            <span class="flex-shrink-0 rounded-full border border-line bg-fill-soft px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-fg-muted">
               Built-in
             </span>
           )}
-        </div>
-        <p class="mt-1.5 line-clamp-2 text-sm leading-relaxed text-fg-soft">
+        </span>
+        <span class="min-w-0 flex-1 truncate text-xs leading-relaxed text-fg-muted">
           {template.description}
-        </p>
+        </span>
       </button>
       {isUserTemplate ? (
         <div class="flex flex-shrink-0 items-center gap-0.5 opacity-60 transition-opacity group-hover:opacity-100">
           <button
             type="button"
             onClick={onEdit}
-            class="rounded-md p-1.5 text-fg-faint transition-colors hover:bg-fill-soft hover:text-fg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+            class="rounded-md p-1 text-fg-faint transition-colors hover:bg-fill-soft hover:text-fg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
             title="Edit template"
             aria-label={`Edit template ${template.displayName}`}
           >
@@ -53,7 +55,7 @@ export function TemplateCard({
           <button
             type="button"
             onClick={onDelete}
-            class="rounded-md p-1.5 text-fg-faint transition-colors hover:bg-fill-soft hover:text-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger/60"
+            class="rounded-md p-1 text-fg-faint transition-colors hover:bg-fill-soft hover:text-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger/60"
             title="Delete template"
             aria-label={`Delete template ${template.displayName}`}
           >
@@ -69,7 +71,7 @@ export function TemplateCard({
         </div>
       ) : (
         <svg
-          class="w-3.5 h-3.5 flex-shrink-0 text-fg-muted"
+          class="w-3.5 h-3.5 flex-shrink-0 text-fg-faint"
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"

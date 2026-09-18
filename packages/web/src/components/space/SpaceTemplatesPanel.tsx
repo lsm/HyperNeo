@@ -1,7 +1,7 @@
 import type { SpaceLongHorizonAgentTemplate } from '@hyperneo/shared';
 import { useEffect, useState } from 'preact/hooks';
 import { groupTemplatesByLabel } from './template-grouping';
-import { TemplateCard } from './TemplateCard';
+import { TemplateListItem } from './TemplateListItem';
 import { TemplateDeleteDialog } from './TemplateDeleteDialog';
 import { TemplateEditor } from './TemplateEditor';
 import {
@@ -37,9 +37,9 @@ export function SpaceTemplatesPanel({
   return (
     <>
       <section>
-        <div class="mb-3 flex items-end justify-between gap-3">
+        <div class="mb-2 flex items-end justify-between gap-3">
           <div>
-            <h3 class="text-lg font-semibold tracking-tight text-fg">
+            <h3 class="text-sm font-semibold tracking-tight text-fg-soft">
               Templates · <span data-testid="agent-template-count">{templates.length}</span>
             </h3>
             <p class="mt-0.5 text-xs text-fg-faint">
@@ -57,15 +57,17 @@ export function SpaceTemplatesPanel({
             New Template
           </button>
         </div>
-        <div class="space-y-5">
+        <div
+          class={`divide-y divide-line overflow-hidden rounded-xl bg-surface-overlay/60 ${templateGroups.length > 0 ? 'border border-line' : ''}`}
+        >
           {templateGroups.map((group) => (
             <div key={group.key} data-testid={`agent-template-group-${group.key}`}>
-              <h4 class="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-fg-muted">
+              <h4 class="border-b border-line bg-fill-soft/40 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-fg-faint">
                 {group.title} · {group.templates.length}
               </h4>
-              <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <div class="divide-y divide-line/60">
                 {group.templates.map((t) => (
-                  <TemplateCard
+                  <TemplateListItem
                     key={t.key}
                     template={t}
                     isUserTemplate={userTemplateKeys.has(t.key)}
