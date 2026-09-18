@@ -46,9 +46,9 @@ export class RemoteDaemonRegistry {
     this.forget(daemonId);
   }
 
-  private open(daemonId: string, url: string): Promise<RemoteConnection> {
+  private open(daemonId: string, url: string): RemoteAttempt {
     const existing = this.attempts.get(daemonId);
-    if (existing) return existing.connection;
+    if (existing) return existing;
     const hub = new MessageHub({ defaultSessionId: 'global' });
     const transport = new WebSocketClientTransport({ url, autoReconnect: false, pingInterval: 0 });
     hub.registerTransport(transport);
@@ -64,13 +64,18 @@ export class RemoteDaemonRegistry {
       hub.cleanup();
       void transport.close();
     });
-    return connection;
+    return attempt;
   }
 
   forget(daemonId: string): void {
     const attempt = this.attempts.get(daemonId);
-    this.attempts.delete(daemonId);
     if (!attempt) return;
+    this.discard(daemonId, attempt);
+  }
+
+  private discard(daemonId: string, attempt: RemoteAttempt): void {
+    if (this.attempts.get(daemonId) !== attempt) return;
+    this.attempts.delete(daemonId);
     void attempt.transport.close();
     void attempt.connection.then((connection) => connection.hub.cleanup()).catch(() => {});
   }
@@ -78,11 +83,12 @@ export class RemoteDaemonRegistry {
   readonly invoke = async (daemonId: string, name: string, input: unknown): Promise<unknown> => {
     const url = this.urls.get(daemonId);
     if (url === undefined) throw new Error(`No attached daemon: ${daemonId}`);
-    const connection = await this.open(daemonId, url);
+    const attempt = this.open(daemonId, url);
+    const connection = await attempt.connection;
     try {
       return await connection.hub.request('operation.invoke', { name, input });
     } catch (error) {
-      this.forget(daemonId);
+      this.discard(daemonId, attempt);
       throw error;
     }
   };

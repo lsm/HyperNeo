@@ -318,6 +318,26 @@ describe('attaching a remote daemon', () => {
   );
 });
 
+describe('tearing down a failed connection', () => {
+  test('leaves alone a connection that replaced the one the failed invoke used', async () => {
+    const remote = await startRemoteDaemon('session-on-b');
+    const daemons = new RemoteDaemonRegistry();
+    daemons.attach('b', remote.url);
+    await daemons.invoke('b', 'message.send', { sessionId: 'session-on-b', message });
+
+    const stale = settled(daemons.invoke('b', 'no.such.operation', {}));
+    daemons.attach('b', remote.url);
+    const fresh = daemons.invoke('b', 'message.send', { sessionId: 'session-on-b', message });
+
+    expect(await stale).toBeInstanceOf(Error);
+    expect(await fresh).toMatchObject({ kind: 'accepted' });
+    expect(remote.mailbox.rowCount()).toBe(2);
+
+    daemons.forget('b');
+    await remote.stop();
+  });
+});
+
 describe('connect deadline on a forwarded send', () => {
   test('rejects a send to a daemon that accepts the socket but never answers the upgrade', async () => {
     const silent = await startSilentServer();
