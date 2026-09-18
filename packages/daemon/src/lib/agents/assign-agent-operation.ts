@@ -178,7 +178,7 @@ const resultSchema = z.union([
 ]);
 
 const GOAL_OWNERSHIP_DOC =
-  'Reassigning goal ownership needs Space authority: a human (RPC) caller, or a long-term agent whose own agent record is active in this Space. Ad-hoc member and worker sessions are rejected. Rejects agent_not_found or goal_not_found when either side belongs to another Space.';
+  'Admitted for MCP callers whose session is active in the owning Space; a caller with no Space, or one whose session is not active in it, is rejected with agent_denied. A caller that presents an agent identity must own one that is active in this Space. Rejects agent_not_found or goal_not_found when either side belongs to another Space.';
 
 export function createAssignAgentToGoalOperation(deps: AgentAssignmentDependencies) {
   const assign = buildGoalPipeline(deps, 'agent.assignGoal');
@@ -205,7 +205,7 @@ export function createUnassignAgentFromGoalOperation(deps: AgentAssignmentDepend
 }
 
 const FORGE_SCOPE_DOC =
-  'Admitted for ad-hoc members and long-term agents whose session is active in the owning Space; read-only and worker sessions are rejected. Rejects agent_not_found or scope_not_found when either side belongs to another Space.';
+  'Admitted for MCP callers whose session is active in the owning Space; a caller with no Space, or one whose session is not active in it, is rejected with agent_denied. Rejects agent_not_found or scope_not_found when either side belongs to another Space.';
 
 export function createAssignAgentToForgeScopeOperation(deps: AgentAssignmentDependencies) {
   const assign = buildScopePipeline(deps, 'agent.assignForgeScope');

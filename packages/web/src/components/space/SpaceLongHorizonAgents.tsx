@@ -774,17 +774,6 @@ export function SpaceLongHorizonAgents({
           </section>
         )}
 
-        <SpaceTemplatesPanel
-          spaceId={spaceId}
-          templates={templates}
-          userTemplateKeys={userTemplateKeys}
-          onUseTemplate={(template) => {
-            setSelectedTemplate(template);
-            setEditingAgent(null);
-            setShowEditor(true);
-          }}
-        />
-
         <section aria-label="Agents">
           <div class="mb-3">
             <h3 class="text-lg font-semibold tracking-tight text-fg">
@@ -798,7 +787,7 @@ export function SpaceLongHorizonAgents({
             <div class={`rounded-2xl border px-5 py-8 text-center flat-surface`}>
               <p class="text-sm font-medium text-fg-soft">No agents yet</p>
               <p class="mt-1 text-xs text-fg-muted">
-                Add a custom agent or choose a template above.
+                Add a custom agent or choose a template below.
               </p>
             </div>
           ) : (
@@ -823,6 +812,17 @@ export function SpaceLongHorizonAgents({
             </div>
           )}
         </section>
+
+        <SpaceTemplatesPanel
+          spaceId={spaceId}
+          templates={templates}
+          userTemplateKeys={userTemplateKeys}
+          onUseTemplate={(template) => {
+            setSelectedTemplate(template);
+            setEditingAgent(null);
+            setShowEditor(true);
+          }}
+        />
       </div>
 
       {showEditor && (
