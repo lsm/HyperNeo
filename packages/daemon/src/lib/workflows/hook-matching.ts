@@ -1,9 +1,26 @@
 import type { SpaceWorkflow, WorkflowHook } from '@hyperneo/shared';
 import { parseAddress } from '../../../../messaging/src/address.ts';
 import { ChannelResolver } from '../messaging/channel-resolver.ts';
-import type { HookActionMeta } from './hook-engine.ts';
+import type { HookActionMeta, HookAddressing } from '../hooks/hook-engine.ts';
 
-export function resolveMatchingHooks(
+export function workflowHookAddressing(
+  workflow: SpaceWorkflow,
+  workflowRunId: string
+): HookAddressing {
+  return {
+    scopeId: workflowRunId,
+    listHooks: () => workflow.hooks ?? [],
+    resolveCandidates: (methodName, params, meta) =>
+      sortHooks(resolveMatchingHooks(workflow, workflowRunId, methodName, params, meta)),
+    resolveSourceName: (meta) => resolveSourceNodeName(workflow, meta),
+  };
+}
+
+function resolveSourceNodeName(workflow: SpaceWorkflow, meta: HookActionMeta): string {
+  return workflow?.nodes.find((node) => node.id === meta.nodeId)?.name ?? meta.agentName;
+}
+
+function resolveMatchingHooks(
   workflow: SpaceWorkflow,
   workflowRunId: string,
   methodName: string,
@@ -12,7 +29,7 @@ export function resolveMatchingHooks(
 ): WorkflowHook[] {
   if (!workflow?.hooks) return [];
 
-  const nodeName = workflow.nodes.find((n) => n.id === meta.nodeId)?.name ?? meta.agentName;
+  const nodeName = resolveSourceNodeName(workflow, meta);
 
   const slotToNodes = new Map<string, string[]>();
   for (const node of workflow.nodes) {
@@ -147,7 +164,7 @@ export function resolveMatchingHooks(
   });
 }
 
-export function sortHooks(hooks: WorkflowHook[]): WorkflowHook[] {
+function sortHooks(hooks: WorkflowHook[]): WorkflowHook[] {
   return [...hooks].sort((a, b) => {
     const aClass = a.classification ?? 'validation';
     const bClass = b.classification ?? 'validation';
