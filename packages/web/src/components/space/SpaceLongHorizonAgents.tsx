@@ -15,7 +15,13 @@ import { toast } from '../../lib/toast';
 import { Button } from '../ui/Button';
 import { ConfirmModal } from '../ui/ConfirmModal';
 import { LineNumberedTextarea } from './LineNumberedTextarea';
-import { modelConfigFromPool, poolFromModelConfig, storedModelConfig } from './agent-model-pool';
+import {
+  isStoredAsPool,
+  modelConfigFromPool,
+  poolFromModelConfig,
+  storedModelConfig,
+  thinkingLevelForSave,
+} from './agent-model-pool';
 import { ModelPoolEditor } from './ModelPoolEditor';
 import { SettingSourcesEditor } from './SettingSourcesEditor';
 import { ToolsEditor, type ToolsSelection } from './ToolsEditor';
@@ -106,7 +112,9 @@ function agentSaveParseToolsStage(ctx: AgentSaveCtx): AgentSaveCtx {
 
 async function agentSavePersistStage(ctx: AgentSaveCtx): Promise<AgentSaveCtx> {
   const { form, parsedTools, toolsChanged, displayName, handle, instructions } = ctx;
-  const modelConfig = modelConfigFromPool(form.modelPool);
+  const storedSource = ctx.agent ?? ctx.template;
+  const modelConfig = modelConfigFromPool(form.modelPool, isStoredAsPool(storedSource));
+  const thinkingLevel = thinkingLevelForSave(modelConfig, storedSource);
   if (ctx.agent) {
     await spaceStore.updateAgent(ctx.agent.id, {
       displayName,
@@ -116,7 +124,7 @@ async function agentSavePersistStage(ctx: AgentSaveCtx): Promise<AgentSaveCtx> {
       ...(modelConfig.provider !== storedModelConfig(ctx.agent).provider
         ? { provider: modelConfig.provider }
         : {}),
-      thinkingLevel: modelConfig.thinkingLevel,
+      thinkingLevel,
       settingSources: form.settingSources,
       ...(toolsChanged
         ? { toolPermissions: { ...ctx.agent.toolPermissions, tools: parsedTools } }
@@ -133,7 +141,7 @@ async function agentSavePersistStage(ctx: AgentSaveCtx): Promise<AgentSaveCtx> {
     autonomyLevel: form.autonomyLevel as 1 | 2 | 3 | 4 | 5 | null,
     model: modelConfig.model,
     ...(modelConfig.provider ? { provider: modelConfig.provider } : {}),
-    thinkingLevel: modelConfig.thinkingLevel,
+    thinkingLevel,
     settingSources: form.settingSources,
     ...(parsedTools.length > 0 ? { tools: parsedTools } : {}),
     ...(ctx.template?.suggestedEventSubscriptions.length

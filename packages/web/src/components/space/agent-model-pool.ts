@@ -51,14 +51,29 @@ function isScalarEquivalent(pool: AgentModelPoolEntry[]): boolean {
   return only.maxConcurrent === DEFAULT_POOL_MAX_CONCURRENT && only.weight === DEFAULT_POOL_WEIGHT;
 }
 
-export function modelConfigFromPool(pool: AgentModelPoolEntry[]): ResolvedModelConfig {
+export function isStoredAsPool(source: ModelConfigSource | null | undefined): boolean {
+  if (!source || source.model) return false;
+  return (source.modelPool?.length ?? 0) > 0;
+}
+
+export function withoutInheritedThinkingLevel(
+  source: ModelConfigSource | null | undefined
+): ModelConfigSource | null {
+  if (!source) return null;
+  return { model: source.model, provider: source.provider, modelPool: source.modelPool };
+}
+
+export function modelConfigFromPool(
+  pool: AgentModelPoolEntry[],
+  keepAsPool = false
+): ResolvedModelConfig {
   const cleaned = pool
     .map((entry) => ({ ...entry, model: entry.model.trim() }))
     .filter((entry) => entry.model.length > 0);
   if (cleaned.length === 0) {
     return { model: null, provider: null, thinkingLevel: null, modelPool: null };
   }
-  if (isScalarEquivalent(cleaned)) {
+  if (!keepAsPool && isScalarEquivalent(cleaned)) {
     const [only] = cleaned;
     return {
       model: only.model,
@@ -73,7 +88,15 @@ export function modelConfigFromPool(pool: AgentModelPoolEntry[]): ResolvedModelC
 export function storedModelConfig(
   source: ModelConfigSource | null | undefined
 ): ResolvedModelConfig {
-  return modelConfigFromPool(poolFromModelConfig(source));
+  return modelConfigFromPool(poolFromModelConfig(source), isStoredAsPool(source));
+}
+
+export function thinkingLevelForSave(
+  config: ResolvedModelConfig,
+  source: ModelConfigSource | null | undefined
+): ThinkingLevel | null {
+  if (config.model) return config.thinkingLevel;
+  return source?.thinkingLevel ?? null;
 }
 
 export function sameModelConfig(a: ResolvedModelConfig, b: ResolvedModelConfig): boolean {

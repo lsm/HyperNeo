@@ -6,7 +6,7 @@ import type {
 import { useState } from 'preact/hooks';
 import { Button } from '../ui/Button';
 import { AUTONOMY_LABELS, toolPermissionsToolsList } from './agent-page-labels';
-import { poolFromModelConfig } from './agent-model-pool';
+import { poolFromModelConfig, withoutInheritedThinkingLevel } from './agent-model-pool';
 import { LineNumberedTextarea } from './LineNumberedTextarea';
 import { ModelPoolEditor } from './ModelPoolEditor';
 import { SettingSourcesEditor } from './SettingSourcesEditor';
@@ -45,11 +45,7 @@ export function TemplateEditor({
     template?.settingSources ?? null
   );
   const [modelPool, setModelPool] = useState<AgentModelPoolEntry[]>(() =>
-    poolFromModelConfig({
-      model: template?.model,
-      provider: template?.provider,
-      modelPool: template?.modelPool,
-    })
+    poolFromModelConfig(withoutInheritedThinkingLevel(template))
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);

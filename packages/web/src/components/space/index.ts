@@ -7,10 +7,13 @@ export { LineNumberedTextarea } from './LineNumberedTextarea';
 export { ModelPoolEditor, POOL_EMPTY_HINT_SPACE_DEFAULT } from './ModelPoolEditor';
 export type { ModelPoolEditorProps } from './ModelPoolEditor';
 export {
+  isStoredAsPool,
   modelConfigFromPool,
   poolFromModelConfig,
   sameModelConfig,
   storedModelConfig,
+  thinkingLevelForSave,
+  withoutInheritedThinkingLevel,
 } from './agent-model-pool';
 export type { ModelConfigSource, ResolvedModelConfig } from './agent-model-pool';
 export { SpaceCreateDialog } from './SpaceCreateDialog';

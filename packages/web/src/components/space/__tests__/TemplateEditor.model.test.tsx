@@ -177,6 +177,53 @@ describe('TemplateEditor model configuration', () => {
     );
   });
 
+  it('omits the model fields on an untouched scalar template that pins a thinking level', async () => {
+    const view = renderEditor(
+      makeTemplate({
+        key: 'scribe',
+        displayName: 'Scribe',
+        model: 'claude-sonnet-4-6',
+        provider: 'anthropic',
+        thinkingLevel: 'think16k',
+      })
+    );
+
+    fireEvent.input(view.getByDisplayValue('Scribe'), { target: { value: 'Scribe II' } });
+    fireEvent.click(view.getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(mockUpdateTemplate).toHaveBeenCalledTimes(1));
+    const edit = mockUpdateTemplate.mock.calls[0][1];
+    expect(edit.thinkingLevel).toBe('think16k');
+    expect(edit).not.toHaveProperty('model');
+    expect(edit).not.toHaveProperty('provider');
+    expect(edit).not.toHaveProperty('modelPool');
+  });
+
+  it('keeps a stored lone default pool entry as a pool when its model is changed', async () => {
+    const view = renderEditor(
+      makeTemplate({
+        key: 'scribe',
+        displayName: 'Scribe',
+        model: null,
+        modelPool: [
+          { model: 'claude-sonnet-4-6', provider: 'anthropic', maxConcurrent: 1, weight: 100 },
+        ],
+      })
+    );
+
+    fireEvent.change(view.getByTestId('pool-entry-model-select'), {
+      target: { value: 'claude-haiku-4-5' },
+    });
+    fireEvent.click(view.getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(mockUpdateTemplate).toHaveBeenCalledTimes(1));
+    const edit = mockUpdateTemplate.mock.calls[0][1];
+    expect(edit.model).toBeNull();
+    expect(edit.modelPool).toEqual([
+      { model: 'claude-haiku-4-5', provider: 'anthropic', maxConcurrent: 1, weight: 100 },
+    ]);
+  });
+
   it('preserves a provider-only override on an unrelated edit', async () => {
     const view = renderEditor(
       makeTemplate({ key: 'scribe', displayName: 'Scribe', model: null, provider: 'anthropic' })

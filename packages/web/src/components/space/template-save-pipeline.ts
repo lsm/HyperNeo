@@ -7,7 +7,13 @@ import type {
 } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { spaceStore } from '../../lib/space-store';
-import { modelConfigFromPool, sameModelConfig, storedModelConfig } from './agent-model-pool';
+import {
+  isStoredAsPool,
+  modelConfigFromPool,
+  sameModelConfig,
+  storedModelConfig,
+  withoutInheritedThinkingLevel,
+} from './agent-model-pool';
 
 export interface TemplateSaveForm {
   displayName: string;
@@ -47,7 +53,7 @@ function templateSaveParseToolsStage(ctx: TemplateSaveCtx): TemplateSaveCtx {
 
 async function templateSavePersistStage(ctx: TemplateSaveCtx): Promise<TemplateSaveCtx> {
   const { form, parsedTools } = ctx;
-  const modelConfig = modelConfigFromPool(form.modelPool);
+  const modelConfig = modelConfigFromPool(form.modelPool, isStoredAsPool(ctx.template));
   const fields = {
     handle: form.handle.trim(),
     displayName: form.displayName.trim(),
@@ -63,7 +69,10 @@ async function templateSavePersistStage(ctx: TemplateSaveCtx): Promise<TemplateS
   };
   if (ctx.template) {
     const { model, provider, modelPool, ...rest } = fields;
-    const modelConfigUnchanged = sameModelConfig(modelConfig, storedModelConfig(ctx.template));
+    const modelConfigUnchanged = sameModelConfig(
+      modelConfig,
+      storedModelConfig(withoutInheritedThinkingLevel(ctx.template))
+    );
     await spaceStore.updateTemplate(
       ctx.template.key,
       modelConfigUnchanged

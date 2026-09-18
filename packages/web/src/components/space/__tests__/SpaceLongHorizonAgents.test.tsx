@@ -1300,6 +1300,60 @@ describe('SpaceLongHorizonAgents', () => {
     expect(mockUpdateAgent.mock.calls[0][1].modelPool).toEqual(pool);
   });
 
+  it('keeps a stored lone default pool entry as a pool on an untouched save', async () => {
+    const pool = [
+      { model: 'claude-haiku-4-5', provider: 'anthropic', maxConcurrent: 1, weight: 100 },
+    ];
+    mockAgents.value = [makeLongHorizonAgent({ model: null, modelPool: pool })];
+    const { getByRole } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByRole('button', { name: 'Edit Research Long Horizon' }));
+    fireEvent.click(getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
+    const params = mockUpdateAgent.mock.calls[0][1];
+    expect(params.modelPool).toEqual(pool);
+    expect(params.model).toBeNull();
+  });
+
+  it('preserves the agent thinking level when the model stays a pool', async () => {
+    mockAgents.value = [
+      makeLongHorizonAgent({
+        model: null,
+        thinkingLevel: 'think16k',
+        modelPool: [
+          { model: 'claude-haiku-4-5', provider: 'anthropic', maxConcurrent: 2, weight: 40 },
+          { model: 'claude-sonnet-4-6', provider: 'anthropic', maxConcurrent: 2, weight: 60 },
+        ],
+      }),
+    ];
+    const { getByRole } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByRole('button', { name: 'Edit Research Long Horizon' }));
+    fireEvent.click(getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
+    const params = mockUpdateAgent.mock.calls[0][1];
+    expect(params.thinkingLevel).toBe('think16k');
+    expect(params.modelPool).toHaveLength(2);
+  });
+
+  it('preserves the agent thinking level when no model is pinned at all', async () => {
+    mockAgents.value = [
+      makeLongHorizonAgent({ model: null, modelPool: null, thinkingLevel: 'think32k' }),
+    ];
+    const { getByRole } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByRole('button', { name: 'Edit Research Long Horizon' }));
+    fireEvent.click(getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
+    const params = mockUpdateAgent.mock.calls[0][1];
+    expect(params.thinkingLevel).toBe('think32k');
+    expect(params.model).toBeNull();
+    expect(params.modelPool).toBeNull();
+  });
+
   it('clears the pool when its only entry is removed', async () => {
     mockAgents.value = [
       makeLongHorizonAgent({
