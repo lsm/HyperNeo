@@ -526,6 +526,7 @@ function AgentCard({ agent, navigationSpaceId, reminderCount, onEdit, onDelete }
       aria-busy={opening}
       onClick={openSession}
       onKeyDown={(e) => {
+        if (e.target !== e.currentTarget) return;
         if (e.key === 'Enter' || e.key === ' ') openSession();
       }}
       class="group flex min-h-32 cursor-pointer flex-col rounded-xl border border-line bg-surface-overlay/90 px-4 py-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-all hover:-translate-y-0.5 hover:border-line-strong hover:bg-surface-raised/95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"

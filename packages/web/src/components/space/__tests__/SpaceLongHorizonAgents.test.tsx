@@ -1752,6 +1752,21 @@ describe('SpaceLongHorizonAgents', () => {
     expect(mockEnsureAgentSession).toHaveBeenCalledWith('lh-1');
   });
 
+  it('ignores Enter on a nested action button instead of opening the session', () => {
+    mockAgents.value = [makeLongHorizonAgent({ sessionId: null })];
+
+    const { getByRole } = render(
+      <SpaceLongHorizonAgents spaceId="space-1" navigationSpaceId="space-slug" />
+    );
+
+    fireEvent.keyDown(getByRole('button', { name: 'Edit Research Long Horizon' }), {
+      key: 'Enter',
+    });
+
+    expect(mockEnsureAgentSession).not.toHaveBeenCalled();
+    expect(mockNavigateToSpaceSession).not.toHaveBeenCalled();
+  });
+
   it('navigates to an existing session without opening a new one', () => {
     mockAgents.value = [makeLongHorizonAgent()];
 
