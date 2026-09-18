@@ -86,6 +86,7 @@ this sweep. Counts by family (`packages/shared/src/types/operation-names/*.ts`):
 | task (`task.retry` only) | 16 | 1 | `admitRetrier` (`tasks/retry-task.ts`) | `'retry_denied'` |
 | externalEvent | 14 | 14 | `admitEventCallerSpace` (`external-events/operation-admission.ts`) | `{ reason: 'caller_denied' }` |
 | core (`operations.list/describe`) | 2 | 0 | n/a — see Discovery below | — |
+| `message.send` (messaging) | 1 | 0 | n/a — policy-free, see below | — |
 | **Total** | **108** | **89** | | |
 
 \* `session`'s sixth declared name, `session.message.send`, is implemented in
@@ -105,15 +106,21 @@ WORKFLOW_READ_ROLES)` / `WORKFLOW_MUTATE_ROLES` in both workflow files; `admitEv
 caller, NODE_EVENT_ROLES | AGENT_EVENT_ROLES | INACTIVITY_ROLES | EXTERNAL_EVENT_READ_ROLES)`
 across all six `external-events/*.ts` files; `admitSpaceCaller` fed the identical
 `READ_ADMISSION`/`WRITE_ADMISSION` shape from `session/operations.ts`, `schedule/operations.ts`,
-and `audit/operations.ts`; `admitAgentCaller` from all five `agents/*.ts` operation files;
-`admitGoalRole`/`admitGoalSpace`/`admitGoalAccess` from all eight `goals/*.ts` operation
+and `audit/operations.ts`; `admitAgentCaller` from seven `agents/*.ts` operation files
+(`agent-template-operations.ts`, `assign-agent-operation.ts`, `create-agent-operation.ts`,
+`get-agent-operation.ts`, `list-agents-operation.ts`, `reminder-operations.ts`,
+`update-agent-operation.ts`);
+`admitGoalRole`/`admitGoalSpace`/`admitGoalAccess` from nine `goals/*.ts` operation
 files; `admitForgeReader`/`admitForgeMutator` from both `evolution/episode-operations.ts` and
 `evolution/scope-operations.ts`; `admitNodeCaller` from the three `messaging/node-*.ts` list
 operations and `send_message`; `admitArtifactCaller` from `artifacts/artifact-operations.ts`;
 `admitRetrier` from `tasks/retry-task.ts`.
 
-None of these gate functions changed in #4726 — the commit touched only `invoke.ts` and test
-assertions. So **the count of operations a role newly reaches with no family gate at all is
+None of these gate functions changed in #4726. Per `git show --stat 57723b053`, the commit
+touched two source files — `operations/invoke.ts` (the gate logic) and
+`agents/reminder-operations.ts` (two operation description strings only, updated to stop
+promising a door refusal that no longer happens; no admission logic changed there) — plus 25
+test files. So **the count of operations a role newly reaches with no family gate at all is
 0** among the 89 that declare a policy. The generic door was fully redundant with these gates
 for every role-restricted operation; #4726 removed a second lock on a door that a first lock
 still closes.
@@ -133,6 +140,16 @@ denies unknown roles. Combined with the fact that no family's role allowlist eve
 every one of the 89 gated operations regardless of #4726 — they were never admitted anywhere,
 before or after.
 
+Nothing about *whether* a session gets the `hyperneo-operations` MCP server varies by role: it
+is attached unconditionally to every session by `QueryOptionsBuilder.computeEffectiveMcpServers`
+(`agent/query-options-builder.ts:304`), and the registry behind it is one global registry
+installed once via `sessionManager.setDefaultOperationRegistryProvider`
+(`rpc-handlers/index.ts:1420`) with no session or role argument. `attachGenericSpaceTools`
+(`space-mcp-session-policy.ts`) is a separate switch that only governs the `agent-memory` and
+`db-query` servers. So every role difference this document describes is enforced entirely
+inside the operations themselves (family gates, or now nothing at the door) — never by varying
+which tools a session can see.
+
 ### Roles admitted per family (identical before and after #4726, enforced by the family gate)
 
 | Family | `ad_hoc_member` | `long_term_agent` | `universal_read` | `workflow_worker` | `direct_task_worker` / `legacy_task_agent` / `outside_space` |
@@ -149,23 +166,29 @@ before or after.
 | schedule/session (mutate/destructive) | yes | yes | no | no | no |
 | node.* / send_message / artifact.* | no | no | no | yes | no |
 | task.retry | yes | yes | no | no | no |
-| externalEvent read (get/listDeliveries) | yes | yes | no | yes | no |
+| externalEvent.get (read) | yes | yes | no | yes | no |
 | externalEvent.agent.* | yes | yes | no | no | no |
-| externalEvent.subscribe/unsubscribe/listSubscriptions, nodeAgent.restore, inactivity.* | no | no\* | no | yes\* | no |
+| externalEvent.listDeliveries, .subscribe/unsubscribe/listSubscriptions, nodeAgent.restore | no | no\* | no | yes\* | no |
+| externalEvent.inactivity.* | no | yes | no | no | no |
 
-\* `inactivity.*` is the one exception inside externalEvent: its role list is
-`INACTIVITY_ROLES = ['long_term_agent']` only, not `workflow_worker`; the other rows in that
-line (`externalEvent.subscribe`/`unsubscribe`/`listSubscriptions`, `nodeAgent.restore`) use
-`NODE_EVENT_ROLES = ['workflow_worker']` only. They're grouped because both admit exactly one
-role and reject everyone else including each other's role.
+\* `externalEvent.listDeliveries` and `inactivity.*` are two separate exceptions inside
+externalEvent, not one. `listDeliveries` (`list-deliveries-operation.ts`) is gated by
+`NODE_EVENT_ROLES = ['workflow_worker']`, the same constant as `.subscribe`/`unsubscribe`/
+`listSubscriptions`/`nodeAgent.restore` — it does not share the `get` row's
+`EXTERNAL_EVENT_READ_ROLES` despite being grouped with `get` under "read" above; `ad_hoc_member`
+and `long_term_agent` are denied. `inactivity.*` uses `INACTIVITY_ROLES = ['long_term_agent']`
+only, admitting neither `ad_hoc_member` nor `workflow_worker`.
 
 ## The one real, confirmed regression: discovery, not execution
 
 `operations.list` and `operations.describe` (`operations/discovery.ts`) filter through
 `isOperationAdmitted` too, and they have no family gate behind them — they're pure catalog
 reads. Before #4726, an `ad_hoc_member` calling `operations.list` would not see
-`node.peers.list`, `send_message`, `agentTemplate.*` filtered by other roles, etc.; a
-`universal_read` caller wouldn't see any mutate/destructive operation. Now every MCP caller,
+`node.peers.list` or `send_message` (`workflow_worker`-only); `agentTemplate.*` is not an
+example of this — every `agentTemplate.*` policy uses `AGENT_ROLES = ['ad_hoc_member',
+'long_term_agent']` (`agents/operation-contracts.ts`, `agents/agent-template-operations.ts`),
+so `ad_hoc_member` always saw it, before and after #4726. A `universal_read` caller wouldn't
+see any mutate/destructive operation. Now every MCP caller,
 in every role, sees **all 108 operation names and descriptions** via `operations.list`, and
 `operations.describe` will hand back the full input/output JSON Schema for **any** operation
 by name, including ones that role will be rejected from executing a moment later. This is
