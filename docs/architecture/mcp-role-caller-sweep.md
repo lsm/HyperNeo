@@ -67,10 +67,13 @@ Counting every `defineOperation({...})` call site with a `policy.roles` array (n
 ones the issue happened to sample), **89 of the 108 registered operations declare a roles
 list**, not "roughly 25." The 25 figure in the issue and the 25 test files #4726 touched
 undercount the surface; #4726's test fixes only touched the files whose *assertions* named
-the door explicitly; several families that declare `roles` (all 23 `forge.*` operations, all
-6 `schedule.*`, most of `session.*`) had no test asserting the door behavior in the first
-place, so they didn't need a diff, but they are still role-declaring operations in scope for
-this sweep. Counts by family (`packages/shared/src/types/operation-names/*.ts`):
+the door explicitly, and that is a per-operation property, not a per-family one: within
+families that declare `roles`, `57723b053` rewrote exactly three such assertions —
+`schedule.delete` ("the door refuses a workflow worker before a schedule mutation runs"),
+`session.state.update`, and one forge scope mutation whose `code: 'forbidden'` became
+`{ accepted: false, reason: 'forge_denied' }`. The remaining operations in those families
+had no door-naming assertion and so needed no diff, but all of them are role-declaring and
+in scope for this sweep. Counts by family (`packages/shared/src/types/operation-names/*.ts`):
 
 | Family | Total ops | Declare `roles` | Gate function (family-owned, independent of the door) | Denial shape |
 |---|---|---|---|---|
