@@ -9,7 +9,9 @@ import { subscribeGoalOwnerChangeOutcomeRedelivery } from '../../../../src/lib/g
 import type { SpaceGoalService } from '../../../../src/lib/goals/service.ts';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { setupSpaceGoalHandlers } from '../../../../src/lib/rpc-handlers/space-goal-handlers.ts';
+import { createGetGoalOperation } from '../../../../src/lib/goals/get-goal-operation.ts';
 import { createGetGoalOwnerOperation } from '../../../../src/lib/goals/get-goal-owner-operation.ts';
+import { createListGoalEventsOperation } from '../../../../src/lib/goals/list-goal-events-operation.ts';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
 
 const SPACE_ID = 'space-1';
@@ -73,6 +75,8 @@ function makeOperations(
       getSession: () => null,
       longHorizonAgentRepo: { getById: () => null } as never,
     }),
+    createGetGoalOperation({ goalService, getSession: () => null }),
+    createListGoalEventsOperation({ goalService, getSession: () => null }),
   ]);
 }
 
@@ -402,7 +406,47 @@ describe('spaceGoal workspacePath resolution', () => {
 });
 
 describe('spaceGoal handler gates', () => {
-  const GOAL = { id: GOAL_ID, spaceId: SPACE_ID, title: 'G' };
+  const GOAL = {
+    id: GOAL_ID,
+    spaceId: SPACE_ID,
+    title: 'G',
+    description: '',
+    status: 'active' as const,
+    type: 'one_shot' as const,
+    priority: 'normal' as const,
+    labels: [],
+    metrics: {},
+    summary: '',
+    progress: 0,
+    nextSteps: [],
+    preferredWorkflowId: null,
+    taskScheduleId: null,
+    autoTriggerNext: false,
+    pendingNextRun: false,
+    activeTaskId: null,
+    lastTaskId: null,
+    lastCheckInAt: null,
+    nextCheckInAt: null,
+    createdAt: 1,
+    updatedAt: 1,
+    completedAt: null,
+    workspacePath: null,
+    revision: 1,
+  };
+  const GOAL_EVENT = {
+    id: 'event-1',
+    spaceId: SPACE_ID,
+    goalId: GOAL_ID,
+    eventType: 'created' as const,
+    source: 'rpc' as const,
+    sourceTaskId: null,
+    sourceSessionId: null,
+    previousState: null,
+    newState: null,
+    diff: null,
+    note: null,
+    createdAt: 1,
+  };
 
   function makeGateHarness(
     overrides: {
@@ -420,7 +464,7 @@ describe('spaceGoal handler gates', () => {
       resumeGoal: mock(() => ({ ...GOAL, status: 'active' })),
       createImmediateTask: mock(() => ({ taskId: 'task-1' })),
       listGoals: mock(() => [GOAL]),
-      listGoalEvents: mock(() => [{ id: 'event-1' }]),
+      listGoalEvents: mock(() => [GOAL_EVENT]),
       ...overrides.goalService,
     };
     const getSpace = mock(overrides.getSpace ?? (async () => ({ id: SPACE_ID, status: 'active' })));
@@ -585,8 +629,12 @@ describe('spaceGoal handler gates', () => {
       beforeId: 'event-9',
     };
     const result = await handlers.get('spaceGoal.listEvents')!(params, makeContext());
-    expect(goalService.listGoalEvents).toHaveBeenCalledWith(GOAL_ID, params);
-    expect(result).toEqual({ events: [{ id: 'event-1' }] });
+    expect(goalService.listGoalEvents).toHaveBeenCalledWith(GOAL_ID, {
+      limit: 10,
+      before: 123,
+      beforeId: 'event-9',
+    });
+    expect(result).toEqual({ events: [GOAL_EVENT] });
   });
 
   it('spaceGoal.getOwner does not require an authorized owner-mutation caller', async () => {
