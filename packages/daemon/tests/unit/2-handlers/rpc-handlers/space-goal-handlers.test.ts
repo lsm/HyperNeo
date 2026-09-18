@@ -1,5 +1,10 @@
 import { describe, expect, it, mock } from 'bun:test';
-import type { MessageHub, RequestHandler, SpaceGoalOwnerResolution } from '@hyperneo/shared';
+import type {
+  MessageHub,
+  RequestHandler,
+  SpaceGoalOwnerResolution,
+  SpaceLongHorizonAgent,
+} from '@hyperneo/shared';
 import {
   createDaemonInternalEventBus,
   type DaemonInternalEventMap,
@@ -20,6 +25,10 @@ import {
 import { createListGoalEventsOperation } from '../../../../src/lib/goals/list-goal-events-operation.ts';
 import { createUpdateGoalOperation } from '../../../../src/lib/goals/update-goal-operation.ts';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
+import {
+  createAssignAgentToGoalOperation,
+  createUnassignAgentFromGoalOperation,
+} from '../../../../src/lib/agents/assign-agent-operation.ts';
 
 const SPACE_ID = 'space-1';
 const GOAL_ID = 'goal-1';
@@ -117,14 +126,37 @@ function makeRepoMock(initial: SpaceGoalOwnerResolution) {
 
 function makeOperations(
   goalService: SpaceGoalService,
-  goalScopeRepo: { getPrimaryGoalOwner: (goalId: string, spaceId: string) => unknown }
+  goalScopeRepo: ReturnType<typeof makeRepoMock>,
+  internalEventBus?: InternalEventBus<DaemonInternalEventMap>,
+  getAgent: (agentId: string) => SpaceLongHorizonAgent | null = (agentId) =>
+    ({ id: agentId, spaceId: SPACE_ID, status: 'active' }) as SpaceLongHorizonAgent
 ) {
   const writeDeps = {
     goalService,
     getSession: () => null,
     longHorizonAgentRepo: { getById: () => null } as never,
   };
+  const assignmentDeps = {
+    getSession: () => null,
+    longHorizonAgentRepo: { getById: () => null } as never,
+    getAgent,
+    getGoalSpace: (goalId: string) => goalService.getGoal(goalId)?.spaceId ?? null,
+    getForgeScopeSpace: () => null,
+    assignGoal: (agentId: string, goalId: string) => goalScopeRepo.assignGoal(agentId, goalId),
+    unassignGoal: (agentId: string, goalId: string) =>
+      goalScopeRepo.deleteGoalAssignmentByRelationship(agentId, goalId, 'owner'),
+    assignForgeScope: () => {},
+    unassignForgeScope: () => {},
+    publishGoalOwnerChanged: (spaceId: string, goalId: string, sessionId: string) => {
+      internalEventBus
+        ?.publish('spaceGoal.ownerChanged', { sessionId, spaceId, goalId })
+        .catch(() => {});
+    },
+    audit: () => {},
+  };
   return createOperationRegistry([
+    createAssignAgentToGoalOperation(assignmentDeps),
+    createUnassignAgentFromGoalOperation(assignmentDeps),
     createGetGoalOwnerOperation({
       goalService,
       goalScopeRepo: goalScopeRepo as never,
@@ -141,7 +173,10 @@ function makeOperations(
   ]);
 }
 
-function makeHarness(repo: ReturnType<typeof makeRepoMock>) {
+function makeHarness(
+  repo: ReturnType<typeof makeRepoMock>,
+  getAgent?: (agentId: string) => SpaceLongHorizonAgent | null
+) {
   const { hub, handlers } = createMockHub();
   const goalService = {
     getGoal: mock(() => ({ id: GOAL_ID, spaceId: SPACE_ID })),
@@ -153,7 +188,7 @@ function makeHarness(repo: ReturnType<typeof makeRepoMock>) {
     goalService,
     spaceManager,
     goalScopeRepo: repo,
-    operations: makeOperations(goalService, repo),
+    operations: makeOperations(goalService, repo, undefined, getAgent),
   });
   return { handlers };
 }
@@ -287,7 +322,7 @@ describe('spaceGoal owner handlers', () => {
         getSpace: mock(async () => ({ id: SPACE_ID })),
       } as unknown as SpaceManager,
       goalScopeRepo,
-      operations: makeOperations(goalService, goalScopeRepo),
+      operations: makeOperations(goalService, goalScopeRepo, eventBus),
       internalEventBus: eventBus,
     });
     await handlers.get('spaceGoal.assignOwner')!(
@@ -329,7 +364,7 @@ describe('spaceGoal owner handlers', () => {
         getSpace: mock(async () => ({ id: SPACE_ID })),
       } as unknown as SpaceManager,
       goalScopeRepo: assignScopeRepo,
-      operations: makeOperations(assignGoalService, assignScopeRepo),
+      operations: makeOperations(assignGoalService, assignScopeRepo, internalEventBus),
       internalEventBus,
     });
 
@@ -348,6 +383,49 @@ describe('spaceGoal owner handlers', () => {
       conflicts: [],
     });
     const { handlers } = makeHarness(repo);
+    const result = await handlers.get('spaceGoal.unassignOwner')!(
+      { spaceId: SPACE_ID, goalId: GOAL_ID },
+      makeContext('global')
+    );
+    expect(repo.deleteGoalAssignmentByRelationship).toHaveBeenCalledWith(
+      'agent-1',
+      GOAL_ID,
+      'owner'
+    );
+    expect(result).toEqual({ owner: { action: 'no_recipient' } });
+  });
+
+  it('clears an owner row whose agent record no longer exists', async () => {
+    const repo = makeRepoMock({
+      action: 'degraded',
+      reason: 'missing',
+      owner: { agentId: 'agent-gone', relationship: 'owner', createdAt: 1 },
+      conflicts: [],
+    });
+    const { handlers } = makeHarness(repo, () => null);
+    const result = await handlers.get('spaceGoal.unassignOwner')!(
+      { spaceId: SPACE_ID, goalId: GOAL_ID },
+      makeContext('global')
+    );
+    expect(repo.deleteGoalAssignmentByRelationship).toHaveBeenCalledWith(
+      'agent-gone',
+      GOAL_ID,
+      'owner'
+    );
+    expect(result).toEqual({ owner: { action: 'no_recipient' } });
+  });
+
+  it('unassigns a degraded owner whose agent record survives', async () => {
+    const repo = makeRepoMock({
+      action: 'degraded',
+      reason: 'archived',
+      owner: { agentId: 'agent-1', relationship: 'owner', createdAt: 1 },
+      conflicts: [],
+    });
+    const { handlers } = makeHarness(
+      repo,
+      (agentId) => ({ id: agentId, spaceId: SPACE_ID, status: 'archived' }) as SpaceLongHorizonAgent
+    );
     const result = await handlers.get('spaceGoal.unassignOwner')!(
       { spaceId: SPACE_ID, goalId: GOAL_ID },
       makeContext('global')

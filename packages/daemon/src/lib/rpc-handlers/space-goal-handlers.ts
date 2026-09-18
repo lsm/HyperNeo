@@ -20,7 +20,7 @@ export interface SpaceGoalHandlerDeps {
   spaceManager: SpaceManager;
   goalScopeRepo: Pick<
     SpaceAgentGoalScopeRepository,
-    'getPrimaryGoalOwner' | 'assignGoal' | 'deleteGoalAssignmentByRelationship'
+    'getPrimaryGoalOwner' | 'deleteGoalAssignmentByRelationship'
   >;
   operations: OperationRegistrySource;
   internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
@@ -54,6 +54,18 @@ export function setupSpaceGoalHandlers(messageHub: MessageHub, deps: SpaceGoalHa
 
   function requireGoalId(goalId: string): void {
     if (!goalId) throw new Error('goalId is required');
+  }
+
+  async function mutateGoalOwner(
+    operationName: 'agent.assignGoal' | 'agent.unassignGoal',
+    input: { spaceId: string; goalId: string; agentId: string }
+  ): Promise<void> {
+    const result = await invokeOperationFromHandler<{
+      accepted: true;
+      rejected?: true;
+      message: string;
+    }>(operations, operationName, input);
+    if (result.rejected) throw new Error(result.message);
   }
 
   function requireGoalInSpace(goalId: string, spaceId: string) {
@@ -181,7 +193,11 @@ export function setupSpaceGoalHandlers(messageHub: MessageHub, deps: SpaceGoalHa
     await requireSpace(params.spaceId);
     requireGoalInSpace(params.goalId, params.spaceId);
     assertOwnerMutationAuthorized(context);
-    goalScopeRepo.assignGoal(params.agentId, params.goalId);
+    await mutateGoalOwner('agent.assignGoal', {
+      spaceId: params.spaceId,
+      goalId: params.goalId,
+      agentId: params.agentId,
+    });
     publishOwnerChanged(context.sessionId, params.spaceId, params.goalId);
     return { owner: resolveOwner(params.goalId, params.spaceId) };
   });
@@ -193,11 +209,19 @@ export function setupSpaceGoalHandlers(messageHub: MessageHub, deps: SpaceGoalHa
     assertOwnerMutationAuthorized(context);
     const resolution = resolveOwner(params.goalId, params.spaceId);
     if (resolution.action === 'resolved' || resolution.action === 'degraded') {
-      goalScopeRepo.deleteGoalAssignmentByRelationship(
-        resolution.owner.agentId,
-        params.goalId,
-        'owner'
-      );
+      if (resolution.action === 'degraded' && resolution.reason === 'missing') {
+        goalScopeRepo.deleteGoalAssignmentByRelationship(
+          resolution.owner.agentId,
+          params.goalId,
+          'owner'
+        );
+      } else {
+        await mutateGoalOwner('agent.unassignGoal', {
+          spaceId: params.spaceId,
+          goalId: params.goalId,
+          agentId: resolution.owner.agentId,
+        });
+      }
       publishOwnerChanged(context.sessionId, params.spaceId, params.goalId);
     }
     return { owner: resolveOwner(params.goalId, params.spaceId) };
