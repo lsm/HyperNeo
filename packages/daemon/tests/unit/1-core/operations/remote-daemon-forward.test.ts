@@ -12,6 +12,7 @@ import { createOperationRegistry } from '../../../../src/lib/operations/registry
 import { setupOperationHandlers } from '../../../../src/lib/rpc-handlers/operation-handlers';
 import { RemoteDaemonRegistry } from '../../../../src/lib/remote-daemons/registry';
 import { createRemoteSendForwarder } from '../../../../src/lib/remote-daemons/forward-send';
+import { createAttachDaemonOperation } from '../../../../src/lib/remote-daemons/attach-operation';
 import { createHttpWsServer, type ServerHandle } from '../../../../src/lib/runtime-server/index';
 import { WebSocketServerTransport } from '../../../../src/lib/websocket-server-transport';
 import { createWebSocketHandlers } from '../../../../src/routes/setup-websocket';
@@ -228,6 +229,93 @@ describe('forwarding message.send to an attached daemon', () => {
     expect(outcome).toMatchObject({ kind: 'completed', value: { kind: 'accepted' } });
     expect(remote.mailbox.rowCount()).toBe(0);
   });
+});
+
+describe('attaching a remote daemon', () => {
+  test('lets a human attach over RPC and then forwards to it', async () => {
+    const remote = await startRemoteDaemon('session-on-b');
+    const local = createMailboxTestDb();
+    const daemons = new RemoteDaemonRegistry();
+    const registry = createOperationRegistry([
+      createAttachDaemonOperation(daemons),
+      createSendMessageOperation(
+        local.jobQueue,
+        (sessionId) => sessionId === 'session-on-a',
+        createRemoteSendForwarder(daemons)
+      ),
+    ]);
+
+    const attached = await invokeOperation(
+      registry,
+      'daemon.attach',
+      { daemonId: 'b', url: remote.url },
+      { source: 'rpc' }
+    );
+    expect(attached).toMatchObject({
+      kind: 'completed',
+      value: {
+        kind: 'attached',
+        daemonId: 'b',
+        addressExample: 'daemon:b::session:%3CsessionId%3E',
+      },
+    });
+
+    const sent = await invokeOperation(
+      registry,
+      'message.send',
+      { sessionId: 'daemon:b::session:session-on-b', message },
+      { source: 'mcp', sessionId: 'agent-on-a' }
+    );
+    expect(sent).toMatchObject({ kind: 'completed', value: { kind: 'accepted' } });
+    expect(remote.mailbox.rowCount()).toBe(1);
+
+    local.close();
+    await remote.stop();
+  });
+
+  test.each(['mcp', 'internal'] as const)(
+    'refuses to dial out for a %s caller, leaving nothing attached',
+    async (source) => {
+      const remote = await startRemoteDaemon('session-on-b');
+      const local = createMailboxTestDb();
+      const daemons = new RemoteDaemonRegistry();
+      const registry = createOperationRegistry([
+        createAttachDaemonOperation(daemons),
+        createSendMessageOperation(
+          local.jobQueue,
+          (sessionId) => sessionId === 'session-on-a',
+          createRemoteSendForwarder(daemons)
+        ),
+      ]);
+
+      const attached = await invokeOperation(
+        registry,
+        'daemon.attach',
+        { daemonId: 'b', url: remote.url },
+        { source, sessionId: 'agent-on-a', spaceId: 'space-a', role: 'ad_hoc_member' }
+      );
+      expect(attached).toMatchObject({
+        kind: 'completed',
+        value: { kind: 'rejected', reason: expect.stringContaining('human-only') },
+      });
+
+      const sent = await invokeOperation(
+        registry,
+        'message.send',
+        { sessionId: 'daemon:b::session:session-on-b', message },
+        { source: 'mcp', sessionId: 'agent-on-a' }
+      );
+      expect(sent).toMatchObject({
+        kind: 'completed',
+        value: { kind: 'rejected', reason: expect.stringContaining('No attached daemon: b') },
+      });
+      expect(remote.mailbox.rowCount()).toBe(0);
+      expect(remote.clientCount()).toBe(0);
+
+      local.close();
+      await remote.stop();
+    }
+  );
 });
 
 describe('connect deadline on a forwarded send', () => {

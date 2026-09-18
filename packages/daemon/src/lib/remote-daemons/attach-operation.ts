@@ -1,6 +1,7 @@
+import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { renderRemoteAddress } from '../mailbox/address.ts';
-import { defineOperation } from '../operations/registry.ts';
+import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import type { RemoteDaemonRegistry } from './registry.ts';
 
 export const AttachDaemonInputSchema = z.object({
@@ -17,32 +18,69 @@ export const AttachDaemonInputSchema = z.object({
     ),
 });
 
-export const AttachDaemonResultSchema = z.object({
-  kind: z.literal('attached'),
-  daemonId: z.string(),
-  url: z.string(),
-  addressExample: z.string(),
-});
+export const AttachDaemonResultSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('attached'),
+    daemonId: z.string(),
+    url: z.string(),
+    addressExample: z.string(),
+  }),
+  z.object({ kind: z.literal('rejected'), reason: z.string() }),
+]);
+
+type AttachInput = z.infer<typeof AttachDaemonInputSchema>;
+type AttachResult = z.infer<typeof AttachDaemonResultSchema>;
+
+export function requireHumanAttachCaller(
+  input: AttachInput,
+  caller: OperationCaller
+): { value: AttachInput } | { reason: AttachResult } {
+  return caller.source === 'rpc'
+    ? { value: input }
+    : {
+        reason: {
+          kind: 'rejected',
+          reason:
+            'Attaching a remote daemon is a human-only action; an agent can address a daemon that is already attached but cannot add one.',
+        },
+      };
+}
+
+export function attachRemoteDaemon(
+  input: AttachInput,
+  registry: RemoteDaemonRegistry
+): AttachResult {
+  registry.attach(input.daemonId, input.url);
+  return {
+    kind: 'attached',
+    daemonId: input.daemonId,
+    url: input.url,
+    addressExample: renderRemoteAddress({
+      kind: 'remote-session',
+      daemonId: input.daemonId,
+      sessionId: '<sessionId>',
+    }),
+  };
+}
+
+const runAttachDaemon = (superpipe({})('attach-remote-daemon') as PipelineAPI)
+  .input(['input', 'caller', 'registry'])
+  .pipe(requireHumanAttachCaller, ['input', 'caller'], 'result:outcome')
+  .pipe(attachRemoteDaemon, ['outcome', 'registry'], 'outcome')
+  .endAsync('outcome') as (
+  input: AttachInput,
+  caller: OperationCaller,
+  registry: RemoteDaemonRegistry
+) => Promise<AttachResult>;
 
 export function createAttachDaemonOperation(registry: RemoteDaemonRegistry) {
   return defineOperation({
     name: 'daemon.attach',
+    policy: { safetyClass: 'human_only' },
     description:
-      'Attach a remote HyperNeo daemon by MessageHub websocket URL so its sessions become addressable as "daemon:<daemonId>::session:<sessionId>". The attachment lives in memory for the life of this daemon process and is replaced when the same id is attached again. No connection is opened until the first forwarded call.',
+      'Attach a remote HyperNeo daemon by MessageHub websocket URL so its sessions become addressable as "daemon:<daemonId>::session:<sessionId>". Only a human acting over RPC can attach a daemon; agents are rejected. The attachment lives in memory for the life of this daemon process and is replaced when the same id is attached again. No connection is opened until the first forwarded call.',
     inputSchema: AttachDaemonInputSchema,
     resultSchema: AttachDaemonResultSchema,
-    execute: async ({ daemonId, url }) => {
-      registry.attach(daemonId, url);
-      return {
-        kind: 'attached' as const,
-        daemonId,
-        url,
-        addressExample: renderRemoteAddress({
-          kind: 'remote-session',
-          daemonId,
-          sessionId: '<sessionId>',
-        }),
-      };
-    },
+    execute: (input, caller) => runAttachDaemon(input, caller, registry),
   });
 }
