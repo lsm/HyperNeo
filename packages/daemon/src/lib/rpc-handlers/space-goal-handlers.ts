@@ -1,6 +1,8 @@
 import type {
   CallContext,
   MessageHub,
+  SpaceGoal,
+  SpaceGoalEvent,
   SpaceGoalOwnerResolution,
   SpaceGoalStatus,
 } from '@hyperneo/shared';
@@ -49,8 +51,12 @@ export function setupSpaceGoalHandlers(messageHub: MessageHub, deps: SpaceGoalHa
     return space;
   }
 
-  function requireGoalInSpace(goalId: string, spaceId: string) {
+  function requireGoalId(goalId: string): void {
     if (!goalId) throw new Error('goalId is required');
+  }
+
+  function requireGoalInSpace(goalId: string, spaceId: string) {
+    requireGoalId(goalId);
     const goal = goalService.getGoal(goalId);
     if (!goal || goal.spaceId !== spaceId) throw new Error(`Goal not found: ${goalId}`);
     return goal;
@@ -81,7 +87,13 @@ export function setupSpaceGoalHandlers(messageHub: MessageHub, deps: SpaceGoalHa
   messageHub.onRequest('spaceGoal.get', async (data) => {
     const params = data as { spaceId: string; goalId: string };
     await requireSpace(params.spaceId);
-    return { goal: requireGoalInSpace(params.goalId, params.spaceId) };
+    requireGoalId(params.goalId);
+    const result = await invokeOperationFromHandler<{ accepted: true; goal: SpaceGoal }>(
+      operations,
+      'goal.get',
+      params
+    );
+    return { goal: result.goal };
   });
 
   messageHub.onRequest('spaceGoal.update', async (data) => {
@@ -143,14 +155,19 @@ export function setupSpaceGoalHandlers(messageHub: MessageHub, deps: SpaceGoalHa
       beforeId?: string;
     };
     await requireSpace(params.spaceId);
-    requireGoalInSpace(params.goalId, params.spaceId);
-    return { events: goalService.listGoalEvents(params.goalId, params) };
+    requireGoalId(params.goalId);
+    const result = await invokeOperationFromHandler<{
+      accepted: true;
+      total: number;
+      events: SpaceGoalEvent[];
+    }>(operations, 'goal.events.list', params);
+    return { events: result.events };
   });
 
   messageHub.onRequest('spaceGoal.getOwner', async (data) => {
     const params = data as { spaceId: string; goalId: string };
     await requireSpace(params.spaceId);
-    if (!params.goalId) throw new Error('goalId is required');
+    requireGoalId(params.goalId);
     const result = await invokeOperationFromHandler<{
       accepted: true;
       owner: SpaceGoalOwnerResolution;
