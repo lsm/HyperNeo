@@ -7,7 +7,7 @@ import {
   getRegisteredBuiltInValidatorIds,
   isRegisteredBuiltInValidator,
   registerBuiltInValidator,
-} from '../../../../src/lib/workflows/built-in-validator-registry';
+} from '../../../../src/lib/hooks/built-in-validator-registry';
 import '../../../../src/lib/workflows/built-in-validators';
 import { registerProductionBuiltInValidators } from '../../../../src/lib/workflows/built-in-validators';
 import { createPrMergedValidator } from '../../../../src/lib/github/connectors/presets.ts';

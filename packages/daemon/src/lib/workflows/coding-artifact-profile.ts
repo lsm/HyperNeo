@@ -2,7 +2,7 @@ import { WorkflowHookStateRepository } from '../../storage/repositories/workflow
 import type { WorkflowRunArtifactRepository } from '../../storage/repositories/workflow-run-artifact-repository.ts';
 import { Logger } from '../logger.ts';
 import type { WorkflowArtifactProfile } from './artifact-profile.ts';
-import { PR_READY_VALIDATED_IDENTITY_HOOK_ID } from './hook-engine.ts';
+import { PR_READY_VALIDATED_IDENTITY_HOOK_ID } from '../hooks/hook-engine.ts';
 
 const log = new Logger('coding-artifact-profile');
 

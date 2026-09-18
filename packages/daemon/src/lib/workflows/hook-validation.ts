@@ -12,7 +12,7 @@ import './built-in-validators/index.ts';
 import {
   getRegisteredBuiltInValidatorIds,
   isRegisteredBuiltInValidator,
-} from './built-in-validator-registry.ts';
+} from '../hooks/built-in-validator-registry.ts';
 import { isRecord, jsonByteLength } from '../hooks/hook-result-validation.ts';
 
 export { validateWorkflowHookResult } from '../hooks/hook-result-validation.ts';

@@ -1,10 +1,8 @@
 import type {
-  SpaceWorkflow,
   WorkflowHook,
   WorkflowHookResult,
   WorkflowHookStateSnapshot,
   WorkflowHookUserState,
-  WorkflowRunStatus,
 } from '@hyperneo/shared';
 import type { NodeExecutionRepository } from '../../storage/repositories/node-execution-repository.ts';
 import type { WorkflowHookStateRepository } from '../../storage/repositories/workflow-hook-state-repository.ts';
@@ -12,21 +10,20 @@ import type { WorkflowRunArtifactRepository } from '../../storage/repositories/w
 import { Logger } from '../logger.ts';
 import { isRateLimitError } from '../session/rate-limit-detector.ts';
 import { type AnyToolResult, scheduleRetryableAction } from './hook-binding.ts';
-import type { HookExecutor } from '../hooks/hook-executor.ts';
+import type { HookExecutor } from './hook-executor.ts';
 import {
   buildExecutorContext,
   PR_READY_VALIDATED_IDENTITY_HOOK_ID,
-} from '../hooks/hook-executor-context.ts';
-import { resolveMatchingHooks, sortHooks } from './hook-matching.ts';
-import { shallowEqual, validatePatchedParams } from '../hooks/hook-param-bounds.ts';
-import { buildAllowUserState, buildBlockUserState } from '../hooks/hook-user-state.ts';
+} from './hook-executor-context.ts';
+import { shallowEqual, validatePatchedParams } from './hook-param-bounds.ts';
+import { buildAllowUserState, buildBlockUserState } from './hook-user-state.ts';
 
 export {
   clearAllRetryableHookActionTimers,
   triggerRetryableHookAction,
   wrapHandlerWithHooks,
 } from './hook-binding.ts';
-export { PR_READY_VALIDATED_IDENTITY_HOOK_ID } from '../hooks/hook-executor-context.ts';
+export { PR_READY_VALIDATED_IDENTITY_HOOK_ID } from './hook-executor-context.ts';
 
 export interface HookActionMeta {
   sessionId: string;
@@ -34,6 +31,17 @@ export interface HookActionMeta {
   nodeId: string;
   taskId: string;
   targetNode?: string;
+}
+
+export interface HookAddressing {
+  readonly scopeId: string;
+  listHooks(): WorkflowHook[];
+  resolveCandidates(
+    methodName: string,
+    params: Record<string, unknown>,
+    meta: HookActionMeta
+  ): WorkflowHook[];
+  resolveSourceName(meta: HookActionMeta): string;
 }
 
 export interface HookActionOutcome {
@@ -59,16 +67,15 @@ export interface HookExecutionRecord {
   timestamp: number;
 }
 
-export interface WorkflowHookEngineConfig {
-  workflow: SpaceWorkflow;
-  workflowRunId: string;
+export interface HookEngineConfig {
+  addressing: HookAddressing;
   workflowRunCreatedAt?: number;
   nodeExecutionRepo: NodeExecutionRepository;
   artifactRepo?: WorkflowRunArtifactRepository;
   hookStateRepo: WorkflowHookStateRepository;
   hookExecutor: HookExecutor;
   workspacePath?: string;
-  getWorkflowRunStatus?: (runId: string) => WorkflowRunStatus | undefined;
+  getScopeStatus?: (scopeId: string) => string | undefined;
   getTaskStatus?: (taskId: string) => string | undefined;
   getSourceNodeExecutionStatus?: (meta: HookActionMeta) => string | undefined;
   notifySourceSession?: (sessionId: string, message: string) => Promise<void>;
@@ -79,10 +86,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-const log = new Logger('workflow-hook-engine');
+const log = new Logger('hook-engine');
 
 export const QUEUED_RETRYABLE_ACTION_STATE_KEY = '__queuedRetryableAction';
-const RETRYABLE_ACTION_CANCEL_STATUSES = new Set<WorkflowRunStatus>(['done', 'cancelled']);
+const RETRYABLE_ACTION_CANCEL_STATUSES = new Set(['done', 'cancelled']);
 
 interface QueuedRetryableHookAction {
   actionKey: string;
@@ -96,15 +103,15 @@ interface QueuedRetryableHookAction {
   queuedAt: number;
 }
 
-export class WorkflowHookEngine {
-  constructor(private readonly config: WorkflowHookEngineConfig) {}
+export class HookEngine {
+  constructor(private readonly config: HookEngineConfig) {}
 
-  get workflowRunId(): string {
-    return this.config.workflowRunId;
+  get scopeId(): string {
+    return this.config.addressing.scopeId;
   }
 
-  getRunStatus(): WorkflowRunStatus | undefined {
-    return this.config.getWorkflowRunStatus?.(this.config.workflowRunId);
+  getScopeStatus(): string | undefined {
+    return this.config.getScopeStatus?.(this.config.addressing.scopeId);
   }
 
   isRetryableActionCancelled(meta?: HookActionMeta): boolean {
@@ -118,7 +125,7 @@ export class WorkflowHookEngine {
         return true;
       }
     }
-    const status = this.getRunStatus();
+    const status = this.getScopeStatus();
     return status !== undefined && RETRYABLE_ACTION_CANCEL_STATUSES.has(status);
   }
 
@@ -169,14 +176,15 @@ export class WorkflowHookEngine {
   }
 
   getQueuedRetryableAction(hookId: string): QueuedRetryableHookAction | undefined {
-    const state = this.config.hookStateRepo.get(this.config.workflowRunId, hookId)?.localState;
+    const state = this.config.hookStateRepo.get(this.config.addressing.scopeId, hookId)?.localState;
     const value = state?.[QUEUED_RETRYABLE_ACTION_STATE_KEY];
     if (!isQueuedRetryableHookAction(value)) return undefined;
     return value;
   }
 
   getQueuedRetryableActions(): QueuedRetryableHookAction[] {
-    return (this.config.workflow.hooks ?? [])
+    return this.config.addressing
+      .listHooks()
       .map((hook) => this.getQueuedRetryableAction(hook.id))
       .filter((action): action is QueuedRetryableHookAction => action !== undefined);
   }
@@ -205,9 +213,9 @@ export class WorkflowHookEngine {
   }
 
   getHooksWithQueuedAction(actionKey: string): WorkflowHook[] {
-    return (this.config.workflow.hooks ?? []).filter(
-      (hook) => this.getQueuedRetryableAction(hook.id)?.actionKey === actionKey
-    );
+    return this.config.addressing
+      .listHooks()
+      .filter((hook) => this.getQueuedRetryableAction(hook.id)?.actionKey === actionKey);
   }
 
   persistStateUpdate(
@@ -218,9 +226,9 @@ export class WorkflowHookEngine {
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         const repoState =
-          this.config.hookStateRepo.get(this.config.workflowRunId, hookId) ??
-          this.config.hookStateRepo.ensure(this.config.workflowRunId, hookId);
-        const result = this.config.hookStateRepo.update(this.config.workflowRunId, hookId, {
+          this.config.hookStateRepo.get(this.config.addressing.scopeId, hookId) ??
+          this.config.hookStateRepo.ensure(this.config.addressing.scopeId, hookId);
+        const result = this.config.hookStateRepo.update(this.config.addressing.scopeId, hookId, {
           expectedVersion: repoState.version,
           localState: state,
           lastResult,
@@ -239,15 +247,9 @@ export class WorkflowHookEngine {
     params: Record<string, unknown>,
     meta: HookActionMeta
   ): Promise<HookActionOutcome> {
-    const hooks = resolveMatchingHooks(
-      this.config.workflow,
-      this.config.workflowRunId,
-      methodName,
-      params,
-      meta
-    );
+    const sortedHooks = this.config.addressing.resolveCandidates(methodName, params, meta);
 
-    if (hooks.length === 0) {
+    if (sortedHooks.length === 0) {
       return {
         decision: 'allow',
         finalParams: params,
@@ -258,7 +260,6 @@ export class WorkflowHookEngine {
       };
     }
 
-    const sortedHooks = sortHooks(hooks);
     const executionLog: HookExecutionRecord[] = [];
     const originalParams = { ...params };
     let currentParams = originalParams;
@@ -279,7 +280,7 @@ export class WorkflowHookEngine {
       }
 
       if ((hook.classification ?? 'validation') === 'validation') {
-        const hookState = this.config.hookStateRepo.get(this.config.workflowRunId, hook.id);
+        const hookState = this.config.hookStateRepo.get(this.config.addressing.scopeId, hook.id);
         const maxAttempts = hook.retry?.maxAttempts ?? 0;
         const currentRetryCount = hookState?.retryCount ?? 0;
         const lastResult = hookState?.lastResult;
@@ -394,7 +395,10 @@ export class WorkflowHookEngine {
             if (!blockedByValidation) {
               const retryConfig = hook.retry;
               const maxAttempts = retryConfig?.maxAttempts ?? 0;
-              const hookState = this.config.hookStateRepo.get(this.config.workflowRunId, hook.id);
+              const hookState = this.config.hookStateRepo.get(
+                this.config.addressing.scopeId,
+                hook.id
+              );
               const currentRetryCount = hookState?.retryCount ?? 0;
               const nextRetryAt = hookState?.nextRetryAt;
 
@@ -411,14 +415,14 @@ export class WorkflowHookEngine {
                 let updateOk = false;
                 for (let attempt = 0; attempt < 3; attempt++) {
                   const currentState = this.config.hookStateRepo.get(
-                    this.config.workflowRunId,
+                    this.config.addressing.scopeId,
                     hook.id
                   );
                   const nextRetryAt =
                     Date.now() + delayMs * backoffMultiplier ** (currentState?.retryCount ?? 0);
                   try {
                     const updateResult = this.config.hookStateRepo.update(
-                      this.config.workflowRunId,
+                      this.config.addressing.scopeId,
                       hook.id,
                       {
                         expectedVersion: currentState?.version ?? 0,
@@ -515,10 +519,13 @@ export class WorkflowHookEngine {
       if (result.type !== 'retryable_block') {
         let updateOk = false;
         for (let attempt = 0; attempt < 3; attempt++) {
-          const currentState = this.config.hookStateRepo.get(this.config.workflowRunId, hook.id);
+          const currentState = this.config.hookStateRepo.get(
+            this.config.addressing.scopeId,
+            hook.id
+          );
           try {
             const updateResult = this.config.hookStateRepo.update(
-              this.config.workflowRunId,
+              this.config.addressing.scopeId,
               hook.id,
               {
                 expectedVersion: currentState?.version ?? 0,
