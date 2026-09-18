@@ -33,6 +33,8 @@ describe('collectFamilyOperations', () => {
         'agentTemplate.delete',
         'agentTemplate.list',
         'agent.createFromTemplate',
+        'space.list',
+        'space.get',
       ])
     );
   });

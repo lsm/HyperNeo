@@ -10,6 +10,7 @@ import { MESSAGING_OPERATION_NAMES } from './operation-names/messaging.ts';
 import { NODE_OPERATION_NAMES } from './operation-names/node.ts';
 import { SCHEDULE_OPERATION_NAMES } from './operation-names/schedule.ts';
 import { SESSION_OPERATION_NAMES } from './operation-names/session.ts';
+import { SPACE_OPERATION_NAMES } from './operation-names/space.ts';
 import { TASK_OPERATION_NAMES } from './operation-names/task.ts';
 import { WORKFLOW_OPERATION_NAMES } from './operation-names/workflow.ts';
 
@@ -26,6 +27,7 @@ export const OPERATION_NAME_FAMILIES = {
   node: NODE_OPERATION_NAMES,
   schedule: SCHEDULE_OPERATION_NAMES,
   session: SESSION_OPERATION_NAMES,
+  space: SPACE_OPERATION_NAMES,
   task: TASK_OPERATION_NAMES,
   workflow: WORKFLOW_OPERATION_NAMES,
 } as const;
@@ -43,6 +45,7 @@ export const OPERATION_NAMES = [
   ...NODE_OPERATION_NAMES,
   ...SCHEDULE_OPERATION_NAMES,
   ...SESSION_OPERATION_NAMES,
+  ...SPACE_OPERATION_NAMES,
   ...TASK_OPERATION_NAMES,
   ...WORKFLOW_OPERATION_NAMES,
 ] as const;
