@@ -1,3 +1,4 @@
+import type { TaskTransitionExpectation } from '../../tasks/task-manager.ts';
 import type {
   McpServerConfig,
   Session,
@@ -1675,7 +1676,11 @@ export class SpaceRuntimeService {
     spaceId: string,
     taskId: string,
     targetStatus: 'open' | 'in_progress',
-    options: { workflowNodeId?: string; agentName?: string; description?: string } = {}
+    options: {
+      workflowNodeId?: string;
+      agentName?: string;
+      description?: string;
+    } & TaskTransitionExpectation = {}
   ): Promise<SpaceTask> {
     const recovered = await this.runtime.recoverWorkflowBackedTask(
       spaceId,
@@ -1701,17 +1706,27 @@ export class SpaceRuntimeService {
   async stopWorkflowBackedTaskForStatus(
     spaceId: string,
     taskId: string,
-    params: UpdateSpaceTaskParams
+    params: UpdateSpaceTaskParams,
+    expected: TaskTransitionExpectation = {}
   ): Promise<SpaceTask> {
-    const updated = await this.runtime.stopWorkflowBackedTaskForStatus(spaceId, taskId, params);
+    const updated = await this.runtime.stopWorkflowBackedTaskForStatus(
+      spaceId,
+      taskId,
+      params,
+      expected
+    );
     if (!updated) {
       throw new Error(`Failed to stop workflow-backed task ${taskId}`);
     }
     return updated;
   }
 
-  async parkStoppedWorkflowTask(spaceId: string, taskId: string): Promise<SpaceTask> {
-    const updated = await this.runtime.parkStoppedWorkflowTask(spaceId, taskId);
+  async parkStoppedWorkflowTask(
+    spaceId: string,
+    taskId: string,
+    expected: TaskTransitionExpectation = {}
+  ): Promise<SpaceTask> {
+    const updated = await this.runtime.parkStoppedWorkflowTask(spaceId, taskId, expected);
     if (!updated) {
       throw new Error(`Failed to stop (park) workflow-backed task ${taskId}`);
     }

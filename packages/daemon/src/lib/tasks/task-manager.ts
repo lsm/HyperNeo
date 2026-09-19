@@ -18,6 +18,24 @@ import {
 export { VALID_SPACE_TASK_TRANSITIONS, isValidSpaceTaskTransition, assertValidSpaceTaskTransition };
 
 class StaleGuardCasMiss extends Error {}
+export interface TaskTransitionExpectation {
+  expectedStatus?: SpaceTaskStatus;
+  expectedWorkflowRunId?: string | null;
+}
+
+export function assertTaskTransitionSnapshot(
+  task: SpaceTask,
+  expected: TaskTransitionExpectation
+): void {
+  if (
+    (expected.expectedStatus !== undefined && task.status !== expected.expectedStatus) ||
+    (expected.expectedWorkflowRunId !== undefined &&
+      (task.workflowRunId ?? null) !== expected.expectedWorkflowRunId)
+  ) {
+    throw new StaleTaskGuardError('Task transition snapshot is stale');
+  }
+}
+
 export class StaleTaskGuardError extends Error {
   constructor(message: string) {
     super(message);

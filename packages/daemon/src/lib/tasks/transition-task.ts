@@ -7,16 +7,20 @@ import { SpaceTaskRepository } from '../../storage/repositories/space-task-repos
 import { Logger } from '../logger.ts';
 import type { OperationCaller } from '../operations/registry.ts';
 import { availableTaskSlots, occupiesTaskSlot } from './capacity.ts';
-import { createTransitionTaskOperation } from './transition-operation.ts';
-import { type SpaceTaskManager, StaleTaskGuardError } from './task-manager.ts';
+import {
+  type SpaceTaskManager,
+  StaleTaskGuardError,
+  type TaskTransitionExpectation,
+} from './task-manager.ts';
 import { decideSpaceTaskTransition } from './transition-decision.ts';
+import { createTransitionTaskOperation } from './transition-operation.ts';
 import {
   admitCaller,
   type Gate,
   loadTask,
-  requireExpectedStatus,
   type OwnedTask,
   rejectActiveDirectAttempt,
+  requireExpectedStatus,
   resolveOwner,
   type SpaceTransitionAdmissionDependencies,
   type SpaceTransitionTaskInput,
@@ -40,14 +44,20 @@ export interface SpaceTransitionTaskDependencies extends SpaceTransitionAdmissio
   recoverTransition?: (
     spaceId: string,
     taskId: string,
-    status: 'open' | 'in_progress'
+    status: 'open' | 'in_progress',
+    expected: TaskTransitionExpectation
   ) => Promise<TaskCore | string>;
   stopForStatus?: (
     spaceId: string,
     taskId: string,
-    params: UpdateSpaceTaskParams
+    params: UpdateSpaceTaskParams,
+    expected: TaskTransitionExpectation
   ) => Promise<SpaceTask | null>;
-  parkStopped?: (spaceId: string, taskId: string) => Promise<SpaceTask>;
+  parkStopped?: (
+    spaceId: string,
+    taskId: string,
+    expected: TaskTransitionExpectation
+  ) => Promise<SpaceTask>;
 }
 type Deps = SpaceTransitionTaskDependencies;
 type DecidedTask = OwnedTask & {
@@ -63,26 +73,36 @@ async function runRuntimeExecutor(
   deps: Deps,
   approvalSource: 'human' | undefined
 ): Promise<Result> {
+  const expected = {
+    expectedStatus: task.status,
+    expectedWorkflowRunId: task.workflowRunId ?? null,
+  };
   if (executor === 'park_stopped') {
     if (!deps.parkStopped) throw new Error(`Space runtime executor unavailable: ${executor}`);
-    return deps.parkStopped(spaceId, task.id);
+    return deps.parkStopped(spaceId, task.id, expected);
   }
   if (executor === 'recover_transition') {
     if (!deps.recoverTransition) throw new Error(`Space runtime executor unavailable: ${executor}`);
     const recovered = await deps.recoverTransition(
       spaceId,
       task.id,
-      input.status as 'open' | 'in_progress'
+      input.status as 'open' | 'in_progress',
+      expected
     );
     return typeof recovered === 'string' ? 'invalid_transition' : recovered;
   }
   if (!deps.stopForStatus) throw new Error(`Space runtime executor unavailable: ${executor}`);
-  const stopped = await deps.stopForStatus(spaceId, task.id, {
-    status: input.status,
-    result: input.result,
-    blockReason: input.blockReason,
-    approvalSource,
-  });
+  const stopped = await deps.stopForStatus(
+    spaceId,
+    task.id,
+    {
+      status: input.status,
+      result: input.result,
+      blockReason: input.blockReason,
+      approvalSource,
+    },
+    expected
+  );
   return stopped ?? 'invalid_transition';
 }
 
@@ -116,15 +136,20 @@ export async function decide(
   if (decision.action === 'reject') return { reason: decision.result };
   if (decision.action === 'runtime') {
     if (!(await snapshotStillCurrent(owned, deps))) return { reason: 'invalid_transition' };
-    return {
-      reason: await runRuntimeExecutor(
-        decision.executor,
-        owned,
-        input,
-        deps,
-        decision.approvalSource
-      ),
-    };
+    try {
+      return {
+        reason: await runRuntimeExecutor(
+          decision.executor,
+          owned,
+          input,
+          deps,
+          decision.approvalSource
+        ),
+      };
+    } catch (error) {
+      if (error instanceof StaleTaskGuardError) return { reason: 'invalid_transition' };
+      throw error;
+    }
   }
   return {
     value: {
@@ -200,7 +225,7 @@ export async function writeStatus(decided: DecidedTask, input: In, deps: Deps): 
   }
 }
 const SPACE_TRANSITION_TASK_DESCRIPTION =
-  'Space-scoped callers change the lifecycle state of a task in their Space; review and approved are entered only through the submit-for-review and approval operations, and rate_limited/usage_limited are runtime-owned. Tasks with an active direct-execution attempt are managed by the durable start/cancel/complete operations, and result may accompany only a transition to done, and blockReason only a transition to blocked, where human_input_requested is the single caller-settable value because every other block reason is stamped by the runtime that observed it. Supply expectedStatus to reject with invalid_transition unless the task is still in that state; it is applied as a compare-and-set on a direct write, and as a pre-dispatch check for transitions handed to the workflow runtime. Moving a task with no workflow run and no agent session into in_progress claims one of the Space concurrency slots, so it rejects with space_at_task_capacity when the Space has none free; stop or finish a running task, or raise the Space limit, and retry. Returns core task data, null for absent or unavailable tasks, or unsupported_status, invalid_transition, result_requires_done, block_reason_requires_blocked, or space_at_task_capacity when rejected.';
+  'Space-scoped callers change the lifecycle state of a task in their Space; review and approved are entered only through the submit-for-review and approval operations, and rate_limited/usage_limited are runtime-owned. Tasks with an active direct-execution attempt are managed by the durable start/cancel/complete operations, and result may accompany only a transition to done, and blockReason only a transition to blocked, where human_input_requested is the single caller-settable value because every other block reason is stamped by the runtime that observed it. Supply expectedStatus to reject with invalid_transition unless the task is still in that state; it is applied at the status write, including transitions handed to the workflow runtime. Moving a task with no workflow run and no agent session into in_progress claims one of the Space concurrency slots, so it rejects with space_at_task_capacity when the Space has none free; stop or finish a running task, or raise the Space limit, and retry. Returns core task data, null for absent or unavailable tasks, or unsupported_status, invalid_transition, result_requires_done, block_reason_requires_blocked, or space_at_task_capacity when rejected.';
 export function createSpaceTransitionTaskOperation(deps: Deps) {
   const transition = (superpipe({ deps })('transition-space-task') as PipelineAPI)
     .input(['input', 'caller'])
