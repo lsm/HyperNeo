@@ -203,14 +203,22 @@ So the invariant is three clauses, each testable:
 > **(c) Reservation.** No app-registry or skill-wrapped server may attach under
 > a first-party name.
 
-Two similarly-named sets exist and mean nearly opposite things; binding to the
-wrong one inverts both clauses. The first-party set is `BUILT_IN_MCP_SERVERS`
-in `packages/daemon/src/lib/mcp/built-in-servers.ts` (#4812) — servers we
-construct, which is why we can author prose for them. `BUILTIN_MCP_SERVERS` in
-`packages/daemon/src/lib/builtins.ts` is unrelated: third-party servers such as
-`fetch-mcp` and `chrome-devtools` that HyperNeo ships as convenient defaults.
-Those are `self-describing` like any other third-party server, and clause (c)
-does not restrain them — a bundled `fetch-mcp` may of course use its own name.
+The three names are written out above rather than referenced by symbol, because
+two similarly-named sets exist and mean nearly opposite things. Binding to the
+wrong one inverts both clauses.
+
+`packages/daemon/src/lib/mcp/built-in-servers.ts` holds the first-party set and
+is the module to use. Its `BUILT_IN_MCP_SERVERS` is deliberately private; the
+exported surface is `isBuiltInMcpServer(name, config)`, which also requires the
+attachment to be an in-process `sdk` server with an `instance`, so a registry
+row cannot satisfy it by taking the name. Reuse that predicate rather than
+comparing names.
+
+`BUILTIN_MCP_SERVERS` in `packages/daemon/src/lib/builtins.ts` is unrelated
+despite the near-identical name: third-party servers such as `fetch-mcp` and
+`chrome-devtools` that HyperNeo ships as convenient defaults. Those are
+`self-describing` like any other third-party server, and clause (c) does not
+restrain them — a bundled `fetch-mcp` may of course use its own name.
 
 The contribution type is a discriminated union, not an optional field:
 
