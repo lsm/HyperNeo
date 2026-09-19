@@ -37,13 +37,16 @@ export interface AgentSubscriptionScope {
   agentId: string;
 }
 
-const REJECTIONS = z.enum([
-  'caller_denied',
-  'session_inactive',
-  'agent_not_found',
-  'invalid_pattern',
-  'refresh_failed',
-]);
+const REJECTIONS = z.object({
+  accepted: z.literal(false),
+  reason: z.enum([
+    'caller_denied',
+    'session_inactive',
+    'agent_not_found',
+    'invalid_pattern',
+    'refresh_failed',
+  ]),
+});
 type Rejection = z.infer<typeof REJECTIONS>;
 
 const SubscribeInput = z
@@ -118,8 +121,9 @@ export function admitAgentSubscriptionWriter(
   deps: AgentSubscriptionDependencies
 ): { value: string } | { reason: Rejection } {
   const space = admitEventCallerSpace(input, caller);
-  if ('reason' in space) return { reason: 'caller_denied' };
-  if (!callerSessionActiveIn(caller, space.value, deps)) return { reason: 'session_inactive' };
+  if ('reason' in space) return { reason: { accepted: false, reason: 'caller_denied' } };
+  if (!callerSessionActiveIn(caller, space.value, deps))
+    return { reason: { accepted: false, reason: 'session_inactive' } };
   return { value: space.value };
 }
 
@@ -128,7 +132,7 @@ export function admitAgentSubscriptionReader(
   caller: OperationCaller
 ): { value: string } | { reason: Rejection } {
   const space = admitEventCallerSpace(input, caller);
-  if ('reason' in space) return { reason: 'caller_denied' };
+  if ('reason' in space) return { reason: { accepted: false, reason: 'caller_denied' } };
   return { value: space.value };
 }
 
@@ -139,7 +143,7 @@ export function gateAgentSubscription(
 ): { value: AgentSubscriptionScope } | { reason: Rejection } {
   return deps.longHorizonAgentRepo.getById(input.agent_id)?.spaceId === spaceId
     ? { value: { spaceId, agentId: input.agent_id } }
-    : { reason: 'agent_not_found' };
+    : { reason: { accepted: false, reason: 'agent_not_found' } };
 }
 
 export function auditAgentSubscription(
@@ -169,7 +173,7 @@ export function subscribeAgentTopic(
 ): z.infer<typeof SubscribeResultSchema> {
   const topicPattern = input.topic_pattern.trim();
   const validation = validateGlobPattern(topicPattern);
-  if (!validation.valid) return 'invalid_pattern';
+  if (!validation.valid) return { accepted: false, reason: 'invalid_pattern' };
   const subscription = deps.subscriptionRepo.upsertSubscription({
     spaceId: scope.spaceId,
     agentId: scope.agentId,
@@ -178,7 +182,8 @@ export function subscribeAgentTopic(
     filter: input.label ? { label: input.label } : {},
     status: 'active',
   });
-  if (!deps.refreshSubscription(scope.spaceId, subscription.id).success) return 'refresh_failed';
+  if (!deps.refreshSubscription(scope.spaceId, subscription.id).success)
+    return { accepted: false, reason: 'refresh_failed' };
   auditAgentSubscription(deps, caller, scope, 'externalEvent.agent.subscribe', {
     agent_id: input.agent_id,
     topic_pattern: input.topic_pattern,
@@ -195,7 +200,7 @@ export function unsubscribeAgentTopic(
 ): z.infer<typeof UnsubscribeResultSchema> {
   const topicPattern = input.topic_pattern.trim();
   const validation = validateGlobPattern(topicPattern);
-  if (!validation.valid) return 'invalid_pattern';
+  if (!validation.valid) return { accepted: false, reason: 'invalid_pattern' };
   const source = topicPattern.split('/')[0] ?? '';
   const existing = deps.subscriptionRepo.getSubscriptionByRoute(
     scope.spaceId,
@@ -255,7 +260,7 @@ function agentPipeline<Input, Result>(
 }
 
 const SCOPE_DOC =
-  'The target long-horizon agent is taken from agent_id and must belong to the caller Space; the Space is derived from the calling session, never guessed, and omitted spaceId defaults to the trusted caller Space. List results report the resolved Space in scope. Rejects caller_denied for any other caller, session_inactive when the calling session is not active in that Space, agent_not_found when the agent is unknown or belongs to another Space, and invalid_pattern when topic_pattern is not a valid topic glob.';
+  'The target long-horizon agent is taken from agent_id and must belong to the caller Space; the Space is derived from the calling session, never guessed, and omitted spaceId defaults to the trusted caller Space. List results report the resolved Space in scope. Returns { accepted: false, reason } on rejection: caller_denied for any other caller, session_inactive when the calling session is not active in that Space, agent_not_found when the agent is unknown or belongs to another Space, and invalid_pattern when topic_pattern is not a valid topic glob.';
 
 export function createAgentSubscriptionOperations(
   deps: AgentSubscriptionDependencies
@@ -291,7 +296,7 @@ export function createAgentSubscriptionOperations(
       name: 'externalEvent.agent.listSubscriptions',
       policy: { safetyClass: 'read', roles: AGENT_EVENT_ROLES },
       description:
-        'List the external-event subscriptions of a long-horizon agent, oldest first, each with its source, topic glob, filter, and status. Rejects caller_denied for any other caller and agent_not_found when the agent is unknown or belongs to another Space.',
+        'List the external-event subscriptions of a long-horizon agent, oldest first, each with its source, topic glob, filter, and status. Returns { accepted: false, reason } on rejection: caller_denied for any other caller and agent_not_found when the agent is unknown or belongs to another Space.',
       inputSchema: ListInput,
       resultSchema: ListResultSchema,
       execute: agentPipeline(

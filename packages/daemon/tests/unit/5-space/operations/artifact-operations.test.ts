@@ -1,3 +1,6 @@
+import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-adapter';
+import { invokeOperation } from '../../../../src/lib/operations/invoke';
+import { invokeOperationFromHandler } from '../../../../src/lib/operations/handler-invoker';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { McpAuditLogRepository } from '../../../../src/storage/repositories/mcp-audit-log-repository';
@@ -230,29 +233,41 @@ describe('artifact operations', () => {
       spaceId: SPACE,
       role: 'ad_hoc_member',
     };
-    expect(await run(operations, 'artifact.save', { shape: 'note', summary: 'x' }, caller)).toBe(
-      'node_caller_denied'
+    expect(await run(operations, 'artifact.save', { shape: 'note', summary: 'x' }, caller)).toEqual(
+      { accepted: false, reason: 'node_caller_denied' }
     );
-    expect(await run(operations, 'artifact.list', {}, caller)).toBe('node_caller_denied');
+    expect(await run(operations, 'artifact.list', {}, caller)).toEqual({
+      accepted: false,
+      reason: 'node_caller_denied',
+    });
     expect(artifactRepo.listByRun(RUN)).toEqual([]);
   });
 
   test('rejects not_a_node_agent without a session or node execution', async () => {
     const caller = worker(workerSession('s-orphan', { withExecution: false }));
-    expect(await run(operations, 'artifact.save', { shape: 'note', summary: 'x' }, caller)).toBe(
-      'not_a_node_agent'
+    expect(await run(operations, 'artifact.save', { shape: 'note', summary: 'x' }, caller)).toEqual(
+      { accepted: false, reason: 'not_a_node_agent' }
     );
-    expect(await run(operations, 'artifact.list', {}, caller)).toBe('not_a_node_agent');
+    expect(await run(operations, 'artifact.list', {}, caller)).toEqual({
+      accepted: false,
+      reason: 'not_a_node_agent',
+    });
 
     const missingSession = worker('s-never-created');
-    expect(await run(operations, 'artifact.list', {}, missingSession)).toBe('not_a_node_agent');
+    expect(await run(operations, 'artifact.list', {}, missingSession)).toEqual({
+      accepted: false,
+      reason: 'not_a_node_agent',
+    });
 
     const sessionless: OperationCaller = {
       source: 'mcp',
       spaceId: SPACE,
       role: 'workflow_worker',
     };
-    expect(await run(operations, 'artifact.list', {}, sessionless)).toBe('not_a_node_agent');
+    expect(await run(operations, 'artifact.list', {}, sessionless)).toEqual({
+      accepted: false,
+      reason: 'not_a_node_agent',
+    });
   });
 
   test('resolves the slot from an exec sub-session id', async () => {
@@ -295,3 +310,24 @@ describe('artifact operations', () => {
     expect(artifactRepo.listByRun(RUN, { nodeId: 'node-a' })).toHaveLength(1);
   });
 });
+
+test.each(['artifact.save', 'artifact.list'])(
+  '%s exposes a recognized rejection through the operation door',
+  async (name) => {
+    const input = name === 'artifact.save' ? { shape: 'note', summary: 'x' } : {};
+    const outcome = await invokeOperation(operations, name, input, { source: 'rpc' });
+    expect(outcome).toEqual({
+      kind: 'completed',
+      value: { accepted: false, reason: 'not_a_node_agent' },
+    });
+    const mcp = createOperationMcpHandler(operations, () => ({ role: 'workflow_worker' }));
+    const response = await mcp({ name, input });
+    expect(response.isError).toBeUndefined();
+    expect(JSON.parse(response.content[0].text)).toEqual(
+      outcome.kind === 'completed' ? outcome.value : null
+    );
+    await expect(invokeOperationFromHandler(operations, name, input)).rejects.toThrow(
+      `Operation ${name} was rejected without a message`
+    );
+  }
+);
