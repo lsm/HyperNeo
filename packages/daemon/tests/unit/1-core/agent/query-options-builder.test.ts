@@ -2043,8 +2043,35 @@ describe('QueryOptionsBuilder', () => {
       expect(options.systemPrompt).toBeUndefined();
     });
 
-    it('should preserve a custom string system prompt for space chat sessions', async () => {
+    it('should clear a custom string system prompt for space chat sessions', async () => {
       mockSession.type = 'space_chat';
+      mockSession.config.systemPrompt = 'You are the Space coordinator.';
+      const options = await builder.build();
+      expect(options.systemPrompt).toBeUndefined();
+    });
+
+    it('should clear the prompt of a space chat session created without the preset', async () => {
+      mockSession.type = 'space_chat';
+      mockSession.config.tools = { useClaudeCodePreset: false };
+      mockSession.config.systemPrompt = 'You are the Space coordinator.';
+      const options = await builder.build();
+      expect(options.systemPrompt).toBeUndefined();
+    });
+
+    it('should clear a preset system prompt carrying an append for space chat sessions', async () => {
+      mockSession.type = 'space_chat';
+      mockSession.config.systemPrompt = {
+        type: 'preset',
+        preset: 'claude_code',
+        append: 'You are the Space coordinator.',
+      };
+      const options = await builder.build();
+      expect(options.systemPrompt).toBeUndefined();
+    });
+
+    it('should keep the same prompts on a worker session, so the key is the session type', async () => {
+      mockSession.type = 'worker';
+      mockSession.config.tools = { useClaudeCodePreset: false };
       mockSession.config.systemPrompt = 'You are the Space coordinator.';
       const options = await builder.build();
       expect(options.systemPrompt).toEqual({
