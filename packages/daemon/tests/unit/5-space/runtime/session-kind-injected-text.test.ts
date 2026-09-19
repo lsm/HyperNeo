@@ -131,13 +131,15 @@ function markersIn(text: string): string[] {
 
 type BuiltSystemPrompt =
   | string
-  | { type?: string; preset?: string; append?: string }
+  | { type?: string; preset?: string; append?: string; prompt?: string }
   | undefined
   | null;
 
 function describeSystemPrompt(prompt: BuiltSystemPrompt): { shape: string; says: string[] } {
   if (prompt === undefined || prompt === null) return { shape: 'none', says: [] };
   if (typeof prompt === 'string') return { shape: 'plain-string', says: markersIn(prompt) };
+  if (prompt.type === 'custom')
+    return { shape: 'custom-prompt', says: markersIn(prompt.prompt ?? '') };
   if (prompt.preset === 'claude_code' && prompt.append === undefined) {
     return { shape: 'claude-code-preset', says: [] };
   }
@@ -544,7 +546,7 @@ describe('session kind injected text', () => {
       ]);
     });
 
-    test('names the Space for a Space chat session, which the query builder still discards (#4795)', async () => {
+    test('names the Space for a Space chat session, and the query builder now keeps it (#4795)', async () => {
       const session = makeSessionOfKind('space_chat');
       const service = buildService('space_chat', makeRecordingAgentSession(session));
 
@@ -553,7 +555,9 @@ describe('session kind injected text', () => {
       const options = await new QueryOptionsBuilder(makeBuilderContext(session, briefing)).build();
 
       expect(briefing).toContain(`the Space "${SPACE_NAME}" (id: ${SESSION_KIND_SPACE_ID})`);
-      expect(options.systemPrompt).toBeUndefined();
+      const prompt = options.systemPrompt as { type?: string; prompt?: string } | undefined;
+      expect(prompt?.type).toBe('custom');
+      expect(prompt?.prompt).toContain(`the Space "${SPACE_NAME}" (id: ${SESSION_KIND_SPACE_ID})`);
     });
 
     test('tells a direct task worker which Space its session carries (#4807)', async () => {
@@ -638,7 +642,17 @@ describe('session kind injected text', () => {
             'scheduling-guardrail',
           ],
         },
-        { kind: 'space_chat', shape: 'none', says: [] },
+        {
+          kind: 'space_chat',
+          shape: 'custom-prompt',
+          says: [
+            'space-identity',
+            'ad-hoc-role',
+            'operations-door-tool',
+            'operations-discovery',
+            'space-standing-instructions',
+          ],
+        },
         {
           kind: 'ad_hoc_member',
           shape: 'claude-code-preset+append',
@@ -695,7 +709,7 @@ describe('session kind injected text', () => {
 
       expect(recording).toEqual([
         { kind: 'agent_card', recorded: false },
-        { kind: 'space_chat', recorded: 'none' },
+        { kind: 'space_chat', recorded: false },
         { kind: 'ad_hoc_member', recorded: false },
         { kind: 'workflow_worker', recorded: false },
         { kind: 'direct_task_worker', recorded: false },
@@ -715,7 +729,7 @@ describe('session kind injected text', () => {
       );
     });
 
-    test('drops a Space briefing that is installed on a Space chat session, and keeps the same one on a worker session', async () => {
+    test('gives a Space chat session the same Space briefing a worker session gets, carried in its own custom prompt rather than an append', async () => {
       const briefing = assembleSessionBriefing({
         scope: [
           spaceScopeContribution({
@@ -735,7 +749,10 @@ describe('session kind injected text', () => {
         makeBuilderContext(makeSessionOfKind('ad_hoc_member'), briefing)
       ).build();
 
-      expect(chat.systemPrompt).toBeUndefined();
+      expect((chat.systemPrompt as { type?: string; prompt?: string }).type).toBe('custom');
+      expect((chat.systemPrompt as { prompt?: string }).prompt).toContain(
+        `You are working inside the Space "${SPACE_NAME}"`
+      );
       expect((member.systemPrompt as { append?: string }).append).toContain(
         `You are working inside the Space "${SPACE_NAME}"`
       );

@@ -6,6 +6,7 @@ import type {
   PreToolUseHookInput,
   Settings,
 } from '@anthropic-ai/claude-agent-sdk';
+import { SPACE_CHAT_SESSION_PROMPT } from '@hyperneo/prompts';
 import type {
   AgentDefinition,
   AppMcpServer,
@@ -530,7 +531,9 @@ export class QueryOptionsBuilder {
           ];
       const spaceRestrictedBuiltinTools = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'];
 
-      queryOptions.systemPrompt = undefined;
+      queryOptions.systemPrompt = buildHostAuthoredPrompt(
+        this.joinSystemPromptAppendParts([SPACE_CHAT_SESSION_PROMPT, this.ctx.getSpaceBriefing?.()])
+      );
 
       queryOptions.tools = spaceAllowedBuiltinTools;
 

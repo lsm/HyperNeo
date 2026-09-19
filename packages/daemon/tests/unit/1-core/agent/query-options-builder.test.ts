@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { SPACE_CHAT_SESSION_PROMPT } from '@hyperneo/prompts';
 import type { Session } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type { Provider } from '@hyperneo/shared/provider';
@@ -2071,28 +2072,40 @@ describe('QueryOptionsBuilder', () => {
       );
     });
 
-    it('should disable Claude Code preset system prompt for space chat sessions', async () => {
+    it('should give space chat sessions the chat framing prompt instead of the Claude Code preset', async () => {
       mockSession.type = 'space_chat';
       const options = await builder.build();
-      expect(options.systemPrompt).toBeUndefined();
+      expect(options.systemPrompt).toEqual({
+        type: 'custom',
+        prompt: SPACE_CHAT_SESSION_PROMPT,
+        snapshot: false,
+      });
     });
 
-    it('should clear a custom string system prompt for space chat sessions', async () => {
+    it('should replace a custom string system prompt with the chat framing prompt for space chat sessions', async () => {
       mockSession.type = 'space_chat';
       mockSession.config.systemPrompt = 'You are the Space coordinator.';
       const options = await builder.build();
-      expect(options.systemPrompt).toBeUndefined();
+      expect(options.systemPrompt).toEqual({
+        type: 'custom',
+        prompt: SPACE_CHAT_SESSION_PROMPT,
+        snapshot: false,
+      });
     });
 
-    it('should clear the prompt of a space chat session created without the preset', async () => {
+    it('should replace the prompt of a space chat session created without the preset', async () => {
       mockSession.type = 'space_chat';
       mockSession.config.tools = { useClaudeCodePreset: false };
       mockSession.config.systemPrompt = 'You are the Space coordinator.';
       const options = await builder.build();
-      expect(options.systemPrompt).toBeUndefined();
+      expect(options.systemPrompt).toEqual({
+        type: 'custom',
+        prompt: SPACE_CHAT_SESSION_PROMPT,
+        snapshot: false,
+      });
     });
 
-    it('should clear a preset system prompt carrying an append for space chat sessions', async () => {
+    it('should replace a preset system prompt carrying an append for space chat sessions', async () => {
       mockSession.type = 'space_chat';
       mockSession.config.systemPrompt = {
         type: 'preset',
@@ -2100,7 +2113,21 @@ describe('QueryOptionsBuilder', () => {
         append: 'You are the Space coordinator.',
       };
       const options = await builder.build();
-      expect(options.systemPrompt).toBeUndefined();
+      expect(options.systemPrompt).toEqual({
+        type: 'custom',
+        prompt: SPACE_CHAT_SESSION_PROMPT,
+        snapshot: false,
+      });
+    });
+
+    it('should append the Space briefing after the chat framing prompt for space chat sessions', async () => {
+      mockSession.type = 'space_chat';
+      mockContext.getSpaceBriefing = () => 'You are working inside the Space "Demo".';
+      const options = await builder.build();
+      const prompt = options.systemPrompt as { type?: string; prompt?: string };
+      expect(prompt.type).toBe('custom');
+      expect(prompt.prompt?.indexOf(SPACE_CHAT_SESSION_PROMPT)).toBe(0);
+      expect(prompt.prompt).toContain('You are working inside the Space "Demo".');
     });
 
     it('should keep the same prompts on a worker session, so the key is the session type', async () => {
