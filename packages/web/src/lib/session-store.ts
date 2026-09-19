@@ -201,6 +201,10 @@ export class SessionStore {
 
   private hasPaginatedOlder = false;
 
+  private resyncMessages: (() => void) | null = null;
+
+  private messagesResyncPending = false;
+
   select(sessionId: string | null): Promise<void> {
     if (this.destroyed) {
       return Promise.resolve();
@@ -240,6 +244,8 @@ export class SessionStore {
     this.deleted = false;
     this.hasPaginatedOlder = false;
     this.activeMessagesSubscriptionId = null;
+    this.resyncMessages = null;
+    this.messagesResyncPending = false;
     this.sessionSwitchTime = Date.now();
 
     this.activeSessionId.value = sessionId;
@@ -339,10 +345,29 @@ export class SessionStore {
     const unsubDelta = hub.onEvent<LiveQueryDeltaEvent>('liveQuery.delta', (event) => {
       if (event.subscriptionId !== subscriptionId) return;
       if (this.activeMessagesSubscriptionId !== subscriptionId) return;
-      if (awaitingSnapshot) return;
+      if (awaitingSnapshot) {
+        this.reconcileTranscriptLength(event.rowCount);
+        return;
+      }
       this._applyMessagesDelta(event);
     });
     this.cleanupFunctions.push(unsubDelta);
+
+    this.resyncMessages = () => {
+      if (this.destroyed) return;
+      if (this.activeMessagesSubscriptionId !== subscriptionId) return;
+      awaitingSnapshot = true;
+      hub
+        .request('liveQuery.subscribe', {
+          queryName: 'messages.bySession',
+          params: [sessionId, LIVE_QUERY_MESSAGE_LIMIT],
+          subscriptionId,
+        })
+        .catch((error) => {
+          this.messagesResyncPending = false;
+          logger.warn('Failed to resynchronize the messages transcript:', error);
+        });
+    };
 
     const unsubError = hub.onEvent<LiveQueryErrorEvent>('liveQuery.error', (event) => {
       if (event.subscriptionId !== subscriptionId) return;
@@ -420,7 +445,19 @@ export class SessionStore {
     this._hasMoreMessages.value = rows.length >= LIVE_QUERY_MESSAGE_LIMIT;
     this._initialMessageCount.value = rows.length;
     this.messagesLoaded.value = true;
+    this.messagesResyncPending = false;
     this._syncCommandsFromSDKMessages(merged);
+  }
+
+  private reconcileTranscriptLength(rowCount: number | undefined): void {
+    if (rowCount === undefined || this.hasPaginatedOlder || this.destroyed) return;
+    if (this.sdkMessages.value.length === rowCount) return;
+    if (this.messagesResyncPending || !this.resyncMessages) return;
+    this.messagesResyncPending = true;
+    logger.warn(
+      `Messages transcript diverged from the daemon (rendered ${this.sdkMessages.value.length}, stored ${rowCount}); resynchronizing`
+    );
+    this.resyncMessages();
   }
 
   private extractBackgroundTaskMessages(metadata?: Record<string, unknown>): ChatMessage[] {
@@ -500,6 +537,8 @@ export class SessionStore {
     if (changed) {
       this.sdkMessages.value = next;
     }
+
+    this.reconcileTranscriptLength(event.rowCount);
   }
 
   private reconcileDaemonEpoch(daemonEpoch: string | undefined): void {

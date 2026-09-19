@@ -4584,6 +4584,7 @@ export function setupLiveQueryHandlers(
             added: diff.added ? applyMapRows(diff.added) : undefined,
             removed: diff.removed ? applyMapRows(diff.removed) : undefined,
             updated: diff.updated ? applyMapRows(diff.updated) : undefined,
+            rowCount: diff.rows.length,
             version: diff.version,
             ...(metadata ? { metadata } : {}),
           };

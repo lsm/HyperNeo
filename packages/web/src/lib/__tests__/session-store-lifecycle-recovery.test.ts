@@ -184,4 +184,77 @@ describe('chat/thread lifecycle recovery — SessionStore', () => {
     ).length;
     expect(session1Resubscribes).toBe(0);
   });
+
+  const userRow = { id: 'row-user', uuid: 'u-user', type: 'user', timestamp: 1 };
+  const assistantRow = {
+    id: 'row-assistant',
+    uuid: 'u-assistant',
+    type: 'assistant',
+    timestamp: 2,
+    message: { role: 'assistant', content: [{ type: 'text', text: 'the answer' }] },
+  };
+  const resultRow = { id: 'row-result', uuid: 'u-result', type: 'result', timestamp: 3 };
+
+  function assistantText(): string | undefined {
+    const row = sessionStore.sdkMessages.value.find((m) => m.uuid === 'u-assistant');
+    return row?.message?.content?.[0]?.text;
+  }
+
+  it('resynchronizes when a delta reveals the transcript is missing a stored message', async () => {
+    await sessionStore.select('session-1');
+    const subId = hub.subscriptionId!;
+
+    hub.fire('liveQuery.snapshot', { subscriptionId: subId, rows: [userRow] });
+    hub.fire('liveQuery.delta', { subscriptionId: subId, added: [resultRow], rowCount: 3 });
+
+    expect(assistantText()).toBeUndefined();
+
+    await vi.waitFor(() => {
+      expect(hub.subscribeCalls).toHaveLength(2);
+    });
+    expect(hub.subscribeCalls[1].subscriptionId).toBe(subId);
+
+    hub.fire('liveQuery.snapshot', {
+      subscriptionId: subId,
+      rows: [userRow, assistantRow, resultRow],
+    });
+
+    expect(assistantText()).toBe('the answer');
+  });
+
+  it('resynchronizes when deltas are being discarded because no snapshot ever arrived', async () => {
+    await sessionStore.select('session-1');
+    const subId = hub.subscriptionId!;
+
+    hub.fire('liveQuery.delta', { subscriptionId: subId, added: [assistantRow], rowCount: 2 });
+    expect(sessionStore.sdkMessages.value).toHaveLength(0);
+
+    await vi.waitFor(() => {
+      expect(hub.subscribeCalls).toHaveLength(2);
+    });
+
+    hub.fire('liveQuery.snapshot', { subscriptionId: subId, rows: [userRow, assistantRow] });
+    expect(assistantText()).toBe('the answer');
+  });
+
+  it('resynchronizes only once the transcript actually diverges', async () => {
+    await sessionStore.select('session-1');
+    const subId = hub.subscriptionId!;
+
+    hub.fire('liveQuery.snapshot', { subscriptionId: subId, rows: [userRow] });
+    hub.fire('liveQuery.delta', { subscriptionId: subId, added: [assistantRow], rowCount: 2 });
+
+    expect(assistantText()).toBe('the answer');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(hub.subscribeCalls).toHaveLength(1);
+
+    hub.fire('liveQuery.delta', { subscriptionId: subId, added: [resultRow], rowCount: 4 });
+    await vi.waitFor(() => {
+      expect(hub.subscribeCalls).toHaveLength(2);
+    });
+
+    hub.fire('liveQuery.delta', { subscriptionId: subId, added: [], rowCount: 4 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(hub.subscribeCalls).toHaveLength(2);
+  });
 });
