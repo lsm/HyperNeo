@@ -93,6 +93,7 @@ const mockSpace: Space = {
 function createMockSpaceManager(space: Space | null = mockSpace): SpaceManager {
   return {
     getSpace: mock(async () => space),
+    addSession: mock(async () => space),
     listSpaces: mock(async () => []),
   } as unknown as SpaceManager;
 }
@@ -2484,7 +2485,13 @@ describe('SpaceRuntimeService', () => {
   });
 
   describe('ensureAgentSession()', () => {
-    test('a freshly created agent session carries its role prompt', async () => {
+    const cases = [
+      [false, false],
+      [true, false],
+      [false, true],
+      [true, true],
+    ];
+    test.each(cases)('registers session %s with publish failure %s', async (existing, fails) => {
       const sessionId = longTermAgentSessionId(mockSpace.id, 'agent-1');
       const sessionData = {
         id: sessionId,
@@ -2504,9 +2511,11 @@ describe('SpaceRuntimeService', () => {
         updateConfig: mock(async (updates: Partial<Session['config']>) => {
           sessionData.config = { ...sessionData.config, ...updates };
         }),
+        resetQuery: mock(async () => ({ success: true })),
+        restart: mock(async () => {}),
         getSessionData: mock(() => sessionData),
       } as unknown as AgentSession;
-      let created = false;
+      let created = existing;
       const sessionManager = {
         getSessionAsync: mock(async () => (created ? agentSession : null)),
         getSession: mock(() => (created ? agentSession : null)),
@@ -2529,8 +2538,22 @@ describe('SpaceRuntimeService', () => {
         ),
         update: mock(() => {}),
       } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
+      const registeredSpace = { ...mockSpace, sessionIds: [] as string[] };
+      const spaceManager = createMockSpaceManager(registeredSpace);
+      spaceManager.addSession = mock(async () => {
+        registeredSpace.sessionIds = [sessionId];
+        return registeredSpace;
+      });
+      const publish = mock(async () => {
+        if (fails) throw new Error('subscriber failed');
+        return { delivered: 0, failures: [] };
+      });
       const svc = new SpaceRuntimeService({
-        ...buildConfig(createMockSpaceManager(mockSpace)),
+        ...buildConfig(spaceManager),
+        internalEventBus: {
+          publish,
+          subscribe: () => () => {},
+        } as unknown as SpaceRuntimeServiceConfig['internalEventBus'],
         sessionManager,
         longHorizonAgentRepo,
         actorRegistryRepos: {
@@ -2541,8 +2564,16 @@ describe('SpaceRuntimeService', () => {
       const ensured = await svc.ensureAgentSession(mockSpace.id, 'agent-1');
 
       expect(ensured).not.toBeNull();
+      expect(spaceManager.addSession).toHaveBeenCalledWith(mockSpace.id, sessionId);
       const systemPrompt = sessionData.config.systemPrompt as { append?: string };
       expect(systemPrompt.append).toContain('Triage and track Space tasks.');
+      expect(publish).toHaveBeenCalledWith('space.updated', {
+        sessionId: 'global',
+        spaceId: mockSpace.id,
+        space: registeredSpace,
+      });
+      await svc.ensureAgentSession(mockSpace.id, 'agent-1');
+      expect(publish).toHaveBeenCalledTimes(1);
     });
   });
 

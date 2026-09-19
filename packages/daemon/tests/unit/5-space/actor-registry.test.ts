@@ -74,6 +74,25 @@ describe('SpaceActorRegistryAdapter', () => {
     db.close();
   });
 
+  it.each(['canonical', 'provenance'])(
+    'does not list registered agent sessions as human members (%s)',
+    (identity) => {
+      const space = spaceRepo.createSpace({ name: 'Space', slug: 'space', workspacePath: '/repo' });
+      const agent = seedLongHorizonAgent(longHorizonAgentRepo, space.id);
+      const sessionId =
+        identity === 'canonical' ? longTermAgentSessionId(space.id, agent.id) : 'legacy-agent';
+      const session = makeSession(sessionId, { context: { spaceId: space.id } });
+      if (identity === 'provenance')
+        session.metadata.promptProvenance = { source: 'agent', hash: agent.id, agentId: agent.id };
+      sessionRepo.createSession(session);
+      spaceRepo.addSessionToSpace(space.id, sessionId);
+      const actors = registry.listActors(space.id);
+      expect(actors.some((actor) => actor.kind === 'agent')).toBe(true);
+      expect(actors.some((actor) => actor.actorId === `human:${sessionId}`)).toBe(false);
+      expect(actors.some((actor) => actor.actorId === `session:${sessionId}`)).toBe(false);
+    }
+  );
+
   it('seeds humans, ad-hoc sessions, agents, workers, and systems', () => {
     const space = spaceRepo.createSpace({
       workspacePath: '/workspace/project',
