@@ -336,6 +336,18 @@ migration_shard_paths() {
 	done
 }
 
+# Shards that build a fresh on-disk SQLite DB per test are I/O-heavy and
+# intermittently exceed vitest's 5s test / 10s hook defaults under CI parallel
+# load — a different file flakes on different runs. Budget the whole shard
+# rather than hardening files one by one. This is the single source of truth:
+# run_shard and --rerun both ask it, so a rerun keeps a file's own shard budget.
+shard_timeout_flags() {
+	case "$1" in
+		1-core | *-migrations | 5-space*) printf '%s' "--testTimeout=30000 --hookTimeout=30000" ;;
+		*) printf '' ;;
+	esac
+}
+
 # Map shard name to one or more test paths. Shards are balanced by CI wall time.
 shard_paths() {
 	# Hash-split shards (e.g. 5-space-a/b) are resolved dynamically by
@@ -488,15 +500,21 @@ if [ "$RERUN" = true ]; then
 	FAILING_FILES=$(cat "$FAILURES_FILE")
 	FILE_COUNT=$(echo "$FAILING_FILES" | wc -l | tr -d ' ')
 	echo "Rerunning $FILE_COUNT failing test file(s)..."
-	# Apply the same generous budget run_shard gives a file's own shard, so a
-	# rerun doesn't re-flake on timeout. Match every layout that lands in a
-	# budgeted shard: migration tests under `migrations/`, top-level
-	# `migration-*.test.ts` directly under `storage/`, `1-core/`, and
-	# `5-space/` — all of which build a fresh on-disk SQLite DB per test.
+	# Give a rerun the same budget run_shard would give each failing file's own
+	# shard. Membership is resolved from shard_paths rather than matched by path
+	# pattern, so satellites (1-core's helpers/, lib/acp/, lib/voice/, …) and the
+	# non-migration files carried by the *-migrations shards are covered too.
 	RERUN_TIMEOUT_FLAGS=""
-	if echo "$FAILING_FILES" | grep -qE "migrations/|migration-[0-9]+[^/]*(\.test|_test)\.[jt]s|/1-core/|/5-space/"; then
-		RERUN_TIMEOUT_FLAGS="--testTimeout=30000 --hookTimeout=30000"
-	fi
+	for shard in "${SHARDS[@]}"; do
+		[ -n "$(shard_timeout_flags "$shard")" ] || continue
+		while IFS= read -r shard_path; do
+			[ -n "$shard_path" ] || continue
+			if echo "$FAILING_FILES" | grep -qF "${shard_path#"$REPO_ROOT/"}"; then
+				RERUN_TIMEOUT_FLAGS=$(shard_timeout_flags "$shard")
+				break 2
+			fi
+		done <<< "$(shard_paths "$shard")"
+	done
 	# shellcheck disable=SC2086
 	(cd "$REPO_ROOT/packages/daemon" && NODE_ENV=test node_modules/.bin/vitest run $RERUN_TIMEOUT_FLAGS $FAILING_FILES)
 	exit $?
@@ -545,10 +563,8 @@ run_shard() {
 	# Migration shards replay the full chain (28/29/33/34/35-36/47/94);
 	# 5-space does the same per-test setup in direct-kickoff-startup and
 	# direct-process-ownership.
-	local timeout_flags=""
-	case "$shard" in
-		1-core | *-migrations | 5-space*) timeout_flags="--testTimeout=30000 --hookTimeout=30000" ;;
-	esac
+	local timeout_flags
+	timeout_flags=$(shard_timeout_flags "$shard")
 
 	# shellcheck disable=SC2086
 	(
