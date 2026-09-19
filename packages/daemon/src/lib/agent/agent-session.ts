@@ -1,3 +1,5 @@
+import type { McpSetServersResult } from '@hyperneo/shared/sdk';
+import { reservedMcpRenameSource } from '../mcp/built-in-servers.ts';
 import { createDirectQueryStartGuard } from '../tasks/direct-query-start-guard.ts';
 import { createDatabaseOperationCatalog } from '../operations/database-catalog.ts';
 import type { OperationRegistry, OperationRegistryProvider } from '../operations/registry.ts';
@@ -1417,6 +1419,7 @@ export class AgentSession
             errors: result.errors,
           })}`
         );
+        this.recordMcpAttachOutcomes(result);
       })
       .catch((error) => {
         this.logger.warn(
@@ -1426,6 +1429,29 @@ export class AgentSession
             .join(', ')}]: ${error instanceof Error ? error.message : String(error)}`
         );
       });
+  }
+
+  private recordMcpAttachOutcomes(result: McpSetServersResult): void {
+    const errors = result.errors ?? {};
+    const outcomes = new Map<string, string | null>();
+    for (const name of result.added ?? []) outcomes.set(name, errors[name] ?? null);
+    for (const [name, message] of Object.entries(errors)) outcomes.set(name, message);
+    if (outcomes.size === 0) return;
+
+    try {
+      const repo = this.db.appMcpServers;
+      repo.recordAttachOutcomes(
+        [...outcomes].map(([name, error]) => ({
+          name: repo.getByName(name) ? name : reservedMcpRenameSource(name),
+          error,
+        }))
+      );
+    } catch (error) {
+      this.logger.warn(
+        `mcp.attach.live status not recorded for session ${this.session.id}: ` +
+          `${error instanceof Error ? error.message : String(error)}`
+      );
+    }
   }
 
   private emitMcpAttachLog(action: 'merge' | 'detach' | 'replace', servers: string[]): void {

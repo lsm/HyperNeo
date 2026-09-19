@@ -313,6 +313,53 @@ describe('AppMcpServerRepository', () => {
     });
   });
 
+  describe('recordAttachOutcomes', () => {
+    test('stores an attach failure against the named entry', () => {
+      const server = repo.create({ name: 'blank-args', sourceType: 'stdio', command: 'echo' });
+
+      repo.recordAttachOutcomes([{ name: 'blank-args', error: 'Connection closed' }]);
+
+      expect(repo.get(server.id)!.lastAttachError).toBe('Connection closed');
+    });
+
+    test('clears a stored failure when the server attaches cleanly', () => {
+      const server = repo.create({ name: 'flaky', sourceType: 'stdio', command: 'echo' });
+      repo.recordAttachOutcomes([{ name: 'flaky', error: 'Connection closed' }]);
+
+      repo.recordAttachOutcomes([{ name: 'flaky', error: null }]);
+
+      expect(repo.get(server.id)!.lastAttachError).toBeUndefined();
+    });
+
+    test('notifies once when an outcome changes and not at all when it repeats', () => {
+      repo.create({ name: 'noisy', sourceType: 'stdio', command: 'echo' });
+      notifyChangeSpy.mockClear();
+
+      repo.recordAttachOutcomes([{ name: 'noisy', error: 'boom' }]);
+      expect(notifyChangeSpy).toHaveBeenCalledTimes(1);
+      expect(notifyChangeSpy).toHaveBeenCalledWith('app_mcp_servers');
+
+      notifyChangeSpy.mockClear();
+      repo.recordAttachOutcomes([{ name: 'noisy', error: 'boom' }]);
+      expect(notifyChangeSpy).not.toHaveBeenCalled();
+    });
+
+    test('ignores names that are not in the registry', () => {
+      notifyChangeSpy.mockClear();
+      repo.recordAttachOutcomes([{ name: 'hyperneo-operations', error: 'boom' }]);
+      expect(notifyChangeSpy).not.toHaveBeenCalled();
+    });
+
+    test('editing a server clears its stored attach failure', () => {
+      const server = repo.create({ name: 'fixme', sourceType: 'stdio', command: 'ech' });
+      repo.recordAttachOutcomes([{ name: 'fixme', error: 'Connection closed' }]);
+
+      const updated = repo.update(server.id, { command: 'echo' });
+
+      expect(updated!.lastAttachError).toBeUndefined();
+    });
+  });
+
   describe('source + sourcePath', () => {
     test('defaults source to "user" when omitted', () => {
       const server = repo.create({ name: 'no-source', sourceType: 'stdio' });

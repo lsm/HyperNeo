@@ -26,8 +26,14 @@ interface AppMcpServerRow {
   enabled: number;
   source: string | null;
   source_path: string | null;
+  last_attach_error: string | null;
   created_at: number | null;
   updated_at: number | null;
+}
+
+export interface McpAttachOutcome {
+  name: string;
+  error: string | null;
 }
 
 function rowToServer(row: AppMcpServerRow): AppMcpServer {
@@ -46,6 +52,7 @@ function rowToServer(row: AppMcpServerRow): AppMcpServer {
     enabled: row.enabled === 1,
     source,
     ...(row.source_path !== null ? { sourcePath: row.source_path } : {}),
+    ...(row.last_attach_error !== null ? { lastAttachError: row.last_attach_error } : {}),
     ...(row.created_at !== null ? { createdAt: row.created_at } : {}),
     ...(row.updated_at !== null ? { updatedAt: row.updated_at } : {}),
   };
@@ -241,6 +248,8 @@ export class AppMcpServerRepository {
     }
 
     if (fields.length > 0) {
+      fields.push('last_attach_error = ?');
+      values.push(null);
       fields.push('updated_at = ?');
       values.push(now);
       values.push(id);
@@ -251,6 +260,24 @@ export class AppMcpServerRepository {
     }
 
     return this.get(id);
+  }
+
+  recordAttachOutcomes(outcomes: readonly McpAttachOutcome[]): void {
+    if (outcomes.length === 0) return;
+
+    const statement = this.db.prepare(
+      `UPDATE app_mcp_servers SET last_attach_error = ? WHERE name = ? AND last_attach_error IS NOT ?`
+    );
+
+    let changed = false;
+    for (const outcome of outcomes) {
+      const result = statement.run(outcome.error, outcome.name, outcome.error);
+      if (result.changes > 0) changed = true;
+    }
+
+    if (changed) {
+      this.reactiveDb.notifyChange('app_mcp_servers');
+    }
   }
 
   delete(id: string): boolean {
