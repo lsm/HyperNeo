@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { toJSONSchema, z } from 'zod';
 import type { McpServerConfig } from '@hyperneo/shared/sdk';
+import { isBuiltInMcpServer } from '../mcp/built-in-servers.ts';
 
 type RegisteredTool = {
   description?: string;
@@ -36,8 +37,6 @@ type ProxyRequest = {
   toolName?: string;
   arguments?: unknown;
 };
-
-const PROXIED_SERVER_NAMES = new Set(['agent-memory', 'db-query']);
 
 export class AcpMcpProxyBridge {
   socketPath: string;
@@ -230,13 +229,7 @@ export class AcpMcpProxyBridge {
 }
 
 export function shouldProxy(serverName: string, config: unknown): boolean {
-  if (!config || typeof config !== 'object') return false;
-  const server = config as { type?: string; instance?: unknown };
-  return (
-    !!server.instance &&
-    server.type === 'sdk' &&
-    (PROXIED_SERVER_NAMES.has(serverName) || /^hyperneo-operations(?:-[0-9]+)?$/.test(serverName))
-  );
+  return isBuiltInMcpServer(serverName, config);
 }
 
 function getRegisteredTools(config: unknown): Record<string, RegisteredTool> {

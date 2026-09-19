@@ -35,6 +35,7 @@ import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-
 import type { McpEnablementRepository } from '../../storage/repositories/mcp-enablement-repository.ts';
 import { getDataDir } from '../data-dir.ts';
 import { Logger } from '../logger.ts';
+import { mergeSessionMcpServers } from '../mcp/built-in-servers.ts';
 import { resolveMcpServers, scopeChainForSession } from '../mcp/resolve-mcp-servers.ts';
 import {
   getProviderCatalogEpoch,
@@ -234,6 +235,7 @@ export function buildProviderSettings(
 
 export interface QueryOptionsBuilderContext {
   getOperationMcpServer?(): SdkMcpServerConfig;
+  getSpaceBriefing?(): string | undefined;
   readonly session: Session;
   readonly settingsManager: SettingsManager;
   readonly db?: Database;
@@ -273,6 +275,7 @@ export class QueryOptionsBuilder {
   private effectiveFallbackCaptured = false;
   private effectiveFallbackModel?: string;
   private readonly logger = new Logger('QueryOptionsBuilder');
+  private readonly warnedReservedMcpNames = new Set<string>();
 
   constructor(private ctx: QueryOptionsBuilderContext) {}
 
@@ -293,21 +296,23 @@ export class QueryOptionsBuilder {
   }
 
   private computeEffectiveMcpServers(): Record<string, SdkMcpServerConfig> | undefined {
-    const registryServers = this.getMcpServersFromRegistry();
-    const skillServers = this.getMcpServersFromSkills();
-    const runtimeServers = this.getMcpServers() as Record<string, McpServerConfig> | undefined;
-    const merged: Record<string, SdkMcpServerConfig> = {
-      ...registryServers,
-      ...skillServers,
-      ...runtimeServers,
-    };
-    if (this.ctx.getOperationMcpServer) {
-      let name = 'hyperneo-operations';
-      let suffix = 2;
-      while (Object.hasOwn(merged, name)) name = `hyperneo-operations-${suffix++}`;
-      merged[name] = this.ctx.getOperationMcpServer();
-    }
-    return Object.keys(merged).length > 0 ? merged : undefined;
+    const { servers, renamed } = mergeSessionMcpServers<SdkMcpServerConfig>({
+      registryServers: this.getMcpServersFromRegistry(),
+      skillServers: this.getMcpServersFromSkills(),
+      runtimeServers: this.getMcpServers() as Record<string, SdkMcpServerConfig> | undefined,
+      operationServer: this.ctx.getOperationMcpServer?.(),
+    });
+    for (const { from, to } of renamed) this.warnReservedMcpServerName(from, to);
+    return Object.keys(servers).length > 0 ? servers : undefined;
+  }
+
+  private warnReservedMcpServerName(from: string, to: string): void {
+    const key = `${from} -> ${to}`;
+    if (this.warnedReservedMcpNames.has(key)) return;
+    this.warnedReservedMcpNames.add(key);
+    this.logger.warn(
+      `MCP server "${from}" uses a name reserved for a HyperNeo built-in server; attaching it as "${to}" instead`
+    );
   }
 
   async build(overrides?: {
@@ -717,6 +722,7 @@ export class QueryOptionsBuilder {
       };
 
       const append = this.joinSystemPromptAppendParts([
+        this.ctx.getSpaceBriefing?.(),
         this.ctx.session.worktree ? this.getWorktreeIsolationText() : undefined,
       ]);
       if (append) {
@@ -726,17 +732,18 @@ export class QueryOptionsBuilder {
       return presetConfig;
     }
 
-    if (this.ctx.session.worktree) {
-      return this.joinSystemPromptAppendParts([this.getMinimalWorktreePrompt()]);
-    }
-
-    return undefined;
+    const plain = this.joinSystemPromptAppendParts([
+      this.ctx.getSpaceBriefing?.(),
+      this.ctx.session.worktree ? this.getMinimalWorktreePrompt() : undefined,
+    ]);
+    return plain || undefined;
   }
 
   private buildCustomSystemPrompt(systemPrompt: SystemPromptConfig): Options['systemPrompt'] {
     if (typeof systemPrompt === 'string') {
       return this.joinSystemPromptAppendParts([
         systemPrompt,
+        this.ctx.getSpaceBriefing?.(),
         this.ctx.session.worktree ? this.getWorktreeIsolationText() : undefined,
       ]);
     }
@@ -749,6 +756,7 @@ export class QueryOptionsBuilder {
 
       const append = this.joinSystemPromptAppendParts([
         systemPrompt.append,
+        this.ctx.getSpaceBriefing?.(),
         this.ctx.session.worktree ? this.getWorktreeIsolationText() : undefined,
       ]);
       if (append) {

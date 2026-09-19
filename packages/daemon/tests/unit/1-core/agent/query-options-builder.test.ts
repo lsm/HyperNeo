@@ -1754,6 +1754,72 @@ describe('QueryOptionsBuilder', () => {
       expect(typeof options.systemPrompt).toBe('string');
       expect(options.systemPrompt).toContain('Git Worktree Isolation');
     });
+
+    it('appends the Space briefing to the preset for a Space session', async () => {
+      const newBuilder = new QueryOptionsBuilder({
+        session: mockSession,
+        settingsManager: mockSettingsManager,
+        getSpaceBriefing: () => 'You are working inside the Space "Acme" (id: space-1).',
+      });
+      const options = await newBuilder.build();
+
+      const systemPrompt = options.systemPrompt as { append?: string };
+      expect(systemPrompt.append).toContain('You are working inside the Space "Acme"');
+    });
+
+    it('keeps the agent role prompt and the Space briefing together', async () => {
+      mockSession.config.systemPrompt = {
+        type: 'preset',
+        preset: 'claude_code',
+        append: 'Triage and track Space tasks.',
+      };
+      const newBuilder = new QueryOptionsBuilder({
+        session: mockSession,
+        settingsManager: mockSettingsManager,
+        getSpaceBriefing: () => 'Space briefing: call mcp__hyperneo-operations__invoke.',
+      });
+      const options = await newBuilder.build();
+
+      const systemPrompt = options.systemPrompt as { append?: string };
+      expect(systemPrompt.append).toContain('Triage and track Space tasks.');
+      expect(systemPrompt.append).toContain('mcp__hyperneo-operations__invoke');
+    });
+
+    it('appends the Space briefing to a custom string system prompt', async () => {
+      mockSession.config.systemPrompt = 'Custom prompt';
+      const newBuilder = new QueryOptionsBuilder({
+        session: mockSession,
+        settingsManager: mockSettingsManager,
+        getSpaceBriefing: () => 'Space briefing text',
+      });
+      const options = await newBuilder.build();
+
+      expect(options.systemPrompt).toContain('Custom prompt');
+      expect(options.systemPrompt).toContain('Space briefing text');
+    });
+
+    it('carries the Space briefing when the Claude Code preset is disabled', async () => {
+      mockSession.config.tools = { useClaudeCodePreset: false };
+      const newBuilder = new QueryOptionsBuilder({
+        session: mockSession,
+        settingsManager: mockSettingsManager,
+        getSpaceBriefing: () => 'Space briefing text',
+      });
+      const options = await newBuilder.build();
+
+      expect(options.systemPrompt).toBe('Space briefing text');
+    });
+
+    it('leaves the system prompt untouched for a session outside any Space', async () => {
+      mockSession.config.tools = { useClaudeCodePreset: false };
+      const newBuilder = new QueryOptionsBuilder({
+        session: mockSession,
+        settingsManager: mockSettingsManager,
+      });
+      const options = await newBuilder.build();
+
+      expect(options.systemPrompt).toBeUndefined();
+    });
   });
 
   describe('tools configuration', () => {
@@ -1901,8 +1967,8 @@ describe('QueryOptionsBuilder', () => {
       mockSession.config.permissionMode = 'acceptEdits';
       mockSession.config.mcpServers = {
         'space-actions': { command: 'space-cmd' },
-        'db-query': { command: 'db-cmd' },
-      };
+        'db-query': { type: 'sdk', name: 'db-query', instance: {} },
+      } as never;
 
       const options = await builder.build();
       expect(options.allowedTools).toEqual(
@@ -3814,6 +3880,203 @@ describe('QueryOptionsBuilder', () => {
       server.enabled = false;
       const options = await builder.build();
       expect(options.mcpServers?.['codebase-memory-mcp']).toBeUndefined();
+    });
+
+    describe('reserved built-in server names', () => {
+      const operationServer = { type: 'sdk', name: 'hyperneo-operations', instance: {} };
+
+      function builtInRuntimeServer(name: string) {
+        return { type: 'sdk', name, instance: {} };
+      }
+
+      function withOperationDoor(ctx: QueryOptionsBuilderContext): QueryOptionsBuilderContext {
+        return { ...ctx, getOperationMcpServer: () => operationServer as never };
+      }
+
+      afterEach(() => {
+        delete mockSession.config.mcpServers;
+      });
+
+      it('keeps the operations door on its canonical name when a registry server claims it', async () => {
+        const ctx = withOperationDoor(
+          buildRegistryContext([
+            {
+              id: 'srv-imposter',
+              name: 'hyperneo-operations',
+              sourceType: 'stdio',
+              command: 'imposter-cmd',
+              enabled: true,
+            },
+          ])
+        );
+        const options = await new QueryOptionsBuilder(ctx).build();
+
+        expect(options.mcpServers?.['hyperneo-operations']).toBe(operationServer);
+        expect(options.mcpServers?.['hyperneo-operations-2']).toEqual({
+          command: 'imposter-cmd',
+        });
+      });
+
+      it('keeps the operations door on its canonical name when a skill claims it', async () => {
+        const ctx = withOperationDoor(
+          buildRegistryContext(
+            [
+              {
+                id: 'srv-1',
+                name: 'weather-api',
+                sourceType: 'stdio',
+                command: 'skill-cmd',
+                enabled: true,
+              },
+            ],
+            {
+              skills: [
+                {
+                  id: 'skill-1',
+                  name: 'hyperneo-operations',
+                  sourceType: 'mcp_server',
+                  config: { type: 'mcp_server', appMcpServerId: 'srv-1' },
+                  enabled: true,
+                },
+              ],
+            }
+          )
+        );
+        const options = await new QueryOptionsBuilder(ctx).build();
+
+        expect(options.mcpServers?.['hyperneo-operations']).toBe(operationServer);
+        expect(options.mcpServers?.['hyperneo-operations-2']).toEqual({ command: 'skill-cmd' });
+      });
+
+      it('leaves a reserved name alone when the skill wrapper key is not reserved', async () => {
+        const ctx = withOperationDoor(
+          buildRegistryContext(
+            [
+              {
+                id: 'srv-1',
+                name: 'hyperneo-operations',
+                sourceType: 'stdio',
+                command: 'skill-cmd',
+                enabled: true,
+              },
+            ],
+            {
+              skills: [
+                {
+                  id: 'skill-1',
+                  name: 'weather-skill',
+                  sourceType: 'mcp_server',
+                  config: { type: 'mcp_server', appMcpServerId: 'srv-1' },
+                  enabled: true,
+                },
+              ],
+            }
+          )
+        );
+        const options = await new QueryOptionsBuilder(ctx).build();
+
+        expect(options.mcpServers?.['weather-skill']).toEqual({ command: 'skill-cmd' });
+        expect(options.mcpServers?.['hyperneo-operations']).toBe(operationServer);
+        expect(options.mcpServers?.['hyperneo-operations-2']).toBeUndefined();
+      });
+
+      it('renames a registry server that collides with the built-in agent-memory server', async () => {
+        const memory = builtInRuntimeServer('agent-memory');
+        const ctx = buildRegistryContext([
+          {
+            id: 'srv-mem',
+            name: 'agent-memory',
+            sourceType: 'stdio',
+            command: 'user-memory-cmd',
+            enabled: true,
+          },
+        ]);
+        mockSession.config.mcpServers = { 'agent-memory': memory } as never;
+        const options = await new QueryOptionsBuilder(ctx).build();
+
+        expect(options.mcpServers?.['agent-memory']).toBe(memory as never);
+        expect(options.mcpServers?.['agent-memory-2']).toEqual({ command: 'user-memory-cmd' });
+      });
+
+      it('renames a registry server that collides with the built-in db-query server', async () => {
+        const dbQuery = builtInRuntimeServer('db-query');
+        const ctx = buildRegistryContext([
+          {
+            id: 'srv-db',
+            name: 'db-query',
+            sourceType: 'stdio',
+            command: 'user-db-cmd',
+            enabled: true,
+          },
+        ]);
+        mockSession.config.mcpServers = { 'db-query': dbQuery } as never;
+        const options = await new QueryOptionsBuilder(ctx).build();
+
+        expect(options.mcpServers?.['db-query']).toBe(dbQuery as never);
+        expect(options.mcpServers?.['db-query-2']).toEqual({ command: 'user-db-cmd' });
+      });
+
+      it('reserves a built-in name even when the built-in server is not attached', async () => {
+        const ctx = buildRegistryContext([
+          {
+            id: 'srv-db',
+            name: 'db-query',
+            sourceType: 'stdio',
+            command: 'user-db-cmd',
+            enabled: true,
+          },
+        ]);
+        const options = await new QueryOptionsBuilder(ctx).build();
+
+        expect(options.mcpServers?.['db-query']).toBeUndefined();
+        expect(options.mcpServers?.['db-query-2']).toEqual({ command: 'user-db-cmd' });
+      });
+
+      it('picks the next free suffix when the renamed name is already taken', async () => {
+        const ctx = buildRegistryContext([
+          {
+            id: 'srv-db',
+            name: 'db-query',
+            sourceType: 'stdio',
+            command: 'user-db-cmd',
+            enabled: true,
+          },
+          {
+            id: 'srv-db-2',
+            name: 'db-query-2',
+            sourceType: 'stdio',
+            command: 'other-db-cmd',
+            enabled: true,
+          },
+        ]);
+        const options = await new QueryOptionsBuilder(ctx).build();
+
+        expect(options.mcpServers?.['db-query-2']).toEqual({ command: 'other-db-cmd' });
+        expect(options.mcpServers?.['db-query-3']).toEqual({ command: 'user-db-cmd' });
+      });
+
+      it('leaves the no-collision path untouched', async () => {
+        const runtime = { command: 'runtime-cmd' };
+        const ctx = withOperationDoor(
+          buildRegistryContext([
+            {
+              id: 'srv-1',
+              name: 'registry-srv',
+              sourceType: 'stdio',
+              command: 'registry-cmd',
+              enabled: true,
+            },
+          ])
+        );
+        mockSession.config.mcpServers = { 'space-actions': runtime };
+        const options = await new QueryOptionsBuilder(ctx).build();
+
+        expect(options.mcpServers).toEqual({
+          'registry-srv': { command: 'registry-cmd' },
+          'space-actions': runtime,
+          'hyperneo-operations': operationServer,
+        } as never);
+      });
     });
   });
 

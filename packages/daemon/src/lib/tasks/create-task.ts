@@ -1,11 +1,14 @@
 import type { Session, Space, SpaceTask } from '@hyperneo/shared';
-import type { TaskCore } from '@hyperneo/shared/types/task-core';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/sqlite-compat.ts';
 import { createStandaloneTask } from '../../storage/tasks/create-task.ts';
 import { Logger } from '../logger.ts';
 import type { OperationCaller } from '../operations/registry.ts';
-import { createCreateTaskOperation } from './create-operation.ts';
+import {
+  createCreateTaskOperation,
+  type CreatedTask,
+  type CreateTaskRejection,
+} from './create-operation.ts';
 import type { SpaceTaskManager } from './task-manager.ts';
 import type { SpaceMcpSessionPolicyContext } from '../space/runtime/space-mcp-session-policy.ts';
 import {
@@ -31,21 +34,32 @@ type In = SpaceCreateTaskInput;
 type Caller = OperationCaller;
 type Sess = Session | null;
 type Opt = string | undefined;
-type Gate = { value: string } | { reason: TaskCore };
-type CreateFn = (input: In, sessionId: Opt, caller: Caller) => Promise<TaskCore>;
+type TargetGate = { value: Opt } | { reason: CreateTaskRejection };
+type OwnershipGate = { value: string } | { reason: CreatedTask };
+type CreateFn = (
+  input: In,
+  sessionId: Opt,
+  caller: Caller
+) => Promise<CreatedTask | CreateTaskRejection>;
 
 function resolveCallerSession(caller: Caller, deps: Deps): Sess {
   return caller.source === 'mcp' && caller.sessionId ? deps.getSession(caller.sessionId) : null;
 }
-function requireCreateTarget(input: In, caller: Caller, session: Sess, deps: Deps): Opt {
+function resolveCreateTarget(input: In, caller: Caller, session: Sess, deps: Deps): TargetGate {
   const target = resolveCreateTaskTarget(input, caller, resolveMetadataSessionSpace(session, deps));
-  if ('reason' in target) throw new Error(target.reason);
-  return target.value.spaceId;
+  return 'reason' in target
+    ? { reason: { accepted: false, reason: target.reason } }
+    : { value: target.value.spaceId };
 }
-function createStandaloneWhenUnowned(spaceId: Opt, input: In, caller: Caller, deps: Deps): Gate {
+function createStandaloneWhenUnowned(
+  spaceId: Opt,
+  input: In,
+  caller: Caller,
+  deps: Deps
+): OwnershipGate {
   if (spaceId !== undefined) return { value: spaceId };
   const task = createStandaloneTask(deps.db, input, caller.sessionId, deps.notifyStandalone);
-  return { reason: task };
+  return { reason: { ...task, standalone: true } };
 }
 async function requireSpace(spaceId: string, deps: Deps): Promise<void> {
   if (!(await deps.getSpace(spaceId))) throw new Error(`Space not found: ${spaceId}`);
@@ -84,8 +98,8 @@ export function createSpaceCreateTaskOperation(deps: Deps) {
   const createTask = (superpipe({ deps })('create-space-task') as PipelineAPI)
     .input(['input', 'creatorSessionId', 'caller'])
     .pipe(resolveCallerSession, ['caller', 'deps'], 'session')
-    .pipe(requireCreateTarget, ['input', 'caller', 'session', 'deps'], 'spaceId')
-    .pipe(createStandaloneWhenUnowned, ['spaceId', 'input', 'caller', 'deps'], 'result:task')
+    .pipe(resolveCreateTarget, ['input', 'caller', 'session', 'deps'], 'result:task')
+    .pipe(createStandaloneWhenUnowned, ['task', 'input', 'caller', 'deps'], 'result:task')
     .pipe(requireSpace, ['task', 'deps'])
     .pipe(requireUsableWorkspace, ['task', 'input', 'deps'])
     .pipe(createSpaceTask, ['task', 'input', 'caller', 'session', 'deps'], 'task')
@@ -94,6 +108,6 @@ export function createSpaceCreateTaskOperation(deps: Deps) {
   return createCreateTaskOperation(createTask, {
     inputSchema: SpaceCreateTaskInputSchema,
     description:
-      'Create a task. Space-scoped callers create it in their Space (RPC callers pass spaceId); dependsOn, draft, preferredWorkflowId and workspacePath apply only to Space tasks; when workspacePath is omitted the Space needs a usable default workspace. Other callers create an independent task. Returns core task data.',
+      'Create a task. Pass spaceId to create it in that Space; a session already scoped to a Space creates there by default and cannot target another Space, which returns { accepted: false, reason }. With no spaceId and no Space of its own the caller gets an independent task, reported as standalone: true on the result. dependsOn, draft, preferredWorkflowId and workspacePath apply only to Space tasks; when workspacePath is omitted the Space needs a usable default workspace. Returns core task data, or a rejection.',
   });
 }

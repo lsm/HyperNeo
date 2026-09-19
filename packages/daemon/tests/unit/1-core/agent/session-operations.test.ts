@@ -303,7 +303,7 @@ describe('session operation MCP attachment', () => {
     }
   );
 
-  test('preserves name collisions and proxies operations for ACP sessions', async () => {
+  test('reserves the operations name and proxies operations for ACP sessions', async () => {
     const source = createTestSession('acp-sender');
     source.config.provider = 'acp';
     source.config.mcpServers = {
@@ -314,15 +314,16 @@ describe('session operation MCP attachment', () => {
     const session = await restore(source.id);
     session.mergeRuntimeMcpServers(source.config.mcpServers);
     const effective = session.optionsBuilder.getEffectiveMcpServers();
-    expect(effective).toMatchObject(source.config.mcpServers);
-    expect(effective?.['hyperneo-operations-3']).toBe(session.getOperationMcpServer());
+    expect(effective?.['hyperneo-operations']).toBe(session.getOperationMcpServer());
+    expect(effective?.['hyperneo-operations-2']).toEqual({ command: 'another-user-server' });
+    expect(effective?.['hyperneo-operations-3']).toEqual({ command: 'user-server' });
     const bridge = new AcpMcpProxyBridge(effective as never);
-    expect(bridge.getToolsForServer('hyperneo-operations-3').map(({ name }) => name)).toEqual([
+    expect(bridge.getToolsForServer('hyperneo-operations').map(({ name }) => name)).toEqual([
       'invoke',
     ]);
     expect(convertMcpServersForAcp(effective, () => {}, bridge)).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ name: 'hyperneo-operations-3', type: 'stdio' }),
+        expect.objectContaining({ name: 'hyperneo-operations', type: 'stdio' }),
       ])
     );
   });

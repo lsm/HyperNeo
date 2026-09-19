@@ -20,6 +20,20 @@ export const StandaloneCreateTaskInputSchema = z
 const STANDALONE_CREATE_TASK_DESCRIPTION =
   'Create an independent task in this daemon. Creates a work record without starting agent execution or attaching it to a Space.';
 
+const CreateTaskRejectionSchema = z
+  .object({ accepted: z.literal(false), reason: z.string() })
+  .strict();
+
+const CreateTaskResultSchema = z.union([
+  CreateTaskRejectionSchema,
+  TaskWithSpaceFieldsSchema.extend({ standalone: z.literal(true) }),
+  TaskWithSpaceFieldsSchema,
+]);
+
+export type CreateTaskRejection = z.infer<typeof CreateTaskRejectionSchema>;
+export type CreatedTask = TaskCore | (TaskCore & { standalone: true });
+type CreateTaskOutput = CreatedTask | CreateTaskRejection;
+
 export interface CreateTaskOperationOptions<Input> {
   inputSchema?: z.ZodType<Input>;
   description?: string;
@@ -29,7 +43,7 @@ type CreateTaskFn<Input> = (
   input: Input,
   creatorSessionId: string | undefined,
   caller: OperationCaller
-) => TaskCore | Promise<TaskCore>;
+) => CreateTaskOutput | Promise<CreateTaskOutput>;
 
 export function createCreateTaskOperation<Input>(
   createTask: CreateTaskFn<Input>,
@@ -48,7 +62,7 @@ export function createCreateTaskOperation<Input = CreateStandaloneTaskInput>(
     description: options.description ?? STANDALONE_CREATE_TASK_DESCRIPTION,
     inputSchema:
       options.inputSchema ?? (StandaloneCreateTaskInputSchema as unknown as z.ZodType<Input>),
-    resultSchema: TaskWithSpaceFieldsSchema,
+    resultSchema: CreateTaskResultSchema,
     execute: async (input, caller) => createTask(input, caller.sessionId, caller),
   });
 }
