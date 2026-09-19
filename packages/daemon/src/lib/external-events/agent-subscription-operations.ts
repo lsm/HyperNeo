@@ -90,7 +90,10 @@ const UnsubscribeResultSchema = z.union([
   REJECTIONS,
 ]);
 const ListResultSchema = z.union([
-  z.object({ subscriptions: z.array(SubscriptionRecordSchema) }),
+  z.object({
+    subscriptions: z.array(SubscriptionRecordSchema),
+    scope: z.object({ spaceId: z.string() }),
+  }),
   REJECTIONS,
 ]);
 
@@ -222,6 +225,7 @@ export function listAgentSubscriptionTopics(
 ): z.infer<typeof ListResultSchema> {
   return {
     subscriptions: deps.subscriptionRepo.listSubscriptions(scope.agentId).map(subscriptionRecord),
+    scope: { spaceId: scope.spaceId },
   };
 }
 
@@ -251,7 +255,7 @@ function agentPipeline<Input, Result>(
 }
 
 const SCOPE_DOC =
-  'The target long-horizon agent is taken from agent_id and must belong to the caller Space; the Space is derived from the calling session, never guessed, and human (RPC) callers pass spaceId explicitly. Rejects caller_denied for any other caller, session_inactive when the calling session is not active in that Space, agent_not_found when the agent is unknown or belongs to another Space, and invalid_pattern when topic_pattern is not a valid topic glob.';
+  'The target long-horizon agent is taken from agent_id and must belong to the caller Space; the Space is derived from the calling session, never guessed, and omitted spaceId defaults to the trusted caller Space. List results report the resolved Space in scope. Rejects caller_denied for any other caller, session_inactive when the calling session is not active in that Space, agent_not_found when the agent is unknown or belongs to another Space, and invalid_pattern when topic_pattern is not a valid topic glob.';
 
 export function createAgentSubscriptionOperations(
   deps: AgentSubscriptionDependencies

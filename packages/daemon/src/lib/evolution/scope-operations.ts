@@ -106,7 +106,13 @@ const FORGE_MUTATE_POLICY = {
   roles: ['ad_hoc_member', 'long_term_agent'],
 } as const satisfies OperationPolicy;
 
-const SpaceScoped = { spaceId: z.string().min(1).optional() };
+const SpaceScoped = {
+  spaceId: z
+    .string()
+    .min(1)
+    .optional()
+    .describe('Defaults to the trusted caller Space; rejects space_required when neither is set.'),
+};
 const ScopeTargeted = { ...SpaceScoped, scopeId: z.string().min(1) };
 
 function accepted<Shape extends z.ZodRawShape>(shape: Shape) {
@@ -287,7 +293,10 @@ export function readForgeScopeList(
   input: z.infer<typeof ScopeListInputSchema>,
   spaceId: string,
   forge: ForgeScopeOperationDependencies
-): ForgeGate<{ accepted: true; scopes: EvolutionScope[] }, ScopeCreateRejection> {
+): ForgeGate<
+  { accepted: true; scopes: EvolutionScope[]; scope: { spaceId: string } },
+  ScopeCreateRejection
+> {
   if (input.goalId) {
     const goal = forge.getGoal(input.goalId);
     if (!goal || goal.spaceId !== spaceId) {
@@ -297,6 +306,7 @@ export function readForgeScopeList(
   return {
     value: {
       accepted: true,
+      scope: { spaceId },
       scopes: forge.scopeService.listScopes({
         spaceId,
         spaceGoalId: input.goalId,
@@ -557,8 +567,12 @@ export function applyForgeWorkflowRunEvidence(
 export function readForgeEvidence(
   scope: EvolutionScope,
   forge: ForgeScopeOperationDependencies
-): { accepted: true; evidence: EvidenceRef[] } {
-  return { accepted: true, evidence: forge.scopeService.listEvidence(scope.id).evidence };
+): { accepted: true; evidence: EvidenceRef[]; scope: { spaceId: string } } {
+  return {
+    accepted: true,
+    evidence: forge.scopeService.listEvidence(scope.id).evidence,
+    scope: { spaceId: scope.spaceId },
+  };
 }
 
 const MetricAddInputSchema = z
@@ -600,8 +614,12 @@ export function applyForgeMetricAdd(
 export function readForgeMetricSnapshots(
   scope: EvolutionScope,
   forge: ForgeScopeOperationDependencies
-): { accepted: true; snapshots: MetricSnapshot[] } {
-  return { accepted: true, snapshots: forge.scopeService.listMetricSnapshots(scope.id) };
+): { accepted: true; snapshots: MetricSnapshot[]; scope: { spaceId: string } } {
+  return {
+    accepted: true,
+    snapshots: forge.scopeService.listMetricSnapshots(scope.id),
+    scope: { spaceId: scope.spaceId },
+  };
 }
 
 function scopeReadPipeline<Result>(
@@ -732,7 +750,7 @@ export function createForgeScopeOperations(forge: ForgeScopeOperationDependencie
         'List Forge scopes in a Space, optionally filtered by linked goal (null lists unlinked scopes) or by kind. Rejects space_required when no Space can be resolved and goal_not_found for a goal outside the Space.',
       inputSchema: ScopeListInputSchema,
       resultSchema: z.union([
-        accepted({ scopes: z.array(ForgeScopeSchema) }),
+        accepted({ scopes: z.array(ForgeScopeSchema), scope: z.object({ spaceId: z.string() }) }),
         forgeDenialSchema(SCOPE_CREATE_REJECTIONS),
       ]),
       execute: async (input, caller) => list(input, caller),
@@ -814,7 +832,10 @@ export function createForgeScopeOperations(forge: ForgeScopeOperationDependencie
         'List the evidence refs attached to a Forge scope. Rejects scope_not_found when the scope is absent or outside the caller Space.',
       inputSchema: z.object(ScopeTargeted).strict(),
       resultSchema: z.union([
-        accepted({ evidence: z.array(ForgeEvidenceRefSchema) }),
+        accepted({
+          evidence: z.array(ForgeEvidenceRefSchema),
+          scope: z.object({ spaceId: z.string() }),
+        }),
         forgeDenialSchema(SCOPE_ID_REJECTIONS),
       ]),
       execute: async (input, caller) => evidenceList(input, caller),
@@ -838,7 +859,10 @@ export function createForgeScopeOperations(forge: ForgeScopeOperationDependencie
         'List the metric snapshots recorded on a Forge scope. Rejects scope_not_found when the scope is absent or outside the caller Space.',
       inputSchema: z.object(ScopeTargeted).strict(),
       resultSchema: z.union([
-        accepted({ snapshots: z.array(ForgeMetricSnapshotSchema) }),
+        accepted({
+          snapshots: z.array(ForgeMetricSnapshotSchema),
+          scope: z.object({ spaceId: z.string() }),
+        }),
         forgeDenialSchema(SCOPE_ID_REJECTIONS),
       ]),
       execute: async (input, caller) => metricList(input, caller),

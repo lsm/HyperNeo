@@ -57,7 +57,7 @@ export function readScopedEvent(
 }
 
 const GET_EXTERNAL_EVENT_DESCRIPTION =
-  'Fetch the full raw record for one external event by id — the on-demand deep-dive counterpart to the lean event summary injected as a message. Returns the event and its delivery state. MCP callers are scoped to their own Space and must be a Space member, long-term agent, or workflow worker; RPC callers pass spaceId explicitly. Rejects caller_denied when the caller has no admitted Space scope, and event_not_found when the id is unknown or belongs to another Space.';
+  'Fetch the full raw record for one external event by id — the on-demand deep-dive counterpart to the lean event summary injected as a message. Returns the event and its delivery state. MCP callers are scoped to their own Space and must be a Space member, long-term agent, or workflow worker; omitted spaceId defaults to the trusted caller Space. The returned event carries its spaceId. Rejects caller_denied when the caller has no admitted Space scope, and event_not_found when the id is unknown or belongs to another Space.';
 
 export function createGetExternalEventOperation(events: GetExternalEventDependencies) {
   const read = (superpipe({ events })('get-external-event') as PipelineAPI)

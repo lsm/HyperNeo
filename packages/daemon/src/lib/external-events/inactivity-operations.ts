@@ -89,6 +89,7 @@ export function admitInactivityWriter(
 
 function readConfig(scope: Scope, _input: unknown, agents: InactivityDependencies) {
   return {
+    scope: { spaceId: scope.spaceId },
     config: agents.configRepo.getByAgent(scope.spaceId, scope.agentId),
     degraded: agents.claimRepo.getByAgent(scope.spaceId, scope.agentId)?.degraded ?? false,
   };
@@ -126,7 +127,7 @@ function applyConfig(
 
 async function runScanNow(scope: Scope, _input: unknown, agents: InactivityDependencies) {
   await agents.runNow(scope.spaceId, scope.agentId);
-  return { started: true as const };
+  return { started: true as const, scope: { spaceId: scope.spaceId } };
 }
 
 const REJECTIONS = z.enum(['caller_denied', 'agent_unknown', 'session_inactive']);
@@ -163,7 +164,7 @@ function writePipeline<Result>(
 }
 
 const SCOPE_DOC =
-  'The watchdog is per long-term agent: an MCP caller always addresses its own agent in its own Space, and an RPC caller names spaceId and agentId explicitly. Rejects caller_denied when the caller is not an admitted long-term agent or names another agent, agent_unknown when the agent is not registered in that Space';
+  'The watchdog is per long-term agent: an MCP caller always addresses its own agent in its own Space, and an RPC caller names agentId and may omit spaceId to use its trusted caller Space. Responses report the resolved Space through scope or the configuration spaceId. Rejects caller_denied when the caller is not an admitted long-term agent or names another agent, agent_unknown when the agent is not registered in that Space';
 
 export function createInactivityOperations(agents: InactivityDependencies): OperationDefinition[] {
   return [
@@ -173,7 +174,11 @@ export function createInactivityOperations(agents: InactivityDependencies): Oper
       description: `Read an agent inactivity watchdog configuration (enabled, idle threshold, nag prompt) and whether its claim is degraded. ${SCOPE_DOC}.`,
       inputSchema: ReadInput,
       resultSchema: z.union([
-        z.object({ config: InactivityConfigSchema.nullable(), degraded: z.boolean() }),
+        z.object({
+          config: InactivityConfigSchema.nullable(),
+          degraded: z.boolean(),
+          scope: z.object({ spaceId: z.string() }),
+        }),
         REJECTIONS,
       ]),
       execute: readPipeline('inactivity-config-get', agents, readConfig),
@@ -199,7 +204,10 @@ export function createInactivityOperations(agents: InactivityDependencies): Oper
       policy: { safetyClass: 'mutate', roles: INACTIVITY_ROLES },
       description: `Run an agent inactivity watchdog scan immediately, through the same admission gates as the periodic scan. The scan is scheduled in the background, so this returns as soon as it is started. ${SCOPE_DOC}, and session_inactive when the calling MCP session is not active in that Space.`,
       inputSchema: ReadInput,
-      resultSchema: z.union([z.object({ started: z.literal(true) }), REJECTIONS]),
+      resultSchema: z.union([
+        z.object({ started: z.literal(true), scope: z.object({ spaceId: z.string() }) }),
+        REJECTIONS,
+      ]),
       execute: writePipeline('inactivity-run-now', agents, runScanNow),
     }),
   ];

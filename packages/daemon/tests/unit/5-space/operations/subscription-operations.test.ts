@@ -246,10 +246,15 @@ describe('node external-event subscription operations', () => {
     expect(await run('externalEvent.listSubscriptions', {}, caller)).toEqual({
       ok: true,
       subscriptions: { ...LIST_RESULT, workflowRunId: RUN },
+      scope: { spaceId: SPACE },
     });
     expect(
       await run('externalEvent.listSubscriptions', { workflowRunId: 'run-x' }, caller)
-    ).toEqual({ ok: true, subscriptions: { ...LIST_RESULT, workflowRunId: 'run-x' } });
+    ).toEqual({
+      ok: true,
+      subscriptions: { ...LIST_RESULT, workflowRunId: 'run-x' },
+      scope: { spaceId: SPACE },
+    });
   });
 
   test('an archived worker session may still list subscriptions', async () => {
@@ -257,6 +262,26 @@ describe('node external-event subscription operations', () => {
     expect(await run('externalEvent.listSubscriptions', {}, caller)).toEqual({
       ok: true,
       subscriptions: { ...LIST_RESULT, workflowRunId: RUN },
+      scope: { spaceId: SPACE },
     });
+  });
+});
+
+describe('node subscriptions optional Space scope', () => {
+  test('RPC and internal lists use the trusted caller Space', async () => {
+    for (const source of ['rpc', 'internal'] as const) {
+      const result = await run(
+        'externalEvent.listSubscriptions',
+        { workflowRunId: RUN },
+        { source, spaceId: SPACE }
+      );
+      expect(
+        operations.get('externalEvent.listSubscriptions')?.resultSchema.parse(result)
+      ).toMatchObject({
+        ok: true,
+        scope: { spaceId: SPACE },
+        subscriptions: { workflowRunId: RUN },
+      });
+    }
   });
 });

@@ -111,12 +111,15 @@ describe('workflow catalog read operations', () => {
       mcpCaller('ad_hoc_member')
     );
     expect(seen).toEqual([SPACE_ID]);
-    expect(value).toEqual({ workflows: [summary(), summary({ id: 'wf-2', disabled: true })] });
+    expect(value).toEqual({
+      scope: { spaceId: SPACE_ID },
+      workflows: [summary(), summary({ id: 'wf-2', disabled: true })],
+    });
   });
 
   test('workflow.list admits a workflow_worker', async () => {
     const worker = await invoke(deps(), 'workflow.list', {}, mcpCaller('workflow_worker'));
-    expect(worker).toEqual({ workflows: [summary()] });
+    expect(worker).toEqual({ scope: { spaceId: SPACE_ID }, workflows: [summary()] });
   });
 
   test('workflow.list admits a direct_task_worker scoped to the Space', async () => {
@@ -159,7 +162,7 @@ describe('workflow catalog read operations', () => {
       { source: 'rpc' }
     );
     expect(seen).toEqual(['human-space']);
-    expect(scoped).toEqual({ workflows: [summary()] });
+    expect(scoped).toEqual({ scope: { spaceId: 'human-space' }, workflows: [summary()] });
     expect(await invoke(deps(), 'workflow.list', {}, { source: 'rpc' })).toBe('space_not_resolved');
   });
 
@@ -172,7 +175,7 @@ describe('workflow catalog read operations', () => {
       { description: 'fix a bug' },
       mcpCaller('long_term_agent')
     );
-    expect(value).toEqual({ workflows: [summary()] });
+    expect(value).toEqual({ scope: { spaceId: SPACE_ID }, workflows: [summary()] });
   });
 
   test('workflow.suggest admits a legacy_task_agent caller scoped to the Space', async () => {
@@ -278,5 +281,46 @@ describe('workflow catalog read operations', () => {
     const registry = createOperationRegistry(createWorkflowReadOperations(deps()));
     const outcome = await invokeOperation(registry, 'workflow.get', {}, mcpCaller('ad_hoc_member'));
     expect(outcome.kind).toBe('failed');
+  });
+});
+
+describe('workflow optional Space scope', () => {
+  for (const source of ['rpc', 'internal', 'mcp'] as const) {
+    test(`${source} lists and suggests only the trusted caller Space when input omits it`, async () => {
+      const seen: string[] = [];
+      const dependencies = deps({
+        listWorkflowSummaries: (spaceId) => {
+          seen.push(spaceId);
+          return [];
+        },
+      });
+      const caller: OperationCaller = { source, spaceId: SPACE_ID, role: 'ad_hoc_member' };
+      for (const name of ['workflow.list', 'workflow.suggest']) {
+        const input = name === 'workflow.list' ? {} : { description: 'Ship' };
+        expect(await invoke(dependencies, name, input, caller)).toEqual({
+          workflows: [],
+          scope: { spaceId: SPACE_ID },
+        });
+      }
+      expect(seen).toEqual([SPACE_ID, SPACE_ID]);
+      expect(await invoke(deps(), 'workflow.get', { workflowId: 'wf-1' }, caller)).toEqual(
+        workflow()
+      );
+    });
+  }
+
+  test('an explicit RPC Space overrides the caller default but payload identity is rejected', async () => {
+    const caller: OperationCaller = { source: 'rpc', spaceId: SPACE_ID };
+    expect(
+      await invoke(
+        deps({ listWorkflowSummaries: () => [] }),
+        'workflow.list',
+        { spaceId: 'other' },
+        caller
+      )
+    ).toEqual({ workflows: [], scope: { spaceId: 'other' } });
+    expect(
+      await outcomeOf(deps(), 'workflow.list', { caller: { spaceId: 'other' } }, caller)
+    ).toMatchObject({ kind: 'failed' });
   });
 });

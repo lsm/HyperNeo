@@ -187,7 +187,7 @@ function readSubscriptions(
 ) {
   const outcome = subs.listRunSubscriptions(scope.workflowRunId, scope.spaceId, input.nodeId);
   return outcome.success
-    ? { ok: true as const, subscriptions: outcome.result }
+    ? { ok: true as const, subscriptions: outcome.result, scope: { spaceId: scope.spaceId } }
     : { ok: false as const, error: outcome.error };
 }
 
@@ -241,7 +241,11 @@ export function createSubscriptionOperations(
         'Snapshot a workflow run external-event subscriptions across the declared, persisted, and active layers, with the mismatch counts between them. Defaults to the calling worker own run. Rejects caller_denied when the caller carries no Space scope and node_unresolved when no run can be determined.',
       inputSchema: ListInput,
       resultSchema: z.union([
-        z.object({ ok: z.literal(true), subscriptions: SubscriptionListSchema }),
+        z.object({
+          ok: z.literal(true),
+          subscriptions: SubscriptionListSchema,
+          scope: z.object({ spaceId: z.string() }),
+        }),
         z.object({ ok: z.literal(false), error: z.string() }),
         REJECTIONS,
       ]),

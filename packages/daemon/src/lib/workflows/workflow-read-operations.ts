@@ -20,7 +20,10 @@ export interface WorkflowReadDependencies {
 }
 
 const ScopeRejectionSchema = z.enum(['space_not_resolved', 'caller_not_admitted']);
-const WorkflowListSchema = z.object({ workflows: z.array(WorkflowSummarySchema) });
+const WorkflowListSchema = z.object({
+  workflows: z.array(WorkflowSummarySchema),
+  scope: z.object({ spaceId: z.string() }),
+});
 
 const listInputSchema = z.object({ spaceId: z.string().min(1).optional() }).strict();
 const suggestInputSchema = z
@@ -51,11 +54,14 @@ function admitReader(
 }
 
 function listSummaries(spaceId: string, deps: WorkflowReadDependencies): WorkflowList {
-  return { workflows: deps.listWorkflowSummaries(spaceId) };
+  return { workflows: deps.listWorkflowSummaries(spaceId), scope: { spaceId } };
 }
 
 function listEnabledSummaries(spaceId: string, deps: WorkflowReadDependencies): WorkflowList {
-  return { workflows: deps.listWorkflowSummaries(spaceId).filter((entry) => !entry.disabled) };
+  return {
+    workflows: deps.listWorkflowSummaries(spaceId).filter((entry) => !entry.disabled),
+    scope: { spaceId },
+  };
 }
 
 export function resolveWorkflowRef(
@@ -75,7 +81,7 @@ export function resolveWorkflowRef(
 }
 
 const LIST_DESCRIPTION =
-  'List every workflow in the Space, enabled or not. Returns one summary per workflow with id, handle, name, description, tags, node count, and completion autonomy level. MCP callers are scoped to the Space their session belongs to; RPC callers pass spaceId. Rejects space_not_resolved when no Space is in scope and caller_not_admitted when the calling session may not read this Space.';
+  'List every workflow in the Space, enabled or not. Returns one summary per workflow with id, handle, name, description, tags, node count, and completion autonomy level. Omitted spaceId defaults to the trusted caller Space. scope reports the Space that answered. MCP callers cannot select another Space. Rejects space_not_resolved when no Space is in scope and caller_not_admitted when the calling session may not read this Space.';
 
 const SUGGEST_DESCRIPTION =
   'List the enabled workflows in the Space so you can pick one for a described piece of work. description is context for your own reasoning only — every enabled workflow is returned, and nothing is ranked or filtered by it. Returns the same summaries as workflow.list minus disabled workflows. Rejects space_not_resolved when no Space is in scope and caller_not_admitted when the calling session may not read this Space.';
