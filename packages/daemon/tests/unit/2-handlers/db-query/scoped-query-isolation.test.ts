@@ -158,6 +158,38 @@ describe('runScopedQuery — the scratch database is the security boundary', () 
     db.close();
   });
 
+  it('can select one row from an in-scope table larger than the materialization cap', () => {
+    const db = makeDb();
+    db.exec(`
+      CREATE TABLE mcp_audit_log (
+        id TEXT PRIMARY KEY,
+        timestamp INTEGER,
+        agent_name TEXT,
+        session_id TEXT,
+        tool_name TEXT,
+        params_summary TEXT,
+        space_id TEXT,
+        task_id TEXT,
+        workflow_run_id TEXT
+      );
+      WITH RECURSIVE seq(n) AS (
+        VALUES(1)
+        UNION ALL
+        SELECT n + 1 FROM seq WHERE n < 50001
+      )
+      INSERT INTO mcp_audit_log
+        (id, timestamp, agent_name, session_id, tool_name, params_summary, space_id)
+      SELECT
+        printf('audit-%d', n), n, 'agent', 'session', 'send_message', '{}', 'space-1'
+      FROM seq;
+    `);
+
+    expect(run(db, 'SELECT id FROM mcp_audit_log WHERE id = ?', ['audit-50001']).rows).toEqual([
+      { id: 'audit-50001' },
+    ]);
+    db.close();
+  });
+
   it('keeps an index name usable when its definition cannot be recreated', () => {
     const db = makeDb();
 
