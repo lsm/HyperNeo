@@ -251,9 +251,9 @@ The ladder in CLAUDE.md, one PR per rung:
    instructions (#4790), which come from the agent record rather than the
    session policy and replace the `buildCustomAgentTaskMessage` injection for
    session context.
-5. **Wire — remaining servers** — settle what a third-party server contributes
-   (#4791), then `agent-memory` and `db-query` (#4783), then the contract test
-   (#4792).
+5. **Wire — remaining servers** — `agent-memory` and `db-query` (#4783), then
+   the contract test (#4792). What a third-party server contributes is settled
+   by decision 6 and no longer a step here; #4791 records the investigation.
 6. **Delete** — the scattered injection sites, once nothing reads them (#4784).
 
 The contract test sits at the end rather than with the seam that defines it:
