@@ -39,7 +39,7 @@ describe('operation MCP server', () => {
   test('discovers operations and schemas through one generic SDK tool', async () => {
     const { tools } = server;
     expect(server.type).toBe('sdk');
-    expect(server.name).toBe('operations');
+    expect(server.name).toBe('hyperneo-operations');
     expect(tools.map(({ name }) => name)).toEqual(['invoke']);
     expect(tools[0].inputSchema).toHaveProperty('name');
     const listed = await call({ name: 'operations.list' });

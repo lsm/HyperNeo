@@ -2,13 +2,16 @@
 
 ## Status
 
-Proposed — 2026-09-18. Tracks epic #4778. Grows out of #4772, where a Space
-agent holding the operations tool did not know it was in a Space, could name
-`hyperneo-operations` when asked and still concluded it had no task-management
-capability, and refused a direct instruction to call `task.create` for lack of
-documentation. Nothing was broken in the sense of throwing: the capability was
-attached correctly, and the sentences explaining it were assembled somewhere
-else entirely.
+Proposed — 2026-09-18. Amended 2026-09-18 after #4791's investigation and the
+merge of #4793 and #4804; the amendments are marked in §Context, decisions 1,
+5 and 6, and §Open items. Tracks epic #4778.
+
+Grows out of #4772, where a Space agent holding the operations tool did not
+know it was in a Space, could name `hyperneo-operations` when asked and still
+concluded it had no task-management capability, and refused a direct
+instruction to call `task.create` for lack of documentation. Nothing was broken
+in the sense of throwing: the capability was attached correctly, and the
+sentences explaining it were assembled somewhere else entirely.
 
 ## Context
 
@@ -19,7 +22,8 @@ Capabilities are attached by `QueryOptionsBuilder.build()`
 MCP servers a session gets: the operations server on every session, plus
 `agent-memory` and `db-query` for Space sessions via
 `SpaceRuntimeService.attachSpaceToolsToMemberSession`, plus the app registry
-and its enablement overrides.
+and its enablement overrides (session > space > default — despite what CLAUDE.md
+still says, room scope is not read by the resolver; see #4802).
 
 The prose that explains those capabilities lives in `packages/prompts` and in
 agent definition records, and reaches the model through a different path —
@@ -32,6 +36,16 @@ every tool and none of the explanation. The agent's own role text
 (`packages/prompts/src/agents/long-horizon/task-manager.md`) is rendered in the
 web UI, which makes the gap invisible to a person looking at the screen — the
 role is right there, and the model has never seen it.
+
+**Amended.** The mechanism above is not quite what #4793 found, and the
+difference matters for rung 1's baseline. `buildAgentSessionConfig` *does*
+append the agent's instructions and contracts; `SessionLifecycle.create` then
+builds `session.config` from a hardcoded field list that omits `systemPrompt`,
+so the text was assembled correctly and silently discarded (#4794 tracks the
+allowlist, which drops six other fields including `disallowedTools`). So there
+were two independent holes: role text built and dropped, and Space identity
+never written anywhere. The structural claim below is unaffected — if anything
+a silent drop between two owners is a sharper example of it.
 
 This is not a missing prompt. It is a structural property: **attaching a
 capability and explaining a capability are separate code paths with separate
@@ -68,6 +82,12 @@ interface CapabilityContribution {
 The property this buys is that a capability with no briefing is not
 representable. A subsystem cannot attach a tool and forget to explain it,
 because there is no value it can return that omits the explanation.
+
+**Amended.** `McpServerAttachment` did not exist when this was written; #4804
+defines it, and the contribution type, in
+`packages/daemon/src/lib/briefings/contribution.ts`. Later rungs use those
+rather than introducing a second pairing shape. Decision 6 supersedes the shape
+shown above with a discriminated union; the property it buys is unchanged.
 
 **Briefing text stays in `.md` files.** `briefing` holds resolved text, not
 prose authored in TypeScript. The authored copy lives in `packages/prompts`
@@ -128,28 +148,106 @@ Exceeding the budget is an error, never a truncation. Silent truncation would
 reintroduce the exact failure this ADR exists to remove: a model missing
 context that the system believes it sent.
 
+**Amended.** The same argument applies at the other end, so the assembler also
+rejects an empty authored briefing and a repeated server name or scope facet. A
+blank briefing is an unexplained capability spelled differently, and a silently
+collapsed duplicate is a contribution the system believes it sent. The type
+cannot rule out `''`, so the assembler does.
+
 ### 6. Contributions are pure functions
 
 A contribution is a function of the attached capabilities and the session
 scope, with no I/O. The assembled context for a session kind can then be
 asserted in a unit test, which is not possible today without booting a session.
 
-This is what makes the invariant enforceable rather than aspirational:
+This is what makes the invariant enforceable rather than aspirational, as a
+test in the same spirit as `check:operation-names`.
 
-> every attached MCP server contributes a briefing
+**Amended.** The invariant was first written as "every attached MCP server
+contributes a briefing". That cannot hold, and the reason is not a detail.
+There is no MCP client in this repo — no client construction, no transports, no
+stored tool inventory. For an app-registry server the daemon holds a connection
+config and nothing else, so at prompt-assembly time it cannot know that
+server's tools. The proof is in the builder: to restrict tools for a Space
+session all it can emit is a whole-server wildcard, `name__*`. If it knew tool
+names it would list them.
 
-as a test, in the same spirit as `check:operation-names`. #4772 becomes a CI
-failure rather than something exploratory QA finds.
+Nor would a briefing add anything. `strictMcpConfig: true` means the SDK
+connects each attached server and gives the model every tool as
+`mcp__<server>__<tool>` with the server's own description and schema. A derived
+briefing would be a lossy paraphrase of verbatim data. That is decision 3
+applied consistently rather than a carve-out from it: `operations.describe` is
+the record of truth for our door, and **the tool definitions are the record of
+truth for a third-party server**.
 
-The invariant needs qualifying for one category. The built-in servers are ours
-and can carry authored briefings. App-registry servers are whatever the user
-configured, and nobody on this side can write prose for an arbitrary
-third-party server — it already describes itself through its own tool
-descriptions. Whether those servers are exempt, get a briefing derived from
-their advertised tools, or contribute only a generated line naming the server
-is open, tracked as #4791, and this decision will be restated once it is
-settled. It must be settled before the contract test is written, since it
-determines what the test can assert.
+Two further reasons not to generate prose about them. The daemon knows a server
+is configured and enabled, never that it is *available* — connection status is
+post-connect — so any sentence asserting the agent "has" server X may be false
+when X fails to start, which is decision 4's confident-wrong-behaviour in our
+own voice. And a third-party server's description, and even its name, are
+attacker-influenced strings; moving them into the system prompt promotes text
+this repo treats as data into the highest-trust channel.
+
+So the invariant is three clauses, each testable:
+
+> **(a) Accounting.** The set of server names in `queryOptions.mcpServers` and
+> the set of names in the session's capability contributions are equal in both
+> directions.
+>
+> **(b) Origin.** A server that is *first-party* — one we construct in-process,
+> namely `hyperneo-operations`, `agent-memory` and `db-query` — must have an
+> `authored` contribution whose text resolves from a `.md` file and is
+> non-empty. Every other attached server has a `self-describing` contribution,
+> which carries no briefing text.
+>
+> **(c) Reservation.** No app-registry or skill-wrapped server may attach under
+> a first-party name.
+
+The three names are written out above rather than referenced by symbol, because
+two similarly-named sets exist and mean nearly opposite things. Binding to the
+wrong one inverts both clauses.
+
+`packages/daemon/src/lib/mcp/built-in-servers.ts` holds the first-party set and
+is the module to use. Its `BUILT_IN_MCP_SERVERS` is deliberately private; the
+exported surface is `isBuiltInMcpServer(name, config)`, which also requires the
+attachment to be an in-process `sdk` server with an `instance`, so a registry
+row cannot satisfy it by taking the name. Reuse that predicate rather than
+comparing names.
+
+`BUILTIN_MCP_SERVERS` in `packages/daemon/src/lib/builtins.ts` is unrelated
+despite the near-identical name: third-party servers such as `fetch-mcp` and
+`chrome-devtools` that HyperNeo ships as convenient defaults. Those are
+`self-describing` like any other third-party server, and clause (c) does not
+restrain them — a bundled `fetch-mcp` may of course use its own name.
+
+The contribution type is a discriminated union, not an optional field:
+
+```ts
+type CapabilityContribution =
+  | { kind: 'authored'; server: McpServerAttachment; briefing: string }
+  | { kind: 'self-describing'; server: McpServerAttachment };
+```
+
+The discriminator must be positive on both sides. If `self-describing` were a
+catch-all default, a new built-in server would fall into it silently and the
+invariant would stop biting — the #4772 failure mode exactly. "No briefing" has
+to be a state a reviewer sees, never one reached by forgetting. Decision 1's
+property survives: a capability with no contribution is still not
+representable.
+
+Clause (c) is not hypothetical, and it is written from a defect that happened.
+`computeEffectiveMcpServers` used to resolve a name collision by renaming
+*ours*, so a registry row named `hyperneo-operations` could take the name our
+own authored prose tells agents to call, pointing `task.create` and arbitrary
+operation input at a third-party server (#4801).
+
+#4812 fixed that: the merge now goes through `mergeSessionMcpServers`
+(`packages/daemon/src/lib/mcp/built-in-servers.ts`), which writes the
+first-party server unconditionally and renames the intruding row to
+`<name>-2`. Clause (c) states the resulting property so it cannot regress
+quietly — the hazard is not that the code is wrong today, but that authored
+prose naming a binding creates a dependency nothing else in the system
+records.
 
 ## Consequences
 
@@ -181,9 +279,9 @@ The ladder in CLAUDE.md, one PR per rung:
    instructions (#4790), which come from the agent record rather than the
    session policy and replace the `buildCustomAgentTaskMessage` injection for
    session context.
-5. **Wire — remaining servers** — settle what a third-party server contributes
-   (#4791), then `agent-memory` and `db-query` (#4783), then the contract test
-   (#4792).
+5. **Wire — remaining servers** — `agent-memory` and `db-query` (#4783), then
+   the contract test (#4792). What a third-party server contributes is settled
+   by decision 6 and no longer a step here; #4791 records the investigation.
 6. **Delete** — the scattered injection sites, once nothing reads them (#4784).
 
 The contract test sits at the end rather than with the seam that defines it:
@@ -211,10 +309,21 @@ rung 3. It is a stopgap for a broken core path, not the first increment.
   contribution.
 - Whether the budget is global or per contributor, and what the limit is. Needs
   measurement against real sessions at rung 1. Tracked as #4788.
-- What an app-registry server contributes, given that nobody here can author
-  prose for a third-party server. Tracked as #4791; blocks the contract test.
 - Whether non-Space sessions get a scope contribution at all, or whether the
   absence of scope is itself the correct signal.
+- Whether `self-describing` carries a short generated line naming the server or
+  no text at all. #4791's evidence favours no text, since the daemon cannot
+  know the server is reachable and the name is attacker-influenced, but this is
+  a judgement rather than something the code forces.
+
+Closed by #4791's investigation: what an app-registry server contributes. See
+decision 6 — the answer changed the invariant rather than carving an exemption
+from it.
+
+Resolved by #4804 while building the seam: two contributions claiming the same
+server or scope facet is an error, not a last-one-wins merge. If a later rung
+ever generates a contribution that an authored one should override, that rung
+has to revisit this rather than rely on ordering.
 
 ## References
 

@@ -26,8 +26,8 @@ export function resolveCreateTaskTarget(
   sessionSpaceId: string | undefined
 ): { value: { spaceId: string | undefined } } | { reason: string } {
   const spaceId = caller.source === 'mcp' ? (input.spaceId ?? sessionSpaceId) : input.spaceId;
-  if (caller.source === 'mcp' && spaceId !== undefined && spaceId !== sessionSpaceId) {
-    return { reason: 'Task creation requires a session in the owning Space' };
+  if (caller.source === 'mcp' && sessionSpaceId !== undefined && spaceId !== sessionSpaceId) {
+    return { reason: 'Task creation in another Space requires a session in that Space' };
   }
   const spaceOnly = [input.dependsOn, input.draft, input.preferredWorkflowId, input.workspacePath];
   if (spaceId === undefined && spaceOnly.some((field) => field !== undefined)) {

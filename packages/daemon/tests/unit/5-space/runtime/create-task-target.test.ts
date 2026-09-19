@@ -9,7 +9,7 @@ import { createTestSession } from '../../../helpers/database';
 const rpc: OperationCaller = { source: 'rpc' };
 const internal: OperationCaller = { source: 'internal' };
 const mcp: OperationCaller = { source: 'mcp', sessionId: 'agent-session' };
-const scopeReason = 'Task creation requires a session in the owning Space';
+const scopeReason = 'Task creation in another Space requires a session in that Space';
 const spaceOnlyReason =
   'dependsOn, draft, preferredWorkflowId and workspacePath require a Space task';
 
@@ -27,8 +27,9 @@ describe('resolveCreateTaskTarget', () => {
       mcp,
       undefined,
       { spaceId: 'b' },
-      { reason: scopeReason },
+      { value: { spaceId: 'b' } },
     ],
+    ['mcp outside any space, no input', mcp, undefined, {}, { value: { spaceId: undefined } }],
     [
       'standalone with dependsOn',
       rpc,
