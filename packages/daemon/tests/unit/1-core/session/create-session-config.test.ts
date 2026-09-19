@@ -52,8 +52,10 @@ mock.module('../../../../src/lib/provider-service', () => ({
 import type { MessageHub, Session, SessionConfig } from '@hyperneo/shared';
 import {
   admitCreateSessionConfig,
+  admitUpdateSessionConfig,
   CREATE_SESSION_CONFIG_FIELD_POLICY,
   UnsupportedSessionConfigFieldsError,
+  UPDATABLE_SESSION_CONFIG_FIELDS,
 } from '../../../../src/lib/session/create-session-config';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { AgentSessionFactory, SessionCache } from '../../../../src/lib/session/session-cache';
@@ -144,6 +146,84 @@ describe('admitCreateSessionConfig', () => {
         admitCreateSessionConfig({ [field]: 'nope' } as Partial<SessionConfig>)
       ).toThrowError(new RegExp(field));
     }
+  });
+});
+
+describe('admitUpdateSessionConfig', () => {
+  it('refuses exactly the fields session creation refuses', () => {
+    const rejected = Object.entries(CREATE_SESSION_CONFIG_FIELD_POLICY)
+      .filter(([, policy]) => policy === 'rejected')
+      .map(([field]) => field);
+    expect(rejected).toContain('pathToClaudeCodeExecutable');
+
+    for (const field of rejected) {
+      expect(() =>
+        admitUpdateSessionConfig({ [field]: 'nope' } as Partial<SessionConfig>)
+      ).toThrowError(new RegExp(field));
+      expect(() => admitUpdateSessionConfig({ [field]: 'nope' } as Partial<SessionConfig>)).toThrow(
+        UnsupportedSessionConfigFieldsError
+      );
+    }
+  });
+
+  it('names the update door in the refusal message', () => {
+    expect(() => admitUpdateSessionConfig({ env: { PATH: '/tmp' } })).toThrowError(
+      /Session update does not accept config field\(s\): env/
+    );
+  });
+
+  it('admits the derived fields that creation owns but updates may change', () => {
+    const admitted = admitUpdateSessionConfig({
+      model: 'opus',
+      provider: 'anthropic',
+      sandbox: { enabled: false },
+      settingSources: ['user'],
+      thinkingLevel: 'high',
+    });
+
+    expect(admitted).toEqual({
+      model: 'opus',
+      provider: 'anthropic',
+      sandbox: { enabled: false },
+      settingSources: ['user'],
+      thinkingLevel: 'high',
+    });
+    expect(admitCreateSessionConfig({ model: 'opus' })).not.toHaveProperty('model');
+  });
+
+  it('admits every non-rejected field in the shared policy table', () => {
+    const sentinels: Record<string, unknown> = {};
+    for (const field of UPDATABLE_SESSION_CONFIG_FIELDS) sentinels[field] = `sentinel:${field}`;
+
+    const admitted = admitUpdateSessionConfig(sentinels as Partial<SessionConfig>) as Record<
+      string,
+      unknown
+    >;
+
+    expect(Object.keys(admitted).sort()).toEqual([...UPDATABLE_SESSION_CONFIG_FIELDS].sort());
+    for (const field of UPDATABLE_SESSION_CONFIG_FIELDS) {
+      expect(admitted[field]).toBe(`sentinel:${field}`);
+    }
+  });
+
+  it('drops wire keys that are not session config fields', () => {
+    const admitted = admitUpdateSessionConfig({
+      maxTurns: 3,
+      somethingElse: 'x',
+    } as Partial<SessionConfig>) as Record<string, unknown>;
+
+    expect(admitted).toEqual({ maxTurns: 3 });
+  });
+
+  it('keeps an explicit undefined on an updatable field so callers can clear it', () => {
+    const admitted = admitUpdateSessionConfig({ provider: undefined });
+
+    expect(admitted).toHaveProperty('provider');
+    expect(admitted?.provider).toBeUndefined();
+  });
+
+  it('passes an absent config through untouched', () => {
+    expect(admitUpdateSessionConfig(undefined)).toBeUndefined();
   });
 });
 

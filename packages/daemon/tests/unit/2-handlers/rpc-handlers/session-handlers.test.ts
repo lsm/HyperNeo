@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
-import type { McpServerConfig, MessageHub, ModelInfo } from '@hyperneo/shared';
+import type { McpServerConfig, MessageHub, ModelInfo, Session } from '@hyperneo/shared';
 import type { Provider } from '@hyperneo/shared/provider';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session';
+import {
+  QueryOptionsBuilder,
+  type QueryOptionsBuilderContext,
+} from '../../../../src/lib/agent/query-options-builder';
+import type { SettingsManager } from '../../../../src/lib/settings-manager';
 import type {
   DaemonInternalEventMap,
   InternalEventBus,
@@ -1522,6 +1527,150 @@ describe('Session RPC Handlers — session.update model curation', () => {
     await handler!({ sessionId: 's1', config: { model: 'gpt-5.4' } }, {});
 
     expect(updateSession).toHaveBeenCalledWith('s1', { config: { model: 'gpt-5.4' } });
+  });
+});
+
+describe('Session RPC Handlers — session.update host process controls', () => {
+  let messageHubData: ReturnType<typeof createMockMessageHub>;
+  let eventBus: ReturnType<typeof createMockInternalEventBus>;
+  let updateSession: ReturnType<typeof mock>;
+  let liveSession: Session;
+
+  async function buildQueryOptions() {
+    const settingsManager = {
+      getGlobalSettings: mock(() => ({
+        settingSources: ['user'],
+        outputLimiter: { enabled: false },
+        sandbox: { excludedCommands: [] },
+      })),
+      prepareSDKOptions: mock(async () => ({})),
+    } as unknown as SettingsManager;
+
+    const builder = new QueryOptionsBuilder({
+      session: liveSession,
+      settingsManager,
+      db: {
+        updateSession: mock(() => {}),
+        getSDKMessages: mock(() => ({ messages: [], hasMore: false })),
+        getSession: mock(() => null),
+      } as QueryOptionsBuilderContext['db'],
+    });
+    return builder.build();
+  }
+
+  beforeEach(async () => {
+    messageHubData = createMockMessageHub();
+    eventBus = createMockInternalEventBus();
+    liveSession = {
+      id: 's1',
+      title: 'Test Session',
+      workspacePath: '/test/workspace',
+      createdAt: new Date().toISOString(),
+      lastActiveAt: new Date().toISOString(),
+      status: 'active',
+      config: { model: 'default', maxTokens: 8192, temperature: 1, provider: 'anthropic' },
+      metadata: {
+        messageCount: 0,
+        totalTokens: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        totalCost: 0,
+        toolCallCount: 0,
+      },
+    } as Session;
+
+    updateSession = mock(async (_id: string, updates: Partial<Session>) => {
+      if (updates.config) {
+        liveSession.config = { ...liveSession.config, ...updates.config };
+      }
+    });
+
+    const sessionManager = {
+      getSession: mock(() => null),
+      getSessionFromDB: mock(() => liveSession),
+      updateSession,
+    } as unknown as SessionManager;
+
+    const { setupSessionHandlers } = await import(
+      '../../../../src/lib/rpc-handlers/session-handlers'
+    );
+    setupSessionHandlers(messageHubData.hub, sessionManager, eventBus, {} as SpaceManager);
+  });
+
+  it('refuses a config write that would repoint the SDK CLI executable', async () => {
+    const handler = messageHubData.handlers.get('session.update');
+
+    await expect(
+      handler!(
+        {
+          sessionId: 's1',
+          config: { pathToClaudeCodeExecutable: '/tmp/evil', executableArgs: ['--pwn'] },
+        },
+        {}
+      )
+    ).rejects.toThrow(/pathToClaudeCodeExecutable/);
+
+    expect(updateSession).not.toHaveBeenCalled();
+    expect(liveSession.config).not.toHaveProperty('pathToClaudeCodeExecutable');
+
+    const options = await buildQueryOptions();
+    expect(options.pathToClaudeCodeExecutable).not.toBe('/tmp/evil');
+    expect(options.executableArgs).toBeUndefined();
+  });
+
+  it('refuses a config write that would inject host env vars and plugins', async () => {
+    const handler = messageHubData.handlers.get('session.update');
+
+    await expect(
+      handler!(
+        {
+          sessionId: 's1',
+          config: {
+            env: { HYPERNEO_PWNED: '1' },
+            plugins: [{ type: 'local', path: '/tmp/evil-plugin' }],
+          },
+        },
+        {}
+      )
+    ).rejects.toThrow(/env/);
+
+    expect(updateSession).not.toHaveBeenCalled();
+
+    const options = await buildQueryOptions();
+    expect(options.env?.HYPERNEO_PWNED).toBeUndefined();
+    expect(
+      (options.plugins ?? []).some(
+        (plugin) => (plugin as { path?: string }).path === '/tmp/evil-plugin'
+      )
+    ).toBe(false);
+  });
+
+  it('strips a rejected field smuggled alongside a legitimate one', async () => {
+    const handler = messageHubData.handlers.get('session.update');
+
+    await expect(
+      handler!({ sessionId: 's1', config: { maxTurns: 5, spawnClaudeCodeProcess: true } }, {})
+    ).rejects.toThrow(/spawnClaudeCodeProcess/);
+
+    expect(updateSession).not.toHaveBeenCalled();
+    expect(liveSession.config.maxTurns).toBeUndefined();
+  });
+
+  it('still lets an updatable config field through to the SDK options', async () => {
+    const handler = messageHubData.handlers.get('session.update');
+
+    await handler!(
+      { sessionId: 's1', config: { sdkToolsPreset: ['Read', 'Glob'], maxTurns: 7 } },
+      {}
+    );
+
+    expect(updateSession).toHaveBeenCalledWith('s1', {
+      config: { sdkToolsPreset: ['Read', 'Glob'], maxTurns: 7 },
+    });
+
+    const options = await buildQueryOptions();
+    expect(options.tools).toEqual(['Read', 'Glob']);
+    expect(options.maxTurns).toBe(7);
   });
 });
 

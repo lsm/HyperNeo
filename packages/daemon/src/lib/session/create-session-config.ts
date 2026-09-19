@@ -67,10 +67,19 @@ function fieldsWithPolicy(policy: CreateSessionConfigFieldPolicy): (keyof Sessio
 const CARRIED_FIELDS = fieldsWithPolicy('carried');
 const REJECTED_FIELDS = fieldsWithPolicy('rejected');
 
+export const UPDATABLE_SESSION_CONFIG_FIELDS: (keyof SessionConfig)[] = (
+  Object.keys(CREATE_SESSION_CONFIG_FIELD_POLICY) as (keyof SessionConfig)[]
+).filter((field) => CREATE_SESSION_CONFIG_FIELD_POLICY[field] !== 'rejected');
+
+export type SessionConfigDoor = 'Session creation' | 'Session update';
+
 export class UnsupportedSessionConfigFieldsError extends Error {
-  constructor(public readonly fields: (keyof SessionConfig)[]) {
+  constructor(
+    public readonly fields: (keyof SessionConfig)[],
+    door: SessionConfigDoor = 'Session creation'
+  ) {
     super(
-      `Session creation does not accept config field(s): ${fields.join(', ')}. ` +
+      `${door} does not accept config field(s): ${fields.join(', ')}. ` +
         'These control the host process or session identity and are owned by the daemon.'
     );
     this.name = 'UnsupportedSessionConfigFieldsError';
@@ -94,4 +103,22 @@ export function admitCreateSessionConfig(
     carried[field] = value;
   }
   return carried as Partial<SessionConfig>;
+}
+
+export function admitUpdateSessionConfig(
+  requested: Partial<SessionConfig> | undefined
+): Partial<SessionConfig> | undefined {
+  if (!requested) return requested;
+
+  const rejected = REJECTED_FIELDS.filter((field) => requested[field] !== undefined);
+  if (rejected.length > 0) {
+    throw new UnsupportedSessionConfigFieldsError(rejected, 'Session update');
+  }
+
+  const admitted: Record<string, unknown> = {};
+  for (const field of UPDATABLE_SESSION_CONFIG_FIELDS) {
+    if (!(field in requested)) continue;
+    admitted[field] = requested[field];
+  }
+  return admitted as Partial<SessionConfig>;
 }

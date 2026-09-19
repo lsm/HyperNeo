@@ -29,6 +29,7 @@ import {
   markRefreshAttemptedFor,
 } from '../model-service.js';
 import { getProviderRegistry, inferProviderForModel } from '../providers/registry.js';
+import { admitUpdateSessionConfig } from '../session/create-session-config.ts';
 import { validateImageSizes } from '../session/message-persistence.ts';
 import {
   hasRuntimeWorkerOperations,
@@ -302,7 +303,10 @@ export function setupSessionHandlers(
 
     const agentSessionForUpdate = sessionManager.getSession(targetSessionId);
 
-    const configUpdate = (updates as Partial<Session>).config;
+    const configUpdate = admitUpdateSessionConfig(updates.config);
+    if (configUpdate) {
+      updates.config = configUpdate;
+    }
     if (configUpdate && (configUpdate.model !== undefined || configUpdate.provider !== undefined)) {
       const existingConfig =
         agentSessionForUpdate?.getSessionData().config ??
