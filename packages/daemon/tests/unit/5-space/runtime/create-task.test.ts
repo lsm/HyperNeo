@@ -159,16 +159,54 @@ test('an mcp worker in a Space creates a task there with its own provenance', as
   expect(created?.createdBy).toBe('Scout');
 });
 
-test('an mcp session cannot target a foreign Space', async () => {
+test('an mcp session in a Space cannot target a foreign Space', async () => {
   const caller = worker('outsider', spaceId);
   const otherSpaceId = spaces.createSpace({ name: 'Other', slug: 'other', workspacePath: '/o' }).id;
+  const before = tasks.countBySpace(otherSpaceId);
   const result = await invoke({ title: 'X', spaceId: otherSpaceId }, caller);
-  expect(result).toMatchObject({ kind: 'failed', code: 'execution_failed' });
+  expect(result).toEqual({
+    kind: 'completed',
+    value: {
+      accepted: false,
+      reason: 'Task creation in another Space requires a session in that Space',
+    },
+  });
+  expect(tasks.countBySpace(otherSpaceId)).toBe(before);
+});
+
+test('an mcp session outside every Space creates a task in the Space it names', async () => {
+  const caller = worker('unscoped');
+  const result = await invoke({ title: 'From outside', spaceId }, caller);
+  expect(result.kind).toBe('completed');
+  const value = (result as { value: SpaceTask }).value;
+  const created = tasks.getTask(value.id);
+  expect(created?.spaceId).toBe(spaceId);
+  expect(created?.createdBySession).toBe('unscoped');
+  expect(emitTaskCreated).toHaveBeenCalledTimes(1);
+});
+
+test('an mcp session outside every Space is told its task was created standalone', async () => {
+  const caller = worker('unscoped');
+  const result = await invoke({ title: 'Loose' }, caller);
+  expect(result.kind).toBe('completed');
+  const value = (result as { value: SpaceTask & { standalone?: true } }).value;
+  expect(value.standalone).toBe(true);
+  const row = db.prepare('SELECT space_id FROM space_tasks WHERE id = ?').get(value.id) as {
+    space_id: string | null;
+  };
+  expect(row.space_id).toBeNull();
+  expect(emitTaskCreated).not.toHaveBeenCalled();
 });
 
 test('a standalone request cannot carry Space-only fields', async () => {
   const result = await invoke({ title: 'X', dependsOn: ['other'] }, rpc);
-  expect(result).toMatchObject({ kind: 'failed', code: 'execution_failed' });
+  expect(result).toEqual({
+    kind: 'completed',
+    value: {
+      accepted: false,
+      reason: 'dependsOn, draft, preferredWorkflowId and workspacePath require a Space task',
+    },
+  });
 });
 
 test('a failing emit still returns the created task', async () => {
