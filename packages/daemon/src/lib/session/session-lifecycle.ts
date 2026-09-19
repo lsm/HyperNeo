@@ -13,6 +13,7 @@ import { KimiProvider } from '../providers/kimi-provider.js';
 import { inferProviderForModel } from '../providers/registry.ts';
 import { archiveSDKSessionFiles, deleteSDKSessionFiles } from '../sdk-session-file-manager.ts';
 import type { WorktreeManager } from '../worktree-manager.ts';
+import { admitCreateSessionConfig } from './create-session-config.ts';
 import type { AgentSessionFactory, SessionCache } from './session-cache.ts';
 import type { ToolsConfigManager } from './tools-config.ts';
 
@@ -111,6 +112,8 @@ export class SessionLifecycle {
     }
     const validWorktreeMode = requestedWorktreeMode as 'worktree' | 'direct' | undefined;
 
+    const carriedConfig = admitCreateSessionConfig(params.config);
+
     let gitSupport: Awaited<ReturnType<typeof this.worktreeManager.detectGitSupport>> | undefined;
     let isGitRepo = false;
     if (baseWorkspacePath !== undefined) {
@@ -198,17 +201,15 @@ export class SessionLifecycle {
       status: sessionStatus,
       type: sessionType,
       config: {
+        ...carriedConfig,
         model: modelId,
         maxTokens: params.config?.maxTokens || this.config.maxTokens,
         temperature: params.config?.temperature || this.config.temperature,
         autoScroll: params.config?.autoScroll ?? globalSettings.autoScroll,
         thinkingLevel: params.config?.thinkingLevel ?? globalSettings.thinkingLevel,
         coordinatorMode: params.config?.coordinatorMode ?? globalSettings.coordinatorMode,
-        permissionMode: params.config?.permissionMode,
         provider: (params.config?.provider ?? resolvedProvider) as Provider,
-        tools: params.config?.tools,
         sandbox: params.config?.sandbox ?? globalSettings.sandbox,
-        mcpServers: params.config?.mcpServers,
         settingSources: params.config?.settingSources ?? globalSettings.settingSources,
       },
       metadata: {
