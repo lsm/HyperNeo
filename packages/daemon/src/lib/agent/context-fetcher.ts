@@ -8,7 +8,7 @@ import type {
 } from '@hyperneo/shared';
 import { AUTO_COMPACT_PERCENT_MAX, resolveAutoCompactPercent } from '@hyperneo/shared';
 import { Logger } from '../logger.ts';
-import { getModelInfo } from '../model-service.js';
+import { getModelInfo, recordObservedContextWindow } from '../model-service.js';
 import { scaledAutoCompactWindow } from './context-budget-decision.ts';
 import type { QueryLike } from './query-like.ts';
 import {
@@ -127,7 +127,7 @@ export class ContextFetcher {
       );
       const info = ContextFetcher.toContextInfo(response, resolvedMetadata);
       if (info) {
-        ContextFetcher.warnOnCapacityMismatch(response, resolvedMetadata, this.logger);
+        ContextFetcher.settleCapacityMismatch(response, resolvedMetadata, info, this.logger);
       }
       return info;
     } catch (error) {
@@ -170,9 +170,10 @@ export class ContextFetcher {
     return responseMetadata ?? modelMetadata;
   }
 
-  private static warnOnCapacityMismatch(
+  private static settleCapacityMismatch(
     response: SDKControlGetContextUsageResponse,
     modelMetadata: ContextMetadata,
+    info: ContextInfo,
     logger: Logger
   ): void {
     const providerId = modelMetadata?.provider;
@@ -185,12 +186,33 @@ export class ContextFetcher {
     if (larger <= 0) return;
     const mismatch = Math.abs(sdkCapacity - metadataCapacity) / larger;
     if (mismatch <= ContextFetcher.CAPACITY_MISMATCH_WARN_FRACTION) return;
+    if (modelMetadata?.preferContextWindowMetadata !== true) {
+      ContextFetcher.reconcileContextWindow(providerId, modelMetadata, info, logger);
+      return;
+    }
     logger.warn(
       `Context capacity mismatch: SDK reports ${sdkCapacity} tokens for ` +
         `model=${response.model ?? '<unknown>'} but metadata declares ` +
         `${metadataCapacity} tokens (mismatch ${(mismatch * 100).toFixed(1)}%). ` +
         `Display will use metadata; SDK auto-compact may fire at the wrong threshold. ` +
         `Check PP() model recognition and CLAUDE_CODE_AUTO_COMPACT_WINDOW env var.`
+    );
+  }
+
+  private static reconcileContextWindow(
+    providerId: string,
+    modelMetadata: ContextMetadata,
+    info: ContextInfo,
+    logger: Logger
+  ): void {
+    const modelId = modelMetadata?.id;
+    const observedCapacity = positiveInteger(info.totalCapacity);
+    if (!modelId || !observedCapacity) return;
+    if (!recordObservedContextWindow(providerId, modelId, observedCapacity)) return;
+    logger.info(
+      `Adopted SDK context capacity ${observedCapacity} tokens for ` +
+        `provider=${providerId} model=${modelId}, replacing stale metadata ` +
+        `${modelMetadata?.contextWindow} tokens.`
     );
   }
 

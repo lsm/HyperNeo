@@ -1171,6 +1171,52 @@ function isCacheStale(cacheKey: string): boolean {
   return Date.now() - timestamp > CACHE_TTL;
 }
 
+const observedContextWindows = new Map<string, number>();
+
+function observedContextWindowKey(providerId: string, modelId: string): string {
+  return `${providerId}:${modelId}`;
+}
+
+function clearObservedContextWindows(providerId?: string): void {
+  if (!providerId) {
+    observedContextWindows.clear();
+    return;
+  }
+  const prefix = `${providerId}:`;
+  for (const key of observedContextWindows.keys()) {
+    if (key.startsWith(prefix)) observedContextWindows.delete(key);
+  }
+}
+
+export function recordObservedContextWindow(
+  providerId: string,
+  modelId: string,
+  contextWindow: number
+): boolean {
+  if (!providerId || !modelId) return false;
+  if (!Number.isFinite(contextWindow) || contextWindow <= 0) return false;
+  const key = observedContextWindowKey(providerId, modelId);
+  if (observedContextWindows.get(key) === contextWindow) return false;
+  observedContextWindows.set(key, contextWindow);
+  return true;
+}
+
+function applyObservedContextWindow<T extends ModelInfo | null>(model: T): T {
+  if (observedContextWindows.size === 0 || model === null) return model;
+  const observed =
+    observedContextWindows.get(observedContextWindowKey(model.provider, model.id)) ??
+    observedContextWindows.get(observedContextWindowKey(model.provider, model.alias));
+  return observed === undefined || observed === model.contextWindow
+    ? model
+    : ({ ...model, contextWindow: observed } as T);
+}
+
+function applyObservedContextWindows(models: ModelInfo[]): ModelInfo[] {
+  return observedContextWindows.size === 0
+    ? models
+    : models.map((m) => applyObservedContextWindow(m));
+}
+
 function readCachedModels(cacheKey: string): ModelInfo[] | null {
   const cachedModels = modelsCache.get(cacheKey);
   if (!cachedModels) {
@@ -1182,7 +1228,7 @@ function readCachedModels(cacheKey: string): ModelInfo[] | null {
   if (cachedModels.length === 0) {
     return null;
   }
-  return cachedModels;
+  return applyObservedContextWindows(cachedModels);
 }
 
 export function getAvailableModels(cacheKey: string = 'global'): ModelInfo[] {
@@ -1288,12 +1334,14 @@ export function clearModelsCache(cacheKey?: string, providerId?: string): void {
     }
     if (cacheKey === 'global') {
       cancelAllProviderRetries();
+      clearObservedContextWindows(providerId);
     }
     if (hadInFlight || cacheGeneration.has(cacheKey)) {
       cacheGeneration.set(cacheKey, (cacheGeneration.get(cacheKey) ?? 0) + 1);
     }
   } else {
     const inFlightKeys = new Set(refreshInProgress.keys());
+    clearObservedContextWindows();
     modelsCache.clear();
     cacheTimestamps.clear();
     refreshInProgress.clear();
@@ -1680,9 +1728,11 @@ export async function getModelInfo(
     STATIC_MODEL_METADATA.filter((model) => model.provider === providerId)
   );
   const staticModel = findInModels(staticProviderModels, idOrAlias) ?? null;
-  return providerId === 'anthropic-copilot' && staticModel
-    ? overlayCodexStaticMetadata(staticModel)
-    : staticModel;
+  if (!staticModel) return null;
+  const observedStatic = applyObservedContextWindow(staticModel);
+  return providerId === 'anthropic-copilot'
+    ? overlayCodexStaticMetadata(observedStatic)
+    : observedStatic;
 }
 
 export async function getSessionModelInfo(
@@ -1703,9 +1753,11 @@ export async function getSessionModelInfo(
   }
   const staticProviderModels = STATIC_MODEL_METADATA.filter((m) => m.provider === providerId);
   const fromStatic = findInModels(staticProviderModels, session.config.model) ?? null;
-  return providerId === 'anthropic-copilot' && fromStatic
-    ? overlayCodexStaticMetadata(fromStatic)
-    : fromStatic;
+  if (!fromStatic) return null;
+  const observedStatic = applyObservedContextWindow(fromStatic);
+  return providerId === 'anthropic-copilot'
+    ? overlayCodexStaticMetadata(observedStatic)
+    : observedStatic;
 }
 
 export async function getModelInfoUnfiltered(
