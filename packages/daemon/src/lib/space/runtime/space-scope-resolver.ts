@@ -13,10 +13,10 @@ export interface SpaceScopeDependencies extends SpaceMcpSessionPolicyContext {
   readonly getSpace: (spaceId: string) => Space | null;
 }
 
-function agentDisplayName(session: Session, deps: SpaceScopeDependencies): string | null {
-  const provenance = session.metadata?.promptProvenance;
-  if (!provenance?.agentId) return null;
-  return deps.longHorizonAgentRepo.getById(provenance.agentId)?.displayName ?? null;
+function boundAgentRecord(session: Session, deps: SpaceScopeDependencies) {
+  const agentId = session.metadata?.promptProvenance?.agentId;
+  if (!agentId) return null;
+  return deps.longHorizonAgentRepo.getById(agentId) ?? null;
 }
 
 export function resolveSessionSpaceScope(
@@ -30,12 +30,14 @@ export function resolveSessionSpaceScope(
   if (!spaceId) return undefined;
   const space = deps.getSpace(spaceId);
   if (!space) return undefined;
+  const agent = boundAgentRecord(session, deps);
   return spaceScopeContribution({
     spaceId: space.id,
     spaceName: space.name,
     role,
-    agentDisplayName: role === 'long_term_agent' ? agentDisplayName(session, deps) : null,
+    agentDisplayName: role === 'long_term_agent' ? (agent?.displayName ?? null) : null,
     spaceInstructions: space.instructions,
+    agentInstructions: agent?.instructions ?? null,
   });
 }
 
