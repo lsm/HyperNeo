@@ -488,13 +488,13 @@ if [ "$RERUN" = true ]; then
 	FAILING_FILES=$(cat "$FAILURES_FILE")
 	FILE_COUNT=$(echo "$FAILING_FILES" | wc -l | tr -d ' ')
 	echo "Rerunning $FILE_COUNT failing test file(s)..."
-	# Apply the same generous budget as the migration shards when a failing file
-	# is a migration test (see run_shard) so a rerun doesn't re-flake on timeout.
-	# Match both layouts: migration tests under `migrations/` AND top-level
-	# `migration-*.test.ts` files directly under `storage/` (both are assigned to
-	# the migration shards, so a --rerun must keep the same budget).
+	# Apply the same generous budget run_shard gives a file's own shard, so a
+	# rerun doesn't re-flake on timeout. Match every layout that lands in a
+	# budgeted shard: migration tests under `migrations/`, top-level
+	# `migration-*.test.ts` directly under `storage/`, `1-core/`, and
+	# `5-space/` — all of which build a fresh on-disk SQLite DB per test.
 	RERUN_TIMEOUT_FLAGS=""
-	if echo "$FAILING_FILES" | grep -qE "migrations/|migration-[0-9]+[^/]*(\.test|_test)\.[jt]s"; then
+	if echo "$FAILING_FILES" | grep -qE "migrations/|migration-[0-9]+[^/]*(\.test|_test)\.[jt]s|/1-core/|/5-space/"; then
 		RERUN_TIMEOUT_FLAGS="--testTimeout=30000 --hookTimeout=30000"
 	fi
 	# shellcheck disable=SC2086
