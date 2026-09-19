@@ -9,6 +9,7 @@ import { registerGoalOperations } from './goals.ts';
 import { registerMessagingOperations } from './messaging.ts';
 import { registerScheduleOperations } from './schedule.ts';
 import { registerSessionOperations } from './session.ts';
+import { registerSpaceOperations } from './spaces.ts';
 import { registerWorkflowOperations } from './workflows.ts';
 
 export type { FamilyOperationContext } from './context.ts';
@@ -24,6 +25,7 @@ export function collectFamilyOperations(context: FamilyOperationContext): Operat
     ...registerMessagingOperations(context),
     ...registerScheduleOperations(context),
     ...registerSessionOperations(context),
+    ...registerSpaceOperations(context),
     ...registerWorkflowOperations(context),
   ];
 }
