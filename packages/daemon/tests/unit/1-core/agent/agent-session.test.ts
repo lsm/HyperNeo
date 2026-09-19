@@ -1143,6 +1143,7 @@ describe('AgentSession', () => {
               status: 'rate_limit_cooldown',
               retryAt: Date.now() + 60_000,
               retryCount: 1,
+              exhaustedCycles: 4,
               maxRetries: 3,
               messageId: 'msg-persisted-episode',
             }),
@@ -1160,6 +1161,7 @@ describe('AgentSession', () => {
       if (state.status === 'rate_limit_cooldown') {
         expect(state.retryAt).toBeGreaterThan(Date.now());
         expect(state.messageId).toBe('msg-persisted-episode');
+        expect(state.exhaustedCycles).toBe(4);
       }
       (
         agentSession as unknown as { rateLimitWatchdog: { cancel: () => void } }
