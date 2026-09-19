@@ -99,8 +99,10 @@ function seedAgentRow(db: BunDatabase, agentId: string, spaceId: string): void {
 class MockTaskAgentManager {
   readonly cancelledSessions: string[] = [];
   readonly liveSubSessionsByTaskId = new Map<string, string[]>();
+  cancelError: Error | null = null;
 
   cancelBySessionId(sessionId: string): void {
+    if (this.cancelError) throw this.cancelError;
     this.cancelledSessions.push(sessionId);
     for (const [taskId, ids] of this.liveSubSessionsByTaskId) {
       this.liveSubSessionsByTaskId.set(
@@ -742,6 +744,35 @@ describe('SpaceRuntime — edge cases and resilience', () => {
       const cancelledExecution = nodeExecutionRepo.getById(execution.id)!;
       expect(cancelledExecution.status).toBe('cancelled');
       expect(cancelledExecution.agentSessionId).toBeNull();
+    });
+
+    test('keeps the task recoverable when agent teardown fails', async () => {
+      const tam = new MockTaskAgentManager();
+      const rt = makeRuntime({ taskAgentManager: tam as never });
+      const wf = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: 'step-cancel-failure', name: 'Only Step', agentId: AGENT },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, wf.id, 'Run');
+      const task = tasks[0];
+      const [execution] = nodeExecutionRepo.listByWorkflowRun(run.id);
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'node-session-cancel-failure',
+      });
+      taskRepo.updateTask(task.id, {
+        status: 'in_progress',
+        taskAgentSessionId: 'task-session-cancel-failure',
+      });
+      tam.cancelError = new Error('session cancellation failed');
+
+      await expect(
+        rt.stopWorkflowBackedTaskForStatus(SPACE_ID, task.id, { status: 'cancelled' })
+      ).rejects.toThrow('session cancellation failed');
+
+      expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
+      expect(taskRepo.getTask(task.id)?.taskAgentSessionId).toBe('task-session-cancel-failure');
+      expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('in_progress');
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
     });
 
     test('cancelling a workflow run stops active task and node sessions', async () => {
