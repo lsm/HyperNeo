@@ -17,7 +17,8 @@ export type TransitionTaskRejection =
   | 'unsupported_status'
   | 'invalid_transition'
   | 'result_requires_done'
-  | 'block_reason_requires_blocked';
+  | 'block_reason_requires_blocked'
+  | 'space_at_task_capacity';
 
 export type TransitionTaskOutput = TransitionResult | TransitionTaskRejection;
 
@@ -71,6 +72,7 @@ export function createTransitionTaskOperation<Input = TransitionStandaloneTaskIn
         'invalid_transition',
         'result_requires_done',
         'block_reason_requires_blocked',
+        'space_at_task_capacity',
       ]),
     ]),
     execute: async (input, caller) => transitionTask(input, caller),

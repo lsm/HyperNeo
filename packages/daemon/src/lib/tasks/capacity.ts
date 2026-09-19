@@ -4,7 +4,12 @@ import {
   isRateOrUsageLimited,
   type Space,
   type SpaceTask,
+  type SpaceTaskStatus,
 } from '@hyperneo/shared';
+
+export function occupiesTaskSlot(status: SpaceTaskStatus): boolean {
+  return status === 'in_progress' || status === 'approved' || isRateOrUsageLimited(status);
+}
 
 export function availableTaskSlots(space: Space | null, tasks: SpaceTask[]): number {
   if (!space) return 0;
@@ -16,11 +21,6 @@ export function availableTaskSlots(space: Space | null, tasks: SpaceTask[]): num
           MAX_SPACE_CONCURRENT_TASKS,
           Math.max(MIN_SPACE_CONCURRENT_TASKS, Math.trunc(configured))
         );
-  const running = tasks.filter(
-    (task) =>
-      task.status === 'in_progress' ||
-      task.status === 'approved' ||
-      isRateOrUsageLimited(task.status)
-  ).length;
+  const running = tasks.filter((task) => occupiesTaskSlot(task.status)).length;
   return Math.max(0, limit - running);
 }
