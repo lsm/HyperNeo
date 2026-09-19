@@ -265,7 +265,7 @@ describe('session kind MCP server attachment', () => {
   });
 
   describe('TaskAgentManager.buildAgentMemoryMcpServers', () => {
-    test('gives a workflow worker agent-memory only, with no db-query branch even when dbPath is set', () => {
+    test('gives a workflow worker both agent-memory and db-query when dbPath is configured (#4808)', () => {
       const manager = Object.create(TaskAgentManager.prototype, {
         config: { value: { memoryRepo: new AgentMemoryRepository(db), dbPath } },
       }) as TaskAgentManager;
@@ -275,8 +275,37 @@ describe('session kind MCP server attachment', () => {
         sessionIdForKind('workflow_worker')
       );
 
-      expect(Object.keys(servers).sort()).toEqual(['agent-memory']);
-      expect(manager.requiredWorkflowSubSessionMcpServers()).toEqual(['agent-memory']);
+      expect(Object.keys(servers).sort()).toEqual(['agent-memory', 'db-query']);
+      expect(manager.requiredWorkflowSubSessionMcpServers().sort()).toEqual([
+        'agent-memory',
+        'db-query',
+      ]);
+      (servers['db-query'] as unknown as { close(): void }).close();
+    });
+
+    test('releases the db-query handle whenever the session leaves the agent index', () => {
+      const manager = Object.create(TaskAgentManager.prototype, {
+        config: { value: { memoryRepo: new AgentMemoryRepository(db), dbPath } },
+        agentSessionIndex: { value: new Map() },
+      }) as TaskAgentManager;
+      const sessionId = sessionIdForKind('workflow_worker');
+
+      const servers = manager.buildAgentMemoryMcpServers(SESSION_KIND_SPACE_ID, sessionId);
+      const opened = servers['db-query'] as unknown as { close(): void };
+      let closed = false;
+      opened.close = () => {
+        closed = true;
+      };
+
+      (manager as unknown as { forgetAgentSession(id: string): void }).forgetAgentSession(
+        sessionId
+      );
+
+      expect(closed).toBe(true);
+      expect(
+        (manager as unknown as { workflowDbQueryServers?: Map<string, unknown> })
+          .workflowDbQueryServers?.size ?? 0
+      ).toBe(0);
     });
   });
 
@@ -304,7 +333,7 @@ describe('session kind MCP server attachment', () => {
         agent_card: ['agent-memory', 'db-query'],
         space_chat: ['agent-memory', 'db-query'],
         ad_hoc_member: ['agent-memory', 'db-query'],
-        workflow_worker: ['agent-memory'],
+        workflow_worker: ['agent-memory', 'db-query'],
         direct_task_worker: [],
         non_space: [],
       };
@@ -322,7 +351,7 @@ describe('session kind MCP server attachment', () => {
         ['agent_card', ['agent-memory', 'db-query', 'hyperneo-operations']],
         ['space_chat', ['agent-memory', 'db-query', 'hyperneo-operations']],
         ['ad_hoc_member', ['agent-memory', 'db-query', 'hyperneo-operations']],
-        ['workflow_worker', ['agent-memory', 'hyperneo-operations']],
+        ['workflow_worker', ['agent-memory', 'db-query', 'hyperneo-operations']],
         ['direct_task_worker', ['hyperneo-operations']],
         ['non_space', ['hyperneo-operations']],
       ]);
