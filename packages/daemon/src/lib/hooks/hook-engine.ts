@@ -21,6 +21,8 @@ import {
 import { shallowEqual, validatePatchedParams } from './hook-param-bounds.ts';
 import { buildAllowUserState, buildBlockUserState } from './hook-user-state.ts';
 
+const MAX_RESTORED_OPERATION_FAILURES = 3;
+
 export {
   clearAllRetryableHookActionTimers,
   hasPendingRetryableHookAction,
@@ -180,6 +182,7 @@ export class HookEngine {
         continue;
       }
       if (!registry.get(action.methodName)) continue;
+      let executionFailureCount = 0;
       const handler = async (args: Record<string, unknown>) => {
         const outcome = await invokeOperation(registry, action.methodName, args, {
           ...caller,
@@ -189,15 +192,19 @@ export class HookEngine {
           },
         });
         if (outcome.kind !== 'completed') {
+          const retryable =
+            outcome.code === 'execution_failed' &&
+            ++executionFailureCount < MAX_RESTORED_OPERATION_FAILURES;
           return {
             ...jsonResult({
               success: false,
               error: outcome.message,
-              retryable: outcome.code === 'execution_failed',
+              retryable,
             }),
             isError: true,
           };
         }
+        executionFailureCount = 0;
         if (typeof outcome.value === 'string') {
           return {
             ...jsonResult({ success: false, error: outcome.value, retryable: false }),

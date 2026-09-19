@@ -1510,6 +1510,70 @@ describe('HookEngine', () => {
     expect(engine.getQueuedRetryableAction('hook-1')).toBeUndefined();
   });
 
+  test('restored operation retry stops after repeated execution failures', async () => {
+    const args = { target: 'Review', message: 'hi' };
+    const actionKey = JSON.stringify({
+      runScopedTaskId: defaultMeta.taskId,
+      nodeId: defaultMeta.nodeId,
+      sessionId: defaultMeta.sessionId,
+      agentName: defaultMeta.agentName,
+      methodName: 'send_message',
+      args,
+    });
+    const hookStateRepo = makeMockHookStateRepo();
+    const notifications: string[] = [];
+    let taskStatus = 'in_progress';
+    const { engine } = makeEngine(
+      [makeHook({ id: 'hook-1', classification: 'validation', order: 0 })],
+      {
+        hookStateRepo,
+        getTaskStatus: () => taskStatus,
+        notifySourceSession: async (_sessionId, message) => {
+          notifications.push(message);
+        },
+      }
+    );
+    hookStateRepo.ensure('run-1', 'hook-1');
+    engine.persistQueuedRetryableAction({
+      actionKey,
+      hookId: 'hook-1',
+      methodName: 'send_message',
+      args,
+      meta: defaultMeta,
+      isFollowUp: false,
+      nextRetryAt: Date.now() - 1,
+      retryAfterMs: 5,
+      queuedAt: Date.now() - 10,
+    });
+    let replayCallCount = 0;
+    const registry = createOperationRegistry([
+      defineOperation({
+        name: 'send_message',
+        description: 'test replay',
+        inputSchema: z.record(z.string(), z.unknown()),
+        resultSchema: z.unknown(),
+        execute: async () => {
+          replayCallCount++;
+          if (replayCallCount === 4) taskStatus = 'done';
+          throw new Error('persistent transport failure');
+        },
+      }),
+    ]);
+
+    engine.scheduleQueuedRetryableOperations(
+      registry,
+      { source: 'internal', sessionId: defaultMeta.sessionId, spaceId: 'space-1' },
+      defaultMeta
+    );
+    await new Promise((resolve) => setTimeout(resolve, 40));
+
+    expect(replayCallCount).toBe(3);
+    expect(notifications).toEqual([
+      'Queued send_message retry failed: persistent transport failure',
+    ]);
+    expect(engine.getQueuedRetryableAction('hook-1')).toBeUndefined();
+  });
+
   test('restored operation retry re-arms when its hook blocks again', async () => {
     const args = { target: 'Review', message: 'hi' };
     const actionKey = JSON.stringify({
