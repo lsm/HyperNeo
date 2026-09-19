@@ -20,6 +20,7 @@
     "knip:all": "knip",
     "check:session-guards": "./scripts/check-session-deletion-callers.sh",
     "check:operation-names": "bun run scripts/check-operation-names.ts",
+    "test:pre-commit": "HYPERNEO_ALLOW_ROOT_TEST=1 bun test scripts/pre-commit.test.ts",
     "test:strip-comments": "HYPERNEO_ALLOW_ROOT_TEST=1 bun test scripts/strip-comments.test.ts",
     "test:ci-balance-report": "HYPERNEO_ALLOW_ROOT_TEST=1 bun test scripts/ci-balance-report.test.ts",
     "test:generate-shard-weights": "HYPERNEO_ALLOW_ROOT_TEST=1 bun test scripts/generate-shard-weights.test.ts",

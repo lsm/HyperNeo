@@ -28,18 +28,20 @@ fi
 
 # Run type check
 echo "🔧 Running type check..."
-bun run typecheck 2>&1 | tee /tmp/typecheck-output.txt
+typecheck_output=$(mktemp "${TMPDIR:-/tmp}/hyperneo-typecheck.XXXXXX")
+trap 'rm -f "$typecheck_output"' EXIT
+bun run typecheck 2>&1 | tee "$typecheck_output"
 
 # Check the exit code of typecheck command
 TYPECHECK_EXIT_CODE=${PIPESTATUS[0]}
 
 if [ $TYPECHECK_EXIT_CODE -ne 0 ]; then
     # Count errors by package
-    CLI_SRC_ERRORS=$(grep -E "packages/cli/src/" /tmp/typecheck-output.txt | grep -v "/tests/" | grep "error TS" | wc -l)
-    DAEMON_SRC_ERRORS=$(grep -E "packages/daemon/src/" /tmp/typecheck-output.txt | grep -v "/tests/" | grep "error TS" | wc -l)
-    SHARED_SRC_ERRORS=$(grep -E "packages/shared/src/" /tmp/typecheck-output.txt | grep -v "/tests/" | grep "error TS" | wc -l)
-    WEB_ERRORS=$(grep -E "packages/web/" /tmp/typecheck-output.txt | grep "error TS" | wc -l)
-    TEST_ERRORS=$(grep -E "/tests?/" /tmp/typecheck-output.txt | grep "error TS" | wc -l)
+    CLI_SRC_ERRORS=$(grep -E "packages/cli/src/" "$typecheck_output" | grep -v "/tests/" | grep "error TS" | wc -l)
+    DAEMON_SRC_ERRORS=$(grep -E "packages/daemon/src/" "$typecheck_output" | grep -v "/tests/" | grep "error TS" | wc -l)
+    SHARED_SRC_ERRORS=$(grep -E "packages/shared/src/" "$typecheck_output" | grep -v "/tests/" | grep "error TS" | wc -l)
+    WEB_ERRORS=$(grep -E "packages/web/" "$typecheck_output" | grep "error TS" | wc -l)
+    TEST_ERRORS=$(grep -E "/tests?/" "$typecheck_output" | grep "error TS" | wc -l)
 
     echo ""
     echo "❌ Type check failed!"
@@ -51,11 +53,8 @@ if [ $TYPECHECK_EXIT_CODE -ne 0 ]; then
     echo ""
     echo "💡 Run 'bun run typecheck' to see all errors"
     echo "⚠️  All type errors must be fixed before committing"
-    rm /tmp/typecheck-output.txt
     exit 1
 fi
-
-rm /tmp/typecheck-output.txt
 
 # Run knip (dead code detection)
 echo "🔎 Running knip (dead code detection)..."
