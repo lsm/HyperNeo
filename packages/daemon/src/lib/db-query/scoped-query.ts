@@ -1,6 +1,7 @@
+import superpipe, { type PipelineAPI } from 'superpipe';
 import { Database } from '../../storage/sqlite-compat.ts';
 import { type DbScopeType, type ScopeTableConfig, getScopeConfig } from './scope-config.ts';
-import { maskCommentsAndStrings, validateSql } from './sql-validator.ts';
+import { maskCommentsAndStrings, type SqlValidationResult, validateSql } from './sql-validator.ts';
 
 export const DEFAULT_LIMIT = 200;
 export const MAX_LIMIT = 1000;
@@ -70,8 +71,6 @@ function stripLimit(sql: string): { sql: string; userLimit?: number } {
 
   return { sql: sql.slice(0, limitPos).trimEnd(), userLimit };
 }
-const MAX_MATERIALIZED_ROWS = 50000;
-
 function quoteIdent(name: string): string {
   return `"${name.replace(/"/g, '""')}"`;
 }
@@ -135,13 +134,52 @@ function enableBigInts(stmt: unknown): void {
 
 const CONNECTION_STATE_FUNCTIONS = /\b(?:changes|total_changes|last_insert_rowid)\s*\(/i;
 
-function assertNoConnectionState(sql: string): void {
-  if (CONNECTION_STATE_FUNCTIONS.test(maskCommentsAndStrings(sql))) {
-    throw new Error(
-      'Query cannot be scoped: changes(), total_changes() and last_insert_rowid() report connection state, which is not meaningful for a scoped read'
-    );
-  }
+interface ScopedQueryAdmission {
+  validation: SqlValidationResult;
+  configMap: Map<string, ScopeTableConfig>;
 }
+
+export function validateScopedSql(
+  sql: string
+): { value: SqlValidationResult } | { reason: string } {
+  const validation = validateSql(sql);
+  return validation.valid ? { value: validation } : { reason: validation.error ?? 'Invalid SQL' };
+}
+
+export function admitScopedTables(
+  validation: SqlValidationResult,
+  scopeType: DbScopeType,
+  configs: ScopeTableConfig[]
+): { value: ScopedQueryAdmission } | { reason: string } {
+  const configMap = new Map(configs.map((config) => [config.tableName, config]));
+  const denied = validation.tableRefs.find((tableRef) => !configMap.has(tableRef));
+  return denied
+    ? { reason: `Table "${denied}" is not accessible in ${scopeType} scope` }
+    : { value: { validation, configMap } };
+}
+
+export function admitConnectionIndependentQuery(
+  sql: string,
+  admission: ScopedQueryAdmission
+): { value: ScopedQueryAdmission } | { reason: string } {
+  return CONNECTION_STATE_FUNCTIONS.test(maskCommentsAndStrings(sql))
+    ? {
+        reason:
+          'Query cannot be scoped: changes(), total_changes() and last_insert_rowid() report connection state, which is not meaningful for a scoped read',
+      }
+    : { value: admission };
+}
+
+const admitScopedQuery = (superpipe({})('admit-scoped-db-query') as PipelineAPI)
+  .input(['sql', 'scopeType', 'configs'])
+  .pipe(validateScopedSql, 'sql', 'result:admission')
+  .pipe(admitScopedTables, ['admission', 'scopeType', 'configs'], 'result:admission')
+  .pipe(admitConnectionIndependentQuery, ['sql', 'admission'], 'result:admission')
+  .end('admission') as (
+  sql: string,
+  scopeType: DbScopeType,
+  configs: ScopeTableConfig[]
+) => ScopedQueryAdmission | string;
 
 function normalizeBigInts(row: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
@@ -236,25 +274,17 @@ function materializeScopedTable(
   const table = quoteIdent(config.tableName);
 
   let withRowid = true;
-  let rows: Record<string, unknown>[];
   const select = (cols: string) => {
-    const stmt = source.query(
-      `SELECT ${cols} FROM ${table}${where} LIMIT ${MAX_MATERIALIZED_ROWS + 1}`
-    );
+    const stmt = source.query(`SELECT ${cols} FROM ${table}${where}`);
     enableBigInts(stmt);
-    return stmt.all(...(filter.params as [])) as Record<string, unknown>[];
+    return stmt;
   };
+  let sourceRows;
   try {
-    rows = select(`rowid AS _dbq_rowid, ${projection}`);
+    sourceRows = select(`rowid AS _dbq_rowid, ${projection}`);
   } catch {
     withRowid = false;
-    rows = select(projection);
-  }
-
-  if (rows.length > MAX_MATERIALIZED_ROWS) {
-    throw new Error(
-      `Table "${config.tableName}" holds more than ${MAX_MATERIALIZED_ROWS} rows in this scope, which exceeds what a scoped query can copy. This is a limit of the table, not of the query — narrowing the WHERE clause will not help.`
-    );
+    sourceRows = select(projection);
   }
 
   const declaration = columns
@@ -263,7 +293,6 @@ function materializeScopedTable(
   const constraints = constraintClauses(source, config, new Set(names));
   scratch.exec(`CREATE TABLE ${table} (${[declaration, ...constraints].join(', ')})`);
   copySourceIndexes(source, scratch, config.tableName, names[0]);
-  if (rows.length === 0) return;
 
   const targets = withRowid ? ['rowid', ...names] : names;
   const insert = scratch.query(
@@ -272,7 +301,9 @@ function materializeScopedTable(
   enableBigInts(insert);
   scratch.exec('BEGIN');
   try {
-    for (const row of rows) {
+    for (const row of sourceRows.iterate(...(filter.params as [])) as Iterable<
+      Record<string, unknown>
+    >) {
       const values = names.map((c) => row[c]);
       insert.run(...((withRowid ? [row._dbq_rowid, ...values] : values) as []));
     }
@@ -291,27 +322,16 @@ export function runScopedQuery(
 ): ScopedDbQueryResult {
   const { sql, params = [], limit } = query;
 
-  const validation = validateSql(sql);
-  if (!validation.valid) {
-    throw new Error(validation.error ?? 'Invalid SQL');
-  }
-
   const configs = getScopeConfig(scopeType);
-  const configMap = new Map(configs.map((tc) => [tc.tableName, tc]));
-
-  for (const tableRef of validation.tableRefs) {
-    if (!configMap.has(tableRef)) {
-      throw new Error(`Table "${tableRef}" is not accessible in ${scopeType} scope`);
-    }
-  }
-
-  assertNoConnectionState(sql);
+  const admission = admitScopedQuery(sql, scopeType, configs);
+  if (typeof admission === 'string') throw new Error(admission);
+  const { validation, configMap } = admission;
 
   const cappedLimit = Math.min(limit ?? DEFAULT_LIMIT, MAX_LIMIT);
   const { sql: strippedSql, userLimit: existingLimit } = stripLimit(sql);
   const effectiveLimit = Math.min(cappedLimit, existingLimit ?? MAX_LIMIT);
 
-  const scratch = new Database(':memory:');
+  const scratch = new Database('');
   scratch.exec('PRAGMA case_sensitive_like = ON');
   try {
     db.exec('BEGIN DEFERRED');
