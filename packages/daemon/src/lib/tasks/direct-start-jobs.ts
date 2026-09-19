@@ -18,6 +18,7 @@ import {
   type DirectTaskStartInput,
   type DirectTaskStartResult,
 } from './start-direct-task.ts';
+import { DIRECT_TASK_PARK_BUDGET, decideParkAdmission, parkAdmissionInput } from './park-budget.ts';
 import { DIRECT_TASK_START, readDirectStartRequest } from './direct-start-request.ts';
 
 export type DirectStartAcknowledgement =
@@ -111,7 +112,12 @@ export function createDirectStartJobHandler(
     } else if (attempts.isStopRequested(attempt.id, attempt.sessionId))
       return { started: false, reason: 'superseded' };
     if (!job.claimToken) throw new Error(`Direct start remains unavailable: ${result.reason}`);
-    if (jobs.requeueParked(job.id, Date.now() + 30_000, job.claimToken))
+    const now = Date.now();
+    const admission = decideParkAdmission(parkAdmissionInput(job, DIRECT_TASK_PARK_BUDGET, now));
+    if ('reason' in admission) {
+      throw new Error(`Direct start remains unavailable: ${admission.reason}`);
+    }
+    if (jobs.requeueParked(job.id, now + 30_000, job.claimToken))
       return {
         ...result,
         parked: terminal || retiring ? 'direct_start_cleanup_unverified' : 'direct_start_not_ready',

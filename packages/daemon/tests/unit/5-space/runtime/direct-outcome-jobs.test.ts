@@ -17,6 +17,7 @@ import {
   registerDirectOutcomeJobs,
   DIRECT_TASK_OUTCOME,
 } from '../../../../src/lib/tasks/direct-outcome-jobs';
+import { DIRECT_TASK_PARK_BUDGET } from '../../../../src/lib/tasks/park-budget';
 import {
   requestDirectTaskFinalization,
   type DirectFinalizationInput,
@@ -250,6 +251,89 @@ test('uncached retries preserve the same job beyond its budget and settle once a
     expect(tasks.getTask(taskId)?.status).toBe('blocked');
     expect(terminal).toHaveBeenCalledTimes(1);
     expect(onTaskUpdated).toHaveBeenCalledTimes(1);
+    expect(await processor.tick()).toBe(0);
+  } finally {
+    await processor.stop();
+    await manager.cleanup();
+  }
+});
+
+test('an unverified shutdown stops parking once its budget is spent (#4896)', async () => {
+  acceptedJob();
+  const [job] = jobs.dequeue(DIRECT_TASK_OUTCOME, 1);
+  cleanup.mockImplementation(async () => {
+    throw new Error('process still live');
+  });
+  db.prepare(
+    `UPDATE job_queue SET payload = json_set(payload, '$.__parkCount', ?, '$.__parkedSince', ?)
+      WHERE id = ?`
+  ).run(DIRECT_TASK_PARK_BUDGET.maxParks, Date.now(), job.id);
+  const spent = jobs.getJob(job.id)!;
+
+  await expect(createDirectOutcomeHandler(deps)(spent)).rejects.toThrow('park_count_exceeded');
+
+  expect(jobs.getJob(job.id)?.payload.__parkCount).toBe(DIRECT_TASK_PARK_BUDGET.maxParks);
+});
+
+test('a long-running park window stops the loop even when the count is low (#4896)', async () => {
+  acceptedJob();
+  const [job] = jobs.dequeue(DIRECT_TASK_OUTCOME, 1);
+  cleanup.mockImplementation(async () => {
+    throw new Error('process still live');
+  });
+  db.prepare(
+    `UPDATE job_queue SET payload = json_set(payload, '$.__parkCount', 1, '$.__parkedSince', ?)
+      WHERE id = ?`
+  ).run(Date.now() - DIRECT_TASK_PARK_BUDGET.maxParkedMs, job.id);
+
+  await expect(createDirectOutcomeHandler(deps)(jobs.getJob(job.id)!)).rejects.toThrow(
+    'park_window_exceeded'
+  );
+});
+
+test('the park window is stamped once and does not slide forward (#4896)', async () => {
+  acceptedJob();
+  const [job] = jobs.dequeue(DIRECT_TASK_OUTCOME, 1);
+  cleanup.mockImplementation(async () => {
+    throw new Error('process still live');
+  });
+  await createDirectOutcomeHandler(deps)(job);
+  const first = jobs.getJob(job.id)?.payload.__parkedSince;
+  expect(typeof first).toBe('number');
+
+  jobs.reschedulePending(job.id, Date.now() - 1);
+  const [again] = jobs.dequeue(DIRECT_TASK_OUTCOME, 1);
+  await createDirectOutcomeHandler(deps)(again);
+
+  expect(jobs.getJob(job.id)?.payload).toMatchObject({ __parkedSince: first, __parkCount: 2 });
+});
+
+test('a park that can never succeed now dead-letters instead of looping forever (#4896)', async () => {
+  const job = acceptedJob();
+  const processor = new JobQueueProcessor(jobs, { maxConcurrent: 1 });
+  const manager = freshUncachedManager(processor);
+  registerDirectOutcomeJobs({
+    ...deps,
+    sessionManager: manager,
+    jobProcessor: processor,
+    jobQueue: jobs,
+  });
+  try {
+    db.prepare(
+      `UPDATE job_queue SET payload = json_set(payload, '$.__parkCount', ?, '$.__parkedSince', ?)
+        WHERE id = ?`
+    ).run(DIRECT_TASK_PARK_BUDGET.maxParks, Date.now(), job.id);
+
+    const seen: string[] = [];
+    for (let i = 0; i < job.maxRetries + 1; i++) {
+      jobs.reschedulePending(job.id, Date.now() - 1);
+      expect(await processor.tick()).toBe(1);
+      await waitForIdle(processor);
+      seen.push(jobs.getJob(job.id)!.status);
+    }
+
+    expect(seen.at(-1)).toBe('dead');
+    expect(jobs.getJob(job.id)?.error).toContain('park_count_exceeded');
     expect(await processor.tick()).toBe(0);
   } finally {
     await processor.stop();
