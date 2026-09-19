@@ -234,6 +234,7 @@ export function buildProviderSettings(
 
 export interface QueryOptionsBuilderContext {
   getOperationMcpServer?(): SdkMcpServerConfig;
+  getSpaceBriefing?(): string | undefined;
   readonly session: Session;
   readonly settingsManager: SettingsManager;
   readonly db?: Database;
@@ -717,6 +718,7 @@ export class QueryOptionsBuilder {
       };
 
       const append = this.joinSystemPromptAppendParts([
+        this.ctx.getSpaceBriefing?.(),
         this.ctx.session.worktree ? this.getWorktreeIsolationText() : undefined,
       ]);
       if (append) {
@@ -726,17 +728,18 @@ export class QueryOptionsBuilder {
       return presetConfig;
     }
 
-    if (this.ctx.session.worktree) {
-      return this.joinSystemPromptAppendParts([this.getMinimalWorktreePrompt()]);
-    }
-
-    return undefined;
+    const plain = this.joinSystemPromptAppendParts([
+      this.ctx.getSpaceBriefing?.(),
+      this.ctx.session.worktree ? this.getMinimalWorktreePrompt() : undefined,
+    ]);
+    return plain || undefined;
   }
 
   private buildCustomSystemPrompt(systemPrompt: SystemPromptConfig): Options['systemPrompt'] {
     if (typeof systemPrompt === 'string') {
       return this.joinSystemPromptAppendParts([
         systemPrompt,
+        this.ctx.getSpaceBriefing?.(),
         this.ctx.session.worktree ? this.getWorktreeIsolationText() : undefined,
       ]);
     }
@@ -749,6 +752,7 @@ export class QueryOptionsBuilder {
 
       const append = this.joinSystemPromptAppendParts([
         systemPrompt.append,
+        this.ctx.getSpaceBriefing?.(),
         this.ctx.session.worktree ? this.getWorktreeIsolationText() : undefined,
       ]);
       if (append) {

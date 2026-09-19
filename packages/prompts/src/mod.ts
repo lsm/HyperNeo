@@ -44,6 +44,7 @@ import mdruntimeWorkflowSelectorInstructions from './runtime/workflow-selector-i
   type: 'text',
 };
 import mdsessionTitleGeneration from './session/title-generation.md' with { type: 'text' };
+import mdspaceOperationsDoor from './space/operations-door.md' with { type: 'text' };
 import mdworkflowsCoderOnlyMergeInstructions from './workflows/coder-only/merge-instructions.md' with {
   type: 'text',
 };
@@ -142,6 +143,7 @@ const registry: Record<string, string> = {
   'runtime/prompt-too-long-continue-nag.md': mdruntimePromptTooLongContinueNag,
   'runtime/workflow-selector-instructions.md': mdruntimeWorkflowSelectorInstructions,
   'session/title-generation.md': mdsessionTitleGeneration,
+  'space/operations-door.md': mdspaceOperationsDoor,
   'workflows/coder-only/merge-instructions.md': mdworkflowsCoderOnlyMergeInstructions,
   'workflows/coder-only/prompt.md': mdworkflowsCoderOnlyPrompt,
   'workflows/coder-owned/external-gate.md': mdworkflowsCoderOwnedExternalGate,
@@ -198,6 +200,7 @@ export const {
   PROMPT_TOO_LONG_CONTINUE_NAG,
   WORKFLOW_SELECTOR_INSTRUCTIONS,
   TITLE_GENERATION_PROMPT,
+  SPACE_OPERATIONS_DOOR,
   CODER_ONLY_MERGE_INSTRUCTIONS,
   CODER_ONLY_PROMPT,
   CODER_EXTERNAL_GATE_BLOCK,

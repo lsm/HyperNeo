@@ -95,11 +95,22 @@ import {
   resolveSpaceMcpSessionPolicy,
   type SpaceMcpSessionPolicy,
 } from './space-mcp-session-policy.ts';
+import { buildSpaceSessionBriefing } from './space-session-briefing.ts';
 import { SpaceRuntime } from './space-runtime.ts';
 import type { TaskAgentManager } from './task-agent-manager.ts';
 import { canTransition as canTransitionRunStatus } from '../../workflows/run-status-machine.ts';
 
 const log = new Logger('space-runtime-service');
+
+function applyBuiltAgentSessionConfig(
+  session: Pick<AgentSession, 'updateConfig'>,
+  config: Partial<Session['config']>
+): Promise<void> {
+  const defined = Object.fromEntries(
+    Object.entries(config).filter(([, value]) => value !== undefined)
+  ) as Partial<Session['config']>;
+  return session.updateConfig(defined);
+}
 
 type LongTermAgentAdmission =
   | { state: 'accepted'; mailboxEntryId: string }
@@ -670,6 +681,7 @@ export class SpaceRuntimeService {
       session = session ?? (await sessionManager.getSessionAsync(sessionId));
       if (!session) return null;
       if (['ended', 'archived'].includes(session.getSessionData().status)) return null;
+      await applyBuiltAgentSessionConfig(session, config);
     } else {
       await this.refreshLongHorizonAgentSessionConfig(session, config);
     }
@@ -689,7 +701,24 @@ export class SpaceRuntimeService {
       },
     });
     this.attachLongTermAgentMcpServers(session, space, sessionId);
+    this.installLongTermAgentBriefing(session, space, agent.displayName);
     return session;
+  }
+
+  private installLongTermAgentBriefing(
+    session: Pick<AgentSession, 'setSpaceBriefing'>,
+    space: Space,
+    agentDisplayName: string | null
+  ): void {
+    session.setSpaceBriefing(
+      buildSpaceSessionBriefing({
+        spaceId: space.id,
+        spaceName: space.name,
+        role: 'long_term_agent',
+        agentDisplayName,
+        spaceInstructions: space.instructions,
+      })
+    );
   }
 
   private createSessionResolutionDeps(): SessionResolutionDeps | null {
@@ -782,6 +811,14 @@ export class SpaceRuntimeService {
       return;
     }
     this.attachLongTermAgentMcpServers(agentSession, space, session.id);
+    const agent = this.config.longHorizonAgentRepo?.getById(agentId) ?? null;
+    this.installLongTermAgentBriefing(agentSession, space, agent?.displayName ?? null);
+    if (agent && agentSession.getSessionData().config.systemPrompt === undefined) {
+      await applyBuiltAgentSessionConfig(
+        agentSession,
+        await buildAgentSessionConfig({ agent }, space)
+      );
+    }
     agentSession.onMissingMemberSpaceMcpServers = async (_sessionId, missing) => {
       log.warn(
         `Long-term Space agent session ${session.id} missing MCP servers [${missing.join(', ')}]; re-installing Space operations before query start`
@@ -1385,6 +1422,15 @@ export class SpaceRuntimeService {
     }
 
     agentSession.mergeRuntimeMcpServers(additional);
+
+    agentSession.setSpaceBriefing(
+      buildSpaceSessionBriefing({
+        spaceId: space.id,
+        spaceName: space.name,
+        role: 'ad_hoc_member',
+        spaceInstructions: space.instructions,
+      })
+    );
 
     agentSession.onMissingMemberSpaceMcpServers = async (_sessionId, missing) => {
       log.warn(
