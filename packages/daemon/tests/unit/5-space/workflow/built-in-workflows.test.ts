@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   CALL_ACTION_PREFERENCE_GUIDANCE,
+  CALL_ACTION_PREFERENCE_GUIDANCE_PRE_OPERATION_NAMES,
   FULLSTACK_CODING_NOCHANGE_GUIDANCE,
 } from '@hyperneo/prompts';
 import type {
@@ -4407,7 +4408,7 @@ test('persisted pre-call-action prompts migrate to the dispatcher preference tem
     ],
     [RESEARCH_PROMPT, '8e19248b31a36c8b4f7f09ee09aae1a6acd6221867b12c093359b0930b72fa83'],
     [RESEARCH_REVIEW_PROMPT, '199f7ad7c972d1495f978924a26cff953680c8fddf73f33e25de3b0bb4621c56'],
-    [REVIEW_ONLY_REVIEW_PROMPT, '9e223b7e6c1c306e66288916cc42e2f5f7211b997cfaf3db06f9ecb7033317ee'],
+    [REVIEW_ONLY_REVIEW_PROMPT, 'c62030e468fe49a3204fe6bbecf7debcd3dbb908222e2e218248475e371e88f4'],
   ]);
   const sha = (value: string) => createHash('sha256').update(value).digest('hex');
   const migratedKeys = new Set<string>();
@@ -4442,6 +4443,37 @@ test('persisted pre-call-action prompts migrate to the dispatcher preference tem
   }
 
   expect(migratedKeys.size).toBe(preDispatcherHashes.size);
+});
+
+test('persisted typed-tool prompts migrate to the operation-name templates', () => {
+  const currentTerminalActions =
+    'invoke(name="artifact.save", input={ shape: "link", kind: "pr", data: { url: "<url>" } }) ' +
+    'to record the PR, then invoke(name="task.resolvePendingCompletion", input={ taskId: "<task id>", approved: true }) ' +
+    'or invoke(name="task.submitForReview", input={ taskId: "<task id>" }) only on APPROVE';
+  const retiredTerminalActions =
+    'save_artifact({ shape: "link", kind: "pr", data: { url: "<url>" } }) to record the PR, ' +
+    'then approve_task() or submit_for_approval only on APPROVE';
+
+  const reviewNode = REVIEW_ONLY_WORKFLOW.nodes.find((node) => node.name === 'Review')!;
+  const current = reviewNode.agents[0].customPrompt!.value;
+  expect(current).toContain(currentTerminalActions);
+
+  const persisted = current
+    .replace(CALL_ACTION_PREFERENCE_GUIDANCE, CALL_ACTION_PREFERENCE_GUIDANCE_PRE_OPERATION_NAMES)
+    .replace(currentTerminalActions, retiredTerminalActions);
+  expect(persisted).not.toBe(current);
+  expect(persisted).toContain('identical to the action name it replaced');
+
+  const existingNode: WorkflowNode = {
+    ...reviewNode,
+    agents: reviewNode.agents.map((agent, index) =>
+      index === 0 ? { ...agent, customPrompt: { value: persisted } } : agent
+    ),
+  };
+  const merged = mergeNodeStructuralFieldsFromTemplate([existingNode], REVIEW_ONLY_WORKFLOW.nodes);
+  expect(merged.find((node) => node.name === 'Review')!.agents[0].customPrompt!.value).toBe(
+    current
+  );
 });
 
 test('CODING_WITH_QA_WORKFLOW Review node is intermediate and defers final approval to QA', () => {

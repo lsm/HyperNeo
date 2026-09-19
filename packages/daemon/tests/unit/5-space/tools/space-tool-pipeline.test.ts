@@ -186,8 +186,8 @@ describe('space tool update_task decision pipeline', () => {
         action: 'reject',
         reason: 'review_direct',
         message:
-          `update_task cannot transition a task into 'review' directly. ` +
-          `Use submit_for_approval so the pending-completion fields get stamped ` +
+          `task.update cannot transition a task into 'review' directly. ` +
+          `Use task.submitForReview so the pending-completion fields get stamped ` +
           `and the approval banner renders.`,
       },
     ],
@@ -198,8 +198,8 @@ describe('space tool update_task decision pipeline', () => {
         action: 'reject',
         reason: 'approved_direct',
         message:
-          `update_task cannot transition a task into 'approved' directly. ` +
-          `Use approve_pending_completion after submit_for_approval, or let the ` +
+          `task.update cannot transition a task into 'approved' directly. ` +
+          `Use task.resolvePendingCompletion after task.submitForReview, or let the ` +
           `runtime's post-approval router handle the transition — both stamp ` +
           `the approval metadata and dispatch the configured post-approval step.`,
       },
@@ -211,10 +211,10 @@ describe('space tool update_task decision pipeline', () => {
         action: 'reject',
         reason: 'review_to_done',
         message:
-          `update_task cannot transition a task from 'review' to 'done' directly. ` +
-          `Use approve_task (subject to the workflow's completion autonomy level) ` +
-          `or submit_for_approval so a human can approve via the UI — both stamp ` +
-          `the approval metadata and dispatch the configured post-approval step.`,
+          `task.update cannot transition a task from 'review' to 'done' directly. ` +
+          `Use task.resolvePendingCompletion (subject to the workflow's completion ` +
+          `autonomy level) or task.submitForReview so a human can approve via the UI — ` +
+          `both stamp the approval metadata and dispatch the configured post-approval step.`,
       },
     ],
     [

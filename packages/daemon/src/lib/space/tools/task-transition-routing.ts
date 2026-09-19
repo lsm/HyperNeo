@@ -107,8 +107,8 @@ export function routeTaskUpdate(input: TaskUpdateRoutingInput): TaskUpdateRoutin
         action: 'reject',
         reason: 'review_direct',
         message:
-          `update_task cannot transition a task into 'review' directly. ` +
-          `Use submit_for_approval so the pending-completion fields get stamped ` +
+          `task.update cannot transition a task into 'review' directly. ` +
+          `Use task.submitForReview so the pending-completion fields get stamped ` +
           `and the approval banner renders.`,
       };
     }
@@ -117,8 +117,8 @@ export function routeTaskUpdate(input: TaskUpdateRoutingInput): TaskUpdateRoutin
         action: 'reject',
         reason: 'approved_direct',
         message:
-          `update_task cannot transition a task into 'approved' directly. ` +
-          `Use approve_pending_completion after submit_for_approval, or let the ` +
+          `task.update cannot transition a task into 'approved' directly. ` +
+          `Use task.resolvePendingCompletion after task.submitForReview, or let the ` +
           `runtime's post-approval router handle the transition — both stamp ` +
           `the approval metadata and dispatch the configured post-approval step.`,
       };
@@ -128,7 +128,7 @@ export function routeTaskUpdate(input: TaskUpdateRoutingInput): TaskUpdateRoutin
         action: 'reject',
         reason: 'limited_direct',
         message:
-          `update_task cannot transition a task into '${requestedStatus}' directly. ` +
+          `task.update cannot transition a task into '${requestedStatus}' directly. ` +
           `rate_limited and usage_limited are runtime-owned: the rate-limit pause ` +
           `path sets them with a restrictions payload and the resume path clears ` +
           `them automatically.`,
@@ -146,10 +146,10 @@ export function routeTaskUpdate(input: TaskUpdateRoutingInput): TaskUpdateRoutin
         action: 'reject',
         reason: 'review_to_done',
         message:
-          `update_task cannot transition a task from 'review' to 'done' directly. ` +
-          `Use approve_task (subject to the workflow's completion autonomy level) ` +
-          `or submit_for_approval so a human can approve via the UI — both stamp ` +
-          `the approval metadata and dispatch the configured post-approval step.`,
+          `task.update cannot transition a task from 'review' to 'done' directly. ` +
+          `Use task.resolvePendingCompletion (subject to the workflow's completion ` +
+          `autonomy level) or task.submitForReview so a human can approve via the UI — ` +
+          `both stamp the approval metadata and dispatch the configured post-approval step.`,
       };
     }
     if (requestedStatus === 'archived' && hasWorkflowRun && runActive) {
@@ -355,7 +355,7 @@ export function routeApproveTask(input: ApproveTaskRoutingInput): ApproveTaskRou
         agentLevel: input.agentLevel,
         spaceLevel: input.spaceLevel,
         required: input.required,
-        message: `approve_task not permitted: agent autonomy ceiling ${input.agentLevel} (space ${input.spaceLevel}) < workflow completionAutonomyLevel ${input.required}. Use submit_for_approval to request human review.`,
+        message: `task.resolvePendingCompletion not permitted: agent autonomy ceiling ${input.agentLevel} (space ${input.spaceLevel}) < workflow completionAutonomyLevel ${input.required}. Use task.submitForReview to request human review.`,
       };
     }
     return {
@@ -363,7 +363,7 @@ export function routeApproveTask(input: ApproveTaskRoutingInput): ApproveTaskRou
       reason: 'space_autonomy_level',
       spaceLevel: input.spaceLevel,
       required: input.required,
-      message: `approve_task not permitted: space autonomy level ${input.spaceLevel} < workflow completionAutonomyLevel ${input.required}. Use submit_for_approval to request human review.`,
+      message: `task.resolvePendingCompletion not permitted: space autonomy level ${input.spaceLevel} < workflow completionAutonomyLevel ${input.required}. Use task.submitForReview to request human review.`,
     };
   }
   if (input.currentStatus !== 'review') {
