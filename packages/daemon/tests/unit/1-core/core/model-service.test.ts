@@ -39,6 +39,9 @@ import {
   getSupportedModelsFromQuery,
   initializeModels,
   getSessionModelInfo,
+  getSessionContextModelInfo,
+  getSessionModelCacheKey,
+  recordObservedContextWindow,
   hasRefreshBeenAttemptedFor,
   markRefreshAttemptedFor,
 } from '../../../../src/lib/model-service';
@@ -3962,6 +3965,23 @@ describe('Model Service', () => {
         baseUrl: 'http://127.0.0.1:11434',
       });
       expect(scopedFetchCount).toBe(1);
+      const session = {
+        id: 'session-scoped-2',
+        config: {
+          model: 'qwen3',
+          provider: 'ollama',
+          providerConfig: { baseUrl: 'http://127.0.0.1:11434' },
+        },
+      };
+      expect(getSessionModelCacheKey(session)).toBe(session.id);
+      expect(
+        getSessionModelCacheKey({ ...session, config: { ...session.config, providerConfig: {} } })
+      ).toBe('global');
+      recordObservedContextWindow('ollama', 'qwen3', 256_000, session.id);
+      expect((await getSessionContextModelInfo(session))?.contextWindow).toBe(256_000);
+      session.config.providerConfig.baseUrl = 'http://127.0.0.1:11435';
+      expect((await getSessionContextModelInfo(session))?.contextWindow).toBe(128_000);
+      expect(scopedFetchCount).toBe(2);
     });
 
     it('is a no-op when the provider has no scoped discovery seam', async () => {
@@ -3982,6 +4002,19 @@ describe('Model Service', () => {
       });
 
       expect(getAvailableModels('session-scoped-3')).toEqual([]);
+      recordObservedContextWindow('ollama', 'model', 256_000, 'session-scoped-3');
+      await ensureScopedProviderCatalogModels('session-scoped-3', 'ollama', {
+        baseUrl: 'http://127.0.0.1:11434',
+      });
+      expect(recordObservedContextWindow('ollama', 'model', 256_000, 'session-scoped-3')).toBe(
+        false
+      );
+      await ensureScopedProviderCatalogModels('session-scoped-3', 'ollama', {
+        baseUrl: 'http://127.0.0.1:11435',
+      });
+      expect(recordObservedContextWindow('ollama', 'model', 256_000, 'session-scoped-3')).toBe(
+        true
+      );
     });
 
     it('refetches the scoped catalog when session settings change', async () => {
