@@ -194,13 +194,23 @@ So the invariant is three clauses, each testable:
 > the set of names in the session's capability contributions are equal in both
 > directions.
 >
-> **(b) Origin.** A server named in `BUILT_IN_MCP_SERVERS` must have an
+> **(b) Origin.** A server that is *first-party* — one we construct in-process,
+> namely `hyperneo-operations`, `agent-memory` and `db-query` — must have an
 > `authored` contribution whose text resolves from a `.md` file and is
 > non-empty. Every other attached server has a `self-describing` contribution,
 > which carries no briefing text.
 >
 > **(c) Reservation.** No app-registry or skill-wrapped server may attach under
-> a name in `BUILT_IN_MCP_SERVERS`.
+> a first-party name.
+
+Two similarly-named sets exist and mean nearly opposite things; binding to the
+wrong one inverts both clauses. The first-party set is `BUILT_IN_MCP_SERVERS`
+in `packages/daemon/src/lib/mcp/built-in-servers.ts` (#4812) — servers we
+construct, which is why we can author prose for them. `BUILTIN_MCP_SERVERS` in
+`packages/daemon/src/lib/builtins.ts` is unrelated: third-party servers such as
+`fetch-mcp` and `chrome-devtools` that HyperNeo ships as convenient defaults.
+Those are `self-describing` like any other third-party server, and clause (c)
+does not restrain them — a bundled `fetch-mcp` may of course use its own name.
 
 The contribution type is a discriminated union, not an optional field:
 
