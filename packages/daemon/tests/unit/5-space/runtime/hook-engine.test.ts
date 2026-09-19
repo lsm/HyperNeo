@@ -26,7 +26,11 @@ import type { WorkflowHookStateRepository } from '../../../../src/storage/reposi
 const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
 import type { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository';
 import type { ToolResult } from '../../../../src/lib/space/tools/tool-result';
-import { createOperationRegistry, defineOperation } from '../../../../src/lib/operations/registry';
+import {
+  createOperationRegistry,
+  defineOperation,
+  type OperationCaller,
+} from '../../../../src/lib/operations/registry';
 
 class MockHookExecutor extends HookExecutor {
   private results = new Map<string, WorkflowHookResult>();
@@ -1405,6 +1409,7 @@ describe('HookEngine', () => {
     const hookStateRepo = makeMockHookStateRepo();
 
     let replayCallCount = 0;
+    let replayCaller: OperationCaller | undefined;
     const { engine, mockExecutor } = makeEngine(
       [makeHook({ id: 'hook-1', classification: 'validation', order: 0 })],
       { hookStateRepo }
@@ -1415,8 +1420,8 @@ describe('HookEngine', () => {
       hookId: 'hook-1',
       methodName: 'send_message',
       args,
-      meta: defaultMeta,
-      isFollowUp: false,
+      meta: { ...defaultMeta, targetNode: 'Review' },
+      isFollowUp: true,
       nextRetryAt: Date.now() - 1,
       retryAfterMs: 5,
       queuedAt: Date.now() - 10,
@@ -1428,8 +1433,9 @@ describe('HookEngine', () => {
         description: 'test replay',
         inputSchema: z.record(z.string(), z.unknown()),
         resultSchema: z.unknown(),
-        execute: async (replayedArgs) => {
+        execute: async (replayedArgs, caller) => {
           replayCallCount++;
+          replayCaller = caller;
           engine.clearQueuedRetryableActionsForKey(actionKey);
           return { success: true, target: replayedArgs.target };
         },
@@ -1444,6 +1450,7 @@ describe('HookEngine', () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
 
     expect(replayCallCount).toBe(1);
+    expect(replayCaller?.hookReplay).toEqual({ targetNode: 'Review', isFollowUp: true });
     expect(
       hookStateRepo.get('run-1', 'hook-1')?.localState[QUEUED_RETRYABLE_ACTION_STATE_KEY]
     ).toBeNull();

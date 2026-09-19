@@ -179,7 +179,13 @@ export class HookEngine {
       }
       if (!registry.get(action.methodName)) continue;
       const handler = async (args: Record<string, unknown>) => {
-        const outcome = await invokeOperation(registry, action.methodName, args, caller);
+        const outcome = await invokeOperation(registry, action.methodName, args, {
+          ...caller,
+          hookReplay: {
+            targetNode: action.meta.targetNode,
+            isFollowUp: action.isFollowUp,
+          },
+        });
         return outcome.kind === 'completed'
           ? jsonResult(outcome.value)
           : { ...jsonResult({ success: false, error: outcome.message }), isError: true };

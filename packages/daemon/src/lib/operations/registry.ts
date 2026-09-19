@@ -18,6 +18,10 @@ export interface OperationCaller {
   readonly role?: OperationCallerRole;
   readonly agentId?: string;
   readonly agentName?: string;
+  readonly hookReplay?: {
+    readonly targetNode?: string;
+    readonly isFollowUp: boolean;
+  };
 }
 
 export type OperationSafetyClass = 'read' | 'mutate' | 'destructive' | 'human_only';

@@ -344,6 +344,62 @@ describe('createNodeSendMessageOperation workflow hooks', () => {
     expect(sent[0]?.message).toBe('patched by hook');
   });
 
+  test('restores persisted follow-up hook metadata for an internal replay', async () => {
+    const calls: HookCall[] = [];
+    const { deps, sent } = harness({
+      hookEngine: hookEngineStub(
+        {
+          decision: 'emit_follow_up',
+          stateUpdates: [],
+          executionLog: [],
+          followUpRequests: [{ targetNode: 'reviewer', message: 'nested follow-up' }],
+          userState: { status: 'allowed' },
+          finalParams: { target: 'reviewer', message: 'restored follow-up' },
+        },
+        calls
+      ),
+    });
+    const operation = createNodeSendMessageOperation(deps);
+
+    await operation.execute({ target: 'reviewer', message: 'restored follow-up' }, {
+      ...workerCaller,
+      source: 'internal',
+      hookReplay: { targetNode: 'reviewer', isFollowUp: true },
+    } as OperationCaller);
+
+    expect(calls[0]?.meta.targetNode).toBe('reviewer');
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.message).toBe('restored follow-up');
+  });
+
+  test('does not accept hook replay metadata from an MCP caller', async () => {
+    const calls: HookCall[] = [];
+    const { deps } = harness({
+      hookEngine: hookEngineStub(
+        {
+          decision: 'allow',
+          stateUpdates: [],
+          executionLog: [],
+          followUpRequests: [],
+          userState: { status: 'allowed' },
+          finalParams: { target: 'reviewer', message: 'normal send' },
+        },
+        calls
+      ),
+    });
+    const operation = createNodeSendMessageOperation(deps);
+
+    await operation.execute(
+      { target: 'reviewer', message: 'normal send' },
+      {
+        ...workerCaller,
+        hookReplay: { targetNode: 'forged-target', isFollowUp: true },
+      }
+    );
+
+    expect(calls[0]?.meta.targetNode).toBeUndefined();
+  });
+
   test('returns the hook block reason without delivering', async () => {
     const calls: HookCall[] = [];
     const { deps, sent } = harness({
