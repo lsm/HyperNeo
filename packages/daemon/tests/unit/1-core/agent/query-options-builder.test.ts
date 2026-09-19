@@ -1754,6 +1754,72 @@ describe('QueryOptionsBuilder', () => {
       expect(typeof options.systemPrompt).toBe('string');
       expect(options.systemPrompt).toContain('Git Worktree Isolation');
     });
+
+    it('appends the Space briefing to the preset for a Space session', async () => {
+      const newBuilder = new QueryOptionsBuilder({
+        session: mockSession,
+        settingsManager: mockSettingsManager,
+        getSpaceBriefing: () => 'You are working inside the Space "Acme" (id: space-1).',
+      });
+      const options = await newBuilder.build();
+
+      const systemPrompt = options.systemPrompt as { append?: string };
+      expect(systemPrompt.append).toContain('You are working inside the Space "Acme"');
+    });
+
+    it('keeps the agent role prompt and the Space briefing together', async () => {
+      mockSession.config.systemPrompt = {
+        type: 'preset',
+        preset: 'claude_code',
+        append: 'Triage and track Space tasks.',
+      };
+      const newBuilder = new QueryOptionsBuilder({
+        session: mockSession,
+        settingsManager: mockSettingsManager,
+        getSpaceBriefing: () => 'Space briefing: call mcp__hyperneo-operations__invoke.',
+      });
+      const options = await newBuilder.build();
+
+      const systemPrompt = options.systemPrompt as { append?: string };
+      expect(systemPrompt.append).toContain('Triage and track Space tasks.');
+      expect(systemPrompt.append).toContain('mcp__hyperneo-operations__invoke');
+    });
+
+    it('appends the Space briefing to a custom string system prompt', async () => {
+      mockSession.config.systemPrompt = 'Custom prompt';
+      const newBuilder = new QueryOptionsBuilder({
+        session: mockSession,
+        settingsManager: mockSettingsManager,
+        getSpaceBriefing: () => 'Space briefing text',
+      });
+      const options = await newBuilder.build();
+
+      expect(options.systemPrompt).toContain('Custom prompt');
+      expect(options.systemPrompt).toContain('Space briefing text');
+    });
+
+    it('carries the Space briefing when the Claude Code preset is disabled', async () => {
+      mockSession.config.tools = { useClaudeCodePreset: false };
+      const newBuilder = new QueryOptionsBuilder({
+        session: mockSession,
+        settingsManager: mockSettingsManager,
+        getSpaceBriefing: () => 'Space briefing text',
+      });
+      const options = await newBuilder.build();
+
+      expect(options.systemPrompt).toBe('Space briefing text');
+    });
+
+    it('leaves the system prompt untouched for a session outside any Space', async () => {
+      mockSession.config.tools = { useClaudeCodePreset: false };
+      const newBuilder = new QueryOptionsBuilder({
+        session: mockSession,
+        settingsManager: mockSettingsManager,
+      });
+      const options = await newBuilder.build();
+
+      expect(options.systemPrompt).toBeUndefined();
+    });
   });
 
   describe('tools configuration', () => {

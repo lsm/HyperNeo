@@ -256,6 +256,15 @@ export class AgentSession
   private operationRegistryProvider?: () => OperationRegistry | undefined;
   private callerScopeResolver: CallerScopeResolver = NO_CALLER_SCOPE;
   private defaultOperationRegistry?: OperationRegistry;
+  private spaceBriefing?: string;
+
+  setSpaceBriefing(briefing: string | undefined): void {
+    this.spaceBriefing = briefing;
+  }
+
+  getSpaceBriefing(): string | undefined {
+    return this.spaceBriefing;
+  }
 
   setOperationRegistryProvider(provider: OperationRegistryProvider): void {
     this.operationRegistryProvider = provider;
