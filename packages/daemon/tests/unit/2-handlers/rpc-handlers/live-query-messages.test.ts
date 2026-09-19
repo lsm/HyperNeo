@@ -1,5 +1,6 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
+import { Logger } from '../../../../src/lib/logger';
 import {
   BACKGROUND_TASK_METADATA_SQL,
   NAMED_QUERY_REGISTRY,
@@ -1274,12 +1275,12 @@ describe('messages.bySession — content replacement rewrite', () => {
     db.close();
   });
 
-  test('registry supplies a rowFingerprint so the engine skips full payload hashing', () => {
+  test('registry supplies a rowFingerprint for message comparisons', () => {
     const entry = NAMED_QUERY_REGISTRY.get('messages.bySession')!;
     expect(typeof entry.rowFingerprint).toBe('function');
   });
 
-  test('a content rewrite through the repository replacement path emits an updated diff', async () => {
+  test.each(['rowId', 'uuid'])('an action rewrite by %s notifies LiveQuery', async (updateBy) => {
     const entry = NAMED_QUERY_REGISTRY.get('messages.bySession')!;
     const reactiveDb = createReactiveDatabase({ getDatabase: () => db } as never);
     const engine = new LiveQueryEngine(db, reactiveDb);
@@ -1313,7 +1314,7 @@ describe('messages.bySession — content replacement rewrite', () => {
     expect(diffs[1].added).toHaveLength(1);
 
     const repo = new SDKMessageRepository(db, reactiveDb);
-    repo.updateHyperNeoActionMessage('action-1', {
+    const rewrittenAction = {
       type: 'hyperneo_action',
       uuid: 'u-action',
       session_id: 's1',
@@ -1321,9 +1322,10 @@ describe('messages.bySession — content replacement rewrite', () => {
       resolved: false,
       chosenOption: 'leave_as_is',
       timestamp: 1,
-    });
+    } as const;
+    if (updateBy === 'rowId') repo.updateHyperNeoActionMessage('action-1', rewrittenAction);
+    else repo.updateHyperNeoActionMessageByUuid('s1', 'u-action', rewrittenAction);
 
-    reactiveDb.notifyChange('sdk_messages', { sessionId: 's1' });
     await Promise.resolve();
     await Promise.resolve();
 
@@ -1334,6 +1336,39 @@ describe('messages.bySession — content replacement rewrite', () => {
     expect(rewritten?.content).toContain('"chosenOption":"leave_as_is"');
 
     engine.dispose();
+  });
+
+  test('a length-preserving assistant edit emits an updated diff', async () => {
+    insertSdkMessage(db, {
+      id: 'assistant-edit',
+      sessionId: 's1',
+      messageType: 'assistant',
+      sdkMessage: {
+        type: 'assistant',
+        uuid: 'edit',
+        message: { content: [{ type: 'text', text: 'before' }] },
+      },
+    });
+    const entry = NAMED_QUERY_REGISTRY.get('messages.bySession')!;
+    const reactiveDb = createReactiveDatabase({ getDatabase: () => db } as never);
+    const engine = new LiveQueryEngine(db, reactiveDb);
+    const diffs: Array<{ updated?: Array<Record<string, unknown>> }> = [];
+    engine.subscribe(entry.sql, ['s1', 100], (diff) => diffs.push(diff), {
+      rowFingerprint: entry.rowFingerprint,
+    });
+    try {
+      db.prepare(
+        "UPDATE sdk_messages SET sdk_message = replace(sdk_message, 'before', 'edited') WHERE id = 'assistant-edit'"
+      ).run();
+      reactiveDb.notifyChange('sdk_messages', { sessionId: 's1' });
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(diffs).toHaveLength(2);
+      expect(diffs[1].updated?.[0]).toMatchObject({ id: 'assistant-edit' });
+      expect(diffs[1].updated?.[0].content).toContain('edited');
+    } finally {
+      engine.dispose();
+    }
   });
 });
 
@@ -1349,7 +1384,8 @@ describe('messages.bySession — transcript reconciliation', () => {
     db.close();
   });
 
-  test('every delta carries the authoritative row count, not just the changed rows', async () => {
+  test('every delta carries the authoritative row count and content-free delivery diagnostics', async () => {
+    const trace = spyOn(Logger.prototype, 'debugWithMetadata').mockImplementation(() => {});
     insertSdkMessage(db, {
       id: 'm-user',
       sessionId: 's1',
@@ -1385,7 +1421,29 @@ describe('messages.bySession — transcript reconciliation', () => {
     expect(delta.method).toBe('liveQuery.delta');
     expect(delta.data.added).toHaveLength(1);
     expect(delta.data.rowCount).toBe(2);
-
+    const deliveryLogs = trace.mock.calls.filter((call) => call[1] === 'liveQuery.delivery');
+    expect(deliveryLogs.map((call) => call[0])).toEqual([
+      expect.objectContaining({
+        subscriptionId: 'sub-1',
+        sessionId: 's1',
+        phase: 'snapshot',
+        outcome: 'sent',
+        rowIds: ['m-user'],
+        rowCount: 1,
+        version: expect.any(Number),
+      }),
+      expect.objectContaining({
+        subscriptionId: 'sub-1',
+        sessionId: 's1',
+        phase: 'delta',
+        outcome: 'sent',
+        addedIds: ['m-assistant'],
+        rowCount: 2,
+        version: expect.any(Number),
+      }),
+    ]);
+    expect(JSON.stringify(trace.mock.calls)).not.toContain('the answer');
+    trace.mockRestore();
     cleanup();
     engine.dispose();
   });

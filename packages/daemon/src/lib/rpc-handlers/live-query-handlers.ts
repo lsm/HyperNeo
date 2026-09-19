@@ -4295,7 +4295,7 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
         row.messageType === 'hyperneo_action'
           ? row
           : {
-              content: typeof row.content === 'string' ? row.content.length : row.content,
+              content: row.content,
               timestamp: row.timestamp,
               sendStatus: row.sendStatus,
               origin: row.origin,
@@ -4553,8 +4553,31 @@ export function setupLiveQueryHandlers(
       sql,
       params,
       (diff: QueryDiff<Record<string, unknown>>) => {
+        const deliveryTrace =
+          queryName === 'messages.bySession'
+            ? {
+                clientId,
+                subscriptionId,
+                queryName,
+                sessionId: params[0],
+                phase: diff.type,
+                version: diff.version,
+                rowCount: diff.rows.length,
+                rowIds: diff.type === 'snapshot' ? diff.rows.map((row) => row.id) : undefined,
+                addedIds: diff.added?.map((row) => row.id),
+                removedIds: diff.removed?.map((row) => row.id),
+                updatedIds: diff.updated?.map((row) => row.id),
+              }
+            : undefined;
+        if (deliveryTrace) log.debugWithMetadata(deliveryTrace, 'liveQuery.emitted');
         const router = messageHub.getRouter();
         if (!router) {
+          if (deliveryTrace) {
+            log.debugWithMetadata(
+              { ...deliveryTrace, outcome: 'router_unavailable' },
+              'liveQuery.delivery'
+            );
+          }
           log.warn(
             `liveQuery: router unavailable; skipping event (clientId=${clientId}, subscriptionId=${subscriptionId})`
           );
@@ -4598,6 +4621,12 @@ export function setupLiveQueryHandlers(
         }
 
         const delivery = router.sendToClientDetailed(clientId, message);
+        if (deliveryTrace) {
+          log.debugWithMetadata(
+            { ...deliveryTrace, outcome: delivery.ok ? 'sent' : delivery.reason },
+            'liveQuery.delivery'
+          );
+        }
         if (!delivery.ok && delivery.reason === 'message_too_large') {
           const errorMessage = createEventMessage({
             method: 'liveQuery.error',
@@ -4656,7 +4685,10 @@ export function setupLiveQueryHandlers(
 
     if (snapshotDeliveryFailed) {
       handle.dispose();
-      return { ok: true } satisfies LiveQuerySubscribeResponse;
+      throw new MessageHubHandlerError(
+        'Live query snapshot delivery failed; subscription was not established',
+        ErrorCode.INTERNAL_ERROR
+      );
     }
 
     router?.addClientSubscription(clientId);

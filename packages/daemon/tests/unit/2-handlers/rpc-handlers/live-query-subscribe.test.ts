@@ -787,33 +787,39 @@ describe('setupLiveQueryHandlers', () => {
     expect(setup.hub.onClientDisconnect).toHaveBeenCalledTimes(1);
   });
 
-  test('subscribe: snapshot delivery failure returns ok gracefully', async () => {
+  test('subscribe: snapshot delivery failure rejects instead of leaving a ghost subscription', async () => {
     setup.setSendResult(false);
-    const result = await setup.callHandler('liveQuery.subscribe', {
-      queryName: 'mcpServers.global',
-      params: [],
-      subscriptionId: 'sub-fail',
-    });
-    expect(result).toEqual({ ok: true });
+    await expect(
+      setup.callHandler('liveQuery.subscribe', {
+        queryName: 'mcpServers.global',
+        params: [],
+        subscriptionId: 'sub-fail',
+      })
+    ).rejects.toThrow('snapshot delivery failed');
+    setup.sentMessages.length = 0;
+    reactiveDb.notifyChange('app_mcp_servers');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(setup.sentMessages).toHaveLength(0);
   });
 
-  test('subscribe: null router during snapshot disposes handle and returns ok', async () => {
+  test('subscribe: null router during snapshot rejects and permits a later retry', async () => {
     setup.setRouterEnabled(false);
+    await expect(
+      setup.callHandler('liveQuery.subscribe', {
+        queryName: 'mcpServers.global',
+        params: [],
+        subscriptionId: 'sub-no-router',
+      })
+    ).rejects.toThrow('snapshot delivery failed');
+    expect(setup.sentMessages.length).toBe(0);
+
+    setup.setRouterEnabled(true);
     const result = await setup.callHandler('liveQuery.subscribe', {
       queryName: 'mcpServers.global',
       params: [],
       subscriptionId: 'sub-no-router',
     });
-    expect(setup.sentMessages.length).toBe(0);
     expect(result).toEqual({ ok: true });
-
-    setup.setRouterEnabled(true);
-    const result2 = await setup.callHandler('liveQuery.subscribe', {
-      queryName: 'mcpServers.global',
-      params: [],
-      subscriptionId: 'sub-no-router',
-    });
-    expect(result2).toEqual({ ok: true });
     expect(setup.sentMessages.length).toBe(1);
     expect(setup.sentMessages[0].message.method).toBe('liveQuery.snapshot');
   });
@@ -1031,16 +1037,17 @@ describe('setupLiveQueryHandlers: per-client subscription cap', () => {
     expect(setup.mockRouter.getClientSubscriptionCount('client-1')).toBe(2);
   });
 
-  test('a snapshot-delivery failure aborts without consuming a subscription slot', async () => {
+  test('a snapshot-delivery failure rejects without consuming a subscription slot', async () => {
     setup.setDetailedSendResult({ ok: false, reason: 'send_failed' });
 
-    const result = await setup.callHandler('liveQuery.subscribe', {
-      queryName: 'mcpServers.global',
-      params: [],
-      subscriptionId: 'sub-1',
-    });
+    await expect(
+      setup.callHandler('liveQuery.subscribe', {
+        queryName: 'mcpServers.global',
+        params: [],
+        subscriptionId: 'sub-1',
+      })
+    ).rejects.toThrow('snapshot delivery failed');
 
-    expect(result).toEqual({ ok: true });
     expect(setup.mockRouter.getClientSubscriptionCount('client-1')).toBe(0);
   });
 
