@@ -516,4 +516,116 @@ describe('OAuthRefreshScheduler', () => {
       clearProviderFailureRecords();
     }
   });
+  it('refreshes a pasted credential with no expiry once a credential failure is recorded', async () => {
+    const registry = new ProviderRegistry();
+    registry.register(createProvider(true));
+    const manager = new FakeCredentialManager();
+    manager.credentials.set('oauth-provider', {
+      type: 'oauth',
+      accessToken: 'pasted-token',
+      refreshToken: 'refresh-token',
+    });
+    recordClassifiedProviderFailure('oauth-provider', {
+      errorKind: 'credential',
+      message: 'OAuth access token has been revoked',
+    });
+    const scheduler = new OAuthRefreshScheduler(manager as never, {
+      registry,
+      now: () => 0,
+      refreshWindowMs: 10_000,
+    });
+    try {
+      await scheduler.tick();
+
+      expect(manager.stored).toHaveLength(1);
+      expect(manager.health.get('oauth-provider')).toBe('healthy');
+    } finally {
+      clearProviderFailureRecords();
+    }
+  });
+
+  it('leaves a pasted credential alone while no failure is recorded', async () => {
+    const registry = new ProviderRegistry();
+    registry.register(createProvider(true));
+    const manager = new FakeCredentialManager();
+    manager.credentials.set('oauth-provider', {
+      type: 'oauth',
+      accessToken: 'pasted-token',
+      refreshToken: 'refresh-token',
+    });
+    const scheduler = new OAuthRefreshScheduler(manager as never, {
+      registry,
+      now: () => 0,
+      refreshWindowMs: 10_000,
+    });
+
+    await scheduler.tick();
+
+    expect(manager.stored).toEqual([]);
+  });
+
+  it('does not refresh a pasted credential on a transient failure', async () => {
+    const registry = new ProviderRegistry();
+    registry.register(createProvider(true));
+    const manager = new FakeCredentialManager();
+    manager.credentials.set('oauth-provider', {
+      type: 'oauth',
+      accessToken: 'pasted-token',
+      refreshToken: 'refresh-token',
+    });
+    recordClassifiedProviderFailure('oauth-provider', {
+      errorKind: 'transient',
+      message: 'Endpoint returned HTTP 503',
+    });
+    const scheduler = new OAuthRefreshScheduler(manager as never, {
+      registry,
+      now: () => 0,
+      refreshWindowMs: 10_000,
+    });
+    try {
+      await scheduler.tick();
+
+      expect(manager.stored).toEqual([]);
+    } finally {
+      clearProviderFailureRecords();
+    }
+  });
+
+  it('stops retrying a revoked pasted credential after maxRetries', async () => {
+    const registry = new ProviderRegistry();
+    registry.register(createProvider(false));
+    const manager = new FakeCredentialManager();
+    manager.credentials.set('oauth-provider', {
+      type: 'oauth',
+      accessToken: 'pasted-token',
+      refreshToken: 'refresh-token',
+    });
+    recordClassifiedProviderFailure('oauth-provider', {
+      errorKind: 'credential',
+      message: 'OAuth access token has been revoked',
+    });
+    let attempts = 0;
+    const provider = registry.getAll()[0];
+    provider.refreshToken = async () => {
+      attempts++;
+      return false;
+    };
+    const scheduler = new OAuthRefreshScheduler(manager as never, {
+      registry,
+      now: () => 0,
+      refreshWindowMs: 10_000,
+      maxRetries: 2,
+    });
+    try {
+      await scheduler.tick();
+      await scheduler.tick();
+      await scheduler.tick();
+      await scheduler.tick();
+
+      expect(attempts).toBe(2);
+      expect(manager.health.get('oauth-provider')).toBe('unhealthy');
+    } finally {
+      clearProviderFailureRecords();
+    }
+  });
 });
