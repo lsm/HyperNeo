@@ -282,6 +282,33 @@ describe('session kind MCP server attachment', () => {
       ]);
       (servers['db-query'] as unknown as { close(): void }).close();
     });
+
+    test('releases the db-query handle when a sub-session is detached, not only on task cleanup', () => {
+      const manager = Object.create(TaskAgentManager.prototype, {
+        config: { value: { memoryRepo: new AgentMemoryRepository(db), dbPath } },
+        subSessions: { value: new Map() },
+        completionCallbacks: { value: new Map() },
+        sessionListeners: { value: new Map() },
+      }) as TaskAgentManager;
+      const sessionId = sessionIdForKind('workflow_worker');
+
+      const servers = manager.buildAgentMemoryMcpServers(SESSION_KIND_SPACE_ID, sessionId);
+      const opened = servers['db-query'] as unknown as { close(): void };
+      let closed = false;
+      opened.close = () => {
+        closed = true;
+      };
+
+      (
+        manager as unknown as { detachSessionBookkeeping(id: string): void }
+      ).detachSessionBookkeeping(sessionId);
+
+      expect(closed).toBe(true);
+      expect(
+        (manager as unknown as { workflowDbQueryServers?: Map<string, unknown> })
+          .workflowDbQueryServers?.size ?? 0
+      ).toBe(0);
+    });
   });
 
   describe('QueryOptionsBuilder.getEffectiveMcpServers', () => {

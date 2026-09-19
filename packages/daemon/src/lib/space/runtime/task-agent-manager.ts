@@ -1406,6 +1406,7 @@ export class TaskAgentManager {
           if (outcome === 'superseded') {
             this.subSessions.get(taskId)?.delete(sessionId);
             this.agentSessionIndex.delete(sessionId);
+            this.releaseWorkflowDbQueryServer(sessionId);
             this.cancelBySessionId(sessionId);
             try {
               this.config.db
@@ -2324,6 +2325,7 @@ export class TaskAgentManager {
     } catch (err) {
       this.subSessions.get(taskId)?.delete(sessionId);
       this.agentSessionIndex.delete(sessionId);
+      this.releaseWorkflowDbQueryServer(sessionId);
       if (createdNow) {
         await this.config.sessionManager.unregisterSession(sessionId).catch(() => {});
       }
@@ -2821,6 +2823,7 @@ export class TaskAgentManager {
       );
     }
     this.agentSessionIndex.delete(sessionId);
+    this.releaseWorkflowDbQueryServer(sessionId);
     for (const [, nodeMap] of this.subSessions) {
       nodeMap.delete(sessionId);
     }
@@ -2908,6 +2911,7 @@ export class TaskAgentManager {
           this.config.sessionManager?.getCachedSession(sessionId) ??
           null;
         this.agentSessionIndex.delete(sessionId);
+        this.releaseWorkflowDbQueryServer(sessionId);
         return session;
       },
       stopSessionStrict: (sessionId, session) =>
@@ -2948,6 +2952,7 @@ export class TaskAgentManager {
   }
 
   private detachSessionBookkeeping(sessionId: string): void {
+    this.releaseWorkflowDbQueryServer(sessionId);
     for (const [, nodeMap] of this.subSessions) nodeMap.delete(sessionId);
     this.completionCallbacks.delete(sessionId);
     const unsub = this.sessionListeners.get(sessionId);
