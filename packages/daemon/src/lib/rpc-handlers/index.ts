@@ -11,6 +11,9 @@ import { isCoderOwnedMergeWorkflow } from '../workflows/post-approval-router.ts'
 import { createGithubConnector } from '../github/connectors/github-connector.ts';
 import { setupOperationHandlers } from './operation-handlers.ts';
 import { createSpaceCallerScopeResolver } from '../space/runtime/space-caller-scope.ts';
+import { createSpaceScopeResolver } from '../space/runtime/space-scope-resolver.ts';
+import { createDatabaseDirectTaskWorkerResolver } from '../tasks/direct-task-worker-identity.ts';
+import { DirectTaskExecutionRepository } from '../../storage/repositories/direct-task-execution-repository.ts';
 import type { MessageHub } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type { SpaceGoalOutcomeNotification } from '@hyperneo/shared';
@@ -1421,6 +1424,21 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   deps.sessionManager.setCallerScopeResolver(
     createSpaceCallerScopeResolver({
       getSession: (sessionId) => deps.db.getSession(sessionId),
+      taskRepo: spaceTaskRepo,
+      nodeExecutionRepo,
+      longHorizonAgentRepo,
+    })
+  );
+
+  const directTaskExecutionRepo = new DirectTaskExecutionRepository(deps.db.getDatabase());
+  const directTaskWorkerResolver = createDatabaseDirectTaskWorkerResolver(deps.db.getDatabase());
+  deps.sessionManager.setSpaceScopeResolver(
+    createSpaceScopeResolver({
+      getSession: (sessionId) => deps.db.getSession(sessionId),
+      getSpace: (spaceId) => spaceRepo.getSpace(spaceId),
+      hasDirectWorkerProvenance: (sessionId) =>
+        directTaskExecutionRepo.hasSessionProvenance(sessionId),
+      resolveDirectWorker: directTaskWorkerResolver,
       taskRepo: spaceTaskRepo,
       nodeExecutionRepo,
       longHorizonAgentRepo,

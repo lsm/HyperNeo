@@ -37,7 +37,6 @@ import {
   LONG_HORIZON_AGENT_BUILTIN_TOOLS,
   LONG_HORIZON_SCHEDULING_GUARDRAIL,
 } from '../../../../src/lib/agents/long-horizon-tools.ts';
-import { operationsCapabilityContribution } from '../../../../src/lib/operations/door-briefing.ts';
 import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session.ts';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { SpaceManager as SpaceMgr } from '../../../../src/lib/space/managers/space-manager.ts';
@@ -76,11 +75,6 @@ import { seedUnifiedAgentMirror } from '../../helpers/seed-unified-agent';
 import { seedLongHorizonAgent } from '../../helpers/seed-long-horizon-agent';
 
 const NOW = Date.now();
-
-const OPERATIONS_CONTRIBUTION = operationsCapabilityContribution({
-  type: 'sdk',
-  instance: {},
-} as never);
 
 const mockSpace: Space = {
   id: 'space-1',
@@ -886,8 +880,6 @@ describe('SpaceRuntimeService', () => {
         mergeRuntimeMcpServers: mock(() => {}),
         setOperationRegistryProvider: mock(() => {}),
         setRuntimeSystemPrompt: mock(() => {}),
-        getOperationsCapabilityContribution: mock(() => OPERATIONS_CONTRIBUTION),
-        setSpaceBriefing: mock(() => {}),
         updateConfig: mock(async () => {}),
         resetQuery: mock(async () => ({ success: true })),
         restart: mock(async () => {}),
@@ -2248,8 +2240,6 @@ describe('SpaceRuntimeService', () => {
         mergeRuntimeMcpServers: mock(() => {}),
         setOperationRegistryProvider: mock(() => {}),
         setRuntimeSystemPrompt: mock(() => {}),
-        getOperationsCapabilityContribution: mock(() => OPERATIONS_CONTRIBUTION),
-        setSpaceBriefing: mock(() => {}),
         updateConfig: mock(async () => {}),
         resetQuery: mock(async () => ({ success: true })),
         getSessionData: mock(() => ({ id: sessionId, metadata: {}, config: {} }) as Session),
@@ -2492,7 +2482,7 @@ describe('SpaceRuntimeService', () => {
   });
 
   describe('ensureAgentSession()', () => {
-    test('a freshly created agent session carries its role prompt and its Space briefing', async () => {
+    test('a freshly created agent session carries its role prompt', async () => {
       const sessionId = longTermAgentSessionId(mockSpace.id, 'agent-1');
       const sessionData = {
         id: sessionId,
@@ -2508,8 +2498,6 @@ describe('SpaceRuntimeService', () => {
       } as unknown as Session;
       const agentSession = {
         mergeRuntimeMcpServers: mock(() => {}),
-        getOperationsCapabilityContribution: mock(() => OPERATIONS_CONTRIBUTION),
-        setSpaceBriefing: mock(() => {}),
         updateConfig: mock(async (updates: Partial<Session['config']>) => {
           sessionData.config = { ...sessionData.config, ...updates };
         }),
@@ -2552,13 +2540,6 @@ describe('SpaceRuntimeService', () => {
       expect(ensured).not.toBeNull();
       const systemPrompt = sessionData.config.systemPrompt as { append?: string };
       expect(systemPrompt.append).toContain('Triage and track Space tasks.');
-      const setBriefing = agentSession.setSpaceBriefing as Mock<
-        (briefing: string | undefined) => void
-      >;
-      const [briefing] = setBriefing.mock.calls[0];
-      expect(briefing).toContain('Test Space');
-      expect(briefing).toContain('the Space agent "Task Manager"');
-      expect(briefing).toContain('mcp__hyperneo-operations__invoke');
     });
   });
 
@@ -2575,8 +2556,6 @@ describe('SpaceRuntimeService', () => {
         setRuntimeMcpServers: mock(() => {}),
         setOperationRegistryProvider: mock(() => {}),
         setRuntimeSystemPrompt: mock(() => {}),
-        getOperationsCapabilityContribution: mock(() => OPERATIONS_CONTRIBUTION),
-        setSpaceBriefing: mock(() => {}),
         updateConfig: mock(async (updates: Partial<Session['config']>) => {
           sessionData.config = { ...sessionData.config, ...updates };
         }),
@@ -3195,33 +3174,7 @@ describe('SpaceRuntimeService', () => {
       await svc.stop();
     });
 
-    test('briefs an ad-hoc member session on its Space, its role, and the operations door', async () => {
-      const agent = makeMemberAgentSession();
-      const sessionManager = makeSessionManager(agent);
-      const svc = new SpaceRuntimeService(
-        buildMemberConfig({
-          sessionManager,
-          spaceManager: createMockSpaceManager({
-            ...mockSpace,
-            instructions: 'Ship small slices.',
-          }),
-        })
-      );
-
-      await svc.attachSpaceToolsToMemberSession(makeMemberSession());
-
-      const setBriefing = agent.setSpaceBriefing as Mock<(briefing: string | undefined) => void>;
-      expect(setBriefing).toHaveBeenCalledTimes(1);
-      const [briefing] = setBriefing.mock.calls[0];
-      expect(briefing).toContain('Test Space');
-      expect(briefing).toContain(mockSpace.id);
-      expect(briefing).toContain('ad-hoc member session');
-      expect(briefing).toContain('mcp__hyperneo-operations__invoke');
-      expect(briefing).toContain('operations.list');
-      expect(briefing).toContain('Ship small slices.');
-    });
-
-    test('briefs a long-term agent session with its own agent name', async () => {
+    test('leaves a long-term agent session that already carries a role prompt untouched', async () => {
       const sessionId = longTermAgentSessionId(mockSpace.id, 'agent-1');
       const agent = makeMemberAgentSession({
         id: sessionId,
@@ -3246,11 +3199,7 @@ describe('SpaceRuntimeService', () => {
         }
       ).attachLongTermAgentMcpServersForSession(agent.getSessionData());
 
-      const setBriefing = agent.setSpaceBriefing as Mock<(briefing: string | undefined) => void>;
-      const [briefing] = setBriefing.mock.calls[0];
-      expect(briefing).toContain('Test Space');
-      expect(briefing).toContain('the Space agent "Task Manager"');
-      expect(briefing).toContain('mcp__hyperneo-operations__invoke');
+      expect(agent.getSessionData().config.systemPrompt).toBe('Existing role text');
       expect(agent.updateConfig).not.toHaveBeenCalled();
     });
 
@@ -3471,8 +3420,6 @@ describe('SpaceRuntimeService', () => {
         setRuntimeMcpServers: mock(() => {}),
         setOperationRegistryProvider: mock(() => {}),
         setRuntimeSystemPrompt: mock(() => {}),
-        getOperationsCapabilityContribution: mock(() => OPERATIONS_CONTRIBUTION),
-        setSpaceBriefing: mock(() => {}),
       } as unknown as AgentSession;
     }
 
@@ -3758,8 +3705,6 @@ describe('SpaceRuntimeService', () => {
         mergeRuntimeMcpServers: mock(() => {}),
         setOperationRegistryProvider: mock(() => {}),
         setRuntimeSystemPrompt: mock(() => {}),
-        getOperationsCapabilityContribution: mock(() => OPERATIONS_CONTRIBUTION),
-        setSpaceBriefing: mock(() => {}),
       } as unknown as AgentSession;
     }
 
@@ -3770,8 +3715,6 @@ describe('SpaceRuntimeService', () => {
         setRuntimeMcpServers: mock(() => {}),
         setOperationRegistryProvider: mock(() => {}),
         setRuntimeSystemPrompt: mock(() => {}),
-        getOperationsCapabilityContribution: mock(() => OPERATIONS_CONTRIBUTION),
-        setSpaceBriefing: mock(() => {}),
       } as unknown as AgentSession;
     }
 

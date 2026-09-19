@@ -21,17 +21,22 @@ import {
   SpaceRuntimeService,
   type SpaceRuntimeServiceConfig,
 } from '../../../../src/lib/space/runtime/space-runtime-service.ts';
-import { buildSpaceSessionBriefing } from '../../../../src/lib/space/runtime/space-session-briefing.ts';
+import { assembleSessionBriefing } from '../../../../src/lib/briefings/assemble-session-briefing.ts';
+import type { ScopeContribution } from '../../../../src/lib/briefings/contribution.ts';
+import { spaceScopeContribution } from '../../../../src/lib/space/runtime/space-scope-contribution.ts';
+import { createSpaceScopeResolver } from '../../../../src/lib/space/runtime/space-scope-resolver.ts';
 import { AgentMemoryRepository } from '../../../../src/storage/repositories/agent-memory-repository.ts';
 import { DirectTaskExecutionRepository } from '../../../../src/storage/repositories/direct-task-execution-repository.ts';
 import type { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import type { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import type { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
+import { createTestDb, createTestInternalEventBus } from '../../../helpers/database.ts';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import {
   makeSessionKindLongHorizonAgent,
   makeSessionKindNodeExecution,
+  makeSessionKindPolicyContext,
   makeSessionKindTask,
   makeSessionOfKind,
   SESSION_KIND_AGENT_ID,
@@ -91,6 +96,14 @@ const TEXT_MARKERS: ReadonlyArray<readonly [string, string]> = [
     'ad-hoc-role',
     'You are an ad-hoc member session: this Space has not assigned you an agent role.',
   ],
+  [
+    'workflow-worker-role',
+    'Your role in it is a worker session running one node of a Space workflow for an assigned task.',
+  ],
+  [
+    'direct-task-worker-role',
+    'Your role in it is a worker session running one assigned Space task directly, outside any workflow.',
+  ],
   ['operations-door-tool', 'mcp__hyperneo-operations__invoke'],
   ['operations-discovery', 'List the operations before concluding that a capability is missing'],
   ['space-standing-instructions', SPACE_INSTRUCTIONS],
@@ -143,30 +156,34 @@ function workerAgent() {
   });
 }
 
-interface RecordedSession {
-  readonly agentSession: AgentSession;
-  readonly briefings: Array<string | undefined>;
-}
-
-function makeRecordingAgentSession(session: Session): RecordedSession {
-  const briefings: Array<string | undefined> = [];
-  const agentSession = {
+function makeRecordingAgentSession(session: Session): AgentSession {
+  return {
     mergeRuntimeMcpServers: () => {},
     setRuntimeMcpServers: () => {},
     setOperationRegistryProvider: () => {},
     ensureOperationRegistryProvider: () => {},
     setCallerScopeResolver: () => {},
+    setSpaceScopeResolver: () => {},
     setRuntimeSystemPrompt: () => {},
-    getOperationsCapabilityContribution: () => OPERATIONS_CONTRIBUTION,
-    setSpaceBriefing: (briefing: string | undefined) => {
-      briefings.push(briefing);
-    },
     updateConfig: async (updates: Partial<Session['config']>) => {
       session.config = { ...session.config, ...updates };
     },
     getSessionData: () => session,
   } as unknown as AgentSession;
-  return { agentSession, briefings };
+}
+
+function scopeFor(kind: SessionKind, session: Session): ScopeContribution | undefined {
+  return createSpaceScopeResolver({
+    ...makeSessionKindPolicyContext(kind),
+    getSession: (id) => (id === session.id ? session : null),
+    getSpace: (id) => (id === SPACE.id ? SPACE : null),
+  })(session.id);
+}
+
+function briefingFor(kind: SessionKind, session: Session): string | undefined {
+  const scope = scopeFor(kind, session);
+  if (!scope) return undefined;
+  return assembleSessionBriefing({ scope: [scope], capabilities: [OPERATIONS_CONTRIBUTION] }).text;
 }
 
 function seedCreationConfig(kind: SessionKind, session: Session): void {
@@ -271,10 +288,9 @@ describe('session kind injected text', () => {
   ): Promise<{ session: Session; briefing: string | undefined }> {
     const session = makeSessionOfKind(kind);
     seedCreationConfig(kind, session);
-    const recorded = makeRecordingAgentSession(session);
-    const service = buildService(kind, recorded.agentSession);
+    const service = buildService(kind, makeRecordingAgentSession(session));
     await service.reattachMemberSpaceTools(session.id);
-    return { session, briefing: recorded.briefings.at(-1) };
+    return { session, briefing: briefingFor(kind, session) };
   }
 
   function makeBuilderContext(
@@ -291,16 +307,20 @@ describe('session kind injected text', () => {
     };
   }
 
-  describe('buildSpaceSessionBriefing', () => {
+  describe('spaceScopeContribution', () => {
     test('assembles the Space scope and the operations door as two contributions for a Space agent', () => {
-      const briefing = buildSpaceSessionBriefing({
-        spaceId: SPACE.id,
-        spaceName: SPACE.name,
-        role: 'long_term_agent',
-        agentDisplayName: 'Card Agent',
-        spaceInstructions: SPACE.instructions,
-        operations: OPERATIONS_CONTRIBUTION,
-      });
+      const briefing = assembleSessionBriefing({
+        scope: [
+          spaceScopeContribution({
+            spaceId: SPACE.id,
+            spaceName: SPACE.name,
+            role: 'long_term_agent',
+            agentDisplayName: 'Card Agent',
+            spaceInstructions: SPACE.instructions,
+          }),
+        ],
+        capabilities: [OPERATIONS_CONTRIBUTION],
+      }).text;
 
       expect(briefing).toBe(
         [
@@ -326,13 +346,17 @@ describe('session kind injected text', () => {
     });
 
     test('tells an ad-hoc member it has no agent role, and drops the standing instructions when the Space has none', () => {
-      const briefing = buildSpaceSessionBriefing({
-        spaceId: SPACE.id,
-        spaceName: SPACE.name,
-        role: 'ad_hoc_member',
-        spaceInstructions: '',
-        operations: OPERATIONS_CONTRIBUTION,
-      });
+      const briefing = assembleSessionBriefing({
+        scope: [
+          spaceScopeContribution({
+            spaceId: SPACE.id,
+            spaceName: SPACE.name,
+            role: 'ad_hoc_member',
+            spaceInstructions: '',
+          }),
+        ],
+        capabilities: [OPERATIONS_CONTRIBUTION],
+      }).text;
 
       expect(briefing.startsWith('## Your Space\n\n')).toBe(true);
       expect(briefing).toContain(
@@ -347,14 +371,18 @@ describe('session kind injected text', () => {
     });
 
     test('puts the whole Space scope ahead of the operations door, which now trails as a capability', () => {
-      const briefing = buildSpaceSessionBriefing({
-        spaceId: SPACE.id,
-        spaceName: SPACE.name,
-        role: 'long_term_agent',
-        agentDisplayName: 'Card Agent',
-        spaceInstructions: SPACE.instructions,
-        operations: OPERATIONS_CONTRIBUTION,
-      });
+      const briefing = assembleSessionBriefing({
+        scope: [
+          spaceScopeContribution({
+            spaceId: SPACE.id,
+            spaceName: SPACE.name,
+            role: 'long_term_agent',
+            agentDisplayName: 'Card Agent',
+            spaceInstructions: SPACE.instructions,
+          }),
+        ],
+        capabilities: [OPERATIONS_CONTRIBUTION],
+      }).text;
 
       expect(briefing.indexOf('## Your Space')).toBeLessThan(
         briefing.indexOf('### Space Standing Instructions')
@@ -366,35 +394,39 @@ describe('session kind injected text', () => {
     });
 
     test('carries the operations door as the authored briefing of the attached server', () => {
-      const briefing = buildSpaceSessionBriefing({
-        spaceId: SPACE.id,
-        spaceName: SPACE.name,
-        role: 'ad_hoc_member',
-        spaceInstructions: '',
-        operations: OPERATIONS_CONTRIBUTION,
-      });
+      const briefing = assembleSessionBriefing({
+        scope: [
+          spaceScopeContribution({
+            spaceId: SPACE.id,
+            spaceName: SPACE.name,
+            role: 'ad_hoc_member',
+            spaceInstructions: '',
+          }),
+        ],
+        capabilities: [OPERATIONS_CONTRIBUTION],
+      }).text;
 
       expect(OPERATIONS_CONTRIBUTION.server.name).toBe('hyperneo-operations');
       expect(briefing).toContain(OPERATIONS_CONTRIBUTION.briefing.trim());
     });
   });
 
-  describe('Space runtime briefing installation', () => {
-    test('installs a Space briefing on the agent-card and ad-hoc member kinds and on nobody else', async () => {
-      const installed: Array<{ kind: SessionKind; briefing: string; says: string[] }> = [];
+  describe('Space scope reaching each session kind', () => {
+    test('resolves a Space scope for every session kind that carries a Space, and for nobody else', async () => {
+      const resolved: Array<{ kind: SessionKind; scope: string; says: string[] }> = [];
       for (const kind of SESSION_KINDS) {
         const { briefing } = await provision(kind);
-        installed.push({
+        resolved.push({
           kind,
-          briefing: briefing === undefined ? 'none' : 'installed',
+          scope: briefing === undefined ? 'none' : 'resolved',
           says: briefing === undefined ? [] : markersIn(briefing),
         });
       }
 
-      expect(installed).toEqual([
+      expect(resolved).toEqual([
         {
           kind: 'agent_card',
-          briefing: 'installed',
+          scope: 'resolved',
           says: [
             'space-identity',
             'card-agent-role',
@@ -403,10 +435,9 @@ describe('session kind injected text', () => {
             'space-standing-instructions',
           ],
         },
-        { kind: 'space_chat', briefing: 'none', says: [] },
         {
-          kind: 'ad_hoc_member',
-          briefing: 'installed',
+          kind: 'space_chat',
+          scope: 'resolved',
           says: [
             'space-identity',
             'ad-hoc-role',
@@ -415,29 +446,64 @@ describe('session kind injected text', () => {
             'space-standing-instructions',
           ],
         },
-        { kind: 'workflow_worker', briefing: 'none', says: [] },
-        { kind: 'direct_task_worker', briefing: 'none', says: [] },
-        { kind: 'non_space', briefing: 'none', says: [] },
+        {
+          kind: 'ad_hoc_member',
+          scope: 'resolved',
+          says: [
+            'space-identity',
+            'ad-hoc-role',
+            'operations-door-tool',
+            'operations-discovery',
+            'space-standing-instructions',
+          ],
+        },
+        {
+          kind: 'workflow_worker',
+          scope: 'resolved',
+          says: [
+            'space-identity',
+            'workflow-worker-role',
+            'operations-door-tool',
+            'operations-discovery',
+            'space-standing-instructions',
+          ],
+        },
+        {
+          kind: 'direct_task_worker',
+          scope: 'resolved',
+          says: [
+            'space-identity',
+            'direct-task-worker-role',
+            'operations-door-tool',
+            'operations-discovery',
+            'space-standing-instructions',
+          ],
+        },
+        { kind: 'non_space', scope: 'none', says: [] },
       ]);
     });
 
-    test('provisions the Space chat session without ever naming its Space (#4795)', async () => {
+    test('names the Space for a Space chat session, which the query builder still discards (#4795)', async () => {
       const session = makeSessionOfKind('space_chat');
-      const recorded = makeRecordingAgentSession(session);
-      const service = buildService('space_chat', recorded.agentSession);
+      const service = buildService('space_chat', makeRecordingAgentSession(session));
 
       await service.setupSpaceAgentSession(SPACE, { replayPendingMessages: false });
+      const briefing = briefingFor('space_chat', session);
+      const options = await new QueryOptionsBuilder(makeBuilderContext(session, briefing)).build();
 
-      expect(recorded.briefings).toEqual([]);
-      expect(session.config.systemPrompt).toBeUndefined();
+      expect(briefing).toContain(`the Space "${SPACE_NAME}" (id: ${SESSION_KIND_SPACE_ID})`);
+      expect(options.systemPrompt).toBeUndefined();
     });
 
-    test('tells a direct task worker nothing although its session carries the Space id (#4807)', async () => {
+    test('tells a direct task worker which Space its session carries (#4807)', async () => {
       const { session, briefing } = await provision('direct_task_worker');
 
       expect(session.context?.spaceId).toBe(SESSION_KIND_SPACE_ID);
-      expect(briefing).toBeUndefined();
-      expect(session.config.systemPrompt).toBeUndefined();
+      expect(briefing).toContain(`the Space "${SPACE_NAME}" (id: ${SESSION_KIND_SPACE_ID})`);
+      expect(briefing).toContain(
+        'Your role in it is a worker session running one assigned Space task directly, outside any workflow.'
+      );
+      expect(briefing).toContain('mcp__hyperneo-operations__invoke');
     });
 
     test('writes the agent-card role prompt into the session config alongside the briefing', async () => {
@@ -447,6 +513,36 @@ describe('session kind injected text', () => {
         shape: 'claude-code-preset+append',
         says: ['card-agent-instructions', 'owner-review-contract', 'scheduling-guardrail'],
       });
+    });
+  });
+
+  describe('AgentSession.getSpaceBriefing', () => {
+    test('assembles the resolved scope with the operations door, and stays silent without one', async () => {
+      const wrapped = await createTestDb();
+      const session = makeSessionOfKind('direct_task_worker');
+      const agentSession = new AgentSession(
+        session,
+        wrapped,
+        {} as never,
+        await createTestInternalEventBus(),
+        async () => null
+      );
+
+      const beforeResolver = agentSession.getSpaceBriefing();
+      agentSession.setSpaceScopeResolver((sessionId) =>
+        sessionId === session.id ? scopeFor('direct_task_worker', session) : undefined
+      );
+      const afterResolver = agentSession.getSpaceBriefing();
+      await agentSession.cleanup();
+
+      expect(beforeResolver).toBeUndefined();
+      expect(markersIn(afterResolver ?? '')).toEqual([
+        'space-identity',
+        'direct-task-worker-role',
+        'operations-door-tool',
+        'operations-discovery',
+        'space-standing-instructions',
+      ]);
     });
   });
 
@@ -494,9 +590,26 @@ describe('session kind injected text', () => {
         {
           kind: 'workflow_worker',
           shape: 'claude-code-preset+append',
-          says: ['worker-agent-instructions'],
+          says: [
+            'space-identity',
+            'workflow-worker-role',
+            'operations-door-tool',
+            'operations-discovery',
+            'space-standing-instructions',
+            'worker-agent-instructions',
+          ],
         },
-        { kind: 'direct_task_worker', shape: 'claude-code-preset', says: [] },
+        {
+          kind: 'direct_task_worker',
+          shape: 'claude-code-preset+append',
+          says: [
+            'space-identity',
+            'direct-task-worker-role',
+            'operations-door-tool',
+            'operations-discovery',
+            'space-standing-instructions',
+          ],
+        },
         { kind: 'non_space', shape: 'claude-code-preset', says: [] },
       ]);
     });
@@ -520,7 +633,7 @@ describe('session kind injected text', () => {
         { kind: 'space_chat', recorded: 'none' },
         { kind: 'ad_hoc_member', recorded: false },
         { kind: 'workflow_worker', recorded: false },
-        { kind: 'direct_task_worker', recorded: true },
+        { kind: 'direct_task_worker', recorded: false },
         { kind: 'non_space', recorded: true },
       ]);
     });
@@ -538,13 +651,17 @@ describe('session kind injected text', () => {
     });
 
     test('drops a Space briefing that is installed on a Space chat session, and keeps the same one on a worker session', async () => {
-      const briefing = buildSpaceSessionBriefing({
-        spaceId: SPACE.id,
-        spaceName: SPACE.name,
-        role: 'ad_hoc_member',
-        spaceInstructions: SPACE.instructions,
-        operations: OPERATIONS_CONTRIBUTION,
-      });
+      const briefing = assembleSessionBriefing({
+        scope: [
+          spaceScopeContribution({
+            spaceId: SPACE.id,
+            spaceName: SPACE.name,
+            role: 'ad_hoc_member',
+            spaceInstructions: SPACE.instructions,
+          }),
+        ],
+        capabilities: [OPERATIONS_CONTRIBUTION],
+      }).text;
 
       const chat = await new QueryOptionsBuilder(
         makeBuilderContext(makeSessionOfKind('space_chat'), briefing)
