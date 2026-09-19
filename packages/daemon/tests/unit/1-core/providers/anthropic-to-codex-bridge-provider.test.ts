@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import { vi } from 'vitest';
+import { fallbackModelsFor } from '../../../../src/lib/model-service';
 import * as fs from 'fs/promises';
 import {
   mkdirSync,
@@ -1138,6 +1139,36 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(body['store']).toBe(false);
       expect(body['stream']).toBe(true);
     });
+
+    it.each(['oauth', 'api_key'] as const)(
+      'retains %s context limits when discovery fails',
+      async (authType) => {
+        const authDir = path.join(tmpDir, 'fallback-auth');
+        writeHyperNeoAuth(authDir, {
+          type: 'oauth',
+          access: 'fallback-token',
+          accountId: 'fallback-account',
+          expires: Date.now() + 3600_000,
+        });
+        const fetchImpl = mock(async () => {
+          throw new Error('ECONNREFUSED');
+        }) as unknown as typeof fetch;
+        provider = makeProvider(
+          authType === 'api_key' ? { OPENAI_API_KEY: 'sk-fallback' } : {},
+          authDir,
+          path.join(tmpDir, 'codex'),
+          fetchImpl
+        );
+        await expect(provider.getModels()).rejects.toThrow('ECONNREFUSED');
+        const models = fallbackModelsFor(provider);
+        expect(models.find((model) => model.id === 'gpt-5.5')?.contextWindow).toBe(
+          authType === 'oauth' ? 272_000 : 1_050_000
+        );
+        expect(models.find((model) => model.id === 'gpt-5.4-mini')?.contextWindow).toBe(
+          authType === 'oauth' ? 128_000 : 400_000
+        );
+      }
+    );
 
     it('throws when OpenAI rejects the API key (401)', async () => {
       const fetchImpl = mock(
