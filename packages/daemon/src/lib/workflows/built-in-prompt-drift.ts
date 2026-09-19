@@ -1,5 +1,6 @@
 import {
   CALL_ACTION_PREFERENCE_GUIDANCE,
+  CALL_ACTION_PREFERENCE_GUIDANCE_PRE_OPERATION_NAMES,
   CODER_ONLY_PROMPT,
   CODER_OWNED_MERGE_PROMPT,
   CODER_OWNED_PR_SUBSCRIBE_GUIDANCE,
@@ -231,6 +232,13 @@ const SHAPE_PR_EVERY_CYCLE =
   'Use save_artifact every cycle to record the PR as a `link` so post-approval dispatch can resolve it.\n\n';
 const RETIRED_TYPE_RESULT_EVERY_CYCLE =
   'Use save_artifact every cycle. Nest pr_url inside artifact data for post-approval dispatch.\n\n';
+const CURRENT_REVIEW_ONLY_TERMINAL_ACTIONS =
+  'invoke(name="artifact.save", input={ shape: "link", kind: "pr", data: { url: "<url>" } }) ' +
+  'to record the PR, then invoke(name="task.resolvePendingCompletion", input={ taskId: "<task id>", approved: true }) ' +
+  'or invoke(name="task.submitForReview", input={ taskId: "<task id>" }) only on APPROVE';
+const RETIRED_TYPED_TOOL_REVIEW_ONLY_TERMINAL_ACTIONS =
+  'save_artifact({ shape: "link", kind: "pr", data: { url: "<url>" } }) to record the PR, ' +
+  'then approve_task() or submit_for_approval only on APPROVE';
 const SHAPE_PR_LINK_REVIEW_ONLY =
   'save_artifact({ shape: "link", kind: "pr", data: { url: "<url>" } }) to record the PR';
 const RETIRED_TYPE_RESULT_PR_LINK_REVIEW_ONLY =
@@ -284,6 +292,8 @@ const BUILT_IN_PROMPT_PATCH_VARIANTS = [
   [[CURRENT_FULLSTACK_CODING_PR_STEP_PROMPT, RETIRED_NOARG_FULLSTACK_CODING_PR_STEP_PROMPT]],
   [[CURRENT_RESEARCH_PR_STEP_PROMPT, RETIRED_NOARG_RESEARCH_PR_STEP_PROMPT]],
   [[CODER_OWNED_PR_SUBSCRIBE_GUIDANCE, '']],
+  [[CALL_ACTION_PREFERENCE_GUIDANCE, CALL_ACTION_PREFERENCE_GUIDANCE_PRE_OPERATION_NAMES]],
+  [[CURRENT_REVIEW_ONLY_TERMINAL_ACTIONS, RETIRED_TYPED_TOOL_REVIEW_ONLY_TERMINAL_ACTIONS]],
   [[CALL_ACTION_PREFERENCE_GUIDANCE, '']],
   [[`\n${CALL_ACTION_PREFERENCE_GUIDANCE}`, '']],
   [[REVIEWER_ZERO_FINDINGS_GATE, '']],

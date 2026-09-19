@@ -237,10 +237,10 @@ describe('Review-Only end-node prompt loses verification boilerplate', () => {
     expect(prompt).not.toContain('before accepting completion');
   });
 
-  test('REVIEW_ONLY_WORKFLOW prompt still requires a visible review before approve_task', () => {
+  test('REVIEW_ONLY_WORKFLOW prompt still requires a visible review before approval', () => {
     const prompt = endNodePrompt(REVIEW_ONLY_WORKFLOW);
     expect(prompt).toContain('post a visible GitHub review');
-    expect(prompt).toContain('save_artifact');
-    expect(prompt).toContain('approve_task()');
+    expect(prompt).toContain('invoke(name="artifact.save"');
+    expect(prompt).toContain('invoke(name="task.resolvePendingCompletion"');
   });
 });

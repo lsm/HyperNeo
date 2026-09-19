@@ -74,8 +74,8 @@ describe('routeTaskUpdate reject reasons', () => {
       action: 'reject',
       reason: 'review_direct',
       message:
-        `update_task cannot transition a task into 'review' directly. ` +
-        `Use submit_for_approval so the pending-completion fields get stamped ` +
+        `task.update cannot transition a task into 'review' directly. ` +
+        `Use task.submitForReview so the pending-completion fields get stamped ` +
         `and the approval banner renders.`,
     });
   });
@@ -94,8 +94,8 @@ describe('routeTaskUpdate reject reasons', () => {
       action: 'reject',
       reason: 'approved_direct',
       message:
-        `update_task cannot transition a task into 'approved' directly. ` +
-        `Use approve_pending_completion after submit_for_approval, or let the ` +
+        `task.update cannot transition a task into 'approved' directly. ` +
+        `Use task.resolvePendingCompletion after task.submitForReview, or let the ` +
         `runtime's post-approval router handle the transition — both stamp ` +
         `the approval metadata and dispatch the configured post-approval step.`,
     });
@@ -117,7 +117,7 @@ describe('routeTaskUpdate reject reasons', () => {
         action: 'reject',
         reason: 'limited_direct',
         message:
-          `update_task cannot transition a task into '${requestedStatus}' directly. ` +
+          `task.update cannot transition a task into '${requestedStatus}' directly. ` +
           `rate_limited and usage_limited are runtime-owned: the rate-limit pause ` +
           `path sets them with a restrictions payload and the resume path clears ` +
           `them automatically.`,
@@ -134,10 +134,10 @@ describe('routeTaskUpdate reject reasons', () => {
       action: 'reject',
       reason: 'review_to_done',
       message:
-        `update_task cannot transition a task from 'review' to 'done' directly. ` +
-        `Use approve_task (subject to the workflow's completion autonomy level) ` +
-        `or submit_for_approval so a human can approve via the UI — both stamp ` +
-        `the approval metadata and dispatch the configured post-approval step.`,
+        `task.update cannot transition a task from 'review' to 'done' directly. ` +
+        `Use task.resolvePendingCompletion (subject to the workflow's completion ` +
+        `autonomy level) or task.submitForReview so a human can approve via the UI — ` +
+        `both stamp the approval metadata and dispatch the configured post-approval step.`,
     });
   });
 
@@ -918,7 +918,7 @@ describe('routeApproveTask', () => {
       spaceLevel: 5,
       required: 5,
       message:
-        'approve_task not permitted: agent autonomy ceiling 1 (space 5) < workflow completionAutonomyLevel 5. Use submit_for_approval to request human review.',
+        'task.resolvePendingCompletion not permitted: agent autonomy ceiling 1 (space 5) < workflow completionAutonomyLevel 5. Use task.submitForReview to request human review.',
     });
   });
 
@@ -929,7 +929,7 @@ describe('routeApproveTask', () => {
       spaceLevel: 3,
       required: 5,
       message:
-        'approve_task not permitted: space autonomy level 3 < workflow completionAutonomyLevel 5. Use submit_for_approval to request human review.',
+        'task.resolvePendingCompletion not permitted: space autonomy level 3 < workflow completionAutonomyLevel 5. Use task.submitForReview to request human review.',
     });
   });
 

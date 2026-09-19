@@ -4,6 +4,7 @@ import {
   CALL_ACTION_PREFERENCE_GUIDANCE,
   POST_APPROVAL_COMPLETION_INSTRUCTIONS,
 } from '@hyperneo/prompts';
+import { isOperationName } from '@hyperneo/shared/types/operation-names';
 import { coderAgent } from '../../../../src/lib/agent/coordinator/coder.ts';
 import { COORDINATOR_AGENT } from '../../../../src/lib/agent/coordinator/coordinator.ts';
 import { debuggerAgent } from '../../../../src/lib/agent/coordinator/debugger.ts';
@@ -54,26 +55,26 @@ const GOLDEN: Record<string, string> = {
   CODEX_REACTION_APPROVAL_GUIDANCE:
     '2e1dbf1a39b2c9b47dc930c2614e3d85c93d0ea2175d3149162262725a4966be',
   CODER_EXTERNAL_GATE_BLOCK: 'e4020f4406f182b4edd57a74bd17d1f7f3b7efeec017f7b1f5dd83d2790d720d',
-  CODER_ONLY_MERGE_INSTRUCTIONS: '5543ba55a4fe4b68a80832481cd4a561f0990e308f979c5be7adb3a5dc85491e',
-  CODER_ONLY_PROMPT: '142b07ce7a51bca8401de280efa0ea32da3918111801ed4873a9e33a9e1f7ada',
+  CODER_ONLY_MERGE_INSTRUCTIONS: '5a10fb80422b2922d8fbd7968705efa5f7ed9e141e564a5ae095e45444a37e10',
+  CODER_ONLY_PROMPT: '4734136a319a617a14f71c7d57ecaa9cf8483324f74009112d4bce7fe7e16973',
   CODER_OWNED_MERGE_INSTRUCTIONS:
-    '04a47ad5a22134e679233bd4038a9037bbb9aa0fc3ec8166e3172a68829d4d01',
-  CODER_OWNED_MERGE_PROMPT: '2019d2456bb199c58b14e0fefd9553e3fc24c878a9010979f1b56d933ac7797e',
+    'adb52987358f9b3b08a6ba795694810ee3bcae493adb36da64ad8cacbe9d02cf',
+  CODER_OWNED_MERGE_PROMPT: 'd5fc7e211289f19d6a8112bd031b0361081ff2562679adc08b907150fa925121',
   CODER_OWNED_PR_SUBSCRIBE_GUIDANCE:
     '849ec685a272e0a751689014bd717b5e2103ccfb02d6b5b18e90eaad86bbb6e1',
-  CODER_OWNED_QA_PROMPT: '6ad1afe0c7e099fa117f2c95ebc6be45a7c7edcb46aed98876d93058119adff1',
-  CODER_OWNED_QA_REVIEW_PROMPT: '1e7e69cf223816813c015fd80b82240688b092559485bb48eccb14f75c16fe1f',
-  CODER_OWNED_REVIEW_PROMPT: '467779a984795c4b3b9f037f3233624c1b18010fd4b2fd188f71c7f6a42cf0b4',
+  CODER_OWNED_QA_PROMPT: '3d7b364726a87787b7ea2d3a3a468b9ebcbd9b45a9d3573f4b91b3d54f3b8942',
+  CODER_OWNED_QA_REVIEW_PROMPT: 'ac6a45761fc71e7d9d058c595b08f61eb5cc336d9e93320dc786df6185d70ff7',
+  CODER_OWNED_REVIEW_PROMPT: 'd336ca8caf451075403a0989b1e487c84faca2ef5a2a89af18db4a9e37b0df7d',
   EXTERNAL_REVIEW_BOTS_GUIDANCE: '5cd7f3fe6b9a05536d0544461e1439fa01691ab4a6e821696975ac418af87933',
   FULLSTACK_CODING_NOCHANGE_GUIDANCE:
     '74f56a17289baccf098c526fe6397b8894414f6cd3fd8178af86f5e3a16b95a4',
   FULLSTACK_QA_POST_APPROVAL_PARAGRAPH:
     '77d86b527ae489e9b32394ddbe2ee72f1ac5b283fe065902e72485ce9fb62030',
-  RESEARCH_PROMPT: '913955fda9e3844e52331e17f8f14c08214dfde770beff924c183d3b0eba660c',
-  RESEARCH_REVIEW_PROMPT: '95074abf105e87fa6a3752e7d16097fc46663c5a28fb5f7e3ff682c582d37269',
-  REVIEW_ONLY_REVIEW_PROMPT: '9cb98891db684bab99494d69ddeb86c5dff04edf1e0306e6cb5cc9239f1df289',
+  RESEARCH_PROMPT: '55f1fe5f85899b3f495197a5dd781f60afa7a3c791bf9e2649919a06d7cf59c8',
+  RESEARCH_REVIEW_PROMPT: '31b0d7c27641fd3b39a87c5f4f751812df5cb643b7a87596094246c92333853e',
+  REVIEW_ONLY_REVIEW_PROMPT: '61d503d32ae0226ce0f158d5e836a640793bf9587c22acf56d349d362902e22d',
   CALL_ACTION_PREFERENCE_GUIDANCE:
-    '7c92b6970e05806e33f7c8e5b6761cb0466dc3129343dd6cf1bbbef05bd6f249',
+    '62f074f444b877af3aa0476324d65231cbb4ea0b6048e0853a644d6306859a34',
   REVIEW_POLICY_GUIDANCE: '6ba821ea3dd2c230a4bd44cf70f17f24bcecf0741e99f68978a689c7904fddf7',
   REVIEWER_POST_APPROVAL_BLOCKER_PARAGRAPH:
     'a86da78d4d26ac27bf38510364b449a905abc3421297fffd180f62ee1c585c60',
@@ -99,7 +100,7 @@ const GOLDEN: Record<string, string> = {
   SUBAGENT_VCS_PROMPT: 'ea28eae3d3fb3291df5324077b0f7d602ff9abe8222ffb2eec71c69fedbdb2b1',
   SUBAGENT_VERIFIER_PROMPT: 'b5c24ec4a2b90c6ddc5b851e33e14da2fad554c528fa93027a9bc5a08dbfbfe0',
   POST_APPROVAL_COMPLETION_INSTRUCTIONS:
-    '99579e535f19b51ec01d42f2014982ff2a2ea309bfc92f5251b1fdfcc70cc640',
+    'ecadf6b37434d39e68182fe70d8904ad7229d7e89f0f840820d8f9e1326d3157',
   PROMPT_TOO_LONG_CONTINUE_NAG: '6087c6a95dc3d926b9c7e683ea1f125dc8fd26052b6291c93fab1d0512f79005',
   TITLE_GENERATION_PROMPT: '90eb78808852b1639e84818f8447dcb02a2b3f9e2e1fb664edf54c930c3610dd',
   WORKFLOW_SELECTOR_INSTRUCTIONS:
@@ -206,6 +207,34 @@ describe('workflow prompts prefer the operations door with named-operation fallb
         text.replace(CALL_ACTION_PREFERENCE_GUIDANCE, '').includes(name)
       );
       expect(usedBy.length, name).toBeGreaterThan(0);
+    }
+  });
+
+  test('the preference prose maps each retired typed tool to a declared operation', () => {
+    expect(CALL_ACTION_PREFERENCE_GUIDANCE).not.toContain('identical to the action name');
+    for (const [tool, operation] of [
+      ['save_artifact', 'artifact.save'],
+      ['submit_for_approval', 'task.submitForReview'],
+      ['approve_task', 'task.resolvePendingCompletion'],
+      ['mark_complete', 'task.complete'],
+    ]) {
+      expect(CALL_ACTION_PREFERENCE_GUIDANCE, tool).toContain(`\`${tool}\` is \`${operation}\``);
+      expect(isOperationName(operation!), operation).toBe(true);
+    }
+  });
+
+  test('every invoke(name="…") target a prompt names is a declared operation', () => {
+    const named: Record<string, string> = {
+      CALL_ACTION_PREFERENCE_GUIDANCE,
+      POST_APPROVAL_COMPLETION_INSTRUCTIONS,
+      REVIEW_ONLY_REVIEW_PROMPT,
+    };
+    for (const [id, text] of Object.entries(named)) {
+      const targets = [...text.matchAll(/invoke\(name="([^"]+)"/g)].map((match) => match[1]!);
+      expect(targets.length, id).toBeGreaterThan(0);
+      for (const target of targets) {
+        expect(isOperationName(target), `${id}: ${target}`).toBe(true);
+      }
     }
   });
 });
