@@ -134,6 +134,16 @@ This is what makes the invariant enforceable rather than aspirational:
 as a test, in the same spirit as `check:operation-names`. #4772 becomes a CI
 failure rather than something exploratory QA finds.
 
+The invariant needs qualifying for one category. The built-in servers are ours
+and can carry authored briefings. App-registry servers are whatever the user
+configured, and nobody on this side can write prose for an arbitrary
+third-party server — it already describes itself through its own tool
+descriptions. Whether those servers are exempt, get a briefing derived from
+their advertised tools, or contribute only a generated line naming the server
+is open, tracked as #4791, and this decision will be restated once it is
+settled. It must be settled before the contract test is written, since it
+determines what the test can assert.
+
 ## Consequences
 
 Every session kind gets the same treatment by construction, including ones that
@@ -151,18 +161,27 @@ model for a given session kind, so there is no baseline to refactor against.
 The ladder in CLAUDE.md, one PR per rung:
 
 1. **Pin** — characterization tests recording what reaches the model today for
-   each session kind: agent card, ad-hoc member, workflow worker, direct task
-   worker, non-Space session.
-2. **Build** — the contribution type, the assembler, the budget, and the
-   contract test, reachable but not yet wired.
-3. **Wire — operations** — the operations server contributes its own briefing.
-   This is the #4772 path and the first one to prove the seam.
-4. **Wire — scope** — Space identity, role and standing instructions as a scope
-   contribution, replacing the `buildCustomAgentTaskMessage` injection for
+   each session kind (agent card, ad-hoc member, workflow worker, direct task
+   worker, non-Space session), split into the attached servers (#4779) and the
+   injected text (#4787). The two have different failure modes; the text is
+   where #4772 went wrong.
+2. **Build** — the contribution type and ordered assembler (#4780), then the
+   budget (#4788), reachable but not yet wired.
+3. **Wire — operations** — the authored `.md` briefing (#4781), then the
+   registry-derived listing (#4789). This is the #4772 path and the first to
+   prove the seam.
+4. **Wire — scope** — Space identity and role (#4782), then agent standing
+   instructions (#4790), which come from the agent record rather than the
+   session policy and replace the `buildCustomAgentTaskMessage` injection for
    session context.
-5. **Wire — remaining servers** — `agent-memory`, `db-query`, and app-registry
-   servers.
-6. **Delete** — the scattered injection sites, once nothing reads them.
+5. **Wire — remaining servers** — settle what a third-party server contributes
+   (#4791), then `agent-memory` and `db-query` (#4783), then the contract test
+   (#4792).
+6. **Delete** — the scattered injection sites, once nothing reads them (#4784).
+
+The contract test sits at the end rather than with the seam that defines it:
+the invariant cannot bite until servers actually contribute, so writing it at
+rung 2 would assert something nothing yet does.
 
 The point fix for #4772 lands before this and is expected to be superseded by
 rung 3. It is a stopgap for a broken core path, not the first increment.
@@ -184,7 +203,9 @@ rung 3. It is a stopgap for a broken core path, not the first increment.
   listing, or whether role differences belong entirely in the scope
   contribution.
 - Whether the budget is global or per contributor, and what the limit is. Needs
-  measurement against real sessions at rung 1.
+  measurement against real sessions at rung 1. Tracked as #4788.
+- What an app-registry server contributes, given that nobody here can author
+  prose for a third-party server. Tracked as #4791; blocks the contract test.
 - Whether non-Space sessions get a scope contribution at all, or whether the
   absence of scope is itself the correct signal.
 
