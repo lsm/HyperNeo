@@ -688,6 +688,7 @@ export class SpaceRuntimeService {
     } else {
       await this.refreshLongHorizonAgentSessionConfig(session, config);
     }
+    await this.config.spaceManager.addSession(spaceId, sessionId);
     if (agent.sessionId !== sessionId) {
       repo.update(agent.id, { sessionId });
     }
