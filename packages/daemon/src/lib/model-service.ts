@@ -1177,6 +1177,17 @@ function observedContextWindowKey(providerId: string, modelId: string): string {
   return `${providerId}:${modelId}`;
 }
 
+function clearObservedContextWindows(providerId?: string): void {
+  if (!providerId) {
+    observedContextWindows.clear();
+    return;
+  }
+  const prefix = `${providerId}:`;
+  for (const key of observedContextWindows.keys()) {
+    if (key.startsWith(prefix)) observedContextWindows.delete(key);
+  }
+}
+
 export function recordObservedContextWindow(
   providerId: string,
   modelId: string,
@@ -1323,13 +1334,14 @@ export function clearModelsCache(cacheKey?: string, providerId?: string): void {
     }
     if (cacheKey === 'global') {
       cancelAllProviderRetries();
+      clearObservedContextWindows(providerId);
     }
     if (hadInFlight || cacheGeneration.has(cacheKey)) {
       cacheGeneration.set(cacheKey, (cacheGeneration.get(cacheKey) ?? 0) + 1);
     }
   } else {
     const inFlightKeys = new Set(refreshInProgress.keys());
-    observedContextWindows.clear();
+    clearObservedContextWindows();
     modelsCache.clear();
     cacheTimestamps.clear();
     refreshInProgress.clear();

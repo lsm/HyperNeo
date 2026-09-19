@@ -1576,5 +1576,27 @@ describe('ContextFetcher.fetch', () => {
       expect(infoSpy).not.toHaveBeenCalled();
       expect(recordObservedContextWindow('glm', 'glm-5.2[1m]', 1_000_000)).toBe(true);
     });
+
+    it('drops observed windows when a keyed global clear refreshes the catalog', () => {
+      clearModelsCache();
+      expect(recordObservedContextWindow('anthropic', 'claude-sonnet-5', 1_000_000)).toBe(true);
+      expect(recordObservedContextWindow('glm', 'glm-5.2[1m]', 1_000_000)).toBe(true);
+
+      clearModelsCache('global');
+
+      expect(recordObservedContextWindow('anthropic', 'claude-sonnet-5', 1_000_000)).toBe(true);
+      expect(recordObservedContextWindow('glm', 'glm-5.2[1m]', 1_000_000)).toBe(true);
+    });
+
+    it('drops only the named provider when a keyed global clear names one', () => {
+      clearModelsCache();
+      expect(recordObservedContextWindow('anthropic', 'claude-sonnet-5', 1_000_000)).toBe(true);
+      expect(recordObservedContextWindow('glm', 'glm-5.2[1m]', 1_000_000)).toBe(true);
+
+      clearModelsCache('global', 'anthropic');
+
+      expect(recordObservedContextWindow('anthropic', 'claude-sonnet-5', 1_000_000)).toBe(true);
+      expect(recordObservedContextWindow('glm', 'glm-5.2[1m]', 1_000_000)).toBe(false);
+    });
   });
 });
