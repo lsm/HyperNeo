@@ -10,6 +10,7 @@ import {
 } from '../../../../src/lib/agent/query-options-builder.ts';
 import { createCustomAgentInit } from '../../../../src/lib/agents/custom-agent.ts';
 import { buildCustomAgentTaskMessage } from '../../../../src/lib/agents/task-message.ts';
+import { operationsCapabilityContribution } from '../../../../src/lib/operations/door-briefing.ts';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
 import { buildAgentSessionConfig } from '../../../../src/lib/session-resolution/agent-session-config.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
@@ -46,6 +47,11 @@ const SPACE_BACKGROUND = 'The board is the record of truth.';
 const CARD_AGENT_INSTRUCTIONS = 'Triage the board and keep every task honest.';
 const WORKER_AGENT_INSTRUCTIONS = 'Implement the task and open exactly one PR.';
 const WORKSPACE_PATH = '/tmp/session-kinds-ws';
+
+const OPERATIONS_CONTRIBUTION = operationsCapabilityContribution({
+  type: 'sdk',
+  instance: {},
+} as never);
 
 const SPACE: Space = {
   id: SESSION_KIND_SPACE_ID,
@@ -151,6 +157,7 @@ function makeRecordingAgentSession(session: Session): RecordedSession {
     ensureOperationRegistryProvider: () => {},
     setCallerScopeResolver: () => {},
     setRuntimeSystemPrompt: () => {},
+    getOperationsCapabilityContribution: () => OPERATIONS_CONTRIBUTION,
     setSpaceBriefing: (briefing: string | undefined) => {
       briefings.push(briefing);
     },
@@ -285,13 +292,14 @@ describe('session kind injected text', () => {
   }
 
   describe('buildSpaceSessionBriefing', () => {
-    test('fuses the Space scope, the operations door and the standing instructions into one string for a Space agent', () => {
+    test('assembles the Space scope and the operations door as two contributions for a Space agent', () => {
       const briefing = buildSpaceSessionBriefing({
         spaceId: SPACE.id,
         spaceName: SPACE.name,
         role: 'long_term_agent',
         agentDisplayName: 'Card Agent',
         spaceInstructions: SPACE.instructions,
+        operations: OPERATIONS_CONTRIBUTION,
       });
 
       expect(briefing).toBe(
@@ -299,6 +307,10 @@ describe('session kind injected text', () => {
           '## Your Space',
           '',
           `You are working inside the Space "${SPACE_NAME}" (id: ${SESSION_KIND_SPACE_ID}) — a shared workspace with its own tasks, goals, agents, and workflows. Your role in it is the Space agent "Card Agent".`,
+          '',
+          '### Space Standing Instructions',
+          '',
+          SPACE_INSTRUCTIONS,
           '',
           '### Acting in the Space',
           '',
@@ -309,10 +321,6 @@ describe('session kind injected text', () => {
           '- `invoke(name="<operation>", input={...})` — runs it.',
           '',
           "List the operations before concluding that a capability is missing; a capability you do not have is simply absent from that list. The SDK's built-in `Task*` tools are a within-turn scratchpad and are invisible to the rest of the Space.",
-          '',
-          '### Space Standing Instructions',
-          '',
-          SPACE_INSTRUCTIONS,
         ].join('\n')
       );
     });
@@ -323,6 +331,7 @@ describe('session kind injected text', () => {
         spaceName: SPACE.name,
         role: 'ad_hoc_member',
         spaceInstructions: '',
+        operations: OPERATIONS_CONTRIBUTION,
       });
 
       expect(briefing.startsWith('## Your Space\n\n')).toBe(true);
@@ -337,21 +346,36 @@ describe('session kind injected text', () => {
       expect(briefing).not.toContain('Card Agent');
     });
 
-    test('keeps the Space scope ahead of the operations door in one fused string, which ADR 0007 splits into two contributions', () => {
+    test('puts the whole Space scope ahead of the operations door, which now trails as a capability', () => {
       const briefing = buildSpaceSessionBriefing({
         spaceId: SPACE.id,
         spaceName: SPACE.name,
         role: 'long_term_agent',
         agentDisplayName: 'Card Agent',
         spaceInstructions: SPACE.instructions,
+        operations: OPERATIONS_CONTRIBUTION,
       });
 
       expect(briefing.indexOf('## Your Space')).toBeLessThan(
-        briefing.indexOf('### Acting in the Space')
-      );
-      expect(briefing.indexOf('### Acting in the Space')).toBeLessThan(
         briefing.indexOf('### Space Standing Instructions')
       );
+      expect(briefing.indexOf('### Space Standing Instructions')).toBeLessThan(
+        briefing.indexOf('### Acting in the Space')
+      );
+      expect(briefing.endsWith(OPERATIONS_CONTRIBUTION.briefing.trim())).toBe(true);
+    });
+
+    test('carries the operations door as the authored briefing of the attached server', () => {
+      const briefing = buildSpaceSessionBriefing({
+        spaceId: SPACE.id,
+        spaceName: SPACE.name,
+        role: 'ad_hoc_member',
+        spaceInstructions: '',
+        operations: OPERATIONS_CONTRIBUTION,
+      });
+
+      expect(OPERATIONS_CONTRIBUTION.server.name).toBe('hyperneo-operations');
+      expect(briefing).toContain(OPERATIONS_CONTRIBUTION.briefing.trim());
     });
   });
 
@@ -495,6 +519,7 @@ describe('session kind injected text', () => {
         spaceName: SPACE.name,
         role: 'ad_hoc_member',
         spaceInstructions: SPACE.instructions,
+        operations: OPERATIONS_CONTRIBUTION,
       });
 
       const chat = await new QueryOptionsBuilder(

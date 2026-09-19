@@ -8,6 +8,7 @@ import {
   QueryOptionsBuilder,
   type QueryOptionsBuilderContext,
 } from '../../../../src/lib/agent/query-options-builder.ts';
+import { operationsCapabilityContribution } from '../../../../src/lib/operations/door-briefing.ts';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
 import { resolveSpaceMcpSessionPolicy } from '../../../../src/lib/space/runtime/space-mcp-session-policy.ts';
 import {
@@ -71,6 +72,8 @@ function makeRecordingAgentSession(session: Session): AgentSession {
     ensureOperationRegistryProvider: () => {},
     setCallerScopeResolver: () => {},
     setRuntimeSystemPrompt: () => {},
+    getOperationsCapabilityContribution: () =>
+      operationsCapabilityContribution({ type: 'sdk', instance: {} } as never),
     setSpaceBriefing: () => {},
     updateConfig: async (updates: Partial<Session['config']>) => {
       session.config = { ...session.config, ...updates };

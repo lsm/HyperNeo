@@ -706,7 +706,7 @@ export class SpaceRuntimeService {
   }
 
   private installLongTermAgentBriefing(
-    session: Pick<AgentSession, 'setSpaceBriefing'>,
+    session: Pick<AgentSession, 'setSpaceBriefing' | 'getOperationsCapabilityContribution'>,
     space: Space,
     agentDisplayName: string | null
   ): void {
@@ -717,6 +717,7 @@ export class SpaceRuntimeService {
         role: 'long_term_agent',
         agentDisplayName,
         spaceInstructions: space.instructions,
+        operations: session.getOperationsCapabilityContribution(),
       })
     );
   }
@@ -1429,6 +1430,7 @@ export class SpaceRuntimeService {
         spaceName: space.name,
         role: 'ad_hoc_member',
         spaceInstructions: space.instructions,
+        operations: agentSession.getOperationsCapabilityContribution(),
       })
     );
 
