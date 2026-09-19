@@ -38,10 +38,17 @@ capability and explaining a capability are separate code paths with separate
 owners, and nothing fails when they disagree.** Any fix that adds the missing
 sentences to one more call site preserves the property and buys one bug.
 
-The same shape will recur as the door grows. There are 112 operations across
-fourteen families, and a session's registry is resolved per role by
+The same shape will recur as the door grows. The operation catalog already runs
+to well over a hundred names across fourteen families and gains more most
+weeks, and a session's registry is resolved per role by
 `resolveSpaceMcpSessionPolicy`. Each new family that assumes the agent has been
 told something adds another way for the two halves to drift.
+
+`OPERATION_NAMES` in `packages/shared/src/types/operation-names.ts` is the
+record of truth for the current count, and `check:operation-names` keeps it
+honest. This document deliberately does not restate the number: a count written
+into prose is stale on the next `defineOperation`, which is the same failure
+mode decision 3 exists to prevent.
 
 ## Decision
 
