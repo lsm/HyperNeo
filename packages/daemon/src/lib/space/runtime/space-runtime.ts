@@ -101,6 +101,7 @@ import {
   DEFAULT_AGENT_STUCK_NAG_GRACE_MS,
   DEFAULT_SILENT_STALL_ATTENTION_THRESHOLD_MS,
   DEFAULT_TOOL_USE_ACTIVE_TTL_MS,
+  blockedRunAttentionKey,
   MAX_BLOCKED_RUN_RETRIES,
   MAX_TASK_AGENT_CRASH_RETRIES,
   MAX_TERMINAL_ERROR_CONTINUE_RETRIES,
@@ -4304,6 +4305,7 @@ export class SpaceRuntime {
     const preTxRun = preTxRunId ? this.config.workflowRunRepo.getRun(preTxRunId) : null;
     if (preTxRunId && preTxTask.spaceId === spaceId && preTxRun?.spaceId === spaceId) {
       this.blockedRetryCounts.delete(preTxRunId);
+      this.notifiedTaskSet.delete(blockedRunAttentionKey(preTxRunId));
       for (const key of this.nonTerminalIdleStates.keys()) {
         if (key.startsWith(preTxRunId + ':')) {
           this.nonTerminalIdleStates.delete(key);
@@ -7793,6 +7795,7 @@ export class SpaceRuntime {
     if (taskReopenedOutsideRuntime && retryCount >= MAX_BLOCKED_RUN_RETRIES) {
       effectiveRetryCount = 0;
       this.blockedRetryCounts.set(runId, 0);
+      this.notifiedTaskSet.delete(blockedRunAttentionKey(runId));
       log.info(
         `SpaceRuntime: canonical task ${canonicalTask.id} was reopened while run ${runId} ` +
           `is blocked; resetting the blocked-run retry budget and repairing executions before resume`
@@ -7862,7 +7865,8 @@ export class SpaceRuntime {
           `(attempt ${effectiveRetryCount + 1}/${MAX_BLOCKED_RUN_RETRIES})`
       );
       this.resumeParkedWorkersForRevivedRun(runId, this.config.taskAgentManager);
-    } else {
+    } else if (!this.notifiedTaskSet.has(blockedRunAttentionKey(runId))) {
+      this.notifiedTaskSet.add(blockedRunAttentionKey(runId));
       await this.safeNotify({
         kind: 'workflow_run_needs_attention',
         spaceId: meta.spaceId,
@@ -8069,6 +8073,7 @@ export class SpaceRuntime {
     }
     this.clearAgentStuckStateForRun(runId);
     this.blockedRetryCounts.delete(runId);
+    this.notifiedTaskSet.delete(blockedRunAttentionKey(runId));
   }
 
   private async recoverRateLimitedTasks(): Promise<void> {
