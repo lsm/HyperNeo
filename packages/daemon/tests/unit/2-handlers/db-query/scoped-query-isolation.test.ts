@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
-import { runScopedQuery } from '../../../../src/lib/db-query/scoped-query.ts';
+import {
+  runScopedQuery,
+  ScopedCopyBudgetExceededError,
+} from '../../../../src/lib/db-query/scoped-query.ts';
 
 function makeDb(): Database {
   const db = new Database(':memory:');
@@ -187,6 +190,55 @@ describe('runScopedQuery — the scratch database is the security boundary', () 
     expect(run(db, 'SELECT id FROM mcp_audit_log WHERE id = ?', ['audit-50001']).rows).toEqual([
       { id: 'audit-50001' },
     ]);
+    db.close();
+  });
+
+  it('rejects a selective query when its scoped copy exceeds the row budget', () => {
+    const db = makeDb();
+    db.exec(`
+      CREATE TABLE mcp_audit_log (
+        id TEXT PRIMARY KEY,
+        timestamp INTEGER,
+        agent_name TEXT,
+        session_id TEXT,
+        tool_name TEXT,
+        params_summary TEXT,
+        space_id TEXT,
+        task_id TEXT,
+        workflow_run_id TEXT
+      );
+      INSERT INTO mcp_audit_log
+        (id, timestamp, agent_name, session_id, tool_name, params_summary, space_id)
+      VALUES
+        ('audit-1', 1, 'agent', 'session', 'send_message', '{}', 'space-1'),
+        ('audit-2', 2, 'agent', 'session', 'send_message', '{}', 'space-1'),
+        ('audit-3', 3, 'agent', 'session', 'send_message', '{}', 'space-1'),
+        ('audit-4', 4, 'agent', 'session', 'send_message', '{}', 'space-1');
+    `);
+    expect(() =>
+      runScopedQuery(
+        db,
+        'space',
+        'space-1',
+        { sql: 'SELECT id FROM mcp_audit_log WHERE id = ?', params: ['audit-4'] },
+        { maxRows: 3, maxBytes: 1024 * 1024 }
+      )
+    ).toThrow(ScopedCopyBudgetExceededError);
+    db.close();
+  });
+
+  it('rejects when the scoped scratch database exceeds its byte budget', () => {
+    const db = makeDb();
+
+    expect(() =>
+      runScopedQuery(
+        db,
+        'space',
+        'space-1',
+        { sql: 'SELECT id FROM space_tasks WHERE id = ?', params: ['t1'] },
+        { maxRows: 100, maxBytes: 4096 }
+      )
+    ).toThrow(/temporary storage exceeded 4096 bytes/i);
     db.close();
   });
 

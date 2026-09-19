@@ -1,6 +1,10 @@
 import { generateUUID } from '@hyperneo/shared';
 import type { DbScopeType } from './scope-config.ts';
-import type { ScopedDbQuery, ScopedDbQueryResult } from './scoped-query.ts';
+import {
+  ScopedCopyBudgetExceededError,
+  type ScopedDbQuery,
+  type ScopedDbQueryResult,
+} from './scoped-query.ts';
 
 const DEFAULT_DB_QUERY_TIMEOUT_MS = 10_000;
 
@@ -18,7 +22,17 @@ type ActiveDbQuery = {
 type DbQueryWorkerMessage =
   | { id: string; started: true }
   | { id: string; result: ScopedDbQueryResult }
-  | { id: string; error: string };
+  | {
+      id: string;
+      error: string | { code?: string; message: string };
+    };
+
+function workerError(error: string | { code?: string; message: string }): Error {
+  if (typeof error === 'string') return new Error(error);
+  return error.code === 'scoped_copy_budget_exceeded'
+    ? new ScopedCopyBudgetExceededError(error.message)
+    : new Error(error.message);
+}
 
 function createDbQueryWorker(): Worker {
   return new Worker(new URL('./db-query-worker.ts', import.meta.url).href, {
@@ -102,7 +116,7 @@ export class DbQueryWorkerService {
       if ('result' in message) {
         active.resolve(message.result);
       } else {
-        active.reject(new Error(message.error));
+        active.reject(workerError(message.error));
       }
     };
     worker.onerror = () => {
