@@ -1185,9 +1185,44 @@ function readCachedModels(cacheKey: string): ModelInfo[] | null {
   return cachedModels;
 }
 
+const observedContextWindows = new Map<string, number>();
+
+function observedContextWindowKey(providerId: string, modelId: string): string {
+  return `${providerId}:${modelId}`;
+}
+
+export function recordObservedContextWindow(
+  providerId: string,
+  modelId: string,
+  contextWindow: number
+): boolean {
+  if (!providerId || !modelId) return false;
+  if (!Number.isFinite(contextWindow) || contextWindow <= 0) return false;
+  const key = observedContextWindowKey(providerId, modelId);
+  if (observedContextWindows.get(key) === contextWindow) return false;
+  observedContextWindows.set(key, contextWindow);
+  return true;
+}
+
+function applyObservedContextWindow(model: ModelInfo): ModelInfo {
+  if (observedContextWindows.size === 0) return model;
+  const observed =
+    observedContextWindows.get(observedContextWindowKey(model.provider, model.id)) ??
+    observedContextWindows.get(observedContextWindowKey(model.provider, model.alias));
+  return observed === undefined || observed === model.contextWindow
+    ? model
+    : { ...model, contextWindow: observed };
+}
+
+function applyObservedContextWindows(models: ModelInfo[]): ModelInfo[] {
+  return observedContextWindows.size === 0 ? models : models.map(applyObservedContextWindow);
+}
+
 export function getAvailableModels(cacheKey: string = 'global'): ModelInfo[] {
   const cachedModels = readCachedModels(cacheKey);
-  return cachedModels === null ? [] : filterModelsByCuration(cachedModels);
+  return cachedModels === null
+    ? []
+    : applyObservedContextWindows(filterModelsByCuration(cachedModels));
 }
 
 export async function initializeModels(): Promise<void> {
@@ -1294,6 +1329,7 @@ export function clearModelsCache(cacheKey?: string, providerId?: string): void {
     }
   } else {
     const inFlightKeys = new Set(refreshInProgress.keys());
+    observedContextWindows.clear();
     modelsCache.clear();
     cacheTimestamps.clear();
     refreshInProgress.clear();
@@ -1680,9 +1716,10 @@ export async function getModelInfo(
     STATIC_MODEL_METADATA.filter((model) => model.provider === providerId)
   );
   const staticModel = findInModels(staticProviderModels, idOrAlias) ?? null;
-  return providerId === 'anthropic-copilot' && staticModel
+  if (!staticModel) return null;
+  return providerId === 'anthropic-copilot'
     ? overlayCodexStaticMetadata(staticModel)
-    : staticModel;
+    : applyObservedContextWindow(staticModel);
 }
 
 export async function getSessionModelInfo(

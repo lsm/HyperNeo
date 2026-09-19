@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import type { Query, SDKControlGetContextUsageResponse } from '@anthropic-ai/claude-agent-sdk';
 import { ContextFetcher } from '../../../../src/lib/agent/context-fetcher';
-import { setModelsCache } from '../../../../src/lib/model-service';
+import {
+  clearModelsCache,
+  getAvailableModels,
+  recordObservedContextWindow,
+  setModelsCache,
+} from '../../../../src/lib/model-service';
 
 type SdkResponse = SDKControlGetContextUsageResponse;
 
@@ -1394,6 +1399,123 @@ describe('ContextFetcher.fetch', () => {
       });
 
       expect(warnSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('capacity mismatch reconciliation', () => {
+    const anthropicSlice = () =>
+      new Map([
+        [
+          'global',
+          [
+            {
+              id: 'claude-sonnet-5',
+              name: 'Sonnet 5',
+              alias: 'claude-sonnet-5',
+              family: 'sonnet',
+              provider: 'anthropic',
+              contextWindow: 200_000,
+              description: '',
+              releaseDate: '',
+              available: true,
+            },
+          ],
+        ],
+      ]);
+
+    afterEach(() => {
+      clearModelsCache();
+    });
+
+    it('adopts the SDK capacity for anthropic instead of warning', async () => {
+      setModelsCache(anthropicSlice());
+      const getContextUsage = mock(async () =>
+        baseResponse({
+          totalTokens: 100_000,
+          maxTokens: 800_000,
+          rawMaxTokens: 1_000_000,
+          model: 'claude-sonnet-5',
+        })
+      );
+      const query = { getContextUsage } as unknown as Query;
+
+      const fetcher = new ContextFetcher('anthropic-drift-session');
+      const warnSpy = spyOn(fetcher.logger, 'warn');
+      const infoSpy = spyOn(fetcher.logger, 'info');
+
+      const info = await fetcher.fetch(query, {
+        id: 'claude-sonnet-5',
+        contextWindow: 200_000,
+        provider: 'anthropic',
+      });
+
+      expect(info?.totalCapacity).toBe(1_000_000);
+      expect(warnSpy).not.toHaveBeenCalled();
+      expect(infoSpy).toHaveBeenCalledTimes(1);
+      expect(String((infoSpy.mock.calls[0] as unknown[])[0])).toContain(
+        'Adopted SDK context capacity 1000000'
+      );
+
+      const reconciled = getAvailableModels('global').find((m) => m.id === 'claude-sonnet-5');
+      expect(reconciled?.contextWindow).toBe(1_000_000);
+    });
+
+    it('adopts the SDK capacity only once for repeated fetches', async () => {
+      setModelsCache(anthropicSlice());
+      const getContextUsage = mock(async () =>
+        baseResponse({
+          totalTokens: 100_000,
+          maxTokens: 800_000,
+          rawMaxTokens: 1_000_000,
+          model: 'claude-sonnet-5',
+        })
+      );
+      const query = { getContextUsage } as unknown as Query;
+
+      const fetcher = new ContextFetcher('anthropic-repeat-session');
+      fetcher.overrideUsageRequestStaleMsForTest(0);
+      const infoSpy = spyOn(fetcher.logger, 'info');
+
+      await fetcher.fetch(query, {
+        id: 'claude-sonnet-5',
+        contextWindow: 200_000,
+        provider: 'anthropic',
+      });
+      await fetcher.fetch(query, {
+        id: 'claude-sonnet-5',
+        contextWindow: 200_000,
+        provider: 'anthropic',
+      });
+
+      expect(getContextUsage).toHaveBeenCalledTimes(2);
+      expect(infoSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('leaves metadata alone for glm, whose SDK window is armed from metadata', async () => {
+      const getContextUsage = mock(async () =>
+        baseResponse({
+          totalTokens: 100_000,
+          maxTokens: 200_000,
+          rawMaxTokens: 1_000_000,
+          model: 'glm-5.2[1m]',
+        })
+      );
+      const query = { getContextUsage } as unknown as Query;
+
+      const fetcher = new ContextFetcher('glm-armed-session');
+      const warnSpy = spyOn(fetcher.logger, 'warn');
+      const infoSpy = spyOn(fetcher.logger, 'info');
+
+      await fetcher.fetch(query, {
+        id: 'glm-5.2[1m]',
+        contextWindow: 1_000_000,
+        provider: 'glm',
+        preferContextWindowMetadata: true,
+      });
+
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(infoSpy).not.toHaveBeenCalled();
+      expect(recordObservedContextWindow('glm', 'glm-5.2[1m]', 1_000_000)).toBe(true);
     });
   });
 });
