@@ -62,6 +62,8 @@ export function GoalDetailPanel({ spaceId, navigationSpaceId, goalId }: GoalDeta
   const owner =
     spaceStore.spaceId.value === spaceId ? (spaceStore.goalOwners.value.get(goalId) ?? null) : null;
   const agents = spaceStore.spaceId.value === spaceId ? spaceStore.agents.value : [];
+  const agentListState =
+    spaceStore.spaceId.value === spaceId ? spaceStore.agentListState.value : 'loading';
   const agentsVersion = agents.map((item) => `${item.id}:${item.handle}:${item.status}`).join('|');
   const goalIdRef = useRef(goalId);
   const spaceIdRef = useRef(spaceId);
@@ -372,8 +374,22 @@ export function GoalDetailPanel({ spaceId, navigationSpaceId, goalId }: GoalDeta
               {renderOwnerStatus()}
               {agents.length === 0 && (
                 <p id={`goal-owner-empty-${goal.id}`} class="text-xs text-fg-muted">
-                  No Space agents are available. Create an agent in this Space’s Agents page before
-                  assigning an owner.
+                  {agentListState === 'loading' ? (
+                    'Loading Space agents…'
+                  ) : agentListState === 'error' ? (
+                    <>
+                      Could not load Space agents.{' '}
+                      <button
+                        type="button"
+                        class="text-accent-soft underline"
+                        onClick={() => void spaceStore.refreshAgents()}
+                      >
+                        Retry
+                      </button>
+                    </>
+                  ) : (
+                    'No Space agents are available. Create an agent in this Space’s Agents page before assigning an owner.'
+                  )}
                 </p>
               )}
               <div class="flex flex-wrap items-center gap-2">

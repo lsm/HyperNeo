@@ -220,6 +220,7 @@ describe('GoalDetailPanel', () => {
     mockWorkflows.value = [];
     mockGoalOwners.value = new Map();
     mockAgents.value = [makeAgent()];
+    spaceStore.agentListState.value = 'loaded';
     mutableSpaceStore.workspaces.value = [
       {
         id: 'ws-1',
@@ -422,6 +423,26 @@ describe('GoalDetailPanel', () => {
     await waitFor(() =>
       expect(screen.getByText('No long-horizon agent owns this goal.')).toBeTruthy()
     );
+  });
+
+  it('distinguishes loading and failed agent requests from a confirmed empty list', async () => {
+    mockAgents.value = [];
+    spaceStore.agentListState.value = 'loading';
+    render(<GoalDetailPanel spaceId="space-1" goalId="goal-1" />);
+
+    expect(screen.getByText('Loading Space agents…')).toBeTruthy();
+    expect(screen.queryByText(/No Space agents are available/)).toBeNull();
+
+    spaceStore.agentListState.value = 'error';
+    await screen.findByText(/Could not load Space agents/);
+    expect(screen.queryByText(/No Space agents are available/)).toBeNull();
+    mockRefreshAgents.mockClear();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(mockRefreshAgents).toHaveBeenCalledTimes(1);
+
+    spaceStore.agentListState.value = 'loaded';
+    await screen.findByText(/No Space agents are available/);
+    expect(screen.queryByText(/Could not load Space agents/)).toBeNull();
   });
 
   it('explains an empty agent list and enables assignment when an agent appears', async () => {
