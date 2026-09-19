@@ -504,12 +504,15 @@ if [ "$RERUN" = true ]; then
 	# shard. Membership is resolved from shard_paths rather than matched by path
 	# pattern, so satellites (1-core's helpers/, lib/acp/, lib/voice/, …) and the
 	# non-migration files carried by the *-migrations shards are covered too.
+	# failures.txt holds vitest junit classnames, which are relative to the
+	# vitest root (packages/daemon) — `tests/unit/…` — so shard_paths must be
+	# made relative to the same root before comparing.
 	RERUN_TIMEOUT_FLAGS=""
 	for shard in "${SHARDS[@]}"; do
 		[ -n "$(shard_timeout_flags "$shard")" ] || continue
 		while IFS= read -r shard_path; do
 			[ -n "$shard_path" ] || continue
-			if echo "$FAILING_FILES" | grep -qF "${shard_path#"$REPO_ROOT/"}"; then
+			if echo "$FAILING_FILES" | grep -qF "${shard_path#"$REPO_ROOT/packages/daemon/"}"; then
 				RERUN_TIMEOUT_FLAGS=$(shard_timeout_flags "$shard")
 				break 2
 			fi
@@ -591,18 +594,11 @@ for shard in "${RUN_SHARDS[@]}"; do
 		exit 1
 	fi
 
-	# Migration tests rebuild full old schemas and re-run the entire migration
-	# suite for idempotency checks — legitimately heavy work that flakes at
-	# vitest's 5s default under parallel shard load (migration-45/53 timeouts
-	# blocked this PR across rounds 11/19/21). Give the migration-carrying
-	# shards a generous per-test timeout; other shards keep the default.
-	case "$shard" in
-		*-migrations) EXTRA_FLAGS="--test-timeout=30000" ;;
-		*) EXTRA_FLAGS="" ;;
-	esac
-
-	# shellcheck disable=SC2086
-	run_shard "$shard" "$JUNIT_FILE" "$LOG_FILE" $EXTRA_FLAGS "${TEST_PATHS[@]}" &
+	# Per-shard timeout budgets live in shard_timeout_flags, which run_shard
+	# consults directly — see there for why migration and DB-per-test shards
+	# need one (migration-45/53 timeouts blocked this PR across rounds
+	# 11/19/21).
+	run_shard "$shard" "$JUNIT_FILE" "$LOG_FILE" "${TEST_PATHS[@]}" &
 
 	PIDS+=($!)
 done
