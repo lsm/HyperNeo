@@ -303,7 +303,7 @@ describe('session kind MCP server attachment', () => {
       const effective = SESSION_KINDS.map((kind) => {
         const session = makeSessionOfKind(kind);
         session.config.mcpServers = Object.fromEntries(
-          attachedByKind[kind].map((name) => [name, { type: 'sdk', name }])
+          attachedByKind[kind].map((name) => [name, { type: 'sdk', name, instance: {} }])
         ) as Session['config']['mcpServers'];
         const builder = new QueryOptionsBuilder(makeBuilderContext(session));
         return [kind, Object.keys(builder.getEffectiveMcpServers() ?? {}).sort()];
@@ -322,7 +322,7 @@ describe('session kind MCP server attachment', () => {
     test('hands build() the same set and pins strictMcpConfig so .mcp.json is never auto-loaded', async () => {
       const session = makeSessionOfKind('ad_hoc_member');
       session.config.mcpServers = {
-        'agent-memory': { type: 'sdk', name: 'agent-memory' },
+        'agent-memory': { type: 'sdk', name: 'agent-memory', instance: {} },
       } as Session['config']['mcpServers'];
       const builder = new QueryOptionsBuilder(makeBuilderContext(session));
 
