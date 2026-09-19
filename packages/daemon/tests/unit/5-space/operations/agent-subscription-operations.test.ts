@@ -1,3 +1,6 @@
+import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-adapter';
+import { invokeOperation } from '../../../../src/lib/operations/invoke';
+import { invokeOperationFromHandler } from '../../../../src/lib/operations/handler-invoker';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { McpAuditLogRepository } from '../../../../src/storage/repositories/mcp-audit-log-repository';
@@ -159,7 +162,7 @@ describe('agent external-event subscription operations', () => {
         { agent_id: AGENT, topic_pattern: 'nosource' },
         member(sessionId)
       )
-    ).toBe('invalid_pattern');
+    ).toEqual({ accepted: false, reason: 'invalid_pattern' });
     expect(subscriptionRepo.listSubscriptions(AGENT)).toEqual([]);
     expect(refreshed).toEqual([]);
   });
@@ -172,14 +175,14 @@ describe('agent external-event subscription operations', () => {
         { agent_id: 'agent-none', topic_pattern: TOPIC },
         member(sessionId)
       )
-    ).toBe('agent_not_found');
+    ).toEqual({ accepted: false, reason: 'agent_not_found' });
     expect(
       await run(
         'externalEvent.agent.subscribe',
         { agent_id: FOREIGN_AGENT, topic_pattern: TOPIC },
         member(sessionId)
       )
-    ).toBe('agent_not_found');
+    ).toEqual({ accepted: false, reason: 'agent_not_found' });
     expect(subscriptionRepo.listSubscriptions(AGENT)).toEqual([]);
   });
 
@@ -192,7 +195,7 @@ describe('agent external-event subscription operations', () => {
         { agent_id: AGENT, topic_pattern: TOPIC },
         member(sessionId)
       )
-    ).toBe('refresh_failed');
+    ).toEqual({ accepted: false, reason: 'refresh_failed' });
     expect(subscriptionRepo.listSubscriptions(AGENT)).toHaveLength(1);
   });
 
@@ -246,7 +249,7 @@ describe('agent external-event subscription operations', () => {
         { agent_id: AGENT, topic_pattern: TOPIC, spaceId: OTHER_SPACE },
         member(sessionId)
       )
-    ).toBe('caller_denied');
+    ).toEqual({ accepted: false, reason: 'caller_denied' });
     expect(subscriptionRepo.listSubscriptions(AGENT)).toEqual([]);
   });
 
@@ -258,14 +261,14 @@ describe('agent external-event subscription operations', () => {
         { agent_id: AGENT, topic_pattern: TOPIC },
         member(sessionId)
       )
-    ).toBe('session_inactive');
+    ).toEqual({ accepted: false, reason: 'session_inactive' });
     expect(
       await run(
         'externalEvent.agent.unsubscribe',
         { agent_id: AGENT, topic_pattern: TOPIC },
         member(sessionId)
       )
-    ).toBe('session_inactive');
+    ).toEqual({ accepted: false, reason: 'session_inactive' });
     expect(subscriptionRepo.listSubscriptions(AGENT)).toEqual([]);
   });
 
@@ -334,14 +337,14 @@ describe('agent external-event subscription operations', () => {
         { agent_id: FOREIGN_AGENT, topic_pattern: TOPIC },
         member(sessionId)
       )
-    ).toBe('agent_not_found');
+    ).toEqual({ accepted: false, reason: 'agent_not_found' });
     expect(
       await run(
         'externalEvent.agent.unsubscribe',
         { agent_id: AGENT, topic_pattern: 'a/**/b' },
         member(sessionId)
       )
-    ).toBe('invalid_pattern');
+    ).toEqual({ accepted: false, reason: 'invalid_pattern' });
   });
 
   test('lists the agent subscriptions regardless of session activity', async () => {
@@ -379,14 +382,14 @@ describe('agent external-event subscription operations', () => {
         { agent_id: 'agent-none' },
         member(sessionId)
       )
-    ).toBe('agent_not_found');
+    ).toEqual({ accepted: false, reason: 'agent_not_found' });
     expect(
       await run(
         'externalEvent.agent.listSubscriptions',
         { agent_id: FOREIGN_AGENT },
         member(sessionId)
       )
-    ).toBe('agent_not_found');
+    ).toEqual({ accepted: false, reason: 'agent_not_found' });
   });
 });
 
@@ -403,4 +406,28 @@ describe('agent subscriptions optional Space scope', () => {
       ).toEqual({ subscriptions: [], scope: { spaceId: SPACE } });
     }
   });
+});
+
+test.each([
+  'externalEvent.agent.subscribe',
+  'externalEvent.agent.unsubscribe',
+  'externalEvent.agent.listSubscriptions',
+])('%s exposes a recognized rejection through the operation door', async (name) => {
+  const input = name.endsWith('listSubscriptions')
+    ? { agent_id: AGENT }
+    : { agent_id: AGENT, topic_pattern: TOPIC };
+  const outcome = await invokeOperation(operations, name, input, { source: 'rpc' });
+  expect(outcome).toEqual({
+    kind: 'completed',
+    value: { accepted: false, reason: 'caller_denied' },
+  });
+  const mcp = createOperationMcpHandler(operations, () => ({ role: 'workflow_worker' }));
+  const response = await mcp({ name, input });
+  expect(response.isError).toBeUndefined();
+  expect(JSON.parse(response.content[0].text)).toEqual(
+    outcome.kind === 'completed' ? outcome.value : null
+  );
+  await expect(invokeOperationFromHandler(operations, name, input)).rejects.toThrow(
+    `Operation ${name} was rejected without a message`
+  );
 });

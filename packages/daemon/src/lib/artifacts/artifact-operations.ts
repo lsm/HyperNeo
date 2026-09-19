@@ -23,9 +23,12 @@ import {
 
 export const ARTIFACT_CONTEXT_REJECTIONS = ['not_a_node_agent', 'node_caller_denied'] as const;
 
-export type ArtifactContextRejection = (typeof ARTIFACT_CONTEXT_REJECTIONS)[number];
+export const ArtifactContextRejectionSchema = z.object({
+  accepted: z.literal(false),
+  reason: z.enum(ARTIFACT_CONTEXT_REJECTIONS),
+});
 
-export const ArtifactContextRejectionSchema = z.enum(ARTIFACT_CONTEXT_REJECTIONS);
+export type ArtifactContextRejection = z.infer<typeof ArtifactContextRejectionSchema>;
 
 export interface ArtifactOperationDependencies {
   readonly nodeExecutionRepo: Pick<NodeExecutionRepository, 'getByAgentSessionId' | 'getById'>;
@@ -46,9 +49,11 @@ export function admitArtifactCaller(
   caller: OperationCaller
 ): { value: string } | { reason: ArtifactContextRejection } {
   if (caller.source === 'mcp' && caller.role !== 'workflow_worker') {
-    return { reason: 'node_caller_denied' };
+    return { reason: { accepted: false, reason: 'node_caller_denied' } };
   }
-  return caller.sessionId ? { value: caller.sessionId } : { reason: 'not_a_node_agent' };
+  return caller.sessionId
+    ? { value: caller.sessionId }
+    : { reason: { accepted: false, reason: 'not_a_node_agent' } };
 }
 
 export function resolveArtifactContext(
@@ -56,9 +61,9 @@ export function resolveArtifactContext(
   deps: ArtifactOperationDependencies
 ): { value: ArtifactOperationContext } | { reason: ArtifactContextRejection } {
   const session = deps.getSession(sessionId);
-  if (!session) return { reason: 'not_a_node_agent' };
+  if (!session) return { reason: { accepted: false, reason: 'not_a_node_agent' } };
   const execution = resolveWorkflowExecution(session, deps.nodeExecutionRepo);
-  if (!execution) return { reason: 'not_a_node_agent' };
+  if (!execution) return { reason: { accepted: false, reason: 'not_a_node_agent' } };
   return {
     value: {
       sessionId,
@@ -189,10 +194,10 @@ export async function runListArtifacts(
 }
 
 const SAVE_DESCRIPTION =
-  'Persist a structured fact to the workflow run artifact store as a link, commit_set, check, metric, decision, or note; saving the same shape and key again upserts it. The workflow run and node are resolved from the calling node-agent session, never from input, so a worker can only record artifacts for its own node. Rejects node_caller_denied when the caller is not a workflow worker and not_a_node_agent when no node execution backs the session.';
+  'Persist a structured fact to the workflow run artifact store as a link, commit_set, check, metric, decision, or note; saving the same shape and key again upserts it. The workflow run and node are resolved from the calling node-agent session, never from input, so a worker can only record artifacts for its own node. Returns { accepted: false, reason } on admission denial: node_caller_denied when the caller is not a workflow worker and not_a_node_agent when no node execution backs the session.';
 
 const LIST_DESCRIPTION =
-  'List the artifacts recorded on the calling agent workflow run, optionally narrowed by nodeId or shape. The workflow run is resolved from the calling node-agent session, never from input. Rejects node_caller_denied when the caller is not a workflow worker and not_a_node_agent when no node execution backs the session.';
+  'List the artifacts recorded on the calling agent workflow run, optionally narrowed by nodeId or shape. The workflow run is resolved from the calling node-agent session, never from input. Returns { accepted: false, reason } on admission denial: node_caller_denied when the caller is not a workflow worker and not_a_node_agent when no node execution backs the session.';
 
 export function createArtifactSaveOperation(deps: ArtifactOperationDependencies) {
   const run = (superpipe({ deps })('save-artifact') as PipelineAPI)
