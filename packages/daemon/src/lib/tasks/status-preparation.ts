@@ -65,6 +65,7 @@ export function prepareSpaceTaskStatusUpdate(
     (task.status === 'review' && (newStatus === 'open' || newStatus === 'in_progress'))
   ) {
     updates.result = null;
+    updates.reportedStatus = null;
     updates.reportedSummary = null;
     updates.blockReason = null;
     updates.approvalSource = null;
