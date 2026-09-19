@@ -159,21 +159,15 @@ test.describe('Space Happy Path Pipeline (Task-First)', () => {
     await page.waitForURL(`/space/${spaceId}/task/${taskId}`, { timeout: 10000 });
     await expect(page.getByTestId('task-thread-panel')).toBeVisible({ timeout: 5000 });
 
-    await page.evaluate(
-      async ({ sid, tid }) => {
-        const hub = window.__messageHub || window.appState?.messageHub;
-        if (!hub?.request) throw new Error('MessageHub not available');
-        await hub.request('space.task.ensureAgentSession', { spaceId: sid, taskId: tid });
-        await hub.request('space.task.sendMessage', {
-          spaceId: sid,
-          taskId: tid,
-          message: 'E2E ping: continue the task and report status.',
-        });
-      },
-      { sid: spaceId, tid: taskId }
-    );
+    const composer = page.getByTestId('task-session-chat-composer');
+    const messageInput = composer.getByRole('textbox');
+    await expect(messageInput).toBeVisible({ timeout: 15000 });
+    await messageInput.fill('E2E ping: continue the task and report status.');
+    await composer.getByRole('button', { name: /Send message|Steer current turn/ }).click();
 
-    await expect(page.getByTestId('space-task-event-row').first()).toBeVisible({ timeout: 15000 });
+    await expect(
+      page.getByText('E2E ping: continue the task and report status.', { exact: true })
+    ).toBeVisible({ timeout: 15000 });
   });
 
   test.describe('completed workflow task', () => {
