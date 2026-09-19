@@ -235,9 +235,19 @@ to be a state a reviewer sees, never one reached by forgetting. Decision 1's
 property survives: a capability with no contribution is still not
 representable.
 
-Clause (c) is not hypothetical. `computeEffectiveMcpServers` resolves a name
-collision by renaming *ours*, so a registry row named `hyperneo-operations`
-takes the name our own authored prose tells agents to call (#4801).
+Clause (c) is not hypothetical, and it is written from a defect that happened.
+`computeEffectiveMcpServers` used to resolve a name collision by renaming
+*ours*, so a registry row named `hyperneo-operations` could take the name our
+own authored prose tells agents to call, pointing `task.create` and arbitrary
+operation input at a third-party server (#4801).
+
+#4812 fixed that: the merge now goes through `mergeSessionMcpServers`
+(`packages/daemon/src/lib/mcp/built-in-servers.ts`), which writes the
+first-party server unconditionally and renames the intruding row to
+`<name>-2`. Clause (c) states the resulting property so it cannot regress
+quietly — the hazard is not that the code is wrong today, but that authored
+prose naming a binding creates a dependency nothing else in the system
+records.
 
 ## Consequences
 
