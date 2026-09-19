@@ -1,3 +1,4 @@
+import superpipe, { type PipelineAPI } from 'superpipe';
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir, platform } from 'node:os';
@@ -184,14 +185,15 @@ function readHyperNeoAuthJson(): Record<string, unknown> {
   }
 }
 
-export async function migrateProvidersIfNeeded(
-  db: Database,
-  credentialManager: ProviderCredentialManager
-): Promise<void> {
-  if (db.providers.countProviders() > 0) {
-    return;
-  }
+type ProviderImportCredentials = Pick<
+  ProviderCredentialManager,
+  'storeApiKey' | 'storeOAuthTokens'
+>;
 
+async function importLegacyProviders(
+  db: Database,
+  credentialManager: ProviderImportCredentials
+): Promise<void> {
   let sortOrder = 0;
 
   for (const mapping of BUILT_IN_PROVIDER_ENV_MAP) {
@@ -290,13 +292,60 @@ export async function migrateProvidersIfNeeded(
   }
 }
 
-export async function backfillDeepSeekProvider(
-  db: Database,
-  credentialManager: Pick<ProviderCredentialManager, 'getCredentials' | 'storeApiKey'>
-): Promise<void> {
-  const apiKey = process.env.DEEPSEEK_API_KEY;
-  if (!apiKey) return;
+function readProviderImportCompleted(db: Database): boolean {
+  if (db.providers.countProviders() > 0) {
+    db.providers.completeStartupImport('legacy-providers');
+  }
+  return db.providers.hasCompletedStartupImport('legacy-providers');
+}
 
+export function gateProviderImport(
+  completed: boolean
+): { value: true } | { reason: 'already_imported' } {
+  return completed ? { reason: 'already_imported' } : { value: true };
+}
+
+const runProviderImport = (superpipe({})('migrate-legacy-providers') as PipelineAPI)
+  .input(['db', 'credentialManager'])
+  .pipe(readProviderImportCompleted, 'db', 'completed')
+  .pipe(gateProviderImport, 'completed', 'result:admission')
+  .pipe(importLegacyProviders, ['db', 'credentialManager'], 'imported')
+  .pipe((db: Database) => db.providers.completeStartupImport('legacy-providers'), 'db', 'recorded')
+  .endAsync('recorded') as (
+  db: Database,
+  credentials: ProviderImportCredentials
+) => Promise<unknown>;
+
+export async function migrateProvidersIfNeeded(
+  db: Database,
+  credentialManager: ProviderImportCredentials
+): Promise<void> {
+  await runProviderImport(db, credentialManager);
+}
+
+export function gateDeepSeekKey(
+  apiKey: string | undefined
+): { value: { apiKey: string } } | { reason: 'no_key' } {
+  return apiKey ? { value: { apiKey } } : { reason: 'no_key' };
+}
+
+function readDeepSeekImportState(db: Database): { present: boolean; completed: boolean } {
+  return {
+    present: Boolean(db.providers.getProviderByProviderId('deepseek')),
+    completed: db.providers.hasCompletedStartupImport('deepseek-provider'),
+  };
+}
+
+export function gateDeepSeekImport(
+  admission: { apiKey: string },
+  state: { present: boolean; completed: boolean }
+): { value: { apiKey: string } } | { reason: 'previously_imported' } {
+  return state.completed && !state.present
+    ? { reason: 'previously_imported' }
+    : { value: admission };
+}
+
+function ensureDeepSeekImport(db: Database): void {
   if (!db.providers.getProviderByProviderId('deepseek')) {
     db.providers.createProvider({
       providerId: 'deepseek',
@@ -308,13 +357,41 @@ export async function backfillDeepSeekProvider(
       sortOrder: db.providers.countProviders(),
     });
   }
+  db.providers.completeStartupImport('deepseek-provider');
+}
 
+type DeepSeekImportCredentials = Pick<ProviderCredentialManager, 'getCredentials' | 'storeApiKey'>;
+
+async function importDeepSeekCredential(
+  credentialManager: DeepSeekImportCredentials,
+  admission: { apiKey: string }
+): Promise<void> {
   try {
     const existingCredentials = await credentialManager.getCredentials('deepseek');
     if (!existingCredentials) {
-      await credentialManager.storeApiKey('deepseek', apiKey);
+      await credentialManager.storeApiKey('deepseek', admission.apiKey);
     }
   } catch {}
+}
+
+const runDeepSeekImport = (superpipe({})('backfill-deepseek-provider') as PipelineAPI)
+  .input(['db', 'credentialManager', 'apiKey'])
+  .pipe(gateDeepSeekKey, 'apiKey', 'result:admission')
+  .pipe(readDeepSeekImportState, 'db', 'state')
+  .pipe(gateDeepSeekImport, ['admission', 'state'], 'result:admission')
+  .pipe(ensureDeepSeekImport, 'db', 'ensured')
+  .pipe(importDeepSeekCredential, ['credentialManager', 'admission'], 'imported')
+  .endAsync('imported') as (
+  db: Database,
+  credentials: DeepSeekImportCredentials,
+  apiKey: string | undefined
+) => Promise<unknown>;
+
+export async function backfillDeepSeekProvider(
+  db: Database,
+  credentialManager: DeepSeekImportCredentials
+): Promise<void> {
+  await runDeepSeekImport(db, credentialManager, process.env.DEEPSEEK_API_KEY);
 }
 
 const STALE_GLM_DISPLAY_NAMES = new Set(['GLM', 'GLM (智谱AI)']);
