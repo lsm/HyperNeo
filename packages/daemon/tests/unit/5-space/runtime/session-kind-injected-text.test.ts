@@ -501,6 +501,30 @@ describe('session kind injected text', () => {
       ]);
     });
 
+    test('keeps every host-authored prompt unrecorded so a resumed session re-reads it (#4824)', async () => {
+      const recording: Array<{ kind: SessionKind; recorded: boolean | 'none' }> = [];
+      for (const kind of SESSION_KINDS) {
+        const { session, briefing } = await provision(kind);
+        const options = await new QueryOptionsBuilder(
+          makeBuilderContext(session, briefing)
+        ).build();
+        const prompt = options.systemPrompt as { snapshot?: boolean } | undefined;
+        recording.push({
+          kind,
+          recorded: prompt === undefined ? 'none' : prompt.snapshot !== false,
+        });
+      }
+
+      expect(recording).toEqual([
+        { kind: 'agent_card', recorded: false },
+        { kind: 'space_chat', recorded: 'none' },
+        { kind: 'ad_hoc_member', recorded: false },
+        { kind: 'workflow_worker', recorded: false },
+        { kind: 'direct_task_worker', recorded: true },
+        { kind: 'non_space', recorded: true },
+      ]);
+    });
+
     test('puts the agent role prompt ahead of the Space briefing for an agent-card session', async () => {
       const { session, briefing } = await provision('agent_card');
 
