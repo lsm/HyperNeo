@@ -1380,7 +1380,7 @@ describe('ContextFetcher.fetch', () => {
       expect(warnSpy).not.toHaveBeenCalled();
     });
 
-    it('does not warn for Codex when SDK effective window matches metadata', async () => {
+    it('keeps route-specific Codex metadata when the SDK reports the same model', async () => {
       const getContextUsage = mock(async () =>
         baseResponse({
           totalTokens: 100_000,
@@ -1394,13 +1394,14 @@ describe('ContextFetcher.fetch', () => {
       const fetcher = new ContextFetcher('codex-session');
       const warnSpy = spyOn(fetcher.logger, 'warn');
 
-      await fetcher.fetch(query, {
+      const info = await fetcher.fetch(query, {
         id: 'gpt-5.5',
         contextWindow: 272_000,
         provider: 'anthropic-codex',
         preferContextWindowMetadata: true,
       });
 
+      expect(info?.totalCapacity).toBe(272_000);
       expect(warnSpy).not.toHaveBeenCalled();
     });
   });

@@ -521,7 +521,19 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     if (!auth) return [];
     void this.ensureBridgeStarted('default').catch(() => {});
     await this.verifyCredentials(auth);
-    return ANTHROPIC_CODEX_MODELS.map((m) => ({ ...m, thinkingModes: 'granular' as const }));
+    return this.getCachedModels();
+  }
+
+  getCachedModels(): ModelInfo[] {
+    const usesApiKey =
+      Boolean(this.env.OPENAI_API_KEY) || this.cachedBridgeAuth?.source === 'api_key';
+    return ANTHROPIC_CODEX_MODELS.map((model) => ({
+      ...model,
+      contextWindow: usesApiKey
+        ? model.contextWindow
+        : (codexBackendContextWindow(model.id) ?? model.contextWindow),
+      thinkingModes: 'granular' as const,
+    }));
   }
 
   ownsModel(modelId: string): boolean {
