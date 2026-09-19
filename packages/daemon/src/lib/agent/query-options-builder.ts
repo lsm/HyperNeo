@@ -10,7 +10,6 @@ import type {
   AgentDefinition,
   AppMcpServer,
   AppMcpServerSourceType,
-  ClaudeCodePreset,
   DeclarativeToolGuard,
   Session,
   SkillEnablementOverride,
@@ -531,15 +530,7 @@ export class QueryOptionsBuilder {
           ];
       const spaceRestrictedBuiltinTools = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'];
 
-      const systemPrompt = queryOptions.systemPrompt;
-      if (
-        typeof systemPrompt === 'object' &&
-        systemPrompt !== null &&
-        (systemPrompt as ClaudeCodePreset).type === 'preset' &&
-        (systemPrompt as ClaudeCodePreset).preset === 'claude_code'
-      ) {
-        queryOptions.systemPrompt = undefined;
-      }
+      queryOptions.systemPrompt = undefined;
 
       queryOptions.tools = spaceAllowedBuiltinTools;
 
