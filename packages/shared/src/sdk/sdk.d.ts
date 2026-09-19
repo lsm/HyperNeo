@@ -1,3 +1,4 @@
+// Upstream SDK documentation: packages/daemon/node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts
 import type { BetaMessage } from '@anthropic-ai/sdk/resources/beta/messages/messages.mjs';
 import type { BetaRawMessageStreamEvent } from '@anthropic-ai/sdk/resources/beta/messages/messages.mjs';
 import type { BetaUsage } from '@anthropic-ai/sdk/resources/beta/messages/messages.mjs';
