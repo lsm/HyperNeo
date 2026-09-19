@@ -4900,7 +4900,7 @@ export class TaskAgentManager {
     const bySession = nodeExecutions.find((exec) => exec.agentSessionId === subSessionId);
     const byAgentName = nodeExecutions.find((exec) => exec.agentName === agentName);
     const execution = bySession ?? byAgentName;
-    const workflowNodeId = workflowNodeIdHint ?? execution?.workflowNodeId ?? '';
+    const workflowNodeId = workflowNodeIdHint || execution?.workflowNodeId || '';
     const run = this.config.workflowRunRepo.getRun(workflowRunId);
     const workflow = run?.workflowId
       ? (this.config.spaceWorkflowManager.getWorkflowForRun(run) ?? null)

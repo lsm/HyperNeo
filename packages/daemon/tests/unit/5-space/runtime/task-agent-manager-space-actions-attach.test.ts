@@ -279,6 +279,56 @@ describe('TaskAgentManager — space-actions dispatcher attach', () => {
     schedule.mockRestore();
   });
 
+  test('queued hook restore falls back to the execution node when the identity has no node', () => {
+    const workflow: SpaceWorkflow = {
+      id: 'workflow-actions-attach',
+      spaceId: SPACE_ID,
+      name: 'Hooked workflow',
+      startNodeId: 'node-coder',
+      endNodeId: 'node-review',
+      nodes: [
+        { id: 'node-coder', name: 'Coding', agents: [{ name: 'coder', agentId: 'agent-coder' }] },
+        {
+          id: 'node-review',
+          name: 'Review',
+          agents: [{ name: 'reviewer', agentId: 'agent-reviewer' }],
+        },
+      ],
+      channels: [{ id: 'coding-review', from: 'Coding', to: 'Review' }],
+      hooks: [
+        {
+          id: 'review-ready',
+          enabled: true,
+          sourceNode: 'Coding',
+          method: 'send_message',
+          classification: 'validation',
+          order: 0,
+          validator: { kind: 'built_in', id: 'pr_ready' },
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+    };
+    const operation = sendMessageOperation();
+    const schedule = spyOn(
+      HookEngine.prototype,
+      'scheduleQueuedRetryableOperations'
+    ).mockImplementation(() => {});
+    const tam = makeManager([operation], workflow);
+
+    tam.buildNodeAgentMcpServersForSession(
+      TASK_ID,
+      SUB_SESSION_ID,
+      'coder',
+      SPACE_ID,
+      RUN_ID,
+      '/tmp/ws',
+      ''
+    );
+
+    expect(schedule.mock.calls[0]?.[2]?.nodeId).toBe('node-coder');
+    schedule.mockRestore();
+  });
+
   test('reinject (self-heal rebuild path) restarts the query and keeps the session marked', async () => {
     const tam = makeManager();
     const fake = makeFakeSession();
