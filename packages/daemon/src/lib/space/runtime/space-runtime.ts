@@ -1,5 +1,6 @@
 import {
   assertTaskTransitionSnapshot,
+  StaleTaskGuardError,
   type TaskTransitionExpectation,
 } from '../../tasks/task-manager.ts';
 import { prepareSpaceTaskStatusUpdate } from '../../tasks/status-preparation.ts';
@@ -3249,6 +3250,10 @@ export class SpaceRuntime {
     const previous = this.config.taskRepo.getTask(taskId);
     if (!previous || previous.spaceId !== spaceId) return null;
     assertTaskTransitionSnapshot(previous, expected);
+    const transitionSnapshot: TaskTransitionExpectation = {
+      expectedStatus: previous.status,
+      expectedWorkflowRunId: previous.workflowRunId ?? null,
+    };
     const nextStatus = params.status;
     if (nextStatus && previous.status !== nextStatus) {
       assertValidSpaceTaskTransition(previous.status, nextStatus);
@@ -3298,8 +3303,13 @@ export class SpaceRuntime {
           reason
         );
       }
+      const afterTeardown = this.config.taskRepo.getTask(taskId);
+      if (!afterTeardown || afterTeardown.spaceId !== spaceId) {
+        throw new StaleTaskGuardError('Task transition snapshot is stale');
+      }
+      assertTaskTransitionSnapshot(afterTeardown, transitionSnapshot);
       let updated = await taskManager.setTaskStatus(taskId, nextStatus, {
-        ...expected,
+        ...transitionSnapshot,
         result: Object.hasOwn(params, 'result') ? params.result : undefined,
         reportedSummary: Object.hasOwn(params, 'reportedSummary')
           ? params.reportedSummary
