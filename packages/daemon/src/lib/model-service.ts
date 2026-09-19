@@ -633,14 +633,20 @@ export async function ensureScopedProviderCatalogModels(
   if (cached && scopedCatalogStamps.get(sessionCacheKey) === stamp) {
     return;
   }
+  if (scopedCatalogStamps.get(sessionCacheKey) !== stamp) {
+    clearObservedContextWindows(undefined, sessionCacheKey);
+  }
   const dropScopedCatalog = () => {
+    clearObservedContextWindows(undefined, sessionCacheKey);
     modelsCache.delete(sessionCacheKey);
     cacheTimestamps.delete(sessionCacheKey);
     scopedCatalogStamps.delete(sessionCacheKey);
   };
   const provider = getProviderRegistry().get(providerId);
   if (!provider?.getModelsForSessionConfig) {
-    dropScopedCatalog();
+    modelsCache.delete(sessionCacheKey);
+    cacheTimestamps.delete(sessionCacheKey);
+    scopedCatalogStamps.set(sessionCacheKey, stamp);
     return;
   }
   scopedDiscoveryInFlight.set(
@@ -1176,48 +1182,57 @@ function isCacheStale(cacheKey: string): boolean {
 
 const observedContextWindows = new Map<string, number>();
 
-function observedContextWindowKey(providerId: string, modelId: string): string {
-  return `${providerId}:${modelId}`;
+const observationScopes = new Map<string, symbol>();
+
+export function captureContextCatalogGuard(cacheKey: string): () => boolean {
+  const scope = observationScopes.get(cacheKey) ?? Symbol();
+  observationScopes.set(cacheKey, scope);
+  return () => observationScopes.get(cacheKey) === scope;
 }
 
-function clearObservedContextWindows(providerId?: string): void {
-  if (!providerId) {
-    observedContextWindows.clear();
-    return;
-  }
-  const prefix = `${providerId}:`;
+function observedContextWindowKey(cacheKey: string, providerId: string, modelId: string): string {
+  return JSON.stringify([cacheKey, providerId, modelId]);
+}
+
+function clearObservedContextWindows(providerId?: string, cacheKey?: string): void {
+  if (cacheKey) observationScopes.delete(cacheKey);
+  else observationScopes.clear();
   for (const key of observedContextWindows.keys()) {
-    if (key.startsWith(prefix)) observedContextWindows.delete(key);
+    const [scope, provider] = JSON.parse(key) as string[];
+    if ((!cacheKey || cacheKey === scope) && (!providerId || providerId === provider)) {
+      observedContextWindows.delete(key);
+    }
   }
 }
 
 export function recordObservedContextWindow(
   providerId: string,
   modelId: string,
-  contextWindow: number
+  contextWindow: number,
+  cacheKey: string = 'global'
 ): boolean {
   if (!providerId || !modelId) return false;
   if (!Number.isFinite(contextWindow) || contextWindow <= 0) return false;
-  const key = observedContextWindowKey(providerId, modelId);
+  const key = observedContextWindowKey(cacheKey, providerId, modelId);
   if (observedContextWindows.get(key) === contextWindow) return false;
   observedContextWindows.set(key, contextWindow);
   return true;
 }
 
-function applyObservedContextWindow<T extends ModelInfo | null>(model: T): T {
+function applyObservedContextWindow<T extends ModelInfo | null>(model: T, cacheKey: string): T {
   if (observedContextWindows.size === 0 || model === null) return model;
   const observed =
-    observedContextWindows.get(observedContextWindowKey(model.provider, model.id)) ??
-    observedContextWindows.get(observedContextWindowKey(model.provider, model.alias));
+    observedContextWindows.get(observedContextWindowKey(cacheKey, model.provider, model.id)) ??
+    observedContextWindows.get(observedContextWindowKey(cacheKey, model.provider, model.alias));
   return observed === undefined || observed === model.contextWindow
     ? model
     : ({ ...model, contextWindow: observed } as T);
 }
 
-function applyObservedContextWindows(models: ModelInfo[]): ModelInfo[] {
+function applyObservedContextWindows(models: ModelInfo[], cacheKey: string): ModelInfo[] {
   return observedContextWindows.size === 0
     ? models
-    : models.map((m) => applyObservedContextWindow(m));
+    : models.map((m) => applyObservedContextWindow(m, cacheKey));
 }
 
 function readCachedModels(cacheKey: string): ModelInfo[] | null {
@@ -1231,7 +1246,7 @@ function readCachedModels(cacheKey: string): ModelInfo[] | null {
   if (cachedModels.length === 0) {
     return null;
   }
-  return applyObservedContextWindows(cachedModels);
+  return applyObservedContextWindows(cachedModels, cacheKey);
 }
 
 export function getAvailableModels(cacheKey: string = 'global'): ModelInfo[] {
@@ -1322,6 +1337,7 @@ export function clearModelsCache(cacheKey?: string, providerId?: string): void {
     cacheClearSequence += 1;
   }
   if (cacheKey) {
+    clearObservedContextWindows(providerId, cacheKey);
     const hadInFlight = refreshInProgress.has(cacheKey);
     modelsCache.delete(cacheKey);
     cacheTimestamps.delete(cacheKey);
@@ -1337,7 +1353,6 @@ export function clearModelsCache(cacheKey?: string, providerId?: string): void {
     }
     if (cacheKey === 'global') {
       cancelAllProviderRetries();
-      clearObservedContextWindows(providerId);
     }
     if (hadInFlight || cacheGeneration.has(cacheKey)) {
       cacheGeneration.set(cacheKey, (cacheGeneration.get(cacheKey) ?? 0) + 1);
@@ -1733,10 +1748,37 @@ export async function getModelInfo(
   );
   const staticModel = findInModels(staticProviderModels, idOrAlias) ?? null;
   if (!staticModel) return null;
-  const observedStatic = applyObservedContextWindow(staticModel);
+  const observedStatic = applyObservedContextWindow(staticModel, cacheKey);
   return providerId === 'anthropic-copilot'
     ? overlayCodexStaticMetadata(observedStatic)
     : observedStatic;
+}
+
+export function getSessionModelCacheKey(session: Pick<Session, 'id' | 'config'>): string {
+  const config = session.config.providerConfig;
+  return session.config.provider && (config?.apiKey || config?.baseUrl || config?.region)
+    ? session.id
+    : 'global';
+}
+
+export async function getSessionContextModelInfo(
+  session: Pick<Session, 'id' | 'config'>
+): Promise<ModelInfo | null> {
+  return (await resolveSessionContextModelInfo(session)).modelInfo;
+}
+
+export async function resolveSessionContextModelInfo(
+  session: Pick<Session, 'id' | 'config'>
+): Promise<{ cacheKey: string; modelInfo: ModelInfo | null }> {
+  const cacheKey = getSessionModelCacheKey(session);
+  if (cacheKey !== 'global' && session.config.provider && session.config.providerConfig) {
+    await ensureScopedProviderCatalogModels(
+      cacheKey,
+      session.config.provider,
+      session.config.providerConfig
+    );
+  }
+  return { cacheKey, modelInfo: await getSessionModelInfo(session, cacheKey) };
 }
 
 export async function getSessionModelInfo(
@@ -1758,7 +1800,7 @@ export async function getSessionModelInfo(
   const staticProviderModels = STATIC_MODEL_METADATA.filter((m) => m.provider === providerId);
   const fromStatic = findInModels(staticProviderModels, session.config.model) ?? null;
   if (!fromStatic) return null;
-  const observedStatic = applyObservedContextWindow(fromStatic);
+  const observedStatic = applyObservedContextWindow(fromStatic, cacheKey);
   return providerId === 'anthropic-copilot'
     ? overlayCodexStaticMetadata(observedStatic)
     : observedStatic;

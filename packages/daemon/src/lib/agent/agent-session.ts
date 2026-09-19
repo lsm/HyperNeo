@@ -141,7 +141,7 @@ import {
 } from '@hyperneo/shared/sdk/type-guards';
 import { AcpQueryRunner } from '../acp/acp-query-runner.ts';
 import {
-  ensureScopedProviderCatalogModels,
+  resolveSessionContextModelInfo,
   getSessionModelInfo,
   initializeModels,
   resolveModelAlias,
@@ -1803,16 +1803,8 @@ export class AgentSession
   }
 
   private async resolveSessionCatalogModelInfo(): Promise<ModelInfo | null> {
-    const providerId = this.session.config.provider;
-    const providerConfig = this.session.config.providerConfig;
-    if (
-      providerId &&
-      (providerConfig?.apiKey || providerConfig?.baseUrl || providerConfig?.region)
-    ) {
-      await ensureScopedProviderCatalogModels(this.session.id, providerId, providerConfig);
-      return getSessionModelInfo(this.session, this.session.id);
-    }
-    const cached = await getSessionModelInfo(this.session);
+    const { cacheKey, modelInfo: cached } = await resolveSessionContextModelInfo(this.session);
+    if (cacheKey !== 'global') return cached;
     if (cached) return cached;
     await initializeModels().catch(() => {});
     return getSessionModelInfo(this.session);
@@ -1933,7 +1925,7 @@ export class AgentSession
       return stale;
     }
     try {
-      const modelInfo = await getSessionModelInfo(this.session);
+      const { cacheKey, modelInfo } = await resolveSessionContextModelInfo(this.session);
       if (
         this.session.config.model !== fenceModel ||
         this.session.config.provider !== fenceProvider
@@ -1942,7 +1934,7 @@ export class AgentSession
       }
       const info = await this.messageHandler
         .getContextFetcher()
-        .fetch(queryObject, modelInfo ?? undefined);
+        .fetch(queryObject, modelInfo ?? undefined, cacheKey);
       if (
         this.queryObject !== queryObject ||
         this.session.config.model !== fenceModel ||

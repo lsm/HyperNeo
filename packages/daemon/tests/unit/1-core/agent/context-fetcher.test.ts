@@ -1431,6 +1431,72 @@ describe('ContextFetcher.fetch', () => {
       clearModelsCache();
     });
 
+    it('keeps observations for identical models isolated by catalog scope', async () => {
+      const model = anthropicSlice().get('global')![0];
+      setModelsCache(
+        new Map([
+          ['global', [model]],
+          ['session-a', [model]],
+          ['session-b', [model]],
+        ])
+      );
+      for (const [scope, capacity] of [
+        ['session-a', 600_000],
+        ['session-b', 900_000],
+      ] as const) {
+        const query = {
+          getContextUsage: async () =>
+            baseResponse({ model: model.id, maxTokens: capacity, rawMaxTokens: capacity }),
+        } as unknown as Query;
+        await new ContextFetcher(scope).fetch(query, model, scope);
+      }
+      expect((await getModelInfo(model.id, 'session-a', 'anthropic'))?.contextWindow).toBe(600_000);
+      expect((await getModelInfo(model.id, 'session-b', 'anthropic'))?.contextWindow).toBe(900_000);
+      expect((await getModelInfo(model.id, 'global', 'anthropic'))?.contextWindow).toBe(200_000);
+      clearModelsCache('session-a');
+      expect(recordObservedContextWindow('anthropic', model.id, 600_000, 'session-a')).toBe(true);
+      expect(recordObservedContextWindow('anthropic', model.id, 900_000, 'session-b')).toBe(false);
+    });
+
+    it('discards an in-flight response when its catalog scope is invalidated', async () => {
+      const model = anthropicSlice().get('global')![0];
+      setModelsCache(new Map([['session-a', [model]]]));
+      let resolveUsage!: (response: SdkResponse) => void;
+      const query = {
+        getContextUsage: () =>
+          new Promise<SdkResponse>((resolve) => {
+            resolveUsage = resolve;
+          }),
+      } as unknown as Query;
+      const pending = new ContextFetcher('session-a').fetch(query, model, 'session-a');
+      clearModelsCache('session-a');
+      resolveUsage(baseResponse({ model: model.id, maxTokens: 900_000, rawMaxTokens: 900_000 }));
+      expect(await pending).toBeNull();
+      expect(recordObservedContextWindow('anthropic', model.id, 900_000, 'session-a')).toBe(true);
+    });
+
+    it('resolves a changed SDK model from the same session catalog', async () => {
+      const model = anthropicSlice().get('global')![0];
+      setModelsCache(
+        new Map([
+          ['global', [model]],
+          [
+            'session-scoped',
+            [{ ...model, contextWindow: 500_000, preferContextWindowMetadata: true }],
+          ],
+        ])
+      );
+      const query = {
+        getContextUsage: async () => baseResponse({ model: model.id }),
+      } as unknown as Query;
+      const info = await new ContextFetcher('session-scoped').fetch(
+        query,
+        { ...model, id: 'previous-model' },
+        'session-scoped'
+      );
+      expect(info?.totalCapacity).toBe(500_000);
+    });
+
     it('adopts the SDK capacity for anthropic instead of warning', async () => {
       setModelsCache(anthropicSlice());
       const getContextUsage = mock(async () =>

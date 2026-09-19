@@ -39,8 +39,9 @@ import { mergeSessionMcpServers } from '../mcp/built-in-servers.ts';
 import { resolveMcpServers, scopeChainForSession } from '../mcp/resolve-mcp-servers.ts';
 import {
   getProviderCatalogEpoch,
-  getSessionModelInfo,
+  getSessionModelCacheKey,
   isCuratedOutModel,
+  resolveSessionContextModelInfo,
 } from '../model-service.ts';
 import { NON_ANTHROPIC_PREFIX_PROVIDER_VARS } from '../provider-service.ts';
 import {
@@ -339,16 +340,13 @@ export class QueryOptionsBuilder {
     await contextManager.ensureContextReady(session);
     const providerContext = contextManager.createContext(session);
     const providerId = providerContext.provider.id;
-    const modelInfo = await getSessionModelInfo(session);
+    const { modelInfo } = await resolveSessionContextModelInfo(session);
     const sdkModelId = providerContext.getSdkModelId();
     let sdkFallbackModel: string | undefined;
     const providerEpoch = getProviderCatalogEpoch(providerId);
     if (config.fallbackModel) {
-      const sessionScopedProvider = Boolean(
-        config.providerConfig?.apiKey ||
-          config.providerConfig?.baseUrl ||
-          config.providerConfig?.region
-      );
+      const sessionScopedProvider =
+        getSessionModelCacheKey({ id: session.id, config }) !== 'global';
       const outcome = await decideFallbackModelCuration({
         providerId,
         fallbackModel: config.fallbackModel,

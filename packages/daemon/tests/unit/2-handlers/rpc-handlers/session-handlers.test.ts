@@ -295,6 +295,43 @@ describe('Session RPC Handlers — models.list', () => {
     expect(result.modelInfo).toMatchObject({ id: 'opus', provider: 'anthropic' });
   });
 
+  it('session.model.get uses the endpoint-specific catalog', async () => {
+    const model = {
+      id: 'scoped-model',
+      alias: 'scoped-model',
+      provider: 'endpoint-provider',
+      contextWindow: 200_000,
+    } as ModelInfo;
+    getProviderRegistry().register({
+      id: model.provider,
+      getModelsForSessionConfig: async () => [{ ...model, contextWindow: 600_000 }],
+    } as unknown as Provider);
+    setModelsCache(new Map([['global', [model]]]));
+    const sessionManager = {
+      getSessionForControl: async () => ({
+        getCurrentModel: () => ({ id: model.id }),
+        getSessionData: () => ({
+          id: 'scoped-session',
+          config: {
+            model: model.id,
+            provider: model.provider,
+            providerConfig: { baseUrl: 'https://endpoint.example.test' },
+          },
+        }),
+      }),
+    } as unknown as SessionManager;
+    const { setupSessionHandlers } = await import(
+      '../../../../src/lib/rpc-handlers/session-handlers'
+    );
+    const hub = createMockMessageHub();
+    setupSessionHandlers(hub.hub, sessionManager, eventBus, {} as SpaceManager);
+    const result = await hub.handlers.get('session.model.get')!(
+      { sessionId: 'scoped-session' },
+      {}
+    );
+    expect(result).toMatchObject({ modelInfo: { id: model.id, contextWindow: 600_000 } });
+  });
+
   it('session.model.get resolves a shared alias to the session provider model', async () => {
     const models = [
       { id: 'openrouter/qwen3', name: 'Qwen3', alias: 'qwen3', provider: 'openrouter-test' },

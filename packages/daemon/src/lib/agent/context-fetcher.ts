@@ -8,7 +8,11 @@ import type {
 } from '@hyperneo/shared';
 import { AUTO_COMPACT_PERCENT_MAX, resolveAutoCompactPercent } from '@hyperneo/shared';
 import { Logger } from '../logger.ts';
-import { getModelInfo, recordObservedContextWindow } from '../model-service.js';
+import {
+  captureContextCatalogGuard,
+  getModelInfo,
+  recordObservedContextWindow,
+} from '../model-service.js';
 import { scaledAutoCompactWindow } from './context-budget-decision.ts';
 import type { QueryLike } from './query-like.ts';
 import {
@@ -88,13 +92,15 @@ export class ContextFetcher {
 
   async fetch(
     query: QueryLike | null,
-    modelMetadata?: ContextMetadata
+    modelMetadata?: ContextMetadata,
+    cacheKey: string = 'global'
   ): Promise<ContextInfo | null> {
     if (!query?.getContextUsage) return null;
     if (this.inFlightUsage && Date.now() - this.inFlightUsageStartedAt < this.usageRequestStaleMs) {
       return null;
     }
 
+    const catalogIsCurrent = captureContextCatalogGuard(cacheKey);
     let request: Promise<SDKControlGetContextUsageResponse>;
     try {
       request = query.getContextUsage();
@@ -120,14 +126,23 @@ export class ContextFetcher {
         this.logger.warn('query.getContextUsage() timed out; superseding the retained request');
         return null;
       }
+      if (!catalogIsCurrent()) return null;
       const response = timedUsage.value;
       const resolvedMetadata = await ContextFetcher.resolveMetadataForResponse(
         response,
-        modelMetadata
+        modelMetadata,
+        cacheKey
       );
+      if (!catalogIsCurrent()) return null;
       const info = ContextFetcher.toContextInfo(response, resolvedMetadata);
       if (info) {
-        ContextFetcher.settleCapacityMismatch(response, resolvedMetadata, info, this.logger);
+        ContextFetcher.settleCapacityMismatch(
+          response,
+          resolvedMetadata,
+          info,
+          this.logger,
+          cacheKey
+        );
       }
       return info;
     } catch (error) {
@@ -154,7 +169,8 @@ export class ContextFetcher {
 
   private static async resolveMetadataForResponse(
     response: SDKControlGetContextUsageResponse,
-    modelMetadata: ContextMetadata
+    modelMetadata: ContextMetadata,
+    cacheKey: string
   ): Promise<ContextMetadata> {
     const providerId = modelMetadata?.provider;
     const responseModel = response.model ? normalizeModelId(response.model) : undefined;
@@ -169,7 +185,7 @@ export class ContextFetcher {
       return modelMetadata;
     }
 
-    const responseMetadata = await getModelInfo(responseModel, 'global', providerId);
+    const responseMetadata = await getModelInfo(responseModel, cacheKey, providerId);
     return responseMetadata ?? modelMetadata;
   }
 
@@ -177,7 +193,8 @@ export class ContextFetcher {
     response: SDKControlGetContextUsageResponse,
     modelMetadata: ContextMetadata,
     info: ContextInfo,
-    logger: Logger
+    logger: Logger,
+    cacheKey: string
   ): void {
     const providerId = modelMetadata?.provider;
     if (!providerId || !NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId)) return;
@@ -190,7 +207,7 @@ export class ContextFetcher {
     const mismatch = Math.abs(sdkCapacity - metadataCapacity) / larger;
     if (mismatch <= ContextFetcher.CAPACITY_MISMATCH_WARN_FRACTION) return;
     if (modelMetadata?.preferContextWindowMetadata !== true) {
-      ContextFetcher.reconcileContextWindow(providerId, modelMetadata, info, logger);
+      ContextFetcher.reconcileContextWindow(providerId, modelMetadata, info, logger, cacheKey);
       return;
     }
     logger.warn(
@@ -206,12 +223,13 @@ export class ContextFetcher {
     providerId: string,
     modelMetadata: ContextMetadata,
     info: ContextInfo,
-    logger: Logger
+    logger: Logger,
+    cacheKey: string
   ): void {
     const modelId = modelMetadata?.id;
     const observedCapacity = positiveInteger(info.totalCapacity);
     if (!modelId || !observedCapacity) return;
-    if (!recordObservedContextWindow(providerId, modelId, observedCapacity)) return;
+    if (!recordObservedContextWindow(providerId, modelId, observedCapacity, cacheKey)) return;
     logger.info(
       `Adopted SDK context capacity ${observedCapacity} tokens for ` +
         `provider=${providerId} model=${modelId}, replacing stale metadata ` +

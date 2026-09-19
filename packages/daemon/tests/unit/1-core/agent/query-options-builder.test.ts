@@ -380,6 +380,7 @@ describe('QueryOptionsBuilder', () => {
           const options = await builder.build();
 
           expect(options.fallbackModel).toBe('qwen3:14b');
+          expect(options.settings).toMatchObject({ autoCompactWindow: 128000 });
         } finally {
           getProviderRegistry().unregister('scoped-catalog-test');
           getProviderRegistry().setCuratedModels('scoped-catalog-test', undefined);
@@ -550,7 +551,7 @@ describe('QueryOptionsBuilder', () => {
         }
       });
 
-      it('skips scoped catalog discovery when no curation is configured', async () => {
+      it('reuses primary-model scoped discovery when fallback curation is enabled', async () => {
         let scopedFetchCount = 0;
         getProviderRegistry().register({
           id: 'scoped-skip-test',
@@ -592,7 +593,7 @@ describe('QueryOptionsBuilder', () => {
 
           const options = await builder.build();
           expect(options.fallbackModel).toBe('qwen3:14b');
-          expect(scopedFetchCount).toBe(0);
+          expect(scopedFetchCount).toBe(1);
 
           getProviderRegistry().setCuratedModels('scoped-skip-test', [{ id: 'qwen3' }]);
           const curatedOptions = await builder.build();

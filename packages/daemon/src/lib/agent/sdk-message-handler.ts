@@ -38,7 +38,7 @@ import type { Database } from '../../storage/database.ts';
 import { ErrorCategory, type ErrorManager } from '../error-manager.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
-import { getProviderCatalogEpoch, getSessionModelInfo } from '../model-service.ts';
+import { getProviderCatalogEpoch, resolveSessionContextModelInfo } from '../model-service.ts';
 import { getProviderContextManager } from '../providers/factory.ts';
 import { isTurnEndAckEligible, selectPersistedAckRow } from './ack-selection.ts';
 import { ApiErrorCircuitBreaker } from './api-error-circuit-breaker.ts';
@@ -2042,7 +2042,7 @@ export class SDKMessageHandler {
           );
           clearedDeadCompaction = true;
         }
-        const modelInfo = await getSessionModelInfo(session);
+        const { cacheKey, modelInfo } = await resolveSessionContextModelInfo(session);
         if (
           this.isContextRefreshStale(
             queryObject,
@@ -2055,7 +2055,8 @@ export class SDKMessageHandler {
           return;
         const contextInfo: ContextInfo | null = await this.contextFetcher.fetch(
           queryObject,
-          modelInfo
+          modelInfo,
+          cacheKey
         );
         if (
           this.isContextRefreshStale(
