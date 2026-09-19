@@ -272,6 +272,7 @@ describe('operation.invoke RPC registration', () => {
       tasks: [],
       total: 0,
       nextCursor: null,
+      scope: { standalone: true },
     });
     const space = new SpaceRepository(taskDb).createSpace({
       name: 'Test',
@@ -416,12 +417,18 @@ describe('operation.invoke RPC registration', () => {
         name: 'task.list',
         input: { spaceId: space.id, status: 'open' },
       })
-    ).toEqual({ tasks: [readTaskCore(taskDb, owned.id)], total: 1, nextCursor: null });
+    ).toEqual({
+      tasks: [readTaskCore(taskDb, owned.id)],
+      total: 1,
+      nextCursor: null,
+      scope: { spaceId: space.id },
+    });
     taskDb.prepare("UPDATE space_tasks SET status = 'archived' WHERE id = ?").run(created[0].id);
     expect(await client.request('operation.invoke', { name: 'task.list' })).toEqual({
       tasks: [created[1]],
       total: 1,
       nextCursor: null,
+      scope: { standalone: true },
     });
     expect(
       await client.request('operation.invoke', {
