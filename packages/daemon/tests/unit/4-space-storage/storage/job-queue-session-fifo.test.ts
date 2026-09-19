@@ -91,22 +91,72 @@ describe('JobQueueRepository — dequeueSessionFifo (dark launch)', () => {
     expect(repo.getJob(second.id)?.status).toBe('pending');
   });
 
-  it('an earlier pending job with a future run_at blocks a later same-session job', () => {
-    const first = repo.enqueue({
+  it('an earlier job deferred past now yields the lane head to the next due job', () => {
+    const deferred = repo.enqueue({
       queue: 'message_delivery',
       payload: { sessionId: 'sess-a' },
       runAt: Date.now() + 60_000,
     });
-    const second = enqueueDelivery(repo, 'sess-a');
-
-    expect(repo.dequeueSessionFifo('message_delivery', 5)).toHaveLength(0);
-
-    repo.reschedulePending(first.id, Date.now() - 1000);
+    const due = enqueueDelivery(repo, 'sess-a');
 
     const claimed = repo.dequeueSessionFifo('message_delivery', 5);
-    expect(claimed).toHaveLength(1);
-    expect(claimed[0].id).toBe(first.id);
-    expect(repo.getJob(second.id)?.status).toBe('pending');
+
+    expect(claimed.map((job) => job.id)).toEqual([due.id]);
+    expect(repo.getJob(deferred.id)?.status).toBe('pending');
+  });
+
+  it('a deferred job reclaims the head as soon as it comes due', () => {
+    const deferred = repo.enqueue({
+      queue: 'message_delivery',
+      payload: { sessionId: 'sess-a' },
+      runAt: Date.now() + 60_000,
+    });
+    const due = enqueueDelivery(repo, 'sess-a');
+    const [first] = repo.dequeueSessionFifo('message_delivery', 5);
+    repo.complete(first.id, {});
+
+    repo.reschedulePending(deferred.id, Date.now() - 1000);
+
+    const claimed = repo.dequeueSessionFifo('message_delivery', 5);
+    expect(claimed.map((job) => job.id)).toEqual([deferred.id]);
+    expect(repo.getJob(due.id)?.status).toBe('completed');
+  });
+
+  it('a lane whose oldest job is deferred still drains one job per dequeue (#4386)', () => {
+    repo.enqueue({
+      queue: 'message_delivery',
+      payload: { sessionId: 'sess-a' },
+      runAt: Date.now() + 86_400_000,
+    });
+    const backlog = [
+      enqueueDelivery(repo, 'sess-a'),
+      enqueueDelivery(repo, 'sess-a'),
+      enqueueDelivery(repo, 'sess-a'),
+    ];
+
+    const drained: string[] = [];
+    for (let pass = 0; pass < backlog.length; pass++) {
+      const [job] = repo.dequeueSessionFifo('message_delivery', 5);
+      drained.push(job.id);
+      repo.complete(job.id, {});
+    }
+
+    expect(drained).toEqual(backlog.map((job) => job.id));
+  });
+
+  it('a deferred oldest job does not let a claimed successor be double-claimed', () => {
+    repo.enqueue({
+      queue: 'message_delivery',
+      payload: { sessionId: 'sess-a' },
+      runAt: Date.now() + 60_000,
+    });
+    enqueueDelivery(repo, 'sess-a');
+    const behind = enqueueDelivery(repo, 'sess-a');
+
+    expect(repo.dequeueSessionFifo('message_delivery', 5)).toHaveLength(1);
+
+    expect(repo.dequeueSessionFifo('message_delivery', 5)).toHaveLength(0);
+    expect(repo.getJob(behind.id)?.status).toBe('pending');
   });
 
   it('an earlier unreleased job blocks a later released job when releasedPath is set', () => {
@@ -534,6 +584,27 @@ describe('JobQueueRepository — dequeueSessionFifo waitsBehind cross-lane gate'
       repo.dequeueSessionFifo('message_delivery', 5, { waitsBehind: WAITS_BEHIND_MAILBOX })
     ).toHaveLength(0);
     expect(repo.getJob(delivery.id)?.status).toBe('pending');
+    expect(repo.getJob(entry.id)?.status).toBe('pending');
+  });
+
+  it('a predecessor-lane entry deferred past now does not block the session', () => {
+    const entry = repo.enqueue({
+      queue: 'mailbox',
+      payload: { to: { kind: 'session', sessionId: 'sess-a' } },
+      createdAt: 1000,
+      runAt: Date.now() + 60_000,
+    });
+    const delivery = repo.enqueue({
+      queue: 'message_delivery',
+      payload: { sessionId: 'sess-a' },
+      createdAt: 2000,
+    });
+
+    const claimed = repo.dequeueSessionFifo('message_delivery', 5, {
+      waitsBehind: WAITS_BEHIND_MAILBOX,
+    });
+
+    expect(claimed.map((job) => job.id)).toEqual([delivery.id]);
     expect(repo.getJob(entry.id)?.status).toBe('pending');
   });
 

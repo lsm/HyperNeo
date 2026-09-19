@@ -141,7 +141,8 @@ export function buildJobQueueSessionFifoSelection(
         COALESCE(json_extract(payload, '$.admissionRowid'), rowid) AS lane_order,
         ${sessionKeySql} AS lane_key
         FROM job_queue
-       WHERE queue = ? AND status IN ('pending', 'processing')
+       WHERE queue = ?
+         AND (status = 'processing' OR (status = 'pending' AND run_at <= ?))
     ),
     session_heads AS (
       SELECT rid FROM (
@@ -161,21 +162,22 @@ export function buildJobQueueSessionFifoSelection(
      WHERE candidate.queue = ? AND candidate.status = 'pending' AND candidate.run_at <= ?`;
   const params: Array<string | number> = [];
   if (!defaultSessionPath) params.push(sessionIdPath);
-  params.push(input.queue, input.queue, input.now);
+  params.push(input.queue, input.now, input.queue, input.now);
   for (const lane of input.waitsBehind ?? []) {
     const candidateSessionSql = defaultSessionPath
       ? `json_extract(candidate.payload, '$.sessionId')`
       : `json_extract(candidate.payload, ?)`;
     sql += ` AND NOT EXISTS (
       SELECT 1 FROM job_queue ahead
-       WHERE ahead.queue = ? AND ahead.status IN ('pending', 'processing')
+       WHERE ahead.queue = ?
+         AND (ahead.status = 'processing' OR (ahead.status = 'pending' AND ahead.run_at <= ?))
          AND json_extract(ahead.payload, ?) = ${candidateSessionSql}
          AND (ahead.created_at < candidate.created_at
               OR (ahead.created_at = candidate.created_at
                   AND COALESCE(json_extract(ahead.payload, '$.admissionRowid'), ahead.rowid)
                     < COALESCE(json_extract(candidate.payload, '$.admissionRowid'), candidate.rowid)))
     )`;
-    params.push(lane.queue, lane.sessionIdPath ?? '$.sessionId');
+    params.push(lane.queue, input.now, lane.sessionIdPath ?? '$.sessionId');
     if (!defaultSessionPath) params.push(sessionIdPath);
   }
   if (input.releasedPath) {

@@ -1,5 +1,9 @@
 import { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
-import { runScopedQuery, type ScopedDbQueryResult } from './scoped-query.ts';
+import {
+  runScopedQuery,
+  ScopedCopyBudgetExceededError,
+  type ScopedDbQueryResult,
+} from './scoped-query.ts';
 import type { DbScopeType } from './scope-config.ts';
 
 type DbQueryWorkerRequest = {
@@ -15,7 +19,7 @@ type DbQueryWorkerRequest = {
 type DbQueryWorkerResponse =
   | { id: string; started: true }
   | { id: string; result: ScopedDbQueryResult }
-  | { id: string; error: string };
+  | { id: string; error: { code?: string; message: string } };
 
 type WorkerGlobal = {
   onmessage: ((event: { data: DbQueryWorkerRequest }) => void | Promise<void>) | null;
@@ -49,6 +53,12 @@ worker.onmessage = (event) => {
     });
     worker.postMessage({ id, result });
   } catch (error) {
-    worker.postMessage({ id, error: error instanceof Error ? error.message : String(error) });
+    worker.postMessage({
+      id,
+      error: {
+        ...(error instanceof ScopedCopyBudgetExceededError ? { code: error.code } : {}),
+        message: error instanceof Error ? error.message : String(error),
+      },
+    });
   }
 };
