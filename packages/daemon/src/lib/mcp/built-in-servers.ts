@@ -1,8 +1,10 @@
 export const OPERATIONS_MCP_SERVER_NAME = 'hyperneo-operations';
+export const AGENT_MEMORY_MCP_SERVER_NAME = 'agent-memory';
+export const DB_QUERY_MCP_SERVER_NAME = 'db-query';
 
 const BUILT_IN_MCP_SERVERS: ReadonlySet<string> = new Set([
-  'agent-memory',
-  'db-query',
+  AGENT_MEMORY_MCP_SERVER_NAME,
+  DB_QUERY_MCP_SERVER_NAME,
   OPERATIONS_MCP_SERVER_NAME,
 ]);
 

@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Session, Space, SpaceWorkflow } from '@hyperneo/shared';
+import type { McpServer } from '@hyperneo/shared/sdk';
 import { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
 import {
   QueryOptionsBuilder,
@@ -50,8 +51,9 @@ const WORKSPACE_PATH = '/tmp/session-kinds-ws';
 
 const OPERATIONS_CONTRIBUTION = operationsCapabilityContribution({
   type: 'sdk',
-  instance: {},
-} as never);
+  name: 'hyperneo-operations',
+  instance: {} as McpServer,
+});
 
 const SPACE: Space = {
   id: SESSION_KIND_SPACE_ID,
@@ -93,6 +95,8 @@ const TEXT_MARKERS: ReadonlyArray<readonly [string, string]> = [
   ],
   ['operations-door-tool', 'mcp__hyperneo-operations__invoke'],
   ['operations-discovery', 'List the operations before concluding that a capability is missing'],
+  ['agent-memory-briefing', '### Space Memory'],
+  ['db-query-briefing', '### Reading the Database'],
   ['space-standing-instructions', SPACE_INSTRUCTIONS],
   ['space-background-context', SPACE_BACKGROUND],
   ['card-agent-instructions', CARD_AGENT_INSTRUCTIONS],
@@ -400,6 +404,8 @@ describe('session kind injected text', () => {
             'card-agent-role',
             'operations-door-tool',
             'operations-discovery',
+            'agent-memory-briefing',
+            'db-query-briefing',
             'space-standing-instructions',
           ],
         },
@@ -412,12 +418,32 @@ describe('session kind injected text', () => {
             'ad-hoc-role',
             'operations-door-tool',
             'operations-discovery',
+            'agent-memory-briefing',
+            'db-query-briefing',
             'space-standing-instructions',
           ],
         },
         { kind: 'workflow_worker', briefing: 'none', says: [] },
         { kind: 'direct_task_worker', briefing: 'none', says: [] },
         { kind: 'non_space', briefing: 'none', says: [] },
+      ]);
+    });
+
+    test('briefs only the built-in servers the session was actually given', async () => {
+      const session = makeSessionOfKind('ad_hoc_member');
+      const recorded = makeRecordingAgentSession(session);
+      const service = buildService('ad_hoc_member', recorded.agentSession);
+      (service as unknown as { config: SpaceRuntimeServiceConfig }).config.dbPath = undefined;
+
+      await service.attachSpaceToolsToMemberSession(session, { replayPendingMessages: false });
+
+      expect(markersIn(recorded.briefings.at(-1) ?? '')).toEqual([
+        'space-identity',
+        'ad-hoc-role',
+        'operations-door-tool',
+        'operations-discovery',
+        'agent-memory-briefing',
+        'space-standing-instructions',
       ]);
     });
 
@@ -473,6 +499,8 @@ describe('session kind injected text', () => {
             'card-agent-role',
             'operations-door-tool',
             'operations-discovery',
+            'agent-memory-briefing',
+            'db-query-briefing',
             'space-standing-instructions',
             'card-agent-instructions',
             'owner-review-contract',
@@ -488,6 +516,8 @@ describe('session kind injected text', () => {
             'ad-hoc-role',
             'operations-door-tool',
             'operations-discovery',
+            'agent-memory-briefing',
+            'db-query-briefing',
             'space-standing-instructions',
           ],
         },

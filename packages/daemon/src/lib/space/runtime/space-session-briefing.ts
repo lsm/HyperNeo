@@ -10,6 +10,7 @@ export interface SpaceSessionBriefingInput {
   readonly agentDisplayName?: string | null;
   readonly spaceInstructions?: string | null;
   readonly operations: CapabilityContribution;
+  readonly capabilities?: readonly CapabilityContribution[];
 }
 
 function roleLine(input: SpaceSessionBriefingInput): string {
@@ -38,6 +39,6 @@ function spaceScopeBriefing(input: SpaceSessionBriefingInput): string {
 export function buildSpaceSessionBriefing(input: SpaceSessionBriefingInput): string {
   return assembleSessionBriefing({
     scope: [{ facet: 'space', briefing: spaceScopeBriefing(input) }],
-    capabilities: [input.operations],
+    capabilities: [input.operations, ...(input.capabilities ?? [])],
   }).text;
 }

@@ -56,7 +56,9 @@ function capabilitySections(contributions: readonly CapabilityContribution[]): B
   }
   return [...byServer.entries()]
     .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
-    .map(([name, contribution]) => section('capability', name, contribution.briefing));
+    .flatMap(([name, contribution]) =>
+      contribution.kind === 'authored' ? [section('capability', name, contribution.briefing)] : []
+    );
 }
 
 export function assembleSessionBriefing(
