@@ -4,6 +4,7 @@ import {
   prepareSpaceTaskStatusUpdate,
   isTerminalTaskStatus,
 } from '../../../../src/lib/tasks/status-preparation';
+import { VALID_TASK_TRANSITIONS } from '../../../../src/lib/tasks/transitions';
 
 function task(status: SpaceTaskStatus, extra: Partial<SpaceTask> = {}): SpaceTask {
   return Object.freeze({ id: 'task', spaceId: 'space', status, ...extra }) as SpaceTask;
@@ -168,21 +169,17 @@ test('rejecting a review task clears the report that would re-signal completion'
   });
 });
 
-test('every reopen transition clears reportedStatus, not just stopped', () => {
-  const reopens: Array<[SpaceTaskStatus, SpaceTaskStatus]> = [
-    ['review', 'open'],
-    ['review', 'in_progress'],
-    ['blocked', 'open'],
-    ['blocked', 'in_progress'],
-    ['cancelled', 'open'],
-    ['cancelled', 'in_progress'],
-    ['done', 'open'],
-    ['done', 'in_progress'],
-    ['in_progress', 'open'],
-    ['stopped', 'open'],
-    ['stopped', 'in_progress'],
-  ];
-  for (const [from, to] of reopens) {
+test('every reopen the transition table allows clears reportedStatus', () => {
+  const NOT_A_REOPEN: SpaceTaskStatus[] = ['draft', 'open', 'rate_limited', 'usage_limited'];
+  const pairs = Object.entries(VALID_TASK_TRANSITIONS).flatMap(([from, targets]) =>
+    NOT_A_REOPEN.includes(from as SpaceTaskStatus)
+      ? []
+      : targets
+          .filter((to) => to === 'open' || to === 'in_progress')
+          .map((to) => [from as SpaceTaskStatus, to as SpaceTaskStatus] as const)
+  );
+  expect(pairs.length).toBeGreaterThan(0);
+  for (const [from, to] of pairs) {
     const prepared = prepareSpaceTaskStatusUpdate(
       task(from, { reportedStatus: 'done' }),
       to,
@@ -194,5 +191,17 @@ test('every reopen transition clears reportedStatus, not just stopped', () => {
       to,
       reportedStatus: null,
     });
+  }
+});
+
+test('resuming from a rate or usage limit keeps the report it was paused with', () => {
+  for (const from of ['rate_limited', 'usage_limited'] as const) {
+    const prepared = prepareSpaceTaskStatusUpdate(
+      task(from, { reportedStatus: 'done' }),
+      'in_progress',
+      undefined,
+      123
+    );
+    expect(prepared.updates).not.toHaveProperty('reportedStatus');
   }
 });
