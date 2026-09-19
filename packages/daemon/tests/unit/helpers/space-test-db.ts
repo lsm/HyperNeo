@@ -332,6 +332,13 @@ export function createSpaceTables(db: BunDatabase): void {
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_space_tasks_workflow_run_id ON space_tasks(workflow_run_id)`
   );
+  db.exec(`CREATE TRIGGER IF NOT EXISTS increment_task_lifecycle_generation
+    AFTER UPDATE OF status, task_agent_session_id, workflow_run_id ON space_tasks
+    WHEN OLD.status IS NOT NEW.status OR OLD.task_agent_session_id IS NOT NEW.task_agent_session_id
+      OR OLD.workflow_run_id IS NOT NEW.workflow_run_id
+    BEGIN
+      UPDATE space_tasks SET lifecycle_generation = OLD.lifecycle_generation + 1 WHERE id = NEW.id;
+    END;`);
 
   db.exec(`
 		CREATE TABLE IF NOT EXISTS space_goals (

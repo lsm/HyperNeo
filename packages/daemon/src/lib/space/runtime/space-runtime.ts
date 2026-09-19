@@ -423,6 +423,8 @@ const NON_TERMINAL_IDLE_ATTENTION_LOG_COOLDOWN_MS = 5 * 60 * 1000;
 const SILENT_STALL_ATTENTION_LOG_COOLDOWN_MS = 5 * 60 * 1000;
 const EXTERNAL_EVENT_RETRY_DELAY_MS = 1000;
 const EXTERNAL_EVENT_RETRY_MAX_ATTEMPTS = 5;
+const ATTACH_RETRY_BASE_MS = 30 * 1000;
+const ATTACH_RETRY_MAX_MS = 5 * 60 * 1000;
 const DIGEST_REPLAY_LOOKUP_STATUSES = [
   'deferred',
   'enqueued',
@@ -683,6 +685,11 @@ export class SpaceRuntime {
   private notifiedTaskSet = new Set<string>();
 
   private taskCrashCounts = new Map<string, number>();
+
+  private readonly attachBackoff = new Map<
+    string,
+    { spaceId: string; failures: number; nextAttemptAt: number }
+  >();
 
   private blockedRetryCounts = new Map<string, number>();
 
@@ -8159,6 +8166,12 @@ export class SpaceRuntime {
     });
   }
 
+  private pruneAttachBackoff(spaceId: string, candidateTaskIds: Set<string>): void {
+    for (const [taskId, state] of this.attachBackoff)
+      if (state.spaceId === spaceId && !candidateTaskIds.has(taskId))
+        this.attachBackoff.delete(taskId);
+  }
+
   private async attachStandaloneTasksToWorkflows(
     excludedSpaceIds = new Set<string>()
   ): Promise<void> {
@@ -8182,11 +8195,13 @@ export class SpaceRuntime {
           .listStandaloneBySpace(space.id, false)
           .filter((task) => task.status === 'open' && !directTaskIds.has(task.id))
       );
+      this.pruneAttachBackoff(space.id, new Set(standaloneOpenTasks.map((task) => task.id)));
 
       const taskManager = this.getOrCreateTaskManager(space.id);
 
       for (const task of standaloneOpenTasks) {
         if (availableSlots <= 0) break;
+        if ((this.attachBackoff.get(task.id)?.nextAttemptAt ?? 0) > Date.now()) continue;
         const fresh = this.config.taskRepo.getTask(task.id);
         if (!fresh || fresh.workflowRunId) continue;
         if (fresh.status !== 'open') continue;
@@ -8211,10 +8226,18 @@ export class SpaceRuntime {
           const attached = this.config.taskRepo.getTask(current.id);
           if (attached)
             await this.safeOnTaskUpdated(space.id, attached, { fromStatus: current.status });
+          this.attachBackoff.delete(current.id);
           availableSlots--;
         } catch (err) {
+          const failures = (this.attachBackoff.get(current.id)?.failures ?? 0) + 1;
+          const delayMs = Math.min(ATTACH_RETRY_BASE_MS * 2 ** (failures - 1), ATTACH_RETRY_MAX_MS);
+          this.attachBackoff.set(current.id, {
+            spaceId: space.id,
+            failures,
+            nextAttemptAt: Date.now() + delayMs,
+          });
           log.warn(
-            `SpaceRuntime: failed to attach standalone task ${current.id} to workflow ${selected.id}:`,
+            `SpaceRuntime: failed to attach standalone task ${current.id} to workflow ${selected.id} (attempt ${failures}, retrying in ${Math.round(delayMs / 1000)}s):`,
             err
           );
         }

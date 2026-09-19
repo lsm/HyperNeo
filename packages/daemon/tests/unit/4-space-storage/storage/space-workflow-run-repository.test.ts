@@ -119,6 +119,28 @@ describe('SpaceWorkflowRunRepository', () => {
       });
     }
 
+    it('attaches the parent task even though the lifecycle trigger writes a second row change', () => {
+      const task = new SpaceTaskRepository(db).createTask({
+        spaceId,
+        title: 'Task',
+        description: '',
+      });
+      const run = createAttachedRun({
+        spaceId,
+        workflowId: WORKFLOW_ID,
+        title: 'Run',
+        rawWorkflow: rawWorkflow(),
+        parentTaskId: task.id,
+      });
+
+      expect(run.status).toBe('in_progress');
+      expect(
+        db
+          .prepare('SELECT workflow_run_id, lifecycle_generation FROM space_tasks WHERE id = ?')
+          .get(task.id)
+      ).toEqual({ workflow_run_id: run.id, lifecycle_generation: 1 });
+    });
+
     it('a restart immediately after pinning can rehydrate the attached run', () => {
       const task = new SpaceTaskRepository(db).createTask({
         spaceId,
