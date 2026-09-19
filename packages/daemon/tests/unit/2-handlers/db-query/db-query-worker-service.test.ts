@@ -7,6 +7,7 @@ import {
   DbQueryWorkerService,
   DbQueryWorkerUnavailableError,
 } from '../../../../src/lib/db-query/db-query-worker-service';
+import { ScopedCopyBudgetExceededError } from '../../../../src/lib/db-query/scoped-query';
 
 const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
 
@@ -18,7 +19,7 @@ type PostedMessage = {
   sql?: string;
   params?: unknown[];
   limit?: number;
-  error?: string;
+  error?: string | { code?: string; message: string };
   result?: { rows: Record<string, unknown>[]; rowCount: number; truncated: boolean };
 };
 
@@ -138,6 +139,23 @@ describe('DbQueryWorkerService', () => {
     fake.respond({ id: fake.posted[0].id, error: 'Query execution error: no such column: x' });
 
     await expect(pending).rejects.toThrow('Query execution error: no such column: x');
+  });
+
+  test('preserves scoped copy budget errors across the worker boundary', async () => {
+    const fake = new FakeWorker();
+    const service = new DbQueryWorkerService('/tmp/hyperneo.db', 1_000, () => asWorker(fake));
+
+    const pending = service.query({ scopeType: 'space', scopeValue: 'space-1', sql: 'SELECT 1' });
+    fake.respond({
+      id: fake.posted[0].id,
+      error: {
+        code: 'scoped_copy_budget_exceeded',
+        message: 'Scoped copy resource budget exceeded',
+      },
+    });
+
+    await expect(pending).rejects.toBeInstanceOf(ScopedCopyBudgetExceededError);
+    await expect(pending).rejects.toMatchObject({ code: 'scoped_copy_budget_exceeded' });
   });
 
   test('does not arm the timeout before the worker starts the query', async () => {

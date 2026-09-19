@@ -5,6 +5,24 @@ import { maskCommentsAndStrings, type SqlValidationResult, validateSql } from '.
 
 export const DEFAULT_LIMIT = 200;
 export const MAX_LIMIT = 1000;
+export const DEFAULT_SCOPED_COPY_BUDGET = {
+  maxRows: 250_000,
+  maxBytes: 128 * 1024 * 1024,
+} as const;
+
+export interface ScopedCopyBudget {
+  maxRows: number;
+  maxBytes: number;
+}
+
+export class ScopedCopyBudgetExceededError extends Error {
+  readonly code = 'scoped_copy_budget_exceeded';
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'ScopedCopyBudgetExceededError';
+  }
+}
 
 export interface ScopedDbQuery {
   sql: string;
@@ -262,7 +280,8 @@ function materializeScopedTable(
   source: Database,
   scratch: Database,
   config: ScopeTableConfig,
-  scopeValue: string
+  scopeValue: string,
+  copyState: { rows: number; budget: ScopedCopyBudget }
 ): void {
   const columns = readableColumns(source, config);
   if (columns.length === 0) return;
@@ -305,6 +324,12 @@ function materializeScopedTable(
   scratch.exec('BEGIN');
   try {
     for (const row of rows) {
+      copyState.rows += 1;
+      if (copyState.rows > copyState.budget.maxRows) {
+        throw new ScopedCopyBudgetExceededError(
+          `Scoped copy resource budget exceeded: more than ${copyState.budget.maxRows} rows were required. Prune historical rows in this scope before retrying.`
+        );
+      }
       const values = names.map((c) => row[c]);
       insert.run(...((withRowid ? [row._dbq_rowid, ...values] : values) as []));
     }
@@ -317,11 +342,25 @@ function materializeScopedTable(
   }
 }
 
+function isSqliteFullError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const code = (error as Error & { code?: unknown }).code;
+  return code === 'SQLITE_FULL' || /database or disk is full/i.test(error.message);
+}
+
+function applyScopedCopyByteBudget(scratch: Database, maxBytes: number): void {
+  const row = scratch.query('PRAGMA page_size').get() as { page_size?: number } | null;
+  const pageSize = row?.page_size ?? 4096;
+  const maxPages = Math.max(1, Math.floor(maxBytes / pageSize));
+  scratch.exec(`PRAGMA max_page_count = ${maxPages}`);
+}
+
 export function runScopedQuery(
   db: Database,
   scopeType: DbScopeType,
   scopeValue: string,
-  query: ScopedDbQuery
+  query: ScopedDbQuery,
+  copyBudget: ScopedCopyBudget = DEFAULT_SCOPED_COPY_BUDGET
 ): ScopedDbQueryResult {
   const { sql, params = [], limit } = query;
 
@@ -335,13 +374,15 @@ export function runScopedQuery(
   const effectiveLimit = Math.min(cappedLimit, existingLimit ?? MAX_LIMIT);
 
   const scratch = new Database('');
+  applyScopedCopyByteBudget(scratch, copyBudget.maxBytes);
   scratch.exec('PRAGMA case_sensitive_like = ON');
+  const copyState = { rows: 0, budget: copyBudget };
   try {
     db.exec('BEGIN DEFERRED');
     try {
       for (const tableRef of new Set(validation.tableRefs)) {
         const config = configMap.get(tableRef);
-        if (config) materializeScopedTable(db, scratch, config, scopeValue);
+        if (config) materializeScopedTable(db, scratch, config, scopeValue, copyState);
       }
     } finally {
       db.exec('COMMIT');
@@ -353,6 +394,12 @@ export function runScopedQuery(
 
     return { rows, rowCount: rows.length, truncated: rows.length >= effectiveLimit };
   } catch (err) {
+    if (err instanceof ScopedCopyBudgetExceededError) throw err;
+    if (isSqliteFullError(err)) {
+      throw new ScopedCopyBudgetExceededError(
+        `Scoped copy resource budget exceeded: temporary storage exceeded ${copyBudget.maxBytes} bytes. Prune historical rows in this scope before retrying.`
+      );
+    }
     const message = err instanceof Error ? err.message : String(err);
     throw new Error(`Query execution error: ${message}`);
   } finally {
