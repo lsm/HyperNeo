@@ -103,6 +103,10 @@ export function clearRetryableHookActionTimer(actionKey: string): void {
   pendingRetryableHookActions.delete(actionKey);
 }
 
+export function hasPendingRetryableHookAction(actionKey: string): boolean {
+  return pendingRetryableHookActions.has(actionKey);
+}
+
 export function triggerRetryableHookAction(actionKey: string): boolean {
   const pending = pendingRetryableHookActions.get(actionKey);
   if (!pending) return false;
@@ -215,6 +219,10 @@ function getToolResultFailure(
     typeof record.retryAfterMs === 'number' && Number.isFinite(record.retryAfterMs)
       ? record.retryAfterMs
       : undefined;
+  if (record.queued === true && retryable) {
+    const message = typeof record.message === 'string' ? record.message : 'action remains queued';
+    return { message, retryable: true, retryAfterMs };
+  }
   if (success === false || result.isError) {
     const message =
       typeof record.error === 'string'

@@ -1510,6 +1510,116 @@ describe('HookEngine', () => {
     expect(engine.getQueuedRetryableAction('hook-1')).toBeUndefined();
   });
 
+  test('restored operation retry re-arms when its hook blocks again', async () => {
+    const args = { target: 'Review', message: 'hi' };
+    const actionKey = JSON.stringify({
+      runScopedTaskId: defaultMeta.taskId,
+      nodeId: defaultMeta.nodeId,
+      sessionId: defaultMeta.sessionId,
+      agentName: defaultMeta.agentName,
+      methodName: 'send_message',
+      args,
+    });
+    const hookStateRepo = makeMockHookStateRepo();
+    const { engine } = makeEngine(
+      [makeHook({ id: 'hook-1', classification: 'validation', order: 0 })],
+      { hookStateRepo }
+    );
+    hookStateRepo.ensure('run-1', 'hook-1');
+    engine.persistQueuedRetryableAction({
+      actionKey,
+      hookId: 'hook-1',
+      methodName: 'send_message',
+      args,
+      meta: defaultMeta,
+      isFollowUp: false,
+      nextRetryAt: Date.now() - 1,
+      retryAfterMs: 5,
+      queuedAt: Date.now() - 10,
+    });
+    let replayCallCount = 0;
+    const registry = createOperationRegistry([
+      defineOperation({
+        name: 'send_message',
+        description: 'test replay',
+        inputSchema: z.record(z.string(), z.unknown()),
+        resultSchema: z.unknown(),
+        execute: async () => {
+          replayCallCount++;
+          if (replayCallCount === 1) {
+            return { success: true, queued: true, retryable: true, retryAfterMs: 5 };
+          }
+          engine.clearQueuedRetryableActionsForKey(actionKey);
+          return { success: true };
+        },
+      }),
+    ]);
+
+    engine.scheduleQueuedRetryableOperations(
+      registry,
+      { source: 'internal', sessionId: defaultMeta.sessionId, spaceId: 'space-1' },
+      defaultMeta
+    );
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    expect(replayCallCount).toBe(2);
+    expect(engine.getQueuedRetryableAction('hook-1')).toBeUndefined();
+  });
+
+  test('restored operation rejection clears the queued action and notifies its source', async () => {
+    const args = { target: 'Review', message: 'hi' };
+    const actionKey = JSON.stringify({
+      runScopedTaskId: defaultMeta.taskId,
+      nodeId: defaultMeta.nodeId,
+      sessionId: defaultMeta.sessionId,
+      agentName: defaultMeta.agentName,
+      methodName: 'send_message',
+      args,
+    });
+    const hookStateRepo = makeMockHookStateRepo();
+    const notifications: string[] = [];
+    const { engine } = makeEngine(
+      [makeHook({ id: 'hook-1', classification: 'validation', order: 0 })],
+      {
+        hookStateRepo,
+        notifySourceSession: async (_sessionId, message) => {
+          notifications.push(message);
+        },
+      }
+    );
+    hookStateRepo.ensure('run-1', 'hook-1');
+    engine.persistQueuedRetryableAction({
+      actionKey,
+      hookId: 'hook-1',
+      methodName: 'send_message',
+      args,
+      meta: defaultMeta,
+      isFollowUp: false,
+      nextRetryAt: Date.now() - 1,
+      retryAfterMs: 5,
+      queuedAt: Date.now() - 10,
+    });
+    const registry = createOperationRegistry([
+      defineOperation({
+        name: 'send_message',
+        description: 'test replay',
+        inputSchema: z.record(z.string(), z.unknown()),
+        resultSchema: z.literal('node_caller_denied'),
+        execute: async () => 'node_caller_denied',
+      }),
+    ]);
+
+    engine.scheduleQueuedRetryableOperations(
+      registry,
+      { source: 'internal', sessionId: defaultMeta.sessionId, spaceId: 'space-1' },
+      defaultMeta
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(notifications).toEqual(['Queued send_message retry failed: node_caller_denied']);
+    expect(engine.getQueuedRetryableAction('hook-1')).toBeUndefined();
+  });
+
   test('a runtime rebuild cannot duplicate an in-flight restored replay', async () => {
     const args = { target: 'Review', message: 'hi' };
     const actionKey = JSON.stringify({

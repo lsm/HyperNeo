@@ -16,6 +16,7 @@ import { resolveTaskWorkspace } from '../tasks/spawn-slot-resolution.ts';
 import type { WorkflowRunStatus } from '@hyperneo/shared';
 import {
   QUEUED_RETRYABLE_ACTION_STATE_KEY,
+  hasPendingRetryableHookAction,
   triggerRetryableHookAction,
 } from '../hooks/hook-engine.ts';
 import {
@@ -603,6 +604,11 @@ export function setupSpaceWorkflowRunHandlers(
       queuedAction && typeof queuedAction === 'object'
         ? (queuedAction as Record<string, unknown>).actionKey
         : undefined;
+    if (typeof queuedActionKey === 'string' && !hasPendingRetryableHookAction(queuedActionKey)) {
+      throw new Error(
+        'Queued hook retry runtime is not ready; wait for restoration or the current retry to finish'
+      );
+    }
     const updateResult = hookStateRepo.update(params.runId, params.hookId, {
       expectedVersion: baseVersion,
       localState: {

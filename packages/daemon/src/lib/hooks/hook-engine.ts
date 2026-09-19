@@ -23,6 +23,7 @@ import { buildAllowUserState, buildBlockUserState } from './hook-user-state.ts';
 
 export {
   clearAllRetryableHookActionTimers,
+  hasPendingRetryableHookAction,
   triggerRetryableHookAction,
   wrapHandlerWithHooks,
 } from './hook-binding.ts';
@@ -187,16 +188,23 @@ export class HookEngine {
             isFollowUp: action.isFollowUp,
           },
         });
-        return outcome.kind === 'completed'
-          ? jsonResult(outcome.value)
-          : {
-              ...jsonResult({
-                success: false,
-                error: outcome.message,
-                retryable: outcome.code === 'execution_failed',
-              }),
-              isError: true,
-            };
+        if (outcome.kind !== 'completed') {
+          return {
+            ...jsonResult({
+              success: false,
+              error: outcome.message,
+              retryable: outcome.code === 'execution_failed',
+            }),
+            isError: true,
+          };
+        }
+        if (typeof outcome.value === 'string') {
+          return {
+            ...jsonResult({ success: false, error: outcome.value, retryable: false }),
+            isError: true,
+          };
+        }
+        return jsonResult(outcome.value);
       };
       scheduleRetryableAction({
         actionKey: action.actionKey,
