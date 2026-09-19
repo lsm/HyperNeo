@@ -389,3 +389,18 @@ describe('agent external-event subscription operations', () => {
     ).toBe('agent_not_found');
   });
 });
+
+describe('agent subscriptions optional Space scope', () => {
+  test('empty RPC and internal lists name the inherited Space', async () => {
+    for (const source of ['rpc', 'internal'] as const) {
+      const result = await run(
+        'externalEvent.agent.listSubscriptions',
+        { agent_id: AGENT },
+        { source, spaceId: SPACE }
+      );
+      expect(
+        operations.get('externalEvent.agent.listSubscriptions')?.resultSchema.parse(result)
+      ).toEqual({ subscriptions: [], scope: { spaceId: SPACE } });
+    }
+  });
+});

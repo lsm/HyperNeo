@@ -220,6 +220,7 @@ describe('GoalDetailPanel', () => {
     mockWorkflows.value = [];
     mockGoalOwners.value = new Map();
     mockAgents.value = [makeAgent()];
+    spaceStore.agentListState.value = 'loaded';
     mutableSpaceStore.workspaces.value = [
       {
         id: 'ws-1',
@@ -422,6 +423,52 @@ describe('GoalDetailPanel', () => {
     await waitFor(() =>
       expect(screen.getByText('No long-horizon agent owns this goal.')).toBeTruthy()
     );
+  });
+
+  it('distinguishes loading and failed agent requests from a confirmed empty list', async () => {
+    mockAgents.value = [];
+    spaceStore.agentListState.value = 'loading';
+    render(<GoalDetailPanel spaceId="space-1" goalId="goal-1" />);
+
+    expect(screen.getByText('Loading Space agents…')).toBeTruthy();
+    expect(screen.queryByText(/No Space agents are available/)).toBeNull();
+
+    spaceStore.agentListState.value = 'error';
+    await screen.findByText(/Could not load Space agents/);
+    expect(screen.queryByText(/No Space agents are available/)).toBeNull();
+    mockRefreshAgents.mockClear();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(mockRefreshAgents).toHaveBeenCalledTimes(1);
+
+    spaceStore.agentListState.value = 'loaded';
+    await screen.findByText(/No Space agents are available/);
+    expect(screen.queryByText(/Could not load Space agents/)).toBeNull();
+  });
+
+  it('explains an empty agent list and enables assignment when an agent appears', async () => {
+    mockAgents.value = [];
+    mockFetchGoalOwner.mockImplementation(async (goalId: string) => {
+      const owner: SpaceGoalOwnerResolution = { action: 'no_recipient' };
+      mockGoalOwners.value = new Map(mockGoalOwners.value).set(goalId, owner);
+      return owner;
+    });
+    render(<GoalDetailPanel spaceId="space-1" goalId="goal-1" />);
+
+    const button = (await screen.findByRole('button', {
+      name: 'Assign owner',
+    })) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    const hint = screen.getByText(/No Space agents are available/);
+    expect(hint.textContent).toContain('Create an agent in this Space’s Agents page');
+    expect(button.getAttribute('aria-describedby')).toBe(hint.id);
+    expect(screen.queryByRole('combobox', { name: 'New goal owner' })).toBeNull();
+
+    mockAgents.value = [makeAgent()];
+
+    await waitFor(() => expect(button.disabled).toBe(false));
+    expect(screen.queryByText(/No Space agents are available/)).toBeNull();
+    fireEvent.click(button);
+    expect(screen.getByRole('combobox', { name: 'New goal owner' })).toBeTruthy();
   });
 
   it('assigns a new owner from the picker and reports the fresh owner', async () => {

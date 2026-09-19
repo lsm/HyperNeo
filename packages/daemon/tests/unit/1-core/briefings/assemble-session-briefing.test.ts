@@ -10,7 +10,15 @@ import type {
 } from '../../../../src/lib/briefings/contribution';
 
 function capability(name: string, briefing: string): CapabilityContribution {
-  return { server: { name, config: { command: 'bun', args: [name] } }, briefing };
+  return {
+    kind: 'authored',
+    server: { name, config: { command: 'bun', args: [name] } },
+    briefing,
+  };
+}
+
+function selfDescribing(name: string): CapabilityContribution {
+  return { kind: 'self-describing', server: { name, config: { command: 'bun', args: [name] } } };
 }
 
 function scope(facet: ScopeFacet, briefing: string): ScopeContribution {
@@ -107,6 +115,25 @@ describe('assembleSessionBriefing', () => {
     expect(() =>
       assembleSessionBriefing({ scope: [scope('space', '')], capabilities: [] })
     ).toThrow('scope "space" contributed no briefing');
+  });
+
+  test('a self-describing contribution carries the server without adding a section', () => {
+    const { sections, text } = assembleSessionBriefing({
+      scope: [],
+      capabilities: [capability('agent-memory', 'memory text'), selfDescribing('search')],
+    });
+
+    expect(sections.map((section) => section.key)).toEqual(['agent-memory']);
+    expect(text).toBe('memory text');
+  });
+
+  test('a self-describing contribution still claims its server name', () => {
+    expect(() =>
+      assembleSessionBriefing({
+        scope: [],
+        capabilities: [selfDescribing('search'), capability('search', 'authored text')],
+      })
+    ).toThrow('duplicate capability server "search"');
   });
 
   test('a repeated server or facet is rejected instead of silently collapsing', () => {

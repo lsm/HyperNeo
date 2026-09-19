@@ -134,6 +134,7 @@ describe('TaskAgentManager Runtime Execution Contract', () => {
         internalEventBus: { subscribe: () => () => {} },
         taskRepo: {
           listActive: () => [task],
+          listActiveWithTaskAgentSession: () => [],
           listByWorkflowRun: () => [task],
         },
         spaceManager: {

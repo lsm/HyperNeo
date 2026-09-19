@@ -1674,6 +1674,86 @@ describe('Session RPC Handlers — session.update host process controls', () => 
   });
 });
 
+describe('Session RPC Handlers — session.thinking.set on a session that already stores host process controls', () => {
+  let messageHubData: ReturnType<typeof createMockMessageHub>;
+  let eventBus: ReturnType<typeof createMockInternalEventBus>;
+  let liveSession: Session;
+
+  async function buildQueryOptions() {
+    const settingsManager = {
+      getGlobalSettings: mock(() => ({
+        settingSources: ['user'],
+        outputLimiter: { enabled: false },
+        sandbox: { excludedCommands: [] },
+      })),
+      prepareSDKOptions: mock(async () => ({})),
+    } as unknown as SettingsManager;
+
+    const builder = new QueryOptionsBuilder({
+      session: liveSession,
+      settingsManager,
+      db: {
+        updateSession: mock(() => {}),
+        getSDKMessages: mock(() => ({ messages: [], hasMore: false })),
+        getSession: mock(() => null),
+      } as QueryOptionsBuilderContext['db'],
+    });
+    return builder.build();
+  }
+
+  beforeEach(async () => {
+    messageHubData = createMockMessageHub();
+    eventBus = createMockInternalEventBus();
+    liveSession = {
+      id: 's1',
+      title: 'Test Session',
+      workspacePath: '/test/workspace',
+      createdAt: new Date().toISOString(),
+      lastActiveAt: new Date().toISOString(),
+      status: 'active',
+      config: {
+        model: 'default',
+        provider: 'anthropic',
+        pathToClaudeCodeExecutable: '/tmp/evil-cli',
+        env: { HYPERNEO_PWNED: '1' },
+      },
+      metadata: {
+        messageCount: 0,
+        totalTokens: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        totalCost: 0,
+        toolCallCount: 0,
+      },
+    } as Session;
+
+    const sessionManager = {
+      getSessionForControl: mock(async () => ({ getSessionData: () => liveSession })),
+      updateSession: mock(async (_id: string, updates: Partial<Session>) => {
+        if (updates.config) liveSession.config = { ...liveSession.config, ...updates.config };
+      }),
+    } as unknown as SessionManager;
+
+    const { setupSessionHandlers } = await import(
+      '../../../../src/lib/rpc-handlers/session-handlers'
+    );
+    setupSessionHandlers(messageHubData.hub, sessionManager, eventBus, {} as SpaceManager);
+  });
+
+  it('re-persists the stored fields but none of them reach the SDK options', async () => {
+    const handler = messageHubData.handlers.get('session.thinking.set');
+
+    await handler!({ sessionId: 's1', level: 'think16k' }, {});
+
+    expect(liveSession.config.thinkingLevel).toBe('think16k');
+    expect(liveSession.config.pathToClaudeCodeExecutable).toBe('/tmp/evil-cli');
+
+    const options = await buildQueryOptions();
+    expect(options.pathToClaudeCodeExecutable).not.toBe('/tmp/evil-cli');
+    expect(options.env?.HYPERNEO_PWNED).toBeUndefined();
+  });
+});
+
 describe('Session RPC Handlers — session.appendVoiceDraft', () => {
   let messageHubData: ReturnType<typeof createMockMessageHub>;
   let eventBus: ReturnType<typeof createMockInternalEventBus>;

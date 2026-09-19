@@ -331,3 +331,33 @@ describe('workflow plan change operation', () => {
     expect(outcome).toMatchObject({ kind: 'failed', code: 'invalid_input' });
   });
 });
+
+describe('workflow run optional Space scope', () => {
+  test('RPC and internal reads and plan changes inherit the caller Space', async () => {
+    for (const source of ['rpc', 'internal'] as const) {
+      const caller = { source, spaceId: SPACE_ID };
+      expect(await invoke(deps(), 'workflow.run.get', { runId: 'run-1' }, caller)).toMatchObject({
+        run: { id: 'run-1', spaceId: SPACE_ID },
+      });
+      expect(
+        await invoke(
+          deps(),
+          'workflow.changePlan',
+          { runId: 'run-1', description: 'Reworded' },
+          caller
+        )
+      ).toMatchObject({
+        outcome: 'described',
+        run: { spaceId: SPACE_ID, description: 'Reworded' },
+      });
+      expect(
+        await invoke(
+          deps({ getRun: () => run({ spaceId: 'other' }) }),
+          'workflow.run.get',
+          { runId: 'run-1' },
+          caller
+        )
+      ).toBe('run_not_found');
+    }
+  });
+});

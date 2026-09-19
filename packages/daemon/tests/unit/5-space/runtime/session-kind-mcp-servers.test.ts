@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { McpServerConfig, Session, Space } from '@hyperneo/shared';
+import type { McpServer } from '@hyperneo/shared/sdk';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
 import {
   QueryOptionsBuilder,
@@ -73,8 +74,13 @@ function makeRecordingAgentSession(session: Session): AgentSession {
     setCallerScopeResolver: () => {},
     setRuntimeSystemPrompt: () => {},
     getOperationsCapabilityContribution: () =>
-      operationsCapabilityContribution({ type: 'sdk', instance: {} } as never),
-    setSpaceBriefing: () => {},
+      operationsCapabilityContribution({
+        type: 'sdk',
+        name: 'hyperneo-operations',
+        instance: {} as McpServer,
+      }),
+    setAttachedCapabilities: () => {},
+    setSpaceScopeResolver: () => {},
     updateConfig: async (updates: Partial<Session['config']>) => {
       session.config = { ...session.config, ...updates };
     },

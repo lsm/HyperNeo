@@ -880,6 +880,7 @@ describe('SpaceRuntimeService', () => {
         mergeRuntimeMcpServers: mock(() => {}),
         setOperationRegistryProvider: mock(() => {}),
         setRuntimeSystemPrompt: mock(() => {}),
+        setAttachedCapabilities: mock(() => {}),
         updateConfig: mock(async () => {}),
         resetQuery: mock(async () => ({ success: true })),
         restart: mock(async () => {}),
@@ -2240,6 +2241,7 @@ describe('SpaceRuntimeService', () => {
         mergeRuntimeMcpServers: mock(() => {}),
         setOperationRegistryProvider: mock(() => {}),
         setRuntimeSystemPrompt: mock(() => {}),
+        setAttachedCapabilities: mock(() => {}),
         updateConfig: mock(async () => {}),
         resetQuery: mock(async () => ({ success: true })),
         getSessionData: mock(() => ({ id: sessionId, metadata: {}, config: {} }) as Session),
@@ -2498,6 +2500,7 @@ describe('SpaceRuntimeService', () => {
       } as unknown as Session;
       const agentSession = {
         mergeRuntimeMcpServers: mock(() => {}),
+        setAttachedCapabilities: mock(() => {}),
         updateConfig: mock(async (updates: Partial<Session['config']>) => {
           sessionData.config = { ...sessionData.config, ...updates };
         }),
@@ -2556,6 +2559,7 @@ describe('SpaceRuntimeService', () => {
         setRuntimeMcpServers: mock(() => {}),
         setOperationRegistryProvider: mock(() => {}),
         setRuntimeSystemPrompt: mock(() => {}),
+        setAttachedCapabilities: mock(() => {}),
         updateConfig: mock(async (updates: Partial<Session['config']>) => {
           sessionData.config = { ...sessionData.config, ...updates };
         }),
@@ -3420,6 +3424,7 @@ describe('SpaceRuntimeService', () => {
         setRuntimeMcpServers: mock(() => {}),
         setOperationRegistryProvider: mock(() => {}),
         setRuntimeSystemPrompt: mock(() => {}),
+        setAttachedCapabilities: mock(() => {}),
       } as unknown as AgentSession;
     }
 
@@ -3705,6 +3710,7 @@ describe('SpaceRuntimeService', () => {
         mergeRuntimeMcpServers: mock(() => {}),
         setOperationRegistryProvider: mock(() => {}),
         setRuntimeSystemPrompt: mock(() => {}),
+        setAttachedCapabilities: mock(() => {}),
       } as unknown as AgentSession;
     }
 
@@ -3715,6 +3721,7 @@ describe('SpaceRuntimeService', () => {
         setRuntimeMcpServers: mock(() => {}),
         setOperationRegistryProvider: mock(() => {}),
         setRuntimeSystemPrompt: mock(() => {}),
+        setAttachedCapabilities: mock(() => {}),
       } as unknown as AgentSession;
     }
 

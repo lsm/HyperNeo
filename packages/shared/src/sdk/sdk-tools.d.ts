@@ -1,3 +1,4 @@
+// Upstream SDK documentation: packages/daemon/node_modules/@anthropic-ai/claude-agent-sdk/sdk-tools.d.ts
 /* eslint-disable */
 
 export type ToolInputSchemas =

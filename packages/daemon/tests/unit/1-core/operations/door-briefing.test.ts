@@ -1,18 +1,33 @@
 import { describe, expect, test } from 'bun:test';
-import type { McpServerConfig } from '@hyperneo/shared';
+import type { McpServer } from '@hyperneo/shared/sdk';
 import { assembleSessionBriefing } from '../../../../src/lib/briefings/assemble-session-briefing.ts';
-import { OPERATIONS_MCP_SERVER_NAME } from '../../../../src/lib/mcp/built-in-servers.ts';
+import type { AttachedMcpServerConfig } from '../../../../src/lib/briefings/contribution.ts';
+import {
+  isBuiltInMcpServer,
+  OPERATIONS_MCP_SERVER_NAME,
+} from '../../../../src/lib/mcp/built-in-servers.ts';
 import { operationsCapabilityContribution } from '../../../../src/lib/operations/door-briefing.ts';
 
-const ATTACHED = { type: 'sdk', instance: {} } as unknown as McpServerConfig;
+const ATTACHED: AttachedMcpServerConfig = {
+  type: 'sdk',
+  name: OPERATIONS_MCP_SERVER_NAME,
+  instance: {} as McpServer,
+};
 
 describe('operationsCapabilityContribution', () => {
   test('pairs the attached operations server with its authored briefing', () => {
     const contribution = operationsCapabilityContribution(ATTACHED);
 
+    expect(contribution.kind).toBe('authored');
     expect(contribution.server.name).toBe(OPERATIONS_MCP_SERVER_NAME);
     expect(contribution.server.config).toBe(ATTACHED);
     expect(contribution.briefing.trim().length).toBeGreaterThan(0);
+  });
+
+  test('carries a config the built-in predicate can recognise as first-party', () => {
+    const { server } = operationsCapabilityContribution(ATTACHED);
+
+    expect(isBuiltInMcpServer(server.name, server.config)).toBe(true);
   });
 
   test('states the shape of the door and points at operations.describe', () => {

@@ -2347,10 +2347,12 @@ export class SDKMessageRepository {
 
   updateHyperNeoActionMessage(rowId: string, updated: HyperNeoActionMessage): void {
     const stmt = this.db.prepare(
-      `UPDATE sdk_messages SET sdk_message = ? WHERE id = ? AND message_type = 'hyperneo_action'`
+      `UPDATE sdk_messages SET sdk_message = ? WHERE id = ? AND message_type = 'hyperneo_action'
+       RETURNING session_id`
     );
-    stmt.run(JSON.stringify(updated), rowId);
+    const row = stmt.get(JSON.stringify(updated), rowId) as { session_id: string } | undefined;
     this.scheduleMessageSearchIndex(rowId);
+    if (row) this.reactiveDb?.notifyChange('sdk_messages', { sessionId: row.session_id });
   }
 
   updateHyperNeoActionMessageByUuid(
@@ -2372,8 +2374,9 @@ export class SDKMessageRepository {
          AND message_type = 'hyperneo_action'
          AND sdk_uuid = ?`
     );
-    stmt.run(JSON.stringify(updated), sessionId, messageUuid);
+    const result = stmt.run(JSON.stringify(updated), sessionId, messageUuid);
     if (row) this.scheduleMessageSearchIndex(row.id);
+    if (result.changes > 0) this.reactiveDb?.notifyChange('sdk_messages', { sessionId });
   }
 
   searchMessages(params: MessageSearchParams): MessageSearchResponse {

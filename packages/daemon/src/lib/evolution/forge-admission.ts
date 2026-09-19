@@ -64,7 +64,12 @@ export function admitForgeReader(
   input: ForgeSpaceScope,
   caller: OperationCaller
 ): ForgeGate<ForgeSpaceScope, ForgeCallerRejection> {
-  if (caller.source !== 'mcp') return { value: { spaceId: input.spaceId } };
+  if (caller.source !== 'mcp') {
+    const spaceId = input.spaceId ?? caller.spaceId;
+    return spaceId
+      ? { value: { spaceId } }
+      : denyForge('space_required', 'spaceId is required for callers outside a Space session');
+  }
   if (!caller.spaceId)
     return denyForge('space_required', 'Caller session is not scoped to a Space');
   if (input.spaceId && input.spaceId !== caller.spaceId) {

@@ -48,7 +48,9 @@ const DeliverySchema = z.object({
 
 type Input = z.infer<typeof inputSchema>;
 type Rejection = EventCallerRejection | 'run_unresolved';
-type Result = { deliveries: z.infer<typeof DeliverySchema>[] } | Rejection;
+type Result =
+  | { deliveries: z.infer<typeof DeliverySchema>[]; scope: { spaceId: string } }
+  | Rejection;
 
 export interface ListDeliveriesDependencies extends EventCallerDependencies {
   eventStore: Pick<ExternalEventStore, 'listDeliveryLog'>;
@@ -87,6 +89,7 @@ export function readDeliveryLog(
     offset: input.offset ?? 0,
   });
   return {
+    scope: { spaceId: scope.spaceId },
     deliveries: records.map((record) => ({
       eventId: record.eventId,
       deliveryKey: record.deliveryKey,
@@ -111,7 +114,7 @@ export function readDeliveryLog(
 }
 
 const LIST_DELIVERIES_DESCRIPTION =
-  'List recent external-event deliveries for a workflow run with delivery state and event essence. Defaults to the calling worker own run; pass workflowRunId to inspect another run in the same Space. MCP callers are scoped to their own Space; RPC callers pass spaceId and workflowRunId explicitly. Rejects caller_denied without an admitted Space scope and run_unresolved when no workflow run can be determined.';
+  'List recent external-event deliveries for a workflow run with delivery state and event essence. Defaults to the calling worker own run; pass workflowRunId to inspect another run in the same Space. MCP callers are scoped to their own Space; RPC callers pass workflowRunId; omitted spaceId defaults to their trusted caller Space. scope reports the Space that answered. Rejects caller_denied without an admitted Space scope and run_unresolved when no workflow run can be determined.';
 
 export function createListDeliveriesOperation(events: ListDeliveriesDependencies) {
   const list = (superpipe({ events })('list-external-event-deliveries') as PipelineAPI)
@@ -126,7 +129,7 @@ export function createListDeliveriesOperation(events: ListDeliveriesDependencies
     policy: { safetyClass: 'read', roles: NODE_EVENT_ROLES },
     inputSchema,
     resultSchema: z.union([
-      z.object({ deliveries: z.array(DeliverySchema) }),
+      z.object({ deliveries: z.array(DeliverySchema), scope: z.object({ spaceId: z.string() }) }),
       z.enum(['caller_denied', 'run_unresolved']),
     ]),
     execute: async (input, caller) => list(input, caller),

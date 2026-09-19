@@ -379,6 +379,8 @@ class SpaceStore {
 
   readonly configDataLoaded = signal<boolean>(false);
 
+  readonly agentListState = signal<'loading' | 'loaded' | 'error'>('loading');
+
   readonly nodeExecLoaded = signal<boolean>(false);
 
   readonly sessions = signal<SpaceSessionRow[]>([]);
@@ -699,6 +701,7 @@ class SpaceStore {
     this.selectGeneration += 1;
     this.workflowRuns.value = [];
     this.agents.value = [];
+    this.agentListState.value = 'loading';
     this.agentTemplates.value = [];
     this.workflows.value = [];
     this.workflowSummariesLoaded = false;
@@ -1046,6 +1049,7 @@ class SpaceStore {
     hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
     spaceId: string
   ): Promise<void> {
+    if (this.spaceId.value === spaceId) this.agentListState.value = 'loading';
     try {
       const result = await hub.request<{ agents: SpaceAgent[] }>('spaceAgentV2.list', {
         spaceId,
@@ -1057,7 +1061,9 @@ class SpaceStore {
       this.agents.value = (result?.agents ?? [])
         .filter((agent) => agent.spaceId === spaceId)
         .map((agent) => this.fromSpaceAgentV2(agent, cachedTemplateKeys.get(agent.id) ?? null));
+      this.agentListState.value = 'loaded';
     } catch (err) {
+      if (this.spaceId.value === spaceId) this.agentListState.value = 'error';
       logger.error('Failed to fetch agents (keeping cached list):', err);
     }
   }
@@ -1065,10 +1071,12 @@ class SpaceStore {
   async refreshAgents(): Promise<void> {
     const spaceId = this.spaceId.value;
     if (!spaceId) return;
+    this.agentListState.value = 'loading';
     try {
       const hub = await connectionManager.getHub();
       await this.fetchAgents(hub, spaceId);
     } catch (err) {
+      if (this.spaceId.value === spaceId) this.agentListState.value = 'error';
       logger.error('Failed to refresh agents:', err);
     }
   }

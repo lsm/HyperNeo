@@ -336,6 +336,18 @@ migration_shard_paths() {
 	done
 }
 
+# Shards that build a fresh on-disk SQLite DB per test are I/O-heavy and
+# intermittently exceed vitest's 5s test / 10s hook defaults under CI parallel
+# load — a different file flakes on different runs. Budget the whole shard
+# rather than hardening files one by one. This is the single source of truth:
+# run_shard and --rerun both ask it, so a rerun keeps a file's own shard budget.
+shard_timeout_flags() {
+	case "$1" in
+		1-core | *-migrations | 5-space*) printf '%s' "--testTimeout=30000 --hookTimeout=30000" ;;
+		*) printf '' ;;
+	esac
+}
+
 # Map shard name to one or more test paths. Shards are balanced by CI wall time.
 shard_paths() {
 	# Hash-split shards (e.g. 5-space-a/b) are resolved dynamically by
@@ -488,15 +500,24 @@ if [ "$RERUN" = true ]; then
 	FAILING_FILES=$(cat "$FAILURES_FILE")
 	FILE_COUNT=$(echo "$FAILING_FILES" | wc -l | tr -d ' ')
 	echo "Rerunning $FILE_COUNT failing test file(s)..."
-	# Apply the same generous budget as the migration shards when a failing file
-	# is a migration test (see run_shard) so a rerun doesn't re-flake on timeout.
-	# Match both layouts: migration tests under `migrations/` AND top-level
-	# `migration-*.test.ts` files directly under `storage/` (both are assigned to
-	# the migration shards, so a --rerun must keep the same budget).
+	# Give a rerun the same budget run_shard would give each failing file's own
+	# shard. Membership is resolved from shard_paths rather than matched by path
+	# pattern, so satellites (1-core's helpers/, lib/acp/, lib/voice/, …) and the
+	# non-migration files carried by the *-migrations shards are covered too.
+	# failures.txt holds vitest junit classnames, which are relative to the
+	# vitest root (packages/daemon) — `tests/unit/…` — so shard_paths must be
+	# made relative to the same root before comparing.
 	RERUN_TIMEOUT_FLAGS=""
-	if echo "$FAILING_FILES" | grep -qE "migrations/|migration-[0-9]+[^/]*(\.test|_test)\.[jt]s"; then
-		RERUN_TIMEOUT_FLAGS="--testTimeout=30000 --hookTimeout=30000"
-	fi
+	for shard in "${SHARDS[@]}"; do
+		[ -n "$(shard_timeout_flags "$shard")" ] || continue
+		while IFS= read -r shard_path; do
+			[ -n "$shard_path" ] || continue
+			if echo "$FAILING_FILES" | grep -qF "${shard_path#"$REPO_ROOT/packages/daemon/"}"; then
+				RERUN_TIMEOUT_FLAGS=$(shard_timeout_flags "$shard")
+				break 2
+			fi
+		done <<< "$(shard_paths "$shard")"
+	done
 	# shellcheck disable=SC2086
 	(cd "$REPO_ROOT/packages/daemon" && NODE_ENV=test node_modules/.bin/vitest run $RERUN_TIMEOUT_FLAGS $FAILING_FILES)
 	exit $?
@@ -538,16 +559,15 @@ run_shard() {
 		pkg_dir="$REPO_ROOT/packages/daemon"
 	fi
 
-	# Migration-carrying shards (both merged halves) replay the full migration
-	# chain on a fresh on-disk SQLite DB per test. That is I/O-heavy and
-	# intermittently exceeds vitest's 5s test / 10s hook defaults under CI
-	# parallel load — a different migration test flakes on different runs
-	# (28/29/33/34/35-36/47/94). Give the whole shard a generous budget instead
-	# of hardening each file one-by-one.
-	local timeout_flags=""
-	case "$shard" in
-		1-core | *-migrations) timeout_flags="--testTimeout=30000 --hookTimeout=30000" ;;
-	esac
+	# Shards that build a fresh on-disk SQLite DB per test are I/O-heavy and
+	# intermittently exceed vitest's 5s test / 10s hook defaults under CI
+	# parallel load — a different file flakes on different runs. Give the whole
+	# shard a generous budget instead of hardening each file one-by-one.
+	# Migration shards replay the full chain (28/29/33/34/35-36/47/94);
+	# 5-space does the same per-test setup in direct-kickoff-startup and
+	# direct-process-ownership.
+	local timeout_flags
+	timeout_flags=$(shard_timeout_flags "$shard")
 
 	# shellcheck disable=SC2086
 	(
@@ -574,18 +594,11 @@ for shard in "${RUN_SHARDS[@]}"; do
 		exit 1
 	fi
 
-	# Migration tests rebuild full old schemas and re-run the entire migration
-	# suite for idempotency checks — legitimately heavy work that flakes at
-	# vitest's 5s default under parallel shard load (migration-45/53 timeouts
-	# blocked this PR across rounds 11/19/21). Give the migration-carrying
-	# shards a generous per-test timeout; other shards keep the default.
-	case "$shard" in
-		*-migrations) EXTRA_FLAGS="--test-timeout=30000" ;;
-		*) EXTRA_FLAGS="" ;;
-	esac
-
-	# shellcheck disable=SC2086
-	run_shard "$shard" "$JUNIT_FILE" "$LOG_FILE" $EXTRA_FLAGS "${TEST_PATHS[@]}" &
+	# Per-shard timeout budgets live in shard_timeout_flags, which run_shard
+	# consults directly — see there for why migration and DB-per-test shards
+	# need one (migration-45/53 timeouts blocked this PR across rounds
+	# 11/19/21).
+	run_shard "$shard" "$JUNIT_FILE" "$LOG_FILE" "${TEST_PATHS[@]}" &
 
 	PIDS+=($!)
 done

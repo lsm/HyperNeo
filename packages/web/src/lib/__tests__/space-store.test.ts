@@ -498,6 +498,7 @@ describe('SpaceStore — space selection', () => {
 
   it('fetches agents and workflows via ensureConfigData()', async () => {
     await spaceStore.selectSpace('space-1');
+    expect(spaceStore.agentListState.value).toBe('loading');
     mockHub.request.mockClear();
 
     await spaceStore.ensureConfigData();
@@ -510,6 +511,20 @@ describe('SpaceStore — space selection', () => {
       spaceId: 'space-1',
     });
     expect(spaceStore.configDataLoaded.value).toBe(true);
+    expect(spaceStore.agentListState.value).toBe('loaded');
+  });
+
+  it('reports an agent fetch failure and recovers after a successful retry', async () => {
+    await spaceStore.selectSpace('space-1');
+    mockHub.request.mockRejectedValueOnce(new Error('agent list unavailable'));
+
+    await spaceStore.refreshAgents();
+
+    expect(spaceStore.agentListState.value).toBe('error');
+    mockHub.request.mockResolvedValueOnce({ agents: [] });
+    await spaceStore.refreshAgents();
+    expect(spaceStore.agentListState.value).toBe('loaded');
+    expect(spaceStore.agents.value).toEqual([]);
   });
 
   it('ensureConfigData() loads the merged template library so custom templates survive reload', async () => {
@@ -562,6 +577,7 @@ describe('SpaceStore — space selection', () => {
     await request;
 
     expect(spaceStore.agents.value.some((agent) => agent.id === 'stale-agent')).toBe(false);
+    expect(spaceStore.agentListState.value).toBe('loading');
   });
 
   it('clears state on clearSpace()', async () => {

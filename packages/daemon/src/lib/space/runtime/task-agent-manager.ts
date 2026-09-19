@@ -2982,27 +2982,26 @@ export class TaskAgentManager {
   }
 
   async rehydrate(): Promise<void> {
-    const activeTasks = this.config.taskRepo.listActive();
-
-    let selfHealed = 0;
-    const processedRunIds = new Set<string>();
-
-    for (const task of activeTasks) {
-      if (task.taskAgentSessionId) {
-        log.info(
-          `TaskAgentManager.rehydrate: clearing legacy task_agent_session_id for task ${task.id}`
-        );
-        try {
-          this.config.taskRepo.updateTask(task.id, { taskAgentSessionId: null });
-          selfHealed++;
-        } catch (err) {
-          log.warn(
-            `TaskAgentManager.rehydrate: failed to clear task_agent_session_id for task ${task.id}:`,
-            err
-          );
+    let danglingLinksCleared = 0;
+    for (const task of this.config.taskRepo.listActiveWithTaskAgentSession()) {
+      try {
+        if (
+          task.taskAgentSessionId &&
+          this.config.taskRepo.clearMissingTaskAgentSession(task.id, task.taskAgentSessionId)
+        ) {
+          danglingLinksCleared++;
         }
+      } catch (err) {
+        log.warn(
+          `TaskAgentManager.rehydrate: failed to reconcile task_agent_session_id for task ${task.id}:`,
+          err
+        );
       }
+    }
 
+    const activeTasks = this.config.taskRepo.listActive();
+    const processedRunIds = new Set<string>();
+    for (const task of activeTasks) {
       if (task.workflowRunId && !processedRunIds.has(task.workflowRunId)) {
         processedRunIds.add(task.workflowRunId);
         try {
@@ -3017,7 +3016,7 @@ export class TaskAgentManager {
     }
 
     log.info(
-      `TaskAgentManager.rehydrate: processed ${processedRunIds.size} run(s), selfHealed=${selfHealed}`
+      `TaskAgentManager.rehydrate: processed ${processedRunIds.size} run(s), danglingLinksCleared=${danglingLinksCleared}`
     );
   }
 

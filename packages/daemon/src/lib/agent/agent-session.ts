@@ -5,7 +5,7 @@ import { createDatabaseOperationCatalog } from '../operations/database-catalog.t
 import type { OperationRegistry, OperationRegistryProvider } from '../operations/registry.ts';
 import { createOperationMcpServer } from '../operations/mcp-server.ts';
 import { operationsCapabilityContribution } from '../operations/door-briefing.ts';
-import type { CapabilityContribution } from '../briefings/contribution.ts';
+import type { AuthoredCapabilityContribution } from '../briefings/contribution.ts';
 import { assembleSessionBriefing } from '../briefings/assemble-session-briefing.ts';
 import { NO_SESSION_SCOPE, type SessionScopeResolver } from '../briefings/scope-resolver.ts';
 import {
@@ -264,9 +264,14 @@ export class AgentSession
   private callerScopeResolver: CallerScopeResolver = NO_CALLER_SCOPE;
   private defaultOperationRegistry?: OperationRegistry;
   private spaceScopeResolver: SessionScopeResolver = NO_SESSION_SCOPE;
+  private attachedCapabilities: readonly AuthoredCapabilityContribution[] = [];
 
   setSpaceScopeResolver(resolver: SessionScopeResolver): void {
     this.spaceScopeResolver = resolver;
+  }
+
+  setAttachedCapabilities(capabilities: readonly AuthoredCapabilityContribution[]): void {
+    this.attachedCapabilities = capabilities;
   }
 
   getSpaceBriefing(): string | undefined {
@@ -274,7 +279,7 @@ export class AgentSession
     if (!scope) return undefined;
     return assembleSessionBriefing({
       scope: [scope],
-      capabilities: [this.getOperationsCapabilityContribution()],
+      capabilities: [this.getOperationsCapabilityContribution(), ...this.attachedCapabilities],
     }).text;
   }
 
@@ -299,10 +304,8 @@ export class AgentSession
     ));
   }
 
-  getOperationsCapabilityContribution(): CapabilityContribution {
-    return operationsCapabilityContribution(
-      this.getOperationMcpServer() as unknown as McpServerConfig
-    );
+  getOperationsCapabilityContribution(): AuthoredCapabilityContribution {
+    return operationsCapabilityContribution(this.getOperationMcpServer());
   }
 
   readonly optionsBuilder: QueryOptionsBuilder;

@@ -333,23 +333,61 @@ export class SessionStore {
     const subscriptionId = `messages:${sessionId}:${Date.now()}:${messageSubscriptionSeq++}`;
     this.activeMessagesSubscriptionId = subscriptionId;
     let awaitingSnapshot = true;
+    const traceRowId = (row: unknown): string | number | undefined => {
+      if (typeof row !== 'object' || row === null || !('id' in row)) return undefined;
+      return typeof row.id === 'string' || typeof row.id === 'number' ? row.id : undefined;
+    };
+    const traceEvent = (
+      event: LiveQuerySnapshotEvent | LiveQueryDeltaEvent,
+      outcome: string
+    ): void => {
+      logger.debugWithMetadata(
+        {
+          sessionId,
+          subscriptionId,
+          activeSubscriptionId: this.activeMessagesSubscriptionId,
+          version: event.version,
+          outcome,
+          renderedCount: this.sdkMessages.value.length,
+          ...('rows' in event
+            ? { phase: 'snapshot', rowIds: event.rows.map(traceRowId) }
+            : {
+                phase: 'delta',
+                rowCount: event.rowCount,
+                addedIds: event.added?.map(traceRowId),
+                removedIds: event.removed?.map(traceRowId),
+                updatedIds: event.updated?.map(traceRowId),
+              }),
+        },
+        'messages.liveQuery'
+      );
+    };
 
     const unsubSnapshot = hub.onEvent<LiveQuerySnapshotEvent>('liveQuery.snapshot', (event) => {
       if (event.subscriptionId !== subscriptionId) return;
-      if (this.activeMessagesSubscriptionId !== subscriptionId) return;
+      if (this.activeMessagesSubscriptionId !== subscriptionId) {
+        traceEvent(event, 'superseded');
+        return;
+      }
       awaitingSnapshot = false;
       this._applyMessagesSnapshot(event.rows as ChatMessage[], event.metadata);
+      traceEvent(event, 'applied');
     });
     this.cleanupFunctions.push(unsubSnapshot);
 
     const unsubDelta = hub.onEvent<LiveQueryDeltaEvent>('liveQuery.delta', (event) => {
       if (event.subscriptionId !== subscriptionId) return;
-      if (this.activeMessagesSubscriptionId !== subscriptionId) return;
+      if (this.activeMessagesSubscriptionId !== subscriptionId) {
+        traceEvent(event, 'superseded');
+        return;
+      }
       if (awaitingSnapshot) {
+        traceEvent(event, 'awaiting_snapshot');
         this.reconcileTranscriptLength(event.rowCount);
         return;
       }
       this._applyMessagesDelta(event);
+      traceEvent(event, 'applied');
     });
     this.cleanupFunctions.push(unsubDelta);
 

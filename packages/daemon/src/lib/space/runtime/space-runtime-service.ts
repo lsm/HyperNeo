@@ -10,6 +10,7 @@ import { generateUUID, isRateOrUsageLimited } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types.ts';
 import type { ReactiveDatabase } from '../../../storage/reactive-database.ts';
+import type { AuthoredCapabilityContribution } from '../../briefings/contribution.ts';
 import type { AgentMemoryRepository } from '../../../storage/repositories/agent-memory-repository.ts';
 import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository.ts';
 import { DirectTaskExecutionRepository } from '../../../storage/repositories/direct-task-execution-repository.ts';
@@ -37,6 +38,7 @@ import {
   PromptContentConflictError,
   verifyPromptContent,
 } from '../../agent/message-delivery-outbox.ts';
+import { dbQueryCapabilityContribution } from '../../db-query/briefing.ts';
 import { createDbQueryMcpServer, type DbQueryMcpServer } from '../../db-query/tools.ts';
 import type { ExternalEventService } from '../../external-events/external-event-service.ts';
 import type { ExternalEventStore } from '../../external-events/external-event-store.ts';
@@ -74,6 +76,7 @@ import { SpaceAgentTemplateManager } from '../../agents/template-manager.ts';
 import type { SpaceManager } from '../managers/space-manager.ts';
 import type { SpaceWorkflowManager } from '../../workflows/workflow-manager.ts';
 import { SpaceMessageResolver } from '../../messaging/space-adapter.ts';
+import { agentMemoryCapabilityContribution } from '../tools/agent-memory-briefing.ts';
 import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools.ts';
 import type { WorkflowArtifactProfile } from '../../workflows/artifact-profile.ts';
 import { ChannelRouter } from '../../messaging/channel-router.ts';
@@ -699,7 +702,7 @@ export class SpaceRuntimeService {
         },
       },
     });
-    this.attachLongTermAgentMcpServers(session, space, sessionId);
+    session.setAttachedCapabilities(this.attachLongTermAgentMcpServers(session, space, sessionId));
     return session;
   }
 
@@ -792,8 +795,9 @@ export class SpaceRuntimeService {
       );
       return;
     }
-    this.attachLongTermAgentMcpServers(agentSession, space, session.id);
+    const capabilities = this.attachLongTermAgentMcpServers(agentSession, space, session.id);
     const agent = this.config.longHorizonAgentRepo?.getById(agentId) ?? null;
+    agentSession.setAttachedCapabilities(capabilities);
     if (agent && agentSession.getSessionData().config.systemPrompt === undefined) {
       await applyBuiltAgentSessionConfig(
         agentSession,
@@ -819,14 +823,17 @@ export class SpaceRuntimeService {
     },
     space: Space,
     sessionId: string
-  ): void {
+  ): AuthoredCapabilityContribution[] {
     const mcpServers: Record<string, McpServerConfig> = {};
+    const contributions: AuthoredCapabilityContribution[] = [];
     if (this.config.memoryRepo) {
-      mcpServers['agent-memory'] = createAgentMemoryMcpServer({
+      const memoryServer = createAgentMemoryMcpServer({
         spaceId: space.id,
         memoryRepo: this.config.memoryRepo,
         mySessionId: sessionId,
-      }) as unknown as McpServerConfig;
+      });
+      mcpServers['agent-memory'] = memoryServer as unknown as McpServerConfig;
+      contributions.push(agentMemoryCapabilityContribution(memoryServer));
     }
     if (this.config.dbPath) {
       this.releaseLongTermAgentDbQuery(sessionId);
@@ -837,8 +844,10 @@ export class SpaceRuntimeService {
       });
       this.longTermAgentDbQueryServers.set(sessionId, dbQueryServer);
       mcpServers['db-query'] = dbQueryServer as unknown as McpServerConfig;
+      contributions.push(dbQueryCapabilityContribution(dbQueryServer));
     }
     session.mergeRuntimeMcpServers(mcpServers);
+    return contributions;
   }
 
   private releaseLongTermAgentDbQuery(sessionId: string): void {
@@ -1383,12 +1392,15 @@ export class SpaceRuntimeService {
     this.taskAgentManager?.reattachSlotContextReset(agentSession);
 
     const additional: Record<string, McpServerConfig> = {};
+    const capabilities: AuthoredCapabilityContribution[] = [];
     if (this.config.memoryRepo) {
-      additional['agent-memory'] = createAgentMemoryMcpServer({
+      const memoryServer = createAgentMemoryMcpServer({
         spaceId: space.id,
         memoryRepo: this.config.memoryRepo,
         mySessionId: session.id,
-      }) as unknown as McpServerConfig;
+      });
+      additional['agent-memory'] = memoryServer as unknown as McpServerConfig;
+      capabilities.push(agentMemoryCapabilityContribution(memoryServer));
     }
 
     if (this.config.dbPath) {
@@ -1400,9 +1412,12 @@ export class SpaceRuntimeService {
       });
       this.memberSessionDbQueryServers.set(session.id, dbQueryServer);
       additional['db-query'] = dbQueryServer as unknown as McpServerConfig;
+      capabilities.push(dbQueryCapabilityContribution(dbQueryServer));
     }
 
     agentSession.mergeRuntimeMcpServers(additional);
+
+    agentSession.setAttachedCapabilities(capabilities);
 
     agentSession.onMissingMemberSpaceMcpServers = async (_sessionId, missing) => {
       log.warn(

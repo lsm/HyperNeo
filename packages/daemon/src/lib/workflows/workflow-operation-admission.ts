@@ -26,7 +26,8 @@ export function admitWorkflowScope(
   requestedSpaceId: string | undefined
 ): { value: string } | { reason: WorkflowScopeRejection } {
   if (caller.source !== 'mcp') {
-    return requestedSpaceId ? { value: requestedSpaceId } : { reason: 'space_not_resolved' };
+    const spaceId = requestedSpaceId ?? caller.spaceId;
+    return spaceId ? { value: spaceId } : { reason: 'space_not_resolved' };
   }
   if (!caller.spaceId) return { reason: 'space_not_resolved' };
   if (requestedSpaceId && requestedSpaceId !== caller.spaceId) {

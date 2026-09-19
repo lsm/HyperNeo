@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Session, Space, SpaceWorkflow } from '@hyperneo/shared';
+import type { McpServer } from '@hyperneo/shared/sdk';
 import { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
 import {
   QueryOptionsBuilder,
@@ -22,7 +23,10 @@ import {
   type SpaceRuntimeServiceConfig,
 } from '../../../../src/lib/space/runtime/space-runtime-service.ts';
 import { assembleSessionBriefing } from '../../../../src/lib/briefings/assemble-session-briefing.ts';
-import type { ScopeContribution } from '../../../../src/lib/briefings/contribution.ts';
+import type {
+  AuthoredCapabilityContribution,
+  ScopeContribution,
+} from '../../../../src/lib/briefings/contribution.ts';
 import { spaceScopeContribution } from '../../../../src/lib/space/runtime/space-scope-contribution.ts';
 import { createSpaceScopeResolver } from '../../../../src/lib/space/runtime/space-scope-resolver.ts';
 import { AgentMemoryRepository } from '../../../../src/storage/repositories/agent-memory-repository.ts';
@@ -55,8 +59,9 @@ const WORKSPACE_PATH = '/tmp/session-kinds-ws';
 
 const OPERATIONS_CONTRIBUTION = operationsCapabilityContribution({
   type: 'sdk',
-  instance: {},
-} as never);
+  name: 'hyperneo-operations',
+  instance: {} as McpServer,
+});
 
 const SPACE: Space = {
   id: SESSION_KIND_SPACE_ID,
@@ -106,6 +111,8 @@ const TEXT_MARKERS: ReadonlyArray<readonly [string, string]> = [
   ],
   ['operations-door-tool', 'mcp__hyperneo-operations__invoke'],
   ['operations-discovery', 'List the operations before concluding that a capability is missing'],
+  ['agent-memory-briefing', '### Space Memory'],
+  ['db-query-briefing', '### Reading the Database'],
   ['space-standing-instructions', SPACE_INSTRUCTIONS],
   ['space-background-context', SPACE_BACKGROUND],
   ['card-agent-instructions', CARD_AGENT_INSTRUCTIONS],
@@ -164,12 +171,30 @@ function makeRecordingAgentSession(session: Session): AgentSession {
     ensureOperationRegistryProvider: () => {},
     setCallerScopeResolver: () => {},
     setSpaceScopeResolver: () => {},
+    setAttachedCapabilities: () => {},
     setRuntimeSystemPrompt: () => {},
     updateConfig: async (updates: Partial<Session['config']>) => {
       session.config = { ...session.config, ...updates };
     },
     getSessionData: () => session,
   } as unknown as AgentSession;
+}
+
+function makeCapabilityRecordingAgentSession(session: Session): {
+  agentSession: AgentSession;
+  capabilities: AuthoredCapabilityContribution[];
+} {
+  const capabilities: AuthoredCapabilityContribution[] = [];
+  const agentSession = makeRecordingAgentSession(session);
+  (
+    agentSession as unknown as {
+      setAttachedCapabilities: (given: readonly AuthoredCapabilityContribution[]) => void;
+    }
+  ).setAttachedCapabilities = (given) => {
+    capabilities.length = 0;
+    capabilities.push(...given);
+  };
+  return { agentSession, capabilities };
 }
 
 function scopeFor(kind: SessionKind, session: Session): ScopeContribution | undefined {
@@ -180,10 +205,17 @@ function scopeFor(kind: SessionKind, session: Session): ScopeContribution | unde
   })(session.id);
 }
 
-function briefingFor(kind: SessionKind, session: Session): string | undefined {
+function briefingFor(
+  kind: SessionKind,
+  session: Session,
+  capabilities: readonly AuthoredCapabilityContribution[] = []
+): string | undefined {
   const scope = scopeFor(kind, session);
   if (!scope) return undefined;
-  return assembleSessionBriefing({ scope: [scope], capabilities: [OPERATIONS_CONTRIBUTION] }).text;
+  return assembleSessionBriefing({
+    scope: [scope],
+    capabilities: [OPERATIONS_CONTRIBUTION, ...capabilities],
+  }).text;
 }
 
 function seedCreationConfig(kind: SessionKind, session: Session): void {
@@ -288,9 +320,10 @@ describe('session kind injected text', () => {
   ): Promise<{ session: Session; briefing: string | undefined }> {
     const session = makeSessionOfKind(kind);
     seedCreationConfig(kind, session);
-    const service = buildService(kind, makeRecordingAgentSession(session));
+    const recorded = makeCapabilityRecordingAgentSession(session);
+    const service = buildService(kind, recorded.agentSession);
     await service.reattachMemberSpaceTools(session.id);
-    return { session, briefing: briefingFor(kind, session) };
+    return { session, briefing: briefingFor(kind, session, recorded.capabilities) };
   }
 
   function makeBuilderContext(
@@ -432,6 +465,8 @@ describe('session kind injected text', () => {
             'card-agent-role',
             'operations-door-tool',
             'operations-discovery',
+            'agent-memory-briefing',
+            'db-query-briefing',
             'space-standing-instructions',
           ],
         },
@@ -454,6 +489,8 @@ describe('session kind injected text', () => {
             'ad-hoc-role',
             'operations-door-tool',
             'operations-discovery',
+            'agent-memory-briefing',
+            'db-query-briefing',
             'space-standing-instructions',
           ],
         },
@@ -480,6 +517,30 @@ describe('session kind injected text', () => {
           ],
         },
         { kind: 'non_space', scope: 'none', says: [] },
+      ]);
+    });
+
+    test('briefs only the built-in servers the session was actually given', async () => {
+      const session = makeSessionOfKind('ad_hoc_member');
+      const recorded = makeCapabilityRecordingAgentSession(session);
+      const service = buildService('ad_hoc_member', recorded.agentSession);
+      (service as unknown as { config: SpaceRuntimeServiceConfig }).config.dbPath = undefined;
+
+      await service.attachSpaceToolsToMemberSession(session, { replayPendingMessages: false });
+
+      const scope = scopeFor('ad_hoc_member', session);
+      const assembled = assembleSessionBriefing({
+        scope: scope ? [scope] : [],
+        capabilities: [OPERATIONS_CONTRIBUTION, ...recorded.capabilities],
+      }).text;
+
+      expect(markersIn(assembled)).toEqual([
+        'space-identity',
+        'ad-hoc-role',
+        'operations-door-tool',
+        'operations-discovery',
+        'agent-memory-briefing',
+        'space-standing-instructions',
       ]);
     });
 
@@ -569,6 +630,8 @@ describe('session kind injected text', () => {
             'card-agent-role',
             'operations-door-tool',
             'operations-discovery',
+            'agent-memory-briefing',
+            'db-query-briefing',
             'space-standing-instructions',
             'card-agent-instructions',
             'owner-review-contract',
@@ -584,6 +647,8 @@ describe('session kind injected text', () => {
             'ad-hoc-role',
             'operations-door-tool',
             'operations-discovery',
+            'agent-memory-briefing',
+            'db-query-briefing',
             'space-standing-instructions',
           ],
         },

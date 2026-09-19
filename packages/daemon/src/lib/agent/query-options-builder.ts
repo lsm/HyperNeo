@@ -10,7 +10,6 @@ import type {
   AgentDefinition,
   AppMcpServer,
   AppMcpServerSourceType,
-  ClaudeCodePreset,
   DeclarativeToolGuard,
   Session,
   SkillEnablementOverride,
@@ -50,6 +49,7 @@ import {
   waitForOptionalProviderRegistration,
 } from '../providers/factory.js';
 import { KimiProvider } from '../providers/kimi-provider.js';
+import { stripRejectedSessionConfig } from '../session/create-session-config.ts';
 import type { SettingsManager } from '../settings-manager.ts';
 import type { SkillsManager } from '../skills-manager.ts';
 import { NON_DELEGATING_GENERAL_AGENT } from '../agents/custom-agent.ts';
@@ -327,7 +327,7 @@ export class QueryOptionsBuilder {
     session?: import('@hyperneo/shared').Session;
   }): Promise<Options> {
     const session = overrides?.session ?? this.ctx.session;
-    const config = session.config;
+    const config = this.admittedConfig(session);
 
     await this.ctx.settingsManager.prepareSDKOptions();
 
@@ -530,15 +530,7 @@ export class QueryOptionsBuilder {
           ];
       const spaceRestrictedBuiltinTools = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'];
 
-      const systemPrompt = queryOptions.systemPrompt;
-      if (
-        typeof systemPrompt === 'object' &&
-        systemPrompt !== null &&
-        (systemPrompt as ClaudeCodePreset).type === 'preset' &&
-        (systemPrompt as ClaudeCodePreset).preset === 'claude_code'
-      ) {
-        queryOptions.systemPrompt = undefined;
-      }
+      queryOptions.systemPrompt = undefined;
 
       queryOptions.tools = spaceAllowedBuiltinTools;
 
@@ -878,7 +870,7 @@ CRITICAL RULES:
     sessionProviderEnvVars: Record<string, string> = {}
   ): Record<string, string> | undefined {
     const globalSettings = this.ctx.settingsManager.getGlobalSettings();
-    const sessionEnv = this.ctx.session.config.env;
+    const sessionEnv = this.admittedConfig().env;
 
     const providerEnvVars = new Set([
       'ANTHROPIC_BASE_URL',
@@ -1079,8 +1071,12 @@ CRITICAL RULES:
     return hooks;
   }
 
+  private admittedConfig(session: Session = this.ctx.session): Session['config'] {
+    return stripRejectedSessionConfig(session.config);
+  }
+
   private getSDKCliPath(): string | undefined {
-    const config = this.ctx.session.config;
+    const config = this.admittedConfig();
 
     if (config.pathToClaudeCodeExecutable) {
       return config.pathToClaudeCodeExecutable;
