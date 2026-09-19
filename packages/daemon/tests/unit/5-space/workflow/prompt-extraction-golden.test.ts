@@ -54,31 +54,31 @@ import { appendPostApprovalCompletionInstructions } from '../../../../src/lib/wo
 const GOLDEN: Record<string, string> = {
   CODEX_REACTION_APPROVAL_GUIDANCE:
     '2e1dbf1a39b2c9b47dc930c2614e3d85c93d0ea2175d3149162262725a4966be',
-  CODER_EXTERNAL_GATE_BLOCK: 'e4020f4406f182b4edd57a74bd17d1f7f3b7efeec017f7b1f5dd83d2790d720d',
-  CODER_ONLY_MERGE_INSTRUCTIONS: '5a10fb80422b2922d8fbd7968705efa5f7ed9e141e564a5ae095e45444a37e10',
-  CODER_ONLY_PROMPT: '4734136a319a617a14f71c7d57ecaa9cf8483324f74009112d4bce7fe7e16973',
+  CODER_EXTERNAL_GATE_BLOCK: '4bda94fdc82f5dc49573c7c26c29f133a92f44c0173328719b65999f1961a837',
+  CODER_ONLY_MERGE_INSTRUCTIONS: '5bf2318d8ed3f97a978df0d887f842a952ed09292ddd758d3737b26710bb33da',
+  CODER_ONLY_PROMPT: 'f3ea0fb5b671f089684a8876cc1ea6c0c07e4cf78a6d73bd4c3429704c61e440',
   CODER_OWNED_MERGE_INSTRUCTIONS:
-    'adb52987358f9b3b08a6ba795694810ee3bcae493adb36da64ad8cacbe9d02cf',
-  CODER_OWNED_MERGE_PROMPT: 'd5fc7e211289f19d6a8112bd031b0361081ff2562679adc08b907150fa925121',
+    'fed125802f734c4b44b8732ef2c59770b79a93beef1459180e1e69c21c4c9fae',
+  CODER_OWNED_MERGE_PROMPT: '0763fb49ae2f354ea75377d7221c5c51f87cb8d89858ec8dec9ef451d032f68d',
   CODER_OWNED_PR_SUBSCRIBE_GUIDANCE:
     '849ec685a272e0a751689014bd717b5e2103ccfb02d6b5b18e90eaad86bbb6e1',
-  CODER_OWNED_QA_PROMPT: '3d7b364726a87787b7ea2d3a3a468b9ebcbd9b45a9d3573f4b91b3d54f3b8942',
-  CODER_OWNED_QA_REVIEW_PROMPT: 'ac6a45761fc71e7d9d058c595b08f61eb5cc336d9e93320dc786df6185d70ff7',
-  CODER_OWNED_REVIEW_PROMPT: 'd336ca8caf451075403a0989b1e487c84faca2ef5a2a89af18db4a9e37b0df7d',
-  EXTERNAL_REVIEW_BOTS_GUIDANCE: '5cd7f3fe6b9a05536d0544461e1439fa01691ab4a6e821696975ac418af87933',
+  CODER_OWNED_QA_PROMPT: '51bf8acff43bbba31af2d1803f09919cb54684ab852c47f16700b31cc3e14b9a',
+  CODER_OWNED_QA_REVIEW_PROMPT: '4e78bbc4676e029073fb8fe5567620a68638f78ddf59f258166421183e538413',
+  CODER_OWNED_REVIEW_PROMPT: '0f4e96d25a57f956d4206cebc4ab00c791e019cdb439b8918a9ee14721c6f7c0',
+  EXTERNAL_REVIEW_BOTS_GUIDANCE: 'ab4d0a12c242d503c87fba14ffb379001b5228bfdbfdb3262a2832eaee85d1fd',
   FULLSTACK_CODING_NOCHANGE_GUIDANCE:
-    '74f56a17289baccf098c526fe6397b8894414f6cd3fd8178af86f5e3a16b95a4',
+    '299ca05ccf28d04d57273b4988dc986a2a89f799eee91955075eed8d096f6977',
   FULLSTACK_QA_POST_APPROVAL_PARAGRAPH:
-    '77d86b527ae489e9b32394ddbe2ee72f1ac5b283fe065902e72485ce9fb62030',
-  RESEARCH_PROMPT: '55f1fe5f85899b3f495197a5dd781f60afa7a3c791bf9e2649919a06d7cf59c8',
-  RESEARCH_REVIEW_PROMPT: '31b0d7c27641fd3b39a87c5f4f751812df5cb643b7a87596094246c92333853e',
-  REVIEW_ONLY_REVIEW_PROMPT: '61d503d32ae0226ce0f158d5e836a640793bf9587c22acf56d349d362902e22d',
+    '7faab1c73d2bf9335772de20f931d74cb0d63393c449daece24d9cc5b9ca62b6',
+  RESEARCH_PROMPT: '521c737f33bac45cbd2b6c9a17e4371d852586fc723768d578b0e3feb5ebda12',
+  RESEARCH_REVIEW_PROMPT: '6fbb0e843f4077291153f8eab25e873a33a401bfa79c72b23fa544b3f6754618',
+  REVIEW_ONLY_REVIEW_PROMPT: '56b2ddc26e52dcce7e27d93047cc3726bfe0bec86f3c7941d57dcb8d8cfc5c59',
   CALL_ACTION_PREFERENCE_GUIDANCE:
     '62f074f444b877af3aa0476324d65231cbb4ea0b6048e0853a644d6306859a34',
   REVIEW_POLICY_GUIDANCE: '6ba821ea3dd2c230a4bd44cf70f17f24bcecf0741e99f68978a689c7904fddf7',
   REVIEWER_POST_APPROVAL_BLOCKER_PARAGRAPH:
     'a86da78d4d26ac27bf38510364b449a905abc3421297fffd180f62ee1c585c60',
-  REVIEWER_ZERO_FINDINGS_GATE: '6c8ce493c0f210efa5687cefb6494fb7f6a2261731f57ef32c60183f68fc4bce',
+  REVIEWER_ZERO_FINDINGS_GATE: '0d03fe38fb08bd5ac562d1869b91906a0879f3bac77f2cee092effbae8dcb1a3',
   REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE:
     '1815eaf2b9369f95d8a5742891ef38ba2fdcf50de8f8f18234831febb70b65d0',
   REVIEW_THREAD_RESOLUTION_GUIDANCE:
@@ -89,8 +89,8 @@ const GOLDEN: Record<string, string> = {
   NON_DELEGATING_GENERAL_PROMPT: '5543aeae7a2a3aac9c5a4f9b489e3849c0998cb5e1d82b20e383da876fc5ae89',
   PRESET_CODER_PROMPT: '57b0ef8003e8e0ddea9aa4bb44404e1a8367fe43991c421046ca348d96fb1911',
   PRESET_RESEARCH_PROMPT: 'acc05ba0296ae52784b5477f97bd7246446644510c8e8228540f6387bcd8495e',
-  QA_SYSTEM_CONTRACT: '60ea7a78cff979f2bcd8269108da1c47e67d411d170ca071407c81b270f41d51',
-  REVIEWER_SYSTEM_CONTRACT: '072afa429bae40ca8cccd739e808000c8094160ab5b0d169c9379d39d9c87854',
+  QA_SYSTEM_CONTRACT: 'bf7cd7b5b14b14ae54f08640bf714c07b7749da0990a3392c2d0018457254614',
+  REVIEWER_SYSTEM_CONTRACT: '64435f09c601a45f250b7f97b98469fd4eec272604de3634160ce53639d2d85e',
   COORDINATOR_PROMPT: '28f30cf29ed5764a703a90029dc468c5e905dc8eb057abf1779e3e5ce9e25487',
   GITHUB_SECURITY_SYSTEM_PROMPT: '486aff88bf9a9c66ac69abe074270c5c538a1433c81dc126228f97de5f65c9bd',
   SUBAGENT_CODER_PROMPT: '5f01cfb2266c6f8a2d154da7aea4162e2297236545bcad2248447a974d6a1dac',
@@ -193,20 +193,17 @@ describe('workflow prompts prefer the operations door with named-operation fallb
     }
   });
 
-  test('the preference prose enumerates only typed tool names the prompts already use', () => {
-    for (const name of [
-      'save_artifact',
-      'send_message',
-      'subscribe_pr_events',
-      'approve_task',
-      'submit_for_approval',
-      'mark_complete',
-    ]) {
-      expect(CALL_ACTION_PREFERENCE_GUIDANCE).toContain(`\`${name}\``);
-      const usedBy = Object.entries(OPERATION_DOOR_PROMPTS).filter(([, text]) =>
-        text.replace(CALL_ACTION_PREFERENCE_GUIDANCE, '').includes(name)
+  test('active prompts contain no fictional typed-tool calls outside migration guidance', () => {
+    for (const [id, text] of Object.entries({
+      ...OPERATION_DOOR_PROMPTS,
+      QA_SYSTEM_CONTRACT,
+      REVIEWER_SYSTEM_CONTRACT,
+      FULLSTACK_CODING_NOCHANGE_GUIDANCE,
+      FULLSTACK_QA_POST_APPROVAL_PARAGRAPH,
+    })) {
+      expect(text.replace(CALL_ACTION_PREFERENCE_GUIDANCE, ''), id).not.toMatch(
+        /\b(?:save_artifact|submit_for_approval|approve_task|mark_complete|update_task|approve_pending_completion)\b/
       );
-      expect(usedBy.length, name).toBeGreaterThan(0);
     }
   });
 
@@ -227,11 +224,16 @@ describe('workflow prompts prefer the operations door with named-operation fallb
     const named: Record<string, string> = {
       CALL_ACTION_PREFERENCE_GUIDANCE,
       POST_APPROVAL_COMPLETION_INSTRUCTIONS,
-      REVIEW_ONLY_REVIEW_PROMPT,
+      ...OPERATION_DOOR_PROMPTS,
+      QA_SYSTEM_CONTRACT,
+      REVIEWER_SYSTEM_CONTRACT,
     };
     for (const [id, text] of Object.entries(named)) {
       const targets = [...text.matchAll(/invoke\(name="([^"]+)"/g)].map((match) => match[1]!);
-      expect(targets.length, id).toBeGreaterThan(0);
+      const references = [...text.matchAll(/\b(?:artifact|task)\.[A-Za-z]+\b/g)].map(
+        (match) => match[0]
+      );
+      targets.push(...references);
       for (const target of targets) {
         expect(isOperationName(target), `${id}: ${target}`).toBe(true);
       }
