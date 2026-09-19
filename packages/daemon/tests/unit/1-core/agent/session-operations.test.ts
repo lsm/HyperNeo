@@ -170,7 +170,12 @@ describe('session operation MCP attachment', () => {
     expect(listed.isError).not.toBe(true);
     const page = listed.content[0];
     if (page.type !== 'text') throw new Error('Expected task page JSON');
-    expect(JSON.parse(page.text)).toEqual({ tasks: [task], total: 1, nextCursor: null });
+    expect(JSON.parse(page.text)).toEqual({
+      tasks: [task],
+      total: 1,
+      nextCursor: null,
+      scope: { standalone: true },
+    });
     const updated = await session.getOperationMcpServer().tools[0].handler(
       {
         name: 'task.update',

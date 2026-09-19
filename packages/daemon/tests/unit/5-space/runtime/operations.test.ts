@@ -614,7 +614,12 @@ test('task.list returns the core shape unchanged for standalone tasks through th
   const standalone = createStandaloneTask(db, { title: 'Loose' }, undefined, () => {});
   const rpc = createOperationRpcHandler(provider(), () => ({}));
   const result = await rpc({ name: 'task.list', input: {} }, context);
-  expect(result).toEqual({ tasks: [standalone], total: 1, nextCursor: null });
+  expect(result).toEqual({
+    tasks: [standalone],
+    total: 1,
+    nextCursor: null,
+    scope: { standalone: true },
+  });
   expect((result as { tasks: unknown[] }).tasks[0]).not.toHaveProperty('spaceId');
 });
 
@@ -727,6 +732,7 @@ test('task.list preserves Space-scoped pagination while adding Space fields, acr
     ],
     total: 3,
     nextCursor: { createdAt: 20, id: second.id },
+    scope: { spaceId },
   });
   expect(firstPage).toMatchObject({
     tasks: [
@@ -743,6 +749,7 @@ test('task.list preserves Space-scoped pagination while adding Space fields, acr
     tasks: [{ ...tasks.getTask(taskId), hasActiveDirectAttempt: false }],
     total: 3,
     nextCursor: null,
+    scope: { spaceId },
   });
 });
 
@@ -787,7 +794,12 @@ test.each([undefined, 'other-space'])(
     const mcp = createOperationMcpHandler(provider(), () => caller);
     const denied = await mcp(list(spaceId));
     expect(denied.isError).not.toBe(true);
-    expect(JSON.parse(denied.content[0].text)).toEqual({ tasks: [], total: 0, nextCursor: null });
+    expect(JSON.parse(denied.content[0].text)).toEqual({
+      tasks: [],
+      total: 0,
+      nextCursor: null,
+      scope: { spaceId },
+    });
   }
 );
 

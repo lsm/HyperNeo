@@ -5,6 +5,25 @@ import { BlockReasonSchema, TaskCoreSchema, TaskWithSpaceFieldsSchema } from './
 
 const cursorSchema = z.object({ createdAt: z.number(), id: z.string().min(1) }).strict();
 
+const scopeSchema = z.union([
+  z.object({ spaceId: z.string().min(1) }).strict(),
+  z.object({ standalone: z.literal(true) }).strict(),
+]);
+
+type TaskListScope = z.infer<typeof scopeSchema>;
+
+function resolveListScope(
+  requestedSpaceId: string | undefined,
+  caller: OperationCaller
+): TaskListScope {
+  const spaceId = requestedSpaceId ?? caller.spaceId;
+  return spaceId === undefined ? { standalone: true } : { spaceId };
+}
+
+function scopedInput(input: ListTasksInput, scope: TaskListScope): ListTasksInput {
+  return 'spaceId' in scope ? { ...input, spaceId: scope.spaceId } : input;
+}
+
 export function createListTasksOperation(
   listTasks: (
     input: ListTasksInput,
@@ -14,7 +33,7 @@ export function createListTasksOperation(
   return defineOperation({
     name: 'task.list',
     description:
-      'List task data, newest first. Defaults to standalone tasks excluding archived tasks. Supply spaceId to list tasks owned by a Space, status to filter, and before with nextCursor to continue. Default limit is 50; maximum is 100. total is the count of every task matching the filters, ignoring all pagination (limit, offset and before). Ordering is newest-first by creation time; pass orderBy updatedAt for most-recently-touched first, which pages by offset only and always returns nextCursor null. Prefer before with nextCursor for sequential paging; offset exists for random-access page jumps and skips that many matches. blockReason narrows to tasks blocked for that reason, or to tasks with no reason recorded when null; blockReasonNotIn excludes the listed reasons and keeps tasks with no reason. Both require status blocked, and the two are mutually exclusive. A Space-owned task includes its Space fields (ownership, workflow, approval, and pending-completion state); a standalone task returns only core fields.',
+      'List task data, newest first, excluding archived tasks. With no spaceId a caller that belongs to a Space lists that Space; a caller outside every Space lists standalone tasks. scope on the result names the scope that answered, either { spaceId } or { standalone: true }. Supply spaceId to list tasks owned by a Space, status to filter, and before with nextCursor to continue. Default limit is 50; maximum is 100. total is the count of every task matching the filters, ignoring all pagination (limit, offset and before). Ordering is newest-first by creation time; pass orderBy updatedAt for most-recently-touched first, which pages by offset only and always returns nextCursor null. Prefer before with nextCursor for sequential paging; offset exists for random-access page jumps and skips that many matches. blockReason narrows to tasks blocked for that reason, or to tasks with no reason recorded when null; blockReasonNotIn excludes the listed reasons and keeps tasks with no reason. Both require status blocked, and the two are mutually exclusive. A Space-owned task includes its Space fields (ownership, workflow, approval, and pending-completion state); a standalone task returns only core fields.',
     inputSchema: z
       .object({
         spaceId: z.string().min(1).optional(),
@@ -52,7 +71,11 @@ export function createListTasksOperation(
       tasks: z.array(TaskWithSpaceFieldsSchema),
       total: z.number().int().min(0),
       nextCursor: cursorSchema.nullable(),
+      scope: scopeSchema,
     }),
-    execute: async (input, caller) => listTasks(input, caller),
+    execute: async (input, caller) => {
+      const scope = resolveListScope(input.spaceId, caller);
+      return { ...(await listTasks(scopedInput(input, scope), caller)), scope };
+    },
   });
 }
