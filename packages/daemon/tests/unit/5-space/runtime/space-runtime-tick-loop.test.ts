@@ -3399,6 +3399,87 @@ describe('SpaceRuntime — tick loop correctness', () => {
       expect(tam._spawned).toEqual([]);
     });
 
+    test('exhausted blocked-run retries escalate once, not on every tick', async () => {
+      const notifications: Array<{ runId: string; retriesExhausted: number }> = [];
+      internalEventBus.subscribe(
+        'space.workflowRun.needsAttention',
+        (payload) => {
+          notifications.push(payload);
+        },
+        { subscriberName: 'test-quiet-supervision:once' }
+      );
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo);
+      const rt = new SpaceRuntime(buildConfig(tam));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      nodeExecutionRepo.update(execution.id, {
+        status: 'blocked',
+        result: 'Awaiting an owner ruling',
+      });
+      taskRepo.updateTask(tasks[0].id, { status: 'blocked' });
+      workflowRunRepo.transitionStatus(run.id, 'blocked');
+      (rt as unknown as { blockedRetryCounts: Map<string, number> }).blockedRetryCounts.set(
+        run.id,
+        MAX_BLOCKED_RUN_RETRIES
+      );
+
+      await rt.executeTick();
+      await rt.executeTick();
+      await rt.executeTick();
+
+      expect(notifications).toHaveLength(1);
+      expect(notifications[0]).toMatchObject({
+        runId: run.id,
+        retriesExhausted: MAX_BLOCKED_RUN_RETRIES,
+      });
+    });
+
+    test('a recovered run can escalate again after a later exhaustion', async () => {
+      const notifications: Array<{ runId: string }> = [];
+      internalEventBus.subscribe(
+        'space.workflowRun.needsAttention',
+        (payload) => {
+          notifications.push(payload);
+        },
+        { subscriberName: 'test-quiet-supervision:re-escalate' }
+      );
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo);
+      const rt = new SpaceRuntime(buildConfig(tam));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
+      const retryCounts = (rt as unknown as { blockedRetryCounts: Map<string, number> })
+        .blockedRetryCounts;
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+
+      const exhaust = () => {
+        nodeExecutionRepo.update(execution.id, { status: 'blocked', result: 'Blocked again' });
+        taskRepo.updateTask(tasks[0].id, { status: 'blocked' });
+        workflowRunRepo.transitionStatus(run.id, 'blocked');
+        retryCounts.set(run.id, MAX_BLOCKED_RUN_RETRIES);
+      };
+
+      exhaust();
+      await rt.executeTick();
+      await rt.executeTick();
+      expect(notifications).toHaveLength(1);
+
+      taskRepo.updateTask(tasks[0].id, { status: 'in_progress' });
+      await rt.executeTick();
+
+      exhaust();
+      await rt.executeTick();
+
+      expect(notifications).toHaveLength(2);
+      expect(notifications[1]).toMatchObject({ runId: run.id });
+    });
+
     test('human-reopened task repairs blocked executions even after retries are exhausted', async () => {
       const retries: Array<{ runId: string; attemptNumber: number; maxAttempts: number }> = [];
       internalEventBus.subscribe(
