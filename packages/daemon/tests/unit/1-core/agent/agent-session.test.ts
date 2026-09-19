@@ -11,6 +11,7 @@ import type {
   SessionConfig,
 } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
+import { z } from 'zod';
 import { AgentSession } from '../../../../src/lib/agent/agent-session';
 import {
   ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS,
@@ -26,6 +27,7 @@ import {
 import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import { getModelsCache, setModelsCache } from '../../../../src/lib/model-service';
+import { createOperationRegistry, defineOperation } from '../../../../src/lib/operations/registry';
 import type { Database } from '../../../../src/storage/database';
 import {
   createTestDb,
@@ -6864,6 +6866,101 @@ describe('AgentSession', () => {
 
       expect(session.pendingResumeAfterCompaction).toBe(false);
       expect(interruptHandler.handleInterrupt).toHaveBeenCalled();
+    });
+  });
+
+  describe('getOperationsCapabilityContribution', () => {
+    function stubOperation(name: string) {
+      return defineOperation({
+        name,
+        description: `stub for ${name}`,
+        inputSchema: z.object({}),
+        resultSchema: z.unknown(),
+        execute: async () => undefined,
+      });
+    }
+
+    function makeMocks() {
+      const mockDb = {
+        getSession: mock(() => null),
+        createSession: mock(() => {}),
+        updateSession: mock(() => {}),
+        getUserMessagesByStatus: mock(() => ({ messages: [], total: 0 })),
+      } as unknown as Database;
+      const mockMessageHub = {} as MessageHub;
+      const mockInternalEventBus = {
+        publish: mock(async () => {}),
+        publishAsync: mock(() => {}),
+        subscribe: mock((_: string, __: Function, ___: object) => () => {}),
+      } as unknown as InternalEventBus<any>;
+      const mockGetApiKey = mock(async () => 'test-api-key');
+      return { mockDb, mockMessageHub, mockInternalEventBus, mockGetApiKey };
+    }
+
+    it("derives the listing from this session's resolved operation registry, not the global catalog", () => {
+      const mockSession = createTestSession('session-op-registry');
+      const { mockDb, mockMessageHub, mockInternalEventBus, mockGetApiKey } = makeMocks();
+      const agentSession = new AgentSession(
+        mockSession,
+        mockDb,
+        mockMessageHub,
+        mockInternalEventBus,
+        mockGetApiKey
+      );
+
+      agentSession.setOperationRegistryProvider(() =>
+        createOperationRegistry([stubOperation('task.create'), stubOperation('goal.list')])
+      );
+
+      const { briefing } = agentSession.getOperationsCapabilityContribution();
+
+      expect(briefing).toContain('2 operations across 2 areas: goal, task');
+    });
+
+    it('reflects a narrower registry swapped in later, since the provider is re-read each time', () => {
+      const mockSession = createTestSession('session-op-registry-2');
+      const { mockDb, mockMessageHub, mockInternalEventBus, mockGetApiKey } = makeMocks();
+      const agentSession = new AgentSession(
+        mockSession,
+        mockDb,
+        mockMessageHub,
+        mockInternalEventBus,
+        mockGetApiKey
+      );
+
+      let registry = createOperationRegistry([stubOperation('task.create')]);
+      agentSession.setOperationRegistryProvider(() => registry);
+      expect(agentSession.getOperationsCapabilityContribution().briefing).toContain(
+        '1 operations across 1 areas: task'
+      );
+
+      registry = createOperationRegistry([
+        stubOperation('task.create'),
+        stubOperation('space.get'),
+      ]);
+      expect(agentSession.getOperationsCapabilityContribution().briefing).toContain(
+        '2 operations across 2 areas: space, task'
+      );
+    });
+
+    it('shares the exact registry resolution used to serve the invoke tool', () => {
+      const mockSession = createTestSession('session-op-registry-3');
+      const { mockDb, mockMessageHub, mockInternalEventBus, mockGetApiKey } = makeMocks();
+      const agentSession = new AgentSession(
+        mockSession,
+        mockDb,
+        mockMessageHub,
+        mockInternalEventBus,
+        mockGetApiKey
+      );
+
+      const registry = createOperationRegistry([stubOperation('workflow.get')]);
+      agentSession.setOperationRegistryProvider(() => registry);
+
+      agentSession.getOperationMcpServer();
+      const { briefing } = agentSession.getOperationsCapabilityContribution();
+
+      expect(briefing).toContain('1 operations across 1 areas: workflow');
     });
   });
 });
