@@ -9,6 +9,7 @@ import {
 import { createSendMessageOperation } from '../../../../src/lib/messaging/message-send';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry';
+import { createDiscoveryOperations } from '../../../../src/lib/operations/discovery';
 import { setupOperationHandlers } from '../../../../src/lib/rpc-handlers/operation-handlers';
 import { RemoteDaemonRegistry } from '../../../../src/lib/remote-daemons/registry';
 import { createRemoteSendForwarder } from '../../../../src/lib/remote-daemons/forward-send';
@@ -40,6 +41,7 @@ async function startRemoteDaemon(knownSessionId: string): Promise<RemoteDaemon> 
   const mailbox = createMailboxTestDb();
   const registry = createOperationRegistry([
     createSendMessageOperation(mailbox.jobQueue, (sessionId) => sessionId === knownSessionId),
+    ...createDiscoveryOperations(() => registry),
   ]);
   const router = new MessageHubRouter({
     logger: { error: () => {}, warn: () => {}, log: () => {} },
@@ -144,6 +146,14 @@ describe('forwarding message.send to an attached daemon', () => {
       value: { kind: 'accepted', mailboxId: entry?.id, messageId: entry?.messageUuid },
     });
     expect(local.rowCount()).toBe(0);
+  });
+
+  test('probes the operation door without retaining a connection or attachment', async () => {
+    await daemons.probe(remote.url);
+
+    await waitFor(() => remote.clientCount() === 0);
+    expect(remote.clientCount()).toBe(0);
+    expect(daemons.list()).toEqual([]);
   });
 
   test('closes the previous socket when the same daemon is attached again', async () => {

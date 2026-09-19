@@ -5,7 +5,7 @@ import { defineOperation, type OperationCaller } from '../operations/registry.ts
 import type { RemoteDaemonRegistry } from './registry.ts';
 
 const RPC_ONLY_REASON =
-  'Inspecting or detaching a remote daemon is restricted to the RPC door; an agent can address a daemon that is already attached but cannot enumerate or remove one.';
+  'Managing or probing a remote daemon is restricted to the RPC door; an agent can address a daemon that is already attached but cannot inspect, probe, or remove one.';
 
 const Rejected = z.object({ kind: z.literal('rejected'), reason: z.string() });
 
@@ -23,6 +23,22 @@ export const ListDaemonsResultSchema = z.discriminatedUnion('kind', [
 
 export const DetachDaemonInputSchema = z.object({ daemonId: z.string().min(1) });
 
+export const ProbeDaemonInputSchema = z.object({
+  url: z
+    .string()
+    .min(1)
+    .refine(
+      (url) => url.startsWith('ws://') || url.startsWith('wss://'),
+      'URL must be a ws:// or wss:// MessageHub endpoint'
+    ),
+});
+
+export const ProbeDaemonResultSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('reachable'), url: z.string() }),
+  z.object({ kind: z.literal('unreachable'), url: z.string(), reason: z.string() }),
+  Rejected,
+]);
+
 export const DetachDaemonResultSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('detached'), daemonId: z.string() }),
   z.object({ kind: z.literal('not_attached'), daemonId: z.string() }),
@@ -33,6 +49,8 @@ type ListInput = z.input<typeof ListDaemonsInputSchema>;
 type ListResult = z.infer<typeof ListDaemonsResultSchema>;
 type DetachInput = z.infer<typeof DetachDaemonInputSchema>;
 type DetachResult = z.infer<typeof DetachDaemonResultSchema>;
+type ProbeInput = z.infer<typeof ProbeDaemonInputSchema>;
+type ProbeResult = z.infer<typeof ProbeDaemonResultSchema>;
 
 export function requireRpcDaemonCaller<Input>(
   input: Input,
@@ -67,6 +85,22 @@ export function detachRemoteDaemon(
     : { kind: 'not_attached', daemonId: input.daemonId };
 }
 
+export async function probeRemoteDaemon(
+  input: ProbeInput,
+  registry: RemoteDaemonRegistry
+): Promise<ProbeResult> {
+  try {
+    await registry.probe(input.url);
+    return { kind: 'reachable', url: input.url };
+  } catch (error) {
+    return {
+      kind: 'unreachable',
+      url: input.url,
+      reason: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 const runListDaemons = (superpipe({})('list-remote-daemons') as PipelineAPI)
   .input(['input', 'caller', 'registry'])
   .pipe(requireRpcDaemonCaller, ['input', 'caller'], 'result:outcome')
@@ -86,6 +120,16 @@ const runDetachDaemon = (superpipe({})('detach-remote-daemon') as PipelineAPI)
   caller: OperationCaller,
   registry: RemoteDaemonRegistry
 ) => Promise<DetachResult>;
+
+const runProbeDaemon = (superpipe({})('probe-remote-daemon') as PipelineAPI)
+  .input(['input', 'caller', 'registry'])
+  .pipe(requireRpcDaemonCaller, ['input', 'caller'], 'result:outcome')
+  .pipe(probeRemoteDaemon, ['outcome', 'registry'], 'outcome')
+  .endAsync('outcome') as (
+  input: ProbeInput,
+  caller: OperationCaller,
+  registry: RemoteDaemonRegistry
+) => Promise<ProbeResult>;
 
 export function createListDaemonsOperation(registry: RemoteDaemonRegistry) {
   return defineOperation({
@@ -108,5 +152,17 @@ export function createDetachDaemonOperation(registry: RemoteDaemonRegistry) {
     inputSchema: DetachDaemonInputSchema,
     resultSchema: DetachDaemonResultSchema,
     execute: (input, caller) => runDetachDaemon(input, caller, registry),
+  });
+}
+
+export function createProbeDaemonOperation(registry: RemoteDaemonRegistry) {
+  return defineOperation({
+    name: 'daemon.probe',
+    policy: { safetyClass: 'human_only' },
+    description:
+      'Test a remote HyperNeo MessageHub websocket URL by opening a temporary connection and invoking operations.list under the existing connect deadline. Only a caller on the RPC door may probe a URL; agent callers are rejected, and probing does not attach the daemon or accept caller identity input.',
+    inputSchema: ProbeDaemonInputSchema,
+    resultSchema: ProbeDaemonResultSchema,
+    execute: (input, caller) => runProbeDaemon(input, caller, registry),
   });
 }

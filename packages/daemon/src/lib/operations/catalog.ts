@@ -16,6 +16,7 @@ import { createAttachDaemonOperation } from '../remote-daemons/attach-operation.
 import {
   createDetachDaemonOperation,
   createListDaemonsOperation,
+  createProbeDaemonOperation,
 } from '../remote-daemons/manage-operations.ts';
 import { createRemoteSendForwarder } from '../remote-daemons/forward-send.ts';
 import { remoteDaemons } from '../remote-daemons/registry.ts';
@@ -63,6 +64,7 @@ export function createDaemonOperationCatalog(
       createRemoteSendForwarder(remoteDaemons)
     ),
     createAttachDaemonOperation(remoteDaemons),
+    createProbeDaemonOperation(remoteDaemons),
     createListDaemonsOperation(remoteDaemons),
     createDetachDaemonOperation(remoteDaemons),
     createGetTaskOperation(tasks.readTask, tasks.readTaskByNumber),
