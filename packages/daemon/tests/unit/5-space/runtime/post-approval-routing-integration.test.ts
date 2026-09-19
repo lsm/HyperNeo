@@ -321,8 +321,16 @@ describe('PR 3/5 integration — dispatchPostApproval → spawn → mark_complet
       .find((w) => w.name === CODING_WORKFLOW.name)!;
 
     const TASK_WORKSPACE = '/task/template-override';
-    const { taskId } = seedRunAndTask(h, coding.id, 'Template workspace');
+    const { runId, taskId } = seedRunAndTask(h, coding.id, 'Template workspace');
     h.taskRepo.updateTask(taskId, { workspacePath: TASK_WORKSPACE });
+    h.artifactRepo.upsert({
+      id: 'art-ws10',
+      runId,
+      nodeId: 'tpl-coding-review',
+      artifactType: 'decision',
+      artifactKey: 'cycle-1',
+      data: { summary: 'Approved.', pr_url: 'https://github.com/example/repo/pull/10' },
+    });
 
     const result = await h.runtime.dispatchPostApproval(taskId, 'agent');
     expect(result.mode).toBe('spawn');
@@ -332,17 +340,17 @@ describe('PR 3/5 integration — dispatchPostApproval → spawn → mark_complet
     expect(h.spawned[0].kickoffMessage).not.toContain('{{workspace_path_sh}}');
   });
 
-  test('approved Coding task WITHOUT pr_url artifact still spawns; kickoff preserves literal {{pr_url}} placeholder', async () => {
+  test('approved Coding task WITHOUT pr_url artifact is refused rather than sent a literal {{pr_url}}', async () => {
     const coding = h.workflowManager
       .listWorkflows(SPACE_ID)
       .find((w) => w.name === CODING_WORKFLOW.name)!;
     const { taskId } = seedRunAndTask(h, coding.id, 'No PR yet');
 
     const result = await h.runtime.dispatchPostApproval(taskId, 'agent');
-    expect(result.mode).toBe('spawn');
+    expect(result.mode).toBe('skipped');
 
-    expect(h.spawned).toHaveLength(1);
-    expect(h.spawned[0].kickoffMessage).toContain('{{pr_url}}');
+    expect(h.spawned).toHaveLength(0);
+    expect(h.taskRepo.getTask(taskId)?.postApprovalBlockedReason).toContain('pr_url');
   });
 
   test('approved task with NO postApproval → dispatchPostApproval closes directly (Review-Only path)', async () => {
@@ -377,7 +385,15 @@ describe('PR 3/5 integration — dispatchPostApproval → spawn → mark_complet
       .find((w) => w.name === CODING_WORKFLOW.name);
     expect(coding).toBeDefined();
 
-    const { taskId } = seedRunAndTask(h, coding!.id, 'Throw-path task', '');
+    const { runId, taskId } = seedRunAndTask(h, coding!.id, 'Throw-path task', '');
+    h.artifactRepo.upsert({
+      id: 'art-throw',
+      runId,
+      nodeId: 'tpl-coding-review',
+      artifactType: 'decision',
+      artifactKey: 'cycle-1',
+      data: { summary: 'Approved.', pr_url: 'https://github.com/example/repo/pull/11' },
+    });
     h.taskRepo.updateTask(taskId, {
       status: 'review',
       pendingCheckpointType: 'task_completion',

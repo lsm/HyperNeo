@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  admitPostApprovalKickoff,
   interpolatePostApprovalTemplate,
   POST_APPROVAL_TEMPLATE_KEYS,
 } from '../../../../src/lib/workflows/post-approval-template.ts';
@@ -143,5 +144,51 @@ describe('interpolatePostApprovalTemplate — grammar guarantees', () => {
   test('values are stringified via String(value) (numbers, booleans)', () => {
     const result = interpolatePostApprovalTemplate('{{n}}/{{b}}', { n: 42, b: true });
     expect(result.text).toBe('42/true');
+  });
+});
+
+describe('admitPostApprovalKickoff', () => {
+  test('refuses a kickoff whose PR url never resolved, naming the placeholder', () => {
+    const admitted = admitPostApprovalKickoff(
+      'You implemented PR {{pr_url}}; run gh pr view {{pr_url}} --json state',
+      { task_id: 'task-1' }
+    );
+
+    expect(admitted).toEqual({
+      reason: 'post-approval kickoff leaves pr_url unresolved; the approved task never recorded it',
+    });
+  });
+
+  test('names every unresolved placeholder, once each', () => {
+    const admitted = admitPostApprovalKickoff(
+      '{{pr_url}} then ask {{approval_authority}} about {{pr_url}}',
+      {}
+    );
+
+    expect(admitted).toEqual({
+      reason:
+        'post-approval kickoff leaves pr_url, approval_authority unresolved; the approved task never recorded them',
+    });
+  });
+
+  test('admits the rendered text once every placeholder resolved', () => {
+    const admitted = admitPostApprovalKickoff('merge {{pr_url}} for {{task_id}}', {
+      pr_url: 'https://github.com/o/r/pull/7',
+      task_id: 'task-1',
+    });
+
+    expect(admitted).toEqual({ value: 'merge https://github.com/o/r/pull/7 for task-1' });
+  });
+
+  test('a template with no placeholders is admitted unchanged', () => {
+    expect(admitPostApprovalKickoff('just merge it', {})).toEqual({ value: 'just merge it' });
+  });
+
+  test('a key present but null is unresolved, not an empty substitution', () => {
+    const admitted = admitPostApprovalKickoff('merge {{pr_url}}', { pr_url: null });
+
+    expect(admitted).toEqual({
+      reason: 'post-approval kickoff leaves pr_url unresolved; the approved task never recorded it',
+    });
   });
 });

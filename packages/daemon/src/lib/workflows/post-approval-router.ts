@@ -15,7 +15,7 @@ import {
   selectFirstDispatchablePostApprovalRoute,
 } from './post-approval-route-selection.ts';
 import {
-  interpolatePostApprovalTemplate,
+  admitPostApprovalKickoff,
   type PostApprovalTemplateContext,
 } from './post-approval-template.ts';
 import { POST_APPROVAL_TASK_AGENT_TARGET } from './post-approval-validator.ts';
@@ -249,15 +249,14 @@ export class PostApprovalRouter {
     }
 
     const route = selected?.route ?? dispatchable[0]!;
-    const { text: interpolatedInstructions, missingKeys } = interpolatePostApprovalTemplate(
-      route.instructions ?? '',
-      context
-    );
-    if (missingKeys.length > 0) {
-      log.warn(
-        `PostApprovalRouter.route: task ${task.id} kickoff referenced unknown keys: ${missingKeys.join(', ')}`
-      );
+    const admitted = admitPostApprovalKickoff(route.instructions ?? '', context);
+    if ('reason' in admitted) {
+      const reason = `task ${task.id}: ${admitted.reason}`;
+      log.warn(`PostApprovalRouter.route: ${reason}`);
+      this.recordBlockedReasonIfCurrent(task, reason);
+      return { mode: 'skipped', reason };
     }
+    const interpolatedInstructions = admitted.value;
     if (!interpolatedInstructions.trim()) {
       const reason = `task ${task.id}: post-approval route (targetAgent=${route.targetAgent}) has an empty instructions template`;
       log.warn(`PostApprovalRouter.route: ${reason}`);
@@ -335,7 +334,7 @@ export class PostApprovalRouter {
       mode: 'spawn',
       postApprovalSessionId: sessionId,
       postApprovalStartedAt: startedAt,
-      missingKeys,
+      missingKeys: [],
     };
   }
 }
