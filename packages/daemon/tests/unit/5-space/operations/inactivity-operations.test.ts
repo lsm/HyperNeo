@@ -131,7 +131,10 @@ describe('inactivity watchdog operations', () => {
 
   test('runNow schedules a scan for the calling agent', async () => {
     const caller = agentCaller(longTermSession('s-run', SPACE));
-    expect(await run('inactivity.runNow', {}, caller)).toEqual({ started: true });
+    expect(await run('inactivity.runNow', {}, caller)).toEqual({
+      started: true,
+      scope: { spaceId: SPACE },
+    });
     expect(scans).toEqual([{ spaceId: SPACE, agentId: AGENT }]);
   });
 
@@ -189,8 +192,26 @@ describe('inactivity watchdog operations', () => {
     const rpc: OperationCaller = { source: 'rpc' };
     expect(await run('inactivity.runNow', { spaceId: SPACE, agentId: AGENT }, rpc)).toEqual({
       started: true,
+      scope: { spaceId: SPACE },
     });
     expect(await run('inactivity.runNow', { agentId: AGENT }, rpc)).toBe('caller_denied');
     expect(scans).toEqual([{ spaceId: SPACE, agentId: AGENT }]);
+  });
+});
+
+describe('inactivity optional Space scope', () => {
+  test('RPC and internal callers inherit their Space even when the watchdog config is missing', async () => {
+    for (const source of ['rpc', 'internal'] as const) {
+      const result = await run(
+        'inactivity.config.get',
+        { agentId: AGENT },
+        { source, spaceId: SPACE }
+      );
+      expect(operations.get('inactivity.config.get')?.resultSchema.parse(result)).toEqual({
+        config: null,
+        degraded: false,
+        scope: { spaceId: SPACE },
+      });
+    }
   });
 });

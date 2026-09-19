@@ -30,7 +30,8 @@ export function admitEventCallerSpace(
   caller: OperationCaller
 ): { value: string } | { reason: EventCallerRejection } {
   if (caller.source !== 'mcp') {
-    return input.spaceId ? { value: input.spaceId } : { reason: 'caller_denied' };
+    const spaceId = input.spaceId ?? caller.spaceId;
+    return spaceId ? { value: spaceId } : { reason: 'caller_denied' };
   }
   if (!caller.spaceId) {
     return { reason: 'caller_denied' };

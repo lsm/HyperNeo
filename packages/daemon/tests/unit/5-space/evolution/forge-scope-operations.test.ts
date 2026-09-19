@@ -385,7 +385,10 @@ describe('forge.scope.get', () => {
       ).toMatchObject({ accepted: false, reason: 'scope_not_found' });
       const visible = (await ctx
         .op('forge.scope.get')
-        .execute({ scopeId: foreign.id }, rpcCaller)) as { accepted: true; scope: { id: string } };
+        .execute({ scopeId: foreign.id, spaceId: OTHER_SPACE_ID }, rpcCaller)) as {
+        accepted: true;
+        scope: { id: string };
+      };
       expect(visible.scope.id).toBe(foreign.id);
     } finally {
       ctx.db.close();
@@ -766,6 +769,48 @@ describe('invokeOperation', () => {
       expect(
         await ctx.op('forge.timeline.get').execute({ scopeId: created.scope.id }, spacelessCaller)
       ).toMatchObject({ accepted: false, reason: 'space_required' });
+    } finally {
+      ctx.db.close();
+    }
+  });
+});
+
+describe('Forge optional Space scope', () => {
+  test('RPC and internal callers inherit their Space and never read foreign scopes by id', async () => {
+    const ctx = makeCtx();
+    try {
+      const own = ctx.scopeService.createScope({
+        spaceId: SPACE_ID,
+        kind: 'project',
+        name: 'Own',
+        objective: 'Own',
+      });
+      const foreign = ctx.scopeService.createScope({
+        spaceId: OTHER_SPACE_ID,
+        kind: 'project',
+        name: 'Foreign',
+        objective: 'Foreign',
+      });
+      for (const source of ['rpc', 'internal'] as const) {
+        const caller = { source, spaceId: SPACE_ID };
+        expect(await invokeOperation(ctx.registry, 'forge.scope.list', {}, caller)).toMatchObject({
+          kind: 'completed',
+          value: { scopes: [{ id: own.id }], scope: { spaceId: SPACE_ID } },
+        });
+        expect(
+          await ctx.op('forge.scope.get').execute({ scopeId: foreign.id }, caller)
+        ).toMatchObject({ accepted: false, reason: 'scope_not_found' });
+        for (const name of ['forge.evidence.list', 'forge.metric.list']) {
+          const result = await invokeOperation(ctx.registry, name, { scopeId: own.id }, caller);
+          expect(result).toMatchObject({
+            kind: 'completed',
+            value: { accepted: true, scope: { spaceId: SPACE_ID } },
+          });
+        }
+        expect(
+          await ctx.op('forge.scope.get').execute({ scopeId: own.id }, { source })
+        ).toMatchObject({ accepted: false, reason: 'space_required' });
+      }
     } finally {
       ctx.db.close();
     }

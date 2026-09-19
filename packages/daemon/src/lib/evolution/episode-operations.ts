@@ -106,7 +106,13 @@ const FORGE_DESTRUCTIVE_POLICY = {
   roles: ['ad_hoc_member', 'long_term_agent'],
 } as const satisfies OperationPolicy;
 
-const SpaceScoped = { spaceId: z.string().min(1).optional() };
+const SpaceScoped = {
+  spaceId: z
+    .string()
+    .min(1)
+    .optional()
+    .describe('Defaults to the trusted caller Space; rejects space_required when neither is set.'),
+};
 const ScopeTargeted = { ...SpaceScoped, scopeId: z.string().min(1) };
 
 function accepted<Shape extends z.ZodRawShape>(shape: Shape) {
@@ -211,7 +217,11 @@ export function readForgeReviewBundle(
   scope: EvolutionScope,
   forge: ForgeEpisodeOperationDependencies
 ): Record<string, unknown> {
-  return { accepted: true, ...forge.episodeService.listReviewBundle(scope.id) };
+  return {
+    accepted: true,
+    ...forge.episodeService.listReviewBundle(scope.id),
+    scope: { spaceId: scope.spaceId },
+  };
 }
 
 const LessonListInputSchema = z
@@ -223,7 +233,7 @@ export function readForgeLessons(
   scope: EvolutionScope,
   caller: OperationCaller,
   forge: ForgeEpisodeOperationDependencies
-): { accepted: true; lessons: EvolutionLesson[] } {
+): { accepted: true; lessons: EvolutionLesson[]; scope: { spaceId: string } } {
   const lessons = forge.episodeService.listLessons(scope.id, input.status);
   forge.audit?.({
     toolName: 'forge.lesson.list',
@@ -231,7 +241,7 @@ export function readForgeLessons(
     caller,
     spaceId: scope.spaceId,
   });
-  return { accepted: true, lessons };
+  return { accepted: true, lessons, scope: { spaceId: scope.spaceId } };
 }
 
 const ProposalListInputSchema = z
@@ -243,7 +253,7 @@ export function readForgeProposals(
   scope: EvolutionScope,
   caller: OperationCaller,
   forge: ForgeEpisodeOperationDependencies
-): { accepted: true; proposals: TaskProposal[] } {
+): { accepted: true; proposals: TaskProposal[]; scope: { spaceId: string } } {
   const proposals = forge.episodeService.listTaskProposals(scope.id, input.status);
   forge.audit?.({
     toolName: 'forge.proposal.list',
@@ -251,7 +261,7 @@ export function readForgeProposals(
     caller,
     spaceId: scope.spaceId,
   });
-  return { accepted: true, proposals };
+  return { accepted: true, proposals, scope: { spaceId: scope.spaceId } };
 }
 
 const EpisodeUpdateInputSchema = z
@@ -591,6 +601,7 @@ export function createForgeEpisodeOperations(forge: ForgeEpisodeOperationDepende
       inputSchema: z.object(ScopeTargeted).strict(),
       resultSchema: z.union([
         accepted({
+          scope: z.object({ spaceId: z.string() }),
           episodes: z.array(ForgeEpisodeSchema),
           lessons: z.array(ForgeLessonSchema),
           proposals: z.array(ForgeProposalSchema),
@@ -606,7 +617,7 @@ export function createForgeEpisodeOperations(forge: ForgeEpisodeOperationDepende
         'List the lessons a Forge scope has accumulated, optionally filtered by status (candidate, active, dismissed). Rejects scope_not_found when the scope is absent or outside the caller Space.',
       inputSchema: LessonListInputSchema,
       resultSchema: z.union([
-        accepted({ lessons: z.array(ForgeLessonSchema) }),
+        accepted({ lessons: z.array(ForgeLessonSchema), scope: z.object({ spaceId: z.string() }) }),
         forgeDenialSchema(SCOPE_REJECTIONS),
       ]),
       execute: async (input, caller) => lessonList(input, caller),
@@ -618,7 +629,10 @@ export function createForgeEpisodeOperations(forge: ForgeEpisodeOperationDepende
         'List the task proposals on a Forge scope, optionally filtered by status (proposed, accepted, dismissed, created). Rejects scope_not_found when the scope is absent or outside the caller Space.',
       inputSchema: ProposalListInputSchema,
       resultSchema: z.union([
-        accepted({ proposals: z.array(ForgeProposalSchema) }),
+        accepted({
+          proposals: z.array(ForgeProposalSchema),
+          scope: z.object({ spaceId: z.string() }),
+        }),
         forgeDenialSchema(SCOPE_REJECTIONS),
       ]),
       execute: async (input, caller) => proposalList(input, caller),

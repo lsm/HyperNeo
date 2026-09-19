@@ -221,3 +221,24 @@ describe('createListDeliveriesOperation', () => {
     expect(result.deliveries.map((entry) => entry.eventId)).toEqual(['evt-d5']);
   });
 });
+
+describe('external event optional Space scope', () => {
+  test('RPC and internal reads inherit the caller Space and empty deliveries report it', async () => {
+    store.store(event('owned', SPACE));
+    store.store(event('foreign', OTHER_SPACE));
+    for (const source of ['rpc', 'internal'] as const) {
+      const caller = { source, spaceId: SPACE };
+      expect(await run('externalEvent.get', { eventId: 'owned' }, caller)).toMatchObject({
+        event: { id: 'owned', spaceId: SPACE },
+      });
+      expect(await run('externalEvent.get', { eventId: 'foreign' }, caller)).toBe(
+        'event_not_found'
+      );
+      const value = await run('externalEvent.listDeliveries', { workflowRunId: RUN }, caller);
+      expect(operations.get('externalEvent.listDeliveries')?.resultSchema.parse(value)).toEqual({
+        deliveries: [],
+        scope: { spaceId: SPACE },
+      });
+    }
+  });
+});

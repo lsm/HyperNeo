@@ -696,3 +696,38 @@ describe('invokeOperation', () => {
     }
   });
 });
+
+describe('Forge episode optional Space scope', () => {
+  test('lists report the inherited Space and cannot read another Space or silently search globally', async () => {
+    const ctx = makeCtx();
+    try {
+      const own = seedScope(ctx);
+      const foreign = seedScope(ctx, OTHER_SPACE_ID);
+      for (const source of ['rpc', 'internal', 'mcp'] as const) {
+        const caller: OperationCaller = { source, spaceId: SPACE_ID, role: 'ad_hoc_member' };
+        for (const name of [
+          'forge.reviewBundle.list',
+          'forge.lesson.list',
+          'forge.proposal.list',
+        ]) {
+          expect(
+            await invokeOperation(ctx.registry, name, { scopeId: own.id }, caller)
+          ).toMatchObject({
+            kind: 'completed',
+            value: { accepted: true, scope: { spaceId: SPACE_ID } },
+          });
+          expect(await ctx.op(name).execute({ scopeId: foreign.id }, caller)).toMatchObject({
+            accepted: false,
+            reason: 'scope_not_found',
+          });
+          expect(await ctx.op(name).execute({ scopeId: own.id }, { source })).toMatchObject({
+            accepted: false,
+            reason: 'space_required',
+          });
+        }
+      }
+    } finally {
+      ctx.db.close();
+    }
+  });
+});
