@@ -1,8 +1,9 @@
 import type { Provider, ProviderCredentials } from '@hyperneo/shared/provider';
 import { getProviderRegistry, type ProviderRegistry } from '../providers/registry.js';
-import { getProviderFailure } from '../providers/provider-failure-store.js';
+import { clearProviderFailure, getProviderFailure } from '../providers/provider-failure-store.js';
 import type { ProviderRecoveryOutcome } from '../model-service.js';
 import type { ProviderCredentialManager } from './provider-credential-manager.js';
+import { decideRefreshDue } from './refresh-due-gate.js';
 
 const DEFAULT_INTERVAL_MS = 5 * 60 * 1000;
 const DEFAULT_REFRESH_WINDOW_MS = 10 * 60 * 1000;
@@ -88,9 +89,13 @@ export class OAuthRefreshScheduler {
     const credentials = await this.credentialsForProvider(provider);
     if (!credentials || credentials.type !== 'oauth') return;
 
-    const expiresAt = credentials.expiresAt;
-    if (typeof expiresAt !== 'number') return;
-    if (expiresAt - this.now() > this.refreshWindowMs) return;
+    const due = decideRefreshDue({
+      expiresAt: credentials.expiresAt,
+      now: this.now(),
+      refreshWindowMs: this.refreshWindowMs,
+      failureKind: getProviderFailure(provider.id)?.errorKind,
+    });
+    if ('reason' in due) return;
 
     const retryKey = this.retryKey(provider.id, credentials);
     if ((this.retryCounts.get(retryKey) ?? 0) >= this.maxRetries) return;
@@ -104,6 +109,7 @@ export class OAuthRefreshScheduler {
 
     if (refreshed) {
       this.retryCounts.delete(retryKey);
+      if (due.value === 'credential_failure') clearProviderFailure(provider.id);
       const nextCredentials = await this.credentialsFromProvider(provider, credentials);
       if (nextCredentials) {
         await this.credentialManager.storeOAuthTokens(provider.id, nextCredentials);
