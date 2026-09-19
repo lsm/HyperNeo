@@ -8,7 +8,10 @@ import type { NodeExecutionRepository } from '../../storage/repositories/node-ex
 import type { WorkflowHookStateRepository } from '../../storage/repositories/workflow-hook-state-repository.ts';
 import type { WorkflowRunArtifactRepository } from '../../storage/repositories/workflow-run-artifact-repository.ts';
 import { Logger } from '../logger.ts';
+import { invokeOperation } from '../operations/invoke.ts';
+import type { OperationCaller, OperationRegistry } from '../operations/registry.ts';
 import { isRateLimitError } from '../session/rate-limit-detector.ts';
+import { jsonResult } from '../space/tools/tool-result.ts';
 import { type AnyToolResult, scheduleRetryableAction } from './hook-binding.ts';
 import type { HookExecutor } from './hook-executor.ts';
 import {
@@ -159,6 +162,39 @@ export class HookEngine {
         handlers: handlersByMethod,
         meta: action.meta,
         isFollowUp: action.isFollowUp,
+      });
+    }
+  }
+
+  scheduleQueuedRetryableOperations(
+    registry: OperationRegistry,
+    caller: OperationCaller,
+    ownerMeta: HookActionMeta
+  ): void {
+    for (const action of this.getQueuedRetryableActions()) {
+      if (!sameRetryableActionOwner(action.meta, ownerMeta)) continue;
+      if (this.isRetryableActionCancelled(action.meta)) {
+        this.clearQueuedRetryableAction(action.hookId);
+        continue;
+      }
+      if (!registry.get(action.methodName)) continue;
+      const handler = async (args: Record<string, unknown>) => {
+        const outcome = await invokeOperation(registry, action.methodName, args, caller);
+        return outcome.kind === 'completed'
+          ? jsonResult(outcome.value)
+          : { ...jsonResult({ success: false, error: outcome.message }), isError: true };
+      };
+      scheduleRetryableAction({
+        actionKey: action.actionKey,
+        delayMs: Math.max(0, action.nextRetryAt - Date.now()),
+        methodName: action.methodName,
+        args: action.args,
+        handler,
+        engine: this,
+        handlers: {},
+        meta: action.meta,
+        isFollowUp: action.isFollowUp,
+        handlerIncludesHooks: true,
       });
     }
   }
