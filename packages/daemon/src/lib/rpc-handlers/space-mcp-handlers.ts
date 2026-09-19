@@ -97,7 +97,9 @@ export function setupSpaceMcpHandlers(
       updated = result.updated;
       removed = result.removed;
       if (result.status === 'malformed') {
-        notes.push(`${result.sourcePath}: parse error — ${result.error ?? 'invalid file'}`);
+        notes.push(
+          `${result.sourcePath}: invalid MCP configuration — ${result.error ?? 'invalid file'}`
+        );
       } else if (result.status === 'failed') {
         notes.push(`${result.sourcePath}: import failed — ${result.error ?? 'unknown error'}`);
       }
@@ -105,7 +107,7 @@ export function setupSpaceMcpHandlers(
       const result = mcpImportService.refreshAll();
       for (const r of result.results) {
         if (r.status === 'malformed') {
-          notes.push(`${r.sourcePath}: parse error — ${r.error ?? 'invalid file'}`);
+          notes.push(`${r.sourcePath}: invalid MCP configuration — ${r.error ?? 'invalid file'}`);
         } else if (r.status === 'failed') {
           notes.push(`${r.sourcePath}: import failed — ${r.error ?? 'unknown error'}`);
         }

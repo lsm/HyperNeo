@@ -170,6 +170,7 @@ export class McpImportService {
     if (reservedError) {
       result.status = 'malformed';
       result.error = reservedError;
+      this.log.warn(`[mcp-import] ${absolutePath}: ${reservedError}`);
       return result;
     }
 
@@ -652,6 +653,7 @@ function extractMcpSources(ctx: RefreshMcpImportsCtx): RefreshMcpImportsCtx {
     if (reservedError) {
       result.status = 'malformed';
       result.error = reservedError;
+      ctx.log.warn(`[mcp-import] ${target.path}: ${reservedError}`);
       declarations.push({ target, status: 'malformed', error: reservedError });
       results.push(result);
       continue;

@@ -399,7 +399,41 @@ describe('space-mcp-handlers', () => {
       const handler = handlers.get('mcp.imports.refresh')!;
       const result = (await handler({ workspacePath: wsPath })) as McpImportsRefreshResponse;
 
-      expect(result.notes.some((n) => n.includes('parse error'))).toBe(true);
+      expect(result.notes.some((n) => n.includes('parse failed'))).toBe(true);
     });
+
+    test.each([true, false])(
+      'reports reserved names without a parse-error label (narrow=%s)',
+      async (narrow) => {
+        const rejection = {
+          sourcePath: '/workspace/.mcp.json',
+          status: 'malformed' as const,
+          added: 0,
+          updated: 0,
+          removed: 0,
+          error:
+            'MCP server names reserved for built-in servers: agent-memory. Rename these entries.',
+        };
+        const service = {
+          refreshAllForPath: () => rejection,
+          refreshAll: () => ({ results: [rejection], orphanPruned: 0 }),
+        } as unknown as McpImportService;
+        const { hub, handlers } = createMockHub();
+        setupSpaceMcpHandlers(
+          hub,
+          createMockInternalEventBus(),
+          db,
+          createSpaceManagerMock([]),
+          service
+        );
+
+        const result = (await handlers.get('mcp.imports.refresh')!(
+          narrow ? { workspacePath: '/workspace' } : {}
+        )) as McpImportsRefreshResponse;
+
+        expect(result.notes[0]).toContain(rejection.error);
+        expect(result.notes[0]).not.toContain('parse error');
+      }
+    );
   });
 });
