@@ -1300,7 +1300,7 @@ export class AgentSession
   async retryNowAfterRateLimit(): Promise<boolean> {
     const persistedEpisodeMessageUuid = this.rateLimitWatchdog.getPersistedEpisodeMessageUuid();
     if (this.rateLimitWatchdog.isPersistedCooldownArmed()) {
-      this.rateLimitWatchdog.cancel();
+      this.rateLimitWatchdog.resumePersistedCooldown();
       return await runRateLimitManualRetry({
         db: this.db,
         sessionId: this.session.id,

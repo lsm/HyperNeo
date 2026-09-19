@@ -819,6 +819,13 @@ export class RateLimitWatchdog {
     }
   }
 
+  resumePersistedCooldown(): void {
+    this.generation++;
+    this.clearPendingCooldown();
+    this.retryFiredForEpisode = true;
+    this.notifyResume();
+  }
+
   clearPendingCooldown(): void {
     this.cancelCooldownTimer();
     this.fallbackPending = false;

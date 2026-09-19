@@ -1178,7 +1178,7 @@ describe('AgentSession', () => {
       const retryNow = mock(() => true);
       const capturedUuids: Array<string | null> = [];
       (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
-        cancel,
+        resumePersistedCooldown: cancel,
         retryNow,
         isPersistedCooldownArmed: () => true,
         getPersistedEpisodeMessageUuid: () => {
@@ -1203,7 +1203,7 @@ describe('AgentSession', () => {
       const rescheduleDelivery = mock(() => true);
       mockDb.getJobQueueRepo = mock(() => ({ rescheduleDelivery }) as never);
       (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
-        cancel: mock(() => {}),
+        resumePersistedCooldown: mock(() => {}),
         retryNow: mock(() => true),
         isPersistedCooldownArmed: () => true,
         getPersistedEpisodeMessageUuid: () => 'msg-episode',
@@ -1248,7 +1248,7 @@ describe('AgentSession', () => {
         return result;
       });
       (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
-        cancel: mock(() => {}),
+        resumePersistedCooldown: mock(() => {}),
         retryNow: mock(() => true),
         isPersistedCooldownArmed: () => true,
         getPersistedEpisodeMessageUuid: () => 'msg-persisted-episode',
@@ -1273,7 +1273,7 @@ describe('AgentSession', () => {
           }) as never
       );
       (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
-        cancel: mock(() => {}),
+        resumePersistedCooldown: mock(() => {}),
         retryNow: mock(() => true),
         isPersistedCooldownArmed: () => true,
         getPersistedEpisodeMessageUuid: () => null,
@@ -1304,7 +1304,7 @@ describe('AgentSession', () => {
           }) as never
       );
       (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
-        cancel: mock(() => {}),
+        resumePersistedCooldown: mock(() => {}),
         retryNow: mock(() => true),
         isPersistedCooldownArmed: () => true,
         getPersistedEpisodeMessageUuid: () => 'msg-persisted-episode',
@@ -1320,7 +1320,7 @@ describe('AgentSession', () => {
       const rescheduleDelivery = mock(() => false);
       mockDb.getJobQueueRepo = mock(() => ({ rescheduleDelivery }) as never);
       (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
-        cancel: mock(() => {}),
+        resumePersistedCooldown: mock(() => {}),
         retryNow: mock(() => true),
         isPersistedCooldownArmed: () => true,
         getPersistedEpisodeMessageUuid: () => 'msg-persisted-episode',
@@ -1468,7 +1468,7 @@ describe('AgentSession', () => {
           }) as never
       );
       (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
-        cancel: mock(() => {}),
+        resumePersistedCooldown: mock(() => {}),
         retryNow: mock(() => true),
         isPersistedCooldownArmed: () => true,
         getPersistedEpisodeMessageUuid: () => 'msg-persisted-episode',
@@ -1488,7 +1488,7 @@ describe('AgentSession', () => {
           }) as never
       );
       (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
-        cancel: mock(() => {}),
+        resumePersistedCooldown: mock(() => {}),
         retryNow: mock(() => true),
         isPersistedCooldownArmed: () => true,
         getPersistedEpisodeMessageUuid: () => 'msg-persisted-episode',

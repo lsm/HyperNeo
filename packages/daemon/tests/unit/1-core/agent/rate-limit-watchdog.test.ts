@@ -1,3 +1,4 @@
+import { AgentSession } from '../../../../src/lib/agent/agent-session';
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { FallbackModelEntry } from '@hyperneo/shared';
 import {
@@ -1423,6 +1424,37 @@ describe('RateLimitWatchdog', () => {
               armedAt + BACKOFF_LADDER_MS[1] * (1 - BACKOFF_JITTER)
             );
           }
+        } finally {
+          restored.cancel();
+        }
+      }
+    );
+
+    it.each(['m1', 'm2'])(
+      'manual retry preserves restored escalation for %s',
+      async (messageId) => {
+        const { deps, notifyPause } = createMockDeps({ chain: [] });
+        const restored = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 5 });
+        restored.armPersistedCooldown(Date.now() + 60_000, 'm1', undefined, 3);
+        try {
+          const session = {
+            rateLimitWatchdog: restored,
+            session: { id: 's' },
+            stateManager,
+            db: {
+              getSession: () => ({ processingState: null }),
+              getJobQueueRepo: () => ({ rescheduleSessionDeliveries: () => true }),
+            },
+          } as unknown as AgentSession;
+          expect(await AgentSession.prototype.retryNowAfterRateLimit.call(session)).toBe(true);
+          expect(restored.isPersistedCooldownArmed()).toBe(false);
+          await restored.scheduleRetry(nearResetMessage(), { uuid: messageId, content: 'hi' });
+          expect(lastPause(notifyPause).reason).toBe(
+            messageId === 'm1' ? 'escalated-park' : 'parsed-reset'
+          );
+          expect(lastCooldownArgs(stateManager)).toMatchObject({
+            exhaustedCycles: messageId === 'm1' ? 4 : 0,
+          });
         } finally {
           restored.cancel();
         }
