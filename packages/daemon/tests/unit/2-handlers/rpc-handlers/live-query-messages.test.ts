@@ -1336,3 +1336,57 @@ describe('messages.bySession — content replacement rewrite', () => {
     engine.dispose();
   });
 });
+
+describe('messages.bySession — transcript reconciliation', () => {
+  let db: BunDatabase;
+
+  beforeEach(() => {
+    db = makeDb();
+    insertSession(db, { id: 's1' });
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  test('every delta carries the authoritative row count, not just the changed rows', async () => {
+    insertSdkMessage(db, {
+      id: 'm-user',
+      sessionId: 's1',
+      messageType: 'user',
+      sdkMessage: { type: 'user', uuid: 'u-user', message: { content: 'hi' } },
+      timestamp: '2024-01-01 00:00:01',
+    });
+
+    const reactiveDb = createReactiveDatabase({ getDatabase: () => db } as never);
+    const engine = new LiveQueryEngine(db, reactiveDb);
+    const setup = createMockHub();
+    const cleanup = setupLiveQueryHandlers(setup.hub, engine, db);
+
+    await setup.subscribe('s1', 100);
+    expect(setup.sentMessages[0].message.method).toBe('liveQuery.snapshot');
+    expect(setup.sentMessages[0].message.data.rows).toHaveLength(1);
+
+    insertSdkMessage(db, {
+      id: 'm-assistant',
+      sessionId: 's1',
+      messageType: 'assistant',
+      sdkMessage: {
+        type: 'assistant',
+        uuid: 'u-assistant',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'the answer' }] },
+      },
+      timestamp: '2024-01-01 00:00:02',
+    });
+    reactiveDb.notifyChange('sdk_messages', { sessionId: 's1' });
+    await new Promise((resolve) => setTimeout(resolve, 400));
+
+    const delta = setup.sentMessages.at(-1)!.message;
+    expect(delta.method).toBe('liveQuery.delta');
+    expect(delta.data.added).toHaveLength(1);
+    expect(delta.data.rowCount).toBe(2);
+
+    cleanup();
+    engine.dispose();
+  });
+});

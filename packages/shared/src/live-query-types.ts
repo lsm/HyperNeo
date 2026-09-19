@@ -28,6 +28,7 @@ export interface LiveQueryDeltaEvent {
   added?: unknown[];
   removed?: unknown[];
   updated?: unknown[];
+  rowCount?: number;
   version: number;
   metadata?: Record<string, unknown>;
 }
