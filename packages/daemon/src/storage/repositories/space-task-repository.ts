@@ -903,6 +903,20 @@ export class SpaceTaskRepository {
     return rows.map((r) => this.rowToSpaceTask(r));
   }
 
+  clearMissingTaskAgentSession(taskId: string, expectedSessionId: string): boolean {
+    const result = this.db
+      .prepare(
+        `UPDATE space_tasks SET task_agent_session_id = NULL
+         WHERE id = ? AND task_agent_session_id = ?
+           AND space_id IS NOT NULL AND archived_at IS NULL
+           AND status IN ('in_progress', 'review', 'blocked', 'approved')
+           AND NOT EXISTS (SELECT 1 FROM sessions WHERE id = ?)`
+      )
+      .run(taskId, expectedSessionId, expectedSessionId);
+    if (result.changes > 0) this.reactiveDb?.notifyChange('space_tasks');
+    return result.changes > 0;
+  }
+
   getTaskBySessionId(sessionId: string): SpaceTask | null {
     const stmt = this.db.prepare(
       `SELECT * FROM space_tasks WHERE space_id IS NOT NULL AND task_agent_session_id = ? LIMIT 1`
