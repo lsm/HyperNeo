@@ -86,6 +86,18 @@ async function startSilentServer(): Promise<{ url: string; stop: () => void }> {
   return { url: `ws://127.0.0.1:${server.port}/ws`, stop: () => server.stop(true) };
 }
 
+async function startUnresponsiveWebSocketServer(): Promise<{ url: string; stop: () => void }> {
+  const server: ServerHandle = await createHttpWsServer({
+    hostname: '127.0.0.1',
+    port: 0,
+    fetch: (request, upgrade) =>
+      upgrade(request, { connectionSessionId: 'global' }) ??
+      new Response('upgrade failed', { status: 500 }),
+    websocket: { message: () => {} },
+  });
+  return { url: `ws://127.0.0.1:${server.port}/ws`, stop: () => server.stop(true) };
+}
+
 async function settled(promise: Promise<unknown>): Promise<unknown> {
   return promise.then(() => null).catch((error) => error);
 }
@@ -349,6 +361,19 @@ describe('tearing down a failed connection', () => {
 });
 
 describe('connect deadline on a forwarded send', () => {
+  test('bounds a probe when the socket opens but the daemon never answers', async () => {
+    const silent = await startUnresponsiveWebSocketServer();
+    const daemons = new RemoteDaemonRegistry({ probeRequestTimeoutMs: 30 });
+    const startedAt = performance.now();
+
+    try {
+      await expect(daemons.probe(silent.url)).rejects.toThrow('Request timeout');
+      expect(performance.now() - startedAt).toBeLessThan(1000);
+    } finally {
+      silent.stop();
+    }
+  });
+
   test('rejects a send to a daemon that accepts the socket but never answers the upgrade', async () => {
     const silent = await startSilentServer();
     const local = createMailboxTestDb();

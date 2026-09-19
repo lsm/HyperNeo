@@ -1,6 +1,7 @@
 import { MessageHub, WebSocketClientTransport } from '@hyperneo/shared';
 
 const DEFAULT_CONNECT_TIMEOUT_MS = 5000;
+const DEFAULT_PROBE_REQUEST_TIMEOUT_MS = 4000;
 
 interface RemoteConnection {
   readonly hub: MessageHub;
@@ -37,9 +38,11 @@ export class RemoteDaemonRegistry {
   private readonly urls = new Map<string, string>();
   private readonly attempts = new Map<string, RemoteAttempt>();
   private readonly connectTimeoutMs: number;
+  private readonly probeRequestTimeoutMs: number;
 
-  constructor(options: { connectTimeoutMs?: number } = {}) {
+  constructor(options: { connectTimeoutMs?: number; probeRequestTimeoutMs?: number } = {}) {
     this.connectTimeoutMs = options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS;
+    this.probeRequestTimeoutMs = options.probeRequestTimeoutMs ?? DEFAULT_PROBE_REQUEST_TIMEOUT_MS;
   }
 
   attach(daemonId: string, url: string): void {
@@ -86,7 +89,11 @@ export class RemoteDaemonRegistry {
     const attempt = this.createAttempt(url);
     try {
       const connection = await attempt.connection;
-      await connection.hub.request('operation.invoke', { name: 'operations.list', input: {} });
+      await connection.hub.request(
+        'operation.invoke',
+        { name: 'operations.list', input: {} },
+        { timeout: this.probeRequestTimeoutMs }
+      );
     } finally {
       attempt.hub.cleanup();
       await attempt.transport.close();
