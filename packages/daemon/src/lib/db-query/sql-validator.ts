@@ -4,49 +4,8 @@ export interface SqlValidationResult {
   tableRefs: string[];
 }
 
-function stripComments(sql: string): string {
-  let result = sql;
-
-  result = result.replace(/\/\*[\s\S]*?\*\//g, ' ');
-
-  result = result.replace(/--[^\n]*/g, ' ');
-
-  return result;
-}
-
 function normalizeWhitespace(sql: string): string {
   return sql.replace(/\s+/g, ' ').trim();
-}
-
-function stripStringContents(sql: string): string {
-  let result = '';
-  let i = 0;
-  const len = sql.length;
-
-  while (i < len) {
-    if (sql[i] === "'") {
-      result += "'";
-      i++;
-      while (i < len) {
-        if (sql[i] === "'" && i + 1 < len && sql[i + 1] === "'") {
-          result += '  ';
-          i += 2;
-        } else if (sql[i] === "'") {
-          result += "'";
-          i++;
-          break;
-        } else {
-          result += ' ';
-          i++;
-        }
-      }
-    } else {
-      result += sql[i];
-      i++;
-    }
-  }
-
-  return result;
 }
 
 function extractCtes(sql: string): { cteNames: Set<string>; remaining: string } {
@@ -478,9 +437,7 @@ function hasTopLevelSetOperator(sql: string): boolean {
 }
 
 export function validateSql(sql: string): SqlValidationResult {
-  const withoutComments = stripComments(sql);
-
-  const withoutStrings = stripStringContents(withoutComments);
+  const withoutStrings = maskCommentsAndStrings(sql);
 
   if (withoutStrings.includes('\0')) {
     return { valid: false, error: 'NULL byte in SQL is not allowed', tableRefs: [] };
