@@ -107,13 +107,42 @@ describe('event-loop-watchdog', () => {
     }
   });
 
-  test('reports fuse expiry while the event loop stays healthy', async () => {
+  test('defers stall detection through blocking startup until explicitly armed', async () => {
     const notices: EventLoopWatchdogNotice[] = [];
     let resolveNotice: (() => void) | undefined;
     const noticeArrived = new Promise<void>((resolve) => {
       resolveNotice = resolve;
     });
     activeWatchdog = await startEventLoopWatchdog({
+      deferStallDetection: true,
+      stallMs: 400,
+      heartbeatMs: 25,
+      killMode: 'observe',
+      onNotice: (notice) => {
+        notices.push(notice);
+        resolveNotice?.();
+      },
+    });
+    if (!activeWatchdog) throw new Error('watchdog failed to start');
+
+    blockMainThreadFor(1200);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(notices).toEqual([]);
+
+    activeWatchdog.armStallDetection();
+    blockMainThreadFor(1200);
+    await withTimeout(noticeArrived, 5000, 'post-startup stall notice');
+    expect(notices[0]?.type).toBe('stall-detected');
+  });
+
+  test('reports fuse expiry even before startup arms stall detection', async () => {
+    const notices: EventLoopWatchdogNotice[] = [];
+    let resolveNotice: (() => void) | undefined;
+    const noticeArrived = new Promise<void>((resolve) => {
+      resolveNotice = resolve;
+    });
+    activeWatchdog = await startEventLoopWatchdog({
+      deferStallDetection: true,
       stallMs: 60_000,
       heartbeatMs: 25,
       shutdownFuseMs: 300,
