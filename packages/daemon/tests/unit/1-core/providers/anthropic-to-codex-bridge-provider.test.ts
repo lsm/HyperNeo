@@ -482,6 +482,12 @@ describe('AnthropicToCodexBridgeProvider', () => {
         const byId = new Map(body.data.map((m) => [m.id, m.context_window]));
         expect(byId.get('gpt-5.6-sol')).toBe(272000);
         expect(byId.get('gpt-5.5')).toBe(272000);
+        const models = await p.getModels();
+        for (const model of models) {
+          const config = p.buildSdkConfig(model.id, { workspacePath: '/tmp/ws-oauth-window' });
+          expect(model.contextWindow).toBe(byId.get(model.id));
+          expect(config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe(String(model.contextWindow));
+        }
       } finally {
         p.stopAllBridgeServers();
         rmSync(tmpDir, { recursive: true, force: true });
@@ -905,8 +911,8 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(byId.get('gpt-5.6-sol')).toBe(1_050_000);
       expect(byId.get('gpt-5.6-terra')).toBe(1_050_000);
       expect(byId.get('gpt-5.6-luna')).toBe(1_050_000);
-      expect(byId.get('gpt-5.5')).toBe(272_000);
-      expect(byId.get('gpt-5.4-mini')).toBe(128_000);
+      expect(byId.get('gpt-5.5')).toBe(1_050_000);
+      expect(byId.get('gpt-5.4-mini')).toBe(400_000);
       expect(byId.has('claude-opus-4-7')).toBe(false);
       expect(byId.has('claude-sonnet-4-20250514')).toBe(false);
     });
@@ -991,10 +997,54 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(contextWindows.get('gpt-5.6-sol')).toBe(1050000);
       expect(contextWindows.get('gpt-5.6-terra')).toBe(1050000);
       expect(contextWindows.get('gpt-5.6-luna')).toBe(1050000);
-      expect(contextWindows.get('gpt-5.3-codex')).toBe(272000);
-      expect(contextWindows.get('gpt-5.4')).toBe(272000);
-      expect(contextWindows.get('gpt-5.5')).toBe(272000);
-      expect(contextWindows.get('gpt-5.4-mini')).toBe(128000);
+      expect(contextWindows.get('gpt-5.3-codex')).toBe(400000);
+      expect(contextWindows.get('gpt-5.4')).toBe(1050000);
+      expect(contextWindows.get('gpt-5.5')).toBe(1050000);
+      expect(contextWindows.get('gpt-5.4-mini')).toBe(400000);
+      await provider.ensureBridgeStarted('gpt-5.5');
+      const config = provider.buildSdkConfig('gpt-5.5');
+      const response = await fetch(`${config.envVars.ANTHROPIC_BASE_URL}/v1/models`);
+      const body = (await response.json()) as {
+        data: Array<{ id: string; context_window: number }>;
+      };
+      const bridgeWindows = new Map(body.data.map((model) => [model.id, model.context_window]));
+      for (const model of models) {
+        for (const modelId of [model.id, model.alias, ...(model.providerAliases ?? [])]) {
+          const sdkConfig = provider.buildSdkConfig(modelId);
+          expect(sdkConfig.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe(
+            String(model.contextWindow)
+          );
+        }
+        expect(bridgeWindows.get(model.id)).toBe(model.contextWindow);
+      }
+    });
+
+    it('reports the OAuth input cap consistently in the catalog, bridge, and SDK environment', async () => {
+      const authDir = path.join(tmpDir, 'hyperneo');
+      writeHyperNeoAuth(authDir, {
+        type: 'oauth',
+        access: 'oauth-capacity-token',
+        accountId: 'account-capacity',
+        expires: Date.now() + 3600_000,
+      });
+      provider = makeProvider({}, authDir, path.join(tmpDir, 'codex'));
+      const models = await provider.getModels();
+      await provider.ensureBridgeStarted('gpt-5.6-sol');
+      const config = provider.buildSdkConfig('gpt-5.6-sol');
+      const response = await fetch(`${config.envVars.ANTHROPIC_BASE_URL}/v1/models`);
+      const body = (await response.json()) as {
+        data: Array<{ id: string; context_window: number }>;
+      };
+      const bridgeWindows = new Map(body.data.map((model) => [model.id, model.context_window]));
+      expect(models).toHaveLength(7);
+      for (const model of models) {
+        const expected = model.id === 'gpt-5.4-mini' ? 128_000 : 272_000;
+        expect(model.contextWindow).toBe(expected);
+        expect(bridgeWindows.get(model.id)).toBe(expected);
+        expect(provider.buildSdkConfig(model.id).envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe(
+          String(expected)
+        );
+      }
     });
 
     it('advertises real Codex model IDs in sdkModelIds', async () => {

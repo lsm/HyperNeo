@@ -59,14 +59,14 @@ const CONTRACT: ContractRow[] = [
   {
     label: 'Codex GPT-5.3 (codex alias)',
     provider: 'anthropic-codex',
-    contextWindow: 272_000,
+    contextWindow: 400_000,
     preferMetadata: true,
     resolveInput: 'codex',
     sdkModelId: 'gpt-5.3-codex',
     sdkSettings: { kind: 'native' },
-    compactionThreshold: 239_000,
+    compactionThreshold: 367_000,
     catalog: { kind: 'codex', id: 'gpt-5.3-codex' },
-    bridgeAutoCompactWindow: 272_000,
+    bridgeAutoCompactWindow: 400_000,
   },
   {
     label: 'GLM-5.2 (1M)',

@@ -136,10 +136,10 @@ describe('N2: thresholds — active SDK window (kimi/codex) + dormant fallback r
       'gpt-5.6-sol': 1_050_000,
       'gpt-5.6-terra': 1_050_000,
       'gpt-5.6-luna': 1_050_000,
-      'gpt-5.5': 272_000,
-      'gpt-5.3-codex': 272_000,
-      'gpt-5.4': 272_000,
-      'gpt-5.4-mini': 128_000,
+      'gpt-5.5': 1_050_000,
+      'gpt-5.3-codex': 400_000,
+      'gpt-5.4': 1_050_000,
+      'gpt-5.4-mini': 400_000,
     };
     expect(Object.keys(MODEL_CONTEXT_WINDOWS).sort()).toEqual(Object.keys(EXPECTED_WINDOWS).sort());
     for (const [id, window] of Object.entries(EXPECTED_WINDOWS)) {
@@ -147,7 +147,7 @@ describe('N2: thresholds — active SDK window (kimi/codex) + dormant fallback r
     }
     expect(getModelContextWindow('codex-mini')).toBe(1_050_000);
     expect(getModelContextWindow('codex-latest')).toBe(1_050_000);
-    expect(getModelContextWindow('codex-5.4-mini')).toBe(128_000);
+    expect(getModelContextWindow('codex-5.4-mini')).toBe(400_000);
   });
 
   it('codexBackendContextWindow caps GPT-5.6 at 272K for the ChatGPT Codex backend', () => {

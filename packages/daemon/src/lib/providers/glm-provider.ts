@@ -138,6 +138,9 @@ export class GlmProvider implements Provider {
     'glm-4.5': 128_000,
     'glm-4.5-air': 128_000,
     'glm-4.6': 200_000,
+    'glm-4.7-flash': 200_000,
+    'glm-4.7-flashx': 200_000,
+    'glm-5.3-flashx': 1_000_000,
   };
 
   private credentials: ProviderCredentials | null = null;

@@ -4,10 +4,10 @@ export const MODEL_CONTEXT_WINDOWS = {
   'gpt-5.6-sol': 1050000,
   'gpt-5.6-terra': 1050000,
   'gpt-5.6-luna': 1050000,
-  'gpt-5.5': 272000,
-  'gpt-5.3-codex': 272000,
-  'gpt-5.4': 272000,
-  'gpt-5.4-mini': 128000,
+  'gpt-5.5': 1050000,
+  'gpt-5.3-codex': 400000,
+  'gpt-5.4': 1050000,
+  'gpt-5.4-mini': 400000,
 } as const;
 
 export type CodexBridgeModelId = keyof typeof MODEL_CONTEXT_WINDOWS;
@@ -91,6 +91,10 @@ const CODEX_BACKEND_CONTEXT_WINDOW_OVERRIDES: Partial<Record<CodexBridgeModelId,
   'gpt-5.6-sol': 272000,
   'gpt-5.6-terra': 272000,
   'gpt-5.6-luna': 272000,
+  'gpt-5.5': 272000,
+  'gpt-5.3-codex': 272000,
+  'gpt-5.4': 272000,
+  'gpt-5.4-mini': 128000,
 };
 
 export function codexBackendContextWindow(modelId: string): number | undefined {

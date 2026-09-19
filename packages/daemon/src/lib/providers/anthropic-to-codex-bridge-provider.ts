@@ -521,7 +521,14 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     if (!auth) return [];
     void this.ensureBridgeStarted('default').catch(() => {});
     await this.verifyCredentials(auth);
-    return ANTHROPIC_CODEX_MODELS.map((m) => ({ ...m, thinkingModes: 'granular' as const }));
+    return ANTHROPIC_CODEX_MODELS.map((model) => ({
+      ...model,
+      contextWindow:
+        auth.source === 'chatgpt_oauth'
+          ? (codexBackendContextWindow(model.id) ?? model.contextWindow)
+          : model.contextWindow,
+      thinkingModes: 'granular' as const,
+    }));
   }
 
   ownsModel(modelId: string): boolean {

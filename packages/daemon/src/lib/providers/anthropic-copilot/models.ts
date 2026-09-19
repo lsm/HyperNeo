@@ -79,3 +79,10 @@ export const COPILOT_ANTHROPIC_MODELS: ModelInfo[] = [
     available: true,
   },
 ];
+
+export const COPILOT_CODEX_CONTEXT_WINDOW_OVERRIDES: Record<string, number> = {
+  'gpt-5.5': 272000,
+  'gpt-5.3-codex': 272000,
+  'gpt-5.4': 272000,
+  'gpt-5.4-mini': 128000,
+};

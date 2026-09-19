@@ -7,7 +7,10 @@ import type {
 import type { QueryLike } from './agent/query-like.ts';
 import type { ProviderRepository } from '../storage/repositories/provider-repository.ts';
 import { decisionRun } from './space/runtime/decision-pipeline.ts';
-import { COPILOT_ANTHROPIC_MODELS } from './providers/anthropic-copilot/models.js';
+import {
+  COPILOT_ANTHROPIC_MODELS,
+  COPILOT_CODEX_CONTEXT_WINDOW_OVERRIDES,
+} from './providers/anthropic-copilot/models.js';
 import { getCodexBridgeModelInfos, resolveCodexBridgeModelId } from './providers/codex-models.js';
 import { DeepSeekProvider } from './providers/deepseek-provider.js';
 import { initializeProviders, waitForOptionalProviderRegistration } from './providers/factory.js';
@@ -1705,7 +1708,8 @@ function overlayCodexStaticMetadata(model: ModelInfo): ModelInfo {
   return staticModel
     ? {
         ...model,
-        contextWindow: staticModel.contextWindow,
+        contextWindow:
+          COPILOT_CODEX_CONTEXT_WINDOW_OVERRIDES[staticModel.id] ?? staticModel.contextWindow,
         preferContextWindowMetadata: staticModel.preferContextWindowMetadata,
       }
     : model;

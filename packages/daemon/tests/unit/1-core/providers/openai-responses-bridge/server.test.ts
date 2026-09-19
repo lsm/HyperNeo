@@ -4059,7 +4059,7 @@ describe('openai-responses-bridge server', () => {
       const startMessage = start?.message as
         | { usage?: { model_context_window?: number } }
         | undefined;
-      expect(startMessage?.usage?.model_context_window).toBe(128000);
+      expect(startMessage?.usage?.model_context_window).toBe(400000);
     }
   );
 

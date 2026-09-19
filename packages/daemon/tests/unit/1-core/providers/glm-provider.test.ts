@@ -291,6 +291,9 @@ describe('GlmProvider', () => {
             JSON.stringify({
               data: [
                 { id: 'glm-4.6', object: 'model' },
+                { id: 'glm-4.7-flash', object: 'model' },
+                { id: 'glm-4.7-flashx', object: 'model' },
+                { id: 'glm-5.3-flashx', object: 'model' },
                 { id: 'glm-4.5-air', object: 'model' },
                 { id: 'glm-4.5', object: 'model' },
                 { id: 'glm-unknown', object: 'model' },
@@ -307,6 +310,18 @@ describe('GlmProvider', () => {
       expect(byId.get('glm-4.5-air')?.contextWindow).toBe(128_000);
       expect(byId.get('glm-4.5')?.contextWindow).toBe(128_000);
       expect(byId.get('glm-unknown')?.contextWindow).toBe(128_000);
+      for (const [id, window] of [
+        ['glm-4.7-flash', 200_000],
+        ['glm-4.7-flashx', 200_000],
+        ['glm-5.3-flashx', 1_000_000],
+      ] as const) {
+        expect(byId.get(id)?.contextWindow).toBe(window);
+        for (const selectedId of [id, `${id}[1m]`, id.toUpperCase()]) {
+          expect(provider.buildSdkConfig(selectedId).envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe(
+            String(window)
+          );
+        }
+      }
 
       expect(provider.buildSdkConfig('glm-4.6').envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe(
         '200000'
