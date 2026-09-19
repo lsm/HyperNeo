@@ -299,11 +299,12 @@ function materializeScopedTable(
     `INSERT INTO ${table} (${targets.map(quoteIdent).join(', ')}) VALUES (${targets.map(() => '?').join(', ')})`
   );
   enableBigInts(insert);
+  const rows = sourceRows.iterate(...(filter.params as [])) as IterableIterator<
+    Record<string, unknown>
+  >;
   scratch.exec('BEGIN');
   try {
-    for (const row of sourceRows.iterate(...(filter.params as [])) as Iterable<
-      Record<string, unknown>
-    >) {
+    for (const row of rows) {
       const values = names.map((c) => row[c]);
       insert.run(...((withRowid ? [row._dbq_rowid, ...values] : values) as []));
     }
@@ -311,6 +312,8 @@ function materializeScopedTable(
   } catch (err) {
     scratch.exec('ROLLBACK');
     throw err;
+  } finally {
+    rows.return?.();
   }
 }
 
