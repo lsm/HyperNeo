@@ -1,3 +1,5 @@
+import { clearModelsCache, getModelInfo, setModelsCache } from '../../../../src/lib/model-service';
+import type { ModelInfo } from '@hyperneo/shared';
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import {
   SDKRuntimeConfig,
@@ -428,6 +430,44 @@ describe('SDKRuntimeConfig', () => {
           contextInfo: expect.any(Object),
         })
       );
+    });
+
+    it('keeps tools-update capacity observations in the endpoint session scope', async () => {
+      clearModelsCache();
+      const model = {
+        id: 'claude-sonnet-4-6',
+        alias: 'claude-sonnet-4-6',
+        provider: 'anthropic',
+        contextWindow: 200_000,
+      } as ModelInfo;
+      setModelsCache(new Map([['global', [model]]]));
+      mockSession.config = {
+        ...mockSession.config,
+        model: model.id,
+        provider: model.provider,
+        providerConfig: { baseUrl: 'https://endpoint.example.test' },
+      };
+      const response = await getContextUsageSpy();
+      getContextUsageSpy.mockImplementation(async () => ({
+        ...response,
+        model: model.id,
+        maxTokens: 600_000,
+        rawMaxTokens: 600_000,
+      }));
+      config = createConfig();
+      try {
+        expect(await config.updateToolsConfig({ disabledTools: ['Edit'] })).toEqual({
+          success: true,
+        });
+        expect((await getModelInfo(model.id, 'global', model.provider))?.contextWindow).toBe(
+          200_000
+        );
+        expect((await getModelInfo(model.id, mockSession.id, model.provider))?.contextWindow).toBe(
+          600_000
+        );
+      } finally {
+        clearModelsCache();
+      }
     });
 
     it('skips context refresh when no live query handle', async () => {

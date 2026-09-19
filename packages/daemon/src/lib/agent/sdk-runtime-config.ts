@@ -6,7 +6,7 @@ import type { Logger } from '../logger.ts';
 import type { SettingsManager } from '../settings-manager.ts';
 import type { ContextTracker } from './context-tracker.ts';
 import { ContextFetcher } from './context-fetcher.ts';
-import { getSessionModelInfo } from '../model-service.ts';
+import { getSessionContextModelInfo, getSessionModelCacheKey } from '../model-service.ts';
 
 export interface SDKRuntimeConfigContext {
   readonly session: Session;
@@ -147,8 +147,9 @@ export class SDKRuntimeConfig {
 
     try {
       const fetcher = new ContextFetcher(session.id);
-      const modelInfo = await getSessionModelInfo(session);
-      const contextInfo = await fetcher.fetch(queryObject, modelInfo);
+      const cacheKey = getSessionModelCacheKey(session);
+      const modelInfo = await getSessionContextModelInfo(session);
+      const contextInfo = await fetcher.fetch(queryObject, modelInfo, cacheKey);
       if (!contextInfo) return;
       contextTracker.updateWithDetailedBreakdown(contextInfo);
       await internalEventBus.publish('context.updated', {
