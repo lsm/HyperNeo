@@ -5,7 +5,7 @@ import type { CallContext, UpdateSpaceTaskParams } from '@hyperneo/shared';
 import type { Database as AppDatabase } from '../../../../src/storage/database';
 import { createSpaceOperationRegistryProvider } from '../../../../src/lib/tasks/operations';
 import { createDatabaseOperationCatalog } from '../../../../src/lib/operations/database-catalog';
-import { SpaceTaskManager } from '../../../../src/lib/tasks/task-manager';
+import { SpaceTaskManager, StaleTaskGuardError } from '../../../../src/lib/tasks/task-manager';
 import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-adapter';
 import { createOperationRpcHandler } from '../../../../src/lib/operations/rpc-adapter';
 import { afterEach, beforeEach, expect, mock, spyOn, test } from 'bun:test';
@@ -459,6 +459,19 @@ test('a stop rejection naming an invalid transition surfaces cancellation_invali
   expect(await workflowOp.execute({ taskId }, { source: 'rpc' })).toMatchObject({
     accepted: false,
     reason: 'cancellation_invalid_transition',
+  });
+});
+
+test('a stale workflow stop guard surfaces cancellation_unavailable', async () => {
+  const spaceId = tasks.getTask(taskId)!.spaceId!;
+  tasks.updateTask(taskId, { workflowRunId: createWorkflowRunId(spaceId) });
+  const stopForStatus = mock(async () => {
+    throw new StaleTaskGuardError('Task transition snapshot is stale');
+  });
+  const workflowOp = createCancelTaskOperation(() => db, jobs, { stopForStatus });
+  expect(await workflowOp.execute({ taskId }, { source: 'rpc' })).toMatchObject({
+    accepted: false,
+    reason: 'cancellation_unavailable',
   });
 });
 
