@@ -1,5 +1,10 @@
+import historicalQaSlotPrompts from './fixtures/pre-operation-qa-slot-prompts.json';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
+import {
+  RETIRED_INLINE_OPERATION_PROMPT_PAIRS,
+  RETIRED_INLINE_EXTERNAL_REVIEW_BOTS_GUIDANCE,
+} from '../../../../src/lib/workflows/built-in-retired-operation-prompts.ts';
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -189,13 +194,13 @@ describe('stable coding workflow templates', () => {
     }
   });
 
-  test('stable Coding Review is the end node and calls approve_task', () => {
+  test('stable Coding Review is the end node and calls task.resolvePendingCompletion', () => {
     expect(STABLE_CODING_WORKFLOW.endNodeId).toBe(
       STABLE_CODING_WORKFLOW.nodes.find((n) => n.name === 'Review')!.id
     );
     const prompt = STABLE_CODING_WORKFLOW.nodes.find((n) => n.name === 'Review')!.agents[0]!
       .customPrompt!.value;
-    expect(prompt).toContain('approve_task');
+    expect(prompt).toContain('task.resolvePendingCompletion');
   });
 
   test('stable Coding-with-QA Review is intermediate and defers the QA handoff to the central contract', () => {
@@ -204,7 +209,7 @@ describe('stable coding workflow templates', () => {
     );
     const reviewPrompt = CODING_WITH_QA_WORKFLOW.nodes.find((n) => n.name === 'Review')!.agents[0]!
       .customPrompt!.value;
-    expect(reviewPrompt).toMatch(/do not call approve_task/i);
+    expect(reviewPrompt).toMatch(/do not call task.resolvePendingCompletion/i);
     expect(reviewPrompt).toMatch(/final approval authority/i);
     expect(reviewPrompt).toMatch(/gated handoff/i);
     expect(reviewPrompt).not.toMatch(/send_message\(target="?QA"?/);
@@ -321,9 +326,9 @@ describe('coder-only workflow template', () => {
     expect(CODER_ONLY_PROMPT).toContain('Copilot');
     expect(CODER_ONLY_PROMPT).toContain('CodeRabbit');
     expect(CODER_ONLY_PROMPT).toContain('informal review');
-    expect(CODER_ONLY_PROMPT).toContain('submit_for_approval');
+    expect(CODER_ONLY_PROMPT).toContain('task.submitForReview');
     expect(CODER_ONLY_PROMPT).toContain('Runtime Execution Contract');
-    expect(CODER_ONLY_PROMPT).not.toContain('approve_task(');
+    expect(CODER_ONLY_PROMPT).not.toContain('invoke(name="task.resolvePendingCompletion"');
     expect(CODER_ONLY_PROMPT).not.toContain('Do NOT merge PRs');
     expect(CODER_ONLY_PROMPT).not.toContain('@devon');
   });
@@ -615,7 +620,7 @@ describe('coder-only workflow template', () => {
       'a merge must never proceed under a policy the verified note predates'
     );
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
-      'do NOT call mark_complete: report the mismatch'
+      'do NOT call task.complete: report the mismatch'
     );
     expect(CODER_EXTERNAL_GATE_BLOCK).toContain('source: "<external|internal|both|auto>"');
     expect(CODER_EXTERNAL_GATE_BLOCK).toContain('depth: "<light|standard|deep|auto>"');
@@ -787,7 +792,7 @@ describe('stable CODING_WORKFLOW template structure', () => {
     const prompt = CODING_WORKFLOW.nodes[1].agents[0]?.customPrompt?.value;
     expect(prompt).toContain('post a visible GitHub review');
     expect(prompt).toContain('Reviewer system contract');
-    expect(prompt).toContain('approve_task');
+    expect(prompt).toContain('task.resolvePendingCompletion');
   });
 
   test('has two channels (Coding→Review + gated Review→Coding)', () => {
@@ -2473,14 +2478,14 @@ describe('seedBuiltInWorkflows()', () => {
     expect(qaCoderPrompt).toContain('`gh pr merge`');
   });
 
-  test('stable Coding-with-QA QA node approves via approve_task and never merges', () => {
+  test('stable Coding-with-QA QA node approves via task.resolvePendingCompletion and never merges', () => {
     const qaPrompt = CODING_WITH_QA_WORKFLOW.nodes.find((n) => n.name === 'QA')!.agents[0]
       .customPrompt!.value;
     expect(qaPrompt).toContain('save the PR link and a passing decision artifact');
-    expect(qaPrompt).toContain('approve_task');
-    expect(qaPrompt).toContain('submit_for_approval');
+    expect(qaPrompt).toContain('task.resolvePendingCompletion');
+    expect(qaPrompt).toContain('task.submitForReview');
     expect(qaPrompt).toContain('Do not merge');
-    expect(qaPrompt).not.toContain('save_artifact({ type: "result"');
+    expect(qaPrompt).not.toContain('invoke(name="artifact.save", input={ type: "result"');
   });
 
   test('stable Coding reviewer prompt is behavioral and carries post-approval blocker handling', () => {
@@ -2488,7 +2493,7 @@ describe('seedBuiltInWorkflows()', () => {
       .customPrompt!.value;
     expect(reviewPrompt).toContain('post a visible GitHub review');
     expect(reviewPrompt).toContain('Reviewer system contract');
-    expect(reviewPrompt).toContain('approve_task');
+    expect(reviewPrompt).toContain('task.resolvePendingCompletion');
     expect(reviewPrompt).toContain('post-approval merge blocker');
     expect(reviewPrompt).toMatch(/re-check the current head/i);
   });
@@ -3560,7 +3565,7 @@ describe('seedBuiltInWorkflows()', () => {
     const researchNode = wf.nodes.find((n) => n.name === 'Research');
     expect(researchNode?.agents[0].customPrompt?.value).toContain('gh pr create');
     const reviewNode = wf.nodes.find((n) => n.name === 'Review');
-    expect(reviewNode?.agents[0].customPrompt?.value).toContain('save_artifact');
+    expect(reviewNode?.agents[0].customPrompt?.value).toContain('artifact.save');
   });
 
   test('all seeded channels have non-empty id fields', () => {
@@ -3997,7 +4002,7 @@ describe('CODING_WORKFLOW agent slot customPrompt', () => {
   });
 });
 
-describe('REVIEW_ONLY_WORKFLOW reviewer customPrompt requires a visible review before save_artifact', () => {
+describe('REVIEW_ONLY_WORKFLOW reviewer customPrompt requires a visible review before artifact.save', () => {
   test('reviewer prompt mandates a visible review before handoff', () => {
     const agent = REVIEW_ONLY_WORKFLOW.nodes[0].agents[0];
     const prompt = agent.customPrompt!.value;
@@ -4041,8 +4046,8 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     expect(prompt).toMatch(
       /terminal-action tool contract|Terminal-action contract|terminal hand-off|terminal action|terminal calls|terminal actions|terminal-action tool descriptions/
     );
-    expect(prompt).toContain('approve_task');
-    expect(prompt).toContain('submit_for_approval');
+    expect(prompt).toContain('task.resolvePendingCompletion');
+    expect(prompt).toContain('task.submitForReview');
     expect(prompt).toMatch(
       /P0[–-]P2|zero findings|zero P0-P2|findings remain|blocking findings|QA passes|Reviewer System Contract/i
     );
@@ -4053,10 +4058,10 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
       /REQUEST_CHANGES|changes needed|requesting changes|more research is needed|findings remain|QA fails/i
     );
     expect(prompt).toMatch(
-      /do not .*approve_task|Never use.*findings|If findings remain|If changes needed|If dispatch is incomplete|If QA fails|only on APPROVE|If requesting changes|If more research is needed/i
+      /do not .*task.resolvePendingCompletion|Never use.*findings|If findings remain|If changes needed|If dispatch is incomplete|If QA fails|only on APPROVE|If requesting changes|If more research is needed/i
     );
     expect(prompt).toMatch(
-      /do not .*submit_for_approval|Never use.*findings|If findings remain|If changes needed|If dispatch is incomplete|If QA fails|only on APPROVE|If requesting changes|If more research is needed/i
+      /do not .*task.submitForReview|Never use.*findings|If findings remain|If changes needed|If dispatch is incomplete|If QA fails|only on APPROVE|If requesting changes|If more research is needed/i
     );
     expect(prompt).toContain(`send_message(target="${opts.upstream}"`);
     expect(prompt).toMatch(
@@ -4067,8 +4072,8 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
   test('CODING_WORKFLOW Review node prompt reserves terminal calls for a clean, resolved head', () => {
     const reviewNode = CODING_WORKFLOW.nodes.find((n) => n.name === 'Review')!;
     const prompt = reviewNode.agents[0].customPrompt!.value;
-    expect(prompt).toContain('approve_task');
-    expect(prompt).toContain('submit_for_approval');
+    expect(prompt).toContain('task.resolvePendingCompletion');
+    expect(prompt).toContain('task.submitForReview');
     expect(prompt).toMatch(/When the current head is clean and all review threads are resolved/i);
     expect(prompt).toContain('Do not merge');
   });
@@ -4078,7 +4083,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     const prompt = reviewNode.agents[0].customPrompt!.value;
     expect(prompt).toMatch(/If changes are needed/i);
     expect(prompt).toContain('actionable feedback');
-    expect(prompt).toMatch(/When the current head is clean .* call approve_task/i);
+    expect(prompt).toMatch(/When the current head is clean .* call task.resolvePendingCompletion/i);
   });
 
   test('RESEARCH_WORKFLOW Review node prompt contains Terminal Action Pre-conditions block', () => {
@@ -4092,10 +4097,10 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     const prompt = reviewNode.agents[0].customPrompt!.value;
     const requestBranch = prompt.split('6. If satisfied')[0];
     expect(requestBranch).toMatch(
-      /If more research is needed|If findings remain|do not .*approve_task/i
+      /If more research is needed|If findings remain|do not .*task.resolvePendingCompletion/i
     );
     expect(requestBranch).toMatch(
-      /If more research is needed|If findings remain|do not .*submit_for_approval/i
+      /If more research is needed|If findings remain|do not .*task.submitForReview/i
     );
   });
 
@@ -4115,13 +4120,13 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     expect(prompt).toMatch(
       /P0[–-]P2|zero findings|zero P0-P2|findings remain|blocking findings|QA passes|Reviewer System Contract/i
     );
-    expect(prompt).toContain('approve_task');
-    expect(prompt).toContain('submit_for_approval');
+    expect(prompt).toContain('task.resolvePendingCompletion');
+    expect(prompt).toContain('task.submitForReview');
     expect(prompt).toMatch(
-      /do not .*approve_task|Never use.*findings|If findings remain|If changes needed|If dispatch is incomplete|If QA fails|only on APPROVE|If requesting changes|If more research is needed/i
+      /do not .*task.resolvePendingCompletion|Never use.*findings|If findings remain|If changes needed|If dispatch is incomplete|If QA fails|only on APPROVE|If requesting changes|If more research is needed/i
     );
     expect(prompt).toMatch(
-      /do not .*submit_for_approval|Never use.*findings|If findings remain|If changes needed|If dispatch is incomplete|If QA fails|only on APPROVE|If requesting changes|If more research is needed/i
+      /do not .*task.submitForReview|Never use.*findings|If findings remain|If changes needed|If dispatch is incomplete|If QA fails|only on APPROVE|If requesting changes|If more research is needed/i
     );
     expect(prompt).toMatch(
       /same approval semantic|terminal-action tool contract|terminal hand-off|terminal.*contract/i
@@ -4302,7 +4307,10 @@ test('persisted prompts carrying the retired escalation target reconcile to the 
   const templateNode = CODING_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
   const templatePrompt = templateNode.agents[0].customPrompt!.value;
 
-  const persisted = templatePrompt.replace(
+  const previous = RETIRED_INLINE_OPERATION_PROMPT_PAIRS.find(
+    ([current]) => current === templatePrompt
+  )![1];
+  const persisted = previous.replace(
     'save a NON-result artifact describing the blocker (`save_artifact({ shape: "note", ' +
       'kind: "no_external_review_bot", summary: "<why the explicit external selection cannot be satisfied>" })`) ' +
       'and stop; do NOT mark the task complete and do NOT wait for a reply — the unfinished task carrying ' +
@@ -4329,7 +4337,10 @@ test('persisted Coder-Only prompts carrying the retired escalation target reconc
   const templateNode = CODER_ONLY_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
   const templatePrompt = templateNode.agents[0].customPrompt!.value;
 
-  const persisted = templatePrompt
+  const previous = RETIRED_INLINE_OPERATION_PROMPT_PAIRS.find(
+    ([current]) => current === templatePrompt
+  )![1];
+  const persisted = previous
     .replace(
       'do NOT fabricate an empty commit or PR — record the blocker with `save_artifact({ shape: "note", kind: "no_code_changes", summary: "<why this task needs no code changes>" })` and stop. Do NOT wait for a reply: there is no Space-level recipient, and the unfinished task carrying that artifact is the signal a human acts on.',
       'do NOT fabricate an empty commit or PR — escalate via send_message to the escalation target in your Runtime Execution Contract, explain that the task produced no code changes and needs re-routing, and stop and wait for guidance.'
@@ -4420,9 +4431,12 @@ test('persisted pre-call-action prompts migrate to the dispatcher preference tem
         if (!value?.includes(CALL_ACTION_PREFERENCE_GUIDANCE)) continue;
         const expectedHash = preDispatcherHashes.get(value);
         expect(expectedHash, `${workflow.name}/${node.name}/${agent.name}`).toBeDefined();
+        const previous = RETIRED_INLINE_OPERATION_PROMPT_PAIRS.find(
+          ([current]) => current === value
+        )![1];
         const persisted = [
-          value.replace(`\n${CALL_ACTION_PREFERENCE_GUIDANCE}`, ''),
-          value.replace(CALL_ACTION_PREFERENCE_GUIDANCE, ''),
+          previous.replace(`\n${CALL_ACTION_PREFERENCE_GUIDANCE}`, ''),
+          previous.replace(CALL_ACTION_PREFERENCE_GUIDANCE, ''),
         ].find((stripped) => sha(stripped) === expectedHash);
         expect(persisted, `${workflow.name}/${node.name}/${agent.name}`).toBeDefined();
         const existingNode: WorkflowNode = {
@@ -4480,7 +4494,7 @@ test('CODING_WITH_QA_WORKFLOW Review node is intermediate and defers final appro
   const reviewNode = CODING_WITH_QA_WORKFLOW.nodes.find((n) => n.name === 'Review')!;
   const prompt = reviewNode.agents[0].customPrompt!.value;
   expect(prompt).toMatch(/determines? final approval|a separate QA step owns final approval/i);
-  expect(prompt).toMatch(/do not call approve_task/i);
+  expect(prompt).toMatch(/do not call task.resolvePendingCompletion/i);
   expect(prompt).toContain('post a visible GitHub review');
   expect(prompt).toContain('Reviewer system contract');
   expect(prompt).not.toContain('send_message(target="QA"');
@@ -4526,8 +4540,8 @@ test('CODING_WITH_QA_WORKFLOW QA node validates the PR and approves only when gr
   expect(prompt).not.toMatch(/send Coding concrete failures/i);
   expect(prompt).toContain('non-terminal QA note');
   expect(prompt).toMatch(/save the PR link and a passing decision artifact/i);
-  expect(prompt).toContain('approve_task');
-  expect(prompt).toContain('submit_for_approval');
+  expect(prompt).toContain('task.resolvePendingCompletion');
+  expect(prompt).toContain('task.submitForReview');
   expect(prompt).toContain('Do not merge');
   expect(prompt).toContain('post-approval merge blocker');
 });
@@ -4561,3 +4575,76 @@ test('CODING_WITH_QA_WORKFLOW cyclic back-channels permit more than 6 review/QA 
   expect(reviewToCoding!.maxCycles).toBeGreaterThan(6);
   expect(qaToCoding!.maxCycles).toBeGreaterThan(6);
 });
+
+test('all retired inline-operation slot prompts migrate without rewriting customizations', () => {
+  const pairs = new Map<string, string>(RETIRED_INLINE_OPERATION_PROMPT_PAIRS);
+  const covered = new Set<string>();
+  for (const workflow of getBuiltInWorkflows()) {
+    for (const node of workflow.nodes) {
+      const current = node.agents[0]?.customPrompt?.value;
+      const retired = current && pairs.get(current);
+      if (!retired) continue;
+      expect(retired).not.toBe(current);
+      const existing = {
+        ...node,
+        agents: [{ ...node.agents[0]!, customPrompt: { value: retired } }],
+      };
+      const migrated = mergeNodeStructuralFieldsFromTemplate([existing], [node]);
+      expect(migrated[0]!.agents[0]!.customPrompt?.value).toBe(current);
+      const customized = `${retired}\nUser customization: retain this policy.`;
+      existing.agents[0]!.customPrompt.value = customized;
+      const preserved = mergeNodeStructuralFieldsFromTemplate([existing], [node]);
+      expect(preserved[0]!.agents[0]!.customPrompt?.value).toBe(customized);
+      covered.add(current!);
+    }
+  }
+  expect(covered.size).toBe(pairs.size);
+});
+
+test('pre-operation slot snapshots retain the earlier external-gate retirement chain', () => {
+  for (const [current, retired] of RETIRED_INLINE_OPERATION_PROMPT_PAIRS) {
+    if (!retired.includes(RETIRED_INLINE_EXTERNAL_REVIEW_BOTS_GUIDANCE)) continue;
+    const node = getBuiltInWorkflows()
+      .flatMap((workflow) => workflow.nodes)
+      .find((candidate) => candidate.agents[0]?.customPrompt?.value === current)!;
+    const previous = retired.replace(
+      RETIRED_INLINE_EXTERNAL_REVIEW_BOTS_GUIDANCE,
+      EXTERNAL_REVIEW_BOTS_GUIDANCE_PRE_CHECK_SEEDING
+    );
+    expect(previous).not.toBe(retired);
+    const merged = mergeNodeStructuralFieldsFromTemplate(
+      [
+        {
+          ...node,
+          agents: [{ ...node.agents[0]!, customPrompt: { value: previous } }],
+        },
+      ],
+      [node]
+    );
+    expect(merged[0]!.agents[0]!.customPrompt?.value).toBe(current);
+  }
+});
+
+test.each(historicalQaSlotPrompts)(
+  'migrates a frozen historical QA seed without changing customized prompts',
+  (persisted) => {
+    const node = CODING_WITH_QA_WORKFLOW.nodes.find((candidate) => candidate.name === 'QA')!;
+    const previous = {
+      ...node,
+      agents: node.agents.map((agent) => ({ ...agent, customPrompt: { value: persisted } })),
+    };
+    const merged = mergeNodeStructuralFieldsFromTemplate([previous], CODING_WITH_QA_WORKFLOW.nodes);
+    expect(merged[0].agents[0].customPrompt?.value).toBe(node.agents[0].customPrompt?.value);
+    const customized = {
+      ...previous,
+      agents: previous.agents.map((agent) => ({
+        ...agent,
+        customPrompt: { value: persisted + '\nKeep my custom QA policy.' },
+      })),
+    };
+    expect(
+      mergeNodeStructuralFieldsFromTemplate([customized], CODING_WITH_QA_WORKFLOW.nodes)[0]
+        .agents[0].customPrompt?.value
+    ).toBe(customized.agents[0].customPrompt.value);
+  }
+);

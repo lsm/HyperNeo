@@ -33,7 +33,7 @@ describe('TaskAgentManager Runtime Execution Contract', () => {
     expect(contract).not.toContain('Escalation: send_message');
   });
 
-  test('no longer injects an escalation target inside a workflow run', () => {
+  test.each([1, 5])('uses current end-node operations at autonomy %s', (autonomyLevel) => {
     const manager = makeManager();
     const workflow: SpaceWorkflow = {
       id: 'wf-1',
@@ -64,9 +64,15 @@ describe('TaskAgentManager Runtime Execution Contract', () => {
         string,
         (w: SpaceWorkflow, e: NodeExecution, s: Space | null) => string
       >
-    ).buildNodeExecutionRuntimeContract(workflow, execution, space);
+    ).buildNodeExecutionRuntimeContract(workflow, execution, { ...space, autonomyLevel });
 
     expect(contract).toContain('Node: "Coding" (node-1)');
+    expect(contract).not.toMatch(/approve_task|submit_for_approval/);
+    expect(contract).toContain(
+      'invoke(name="task.submitForReview", input={ taskId: "<task id>", reason: "..." })'
+    );
+    expect(contract).not.toContain('invoke(name="task.resolvePendingCompletion"');
+    expect(contract).toContain('overrides earlier terminal-action guidance');
     expect(contract).not.toContain('Escalation: send_message');
   });
 

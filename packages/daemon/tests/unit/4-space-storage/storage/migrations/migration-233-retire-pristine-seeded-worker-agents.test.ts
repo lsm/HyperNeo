@@ -14,6 +14,11 @@ const M233_REVIEWER_PROMPT = readFileSync(
   'utf8'
 );
 
+const M233_QA_PROMPT = readFileSync(
+  new URL('fixtures/m233-qa-prompt.txt', import.meta.url),
+  'utf8'
+);
+
 const RETIRED_PRESET_MIRRORS = [
   {
     name: 'General',
@@ -47,6 +52,7 @@ function createDb(): {
     ...getPresetAgentTemplates().map((preset) => {
       if (preset.handle === 'swe') return { ...preset, name: 'Coder', handle: 'coder' };
       if (preset.handle === 'reviewer') return { ...preset, customPrompt: M233_REVIEWER_PROMPT };
+      if (preset.handle === 'qa') return { ...preset, customPrompt: M233_QA_PROMPT };
       return preset;
     }),
     ...RETIRED_PRESET_MIRRORS,
