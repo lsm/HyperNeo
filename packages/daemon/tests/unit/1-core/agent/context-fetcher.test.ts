@@ -4,6 +4,7 @@ import { ContextFetcher } from '../../../../src/lib/agent/context-fetcher';
 import {
   clearModelsCache,
   getAvailableModels,
+  getModelInfo,
   getModelInfoUnfiltered,
   getSessionModelInfo,
   recordObservedContextWindow,
@@ -1586,6 +1587,17 @@ describe('ContextFetcher.fetch', () => {
 
       expect(recordObservedContextWindow('anthropic', 'claude-sonnet-5', 1_000_000)).toBe(true);
       expect(recordObservedContextWindow('glm', 'glm-5.2[1m]', 1_000_000)).toBe(true);
+    });
+
+    it('serves a copilot claude model its observed window from the static tail', async () => {
+      clearModelsCache();
+      expect(recordObservedContextWindow('anthropic-copilot', 'claude-sonnet-4.6', 1_000_000)).toBe(
+        true
+      );
+
+      const resolved = await getModelInfo('claude-sonnet-4.6', 'global', 'anthropic-copilot');
+
+      expect(resolved?.contextWindow).toBe(1_000_000);
     });
 
     it('drops only the named provider when a keyed global clear names one', () => {

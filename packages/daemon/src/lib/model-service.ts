@@ -1729,9 +1729,10 @@ export async function getModelInfo(
   );
   const staticModel = findInModels(staticProviderModels, idOrAlias) ?? null;
   if (!staticModel) return null;
+  const observedStatic = applyObservedContextWindow(staticModel);
   return providerId === 'anthropic-copilot'
-    ? overlayCodexStaticMetadata(staticModel)
-    : applyObservedContextWindow(staticModel);
+    ? overlayCodexStaticMetadata(observedStatic)
+    : observedStatic;
 }
 
 export async function getSessionModelInfo(
@@ -1753,9 +1754,10 @@ export async function getSessionModelInfo(
   const staticProviderModels = STATIC_MODEL_METADATA.filter((m) => m.provider === providerId);
   const fromStatic = findInModels(staticProviderModels, session.config.model) ?? null;
   if (!fromStatic) return null;
+  const observedStatic = applyObservedContextWindow(fromStatic);
   return providerId === 'anthropic-copilot'
-    ? overlayCodexStaticMetadata(fromStatic)
-    : applyObservedContextWindow(fromStatic);
+    ? overlayCodexStaticMetadata(observedStatic)
+    : observedStatic;
 }
 
 export async function getModelInfoUnfiltered(
