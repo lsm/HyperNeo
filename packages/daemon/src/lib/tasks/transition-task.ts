@@ -1,3 +1,4 @@
+import type { TaskMutationDenial } from './mutation-denial.ts';
 import type { SpaceTask, UpdateSpaceTaskParams } from '@hyperneo/shared';
 import type { TaskCore } from '@hyperneo/shared/types/task-core';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -36,7 +37,7 @@ type Rejection =
   | 'result_requires_done'
   | 'block_reason_requires_blocked'
   | 'space_at_task_capacity';
-type Result = TaskCore | Rejection | null;
+type Result = TaskCore | Rejection | TaskMutationDenial | null;
 export interface SpaceTransitionTaskDependencies extends SpaceTransitionAdmissionDependencies {
   getTaskManager: (spaceId: string) => Pick<SpaceTaskManager, 'getTask' | 'setTaskStatus'>;
   emitTaskUpdated: (spaceId: string, task: SpaceTask) => Promise<void>;
@@ -225,7 +226,7 @@ export async function writeStatus(decided: DecidedTask, input: In, deps: Deps): 
   }
 }
 const SPACE_TRANSITION_TASK_DESCRIPTION =
-  'Space-scoped callers change the lifecycle state of a task in their Space; review and approved are entered only through the submit-for-review and approval operations, and rate_limited/usage_limited are runtime-owned. Tasks with an active direct-execution attempt are managed by the durable start/cancel/complete operations, and result may accompany only a transition to done, and blockReason only a transition to blocked, where human_input_requested is the single caller-settable value because every other block reason is stamped by the runtime that observed it. Supply expectedStatus to reject with invalid_transition unless the task is still in that state; it is applied at the status write, including transitions handed to the workflow runtime. Moving a task with no workflow run and no agent session into in_progress claims one of the Space concurrency slots, so it rejects with space_at_task_capacity when the Space has none free; stop or finish a running task, or raise the Space limit, and retry. Returns core task data, null for absent or unavailable tasks, or unsupported_status, invalid_transition, result_requires_done, block_reason_requires_blocked, or space_at_task_capacity when rejected.';
+  'Space-scoped callers change the lifecycle state of a task in their Space; review and approved are entered only through the submit-for-review and approval operations, and rate_limited/usage_limited are runtime-owned. Tasks with an active direct-execution attempt are managed by the durable start/cancel/complete operations, and result may accompany only a transition to done, and blockReason only a transition to blocked, where human_input_requested is the single caller-settable value because every other block reason is stamped by the runtime that observed it. Supply expectedStatus to reject with invalid_transition unless the task is still in that state; it is applied at the status write, including transitions handed to the workflow runtime. Moving a task with no workflow run and no agent session into in_progress claims one of the Space concurrency slots, so it rejects with space_at_task_capacity when the Space has none free; stop or finish a running task, or raise the Space limit, and retry. Returns core task data, null for absent tasks, { accepted: false, reason: "task_transition_denied" } for caller scope denials, or unsupported_status, invalid_transition, result_requires_done, block_reason_requires_blocked, or space_at_task_capacity when rejected.';
 export function createSpaceTransitionTaskOperation(deps: Deps) {
   const transition = (superpipe({ deps })('transition-space-task') as PipelineAPI)
     .input(['input', 'caller'])

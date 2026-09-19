@@ -124,8 +124,7 @@ export function createSpaceTaskDependencyEditor(dependencies: SpaceTaskDependenc
         caller,
         resolveMetadataSessionSpace(session, dependencies)
       );
-      if ('reason' in scope)
-        throw new Error('Task dependency updates require a session in the owning Space');
+      if ('reason' in scope) return { accepted: false, reason: 'task_dependencies_denied' };
     },
     replaceStandalone: (input) => setStandaloneTaskDependencies(db, input, notifyStandalone),
     replaceSpace: createSpaceDependencyReplacer(dependencies),

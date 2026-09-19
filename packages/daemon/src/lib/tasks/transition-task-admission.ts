@@ -1,3 +1,4 @@
+import type { TaskMutationDenial } from './mutation-denial.ts';
 import type { Session, SpaceTask } from '@hyperneo/shared';
 import type { TaskCore } from '@hyperneo/shared/types/task-core';
 import { z } from 'zod';
@@ -56,9 +57,11 @@ export function admitCaller(
   spaceId: string,
   caller: OperationCaller,
   deps: Deps
-): Gate<string, null> {
+): Gate<string, TaskMutationDenial> {
   const admitted = admitSpaceTaskCaller({ kind: 'space', spaceId }, caller, deps);
-  return 'reason' in admitted ? { reason: null } : { value: spaceId };
+  return 'reason' in admitted
+    ? { reason: { accepted: false, reason: 'task_transition_denied' } }
+    : { value: spaceId };
 }
 export function requireExpectedStatus(owned: OwnedTask, input: In): Gate<OwnedTask, Result> {
   return input.expectedStatus === undefined || owned.task.status === input.expectedStatus

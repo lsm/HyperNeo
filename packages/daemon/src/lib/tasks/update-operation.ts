@@ -1,3 +1,4 @@
+import { TaskMutationDenialSchema, type TaskMutationDenial } from './mutation-denial.ts';
 import type { TaskCore } from '@hyperneo/shared/types/task-core';
 import { z } from 'zod';
 import type { OperationCaller } from '../operations/registry.ts';
@@ -9,12 +10,12 @@ export function createUpdateTaskOperation(
   editTask: (
     input: TaskMetadataInput,
     caller: OperationCaller
-  ) => TaskCore | null | Promise<TaskCore | null>
+  ) => TaskCore | TaskMutationDenial | null | Promise<TaskCore | TaskMutationDenial | null>
 ) {
   return defineOperation({
     name: 'task.update',
     description:
-      'Edit available task metadata. Space-scoped MCP callers can edit tasks in their owning Space. Supply taskId and at least one of title, description, priority or labels. Omitted fields are preserved. Returns null for missing or unavailable targets. Does not change lifecycle or execution.',
+      'Edit available task metadata. Space-scoped MCP callers can edit tasks in their owning Space. Supply taskId and at least one of title, description, priority or labels. Omitted fields are preserved. Returns null for missing targets and { accepted: false, reason: "task_update_denied" } for caller scope denials. Does not change lifecycle or execution.',
     inputSchema: z
       .object({
         taskId: z.string().min(1),
@@ -31,7 +32,7 @@ export function createUpdateTaskOperation(
           ),
         'Task update requires at least one editable field'
       ),
-    resultSchema: TaskWithSpaceFieldsSchema.nullable(),
+    resultSchema: z.union([TaskWithSpaceFieldsSchema.nullable(), TaskMutationDenialSchema]),
     execute: async (input, caller) => editTask(input, caller),
   });
 }

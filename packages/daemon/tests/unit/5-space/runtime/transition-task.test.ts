@@ -202,11 +202,14 @@ test('a missing task resolves to null', async () => {
   });
 });
 
-test('an mcp session in another Space gets null and makes no write', async () => {
+test('an mcp session in another Space gets a typed denial and makes no write', async () => {
   const task = tasks.createTask({ spaceId, title: 'T', description: '' });
   const caller = worker('outsider', 'other-space');
   const result = await invoke({ taskId: task.id, status: 'in_progress' }, caller);
-  expect(result).toEqual({ kind: 'completed', value: null });
+  expect(result).toEqual({
+    kind: 'completed',
+    value: { accepted: false, reason: 'task_transition_denied' },
+  });
   expect(tasks.getTask(task.id)?.status).toBe('open');
   expect(emitTaskUpdated).not.toHaveBeenCalled();
 });

@@ -1,3 +1,6 @@
+import { invokeOperation } from '../../../../src/lib/operations/invoke';
+import { createOperationRegistry } from '../../../../src/lib/operations/registry';
+import { createUpdateTaskOperation } from '../../../../src/lib/tasks/update-operation';
 import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
 import type { NodeExecution, Session } from '@hyperneo/shared';
 import { Database } from '../../../../src/storage/sqlite-compat';
@@ -112,7 +115,7 @@ test('uses legacy space chat fallback only after looking up its persisted sessio
   const id = `space:chat:${spaceId}`;
   await expect(
     editor()({ taskId, title: 'Changed' }, { source: 'mcp', sessionId: id })
-  ).rejects.toThrow('owning Space');
+  ).resolves.toEqual({ accepted: false, reason: 'task_update_denied' });
   persistSession({ id, type: 'space_chat' });
   expect(
     await editor()({ taskId, title: 'Changed' }, { source: 'mcp', sessionId: id })
@@ -139,7 +142,7 @@ test.each([undefined, {}, { spaceId: 'other' }])(
     const session = context === undefined ? null : persistSession({ type: 'worker', context });
     await expect(
       editor()({ taskId, title: 'Changed' }, { source: 'mcp', sessionId: session?.id })
-    ).rejects.toThrow('owning Space');
+    ).resolves.toEqual({ accepted: false, reason: 'task_update_denied' });
     expect(tasks.getTask(taskId)?.title).toBe('Original');
     expect(getTaskManager).not.toHaveBeenCalled();
     expect(emit).not.toHaveBeenCalled();
@@ -190,3 +193,31 @@ test('event rejection preserves committed metadata and is attempted once', async
   expect(tasks.getTask(taskId)?.title).toBe('Changed');
   expect(emit).toHaveBeenCalledTimes(1);
 });
+
+test.each([false, true])(
+  'operation distinguishes scope denial from infrastructure fault %s',
+  async (fault) => {
+    const mutate = editor({
+      getSession: () => {
+        if (fault) throw new Error('session store unavailable');
+        return null;
+      },
+    });
+    const registry = createOperationRegistry([createUpdateTaskOperation(mutate)]);
+    const result = await invokeOperation(
+      registry,
+      'task.update',
+      { taskId, title: 'Changed' },
+      {
+        source: 'mcp',
+        sessionId: 'outsider',
+      }
+    );
+    expect(result).toMatchObject(
+      fault
+        ? { kind: 'failed', code: 'execution_failed' }
+        : { kind: 'completed', value: { accepted: false, reason: 'task_update_denied' } }
+    );
+    expect(emit).not.toHaveBeenCalled();
+  }
+);

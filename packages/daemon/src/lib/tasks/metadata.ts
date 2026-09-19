@@ -67,7 +67,7 @@ export function createSpaceTaskMetadataEditor(dependencies: SpaceTaskMetadataDep
     resolveOwner: (taskId) => resolveSpaceTaskOwner(db, taskId),
     admit: (owner, caller) => {
       const scope = admitSpaceTaskCaller(owner, caller, dependencies);
-      if ('reason' in scope) throw new Error(scope.reason);
+      if ('reason' in scope) return { accepted: false, reason: 'task_update_denied' };
     },
     editStandalone: (input) => editStandaloneTask(db, input, notifyStandalone),
     editSpace: (spaceId, { taskId, ...metadata }) =>

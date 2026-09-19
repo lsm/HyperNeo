@@ -1,3 +1,4 @@
+import { TaskMutationDenialSchema, type TaskMutationDenial } from './mutation-denial.ts';
 import type { Session, SpaceTask } from '@hyperneo/shared';
 import type { TaskCore } from '@hyperneo/shared/types/task-core';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -27,7 +28,7 @@ export type SetPreferredWorkflowRejection =
   | 'workflow_disabled';
 
 type In = SetPreferredWorkflowInput;
-type Result = TaskCore | SetPreferredWorkflowRejection | null;
+type Result = TaskCore | SetPreferredWorkflowRejection | TaskMutationDenial | null;
 type Gate<T> = { value: T } | { reason: Result };
 type OwnedTask = { spaceId: string; task: SpaceTask };
 
@@ -52,7 +53,9 @@ export function resolveOwner(input: In, deps: Deps): Gate<string> {
 
 export function admitCaller(spaceId: string, caller: OperationCaller, deps: Deps): Gate<string> {
   const admission = admitSpaceTaskCaller({ kind: 'space', spaceId }, caller, deps);
-  return 'reason' in admission ? { reason: null } : { value: spaceId };
+  return 'reason' in admission
+    ? { reason: { accepted: false, reason: 'task_workflow_selection_denied' } }
+    : { value: spaceId };
 }
 
 export async function loadTask(spaceId: string, input: In, deps: Deps): Promise<Gate<OwnedTask>> {
@@ -120,7 +123,7 @@ export async function writeSelection(owned: OwnedTask, input: In, deps: Deps): P
 }
 
 const SET_PREFERRED_WORKFLOW_DESCRIPTION =
-  'Choose which Space workflow a task will run when it next starts, or clear the selection with a null workflowId. Changing the selection also clears the task workflowModelOverrides, because per-node overrides are keyed to the workflow they were authored against and would otherwise silently re-attach wherever node and agent keys happen to overlap. The selection is locked once the task starts: a task with a workflowRunId or a startedAt rejects with workflow_locked, and the write is guarded on that condition so a start racing the write loses rather than landing after execution began. Re-sending the selection a task already carries succeeds without a write, so retries are safe. Returns the updated core task data, null for an absent, standalone, or out-of-scope task, workflow_not_found when the id names no workflow in the owning Space, workflow_disabled when it names a disabled one, and workflow_locked when the task has already started.';
+  'Choose which Space workflow a task will run when it next starts, or clear the selection with a null workflowId. Changing the selection also clears the task workflowModelOverrides, because per-node overrides are keyed to the workflow they were authored against and would otherwise silently re-attach wherever node and agent keys happen to overlap. The selection is locked once the task starts: a task with a workflowRunId or a startedAt rejects with workflow_locked, and the write is guarded on that condition so a start racing the write loses rather than landing after execution began. Re-sending the selection a task already carries succeeds without a write, so retries are safe. Returns the updated core task data, null for an absent or standalone task, { accepted: false, reason: "task_workflow_selection_denied" } for an out-of-scope caller, workflow_not_found when the id names no workflow in the owning Space, workflow_disabled when it names a disabled one, and workflow_locked when the task has already started.';
 
 export function createSetPreferredWorkflowOperation(deps: Deps) {
   const setPreferredWorkflow = (superpipe({ deps })('set-preferred-workflow') as PipelineAPI)
@@ -139,6 +142,7 @@ export function createSetPreferredWorkflowOperation(deps: Deps) {
     description: SET_PREFERRED_WORKFLOW_DESCRIPTION,
     inputSchema: SetPreferredWorkflowInputSchema,
     resultSchema: z.union([
+      TaskMutationDenialSchema,
       TaskWithSpaceFieldsSchema.nullable(),
       z.enum(['workflow_locked', 'workflow_not_found', 'workflow_disabled']),
     ]),

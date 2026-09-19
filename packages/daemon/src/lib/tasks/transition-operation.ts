@@ -1,3 +1,4 @@
+import { TaskMutationDenialSchema, type TaskMutationDenial } from './mutation-denial.ts';
 import { z } from 'zod';
 import type {
   TransitionStandaloneTaskInput,
@@ -20,7 +21,7 @@ export type TransitionTaskRejection =
   | 'block_reason_requires_blocked'
   | 'space_at_task_capacity';
 
-export type TransitionTaskOutput = TransitionResult | TransitionTaskRejection;
+export type TransitionTaskOutput = TransitionResult | TransitionTaskRejection | TaskMutationDenial;
 
 export const StandaloneTransitionTaskInputSchema = z
   .object({
@@ -66,6 +67,7 @@ export function createTransitionTaskOperation<Input = TransitionStandaloneTaskIn
     inputSchema:
       options.inputSchema ?? (StandaloneTransitionTaskInputSchema as unknown as z.ZodType<Input>),
     resultSchema: z.union([
+      TaskMutationDenialSchema,
       TaskWithSpaceFieldsSchema.nullable(),
       z.enum([
         'unsupported_status',
