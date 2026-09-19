@@ -370,11 +370,20 @@ export function GoalDetailPanel({ spaceId, navigationSpaceId, goalId }: GoalDeta
           <SectionCard title="Owner">
             <div class="space-y-3">
               {renderOwnerStatus()}
+              {agents.length === 0 && (
+                <p id={`goal-owner-empty-${goal.id}`} class="text-xs text-fg-muted">
+                  No Space agents are available. Create an agent in this Space’s Agents page before
+                  assigning an owner.
+                </p>
+              )}
               <div class="flex flex-wrap items-center gap-2">
                 {!assignOpen ? (
                   <button
                     type="button"
-                    disabled={ownerBusy}
+                    disabled={ownerBusy || agents.length === 0}
+                    aria-describedby={
+                      agents.length === 0 ? `goal-owner-empty-${goal.id}` : undefined
+                    }
                     onClick={() => setAssignOpen(true)}
                     class="rounded-lg border border-line-strong px-3 py-1.5 text-xs font-medium text-fg-soft hover:bg-surface-raised disabled:opacity-50"
                   >
@@ -400,7 +409,7 @@ export function GoalDetailPanel({ spaceId, navigationSpaceId, goalId }: GoalDeta
                     </select>
                     <button
                       type="button"
-                      disabled={ownerBusy || !assigneeId}
+                      disabled={ownerBusy || !assigneeId || agents.length === 0}
                       onClick={() => void runOwnerAction('assign')}
                       class="rounded-lg border border-accent/40 bg-accent/20 px-3 py-1.5 text-xs font-medium text-accent-soft disabled:opacity-50"
                     >
