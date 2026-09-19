@@ -8,6 +8,7 @@ import {
   makeSessionKindLongHorizonAgent,
   makeSessionKindPolicyContext,
   makeSessionOfKind,
+  SESSION_KIND_AGENT_ID,
   SESSION_KIND_SPACE_ID,
   type SessionKind,
 } from '../../helpers/session-kinds.ts';
@@ -92,6 +93,75 @@ describe('createSpaceScopeResolver', () => {
       'Your role in it is a worker session running one assigned Space task directly, outside any workflow.'
     );
     expect(scope?.briefing).toContain(`the Space "Test Space" (id: ${SESSION_KIND_SPACE_ID})`);
+  });
+
+  test("includes the bound agent's own standing instructions under their own heading", () => {
+    const session = makeSessionOfKind('agent_card');
+
+    const scope = createSpaceScopeResolver({
+      ...deps('agent_card', session),
+      longHorizonAgentRepo: {
+        getById: () =>
+          makeSessionKindLongHorizonAgent({ instructions: 'Triage the board and stay honest.' }),
+      },
+    })(session.id);
+
+    expect(scope?.briefing).toContain('### Agent Standing Instructions');
+    expect(scope?.briefing).toContain('Triage the board and stay honest.');
+    expect(scope?.briefing?.indexOf('### Space Standing Instructions')).toBeLessThan(
+      scope?.briefing?.indexOf('### Agent Standing Instructions') ?? -1
+    );
+  });
+
+  test('reaches a workflow worker bound to an agent, not only the agent card session', () => {
+    const session = makeSessionOfKind('workflow_worker', {
+      metadata: {
+        messageCount: 0,
+        totalTokens: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        totalCost: 0,
+        toolCallCount: 0,
+        promptProvenance: {
+          source: 'test',
+          hash: 'hash',
+          agentId: SESSION_KIND_AGENT_ID,
+          agentName: 'Coder',
+        },
+      },
+    } as unknown as Partial<Session>);
+
+    const scope = createSpaceScopeResolver({
+      ...deps('workflow_worker', session),
+      longHorizonAgentRepo: {
+        getById: () => makeSessionKindLongHorizonAgent({ instructions: 'Open exactly one PR.' }),
+      },
+    })(session.id);
+
+    expect(scope?.briefing).toContain('### Agent Standing Instructions');
+    expect(scope?.briefing).toContain('Open exactly one PR.');
+    expect(scope?.briefing).not.toContain('Your role in it is the Space agent');
+  });
+
+  test('omits the agent standing-instructions heading when the bound agent has none', () => {
+    const session = makeSessionOfKind('agent_card');
+
+    const scope = createSpaceScopeResolver({
+      ...deps('agent_card', session),
+      longHorizonAgentRepo: {
+        getById: () => makeSessionKindLongHorizonAgent({ instructions: '' }),
+      },
+    })(session.id);
+
+    expect(scope?.briefing).not.toContain('### Agent Standing Instructions');
+  });
+
+  test('omits the agent standing-instructions heading for a session with no bound agent', () => {
+    const session = makeSessionOfKind('ad_hoc_member');
+
+    const scope = createSpaceScopeResolver(deps('ad_hoc_member', session))(session.id);
+
+    expect(scope?.briefing).not.toContain('### Agent Standing Instructions');
   });
 
   test('drops the standing-instructions section when the Space has none', () => {
