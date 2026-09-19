@@ -726,6 +726,7 @@ export function createTables(db: BunDatabase): void {
         enabled INTEGER NOT NULL DEFAULT 1,
         source TEXT NOT NULL DEFAULT 'user' CHECK(source IN ('builtin', 'user', 'imported')),
         source_path TEXT,
+        last_attach_error TEXT,
         created_at INTEGER,
         updated_at INTEGER
       )

@@ -359,6 +359,14 @@ export function AppMcpServersSettings() {
                     {server.description && (
                       <div class="text-xs text-fg-faint mt-1 truncate">{server.description}</div>
                     )}
+                    {server.lastAttachError && (
+                      <div
+                        class="text-[11px] text-danger mt-1"
+                        data-testid={`mcp-attach-error-${server.name}`}
+                      >
+                        Failed to attach: {server.lastAttachError}
+                      </div>
+                    )}
                     {skillsLoaded && linkedSkill && (
                       <div
                         class="text-[11px] text-info/80 mt-1 truncate"

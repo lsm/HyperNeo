@@ -652,6 +652,26 @@ describe('setupLiveQueryHandlers', () => {
     expect(typeof msg.message.data.version).toBe('number');
   });
 
+  test('subscribe: snapshot carries the last attach error for a server that failed to attach', async () => {
+    insertMcpServer(db, 'mcp-failed', 'blank-args');
+    db.prepare(`UPDATE app_mcp_servers SET last_attach_error = ? WHERE id = ?`).run(
+      'Spread syntax requires ...iterable not be null or undefined',
+      'mcp-failed'
+    );
+
+    await setup.callHandler('liveQuery.subscribe', {
+      queryName: 'mcpServers.global',
+      params: [],
+      subscriptionId: 'sub-attach-error',
+    });
+
+    const rows = setup.sentMessages[0].message.data.rows as Array<Record<string, unknown>>;
+    const row = rows.find((candidate) => candidate.id === 'mcp-failed');
+    expect(row?.lastAttachError).toBe(
+      'Spread syntax requires ...iterable not be null or undefined'
+    );
+  });
+
   test('oversized snapshot reports an error and rejects the subscription', async () => {
     setup.setDetailedSendResult({ ok: false, reason: 'message_too_large' });
     await expect(

@@ -10,6 +10,12 @@ function isBuiltInMcpServerName(name: string): boolean {
   return BUILT_IN_MCP_SERVERS.has(name);
 }
 
+export function reservedMcpRenameSource(attachedName: string): string {
+  const match = /^(.+)-\d+$/.exec(attachedName);
+  if (match && isBuiltInMcpServerName(match[1])) return match[1];
+  return attachedName;
+}
+
 export function isBuiltInMcpServer(name: string, config: unknown): boolean {
   if (!isBuiltInMcpServerName(name)) return false;
   if (!config || typeof config !== 'object') return false;

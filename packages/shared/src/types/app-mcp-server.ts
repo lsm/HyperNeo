@@ -15,13 +15,19 @@ export interface AppMcpServer {
   enabled: boolean;
   source: AppMcpServerSource;
   sourcePath?: string;
+  lastAttachError?: string;
   createdAt?: number;
   updatedAt?: number;
 }
 
-export type CreateAppMcpServerRequest = Omit<AppMcpServer, 'id' | 'enabled' | 'source'> & {
+export type CreateAppMcpServerRequest = Omit<
+  AppMcpServer,
+  'id' | 'enabled' | 'source' | 'lastAttachError'
+> & {
   enabled?: boolean;
   source?: AppMcpServerSource;
 };
 
-export type UpdateAppMcpServerRequest = { id: string } & Partial<Omit<AppMcpServer, 'id'>>;
+export type UpdateAppMcpServerRequest = { id: string } & Partial<
+  Omit<AppMcpServer, 'id' | 'lastAttachError'>
+>;

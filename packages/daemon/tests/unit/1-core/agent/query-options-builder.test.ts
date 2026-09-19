@@ -3663,6 +3663,22 @@ describe('QueryOptionsBuilder', () => {
       expect(options.strictMcpConfig).toBe(true);
     });
 
+    it('emits an empty args array for a stdio registry server saved without args', async () => {
+      const ctx = buildRegistryContext([
+        {
+          id: 'srv-blank',
+          name: 'blank-args',
+          sourceType: 'stdio',
+          command: 'echo',
+          enabled: true,
+        },
+      ]);
+      const builder = new QueryOptionsBuilder(ctx);
+      const options = await builder.build();
+
+      expect(options.mcpServers?.['blank-args']).toEqual({ command: 'echo', args: [] });
+    });
+
     it('omits a disabled registry server', async () => {
       const ctx = buildRegistryContext([
         {
@@ -3710,7 +3726,7 @@ describe('QueryOptionsBuilder', () => {
       const options = await builder.build();
 
       expect(options.mcpServers?.['space-actions']).toEqual({ command: 'runtime-cmd' });
-      expect(options.mcpServers?.['registry-srv']).toEqual({ command: 'registry-cmd' });
+      expect(options.mcpServers?.['registry-srv']).toEqual({ command: 'registry-cmd', args: [] });
       delete mockSession.config.mcpServers;
     });
 
@@ -3914,6 +3930,7 @@ describe('QueryOptionsBuilder', () => {
         expect(options.mcpServers?.['hyperneo-operations']).toBe(operationServer);
         expect(options.mcpServers?.['hyperneo-operations-2']).toEqual({
           command: 'imposter-cmd',
+          args: [],
         });
       });
 
@@ -3945,7 +3962,10 @@ describe('QueryOptionsBuilder', () => {
         const options = await new QueryOptionsBuilder(ctx).build();
 
         expect(options.mcpServers?.['hyperneo-operations']).toBe(operationServer);
-        expect(options.mcpServers?.['hyperneo-operations-2']).toEqual({ command: 'skill-cmd' });
+        expect(options.mcpServers?.['hyperneo-operations-2']).toEqual({
+          command: 'skill-cmd',
+          args: [],
+        });
       });
 
       it('leaves a reserved name alone when the skill wrapper key is not reserved', async () => {
@@ -3975,7 +3995,7 @@ describe('QueryOptionsBuilder', () => {
         );
         const options = await new QueryOptionsBuilder(ctx).build();
 
-        expect(options.mcpServers?.['weather-skill']).toEqual({ command: 'skill-cmd' });
+        expect(options.mcpServers?.['weather-skill']).toEqual({ command: 'skill-cmd', args: [] });
         expect(options.mcpServers?.['hyperneo-operations']).toBe(operationServer);
         expect(options.mcpServers?.['hyperneo-operations-2']).toBeUndefined();
       });
@@ -3995,7 +4015,10 @@ describe('QueryOptionsBuilder', () => {
         const options = await new QueryOptionsBuilder(ctx).build();
 
         expect(options.mcpServers?.['agent-memory']).toBe(memory as never);
-        expect(options.mcpServers?.['agent-memory-2']).toEqual({ command: 'user-memory-cmd' });
+        expect(options.mcpServers?.['agent-memory-2']).toEqual({
+          command: 'user-memory-cmd',
+          args: [],
+        });
       });
 
       it('renames a registry server that collides with the built-in db-query server', async () => {
@@ -4013,7 +4036,7 @@ describe('QueryOptionsBuilder', () => {
         const options = await new QueryOptionsBuilder(ctx).build();
 
         expect(options.mcpServers?.['db-query']).toBe(dbQuery as never);
-        expect(options.mcpServers?.['db-query-2']).toEqual({ command: 'user-db-cmd' });
+        expect(options.mcpServers?.['db-query-2']).toEqual({ command: 'user-db-cmd', args: [] });
       });
 
       it('reserves a built-in name even when the built-in server is not attached', async () => {
@@ -4029,7 +4052,7 @@ describe('QueryOptionsBuilder', () => {
         const options = await new QueryOptionsBuilder(ctx).build();
 
         expect(options.mcpServers?.['db-query']).toBeUndefined();
-        expect(options.mcpServers?.['db-query-2']).toEqual({ command: 'user-db-cmd' });
+        expect(options.mcpServers?.['db-query-2']).toEqual({ command: 'user-db-cmd', args: [] });
       });
 
       it('picks the next free suffix when the renamed name is already taken', async () => {
@@ -4051,8 +4074,8 @@ describe('QueryOptionsBuilder', () => {
         ]);
         const options = await new QueryOptionsBuilder(ctx).build();
 
-        expect(options.mcpServers?.['db-query-2']).toEqual({ command: 'other-db-cmd' });
-        expect(options.mcpServers?.['db-query-3']).toEqual({ command: 'user-db-cmd' });
+        expect(options.mcpServers?.['db-query-2']).toEqual({ command: 'other-db-cmd', args: [] });
+        expect(options.mcpServers?.['db-query-3']).toEqual({ command: 'user-db-cmd', args: [] });
       });
 
       it('leaves the no-collision path untouched', async () => {
@@ -4072,7 +4095,7 @@ describe('QueryOptionsBuilder', () => {
         const options = await new QueryOptionsBuilder(ctx).build();
 
         expect(options.mcpServers).toEqual({
-          'registry-srv': { command: 'registry-cmd' },
+          'registry-srv': { command: 'registry-cmd', args: [] },
           'space-actions': runtime,
           'hyperneo-operations': operationServer,
         } as never);

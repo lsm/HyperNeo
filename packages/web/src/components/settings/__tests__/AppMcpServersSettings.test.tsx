@@ -290,6 +290,29 @@ describe('AppMcpServersSettings', () => {
       expect(screen.getByText('A test server')).toBeTruthy();
     });
 
+    it('should surface the last attach failure for a server that did not attach', () => {
+      appMcpStore.appMcpServers.value = [
+        makeServer('1', {
+          name: 'blank-args',
+          lastAttachError: 'Spread syntax requires ...iterable not be null or undefined',
+        }),
+      ];
+
+      render(<AppMcpServersSettings />);
+
+      const banner = screen.getByTestId('mcp-attach-error-blank-args');
+      expect(banner.textContent).toContain('Failed to attach');
+      expect(banner.textContent).toContain('Spread syntax requires');
+    });
+
+    it('should not show an attach failure for a server with no recorded error', () => {
+      appMcpStore.appMcpServers.value = [makeServer('1', { name: 'healthy' })];
+
+      render(<AppMcpServersSettings />);
+
+      expect(screen.queryByTestId('mcp-attach-error-healthy')).toBeNull();
+    });
+
     it('should show the informational note about env vars', () => {
       render(<AppMcpServersSettings />);
 

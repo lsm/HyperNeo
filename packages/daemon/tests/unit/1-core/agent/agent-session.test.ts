@@ -4740,6 +4740,70 @@ describe('AgentSession', () => {
       });
     });
 
+    it('records per-server attach errors against the MCP registry', async () => {
+      const mockSession = makeMockSession();
+      const { mockDb, mockMessageHub, mockInternalEventBus, mockGetApiKey } = makeMocks();
+      const recordAttachOutcomes = mock(() => {});
+      (mockDb as unknown as { appMcpServers: unknown }).appMcpServers = {
+        getByName: mock((name: string) => (name === 'blank-args' ? { id: 'srv-1', name } : null)),
+        recordAttachOutcomes,
+      };
+      const agentSession = new AgentSession(
+        mockSession,
+        mockDb,
+        mockMessageHub,
+        mockInternalEventBus,
+        mockGetApiKey
+      );
+      agentSession.queryObject = {
+        setMcpServers: mock(async () => ({
+          added: ['blank-args', 'healthy'],
+          removed: [],
+          errors: { 'blank-args': 'Spread syntax requires ...iterable' },
+        })),
+      } as unknown as import('@anthropic-ai/claude-agent-sdk').Query;
+
+      agentSession.reconcileEffectiveMcpServers();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(recordAttachOutcomes).toHaveBeenCalledTimes(1);
+      expect(recordAttachOutcomes.mock.calls[0][0]).toEqual([
+        { name: 'blank-args', error: 'Spread syntax requires ...iterable' },
+        { name: 'healthy', error: null },
+      ]);
+    });
+
+    it('records an attach error for a server renamed off a reserved built-in name', async () => {
+      const mockSession = makeMockSession();
+      const { mockDb, mockMessageHub, mockInternalEventBus, mockGetApiKey } = makeMocks();
+      const recordAttachOutcomes = mock(() => {});
+      (mockDb as unknown as { appMcpServers: unknown }).appMcpServers = {
+        getByName: mock(() => null),
+        recordAttachOutcomes,
+      };
+      const agentSession = new AgentSession(
+        mockSession,
+        mockDb,
+        mockMessageHub,
+        mockInternalEventBus,
+        mockGetApiKey
+      );
+      agentSession.queryObject = {
+        setMcpServers: mock(async () => ({
+          added: ['agent-memory-2'],
+          removed: [],
+          errors: { 'agent-memory-2': 'Connection closed' },
+        })),
+      } as unknown as import('@anthropic-ai/claude-agent-sdk').Query;
+
+      agentSession.reconcileEffectiveMcpServers();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(recordAttachOutcomes.mock.calls[0][0]).toEqual([
+        { name: 'agent-memory', error: 'Connection closed' },
+      ]);
+    });
+
     it('can defer constructor pending-message replay until runtime provisioning completes', async () => {
       const mockSession = makeMockSession();
       const replayStatusReads: string[] = [];

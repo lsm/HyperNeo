@@ -96,7 +96,7 @@ export class AppMcpLifecycleManager {
         const config: McpStdioServerConfig = {
           type: 'stdio',
           command: entry.command!,
-          ...(entry.args && entry.args.length > 0 ? { args: entry.args } : {}),
+          args: entry.args ?? [],
           ...(entry.env && Object.keys(entry.env).length > 0 ? { env: entry.env } : {}),
         };
         return config;

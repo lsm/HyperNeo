@@ -1259,7 +1259,7 @@ CRITICAL RULES:
       case 'stdio':
         return {
           command: server.command!,
-          ...(server.args && server.args.length > 0 ? { args: server.args } : {}),
+          args: server.args ?? [],
           ...(server.env && Object.keys(server.env).length > 0 ? { env: server.env } : {}),
         };
       case 'sse':
