@@ -42,7 +42,7 @@ Prefer unit/component tests; add E2E only when asked or when the behavior needs 
 
 Repo-specific checks inside `bun run check`, all CI-enforced:
 
-- `check:no-comments` — zero comments in `.ts`/`.tsx`. Exempt only: shebangs, `/// <reference>`, `@ts-*`, `biome-ignore`, `eslint-*`, `oxlint-*`, knip `@public`/`knip-ignore`, coverage ignores.
+- `check:no-comments` — zero comments in `.ts`/`.tsx`. Exempt only: shebangs, `/// <reference>`, `@ts-*`, `biome-ignore`, `eslint-*`, `oxlint-*`, knip `@public`/`knip-ignore`, coverage ignores. Vendored `packages/shared/src/sdk/{sdk,sdk-tools}.d.ts` also retain only their generated `Upstream SDK documentation` pointer; `make sync-sdk-types` refreshes those pointers to the installed, documented upstream declarations.
 - `check:session-guards` — only the allowlist in `scripts/check-session-deletion-callers.sh` may call session delete/archive primitives; anything else reopens a closed data-loss path.
 - `check:operation-names` — every `defineOperation` name must be declared in `packages/shared/src/types/operation-names.ts`, and vice versa.
 - `check:db-schema-parity` — `createSpaceTables` in `packages/daemon/tests/unit/helpers/space-test-db.ts` must match the migrated schema; update it with every migration that touches a table it covers.

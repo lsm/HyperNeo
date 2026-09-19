@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { stripComments } from './strip-comments.ts';
@@ -279,5 +279,59 @@ describe('zero-comments wiring', () => {
       scripts: Record<string, string>;
     };
     expect(pkg.scripts['strip-comments']).toBe('bun scripts/strip-comments.ts');
+  });
+});
+
+describe('SDK documentation pointers', () => {
+  it('retains only the exact upstream pointer in the two vendored declaration files', () => {
+    for (const name of ['sdk.d.ts', 'sdk-tools.d.ts']) {
+      const destination = `packages/shared/src/sdk/${name}`;
+      const pointer = `// Upstream SDK documentation: packages/daemon/node_modules/@anthropic-ai/claude-agent-sdk/${name}`;
+      const source = `${pointer}\n/** Remove ordinary documentation. */\nexport type Value = string;\n`;
+      const expected = `${pointer}\nexport type Value = string;\n`;
+      expect(stripComments(source, destination, false)).toBe(expected);
+      expect(stripComments(source, join(repoRoot, destination), false)).toBe(expected);
+      expect(stripComments(source, 'packages/shared/src/app.ts', false)).toBe(
+        'export type Value = string;\n'
+      );
+      expect(stripComments(source.replace(pointer, `${pointer}.wrong`), destination, false)).toBe(
+        'export type Value = string;\n'
+      );
+    }
+  });
+
+  it('regenerates both vendor pointers and comment-free declarations from installed SDK types', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sync-sdk-types-'));
+    try {
+      const upstream = join(dir, 'packages/daemon/node_modules/@anthropic-ai/claude-agent-sdk');
+      mkdirSync(upstream, { recursive: true });
+      const declaration = 'export type Options = { systemPromptSnapshot?: boolean };\n';
+      for (const name of ['sdk.d.ts', 'sdk-tools.d.ts']) {
+        writeFileSync(
+          join(upstream, name),
+          `/** Full upstream behavior documentation. */\n${declaration}`
+        );
+      }
+      for (let run = 0; run < 2; run++) {
+        const result = spawnSync('bun', [join(import.meta.dir, 'sync-sdk-types.ts')], {
+          cwd: dir,
+          encoding: 'utf8',
+        });
+        expect(result.status).toBe(0);
+        for (const name of ['sdk.d.ts', 'sdk-tools.d.ts']) {
+          const destination = `packages/shared/src/sdk/${name}`;
+          const generated = readFileSync(join(dir, destination), 'utf8');
+          expect(generated).toBe(
+            `// Upstream SDK documentation: packages/daemon/node_modules/@anthropic-ai/claude-agent-sdk/${name}\n${declaration}`
+          );
+          expect(stripComments(generated, destination, false)).toBe(generated);
+          expect(readFileSync(join(upstream, name), 'utf8')).toContain(
+            'Full upstream behavior documentation.'
+          );
+        }
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

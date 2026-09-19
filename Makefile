@@ -121,9 +121,7 @@ package-npm:
 # Sync SDK type definitions from installed package to shared types
 sync-sdk-types:
 	@echo "Syncing Claude SDK type definitions..."
-	@mkdir -p packages/shared/src/sdk
-	@cp packages/daemon/node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts packages/shared/src/sdk/
-	@cp packages/daemon/node_modules/@anthropic-ai/claude-agent-sdk/sdk-tools.d.ts packages/shared/src/sdk/
+	@bun scripts/sync-sdk-types.ts
 	@echo "SDK types synced to packages/shared/src/sdk/"
 
 # Full release pipeline: build + compile + package

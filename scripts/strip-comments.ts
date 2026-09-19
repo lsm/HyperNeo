@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import * as ts from 'typescript';
+import { basename, relative, resolve, sep } from 'node:path';
 
 const KEEP_PATTERNS: RegExp[] = [
   /^#!/,
@@ -13,6 +14,21 @@ const KEEP_PATTERNS: RegExp[] = [
   /^(?:\/\/|\/\*+)\s*(?:v8|istanbul|c8) ignore\b/,
   /^(?:\/\/|\/\*+)\s*knip-ignore\b/,
 ];
+
+function keepComment(comment: string, fileName: string): boolean {
+  if (KEEP_PATTERNS.some((pattern) => pattern.test(comment))) return true;
+  const path = relative(process.cwd(), resolve(fileName)).split(sep).join('/');
+  if (
+    path !== 'packages/shared/src/sdk/sdk.d.ts' &&
+    path !== 'packages/shared/src/sdk/sdk-tools.d.ts'
+  ) {
+    return false;
+  }
+  return (
+    comment ===
+    `// Upstream SDK documentation: packages/daemon/node_modules/@anthropic-ai/claude-agent-sdk/${basename(fileName)}`
+  );
+}
 
 interface Range {
   start: number;
@@ -38,7 +54,7 @@ function collectCommentRanges(text: string, fileName: string, isTsx: boolean): R
       const end = node.getEnd();
       const inner = text.slice(start + 1, end - 1);
       const matches = [...inner.matchAll(new RegExp(COMMENT_RE.source, 'g'))];
-      if (matches.length > 0 && matches.every((m) => !KEEP_PATTERNS.some((p) => p.test(m[0])))) {
+      if (matches.length > 0 && matches.every((m) => !keepComment(m[0], fileName))) {
         for (const m of matches) {
           ranges.push({
             start: start + 1 + m.index,
@@ -56,7 +72,7 @@ function collectCommentRanges(text: string, fileName: string, isTsx: boolean): R
       const trivia = text.slice(fullStart, start);
       COMMENT_RE.lastIndex = 0;
       for (let m = COMMENT_RE.exec(trivia); m !== null; m = COMMENT_RE.exec(trivia)) {
-        if (KEEP_PATTERNS.some((p) => p.test(m[0]))) continue;
+        if (keepComment(m[0], fileName)) continue;
         ranges.push({ start: fullStart + m.index, end: fullStart + m.index + m[0].length });
       }
     }
