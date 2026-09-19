@@ -827,32 +827,26 @@ describe('QueryOptionsBuilder', () => {
       });
     });
 
-    it('should include env when configured', async () => {
+    it('should keep an env stored on the session out of the SDK env', async () => {
       mockSession.config.env = { MY_VAR: 'value' };
       const options = await builder.build();
       expect(options.env).toMatchObject({
         PATH: process.env.PATH,
         HOME: process.env.HOME,
-        MY_VAR: 'value',
       });
+      expect(options.env).not.toHaveProperty('MY_VAR');
     });
 
     it('should filter provider env overrides so provider cleanup owns the SDK env', async () => {
       mockSettingsManager.getGlobalSettings = mock(() => ({
         env: {
           CLAUDE_CODE_AUTO_COMPACT_WINDOW: '200000',
-          CLAUDE_CODE_SUBAGENT_MODEL: 'wrong-subagent',
-          ENABLE_TOOL_SEARCH: 'true',
+          CLAUDE_CODE_SUBAGENT_MODEL: 'settings-subagent',
+          ENABLE_TOOL_SEARCH: 'false',
           KEEP_GLOBAL: 'global',
         },
         settingSources: ['user', 'project', 'local'],
       }));
-      mockSession.config.env = {
-        CLAUDE_CODE_AUTO_COMPACT_WINDOW: '262144',
-        CLAUDE_CODE_SUBAGENT_MODEL: 'session-subagent',
-        ENABLE_TOOL_SEARCH: 'false',
-        KEEP_SESSION: 'session',
-      };
 
       const options = await builder.build();
 
@@ -860,10 +854,9 @@ describe('QueryOptionsBuilder', () => {
         PATH: process.env.PATH,
         HOME: process.env.HOME,
         KEEP_GLOBAL: 'global',
-        KEEP_SESSION: 'session',
       });
       expect(options.env).not.toHaveProperty('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
-      expect(options.env?.CLAUDE_CODE_SUBAGENT_MODEL).toBe('session-subagent');
+      expect(options.env?.CLAUDE_CODE_SUBAGENT_MODEL).toBe('settings-subagent');
       expect(options.env?.ENABLE_TOOL_SEARCH).toBe('false');
     });
 
@@ -891,10 +884,6 @@ describe('QueryOptionsBuilder', () => {
         }));
         mockSession.config.provider = 'anthropic-codex';
         mockSession.config.model = 'gpt-5.3-codex';
-        mockSession.config.env = {
-          CLAUDE_CODE_AUTO_COMPACT_WINDOW: '262144',
-          KEEP_SESSION: 'session',
-        };
 
         const options = await builder.build();
 
@@ -902,7 +891,6 @@ describe('QueryOptionsBuilder', () => {
           PATH: process.env.PATH,
           HOME: process.env.HOME,
           KEEP_GLOBAL: 'global',
-          KEEP_SESSION: 'session',
         });
         expect(options.env).not.toHaveProperty('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
       }
@@ -933,6 +921,52 @@ describe('QueryOptionsBuilder', () => {
       for (const [_key, value] of Object.entries(options)) {
         expect(value).not.toBeUndefined();
       }
+    });
+  });
+
+  describe('host process controls already stored on the session', () => {
+    it('does not repoint the SDK CLI executable from a stored config', async () => {
+      mockSession.config.pathToClaudeCodeExecutable = '/tmp/evil-cli';
+      mockSession.config.executable = 'node';
+      mockSession.config.executableArgs = ['--pwn'];
+
+      const options = await builder.build();
+
+      expect(options.pathToClaudeCodeExecutable).not.toBe('/tmp/evil-cli');
+      expect(options.executable).not.toBe('node');
+      expect(options.executableArgs).toBeUndefined();
+    });
+
+    it('does not load plugins or spawn overrides from a stored config', async () => {
+      mockSession.config.plugins = [{ type: 'local', path: '/tmp/evil-plugin' }];
+      mockSession.config.spawnClaudeCodeProcess = () => {
+        throw new Error('stored spawn override must never be used');
+      };
+
+      const options = await builder.build();
+
+      expect(
+        (options.plugins ?? []).some(
+          (plugin) => (plugin as { path?: string }).path === '/tmp/evil-plugin'
+        )
+      ).toBe(false);
+      expect(options.spawnClaudeCodeProcess).toBeUndefined();
+    });
+
+    it('does not inject a stored env into the SDK env', async () => {
+      mockSession.config.env = { HYPERNEO_PWNED: '1' };
+
+      const options = await builder.build();
+
+      expect(options.env?.HYPERNEO_PWNED).toBeUndefined();
+    });
+
+    it('leaves the stored config itself untouched', async () => {
+      mockSession.config.env = { HYPERNEO_PWNED: '1' };
+
+      await builder.build();
+
+      expect(mockSession.config.env).toEqual({ HYPERNEO_PWNED: '1' });
     });
   });
 
@@ -3167,7 +3201,7 @@ describe('QueryOptionsBuilder', () => {
       expect(options.plugins).toBeUndefined();
     });
 
-    it('should merge skill plugins with existing config plugins', async () => {
+    it('should keep skill plugins and drop a plugin stored on the session config', async () => {
       const mockSkillsManager = {
         getEnabledSkills: mock(() => [enabledSkills[0]]),
       };
@@ -3181,10 +3215,7 @@ describe('QueryOptionsBuilder', () => {
       const builder = new QueryOptionsBuilder(context);
       const options = await builder.build();
 
-      expect(options.plugins).toEqual([
-        { type: 'local', path: '/existing/plugin' },
-        { type: 'local', path: '/path/to/plugin' },
-      ]);
+      expect(options.plugins).toEqual([{ type: 'local', path: '/path/to/plugin' }]);
     });
 
     it('should merge skill MCP servers with existing config mcpServers', async () => {

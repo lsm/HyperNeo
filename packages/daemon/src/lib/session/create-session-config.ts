@@ -86,6 +86,17 @@ export class UnsupportedSessionConfigFieldsError extends Error {
   }
 }
 
+export function stripRejectedSessionConfig(config: SessionConfig): SessionConfig {
+  const stored = REJECTED_FIELDS.filter((field) => config[field] !== undefined);
+  if (stored.length === 0) return config;
+
+  const admitted = { ...config } as SessionConfig & Record<string, unknown>;
+  for (const field of stored) {
+    delete admitted[field as string];
+  }
+  return admitted;
+}
+
 export function admitCreateSessionConfig(
   requested: Partial<SessionConfig> | undefined
 ): Partial<SessionConfig> {

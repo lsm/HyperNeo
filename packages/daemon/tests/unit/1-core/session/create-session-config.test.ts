@@ -54,6 +54,7 @@ import {
   admitCreateSessionConfig,
   admitUpdateSessionConfig,
   CREATE_SESSION_CONFIG_FIELD_POLICY,
+  stripRejectedSessionConfig,
   UnsupportedSessionConfigFieldsError,
   UPDATABLE_SESSION_CONFIG_FIELDS,
 } from '../../../../src/lib/session/create-session-config';
@@ -224,6 +225,48 @@ describe('admitUpdateSessionConfig', () => {
 
   it('passes an absent config through untouched', () => {
     expect(admitUpdateSessionConfig(undefined)).toBeUndefined();
+  });
+});
+
+describe('stripRejectedSessionConfig', () => {
+  it('removes exactly the fields the shared policy table rejects', () => {
+    const entries = Object.entries(CREATE_SESSION_CONFIG_FIELD_POLICY);
+    const rejected = entries.filter(([, policy]) => policy === 'rejected').map(([field]) => field);
+    expect(rejected).toContain('pathToClaudeCodeExecutable');
+
+    const stored: Record<string, unknown> = {};
+    for (const [field] of entries) stored[field] = `sentinel:${field}`;
+
+    const stripped = stripRejectedSessionConfig(stored as SessionConfig) as Record<string, unknown>;
+
+    expect(Object.keys(stripped).sort()).toEqual([...UPDATABLE_SESSION_CONFIG_FIELDS].sort());
+    for (const field of UPDATABLE_SESSION_CONFIG_FIELDS) {
+      expect(stripped[field]).toBe(`sentinel:${field}`);
+    }
+  });
+
+  it('leaves unknown keys alone', () => {
+    const stripped = stripRejectedSessionConfig({
+      maxTurns: 3,
+      somethingElse: 'x',
+      env: { PATH: '/tmp' },
+    } as SessionConfig) as Record<string, unknown>;
+
+    expect(stripped).toEqual({ maxTurns: 3, somethingElse: 'x' });
+  });
+
+  it('returns the same config when nothing is stored that the doors refuse', () => {
+    const config = { model: 'opus', maxTurns: 3 } as SessionConfig;
+
+    expect(stripRejectedSessionConfig(config)).toBe(config);
+  });
+
+  it('does not mutate the config it is given', () => {
+    const config = { model: 'opus', env: { PATH: '/tmp' } } as SessionConfig;
+
+    stripRejectedSessionConfig(config);
+
+    expect(config.env).toEqual({ PATH: '/tmp' });
   });
 });
 
