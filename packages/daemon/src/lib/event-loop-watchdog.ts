@@ -11,6 +11,7 @@ export type EventLoopWatchdogNotice =
   | { type: 'fuse-expired'; overdueMs: number };
 
 export interface EventLoopWatchdogOptions {
+  deferStallDetection?: boolean;
   stallMs?: number;
   heartbeatMs?: number;
   shutdownFuseMs?: number;
@@ -19,6 +20,7 @@ export interface EventLoopWatchdogOptions {
 }
 
 export interface EventLoopWatchdogHandle {
+  armStallDetection(): void;
   armShutdownFuse(timeoutMs?: number): void;
   stop(): void;
 }
@@ -53,7 +55,13 @@ export async function startEventLoopWatchdog(
       EVENT_LOOP_WATCHDOG_MAX_CHECK_INTERVAL_MS
     );
     worker = new Worker(await resolveWorkerUrl(), {
-      workerData: { pid: process.pid, stallMs, checkIntervalMs, killMode },
+      workerData: {
+        pid: process.pid,
+        stallMs,
+        checkIntervalMs,
+        killMode,
+        deferStallDetection: options.deferStallDetection ?? false,
+      },
     });
   } catch (error) {
     logger.warn(
@@ -86,6 +94,10 @@ export async function startEventLoopWatchdog(
   });
 
   return {
+    armStallDetection() {
+      if (stopped) return;
+      worker.postMessage({ type: 'arm-stall-detection' });
+    },
     armShutdownFuse(timeoutMs: number = shutdownFuseMs) {
       if (stopped) return;
       worker.postMessage({ type: 'arm-shutdown-fuse', timeoutMs });

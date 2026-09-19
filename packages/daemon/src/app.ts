@@ -367,7 +367,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     delete process.env.CLAUDECODE;
 
     if (process.env.NODE_ENV !== 'test') {
-      eventLoopWatchdog = await startEventLoopWatchdog();
+      eventLoopWatchdog = await startEventLoopWatchdog({ deferStallDetection: true });
 
       const prefetchLogInfo = verbose ? console.log : () => {};
       const prefetchLogError = verbose ? console.error : () => {};
@@ -1393,6 +1393,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     };
 
     startupTimer.finish();
+    eventLoopWatchdog?.armStallDetection();
 
     return {
       server,
