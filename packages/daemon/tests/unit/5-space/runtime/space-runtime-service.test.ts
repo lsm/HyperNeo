@@ -2485,7 +2485,13 @@ describe('SpaceRuntimeService', () => {
   });
 
   describe('ensureAgentSession()', () => {
-    test.each([false, true])('registers session (existing=%s)', async (existing) => {
+    const cases = [
+      [false, false],
+      [true, false],
+      [false, true],
+      [true, true],
+    ];
+    test.each(cases)('registers session %s with publish failure %s', async (existing, fails) => {
       const sessionId = longTermAgentSessionId(mockSpace.id, 'agent-1');
       const sessionData = {
         id: sessionId,
@@ -2538,7 +2544,10 @@ describe('SpaceRuntimeService', () => {
         registeredSpace.sessionIds = [sessionId];
         return registeredSpace;
       });
-      const publish = mock(async () => ({ delivered: 0, failures: [] }));
+      const publish = mock(async () => {
+        if (fails) throw new Error('subscriber failed');
+        return { delivered: 0, failures: [] };
+      });
       const svc = new SpaceRuntimeService({
         ...buildConfig(spaceManager),
         internalEventBus: {

@@ -707,11 +707,15 @@ export class SpaceRuntimeService {
     });
     session.setAttachedCapabilities(this.attachLongTermAgentMcpServers(session, space, sessionId));
     if (membershipChanged) {
-      await this.config.internalEventBus?.publish('space.updated', {
-        sessionId: 'global',
-        spaceId,
-        space: updatedSpace,
-      });
+      await this.config.internalEventBus
+        ?.publish('space.updated', {
+          sessionId: 'global',
+          spaceId,
+          space: updatedSpace,
+        })
+        .catch((error) => {
+          log.warn(`Failed to publish agent session membership for space ${spaceId}:`, error);
+        });
     }
     return session;
   }
