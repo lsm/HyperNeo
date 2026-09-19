@@ -444,6 +444,54 @@ describe('PostApprovalRouter.route', () => {
     expect(final?.pendingCompletionSubmittedByNodeId).toBeNull();
   });
 
+  test('unresolved {{pr_url}} → skipped, nothing spawned, reason recorded', async () => {
+    const task = makeApprovedTask(taskRepo);
+    const delegates = makeDelegates();
+    const router = new PostApprovalRouter({
+      taskRepo,
+      spawner: delegates.spawner,
+      livenessProbe: delegates.liveness,
+    });
+
+    const result = await router.route(
+      task,
+      stubWorkflow({
+        postApproval: {
+          targetAgent: 'deployer',
+          instructions: 'You implemented PR {{pr_url}}; run gh pr view {{pr_url}}.',
+        },
+      }),
+      { approvalSource: 'human', task_id: task.id }
+    );
+
+    expect(result.mode).toBe('skipped');
+    expect(delegates.spawned).toHaveLength(0);
+    expect(taskRepo.getTask(task.id)?.postApprovalBlockedReason).toContain('pr_url');
+  });
+
+  test('a resolved {{pr_url}} still dispatches, so the gate keys on the value not the token', async () => {
+    const task = makeApprovedTask(taskRepo);
+    const delegates = makeDelegates();
+    const router = new PostApprovalRouter({
+      taskRepo,
+      spawner: delegates.spawner,
+      livenessProbe: delegates.liveness,
+    });
+
+    const result = await router.route(
+      task,
+      stubWorkflow({
+        postApproval: { targetAgent: 'deployer', instructions: 'Merge {{pr_url}} now.' },
+      }),
+      { approvalSource: 'human', task_id: task.id, pr_url: 'https://github.com/o/r/pull/7' }
+    );
+
+    expect(result.mode).toBe('spawn');
+    expect(delegates.spawned).toHaveLength(1);
+    expect(delegates.spawned[0]?.kickoffMessage).toContain('https://github.com/o/r/pull/7');
+    expect(delegates.spawned[0]?.kickoffMessage).not.toContain('{{');
+  });
+
   test('task not in approved → skipped', async () => {
     const task = taskRepo.createTask({
       spaceId: SPACE_ID,
@@ -618,7 +666,10 @@ describe('PostApprovalRouter.route — routing CAS', () => {
         sessionId === 'worker-on-slot' && routeNodeId === null && routeAgentName === 'deployer',
     });
 
-    const result = await router.route(updated, routedWorkflow(), { approvalSource: 'agent' });
+    const result = await router.route(updated, routedWorkflow(), {
+      approvalSource: 'agent',
+      task_title: 'T',
+    });
 
     expect(result.mode).toBe('spawn');
     expect(delegates.spawned).toHaveLength(1);
@@ -638,7 +689,10 @@ describe('PostApprovalRouter.route — routing CAS', () => {
       validateRecordedPointer: ({ sessionId }) => sessionId === 'worker-on-slot',
     });
 
-    const result = await router.route(updated, routedWorkflow(), { approvalSource: 'agent' });
+    const result = await router.route(updated, routedWorkflow(), {
+      approvalSource: 'agent',
+      task_title: 'T',
+    });
 
     expect(result.mode).toBe('already-routed');
     expect(delegates.spawned).toHaveLength(0);
@@ -861,7 +915,10 @@ describe('PostApprovalRouter.route — cycle-3 race guards', () => {
       validateRecordedPointer: ({ sessionId }) => sessionId === 'worker-on-slot',
     });
 
-    const result = await router.route(updated, routedWorkflow(), { approvalSource: 'agent' });
+    const result = await router.route(updated, routedWorkflow(), {
+      approvalSource: 'agent',
+      task_title: 'T',
+    });
 
     expect(result.mode).toBe('already-routed');
     expect(taskRepo.getTask(task.id)?.postApprovalBlockedReason).toBeNull();

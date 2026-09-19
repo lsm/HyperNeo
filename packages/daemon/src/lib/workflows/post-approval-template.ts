@@ -65,3 +65,14 @@ export function interpolatePostApprovalTemplate(
 
   return { text, missingKeys };
 }
+
+export function admitPostApprovalKickoff(
+  template: string,
+  context: PostApprovalTemplateContext
+): { value: string } | { reason: string } {
+  const { text, missingKeys } = interpolatePostApprovalTemplate(template, context);
+  if (missingKeys.length === 0) return { value: text };
+  return {
+    reason: `post-approval kickoff leaves ${missingKeys.join(', ')} unresolved; the approved task never recorded ${missingKeys.length === 1 ? 'it' : 'them'}`,
+  };
+}
