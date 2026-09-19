@@ -3,6 +3,10 @@ import type { Space, SpaceLongHorizonAgent } from '@hyperneo/shared';
 import type { ResolveAgentRecordDeps } from '../../../../src/lib/session-resolution/resolve-agent-record.ts';
 import {
   type EnsureAgentSessionDeps,
+  type EnsureAgentSessionReason,
+  admitSpaceStage,
+  admitAgentStage,
+  gateEnsuredSessionStage,
   isAgentTargetLifecycleEligible,
   runEnsureAgentSession,
 } from '../../../../src/lib/session/ensure-agent-session.ts';
@@ -59,9 +63,10 @@ function makeDeps(config?: {
 async function expectTargetRejected(
   deps: EnsureAgentSessionDeps,
   agentId: string,
-  calls: ProvisionCalls
+  calls: ProvisionCalls,
+  reason: EnsureAgentSessionReason = 'agent_missing'
 ): Promise<void> {
-  expect(await runEnsureAgentSession(SPACE_ID, agentId, deps)).toBeNull();
+  expect(await runEnsureAgentSession(SPACE_ID, agentId, deps)).toBe(reason);
   expect(await isAgentTargetLifecycleEligible(SPACE_ID, agentId, deps)).toBe(false);
   expect(calls).toEqual({ provisioned: [] });
 }
@@ -76,13 +81,29 @@ describe('ensure-agent-session lifecycle admission', () => {
     ];
     for (const space of spaces) {
       const { deps, calls } = makeDeps({ space, longHorizonAgents: [makeAgent('lha-1')] });
-      await expectTargetRejected(deps, 'lha-1', calls);
+      await expectTargetRejected(deps, 'lha-1', calls, 'space_inactive');
     }
   });
 
-  test('a failing space read rejects instead of throwing', async () => {
+  test('a failing space read propagates the infrastructure error', async () => {
     const { deps, calls } = makeDeps({ spaceReadFails: true });
-    await expectTargetRejected(deps, 'coordinator', calls);
+    await expect(runEnsureAgentSession(SPACE_ID, 'coordinator', deps)).rejects.toThrow(
+      'space read failed'
+    );
+    await expect(isAgentTargetLifecycleEligible(SPACE_ID, 'coordinator', deps)).rejects.toThrow(
+      'space read failed'
+    );
+    expect(calls.provisioned).toEqual([]);
+  });
+
+  test('a provisioning fault propagates instead of becoming an unavailable session', async () => {
+    const { deps } = makeDeps({ longHorizonAgents: [makeAgent('agent-1')] });
+    deps.ensureLongHorizon = async () => {
+      throw new Error('provider exploded');
+    };
+    await expect(runEnsureAgentSession(SPACE_ID, 'agent-1', deps)).rejects.toThrow(
+      'provider exploded'
+    );
   });
 
   test('inactive canonical coordinator records reject the coordinator target', async () => {
@@ -116,7 +137,7 @@ describe('ensure-agent-session lifecycle admission', () => {
       ],
     });
     expect(await isAgentTargetLifecycleEligible(SPACE_ID, 'lha-2', deps)).toBe(true);
-    expect(await runEnsureAgentSession(SPACE_ID, 'lha-2', deps)).not.toBeNull();
+    expect(typeof (await runEnsureAgentSession(SPACE_ID, 'lha-2', deps))).toBe('object');
     expect(calls).toEqual({ provisioned: [`${SPACE_ID}:lha-2`] });
   });
 
@@ -137,8 +158,59 @@ describe('ensure-agent-session lifecycle admission', () => {
     for (const status of ['ended', 'archived']) {
       const agent = makeAgent('agent-1');
       const { deps, calls } = makeDeps({ ensuredStatus: status, longHorizonAgents: [agent] });
-      expect(await runEnsureAgentSession(SPACE_ID, 'agent-1', deps)).toBeNull();
+      expect(await runEnsureAgentSession(SPACE_ID, 'agent-1', deps)).toBe('session_unavailable');
       expect(calls.provisioned).toEqual([`${SPACE_ID}:agent-1`]);
     }
+  });
+});
+
+describe('ensure-agent-session gates', () => {
+  test.each([
+    null,
+    makeSpace({ paused: true }),
+    makeSpace({ stopped: true }),
+    makeSpace({ status: 'archived' }),
+  ])('admitSpaceStage rejects inactive spaces', (space) => {
+    expect(admitSpaceStage(space)).toEqual({ reason: 'space_inactive' });
+  });
+  test('admitSpaceStage accepts an active space', () => {
+    const space = makeSpace();
+    expect(admitSpaceStage(space)).toEqual({ value: space });
+  });
+  test('admitAgentStage keeps success and rejection disjoint', () => {
+    expect(admitAgentStage({ kind: 'missing' })).toEqual({ reason: 'agent_missing' });
+    const resolution = { kind: 'long_horizon' as const, agent: makeAgent('a') };
+    expect(admitAgentStage(resolution)).toEqual({ value: resolution });
+  });
+  test.each([null, 'ended', 'archived', 'active'])(
+    'gateEnsuredSessionStage handles %s',
+    (status) => {
+      const session = status === null ? null : { getSessionData: () => ({ status }) };
+      expect(gateEnsuredSessionStage(session)).toEqual(
+        status === 'active' ? { value: session } : { reason: 'session_unavailable' }
+      );
+    }
+  );
+  test('a repository fault propagates through lifecycle eligibility', async () => {
+    const { deps } = makeDeps();
+    deps.recordDeps.getLongHorizonAgent = () => {
+      throw new Error('repository failed');
+    };
+    await expect(isAgentTargetLifecycleEligible(SPACE_ID, 'a', deps)).rejects.toThrow(
+      'repository failed'
+    );
+  });
+  test.each(['space', 'agent'])('rechecks %s eligibility after provisioning', async (changed) => {
+    const agent = makeAgent('a');
+    const space = makeSpace();
+    const { deps } = makeDeps({ space, longHorizonAgents: [agent] });
+    deps.ensureLongHorizon = async () => {
+      if (changed === 'space') space.paused = true;
+      else agent.status = 'paused';
+      return { getSessionData: () => ({ status: 'active' }) };
+    };
+    expect(await runEnsureAgentSession(SPACE_ID, 'a', deps)).toBe(
+      changed === 'space' ? 'space_inactive' : 'agent_missing'
+    );
   });
 });

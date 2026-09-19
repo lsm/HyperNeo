@@ -10,90 +10,99 @@ export interface EnsuredSession {
   getSessionData(): { status: string };
 }
 
+export type EnsureAgentSessionReason = 'space_inactive' | 'agent_missing' | 'session_unavailable';
+export type EnsureAgentSessionOutcome = EnsuredSession | EnsureAgentSessionReason;
+
 export interface EnsureAgentSessionDeps {
   getSpace(spaceId: string): Promise<Space | null>;
   recordDeps: ResolveAgentRecordDeps;
   ensureLongHorizon(spaceId: string, agentId: string): Promise<EnsuredSession | null>;
 }
 
-export async function admitSpaceStage(
-  deps: EnsureAgentSessionDeps,
-  spaceId: string
-): Promise<string | undefined> {
-  const space = await deps.getSpace(spaceId).catch(() => null);
-  if (!space || space.paused || space.stopped || space.status === 'archived')
-    return 'space_inactive';
+function readSpaceStage(deps: EnsureAgentSessionDeps, spaceId: string): Promise<Space | null> {
+  return deps.getSpace(spaceId);
 }
 
-export function classifyAgentStage(
+export function admitSpaceStage(
+  space: Space | null
+): { value: Space } | { reason: 'space_inactive' } {
+  return !space || space.paused || space.stopped || space.status === 'archived'
+    ? { reason: 'space_inactive' }
+    : { value: space };
+}
+
+function classifyAgentStage(
   spaceId: string,
   agentId: string,
   deps: EnsureAgentSessionDeps
-): { resolution: AgentRecordResolution | null; classifyHalt: string | undefined } {
-  const resolution = resolveAgentRecord(spaceId, agentId, deps.recordDeps);
-  if (resolution.kind === 'missing') {
-    return { resolution: null, classifyHalt: 'agent_missing' };
-  }
-  return { resolution, classifyHalt: undefined };
+): AgentRecordResolution {
+  return resolveAgentRecord(spaceId, agentId, deps.recordDeps);
 }
 
-export async function provisionAgentSessionStage(
-  resolution: AgentRecordResolution | null,
+export function admitAgentStage(
+  resolution: AgentRecordResolution
+): { value: Exclude<AgentRecordResolution, { kind: 'missing' }> } | { reason: 'agent_missing' } {
+  return resolution.kind === 'missing' ? { reason: 'agent_missing' } : { value: resolution };
+}
+
+function provisionAgentSessionStage(
   spaceId: string,
   agentId: string,
   deps: EnsureAgentSessionDeps
 ): Promise<EnsuredSession | null> {
-  if (resolution === null || resolution.kind === 'missing') return null;
   return deps.ensureLongHorizon(spaceId, agentId);
 }
 
-export async function gateEnsuredSessionStage(
-  ensured: EnsuredSession | null,
+export function gateEnsuredSessionStage(
+  ensured: EnsuredSession | null
+): { value: EnsuredSession } | { reason: 'session_unavailable' } {
+  return !ensured || ['ended', 'archived'].includes(ensured.getSessionData().status)
+    ? { reason: 'session_unavailable' }
+    : { value: ensured };
+}
+
+const runEnsureAgentSessionPipeline = (superpipe({})('ensure-agent-session') as PipelineAPI)
+  .input(['spaceId', 'agentId', 'deps'])
+  .pipe(readSpaceStage, ['deps', 'spaceId'], 'space')
+  .pipe(admitSpaceStage, 'space', 'result:outcome')
+  .pipe(classifyAgentStage, ['spaceId', 'agentId', 'deps'], 'resolution')
+  .pipe(admitAgentStage, 'resolution', 'result:outcome')
+  .pipe(provisionAgentSessionStage, ['spaceId', 'agentId', 'deps'], 'ensuredSession')
+  .pipe(readSpaceStage, ['deps', 'spaceId'], 'space')
+  .pipe(admitSpaceStage, 'space', 'result:outcome')
+  .pipe(classifyAgentStage, ['spaceId', 'agentId', 'deps'], 'resolution')
+  .pipe(admitAgentStage, 'resolution', 'result:outcome')
+  .pipe(gateEnsuredSessionStage, 'ensuredSession', 'result:outcome')
+  .endAsync('outcome') as (
   spaceId: string,
   agentId: string,
   deps: EnsureAgentSessionDeps
-): Promise<{ ensuredSession: EnsuredSession | null }> {
-  if ((await admitSpaceStage(deps, spaceId)) !== undefined) return { ensuredSession: null };
-  if (classifyAgentStage(spaceId, agentId, deps).resolution === null) {
-    return { ensuredSession: null };
-  }
-  if (['ended', 'archived'].includes(ensured?.getSessionData().status ?? ''))
-    return { ensuredSession: null };
-  return { ensuredSession: ensured };
-}
-
-const runEnsureAgentSessionPipeline = (
-  superpipe({ ensureHalted: (halt?: string) => halt !== undefined })(
-    'ensure-agent-session'
-  ) as PipelineAPI
-)
-  .input(['spaceId', 'agentId', 'deps'])
-  .pipe(admitSpaceStage, ['deps', 'spaceId'], 'spaceHalt')
-  .pipe('!ensureHalted', 'spaceHalt')
-  .pipe(classifyAgentStage, ['spaceId', 'agentId', 'deps'], ['resolution', 'classifyHalt'])
-  .pipe('!ensureHalted', 'classifyHalt')
-  .pipe(provisionAgentSessionStage, ['resolution', 'spaceId', 'agentId', 'deps'], 'ensuredSession')
-  .pipe(gateEnsuredSessionStage, ['ensuredSession', 'spaceId', 'agentId', 'deps'], '{...}')
-  .endAsync('ensuredSession');
+) => Promise<EnsureAgentSessionOutcome>;
 
 export async function runEnsureAgentSession(
   spaceId: string,
   agentId: string,
   deps: EnsureAgentSessionDeps
-): Promise<EnsuredSession | null> {
-  return ((await runEnsureAgentSessionPipeline(spaceId, agentId, deps).catch(() => null)) ??
-    null) as EnsuredSession | null;
+): Promise<EnsureAgentSessionOutcome> {
+  return runEnsureAgentSessionPipeline(spaceId, agentId, deps);
 }
+
+const runAgentEligibility = (superpipe({})('agent-target-lifecycle-eligibility') as PipelineAPI)
+  .input(['spaceId', 'agentId', 'deps'])
+  .pipe(readSpaceStage, ['deps', 'spaceId'], 'space')
+  .pipe(admitSpaceStage, 'space', 'result:outcome')
+  .pipe(classifyAgentStage, ['spaceId', 'agentId', 'deps'], 'resolution')
+  .pipe(admitAgentStage, 'resolution', 'result:outcome')
+  .endAsync('outcome') as (
+  spaceId: string,
+  agentId: string,
+  deps: EnsureAgentSessionDeps
+) => Promise<AgentRecordResolution | EnsureAgentSessionReason>;
 
 export async function isAgentTargetLifecycleEligible(
   spaceId: string,
   agentId: string,
   deps: EnsureAgentSessionDeps
 ): Promise<boolean> {
-  if ((await admitSpaceStage(deps, spaceId)) !== undefined) return false;
-  try {
-    return classifyAgentStage(spaceId, agentId, deps).resolution !== null;
-  } catch {
-    return false;
-  }
+  return typeof (await runAgentEligibility(spaceId, agentId, deps)) !== 'string';
 }
