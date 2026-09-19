@@ -4,6 +4,7 @@ import {
   prepareSpaceTaskStatusUpdate,
   isTerminalTaskStatus,
 } from '../../../../src/lib/tasks/status-preparation';
+import { VALID_TASK_TRANSITIONS } from '../../../../src/lib/tasks/transitions';
 
 function task(status: SpaceTaskStatus, extra: Partial<SpaceTask> = {}): SpaceTask {
   return Object.freeze({ id: 'task', spaceId: 'space', status, ...extra }) as SpaceTask;
@@ -90,6 +91,7 @@ test.each(['blocked', 'cancelled', 'done'] as const)(
     expect(prepared.updates).toEqual({
       status: 'open',
       result: null,
+      reportedStatus: null,
       reportedSummary: null,
       blockReason: null,
       approvalSource: null,
@@ -151,4 +153,55 @@ test('staying in approved leaves post-approval bookkeeping alone', () => {
   const source = task('approved', { postApprovalSessionId: 'session-1' });
   const updates = prepareSpaceTaskStatusUpdate(source, 'approved', undefined, 123).updates;
   expect(updates).not.toHaveProperty('postApprovalSessionId');
+});
+
+test('rejecting a review task clears the report that would re-signal completion', () => {
+  const rejected = prepareSpaceTaskStatusUpdate(
+    task('review', { reportedStatus: 'done', reportedSummary: 'agent said done' }),
+    'in_progress',
+    undefined,
+    123
+  );
+  expect(rejected.updates).toMatchObject({
+    status: 'in_progress',
+    reportedStatus: null,
+    reportedSummary: null,
+  });
+});
+
+test('every reopen the transition table allows clears reportedStatus', () => {
+  const NOT_A_REOPEN: SpaceTaskStatus[] = ['draft', 'open', 'rate_limited', 'usage_limited'];
+  const pairs = Object.entries(VALID_TASK_TRANSITIONS).flatMap(([from, targets]) =>
+    NOT_A_REOPEN.includes(from as SpaceTaskStatus)
+      ? []
+      : targets
+          .filter((to) => to === 'open' || to === 'in_progress')
+          .map((to) => [from as SpaceTaskStatus, to as SpaceTaskStatus] as const)
+  );
+  expect(pairs.length).toBeGreaterThan(0);
+  for (const [from, to] of pairs) {
+    const prepared = prepareSpaceTaskStatusUpdate(
+      task(from, { reportedStatus: 'done' }),
+      to,
+      undefined,
+      123
+    );
+    expect({ from, to, reportedStatus: prepared.updates.reportedStatus }).toEqual({
+      from,
+      to,
+      reportedStatus: null,
+    });
+  }
+});
+
+test('resuming from a rate or usage limit keeps the report it was paused with', () => {
+  for (const from of ['rate_limited', 'usage_limited'] as const) {
+    const prepared = prepareSpaceTaskStatusUpdate(
+      task(from, { reportedStatus: 'done' }),
+      'in_progress',
+      undefined,
+      123
+    );
+    expect(prepared.updates).not.toHaveProperty('reportedStatus');
+  }
 });

@@ -218,6 +218,22 @@ describe('SpaceTaskManager', () => {
       expect(resumed.blockReason).toBeNull();
     });
 
+    it('clears the stale report when a review task is rejected back to in_progress', async () => {
+      const task = await manager.createTask({ title: 'T', description: '' });
+      await manager.setTaskStatus(task.id, 'in_progress');
+      await manager.setTaskStatus(task.id, 'review');
+      await manager.updateTask(task.id, {
+        reportedStatus: 'done',
+        reportedSummary: 'agent said done',
+      });
+
+      const rejected = await manager.setTaskStatus(task.id, 'in_progress');
+
+      expect(rejected.status).toBe('in_progress');
+      expect(rejected.reportedStatus).toBeNull();
+      expect(rejected.reportedSummary).toBeNull();
+    });
+
     it('transitions in_progress -> done with result', async () => {
       const task = await manager.createTask({ title: 'T', description: '' });
       await manager.setTaskStatus(task.id, 'in_progress');
