@@ -1456,6 +1456,126 @@ describe('HookEngine', () => {
     ).toBeNull();
   });
 
+  test('restored operation retry survives a transient execution failure', async () => {
+    const args = { target: 'Review', message: 'hi' };
+    const actionKey = JSON.stringify({
+      runScopedTaskId: defaultMeta.taskId,
+      nodeId: defaultMeta.nodeId,
+      sessionId: defaultMeta.sessionId,
+      agentName: defaultMeta.agentName,
+      methodName: 'send_message',
+      args,
+    });
+    const hookStateRepo = makeMockHookStateRepo();
+    const { engine } = makeEngine(
+      [makeHook({ id: 'hook-1', classification: 'validation', order: 0 })],
+      { hookStateRepo }
+    );
+    hookStateRepo.ensure('run-1', 'hook-1');
+    engine.persistQueuedRetryableAction({
+      actionKey,
+      hookId: 'hook-1',
+      methodName: 'send_message',
+      args,
+      meta: defaultMeta,
+      isFollowUp: false,
+      nextRetryAt: Date.now() - 1,
+      retryAfterMs: 5,
+      queuedAt: Date.now() - 10,
+    });
+    let replayCallCount = 0;
+    const registry = createOperationRegistry([
+      defineOperation({
+        name: 'send_message',
+        description: 'test replay',
+        inputSchema: z.record(z.string(), z.unknown()),
+        resultSchema: z.unknown(),
+        execute: async () => {
+          replayCallCount++;
+          if (replayCallCount === 1) throw new Error('temporary transport failure');
+          engine.clearQueuedRetryableActionsForKey(actionKey);
+          return { success: true };
+        },
+      }),
+    ]);
+
+    engine.scheduleQueuedRetryableOperations(
+      registry,
+      { source: 'internal', sessionId: defaultMeta.sessionId, spaceId: 'space-1' },
+      defaultMeta
+    );
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    expect(replayCallCount).toBe(2);
+    expect(engine.getQueuedRetryableAction('hook-1')).toBeUndefined();
+  });
+
+  test('a runtime rebuild cannot duplicate an in-flight restored replay', async () => {
+    const args = { target: 'Review', message: 'hi' };
+    const actionKey = JSON.stringify({
+      runScopedTaskId: defaultMeta.taskId,
+      nodeId: defaultMeta.nodeId,
+      sessionId: defaultMeta.sessionId,
+      agentName: defaultMeta.agentName,
+      methodName: 'send_message',
+      args,
+    });
+    const hookStateRepo = makeMockHookStateRepo();
+    const { engine } = makeEngine(
+      [makeHook({ id: 'hook-1', classification: 'validation', order: 0 })],
+      { hookStateRepo }
+    );
+    hookStateRepo.ensure('run-1', 'hook-1');
+    engine.persistQueuedRetryableAction({
+      actionKey,
+      hookId: 'hook-1',
+      methodName: 'send_message',
+      args,
+      meta: defaultMeta,
+      isFollowUp: false,
+      nextRetryAt: Date.now() - 1,
+      retryAfterMs: 5,
+      queuedAt: Date.now() - 10,
+    });
+    let markReplayStarted: (() => void) | undefined;
+    const replayStarted = new Promise<void>((resolve) => {
+      markReplayStarted = resolve;
+    });
+    let releaseReplay: (() => void) | undefined;
+    const replayGate = new Promise<void>((resolve) => {
+      releaseReplay = resolve;
+    });
+    let replayCallCount = 0;
+    const registry = createOperationRegistry([
+      defineOperation({
+        name: 'send_message',
+        description: 'test replay',
+        inputSchema: z.record(z.string(), z.unknown()),
+        resultSchema: z.unknown(),
+        execute: async () => {
+          replayCallCount++;
+          markReplayStarted?.();
+          await replayGate;
+          engine.clearQueuedRetryableActionsForKey(actionKey);
+          return { success: true };
+        },
+      }),
+    ]);
+    const caller = {
+      source: 'internal' as const,
+      sessionId: defaultMeta.sessionId,
+      spaceId: 'space-1',
+    };
+
+    engine.scheduleQueuedRetryableOperations(registry, caller, defaultMeta);
+    await replayStarted;
+    engine.scheduleQueuedRetryableOperations(registry, caller, defaultMeta);
+    releaseReplay?.();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(replayCallCount).toBe(1);
+  });
+
   test.each([
     ['task is done', { getTaskStatus: () => 'done' }, false],
     [

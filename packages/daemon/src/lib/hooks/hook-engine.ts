@@ -155,6 +155,7 @@ export class HookEngine {
       scheduleRetryableAction({
         actionKey: action.actionKey,
         delayMs: Math.max(0, action.nextRetryAt - Date.now()),
+        retryDelayMs: action.retryAfterMs,
         methodName: action.methodName,
         args: action.args,
         handler,
@@ -188,11 +189,19 @@ export class HookEngine {
         });
         return outcome.kind === 'completed'
           ? jsonResult(outcome.value)
-          : { ...jsonResult({ success: false, error: outcome.message }), isError: true };
+          : {
+              ...jsonResult({
+                success: false,
+                error: outcome.message,
+                retryable: outcome.code === 'execution_failed',
+              }),
+              isError: true,
+            };
       };
       scheduleRetryableAction({
         actionKey: action.actionKey,
         delayMs: Math.max(0, action.nextRetryAt - Date.now()),
+        retryDelayMs: action.retryAfterMs,
         methodName: action.methodName,
         args: action.args,
         handler,
