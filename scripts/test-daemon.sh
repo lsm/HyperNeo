@@ -538,15 +538,16 @@ run_shard() {
 		pkg_dir="$REPO_ROOT/packages/daemon"
 	fi
 
-	# Migration-carrying shards (both merged halves) replay the full migration
-	# chain on a fresh on-disk SQLite DB per test. That is I/O-heavy and
-	# intermittently exceeds vitest's 5s test / 10s hook defaults under CI
-	# parallel load — a different migration test flakes on different runs
-	# (28/29/33/34/35-36/47/94). Give the whole shard a generous budget instead
-	# of hardening each file one-by-one.
+	# Shards that build a fresh on-disk SQLite DB per test are I/O-heavy and
+	# intermittently exceed vitest's 5s test / 10s hook defaults under CI
+	# parallel load — a different file flakes on different runs. Give the whole
+	# shard a generous budget instead of hardening each file one-by-one.
+	# Migration shards replay the full chain (28/29/33/34/35-36/47/94);
+	# 5-space does the same per-test setup in direct-kickoff-startup and
+	# direct-process-ownership.
 	local timeout_flags=""
 	case "$shard" in
-		1-core | *-migrations) timeout_flags="--testTimeout=30000 --hookTimeout=30000" ;;
+		1-core | *-migrations | 5-space*) timeout_flags="--testTimeout=30000 --hookTimeout=30000" ;;
 	esac
 
 	# shellcheck disable=SC2086
