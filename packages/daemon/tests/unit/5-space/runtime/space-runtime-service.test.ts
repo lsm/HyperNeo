@@ -37,6 +37,7 @@ import {
   LONG_HORIZON_AGENT_BUILTIN_TOOLS,
   LONG_HORIZON_SCHEDULING_GUARDRAIL,
 } from '../../../../src/lib/agents/long-horizon-tools.ts';
+import { operationsCapabilityContribution } from '../../../../src/lib/operations/door-briefing.ts';
 import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session.ts';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { SpaceManager as SpaceMgr } from '../../../../src/lib/space/managers/space-manager.ts';
@@ -75,6 +76,11 @@ import { seedUnifiedAgentMirror } from '../../helpers/seed-unified-agent';
 import { seedLongHorizonAgent } from '../../helpers/seed-long-horizon-agent';
 
 const NOW = Date.now();
+
+const OPERATIONS_CONTRIBUTION = operationsCapabilityContribution({
+  type: 'sdk',
+  instance: {},
+} as never);
 
 const mockSpace: Space = {
   id: 'space-1',
@@ -880,6 +886,7 @@ describe('SpaceRuntimeService', () => {
         mergeRuntimeMcpServers: mock(() => {}),
         setOperationRegistryProvider: mock(() => {}),
         setRuntimeSystemPrompt: mock(() => {}),
+        getOperationsCapabilityContribution: mock(() => OPERATIONS_CONTRIBUTION),
         setSpaceBriefing: mock(() => {}),
         updateConfig: mock(async () => {}),
         resetQuery: mock(async () => ({ success: true })),
@@ -2241,6 +2248,7 @@ describe('SpaceRuntimeService', () => {
         mergeRuntimeMcpServers: mock(() => {}),
         setOperationRegistryProvider: mock(() => {}),
         setRuntimeSystemPrompt: mock(() => {}),
+        getOperationsCapabilityContribution: mock(() => OPERATIONS_CONTRIBUTION),
         setSpaceBriefing: mock(() => {}),
         updateConfig: mock(async () => {}),
         resetQuery: mock(async () => ({ success: true })),
@@ -2500,6 +2508,7 @@ describe('SpaceRuntimeService', () => {
       } as unknown as Session;
       const agentSession = {
         mergeRuntimeMcpServers: mock(() => {}),
+        getOperationsCapabilityContribution: mock(() => OPERATIONS_CONTRIBUTION),
         setSpaceBriefing: mock(() => {}),
         updateConfig: mock(async (updates: Partial<Session['config']>) => {
           sessionData.config = { ...sessionData.config, ...updates };
@@ -2566,6 +2575,7 @@ describe('SpaceRuntimeService', () => {
         setRuntimeMcpServers: mock(() => {}),
         setOperationRegistryProvider: mock(() => {}),
         setRuntimeSystemPrompt: mock(() => {}),
+        getOperationsCapabilityContribution: mock(() => OPERATIONS_CONTRIBUTION),
         setSpaceBriefing: mock(() => {}),
         updateConfig: mock(async (updates: Partial<Session['config']>) => {
           sessionData.config = { ...sessionData.config, ...updates };
@@ -3461,6 +3471,7 @@ describe('SpaceRuntimeService', () => {
         setRuntimeMcpServers: mock(() => {}),
         setOperationRegistryProvider: mock(() => {}),
         setRuntimeSystemPrompt: mock(() => {}),
+        getOperationsCapabilityContribution: mock(() => OPERATIONS_CONTRIBUTION),
         setSpaceBriefing: mock(() => {}),
       } as unknown as AgentSession;
     }
@@ -3747,6 +3758,7 @@ describe('SpaceRuntimeService', () => {
         mergeRuntimeMcpServers: mock(() => {}),
         setOperationRegistryProvider: mock(() => {}),
         setRuntimeSystemPrompt: mock(() => {}),
+        getOperationsCapabilityContribution: mock(() => OPERATIONS_CONTRIBUTION),
         setSpaceBriefing: mock(() => {}),
       } as unknown as AgentSession;
     }
@@ -3758,6 +3770,7 @@ describe('SpaceRuntimeService', () => {
         setRuntimeMcpServers: mock(() => {}),
         setOperationRegistryProvider: mock(() => {}),
         setRuntimeSystemPrompt: mock(() => {}),
+        getOperationsCapabilityContribution: mock(() => OPERATIONS_CONTRIBUTION),
         setSpaceBriefing: mock(() => {}),
       } as unknown as AgentSession;
     }

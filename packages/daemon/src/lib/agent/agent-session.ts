@@ -2,6 +2,8 @@ import { createDirectQueryStartGuard } from '../tasks/direct-query-start-guard.t
 import { createDatabaseOperationCatalog } from '../operations/database-catalog.ts';
 import type { OperationRegistry, OperationRegistryProvider } from '../operations/registry.ts';
 import { createOperationMcpServer } from '../operations/mcp-server.ts';
+import { operationsCapabilityContribution } from '../operations/door-briefing.ts';
+import type { CapabilityContribution } from '../briefings/contribution.ts';
 import {
   NO_CALLER_SCOPE,
   resolveCallerIdentity,
@@ -285,6 +287,12 @@ export class AgentSession
         (this.defaultOperationRegistry ??= createDatabaseOperationCatalog(this.db)),
       () => resolveCallerIdentity(this.callerScopeResolver, this.session.id)
     ));
+  }
+
+  getOperationsCapabilityContribution(): CapabilityContribution {
+    return operationsCapabilityContribution(
+      this.getOperationMcpServer() as unknown as McpServerConfig
+    );
   }
 
   readonly optionsBuilder: QueryOptionsBuilder;
