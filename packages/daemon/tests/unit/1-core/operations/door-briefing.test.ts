@@ -1,18 +1,36 @@
 import { describe, expect, test } from 'bun:test';
 import type { McpServer } from '@hyperneo/shared/sdk';
+import { z } from 'zod';
 import { assembleSessionBriefing } from '../../../../src/lib/briefings/assemble-session-briefing.ts';
 import type { AttachedMcpServerConfig } from '../../../../src/lib/briefings/contribution.ts';
 import {
   isBuiltInMcpServer,
   OPERATIONS_MCP_SERVER_NAME,
 } from '../../../../src/lib/mcp/built-in-servers.ts';
-import { operationsCapabilityContribution } from '../../../../src/lib/operations/door-briefing.ts';
+import {
+  describeResolvedOperations,
+  operationsCapabilityContribution,
+} from '../../../../src/lib/operations/door-briefing.ts';
+import {
+  createOperationRegistry,
+  defineOperation,
+} from '../../../../src/lib/operations/registry.ts';
 
 const ATTACHED: AttachedMcpServerConfig = {
   type: 'sdk',
   name: OPERATIONS_MCP_SERVER_NAME,
   instance: {} as McpServer,
 };
+
+function stubOperation(name: string) {
+  return defineOperation({
+    name,
+    description: `stub for ${name}`,
+    inputSchema: z.object({}),
+    resultSchema: z.unknown(),
+    execute: async () => undefined,
+  });
+}
 
 describe('operationsCapabilityContribution', () => {
   test('pairs the attached operations server with its authored briefing', () => {
@@ -63,5 +81,85 @@ describe('operationsCapabilityContribution', () => {
       ['scope', 'space'],
       ['capability', OPERATIONS_MCP_SERVER_NAME],
     ]);
+  });
+});
+
+describe('describeResolvedOperations', () => {
+  test('derives the count and areas from the registry, never a written list', () => {
+    const registry = createOperationRegistry([
+      stubOperation('task.create'),
+      stubOperation('task.cancel'),
+      stubOperation('goal.list'),
+      stubOperation('operations.list'),
+      stubOperation('operations.describe'),
+    ]);
+
+    expect(describeResolvedOperations(registry)).toBe(
+      "This session's registry currently resolves 3 operations across 2 areas: goal, task."
+    );
+  });
+
+  test('excludes the discovery operations from the count and leaves no individual name behind', () => {
+    const registry = createOperationRegistry([
+      stubOperation('task.create'),
+      stubOperation('operations.list'),
+      stubOperation('operations.describe'),
+    ]);
+
+    const listing = describeResolvedOperations(registry);
+
+    expect(listing).toContain('1 operation across 1 area');
+    expect(listing).not.toContain('task.create');
+  });
+
+  test('returns an empty string for a registry with nothing to list', () => {
+    const registry = createOperationRegistry([
+      stubOperation('operations.list'),
+      stubOperation('operations.describe'),
+    ]);
+
+    expect(describeResolvedOperations(registry)).toBe('');
+  });
+
+  test('sorts areas and de-duplicates repeated families', () => {
+    const registry = createOperationRegistry([
+      stubOperation('workflow.get'),
+      stubOperation('agent.get'),
+      stubOperation('agent.list'),
+    ]);
+
+    expect(describeResolvedOperations(registry)).toBe(
+      "This session's registry currently resolves 3 operations across 2 areas: agent, workflow."
+    );
+  });
+});
+
+describe('operationsCapabilityContribution with a resolved registry', () => {
+  test('appends the derived listing after the authored prose', () => {
+    const registry = createOperationRegistry([stubOperation('task.create')]);
+
+    const { briefing } = operationsCapabilityContribution(ATTACHED, registry);
+
+    expect(briefing.startsWith(operationsCapabilityContribution(ATTACHED).briefing)).toBe(true);
+    expect(briefing).toContain('1 operation across 1 area: task');
+  });
+
+  test('never names an individual operation in the derived section either', () => {
+    const registry = createOperationRegistry([
+      stubOperation('task.create'),
+      stubOperation('message.send'),
+    ]);
+
+    const { briefing } = operationsCapabilityContribution(ATTACHED, registry);
+
+    expect(briefing).not.toContain('task.create');
+    expect(briefing).not.toContain('message.send');
+  });
+
+  test('omits the derived section when no registry is supplied, unchanged from before', () => {
+    const withoutRegistry = operationsCapabilityContribution(ATTACHED);
+
+    expect(withoutRegistry.briefing).not.toContain('this session');
+    expect(withoutRegistry.briefing.toLowerCase()).not.toContain('resolves');
   });
 });

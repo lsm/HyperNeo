@@ -1,18 +1,3 @@
-import type { McpSetServersResult } from '@hyperneo/shared/sdk';
-import { reservedMcpRenameSource } from '../mcp/built-in-servers.ts';
-import { createDirectQueryStartGuard } from '../tasks/direct-query-start-guard.ts';
-import { createDatabaseOperationCatalog } from '../operations/database-catalog.ts';
-import type { OperationRegistry, OperationRegistryProvider } from '../operations/registry.ts';
-import { createOperationMcpServer } from '../operations/mcp-server.ts';
-import { operationsCapabilityContribution } from '../operations/door-briefing.ts';
-import type { AuthoredCapabilityContribution } from '../briefings/contribution.ts';
-import { assembleSessionBriefing } from '../briefings/assemble-session-briefing.ts';
-import { NO_SESSION_SCOPE, type SessionScopeResolver } from '../briefings/scope-resolver.ts';
-import {
-  NO_CALLER_SCOPE,
-  resolveCallerIdentity,
-  type CallerScopeResolver,
-} from '../operations/caller.ts';
 import type {
   AgentProcessingState,
   ChatMessage,
@@ -41,11 +26,26 @@ import type {
   SystemPromptConfig,
 } from '@hyperneo/shared';
 import { generateUUID, DEFAULT_WORKER_FEATURES as WORKER_FEATURES } from '@hyperneo/shared';
+import type { McpSetServersResult } from '@hyperneo/shared/sdk';
 import type { Database } from '../../storage/database.ts';
+import { assembleSessionBriefing } from '../briefings/assemble-session-briefing.ts';
+import type { AuthoredCapabilityContribution } from '../briefings/contribution.ts';
+import { NO_SESSION_SCOPE, type SessionScopeResolver } from '../briefings/scope-resolver.ts';
 import { ErrorCategory, ErrorManager, type StructuredError } from '../error-manager.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
+import { reservedMcpRenameSource } from '../mcp/built-in-servers.ts';
+import {
+  type CallerScopeResolver,
+  NO_CALLER_SCOPE,
+  resolveCallerIdentity,
+} from '../operations/caller.ts';
+import { createDatabaseOperationCatalog } from '../operations/database-catalog.ts';
+import { operationsCapabilityContribution } from '../operations/door-briefing.ts';
+import { createOperationMcpServer } from '../operations/mcp-server.ts';
+import type { OperationRegistry, OperationRegistryProvider } from '../operations/registry.ts';
 import { SettingsManager } from '../settings-manager.ts';
+import { createDirectQueryStartGuard } from '../tasks/direct-query-start-guard.ts';
 import { runRateLimitManualCancel } from './rate-limit-manual-cancel.ts';
 import { runRateLimitManualRetry } from './rate-limit-manual-retry.ts';
 
@@ -168,7 +168,9 @@ import { InterruptHandler, type InterruptHandlerContext } from './interrupt-hand
 import type { LimitRetryHint } from './limit-error-classifier.ts';
 import { LimitErrorLlmClassifier } from './limit-error-llm-classifier.ts';
 import {
+  acquireContextClearBoundary,
   admitAcrossContextClearBoundary,
+  type ContextClearBoundaryOwner,
   type DeliveryOutcome,
   type DriveTurnOutcome,
   deliverMessage,
@@ -181,14 +183,12 @@ import {
   MessageDeliveryTerminalTurnError,
   signalDeliveryConsumed,
   throwIfDeliveryAborted,
-  acquireContextClearBoundary,
-  type ContextClearBoundaryOwner,
   waitForDeliveryAbort,
   waitForDeliveryConsumption,
   withSessionLock,
 } from './message-delivery.ts';
-import { decideReconcileAdmission, selectStrandedDeliveries } from './message-delivery-pipeline.ts';
 import { deliveryMetrics } from './message-delivery-metrics.ts';
+import { decideReconcileAdmission, selectStrandedDeliveries } from './message-delivery-pipeline.ts';
 import type { MidTurnBudgetInterruptOptions } from './message-queue.ts';
 import { MessageQueue } from './message-queue.ts';
 import { runMidTurnBudgetPipeline } from './mid-turn-budget-pipeline.ts';
@@ -295,17 +295,25 @@ export class AgentSession
     this.callerScopeResolver = resolver;
   }
 
+  private resolveOperationRegistry(): OperationRegistry {
+    return (
+      this.operationRegistryProvider?.() ??
+      (this.defaultOperationRegistry ??= createDatabaseOperationCatalog(this.db))
+    );
+  }
+
   getOperationMcpServer(): ReturnType<typeof createOperationMcpServer> {
     return (this.operationMcpServer ??= createOperationMcpServer(
-      () =>
-        this.operationRegistryProvider?.() ??
-        (this.defaultOperationRegistry ??= createDatabaseOperationCatalog(this.db)),
+      () => this.resolveOperationRegistry(),
       () => resolveCallerIdentity(this.callerScopeResolver, this.session.id)
     ));
   }
 
   getOperationsCapabilityContribution(): AuthoredCapabilityContribution {
-    return operationsCapabilityContribution(this.getOperationMcpServer());
+    return operationsCapabilityContribution(
+      this.getOperationMcpServer(),
+      this.resolveOperationRegistry()
+    );
   }
 
   readonly optionsBuilder: QueryOptionsBuilder;
