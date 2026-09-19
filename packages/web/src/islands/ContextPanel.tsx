@@ -51,6 +51,12 @@ const SETTINGS_SECTIONS: Array<{
     icon: 'server',
     accent: 'text-cat-violet bg-cat-violet/15',
   },
+  {
+    id: 'remote-daemons',
+    label: 'Remote Daemons',
+    icon: 'server',
+    accent: 'text-cat-teal bg-cat-teal/15',
+  },
   { id: 'skills', label: 'Skills', icon: 'skills', accent: 'text-success-soft bg-success/15' },
   { id: 'models', label: 'Models', icon: 'swap', accent: 'text-cat-cyan bg-cat-cyan/15' },
   { id: 'usage', label: 'Usage', icon: 'chart', accent: 'text-warning bg-warning/15' },

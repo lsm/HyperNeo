@@ -13,6 +13,10 @@ import {
   type SessionExistenceCheck,
 } from '../messaging/message-send.ts';
 import { createAttachDaemonOperation } from '../remote-daemons/attach-operation.ts';
+import {
+  createDetachDaemonOperation,
+  createListDaemonsOperation,
+} from '../remote-daemons/manage-operations.ts';
 import { createRemoteSendForwarder } from '../remote-daemons/forward-send.ts';
 import { remoteDaemons } from '../remote-daemons/registry.ts';
 import {
@@ -59,6 +63,8 @@ export function createDaemonOperationCatalog(
       createRemoteSendForwarder(remoteDaemons)
     ),
     createAttachDaemonOperation(remoteDaemons),
+    createListDaemonsOperation(remoteDaemons),
+    createDetachDaemonOperation(remoteDaemons),
     createGetTaskOperation(tasks.readTask, tasks.readTaskByNumber),
     tasks.create ?? createCreateTaskOperation(tasks.createTask),
     createListTasksOperation(tasks.listTasks),
