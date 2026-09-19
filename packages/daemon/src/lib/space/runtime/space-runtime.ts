@@ -1,3 +1,7 @@
+import {
+  assertTaskTransitionSnapshot,
+  type TaskTransitionExpectation,
+} from '../../tasks/task-manager.ts';
 import { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
 import { availableTaskSlots } from '../../tasks/capacity.ts';
 import { selectOrphanedInProgressTasks } from '../../tasks/orphaned-task-recovery.ts';
@@ -3170,14 +3174,23 @@ export class SpaceRuntime {
     return [...ids];
   }
 
-  async parkStoppedWorkflowTask(spaceId: string, taskId: string): Promise<SpaceTask | null> {
+  async parkStoppedWorkflowTask(
+    spaceId: string,
+    taskId: string,
+    expected: TaskTransitionExpectation = {}
+  ): Promise<SpaceTask | null> {
     const task = this.config.taskRepo.getTask(taskId);
     if (!task || task.spaceId !== spaceId) return null;
+    assertTaskTransitionSnapshot(task, expected);
     if (!isValidSpaceTaskTransition(task.status, 'stopped')) {
       throw new Error(`Invalid status transition from '${task.status}' to 'stopped'.`);
     }
 
-    const updated = await this.getOrCreateTaskManager(spaceId).setTaskStatus(taskId, 'stopped');
+    const updated = await this.getOrCreateTaskManager(spaceId).setTaskStatus(
+      taskId,
+      'stopped',
+      expected
+    );
     await this.safeOnTaskUpdated(spaceId, updated);
 
     const tam = this.config.taskAgentManager;
@@ -3228,10 +3241,12 @@ export class SpaceRuntime {
   async stopWorkflowBackedTaskForStatus(
     spaceId: string,
     taskId: string,
-    params: UpdateSpaceTaskParams
+    params: UpdateSpaceTaskParams,
+    expected: TaskTransitionExpectation = {}
   ): Promise<SpaceTask | null> {
     const previous = this.config.taskRepo.getTask(taskId);
-    if (!previous) return null;
+    if (!previous || previous.spaceId !== spaceId) return null;
+    assertTaskTransitionSnapshot(previous, expected);
     const nextStatus = params.status;
     if (nextStatus && previous.status !== nextStatus) {
       assertValidSpaceTaskTransition(previous.status, nextStatus);
@@ -3258,6 +3273,7 @@ export class SpaceRuntime {
         delete (params as Record<string, unknown>).workspacePath;
       }
       let updated = await taskManager.setTaskStatus(taskId, nextStatus, {
+        ...expected,
         result: Object.hasOwn(params, 'result') ? params.result : undefined,
         reportedSummary: Object.hasOwn(params, 'reportedSummary')
           ? params.reportedSummary
@@ -4104,7 +4120,11 @@ export class SpaceRuntime {
     spaceId: string,
     taskId: string,
     targetStatus: WorkflowTaskRecoveryTargetStatus,
-    options: { workflowNodeId?: string; agentName?: string; description?: string } = {}
+    options: {
+      workflowNodeId?: string;
+      agentName?: string;
+      description?: string;
+    } & TaskTransitionExpectation = {}
   ): Promise<{ task: SpaceTask; run: SpaceWorkflowRun }> {
     if (targetStatus !== 'open' && targetStatus !== 'in_progress') {
       throw new Error(
@@ -4112,24 +4132,12 @@ export class SpaceRuntime {
       );
     }
 
-    const preTxTask = this.config.taskRepo.getTask(taskId);
-    const preTxRunId = preTxTask?.workflowRunId;
-    const preTxRun = preTxRunId ? this.config.workflowRunRepo.getRun(preTxRunId) : null;
-    if (preTxRunId && preTxTask.spaceId === spaceId && preTxRun?.spaceId === spaceId) {
-      this.blockedRetryCounts.delete(preTxRunId);
-      for (const key of this.nonTerminalIdleStates.keys()) {
-        if (key.startsWith(preTxRunId + ':')) {
-          this.nonTerminalIdleStates.delete(key);
-        }
-      }
-      this.clearAgentStuckStateForRun(preTxRunId);
-    }
-
     const liveSessionIds = new Set<string>();
     const recoverTx = this.config.db.transaction(() => {
       const task = this.config.taskRepo.getTask(taskId);
       if (!task) throw new Error(`Task not found: ${taskId}`);
       if (task.spaceId !== spaceId) throw new Error(`Task not found: ${taskId}`);
+      assertTaskTransitionSnapshot(task, options);
       if (!task.workflowRunId) {
         throw new Error(`Task ${taskId} is not backed by a workflow run`);
       }
@@ -4291,6 +4299,19 @@ export class SpaceRuntime {
       this.config.reactiveDb?.abortTransaction();
       throw err;
     }
+    const preTxTask = this.config.taskRepo.getTask(taskId);
+    const preTxRunId = preTxTask?.workflowRunId;
+    const preTxRun = preTxRunId ? this.config.workflowRunRepo.getRun(preTxRunId) : null;
+    if (preTxRunId && preTxTask.spaceId === spaceId && preTxRun?.spaceId === spaceId) {
+      this.blockedRetryCounts.delete(preTxRunId);
+      for (const key of this.nonTerminalIdleStates.keys()) {
+        if (key.startsWith(preTxRunId + ':')) {
+          this.nonTerminalIdleStates.delete(key);
+        }
+      }
+      this.clearAgentStuckStateForRun(preTxRunId);
+    }
+
     await this.ensureExecutorRegistered(recovered.run);
     const recoveredWorkflow = this.config.spaceWorkflowManager.getWorkflowForRun(recovered.run);
     if (recoveredWorkflow) {

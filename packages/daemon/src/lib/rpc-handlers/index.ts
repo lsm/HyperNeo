@@ -1403,16 +1403,16 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       },
       isWorkflowRunActive: (workflowRunId) =>
         spaceRuntimeService.isWorkflowRunActive(workflowRunId),
-      recoverTransition: (spaceId, taskId, status) =>
+      recoverTransition: (spaceId, taskId, status, expected) =>
         recoverTaskExecution(
-          createWorkflowTaskRecoveryExecutor(spaceId, spaceRuntimeService),
+          createWorkflowTaskRecoveryExecutor(spaceId, spaceRuntimeService, expected),
           taskId,
           status
         ),
-      stopForStatus: (spaceId, taskId, params) =>
-        spaceRuntimeService.stopWorkflowBackedTaskForStatus(spaceId, taskId, params),
-      parkStopped: (spaceId, taskId) =>
-        spaceRuntimeService.parkStoppedWorkflowTask(spaceId, taskId),
+      stopForStatus: (spaceId, taskId, params, expected) =>
+        spaceRuntimeService.stopWorkflowBackedTaskForStatus(spaceId, taskId, params, expected),
+      parkStopped: (spaceId, taskId, expected) =>
+        spaceRuntimeService.parkStoppedWorkflowTask(spaceId, taskId, expected),
     },
     familyOperations
   );
