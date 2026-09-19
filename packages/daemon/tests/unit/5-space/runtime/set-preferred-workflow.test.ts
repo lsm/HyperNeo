@@ -239,14 +239,14 @@ test('a missing task resolves to null', async () => {
   });
 });
 
-test('an mcp session in another Space gets null and makes no write', async () => {
+test('an mcp session in another Space gets a typed denial and makes no write', async () => {
   const workflow = makeWorkflow();
   const task = tasks.createTask({ spaceId, title: 'T', description: '' });
   const caller = worker('outsider', 'other-space');
 
   expect(await invoke({ taskId: task.id, workflowId: workflow.id }, caller)).toEqual({
     kind: 'completed',
-    value: null,
+    value: { accepted: false, reason: 'task_workflow_selection_denied' },
   });
   expect(tasks.getTask(task.id)?.preferredWorkflowId ?? null).toBeNull();
 });

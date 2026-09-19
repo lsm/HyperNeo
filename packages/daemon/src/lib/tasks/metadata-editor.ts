@@ -1,3 +1,4 @@
+import type { TaskMutationDenial } from './mutation-denial.ts';
 import type { TaskCore, TaskPriority } from '@hyperneo/shared/types/task-core';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { OperationCaller } from '../operations/registry.ts';
@@ -16,7 +17,10 @@ type Awaitable<T> = T | Promise<T>;
 
 export interface TaskMetadataDependencies {
   resolveOwner: (taskId: string) => Awaitable<TaskMetadataOwner | null>;
-  admit: (owner: TaskMetadataOwner, caller: OperationCaller) => Awaitable<void>;
+  admit: (
+    owner: TaskMetadataOwner,
+    caller: OperationCaller
+  ) => Awaitable<void | TaskMutationDenial>;
   editStandalone: (input: TaskMetadataInput) => Awaitable<TaskCore | null>;
   editSpace: (spaceId: string, input: TaskMetadataInput) => Awaitable<TaskCore | null>;
   afterEdit?: (owner: TaskMetadataOwner, task: TaskCore) => Awaitable<void>;
@@ -44,8 +48,9 @@ export async function admitTaskMetadataEdit(
   admit: TaskMetadataDependencies['admit'],
   owner: TaskMetadataOwner,
   caller: OperationCaller
-): Promise<void> {
-  await admit(owner, caller);
+): Promise<{ value: TaskMetadataOwner } | { reason: TaskMutationDenial }> {
+  const denial = await admit(owner, caller);
+  return denial ? { reason: denial } : { value: owner };
 }
 
 export async function persistTaskMetadata(
@@ -65,7 +70,7 @@ export function createTaskMetadataEditor(dependencies: TaskMetadataDependencies)
     .input(['input', 'caller'])
     .pipe(selectTaskMetadata, 'input', 'metadata')
     .pipe(resolveTaskMetadataOwner, ['resolveOwner', 'metadata'], 'result:editedTask')
-    .pipe(admitTaskMetadataEdit, ['admit', 'editedTask', 'caller'])
+    .pipe(admitTaskMetadataEdit, ['admit', 'editedTask', 'caller'], 'result:editedTask')
     .pipe((owner: TaskMetadataOwner) => owner, 'editedTask', 'owner')
     .pipe(
       persistTaskMetadata,
@@ -76,5 +81,5 @@ export function createTaskMetadataEditor(dependencies: TaskMetadataDependencies)
     .endAsync('editedTask') as (
     input: TaskMetadataInput,
     caller: OperationCaller
-  ) => Promise<TaskCore | null>;
+  ) => Promise<TaskCore | TaskMutationDenial | null>;
 }

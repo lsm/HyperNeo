@@ -169,10 +169,10 @@ test.each([undefined, 'other-space'])(
     const caller = member('caller', owner);
     const mcp = createOperationMcpHandler(provider(), () => caller);
     const denied = await mcp(update('Denied'));
-    expect(denied.isError).toBe(true);
+    expect(denied.isError).not.toBe(true);
     expect(JSON.parse(denied.content[0].text)).toMatchObject({
-      code: 'execution_failed',
-      message: expect.stringContaining('owning Space'),
+      accepted: false,
+      reason: 'task_update_denied',
     });
     expect(tasks.getTask(taskId)?.title).toBe('Original');
     expect(emit).not.toHaveBeenCalled();
@@ -218,10 +218,10 @@ test.each([undefined, 'other-space'])(
     const caller = member('dependency-caller', owner);
     const mcp = createOperationMcpHandler(provider(), () => caller);
     const denied = await mcp(replaceDependencies(taskId, []));
-    expect(denied.isError).toBe(true);
+    expect(denied.isError).not.toBe(true);
     expect(JSON.parse(denied.content[0].text)).toMatchObject({
-      code: 'execution_failed',
-      message: expect.stringContaining('owning Space'),
+      accepted: false,
+      reason: 'task_dependencies_denied',
     });
     expect(tasks.getTask(taskId)?.dependsOn).toEqual([]);
     const a = createStandaloneTask(db, { title: 'Standalone' }, undefined, () => {});

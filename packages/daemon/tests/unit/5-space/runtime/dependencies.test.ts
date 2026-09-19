@@ -1,3 +1,6 @@
+import { invokeOperation } from '../../../../src/lib/operations/invoke';
+import { createOperationRegistry } from '../../../../src/lib/operations/registry';
+import { createSetTaskDependenciesOperation } from '../../../../src/lib/tasks/dependencies-operation';
 import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
 import type { SpaceTask } from '@hyperneo/shared';
 import { Database } from '../../../../src/storage/sqlite-compat';
@@ -101,9 +104,7 @@ test.each([null, 'other', 'matching'])('uses persisted session scope %s', async 
     expect(await result).toMatchObject({ id: target.id });
     expect(emit).toHaveBeenCalledTimes(1);
   } else {
-    await expect(result).rejects.toThrow(
-      'Task dependency updates require a session in the owning Space'
-    );
+    await expect(result).resolves.toEqual({ accepted: false, reason: 'task_dependencies_denied' });
     expect(emit).not.toHaveBeenCalled();
   }
 });
@@ -216,5 +217,33 @@ test.each([
     expect(blockExecution).toHaveBeenCalledTimes(blocked ? 1 : 0);
     if (blocked) expect(blockExecution.mock.calls[0][2]).not.toHaveProperty('dependsOn');
     if (!met) expect(tasks.getTask(target.id)?.completedAt).toBeNull();
+  }
+);
+
+test.each([false, true])(
+  'operation distinguishes scope denial from infrastructure fault %s',
+  async (fault) => {
+    const mutate = editor({
+      getSession: () => {
+        if (fault) throw new Error('session store unavailable');
+        return null;
+      },
+    });
+    const registry = createOperationRegistry([createSetTaskDependenciesOperation(mutate)]);
+    const result = await invokeOperation(
+      registry,
+      'task.dependencies.set',
+      { taskId: target.id, dependsOn: [] },
+      {
+        source: 'mcp',
+        sessionId: 'outsider',
+      }
+    );
+    expect(result).toMatchObject(
+      fault
+        ? { kind: 'failed', code: 'execution_failed' }
+        : { kind: 'completed', value: { accepted: false, reason: 'task_dependencies_denied' } }
+    );
+    expect(emit).not.toHaveBeenCalled();
   }
 );

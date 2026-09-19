@@ -108,7 +108,9 @@ describe('admitCaller', () => {
 
   test('an mcp session scoped to another Space is rejected', () => {
     const caller = worker('outsider', 'other-space');
-    expect(admitCaller(spaceId, caller, deps())).toEqual({ reason: null });
+    expect(admitCaller(spaceId, caller, deps())).toEqual({
+      reason: { accepted: false, reason: 'task_transition_denied' },
+    });
   });
 });
 
