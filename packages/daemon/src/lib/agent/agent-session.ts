@@ -138,8 +138,7 @@ import {
 } from '@hyperneo/shared/sdk/type-guards';
 import { AcpQueryRunner } from '../acp/acp-query-runner.ts';
 import {
-  getSessionContextModelInfo,
-  getSessionModelCacheKey,
+  resolveSessionContextModelInfo,
   getSessionModelInfo,
   initializeModels,
   resolveModelAlias,
@@ -1769,8 +1768,8 @@ export class AgentSession
   }
 
   private async resolveSessionCatalogModelInfo(): Promise<ModelInfo | null> {
-    const cached = await getSessionContextModelInfo(this.session);
-    if (getSessionModelCacheKey(this.session) !== 'global') return cached;
+    const { cacheKey, modelInfo: cached } = await resolveSessionContextModelInfo(this.session);
+    if (cacheKey !== 'global') return cached;
     if (cached) return cached;
     await initializeModels().catch(() => {});
     return getSessionModelInfo(this.session);
@@ -1891,8 +1890,7 @@ export class AgentSession
       return stale;
     }
     try {
-      const cacheKey = getSessionModelCacheKey(this.session);
-      const modelInfo = await getSessionContextModelInfo(this.session);
+      const { cacheKey, modelInfo } = await resolveSessionContextModelInfo(this.session);
       if (
         this.session.config.model !== fenceModel ||
         this.session.config.provider !== fenceProvider

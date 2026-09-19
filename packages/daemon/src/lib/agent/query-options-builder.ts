@@ -38,6 +38,7 @@ import { mergeSessionMcpServers } from '../mcp/built-in-servers.ts';
 import { resolveMcpServers, scopeChainForSession } from '../mcp/resolve-mcp-servers.ts';
 import {
   getProviderCatalogEpoch,
+  getSessionModelCacheKey,
   getSessionModelInfo,
   isCuratedOutModel,
 } from '../model-service.ts';
@@ -343,11 +344,8 @@ export class QueryOptionsBuilder {
     let sdkFallbackModel: string | undefined;
     const providerEpoch = getProviderCatalogEpoch(providerId);
     if (config.fallbackModel) {
-      const sessionScopedProvider = Boolean(
-        config.providerConfig?.apiKey ||
-          config.providerConfig?.baseUrl ||
-          config.providerConfig?.region
-      );
+      const sessionScopedProvider =
+        getSessionModelCacheKey({ id: session.id, config }) !== 'global';
       const outcome = await decideFallbackModelCuration({
         providerId,
         fallbackModel: config.fallbackModel,

@@ -1764,6 +1764,12 @@ export function getSessionModelCacheKey(session: Pick<Session, 'id' | 'config'>)
 export async function getSessionContextModelInfo(
   session: Pick<Session, 'id' | 'config'>
 ): Promise<ModelInfo | null> {
+  return (await resolveSessionContextModelInfo(session)).modelInfo;
+}
+
+export async function resolveSessionContextModelInfo(
+  session: Pick<Session, 'id' | 'config'>
+): Promise<{ cacheKey: string; modelInfo: ModelInfo | null }> {
   const cacheKey = getSessionModelCacheKey(session);
   if (cacheKey !== 'global' && session.config.provider && session.config.providerConfig) {
     await ensureScopedProviderCatalogModels(
@@ -1772,7 +1778,7 @@ export async function getSessionContextModelInfo(
       session.config.providerConfig
     );
   }
-  return getSessionModelInfo(session, cacheKey);
+  return { cacheKey, modelInfo: await getSessionModelInfo(session, cacheKey) };
 }
 
 export async function getSessionModelInfo(
