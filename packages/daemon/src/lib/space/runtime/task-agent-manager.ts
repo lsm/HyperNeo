@@ -124,6 +124,9 @@ import {
 } from '../../messaging/delivery-pipeline.ts';
 import { AgentMessageRouter } from '../../messaging/agent-message-router.ts';
 import type { WorkflowArtifactProfile } from '../../workflows/artifact-profile.ts';
+import { bindNodeSendMessage, nodeSendMessageHookMeta } from '../../messaging/node-send-message.ts';
+import type { NodeMessagingContext } from '../../messaging/node-messaging-context.ts';
+import type { AnyToolResult } from '../../hooks/hook-binding.ts';
 import { ChannelResolver } from '../../messaging/channel-resolver.ts';
 import type { NodeMessagingRuntime } from '../../messaging/node-messaging-context.ts';
 import { ChannelRouter } from '../../messaging/channel-router.ts';
@@ -5070,7 +5073,7 @@ export class TaskAgentManager {
       });
     }
 
-    this.nodeMessagingBySession.set(subSessionId, {
+    const nodeMessagingRuntime: NodeMessagingRuntime = {
       spaceId,
       taskId,
       workflow,
@@ -5080,7 +5083,25 @@ export class TaskAgentManager {
       replyRoutingLookup: (fromAgentName) =>
         this.config.replyRoutingRegistry?.get(taskId, fromAgentName) ?? null,
       hookEngine,
-    });
+    };
+    this.nodeMessagingBySession.set(subSessionId, nodeMessagingRuntime);
+    if (hookEngine) {
+      const hookContext = {
+        sessionId: subSessionId,
+        agentName,
+        workflowRunId,
+        workflowNodeId,
+        runtime: nodeMessagingRuntime,
+      } as NodeMessagingContext;
+      hookEngine.scheduleQueuedRetryableActions(
+        {
+          send_message: bindNodeSendMessage(hookContext, this.config.nodeExecutionRepo) as (
+            ...callArgs: unknown[]
+          ) => Promise<AnyToolResult>,
+        },
+        nodeSendMessageHookMeta(hookContext)
+      );
+    }
     return {};
   }
 
