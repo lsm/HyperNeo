@@ -2,6 +2,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { sessionStore } from '../session-store';
+import { Logger } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 
 const lifecycleHub = {
@@ -104,6 +105,61 @@ describe('chat/thread lifecycle recovery — SessionStore', () => {
 
   afterEach(async () => {
     await sessionStore.select(null);
+  });
+
+  it('traces received row IDs and the exact guard that discards each delta without message contents', async () => {
+    const trace = vi.spyOn(Logger.prototype, 'debugWithMetadata').mockImplementation(() => {});
+    try {
+      await sessionStore.select('session-1');
+      const subscriptionId = hub.subscriptionId;
+      const row = {
+        id: 'assistant-secret',
+        type: 'assistant',
+        message: { content: 'private answer' },
+      };
+      hub.fire('liveQuery.delta', { subscriptionId, added: [row], version: 1 });
+      expect(sessionStore.sdkMessages.value).toHaveLength(0);
+      expect(trace).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          subscriptionId,
+          outcome: 'awaiting_snapshot',
+          addedIds: ['assistant-secret'],
+          version: 1,
+        }),
+        'messages.liveQuery'
+      );
+
+      hub.fire('liveQuery.snapshot', { subscriptionId, rows: [], version: 2 });
+      hub.fire('liveQuery.delta', { subscriptionId, added: [row], version: 3, rowCount: 1 });
+      expect(sessionStore.sdkMessages.value).toHaveLength(1);
+      expect(trace).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          subscriptionId,
+          outcome: 'applied',
+          addedIds: ['assistant-secret'],
+          version: 3,
+          renderedCount: 1,
+        }),
+        'messages.liveQuery'
+      );
+
+      sessionStore.activeMessagesSubscriptionId = 'replacement-subscription';
+      hub.fire('liveQuery.delta', { subscriptionId, removed: [row], version: 4 });
+      expect(sessionStore.sdkMessages.value).toHaveLength(1);
+      expect(trace).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          subscriptionId,
+          activeSubscriptionId: 'replacement-subscription',
+          outcome: 'superseded',
+          removedIds: ['assistant-secret'],
+          version: 4,
+        }),
+        'messages.liveQuery'
+      );
+      expect(JSON.stringify(trace.mock.calls)).not.toContain('private answer');
+    } finally {
+      trace.mockRestore();
+    }
   });
 
   it('applies the cold-mount snapshot sorted by timestamp and opens the messagesLoaded gate', async () => {
