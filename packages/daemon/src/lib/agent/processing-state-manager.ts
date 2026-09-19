@@ -312,6 +312,7 @@ export class ProcessingStateManager {
   async setRateLimitCooldown(
     state: {
       retryCount: number;
+      exhaustedCycles?: number;
       maxRetries: number;
       retryAt: number;
       messageId?: string;
@@ -324,6 +325,7 @@ export class ProcessingStateManager {
     const previousState = this.processingState;
     const cooldownState: AgentProcessingState = {
       status: 'rate_limit_cooldown',
+      ...(state.exhaustedCycles !== undefined ? { exhaustedCycles: state.exhaustedCycles } : {}),
       retryCount: state.retryCount,
       maxRetries: state.maxRetries,
       retryAt: state.retryAt,

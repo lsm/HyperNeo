@@ -853,6 +853,7 @@ export class AgentSession
         messageId?: unknown;
         retryCount?: unknown;
         maxRetries?: unknown;
+        exhaustedCycles?: unknown;
       };
       if (
         parsed.status === 'rate_limit_cooldown' &&
@@ -860,13 +861,25 @@ export class AgentSession
         parsed.retryAt > Date.now()
       ) {
         const messageId = typeof parsed.messageId === 'string' ? parsed.messageId : undefined;
-        this.rateLimitWatchdog.armPersistedCooldown(parsed.retryAt, messageId, () => {
-          void this.stateManager.setIdle().catch(() => {});
-        });
+        const exhaustedCycles =
+          typeof parsed.exhaustedCycles === 'number' &&
+          Number.isSafeInteger(parsed.exhaustedCycles) &&
+          parsed.exhaustedCycles >= 0
+            ? parsed.exhaustedCycles
+            : 0;
+        this.rateLimitWatchdog.armPersistedCooldown(
+          parsed.retryAt,
+          messageId,
+          () => {
+            void this.stateManager.setIdle().catch(() => {});
+          },
+          exhaustedCycles
+        );
         void this.stateManager
           .setRateLimitCooldown({
             retryCount: typeof parsed.retryCount === 'number' ? parsed.retryCount : 0,
             maxRetries: typeof parsed.maxRetries === 'number' ? parsed.maxRetries : 0,
+            exhaustedCycles,
             retryAt: parsed.retryAt,
             ...(messageId !== undefined ? { messageId } : {}),
           })
