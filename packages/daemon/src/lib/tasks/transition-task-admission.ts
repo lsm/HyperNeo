@@ -26,7 +26,8 @@ type Rejection =
   | 'unsupported_status'
   | 'invalid_transition'
   | 'result_requires_done'
-  | 'block_reason_requires_blocked';
+  | 'block_reason_requires_blocked'
+  | 'space_at_task_capacity';
 type Result = TaskCore | Rejection | null;
 export type Gate<T, R> = { value: T } | { reason: R };
 export type OwnedTask = { spaceId: string; task: SpaceTask };

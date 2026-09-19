@@ -425,6 +425,46 @@ test('a rejecting emitTaskUpdated still returns the updated task', async () => {
   });
 });
 
+test('a Space with no free slot rejects a start instead of reporting work began', async () => {
+  const running = tasks.createTask({ spaceId, title: 'Running', description: '' });
+  tasks.updateTask(running.id, { status: 'in_progress' });
+  const queued = tasks.createTask({ spaceId, title: 'Queued', description: '' });
+
+  const result = await invoke({ taskId: queued.id, status: 'in_progress' }, rpc);
+
+  expect(result).toEqual({ kind: 'completed', value: 'space_at_task_capacity' });
+  const unchanged = tasks.getTask(queued.id)!;
+  expect(unchanged.status).toBe('open');
+  expect(unchanged.startedAt).toBeNull();
+});
+
+test('a task that already holds a slot still moves to in_progress at the limit', async () => {
+  const task = tasks.createTask({ spaceId, title: 'Approved', description: '' });
+  tasks.updateTask(task.id, { status: 'approved' });
+
+  const result = await invoke({ taskId: task.id, status: 'in_progress' }, rpc);
+
+  expect(result).toMatchObject({
+    kind: 'completed',
+    value: { id: task.id, status: 'in_progress' },
+  });
+});
+
+test('a workflow-backed task is not gated by the Space concurrency limit', async () => {
+  const running = tasks.createTask({ spaceId, title: 'Running', description: '' });
+  tasks.updateTask(running.id, { status: 'in_progress' });
+  const run = createWorkflowRun();
+  const attached = tasks.createTask({ spaceId, title: 'Attached', description: '' });
+  tasks.updateTask(attached.id, { workflowRunId: run.id });
+
+  const result = await invoke({ taskId: attached.id, status: 'in_progress' }, rpc);
+
+  expect(result).toMatchObject({
+    kind: 'completed',
+    value: { id: attached.id, status: 'in_progress' },
+  });
+});
+
 function createOwned(status: SpaceTaskStatus, workflowRunId?: string) {
   const created = tasks.createTask({ spaceId, title: 'T', description: '' });
   if (status === 'open' && workflowRunId === undefined) return { spaceId, task: created };

@@ -1,5 +1,6 @@
 import { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
 import { availableTaskSlots } from '../../tasks/capacity.ts';
+import { selectOrphanedInProgressTasks } from '../../tasks/orphaned-task-recovery.ts';
 import { DirectTaskExecutionRepository } from '../../../storage/repositories/direct-task-execution-repository.ts';
 import { PendingCompletionSupersededError } from '../../tasks/pending-completion-guard.ts';
 import type {
@@ -3895,6 +3896,11 @@ export class SpaceRuntime {
         await this.processCompletedTasks(failedActivationSpaceIds);
       } catch (err) {
         activationError = err;
+      }
+      try {
+        await this.reclaimOrphanedInProgressTasks();
+      } catch (err) {
+        if (activationError === null) activationError = err;
       }
       try {
         await this.attachStandaloneTasksToWorkflows(failedActivationSpaceIds);
@@ -8170,6 +8176,29 @@ export class SpaceRuntime {
     for (const [taskId, state] of this.attachBackoff)
       if (state.spaceId === spaceId && !candidateTaskIds.has(taskId))
         this.attachBackoff.delete(taskId);
+  }
+
+  private async reclaimOrphanedInProgressTasks(): Promise<void> {
+    const attempts = new DirectTaskExecutionRepository(this.config.db);
+    const now = Date.now();
+    for (const space of await this.listActiveSpaces()) {
+      const evidence = this.config.taskRepo
+        .listBySpace(space.id, false)
+        .filter((task) => task.status === 'in_progress')
+        .map((task) => ({ task, hasDirectAttempt: !!attempts.getActive(task.id) }));
+      for (const task of selectOrphanedInProgressTasks(evidence, now)) {
+        const reopened = this.config.taskRepo.updateTask(
+          task.id,
+          { status: 'open', startedAt: null },
+          'in_progress'
+        );
+        if (!reopened) continue;
+        log.warn(
+          `SpaceRuntime: reopened orphaned in_progress task ${task.id} in space ${space.id} — no workflow run, agent session or direct attempt was ever attached; its concurrency slot is released.`
+        );
+        await this.safeOnTaskUpdated(space.id, reopened, { fromStatus: 'in_progress' });
+      }
+    }
   }
 
   private async attachStandaloneTasksToWorkflows(

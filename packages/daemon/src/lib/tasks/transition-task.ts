@@ -2,8 +2,11 @@ import type { SpaceTask, UpdateSpaceTaskParams } from '@hyperneo/shared';
 import type { TaskCore } from '@hyperneo/shared/types/task-core';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { DirectTaskExecutionRepository } from '../../storage/repositories/direct-task-execution-repository.ts';
+import { SpaceRepository } from '../../storage/repositories/space-repository.ts';
+import { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
 import { Logger } from '../logger.ts';
 import type { OperationCaller } from '../operations/registry.ts';
+import { availableTaskSlots, occupiesTaskSlot } from './capacity.ts';
 import { createTransitionTaskOperation } from './transition-operation.ts';
 import { type SpaceTaskManager, StaleTaskGuardError } from './task-manager.ts';
 import { decideSpaceTaskTransition } from './transition-decision.ts';
@@ -27,7 +30,8 @@ type Rejection =
   | 'unsupported_status'
   | 'invalid_transition'
   | 'result_requires_done'
-  | 'block_reason_requires_blocked';
+  | 'block_reason_requires_blocked'
+  | 'space_at_task_capacity';
 type Result = TaskCore | Rejection | null;
 export interface SpaceTransitionTaskDependencies extends SpaceTransitionAdmissionDependencies {
   getTaskManager: (spaceId: string) => Pick<SpaceTaskManager, 'getTask' | 'setTaskStatus'>;
@@ -130,6 +134,25 @@ export async function decide(
     },
   };
 }
+export function requireFreeTaskSlot(
+  decided: DecidedTask,
+  input: In,
+  deps: Deps
+): Gate<DecidedTask, Result> {
+  const { spaceId, task } = decided;
+  if (
+    input.status !== 'in_progress' ||
+    occupiesTaskSlot(task.status) ||
+    task.workflowRunId ||
+    task.taskAgentSessionId
+  )
+    return { value: decided };
+  const space = new SpaceRepository(deps.db).getSpace(spaceId);
+  const tasks = new SpaceTaskRepository(deps.db).listBySpace(spaceId, false);
+  return availableTaskSlots(space, tasks) > 0
+    ? { value: decided }
+    : { reason: 'space_at_task_capacity' };
+}
 async function emitUpdated(spaceId: string, task: SpaceTask, deps: Deps): Promise<void> {
   await deps
     .emitTaskUpdated(spaceId, task)
@@ -177,7 +200,7 @@ export async function writeStatus(decided: DecidedTask, input: In, deps: Deps): 
   }
 }
 const SPACE_TRANSITION_TASK_DESCRIPTION =
-  'Space-scoped callers change the lifecycle state of a task in their Space; review and approved are entered only through the submit-for-review and approval operations, and rate_limited/usage_limited are runtime-owned. Tasks with an active direct-execution attempt are managed by the durable start/cancel/complete operations, and result may accompany only a transition to done, and blockReason only a transition to blocked, where human_input_requested is the single caller-settable value because every other block reason is stamped by the runtime that observed it. Supply expectedStatus to reject with invalid_transition unless the task is still in that state; it is applied as a compare-and-set on a direct write, and as a pre-dispatch check for transitions handed to the workflow runtime. Returns core task data, null for absent or unavailable tasks, or unsupported_status, invalid_transition, result_requires_done, or block_reason_requires_blocked when rejected.';
+  'Space-scoped callers change the lifecycle state of a task in their Space; review and approved are entered only through the submit-for-review and approval operations, and rate_limited/usage_limited are runtime-owned. Tasks with an active direct-execution attempt are managed by the durable start/cancel/complete operations, and result may accompany only a transition to done, and blockReason only a transition to blocked, where human_input_requested is the single caller-settable value because every other block reason is stamped by the runtime that observed it. Supply expectedStatus to reject with invalid_transition unless the task is still in that state; it is applied as a compare-and-set on a direct write, and as a pre-dispatch check for transitions handed to the workflow runtime. Moving a task with no workflow run and no agent session into in_progress claims one of the Space concurrency slots, so it rejects with space_at_task_capacity when the Space has none free; stop or finish a running task, or raise the Space limit, and retry. Returns core task data, null for absent or unavailable tasks, or unsupported_status, invalid_transition, result_requires_done, block_reason_requires_blocked, or space_at_task_capacity when rejected.';
 export function createSpaceTransitionTaskOperation(deps: Deps) {
   const transition = (superpipe({ deps })('transition-space-task') as PipelineAPI)
     .input(['input', 'caller'])
@@ -187,6 +210,7 @@ export function createSpaceTransitionTaskOperation(deps: Deps) {
     .pipe(requireExpectedStatus, ['outcome', 'input'], 'result:outcome')
     .pipe(rejectActiveDirectAttempt, ['outcome', 'deps'], 'result:outcome')
     .pipe(decide, ['outcome', 'input', 'caller', 'deps'], 'result:outcome')
+    .pipe(requireFreeTaskSlot, ['outcome', 'input', 'deps'], 'result:outcome')
     .pipe(writeStatus, ['outcome', 'input', 'deps'], 'outcome')
     .endAsync('outcome') as (input: In, caller: Caller) => Promise<Result>;
   return createTransitionTaskOperation(transition, {
