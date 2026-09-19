@@ -1,3 +1,4 @@
+import type { EnsureAgentSessionOutcome } from '../session/ensure-agent-session.ts';
 import type { SpaceLongHorizonAgent } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
@@ -23,7 +24,10 @@ type Result = { sessionId: string } | AgentRejection;
 
 export interface EnsureAgentSessionDependencies extends AgentOperationDeps {
   readonly getAgent: (agentId: string) => SpaceLongHorizonAgent | null;
-  readonly ensureAgentSession: (spaceId: string, agentId: string) => Promise<unknown | null>;
+  readonly ensureAgentSession: (
+    spaceId: string,
+    agentId: string
+  ) => Promise<EnsureAgentSessionOutcome>;
 }
 
 export function locateAgentForSession(
@@ -42,10 +46,10 @@ export async function provisionAgentSession(
   deps: EnsureAgentSessionDependencies
 ): Promise<Result> {
   const ensured = await deps.ensureAgentSession(located.spaceId, located.agent.id);
-  return ensured === null
+  return typeof ensured === 'string'
     ? rejectAgent(
-        'session_unavailable',
-        `No session could be started for agent ${located.agent.id}; the Space or the agent is not active.`
+        ensured === 'agent_missing' ? 'agent_not_found' : 'session_unavailable',
+        `No session could be started for agent ${located.agent.id}: ${ensured}.`
       )
     : { sessionId: longTermAgentSessionId(located.spaceId, located.agent.id) };
 }

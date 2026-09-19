@@ -83,7 +83,7 @@ import { ChannelRouter } from '../../messaging/channel-router.ts';
 import { createDatabaseDirectTaskWorkerResolver } from '../../tasks/direct-task-worker-identity.ts';
 import {
   type EnsureAgentSessionDeps,
-  type EnsuredSession,
+  type EnsureAgentSessionOutcome,
   isAgentTargetLifecycleEligible,
   runEnsureAgentSession,
 } from '../../session/ensure-agent-session.ts';
@@ -740,7 +740,7 @@ export class SpaceRuntimeService {
     return ensureSession(target, deps);
   }
 
-  async ensureAgentSession(spaceId: string, agentId: string): Promise<EnsuredSession | null> {
+  async ensureAgentSession(spaceId: string, agentId: string): Promise<EnsureAgentSessionOutcome> {
     return runEnsureAgentSession(spaceId, agentId, this.ensureAgentSessionDeps());
   }
 

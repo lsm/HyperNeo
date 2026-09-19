@@ -1,3 +1,4 @@
+import type { EnsureAgentSessionOutcome } from '../../../../src/lib/session/ensure-agent-session';
 import { beforeEach, describe, expect, test } from 'bun:test';
 import type { Session, SpaceLongHorizonAgent } from '@hyperneo/shared';
 import { Database } from '../../../../src/storage/sqlite-compat';
@@ -18,7 +19,8 @@ let spaceId: string;
 let agent: SpaceLongHorizonAgent;
 let sessions: Map<string, Session>;
 let ensureCalls: Array<{ spaceId: string; agentId: string }>;
-let ensureOutcome: { getSessionData(): { status: string } } | null;
+let ensureOutcome: EnsureAgentSessionOutcome;
+let ensureFault: Error | undefined;
 
 const MEMBER_SESSION = 'space:chat:member';
 
@@ -50,6 +52,7 @@ function registry() {
       },
       ensureAgentSession: async (space, agentId) => {
         ensureCalls.push({ spaceId: space, agentId });
+        if (ensureFault) throw ensureFault;
         return ensureOutcome;
       },
     })
@@ -79,6 +82,7 @@ beforeEach(() => {
   });
   sessions = new Map([[MEMBER_SESSION, sessionRow({ id: MEMBER_SESSION })]]);
   ensureCalls = [];
+  ensureFault = undefined;
   ensureOutcome = { getSessionData: () => ({ status: 'active' }) };
 });
 
@@ -129,12 +133,28 @@ describe('the agent.ensureSession operation', () => {
   });
 
   test('a runtime that declines to start a session reports session_unavailable', async () => {
-    ensureOutcome = null;
+    ensureOutcome = 'space_inactive';
 
     const outcome = await ensureSession({ spaceId, agentId: agent.id }, { source: 'rpc' });
 
     expect(outcome.value).toMatchObject({ rejected: true, reason: 'session_unavailable' });
     expect(ensureCalls).toEqual([{ spaceId, agentId: agent.id }]);
+  });
+
+  test('a provisioning fault remains an infrastructure failure', async () => {
+    ensureFault = new Error('provider exploded');
+    const outcome = await ensureSession({ spaceId, agentId: agent.id }, { source: 'rpc' });
+    expect(outcome).toMatchObject({
+      kind: 'failed',
+      code: 'execution_failed',
+      message: 'provider exploded',
+    });
+  });
+
+  test('an agent that disappears during provisioning is reported as missing', async () => {
+    ensureOutcome = 'agent_missing';
+    const outcome = await ensureSession({ spaceId, agentId: agent.id }, { source: 'rpc' });
+    expect(outcome.value).toMatchObject({ rejected: true, reason: 'agent_not_found' });
   });
 
   test('a human caller that names no Space is rejected', async () => {
