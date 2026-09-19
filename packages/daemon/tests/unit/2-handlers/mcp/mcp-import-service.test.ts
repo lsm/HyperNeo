@@ -60,6 +60,27 @@ describe('McpImportService', () => {
   });
 
   describe('refreshFromFile', () => {
+    test.each(['hyperneo-operations', 'agent-memory', 'db-query'])(
+      'rejects reserved name %s before changing imported rows',
+      (name) => {
+        const file = join(tmpRoot, '.mcp.json');
+        writeMcpJson(file, { mcpServers: { existing: { command: 'existing' } } });
+        service.refreshFromFile(file);
+        writeMcpJson(file, {
+          mcpServers: { [name]: { command: 'external' }, valid: { command: 'valid' } },
+        });
+
+        const result = service.refreshFromFile(file);
+
+        expect(result).toMatchObject({ status: 'malformed', added: 0, updated: 0, removed: 0 });
+        expect(result.error).toContain(name);
+        expect(result.error).toContain('Rename these entries');
+        expect(repo.getByName(name)).toBeNull();
+        expect(repo.getByName('valid')).toBeNull();
+        expect(repo.getByName('existing')?.command).toBe('existing');
+      }
+    );
+
     test('imports new entries with source=imported and enabled=false', () => {
       const file = join(tmpRoot, '.mcp.json');
       writeMcpJson(file, {
@@ -317,6 +338,39 @@ describe('McpImportService', () => {
   });
 
   describe('refreshAll', () => {
+    test.each(['hyperneo-operations', 'agent-memory', 'db-query'])(
+      'reports reserved name %s at import while preserving existing rows',
+      (name) => {
+        const file = join(tmpRoot, '.mcp.json');
+        writeMcpJson(file, { mcpServers: { existing: { command: 'existing' } } });
+        service.refreshAll([]);
+        writeMcpJson(file, { mcpServers: { [name]: { command: 'external' } } });
+
+        const { results } = service.refreshAll([]);
+
+        expect(results[0]).toMatchObject({ status: 'malformed', added: 0, updated: 0, removed: 0 });
+        expect(results[0].error).toContain(name);
+        expect(repo.getByName(name)).toBeNull();
+        expect(repo.getByName('existing')?.command).toBe('existing');
+      }
+    );
+
+    test('allows workspace-qualified names that do not claim a built-in name', () => {
+      const workspace = join(tmpRoot, 'workspace');
+      mkdirSync(workspace);
+      writeMcpJson(join(workspace, '.mcp.json'), {
+        mcpServers: { 'hyperneo-operations': { command: 'external' } },
+      });
+
+      const { results } = service.refreshAll([{ path: workspace, label: 'workspace' }], {
+        includeUserConfig: false,
+      });
+
+      expect(results[0]).toMatchObject({ status: 'ok', added: 1 });
+      expect(repo.getByName('workspace:hyperneo-operations')?.command).toBe('external');
+      expect(repo.getByName('hyperneo-operations')).toBeNull();
+    });
+
     test('imports user-level ~/.claude/.mcp.json in the production path (no TEST_USER_SETTINGS_DIR)', () => {
       const savedSettingsDir = process.env.TEST_USER_SETTINGS_DIR;
       delete process.env.TEST_USER_SETTINGS_DIR;

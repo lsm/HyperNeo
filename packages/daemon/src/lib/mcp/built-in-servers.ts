@@ -8,7 +8,7 @@ const BUILT_IN_MCP_SERVERS: ReadonlySet<string> = new Set([
   OPERATIONS_MCP_SERVER_NAME,
 ]);
 
-function isBuiltInMcpServerName(name: string): boolean {
+export function isBuiltInMcpServerName(name: string): boolean {
   return BUILT_IN_MCP_SERVERS.has(name);
 }
 
