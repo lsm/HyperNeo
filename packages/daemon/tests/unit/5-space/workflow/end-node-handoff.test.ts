@@ -98,22 +98,22 @@ describe('Post-approval route declarations', () => {
   });
 });
 
-describe('End-node prompts save runtime post-approval data before approve_task', () => {
+describe('End-node prompts save runtime post-approval data before task.resolvePendingCompletion', () => {
   for (const [label, wf] of IMPLEMENTER_ROUTED_WORKFLOWS) {
     test(`${label} end-node prompt instructs the agent to record the PR and not relay to the task-agent`, () => {
       const prompt = endNodePrompt(wf);
-      expect(prompt).toMatch(/save_artifact|save the PR link/);
-      expect(prompt).toContain('approve_task');
+      expect(prompt).toMatch(/artifact\.save|save the PR link/);
+      expect(prompt).toContain('task.resolvePendingCompletion');
       expect(prompt).not.toContain('target: "task-agent"');
     });
 
-    test(`${label} end-node prompt places the record-PR step BEFORE the final approve_task call`, () => {
+    test(`${label} end-node prompt places the record-PR step BEFORE the final task.resolvePendingCompletion call`, () => {
       const prompt = endNodePrompt(wf);
       const signalIdx = Math.max(
-        prompt.lastIndexOf('save_artifact('),
+        prompt.lastIndexOf('invoke(name="artifact.save"'),
         prompt.lastIndexOf('save the PR link')
       );
-      const approveIdx = prompt.lastIndexOf('approve_task');
+      const approveIdx = prompt.lastIndexOf('task.resolvePendingCompletion');
       expect(signalIdx).toBeGreaterThan(-1);
       expect(approveIdx).toBeGreaterThan(-1);
       expect(signalIdx).toBeLessThan(approveIdx);
