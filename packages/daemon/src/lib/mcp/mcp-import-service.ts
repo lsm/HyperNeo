@@ -11,6 +11,7 @@ import type { Database } from '../../storage/database.ts';
 import { SpaceRepository } from '../../storage/repositories/space-repository.ts';
 import { SpaceWorkspaceRepository } from '../../storage/repositories/space-workspace-repository.ts';
 import { Logger } from '../logger.ts';
+import { isBuiltInMcpServerName } from './built-in-servers.ts';
 import { resolveWorkspaceMcpServerName } from './mcp-server-namespace.ts';
 
 export interface ImportResult {
@@ -98,6 +99,14 @@ function fieldsEqual(row: AppMcpServer, req: CreateAppMcpServerRequest): boolean
   );
 }
 
+function reservedNameError(entries: Record<string, McpJsonEntry>, label = ''): string | undefined {
+  const reserved = Object.keys(entries).filter((name) =>
+    isBuiltInMcpServerName(label ? `${label}:${name}` : name)
+  );
+  if (reserved.length === 0) return undefined;
+  return `MCP server names reserved for built-in servers: ${reserved.join(', ')}. Rename these entries in the source file before importing.`;
+}
+
 export class McpImportService {
   private readonly log: Logger;
 
@@ -154,6 +163,14 @@ export class McpImportService {
       result.status = 'malformed';
       result.error = 'missing or invalid "mcpServers" object';
       this.log.warn(`[mcp-import] ${absolutePath}: ${result.error}`);
+      return result;
+    }
+
+    const reservedError = reservedNameError(entries);
+    if (reservedError) {
+      result.status = 'malformed';
+      result.error = reservedError;
+      this.log.warn(`[mcp-import] ${absolutePath}: ${reservedError}`);
       return result;
     }
 
@@ -628,6 +645,16 @@ function extractMcpSources(ctx: RefreshMcpImportsCtx): RefreshMcpImportsCtx {
       result.error = 'missing or invalid "mcpServers" object';
       ctx.log.warn(`[mcp-import] ${target.path}: ${result.error}`);
       declarations.push({ target, status: 'malformed', error: result.error });
+      results.push(result);
+      continue;
+    }
+
+    const reservedError = reservedNameError(entriesByServerName, target.label);
+    if (reservedError) {
+      result.status = 'malformed';
+      result.error = reservedError;
+      ctx.log.warn(`[mcp-import] ${target.path}: ${reservedError}`);
+      declarations.push({ target, status: 'malformed', error: reservedError });
       results.push(result);
       continue;
     }

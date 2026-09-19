@@ -8,6 +8,7 @@ import type {
 } from '@hyperneo/shared';
 import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository.ts';
 import { Logger } from '../logger.ts';
+import { isBuiltInMcpServerName } from './built-in-servers.ts';
 
 const log = new Logger('mcp-import-scanner');
 
@@ -112,6 +113,13 @@ export async function scanMcpImports(
   for (const mcpJsonPath of options.mcpJsonPaths) {
     const servers = await readMcpJsonSafe(mcpJsonPath, notes);
     if (servers === null) continue;
+    const reserved = Object.keys(servers).filter(isBuiltInMcpServerName);
+    if (reserved.length > 0) {
+      notes.push(
+        `${mcpJsonPath}: names reserved for built-in servers: ${reserved.join(', ')}. Rename these entries before importing.`
+      );
+      continue;
+    }
     scannedPaths.add(mcpJsonPath);
 
     for (const [name, entry] of Object.entries(servers)) {
