@@ -44,6 +44,8 @@ import mdruntimeWorkflowSelectorInstructions from './runtime/workflow-selector-i
   type: 'text',
 };
 import mdsessionTitleGeneration from './session/title-generation.md' with { type: 'text' };
+import mdspaceAgentMemory from './space/agent-memory.md' with { type: 'text' };
+import mdspaceDbQuery from './space/db-query.md' with { type: 'text' };
 import mdspaceOperationsDoor from './space/operations-door.md' with { type: 'text' };
 import mdworkflowsCoderOnlyMergeInstructions from './workflows/coder-only/merge-instructions.md' with {
   type: 'text',
@@ -146,6 +148,8 @@ const registry: Record<string, string> = {
   'runtime/prompt-too-long-continue-nag.md': mdruntimePromptTooLongContinueNag,
   'runtime/workflow-selector-instructions.md': mdruntimeWorkflowSelectorInstructions,
   'session/title-generation.md': mdsessionTitleGeneration,
+  'space/agent-memory.md': mdspaceAgentMemory,
+  'space/db-query.md': mdspaceDbQuery,
   'space/operations-door.md': mdspaceOperationsDoor,
   'workflows/coder-only/merge-instructions.md': mdworkflowsCoderOnlyMergeInstructions,
   'workflows/coder-only/prompt.md': mdworkflowsCoderOnlyPrompt,
@@ -205,6 +209,8 @@ export const {
   PROMPT_TOO_LONG_CONTINUE_NAG,
   WORKFLOW_SELECTOR_INSTRUCTIONS,
   TITLE_GENERATION_PROMPT,
+  SPACE_AGENT_MEMORY_BRIEFING,
+  SPACE_DB_QUERY_BRIEFING,
   SPACE_OPERATIONS_DOOR,
   CODER_ONLY_MERGE_INSTRUCTIONS,
   CODER_ONLY_PROMPT,
