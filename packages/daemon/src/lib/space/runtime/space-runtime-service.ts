@@ -688,7 +688,8 @@ export class SpaceRuntimeService {
     } else {
       await this.refreshLongHorizonAgentSessionConfig(session, config);
     }
-    await this.config.spaceManager.addSession(spaceId, sessionId);
+    const membershipChanged = !space.sessionIds.includes(sessionId);
+    const updatedSpace = await this.config.spaceManager.addSession(spaceId, sessionId);
     if (agent.sessionId !== sessionId) {
       repo.update(agent.id, { sessionId });
     }
@@ -705,6 +706,13 @@ export class SpaceRuntimeService {
       },
     });
     session.setAttachedCapabilities(this.attachLongTermAgentMcpServers(session, space, sessionId));
+    if (membershipChanged) {
+      await this.config.internalEventBus?.publish('space.updated', {
+        sessionId: 'global',
+        spaceId,
+        space: updatedSpace,
+      });
+    }
     return session;
   }
 

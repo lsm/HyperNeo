@@ -2532,9 +2532,19 @@ describe('SpaceRuntimeService', () => {
         ),
         update: mock(() => {}),
       } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
-      const spaceManager = createMockSpaceManager(mockSpace);
+      const registeredSpace = { ...mockSpace, sessionIds: [] as string[] };
+      const spaceManager = createMockSpaceManager(registeredSpace);
+      spaceManager.addSession = mock(async () => {
+        registeredSpace.sessionIds = [sessionId];
+        return registeredSpace;
+      });
+      const publish = mock(async () => ({ delivered: 0, failures: [] }));
       const svc = new SpaceRuntimeService({
         ...buildConfig(spaceManager),
+        internalEventBus: {
+          publish,
+          subscribe: () => () => {},
+        } as unknown as SpaceRuntimeServiceConfig['internalEventBus'],
         sessionManager,
         longHorizonAgentRepo,
         actorRegistryRepos: {
@@ -2548,6 +2558,13 @@ describe('SpaceRuntimeService', () => {
       expect(spaceManager.addSession).toHaveBeenCalledWith(mockSpace.id, sessionId);
       const systemPrompt = sessionData.config.systemPrompt as { append?: string };
       expect(systemPrompt.append).toContain('Triage and track Space tasks.');
+      expect(publish).toHaveBeenCalledWith('space.updated', {
+        sessionId: 'global',
+        spaceId: mockSpace.id,
+        space: registeredSpace,
+      });
+      await svc.ensureAgentSession(mockSpace.id, 'agent-1');
+      expect(publish).toHaveBeenCalledTimes(1);
     });
   });
 
