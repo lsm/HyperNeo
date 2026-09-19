@@ -1,4 +1,4 @@
-import { describe, test, expect } from 'bun:test';
+import { describe, test, expect, spyOn } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { z } from 'zod';
 import { createAuditOperations } from '../../../../src/lib/audit/operations.ts';
@@ -14,11 +14,12 @@ import {
 } from '../../../../src/lib/operations/registry.ts';
 import { createDiscoveryOperations } from '../../../../src/lib/operations/discovery.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
+import { HookEngine } from '../../../../src/lib/hooks/hook-engine.ts';
 import { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import { hasRuntimeWorkerOperations } from '../../../../src/lib/session/sub-session-identity.ts';
 import { McpAuditLogRepository } from '../../../../src/storage/repositories/mcp-audit-log-repository.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
-import { MessageHub, type McpServerConfig } from '@hyperneo/shared';
+import { MessageHub, type McpServerConfig, type SpaceWorkflow } from '@hyperneo/shared';
 import {
   createTestDb,
   createTestInternalEventBus,
@@ -40,7 +41,10 @@ function catalogRegistry(operations: OperationDefinition[]): OperationRegistry {
   return registry;
 }
 
-function makeManager(operations: OperationDefinition[] = []): TaskAgentManager {
+function makeManager(
+  operations: OperationDefinition[] = [],
+  workflow: SpaceWorkflow | null = null
+): TaskAgentManager {
   const execution = {
     id: EXEC_ID,
     workflowRunId: RUN_ID,
@@ -61,7 +65,11 @@ function makeManager(operations: OperationDefinition[] = []): TaskAgentManager {
       listByWorkflowRun: () => [task],
     },
     nodeExecutionRepo: { listByWorkflowRun: () => [execution] },
-    workflowRunRepo: { getRun: () => null },
+    workflowRunRepo: {
+      getRun: () =>
+        workflow ? { id: RUN_ID, workflowId: workflow.id, createdAt: Date.now() } : null,
+    },
+    spaceWorkflowManager: { getWorkflowForRun: () => workflow },
     spaceManager: { getSpace: async () => ({ id: SPACE_ID, autonomyLevel: 3 }) },
     spaceRuntimeService: {
       getSpaceRuntime: () =>
@@ -211,6 +219,64 @@ describe('TaskAgentManager — space-actions dispatcher attach', () => {
     const tam = makeManager();
     const servers = buildServers(tam);
     expect(Object.keys(servers)).toEqual([]);
+  });
+
+  test('building a hook-enabled worker runtime rehydrates queued actions from operations', () => {
+    const workflow: SpaceWorkflow = {
+      id: 'workflow-actions-attach',
+      spaceId: SPACE_ID,
+      name: 'Hooked workflow',
+      startNodeId: 'node-coder',
+      endNodeId: 'node-review',
+      nodes: [
+        { id: 'node-coder', name: 'Coding', agents: [{ name: 'coder', agentId: 'agent-coder' }] },
+        {
+          id: 'node-review',
+          name: 'Review',
+          agents: [{ name: 'reviewer', agentId: 'agent-reviewer' }],
+        },
+      ],
+      channels: [{ id: 'coding-review', from: 'Coding', to: 'Review' }],
+      hooks: [
+        {
+          id: 'review-ready',
+          enabled: true,
+          sourceNode: 'Coding',
+          method: 'send_message',
+          classification: 'validation',
+          order: 0,
+          validator: { kind: 'built_in', id: 'pr_ready' },
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+    };
+    const operation = sendMessageOperation();
+    const registry = catalogRegistry([operation]);
+    const schedule = spyOn(
+      HookEngine.prototype,
+      'scheduleQueuedRetryableOperations'
+    ).mockImplementation(() => {});
+    const tam = makeManager([operation], workflow);
+
+    buildServers(tam);
+
+    expect(schedule).toHaveBeenCalledTimes(1);
+    expect(schedule.mock.calls[0]?.[0].get('send_message')).toBeDefined();
+    expect(schedule.mock.calls[0]?.[1]).toEqual({
+      source: 'internal',
+      sessionId: SUB_SESSION_ID,
+      spaceId: SPACE_ID,
+      role: 'workflow_worker',
+      agentName: 'coder',
+    });
+    expect(schedule.mock.calls[0]?.[2]).toEqual({
+      sessionId: SUB_SESSION_ID,
+      agentName: 'coder',
+      nodeId: 'node-coder',
+      taskId: TASK_ID,
+    });
+    expect(registry.get('send_message')).toBeDefined();
+    schedule.mockRestore();
   });
 
   test('reinject (self-heal rebuild path) restarts the query and keeps the session marked', async () => {

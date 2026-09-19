@@ -20,6 +20,7 @@ interface PendingRetryableHookAction {
   handlers: Record<string, (...args: unknown[]) => Promise<AnyToolResult> | AnyToolResult>;
   meta: HookActionMeta;
   isFollowUp: boolean;
+  handlerIncludesHooks: boolean;
 }
 
 const pendingRetryableHookActions = new Map<
@@ -66,6 +67,7 @@ export function scheduleRetryableAction<T extends Record<string, unknown>>(optio
   handlers: Record<string, (...args: unknown[]) => Promise<AnyToolResult> | AnyToolResult>;
   meta: HookActionMeta;
   isFollowUp: boolean;
+  handlerIncludesHooks?: boolean;
 }): void {
   if (pendingRetryableHookActions.has(options.actionKey)) return;
 
@@ -84,6 +86,7 @@ export function scheduleRetryableAction<T extends Record<string, unknown>>(optio
       ...options,
       args: options.args,
       handler: async (args) => options.handler(args as T),
+      handlerIncludesHooks: options.handlerIncludesHooks ?? false,
     },
   });
 }
@@ -124,6 +127,7 @@ async function replayRetryableAction<T extends Record<string, unknown>>(options:
   handlers: Record<string, (...args: unknown[]) => Promise<AnyToolResult> | AnyToolResult>;
   meta: HookActionMeta;
   isFollowUp: boolean;
+  handlerIncludesHooks?: boolean;
 }): Promise<void> {
   if (options.engine.isRetryableActionCancelled(options.meta)) {
     options.engine.clearQueuedRetryableActionsForKey(options.actionKey);
@@ -131,14 +135,16 @@ async function replayRetryableAction<T extends Record<string, unknown>>(options:
     return;
   }
 
-  const retryHandler = wrapHandlerWithHooks(
-    options.methodName,
-    options.handler,
-    options.engine,
-    options.handlers,
-    options.meta,
-    options.isFollowUp
-  );
+  const retryHandler = options.handlerIncludesHooks
+    ? options.handler
+    : wrapHandlerWithHooks(
+        options.methodName,
+        options.handler,
+        options.engine,
+        options.handlers,
+        options.meta,
+        options.isFollowUp
+      );
   const result = await retryHandler(options.args);
   const failure = getToolResultFailure(result);
   if (failure && !failure.retryable) {

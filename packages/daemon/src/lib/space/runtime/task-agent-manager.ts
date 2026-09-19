@@ -5036,7 +5036,7 @@ export class TaskAgentManager {
       });
     }
 
-    this.nodeMessagingBySession.set(subSessionId, {
+    const nodeMessagingRuntime: NodeMessagingRuntime = {
       spaceId,
       taskId,
       workflow,
@@ -5046,7 +5046,24 @@ export class TaskAgentManager {
       replyRoutingLookup: (fromAgentName) =>
         this.config.replyRoutingRegistry?.get(taskId, fromAgentName) ?? null,
       hookEngine,
-    });
+    };
+    this.nodeMessagingBySession.set(subSessionId, nodeMessagingRuntime);
+    hookEngine?.scheduleQueuedRetryableOperations(
+      this.config.sessionManager.getOperationRegistry(),
+      {
+        source: 'internal',
+        sessionId: subSessionId,
+        spaceId,
+        role: 'workflow_worker',
+        agentName,
+      },
+      {
+        sessionId: subSessionId,
+        agentName,
+        nodeId: workflowNodeId,
+        taskId,
+      }
+    );
     return {};
   }
 

@@ -2,6 +2,7 @@ import { describe, test, expect, beforeEach } from 'bun:test';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { z } from 'zod';
 import {
   clearAllRetryableHookActionTimers,
   QUEUED_RETRYABLE_ACTION_STATE_KEY,
@@ -25,6 +26,7 @@ import type { WorkflowHookStateRepository } from '../../../../src/storage/reposi
 const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
 import type { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository';
 import type { ToolResult } from '../../../../src/lib/space/tools/tool-result';
+import { createOperationRegistry, defineOperation } from '../../../../src/lib/operations/registry';
 
 class MockHookExecutor extends HookExecutor {
   private results = new Map<string, WorkflowHookResult>();
@@ -1420,20 +1422,22 @@ describe('HookEngine', () => {
       queuedAt: Date.now() - 10,
     });
     mockExecutor.setResult('hook-1', { type: 'allow' });
-    engine.scheduleQueuedRetryableActions(
-      {
-        send_message: async (replayedArgs: Record<string, unknown>) => {
+    const registry = createOperationRegistry([
+      defineOperation({
+        name: 'send_message',
+        description: 'test replay',
+        inputSchema: z.record(z.string(), z.unknown()),
+        resultSchema: z.unknown(),
+        execute: async (replayedArgs) => {
           replayCallCount++;
-          return {
-            content: [
-              {
-                type: 'text' as const,
-                text: JSON.stringify({ success: true, target: replayedArgs.target }),
-              },
-            ],
-          };
+          engine.clearQueuedRetryableActionsForKey(actionKey);
+          return { success: true, target: replayedArgs.target };
         },
-      },
+      }),
+    ]);
+    engine.scheduleQueuedRetryableOperations(
+      registry,
+      { source: 'internal', sessionId: defaultMeta.sessionId, spaceId: 'space-1' },
       defaultMeta
     );
 
@@ -1482,15 +1486,22 @@ describe('HookEngine', () => {
     });
 
     let handlerCallCount = 0;
-    engine.scheduleQueuedRetryableActions(
-      {
-        send_message: async () => {
+    const registry = createOperationRegistry([
+      defineOperation({
+        name: 'send_message',
+        description: 'test replay',
+        inputSchema: z.record(z.string(), z.unknown()),
+        resultSchema: z.unknown(),
+        execute: async () => {
           handlerCallCount++;
-          return {
-            content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }],
-          };
+          engine.clearQueuedRetryableActionsForKey(actionKey);
+          return { success: true };
         },
-      },
+      }),
+    ]);
+    engine.scheduleQueuedRetryableOperations(
+      registry,
+      { source: 'internal', sessionId: defaultMeta.sessionId, spaceId: 'space-1' },
       defaultMeta
     );
     await new Promise((resolve) => setTimeout(resolve, 20));
