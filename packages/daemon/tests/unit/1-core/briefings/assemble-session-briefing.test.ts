@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   assembleSessionBriefing,
+  BRIEFING_ASSEMBLY_BUDGET_BYTES,
   type SessionBriefingContributions,
 } from '../../../../src/lib/briefings/assemble-session-briefing';
 import type {
@@ -149,5 +150,75 @@ describe('assembleSessionBriefing', () => {
         capabilities: [],
       })
     ).toThrow('duplicate scope facet "role"');
+  });
+
+  describe('assembly budget', () => {
+    test('a briefing landing exactly on the budget assembles without error', () => {
+      const text = 'a'.repeat(BRIEFING_ASSEMBLY_BUDGET_BYTES);
+      const assembled = assembleSessionBriefing({
+        scope: [],
+        capabilities: [capability('solo', text)],
+      });
+
+      expect(assembled.text.length).toBe(BRIEFING_ASSEMBLY_BUDGET_BYTES);
+    });
+
+    test('one byte over the budget errors, naming the contribution and the overage', () => {
+      const overBy = BRIEFING_ASSEMBLY_BUDGET_BYTES + 1;
+      const text = 'a'.repeat(overBy);
+
+      expect(() =>
+        assembleSessionBriefing({ scope: [], capabilities: [capability('solo', text)] })
+      ).toThrow(
+        `briefing assembly: total size ${overBy}B exceeds the ${BRIEFING_ASSEMBLY_BUDGET_BYTES}B budget by 1B; pushed over by capability "solo" (${overBy}B)`
+      );
+    });
+
+    test('names whichever contribution pushes the running total over, not the largest one', () => {
+      const half = Math.floor(BRIEFING_ASSEMBLY_BUDGET_BYTES / 2);
+      const first = 'a'.repeat(half + 10);
+      const second = 'b'.repeat(half + 10);
+
+      expect(() =>
+        assembleSessionBriefing({
+          scope: [],
+          capabilities: [capability('agent-memory', first), capability('db-query', second)],
+        })
+      ).toThrow('pushed over by capability "db-query"');
+    });
+
+    test('a scope contribution can push the total over on its own, ahead of any capability', () => {
+      const text = 'a'.repeat(BRIEFING_ASSEMBLY_BUDGET_BYTES + 1);
+
+      expect(() =>
+        assembleSessionBriefing({
+          scope: [scope('space', text)],
+          capabilities: [capability('db-query', 'small')],
+        })
+      ).toThrow('pushed over by scope "space"');
+    });
+
+    test('counts UTF-8 bytes rather than UTF-16 code units', () => {
+      const surrogatePairEmoji = '\u{1F600}';
+      const text = surrogatePairEmoji.repeat(3000);
+      expect(text.length).toBeLessThan(BRIEFING_ASSEMBLY_BUDGET_BYTES);
+
+      expect(() =>
+        assembleSessionBriefing({ scope: [], capabilities: [capability('solo', text)] })
+      ).toThrow(`exceeds the ${BRIEFING_ASSEMBLY_BUDGET_BYTES}B budget`);
+    });
+
+    test('the separator between sections counts toward the total', () => {
+      const perSection = Math.floor(BRIEFING_ASSEMBLY_BUDGET_BYTES / 2);
+      const first = 'a'.repeat(perSection);
+      const second = 'b'.repeat(perSection);
+
+      expect(() =>
+        assembleSessionBriefing({
+          scope: [],
+          capabilities: [capability('agent-memory', first), capability('db-query', second)],
+        })
+      ).toThrow('pushed over by capability "db-query"');
+    });
   });
 });
