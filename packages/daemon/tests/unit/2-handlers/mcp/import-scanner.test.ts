@@ -36,6 +36,25 @@ describe('import-scanner', () => {
   }
 
   describe('scanMcpImports', () => {
+    test.each(['hyperneo-operations', 'agent-memory', 'db-query'])(
+      'rejects reserved name %s without importing or pruning the source',
+      async (name) => {
+        const path = writeMcpJson('repo/.mcp.json', {
+          mcpServers: { existing: { command: 'existing' } },
+        });
+        await scanMcpImports(repo, { mcpJsonPaths: [path] });
+        writeMcpJson('repo/.mcp.json', { mcpServers: { [name]: { command: 'external' } } });
+
+        const result = await scanMcpImports(repo, { mcpJsonPaths: [path] });
+
+        expect(result).toMatchObject({ imported: 0, removed: 0 });
+        expect(result.notes[0]).toContain(name);
+        expect(result.notes[0]).toContain('Rename these entries');
+        expect(repo.getByName(name)).toBeNull();
+        expect(repo.getByName('existing')?.command).toBe('existing');
+      }
+    );
+
     test('inserts imported rows for stdio entries', async () => {
       const p = writeMcpJson('repo/.mcp.json', {
         mcpServers: {
