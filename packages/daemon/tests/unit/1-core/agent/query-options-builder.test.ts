@@ -1718,7 +1718,11 @@ describe('QueryOptionsBuilder', () => {
       mockSession.config.systemPrompt = 'Custom system prompt';
       const options = await builder.build();
 
-      expect(options.systemPrompt).toBe('Custom system prompt');
+      expect(options.systemPrompt).toEqual({
+        type: 'custom',
+        prompt: 'Custom system prompt',
+        snapshot: false,
+      });
     });
 
     it('should combine custom prompt with worktree isolation', async () => {
@@ -1734,8 +1738,9 @@ describe('QueryOptionsBuilder', () => {
       });
       const options = await newBuilder.build();
 
-      expect(options.systemPrompt).toContain('Custom prompt');
-      expect(options.systemPrompt).toContain('Git Worktree Isolation');
+      const prompt = (options.systemPrompt as { prompt: string }).prompt;
+      expect(prompt).toContain('Custom prompt');
+      expect(prompt).toContain('Git Worktree Isolation');
     });
 
     it('should use minimal worktree prompt when Claude Code preset disabled', async () => {
@@ -1751,8 +1756,12 @@ describe('QueryOptionsBuilder', () => {
       });
       const options = await newBuilder.build();
 
-      expect(typeof options.systemPrompt).toBe('string');
-      expect(options.systemPrompt).toContain('Git Worktree Isolation');
+      expect(options.systemPrompt).toEqual(
+        expect.objectContaining({ type: 'custom', snapshot: false })
+      );
+      expect((options.systemPrompt as { prompt: string }).prompt).toContain(
+        'Git Worktree Isolation'
+      );
     });
 
     it('appends the Space briefing to the preset for a Space session', async () => {
@@ -1794,8 +1803,9 @@ describe('QueryOptionsBuilder', () => {
       });
       const options = await newBuilder.build();
 
-      expect(options.systemPrompt).toContain('Custom prompt');
-      expect(options.systemPrompt).toContain('Space briefing text');
+      const prompt = (options.systemPrompt as { prompt: string }).prompt;
+      expect(prompt).toContain('Custom prompt');
+      expect(prompt).toContain('Space briefing text');
     });
 
     it('carries the Space briefing when the Claude Code preset is disabled', async () => {
@@ -1807,7 +1817,11 @@ describe('QueryOptionsBuilder', () => {
       });
       const options = await newBuilder.build();
 
-      expect(options.systemPrompt).toBe('Space briefing text');
+      expect(options.systemPrompt).toEqual({
+        type: 'custom',
+        prompt: 'Space briefing text',
+        snapshot: false,
+      });
     });
 
     it('leaves the system prompt untouched for a session outside any Space', async () => {
@@ -1819,6 +1833,53 @@ describe('QueryOptionsBuilder', () => {
       const options = await newBuilder.build();
 
       expect(options.systemPrompt).toBeUndefined();
+    });
+  });
+
+  describe('system prompt recording', () => {
+    it('sends an agent role prompt unrecorded so a resumed session re-reads it (#4824)', async () => {
+      mockSession.sdkSessionId = 'sdk-session-already-running';
+      mockSession.config.systemPrompt = {
+        type: 'preset',
+        preset: 'claude_code',
+        append: 'You are the Task Manager for this Space.',
+      };
+      const newBuilder = new QueryOptionsBuilder({
+        session: mockSession,
+        settingsManager: mockSettingsManager,
+      });
+
+      const options = newBuilder.addSessionStateOptions(await newBuilder.build());
+
+      expect(options.resume).toBe('sdk-session-already-running');
+      expect(options.systemPrompt).toEqual({
+        type: 'preset',
+        preset: 'claude_code',
+        append: 'You are the Task Manager for this Space.',
+        snapshot: false,
+      });
+    });
+
+    it('sends a Space briefing unrecorded', async () => {
+      const newBuilder = new QueryOptionsBuilder({
+        session: mockSession,
+        settingsManager: mockSettingsManager,
+        getSpaceBriefing: () => 'You are working inside the Space "Acme" (id: space-1).',
+      });
+
+      const options = await newBuilder.build();
+
+      expect((options.systemPrompt as { snapshot?: boolean }).snapshot).toBe(false);
+    });
+
+    it('leaves recording to the SDK when it contributes no prompt text of its own', async () => {
+      const options = await builder.build();
+
+      expect(options.systemPrompt).toEqual({
+        type: 'preset',
+        preset: 'claude_code',
+      });
+      expect((options.systemPrompt as { snapshot?: boolean }).snapshot).toBeUndefined();
     });
   });
 
@@ -1986,7 +2047,11 @@ describe('QueryOptionsBuilder', () => {
       mockSession.type = 'space_chat';
       mockSession.config.systemPrompt = 'You are the Space coordinator.';
       const options = await builder.build();
-      expect(options.systemPrompt).toBe('You are the Space coordinator.');
+      expect(options.systemPrompt).toEqual({
+        type: 'custom',
+        prompt: 'You are the Space coordinator.',
+        snapshot: false,
+      });
     });
 
     it('should not affect worker sessions tool allowlist (coder/reviewer tool access unchanged)', async () => {

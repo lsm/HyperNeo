@@ -72,6 +72,12 @@ import { withSdkTranscriptRetention } from './sdk-transcript-retention.ts';
 
 const log = new Logger('QueryOptionsBuilder');
 
+const RECORD_HOST_AUTHORED_PROMPT = false;
+
+function buildHostAuthoredPrompt(prompt: string): Options['systemPrompt'] {
+  return { type: 'custom', prompt, snapshot: RECORD_HOST_AUTHORED_PROMPT };
+}
+
 function compileToolGuard(guard: DeclarativeToolGuard): HookCallback {
   let pattern: RegExp;
   try {
@@ -727,6 +733,7 @@ export class QueryOptionsBuilder {
       ]);
       if (append) {
         presetConfig.append = append;
+        presetConfig.snapshot = RECORD_HOST_AUTHORED_PROMPT;
       }
 
       return presetConfig;
@@ -736,20 +743,22 @@ export class QueryOptionsBuilder {
       this.ctx.getSpaceBriefing?.(),
       this.ctx.session.worktree ? this.getMinimalWorktreePrompt() : undefined,
     ]);
-    return plain || undefined;
+    return plain ? buildHostAuthoredPrompt(plain) : undefined;
   }
 
   private buildCustomSystemPrompt(systemPrompt: SystemPromptConfig): Options['systemPrompt'] {
     if (typeof systemPrompt === 'string') {
-      return this.joinSystemPromptAppendParts([
-        systemPrompt,
-        this.ctx.getSpaceBriefing?.(),
-        this.ctx.session.worktree ? this.getWorktreeIsolationText() : undefined,
-      ]);
+      return buildHostAuthoredPrompt(
+        this.joinSystemPromptAppendParts([
+          systemPrompt,
+          this.ctx.getSpaceBriefing?.(),
+          this.ctx.session.worktree ? this.getWorktreeIsolationText() : undefined,
+        ])
+      );
     }
 
     if (systemPrompt.type === 'preset' && systemPrompt.preset === 'claude_code') {
-      const presetConfig: ClaudeCodePreset = {
+      const presetConfig: Options['systemPrompt'] = {
         type: 'preset',
         preset: 'claude_code',
       };
@@ -761,6 +770,7 @@ export class QueryOptionsBuilder {
       ]);
       if (append) {
         presetConfig.append = append;
+        presetConfig.snapshot = RECORD_HOST_AUTHORED_PROMPT;
       }
 
       return presetConfig;
