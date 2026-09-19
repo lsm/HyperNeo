@@ -1,3 +1,4 @@
+import historicalQaSlotPrompts from './fixtures/pre-operation-qa-slot-prompts.json';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import {
@@ -4623,3 +4624,27 @@ test('pre-operation slot snapshots retain the earlier external-gate retirement c
     expect(merged[0]!.agents[0]!.customPrompt?.value).toBe(current);
   }
 });
+
+test.each(historicalQaSlotPrompts)(
+  'migrates a frozen historical QA seed without changing customized prompts',
+  (persisted) => {
+    const node = CODING_WITH_QA_WORKFLOW.nodes.find((candidate) => candidate.name === 'QA')!;
+    const previous = {
+      ...node,
+      agents: node.agents.map((agent) => ({ ...agent, customPrompt: { value: persisted } })),
+    };
+    const merged = mergeNodeStructuralFieldsFromTemplate([previous], CODING_WITH_QA_WORKFLOW.nodes);
+    expect(merged[0].agents[0].customPrompt?.value).toBe(node.agents[0].customPrompt?.value);
+    const customized = {
+      ...previous,
+      agents: previous.agents.map((agent) => ({
+        ...agent,
+        customPrompt: { value: persisted + '\nKeep my custom QA policy.' },
+      })),
+    };
+    expect(
+      mergeNodeStructuralFieldsFromTemplate([customized], CODING_WITH_QA_WORKFLOW.nodes)[0]
+        .agents[0].customPrompt?.value
+    ).toBe(customized.agents[0].customPrompt.value);
+  }
+);
