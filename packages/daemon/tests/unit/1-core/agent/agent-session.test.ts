@@ -6931,7 +6931,7 @@ describe('AgentSession', () => {
       let registry = createOperationRegistry([stubOperation('task.create')]);
       agentSession.setOperationRegistryProvider(() => registry);
       expect(agentSession.getOperationsCapabilityContribution().briefing).toContain(
-        '1 operations across 1 areas: task'
+        '1 operation across 1 area: task'
       );
 
       registry = createOperationRegistry([
@@ -6960,7 +6960,7 @@ describe('AgentSession', () => {
       agentSession.getOperationMcpServer();
       const { briefing } = agentSession.getOperationsCapabilityContribution();
 
-      expect(briefing).toContain('1 operations across 1 areas: workflow');
+      expect(briefing).toContain('1 operation across 1 area: workflow');
     });
   });
 });

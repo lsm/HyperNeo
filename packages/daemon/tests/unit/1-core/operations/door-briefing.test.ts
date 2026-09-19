@@ -108,7 +108,7 @@ describe('describeResolvedOperations', () => {
 
     const listing = describeResolvedOperations(registry);
 
-    expect(listing).toContain('1 operations across 1 areas');
+    expect(listing).toContain('1 operation across 1 area');
     expect(listing).not.toContain('task.create');
   });
 
@@ -141,7 +141,7 @@ describe('operationsCapabilityContribution with a resolved registry', () => {
     const { briefing } = operationsCapabilityContribution(ATTACHED, registry);
 
     expect(briefing.startsWith(operationsCapabilityContribution(ATTACHED).briefing)).toBe(true);
-    expect(briefing).toContain('1 operations across 1 areas: task');
+    expect(briefing).toContain('1 operation across 1 area: task');
   });
 
   test('never names an individual operation in the derived section either', () => {

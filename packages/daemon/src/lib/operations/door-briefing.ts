@@ -21,7 +21,9 @@ export function describeResolvedOperations(registry: OperationRegistry): string 
   const families = [...new Set(names.map(operationFamily))].sort((left, right) =>
     left < right ? -1 : left > right ? 1 : 0
   );
-  return `This session's registry currently resolves ${names.length} operations across ${families.length} areas: ${families.join(', ')}.`;
+  const operationWord = names.length === 1 ? 'operation' : 'operations';
+  const areaWord = families.length === 1 ? 'area' : 'areas';
+  return `This session's registry currently resolves ${names.length} ${operationWord} across ${families.length} ${areaWord}: ${families.join(', ')}.`;
 }
 
 export function operationsCapabilityContribution(
