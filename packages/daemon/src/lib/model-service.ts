@@ -1171,20 +1171,6 @@ function isCacheStale(cacheKey: string): boolean {
   return Date.now() - timestamp > CACHE_TTL;
 }
 
-function readCachedModels(cacheKey: string): ModelInfo[] | null {
-  const cachedModels = modelsCache.get(cacheKey);
-  if (!cachedModels) {
-    return null;
-  }
-  if (isCacheStale(cacheKey)) {
-    triggerBackgroundRefresh(cacheKey).catch(() => {});
-  }
-  if (cachedModels.length === 0) {
-    return null;
-  }
-  return cachedModels;
-}
-
 const observedContextWindows = new Map<string, number>();
 
 function observedContextWindowKey(providerId: string, modelId: string): string {
@@ -1204,25 +1190,39 @@ export function recordObservedContextWindow(
   return true;
 }
 
-function applyObservedContextWindow(model: ModelInfo): ModelInfo {
-  if (observedContextWindows.size === 0) return model;
+function applyObservedContextWindow<T extends ModelInfo | null>(model: T): T {
+  if (observedContextWindows.size === 0 || model === null) return model;
   const observed =
     observedContextWindows.get(observedContextWindowKey(model.provider, model.id)) ??
     observedContextWindows.get(observedContextWindowKey(model.provider, model.alias));
   return observed === undefined || observed === model.contextWindow
     ? model
-    : { ...model, contextWindow: observed };
+    : ({ ...model, contextWindow: observed } as T);
 }
 
 function applyObservedContextWindows(models: ModelInfo[]): ModelInfo[] {
-  return observedContextWindows.size === 0 ? models : models.map(applyObservedContextWindow);
+  return observedContextWindows.size === 0
+    ? models
+    : models.map((m) => applyObservedContextWindow(m));
+}
+
+function readCachedModels(cacheKey: string): ModelInfo[] | null {
+  const cachedModels = modelsCache.get(cacheKey);
+  if (!cachedModels) {
+    return null;
+  }
+  if (isCacheStale(cacheKey)) {
+    triggerBackgroundRefresh(cacheKey).catch(() => {});
+  }
+  if (cachedModels.length === 0) {
+    return null;
+  }
+  return applyObservedContextWindows(cachedModels);
 }
 
 export function getAvailableModels(cacheKey: string = 'global'): ModelInfo[] {
   const cachedModels = readCachedModels(cacheKey);
-  return cachedModels === null
-    ? []
-    : applyObservedContextWindows(filterModelsByCuration(cachedModels));
+  return cachedModels === null ? [] : filterModelsByCuration(cachedModels);
 }
 
 export async function initializeModels(): Promise<void> {
@@ -1740,9 +1740,10 @@ export async function getSessionModelInfo(
   }
   const staticProviderModels = STATIC_MODEL_METADATA.filter((m) => m.provider === providerId);
   const fromStatic = findInModels(staticProviderModels, session.config.model) ?? null;
-  return providerId === 'anthropic-copilot' && fromStatic
+  if (!fromStatic) return null;
+  return providerId === 'anthropic-copilot'
     ? overlayCodexStaticMetadata(fromStatic)
-    : fromStatic;
+    : applyObservedContextWindow(fromStatic);
 }
 
 export async function getModelInfoUnfiltered(

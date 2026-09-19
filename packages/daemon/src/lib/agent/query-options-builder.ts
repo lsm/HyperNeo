@@ -197,8 +197,6 @@ export const NATIVE_CONTEXT_WINDOW_PROVIDER_IDS = [
   'glm',
 ];
 
-export const METADATA_ARMED_CONTEXT_WINDOW_PROVIDER_IDS = ['anthropic-codex', 'glm'];
-
 export function buildProviderSettings(
   providerId: string,
   contextWindow?: number | null,

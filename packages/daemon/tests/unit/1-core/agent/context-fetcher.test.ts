@@ -4,6 +4,8 @@ import { ContextFetcher } from '../../../../src/lib/agent/context-fetcher';
 import {
   clearModelsCache,
   getAvailableModels,
+  getModelInfoUnfiltered,
+  getSessionModelInfo,
   recordObservedContextWindow,
   setModelsCache,
 } from '../../../../src/lib/model-service';
@@ -1489,6 +1491,63 @@ describe('ContextFetcher.fetch', () => {
 
       expect(getContextUsage).toHaveBeenCalledTimes(2);
       expect(infoSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('warns instead of adopting when metadata is the declared capacity authority', async () => {
+      const getContextUsage = mock(async () =>
+        baseResponse({
+          totalTokens: 100_000,
+          maxTokens: 128_000,
+          rawMaxTokens: 128_000,
+          model: 'gpt-5.1-codex-mini',
+        })
+      );
+      const query = { getContextUsage } as unknown as Query;
+
+      const fetcher = new ContextFetcher('copilot-codex-session');
+      const warnSpy = spyOn(fetcher.logger, 'warn');
+      const infoSpy = spyOn(fetcher.logger, 'info');
+
+      await fetcher.fetch(query, {
+        id: 'gpt-5.1-codex-mini',
+        contextWindow: 272_000,
+        provider: 'anthropic-copilot',
+        preferContextWindowMetadata: true,
+      });
+
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(infoSpy).not.toHaveBeenCalled();
+      expect(recordObservedContextWindow('anthropic-copilot', 'gpt-5.1-codex-mini', 128_000)).toBe(
+        true
+      );
+    });
+
+    it('reaches raw cache reads that skip the curated model list', async () => {
+      setModelsCache(anthropicSlice());
+      const getContextUsage = mock(async () =>
+        baseResponse({
+          totalTokens: 100_000,
+          maxTokens: 800_000,
+          rawMaxTokens: 1_000_000,
+          model: 'claude-sonnet-5',
+        })
+      );
+      const query = { getContextUsage } as unknown as Query;
+
+      const fetcher = new ContextFetcher('anthropic-raw-read-session');
+      await fetcher.fetch(query, {
+        id: 'claude-sonnet-5',
+        contextWindow: 200_000,
+        provider: 'anthropic',
+      });
+
+      const unfiltered = await getModelInfoUnfiltered('claude-sonnet-5', 'global');
+      expect(unfiltered?.contextWindow).toBe(1_000_000);
+
+      const sessionInfo = await getSessionModelInfo({
+        config: { model: 'claude-sonnet-5', provider: 'anthropic' },
+      } as Parameters<typeof getSessionModelInfo>[0]);
+      expect(sessionInfo?.contextWindow).toBe(1_000_000);
     });
 
     it('leaves metadata alone for glm, whose SDK window is armed from metadata', async () => {

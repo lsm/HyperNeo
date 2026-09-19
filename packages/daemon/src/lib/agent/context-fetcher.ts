@@ -13,7 +13,6 @@ import { scaledAutoCompactWindow } from './context-budget-decision.ts';
 import type { QueryLike } from './query-like.ts';
 import {
   buildProviderSettings,
-  METADATA_ARMED_CONTEXT_WINDOW_PROVIDER_IDS,
   NATIVE_CONTEXT_WINDOW_PROVIDER_IDS,
 } from './query-options-builder.js';
 
@@ -187,7 +186,7 @@ export class ContextFetcher {
     if (larger <= 0) return;
     const mismatch = Math.abs(sdkCapacity - metadataCapacity) / larger;
     if (mismatch <= ContextFetcher.CAPACITY_MISMATCH_WARN_FRACTION) return;
-    if (!METADATA_ARMED_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId)) {
+    if (modelMetadata?.preferContextWindowMetadata !== true) {
       ContextFetcher.reconcileContextWindow(providerId, modelMetadata, info, logger);
       return;
     }
