@@ -1,7 +1,9 @@
 import {
   assertTaskTransitionSnapshot,
+  StaleTaskGuardError,
   type TaskTransitionExpectation,
 } from '../../tasks/task-manager.ts';
+import { prepareSpaceTaskStatusUpdate } from '../../tasks/status-preparation.ts';
 import { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
 import { availableTaskSlots } from '../../tasks/capacity.ts';
 import { selectOrphanedInProgressTasks } from '../../tasks/orphaned-task-recovery.ts';
@@ -3248,6 +3250,10 @@ export class SpaceRuntime {
     const previous = this.config.taskRepo.getTask(taskId);
     if (!previous || previous.spaceId !== spaceId) return null;
     assertTaskTransitionSnapshot(previous, expected);
+    const transitionSnapshot: TaskTransitionExpectation = {
+      expectedStatus: previous.status,
+      expectedWorkflowRunId: previous.workflowRunId ?? null,
+    };
     const nextStatus = params.status;
     if (nextStatus && previous.status !== nextStatus) {
       assertValidSpaceTaskTransition(previous.status, nextStatus);
@@ -3273,8 +3279,37 @@ export class SpaceRuntime {
         );
         delete (params as Record<string, unknown>).workspacePath;
       }
+      const projectedStatus = prepareSpaceTaskStatusUpdate(
+        previous,
+        nextStatus,
+        {
+          result: Object.hasOwn(params, 'result') ? params.result : undefined,
+          reportedSummary: Object.hasOwn(params, 'reportedSummary')
+            ? params.reportedSummary
+            : undefined,
+        },
+        Date.now()
+      ).updates;
+      const projectedResult = Object.hasOwn(projectedStatus, 'result')
+        ? projectedStatus.result
+        : previous.result;
+      const reason = params.result ?? projectedResult ?? `Task ${nextStatus}`;
+      if (previous.workflowRunId) {
+        await this.stopActiveWorkflowTaskAgents(
+          {
+            ...previous,
+            status: nextStatus,
+          },
+          reason
+        );
+      }
+      const afterTeardown = this.config.taskRepo.getTask(taskId);
+      if (!afterTeardown || afterTeardown.spaceId !== spaceId) {
+        throw new StaleTaskGuardError('Task transition snapshot is stale');
+      }
+      assertTaskTransitionSnapshot(afterTeardown, transitionSnapshot);
       let updated = await taskManager.setTaskStatus(taskId, nextStatus, {
-        ...expected,
+        ...transitionSnapshot,
         result: Object.hasOwn(params, 'result') ? params.result : undefined,
         reportedSummary: Object.hasOwn(params, 'reportedSummary')
           ? params.reportedSummary
@@ -3316,15 +3351,6 @@ export class SpaceRuntime {
         return updated;
       }
 
-      const reason = params.result ?? updated.result ?? `Task ${nextStatus}`;
-      updated = await this.stopActiveWorkflowTaskAgents(
-        {
-          ...updated,
-          workflowRunId: previous.workflowRunId,
-          taskAgentSessionId: previous.taskAgentSessionId,
-        },
-        reason
-      );
       await this.safeOnTaskUpdated(spaceId, updated);
 
       if (nextStatus === 'blocked') {

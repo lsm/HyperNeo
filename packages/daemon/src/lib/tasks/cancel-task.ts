@@ -71,6 +71,9 @@ async function admitManagedCancellation(
       await stopTaskExecution(executor, task.id, 'cancelled');
       return { reason: { accepted: true, jobId: null } };
     } catch (error) {
+      if (error instanceof StaleTaskGuardError) {
+        return { reason: { accepted: false, reason: 'cancellation_unavailable' } };
+      }
       if (!resolveWorkflowCancellationRejection(error)) throw error;
       return { reason: { accepted: false, reason: 'cancellation_invalid_transition' } };
     }
