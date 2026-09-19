@@ -46,8 +46,9 @@ export function createDefaultSessionResolutionDeps(
       return restored;
     },
 
-    ensureLongTermAgent(spaceId, agentId) {
-      return spaceRuntimeService.ensureAgentSession(spaceId, agentId);
+    async ensureLongTermAgent(spaceId, agentId) {
+      const outcome = await spaceRuntimeService.ensureAgentSession(spaceId, agentId);
+      return typeof outcome === 'string' ? null : outcome;
     },
 
     isAgentTargetLifecycleEligible(spaceId, agentId) {

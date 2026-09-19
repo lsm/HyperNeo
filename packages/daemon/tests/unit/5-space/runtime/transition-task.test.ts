@@ -148,7 +148,8 @@ test('a workflow-backed stop carries the block reason into the runtime params', 
   expect(stopForStatus).toHaveBeenCalledWith(
     spaceId,
     task.id,
-    expect.objectContaining({ status: 'blocked', blockReason: 'human_input_requested' })
+    expect.objectContaining({ status: 'blocked', blockReason: 'human_input_requested' }),
+    { expectedStatus: 'in_progress', expectedWorkflowRunId: run.id }
   );
 });
 
@@ -510,6 +511,34 @@ describe('decide', () => {
     ).rejects.toThrow('Space runtime executor unavailable: stop_for_status');
   });
 
+  test('a stale runtime write becomes invalid_transition while infrastructure faults propagate', async () => {
+    const owned = createOwned('in_progress', createWorkflowRun().id);
+    const input = { taskId: owned.task.id, status: 'stopped' as const };
+    const result = await decide(
+      owned,
+      input,
+      rpc,
+      deps({
+        parkStopped: async () => {
+          throw new StaleTaskGuardError('stale');
+        },
+      })
+    );
+    expect(result).toEqual({ reason: 'invalid_transition' });
+    await expect(
+      decide(
+        owned,
+        input,
+        rpc,
+        deps({
+          parkStopped: async () => {
+            throw new Error('database unavailable');
+          },
+        })
+      )
+    ).rejects.toThrow('database unavailable');
+  });
+
   test('park_stopped calls the bound executor and completes the transition', async () => {
     const owned = createOwned('in_progress', createWorkflowRun().id);
     const parked = { ...owned.task, status: 'stopped' as const };
@@ -520,7 +549,10 @@ describe('decide', () => {
       rpc,
       deps({ parkStopped })
     );
-    expect(parkStopped).toHaveBeenCalledWith(spaceId, owned.task.id);
+    expect(parkStopped).toHaveBeenCalledWith(spaceId, owned.task.id, {
+      expectedStatus: owned.task.status,
+      expectedWorkflowRunId: owned.task.workflowRunId,
+    });
     expect(result).toEqual({ reason: parked });
   });
 
@@ -534,7 +566,10 @@ describe('decide', () => {
       rpc,
       deps({ recoverTransition })
     );
-    expect(recoverTransition).toHaveBeenCalledWith(spaceId, owned.task.id, 'in_progress');
+    expect(recoverTransition).toHaveBeenCalledWith(spaceId, owned.task.id, 'in_progress', {
+      expectedStatus: owned.task.status,
+      expectedWorkflowRunId: owned.task.workflowRunId,
+    });
     expect(result).toEqual({ reason: recovered });
   });
 
@@ -598,10 +633,15 @@ describe('decide', () => {
       rpc,
       deps({ stopForStatus, isWorkflowRunActive: () => true })
     );
-    expect(stopForStatus).toHaveBeenCalledWith(spaceId, owned.task.id, {
-      status: 'done',
-      result: 'shipped it',
-    });
+    expect(stopForStatus).toHaveBeenCalledWith(
+      spaceId,
+      owned.task.id,
+      {
+        status: 'done',
+        result: 'shipped it',
+      },
+      { expectedStatus: owned.task.status, expectedWorkflowRunId: owned.task.workflowRunId }
+    );
   });
 
   test('an rpc review to done with a live run stops the workflow and stamps approval', async () => {
@@ -614,10 +654,15 @@ describe('decide', () => {
       rpc,
       deps({ stopForStatus, isWorkflowRunActive: () => true })
     );
-    expect(stopForStatus).toHaveBeenCalledWith(spaceId, owned.task.id, {
-      status: 'done',
-      approvalSource: 'human',
-    });
+    expect(stopForStatus).toHaveBeenCalledWith(
+      spaceId,
+      owned.task.id,
+      {
+        status: 'done',
+        approvalSource: 'human',
+      },
+      { expectedStatus: owned.task.status, expectedWorkflowRunId: owned.task.workflowRunId }
+    );
     expect(result).toEqual({ reason: stopped });
   });
 
@@ -644,7 +689,12 @@ describe('decide', () => {
       rpc,
       deps({ stopForStatus })
     );
-    expect(stopForStatus).toHaveBeenCalledWith(spaceId, owned.task.id, { status: 'open' });
+    expect(stopForStatus).toHaveBeenCalledWith(
+      spaceId,
+      owned.task.id,
+      { status: 'open' },
+      { expectedStatus: owned.task.status, expectedWorkflowRunId: owned.task.workflowRunId }
+    );
     expect(result).toEqual({ reason: stopped });
   });
 });

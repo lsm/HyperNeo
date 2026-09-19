@@ -6,7 +6,10 @@ import {
   createCreateAgentOperation,
   type CreateAgentDependencies,
 } from './create-agent-operation.ts';
-import { createEnsureAgentSessionOperation } from './ensure-agent-session-operation.ts';
+import {
+  createEnsureAgentSessionOperation,
+  type EnsureAgentSessionDependencies,
+} from './ensure-agent-session-operation.ts';
 import { createGetAgentOperation } from './get-agent-operation.ts';
 import { createListAgentsOperation } from './list-agents-operation.ts';
 import {
@@ -39,7 +42,7 @@ export interface AgentOperationDependencies extends AgentOperationDeps {
   readonly publishAgentUpdated: UpdateAgentDependencies['publishAgentUpdated'];
   readonly refreshAgentSubscriptions: UpdateAgentDependencies['refreshAgentSubscriptions'];
   readonly clearAgentSessionProvider: UpdateAgentDependencies['clearAgentSessionProvider'];
-  readonly ensureAgentSession: (spaceId: string, agentId: string) => Promise<unknown | null>;
+  readonly ensureAgentSession: EnsureAgentSessionDependencies['ensureAgentSession'];
   readonly audit: CreateAgentDependencies['audit'];
   readonly getGoalSpace: AgentAssignmentDependencies['getGoalSpace'];
   readonly getForgeScopeSpace: AgentAssignmentDependencies['getForgeScopeSpace'];

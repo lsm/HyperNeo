@@ -112,13 +112,13 @@ test.describe('Space Happy Path Pipeline (Task-First)', () => {
   test.use({ viewport: DESKTOP_VIEWPORT });
 
   let spaceId = '';
-  let runId = '';
+  let taskId = '';
 
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
     const ids = await createSpaceWithRun(page);
     spaceId = ids.spaceId;
-    runId = ids.runId;
+    taskId = await getRunTaskId(page, spaceId, ids.runId);
   });
 
   test.afterEach(async ({ page }) => {
@@ -155,8 +155,6 @@ test.describe('Space Happy Path Pipeline (Task-First)', () => {
   });
 
   test('workflow run task opens task route and shows thread activity', async ({ page }) => {
-    const taskId = await getRunTaskId(page, spaceId, runId);
-
     await gotoAndWaitForConnection(page, `/space/${spaceId}/task/${taskId}`);
     await page.waitForURL(`/space/${spaceId}/task/${taskId}`, { timeout: 10000 });
     await expect(page.getByTestId('task-thread-panel')).toBeVisible({ timeout: 5000 });
@@ -178,34 +176,23 @@ test.describe('Space Happy Path Pipeline (Task-First)', () => {
     await expect(page.getByTestId('space-task-event-row').first()).toBeVisible({ timeout: 15000 });
   });
 
-  test('task completion is reflected in task pane', async ({ page }) => {
-    const taskId = await getRunTaskId(page, spaceId, runId);
-
-    await gotoAndWaitForConnection(page, `/space/${spaceId}/task/${taskId}`);
-    await page.waitForURL(`/space/${spaceId}/task/${taskId}`, { timeout: 10000 });
-
-    await page.evaluate(
-      async ({ sid, tid }) => {
+  test.describe('completed workflow task', () => {
+    test.beforeEach(async ({ page }) => {
+      await page.evaluate(async (tid) => {
         const hub = window.__messageHub || window.appState?.messageHub;
         if (!hub?.request) throw new Error('MessageHub not available');
-        const current = (await hub.request('operation.invoke', {
-          name: 'task.get',
-          input: { taskId: tid },
-        })) as { status: string };
-        if (current.status === 'pending') {
-          await hub.request('operation.invoke', {
-            name: 'task.transition',
-            input: { taskId: tid, status: 'in_progress' },
-          });
-        }
         await hub.request('operation.invoke', {
           name: 'task.transition',
           input: { taskId: tid, status: 'done' },
         });
-      },
-      { sid: spaceId, tid: taskId }
-    );
+      }, taskId);
+    });
 
-    await expect(page.getByText('Done', { exact: true }).first()).toBeVisible({ timeout: 5000 });
+    test('task completion is reflected in task pane', async ({ page }) => {
+      await gotoAndWaitForConnection(page, `/space/${spaceId}/task/${taskId}`);
+      await page.waitForURL(`/space/${spaceId}/task/${taskId}`, { timeout: 10000 });
+
+      await expect(page.getByTestId('task-status-label')).toHaveText('Done', { timeout: 5000 });
+    });
   });
 });

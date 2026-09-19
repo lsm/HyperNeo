@@ -1,3 +1,4 @@
+import type { TaskTransitionExpectation } from '../../tasks/task-manager.ts';
 import type {
   McpServerConfig,
   Session,
@@ -83,7 +84,7 @@ import { ChannelRouter } from '../../messaging/channel-router.ts';
 import { createDatabaseDirectTaskWorkerResolver } from '../../tasks/direct-task-worker-identity.ts';
 import {
   type EnsureAgentSessionDeps,
-  type EnsuredSession,
+  type EnsureAgentSessionOutcome,
   isAgentTargetLifecycleEligible,
   runEnsureAgentSession,
 } from '../../session/ensure-agent-session.ts';
@@ -98,7 +99,6 @@ import {
   resolveSpaceMcpSessionPolicy,
   type SpaceMcpSessionPolicy,
 } from './space-mcp-session-policy.ts';
-import { buildSpaceSessionBriefing } from './space-session-briefing.ts';
 import { SpaceRuntime } from './space-runtime.ts';
 import type { TaskAgentManager } from './task-agent-manager.ts';
 import { canTransition as canTransitionRunStatus } from '../../workflows/run-status-machine.ts';
@@ -704,28 +704,8 @@ export class SpaceRuntimeService {
         },
       },
     });
-    const capabilities = this.attachLongTermAgentMcpServers(session, space, sessionId);
-    this.installLongTermAgentBriefing(session, space, agent.displayName, capabilities);
+    session.setAttachedCapabilities(this.attachLongTermAgentMcpServers(session, space, sessionId));
     return session;
-  }
-
-  private installLongTermAgentBriefing(
-    session: Pick<AgentSession, 'setSpaceBriefing' | 'getOperationsCapabilityContribution'>,
-    space: Space,
-    agentDisplayName: string | null,
-    capabilities: readonly AuthoredCapabilityContribution[]
-  ): void {
-    session.setSpaceBriefing(
-      buildSpaceSessionBriefing({
-        spaceId: space.id,
-        spaceName: space.name,
-        role: 'long_term_agent',
-        agentDisplayName,
-        spaceInstructions: space.instructions,
-        operations: session.getOperationsCapabilityContribution(),
-        capabilities,
-      })
-    );
   }
 
   private createSessionResolutionDeps(): SessionResolutionDeps | null {
@@ -762,7 +742,7 @@ export class SpaceRuntimeService {
     return ensureSession(target, deps);
   }
 
-  async ensureAgentSession(spaceId: string, agentId: string): Promise<EnsuredSession | null> {
+  async ensureAgentSession(spaceId: string, agentId: string): Promise<EnsureAgentSessionOutcome> {
     return runEnsureAgentSession(spaceId, agentId, this.ensureAgentSessionDeps());
   }
 
@@ -819,12 +799,7 @@ export class SpaceRuntimeService {
     }
     const capabilities = this.attachLongTermAgentMcpServers(agentSession, space, session.id);
     const agent = this.config.longHorizonAgentRepo?.getById(agentId) ?? null;
-    this.installLongTermAgentBriefing(
-      agentSession,
-      space,
-      agent?.displayName ?? null,
-      capabilities
-    );
+    agentSession.setAttachedCapabilities(capabilities);
     if (agent && agentSession.getSessionData().config.systemPrompt === undefined) {
       await applyBuiltAgentSessionConfig(
         agentSession,
@@ -1444,16 +1419,7 @@ export class SpaceRuntimeService {
 
     agentSession.mergeRuntimeMcpServers(additional);
 
-    agentSession.setSpaceBriefing(
-      buildSpaceSessionBriefing({
-        spaceId: space.id,
-        spaceName: space.name,
-        role: 'ad_hoc_member',
-        spaceInstructions: space.instructions,
-        operations: agentSession.getOperationsCapabilityContribution(),
-        capabilities,
-      })
-    );
+    agentSession.setAttachedCapabilities(capabilities);
 
     agentSession.onMissingMemberSpaceMcpServers = async (_sessionId, missing) => {
       log.warn(
@@ -1711,7 +1677,11 @@ export class SpaceRuntimeService {
     spaceId: string,
     taskId: string,
     targetStatus: 'open' | 'in_progress',
-    options: { workflowNodeId?: string; agentName?: string; description?: string } = {}
+    options: {
+      workflowNodeId?: string;
+      agentName?: string;
+      description?: string;
+    } & TaskTransitionExpectation = {}
   ): Promise<SpaceTask> {
     const recovered = await this.runtime.recoverWorkflowBackedTask(
       spaceId,
@@ -1737,17 +1707,27 @@ export class SpaceRuntimeService {
   async stopWorkflowBackedTaskForStatus(
     spaceId: string,
     taskId: string,
-    params: UpdateSpaceTaskParams
+    params: UpdateSpaceTaskParams,
+    expected: TaskTransitionExpectation = {}
   ): Promise<SpaceTask> {
-    const updated = await this.runtime.stopWorkflowBackedTaskForStatus(spaceId, taskId, params);
+    const updated = await this.runtime.stopWorkflowBackedTaskForStatus(
+      spaceId,
+      taskId,
+      params,
+      expected
+    );
     if (!updated) {
       throw new Error(`Failed to stop workflow-backed task ${taskId}`);
     }
     return updated;
   }
 
-  async parkStoppedWorkflowTask(spaceId: string, taskId: string): Promise<SpaceTask> {
-    const updated = await this.runtime.parkStoppedWorkflowTask(spaceId, taskId);
+  async parkStoppedWorkflowTask(
+    spaceId: string,
+    taskId: string,
+    expected: TaskTransitionExpectation = {}
+  ): Promise<SpaceTask> {
+    const updated = await this.runtime.parkStoppedWorkflowTask(spaceId, taskId, expected);
     if (!updated) {
       throw new Error(`Failed to stop (park) workflow-backed task ${taskId}`);
     }

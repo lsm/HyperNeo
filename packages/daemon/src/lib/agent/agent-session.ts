@@ -6,6 +6,8 @@ import type { OperationRegistry, OperationRegistryProvider } from '../operations
 import { createOperationMcpServer } from '../operations/mcp-server.ts';
 import { operationsCapabilityContribution } from '../operations/door-briefing.ts';
 import type { AuthoredCapabilityContribution } from '../briefings/contribution.ts';
+import { assembleSessionBriefing } from '../briefings/assemble-session-briefing.ts';
+import { NO_SESSION_SCOPE, type SessionScopeResolver } from '../briefings/scope-resolver.ts';
 import {
   NO_CALLER_SCOPE,
   resolveCallerIdentity,
@@ -124,6 +126,7 @@ export interface AgentSessionInit {
 export interface AgentSessionRuntimeOptions {
   operationRegistryProvider?: () => OperationRegistry | undefined;
   callerScopeResolver?: CallerScopeResolver;
+  spaceScopeResolver?: SessionScopeResolver;
   autoReplayPendingMessages?: boolean;
 
   hardReset?: (
@@ -260,14 +263,24 @@ export class AgentSession
   private operationRegistryProvider?: () => OperationRegistry | undefined;
   private callerScopeResolver: CallerScopeResolver = NO_CALLER_SCOPE;
   private defaultOperationRegistry?: OperationRegistry;
-  private spaceBriefing?: string;
+  private spaceScopeResolver: SessionScopeResolver = NO_SESSION_SCOPE;
+  private attachedCapabilities: readonly AuthoredCapabilityContribution[] = [];
 
-  setSpaceBriefing(briefing: string | undefined): void {
-    this.spaceBriefing = briefing;
+  setSpaceScopeResolver(resolver: SessionScopeResolver): void {
+    this.spaceScopeResolver = resolver;
+  }
+
+  setAttachedCapabilities(capabilities: readonly AuthoredCapabilityContribution[]): void {
+    this.attachedCapabilities = capabilities;
   }
 
   getSpaceBriefing(): string | undefined {
-    return this.spaceBriefing;
+    const scope = this.spaceScopeResolver(this.session.id);
+    if (!scope) return undefined;
+    return assembleSessionBriefing({
+      scope: [scope],
+      capabilities: [this.getOperationsCapabilityContribution(), ...this.attachedCapabilities],
+    }).text;
   }
 
   setOperationRegistryProvider(provider: OperationRegistryProvider): void {
@@ -424,6 +437,7 @@ export class AgentSession
   ) {
     this.operationRegistryProvider = runtimeOptions.operationRegistryProvider;
     this.callerScopeResolver = runtimeOptions.callerScopeResolver ?? NO_CALLER_SCOPE;
+    this.spaceScopeResolver = runtimeOptions.spaceScopeResolver ?? NO_SESSION_SCOPE;
     this.errorManager = new ErrorManager(this.messageHub, this.internalEventBus);
     this.logger = new Logger(`AgentSession ${session.id}`);
 
@@ -839,6 +853,7 @@ export class AgentSession
         messageId?: unknown;
         retryCount?: unknown;
         maxRetries?: unknown;
+        exhaustedCycles?: unknown;
       };
       if (
         parsed.status === 'rate_limit_cooldown' &&
@@ -846,13 +861,25 @@ export class AgentSession
         parsed.retryAt > Date.now()
       ) {
         const messageId = typeof parsed.messageId === 'string' ? parsed.messageId : undefined;
-        this.rateLimitWatchdog.armPersistedCooldown(parsed.retryAt, messageId, () => {
-          void this.stateManager.setIdle().catch(() => {});
-        });
+        const exhaustedCycles =
+          typeof parsed.exhaustedCycles === 'number' &&
+          Number.isSafeInteger(parsed.exhaustedCycles) &&
+          parsed.exhaustedCycles >= 0
+            ? parsed.exhaustedCycles
+            : 0;
+        this.rateLimitWatchdog.armPersistedCooldown(
+          parsed.retryAt,
+          messageId,
+          () => {
+            void this.stateManager.setIdle().catch(() => {});
+          },
+          exhaustedCycles
+        );
         void this.stateManager
           .setRateLimitCooldown({
             retryCount: typeof parsed.retryCount === 'number' ? parsed.retryCount : 0,
             maxRetries: typeof parsed.maxRetries === 'number' ? parsed.maxRetries : 0,
+            exhaustedCycles,
             retryAt: parsed.retryAt,
             ...(messageId !== undefined ? { messageId } : {}),
           })

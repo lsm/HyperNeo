@@ -150,18 +150,27 @@ export class RateLimitWatchdog {
     };
   }
 
-  armPersistedCooldown(retryAt: number, messageId?: string, onPersistedExpiry?: () => void): void {
+  armPersistedCooldown(
+    retryAt: number,
+    messageId?: string,
+    onPersistedExpiry?: () => void,
+    exhaustedCycles = 0
+  ): void {
     if (this.cooldownTimer !== null) return;
     const remaining = Math.max(0, retryAt - Date.now());
     this.currentRetryAt = retryAt;
     this.persistedCooldownArm = true;
     this.persistedEpisodeMessageUuid = messageId ?? null;
+    this.episodeMessageUuid = messageId ?? null;
+    this.exhaustedRetryCycles =
+      Number.isSafeInteger(exhaustedCycles) && exhaustedCycles >= 0 ? exhaustedCycles : 0;
     this.persistedExpiryCallback = onPersistedExpiry ?? null;
     this.cooldownTimer = setTimeout(() => {
       this.cooldownTimer = null;
       this.currentRetryAt = null;
       this.persistedCooldownArm = false;
       this.persistedEpisodeMessageUuid = null;
+      this.retryFiredForEpisode = true;
       const expiry = this.persistedExpiryCallback;
       this.persistedExpiryCallback = null;
       expiry?.();
@@ -454,6 +463,7 @@ export class RateLimitWatchdog {
                   maxRetries: this.config.maxAutoRetries,
                   retryAt: this.currentRetryAt,
                   messageId: this.lastUserMessage?.uuid,
+                  exhaustedCycles: this.exhaustedRetryCycles,
                 },
                 queryGeneration
               )
@@ -491,6 +501,7 @@ export class RateLimitWatchdog {
         maxRetries: this.config.maxAutoRetries,
         retryAt,
         messageId: this.lastUserMessage?.uuid,
+        exhaustedCycles: this.exhaustedRetryCycles,
       },
       queryGeneration
     );
@@ -637,6 +648,7 @@ export class RateLimitWatchdog {
           maxRetries: this.config.maxAutoRetries,
           retryAt: Date.now() + STARTUP_RETRY_DELAY_MS,
           messageId: this.lastUserMessage?.uuid,
+          exhaustedCycles: this.exhaustedRetryCycles,
         },
         queryGeneration
       );
@@ -750,6 +762,7 @@ export class RateLimitWatchdog {
                 maxRetries: this.config.maxAutoRetries,
                 retryAt: Date.now(),
                 messageId: this.lastUserMessage?.uuid,
+                exhaustedCycles: this.exhaustedRetryCycles,
               },
               queryGeneration
             );
@@ -843,6 +856,7 @@ export class RateLimitWatchdog {
         maxRetries: this.config.maxAutoRetries,
         retryAt: this.currentRetryAt,
         messageId: this.lastUserMessage?.uuid,
+        exhaustedCycles: this.exhaustedRetryCycles,
       });
       return;
     }
@@ -852,6 +866,7 @@ export class RateLimitWatchdog {
         maxRetries: this.config.maxAutoRetries,
         retryAt: Date.now(),
         messageId: this.lastUserMessage?.uuid,
+        exhaustedCycles: this.exhaustedRetryCycles,
       });
     }
   }

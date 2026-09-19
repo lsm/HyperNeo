@@ -105,6 +105,7 @@ export type AgentProcessingState =
   | { status: 'waiting_for_input'; pendingQuestion: PendingUserQuestion }
   | {
       status: 'rate_limit_cooldown';
+      exhaustedCycles?: number;
       retryCount: number;
       maxRetries: number;
       retryAt: number;

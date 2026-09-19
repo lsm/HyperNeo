@@ -1387,6 +1387,48 @@ describe('RateLimitWatchdog', () => {
       watchdog.cancel();
     });
 
+    it.each(['m1', 'm2'])(
+      'restores exhausted cycles after restart for message %s',
+      async (messageId) => {
+        const { deps, notifyPause } = createMockDeps({ chain: [] });
+        const original = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 5 });
+        for (let index = 0; index < 3; index++) {
+          await original.scheduleRetry(nearResetMessage(), { uuid: 'm1', content: 'hi' });
+          original.retryNow();
+          await flush();
+        }
+        await original.scheduleRetry(nearResetMessage(), { uuid: 'm1', content: 'hi' });
+        const stored = lastCooldownArgs(stateManager) as ReturnType<typeof lastCooldownArgs> & {
+          exhaustedCycles?: number;
+          messageId?: string;
+        };
+        expect(stored.exhaustedCycles).toBe(3);
+        original.cancel();
+        const restored = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 5 });
+        try {
+          restored.armPersistedCooldown(
+            Date.now() + 10,
+            stored.messageId,
+            undefined,
+            stored.exhaustedCycles
+          );
+          await new Promise((resolve) => setTimeout(resolve, 30));
+          const armedAt = Date.now();
+          await restored.scheduleRetry(nearResetMessage(), { uuid: messageId, content: 'hi' });
+          expect(lastPause(notifyPause).reason).toBe(
+            messageId === 'm1' ? 'escalated-park' : 'parsed-reset'
+          );
+          if (messageId === 'm1') {
+            expect(lastCooldownArgs(stateManager).retryAt).toBeGreaterThanOrEqual(
+              armedAt + BACKOFF_LADDER_MS[1] * (1 - BACKOFF_JITTER)
+            );
+          }
+        } finally {
+          restored.cancel();
+        }
+      }
+    );
+
     it('re-exhaustions that never fired a retry do not consume the escalation budget', async () => {
       const { deps, notifyPause } = createMockDeps({ chain: [] });
       const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 5 });

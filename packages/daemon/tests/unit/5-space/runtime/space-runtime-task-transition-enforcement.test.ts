@@ -14,7 +14,10 @@ import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/reposit
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
 import { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
-import { VALID_SPACE_TASK_TRANSITIONS } from '../../../../src/lib/tasks/task-manager.ts';
+import {
+  SpaceTaskManager,
+  VALID_SPACE_TASK_TRANSITIONS,
+} from '../../../../src/lib/tasks/task-manager.ts';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import { seedUnifiedAgentMirror } from '../../helpers/seed-unified-agent';
@@ -128,6 +131,62 @@ describe('SpaceRuntime.updateTaskAndEmit — transition table enforcement (task 
   test('unknown task still resolves to null instead of throwing', async () => {
     await expect(updateTaskAndEmit('task-does-not-exist', { status: 'done' })).resolves.toBeNull();
   });
+
+  test.each(
+    (['park', 'stop', 'recover'] as const).flatMap((route) =>
+      ['status', 'run'].map((changed) => ({ route, changed }))
+    )
+  )(
+    '$route rejects a stale admitted $changed before runtime side effects',
+    async ({ route, changed }) => {
+      const taskId = seedTask('blocked');
+      const expected = {
+        expectedStatus: changed === 'status' ? ('in_progress' as const) : ('blocked' as const),
+        expectedWorkflowRunId: changed === 'run' ? 'previous-run' : null,
+      };
+      const transition =
+        route === 'park'
+          ? runtime.parkStoppedWorkflowTask(SPACE_ID, taskId, expected)
+          : route === 'stop'
+            ? runtime.stopWorkflowBackedTaskForStatus(
+                SPACE_ID,
+                taskId,
+                { status: 'cancelled' },
+                expected
+              )
+            : runtime.recoverWorkflowBackedTask(SPACE_ID, taskId, 'in_progress', expected);
+      await expect(transition).rejects.toThrow('Task transition snapshot is stale');
+      expect(taskRepo.getTask(taskId)?.status).toBe('blocked');
+    }
+  );
+
+  test.each(['park', 'stop'] as const)(
+    '%s guards the write after its async read',
+    async (route) => {
+      const taskId = seedTask('in_progress');
+      const manager = new SpaceTaskManager(db, SPACE_ID);
+      manager.getTask = async (id) => {
+        const snapshot = taskRepo.getTask(id);
+        taskRepo.updateTask(id, { status: 'blocked' });
+        return snapshot;
+      };
+      (
+        runtime as unknown as { getOrCreateTaskManager: () => SpaceTaskManager }
+      ).getOrCreateTaskManager = () => manager;
+      const expected = { expectedStatus: 'in_progress' as const, expectedWorkflowRunId: null };
+      const transition =
+        route === 'park'
+          ? runtime.parkStoppedWorkflowTask(SPACE_ID, taskId, expected)
+          : runtime.stopWorkflowBackedTaskForStatus(
+              SPACE_ID,
+              taskId,
+              { status: 'cancelled' },
+              expected
+            );
+      await expect(transition).rejects.toThrow();
+      expect(taskRepo.getTask(taskId)?.status).toBe('blocked');
+    }
+  );
 
   test('cancelled-run reconcile skips terminal canonical tasks instead of throwing', async () => {
     const workflow = workflowManager.createWorkflow({

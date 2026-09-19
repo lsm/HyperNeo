@@ -79,7 +79,8 @@ function makeRecordingAgentSession(session: Session): AgentSession {
         name: 'hyperneo-operations',
         instance: {} as McpServer,
       }),
-    setSpaceBriefing: () => {},
+    setAttachedCapabilities: () => {},
+    setSpaceScopeResolver: () => {},
     updateConfig: async (updates: Partial<Session['config']>) => {
       session.config = { ...session.config, ...updates };
     },

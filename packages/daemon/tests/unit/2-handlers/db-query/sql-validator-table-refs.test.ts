@@ -24,6 +24,19 @@ describe('validateSql table references', () => {
     ]);
   });
 
+  test.each(["'-- x'", "'/* x */'", "'can''t -- x'", "'/*'", "'*/'"])(
+    'retains table references after the literal %s',
+    (literal) => {
+      expect(
+        validateSql(`SELECT ${literal} AS marker FROM space_tasks JOIN space_goals ON 1 = 1`)
+      ).toEqual({ valid: true, tableRefs: ['space_tasks', 'space_goals'] });
+    }
+  );
+
+  test('still rejects a second statement after a comment marker inside a literal', () => {
+    expect(validateSql("SELECT '--' FROM space_tasks; DELETE FROM space_tasks").valid).toBe(false);
+  });
+
   test('deduplicates a name that appears twice', () => {
     expect(refs('SELECT * FROM space_workflows a JOIN space_workflows b ON 1 = 1')).toEqual([
       'space_workflows',
