@@ -301,6 +301,8 @@ test.each([
     expect(await createDirectStartJobHandler(db, start, jobs, control)(claimed)).toMatchObject({
       parked: 'direct_start_not_ready',
     });
+    expect(jobs.getJob(claimed.id)).toMatchObject({ status: 'pending', retryCount: 0 });
+    expect(jobs.getJob(claimed.id)?.payload.__parkCount).toBe(1);
     expect(attempts.getActive(taskId)?.phase).toBe('reserved');
     expect(readDirectKickoffIntent(db, reserved.id)).toBeNull();
     expect(readDirectStartRequest(db, reserved.id)?.input.reviewRejection?.reason).toBe(

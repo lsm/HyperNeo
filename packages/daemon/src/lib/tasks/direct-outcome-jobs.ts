@@ -20,7 +20,7 @@ import {
 import { verifyDirectAttemptStop } from './stop-direct-attempt.ts';
 
 interface DirectOutcomeDependencies extends DirectTaskFinalizerDependencies {
-  jobQueue: Pick<JobQueueRepository, 'requeue'>;
+  jobQueue: Pick<JobQueueRepository, 'requeueParked'>;
   onTaskUpdated?: (task: SpaceTask) => void;
 }
 
@@ -145,7 +145,7 @@ export function createDirectOutcomeHandler(deps: DirectOutcomeDependencies) {
     const result = await run(job);
     if (!result.finalized && result.reason === 'unverified') {
       if (!job.claimToken) throw new Error('Direct outcome shutdown remains unverified');
-      if (deps.jobQueue.requeue(job.id, Date.now() + 30_000, job.claimToken))
+      if (deps.jobQueue.requeueParked(job.id, Date.now() + 30_000, job.claimToken))
         return { ...result, parked: 'direct_stop_unverified' };
     }
     if (result.finalized) deps.onTaskUpdated?.(result.task);

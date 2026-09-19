@@ -94,7 +94,7 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
       await session.settleSkippedDelivery?.(payload.messageUuid);
     }
     if (route.mutation === 'requeue' && route.retryAt !== undefined) {
-      deps.jobQueue.requeue(job.id, route.retryAt, job.claimToken);
+      deps.jobQueue.requeueParked(job.id, route.retryAt, job.claimToken);
     }
     return route.result;
   };

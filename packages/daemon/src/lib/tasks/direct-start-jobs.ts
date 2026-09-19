@@ -55,7 +55,7 @@ export function createDirectStartRequester(deps: {
 export function createDirectStartJobHandler(
   db: Database,
   start: (input: DirectTaskStartInput) => Promise<DirectTaskStartResult>,
-  jobs: Pick<JobQueueRepository, 'requeue'>,
+  jobs: Pick<JobQueueRepository, 'requeueParked'>,
   sessionManager: DirectAttemptStopDependencies['sessionManager'],
   onTaskAttemptChanged?: (taskId: string) => void
 ) {
@@ -111,7 +111,7 @@ export function createDirectStartJobHandler(
     } else if (attempts.isStopRequested(attempt.id, attempt.sessionId))
       return { started: false, reason: 'superseded' };
     if (!job.claimToken) throw new Error(`Direct start remains unavailable: ${result.reason}`);
-    if (jobs.requeue(job.id, Date.now() + 30_000, job.claimToken))
+    if (jobs.requeueParked(job.id, Date.now() + 30_000, job.claimToken))
       return {
         ...result,
         parked: terminal || retiring ? 'direct_start_cleanup_unverified' : 'direct_start_not_ready',

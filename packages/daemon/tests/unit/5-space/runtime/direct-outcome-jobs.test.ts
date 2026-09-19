@@ -184,6 +184,7 @@ test('unverified shutdown is retryable without dropping the durable request', as
     parked: 'direct_stop_unverified',
   });
   expect(jobs.getJob(job.id)).toMatchObject({ status: 'pending', retryCount: 0 });
+  expect(jobs.getJob(job.id)?.payload.__parkCount).toBe(1);
   expect(attempts.getActive(taskId)?.phase).toBe('running');
   expect(request()).toEqual({ accepted: true, jobId: job.id });
   cleanup.mockImplementation(async () => {});
@@ -231,6 +232,7 @@ test('uncached retries preserve the same job beyond its budget and settle once a
       expect(await processor.tick()).toBe(1);
       await waitForIdle(processor);
       expect(jobs.getJob(job.id)).toMatchObject({ status: 'pending', retryCount: 0 });
+      expect(jobs.getJob(job.id)?.payload.__parkCount).toBe(i + 1);
       expect(jobs.getJob(job.id)!.runAt).toBeGreaterThan(Date.now());
       expect(attempts.getActive(taskId)?.phase).toBe('running');
       expect(attempts.isStopRequested('attempt', 'worker')).toBe(true);

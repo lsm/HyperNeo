@@ -68,7 +68,6 @@ function makeHarness(
   const session = new MockSession();
   const jobQueue = {
     isClaimCurrent: mock((_id: string, _token: string | null) => true),
-    requeue: mock((_id: string, _runAt: number, _token: string | null) => null),
     requeueParked: mock((_id: string, _runAt: number, _token: string | null) => null),
   };
   const getSession = mock(() => session);
@@ -249,12 +248,12 @@ describe('createMessageDeliveryHandler', () => {
   });
 
   describe('drive outcome → requeue', () => {
-    it('blocked requeues at the session retryAt', async () => {
+    it('blocked parks at the session retryAt', async () => {
       const { handler, session, jobQueue, job } = makeHarness();
       session.driveResult = { outcome: 'blocked', retryAt: 1234 };
       const result = await handler(job, {});
       expect(result).toEqual({ parked: 'sdk_resume_choice', retryAt: 1234 });
-      expect(jobQueue.requeue).toHaveBeenCalledWith('job-1', 1234, 'claim-1');
+      expect(jobQueue.requeueParked).toHaveBeenCalledWith('job-1', 1234, 'claim-1');
       expect(session.settleCalls).toEqual([]);
     });
 
@@ -270,7 +269,7 @@ describe('createMessageDeliveryHandler', () => {
       const { handler, session, jobQueue, job } = makeHarness();
       const result = await handler(job, {});
       expect(result).toEqual({ outcome: 'completed' });
-      expect(jobQueue.requeue).not.toHaveBeenCalled();
+      expect(jobQueue.requeueParked).not.toHaveBeenCalled();
       expect(session.settleCalls).toEqual([]);
     });
   });
