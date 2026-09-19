@@ -50,6 +50,9 @@ function respondWith(listPages: Array<ReturnType<typeof attached>[]>) {
     if (params.name === 'daemon.attach') {
       return { kind: 'attached', daemonId: (params.input as { daemonId: string }).daemonId };
     }
+    if (params.name === 'daemon.probe') {
+      return { kind: 'reachable', url: (params.input as { url: string }).url };
+    }
     return { kind: 'detached', daemonId: (params.input as { daemonId: string }).daemonId };
   });
 }
@@ -119,6 +122,41 @@ describe('RemoteDaemonsSettings', () => {
       input: { daemonId: 'staging', url: 'ws://staging.test:8484/ws' },
     });
     expect(mockToastSuccess).toHaveBeenCalledWith("Attached 'staging'");
+  });
+
+  it('tests the form URL without attaching it', async () => {
+    respondWith([[]]);
+
+    render(<RemoteDaemonsSettings />);
+    await waitFor(() => expect(screen.getByText('No remote daemons attached.')).toBeTruthy());
+
+    typeForm('staging', 'ws://staging.test:8484/ws');
+    fireEvent.click(screen.getByText('Test'));
+
+    await waitFor(() =>
+      expect(mockToastSuccess).toHaveBeenCalledWith('Remote daemon is reachable')
+    );
+    expect(invocations()[1]).toEqual({
+      name: 'daemon.probe',
+      input: { url: 'ws://staging.test:8484/ws' },
+    });
+    expect(invocations().map(({ name }) => name)).toEqual(['daemon.list', 'daemon.probe']);
+  });
+
+  it('shows the probe failure reason', async () => {
+    mockRequest.mockImplementation(async (_method: string, params: Invocation) =>
+      params.name === 'daemon.list'
+        ? { kind: 'listed', daemons: [] }
+        : { kind: 'unreachable', url: 'ws://bad.test/ws', reason: 'connection refused' }
+    );
+
+    render(<RemoteDaemonsSettings />);
+    await waitFor(() => expect(screen.getByText('No remote daemons attached.')).toBeTruthy());
+
+    typeForm('bad', 'ws://bad.test/ws');
+    fireEvent.click(screen.getByText('Test'));
+
+    await waitFor(() => expect(mockToastError).toHaveBeenCalledWith('connection refused'));
   });
 
   it('refuses a non-websocket URL in the form without reaching the daemon', async () => {

@@ -19,6 +19,10 @@ type DetachResult =
   | { kind: 'detached'; daemonId: string }
   | { kind: 'not_attached'; daemonId: string }
   | { kind: 'rejected'; reason: string };
+type ProbeResult =
+  | { kind: 'reachable'; url: string }
+  | { kind: 'unreachable'; url: string; reason: string }
+  | { kind: 'rejected'; reason: string };
 
 const DAEMON_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
 
@@ -30,6 +34,13 @@ export function validateAttachForm(daemonId: string, url: string): string | null
   if (!DAEMON_ID_PATTERN.test(daemonId)) {
     return 'Daemon id must start with a letter or digit and use only letters, digits, . _ or -';
   }
+  if (!url.startsWith('ws://') && !url.startsWith('wss://')) {
+    return 'URL must be a ws:// or wss:// MessageHub endpoint';
+  }
+  return null;
+}
+
+function validateProbeUrl(url: string): string | null {
   if (!url.startsWith('ws://') && !url.startsWith('wss://')) {
     return 'URL must be a ws:// or wss:// MessageHub endpoint';
   }
@@ -52,6 +63,7 @@ export function RemoteDaemonsSettings() {
   const [url, setUrl] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
   const [attaching, setAttaching] = useState(false);
+  const [probingUrl, setProbingUrl] = useState<string | null>(null);
   const [detachingId, setDetachingId] = useState<string | null>(null);
 
   const load = async () => {
@@ -117,12 +129,34 @@ export function RemoteDaemonsSettings() {
     }
   };
 
+  const handleProbe = async (targetUrl: string) => {
+    const trimmedUrl = targetUrl.trim();
+    const problem = validateProbeUrl(trimmedUrl);
+    setFormError(problem);
+    if (problem) return;
+    try {
+      setProbingUrl(trimmedUrl);
+      const result = await invokeOperation<ProbeResult>(hubOrThrow(), 'daemon.probe', {
+        url: trimmedUrl,
+      });
+      if (result.kind === 'reachable') {
+        toast.success('Remote daemon is reachable');
+      } else {
+        toast.error(result.reason);
+      }
+    } catch (error) {
+      toast.error(messageOf(error, 'Failed to test the remote daemon'));
+    } finally {
+      setProbingUrl(null);
+    }
+  };
+
   return (
     <SettingsSection title="Remote Daemons">
       <div class="rounded-lg border border-warning/40 bg-warning/10 px-4 py-3 text-xs text-fg-soft">
         Attachments are held in this daemon's memory and are gone when it restarts — you have to
-        attach them again after every restart. No connection is opened until the first message is
-        forwarded, so a wrong URL shows up as a failed message rather than a failed attach.
+        attach them again after every restart. Test a URL before attaching it to verify the remote
+        operation door is reachable.
       </div>
 
       <div class="rounded-lg border border-line bg-fill-soft px-4 py-3 space-y-3">
@@ -153,11 +187,20 @@ export function RemoteDaemonsSettings() {
           </div>
         </div>
         {formError && <div class="text-xs text-danger">{formError}</div>}
-        <div class="flex justify-end">
+        <div class="flex justify-end gap-2">
+          <Button
+            size="sm"
+            variant="secondary"
+            loading={probingUrl === url.trim() && probingUrl !== null}
+            disabled={attaching || probingUrl !== null}
+            onClick={() => void handleProbe(url)}
+          >
+            Test
+          </Button>
           <Button
             size="sm"
             loading={attaching}
-            disabled={attaching}
+            disabled={attaching || probingUrl !== null}
             onClick={() => void handleAttach()}
           >
             Attach
@@ -180,6 +223,15 @@ export function RemoteDaemonsSettings() {
               <div class="truncate font-mono text-xs text-fg-faint">{daemon.url}</div>
               <div class="truncate font-mono text-xs text-fg-muted">{daemon.addressExample}</div>
             </div>
+            <Button
+              size="xs"
+              variant="secondary"
+              loading={probingUrl === daemon.url}
+              disabled={probingUrl !== null || detachingId === daemon.daemonId}
+              onClick={() => void handleProbe(daemon.url)}
+            >
+              Test
+            </Button>
             <Button
               size="xs"
               variant="danger"

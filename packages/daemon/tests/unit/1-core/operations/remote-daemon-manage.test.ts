@@ -6,6 +6,7 @@ import { createAttachDaemonOperation } from '../../../../src/lib/remote-daemons/
 import {
   createDetachDaemonOperation,
   createListDaemonsOperation,
+  createProbeDaemonOperation,
 } from '../../../../src/lib/remote-daemons/manage-operations';
 import type { OperationCaller } from '../../../../src/lib/operations/registry';
 
@@ -21,6 +22,7 @@ function daemonCatalog() {
   const daemons = new RemoteDaemonRegistry();
   const registry = createOperationRegistry([
     createAttachDaemonOperation(daemons),
+    createProbeDaemonOperation(daemons),
     createListDaemonsOperation(daemons),
     createDetachDaemonOperation(daemons),
   ]);
@@ -30,6 +32,56 @@ function daemonCatalog() {
       invokeOperation(registry, name, input, caller),
   };
 }
+
+describe('probing a remote daemon URL', () => {
+  test('dials the supplied URL without attaching it', async () => {
+    const { daemons, call } = daemonCatalog();
+    const probed: string[] = [];
+    daemons.probe = async (url) => {
+      probed.push(url);
+    };
+
+    expect(await call('daemon.probe', { url: 'ws://remote.test/ws' }, HUMAN)).toEqual({
+      kind: 'completed',
+      value: { kind: 'reachable', url: 'ws://remote.test/ws' },
+    });
+    expect(probed).toEqual(['ws://remote.test/ws']);
+    expect(await call('daemon.list', {}, HUMAN)).toEqual({
+      kind: 'completed',
+      value: { kind: 'listed', daemons: [] },
+    });
+  });
+
+  test('returns the connection reason without attaching an unreachable URL', async () => {
+    const { daemons, call } = daemonCatalog();
+    daemons.probe = async () => {
+      throw new Error('Timed out connecting after 5000ms');
+    };
+
+    expect(await call('daemon.probe', { url: 'ws://remote.test/ws' }, HUMAN)).toEqual({
+      kind: 'completed',
+      value: {
+        kind: 'unreachable',
+        url: 'ws://remote.test/ws',
+        reason: 'Timed out connecting after 5000ms',
+      },
+    });
+  });
+
+  test('refuses an agent caller before dialing the URL', async () => {
+    const { daemons, call } = daemonCatalog();
+    let probed = false;
+    daemons.probe = async () => {
+      probed = true;
+    };
+
+    expect(await call('daemon.probe', { url: 'ws://remote.test/ws' }, AGENT)).toMatchObject({
+      kind: 'completed',
+      value: { kind: 'rejected', reason: expect.stringContaining('restricted to the RPC door') },
+    });
+    expect(probed).toBe(false);
+  });
+});
 
 describe('listing and detaching attached remote daemons', () => {
   test('lists every daemon a human attached, with the address prefix it answers to', async () => {

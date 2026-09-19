@@ -1,6 +1,7 @@
 import { MessageHub, WebSocketClientTransport } from '@hyperneo/shared';
 
 const DEFAULT_CONNECT_TIMEOUT_MS = 5000;
+const DEFAULT_PROBE_REQUEST_TIMEOUT_MS = 4000;
 
 interface RemoteConnection {
   readonly hub: MessageHub;
@@ -8,6 +9,7 @@ interface RemoteConnection {
 }
 
 interface RemoteAttempt {
+  readonly hub: MessageHub;
   readonly transport: WebSocketClientTransport;
   readonly connection: Promise<RemoteConnection>;
 }
@@ -36,9 +38,11 @@ export class RemoteDaemonRegistry {
   private readonly urls = new Map<string, string>();
   private readonly attempts = new Map<string, RemoteAttempt>();
   private readonly connectTimeoutMs: number;
+  private readonly probeRequestTimeoutMs: number;
 
-  constructor(options: { connectTimeoutMs?: number } = {}) {
+  constructor(options: { connectTimeoutMs?: number; probeRequestTimeoutMs?: number } = {}) {
     this.connectTimeoutMs = options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS;
+    this.probeRequestTimeoutMs = options.probeRequestTimeoutMs ?? DEFAULT_PROBE_REQUEST_TIMEOUT_MS;
   }
 
   attach(daemonId: string, url: string): void {
@@ -59,6 +63,17 @@ export class RemoteDaemonRegistry {
   private open(daemonId: string, url: string): RemoteAttempt {
     const existing = this.attempts.get(daemonId);
     if (existing) return existing;
+    const attempt = this.createAttempt(url);
+    this.attempts.set(daemonId, attempt);
+    attempt.connection.catch(() => {
+      if (this.attempts.get(daemonId) === attempt) this.attempts.delete(daemonId);
+      attempt.hub.cleanup();
+      void attempt.transport.close();
+    });
+    return attempt;
+  }
+
+  private createAttempt(url: string): RemoteAttempt {
     const hub = new MessageHub({ defaultSessionId: 'global' });
     const transport = new WebSocketClientTransport({ url, autoReconnect: false, pingInterval: 0 });
     hub.registerTransport(transport);
@@ -67,14 +82,22 @@ export class RemoteDaemonRegistry {
     const connection = withConnectDeadline(opening, this.connectTimeoutMs, url, () => {
       void transport.close();
     }).then(() => ({ hub, transport }));
-    const attempt: RemoteAttempt = { transport, connection };
-    this.attempts.set(daemonId, attempt);
-    connection.catch(() => {
-      if (this.attempts.get(daemonId) === attempt) this.attempts.delete(daemonId);
-      hub.cleanup();
-      void transport.close();
-    });
-    return attempt;
+    return { hub, transport, connection };
+  }
+
+  async probe(url: string): Promise<void> {
+    const attempt = this.createAttempt(url);
+    try {
+      const connection = await attempt.connection;
+      await connection.hub.request(
+        'operation.invoke',
+        { name: 'operations.list', input: {} },
+        { timeout: this.probeRequestTimeoutMs }
+      );
+    } finally {
+      attempt.hub.cleanup();
+      await attempt.transport.close();
+    }
   }
 
   forget(daemonId: string): void {
@@ -87,7 +110,7 @@ export class RemoteDaemonRegistry {
     if (this.attempts.get(daemonId) !== attempt) return;
     this.attempts.delete(daemonId);
     void attempt.transport.close();
-    void attempt.connection.then((connection) => connection.hub.cleanup()).catch(() => {});
+    attempt.hub.cleanup();
   }
 
   readonly invoke = async (daemonId: string, name: string, input: unknown): Promise<unknown> => {
