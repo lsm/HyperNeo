@@ -121,6 +121,9 @@ jobs:
           bash scripts/lib/shard-split.sh --self-test
           ./scripts/test-daemon.sh --verify
 
+      - name: Test pre-commit temporary file isolation
+        run: bun run test:pre-commit
+
       - name: Test strip-comments argument handling
         run: bun run test:strip-comments
 
