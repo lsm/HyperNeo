@@ -69,10 +69,10 @@ describe('TaskAgentManager Runtime Execution Contract', () => {
     expect(contract).toContain('Node: "Coding" (node-1)');
     expect(contract).not.toMatch(/approve_task|submit_for_approval/);
     expect(contract).toContain(
-      autonomyLevel === 5
-        ? 'invoke(name="task.resolvePendingCompletion", input={ taskId: "<task id>", approved: true })'
-        : 'invoke(name="task.submitForReview", input={ taskId: "<task id>", reason: "..." })'
+      'invoke(name="task.submitForReview", input={ taskId: "<task id>", reason: "..." })'
     );
+    expect(contract).not.toContain('invoke(name="task.resolvePendingCompletion"');
+    expect(contract).toContain('overrides earlier terminal-action guidance');
     expect(contract).not.toContain('Escalation: send_message');
   });
 

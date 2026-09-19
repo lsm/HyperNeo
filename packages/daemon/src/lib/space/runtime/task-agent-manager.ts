@@ -3268,13 +3268,16 @@ export class TaskAgentManager {
       'If you hit a hard blocker: record it via invoke(name="artifact.save", input={ shape: "note", kind: "blocked", summary: "<what blocks you>" }) and stop. Do NOT wait for a reply — there is no Space-level recipient, and the unfinished task carrying that artifact is the signal a human acts on.'
     );
     if (isEndNode) {
+      lines.push(
+        'For this workflow worker, this runtime contract overrides earlier terminal-action guidance: submit completion with task.submitForReview at every autonomy level. Workflow workers cannot use task.resolvePendingCompletion; submission creates the checkpoint required for a later authorized approval.'
+      );
       if (approveUnlocked) {
         lines.push(
-          'When your work is complete: (1) call invoke(name="artifact.save", input={ shape: "decision", key: "outcome", summary: "...", data: { recommendation: "completed" } }) to record the outcome, then (2) call invoke(name="task.resolvePendingCompletion", input={ taskId: "<task id>", approved: true }) as your FINAL action to close the task. The runtime — not your artifact — decides the terminal status via completion actions.'
+          'When your work is complete: (1) call invoke(name="artifact.save", input={ shape: "decision", key: "outcome", summary: "...", data: { recommendation: "completed" } }) to record the outcome, then (2) call invoke(name="task.submitForReview", input={ taskId: "<task id>", reason: "..." }) as your FINAL action to submit the completion checkpoint. The runtime applies the completion and autonomy policy; submission acceptance is not final approval.'
         );
       } else {
         lines.push(
-          'When your work is complete: (1) call invoke(name="artifact.save", input={ shape: "decision", key: "outcome", summary: "...", data: { recommendation: "completed" } }) to record the outcome, then (2) call invoke(name="task.submitForReview", input={ taskId: "<task id>", reason: "..." }) as your FINAL action. task.resolvePendingCompletion is NOT available at this autonomy level; only a human can finalize.'
+          'When your work is complete: (1) call invoke(name="artifact.save", input={ shape: "decision", key: "outcome", summary: "...", data: { recommendation: "completed" } }) to record the outcome, then (2) call invoke(name="task.submitForReview", input={ taskId: "<task id>", reason: "..." }) as your FINAL action. Only a human can finalize at this autonomy level.'
         );
       }
     }
