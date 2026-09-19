@@ -47,6 +47,65 @@ function makeAgent(
 }
 
 describe('buildAgentSessionConfig — long-horizon arm', () => {
+  test('uses the first pool entry for the persistent session regardless of workflow weights', async () => {
+    const agent = makeAgent('pooled', {
+      modelPool: [
+        {
+          model: 'pool-first',
+          provider: 'openrouter',
+          thinkingLevel: 'think8k',
+          weight: 1,
+          maxConcurrent: 1,
+        },
+        { model: 'pool-second', provider: 'glm', weight: 10, maxConcurrent: 10 },
+      ],
+    });
+    const config = await buildAgentSessionConfig(
+      { agent },
+      { ...mockSpace, defaultModel: 'space-default' }
+    );
+    expect(config.model).toBe('pool-first');
+    expect(config.provider).toBe('openrouter');
+    expect(config.thinkingLevel).toBe('think8k');
+  });
+
+  test('keeps scalar configuration precedence over a legacy pool', async () => {
+    const agent = makeAgent('scalar', {
+      model: 'scalar-model',
+      provider: 'glm',
+      thinkingLevel: 'think16k',
+      modelPool: [{ model: 'pool-model', provider: 'openrouter', weight: 1, maxConcurrent: 1 }],
+    });
+    const config = await buildAgentSessionConfig({ agent }, mockSpace);
+    expect(config).toMatchObject({
+      model: 'scalar-model',
+      provider: 'glm',
+      thinkingLevel: 'think16k',
+    });
+  });
+
+  test('keeps the space default for an empty pool', async () => {
+    const config = await buildAgentSessionConfig(
+      { agent: makeAgent('empty', { modelPool: [] }) },
+      { ...mockSpace, defaultModel: 'space-model' },
+      { model: 'space-model', provider: 'openrouter' }
+    );
+    expect(config).toMatchObject({ model: 'space-model', provider: 'openrouter' });
+  });
+
+  test('keeps the current provider for an unqualified pool entry with the same model', async () => {
+    const config = await buildAgentSessionConfig(
+      {
+        agent: makeAgent('unqualified', {
+          modelPool: [{ model: 'shared-model', weight: 1, maxConcurrent: 1 }],
+        }),
+      },
+      mockSpace,
+      { model: 'shared-model', provider: 'openrouter' }
+    );
+    expect(config).toMatchObject({ model: 'shared-model', provider: 'openrouter' });
+  });
+
   test('deterministic fixture produces the expected literal config', async () => {
     const agent = makeAgent('lh-set', {
       model: 'model-x',

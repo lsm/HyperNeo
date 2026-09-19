@@ -1,3 +1,4 @@
+import superpipe, { type PipelineAPI } from 'superpipe';
 import type { AgentDefinition, Session, Space, SpaceLongHorizonAgent } from '@hyperneo/shared';
 import { isScopedBashToolEntry } from '@hyperneo/shared';
 import { findInModels, getAvailableModels } from '../model-service.ts';
@@ -37,19 +38,10 @@ export async function buildAgentSessionConfig(
   const customDisallowedBuiltins = deriveWorkerDisallowedTools(customTools);
   const scopedBashToolEntries = customTools?.filter((tool) => isScopedBashToolEntry(tool));
   const agentKey = sanitizeLongTermAgentKey(input.agent.displayName);
-  const model =
-    input.agent.model ??
-    space.defaultModel ??
-    (input.agent.provider ? undefined : DEFAULT_LONG_HORIZON_AGENT_MODEL);
-  const provider = (input.agent.provider ??
-    (model
-      ? await resolveAgentConfigProvider(model, currentConfig?.provider, currentConfig?.model)
-      : undefined)) as Session['config']['provider'];
+  const modelConfig = await resolvePersistentAgentModel(input.agent, space, currentConfig);
   const promptValues = agentPromptValues(input);
   return {
-    model,
-    provider,
-    thinkingLevel: input.agent.thinkingLevel ?? undefined,
+    ...modelConfig,
     systemPrompt: {
       type: 'preset',
       preset: 'claude_code',
@@ -75,6 +67,53 @@ export async function buildAgentSessionConfig(
     settingSources: input.agent.settingSources ?? space.settingSources,
   };
 }
+
+type PersistentAgentModel = Partial<
+  Pick<Session['config'], 'model' | 'provider' | 'thinkingLevel'>
+>;
+
+function selectPersistentAgentModel(
+  agent: SpaceLongHorizonAgent,
+  space: Space
+): PersistentAgentModel {
+  const configured = agent.model ? agent : (agent.modelPool?.[0] ?? agent);
+  return {
+    model:
+      configured.model ??
+      space.defaultModel ??
+      (configured.provider ? undefined : DEFAULT_LONG_HORIZON_AGENT_MODEL),
+    provider: (configured.provider?.trim() || undefined) as Session['config']['provider'],
+    thinkingLevel: configured.thinkingLevel ?? agent.thinkingLevel ?? undefined,
+  };
+}
+
+async function resolvePersistentAgentProvider(
+  selection: PersistentAgentModel,
+  currentConfig?: AgentSessionConfigCurrent
+): Promise<PersistentAgentModel> {
+  return {
+    ...selection,
+    provider:
+      selection.provider ??
+      (selection.model
+        ? await resolveAgentConfigProvider(
+            selection.model,
+            currentConfig?.provider,
+            currentConfig?.model
+          )
+        : undefined),
+  };
+}
+
+const resolvePersistentAgentModel = (superpipe({})('resolve-persistent-agent-model') as PipelineAPI)
+  .input(['agent', 'space', 'currentConfig'])
+  .pipe(selectPersistentAgentModel, ['agent', 'space'], 'selection')
+  .pipe(resolvePersistentAgentProvider, ['selection', 'currentConfig'], 'modelConfig')
+  .endAsync('modelConfig') as (
+  agent: SpaceLongHorizonAgent,
+  space: Space,
+  currentConfig?: AgentSessionConfigCurrent
+) => Promise<PersistentAgentModel>;
 
 function agentCustomTools(input: AgentSessionConfigInput): string[] | undefined {
   return Array.isArray(input.agent.toolPermissions.tools)

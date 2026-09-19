@@ -340,6 +340,11 @@ function AgentEditor({
           <div>
             <label class="mb-2 block text-sm font-medium text-fg-soft">Model</label>
             <ModelPoolEditor modelPool={modelPool} onModelPoolChange={setModelPool} />
+            {modelPool.length > 1 && (
+              <p class="mt-2 text-xs text-fg-muted">
+                This agent’s own session uses the first model. Pool weights apply to workflow tasks.
+              </p>
+            )}
           </div>
           <div>
             <ToolsEditor
