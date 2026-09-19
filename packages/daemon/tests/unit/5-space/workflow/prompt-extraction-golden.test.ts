@@ -56,7 +56,7 @@ const GOLDEN: Record<string, string> = {
     '2e1dbf1a39b2c9b47dc930c2614e3d85c93d0ea2175d3149162262725a4966be',
   CODER_EXTERNAL_GATE_BLOCK: '4bda94fdc82f5dc49573c7c26c29f133a92f44c0173328719b65999f1961a837',
   CODER_ONLY_MERGE_INSTRUCTIONS: '5bf2318d8ed3f97a978df0d887f842a952ed09292ddd758d3737b26710bb33da',
-  CODER_ONLY_PROMPT: 'f3ea0fb5b671f089684a8876cc1ea6c0c07e4cf78a6d73bd4c3429704c61e440',
+  CODER_ONLY_PROMPT: 'a334819f580a5579ae3b707a031e6949fc47adee6390d837f33e00b23e391fa5',
   CODER_OWNED_MERGE_INSTRUCTIONS:
     'fed125802f734c4b44b8732ef2c59770b79a93beef1459180e1e69c21c4c9fae',
   CODER_OWNED_MERGE_PROMPT: '0763fb49ae2f354ea75377d7221c5c51f87cb8d89858ec8dec9ef451d032f68d',
@@ -160,6 +160,10 @@ const VALUES: Record<string, string> = {
 };
 
 describe('prompt extraction golden hashes', () => {
+  test('separates the coder-only introduction from the review policy', () => {
+    expect(CODER_ONLY_PROMPT).toContain('repository. ### Review policy');
+  });
+
   test('every extracted prompt is byte-identical to its pre-extraction value', () => {
     expect(Object.keys(VALUES).sort()).toEqual(Object.keys(GOLDEN).sort());
     for (const [id, expected] of Object.entries(GOLDEN)) {

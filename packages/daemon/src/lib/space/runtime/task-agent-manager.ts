@@ -3270,11 +3270,11 @@ export class TaskAgentManager {
     if (isEndNode) {
       if (approveUnlocked) {
         lines.push(
-          'When your work is complete: (1) call invoke(name="artifact.save", input={ shape: "decision", key: "outcome", summary: "...", data: { recommendation: "completed" } }) to record the outcome, then (2) call invoke(name="approve_task") as your FINAL action to close the task. The runtime — not your artifact — decides the terminal status via completion actions.'
+          'When your work is complete: (1) call invoke(name="artifact.save", input={ shape: "decision", key: "outcome", summary: "...", data: { recommendation: "completed" } }) to record the outcome, then (2) call invoke(name="task.resolvePendingCompletion", input={ taskId: "<task id>", approved: true }) as your FINAL action to close the task. The runtime — not your artifact — decides the terminal status via completion actions.'
         );
       } else {
         lines.push(
-          'When your work is complete: (1) call invoke(name="artifact.save", input={ shape: "decision", key: "outcome", summary: "...", data: { recommendation: "completed" } }) to record the outcome, then (2) call invoke(name="submit_for_approval", input={ reason: "..." }) as your FINAL action. approve_task is NOT available at this autonomy level; only a human can finalize.'
+          'When your work is complete: (1) call invoke(name="artifact.save", input={ shape: "decision", key: "outcome", summary: "...", data: { recommendation: "completed" } }) to record the outcome, then (2) call invoke(name="task.submitForReview", input={ taskId: "<task id>", reason: "..." }) as your FINAL action. task.resolvePendingCompletion is NOT available at this autonomy level; only a human can finalize.'
         );
       }
     }
