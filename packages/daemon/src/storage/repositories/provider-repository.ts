@@ -235,6 +235,20 @@ export class ProviderRepository {
     this.reactiveDb.notifyChange('providers');
   }
 
+  hasCompletedStartupImport(name: 'legacy-providers' | 'deepseek-provider'): boolean {
+    return Boolean(
+      this.db
+        .prepare('SELECT 1 FROM migration_markers WHERE key = ?')
+        .get(`provider-import:${name}`)
+    );
+  }
+
+  completeStartupImport(name: 'legacy-providers' | 'deepseek-provider'): void {
+    this.db
+      .prepare('INSERT OR IGNORE INTO migration_markers (key, applied_at) VALUES (?, ?)')
+      .run(`provider-import:${name}`, Date.now());
+  }
+
   countProviders(): number {
     const row = this.db.prepare(`SELECT COUNT(*) as count FROM providers`).get() as {
       count: number;
