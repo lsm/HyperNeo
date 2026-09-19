@@ -111,6 +111,7 @@ import {
 import type { EvolutionScopeService } from '../../evolution/scope-service.ts';
 import { TERMINAL_NODE_EXECUTION_STATUSES } from '../../workflows/node-execution-manager.ts';
 import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools.ts';
+import { createDbQueryMcpServer, type DbQueryMcpServer } from '../../db-query/tools.ts';
 import { POST_APPROVAL_TASK_AGENT_TARGET } from '../../workflows/post-approval-validator.ts';
 import { runTemplateSnapshotRecord } from '../../workflows/run-template-snapshot.ts';
 import {
@@ -359,6 +360,7 @@ export class TaskAgentManager {
   private rateLimitListenerUnsubs: Array<() => void> = [];
   private activityListenerUnsubs: Array<() => void> = [];
   private limitedSessionsByTask = new Map<string, Map<string, RateLimitSessionEntry>>();
+  private workflowDbQueryServers?: Map<string, DbQueryMcpServer>;
 
   constructor(private readonly config: TaskAgentManagerConfig) {
     this.auditLogRepo = new McpAuditLogRepository(this.config.db.getDatabase());
@@ -3047,6 +3049,7 @@ export class TaskAgentManager {
           preserveDeliveryJobs: true,
         });
         this.agentSessionIndex.delete(subSessionId);
+        this.releaseWorkflowDbQueryServer(subSessionId);
       }
       this.subSessions.delete(taskId);
     }
@@ -3092,6 +3095,7 @@ export class TaskAgentManager {
         unsub();
         this.sessionListeners.delete(sessionId);
       }
+      this.releaseWorkflowDbQueryServer(sessionId);
     }
 
     this.taskWorktreePaths.delete(taskId);
@@ -4504,7 +4508,10 @@ export class TaskAgentManager {
   }
 
   requiredWorkflowSubSessionMcpServers(): string[] {
-    return this.config.memoryRepo ? ['agent-memory'] : [];
+    return [
+      ...(this.config.memoryRepo ? ['agent-memory'] : []),
+      ...(this.config.dbPath ? ['db-query'] : []),
+    ];
   }
 
   async ensureNodeAgentAttached(
@@ -4541,7 +4548,7 @@ export class TaskAgentManager {
         `Self-healing by re-injecting before first turn — but this indicates a regression in the spawn/rehydrate merge logic.`
     );
 
-    if (missing.includes('agent-memory')) {
+    if (missing.includes('agent-memory') || missing.includes('db-query')) {
       await this.reinjectAgentMemoryMcpServer(session, ctx);
     }
 
@@ -4753,14 +4760,36 @@ export class TaskAgentManager {
   }
 
   buildAgentMemoryMcpServers(spaceId: string, sessionId: string): Record<string, McpServerConfig> {
-    if (!this.config.memoryRepo) return {};
-    return {
-      'agent-memory': createAgentMemoryMcpServer({
+    const servers: Record<string, McpServerConfig> = {};
+    if (this.config.memoryRepo) {
+      servers['agent-memory'] = createAgentMemoryMcpServer({
         spaceId,
         memoryRepo: this.config.memoryRepo,
         mySessionId: sessionId,
-      }) as unknown as McpServerConfig,
-    };
+      }) as unknown as McpServerConfig;
+    }
+    if (this.config.dbPath) {
+      this.releaseWorkflowDbQueryServer(sessionId);
+      const dbQueryServer = createDbQueryMcpServer({
+        dbPath: this.config.dbPath,
+        scopeType: 'space',
+        scopeValue: spaceId,
+      });
+      (this.workflowDbQueryServers ??= new Map()).set(sessionId, dbQueryServer);
+      servers['db-query'] = dbQueryServer as unknown as McpServerConfig;
+    }
+    return servers;
+  }
+
+  private releaseWorkflowDbQueryServer(sessionId: string): void {
+    const server = this.workflowDbQueryServers?.get(sessionId);
+    if (!server) return;
+    try {
+      server.close();
+    } catch (err) {
+      log.warn(`Failed to close db-query server for workflow sub-session ${sessionId}:`, err);
+    }
+    this.workflowDbQueryServers?.delete(sessionId);
   }
 
   private agentMessageDeliveryDeps(workflowRunId: string): AgentMessageDeliveryDeps {
