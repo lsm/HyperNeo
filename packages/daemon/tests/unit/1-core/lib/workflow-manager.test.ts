@@ -1321,7 +1321,7 @@ describe('SpaceWorkflowManager', () => {
       return versionHash;
     }
 
-    it('falls back to the live head when the run has no pin', () => {
+    it('fails closed when the run has no definition pin', () => {
       const wf = manager.createWorkflow({
         spaceId: 'space-1',
         name: 'W',
@@ -1329,7 +1329,8 @@ describe('SpaceWorkflowManager', () => {
         completionAutonomyLevel: 3,
       });
       const resolved = manager.getWorkflowForRun({ workflowId: wf.id, definitionVersion: null });
-      expect(resolved).toEqual(manager.getWorkflow(wf.id));
+      expect(resolved).toBeNull();
+      expect(manager.getWorkflow(wf.id)).not.toBeNull();
     });
 
     it('resolves a pinned run through its immutable version, ignoring later head edits', () => {
@@ -1348,7 +1349,7 @@ describe('SpaceWorkflowManager', () => {
       expect(manager.getWorkflow(wf.id)!.name).toBe('Edited');
     });
 
-    it('falls back to the live head when the pinned version row is absent', () => {
+    it('fails closed when the pinned version row is absent', () => {
       const wf = manager.createWorkflow({
         spaceId: 'space-1',
         name: 'W',
@@ -1359,7 +1360,8 @@ describe('SpaceWorkflowManager', () => {
         workflowId: wf.id,
         definitionVersion: 'version-row-that-does-not-exist',
       });
-      expect(resolved).toEqual(manager.getWorkflow(wf.id));
+      expect(resolved).toBeNull();
+      expect(manager.getWorkflow(wf.id)).not.toBeNull();
     });
 
     it('rehydrates a pinned version through sanitize, behaviorally equal to the live path', () => {
@@ -1380,7 +1382,7 @@ describe('SpaceWorkflowManager', () => {
       expect(resolved.updatedAt).toBe(stableVersionTimestamp(pin));
     });
 
-    it('falls back to the live head when the pinned payload cannot be parsed', () => {
+    it('fails closed when the pinned payload cannot be parsed', () => {
       const wf = manager.createWorkflow({
         spaceId: 'space-1',
         name: 'W',
@@ -1399,10 +1401,11 @@ describe('SpaceWorkflowManager', () => {
         workflowId: wf.id,
         definitionVersion: 'corrupt-payload',
       });
-      expect(resolved).toEqual(manager.getWorkflow(wf.id));
+      expect(resolved).toBeNull();
+      expect(manager.getWorkflow(wf.id)).not.toBeNull();
     });
 
-    it('falls back to the live head when the pinned payload has an invalid shape', () => {
+    it('fails closed when the pinned payload has an invalid shape', () => {
       const wf = manager.createWorkflow({
         spaceId: 'space-1',
         name: 'W',
@@ -1421,10 +1424,11 @@ describe('SpaceWorkflowManager', () => {
         workflowId: wf.id,
         definitionVersion: 'corrupt-shape',
       });
-      expect(resolved).toEqual(manager.getWorkflow(wf.id));
+      expect(resolved).toBeNull();
+      expect(manager.getWorkflow(wf.id)).not.toBeNull();
     });
 
-    it('falls back to the live head when the payload hash does not match the version hash', () => {
+    it('fails closed when the payload hash does not match the version hash', () => {
       const wf = manager.createWorkflow({
         spaceId: 'space-1',
         name: 'W',
@@ -1445,7 +1449,8 @@ describe('SpaceWorkflowManager', () => {
         workflowId: wf.id,
         definitionVersion: 'wrong-hash',
       });
-      expect(resolved).toEqual(manager.getWorkflow(wf.id));
+      expect(resolved).toBeNull();
+      expect(manager.getWorkflow(wf.id)).not.toBeNull();
     });
 
     it('backfill pins a legacy run to its head, and the pin resolves behaviorally equal to the head', () => {

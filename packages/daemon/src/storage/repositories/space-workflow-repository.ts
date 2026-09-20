@@ -229,38 +229,38 @@ export class SpaceWorkflowRepository {
     definitionVersion: string | null;
   }): SpaceWorkflow | null {
     const versionHash = run.definitionVersion;
-    if (versionHash) {
-      try {
-        const version = this.definitionVersions.getVersion(run.workflowId, versionHash);
-        if (version) {
-          const parsed = JSON.parse(version.payload) as SpaceWorkflow;
-          if (!parsed || !Array.isArray(parsed.nodes)) {
-            log.warn(
-              `getWorkflowForRun: pinned payload for ${versionHash} has invalid shape; falling back to live head`
-            );
-            return this.getWorkflow(run.workflowId);
-          }
-          if (!verifyDefinitionVersion(version.payload, versionHash)) {
-            log.warn(
-              `getWorkflowForRun: payload hash mismatch for workflow ${run.workflowId} (version ${versionHash}); falling back to live head`
-            );
-            return this.getWorkflow(run.workflowId);
-          }
-          return {
-            ...parsed,
-            createdAt: version.createdAt,
-            updatedAt: stableVersionTimestamp(versionHash),
-          };
-        }
-      } catch (err) {
+    if (!versionHash) return null;
+    try {
+      const version = this.definitionVersions.getVersion(run.workflowId, versionHash);
+      if (!version) {
         log.warn(
-          `getWorkflowForRun: failed to rehydrate pinned version ${versionHash} for workflow ` +
-            `${run.workflowId}; falling back to live head:`,
-          err
+          `getWorkflowForRun: pinned version ${versionHash} is missing for workflow ${run.workflowId}`
         );
+        return null;
       }
+      const parsed = JSON.parse(version.payload) as SpaceWorkflow;
+      if (!parsed || !Array.isArray(parsed.nodes)) {
+        log.warn(`getWorkflowForRun: pinned payload for ${versionHash} has invalid shape`);
+        return null;
+      }
+      if (!verifyDefinitionVersion(version.payload, versionHash)) {
+        log.warn(
+          `getWorkflowForRun: payload hash mismatch for workflow ${run.workflowId} (version ${versionHash})`
+        );
+        return null;
+      }
+      return {
+        ...parsed,
+        createdAt: version.createdAt,
+        updatedAt: stableVersionTimestamp(versionHash),
+      };
+    } catch (err) {
+      log.warn(
+        `getWorkflowForRun: failed to rehydrate pinned version ${versionHash} for workflow ${run.workflowId}:`,
+        err
+      );
+      return null;
     }
-    return this.getWorkflow(run.workflowId);
   }
 
   listWorkflows(spaceId: string): SpaceWorkflow[] {
