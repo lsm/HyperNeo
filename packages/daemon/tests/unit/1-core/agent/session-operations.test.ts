@@ -251,7 +251,7 @@ describe('session operation MCP attachment', () => {
     ).toEqual({ space_id: null, task_number: null, created_by_session: 'creator' });
   });
 
-  test('ordinary chat sessions can discover and read existing tasks through MCP', async () => {
+  test('ordinary fallback sessions discover task reads without exposing Space-owned rows', async () => {
     db.createSession(createTestSession('reader'));
     const session = await restore('reader');
     const space = new SpaceRepository(db.getDatabase()).createSpace({
@@ -266,7 +266,7 @@ describe('session operation MCP attachment', () => {
     expect(result.isError).not.toBe(true);
     const content = result.content[0];
     if (content.type !== 'text') throw new Error('Expected task JSON');
-    expect(JSON.parse(content.text)).toEqual(readTaskCore(db.getDatabase(), stored.id));
+    expect(JSON.parse(content.text)).toBeNull();
     expect(tasks.getTask(stored.id)).toEqual(stored);
     const discovery = await tool.handler({ name: 'operations.list' }, {});
     const listed = discovery.content[0];

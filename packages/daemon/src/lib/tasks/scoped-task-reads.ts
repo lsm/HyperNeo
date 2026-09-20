@@ -52,8 +52,9 @@ export function admitListedScope(
     : { reason: EMPTY_PAGE };
 }
 
-function loadTask(readTask: TaskReader, taskId: string): TaskCore | null {
-  return readTask(taskId);
+function loadTask(readTask: TaskReader, taskId: string): { value: TaskCore } | { reason: null } {
+  const task = readTask(taskId);
+  return task ? { value: task } : { reason: null };
 }
 
 function loadTaskByNumber(
@@ -71,7 +72,7 @@ function loadPage(listTasks: TaskPageReader, input: ListTasksInput): TaskListPag
 export const readScopedTask = (superpipe({})('read-scoped-task') as PipelineAPI)
   .input(['db', 'caller', 'admission', 'readTask', 'taskId'])
   .pipe(admitTaskOwner, ['db', 'taskId', 'caller', 'admission'], 'result:task')
-  .pipe(loadTask, ['readTask', 'task'], 'task')
+  .pipe(loadTask, ['readTask', 'task'], 'result:task')
   .end('task') as (
   db: Database,
   caller: OperationCaller,
