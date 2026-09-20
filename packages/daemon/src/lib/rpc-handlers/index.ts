@@ -1508,7 +1508,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     (runId, sessionId) =>
       nodeExecutionRepo
         .listByAgentSessionId(sessionId)
-        .some((execution) => execution.workflowRunId === runId)
+        .some((execution) => execution.workflowRunId === runId),
+    (sessionId) => taskAgentManager.isSessionInMemory(sessionId)
   );
 
   const artifactSyncHandlers = createSyncArtifactHandlers({

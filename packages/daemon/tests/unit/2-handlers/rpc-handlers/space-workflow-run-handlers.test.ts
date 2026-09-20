@@ -249,6 +249,7 @@ describe('space-workflow-run-handlers', () => {
       worktreePath?: string | null;
       hookStateRepo?: WorkflowHookStateRepository;
       isQueuedRetryOwner?: (runId: string, sessionId: string) => boolean;
+      isQueuedRetryRuntimeLive?: (sessionId: string) => boolean;
     } = {}
   ) {
     const mh = createMockMessageHub();
@@ -278,7 +279,8 @@ describe('space-workflow-run-handlers', () => {
       createMockArtifactCacheRepo(),
       createMockJobQueue(),
       opts.hookStateRepo ?? createMockHookStateRepo(),
-      opts.isQueuedRetryOwner ?? (() => true)
+      opts.isQueuedRetryOwner ?? (() => true),
+      opts.isQueuedRetryRuntimeLive ?? (() => true)
     );
   }
 
@@ -885,7 +887,10 @@ describe('space-workflow-run-handlers', () => {
       expect(snapshot.localState[QUEUED_RETRYABLE_ACTION_STATE_KEY]).toEqual(queuedAction);
     });
 
-    it('releases an orphaned queued action owned by a replaced session', async () => {
+    it.each([
+      ['a replaced owner', false, true],
+      ['an unavailable owner runtime', true, false],
+    ])('releases a queued action for %s', async (_case, isOwner, isLive) => {
       const queuedAction = {
         actionKey: 'persisted-retry',
         hookId: 'hook-1',
@@ -923,7 +928,11 @@ describe('space-workflow-run-handlers', () => {
         get: mock(() => snapshot),
         update,
       } as unknown as WorkflowHookStateRepository;
-      setup({ hookStateRepo, isQueuedRetryOwner: () => false });
+      setup({
+        hookStateRepo,
+        isQueuedRetryOwner: () => isOwner,
+        isQueuedRetryRuntimeLive: () => isLive,
+      });
 
       await expect(
         call('spaceWorkflowRun.retryHook', { runId: 'run-1', hookId: 'hook-1' })
