@@ -3008,8 +3008,8 @@ export class AgentSession
     const exitPromise = new Promise<void>((resolve) => {
       proc.once('exit', () => {
         this.clearForceKillTimer(pid);
-        this.forgetAgentChild(pid);
         if (this.trackedAgentProcesses.get(pid) === proc) {
+          this.forgetAgentChild(pid);
           this.trackedAgentProcesses.delete(pid);
           this.trackedAgentProcessExitPromises.delete(pid);
           this.recentlyExitedAgentRootPids.set(pid, Date.now());

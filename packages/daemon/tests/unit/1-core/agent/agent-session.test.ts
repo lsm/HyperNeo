@@ -324,6 +324,35 @@ describe('AgentSession', () => {
       raw.close();
     });
 
+    it('a stale exit does not forget the record of the process that replaced it', () => {
+      const raw = new SqliteDatabase(':memory:');
+      runMigration264(raw);
+      const agentSession = createAgentSession(raw);
+      let fireOldExit: (() => void) | null = null;
+      const oldProc = {
+        pid: 9913,
+        spawnfile: '/usr/local/bin/claude',
+        once: (event: string, handler: () => void) => {
+          if (event === 'exit') fireOldExit = handler;
+          return oldProc;
+        },
+        kill: mock(() => true),
+      };
+      const replacement = {
+        pid: 9913,
+        spawnfile: '/usr/local/bin/claude',
+        once: (_event: string, _handler: () => void) => replacement,
+        kill: mock(() => true),
+      };
+
+      agentSession.trackAgentProcess(oldProc as never);
+      agentSession.trackAgentProcess(replacement as never);
+      fireOldExit?.();
+
+      expect(new AgentChildProcessRepository(raw).list()).toMatchObject([{ pid: 9913 }]);
+      raw.close();
+    });
+
     it('tracks a child normally when the database cannot record it', () => {
       const agentSession = createAgentSession();
       const proc = {

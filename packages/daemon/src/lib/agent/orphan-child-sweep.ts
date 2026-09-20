@@ -81,6 +81,19 @@ export async function sweepOrphanedAgentChildren(
   logError: (...args: unknown[]) => void,
   io: OrphanChildSweepIo = {}
 ): Promise<void> {
+  try {
+    await runOrphanChildSweep(repo, logInfo, logError, io);
+  } catch (err) {
+    logError('[Daemon] Orphaned agent child sweep failed; its record is kept for boot:', err);
+  }
+}
+
+async function runOrphanChildSweep(
+  repo: AgentChildProcessRepository,
+  logInfo: (...args: unknown[]) => void,
+  logError: (...args: unknown[]) => void,
+  io: OrphanChildSweepIo
+): Promise<void> {
   const list = io.list ?? listProcesses;
   const kill = io.kill ?? killProcessGroupThenPid;
   const now = io.now ?? Date.now;

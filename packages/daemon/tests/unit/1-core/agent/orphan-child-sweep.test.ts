@@ -283,3 +283,39 @@ test('forgetMany removes only the pids it is given', () => {
   expect(repo.list().map((row) => row.pid)).toEqual([2]);
   db.close();
 });
+
+test('a failed record delete keeps the rows and does not abort boot (#4904 review)', async () => {
+  const { db, repo } = repoWithRows([child({ pid: 1 })]);
+  const logError = mock(() => {});
+  repo.forgetMany = () => {
+    throw new Error('SQLITE_BUSY');
+  };
+
+  await sweepOrphanedAgentChildren(repo, () => {}, logError, {
+    list: async () => [snap({ pid: 1 })],
+    kill: () => {},
+    now: () => NOW,
+  });
+
+  expect(logError).toHaveBeenCalled();
+  expect(new AgentChildProcessRepository(db).list()).toHaveLength(1);
+  db.close();
+});
+
+test('the sweep swallows any failure, not only the ones it names', async () => {
+  const { db, repo } = repoWithRows([child({ pid: 1 })]);
+  const logError = mock(() => {});
+
+  await expect(
+    sweepOrphanedAgentChildren(repo, () => {}, logError, {
+      list: async () => [snap({ pid: 1 })],
+      now: () => {
+        throw new Error('clock exploded');
+      },
+    })
+  ).resolves.toBeUndefined();
+
+  expect(logError).toHaveBeenCalled();
+  expect(new AgentChildProcessRepository(db).list()).toHaveLength(1);
+  db.close();
+});

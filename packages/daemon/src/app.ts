@@ -1174,11 +1174,15 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     }
 
     if (process.env.NODE_ENV !== 'test') {
-      await sweepOrphanedAgentChildren(
-        new AgentChildProcessRepository(db.getDatabase()),
-        logInfo,
-        logError
-      );
+      try {
+        await sweepOrphanedAgentChildren(
+          new AgentChildProcessRepository(db.getDatabase()),
+          logInfo,
+          logError
+        );
+      } catch (err) {
+        logError('[Daemon] Orphaned agent child sweep failed (non-fatal):', err);
+      }
     }
 
     jobProcessor.start();
