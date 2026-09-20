@@ -64,11 +64,15 @@ export function PendingTaskCompletionBanner({
     }
   }, [task.id, rejectReason]);
 
-  if (task.pendingCheckpointType !== 'task_completion') return null;
+  if (task.status !== 'review') return null;
 
   const agentReason = task.pendingCompletionReason?.trim();
   const reportedSummary = task.reportedSummary?.trim();
   const submittedAgo = formatPendingSince(task.pendingCompletionSubmittedAt ?? null);
+  const meta =
+    task.pendingCheckpointType === 'task_completion'
+      ? submittedAgo && `· ${submittedAgo}`
+      : '· submission record missing';
 
   const actions: InlineStatusBannerAction[] = [
     {
@@ -99,7 +103,7 @@ export function PendingTaskCompletionBanner({
         tone="amber"
         icon={<span aria-hidden="true">⏸</span>}
         label="Awaiting approval"
-        meta={submittedAgo ? `· ${submittedAgo}` : undefined}
+        meta={meta || undefined}
         actions={actions}
         testId="pending-task-completion-banner"
       />
