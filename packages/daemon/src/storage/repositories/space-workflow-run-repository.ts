@@ -66,7 +66,11 @@ export class SpaceWorkflowRunRepository {
   }
 
   createPinnedRun(
-    params: CreateWorkflowRunParams & { rawWorkflow: SpaceWorkflow; parentTaskId?: string },
+    params: CreateWorkflowRunParams & {
+      rawWorkflow: SpaceWorkflow;
+      parentTaskId?: string;
+      expectedParentPreferredWorkflowId?: string | null;
+    },
     resolveTemplate?: AgentTemplateResolver,
     initializeAttachedRun?: (run: SpaceWorkflowRun) => undefined
   ): SpaceWorkflowRun {
@@ -93,12 +97,20 @@ export class SpaceWorkflowRunRepository {
       });
       const run = this.insertRun(params, versionHash);
       if (params.parentTaskId) {
+        const preferenceGuard =
+          params.expectedParentPreferredWorkflowId === undefined
+            ? ''
+            : ' AND preferred_workflow_id IS ?';
+        const preferenceValues =
+          params.expectedParentPreferredWorkflowId === undefined
+            ? []
+            : [params.expectedParentPreferredWorkflowId];
         this.db
           .prepare(`UPDATE space_tasks SET workflow_run_id = ?, updated_at = ?
           WHERE id = ? AND space_id = ? AND status = 'open' AND archived_at IS NULL
             AND workflow_run_id IS NULL
-            AND NOT EXISTS (SELECT 1 FROM direct_task_execution_selection WHERE task_id = space_tasks.id)`)
-          .run(run.id, Date.now(), params.parentTaskId, params.spaceId);
+            AND NOT EXISTS (SELECT 1 FROM direct_task_execution_selection WHERE task_id = space_tasks.id)${preferenceGuard}`)
+          .run(run.id, Date.now(), params.parentTaskId, params.spaceId, ...preferenceValues);
         const attached = this.db
           .prepare('SELECT 1 FROM space_tasks WHERE id = ? AND workflow_run_id = ?')
           .get(params.parentTaskId, run.id);
