@@ -3100,7 +3100,6 @@ export class SpaceRuntime {
       this.config.taskAgentManager?.cancelBySessionId(task.taskAgentSessionId);
     }
     const cleared = this.config.taskRepo.updateTask(task.id, {
-      workflowRunId: task.workflowRunId,
       taskAgentSessionId: null,
     });
     if (cleared) {
@@ -3151,7 +3150,6 @@ export class SpaceRuntime {
     this.clearAgentStuckStateForRun(task.workflowRunId);
     return (
       this.config.taskRepo.updateTask(task.id, {
-        workflowRunId: task.workflowRunId,
         taskAgentSessionId: null,
       }) ?? task
     );
@@ -3429,6 +3427,10 @@ export class SpaceRuntime {
     opts?: { archiveSource?: 'user' | 'system_reconcile' }
   ): Promise<SpaceTask | null> {
     const previous = this.config.taskRepo.getTask(taskId);
+    const writeParams = { ...params };
+    if (params.status === 'blocked' && params.blockReason === 'dependency_added') {
+      delete writeParams.workflowRunId;
+    }
     if (previous && params.status !== undefined && params.status !== previous.status) {
       assertValidSpaceTaskTransition(previous.status, params.status);
     }
@@ -3444,7 +3446,7 @@ export class SpaceRuntime {
       this.config.reactiveDb?.beginTransaction();
       try {
         updated = this.config.db.transaction(() => {
-          const result = this.config.taskRepo.updateTask(taskId, params);
+          const result = this.config.taskRepo.updateTask(taskId, writeParams);
           this.config.goalService?.supersedeOutcomeNotificationsForTask(taskId);
           return result;
         })();
@@ -3454,7 +3456,7 @@ export class SpaceRuntime {
         throw err;
       }
     } else {
-      updated = this.config.taskRepo.updateTask(taskId, params);
+      updated = this.config.taskRepo.updateTask(taskId, writeParams);
     }
     if (updated) {
       let emitUpdated = true;

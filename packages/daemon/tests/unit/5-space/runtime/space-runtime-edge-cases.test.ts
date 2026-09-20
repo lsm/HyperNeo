@@ -555,6 +555,41 @@ describe('SpaceRuntime — edge cases and resilience', () => {
       expect(cancelledExecution.agentSessionId).toBeNull();
     });
 
+    test('does not overwrite a concurrent workflow run reattach while blocking', async () => {
+      const tam = new MockTaskAgentManager();
+      const rt = makeRuntime({ taskAgentManager: tam as never });
+      const wf = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: 'step-block-reattach', name: 'Only Step', agentId: AGENT },
+      ]);
+      const replacementWorkflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: 'step-block-replacement', name: 'Replacement Step', agentId: AGENT },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, wf.id, 'Run');
+      const { run: replacementRun } = await rt.startWorkflowRun(
+        SPACE_ID,
+        replacementWorkflow.id,
+        'Replacement Run'
+      );
+      const task = tasks[0];
+      const [execution] = nodeExecutionRepo.listByWorkflowRun(run.id);
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'node-session-block-reattach',
+      });
+      tam.onCancel = () => {
+        tam.onCancel = null;
+        taskRepo.updateTask(task.id, { workflowRunId: replacementRun.id });
+      };
+
+      await rt.blockWorkflowBackedTask(SPACE_ID, task.id, {
+        status: 'blocked',
+        blockReason: 'dependency_added',
+        result: 'Dependency added while task was in progress',
+      });
+
+      expect(taskRepo.getTask(task.id)?.workflowRunId).toBe(replacementRun.id);
+    });
+
     test('ignores payload task session when dependency-block task had no session pointer', async () => {
       const tam = new MockTaskAgentManager();
       const rt = makeRuntime({ taskAgentManager: tam as never });
@@ -801,6 +836,40 @@ describe('SpaceRuntime — edge cases and resilience', () => {
       ).rejects.toThrow('Task transition snapshot is stale');
 
       expect(taskRepo.getTask(task.id)?.status).toBe('blocked');
+    });
+
+    test('does not overwrite a concurrent workflow run reattach during teardown', async () => {
+      const tam = new MockTaskAgentManager();
+      const rt = makeRuntime({ taskAgentManager: tam as never });
+      const wf = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: 'step-cancel-reattach', name: 'Only Step', agentId: AGENT },
+      ]);
+      const replacementWorkflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: 'step-replacement-run', name: 'Replacement Step', agentId: AGENT },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, wf.id, 'Run');
+      const { run: replacementRun } = await rt.startWorkflowRun(
+        SPACE_ID,
+        replacementWorkflow.id,
+        'Replacement Run'
+      );
+      const task = tasks[0];
+      const [execution] = nodeExecutionRepo.listByWorkflowRun(run.id);
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'node-session-cancel-reattach',
+      });
+      taskRepo.updateTask(task.id, { status: 'in_progress' });
+      tam.onCancel = () => {
+        tam.onCancel = null;
+        taskRepo.updateTask(task.id, { workflowRunId: replacementRun.id });
+      };
+
+      await expect(
+        rt.stopWorkflowBackedTaskForStatus(SPACE_ID, task.id, { status: 'cancelled' })
+      ).rejects.toThrow('Task transition snapshot is stale');
+
+      expect(taskRepo.getTask(task.id)?.workflowRunId).toBe(replacementRun.id);
     });
 
     test('cancelling a workflow run stops active task and node sessions', async () => {
