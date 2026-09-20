@@ -11,6 +11,7 @@ import {
   type OperationDefinition,
 } from '../operations/registry.ts';
 import { TaskWithSpaceFieldsSchema } from './get-operation.ts';
+import type { DirectOutcomeAcknowledgement } from './direct-outcome-jobs.ts';
 
 type TransitionResult = ReturnType<typeof transitionStandaloneTask>;
 
@@ -21,7 +22,11 @@ export type TransitionTaskRejection =
   | 'block_reason_requires_blocked'
   | 'space_at_task_capacity';
 
-export type TransitionTaskOutput = TransitionResult | TransitionTaskRejection | TaskMutationDenial;
+export type TransitionTaskOutput =
+  | TransitionResult
+  | TransitionTaskRejection
+  | TaskMutationDenial
+  | DirectOutcomeAcknowledgement;
 
 export const StandaloneTransitionTaskInputSchema = z
   .object({
@@ -68,6 +73,8 @@ export function createTransitionTaskOperation<Input = TransitionStandaloneTaskIn
       options.inputSchema ?? (StandaloneTransitionTaskInputSchema as unknown as z.ZodType<Input>),
     resultSchema: z.union([
       TaskMutationDenialSchema,
+      z.object({ accepted: z.literal(true), jobId: z.string().nullable() }),
+      z.object({ accepted: z.literal(false), reason: z.string() }),
       TaskWithSpaceFieldsSchema.nullable(),
       z.enum([
         'unsupported_status',

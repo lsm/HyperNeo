@@ -45,6 +45,7 @@ import {
   createSendTaskMessageOperation,
   type TaskMessageSendDependencies,
 } from '../messaging/task-message-send.ts';
+import { enqueueDirectOutcome } from './direct-outcome-jobs.ts';
 
 interface ArchiveTaskCapability {
   getTaskManager: ArchiveTaskDependencies['getTaskManager'];
@@ -191,6 +192,8 @@ export function createSpaceOperationRegistryProvider(
               get db() {
                 return database.getDatabase();
               },
+              requestDirectOutcome: (input) =>
+                enqueueDirectOutcome(database.getDatabase(), jobQueue, input),
             })
           : undefined,
         pendingCompletion: pendingCompletion

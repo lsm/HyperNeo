@@ -110,6 +110,21 @@ test('request is durable before shutdown and task/attempt commit together', asyn
   expect(terminal).toHaveBeenCalledTimes(1);
 });
 
+test('done is a durable direct finalization outcome', async () => {
+  const result = await finalize()({
+    ...input,
+    status: 'done',
+    options: { result: 'Finished' },
+  });
+
+  expect(result).toMatchObject({
+    finalized: true,
+    task: { status: 'done', result: 'Finished' },
+    attempt: { phase: 'stopped', outcome: 'done' },
+  });
+  expect(terminal).toHaveBeenCalledWith(taskId, 'in_progress');
+});
+
 test('callback failure rolls back both writes and retry reuses verified shutdown', async () => {
   terminal.mockImplementation(() => {
     throw new Error('callback failed');

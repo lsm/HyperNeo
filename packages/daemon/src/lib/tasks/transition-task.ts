@@ -15,12 +15,13 @@ import {
 } from './task-manager.ts';
 import { decideSpaceTaskTransition } from './transition-decision.ts';
 import { createTransitionTaskOperation } from './transition-operation.ts';
+import type { DirectOutcomeAcknowledgement } from './direct-outcome-jobs.ts';
 import {
   admitCaller,
   type Gate,
   loadTask,
   type OwnedTask,
-  rejectActiveDirectAttempt,
+  routeActiveDirectAttempt,
   requireExpectedStatus,
   resolveOwner,
   type SpaceTransitionAdmissionDependencies,
@@ -37,7 +38,7 @@ type Rejection =
   | 'result_requires_done'
   | 'block_reason_requires_blocked'
   | 'space_at_task_capacity';
-type Result = TaskCore | Rejection | TaskMutationDenial | null;
+type Result = TaskCore | Rejection | TaskMutationDenial | DirectOutcomeAcknowledgement | null;
 export interface SpaceTransitionTaskDependencies extends SpaceTransitionAdmissionDependencies {
   getTaskManager: (spaceId: string) => Pick<SpaceTaskManager, 'getTask' | 'setTaskStatus'>;
   emitTaskUpdated: (spaceId: string, task: SpaceTask) => Promise<void>;
@@ -226,7 +227,7 @@ export async function writeStatus(decided: DecidedTask, input: In, deps: Deps): 
   }
 }
 const SPACE_TRANSITION_TASK_DESCRIPTION =
-  'Space-scoped callers change the lifecycle state of a task in their Space; review and approved are entered only through the submit-for-review and approval operations, and rate_limited/usage_limited are runtime-owned. Tasks with an active direct-execution attempt are managed by the durable start/cancel/complete operations, and result may accompany only a transition to done, and blockReason only a transition to blocked, where human_input_requested is the single caller-settable value because every other block reason is stamped by the runtime that observed it. Supply expectedStatus to reject with invalid_transition unless the task is still in that state; it is applied at the status write, including transitions handed to the workflow runtime. Moving a task with no workflow run and no agent session into in_progress claims one of the Space concurrency slots, so it rejects with space_at_task_capacity when the Space has none free; stop or finish a running task, or raise the Space limit, and retry. Returns core task data, null for absent tasks, { accepted: false, reason: "task_transition_denied" } for caller scope denials, or unsupported_status, invalid_transition, result_requires_done, block_reason_requires_blocked, or space_at_task_capacity when rejected.';
+  'Space-scoped callers change the lifecycle state of a task in their Space; review and approved are entered only through the submit-for-review and approval operations, and rate_limited/usage_limited are runtime-owned. A running direct-execution attempt moving to done, blocked, cancelled, or stopped is shut down through the durable outcome queue before the task status commits; that route returns { accepted, jobId } instead of task data. Reserved attempts remain fenced and must use task.cancel. result may accompany only a transition to done, and blockReason only a transition to blocked, where human_input_requested is the single caller-settable value because every other block reason is stamped by the runtime that observed it. Supply expectedStatus to reject with invalid_transition unless the task is still in that state; it is applied at the status write, including transitions handed to a runtime. Moving a task with no workflow run and no agent session into in_progress claims one of the Space concurrency slots, so it rejects with space_at_task_capacity when the Space has none free; stop or finish a running task, or raise the Space limit, and retry. Returns core task data, a durable outcome acknowledgement for a running direct attempt, null for absent tasks, { accepted: false, reason: "task_transition_denied" } for caller scope denials, or unsupported_status, invalid_transition, result_requires_done, block_reason_requires_blocked, or space_at_task_capacity when rejected.';
 export function createSpaceTransitionTaskOperation(deps: Deps) {
   const transition = (superpipe({ deps })('transition-space-task') as PipelineAPI)
     .input(['input', 'caller'])
@@ -234,8 +235,8 @@ export function createSpaceTransitionTaskOperation(deps: Deps) {
     .pipe(admitCaller, ['outcome', 'caller', 'deps'], 'result:outcome')
     .pipe(loadTask, ['outcome', 'input', 'deps'], 'result:outcome')
     .pipe(requireExpectedStatus, ['outcome', 'input'], 'result:outcome')
-    .pipe(rejectActiveDirectAttempt, ['outcome', 'deps'], 'result:outcome')
     .pipe(decide, ['outcome', 'input', 'caller', 'deps'], 'result:outcome')
+    .pipe(routeActiveDirectAttempt, ['outcome', 'input', 'deps'], 'result:outcome')
     .pipe(requireFreeTaskSlot, ['outcome', 'input', 'deps'], 'result:outcome')
     .pipe(writeStatus, ['outcome', 'input', 'deps'], 'outcome')
     .endAsync('outcome') as (input: In, caller: Caller) => Promise<Result>;

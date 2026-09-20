@@ -11,6 +11,8 @@ import type { StandaloneTaskStatus } from './standalone-lifecycle.ts';
 import type { SpaceTaskManager } from './task-manager.ts';
 import type { SpaceMcpSessionPolicyContext } from '../space/runtime/space-mcp-session-policy.ts';
 import { admitSpaceTaskCaller, resolveSpaceTaskOwner } from './metadata.ts';
+import type { DirectFinalizationInput } from './finalize-direct-attempt.ts';
+import type { DirectOutcomeAcknowledgement } from './direct-outcome-jobs.ts';
 
 export const SpaceTransitionTaskInputSchema = z
   .object({
@@ -29,7 +31,7 @@ type Rejection =
   | 'result_requires_done'
   | 'block_reason_requires_blocked'
   | 'space_at_task_capacity';
-type Result = TaskCore | Rejection | null;
+type Result = TaskCore | Rejection | DirectOutcomeAcknowledgement | null;
 export type Gate<T, R> = { value: T } | { reason: R };
 export type OwnedTask = { spaceId: string; task: SpaceTask };
 export type SpaceTransitionAdmissionDependencies = SpaceMcpSessionPolicyContext & {
@@ -37,6 +39,7 @@ export type SpaceTransitionAdmissionDependencies = SpaceMcpSessionPolicyContext 
   getSession: (sessionId: string) => Session | null;
   getTaskManager: (spaceId: string) => Pick<SpaceTaskManager, 'getTask'>;
   notifyStandalone: () => void;
+  requestDirectOutcome?: (input: DirectFinalizationInput) => DirectOutcomeAcknowledgement;
 };
 type Deps = SpaceTransitionAdmissionDependencies;
 
@@ -76,10 +79,32 @@ export async function loadTask(
   const task = await deps.getTaskManager(spaceId).getTask(input.taskId);
   return task ? { value: { spaceId, task } } : { reason: null };
 }
-export function rejectActiveDirectAttempt(
-  owned: OwnedTask,
+export function routeActiveDirectAttempt<T extends OwnedTask>(
+  owned: T,
+  input: In,
   deps: Deps
-): Gate<OwnedTask, 'unsupported_status'> {
+): Gate<T, 'unsupported_status' | DirectOutcomeAcknowledgement> {
   const attempt = new DirectTaskExecutionRepository(deps.db).getActive(owned.task.id);
-  return attempt ? { reason: 'unsupported_status' } : { value: owned };
+  if (!attempt) return { value: owned };
+  const directStatus = input.status as 'done' | 'blocked' | 'cancelled' | 'stopped';
+  if (
+    attempt.phase !== 'running' ||
+    owned.task.taskAgentSessionId !== attempt.sessionId ||
+    !deps.requestDirectOutcome ||
+    !(['done', 'blocked', 'cancelled', 'stopped'] as const).includes(directStatus)
+  )
+    return { reason: 'unsupported_status' };
+  const options = {
+    ...(input.result === undefined ? {} : { result: input.result }),
+    ...(input.blockReason === undefined ? {} : { blockReason: input.blockReason }),
+  };
+  return {
+    reason: deps.requestDirectOutcome({
+      attemptId: attempt.id,
+      sessionId: attempt.sessionId,
+      generation: attempt.generation,
+      status: directStatus,
+      ...(Object.keys(options).length === 0 ? {} : { options }),
+    }),
+  };
 }

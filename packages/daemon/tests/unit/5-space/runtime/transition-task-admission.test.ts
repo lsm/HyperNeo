@@ -3,7 +3,7 @@ import { SpaceTaskManager } from '../../../../src/lib/tasks/task-manager';
 import {
   admitCaller,
   loadTask,
-  rejectActiveDirectAttempt,
+  routeActiveDirectAttempt,
   resolveOwner,
   type SpaceTransitionAdmissionDependencies,
 } from '../../../../src/lib/tasks/transition-task-admission';
@@ -127,7 +127,7 @@ describe('loadTask', () => {
   });
 });
 
-describe('rejectActiveDirectAttempt', () => {
+describe('routeActiveDirectAttempt', () => {
   test.each(['reserved', 'running'] as const)(
     'a task with a %s direct attempt is rejected',
     (phase) => {
@@ -135,16 +135,16 @@ describe('rejectActiveDirectAttempt', () => {
       attempts.select(task.id);
       attempts.claim(task.id, 'attempt', 'worker');
       if (phase === 'running') attempts.activate('attempt', 'worker');
-      expect(rejectActiveDirectAttempt({ spaceId, task }, deps())).toEqual({
-        reason: 'unsupported_status',
-      });
+      expect(
+        routeActiveDirectAttempt({ spaceId, task }, { taskId: task.id, status: 'done' }, deps())
+      ).toEqual({ reason: 'unsupported_status' });
     }
   );
 
   test('a task without an active attempt passes through unchanged', () => {
     const task = tasks.createTask({ spaceId, title: 'T', description: '' });
-    expect(rejectActiveDirectAttempt({ spaceId, task }, deps())).toEqual({
-      value: { spaceId, task },
-    });
+    expect(
+      routeActiveDirectAttempt({ spaceId, task }, { taskId: task.id, status: 'done' }, deps())
+    ).toEqual({ value: { spaceId, task } });
   });
 });

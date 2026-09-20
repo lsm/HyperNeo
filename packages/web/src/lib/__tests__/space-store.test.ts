@@ -22,7 +22,12 @@ let mockEventHandlers: Map<string, (event: unknown) => void>;
 let mockEventHandlerSets: Map<string, Set<(event: unknown) => void>>;
 let mockHub: ReturnType<typeof makeMockHub>;
 let taskDetailResult: SpaceTask | null = null;
-let transitionResult: SpaceTask | string | null | undefined;
+let transitionResult:
+  | SpaceTask
+  | string
+  | null
+  | { accepted: boolean; jobId?: string | null; reason?: string }
+  | undefined;
 let taskUpdateResult: SpaceTask | null | undefined;
 let preferredWorkflowResult: SpaceTask | string | null | undefined;
 let templateListResult: SpaceAgentTemplate[] | null = null;
@@ -1820,7 +1825,7 @@ describe('SpaceStore — CRUD methods', () => {
       name: 'task.transition',
       input: { taskId: 't1', status: 'in_progress' },
     });
-    expect(task.status).toBe('in_progress');
+    expect(task).toMatchObject({ status: 'in_progress' });
   });
 
   it('setTaskStatus surfaces a transition rejection', async () => {
@@ -1829,6 +1834,25 @@ describe('SpaceStore — CRUD methods', () => {
 
     await expect(spaceStore.setTaskStatus('t1', 'done')).rejects.toThrow(
       'Cannot move task t1 to done: invalid_transition'
+    );
+  });
+
+  it('setTaskStatus returns a durable direct-outcome acknowledgement', async () => {
+    await spaceStore.selectSpace('space-1');
+    transitionResult = { accepted: true, jobId: 'job-1' };
+
+    await expect(spaceStore.setTaskStatus('t1', 'done')).resolves.toEqual({
+      accepted: true,
+      jobId: 'job-1',
+    });
+  });
+
+  it('setTaskStatus surfaces a durable direct-outcome refusal', async () => {
+    await spaceStore.selectSpace('space-1');
+    transitionResult = { accepted: false, reason: 'unavailable' };
+
+    await expect(spaceStore.setTaskStatus('t1', 'done')).rejects.toThrow(
+      'Cannot move task t1 to done: unavailable'
     );
   });
 

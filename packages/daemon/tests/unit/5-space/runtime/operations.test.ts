@@ -6,6 +6,7 @@ import type { CallContext } from '@hyperneo/shared';
 import type { Database as AppDatabase } from '../../../../src/storage/database';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import type { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
+import { DirectTaskExecutionRepository } from '../../../../src/storage/repositories/direct-task-execution-repository';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { SpaceGoalRepository } from '../../../../src/storage/repositories/space-goal-repository';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
@@ -18,6 +19,7 @@ import { createSpaceOperationRegistryProvider } from '../../../../src/lib/tasks/
 import { createDatabaseOperationCatalog } from '../../../../src/lib/operations/database-catalog';
 import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-adapter';
 import { createOperationRpcHandler } from '../../../../src/lib/operations/rpc-adapter';
+import { DIRECT_TASK_OUTCOME } from '../../../../src/lib/tasks/direct-outcome-jobs';
 
 let db: Database;
 let database: AppDatabase;
@@ -26,7 +28,7 @@ let sessions: SessionRepository;
 let spaces: SpaceRepository;
 let spaceId: string;
 let taskId: string;
-const jobQueue = {} as JobQueueRepository;
+let jobQueue: JobQueueRepository;
 const context = {} as CallContext;
 let emit: ReturnType<typeof mock>;
 let emitCreated: ReturnType<typeof mock>;
@@ -44,6 +46,7 @@ beforeEach(() => {
   tasks = new SpaceTaskRepository(db);
   taskId = tasks.createTask({ spaceId, title: 'Original', description: '' }).id;
   sessions = new SessionRepository(db);
+  jobQueue = {} as JobQueueRepository;
   getDatabase = mock(() => db);
   database = { getDatabase, notifyChange: mock(() => {}) } as unknown as AppDatabase;
   emit = mock(async () => {});
@@ -468,6 +471,38 @@ test('task.transition is served through the Space registry when bound', async ()
   expect(result).toMatchObject({ id: taskId, status: 'in_progress' });
   expect(tasks.getTask(taskId)?.status).toBe('in_progress');
   expect(emit).toHaveBeenCalledTimes(1);
+});
+
+test('task.transition durably queues a terminal outcome for a running direct attempt', async () => {
+  const attempts = new DirectTaskExecutionRepository(db);
+  attempts.select(taskId);
+  attempts.claim(taskId, 'attempt', 'worker');
+  attempts.activate('attempt', 'worker');
+  tasks.updateTask(taskId, { status: 'in_progress', taskAgentSessionId: 'worker' });
+  const enqueue = mock(() => ({ id: 'job-1' }));
+  jobQueue = { enqueue } as unknown as JobQueueRepository;
+  const rpc = createOperationRpcHandler(
+    provider({}, undefined, {
+      getSession: (id) => sessions.getSession(id),
+      getTaskManager: (id) => new SpaceTaskManager(db, id),
+      notifyStandalone: () => database.notifyChange('space_tasks'),
+      emitTaskUpdated: emit,
+      isWorkflowRunActive: () => false,
+    }),
+    () => ({})
+  );
+
+  const result = await rpc(
+    { name: 'task.transition', input: { taskId, status: 'done', result: 'Finished' } },
+    context
+  );
+
+  expect(result).toEqual({ accepted: true, jobId: 'job-1' });
+  expect(enqueue).toHaveBeenCalledWith({
+    queue: DIRECT_TASK_OUTCOME,
+    payload: { attemptId: 'attempt', sessionId: 'worker', generation: 1 },
+  });
+  expect(tasks.getTask(taskId)?.status).toBe('in_progress');
 });
 
 test('task.get returns the core shape unchanged for a standalone task through the Space registry', async () => {
