@@ -52,6 +52,7 @@ import {
   invokeOperation,
   setPreferredWorkflow,
   transitionTask,
+  type TaskTransitionResult,
 } from './operations';
 import { currentSpaceCanonicalIdSignal, currentSpaceIdSignal } from './signals';
 
@@ -246,6 +247,11 @@ function toPaneAgentTemplate(template: SpaceAgentTemplate): SpaceLongHorizonAgen
 export type DirectTaskStartResult =
   | { accepted: true; jobId: string | null }
   | { accepted: false; reason: string };
+
+function requireSynchronousTransition(result: TaskTransitionResult): SpaceTask {
+  if ('accepted' in result) throw new Error('Expected a synchronous task transition');
+  return result;
+}
 
 export type ReviewSubmissionResult =
   | { accepted: true; jobId: string | null }
@@ -2143,7 +2149,7 @@ class SpaceStore {
     };
   }
 
-  async setTaskStatus(taskId: string, status: SpaceTaskStatus): Promise<SpaceTask> {
+  async setTaskStatus(taskId: string, status: SpaceTaskStatus): Promise<TaskTransitionResult> {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
 
@@ -2191,7 +2197,7 @@ class SpaceStore {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
 
-    return transitionTask(hub, { taskId, status });
+    return requireSynchronousTransition(await transitionTask(hub, { taskId, status }));
   }
 
   async publishTask(taskId: string): Promise<SpaceTask> {
@@ -2201,7 +2207,9 @@ class SpaceStore {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
 
-    return transitionTask(hub, { taskId, status: 'open', expectedStatus: 'draft' });
+    return requireSynchronousTransition(
+      await transitionTask(hub, { taskId, status: 'open', expectedStatus: 'draft' })
+    );
   }
 
   async runTaskDirectly(taskId: string): Promise<DirectTaskStartResult> {

@@ -297,6 +297,58 @@ test('a task with a reserved direct attempt is unsupported', async () => {
   expect(result).toEqual({ kind: 'completed', value: 'unsupported_status' });
 });
 
+test.each([
+  ['done', { result: 'Finished' }, { result: 'Finished' }],
+  ['blocked', { blockReason: 'human_input_requested' }, { blockReason: 'human_input_requested' }],
+  ['cancelled', {}, undefined],
+  ['stopped', {}, undefined],
+] as const)(
+  'a %s transition with a running direct attempt requests a durable outcome',
+  async (status, fields, options) => {
+    const task = tasks.createTask({ spaceId, title: 'T', description: '' });
+    attempts.select(task.id);
+    attempts.claim(task.id, 'attempt', 'worker');
+    attempts.activate('attempt', 'worker');
+    tasks.updateTask(task.id, { status: 'in_progress', taskAgentSessionId: 'worker' });
+    const requestDirectOutcome = mock(() => ({ accepted: true as const, jobId: 'job-1' }));
+
+    const result = await invoke({ taskId: task.id, status, ...fields }, rpc, {
+      requestDirectOutcome,
+    });
+
+    expect(result).toEqual({ kind: 'completed', value: { accepted: true, jobId: 'job-1' } });
+    expect(requestDirectOutcome).toHaveBeenCalledWith({
+      attemptId: 'attempt',
+      sessionId: 'worker',
+      generation: 1,
+      status,
+      ...(options === undefined ? {} : { options }),
+    });
+  }
+);
+
+test('a direct outcome refusal is returned without a fallback status write', async () => {
+  const task = tasks.createTask({ spaceId, title: 'T', description: '' });
+  attempts.select(task.id);
+  attempts.claim(task.id, 'attempt', 'worker');
+  attempts.activate('attempt', 'worker');
+  tasks.updateTask(task.id, { status: 'in_progress', taskAgentSessionId: 'worker' });
+  const requestDirectOutcome = mock(() => ({
+    accepted: false as const,
+    reason: 'direct_transition_unavailable',
+  }));
+
+  const result = await invoke({ taskId: task.id, status: 'done' }, rpc, {
+    requestDirectOutcome,
+  });
+
+  expect(result).toEqual({
+    kind: 'completed',
+    value: { accepted: false, reason: 'direct_transition_unavailable' },
+  });
+  expect(tasks.getTask(task.id)?.status).toBe('in_progress');
+});
+
 test('a stale-status guard failure surfaces as invalid_transition', async () => {
   const task = tasks.createTask({ spaceId, title: 'T', description: '' });
   const staleManager: Pick<SpaceTaskManager, 'getTask' | 'setTaskStatus'> = {

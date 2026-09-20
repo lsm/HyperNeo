@@ -21,7 +21,7 @@ import {
   type VerifiedDirectStop,
 } from './stop-direct-attempt.ts';
 
-type OutcomeStatus = 'review' | 'blocked' | 'cancelled' | 'stopped';
+type OutcomeStatus = 'review' | 'done' | 'blocked' | 'cancelled' | 'stopped';
 type StatusOptions = Parameters<typeof prepareSpaceTaskStatusUpdate>[2];
 export interface DirectFinalizationInput {
   attemptId: string;
@@ -123,7 +123,7 @@ export function requestDirectTaskFinalization(db: Database, input: DirectFinaliz
       !task ||
       attempt.phase !== 'running' ||
       attempts.isStopRequested(attempt.id, attempt.sessionId) ||
-      !['review', 'blocked', 'cancelled', 'stopped'].includes(input.status) ||
+      !['review', 'done', 'blocked', 'cancelled', 'stopped'].includes(input.status) ||
       !isValidTaskTransition(task.status, input.status)
     )
       return unavailable;

@@ -17,16 +17,23 @@ const TRANSITION_REJECTION_MESSAGES: Record<string, string> = {
 export async function transitionTask(
   hub: MessageHub,
   input: { taskId: string; status: string; result?: string; expectedStatus?: string }
-): Promise<SpaceTask> {
-  const result = await invokeOperation<SpaceTask | string | null>(hub, 'task.transition', input);
+): Promise<TaskTransitionResult> {
+  const result = await invokeOperation<
+    TaskTransitionResult | { accepted: false; reason: string } | string | null
+  >(hub, 'task.transition', input);
   if (result === null) throw new Error(`Task ${input.taskId} is unavailable`);
   if (typeof result === 'string') {
     const friendly = TRANSITION_REJECTION_MESSAGES[result];
     if (friendly) throw new Error(friendly);
     throw new Error(`Cannot move task ${input.taskId} to ${input.status}: ${result}`);
   }
+  if ('accepted' in result && !result.accepted) {
+    throw new Error(`Cannot move task ${input.taskId} to ${input.status}: ${result.reason}`);
+  }
   return result;
 }
+
+export type TaskTransitionResult = SpaceTask | { accepted: true; jobId: string | null };
 
 export async function editTaskMetadata(
   hub: MessageHub,

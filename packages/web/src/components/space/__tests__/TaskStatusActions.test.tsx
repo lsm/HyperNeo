@@ -342,12 +342,12 @@ describe('TaskStatusActions component', () => {
 });
 
 describe('filterDirectAttemptTargets', () => {
-  it('keeps only the targets that do not route through task.transition', () => {
+  it('keeps the targets with direct-attempt teardown routes', () => {
     const targets = filterDirectAttemptTargets(getTransitionActions('in_progress'), {
       hasActiveDirectAttempt: true,
       taskAgentSessionId: 'session-1',
     }).map(({ target }) => target);
-    expect(targets).toEqual(['review', 'cancelled']);
+    expect(targets).toEqual(['review', 'done', 'blocked', 'cancelled', 'stopped']);
   });
 
   it('also hides start and archive from an open task with a live attempt', () => {
@@ -355,7 +355,7 @@ describe('filterDirectAttemptTargets', () => {
       hasActiveDirectAttempt: true,
       taskAgentSessionId: 'session-1',
     }).map(({ target }) => target);
-    expect(targets).toEqual(['review', 'cancelled']);
+    expect(targets).toEqual(['blocked', 'review', 'done', 'cancelled']);
   });
 
   it('hides review too while the attempt is only reserved', () => {
