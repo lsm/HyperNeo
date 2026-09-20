@@ -14,6 +14,7 @@ import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { seedWorkerMirror } from '../../helpers/seed-worker-mirror';
+import { createPinnedWorkflowRun } from '../../helpers/create-pinned-workflow-run.ts';
 
 const SPACE_ID = 'space-persist-1';
 const AGENT_ID = 'agent-persist-1';
@@ -114,7 +115,7 @@ describe('SpaceRuntime workflow subscription persistence', () => {
       rules: [],
       tags: [],
     });
-    const run = workflowRunRepo.createRun({
+    const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
       spaceId: SPACE_ID,
       workflowId: workflow.id,
       title: 'Persist Run',

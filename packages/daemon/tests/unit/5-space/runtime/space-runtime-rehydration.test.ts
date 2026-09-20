@@ -14,6 +14,7 @@ import { ToolContinuationRecoveryRepository } from '../../../../src/storage/repo
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { seedUnifiedAgentMirror } from '../../helpers/seed-unified-agent';
+import { createPinnedWorkflowRun } from '../../helpers/create-pinned-workflow-run.ts';
 
 function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
@@ -115,7 +116,7 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
         { id: STEP_A, name: 'Step A', agentId: AGENT },
       ]);
 
-      const pendingRun = workflowRunRepo.createRun({
+      const pendingRun = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Crashed Run',
@@ -136,7 +137,7 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
         { id: STEP_A, name: 'Step A', agentId: AGENT },
       ]);
 
-      const runA = workflowRunRepo.createRun({
+      const runA = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Run A',
@@ -157,14 +158,14 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
         { id: 'step-multi-b', name: 'Step B', agentId: AGENT },
       ]);
 
-      const runA = workflowRunRepo.createRun({
+      const runA = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: wfA.id,
         title: 'Run A',
       });
       workflowRunRepo.transitionStatus(runA.id, 'in_progress');
 
-      const runB = workflowRunRepo.createRun({
+      const runB = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: wfB.id,
         title: 'Run B',
@@ -186,7 +187,7 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
         { id: STEP_A, name: 'Step A', agentId: AGENT },
       ]);
 
-      const pendingRun = workflowRunRepo.createRun({
+      const pendingRun = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Blocked Run',
@@ -208,7 +209,7 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
         { id: STEP_A, name: 'Step A', agentId: AGENT },
       ]);
 
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Done Run',
@@ -227,7 +228,7 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: STEP_A, name: 'Step A', agentId: AGENT },
       ]);
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Done Run With Stale Hook State',
@@ -286,7 +287,7 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
         { id: STEP_A, name: 'Step A', agentId: AGENT },
       ]);
 
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Cancelled Run',
@@ -306,7 +307,7 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
         { id: STEP_A, name: 'Step A', agentId: AGENT },
       ]);
 
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Pending Run',
@@ -334,14 +335,14 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
         { id: 'step-blocked', name: 'Blocked', agentId: AGENT },
       ]);
 
-      const activeRun = workflowRunRepo.createRun({
+      const activeRun = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: wfActive.id,
         title: 'Active',
       });
       workflowRunRepo.transitionStatus(activeRun.id, 'in_progress');
 
-      const doneRun = workflowRunRepo.createRun({
+      const doneRun = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: wfDone.id,
         title: 'Done',
@@ -349,7 +350,7 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
       workflowRunRepo.transitionStatus(doneRun.id, 'in_progress');
       workflowRunRepo.transitionStatus(doneRun.id, 'done');
 
-      const cancelledRun = workflowRunRepo.createRun({
+      const cancelledRun = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: wfCancelled.id,
         title: 'Cancelled',
@@ -357,7 +358,7 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
       workflowRunRepo.transitionStatus(cancelledRun.id, 'in_progress');
       workflowRunRepo.transitionStatus(cancelledRun.id, 'cancelled');
 
-      const blockedRun = workflowRunRepo.createRun({
+      const blockedRun = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: wfBlocked.id,
         title: 'Blocked',
@@ -382,7 +383,7 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
         { id: STEP_A, name: 'Step A', agentId: AGENT },
       ]);
 
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Agent Rehydration Run',
@@ -458,7 +459,7 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
         { id: STEP_A, name: 'Step A', agentId: AGENT },
       ]);
 
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Order Test Run',
@@ -506,7 +507,7 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
         { id: STEP_A, name: 'Step A', agentId: AGENT },
       ]);
 
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Unspawned Run',
@@ -567,7 +568,7 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
         { id: STEP_A, name: 'Step A', agentId: AGENT },
       ]);
 
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Live Agent Run',
@@ -633,14 +634,14 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
         { id: 'step-cross-b', name: 'Step B', agentId: 'agent-b' },
       ]);
 
-      const runA = workflowRunRepo.createRun({
+      const runA = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: wfA.id,
         title: 'Run A',
       });
       workflowRunRepo.transitionStatus(runA.id, 'in_progress');
 
-      const runB = workflowRunRepo.createRun({
+      const runB = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_B,
         workflowId: wfB.id,
         title: 'Run B',

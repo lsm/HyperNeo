@@ -112,11 +112,14 @@ describe('ChannelRouter — reopen on inbound activity (archive tombstone)', () 
     workflowRunRepo = new SpaceWorkflowRunRepository(db);
     channelCycleRepo = new ChannelCycleRepository(db);
 
-    const createRunOriginal = workflowRunRepo.createRun.bind(workflowRunRepo);
+    workflowManager = new SpaceWorkflowManager(new SpaceWorkflowRepository(db));
+
     (workflowRunRepo as unknown as { createRun: typeof workflowRunRepo.createRun }).createRun = ((
       params: Parameters<typeof workflowRunRepo.createRun>[0]
     ) => {
-      const run = createRunOriginal(params);
+      const rawWorkflow = workflowManager.getWorkflow(params.workflowId);
+      if (!rawWorkflow) throw new Error(`Test workflow not found: ${params.workflowId}`);
+      const run = workflowRunRepo.createPinnedRun({ ...params, rawWorkflow });
       taskRepo.createTask({
         spaceId: params.spaceId,
         title: params.title,
@@ -128,7 +131,6 @@ describe('ChannelRouter — reopen on inbound activity (archive tombstone)', () 
     }) as typeof workflowRunRepo.createRun;
 
     longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(db);
-    workflowManager = new SpaceWorkflowManager(new SpaceWorkflowRepository(db));
     bus = new InternalEventBus<DaemonInternalEventMap>();
     collector = new RecordingCollector(bus);
 

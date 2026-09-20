@@ -31,6 +31,7 @@ import { ToolContinuationRecoveryRepository } from '../../../../src/storage/repo
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { seedUnifiedAgentMirror } from '../../helpers/seed-unified-agent';
+import { createPinnedWorkflowRun } from '../../helpers/create-pinned-workflow-run.ts';
 
 function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
@@ -1479,7 +1480,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
   });
 
   describe('rehydration graceful failure handling', () => {
-    test('rehydration skips run whose workflow was deleted (no throw)', async () => {
+    test('rehydration skips run without a definition pin (no throw)', async () => {
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
       ]);
@@ -1491,8 +1492,6 @@ describe('SpaceRuntime — tick loop correctness', () => {
       });
       workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
-      new SpaceWorkflowRepository(db).deleteWorkflow(workflow.id);
-
       const freshRt = new SpaceRuntime(buildConfig());
       await expect(freshRt.executeTick()).resolves.toBeUndefined();
       expect(freshRt.executorCount).toBe(0);
@@ -1503,7 +1502,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
       ]);
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Rehydrate Run',
@@ -1549,7 +1548,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
       ]);
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Rehydrate Run',
@@ -1576,7 +1575,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
       ]);
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Live Run',
@@ -1625,14 +1624,14 @@ describe('SpaceRuntime — tick loop correctness', () => {
         { id: STEP_B, name: 'Code', agentId: `${AGENT_CODER}-s2` },
       ]);
 
-      const run1 = workflowRunRepo.createRun({
+      const run1 = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: wf1.id,
         title: 'Run S1',
       });
       workflowRunRepo.transitionStatus(run1.id, 'in_progress');
 
-      const run2 = workflowRunRepo.createRun({
+      const run2 = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID_2,
         workflowId: wf2.id,
         title: 'Run S2',
@@ -2250,7 +2249,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
       ]);
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Run',

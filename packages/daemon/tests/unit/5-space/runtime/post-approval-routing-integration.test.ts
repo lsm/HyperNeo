@@ -28,6 +28,7 @@ import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositor
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { seedWorkerMirror } from '../../helpers/seed-worker-mirror';
+import { createPinnedWorkflowRun } from '../../helpers/create-pinned-workflow-run.ts';
 
 const SPACE_ID = 'space-par-int';
 
@@ -159,7 +160,7 @@ function seedRunAndTask(
   title = 'Test task',
   description = ''
 ): { runId: string; taskId: string } {
-  const run = h.workflowRunRepo.createRun({
+  const run = createPinnedWorkflowRun(h.workflowRunRepo, h.workflowManager, {
     spaceId: SPACE_ID,
     workflowId,
     title,

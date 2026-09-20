@@ -22,6 +22,7 @@ import { ToolContinuationRecoveryRepository } from '../../../../src/storage/repo
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { seedUnifiedAgentMirror } from '../../helpers/seed-unified-agent';
+import { createPinnedWorkflowRun } from '../../helpers/create-pinned-workflow-run.ts';
 
 function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
@@ -264,7 +265,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         { id: STEP_A, name: 'Step A', agentId: AGENT },
       ]);
       db.prepare(`UPDATE spaces SET paused = 1 WHERE id = ?`).run(SPACE_ID);
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Recent System Idle Run',
@@ -314,7 +315,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         { id: STEP_A, name: 'Step A', agentId: AGENT },
       ]);
       db.prepare(`UPDATE spaces SET paused = 1 WHERE id = ?`).run(SPACE_ID);
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Non Terminal Idle Run',
@@ -363,7 +364,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         { id: STEP_A, name: 'Step A', agentId: AGENT },
       ]);
       db.prepare(`UPDATE spaces SET paused = 1 WHERE id = ?`).run(SPACE_ID);
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Paused Restart Stall Run',
@@ -400,7 +401,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         { id: STEP_A, name: 'Step A', agentId: AGENT },
       ]);
       db.prepare(`UPDATE spaces SET paused = 1 WHERE id = ?`).run(SPACE_ID);
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Restart Non Terminal Idle Run',
@@ -443,7 +444,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         { id: STEP_A, name: 'Step A', agentId: AGENT },
       ]);
       db.prepare(`UPDATE spaces SET paused = 1 WHERE id = ?`).run(SPACE_ID);
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Repeated Non Terminal Idle Run',
@@ -497,7 +498,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: STEP_A, name: 'Step A', agentId: AGENT },
       ]);
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Block retry budget test',
@@ -552,7 +553,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         { id: STEP_A, name: 'Step A', agentId: AGENT },
       ]);
       db.prepare(`UPDATE spaces SET paused = 1 WHERE id = ?`).run(SPACE_ID);
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Orphan Recovery Run',
@@ -616,7 +617,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         { id: STEP_A, name: 'Step A', agentId: AGENT },
       ]);
       db.prepare(`UPDATE spaces SET paused = 1 WHERE id = ?`).run(SPACE_ID);
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Expired Orphan Recovery Run',
@@ -683,7 +684,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         { id: STEP_A, name: 'Step A', agentId: AGENT },
       ]);
       db.prepare(`UPDATE spaces SET paused = 1 WHERE id = ?`).run(SPACE_ID);
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Live Rebind Session Run',
@@ -733,7 +734,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         { id: STEP_A, name: 'Step A', agentId: AGENT },
       ]);
       db.prepare(`UPDATE spaces SET paused = 1 WHERE id = ?`).run(SPACE_ID);
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Live Rebind Inbox Run',
@@ -796,7 +797,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         { id: STEP_B, name: 'Step B', agentId: AGENT },
       ]);
       db.prepare(`UPDATE spaces SET paused = 1 WHERE id = ?`).run(SPACE_ID);
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Multiple Waiting Rebind Run',
@@ -863,7 +864,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         { id: STEP_A, name: 'Coding', agentId: AGENT },
         { id: STEP_B, name: 'Review', agentId: AGENT },
       ]);
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Recover missing reviewer',
@@ -897,7 +898,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         { id: STEP_A, name: 'Coding', agentId: AGENT },
         { id: STEP_B, name: 'Review', agentId: AGENT },
       ]);
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Recover idle reviewer',
@@ -936,7 +937,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         { id: STEP_A, name: 'Coding', agentId: AGENT },
         { id: STEP_B, name: 'Review', agentId: AGENT },
       ]);
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Do not recover cancelled source',
@@ -964,7 +965,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         { id: STEP_A, name: 'Coding', agentId: AGENT },
         { id: STEP_B, name: 'Review', agentId: AGENT },
       ]);
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Recover cancelled reviewer',
@@ -999,7 +1000,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         { id: STEP_B, name: 'Code', agentId: AGENT },
         { id: 'step-c', name: 'Review', agentId: AGENT },
       ]);
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Recover latest handoff only',
@@ -1039,7 +1040,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       workflow.nodes[0].agents[0].name = 'coder';
       workflow.nodes[1].agents[0].name = 'reviewer';
       workflowManager.updateWorkflow(workflow.id, { nodes: workflow.nodes });
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Recover agent-name channel',
@@ -1079,7 +1080,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         { agentId: AGENT, name: 'Reviewer B' },
       ];
       workflowManager.updateWorkflow(workflow.id, { nodes: workflow.nodes });
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Recover missing reviewer slot',
@@ -1134,7 +1135,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
           ],
         }
       );
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Recover one fan-out branch',
@@ -1182,7 +1183,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
           channels: [{ id: 'coding-to-any', from: 'Coding', to: '*' }],
         }
       );
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Do not broadcast wildcard target',
@@ -1244,7 +1245,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
           endNodeId: STEP_B,
         }
       );
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Dead-loop handoff',
@@ -1292,7 +1293,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
           endNodeId: STEP_B,
         }
       );
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Boundary Run',
@@ -1335,7 +1336,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
           endNodeId: STEP_B,
         }
       );
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Reopen retain',
@@ -1381,7 +1382,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
           endNodeId: STEP_B,
         }
       );
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Multi-task run',
@@ -1431,7 +1432,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
           endNodeId: STEP_B,
         }
       );
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Prune sweep',
@@ -1466,7 +1467,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         { id: STEP_A, name: 'Step A', agentId: AGENT },
       ]);
 
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Stalled Run',
@@ -1521,7 +1522,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         { id: STEP_B, name: 'Step B', agentId: AGENT },
       ]);
 
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Multi-Stalled',
@@ -1551,7 +1552,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         { id: STEP_A, name: 'Step A', agentId: AGENT },
       ]);
 
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Orphan Run',
@@ -1575,7 +1576,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         { id: STEP_A, name: 'Step A', agentId: AGENT },
       ]);
 
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Completion Pending',
@@ -1607,7 +1608,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         { id: STEP_A, name: 'Step A', agentId: AGENT },
       ]);
 
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Done Task Run',
@@ -1636,7 +1637,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         { id: STEP_A, name: 'Step A', agentId: AGENT },
       ]);
 
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Review-Pending Run',
@@ -1670,7 +1671,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         { id: STEP_A, name: 'Step A', agentId: AGENT },
       ]);
 
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Submit-For-Approval Run',
@@ -1704,7 +1705,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         { id: STEP_A, name: 'Step A', agentId: AGENT },
       ]);
 
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Approved Run',
@@ -1738,7 +1739,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         { id: STEP_A, name: 'Step A', agentId: AGENT },
       ]);
 
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Pending Exec',
@@ -1755,12 +1756,12 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       expect(notifications.length).toBe(0);
     });
 
-    test('run with deleted workflow is blocked during restart recovery', async () => {
+    test('run with an invalid definition pin is blocked with an actionable diagnostic', async () => {
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: STEP_A, name: 'Step A', agentId: AGENT },
       ]);
 
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Deleted Workflow Run',
@@ -1777,7 +1778,12 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       const execution = seedExec(run.id, STEP_A, 'Step A', 'in_progress', {
         agentSessionId: 'session:missing-workflow',
       });
-      new SpaceWorkflowRepository(db).deleteWorkflow(workflow.id);
+      db.exec('PRAGMA foreign_keys = OFF');
+      db.prepare(`UPDATE space_workflow_runs SET definition_version = ? WHERE id = ?`).run(
+        'missing-version',
+        run.id
+      );
+      db.exec('PRAGMA foreign_keys = ON');
       const cancelledSessions: string[] = [];
       const tam = {
         rehydrate: async () => {},
@@ -1787,7 +1793,9 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       const rt = makeRuntime({ taskAgentManager: tam as never });
       await rt.recoverStalledRuns();
 
-      const reason = `Workflow ${workflow.id} no longer exists; workflow run cannot continue`;
+      const reason =
+        `Pinned workflow definition missing-version for workflow run ${run.id} is unavailable or ` +
+        'invalid; workflow run cannot continue';
       expect(workflowRunRepo.getRun(run.id)!.status).toBe('blocked');
       expect(taskRepo.getTask(task.id)!.status).toBe('blocked');
       expect(taskRepo.getTask(task.id)!.blockReason).toBe('workflow_invalid');
@@ -1805,7 +1813,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         { id: STEP_A, name: 'Step A', agentId: AGENT },
       ]);
 
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Stale Pending Exec',
@@ -1856,7 +1864,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         { id: STEP_B, name: 'Step B', agentId: AGENT },
       ]);
 
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Partially Stale Pending Exec',
@@ -1923,7 +1931,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         { id: STEP_A, name: 'Step A', agentId: AGENT },
       ]);
 
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Blocked Exec',
@@ -1946,7 +1954,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         { id: STEP_A, name: 'Step A', agentId: AGENT },
       ]);
 
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Orphan In-Progress',
@@ -1984,7 +1992,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         { id: STEP_A, name: 'Step A', agentId: AGENT },
       ]);
 
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Idempotent',
@@ -2015,7 +2023,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         { id: STEP_A, name: 'Step A', agentId: AGENT },
       ]);
 
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Tick Idempotent',
@@ -2054,7 +2062,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         { id: STEP_A, name: 'Step A', agentId: AGENT },
       ]);
 
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Tick Recovery',
@@ -2088,7 +2096,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         { id: 'step-multi-2', name: 'Step 2', agentId: AGENT },
       ]);
 
-      const run1 = workflowRunRepo.createRun({
+      const run1 = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: wf1.id,
         title: 'Stalled 1',
@@ -2104,7 +2112,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       });
       seedExec(run1.id, 'step-multi-1', 'Step 1', 'idle');
 
-      const run2 = workflowRunRepo.createRun({
+      const run2 = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: wf2.id,
         title: 'Stalled 2',
@@ -2133,7 +2141,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
     const STALE_AGENT = 'agent-stale-downstream';
 
     function seedStaleRun(nodeAId: string, nodeBId: string, workflowId: string) {
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId,
         title: 'Stale downstream agent',
@@ -2194,7 +2202,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         { id: 'good-a', name: 'Plan', agentId: GOOD_AGENT },
         { id: 'good-b', name: 'Verify', agentId: GOOD_AGENT },
       ]);
-      const goodRun = workflowRunRepo.createRun({
+      const goodRun = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: goodWf.id,
         title: 'Valid sibling run',
@@ -2259,7 +2267,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: STEP_A, name: 'Step A', agentId: AGENT },
       ]);
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Park During Recovery Run',
@@ -2348,7 +2356,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         { id: STEP_A, name: 'Step A', agentId: AGENT },
         { id: STEP_B, name: 'Step B', agentId: AGENT },
       ]);
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Park During Recovery Sibling Run',
@@ -2423,7 +2431,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: STEP_A, name: 'Step A', agentId: AGENT },
       ]);
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Unparked Stuck Block Run',
