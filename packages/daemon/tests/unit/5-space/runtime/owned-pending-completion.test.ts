@@ -10,6 +10,7 @@ import {
   type OwnedPendingCompletionDependencies,
   requireCompletionTarget,
   resolveCompletionActor,
+  restageOrphanedCheckpoint,
 } from '../../../../src/lib/tasks/owned-pending-completion';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
@@ -255,7 +256,7 @@ test('denies cross-Space actor before task mutation', async () => {
   expect(order).toEqual([]);
 });
 
-test('target gates reject absent, standalone and non-review checkpoints', async () => {
+test('target gates reject absent, standalone and non-review tasks', async () => {
   const input = { taskId: task.id, approved: true };
   const actor = { source: 'rpc' as const };
   expect(await loadCompletionTarget(input, actor, async () => null)).toEqual({
@@ -265,7 +266,7 @@ test('target gates reject absent, standalone and non-review checkpoints', async 
     reason: expect.any(Error),
   });
   expect(requireCompletionTarget({ ...task, pendingCheckpointType: null }, input, actor)).toEqual({
-    reason: expect.any(Error),
+    value: { ...task, pendingCheckpointType: null },
   });
   expect(requireCompletionTarget({ ...task, status: 'open' }, input, actor)).toEqual({
     reason: expect.any(Error),
@@ -391,3 +392,88 @@ test.each([true, false])(
     expect(dependencies.warn).not.toHaveBeenCalled();
   }
 );
+
+function orphan(): SpaceTask {
+  return tasks.updateTask(task.id, {
+    pendingCheckpointType: null,
+    pendingCompletionSubmittedByNodeId: 'node-1',
+    reportedStatus: 'done',
+  })!;
+}
+
+test('a task orphaned in review can still be approved by a human (#4033)', async () => {
+  orphan();
+  const session = persist(
+    'worker',
+    longTermAgentSessionId(spaceId, coordinator.id),
+    spaceId,
+    coordinator.id
+  );
+
+  const outcome = await invoke(session.id, { taskId: task.id, approved: true });
+
+  expect(outcome).toMatchObject({ kind: 'completed' });
+  expect(tasks.getTask(task.id)).toMatchObject({
+    status: 'approved',
+    approvalSource: 'human',
+    pendingCheckpointType: null,
+  });
+  expect(order).toContain('dispatch');
+});
+
+test('a task orphaned in review can still be rejected back to in_progress (#4033)', async () => {
+  orphan();
+  const session = persist(
+    'worker',
+    longTermAgentSessionId(spaceId, coordinator.id),
+    spaceId,
+    coordinator.id
+  );
+
+  const outcome = await invoke(session.id, {
+    taskId: task.id,
+    approved: false,
+    reason: 'needs more',
+  });
+
+  expect(outcome).toMatchObject({ kind: 'completed' });
+  expect(tasks.getTask(task.id)).toMatchObject({ status: 'in_progress', reportedStatus: null });
+});
+
+test('restaging keeps the submission stamp it already had', async () => {
+  tasks.updateTask(task.id, {
+    pendingCheckpointType: null,
+    pendingCompletionSubmittedAt: 4242,
+  });
+
+  const restaged = await restageOrphanedCheckpoint(
+    tasks.getTask(task.id)!,
+    (id) => new SpaceTaskManager(db, id)
+  );
+
+  expect(restaged).toMatchObject({
+    pendingCheckpointType: 'task_completion',
+    pendingCompletionSubmittedAt: 4242,
+  });
+});
+
+test('restaging is a compare-and-set against the row it read', async () => {
+  const stale = { ...orphan(), status: 'review' as const, pendingCheckpointType: null };
+  tasks.updateTask(task.id, { status: 'in_progress' });
+
+  await expect(
+    restageOrphanedCheckpoint(stale, (id) => new SpaceTaskManager(db, id))
+  ).rejects.toThrow('left the orphaned review state');
+  expect(tasks.getTask(task.id)).toMatchObject({
+    status: 'in_progress',
+    pendingCheckpointType: null,
+  });
+});
+
+test('a healthy review task is not restaged and keeps its generation', async () => {
+  const before = tasks.getTask(task.id)!;
+
+  const same = await restageOrphanedCheckpoint(before, (id) => new SpaceTaskManager(db, id));
+
+  expect(same).toBe(before);
+});

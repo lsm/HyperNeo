@@ -121,12 +121,6 @@ export function requireCompletionTarget(
     return { reason: new Error('Pending completion decisions require a Space-owned task') };
   if (actor.source === 'mcp' && task.spaceId !== actor.spaceId)
     return { reason: new Error(`Task ${input.taskId} does not belong to this space.`) };
-  if (task.pendingCheckpointType !== 'task_completion')
-    return {
-      reason: new Error(
-        `Task ${input.taskId} is not awaiting submit_for_approval review (pendingCheckpointType=${task.pendingCheckpointType ?? 'null'}).`
-      ),
-    };
   return task.status === 'review'
     ? { value: task }
     : {
@@ -134,6 +128,28 @@ export function requireCompletionTarget(
           `Task ${input.taskId} is not in 'review' status (current: ${task.status}).`
         ),
       };
+}
+
+export async function restageOrphanedCheckpoint(
+  task: SpaceTask,
+  getTaskManager: OwnedPendingCompletionDependencies['getTaskManager']
+): Promise<SpaceTask> {
+  if (task.pendingCheckpointType === 'task_completion') return task;
+  const manager = getTaskManager(task.spaceId);
+  await manager.updateTask(
+    task.id,
+    {
+      pendingCheckpointType: 'task_completion',
+      pendingCompletionSubmittedAt: task.pendingCompletionSubmittedAt ?? Date.now(),
+    },
+    {
+      guardWrite: (current) =>
+        current.status === 'review' && current.pendingCheckpointType === null
+          ? undefined
+          : `Task ${task.id} left the orphaned review state before it could be restaged`,
+    }
+  );
+  return (await manager.getTask(task.id)) ?? task;
 }
 
 export async function loadCompletionTarget(
@@ -201,7 +217,7 @@ export function createOwnedPendingCompletionOperation(
     )
     .pipe((actor: CompletionActor) => actor, 'task', 'actor')
     .pipe(loadCompletionTarget, ['input', 'actor', 'getTask'], 'result:task')
-    .pipe((task: SpaceTask) => task, 'task', 'previous')
+    .pipe(restageOrphanedCheckpoint, ['task', 'getTaskManager'], 'previous')
     .pipe(
       bindOwnedCompletion,
       ['previous', 'getTaskManager', 'dispatchApproval', 'warn'],
