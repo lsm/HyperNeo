@@ -31,6 +31,7 @@ function run(overrides: Partial<SpaceWorkflowRun> = {}): SpaceWorkflowRun {
     title: 'Ship it',
     description: 'original',
     status: 'in_progress' as WorkflowRunStatus,
+    blockedRetryCount: 0,
     createdAt: 1,
     startedAt: 2,
     updatedAt: 3,

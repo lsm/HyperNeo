@@ -192,6 +192,23 @@ describe('SpaceRuntime — in-flight execution parking', () => {
   });
 
   describe('parkInFlightExecutionsForSpace()', () => {
+    test('does not churn run timestamps when retry budgets are already clear', () => {
+      const activeWorkflow = buildWorkflow(SPACE_ID);
+      const activeRun = createRun(SPACE_ID, activeWorkflow.workflow.id, 'Active Run');
+      const terminalWorkflow = buildWorkflow(SPACE_ID);
+      const terminalRun = createRun(SPACE_ID, terminalWorkflow.workflow.id, 'Terminal Run');
+      workflowRunRepo.transitionStatus(terminalRun.id, 'done');
+      db.prepare(`UPDATE space_workflow_runs SET updated_at = 1 WHERE id IN (?, ?)`).run(
+        activeRun.id,
+        terminalRun.id
+      );
+
+      makeRuntime().parkInFlightExecutionsForSpace(SPACE_ID);
+
+      expect(workflowRunRepo.getRun(activeRun.id)?.updatedAt).toBe(1);
+      expect(workflowRunRepo.getRun(terminalRun.id)?.updatedAt).toBe(1);
+    });
+
     test('resets in_progress executions to pending with null result and session', () => {
       const { workflow, stepA, stepB } = buildWorkflow(SPACE_ID);
       const run = createRun(SPACE_ID, workflow.id, 'Park Run');

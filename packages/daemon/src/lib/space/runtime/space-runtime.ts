@@ -708,7 +708,15 @@ export class SpaceRuntime {
   }
 
   private setBlockedRetryCount(runId: string, count: number): void {
-    this.config.workflowRunRepo.updateRun(runId, { blockedRetryCount: count });
+    const run = this.config.workflowRunRepo.getRun(runId);
+    if (
+      run &&
+      run.status !== 'done' &&
+      run.status !== 'cancelled' &&
+      run.blockedRetryCount !== count
+    ) {
+      this.config.workflowRunRepo.updateRun(runId, { blockedRetryCount: count });
+    }
     this.cacheBlockedRetryCount(runId, count);
   }
 
