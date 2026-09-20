@@ -3151,7 +3151,6 @@ export class SpaceRuntime {
     this.clearAgentStuckStateForRun(task.workflowRunId);
     return (
       this.config.taskRepo.updateTask(task.id, {
-        workflowRunId: task.workflowRunId,
         taskAgentSessionId: null,
       }) ?? task
     );
