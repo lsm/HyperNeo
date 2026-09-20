@@ -1509,7 +1509,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       nodeExecutionRepo
         .listByAgentSessionId(sessionId)
         .some((execution) => execution.workflowRunId === runId),
-    (sessionId) => taskAgentManager.isSessionInMemory(sessionId)
+    (sessionId) => taskAgentManager.isRetryableActionRestorePending(sessionId)
   );
 
   const artifactSyncHandlers = createSyncArtifactHandlers({

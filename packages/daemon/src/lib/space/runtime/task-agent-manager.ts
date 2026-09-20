@@ -338,6 +338,7 @@ export class TaskAgentManager {
   private readonly sessionRestoreLocks = new Map<string, Promise<void>>();
 
   private readonly rehydrateInFlight = new Map<string, Promise<AgentSession | null>>();
+  private initialRehydrateComplete = false;
 
   private spawningExecutionIds = new Set<string>();
   private concurrentSpawnWaiters = new Map<
@@ -2556,6 +2557,10 @@ export class TaskAgentManager {
     return !!indexed && this.isAgentSessionAlive(indexed);
   }
 
+  isRetryableActionRestorePending(sessionId: string): boolean {
+    return !this.initialRehydrateComplete || this.rehydrateInFlight.has(sessionId);
+  }
+
   private isAgentSessionAlive(session: AgentSession): boolean {
     const status = session.getSessionData().status;
     if (status === 'archived' || status === 'ended') return false;
@@ -3018,6 +3023,7 @@ export class TaskAgentManager {
     log.info(
       `TaskAgentManager.rehydrate: processed ${processedRunIds.size} run(s), danglingLinksCleared=${danglingLinksCleared}`
     );
+    this.initialRehydrateComplete = true;
   }
 
   async cleanupAll(): Promise<void> {

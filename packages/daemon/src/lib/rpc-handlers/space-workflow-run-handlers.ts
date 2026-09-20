@@ -157,7 +157,7 @@ export function setupSpaceWorkflowRunHandlers(
   jobQueue: JobQueueRepository,
   hookStateRepo: WorkflowHookStateRepository,
   isQueuedRetryOwner: (runId: string, sessionId: string) => boolean = () => true,
-  isQueuedRetryRuntimeLive: (sessionId: string) => boolean = () => true
+  isQueuedRetryRestorePending: (sessionId: string) => boolean = () => true
 ): void {
   messageHub.onRequest('spaceWorkflowRun.getGateArtifacts', async (data) => {
     const params = data as { runId: string; taskId?: string };
@@ -617,7 +617,7 @@ export function setupSpaceWorkflowRunHandlers(
     const queuedRetryOwnerCurrent =
       typeof queuedActionSessionId !== 'string' ||
       (isQueuedRetryOwner(run.id, queuedActionSessionId) &&
-        isQueuedRetryRuntimeLive(queuedActionSessionId));
+        isQueuedRetryRestorePending(queuedActionSessionId));
     if (
       typeof queuedActionKey === 'string' &&
       !hasPendingRetryableHookAction(queuedActionKey) &&

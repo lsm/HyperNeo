@@ -249,7 +249,7 @@ describe('space-workflow-run-handlers', () => {
       worktreePath?: string | null;
       hookStateRepo?: WorkflowHookStateRepository;
       isQueuedRetryOwner?: (runId: string, sessionId: string) => boolean;
-      isQueuedRetryRuntimeLive?: (sessionId: string) => boolean;
+      isQueuedRetryRestorePending?: (sessionId: string) => boolean;
     } = {}
   ) {
     const mh = createMockMessageHub();
@@ -280,7 +280,7 @@ describe('space-workflow-run-handlers', () => {
       createMockJobQueue(),
       opts.hookStateRepo ?? createMockHookStateRepo(),
       opts.isQueuedRetryOwner ?? (() => true),
-      opts.isQueuedRetryRuntimeLive ?? (() => true)
+      opts.isQueuedRetryRestorePending ?? (() => true)
     );
   }
 
@@ -889,8 +889,8 @@ describe('space-workflow-run-handlers', () => {
 
     it.each([
       ['a replaced owner', false, true],
-      ['an unavailable owner runtime', true, false],
-    ])('releases a queued action for %s', async (_case, isOwner, isLive) => {
+      ['a completed restoration that did not schedule it', true, false],
+    ])('releases a queued action for %s', async (_case, isOwner, restorePending) => {
       const queuedAction = {
         actionKey: 'persisted-retry',
         hookId: 'hook-1',
@@ -931,7 +931,7 @@ describe('space-workflow-run-handlers', () => {
       setup({
         hookStateRepo,
         isQueuedRetryOwner: () => isOwner,
-        isQueuedRetryRuntimeLive: () => isLive,
+        isQueuedRetryRestorePending: () => restorePending,
       });
 
       await expect(
