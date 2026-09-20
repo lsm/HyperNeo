@@ -12,7 +12,7 @@ import { invokeOperation } from '../operations/invoke.ts';
 import type { OperationCaller, OperationRegistry } from '../operations/registry.ts';
 import { isRateLimitError } from '../session/rate-limit-detector.ts';
 import { jsonResult } from '../space/tools/tool-result.ts';
-import { type AnyToolResult, scheduleRetryableAction } from './hook-binding.ts';
+import { scheduleRetryableAction } from './hook-binding.ts';
 import type { HookExecutor } from './hook-executor.ts';
 import {
   buildExecutorContext,
@@ -137,37 +137,6 @@ export class HookEngine {
 
   async notifySourceSession(sessionId: string, message: string): Promise<void> {
     await this.config.notifySourceSession?.(sessionId, message);
-  }
-
-  scheduleQueuedRetryableActions(
-    handlersByMethod: Record<
-      string,
-      (...args: unknown[]) => Promise<AnyToolResult> | AnyToolResult
-    >,
-    ownerMeta: HookActionMeta
-  ): void {
-    for (const action of this.getQueuedRetryableActions()) {
-      if (!sameRetryableActionOwner(action.meta, ownerMeta)) continue;
-      if (this.isRetryableActionCancelled(action.meta)) {
-        this.clearQueuedRetryableAction(action.hookId);
-        continue;
-      }
-      const rawHandler = handlersByMethod[action.methodName];
-      if (!rawHandler) continue;
-      const handler = async (args: Record<string, unknown>) => await rawHandler(args);
-      scheduleRetryableAction({
-        actionKey: action.actionKey,
-        delayMs: Math.max(0, action.nextRetryAt - Date.now()),
-        retryDelayMs: action.retryAfterMs,
-        methodName: action.methodName,
-        args: action.args,
-        handler,
-        engine: this,
-        handlers: handlersByMethod,
-        meta: action.meta,
-        isFollowUp: action.isFollowUp,
-      });
-    }
   }
 
   scheduleQueuedRetryableOperations(
