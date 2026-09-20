@@ -186,7 +186,13 @@ function makeManager(): {
 
 function rehydrateOf(tam: TaskAgentManager) {
   return (
-    tam as unknown as { rehydrateSubSession: (id: string) => Promise<AgentSessionType | null> }
+    tam as unknown as {
+      rehydrateSubSession: (
+        id: string,
+        supplied?: AgentSessionType,
+        options?: { startQuery?: boolean; replayPendingMessages?: boolean }
+      ) => Promise<AgentSessionType | null>;
+    }
   ).rehydrateSubSession.bind(tam);
 }
 
@@ -249,6 +255,29 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
       .agentSessionIndex;
     expect(index.get(SUB_SESSION_ID)).toBe(fake.agentSession);
     expect(registered.get(SUB_SESSION_ID)).toBe(fake.agentSession);
+  });
+
+  test('rehydrated reuse can replay deferred messages without starting the restored query', async () => {
+    const { tam } = makeManager();
+    const task = (
+      tam.config as unknown as { taskRepo: { getTask: () => { status: string } } }
+    ).taskRepo.getTask();
+    task.status = 'approved';
+    const fake = makeFakeAgentSession(SUB_SESSION_ID);
+    restoreSpy = spyOn(AgentSession, 'restore').mockImplementation(
+      (() => fake.agentSession) as unknown as typeof AgentSession.restore
+    );
+
+    const rehydrated = await rehydrateOf(tam)(SUB_SESSION_ID, undefined, {
+      startQuery: false,
+      replayPendingMessages: true,
+    });
+
+    expect(rehydrated).toBe(fake.agentSession);
+    expect(fake.state.calls).toEqual([
+      'mergeRuntimeMcpServers',
+      'replayPendingMessagesForImmediateMode',
+    ]);
   });
 
   test('a blocked parent task restores the worker idle without starting a query (#3823)', async () => {

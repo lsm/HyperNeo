@@ -263,16 +263,10 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
   test('restart reuse replays a deferred kickoff before injecting post-approval work', async () => {
     const tam = makeManager();
     const restored = makeFakeSession();
-    const order: string[] = [];
+    const rehydrateOptions: Array<{ startQuery?: boolean; replayPendingMessages?: boolean }> = [];
     (
       tam as unknown as { reinjectNodeAgentMcpServer: (...a: unknown[]) => Promise<void> }
     ).reinjectNodeAgentMcpServer = async () => {};
-    Object.assign(restored.session, {
-      replayPendingMessagesForImmediateMode: async () => {
-        order.push('replay');
-        return true;
-      },
-    });
     (
       tam as unknown as {
         rehydrateSubSession: (
@@ -282,17 +276,11 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
         ) => Promise<AgentSessionType>;
       }
     ).rehydrateSubSession = async (_id, _supplied, options) => {
-      order.push('rehydrate');
-      seedLiveSession(tam);
-      const replay = (
-        restored.session as AgentSessionType & {
-          replayPendingMessagesForImmediateMode: () => Promise<boolean>;
-        }
-      ).replayPendingMessagesForImmediateMode;
-      if (options.replayPendingMessages) await replay.call(restored.session);
+      rehydrateOptions.push(options);
       const sessions = (
         tam as unknown as { subSessions: Map<string, Map<string, AgentSessionType>> }
       ).subSessions;
+      sessions.set(TASK_ID, new Map());
       sessions.get(TASK_ID)!.set(REVIEWER_SESSION_ID, restored.session);
       (
         tam as unknown as { agentSessionIndex: Map<string, AgentSessionType> }
@@ -304,7 +292,6 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
         injectMessageIntoSession: (s: AgentSessionType, m: string) => Promise<string>;
       }
     ).injectMessageIntoSession = async () => {
-      order.push('inject');
       return 'msg-id';
     };
 
@@ -315,7 +302,7 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
       kickoffMessage: 'merge the PR',
     });
 
-    expect(order).toEqual(['rehydrate', 'replay', 'inject']);
+    expect(rehydrateOptions).toEqual([{ startQuery: false, replayPendingMessages: true }]);
   });
 
   test('live reuse syncs the session workspace to task.workspacePath before injection', async () => {
