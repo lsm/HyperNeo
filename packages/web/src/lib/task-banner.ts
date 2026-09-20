@@ -35,7 +35,7 @@ export function resolveActiveTaskBanner(
     }
   }
 
-  if (task.pendingCheckpointType === 'task_completion' && task.status === 'review') {
+  if (task.status === 'review') {
     return { kind: 'task_completion_pending' };
   }
 
