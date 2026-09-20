@@ -9,7 +9,12 @@ export interface PersistedAgentChild {
   daemonPid: number;
 }
 
-export type OrphanSkipReason = 'not_running' | 'start_time_mismatch' | 'command_mismatch';
+export type OrphanSkipReason =
+  | 'own_record'
+  | 'own_child'
+  | 'not_running'
+  | 'start_time_mismatch'
+  | 'command_mismatch';
 
 export const ORPHAN_START_TIME_TOLERANCE_MS = 10_000;
 
@@ -18,13 +23,16 @@ export interface OrphanChildKillInput {
   observed: ProcessSnapshot | undefined;
   now: number;
   toleranceMs: number;
+  currentDaemonPid: number;
 }
 
 export function decideOrphanChildKill(
   input: OrphanChildKillInput
 ): { value: number } | { reason: OrphanSkipReason } {
-  const { child, observed, now, toleranceMs } = input;
+  const { child, observed, now, toleranceMs, currentDaemonPid } = input;
+  if (child.daemonPid === currentDaemonPid) return { reason: 'own_record' };
   if (!observed) return { reason: 'not_running' };
+  if (observed.ppid === currentDaemonPid) return { reason: 'own_child' };
   const observedStartedAt = now - observed.elapsedSeconds * 1000;
   if (Math.abs(observedStartedAt - child.startedAt) > toleranceMs) {
     return { reason: 'start_time_mismatch' };
@@ -43,6 +51,7 @@ export function planOrphanChildSweep(
   persisted: readonly PersistedAgentChild[],
   snapshot: readonly ProcessSnapshot[],
   now: number,
+  currentDaemonPid: number,
   toleranceMs: number = ORPHAN_START_TIME_TOLERANCE_MS
 ): OrphanChildSweepPlan {
   const byPid = new Map<number, ProcessSnapshot>();
@@ -54,6 +63,7 @@ export function planOrphanChildSweep(
       observed: byPid.get(child.pid),
       now,
       toleranceMs,
+      currentDaemonPid,
     });
     if ('reason' in decision) plan.skipped.push({ pid: child.pid, reason: decision.reason });
     else plan.kill.push(decision.value);
@@ -114,7 +124,7 @@ async function runOrphanChildSweep(
     return;
   }
 
-  const plan = planOrphanChildSweep(persisted, snapshot, now());
+  const plan = planOrphanChildSweep(persisted, snapshot, now(), process.pid);
   let killed = 0;
   for (const pid of plan.kill) {
     try {
@@ -124,7 +134,9 @@ async function runOrphanChildSweep(
       logError(`[Daemon] Failed to kill orphaned agent child ${pid}:`, err);
     }
   }
-  repo.forgetMany(persisted.map((child) => child.pid));
+  repo.forgetMany(
+    persisted.filter((child) => child.daemonPid !== process.pid).map((child) => child.pid)
+  );
   logInfo(
     `[Daemon] Orphaned agent child sweep: ${killed} killed, ${plan.skipped.length} skipped ` +
       `(${persisted.length} recorded by daemon pid ${persisted[0]?.daemonPid ?? 'unknown'})`

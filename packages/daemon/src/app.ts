@@ -408,6 +408,18 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const logInfo = verbose ? console.log : () => {};
     const logError = verbose ? console.error : () => {};
 
+    if (process.env.NODE_ENV !== 'test') {
+      try {
+        await sweepOrphanedAgentChildren(
+          new AgentChildProcessRepository(db.getDatabase()),
+          logInfo,
+          logError
+        );
+      } catch (err) {
+        logError('[Daemon] Orphaned agent child sweep failed (non-fatal):', err);
+      }
+    }
+
     const internalEventBus = createDaemonInternalEventBus();
     const daemonConfigService = new DaemonConfigService(db.getDatabase(), internalEventBus);
     if (daemonConfigService.seedFromLegacyEnv()) {
@@ -1170,18 +1182,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         }
       } catch (err) {
         logError('[Daemon] LH agent reminder backfill failed (non-fatal):', err);
-      }
-    }
-
-    if (process.env.NODE_ENV !== 'test') {
-      try {
-        await sweepOrphanedAgentChildren(
-          new AgentChildProcessRepository(db.getDatabase()),
-          logInfo,
-          logError
-        );
-      } catch (err) {
-        logError('[Daemon] Orphaned agent child sweep failed (non-fatal):', err);
       }
     }
 

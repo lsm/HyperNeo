@@ -13,6 +13,7 @@ import { Database } from '../../../../src/storage/sqlite-compat';
 import { runMigration264 } from '../../../../src/storage/schema/m264-agent-child-processes';
 
 const NOW = 1_700_000_000_000;
+const DAEMON = 999;
 
 function child(overrides: Partial<PersistedAgentChild> = {}): PersistedAgentChild {
   return {
@@ -50,6 +51,7 @@ test('a surviving child with a matching start time and command is killed', () =>
       observed: snap(),
       now: NOW,
       toleranceMs: ORPHAN_START_TIME_TOLERANCE_MS,
+      currentDaemonPid: DAEMON,
     })
   ).toEqual({ value: 4242 });
 });
@@ -61,6 +63,7 @@ test('a pid that is no longer running is left alone', () => {
       observed: undefined,
       now: NOW,
       toleranceMs: ORPHAN_START_TIME_TOLERANCE_MS,
+      currentDaemonPid: DAEMON,
     })
   ).toEqual({ reason: 'not_running' });
 });
@@ -72,6 +75,7 @@ test('a reused pid is left alone because its start time does not match', () => {
       observed: snap({ elapsedSeconds: 5 }),
       now: NOW,
       toleranceMs: ORPHAN_START_TIME_TOLERANCE_MS,
+      currentDaemonPid: DAEMON,
     })
   ).toEqual({ reason: 'start_time_mismatch' });
 });
@@ -83,6 +87,7 @@ test('a pid running something else is left alone even when the clock agrees', ()
       observed: snap({ command: '/usr/bin/ssh tts' }),
       now: NOW,
       toleranceMs: ORPHAN_START_TIME_TOLERANCE_MS,
+      currentDaemonPid: DAEMON,
     })
   ).toEqual({ reason: 'command_mismatch' });
 });
@@ -94,6 +99,7 @@ test('an empty recorded command never matches', () => {
       observed: snap(),
       now: NOW,
       toleranceMs: ORPHAN_START_TIME_TOLERANCE_MS,
+      currentDaemonPid: DAEMON,
     })
   ).toEqual({ reason: 'command_mismatch' });
 });
@@ -106,6 +112,7 @@ test('second-granularity clock skew inside the tolerance still matches', () => {
         observed: snap({ elapsedSeconds }),
         now: NOW,
         toleranceMs: ORPHAN_START_TIME_TOLERANCE_MS,
+        currentDaemonPid: DAEMON,
       })
     ).toEqual({ value: 4242 });
   }
@@ -120,7 +127,8 @@ test('the plan partitions survivors from every skip reason', () => {
       child({ pid: 4, command: '/usr/local/bin/claude' }),
     ],
     [snap({ pid: 1 }), snap({ pid: 3, elapsedSeconds: 5 }), snap({ pid: 4, command: '/bin/zsh' })],
-    NOW
+    NOW,
+    DAEMON
   );
   expect(plan).toEqual({
     kill: [1],
@@ -317,5 +325,67 @@ test('the sweep swallows any failure, not only the ones it names', async () => {
 
   expect(logError).toHaveBeenCalled();
   expect(new AgentChildProcessRepository(db).list()).toHaveLength(1);
+  db.close();
+});
+
+test('a row this daemon wrote is never a sweep candidate (#4904 review)', () => {
+  expect(
+    decideOrphanChildKill({
+      child: child({ daemonPid: DAEMON }),
+      observed: snap(),
+      now: NOW,
+      toleranceMs: ORPHAN_START_TIME_TOLERANCE_MS,
+      currentDaemonPid: DAEMON,
+    })
+  ).toEqual({ reason: 'own_record' });
+});
+
+test('a process that is currently our own child is never killed (#4904 review)', () => {
+  expect(
+    decideOrphanChildKill({
+      child: child(),
+      observed: snap({ ppid: DAEMON }),
+      now: NOW,
+      toleranceMs: ORPHAN_START_TIME_TOLERANCE_MS,
+      currentDaemonPid: DAEMON,
+    })
+  ).toEqual({ reason: 'own_child' });
+});
+
+test('a reused pid respawned by this daemon survives a crash-loop restart (#4904 review)', async () => {
+  const { db, repo } = repoWithRows([child({ pid: 4242, daemonPid: 111 })]);
+  const killed: number[] = [];
+
+  await sweepOrphanedAgentChildren(
+    repo,
+    () => {},
+    () => {},
+    {
+      list: async () => [snap({ pid: 4242, ppid: process.pid, elapsedSeconds: 60 })],
+      kill: (pid) => killed.push(pid),
+      now: () => NOW,
+    }
+  );
+
+  expect(killed).toEqual([]);
+  db.close();
+});
+
+test('the sweep leaves rows written by the running daemon in place', async () => {
+  const { db, repo } = repoWithRows([child({ pid: 1, daemonPid: 111 })]);
+  repo.record(child({ pid: 2, daemonPid: process.pid, sessionId: 'spawned-now' }));
+
+  await sweepOrphanedAgentChildren(
+    repo,
+    () => {},
+    () => {},
+    {
+      list: async () => [snap({ pid: 1 }), snap({ pid: 2 })],
+      kill: () => {},
+      now: () => NOW,
+    }
+  );
+
+  expect(repo.list().map((row) => row.pid)).toEqual([2]);
   db.close();
 });
