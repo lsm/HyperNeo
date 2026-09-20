@@ -13,6 +13,9 @@ import type {
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import { z } from 'zod';
 import { AgentSession } from '../../../../src/lib/agent/agent-session';
+import { AgentChildProcessRepository } from '../../../../src/storage/repositories/agent-child-process-repository';
+import { runMigration264 } from '../../../../src/storage/schema/m264-agent-child-processes';
+import { Database as SqliteDatabase } from '../../../../src/storage/sqlite-compat';
 import {
   ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS,
   clearContextClearBoundariesForTest,
@@ -252,7 +255,7 @@ describe('AgentSession', () => {
       processKillSpy = null;
     });
 
-    function createAgentSession(): AgentSession {
+    function createAgentSession(rawDb?: unknown): AgentSession {
       const mockSession: Session = {
         id: `test-session-${Math.random()}`,
         title: 'Test Session',
@@ -280,6 +283,7 @@ describe('AgentSession', () => {
         updateMessage: mock(() => {}),
         getSDKMessageCount: mock(() => 0),
         getUserMessagesByStatus: mock(() => ({ messages: [], total: 0 })),
+        ...(rawDb ? { getDatabase: () => rawDb } : {}),
       } as unknown as Database;
 
       return new AgentSession(
@@ -294,6 +298,45 @@ describe('AgentSession', () => {
         mock(async () => 'test-api-key')
       );
     }
+
+    it('records a tracked child so a crashed daemon can sweep it, and forgets it on exit', () => {
+      const raw = new SqliteDatabase(':memory:');
+      runMigration264(raw);
+      const agentSession = createAgentSession(raw);
+      let fireExit: (() => void) | null = null;
+      const proc = {
+        pid: 9911,
+        spawnfile: '/usr/local/bin/claude',
+        once: (event: string, handler: () => void) => {
+          if (event === 'exit') fireExit = handler;
+          return proc;
+        },
+        kill: mock(() => true),
+      };
+
+      agentSession.trackAgentProcess(proc as never);
+      const recorded = new AgentChildProcessRepository(raw).list();
+      expect(recorded).toMatchObject([{ pid: 9911, command: '/usr/local/bin/claude' }]);
+      expect(recorded[0].daemonPid).toBe(process.pid);
+
+      fireExit?.();
+      expect(new AgentChildProcessRepository(raw).list()).toEqual([]);
+      raw.close();
+    });
+
+    it('tracks a child normally when the database cannot record it', () => {
+      const agentSession = createAgentSession();
+      const proc = {
+        pid: 9912,
+        spawnfile: '/usr/local/bin/claude',
+        once: mock((_event: string, _handler: () => void) => proc),
+        kill: mock(() => true),
+      };
+
+      agentSession.trackAgentProcess(proc as never);
+
+      expect([...agentSession.getTrackedAgentRootPids()]).toContain(9912);
+    });
 
     it('exposes tracked root pids for daemon-owned watchdog scoping', () => {
       const agentSession = createAgentSession();

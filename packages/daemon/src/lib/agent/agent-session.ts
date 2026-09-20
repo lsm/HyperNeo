@@ -27,7 +27,9 @@ import type {
 } from '@hyperneo/shared';
 import { generateUUID, DEFAULT_WORKER_FEATURES as WORKER_FEATURES } from '@hyperneo/shared';
 import type { McpSetServersResult } from '@hyperneo/shared/sdk';
+import type { ChildProcess } from 'node:child_process';
 import type { Database } from '../../storage/database.ts';
+import { AgentChildProcessRepository } from '../../storage/repositories/agent-child-process-repository.ts';
 import { assembleSessionBriefing } from '../briefings/assemble-session-briefing.ts';
 import type { AuthoredCapabilityContribution } from '../briefings/contribution.ts';
 import { NO_SESSION_SCOPE, type SessionScopeResolver } from '../briefings/scope-resolver.ts';
@@ -387,6 +389,7 @@ export class AgentSession
   originalEnvVars: OriginalEnvVars = {};
   processExitedPromise: Promise<void> | null = null;
   private trackedAgentProcesses = new Map<number, TrackedAgentProcess>();
+  private agentChildRepo: AgentChildProcessRepository | null = null;
   private trackedAgentProcessExitPromises = new Map<number, Promise<void>>();
   private noPidAgentProcesses: NoPidTrackedProcess[] = [];
   private recentlyExitedAgentRootPids = new Map<number, number>();
@@ -2949,6 +2952,34 @@ export class AgentSession
     return reEnqueued + settled;
   }
 
+  private agentChildProcesses(): AgentChildProcessRepository | null {
+    try {
+      return (this.agentChildRepo ??= new AgentChildProcessRepository(this.db.getDatabase()));
+    } catch {
+      return null;
+    }
+  }
+
+  private persistAgentChild(pid: number, proc: TrackedAgentProcess): void {
+    try {
+      this.agentChildProcesses()?.record({
+        pid,
+        sessionId: this.session.id,
+        command: (proc as unknown as ChildProcess).spawnfile ?? '',
+        startedAt: Date.now(),
+        daemonPid: process.pid,
+      });
+    } catch (error) {
+      this.logger.warn('Failed to persist the agent child pid for crash cleanup:', error);
+    }
+  }
+
+  private forgetAgentChild(pid: number): void {
+    try {
+      this.agentChildProcesses()?.forget(pid);
+    } catch {}
+  }
+
   trackAgentProcess(proc: TrackedAgentProcess): void {
     const pid = proc.pid;
     if (typeof pid !== 'number' || pid <= 0) {
@@ -2972,10 +3003,12 @@ export class AgentSession
     this.clearForceKillTimer(pid);
     this.recentlyExitedAgentRootPids.delete(pid);
     this.trackedAgentProcesses.set(pid, proc);
+    this.persistAgentChild(pid, proc);
 
     const exitPromise = new Promise<void>((resolve) => {
       proc.once('exit', () => {
         this.clearForceKillTimer(pid);
+        this.forgetAgentChild(pid);
         if (this.trackedAgentProcesses.get(pid) === proc) {
           this.trackedAgentProcesses.delete(pid);
           this.trackedAgentProcessExitPromises.delete(pid);

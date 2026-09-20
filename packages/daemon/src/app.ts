@@ -136,6 +136,8 @@ import {
   ProcessWatchdog,
   type ProcessSnapshot,
 } from './lib/process-watchdog.ts';
+import { sweepOrphanedAgentChildren } from './lib/agent/orphan-child-sweep.ts';
+import { AgentChildProcessRepository } from './storage/repositories/agent-child-process-repository.ts';
 
 interface ReconcilePersistedDiscoveryDeps {
   credentialManager: ProviderCredentialManager;
@@ -1178,6 +1180,11 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     messageDeliveryProcessor.start();
     logInfo('[Daemon] Message-delivery job processor started');
     if (process.env.NODE_ENV !== 'test') {
+      await sweepOrphanedAgentChildren(
+        new AgentChildProcessRepository(db.getDatabase()),
+        logInfo,
+        logError
+      );
       processWatchdog.start();
       logInfo('[Daemon] Process watchdog started');
     }
