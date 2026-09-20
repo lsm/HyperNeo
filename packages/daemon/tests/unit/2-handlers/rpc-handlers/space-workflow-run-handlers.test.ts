@@ -1,6 +1,11 @@
 import { describe, expect, it, mock, beforeEach } from 'bun:test';
 import { MessageHub } from '@hyperneo/shared';
-import type { Space, SpaceWorkflowRun, SpaceTask } from '@hyperneo/shared';
+import type {
+  Space,
+  SpaceWorkflowRun,
+  SpaceTask,
+  WorkflowHookStateSnapshot,
+} from '@hyperneo/shared';
 import {
   setupSpaceWorkflowRunHandlers,
   type SpaceWorkflowRunTaskManagerFactory,
@@ -19,6 +24,7 @@ import type {
   DaemonInternalEventMap,
   InternalEventBus,
 } from '../../../../src/lib/internal-event-bus.ts';
+import { QUEUED_RETRYABLE_ACTION_STATE_KEY } from '../../../../src/lib/hooks/hook-engine.ts';
 
 type RequestHandler = (data: unknown) => Promise<unknown>;
 
@@ -241,6 +247,9 @@ describe('space-workflow-run-handlers', () => {
       run?: SpaceWorkflowRun | null;
       tasks?: SpaceTask[];
       worktreePath?: string | null;
+      hookStateRepo?: WorkflowHookStateRepository;
+      isQueuedRetryOwner?: (runId: string, sessionId: string) => boolean;
+      isQueuedRetryRestorePending?: (sessionId: string) => boolean;
     } = {}
   ) {
     const mh = createMockMessageHub();
@@ -269,7 +278,9 @@ describe('space-workflow-run-handlers', () => {
       createMockArtifactRepo(),
       createMockArtifactCacheRepo(),
       createMockJobQueue(),
-      createMockHookStateRepo()
+      opts.hookStateRepo ?? createMockHookStateRepo(),
+      opts.isQueuedRetryOwner ?? (() => true),
+      opts.isQueuedRetryRestorePending ?? (() => true)
     );
   }
 
@@ -830,6 +841,107 @@ describe('space-workflow-run-handlers', () => {
       expect(result.truncated).toBe(true);
       expect(result.originalSize).toBe(150 * 1024);
       expect(result.diff.length).toBe(100 * 1024);
+    });
+  });
+
+  describe('spaceWorkflowRun.retryHook', () => {
+    it('preserves a queued action when its in-memory retry timer is unavailable', async () => {
+      const queuedAction = {
+        actionKey: 'persisted-retry',
+        hookId: 'hook-1',
+        methodName: 'send_message',
+        args: { target: 'Review', message: 'ready' },
+        meta: {
+          taskId: 'task-1',
+          nodeId: 'node-1',
+          sessionId: 'session-1',
+          agentName: 'Coder',
+        },
+        isFollowUp: false,
+        nextRetryAt: Date.now() - 1,
+        retryAfterMs: 5,
+        queuedAt: Date.now() - 10,
+      };
+      const snapshot: WorkflowHookStateSnapshot = {
+        runId: 'run-1',
+        hookId: 'hook-1',
+        version: 1,
+        localState: { [QUEUED_RETRYABLE_ACTION_STATE_KEY]: queuedAction },
+        lastResult: { type: 'retryable_block', reason: 'waiting' },
+        retryCount: 1,
+        nextRetryAt: queuedAction.nextRetryAt,
+        voteMaps: {},
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      const hookStateRepo = {
+        get: mock(() => snapshot),
+        update: mock(() => ({ ...snapshot, version: 2 })),
+      } as unknown as WorkflowHookStateRepository;
+      setup({ hookStateRepo });
+
+      await expect(
+        call('spaceWorkflowRun.retryHook', { runId: 'run-1', hookId: 'hook-1' })
+      ).rejects.toThrow('retry runtime is not ready');
+      expect(hookStateRepo.update).not.toHaveBeenCalled();
+      expect(snapshot.localState[QUEUED_RETRYABLE_ACTION_STATE_KEY]).toEqual(queuedAction);
+    });
+
+    it.each([
+      ['a replaced owner', false, true],
+      ['a completed restoration that did not schedule it', true, false],
+    ])('releases a queued action for %s', async (_case, isOwner, restorePending) => {
+      const queuedAction = {
+        actionKey: 'persisted-retry',
+        hookId: 'hook-1',
+        methodName: 'send_message',
+        args: { target: 'Review', message: 'ready' },
+        meta: {
+          taskId: 'task-1',
+          nodeId: 'node-1',
+          sessionId: 'session-1',
+          agentName: 'Coder',
+        },
+        isFollowUp: false,
+        nextRetryAt: Date.now() - 1,
+        retryAfterMs: 5,
+        queuedAt: Date.now() - 10,
+      };
+      const snapshot: WorkflowHookStateSnapshot = {
+        runId: 'run-1',
+        hookId: 'hook-1',
+        version: 1,
+        localState: { [QUEUED_RETRYABLE_ACTION_STATE_KEY]: queuedAction },
+        lastResult: { type: 'retryable_block', reason: 'waiting' },
+        retryCount: 1,
+        nextRetryAt: queuedAction.nextRetryAt,
+        voteMaps: {},
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      const update = mock(() => ({
+        ...snapshot,
+        version: 2,
+        localState: { [QUEUED_RETRYABLE_ACTION_STATE_KEY]: null },
+      }));
+      const hookStateRepo = {
+        get: mock(() => snapshot),
+        update,
+      } as unknown as WorkflowHookStateRepository;
+      setup({
+        hookStateRepo,
+        isQueuedRetryOwner: () => isOwner,
+        isQueuedRetryRestorePending: () => restorePending,
+      });
+
+      await expect(
+        call('spaceWorkflowRun.retryHook', { runId: 'run-1', hookId: 'hook-1' })
+      ).resolves.toBeDefined();
+      expect(update).toHaveBeenCalledTimes(1);
+      expect(update.mock.calls[0]?.[2]).toMatchObject({
+        localState: { [QUEUED_RETRYABLE_ACTION_STATE_KEY]: null },
+        lastResult: { type: 'allow' },
+      });
     });
   });
 });

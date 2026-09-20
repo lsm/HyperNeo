@@ -212,12 +212,16 @@ export function renderAgentMessageResult(result: AgentMessageResult): ToolResult
   return jsonResult(renderDelivered(result));
 }
 
-export function nodeSendMessageHookMeta(context: NodeMessagingContext): HookActionMeta {
+export function nodeSendMessageHookMeta(
+  context: NodeMessagingContext,
+  targetNode?: string
+): HookActionMeta {
   return {
     sessionId: context.sessionId,
     agentName: context.agentName,
     nodeId: context.workflowNodeId,
     taskId: context.runtime.taskId,
+    ...(targetNode === undefined ? {} : { targetNode }),
   };
 }
 
@@ -241,7 +245,8 @@ export function deliverNodeAgentMessage(
 
 export function bindNodeSendMessage(
   context: NodeMessagingContext,
-  nodeExecutionRepo: NodeMessagingDependencies['nodeExecutionRepo']
+  nodeExecutionRepo: NodeMessagingDependencies['nodeExecutionRepo'],
+  hookReplay?: OperationCaller['hookReplay']
 ): (args: NodeSendMessageInput) => Promise<ToolResult> {
   const raw = deliverNodeAgentMessage(context, nodeExecutionRepo);
   const handlers = { send_message: raw as (...args: unknown[]) => Promise<ToolResult> };
@@ -250,7 +255,8 @@ export function bindNodeSendMessage(
     raw,
     context.runtime.hookEngine,
     handlers,
-    nodeSendMessageHookMeta(context)
+    nodeSendMessageHookMeta(context, hookReplay?.targetNode),
+    hookReplay?.isFollowUp ?? false
   );
 }
 
@@ -273,10 +279,15 @@ export function decodeNodeSendMessageResult(result: ToolResult): Result {
 async function runNodeSendMessage(
   context: NodeMessagingContext,
   deps: NodeMessagingDependencies,
-  input: NodeSendMessageInput
+  input: NodeSendMessageInput,
+  caller: OperationCaller
 ): Promise<Result> {
   return decodeNodeSendMessageResult(
-    await bindNodeSendMessage(context, deps.nodeExecutionRepo)(input)
+    await bindNodeSendMessage(
+      context,
+      deps.nodeExecutionRepo,
+      caller.source === 'internal' ? caller.hookReplay : undefined
+    )(input)
   );
 }
 
@@ -289,7 +300,7 @@ export function createNodeSendMessageOperation(deps: NodeMessagingDependencies) 
     .pipe(admitNodeCaller, 'caller', 'result:outcome')
     .pipe(resolveNodeContext, ['outcome', 'caller', 'deps'], 'result:outcome')
     .pipe(requireActiveNodeSession, ['outcome', 'caller', 'deps'], 'result:outcome')
-    .pipe(runNodeSendMessage, ['outcome', 'deps', 'input'], 'outcome')
+    .pipe(runNodeSendMessage, ['outcome', 'deps', 'input', 'caller'], 'outcome')
     .endAsync('outcome') as (
     input: NodeSendMessageInput,
     caller: OperationCaller

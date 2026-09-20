@@ -8,8 +8,11 @@ import type { NodeExecutionRepository } from '../../storage/repositories/node-ex
 import type { WorkflowHookStateRepository } from '../../storage/repositories/workflow-hook-state-repository.ts';
 import type { WorkflowRunArtifactRepository } from '../../storage/repositories/workflow-run-artifact-repository.ts';
 import { Logger } from '../logger.ts';
+import { invokeOperation } from '../operations/invoke.ts';
+import type { OperationCaller, OperationRegistry } from '../operations/registry.ts';
 import { isRateLimitError } from '../session/rate-limit-detector.ts';
-import { type AnyToolResult, scheduleRetryableAction } from './hook-binding.ts';
+import { jsonResult } from '../space/tools/tool-result.ts';
+import { scheduleRetryableAction } from './hook-binding.ts';
 import type { HookExecutor } from './hook-executor.ts';
 import {
   buildExecutorContext,
@@ -18,8 +21,11 @@ import {
 import { shallowEqual, validatePatchedParams } from './hook-param-bounds.ts';
 import { buildAllowUserState, buildBlockUserState } from './hook-user-state.ts';
 
+const MAX_RESTORED_OPERATION_FAILURES = 3;
+
 export {
   clearAllRetryableHookActionTimers,
+  hasPendingRetryableHookAction,
   triggerRetryableHookAction,
   wrapHandlerWithHooks,
 } from './hook-binding.ts';
@@ -133,11 +139,9 @@ export class HookEngine {
     await this.config.notifySourceSession?.(sessionId, message);
   }
 
-  scheduleQueuedRetryableActions(
-    handlersByMethod: Record<
-      string,
-      (...args: unknown[]) => Promise<AnyToolResult> | AnyToolResult
-    >,
+  scheduleQueuedRetryableOperations(
+    registry: OperationRegistry,
+    caller: OperationCaller,
     ownerMeta: HookActionMeta
   ): void {
     for (const action of this.getQueuedRetryableActions()) {
@@ -146,19 +150,50 @@ export class HookEngine {
         this.clearQueuedRetryableAction(action.hookId);
         continue;
       }
-      const rawHandler = handlersByMethod[action.methodName];
-      if (!rawHandler) continue;
-      const handler = async (args: Record<string, unknown>) => await rawHandler(args);
+      if (!registry.get(action.methodName)) continue;
+      let executionFailureCount = 0;
+      const handler = async (args: Record<string, unknown>) => {
+        const outcome = await invokeOperation(registry, action.methodName, args, {
+          ...caller,
+          hookReplay: {
+            targetNode: action.meta.targetNode,
+            isFollowUp: action.isFollowUp,
+          },
+        });
+        if (outcome.kind !== 'completed') {
+          const retryable =
+            outcome.code === 'execution_failed' &&
+            ++executionFailureCount < MAX_RESTORED_OPERATION_FAILURES;
+          return {
+            ...jsonResult({
+              success: false,
+              error: outcome.message,
+              retryable,
+            }),
+            isError: true,
+          };
+        }
+        executionFailureCount = 0;
+        if (typeof outcome.value === 'string') {
+          return {
+            ...jsonResult({ success: false, error: outcome.value, retryable: false }),
+            isError: true,
+          };
+        }
+        return jsonResult(outcome.value);
+      };
       scheduleRetryableAction({
         actionKey: action.actionKey,
         delayMs: Math.max(0, action.nextRetryAt - Date.now()),
+        retryDelayMs: action.retryAfterMs,
         methodName: action.methodName,
         args: action.args,
         handler,
         engine: this,
-        handlers: handlersByMethod,
+        handlers: {},
         meta: action.meta,
         isFollowUp: action.isFollowUp,
+        handlerIncludesHooks: true,
       });
     }
   }

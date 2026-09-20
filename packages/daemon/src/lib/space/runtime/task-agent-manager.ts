@@ -339,6 +339,7 @@ export class TaskAgentManager {
   private readonly sessionRestoreLocks = new Map<string, Promise<void>>();
 
   private readonly rehydrateInFlight = new Map<string, Promise<AgentSession | null>>();
+  private initialRehydrateComplete = false;
 
   private spawningExecutionIds = new Set<string>();
   private concurrentSpawnWaiters = new Map<
@@ -2558,6 +2559,10 @@ export class TaskAgentManager {
     return !!indexed && this.isAgentSessionAlive(indexed);
   }
 
+  isRetryableActionRestorePending(sessionId: string): boolean {
+    return !this.initialRehydrateComplete || this.rehydrateInFlight.has(sessionId);
+  }
+
   private isAgentSessionAlive(session: AgentSession): boolean {
     const status = session.getSessionData().status;
     if (status === 'archived' || status === 'ended') return false;
@@ -3021,6 +3026,7 @@ export class TaskAgentManager {
     log.info(
       `TaskAgentManager.rehydrate: processed ${processedRunIds.size} run(s), danglingLinksCleared=${danglingLinksCleared}`
     );
+    this.initialRehydrateComplete = true;
   }
 
   async cleanupAll(): Promise<void> {
@@ -4934,7 +4940,7 @@ export class TaskAgentManager {
     const bySession = nodeExecutions.find((exec) => exec.agentSessionId === subSessionId);
     const byAgentName = nodeExecutions.find((exec) => exec.agentName === agentName);
     const execution = bySession ?? byAgentName;
-    const workflowNodeId = workflowNodeIdHint ?? execution?.workflowNodeId ?? '';
+    const workflowNodeId = workflowNodeIdHint || execution?.workflowNodeId || '';
     const run = this.config.workflowRunRepo.getRun(workflowRunId);
     const workflow = run?.workflowId
       ? (this.config.spaceWorkflowManager.getWorkflowForRun(run) ?? null)
@@ -5070,7 +5076,7 @@ export class TaskAgentManager {
       });
     }
 
-    this.nodeMessagingBySession.set(subSessionId, {
+    const nodeMessagingRuntime: NodeMessagingRuntime = {
       spaceId,
       taskId,
       workflow,
@@ -5080,7 +5086,24 @@ export class TaskAgentManager {
       replyRoutingLookup: (fromAgentName) =>
         this.config.replyRoutingRegistry?.get(taskId, fromAgentName) ?? null,
       hookEngine,
-    });
+    };
+    this.nodeMessagingBySession.set(subSessionId, nodeMessagingRuntime);
+    hookEngine?.scheduleQueuedRetryableOperations(
+      this.config.sessionManager.getOperationRegistry(),
+      {
+        source: 'internal',
+        sessionId: subSessionId,
+        spaceId,
+        role: 'workflow_worker',
+        agentName,
+      },
+      {
+        sessionId: subSessionId,
+        agentName,
+        nodeId: workflowNodeId,
+        taskId,
+      }
+    );
     return {};
   }
 

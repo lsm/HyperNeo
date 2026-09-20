@@ -16,6 +16,7 @@ import { resolveTaskWorkspace } from '../tasks/spawn-slot-resolution.ts';
 import type { WorkflowRunStatus } from '@hyperneo/shared';
 import {
   QUEUED_RETRYABLE_ACTION_STATE_KEY,
+  hasPendingRetryableHookAction,
   triggerRetryableHookAction,
 } from '../hooks/hook-engine.ts';
 import {
@@ -154,7 +155,9 @@ export function setupSpaceWorkflowRunHandlers(
   artifactRepo: WorkflowRunArtifactRepository,
   artifactCacheRepo: WorkflowRunArtifactCacheRepository,
   jobQueue: JobQueueRepository,
-  hookStateRepo: WorkflowHookStateRepository
+  hookStateRepo: WorkflowHookStateRepository,
+  isQueuedRetryOwner: (runId: string, sessionId: string) => boolean = () => true,
+  isQueuedRetryRestorePending: (sessionId: string) => boolean = () => true
 ): void {
   messageHub.onRequest('spaceWorkflowRun.getGateArtifacts', async (data) => {
     const params = data as { runId: string; taskId?: string };
@@ -603,6 +606,27 @@ export function setupSpaceWorkflowRunHandlers(
       queuedAction && typeof queuedAction === 'object'
         ? (queuedAction as Record<string, unknown>).actionKey
         : undefined;
+    const queuedActionMeta =
+      queuedAction && typeof queuedAction === 'object'
+        ? (queuedAction as Record<string, unknown>).meta
+        : undefined;
+    const queuedActionSessionId =
+      queuedActionMeta && typeof queuedActionMeta === 'object'
+        ? (queuedActionMeta as Record<string, unknown>).sessionId
+        : undefined;
+    const queuedRetryOwnerCurrent =
+      typeof queuedActionSessionId !== 'string' ||
+      (isQueuedRetryOwner(run.id, queuedActionSessionId) &&
+        isQueuedRetryRestorePending(queuedActionSessionId));
+    if (
+      typeof queuedActionKey === 'string' &&
+      !hasPendingRetryableHookAction(queuedActionKey) &&
+      queuedRetryOwnerCurrent
+    ) {
+      throw new Error(
+        'Queued hook retry runtime is not ready; wait for restoration or the current retry to finish'
+      );
+    }
     const updateResult = hookStateRepo.update(params.runId, params.hookId, {
       expectedVersion: baseVersion,
       localState: {

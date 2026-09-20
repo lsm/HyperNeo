@@ -13,6 +13,7 @@ export const DEFAULT_RETRYABLE_ACTION_DELAY_MS = 30_000;
 interface PendingRetryableHookAction {
   actionKey: string;
   delayMs: number;
+  retryDelayMs: number;
   methodName: string;
   args: Record<string, unknown>;
   handler: (args: Record<string, unknown>) => Promise<AnyToolResult>;
@@ -20,12 +21,14 @@ interface PendingRetryableHookAction {
   handlers: Record<string, (...args: unknown[]) => Promise<AnyToolResult> | AnyToolResult>;
   meta: HookActionMeta;
   isFollowUp: boolean;
+  handlerIncludesHooks: boolean;
 }
 
 const pendingRetryableHookActions = new Map<
   string,
   { timer: ReturnType<typeof setTimeout>; options: PendingRetryableHookAction }
 >();
+const activeRetryableHookActions = new Set<string>();
 const RAW_HANDLER = Symbol('rawHandler');
 
 function hookResult(
@@ -59,6 +62,7 @@ function buildRetryableActionKey(
 export function scheduleRetryableAction<T extends Record<string, unknown>>(options: {
   actionKey: string;
   delayMs: number;
+  retryDelayMs?: number;
   methodName: string;
   args: T;
   handler: (args: T) => Promise<AnyToolResult>;
@@ -66,25 +70,29 @@ export function scheduleRetryableAction<T extends Record<string, unknown>>(optio
   handlers: Record<string, (...args: unknown[]) => Promise<AnyToolResult> | AnyToolResult>;
   meta: HookActionMeta;
   isFollowUp: boolean;
+  handlerIncludesHooks?: boolean;
 }): void {
-  if (pendingRetryableHookActions.has(options.actionKey)) return;
+  if (
+    pendingRetryableHookActions.has(options.actionKey) ||
+    activeRetryableHookActions.has(options.actionKey)
+  )
+    return;
 
+  const pendingOptions: PendingRetryableHookAction = {
+    ...options,
+    args: options.args,
+    handler: async (args) => options.handler(args as T),
+    handlerIncludesHooks: options.handlerIncludesHooks ?? false,
+    retryDelayMs: options.retryDelayMs ?? options.delayMs,
+  };
   const timer = setTimeout(() => {
     pendingRetryableHookActions.delete(options.actionKey);
-    void replayRetryableAction(options).catch((err) => {
-      log.warn(
-        `Retryable hook action retry failed for ${options.methodName}: ${err instanceof Error ? err.message : String(err)}`
-      );
-    });
+    launchRetryableActionReplay(pendingOptions, 'Retryable hook action retry failed');
   }, options.delayMs);
 
   pendingRetryableHookActions.set(options.actionKey, {
     timer,
-    options: {
-      ...options,
-      args: options.args,
-      handler: async (args) => options.handler(args as T),
-    },
+    options: pendingOptions,
   });
 }
 
@@ -95,16 +103,16 @@ export function clearRetryableHookActionTimer(actionKey: string): void {
   pendingRetryableHookActions.delete(actionKey);
 }
 
+export function hasPendingRetryableHookAction(actionKey: string): boolean {
+  return pendingRetryableHookActions.has(actionKey);
+}
+
 export function triggerRetryableHookAction(actionKey: string): boolean {
   const pending = pendingRetryableHookActions.get(actionKey);
   if (!pending) return false;
   clearTimeout(pending.timer);
   pendingRetryableHookActions.delete(actionKey);
-  void replayRetryableAction(pending.options).catch((err) => {
-    log.warn(
-      `Manual retryable hook action retry failed for ${pending.options.methodName}: ${err instanceof Error ? err.message : String(err)}`
-    );
-  });
+  launchRetryableActionReplay(pending.options, 'Manual retryable hook action retry failed');
   return true;
 }
 
@@ -113,6 +121,25 @@ export function clearAllRetryableHookActionTimers(): void {
     clearTimeout(pending.timer);
   }
   pendingRetryableHookActions.clear();
+}
+
+function launchRetryableActionReplay(
+  options: PendingRetryableHookAction,
+  failurePrefix: string
+): void {
+  activeRetryableHookActions.add(options.actionKey);
+  void replayRetryableAction(options)
+    .then((retryDelayMs) => {
+      activeRetryableHookActions.delete(options.actionKey);
+      if (retryDelayMs === undefined) return;
+      scheduleRetryableAction({ ...options, delayMs: retryDelayMs, retryDelayMs });
+    })
+    .catch((err) => {
+      log.warn(
+        `${failurePrefix} for ${options.methodName}: ${err instanceof Error ? err.message : String(err)}`
+      );
+    })
+    .finally(() => activeRetryableHookActions.delete(options.actionKey));
 }
 
 async function replayRetryableAction<T extends Record<string, unknown>>(options: {
@@ -124,23 +151,30 @@ async function replayRetryableAction<T extends Record<string, unknown>>(options:
   handlers: Record<string, (...args: unknown[]) => Promise<AnyToolResult> | AnyToolResult>;
   meta: HookActionMeta;
   isFollowUp: boolean;
-}): Promise<void> {
+  handlerIncludesHooks?: boolean;
+  retryDelayMs: number;
+}): Promise<number | undefined> {
   if (options.engine.isRetryableActionCancelled(options.meta)) {
     options.engine.clearQueuedRetryableActionsForKey(options.actionKey);
     clearRetryableHookActionTimer(options.actionKey);
-    return;
+    return undefined;
   }
 
-  const retryHandler = wrapHandlerWithHooks(
-    options.methodName,
-    options.handler,
-    options.engine,
-    options.handlers,
-    options.meta,
-    options.isFollowUp
-  );
+  const retryHandler = options.handlerIncludesHooks
+    ? options.handler
+    : wrapHandlerWithHooks(
+        options.methodName,
+        options.handler,
+        options.engine,
+        options.handlers,
+        options.meta,
+        options.isFollowUp
+      );
   const result = await retryHandler(options.args);
   const failure = getToolResultFailure(result);
+  if (failure?.retryable) {
+    return failure.retryAfterMs ?? options.retryDelayMs;
+  }
   if (failure && !failure.retryable) {
     try {
       await options.engine.notifySourceSession(
@@ -156,11 +190,12 @@ async function replayRetryableAction<T extends Record<string, unknown>>(options:
       clearRetryableHookActionTimer(options.actionKey);
     }
   }
+  return undefined;
 }
 
 function getToolResultFailure(
   result: AnyToolResult
-): { message: string; retryable: boolean } | undefined {
+): { message: string; retryable: boolean; retryAfterMs?: number } | undefined {
   const text = result.content.find((item) => item.type === 'text')?.text;
   if (!text) {
     return result.isError ? { message: 'tool returned an error', retryable: false } : undefined;
@@ -180,6 +215,14 @@ function getToolResultFailure(
   const record = data as Record<string, unknown>;
   const success = record.success;
   const retryable = record.retryable === true;
+  const retryAfterMs =
+    typeof record.retryAfterMs === 'number' && Number.isFinite(record.retryAfterMs)
+      ? record.retryAfterMs
+      : undefined;
+  if (record.queued === true && retryable) {
+    const message = typeof record.message === 'string' ? record.message : 'action remains queued';
+    return { message, retryable: true, retryAfterMs };
+  }
   if (success === false || result.isError) {
     const message =
       typeof record.error === 'string'
@@ -187,7 +230,7 @@ function getToolResultFailure(
         : typeof record.message === 'string'
           ? record.message
           : text;
-    return { message, retryable };
+    return { message, retryable, retryAfterMs };
   }
   return undefined;
 }
@@ -300,6 +343,7 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
         scheduleRetryableAction({
           actionKey,
           delayMs: retryAfterMs,
+          retryDelayMs: retryAfterMs,
           methodName,
           args,
           handler,

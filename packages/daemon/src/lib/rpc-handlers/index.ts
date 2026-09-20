@@ -1504,7 +1504,12 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     artifactRepo,
     artifactCacheRepo,
     deps.jobQueue,
-    hookStateRepo
+    hookStateRepo,
+    (runId, sessionId) =>
+      nodeExecutionRepo
+        .listByAgentSessionId(sessionId)
+        .some((execution) => execution.workflowRunId === runId),
+    (sessionId) => taskAgentManager.isRetryableActionRestorePending(sessionId)
   );
 
   const artifactSyncHandlers = createSyncArtifactHandlers({
