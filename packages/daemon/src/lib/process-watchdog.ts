@@ -28,8 +28,12 @@ const SUSPICIOUS_THRESHOLDS = [
 
 export const PROCESS_WATCHDOG_INTERVAL_MS = 5 * 60 * 1000;
 
+export function canListProcesses(): boolean {
+  return process.platform !== 'win32';
+}
+
 export async function listProcesses(): Promise<ProcessSnapshot[]> {
-  if (process.platform === 'win32') return [];
+  if (!canListProcesses()) return [];
 
   if (usesBsdPsElapsedFormat()) {
     const { stdout } = await execFileAsync('ps', ['-axo', 'pid=,ppid=,pgid=,etime=,command='], {

@@ -1,4 +1,4 @@
-import { listProcesses, type ProcessSnapshot } from '../process-watchdog.ts';
+import { canListProcesses, listProcesses, type ProcessSnapshot } from '../process-watchdog.ts';
 import type { AgentChildProcessRepository } from '../../storage/repositories/agent-child-process-repository.ts';
 
 export interface PersistedAgentChild {
@@ -80,6 +80,7 @@ export function killProcessGroupThenPid(pid: number): void {
 }
 
 export interface OrphanChildSweepIo {
+  canList?: () => boolean;
   list?: () => Promise<ProcessSnapshot[]>;
   kill?: (pid: number) => void;
   now?: () => number;
@@ -104,6 +105,7 @@ async function runOrphanChildSweep(
   logError: (...args: unknown[]) => void,
   io: OrphanChildSweepIo
 ): Promise<void> {
+  const canList = io.canList ?? canListProcesses;
   const list = io.list ?? listProcesses;
   const kill = io.kill ?? killProcessGroupThenPid;
   const now = io.now ?? Date.now;
@@ -115,6 +117,13 @@ async function runOrphanChildSweep(
     return;
   }
   if (persisted.length === 0) return;
+  if (!canList()) {
+    logInfo(
+      `[Daemon] Orphaned agent child sweep skipped: this platform cannot enumerate processes; ` +
+        `${persisted.length} record(s) kept`
+    );
+    return;
+  }
 
   let snapshot: ProcessSnapshot[] = [];
   try {

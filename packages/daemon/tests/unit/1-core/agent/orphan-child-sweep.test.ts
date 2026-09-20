@@ -8,6 +8,7 @@ import {
   sweepOrphanedAgentChildren,
   type PersistedAgentChild,
 } from '../../../../src/lib/agent/orphan-child-sweep';
+import { canListProcesses, listProcesses } from '../../../../src/lib/process-watchdog';
 import { AgentChildProcessRepository } from '../../../../src/storage/repositories/agent-child-process-repository';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { runMigration264 } from '../../../../src/storage/schema/m264-agent-child-processes';
@@ -388,4 +389,32 @@ test('the sweep leaves rows written by the running daemon in place', async () =>
 
   expect(repo.list().map((row) => row.pid)).toEqual([2]);
   db.close();
+});
+
+test('a platform that cannot enumerate processes keeps its records (#4904 review)', async () => {
+  const { db, repo } = repoWithRows([child({ pid: 1 }), child({ pid: 2 })]);
+  const list = mock(async () => []);
+  const kill = mock(() => {});
+
+  await sweepOrphanedAgentChildren(
+    repo,
+    () => {},
+    () => {},
+    {
+      canList: () => false,
+      list,
+      kill,
+      now: () => NOW,
+    }
+  );
+
+  expect(list).not.toHaveBeenCalled();
+  expect(kill).not.toHaveBeenCalled();
+  expect(repo.list()).toHaveLength(2);
+  db.close();
+});
+
+test('canListProcesses tracks the platforms listProcesses can actually read', async () => {
+  expect(canListProcesses()).toBe(process.platform !== 'win32');
+  if (!canListProcesses()) expect(await listProcesses()).toEqual([]);
 });
