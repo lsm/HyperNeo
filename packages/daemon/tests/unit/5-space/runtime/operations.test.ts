@@ -146,6 +146,35 @@ test('rpc task.create without spaceId creates a standalone row', async () => {
   expect(emitCreated).not.toHaveBeenCalled();
 });
 
+test('fallback MCP catalog hides Space-owned task reads while preserving standalone reads', async () => {
+  const standalone = createStandaloneTask(db, { title: 'Standalone' }, undefined, () => {});
+  const caller = member('fallback-member', spaceId);
+  const mcp = createOperationMcpHandler(
+    createDatabaseOperationCatalog(database, jobQueue),
+    () => caller
+  );
+
+  const deniedGet = await mcp({ name: 'task.get', input: { taskId } });
+  expect(deniedGet.isError).not.toBe(true);
+  expect(JSON.parse(deniedGet.content[0].text)).toBeNull();
+
+  const standaloneGet = await mcp({ name: 'task.get', input: { taskId: standalone.id } });
+  expect(standaloneGet.isError).not.toBe(true);
+  expect(JSON.parse(standaloneGet.content[0].text)).toMatchObject({
+    id: standalone.id,
+    title: 'Standalone',
+  });
+
+  const deniedList = await mcp({ name: 'task.list', input: { spaceId } });
+  expect(deniedList.isError).not.toBe(true);
+  expect(JSON.parse(deniedList.content[0].text)).toEqual({
+    tasks: [],
+    total: 0,
+    nextCursor: null,
+    scope: { spaceId },
+  });
+});
+
 test('cached and new MCP handlers adopt the same Space catalog as RPC', async () => {
   const caller = member('member', spaceId);
   let registry = createDatabaseOperationCatalog(database, jobQueue);
