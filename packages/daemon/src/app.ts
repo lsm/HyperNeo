@@ -1173,6 +1173,14 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       }
     }
 
+    if (process.env.NODE_ENV !== 'test') {
+      await sweepOrphanedAgentChildren(
+        new AgentChildProcessRepository(db.getDatabase()),
+        logInfo,
+        logError
+      );
+    }
+
     jobProcessor.start();
     logInfo('[Daemon] Job queue processor started');
     mailboxExpireProcessor.start();
@@ -1180,11 +1188,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     messageDeliveryProcessor.start();
     logInfo('[Daemon] Message-delivery job processor started');
     if (process.env.NODE_ENV !== 'test') {
-      await sweepOrphanedAgentChildren(
-        new AgentChildProcessRepository(db.getDatabase()),
-        logInfo,
-        logError
-      );
       processWatchdog.start();
       logInfo('[Daemon] Process watchdog started');
     }

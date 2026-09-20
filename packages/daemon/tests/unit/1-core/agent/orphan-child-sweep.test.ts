@@ -249,3 +249,37 @@ test('an orphan is killed by process group, falling back to the bare pid', () =>
     (process as { kill: unknown }).kill = original;
   }
 });
+
+test('a child recorded while ps is running survives the sweep (#4904 review)', async () => {
+  const { db, repo } = repoWithRows([child({ pid: 1 }), child({ pid: 2 })]);
+  const killed: number[] = [];
+
+  await sweepOrphanedAgentChildren(
+    repo,
+    () => {},
+    () => {},
+    {
+      list: async () => {
+        repo.record(child({ pid: 3, sessionId: 'spawned-during-ps' }));
+        return [snap({ pid: 1 }), snap({ pid: 3 })];
+      },
+      kill: (pid) => killed.push(pid),
+      now: () => NOW,
+    }
+  );
+
+  expect(killed).toEqual([1]);
+  expect(repo.list()).toEqual([child({ pid: 3, sessionId: 'spawned-during-ps' })]);
+  db.close();
+});
+
+test('forgetMany removes only the pids it is given', () => {
+  const { db, repo } = repoWithRows([child({ pid: 1 }), child({ pid: 2 }), child({ pid: 3 })]);
+
+  repo.forgetMany([]);
+  expect(repo.list()).toHaveLength(3);
+
+  repo.forgetMany([1, 3]);
+  expect(repo.list().map((row) => row.pid)).toEqual([2]);
+  db.close();
+});

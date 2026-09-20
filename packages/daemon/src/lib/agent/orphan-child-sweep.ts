@@ -111,7 +111,7 @@ export async function sweepOrphanedAgentChildren(
       logError(`[Daemon] Failed to kill orphaned agent child ${pid}:`, err);
     }
   }
-  repo.clear();
+  repo.forgetMany(persisted.map((child) => child.pid));
   logInfo(
     `[Daemon] Orphaned agent child sweep: ${killed} killed, ${plan.skipped.length} skipped ` +
       `(${persisted.length} recorded by daemon pid ${persisted[0]?.daemonPid ?? 'unknown'})`

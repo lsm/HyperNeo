@@ -41,7 +41,13 @@ export class AgentChildProcessRepository {
     }));
   }
 
-  clear(): void {
-    withBusyRetry(() => this.db.prepare(`DELETE FROM agent_child_processes`).run());
+  forgetMany(pids: readonly number[]): void {
+    if (pids.length === 0) return;
+    const placeholders = pids.map(() => '?').join(',');
+    withBusyRetry(() =>
+      this.db
+        .prepare(`DELETE FROM agent_child_processes WHERE pid IN (${placeholders})`)
+        .run(...pids)
+    );
   }
 }
