@@ -80,12 +80,18 @@ describe('Space messaging adapter', () => {
       rules: [],
       completionAutonomyLevel: 3,
     });
-    const run = workflowRunRepo.createRun({ spaceId, workflowId: workflow.id, title: 'Run' });
+    const run = workflowRunRepo.createPinnedRun({
+      spaceId,
+      workflowId: workflow.id,
+      title: 'Run',
+      rawWorkflow: workflow,
+    });
     runId = run.id;
-    const otherRun = workflowRunRepo.createRun({
+    const otherRun = workflowRunRepo.createPinnedRun({
       spaceId,
       workflowId: workflow.id,
       title: 'Run 2',
+      rawWorkflow: workflow,
     });
     nodeExecutionRepo.create({
       workflowRunId: otherRun.id,

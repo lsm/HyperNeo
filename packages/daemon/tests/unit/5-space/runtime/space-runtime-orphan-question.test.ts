@@ -12,6 +12,7 @@ import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { seedUnifiedAgentMirror } from '../../helpers/seed-unified-agent';
+import { createPinnedWorkflowRun } from '../../helpers/create-pinned-workflow-run.ts';
 
 function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
@@ -164,7 +165,7 @@ describe('SpaceRuntime — orphaned-question cleanup (Task #138)', () => {
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: STEP_A, name: 'Step A', agentId: AGENT },
       ]);
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Crashed-question run',
@@ -223,7 +224,7 @@ describe('SpaceRuntime — orphaned-question cleanup (Task #138)', () => {
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: STEP_A, name: 'Step A', agentId: AGENT },
       ]);
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Vanished-session run',

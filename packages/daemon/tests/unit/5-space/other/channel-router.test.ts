@@ -124,13 +124,21 @@ describe('ChannelRouter', () => {
     workflowRunRepo = new SpaceWorkflowRunRepository(db);
     channelCycleRepo = new ChannelCycleRepository(db);
 
-    const createRunOriginal = workflowRunRepo.createRun.bind(workflowRunRepo);
+    const workflowRepo = new SpaceWorkflowRepository(db);
+    workflowManager = new SpaceWorkflowManager(
+      workflowRepo,
+      null,
+      new SpaceAgentTemplateRepository(db)
+    );
+
     (
       workflowRunRepo as unknown as {
         createRun: typeof workflowRunRepo.createRun;
       }
     ).createRun = ((params: Parameters<typeof workflowRunRepo.createRun>[0]) => {
-      const run = createRunOriginal(params);
+      const rawWorkflow = workflowManager.getWorkflow(params.workflowId);
+      if (!rawWorkflow) throw new Error(`Test workflow not found: ${params.workflowId}`);
+      const run = workflowRunRepo.createPinnedRun({ ...params, rawWorkflow });
       taskRepo.createTask({
         spaceId: params.spaceId,
         title: params.title,
@@ -142,13 +150,6 @@ describe('ChannelRouter', () => {
     }) as typeof workflowRunRepo.createRun;
 
     longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(db);
-
-    const workflowRepo = new SpaceWorkflowRepository(db);
-    workflowManager = new SpaceWorkflowManager(
-      workflowRepo,
-      null,
-      new SpaceAgentTemplateRepository(db)
-    );
 
     router = new ChannelRouter({
       taskRepo,
@@ -303,7 +304,6 @@ describe('ChannelRouter', () => {
           ],
         },
       ]);
-
       const run = workflowRunRepo.createRun({
         spaceId: SPACE_ID,
         workflowId: workflow.id,
@@ -576,6 +576,14 @@ describe('ChannelRouter', () => {
           agents: [{ agentId: AGENT_CODER, name: 'stale-slot' }],
         },
       ]);
+      workflowManager.updateWorkflow(workflow.id, {
+        nodes: [
+          { id: NODE_A, name: 'Node A', agents: [{ agentId: AGENT_PLANNER, name: 'stale-slot' }] },
+        ],
+        startNodeId: NODE_A,
+        endNodeId: NODE_A,
+        channels: [],
+      });
 
       const run = workflowRunRepo.createRun({
         spaceId: SPACE_ID,
@@ -592,14 +600,6 @@ describe('ChannelRouter', () => {
         agentId: AGENT_CODER,
         agentSessionId: 'session:stale-activation',
         status: 'cancelled',
-      });
-      workflowManager.updateWorkflow(workflow.id, {
-        nodes: [
-          { id: NODE_A, name: 'Node A', agents: [{ agentId: AGENT_PLANNER, name: 'stale-slot' }] },
-        ],
-        startNodeId: NODE_A,
-        endNodeId: NODE_A,
-        channels: [],
       });
       const cancelledSessions: string[] = [];
       const routerWithCancellation = new ChannelRouter({

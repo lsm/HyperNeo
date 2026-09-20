@@ -15,6 +15,7 @@ import { ToolContinuationRecoveryRepository } from '../../../../src/storage/repo
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { seedUnifiedAgentMirror } from '../../helpers/seed-unified-agent';
+import { createPinnedWorkflowRun } from '../../helpers/create-pinned-workflow-run.ts';
 
 function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
@@ -229,7 +230,7 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
       tags: [],
       completionAutonomyLevel: 3,
     });
-    const run = workflowRunRepo.createRun({
+    const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
       spaceId: SPACE_ID,
       workflowId: workflow.id,
       title: 'Terminal-error run',

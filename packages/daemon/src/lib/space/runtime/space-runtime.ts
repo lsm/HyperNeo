@@ -5193,7 +5193,10 @@ export class SpaceRuntime {
     run: SpaceWorkflowRun,
     executions: NodeExecution[]
   ): Promise<void> {
-    const reason = `Workflow ${run.workflowId} no longer exists; workflow run cannot continue`;
+    const pin = run.definitionVersion ?? 'missing';
+    const reason =
+      `Pinned workflow definition ${pin} for workflow run ${run.id} is unavailable or invalid; ` +
+      'workflow run cannot continue';
     const now = Date.now();
     for (const execution of executions) {
       if (execution.status === 'cancelled') continue;

@@ -23,6 +23,7 @@ import type {
 import type { Provider } from '@hyperneo/shared/provider';
 import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types.ts';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
+import { createPinnedWorkflowRun } from '../../helpers/create-pinned-workflow-run.ts';
 import { persistPrompt } from '../../../../src/lib/agent/message-delivery-outbox';
 import { createMailboxDeliveryHandler } from '../../../../src/lib/mailbox/delivery.ts';
 import { MAILBOX_LANE } from '../../../../src/lib/mailbox/enqueue.ts';
@@ -3948,7 +3949,7 @@ describe('activateWorkflowNode() — InternalEventBus forwarding', () => {
         completionAutonomyLevel: 3,
       });
 
-      const run = workflowRunRepo.createRun({
+      const run = createPinnedWorkflowRun(workflowRunRepo, workflowManager, {
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Reopen me',

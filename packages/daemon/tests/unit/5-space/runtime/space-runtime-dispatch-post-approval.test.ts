@@ -26,6 +26,7 @@ import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.t
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import type { SpaceTask } from '@hyperneo/shared';
+import { createPinnedWorkflowRun } from '../../helpers/create-pinned-workflow-run.ts';
 
 const SPACE_ID = 'space-dispatch-pa';
 
@@ -322,7 +323,7 @@ describe('SpaceRuntime.retryPostApprovalDispatch — canonical serialized retry'
       tags: [],
       completionAutonomyLevel: 3,
     });
-    const run = target.workflowRunRepo.createRun({
+    const run = createPinnedWorkflowRun(target.workflowRunRepo, target.workflowManager, {
       spaceId: SPACE_ID,
       workflowId: workflow.id,
       title: 'Ship it',
@@ -560,7 +561,7 @@ describe('SpaceRuntime.retryPostApprovalDispatch — canonical serialized retry'
       tags: [],
       completionAutonomyLevel: 3,
     });
-    const run = reactive.workflowRunRepo.createRun({
+    const run = createPinnedWorkflowRun(reactive.workflowRunRepo, reactive.workflowManager, {
       spaceId: SPACE_ID,
       workflowId: workflow.id,
       title: 'Ship it',
