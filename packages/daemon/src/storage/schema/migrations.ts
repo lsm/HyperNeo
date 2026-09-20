@@ -19,6 +19,7 @@ import { runMigration242 } from './m242-task-list-indexes.ts';
 import { runMigration261 } from './m261-task-list-updated-indexes.ts';
 import { runMigration262 } from './m262-mcp-attach-error.ts';
 import { runMigration263 } from './m263-message-delivery-uuid-index.ts';
+import { runMigration264 } from './m264-agent-child-processes.ts';
 import { migrateStandaloneTaskOwnership } from '../tasks/ownership-migration.ts';
 import {
   type ArtifactShape,
@@ -602,6 +603,7 @@ export function runMigrations(
   run(migrationMarkerKey(261), () => runMigration261(db));
   run(migrationMarkerKey(262), () => runMigration262(db));
   run(migrationMarkerKey(263), () => runMigration263(db));
+  run(migrationMarkerKey(264), () => runMigration264(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }
