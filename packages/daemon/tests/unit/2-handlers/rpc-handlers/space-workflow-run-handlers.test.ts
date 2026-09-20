@@ -248,6 +248,7 @@ describe('space-workflow-run-handlers', () => {
       tasks?: SpaceTask[];
       worktreePath?: string | null;
       hookStateRepo?: WorkflowHookStateRepository;
+      isQueuedRetryOwner?: (runId: string, sessionId: string) => boolean;
     } = {}
   ) {
     const mh = createMockMessageHub();
@@ -276,7 +277,8 @@ describe('space-workflow-run-handlers', () => {
       createMockArtifactRepo(),
       createMockArtifactCacheRepo(),
       createMockJobQueue(),
-      opts.hookStateRepo ?? createMockHookStateRepo()
+      opts.hookStateRepo ?? createMockHookStateRepo(),
+      opts.isQueuedRetryOwner ?? (() => true)
     );
   }
 
@@ -881,6 +883,56 @@ describe('space-workflow-run-handlers', () => {
       ).rejects.toThrow('retry runtime is not ready');
       expect(hookStateRepo.update).not.toHaveBeenCalled();
       expect(snapshot.localState[QUEUED_RETRYABLE_ACTION_STATE_KEY]).toEqual(queuedAction);
+    });
+
+    it('releases an orphaned queued action owned by a replaced session', async () => {
+      const queuedAction = {
+        actionKey: 'persisted-retry',
+        hookId: 'hook-1',
+        methodName: 'send_message',
+        args: { target: 'Review', message: 'ready' },
+        meta: {
+          taskId: 'task-1',
+          nodeId: 'node-1',
+          sessionId: 'session-1',
+          agentName: 'Coder',
+        },
+        isFollowUp: false,
+        nextRetryAt: Date.now() - 1,
+        retryAfterMs: 5,
+        queuedAt: Date.now() - 10,
+      };
+      const snapshot: WorkflowHookStateSnapshot = {
+        runId: 'run-1',
+        hookId: 'hook-1',
+        version: 1,
+        localState: { [QUEUED_RETRYABLE_ACTION_STATE_KEY]: queuedAction },
+        lastResult: { type: 'retryable_block', reason: 'waiting' },
+        retryCount: 1,
+        nextRetryAt: queuedAction.nextRetryAt,
+        voteMaps: {},
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      const update = mock(() => ({
+        ...snapshot,
+        version: 2,
+        localState: { [QUEUED_RETRYABLE_ACTION_STATE_KEY]: null },
+      }));
+      const hookStateRepo = {
+        get: mock(() => snapshot),
+        update,
+      } as unknown as WorkflowHookStateRepository;
+      setup({ hookStateRepo, isQueuedRetryOwner: () => false });
+
+      await expect(
+        call('spaceWorkflowRun.retryHook', { runId: 'run-1', hookId: 'hook-1' })
+      ).resolves.toBeDefined();
+      expect(update).toHaveBeenCalledTimes(1);
+      expect(update.mock.calls[0]?.[2]).toMatchObject({
+        localState: { [QUEUED_RETRYABLE_ACTION_STATE_KEY]: null },
+        lastResult: { type: 'allow' },
+      });
     });
   });
 });
