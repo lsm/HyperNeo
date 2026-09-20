@@ -4479,6 +4479,10 @@ export class SpaceRuntime {
           !!fresh && fresh.status === 'idle' && fresh.agentSessionId === execution.agentSessionId
         );
       },
+      isSessionAdopted: (execution) => {
+        const owner = this.config.nodeExecutionRepo.getByAgentSessionId(execution.agentSessionId);
+        return !!owner && owner.status !== 'cancelled';
+      },
       cancelSession: (sessionId) => tam.cancelBySessionId(sessionId),
     };
     const outcomes = await runRestoreIdleSessions(deps, workflowRunId);
@@ -4486,6 +4490,10 @@ export class SpaceRuntime {
       if (outcome.action === 'skipped_inactivation') {
         log.warn(
           `SpaceRuntime: tore down restored node-agent session ${outcome.sessionId} because its space, task, or execution went inactive during restoration`
+        );
+      } else if (outcome.action === 'skipped_invalidation') {
+        log.warn(
+          `SpaceRuntime: tore down restored node-agent session ${outcome.sessionId} because no active execution adopted it`
         );
       }
     }
@@ -4503,13 +4511,23 @@ export class SpaceRuntime {
     );
     if (this.isStopped || generation !== this.runtimeGeneration) {
       for (const outcome of outcomes) {
-        if (outcome.action === 'restored') {
+        if (
+          outcome.action === 'restored' &&
+          (this.isStopped || !this.isRestoredSessionAdopted(outcome.sessionId))
+        ) {
           this.config.taskAgentManager?.cancelBySessionId(outcome.sessionId);
         }
       }
       return;
     }
     this.requeuePersistedPendingDeliveries(pausedSpaceIds, workflowRunId);
+  }
+
+  private isRestoredSessionAdopted(sessionId: string): boolean {
+    const manager = this.config.taskAgentManager;
+    if (!manager?.isSessionAlive(sessionId)) return false;
+    const execution = this.config.nodeExecutionRepo.getByAgentSessionId(sessionId);
+    return !!execution && execution.status !== 'cancelled';
   }
 
   private async recoverPendingDeliveries(

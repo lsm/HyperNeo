@@ -44,6 +44,7 @@ function makeEventRecord(): ExternalEventRecord {
 interface DepsState {
   taskStatusAfterRestore: string | null | undefined;
   executionRestorableAfter: boolean | undefined;
+  sessionAdoptedAfter: boolean;
   inFlight: Set<string>;
   expired: boolean;
   paused: boolean;
@@ -72,6 +73,7 @@ function makeDeps(state: Partial<DepsState> = {}): RestoreIdleSessionsDeps {
     failRestore: false,
     taskStatusAfterRestore: undefined,
     executionRestorableAfter: undefined,
+    sessionAdoptedAfter: true,
     ...state,
   };
   let taskAdmissionCalls = 0;
@@ -109,6 +111,7 @@ function makeDeps(state: Partial<DepsState> = {}): RestoreIdleSessionsDeps {
       full.restores.push(target.agentName);
     },
     isExecutionRestorable: () => full.executionRestorableAfter ?? full.hasIdleExecution,
+    isSessionAdopted: () => full.sessionAdoptedAfter,
     cancelSession: (sessionId) => {
       full.cancels.push(sessionId);
     },
@@ -167,6 +170,13 @@ describe('runRestoreIdleSessions', () => {
   test('leaves a repurposed session intact when its execution was rebound mid-restore', async () => {
     const outcomes = await runRestoreIdleSessions(makeDeps({ executionRestorableAfter: false }));
     expect(outcomes).toEqual([{ action: 'adopted_by_new_owner', sessionId: 'session-1' }]);
+  });
+
+  test('tears down a restored session whose execution was cancelled without rebinding', async () => {
+    const outcomes = await runRestoreIdleSessions(
+      makeDeps({ executionRestorableAfter: false, sessionAdoptedAfter: false })
+    );
+    expect(outcomes).toEqual([{ action: 'skipped_invalidation', sessionId: 'session-1' }]);
   });
 
   test('still tears down a rebound session whose task went inactive mid-restore', async () => {

@@ -28,12 +28,14 @@ export interface RestoreIdleSessionsDeps {
   ) => RestoreIdleSessionExecution | undefined;
   restoreSession: (target: RestoreIdleSessionTarget) => Promise<void>;
   isExecutionRestorable: (execution: RestoreIdleSessionExecution) => boolean;
+  isSessionAdopted: (execution: RestoreIdleSessionExecution) => boolean;
   cancelSession: (sessionId: string) => void;
 }
 
 export type RestoreIdleSessionsOutcome =
   | { action: 'restored'; sessionId: string }
   | { action: 'skipped_inactivation'; sessionId: string }
+  | { action: 'skipped_invalidation'; sessionId: string }
   | { action: 'adopted_by_new_owner'; sessionId: string }
   | { action: 'failed' };
 
@@ -112,7 +114,12 @@ export async function restoreWithRevalidation(
       continue;
     }
     if (!executionRestorable) {
-      outcomes.push({ action: 'adopted_by_new_owner', sessionId: execution.agentSessionId });
+      if (ctx.deps.isSessionAdopted(execution)) {
+        outcomes.push({ action: 'adopted_by_new_owner', sessionId: execution.agentSessionId });
+      } else {
+        ctx.deps.cancelSession(execution.agentSessionId);
+        outcomes.push({ action: 'skipped_invalidation', sessionId: execution.agentSessionId });
+      }
       continue;
     }
     outcomes.push({ action: 'restored', sessionId: execution.agentSessionId });
