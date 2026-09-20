@@ -2187,7 +2187,7 @@ describe('seedBuiltInWorkflows()', () => {
     expect(prompt).toContain('filter GraphQL results on `__typename == "Bot"`');
   });
 
-  test('pinned definition payloads overlay the drift variants on run reads', () => {
+  test('legacy pinned definition repair overlays only recognized drift variants', () => {
     const stale = CODER_ONLY_PROMPT.replace(
       EXTERNAL_REVIEW_BOTS_GUIDANCE,
       EXTERNAL_REVIEW_BOTS_GUIDANCE_PRE_TYPENAME
