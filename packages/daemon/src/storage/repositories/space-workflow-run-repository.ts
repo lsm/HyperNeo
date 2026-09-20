@@ -36,6 +36,7 @@ export interface UpdateWorkflowRunParams {
   failureReason?: WorkflowRunFailureReason | null;
   startedAt?: number | null;
   completedAt?: number | null;
+  blockedRetryCount?: number;
 }
 
 export const TERMINAL_RUN_RECONCILE_SETTLED_TASK_STATUSES: readonly SpaceTaskStatus[] = [
@@ -504,6 +505,10 @@ export class SpaceWorkflowRunRepository {
       fields.push('completed_at = ?');
       values.push(params.completedAt ?? null);
     }
+    if (params.blockedRetryCount !== undefined) {
+      fields.push('blocked_retry_count = ?');
+      values.push(params.blockedRetryCount);
+    }
 
     if (fields.length > 0) {
       fields.push('updated_at = ?');
@@ -533,7 +538,8 @@ export class SpaceWorkflowRunRepository {
   casRunStatus(
     id: string,
     expected: WorkflowRunStatus | readonly WorkflowRunStatus[],
-    next: WorkflowRunStatus
+    next: WorkflowRunStatus,
+    options: { blockedRetryCount?: number } = {}
   ): 'won' | 'superseded' {
     const expectedStatuses = Array.isArray(expected) ? [...expected] : [expected];
     if (expectedStatuses.length === 0) return 'superseded';
@@ -548,6 +554,10 @@ export class SpaceWorkflowRunRepository {
       values.push(Date.now());
       sets.push('completed_at = ?');
       values.push(null);
+    }
+    if (options.blockedRetryCount !== undefined) {
+      sets.push('blocked_retry_count = ?');
+      values.push(options.blockedRetryCount);
     }
     sets.push('updated_at = ?');
     values.push(Date.now());
@@ -592,6 +602,7 @@ export class SpaceWorkflowRunRepository {
       description: (row.description as string | null) ?? undefined,
       status: row.status as WorkflowRunStatus,
       failureReason: (row.failure_reason as WorkflowRunFailureReason | null) ?? undefined,
+      blockedRetryCount: (row.blocked_retry_count as number | null) ?? 0,
       createdAt: row.created_at as number,
       startedAt: (row.started_at as number | null) ?? null,
       updatedAt: row.updated_at as number,

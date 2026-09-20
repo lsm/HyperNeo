@@ -19,6 +19,7 @@ import { DEFAULT_GLOBAL_TOOLS_CONFIG, DEFAULT_GLOBAL_SETTINGS } from '@hyperneo/
 
 // knip-ignore-next-line
 export { runMigrations } from './migrations.ts';
+export { runMigration265 } from './m265-workflow-run-blocked-retries.ts';
 export { reclaimPendingMigrationSpace } from './migration-space-reclaim.ts';
 // knip-ignore-next-line
 export { runMigration12 } from './migrations.ts';
