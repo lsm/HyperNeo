@@ -925,7 +925,7 @@ describe('delivery transcript parity harness (A1a)', () => {
           { op: 'job:isClaimCurrent', jobId: job.id, result: true, claimToken: job.claimToken },
           { op: 'job:isClaimCurrent', jobId: job.id, result: true, claimToken: job.claimToken },
           { op: 'job:isClaimCurrent', jobId: job.id, result: true, claimToken: job.claimToken },
-          { op: 'job:requeue', jobId: job.id, runAt: 12345, claimToken: job.claimToken },
+          { op: 'job:requeueParked', jobId: job.id, runAt: 12345, claimToken: job.claimToken },
         ]);
       } finally {
         db.close();

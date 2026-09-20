@@ -246,7 +246,7 @@ const REVIVE_DELIVERY_JOB_SQL = `UPDATE job_queue
           '$.injectedMidTurn',
           CASE WHEN ? THEN json('true') ELSE json('null') END
         ),
-        '$.__claimToken', '$.__parkCount'
+        '$.__claimToken', '$.__parkCount', '$.__parkedSince'
       )
   WHERE id = ?`;
 
@@ -254,7 +254,7 @@ const REQUEUE_HELD_CLAIM_SQL = `UPDATE job_queue
   SET status = 'pending', run_at = ?, started_at = NULL, heartbeat_at = NULL,
       payload = json_remove(
         json_set(payload, '$.released', json('true')),
-        '$.__claimToken', '$.__parkCount'
+        '$.__claimToken', '$.__parkCount', '$.__parkedSince'
       )
   WHERE id = ? AND status = 'processing'`;
 

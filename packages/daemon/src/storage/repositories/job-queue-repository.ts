@@ -342,12 +342,15 @@ export class JobQueueRepository {
     const stmt = this.db.prepare(
       `UPDATE job_queue
          SET status = 'pending', run_at = ?, started_at = NULL, heartbeat_at = NULL,
-             payload = json_set(payload, '$.__parkCount',
-               COALESCE(json_extract(payload, '$.__parkCount'), 0) + 1)
+             payload = json_set(payload,
+               '$.__parkCount', COALESCE(json_extract(payload, '$.__parkCount'), 0) + 1,
+               '$.__parkedSince', COALESCE(json_extract(payload, '$.__parkedSince'), ?))
        WHERE id = ? AND status = 'processing'
          AND (? IS NULL OR json_extract(payload, '$.__claimToken') = ?)`
     );
-    const res = withBusyRetry(() => stmt.run(runAt, jobId, claimToken ?? null, claimToken ?? null));
+    const res = withBusyRetry(() =>
+      stmt.run(runAt, Date.now(), jobId, claimToken ?? null, claimToken ?? null)
+    );
     if (res.changes === 0) return null;
     return this.getJob(jobId);
   }
@@ -487,7 +490,7 @@ export class JobQueueRepository {
         .prepare(
           `UPDATE job_queue
               SET status = 'pending', run_at = ?, started_at = NULL, heartbeat_at = NULL,
-                  payload = json_remove(payload, '$.__claimToken', '$.__parkCount')
+                  payload = json_remove(payload, '$.__claimToken', '$.__parkCount', '$.__parkedSince')
             WHERE queue = 'message_delivery'
               AND json_extract(payload, '$.sessionId') = ?
               AND status IN ('pending', 'processing')`

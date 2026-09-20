@@ -17,10 +17,11 @@ import {
   type DirectFinalizationResult,
   type DirectTaskFinalizerDependencies,
 } from './finalize-direct-attempt.ts';
+import { DIRECT_TASK_PARK_BUDGET, decideParkAdmission, parkAdmissionInput } from './park-budget.ts';
 import { verifyDirectAttemptStop } from './stop-direct-attempt.ts';
 
 interface DirectOutcomeDependencies extends DirectTaskFinalizerDependencies {
-  jobQueue: Pick<JobQueueRepository, 'requeue'>;
+  jobQueue: Pick<JobQueueRepository, 'requeueParked'>;
   onTaskUpdated?: (task: SpaceTask) => void;
 }
 
@@ -145,7 +146,12 @@ export function createDirectOutcomeHandler(deps: DirectOutcomeDependencies) {
     const result = await run(job);
     if (!result.finalized && result.reason === 'unverified') {
       if (!job.claimToken) throw new Error('Direct outcome shutdown remains unverified');
-      if (deps.jobQueue.requeue(job.id, Date.now() + 30_000, job.claimToken))
+      const now = Date.now();
+      const admission = decideParkAdmission(parkAdmissionInput(job, DIRECT_TASK_PARK_BUDGET, now));
+      if ('reason' in admission) {
+        throw new Error(`Direct outcome shutdown remains unverified: ${admission.reason}`);
+      }
+      if (deps.jobQueue.requeueParked(job.id, now + 30_000, job.claimToken))
         return { ...result, parked: 'direct_stop_unverified' };
     }
     if (result.finalized) deps.onTaskUpdated?.(result.task);

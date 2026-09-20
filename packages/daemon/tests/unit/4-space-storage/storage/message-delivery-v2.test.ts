@@ -639,6 +639,32 @@ describe('handler — status-aware delivery (§8)', () => {
     expect(after?.runAt).toBe(sessionRetryAt);
   });
 
+  it('every park of a blocked delivery is counted on the job (#4896)', async () => {
+    const session = new MockSession();
+    session.driveResult = {
+      outcome: 'blocked',
+      retryAt: Date.now() + 60_000,
+      reason: 'sdk_resume_choice',
+    };
+    const handler = createMessageDeliveryHandler({
+      jobQueue: repo,
+      getSession: () => session,
+      getMessageContent: () => ({ content: 'hello', sendStatus: 'enqueued' }),
+    });
+    const job = turnJob(repo, 'msg-park-counted');
+
+    const counts: Array<number | undefined> = [];
+    for (let pass = 0; pass < 3; pass++) {
+      const claimed = repo.getJob(job.id);
+      await handler({ ...claimed!, claimToken: claimed!.claimToken });
+      counts.push(repo.getJob(job.id)?.payload.__parkCount as number | undefined);
+      repo.reschedulePending(job.id, Date.now() - 1);
+      repo.dequeue(MESSAGE_DELIVERY, 1);
+    }
+
+    expect(counts).toEqual([1, 2, 3]);
+  });
+
   it('turn aborted (archive/removePending at feed time) → completes without feeding (#3742774841/#3696)', async () => {
     const session = new MockSession();
     session.driveResult = { outcome: 'aborted' };
