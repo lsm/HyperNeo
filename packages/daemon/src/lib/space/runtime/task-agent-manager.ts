@@ -582,6 +582,16 @@ export class TaskAgentManager {
     );
     if (outcome === 'won') {
       this.emitTaskUpdatedEvent(taskId);
+      for (const [sessionId, session] of this.subSessions.get(taskId) ?? []) {
+        try {
+          await this.startRestoredWorkerForResume(session);
+        } catch (err) {
+          log.warn(
+            `TaskAgentManager: failed to resume restored worker ${sessionId} after task ${taskId} left its rate limit:`,
+            err
+          );
+        }
+      }
     }
   }
 
@@ -3722,11 +3732,19 @@ export class TaskAgentManager {
     const inFlight = this.rehydrateInFlight.get(subSessionId);
     if (inFlight) {
       const restored = await inFlight;
-      if (!restored) return null;
+      if (!restored) {
+        return suppliedSession
+          ? this.rehydrateSubSession(subSessionId, suppliedSession, options)
+          : null;
+      }
       if (suppliedSession && restored !== suppliedSession) {
         return this.rehydrateSubSession(subSessionId, suppliedSession, options);
       }
-      return this.settleRehydratedSubSessionOptions(subSessionId, restored, options);
+      return this.withSessionRestoreLock(subSessionId, async () => {
+        const current = this.agentSessionIndex.get(subSessionId);
+        if (!current) return null;
+        return this.settleRehydratedSubSessionOptions(subSessionId, current, options);
+      });
     }
 
     const rehydrateTask = this.withSessionRestoreLock(subSessionId, async () => {
@@ -4147,11 +4165,13 @@ export class TaskAgentManager {
   ): Promise<boolean> {
     const replay = (
       session as AgentSession & {
-        replayPendingMessagesForImmediateMode?: () => Promise<boolean>;
+        replayPendingMessagesForImmediateMode?: (options?: {
+          waitForPostSettlementFlush?: boolean;
+        }) => Promise<boolean>;
       }
     ).replayPendingMessagesForImmediateMode;
     if (typeof replay === 'function') {
-      return replay.call(session);
+      return replay.call(session, { waitForPostSettlementFlush: true });
     }
     return true;
   }

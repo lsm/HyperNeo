@@ -657,6 +657,44 @@ describe('QueryModeHandler', () => {
       expect(sendStatusByUuid('uuid-task')).toBe('deferred');
     });
 
+    it('awaited replay flushes deferred work after an active delivery settles', async () => {
+      db.getJobQueueRepo().enqueue({
+        queue: 'message_delivery',
+        payload: {
+          sessionId: SESSION_ID,
+          messageUuid: 'uuid-active',
+          origin: 'chat',
+          parentToolUseId: null,
+        },
+      });
+      seedRow('uuid-task', 'the deferred task', 'deferred', {
+        isSynthetic: true,
+        inputKind: 'task',
+      });
+      const handler = createHandler();
+      setTimeout(() => {
+        rawDb()
+          .prepare(
+            `DELETE FROM job_queue
+              WHERE queue = 'message_delivery'
+                AND json_extract(payload, '$.messageUuid') = ?`
+          )
+          .run('uuid-active');
+      }, 10);
+
+      const replayed = await (
+        handler as unknown as {
+          replayPendingMessagesForImmediateMode: (options: {
+            waitForPostSettlementFlush: boolean;
+          }) => Promise<boolean>;
+        }
+      ).replayPendingMessagesForImmediateMode({ waitForPostSettlementFlush: true });
+
+      expect(replayed).toBe(true);
+      expect(sendStatusByUuid('uuid-task')).toBe('enqueued');
+      expect(deliveryUuids()).toContainEqual({ uuid: 'uuid-task' });
+    });
+
     it('clears exactly once before the durable jobs are created (#1085)', async () => {
       const order: string[] = [];
       const clearSpy = mock(async () => {

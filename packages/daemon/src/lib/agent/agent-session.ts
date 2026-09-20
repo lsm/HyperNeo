@@ -914,9 +914,11 @@ export class AgentSession
     });
   }
 
-  async replayPendingMessagesForImmediateMode(): Promise<boolean> {
+  async replayPendingMessagesForImmediateMode(
+    options: { waitForPostSettlementFlush?: boolean } = {}
+  ): Promise<boolean> {
     this.reconcilerProvisioned = true;
-    return this.queryModeHandler.replayPendingMessagesForAutomaticTurnEnd();
+    return this.queryModeHandler.replayPendingMessagesForAutomaticTurnEnd(options);
   }
 
   async replayAllPendingMessages(): Promise<void> {
