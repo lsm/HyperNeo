@@ -5502,7 +5502,10 @@ export class TaskAgentManager {
     if (!candidateId) return null;
     const candidate =
       this.getSubSession(candidateId) ??
-      (await this.rehydrateSubSession(candidateId, undefined, { startQuery: false }));
+      (await this.rehydrateSubSession(candidateId, undefined, {
+        startQuery: false,
+        replayPendingMessages: true,
+      }));
     if (!candidate) return null;
     const data = candidate.getSessionData();
     if (data.status === 'ended' || data.status === 'archived') return null;

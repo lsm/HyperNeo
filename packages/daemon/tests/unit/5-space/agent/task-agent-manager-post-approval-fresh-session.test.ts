@@ -260,6 +260,64 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
     expect(fromInitSpy).not.toHaveBeenCalled();
   });
 
+  test('restart reuse replays a deferred kickoff before injecting post-approval work', async () => {
+    const tam = makeManager();
+    const restored = makeFakeSession();
+    const order: string[] = [];
+    (
+      tam as unknown as { reinjectNodeAgentMcpServer: (...a: unknown[]) => Promise<void> }
+    ).reinjectNodeAgentMcpServer = async () => {};
+    Object.assign(restored.session, {
+      replayPendingMessagesForImmediateMode: async () => {
+        order.push('replay');
+        return true;
+      },
+    });
+    (
+      tam as unknown as {
+        rehydrateSubSession: (
+          id: string,
+          supplied: AgentSessionType | undefined,
+          options: { startQuery?: boolean; replayPendingMessages?: boolean }
+        ) => Promise<AgentSessionType>;
+      }
+    ).rehydrateSubSession = async (_id, _supplied, options) => {
+      order.push('rehydrate');
+      seedLiveSession(tam);
+      const replay = (
+        restored.session as AgentSessionType & {
+          replayPendingMessagesForImmediateMode: () => Promise<boolean>;
+        }
+      ).replayPendingMessagesForImmediateMode;
+      if (options.replayPendingMessages) await replay.call(restored.session);
+      const sessions = (
+        tam as unknown as { subSessions: Map<string, Map<string, AgentSessionType>> }
+      ).subSessions;
+      sessions.get(TASK_ID)!.set(REVIEWER_SESSION_ID, restored.session);
+      (
+        tam as unknown as { agentSessionIndex: Map<string, AgentSessionType> }
+      ).agentSessionIndex.set(REVIEWER_SESSION_ID, restored.session);
+      return restored.session;
+    };
+    (
+      tam as unknown as {
+        injectMessageIntoSession: (s: AgentSessionType, m: string) => Promise<string>;
+      }
+    ).injectMessageIntoSession = async () => {
+      order.push('inject');
+      return 'msg-id';
+    };
+
+    await tam.spawnPostApprovalSubSession({
+      task: { id: TASK_ID, spaceId: SPACE_ID, workflowRunId: RUN_ID } as unknown as SpaceTask,
+      workflow: minimalWorkflow(),
+      targetAgent: REVIEWER_AGENT,
+      kickoffMessage: 'merge the PR',
+    });
+
+    expect(order).toEqual(['rehydrate', 'replay', 'inject']);
+  });
+
   test('live reuse syncs the session workspace to task.workspacePath before injection', async () => {
     const tam = makeManager();
     const live = seedLiveSession(tam);
