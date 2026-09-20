@@ -93,6 +93,51 @@ describe('SpaceRuntime — standalone task attachment', () => {
     ).toEqual([START_NODE_ID]);
   });
 
+  test('a preference change during attachment leaves the task open for reselection', async () => {
+    const [selected] = workflowManager.listWorkflows(SPACE_ID);
+    const replacement = workflowManager.createWorkflow({
+      spaceId: SPACE_ID,
+      name: 'Replacement',
+      description: '',
+      nodes: [{ id: 'replacement-start', name: 'Replacement', agentId: AGENT_ID }],
+      startNodeId: 'replacement-start',
+      tags: [],
+      completionAutonomyLevel: 3,
+    });
+    const task = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'Choose carefully',
+      description: '',
+      status: 'open',
+      preferredWorkflowId: selected.id,
+    });
+    const createPinnedRun = workflowRunRepo.createPinnedRun.bind(workflowRunRepo);
+    const create = spyOn(workflowRunRepo, 'createPinnedRun').mockImplementation((...args) => {
+      taskRepo.updateTask(task.id, { preferredWorkflowId: replacement.id });
+      return createPinnedRun(...args);
+    });
+
+    const runtime = buildRuntime();
+    try {
+      await runtime.executeTick();
+    } finally {
+      create.mockRestore();
+    }
+
+    expect(taskRepo.getTask(task.id)).toMatchObject({
+      status: 'open',
+      workflowRunId: undefined,
+      preferredWorkflowId: replacement.id,
+    });
+    expect(workflowRunRepo.listBySpace(SPACE_ID)).toHaveLength(0);
+
+    await runtime.executeTick();
+
+    const attached = taskRepo.getTask(task.id)!;
+    expect(attached.status).toBe('in_progress');
+    expect(workflowRunRepo.getRun(attached.workflowRunId!)?.workflowId).toBe(replacement.id);
+  });
+
   test('a failing attach is not retried on the very next tick', async () => {
     taskRepo.createTask({
       spaceId: SPACE_ID,

@@ -268,6 +268,7 @@ export interface SpaceRuntimeConfig {
 
 interface StartWorkflowRunOptions {
   parentTaskId?: string;
+  expectedParentPreferredWorkflowId?: string | null;
 }
 
 type WorkflowTaskRecoveryTargetStatus = 'open' | 'in_progress';
@@ -4009,6 +4010,7 @@ export class SpaceRuntime {
           description,
           rawWorkflow,
           parentTaskId: options.parentTaskId,
+          expectedParentPreferredWorkflowId: options.expectedParentPreferredWorkflowId,
         },
         createAgentTemplateResolver(spaceId, this.config.templateRepo),
         options.parentTaskId
@@ -8296,6 +8298,7 @@ export class SpaceRuntime {
         const current = this.config.taskRepo.getTask(fresh.id);
         if (!current || current.workflowRunId) continue;
         if (current.status !== 'open') continue;
+        if ((current.preferredWorkflowId ?? null) !== (fresh.preferredWorkflowId ?? null)) continue;
         if (this.getAvailableTaskSlots(space) <= 0) {
           availableSlots = 0;
           break;
@@ -8304,6 +8307,7 @@ export class SpaceRuntime {
         try {
           await this.startWorkflowRun(space.id, selected.id, current.title, current.description, {
             parentTaskId: current.id,
+            expectedParentPreferredWorkflowId: fresh.preferredWorkflowId ?? null,
           });
 
           const attached = this.config.taskRepo.getTask(current.id);
@@ -8312,6 +8316,11 @@ export class SpaceRuntime {
           this.attachBackoff.delete(current.id);
           availableSlots--;
         } catch (err) {
+          const latest = this.config.taskRepo.getTask(current.id);
+          if ((latest?.preferredWorkflowId ?? null) !== (fresh.preferredWorkflowId ?? null)) {
+            this.attachBackoff.delete(current.id);
+            continue;
+          }
           const failures = (this.attachBackoff.get(current.id)?.failures ?? 0) + 1;
           const delayMs = Math.min(ATTACH_RETRY_BASE_MS * 2 ** (failures - 1), ATTACH_RETRY_MAX_MS);
           this.attachBackoff.set(current.id, {

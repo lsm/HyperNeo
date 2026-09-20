@@ -141,6 +141,33 @@ describe('SpaceWorkflowRunRepository', () => {
       ).toEqual({ workflow_run_id: run.id, lifecycle_generation: 1 });
     });
 
+    it('rejects attachment when the parent workflow preference changed', () => {
+      const tasks = new SpaceTaskRepository(db);
+      const task = tasks.createTask({
+        spaceId,
+        title: 'Task',
+        description: '',
+        preferredWorkflowId: 'workflow-a',
+      });
+      tasks.updateTask(task.id, { preferredWorkflowId: 'workflow-b' });
+
+      expect(() =>
+        createAttachedRun({
+          spaceId,
+          workflowId: WORKFLOW_ID,
+          title: 'Run',
+          rawWorkflow: rawWorkflow(),
+          parentTaskId: task.id,
+          expectedParentPreferredWorkflowId: 'workflow-a',
+        })
+      ).toThrow('not available');
+      expect(tasks.getTask(task.id)).toMatchObject({
+        workflowRunId: undefined,
+        preferredWorkflowId: 'workflow-b',
+      });
+      expect(repo.listBySpace(spaceId)).toHaveLength(0);
+    });
+
     it('a restart immediately after pinning can rehydrate the attached run', () => {
       const task = new SpaceTaskRepository(db).createTask({
         spaceId,
