@@ -90,6 +90,7 @@ describe('SpaceWorkflowRunRepository', () => {
       expect(run.definitionVersion).toBeNull();
       expect(run.title).toBe('Run #1');
       expect(run.status).toBe('pending');
+      expect(run.blockedRetryCount).toBe(0);
       expect(run.completedAt).toBeNull();
       expect(run.startedAt).toBeNull();
     });
@@ -604,6 +605,13 @@ describe('SpaceWorkflowRunRepository', () => {
       const updated = repo.updateRun(run.id, { status: 'in_progress' });
       expect(updated!.startedAt).toBeDefined();
     });
+
+    it('persists the blocked-run retry budget', () => {
+      const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'R' });
+      const updated = repo.updateRun(run.id, { blockedRetryCount: 1 });
+      expect(updated?.blockedRetryCount).toBe(1);
+      expect(repo.getRun(run.id)?.blockedRetryCount).toBe(1);
+    });
   });
 
   describe('updateStatusUnchecked', () => {
@@ -663,6 +671,19 @@ describe('SpaceWorkflowRunRepository', () => {
       expect(updated.status).toBe('in_progress');
       expect(updated.startedAt).not.toBe(1234);
       expect(updated.completedAt).toBeNull();
+    });
+
+    it('persists a blocked retry budget with the status transition', () => {
+      const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'R' });
+      repo.updateStatusUnchecked(run.id, 'blocked');
+
+      expect(repo.casRunStatus(run.id, 'blocked', 'in_progress', { blockedRetryCount: 1 })).toBe(
+        'won'
+      );
+      expect(repo.getRun(run.id)).toMatchObject({
+        status: 'in_progress',
+        blockedRetryCount: 1,
+      });
     });
   });
 

@@ -826,6 +826,7 @@ export interface SpaceWorkflowRun {
   description?: string;
   status: WorkflowRunStatus;
   failureReason?: WorkflowRunFailureReason;
+  blockedRetryCount: number;
   createdAt: number;
   startedAt: number | null;
   updatedAt: number;

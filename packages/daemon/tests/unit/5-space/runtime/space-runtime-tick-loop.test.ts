@@ -3068,6 +3068,50 @@ describe('SpaceRuntime — tick loop correctness', () => {
       expect(retries.filter((r) => r.runId === run.id)).toEqual([]);
     });
 
+    test('a restart preserves suppression after blocked-run recovery loses to a concurrent block', async () => {
+      const retries: Array<{ runId?: string }> = [];
+      internalEventBus.subscribe(
+        'space.workflowRun.retry',
+        (payload) => {
+          retries.push({ runId: payload.runId });
+        },
+        { subscriberName: 'test-blocked-recovery:restart-suppression' }
+      );
+      let taskId = '';
+      const firstRuntime = new SpaceRuntime(
+        buildConfig(makeMockTaskAgentManager(taskRepo, nodeExecutionRepo), {
+          onWorkflowRunUpdated: () => {
+            taskRepo.updateTask(taskId, { status: 'blocked' });
+          },
+        })
+      );
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run, tasks } = await firstRuntime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      taskId = tasks[0].id;
+      (firstRuntime as unknown as { recoveryDone: boolean }).recoveryDone = true;
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      nodeExecutionRepo.update(execution.id, {
+        status: 'blocked',
+        result: 'Agent session crashed',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'blocked');
+
+      await firstRuntime.executeTick();
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
+
+      const restartedRuntime = new SpaceRuntime(
+        buildConfig(makeMockTaskAgentManager(taskRepo, nodeExecutionRepo))
+      );
+      await restartedRuntime.executeTick();
+
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
+      expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('blocked');
+      expect(taskRepo.getTask(taskId)?.status).toBe('blocked');
+      expect(retries.filter((retry) => retry.runId === run.id)).toEqual([]);
+    });
+
     test('blocked-run recovery reverts when the promoted task is reopened during the emit', async () => {
       const sessionId = 'session:reopened-during-emit';
       const retries: Array<{ runId?: string }> = [];

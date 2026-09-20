@@ -144,6 +144,7 @@ function makeRun(id: string, status = 'pending'): SpaceWorkflowRun {
     definitionVersion: null,
     title: `Run ${id}`,
     status: status as SpaceWorkflowRun['status'],
+    blockedRetryCount: 0,
     startedAt: null,
     completedAt: null,
     createdAt: Date.now(),

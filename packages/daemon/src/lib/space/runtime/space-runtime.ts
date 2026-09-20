@@ -702,6 +702,16 @@ export class SpaceRuntime {
 
   private blockedRetryCounts = new Map<string, number>();
 
+  private cacheBlockedRetryCount(runId: string, count: number): void {
+    if (count === 0) this.blockedRetryCounts.delete(runId);
+    else this.blockedRetryCounts.set(runId, count);
+  }
+
+  private setBlockedRetryCount(runId: string, count: number): void {
+    this.config.workflowRunRepo.updateRun(runId, { blockedRetryCount: count });
+    this.cacheBlockedRetryCount(runId, count);
+  }
+
   private workflowChannelsMap = new Map<string, WorkflowChannel[]>();
 
   private nonTerminalIdleStates = new Map<string, NonTerminalIdleState>();
@@ -4334,7 +4344,7 @@ export class SpaceRuntime {
     const preTxRunId = preTxTask?.workflowRunId;
     const preTxRun = preTxRunId ? this.config.workflowRunRepo.getRun(preTxRunId) : null;
     if (preTxRunId && preTxTask.spaceId === spaceId && preTxRun?.spaceId === spaceId) {
-      this.blockedRetryCounts.delete(preTxRunId);
+      this.setBlockedRetryCount(preTxRunId, 0);
       this.notifiedTaskSet.delete(blockedRunAttentionKey(preTxRunId));
       for (const key of this.nonTerminalIdleStates.keys()) {
         if (key.startsWith(preTxRunId + ':')) {
@@ -4875,6 +4885,9 @@ export class SpaceRuntime {
 
       for (const run of activeRuns) {
         if (this.executors.has(run.id)) continue;
+        if (run.blockedRetryCount > 0) {
+          this.blockedRetryCounts.set(run.id, run.blockedRetryCount);
+        }
         await this.ensureExecutorRegistered(run, space);
       }
       this.rehydrateLongHorizonSubscriptions(space.id);
@@ -7824,7 +7837,7 @@ export class SpaceRuntime {
     let effectiveRetryCount = retryCount;
     if (taskReopenedOutsideRuntime && retryCount >= MAX_BLOCKED_RUN_RETRIES) {
       effectiveRetryCount = 0;
-      this.blockedRetryCounts.set(runId, 0);
+      this.setBlockedRetryCount(runId, 0);
       this.notifiedTaskSet.delete(blockedRunAttentionKey(runId));
       log.info(
         `SpaceRuntime: canonical task ${canonicalTask.id} was reopened while run ${runId} ` +
@@ -7836,7 +7849,11 @@ export class SpaceRuntime {
       if (!taskReopenedOutsideRuntime && this.getAvailableTaskSlots(space) <= 0) return;
 
       const runSnapshot = this.config.workflowRunRepo.getRun(runId)!;
-      if (this.config.workflowRunRepo.casRunStatus(runId, ['blocked'], 'in_progress') !== 'won') {
+      if (
+        this.config.workflowRunRepo.casRunStatus(runId, ['blocked'], 'in_progress', {
+          blockedRetryCount: effectiveRetryCount + 1,
+        }) !== 'won'
+      ) {
         log.info(
           `SpaceRuntime: skipping blocked-run retry for run ${runId}; ` +
             `run status moved concurrently — keeping the concurrent status`
@@ -7877,7 +7894,7 @@ export class SpaceRuntime {
         return;
       }
 
-      this.blockedRetryCounts.set(runId, effectiveRetryCount + 1);
+      this.cacheBlockedRetryCount(runId, effectiveRetryCount + 1);
       this.notifiedTaskSet.delete(`${canonicalTask.id}:blocked`);
 
       await this.safeNotify({
@@ -7919,7 +7936,11 @@ export class SpaceRuntime {
     repairedExecutions: readonly NodeExecution[],
     runSnapshot: SpaceWorkflowRun
   ): Promise<void> {
-    if (this.config.workflowRunRepo.casRunStatus(runId, ['in_progress'], 'blocked') !== 'won') {
+    if (
+      this.config.workflowRunRepo.casRunStatus(runId, ['in_progress'], 'blocked', {
+        blockedRetryCount: MAX_BLOCKED_RUN_RETRIES,
+      }) !== 'won'
+    ) {
       return;
     }
     for (const execution of repairedExecutions) {
@@ -7936,7 +7957,7 @@ export class SpaceRuntime {
       startedAt: runSnapshot.startedAt,
       completedAt: runSnapshot.completedAt,
     });
-    this.blockedRetryCounts.set(runId, MAX_BLOCKED_RUN_RETRIES);
+    this.cacheBlockedRetryCount(runId, MAX_BLOCKED_RUN_RETRIES);
     await this.safeOnWorkflowRunUpdated(spaceId, this.config.workflowRunRepo.getRun(runId)!);
   }
 
@@ -8102,7 +8123,7 @@ export class SpaceRuntime {
       this.taskCrashCounts.delete(`${runId}:${execution.id}`);
     }
     this.clearAgentStuckStateForRun(runId);
-    this.blockedRetryCounts.delete(runId);
+    this.setBlockedRetryCount(runId, 0);
     this.notifiedTaskSet.delete(blockedRunAttentionKey(runId));
   }
 

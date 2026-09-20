@@ -229,6 +229,7 @@ export const WorkflowRunSchema = z.object({
   failureReason: z
     .enum(['humanRejected', 'maxIterationsReached', 'nodeTimeout', 'agentCrash'])
     .optional(),
+  blockedRetryCount: z.number().int().nonnegative(),
   createdAt: z.number(),
   startedAt: z.number().nullable(),
   updatedAt: z.number(),
