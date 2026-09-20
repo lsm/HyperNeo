@@ -28,6 +28,7 @@ interface FakeSessionState {
   providers: Array<() => OperationRegistry>;
   metadataUpdates: Array<Record<string, unknown>>;
   startSawCallback: boolean;
+  queryActive: boolean;
 }
 
 function makeFakeAgentSession(
@@ -40,6 +41,7 @@ function makeFakeAgentSession(
     providers: [],
     metadataUpdates: [],
     startSawCallback: false,
+    queryActive: false,
   };
   const agentSession = {
     get session() {
@@ -83,6 +85,7 @@ function makeFakeAgentSession(
     },
     startStreamingQuery: async () => {
       state.calls.push('startStreamingQuery');
+      state.queryActive = true;
       state.startSawCallback = typeof state.onMissingWorkflowMcpServers === 'function';
       if (options.beforeStart) await options.beforeStart();
       if (options.failStart) {
@@ -99,7 +102,7 @@ function makeFakeAgentSession(
       }
     },
     getProcessingState: () => ({ status: 'idle' }),
-    isQueryActiveOrStarting: () => false,
+    isQueryActiveOrStarting: () => state.queryActive,
     getSDKMessageCount: () => 0,
     stateManager: { setQueuedIfIdle: async () => true },
     replayPendingMessagesForImmediateMode: async () => {
@@ -387,6 +390,39 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     expect(fakeWithGate.state.calls.filter((call) => call === 'startStreamingQuery')).toHaveLength(
       1
     );
+  });
+
+  test('a concurrent rehydrate preserves a later replay request', async () => {
+    const { tam } = makeManager();
+    let releaseStart: (() => void) | null = null;
+    const gate = new Promise<void>((resolve) => {
+      releaseStart = resolve;
+    });
+    const fakeWithGate = makeFakeAgentSession(SUB_SESSION_ID, { beforeStart: () => gate });
+    restoreSpy = spyOn(AgentSession, 'restore').mockImplementation(
+      (() => fakeWithGate.agentSession) as unknown as typeof AgentSession.restore
+    );
+
+    const rehydrate = rehydrateOf(tam);
+    const first = rehydrate(SUB_SESSION_ID, undefined, {
+      startQuery: true,
+      replayPendingMessages: false,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const second = rehydrate(SUB_SESSION_ID, undefined, {
+      startQuery: false,
+      replayPendingMessages: true,
+    });
+    releaseStart?.();
+    const [a, b] = await Promise.all([first, second]);
+
+    expect(a).toBe(fakeWithGate.agentSession);
+    expect(b).toBe(fakeWithGate.agentSession);
+    expect(fakeWithGate.state.calls).toEqual([
+      'mergeRuntimeMcpServers',
+      'startStreamingQuery',
+      'replayPendingMessagesForImmediateMode',
+    ]);
   });
 
   test('provisioning with startQuery:false installs worker operations without starting the query', async () => {

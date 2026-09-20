@@ -3722,35 +3722,17 @@ export class TaskAgentManager {
     const inFlight = this.rehydrateInFlight.get(subSessionId);
     if (inFlight) {
       const restored = await inFlight;
-      if (!suppliedSession || restored === suppliedSession) return restored;
-      return this.rehydrateSubSession(subSessionId, suppliedSession, options);
+      if (!restored) return null;
+      if (suppliedSession && restored !== suppliedSession) {
+        return this.rehydrateSubSession(subSessionId, suppliedSession, options);
+      }
+      return this.settleRehydratedSubSessionOptions(subSessionId, restored, options);
     }
 
     const rehydrateTask = this.withSessionRestoreLock(subSessionId, async () => {
       const indexed = this.agentSessionIndex.get(subSessionId);
       if (indexed && (indexed === suppliedSession || !suppliedSession)) {
-        const shouldReplayPendingMessages =
-          options.replayPendingMessages ?? options.startQuery !== false;
-        const taskId = taskIdFromSubSessionIdentity(subSessionId);
-        if (
-          options.startQuery !== false &&
-          !indexed.isQueryActiveOrStarting() &&
-          taskId !== null &&
-          (await this.restoredWorkerStartAdmitted(indexed, taskId))
-        ) {
-          await indexed.startStreamingQuery();
-        }
-        if (
-          shouldReplayPendingMessages &&
-          taskId !== null &&
-          (await this.restoredWorkerStartAdmitted(indexed, taskId, {
-            settleReplayProvisioning: true,
-          }))
-        ) {
-          const replayed = await this.replayPendingMessagesAfterRuntimeProvisioning(indexed);
-          options.onReplaySettled?.(replayed);
-        }
-        return indexed;
+        return this.settleRehydratedSubSessionOptions(subSessionId, indexed, options);
       }
       if (indexed) {
         await this.stopSessionPreserveDb(subSessionId, indexed, { preserveDeliveryJobs: true });
@@ -3767,6 +3749,39 @@ export class TaskAgentManager {
         this.rehydrateInFlight.delete(subSessionId);
       }
     }
+  }
+
+  private async settleRehydratedSubSessionOptions(
+    subSessionId: string,
+    session: AgentSession,
+    options: {
+      startQuery?: boolean;
+      replayPendingMessages?: boolean;
+      onReplaySettled?: (succeeded: boolean) => void;
+    }
+  ): Promise<AgentSession> {
+    const taskId = taskIdFromSubSessionIdentity(subSessionId);
+    if (
+      options.startQuery !== false &&
+      !session.isQueryActiveOrStarting() &&
+      taskId !== null &&
+      (await this.restoredWorkerStartAdmitted(session, taskId))
+    ) {
+      await session.startStreamingQuery();
+    }
+    const shouldReplayPendingMessages =
+      options.replayPendingMessages ?? options.startQuery !== false;
+    if (
+      shouldReplayPendingMessages &&
+      taskId !== null &&
+      (await this.restoredWorkerStartAdmitted(session, taskId, {
+        settleReplayProvisioning: true,
+      }))
+    ) {
+      const replayed = await this.replayPendingMessagesAfterRuntimeProvisioning(session);
+      options.onReplaySettled?.(replayed);
+    }
+    return session;
   }
 
   private async performSubSessionRehydrate(
