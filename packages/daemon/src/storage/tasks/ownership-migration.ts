@@ -1,6 +1,10 @@
 import type { Database } from '../sqlite-compat.ts';
 import { buildStandaloneTaskTableSql } from './ownership-ddl.ts';
 
+function countRows(db: Database, table: string): number {
+  return (db.prepare(`SELECT COUNT(*) AS n FROM "${table}"`).get() as { n: number }).n;
+}
+
 export function migrateStandaloneTaskOwnership(db: Database): void {
   const foreignKeys = (db.prepare('PRAGMA foreign_keys').get() as { foreign_keys: number })
     .foreign_keys;
@@ -40,10 +44,17 @@ export function migrateStandaloneTaskOwnership(db: Database): void {
         db.exec(
           `INSERT INTO task_ownership_rebuild (${columnNames}) SELECT ${columnNames} FROM space_tasks`
         );
+        const source = countRows(db, 'space_tasks');
+        const rebuilt = countRows(db, 'task_ownership_rebuild');
+        if (source !== rebuilt) {
+          throw new Error(
+            `Task ownership migration copied ${rebuilt} of ${source} rows; refusing to swap tables`
+          );
+        }
         db.exec('DROP TABLE space_tasks');
         db.exec('ALTER TABLE task_ownership_rebuild RENAME TO space_tasks');
         for (const object of schemaObjects) db.exec(object.sql);
-        if (db.prepare('PRAGMA foreign_key_check').all().length > 0) {
+        if (db.prepare('PRAGMA foreign_key_check(space_tasks)').all().length > 0) {
           throw new Error('Task ownership migration found foreign-key violations');
         }
       }
