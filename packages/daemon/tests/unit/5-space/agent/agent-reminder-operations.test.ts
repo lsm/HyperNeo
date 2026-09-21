@@ -265,3 +265,99 @@ describe('the agent.reminders.list operation', () => {
     expect(outcome.value?.reminders?.map((entry) => entry.message)).toEqual(['visible']);
   });
 });
+
+describe('the agent.reminders.cancel operation', () => {
+  async function seed(remindAt = 1_000) {
+    const created = await run('agent.reminders.create', {
+      agentId: agent.id,
+      message: 'Ship the release',
+      remindAt,
+    });
+    audited = [];
+    return created.value?.reminder?.id as string;
+  }
+
+  test('cancels a pending reminder and stops it coming due', async () => {
+    const reminderId = await seed();
+    expect(reminderRepo.listDueReminders(2_000)).toHaveLength(1);
+
+    const outcome = await run('agent.reminders.cancel', { agentId: agent.id, reminderId });
+
+    expect(outcome.value?.reminder).toMatchObject({ id: reminderId, state: 'cancelled' });
+    expect(reminderRepo.listDueReminders(2_000)).toHaveLength(0);
+    expect(reminderRepo.getReminder(reminderId)?.status).toBe('cancelled');
+  });
+
+  test('a cancelled reminder is reachable through the list state filter', async () => {
+    const reminderId = await seed();
+    await run('agent.reminders.cancel', { agentId: agent.id, reminderId });
+
+    const listed = await run('agent.reminders.list', { agentId: agent.id, state: 'cancelled' });
+
+    expect(listed.value?.reminders).toHaveLength(1);
+    expect(listed.value?.reminders?.[0]).toMatchObject({ id: reminderId, state: 'cancelled' });
+  });
+
+  test('cancelling again succeeds without a second write or audit entry', async () => {
+    const reminderId = await seed();
+    await run('agent.reminders.cancel', { agentId: agent.id, reminderId });
+    const updatedAt = reminderRepo.getReminder(reminderId)?.updatedAt;
+    audited = [];
+
+    const repeat = await run('agent.reminders.cancel', { agentId: agent.id, reminderId });
+
+    expect(repeat.value?.reminder).toMatchObject({ id: reminderId, state: 'cancelled' });
+    expect(reminderRepo.getReminder(reminderId)?.updatedAt).toBe(updatedAt as number);
+    expect(audited).toEqual([]);
+  });
+
+  test('the audit entry names the operation and the reminder', async () => {
+    const reminderId = await seed();
+    await run('agent.reminders.cancel', { agentId: agent.id, reminderId });
+    expect(audited).toEqual([
+      { name: 'agent.reminders.cancel', summary: { agentId: agent.id, reminderId } },
+    ]);
+  });
+
+  test('rejects a reminder that already fired', async () => {
+    const reminderId = await seed();
+    reminderRepo.advanceReminderAfterFire(reminderId, 1_000, {
+      status: 'fired',
+      nextRunAt: null,
+      lastFiredAt: 1_000,
+    });
+
+    const outcome = await run('agent.reminders.cancel', { agentId: agent.id, reminderId });
+
+    expect(outcome.value?.reason).toBe('reminder_not_cancellable');
+    expect(reminderRepo.getReminder(reminderId)?.status).toBe('fired');
+  });
+
+  test('rejects a reminder that belongs to another agent', async () => {
+    const reminderId = await seed();
+    const other = agentRepo.create({
+      spaceId,
+      handle: 'other',
+      displayName: 'Other',
+      instructions: '',
+    });
+
+    const outcome = await run('agent.reminders.cancel', { agentId: other.id, reminderId });
+
+    expect(outcome.value?.reason).toBe('reminder_not_found');
+    expect(reminderRepo.getReminder(reminderId)?.status).toBe('active');
+  });
+
+  test('denies a read-only caller before any write', async () => {
+    const reminderId = await seed();
+
+    const outcome = await run(
+      'agent.reminders.cancel',
+      { agentId: agent.id, reminderId },
+      readOnlyCaller()
+    );
+
+    expect(outcome.value?.reason).toBe('agent_denied');
+    expect(reminderRepo.getReminder(reminderId)?.status).toBe('active');
+  });
+});

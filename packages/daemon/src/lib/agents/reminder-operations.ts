@@ -45,10 +45,17 @@ const listInputSchema = AgentSpaceScopeSchema.extend({
   state: ReminderStateSchema.optional().describe('Keep only reminders in this state'),
 }).strict();
 
+const cancelInputSchema = AgentSpaceScopeSchema.extend({
+  agentId: z.string().min(1).describe('Long-horizon agent ID'),
+  reminderId: z.string().min(1).describe('Reminder ID to cancel'),
+}).strict();
+
 type CreateInput = z.infer<typeof createInputSchema>;
 type ListInput = z.infer<typeof listInputSchema>;
+type CancelInput = z.infer<typeof cancelInputSchema>;
 type CreateResult = { reminder: ReminderRecord } | AgentRejection;
 type ListResult = { reminders: ReminderRecord[] } | AgentRejection;
+type CancelResult = { reminder: ReminderRecord } | AgentRejection;
 type Gate = { value: string } | { reason: AgentRejection };
 
 export interface AgentReminderDependencies extends AgentOperationDeps {
@@ -57,6 +64,8 @@ export interface AgentReminderDependencies extends AgentOperationDeps {
     params: CreateSpaceLongHorizonAgentReminderParams
   ) => SpaceLongHorizonAgentReminder;
   readonly listReminders: (agentId: string) => SpaceLongHorizonAgentReminder[];
+  readonly getReminder: (reminderId: string) => SpaceLongHorizonAgentReminder | null;
+  readonly cancelReminder: (reminderId: string) => boolean;
   readonly audit: (
     operationName: string,
     summary: Record<string, unknown>,
@@ -132,9 +141,38 @@ export function selectReminders(
 const SCOPE_DOC =
   'Human (RPC) callers pass spaceId; agent callers act in their own Space. Rejects agent_not_found when the agent belongs to another Space.';
 
+const CANCEL_DESCRIPTION = `Cancel a pending reminder of a long-horizon agent so it never fires, leaving it visible in the cancelled state rather than deleting it. Cancelling a reminder that is already cancelled succeeds without a write, so retries are safe, and a reminder that already fired is rejected with reminder_not_cancellable. ${SCOPE_DOC} Rejects reminder_not_found when the reminder is absent or belongs to another agent. Admitted for MCP callers whose session is active in the owning Space.`;
+
 const CREATE_DESCRIPTION = `Schedule a one-shot reminder delivered to a long-horizon agent at remindAt, a millisecond epoch timestamp, and return the created reminder. The reminder starts in the active state and moves to done once it fires. ${SCOPE_DOC} Admitted for MCP callers whose session is active in the owning Space. A caller with no Space, or one whose session is not active in that Space, is rejected with agent_denied.`;
 
 const LIST_DESCRIPTION = `List the reminders of a long-horizon agent, soonest due first, each with its message, state, and delivery time. Pass state to keep only reminders in that state: active, paused, done, or cancelled. ${SCOPE_DOC} Read access is admitted for any caller scoped to the Space; a caller with no Space is rejected with agent_denied.`;
+
+export function cancelAgentReminder(
+  spaceId: string,
+  input: CancelInput,
+  caller: OperationCaller,
+  deps: AgentReminderDependencies
+): CancelResult {
+  const existing = deps.getReminder(input.reminderId);
+  if (!existing || existing.spaceId !== spaceId || existing.agentId !== input.agentId) {
+    return rejectAgent('reminder_not_found', `Reminder not found: ${input.reminderId}`);
+  }
+  if (existing.status === 'cancelled') return { reminder: reminderRecord(existing) };
+  if (!deps.cancelReminder(input.reminderId)) {
+    return rejectAgent(
+      'reminder_not_cancellable',
+      `Reminder ${input.reminderId} already fired and cannot be cancelled`
+    );
+  }
+  deps.audit(
+    'agent.reminders.cancel',
+    { agentId: input.agentId, reminderId: input.reminderId },
+    caller,
+    spaceId
+  );
+  const cancelled = deps.getReminder(input.reminderId) ?? existing;
+  return { reminder: reminderRecord(cancelled) };
+}
 
 export function createCreateAgentReminderOperation(deps: AgentReminderDependencies) {
   const access = 'mutate' as const;
@@ -175,5 +213,26 @@ export function createListAgentRemindersOperation(deps: AgentReminderDependencie
       AgentRejectionSchema,
     ]),
     execute: async (input, caller) => list(input, caller),
+  });
+}
+
+export function createCancelAgentReminderOperation(deps: AgentReminderDependencies) {
+  const access = 'mutate' as const;
+  const cancel = (superpipe({ deps, access })('cancel-agent-reminder') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(admitAgentCaller, ['input', 'caller', 'deps', 'access'], 'result:outcome')
+    .pipe(gateReminderAgent, ['outcome', 'input', 'deps'], 'result:outcome')
+    .pipe(cancelAgentReminder, ['outcome', 'input', 'caller', 'deps'], 'outcome')
+    .endAsync('outcome') as (input: CancelInput, caller: OperationCaller) => Promise<CancelResult>;
+  return defineOperation({
+    name: 'agent.reminders.cancel',
+    policy: AGENT_MUTATE_POLICY,
+    description: CANCEL_DESCRIPTION,
+    inputSchema: cancelInputSchema,
+    resultSchema: z.union([
+      z.object({ reminder: ReminderRecordSchema }).strict(),
+      AgentRejectionSchema,
+    ]),
+    execute: async (input, caller) => cancel(input, caller),
   });
 }
