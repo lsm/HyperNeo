@@ -6,6 +6,7 @@ import type {
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
+import { isReminderDeliveryInFlight } from './reminder-delivery-registry.ts';
 import {
   admitAgentCaller,
   AGENT_MUTATE_POLICY,
@@ -141,7 +142,7 @@ export function selectReminders(
 const SCOPE_DOC =
   'Human (RPC) callers pass spaceId; agent callers act in their own Space. Rejects agent_not_found when the agent belongs to another Space.';
 
-const CANCEL_DESCRIPTION = `Cancel a pending reminder of a long-horizon agent so it never fires, leaving it visible in the cancelled state rather than deleting it. Cancelling a reminder that is already cancelled succeeds without a write, so retries are safe, and a reminder that already fired is rejected with reminder_not_cancellable. ${SCOPE_DOC} Rejects reminder_not_found when the reminder is absent or belongs to another agent. Admitted for MCP callers whose session is active in the owning Space.`;
+const CANCEL_DESCRIPTION = `Cancel a pending reminder of a long-horizon agent so it never fires, leaving it visible in the cancelled state rather than deleting it. Cancelling a reminder that is already cancelled succeeds without a write, so retries are safe, and two callers racing the same cancel both see it cancelled. A reminder that already fired, or whose delivery is already in flight, is rejected with reminder_not_cancellable rather than being reported as never fired. ${SCOPE_DOC} Rejects reminder_not_found when the reminder is absent or belongs to another agent. Admitted for MCP callers whose session is active in the owning Space.`;
 
 const CREATE_DESCRIPTION = `Schedule a one-shot reminder delivered to a long-horizon agent at remindAt, a millisecond epoch timestamp, and return the created reminder. The reminder starts in the active state and moves to done once it fires. ${SCOPE_DOC} Admitted for MCP callers whose session is active in the owning Space. A caller with no Space, or one whose session is not active in that Space, is rejected with agent_denied.`;
 
@@ -158,7 +159,15 @@ export function cancelAgentReminder(
     return rejectAgent('reminder_not_found', `Reminder not found: ${input.reminderId}`);
   }
   if (existing.status === 'cancelled') return { reminder: reminderRecord(existing) };
+  if (isReminderDeliveryInFlight(input.reminderId)) {
+    return rejectAgent(
+      'reminder_not_cancellable',
+      `Reminder ${input.reminderId} is being delivered and can no longer be cancelled`
+    );
+  }
   if (!deps.cancelReminder(input.reminderId)) {
+    const settled = deps.getReminder(input.reminderId);
+    if (settled?.status === 'cancelled') return { reminder: reminderRecord(settled) };
     return rejectAgent(
       'reminder_not_cancellable',
       `Reminder ${input.reminderId} already fired and cannot be cancelled`

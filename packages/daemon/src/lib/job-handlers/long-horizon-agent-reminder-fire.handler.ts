@@ -2,6 +2,10 @@ import type { SpaceLongHorizonAgentReminder } from '@hyperneo/shared';
 import { LONG_HORIZON_AGENT_REMINDER_FIRE } from '../job-queue-constants.ts';
 import { Logger } from '../logger.ts';
 import { getNextRunAt } from '../schedule/cron-utils.ts';
+import {
+  claimReminderDelivery,
+  isReminderDeliveryInFlight,
+} from '../agents/reminder-delivery-registry.ts';
 import type { SpaceAgentReminderRepository } from '../../storage/repositories/space-agent-reminder-repository.ts';
 import type { SpaceRepository } from '../../storage/repositories/space-repository.ts';
 import type { JobQueueRepository, Job } from '../../storage/repositories/job-queue-repository.ts';
@@ -15,8 +19,6 @@ const SCAN_DEADLINE_MS = 20_000;
 const DELIVERY_TIMEOUT_MS = 35_000;
 
 const reminderFireLocks = new Map<string, Promise<void>>();
-
-const reminderDeliveriesInFlight = new Map<string, Promise<unknown>>();
 
 export interface LongHorizonAgentReminderFireResult extends Record<string, unknown> {
   scanned: number;
@@ -163,7 +165,7 @@ async function fireReminder(
     });
     delivered = true;
   } else {
-    if (reminderDeliveriesInFlight.has(fresh.id)) {
+    if (isReminderDeliveryInFlight(fresh.id)) {
       log.debug('lh-agent-reminder-fire: delivery already in flight, deferring', {
         reminderId: fresh.id,
       });
@@ -175,13 +177,7 @@ async function fireReminder(
       message,
       idempotencyKey,
     });
-    reminderDeliveriesInFlight.set(fresh.id, delivery);
-    const clearInFlight = () => {
-      if (reminderDeliveriesInFlight.get(fresh.id) === delivery) {
-        reminderDeliveriesInFlight.delete(fresh.id);
-      }
-    };
-    delivery.then(clearInFlight, clearInFlight);
+    claimReminderDelivery(fresh.id, delivery);
     try {
       const result = await withTimeout(
         delivery,

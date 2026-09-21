@@ -14,6 +14,7 @@ import {
 } from '../../../../src/lib/operations/registry';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
 import { resolveSessionCallerScope } from '../../../../src/lib/space/runtime/space-caller-scope';
+import { claimReminderDelivery } from '../../../../src/lib/agents/reminder-delivery-registry';
 
 let db: Database;
 let agentRepo: SpaceLongHorizonAgentRepository;
@@ -331,6 +332,44 @@ describe('the agent.reminders.cancel operation', () => {
 
     expect(outcome.value?.reason).toBe('reminder_not_cancellable');
     expect(reminderRepo.getReminder(reminderId)?.status).toBe('fired');
+  });
+
+  test('rejects a reminder whose delivery is already in flight', async () => {
+    const reminderId = await seed();
+    let release = () => {};
+    claimReminderDelivery(
+      reminderId,
+      new Promise<void>((resolve) => {
+        release = resolve;
+      })
+    );
+
+    const outcome = await run('agent.reminders.cancel', { agentId: agent.id, reminderId });
+
+    expect(outcome.value?.reason).toBe('reminder_not_cancellable');
+    expect(reminderRepo.getReminder(reminderId)?.status).toBe('active');
+    release();
+  });
+
+  test('a caller that loses a cancel race still sees the reminder cancelled', async () => {
+    const reminderId = await seed();
+    const real = reminderRepo;
+    reminderRepo = {
+      ...real,
+      getReminder: (id: string) => real.getReminder(id),
+      listReminders: (id: string) => real.listReminders(id),
+      createReminder: real.createReminder.bind(real),
+      cancelReminder: (id: string) => {
+        real.cancelReminder(id);
+        return false;
+      },
+    } as unknown as SpaceAgentReminderRepository;
+
+    const outcome = await run('agent.reminders.cancel', { agentId: agent.id, reminderId });
+
+    expect(outcome.value?.reminder).toMatchObject({ id: reminderId, state: 'cancelled' });
+    expect(outcome.value?.reason).toBeUndefined();
+    reminderRepo = real;
   });
 
   test('rejects a reminder that belongs to another agent', async () => {
