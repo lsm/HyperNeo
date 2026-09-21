@@ -14,7 +14,10 @@ import {
 } from '../../../../src/lib/operations/registry';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
 import { resolveSessionCallerScope } from '../../../../src/lib/space/runtime/space-caller-scope';
-import { claimReminderDelivery } from '../../../../src/lib/agents/reminder-delivery-registry';
+import {
+  claimReminderDelivery,
+  type ReminderOccurrenceState,
+} from '../../../../src/lib/agents/reminder-delivery-registry';
 
 let db: Database;
 let agentRepo: SpaceLongHorizonAgentRepository;
@@ -25,6 +28,7 @@ let agent: SpaceLongHorizonAgent;
 let stranger: SpaceLongHorizonAgent;
 let sessions: Map<string, Session>;
 let audited: Array<{ name: string; summary: Record<string, unknown> }>;
+let occurrenceState: ReminderOccurrenceState;
 
 const MEMBER_SESSION = 'space:chat:member';
 const READ_ONLY_SESSION = 'chat:read-only';
@@ -63,6 +67,7 @@ function registry() {
       getSession: (sessionId) => sessions.get(sessionId) ?? null,
       longHorizonAgentRepo: agentRepo,
       reminderRepo,
+      getOccurrenceDeliveryState: () => occurrenceState,
       publishAgentCreated: () => {},
       audit: (name, summary) => audited.push({ name, summary }),
     })
@@ -109,6 +114,7 @@ beforeEach(() => {
     ],
   ]);
   audited = [];
+  occurrenceState = 'absent';
 });
 
 describe('the agent.reminders.create operation', () => {
@@ -371,6 +377,19 @@ describe('the agent.reminders.cancel operation', () => {
     expect(outcome.value?.reason).toBeUndefined();
     reminderRepo = real;
   });
+
+  test.each(['enqueued', 'consumed'] as const)(
+    'rejects a reminder whose occurrence is already %s for the agent',
+    async (state) => {
+      const reminderId = await seed();
+      occurrenceState = state;
+
+      const outcome = await run('agent.reminders.cancel', { agentId: agent.id, reminderId });
+
+      expect(outcome.value?.reason).toBe('reminder_not_cancellable');
+      expect(reminderRepo.getReminder(reminderId)?.status).toBe('active');
+    }
+  );
 
   test('rejects a reminder that belongs to another agent', async () => {
     const reminderId = await seed();

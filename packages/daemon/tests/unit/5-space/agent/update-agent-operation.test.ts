@@ -48,6 +48,8 @@ function registry() {
       getSession: (sessionId) => sessions.get(sessionId) ?? null,
       longHorizonAgentRepo: agentRepo,
       reminderRepo: {
+        getReminder: () => null,
+        cancelReminder: () => false,
         createReminder: () => {
           throw new Error('reminders are not exercised by this suite');
         },

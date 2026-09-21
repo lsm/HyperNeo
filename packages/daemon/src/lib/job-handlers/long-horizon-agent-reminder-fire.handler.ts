@@ -5,6 +5,7 @@ import { getNextRunAt } from '../schedule/cron-utils.ts';
 import {
   claimReminderDelivery,
   isReminderDeliveryInFlight,
+  reminderOccurrenceKey,
 } from '../agents/reminder-delivery-registry.ts';
 import type { SpaceAgentReminderRepository } from '../../storage/repositories/space-agent-reminder-repository.ts';
 import type { SpaceRepository } from '../../storage/repositories/space-repository.ts';
@@ -149,7 +150,7 @@ async function fireReminder(
   }
 
   const message = formatReminderMessage(fresh);
-  const idempotencyKey = `reminder:${fresh.id}:${fresh.nextRunAt}`;
+  const idempotencyKey = reminderOccurrenceKey(fresh.id, fresh.nextRunAt);
 
   const occurrenceState =
     getOccurrenceDeliveryState?.(fresh.spaceId, fresh.agentId, idempotencyKey) ?? 'absent';
