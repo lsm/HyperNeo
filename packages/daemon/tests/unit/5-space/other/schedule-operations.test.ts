@@ -64,6 +64,7 @@ interface Harness {
   sessions: Map<string, Session>;
   deleteSucceeds: boolean;
   createThrows: string | null;
+  transitionThrows: string | null;
   auditThrows: boolean;
 }
 
@@ -77,6 +78,7 @@ function harness(): Harness {
     sessions: new Map([['member-1', session('active', SPACE_ID)]]),
     deleteSucceeds: true,
     createThrows: null,
+    transitionThrows: null,
     auditThrows: false,
   };
   state.deps = {
@@ -103,10 +105,12 @@ function harness(): Harness {
       getSchedule: (scheduleId) => state.stored.find((entry) => entry.id === scheduleId) ?? null,
       pauseSchedule: (scheduleId) => {
         state.calls.push('pauseSchedule');
+        if (state.transitionThrows) throw new Error(state.transitionThrows);
         return schedule({ id: scheduleId, status: 'paused' });
       },
       resumeSchedule: (scheduleId) => {
         state.calls.push('resumeSchedule');
+        if (state.transitionThrows) throw new Error(state.transitionThrows);
         return schedule({ id: scheduleId, status: 'active' });
       },
       deleteSchedule: (scheduleId) => {
@@ -156,7 +160,7 @@ function run(name: string, input: unknown, caller: OperationCaller) {
 }
 
 describe('schedule operation catalog', () => {
-  test('registers the six schedule operations', () => {
+  test('registers the seven schedule operations', () => {
     expect([...h.operations.keys()].sort()).toEqual([
       'schedule.create',
       'schedule.delete',
@@ -164,6 +168,7 @@ describe('schedule operation catalog', () => {
       'schedule.list',
       'schedule.pause',
       'schedule.resume',
+      'schedule.update',
     ]);
   });
 
@@ -179,6 +184,7 @@ describe('schedule operation catalog', () => {
       ['schedule.get', 'read', READ_ROLES],
       ['schedule.pause', 'mutate', WRITE_ROLES],
       ['schedule.resume', 'mutate', WRITE_ROLES],
+      ['schedule.update', 'mutate', WRITE_ROLES],
       ['schedule.delete', 'destructive', WRITE_ROLES],
     ]);
   });
@@ -298,6 +304,77 @@ describe('schedule operation catalog', () => {
     expect(h.audits.map((entry) => entry.toolName)).toEqual(['schedule.pause', 'schedule.resume']);
   });
 
+  test('update pauses an active schedule and audits the door that was called', async () => {
+    expect(
+      await run(
+        'schedule.update',
+        { scheduleId: 'sched-1', status: 'paused' },
+        mcpCaller('ad_hoc_member')
+      )
+    ).toEqual({ ok: true, schedule: schedule({ status: 'paused' }) });
+    expect(h.calls).toEqual(['pauseSchedule']);
+    expect(h.audits.map((entry) => entry.toolName)).toEqual(['schedule.update']);
+    expect(h.audits[0]?.paramsSummary).toEqual({ schedule_id: 'sched-1', transition: 'pause' });
+  });
+
+  test('update returns a paused schedule to active through the resume path', async () => {
+    h.stored = [schedule({ status: 'paused', nextRunAt: null, pendingJobId: null })];
+    expect(
+      await run(
+        'schedule.update',
+        { scheduleId: 'sched-1', status: 'active' },
+        mcpCaller('ad_hoc_member')
+      )
+    ).toEqual({ ok: true, schedule: schedule({ status: 'active' }) });
+    expect(h.calls).toEqual(['resumeSchedule']);
+    expect(h.audits[0]?.paramsSummary).toEqual({ schedule_id: 'sched-1', transition: 'resume' });
+  });
+
+  test('update to the status a schedule already holds touches nothing', async () => {
+    expect(
+      await run(
+        'schedule.update',
+        { scheduleId: 'sched-1', status: 'active' },
+        mcpCaller('ad_hoc_member')
+      )
+    ).toEqual({ ok: true, schedule: schedule() });
+    expect(h.calls).toEqual([]);
+    expect(h.audits[0]?.paramsSummary).toEqual({ schedule_id: 'sched-1', transition: 'none' });
+  });
+
+  test('update reports the service status guard instead of swallowing it', async () => {
+    h.stored = [schedule({ status: 'completed' })];
+    h.transitionThrows = 'Schedule is not active (current: completed)';
+    expect(
+      await run(
+        'schedule.update',
+        { scheduleId: 'sched-1', status: 'paused' },
+        mcpCaller('ad_hoc_member')
+      )
+    ).toEqual({
+      ok: false,
+      reason: 'rejected',
+      message: 'Schedule is not active (current: completed)',
+    });
+    expect(h.audits).toEqual([]);
+  });
+
+  test('update cannot reach a schedule owned by another space', async () => {
+    h.stored = [schedule({ spaceId: OTHER_SPACE_ID })];
+    expect(
+      await run(
+        'schedule.update',
+        { scheduleId: 'sched-1', status: 'paused' },
+        mcpCaller('ad_hoc_member')
+      )
+    ).toEqual({
+      ok: false,
+      reason: 'schedule_not_found',
+      message: 'Schedule not found: sched-1',
+    });
+    expect(h.calls).toEqual([]);
+  });
+
   test('a concurrently advanced schedule reports modified_concurrently', async () => {
     h.deleteSucceeds = false;
     expect(
@@ -414,6 +491,25 @@ describe('invokeOperation', () => {
         mcpCaller('ad_hoc_member')
       )
     ).toEqual({ kind: 'completed', value: { ok: true } });
+  });
+
+  test('update accepts only a status the door can reach', async () => {
+    const registry = createOperationRegistry([...h.operations.values()]);
+    expect(
+      await invokeOperation(
+        registry,
+        'schedule.update',
+        { scheduleId: 'sched-1', status: 'paused' },
+        mcpCaller('ad_hoc_member')
+      )
+    ).toEqual({ kind: 'completed', value: { ok: true, schedule: schedule({ status: 'paused' }) } });
+    const completed = await invokeOperation(
+      registry,
+      'schedule.update',
+      { scheduleId: 'sched-1', status: 'completed' },
+      mcpCaller('ad_hoc_member')
+    );
+    expect(completed.kind).toBe('failed');
   });
 
   test('caller identity fields are rejected as unknown input', async () => {
