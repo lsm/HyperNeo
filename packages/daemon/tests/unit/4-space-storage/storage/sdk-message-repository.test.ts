@@ -8,6 +8,7 @@ import type {
 } from '../../../../src/storage/message-search';
 import type { ReactiveDatabase } from '../../../../src/storage/reactive-database';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
+import { createSQLiteAsciiPrefixRange } from '../../../../src/storage/sqlite-prefix-range';
 import { Database } from '../../../../src/storage/sqlite-compat';
 
 describe('SDKMessageRepository', () => {
@@ -97,6 +98,7 @@ describe('SDKMessageRepository', () => {
 			CREATE INDEX idx_sdk_messages_timestamp ON sdk_messages(timestamp);
 			CREATE INDEX idx_sdk_messages_task_id ON sdk_messages(task_id);
 			CREATE INDEX idx_sdk_messages_session_uuid ON sdk_messages(session_id, sdk_uuid);
+			CREATE INDEX idx_sdk_messages_deferred_uuid ON sdk_messages(sdk_uuid) WHERE send_status = 'deferred';
 		`);
     repository = new SDKMessageRepository(db as any);
   });
@@ -5143,6 +5145,75 @@ describe('SDKMessageRepository', () => {
       );
       expect(plan).toContain('idx_sdk_messages_session_uuid');
       expect(plan).not.toContain('SCAN sdk_messages');
+    });
+
+    it('listUserMessagesByUuidPrefix seeks idx_sdk_messages_session_uuid', () => {
+      const { lowerBound, upperBound } = createSQLiteAsciiPrefixRange('uuid-');
+      const plan = queryPlan(
+        `SELECT rowid AS row_id, id, sdk_message, timestamp, COALESCE(send_status, 'consumed') AS send_status FROM sdk_messages
+         WHERE session_id = ?
+           AND message_type = 'user'
+           AND sdk_uuid >= ?
+           AND sdk_uuid < ?
+         ORDER BY timestamp DESC, rowid DESC
+         LIMIT ?`,
+        ['s1', lowerBound, upperBound, 100]
+      );
+      expect(plan).toContain('idx_sdk_messages_session_uuid');
+      expect(plan).not.toContain('SCAN sdk_messages');
+    });
+
+    it('deferred digest rehydration seeks idx_sdk_messages_deferred_uuid', () => {
+      const { lowerBound, upperBound } = createSQLiteAsciiPrefixRange('digest-');
+      const plan = queryPlan(
+        `SELECT id, session_id, sdk_message, task_id FROM sdk_messages
+         WHERE send_status = 'deferred' AND sdk_uuid >= ? AND sdk_uuid < ?`,
+        [lowerBound, upperBound]
+      );
+      expect(plan).toContain('idx_sdk_messages_deferred_uuid');
+      expect(plan).not.toContain('SCAN sdk_messages');
+    });
+  });
+
+  describe('listUserMessagesByUuidPrefix', () => {
+    it('matches literal prefixes and preserves descending row order across pages', () => {
+      const insert = db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid)
+         VALUES (?, ?, 'user', ?, ?, 'deferred', ?)`
+      );
+      for (let index = 0; index < 105; index++) {
+        const uuid = index === 103 ? 'digest-%literal' : `digest-${index}`;
+        insert.run(
+          `digest-${index}`,
+          'prefix-session',
+          JSON.stringify(createUserMessage(`message-${index}`, uuid)),
+          new Date(index).toISOString(),
+          uuid
+        );
+      }
+      insert.run(
+        'wildcard-neighbor',
+        'prefix-session',
+        JSON.stringify(createUserMessage('neighbor', 'digestX-neighbor')),
+        new Date(200).toISOString(),
+        'digestX-neighbor'
+      );
+      insert.run(
+        'other-session',
+        'other-session',
+        JSON.stringify(createUserMessage('other', 'digest-other')),
+        new Date(300).toISOString(),
+        'digest-other'
+      );
+
+      const messages = repository.listUserMessagesByUuidPrefix('prefix-session', 'digest-');
+
+      expect(messages).toHaveLength(105);
+      expect(messages.map((message) => message.uuid)).toEqual(
+        Array.from({ length: 105 }, (_, index) =>
+          index === 1 ? 'digest-%literal' : `digest-${104 - index}`
+        )
+      );
     });
   });
 

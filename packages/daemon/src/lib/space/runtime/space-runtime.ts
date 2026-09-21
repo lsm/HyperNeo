@@ -33,6 +33,7 @@ import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import { isSDKResultError, isSDKResultSuccess } from '@hyperneo/shared/sdk';
 import { activatePrompts } from '../../agent/message-delivery-outbox.ts';
 import type { ReactiveDatabase } from '../../../storage/reactive-database.ts';
+import { createSQLiteAsciiPrefixRange } from '../../../storage/sqlite-prefix-range.ts';
 import {
   ChannelCycleRepository,
   DEAD_LOOP_THRESHOLD,
@@ -4976,12 +4977,15 @@ export class SpaceRuntime {
     this.pruneDigestHandoffDebt();
     const store = this.config.externalEventStore;
     if (!store) return;
+    const { lowerBound, upperBound } = createSQLiteAsciiPrefixRange(
+      DETERMINISTIC_DIGEST_UUID_PREFIX
+    );
     const rows = this.config.db
       .prepare(
         `SELECT id, session_id, sdk_message, task_id FROM sdk_messages
-         WHERE send_status = 'deferred' AND sdk_uuid LIKE ? || '%'`
+         WHERE send_status = 'deferred' AND sdk_uuid >= ? AND sdk_uuid < ?`
       )
-      .all(DETERMINISTIC_DIGEST_UUID_PREFIX) as Array<{
+      .all(lowerBound, upperBound) as Array<{
       id: string;
       session_id: string;
       sdk_message: string;

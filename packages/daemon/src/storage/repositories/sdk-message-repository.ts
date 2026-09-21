@@ -27,6 +27,7 @@ import {
   type MessageSearchResult,
 } from '../message-search.ts';
 import type { ReactiveDatabase } from '../reactive-database.ts';
+import { createSQLiteAsciiPrefixRange } from '../sqlite-prefix-range.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import type { SQLiteValue } from '../types.ts';
 import {
@@ -1495,21 +1496,37 @@ export class SDKMessageRepository {
     prefix: string
   ): Array<SDKUserMessage & { dbId: string; timestamp: number; sendStatus: string }> {
     const pageSize = 100;
+    const { lowerBound, upperBound } = createSQLiteAsciiPrefixRange(prefix);
     const messages: Array<
       SDKUserMessage & { dbId: string; timestamp: number; sendStatus: string }
     > = [];
-    let offset = 0;
+    let cursor: { timestamp: string; rowId: number } | null = null;
     for (;;) {
+      const cursorClause = cursor ? 'AND (timestamp < ? OR (timestamp = ? AND rowid < ?))' : '';
+      const params = cursor
+        ? [
+            sessionId,
+            lowerBound,
+            upperBound,
+            cursor.timestamp,
+            cursor.timestamp,
+            cursor.rowId,
+            pageSize,
+          ]
+        : [sessionId, lowerBound, upperBound, pageSize];
       const rows = this.db
         .prepare(
-          `SELECT id, sdk_message, timestamp, COALESCE(send_status, 'consumed') AS send_status FROM sdk_messages
+          `SELECT rowid AS row_id, id, sdk_message, timestamp, COALESCE(send_status, 'consumed') AS send_status FROM sdk_messages
 	       WHERE session_id = ?
 	         AND message_type = 'user'
-	         AND sdk_uuid LIKE ? || '%'
+	         AND sdk_uuid >= ?
+	         AND sdk_uuid < ?
+	         ${cursorClause}
 	       ORDER BY timestamp DESC, rowid DESC
-	       LIMIT ? OFFSET ?`
+	       LIMIT ?`
         )
-        .all(sessionId, prefix, pageSize, offset) as Array<{
+        .all(...params) as Array<{
+        row_id: number;
         id: string;
         sdk_message: string;
         timestamp: string;
@@ -1525,7 +1542,8 @@ export class SDKMessageRepository {
         )
       );
       if (rows.length < pageSize) return messages;
-      offset += pageSize;
+      const lastRow = rows[rows.length - 1];
+      cursor = { timestamp: lastRow.timestamp, rowId: lastRow.row_id };
     }
   }
 
