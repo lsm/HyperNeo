@@ -1,9 +1,10 @@
 import { describe, expect, test, afterEach } from 'bun:test';
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { existsSync, rmSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readAndClearEventLoopStallMarker } from '../../../src/lib/event-loop-stall-marker';
 import {
   armStallDetectionWhenStartupSettles,
   startEventLoopWatchdog,
@@ -43,10 +44,14 @@ interface SpawnedFixture {
   stderrText: () => string;
 }
 
-function spawnBunFixture(fixtureFileName: string): SpawnedFixture {
+function spawnBunFixture(
+  fixtureFileName: string,
+  env: Record<string, string> = {}
+): SpawnedFixture {
   const fixturePath = fileURLToPath(new URL(`./${fixtureFileName}`, import.meta.url));
   const child = spawn(resolveBunExecutable(), [fixturePath], {
     stdio: ['ignore', 'ignore', 'pipe'],
+    env: { ...process.env, ...env },
   });
   const stderrChunks: Buffer[] = [];
   child.stderr.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
@@ -199,15 +204,41 @@ describe('event-loop-watchdog', () => {
     }
   });
 
-  test('kills a process whose event loop spins forever', async () => {
-    const { child, closed, stderrText } = spawnBunFixture('event-loop-watchdog-kill-fixture.ts');
+  test('kills a process whose event loop spins forever when sigkill is opted into', async () => {
+    const markerPath = join(tmpdir(), `watchdog-marker-${process.pid}-${Date.now()}.json`);
+    const { child, closed, stderrText } = spawnBunFixture('event-loop-watchdog-kill-fixture.ts', {
+      WATCHDOG_MARKER_PATH: markerPath,
+    });
     try {
       const outcome = await withTimeout(closed, 10_000, 'watchdog kill');
       expect(stderrText()).toContain('fixture: spinning forever');
       expect(stderrText()).toContain('[EventLoopWatchdog] killing daemon');
       expect(outcome.signal).toBe('SIGKILL');
+
+      const marker = readAndClearEventLoopStallMarker(markerPath);
+      expect(marker).toMatchObject({ action: 'killed', pid: child.pid });
+      expect(marker?.reason).toContain('event loop stalled');
+      expect(readAndClearEventLoopStallMarker(markerPath)).toBeNull();
     } finally {
       child.kill('SIGKILL');
+      rmSync(markerPath, { force: true });
+    }
+  }, 12_000);
+
+  test('a spinning process is left alive by default and still leaves a marker', async () => {
+    const markerPath = join(tmpdir(), `watchdog-observe-${process.pid}-${Date.now()}.json`);
+    const { child, stderrText } = spawnBunFixture('event-loop-watchdog-observe-fixture.ts', {
+      WATCHDOG_MARKER_PATH: markerPath,
+    });
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 2500));
+      expect(child.kill(0)).toBe(true);
+      expect(stderrText()).toContain('[EventLoopWatchdog] daemon pid=');
+      expect(stderrText()).not.toContain('killing daemon');
+      expect(readAndClearEventLoopStallMarker(markerPath)).toMatchObject({ action: 'observed' });
+    } finally {
+      child.kill('SIGKILL');
+      rmSync(markerPath, { force: true });
     }
   }, 12_000);
 

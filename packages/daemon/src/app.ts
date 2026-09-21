@@ -75,11 +75,17 @@ import {
 import { createReactiveDatabase } from './storage/reactive-database.ts';
 import { LiveQueryEngine } from './storage/live-query.ts';
 import { installProcessFatalLogging } from './lib/process-fatal-logger.ts';
+import { dirname } from 'node:path';
 import {
   armStallDetectionWhenStartupSettles,
   startEventLoopWatchdog,
   type EventLoopWatchdogHandle,
 } from './lib/event-loop-watchdog.ts';
+import {
+  describeEventLoopStallMarker,
+  eventLoopStallMarkerPath,
+  readAndClearEventLoopStallMarker,
+} from './lib/event-loop-stall-marker.ts';
 import { WorkflowHookRuntimeService } from './lib/workflows/hook-runtime-service.ts';
 import { WorkflowHookStateRepository } from './storage/repositories/workflow-hook-state-repository.ts';
 import { SpaceLongHorizonAgentRepository } from './storage/repositories/space-long-horizon-agent-repository.ts';
@@ -373,7 +379,27 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     delete process.env.CLAUDECODE;
 
     if (process.env.NODE_ENV !== 'test') {
-      eventLoopWatchdog = await startEventLoopWatchdog({ deferStallDetection: true });
+      const stallMarkerPath = eventLoopStallMarkerPath(dirname(config.dbPath));
+      eventLoopWatchdog = await startEventLoopWatchdog({
+        deferStallDetection: true,
+        markerPath: stallMarkerPath,
+        onNotice: (notice) => {
+          if (notice.type === 'stall-detected') {
+            console.error(
+              `[Daemon] Event loop unresponsive for ${notice.stalledForMs}ms; the daemon is not ` +
+                `serving requests. Marker written to ${stallMarkerPath}`
+            );
+          } else if (notice.type === 'stall-recovered') {
+            console.error(`[Daemon] Event loop recovered after ${notice.stalledForMs}ms`);
+          } else {
+            console.error(`[Daemon] Graceful shutdown overdue by ${notice.overdueMs}ms`);
+          }
+        },
+      });
+      const priorStall = readAndClearEventLoopStallMarker(stallMarkerPath);
+      if (priorStall) {
+        console.error(`[Daemon] ${describeEventLoopStallMarker(priorStall)}`);
+      }
 
       const prefetchLogInfo = verbose ? console.log : () => {};
       const prefetchLogError = verbose ? console.error : () => {};

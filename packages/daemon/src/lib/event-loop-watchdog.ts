@@ -40,6 +40,7 @@ export function armStallDetectionWhenStartupSettles(
 
 export type EventLoopWatchdogNotice =
   | { type: 'stall-detected'; stalledForMs: number }
+  | { type: 'stall-recovered'; stalledForMs: number }
   | { type: 'fuse-expired'; overdueMs: number };
 
 export interface EventLoopWatchdogOptions {
@@ -48,6 +49,7 @@ export interface EventLoopWatchdogOptions {
   heartbeatMs?: number;
   shutdownFuseMs?: number;
   killMode?: 'sigkill' | 'observe';
+  markerPath?: string;
   onNotice?: (notice: EventLoopWatchdogNotice) => void;
 }
 
@@ -78,7 +80,7 @@ export async function startEventLoopWatchdog(
   const stallMs = options.stallMs ?? EVENT_LOOP_WATCHDOG_STALL_MS;
   const heartbeatMs = options.heartbeatMs ?? EVENT_LOOP_WATCHDOG_HEARTBEAT_MS;
   const shutdownFuseMs = options.shutdownFuseMs ?? EVENT_LOOP_WATCHDOG_SHUTDOWN_FUSE_MS;
-  const killMode = options.killMode ?? 'sigkill';
+  const killMode = options.killMode ?? 'observe';
 
   let worker: Worker;
   try {
@@ -92,6 +94,7 @@ export async function startEventLoopWatchdog(
         stallMs,
         checkIntervalMs,
         killMode,
+        markerPath: options.markerPath,
         deferStallDetection: options.deferStallDetection ?? false,
       },
     });
