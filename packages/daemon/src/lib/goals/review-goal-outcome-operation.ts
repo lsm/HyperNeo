@@ -249,10 +249,10 @@ export function applyOutcomeClaim(
 }
 
 const LIST_DESCRIPTION =
-  'List the terminal goal-outcome notifications you can claim, newest first. The owner identity is resolved from the calling session and never taken from input, so this returns only what you may act on. Resolve one with goal.outcome.resolve.';
+  'List the terminal goal-outcome notifications you can claim, oldest first, up to 100. The owner identity is resolved from the calling session and never taken from input, so this returns only what you may act on. Resolve one with goal.outcome.resolve.';
 
 const RESOLVE_DESCRIPTION =
-  'Terminalize one goal-outcome notification with a disposition (acknowledge, reject, supersede), or acknowledge it while persisting goal-state updates (summary, nextSteps, metrics, observations, progress). notificationId, goalId and taskId are all required — copy them from goal.outcome.list or the wake. Goal-state updates require the acknowledge disposition. Only the goal owner identity resolved from the calling session may claim; the reviewing actor is never taken from input. Claims are single-owner and idempotent, so a retry of the same claim returns already_applied without duplicating effects.';
+  'Terminalize one goal-outcome notification with a disposition (acknowledge, reject, supersede), or acknowledge it while persisting goal-state updates (summary, nextSteps, metrics, observations, progress). notificationId, goalId and taskId are all required and come from goal.outcome.list; the outcome wake names the goal and task in prose but carries none of the three identities. Goal-state updates require the acknowledge disposition. Only the goal owner identity resolved from the calling session may claim; the reviewing actor is never taken from input. Claims are single-owner and idempotent, so a retry of the same claim returns already_applied without duplicating effects.';
 
 export function createListGoalOutcomeNotificationsOperation(deps: ReviewGoalOutcomeDependencies) {
   const list = (superpipe({ deps })('goal-outcome-list') as PipelineAPI)

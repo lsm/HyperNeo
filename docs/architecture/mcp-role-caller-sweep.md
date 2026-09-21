@@ -162,7 +162,7 @@ which tools a session can see.
 | agent (all 17) | yes | yes | no | no | no |
 | goal (read: list/get/tasks.list/events.list/owner.get) | yes | yes | yes | no | no |
 | goal (mutate: create/update/pause/resume/triggerTask) | yes | yes | no | no | no |
-| goal (owner: outcome.list, outcome.resolve) | no | yes | no | no | no |
+| goal (owner: reviewOutcome) | no | yes | no | no | no |
 | forge (read) | yes | yes | yes | no | no |
 | forge (mutate/destructive) | yes | yes | no | no | no |
 | workflow (list/suggest/get/run.get) | yes | yes | yes | yes | no |
