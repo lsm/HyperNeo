@@ -48,7 +48,7 @@ export interface OwnedPendingCompletionDependencies {
   dispatchApproval: (
     spaceId: string,
     taskId: string,
-    source: 'human',
+    source: 'human' | 'agent',
     reason: string | null,
     guard: { expectedPendingCompletionGeneration: number }
   ) => Promise<unknown>;
@@ -160,18 +160,23 @@ export async function loadCompletionTarget(
   return requireCompletionTarget(await getTask(input.taskId), input, actor);
 }
 
+function resolveCompletionApprovalSource(actor: CompletionActor): 'human' | 'agent' {
+  return actor.source === 'mcp' ? 'agent' : 'human';
+}
+
 function bindOwnedCompletion(
   previous: SpaceTask,
+  actor: CompletionActor,
   getTaskManager: OwnedPendingCompletionDependencies['getTaskManager'],
   dispatchApproval: OwnedPendingCompletionDependencies['dispatchApproval'],
   warn: OwnedPendingCompletionDependencies['warn']
 ): PendingCompletionDependencies {
   const manager = getTaskManager(previous.spaceId);
   const guard = { expectedPendingCompletionGeneration: previous.pendingCompletionGeneration ?? 0 };
+  const source = resolveCompletionApprovalSource(actor);
   return {
     getTask: (id) => manager.getTask(id),
-    dispatchApproval: (id, reason) =>
-      dispatchApproval(previous.spaceId, id, 'human', reason, guard),
+    dispatchApproval: (id, reason) => dispatchApproval(previous.spaceId, id, source, reason, guard),
     reopenTask: (id, reason) => manager.reopenPendingCompletion(id, reason, guard),
     updateTask: (id, fields) => manager.updateTask(id, fields),
     warn,
@@ -220,7 +225,7 @@ export function createOwnedPendingCompletionOperation(
     .pipe(restageOrphanedCheckpoint, ['task', 'getTaskManager'], 'previous')
     .pipe(
       bindOwnedCompletion,
-      ['previous', 'getTaskManager', 'dispatchApproval', 'warn'],
+      ['previous', 'actor', 'getTaskManager', 'dispatchApproval', 'warn'],
       [
         'getTask:readOwnedTask',
         'dispatchApproval:dispatchOwnedApproval',
@@ -246,7 +251,7 @@ export function createOwnedPendingCompletionOperation(
   return defineOperation({
     name: 'task.resolvePendingCompletion',
     description:
-      'Approve or reject a Space task awaiting completion review. MCP requires a Space agent session in the owning space or a legacy task-agent session. Both transports use human approval semantics. Standalone tasks are unsupported. Approval may return postApprovalBlockedReason when post-approval work could not dispatch.',
+      'Approve or reject a Space task awaiting completion review. MCP requires a Space agent session in the owning space or a legacy task-agent session. Both transports carry the same human approval weight, and a long-term agent caller needs the human-only autonomy level to be admitted while a legacy task-agent session is exempt from that gate, but an approval records who made it: approvalSource is agent for an MCP caller and human for an RPC or internal one. A rejection reopens the task to in_progress and leaves approvalSource null. Standalone tasks are unsupported. Approval may return postApprovalBlockedReason when post-approval work could not dispatch.',
     inputSchema: z
       .object({
         taskId: z.string().min(1),
