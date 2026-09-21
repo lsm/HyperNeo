@@ -155,6 +155,9 @@ export function listClaimableOutcomeNotifications(
     if (!isAuthorized) continue;
     claimable.push(...notificationRepo.listPendingByGoal(goal.id));
   }
+  claimable.sort(
+    (left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id)
+  );
   return claimable.slice(0, params.limit ?? 100);
 }
 

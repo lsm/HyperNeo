@@ -267,6 +267,43 @@ describe('SpaceGoalService.claimOutcomeNotification', () => {
       expect(notifications.map((n) => n.id)).toEqual([notification.id]);
     });
 
+    it('orders notifications across goals oldest first, not grouped by goal', () => {
+      const second = service.createGoal({ spaceId: goal.spaceId, title: 'Second' });
+      resolutions[second.id] = {
+        action: 'resolved',
+        owner: { agentId: 'agent-1', relationship: 'owner', createdAt: Date.now() },
+        conflicts: [],
+      };
+      const secondTask = taskRepo.createTask({
+        spaceId: goal.spaceId,
+        title: 'Second task',
+        goalId: second.id,
+      });
+      const younger = notificationRepo.create({
+        spaceId: goal.spaceId,
+        goalId: second.id,
+        taskId: secondTask.id,
+        terminalGeneration: 1,
+        goalRevision: second.revision,
+        payload: {
+          summary: '',
+          taskStatus: 'done',
+          taskTitle: 'Second task',
+          goalTitle: 'Second',
+        },
+      });
+
+      const notifications = service.listClaimableOutcomeNotifications({
+        spaceId: goal.spaceId,
+        callerAgentId: 'agent-1',
+        humanAdmissionAllowed: false,
+      });
+
+      expect(notifications.map((n) => n.id).sort()).toEqual([notification.id, younger.id].sort());
+      const stamps = notifications.map((n) => n.createdAt);
+      expect(stamps).toEqual([...stamps].sort((left, right) => left - right));
+    });
+
     it('excludes goals the caller does not own', () => {
       const otherGoal = service.createGoal({ spaceId: goal.spaceId, title: 'Other' });
       resolutions[otherGoal.id] = {

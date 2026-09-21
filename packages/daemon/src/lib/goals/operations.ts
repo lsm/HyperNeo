@@ -21,7 +21,8 @@ import {
 } from './list-goal-tasks-operation.ts';
 import { createListGoalsOperation, type ListGoalsDependencies } from './list-goals-operation.ts';
 import {
-  createReviewGoalOutcomeOperation,
+  createListGoalOutcomeNotificationsOperation,
+  createResolveGoalOutcomeOperation,
   type ReviewGoalOutcomeDependencies,
 } from './review-goal-outcome-operation.ts';
 import { createUpdateGoalOperation, type UpdateGoalDependencies } from './update-goal-operation.ts';
@@ -48,6 +49,7 @@ export function createGoalOperations(deps: GoalOperationDependencies): Operation
     createPauseGoalOperation(deps),
     createResumeGoalOperation(deps),
     createTriggerGoalTaskOperation(deps),
-    createReviewGoalOutcomeOperation(deps),
+    createListGoalOutcomeNotificationsOperation(deps),
+    createResolveGoalOutcomeOperation(deps),
   ];
 }
