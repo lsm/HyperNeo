@@ -10,7 +10,6 @@ import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories
 import type { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository.ts';
 import { isRunnableUnifiedAgent } from '../agents/worker-long-horizon-mapper.ts';
 import { Logger } from '../logger.ts';
-import { patchPinnedBuiltInPromptDrift } from './built-in-prompt-drift.ts';
 import { validatePostApproval, validatePostApprovalRoutes } from './post-approval-validator.ts';
 import '../github/connectors/production.ts';
 import type { SpaceAgentTemplateRepository } from '../../storage/repositories/space-agent-template-repository.ts';
@@ -150,8 +149,7 @@ export class SpaceWorkflowManager {
   }): SpaceWorkflow | null {
     const raw = this.repo.getWorkflowForRun(run);
     if (!raw) return null;
-    const drifted = run.definitionVersion ? patchPinnedBuiltInPromptDrift(raw) : raw;
-    return this.sanitizePostApprovalForLoad(drifted);
+    return this.sanitizePostApprovalForLoad(raw);
   }
 
   getWorkflowByHandle(spaceId: string, handle: string): SpaceWorkflow | null {

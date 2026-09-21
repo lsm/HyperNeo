@@ -19,6 +19,12 @@ import {
   computeDefinitionVersion,
   stableVersionTimestamp,
 } from '../../../../src/lib/workflows/definition-version';
+import {
+  CODER_ONLY_PROMPT,
+  CODER_ONLY_WORKFLOW,
+  EXTERNAL_REVIEW_BOTS_GUIDANCE,
+  EXTERNAL_REVIEW_BOTS_GUIDANCE_PRE_TYPENAME,
+} from '../../../../src/lib/workflows/built-in-workflows';
 
 describe('SpaceWorkflowManager', () => {
   let db: Database;
@@ -1347,6 +1353,40 @@ describe('SpaceWorkflowManager', () => {
       const resolved = manager.getWorkflowForRun({ workflowId: wf.id, definitionVersion: pin });
       expect(resolved!.name).toBe('Original');
       expect(manager.getWorkflow(wf.id)!.name).toBe('Edited');
+    });
+
+    it('preserves the prompt bytes stored in a pinned built-in definition', () => {
+      const pinnedPrompt = CODER_ONLY_PROMPT.replace(
+        EXTERNAL_REVIEW_BOTS_GUIDANCE,
+        EXTERNAL_REVIEW_BOTS_GUIDANCE_PRE_TYPENAME
+      );
+      const pinnedWorkflow = {
+        ...CODER_ONLY_WORKFLOW,
+        id: 'pinned-built-in',
+        spaceId: 'space-1',
+        templateName: CODER_ONLY_WORKFLOW.name,
+        nodes: CODER_ONLY_WORKFLOW.nodes.map((node, nodeIndex) =>
+          nodeIndex === 0
+            ? {
+                ...node,
+                agents: node.agents.map((agent, agentIndex) =>
+                  agentIndex === 0 ? { ...agent, customPrompt: { value: pinnedPrompt } } : agent
+                ),
+              }
+            : node
+        ),
+      };
+      const pinnedRepo = {
+        getWorkflowForRun: () => pinnedWorkflow,
+      } as unknown as SpaceWorkflowRepository;
+      const pinnedManager = new SpaceWorkflowManager(pinnedRepo);
+
+      const resolved = pinnedManager.getWorkflowForRun({
+        workflowId: pinnedWorkflow.id,
+        definitionVersion: 'pinned-version',
+      });
+
+      expect(resolved?.nodes[0]?.agents[0]?.customPrompt?.value).toBe(pinnedPrompt);
     });
 
     it('fails closed when the pinned version row is absent', () => {

@@ -15,11 +15,8 @@ import {
   REVIEWER_POST_APPROVAL_BLOCKER_PARAGRAPH,
   REVIEWER_ZERO_FINDINGS_GATE,
 } from '@hyperneo/prompts';
-import type { SpaceWorkflow, WorkflowNode, WorkflowNodeAgentOverride } from '@hyperneo/shared';
-import {
-  patchLegacyStableSlotPrompt,
-  RETIRED_ESCALATION_FULLSTACK_CODING_NOCHANGE_GUIDANCE,
-} from './built-in-legacy-slot-prompts.ts';
+import type { WorkflowNodeAgentOverride } from '@hyperneo/shared';
+import { RETIRED_ESCALATION_FULLSTACK_CODING_NOCHANGE_GUIDANCE } from './built-in-legacy-slot-prompts.ts';
 import {
   RETIRED_PRE_BASE_ADVANCE_POLICY_CODER_ONLY_PROMPT,
   RETIRED_PRE_EVENT_DRIVEN_CODER_ONLY_PROMPT,
@@ -35,7 +32,6 @@ import {
   RETIRED_PRE_EVENT_DRIVEN_RESEARCH_PROMPT,
   RETIRED_PRE_REVIEW_MODES_RESEARCH_PROMPT,
 } from './built-in-retired-prompts-research.ts';
-import { resolveBuiltInWorkflowTemplate } from './built-in-workflows.ts';
 import {
   RETIRED_INLINE_OPERATION_PROMPT_PAIRS,
   RETIRED_INLINE_EXTERNAL_REVIEW_BOTS_GUIDANCE,
@@ -403,65 +399,6 @@ export function patchKnownBuiltInPromptDrift<T extends WorkflowNodeAgentOverride
 
 function isExactRetiredBuiltInPrompt(existingValue: string, templateValue: string): boolean {
   return buildRetiredBuiltInPromptValues(templateValue).some((value) => existingValue === value);
-}
-
-function findTemplateNodeBySlotPromptFamily(
-  templateNodes: WorkflowNode[],
-  node: WorkflowNode
-): WorkflowNode | undefined {
-  if (node.agents.length !== 1) return undefined;
-  const slotPrompt = node.agents[0]?.customPrompt;
-  const matches = templateNodes.filter(
-    (candidate) =>
-      candidate.agents.length === 1 &&
-      patchKnownBuiltInPromptDrift(slotPrompt, candidate.agents[0]?.customPrompt) !== slotPrompt
-  );
-  return matches.length === 1 ? matches[0] : undefined;
-}
-
-export function patchPinnedBuiltInPromptDrift(workflow: SpaceWorkflow): SpaceWorkflow {
-  const template = resolveBuiltInWorkflowTemplate(workflow.templateName ?? '');
-  if (!template) return workflow;
-  let changed = false;
-  const nodes = workflow.nodes.map((node) => {
-    const templateNode =
-      template.nodes.find((candidate) => candidate.id === node.id) ??
-      template.nodes.find((candidate) => candidate.name === node.name) ??
-      findTemplateNodeBySlotPromptFamily(template.nodes, node);
-    if (!templateNode) return node;
-    const agents = node.agents.map((agent) => {
-      const templateAgent =
-        (agent.agentId
-          ? templateNode.agents.find((candidate) => candidate.agentId === agent.agentId)
-          : undefined) ??
-        templateNode.agents.find((candidate) => candidate.name === agent.name) ??
-        (templateNode.agents.length === 1 && node.agents.length === 1
-          ? templateNode.agents[0]
-          : undefined);
-      if (!templateAgent) return agent;
-      const drifted = patchKnownBuiltInPromptDrift(agent.customPrompt, templateAgent.customPrompt);
-      const nodeKeyed = patchLegacyStableSlotPrompt(
-        drifted?.value,
-        templateAgent.customPrompt?.value,
-        node.name,
-        agent.name
-      );
-      const value =
-        nodeKeyed !== undefined && nodeKeyed !== agent.customPrompt?.value
-          ? nodeKeyed
-          : patchLegacyStableSlotPrompt(
-              drifted?.value,
-              templateAgent.customPrompt?.value,
-              template.name,
-              agent.name
-            );
-      if (value === undefined || value === agent.customPrompt?.value) return agent;
-      changed = true;
-      return { ...agent, customPrompt: { value } };
-    });
-    return agents === node.agents ? node : { ...node, agents };
-  });
-  return changed ? { ...workflow, nodes } : workflow;
 }
 
 function buildRetiredBuiltInPromptValues(templateValue: string): string[] {
