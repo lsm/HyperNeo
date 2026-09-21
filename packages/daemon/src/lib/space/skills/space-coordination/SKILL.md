@@ -56,10 +56,6 @@ Call the task reassign RPC with `taskId` and either a built-in agent type or wor
 
 Call the workflow list RPC with `spaceId`. Return workflow ids, names, descriptions, tags, and node counts.
 
-### workflow.suggest(description)
-
-The MCP tool intentionally returns all workflows and lets the model reason over them. Do the same here: list workflows, compare them against the description, and explain your recommended workflow.
-
 ### workflow.get(workflowId)
 
 Call the workflow detail RPC with `workflowId`. Return nodes, transitions, gates, completion/autonomy levels, and relevant instructions.
