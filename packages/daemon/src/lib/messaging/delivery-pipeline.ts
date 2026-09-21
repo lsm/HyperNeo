@@ -2,7 +2,7 @@ import type { MessageInputKind } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { UUID } from 'crypto';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import { ClearConversationCancelledError, type AgentSession } from '../agent/agent-session.ts';
+import { type AgentSession, ClearConversationCancelledError } from '../agent/agent-session.ts';
 import type { MessageDeliveryOrigin } from '../agent/message-delivery.ts';
 import {
   acquireContextClearBoundary,
@@ -217,6 +217,8 @@ export function planDeliveryAdmission(
     status === 'rate_limit_cooldown';
   const shouldDefer =
     status === 'rate_limit_cooldown' ||
+    status === 'waiting_for_input' ||
+    status === 'interrupted' ||
     (task !== null &&
       (deps.isRateOrUsageLimited(task.status ?? '') || task.status === 'blocked')) ||
     deps.hasHeldDeliveryBacklog(sessionId, ctx.messageId) ||

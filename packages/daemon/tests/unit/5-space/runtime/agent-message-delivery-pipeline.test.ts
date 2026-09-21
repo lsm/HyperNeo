@@ -1,11 +1,11 @@
 import { describe, expect, it, mock } from 'bun:test';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
 import type { MailboxHandoffArgs } from '../../../../src/lib/mailbox/handoff.ts';
-import type { SessionTarget } from '../../../../src/lib/session-resolution/target.ts';
 import {
-  deliverAgentMessageToTarget,
   type AgentMessageDeliveryDeps,
+  deliverAgentMessageToTarget,
 } from '../../../../src/lib/messaging/delivery-pipeline.ts';
+import type { SessionTarget } from '../../../../src/lib/session-resolution/target.ts';
 
 const WORKER_TARGET: SessionTarget = {
   kind: 'worker',
@@ -235,6 +235,23 @@ describe('deliverAgentMessageToTarget', () => {
     expect(handoffCalls[0].deliveryMode).toBe('defer');
     expect(live.setQueuedIfIdle).not.toHaveBeenCalled();
   });
+
+  for (const status of ['waiting_for_input', 'interrupted'] as const) {
+    it(`defers immediate admission while the target session is ${status}`, async () => {
+      const live = makeSession({ status });
+      const { deps, handoffCalls } = makeDeps({
+        getSessionAsync: async () => live.session,
+      });
+      await deliverAgentMessageToTarget({
+        deps,
+        target: WORKER_TARGET,
+        message: 'peer update',
+        messageId: `msg-${status}`,
+      });
+      expect(handoffCalls[0].deliveryMode).toBe('defer');
+      expect(live.setQueuedIfIdle).not.toHaveBeenCalled();
+    });
+  }
 
   it('defers admission behind an unconsumed held backlog', async () => {
     const { deps, handoffCalls } = makeDeps({
