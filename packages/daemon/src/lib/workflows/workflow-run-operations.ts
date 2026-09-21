@@ -38,32 +38,28 @@ const getRunInputSchema = z
   .object({ runId: z.string().min(1), spaceId: z.string().min(1).optional() })
   .strict();
 
-const updateRunInputSchema = z
+const changePlanInputSchema = z
   .object({
     runId: z.string().min(1),
-    description: z.string(),
-    spaceId: z.string().min(1).optional(),
-  })
-  .strict();
-
-const replaceRunInputSchema = z
-  .object({
-    runId: z.string().min(1),
+    description: z.string().optional(),
     workflowId: z.string().min(1).optional(),
     workflowHandle: z.string().trim().min(1).optional(),
-    description: z.string().optional(),
     spaceId: z.string().min(1).optional(),
   })
   .strict()
-  .refine((input) => input.workflowId !== undefined || input.workflowHandle !== undefined, {
-    message: 'Provide workflowId or workflowHandle',
-    path: ['workflowId'],
-  });
+  .refine(
+    (input) =>
+      input.description !== undefined ||
+      input.workflowId !== undefined ||
+      input.workflowHandle !== undefined,
+    {
+      message: 'Provide at least one of description, workflowId or workflowHandle',
+      path: ['description'],
+    }
+  );
 
 type GetRunInput = z.infer<typeof getRunInputSchema>;
-type UpdateRunInput = z.infer<typeof updateRunInputSchema>;
-type ReplaceRunInput = z.infer<typeof replaceRunInputSchema>;
-type RunWriteInput = { runId: string; spaceId?: string };
+type ChangePlanInput = z.infer<typeof changePlanInputSchema>;
 
 const RunDetailSchema = z.object({
   run: WorkflowRunSchema,
@@ -72,28 +68,36 @@ const RunDetailSchema = z.object({
 type RunDetail = z.infer<typeof RunDetailSchema>;
 type GetRunResult = RunDetail | WorkflowScopeRejection | 'run_not_found';
 
-const RunWriteRejectionSchema = z.enum(['run_not_found', 'run_finished']);
-
-const UpdateRunResultSchema = z.union([
-  z.object({ run: WorkflowRunSchema }),
-  ScopeRejectionSchema,
-  RunWriteRejectionSchema,
-]);
-type UpdateRunResult = z.infer<typeof UpdateRunResultSchema>;
-
-const ReplaceRunResultSchema = z.union([
+const ChangePlanResultSchema = z.union([
   z.object({
     outcome: z.literal('switched'),
     previousRunId: z.string(),
     run: WorkflowRunSchema,
     tasks: z.array(TaskWithSpaceFieldsSchema),
   }),
+  z.object({ outcome: z.literal('described'), run: WorkflowRunSchema }),
   z.object({ outcome: z.literal('switch_failed'), previousRunId: z.string(), error: z.string() }),
   ScopeRejectionSchema,
-  RunWriteRejectionSchema,
-  z.enum(['workflow_not_found', 'workflow_disabled']),
+  z.enum([
+    'run_not_found',
+    'run_finished',
+    'nothing_to_change',
+    'workflow_not_found',
+    'workflow_disabled',
+  ]),
 ]);
-type ReplaceRunResult = z.infer<typeof ReplaceRunResultSchema>;
+type ChangePlanResult = z.infer<typeof ChangePlanResultSchema>;
+type PlanChangeRejection =
+  | WorkflowScopeRejection
+  | 'run_not_found'
+  | 'run_finished'
+  | 'nothing_to_change'
+  | 'workflow_not_found'
+  | 'workflow_disabled';
+
+type PlanChange =
+  | { kind: 'switch'; run: SpaceWorkflowRun; target: SpaceWorkflow; description?: string }
+  | { kind: 'describe'; run: SpaceWorkflowRun; description: string };
 
 function admitRunReader(
   input: GetRunInput,
@@ -112,8 +116,8 @@ function loadRunDetail(
   return { value: { run, executions: deps.listRunExecutions(run.id) } };
 }
 
-function admitRunWriter(
-  input: RunWriteInput,
+export function admitPlanChanger(
+  input: ChangePlanInput,
   caller: OperationCaller,
   deps: WorkflowRunDependencies
 ): { value: string } | { reason: WorkflowScopeRejection } {
@@ -122,7 +126,7 @@ function admitRunWriter(
 }
 
 function loadChangeableRun(
-  input: RunWriteInput,
+  input: ChangePlanInput,
   spaceId: string,
   deps: WorkflowRunDependencies
 ): { value: SpaceWorkflowRun } | { reason: 'run_not_found' | 'run_finished' } {
@@ -132,11 +136,16 @@ function loadChangeableRun(
   return { value: run };
 }
 
-function resolveReplacementWorkflow(
-  input: ReplaceRunInput,
+export function planPlanChange(
+  input: ChangePlanInput,
   run: SpaceWorkflowRun,
   deps: WorkflowRunDependencies
-): { value: SpaceWorkflow } | { reason: 'workflow_not_found' | 'workflow_disabled' } {
+): { value: PlanChange } | { reason: PlanChangeRejection } {
+  if (input.workflowId === undefined && input.workflowHandle === undefined) {
+    return input.description === undefined
+      ? { reason: 'nothing_to_change' }
+      : { value: { kind: 'describe', run, description: input.description } };
+  }
   const byId = input.workflowId ? deps.getWorkflow(input.workflowId) : null;
   const inSpace = byId && byId.spaceId === run.spaceId ? byId : null;
   const usableById = inSpace && !inSpace.disabled ? inSpace : null;
@@ -147,37 +156,30 @@ function resolveReplacementWorkflow(
   const target = usableById ?? byHandle ?? inSpace;
   if (!target) return { reason: 'workflow_not_found' };
   if (target.disabled) return { reason: 'workflow_disabled' };
-  return { value: target };
+  return { value: { kind: 'switch', run, target, description: input.description } };
 }
 
-function applyRunDescription(
-  input: UpdateRunInput,
-  run: SpaceWorkflowRun,
+async function applyPlanChange(
+  plan: PlanChange,
   deps: WorkflowRunDependencies
-): UpdateRunResult {
-  const updated = deps.updateRunDescription(run.id, input.description);
-  return updated ? { run: updated } : 'run_not_found';
-}
-
-async function applyRunReplacement(
-  input: ReplaceRunInput,
-  run: SpaceWorkflowRun,
-  target: SpaceWorkflow,
-  deps: WorkflowRunDependencies
-): Promise<ReplaceRunResult> {
-  await deps.cancelWorkflowRun(run.spaceId, run.id);
+): Promise<ChangePlanResult> {
+  if (plan.kind === 'describe') {
+    const updated = deps.updateRunDescription(plan.run.id, plan.description);
+    return updated ? { outcome: 'described', run: updated } : 'run_not_found';
+  }
+  await deps.cancelWorkflowRun(plan.run.spaceId, plan.run.id);
   try {
     const started = await deps.startWorkflowRun(
-      run.spaceId,
-      target.id,
-      run.title,
-      input.description ?? run.description
+      plan.run.spaceId,
+      plan.target.id,
+      plan.run.title,
+      plan.description ?? plan.run.description
     );
-    return { outcome: 'switched', previousRunId: run.id, ...started };
+    return { outcome: 'switched', previousRunId: plan.run.id, ...started };
   } catch (err) {
     return {
       outcome: 'switch_failed',
-      previousRunId: run.id,
+      previousRunId: plan.run.id,
       error: err instanceof Error ? err.message : String(err),
     };
   }
@@ -186,11 +188,8 @@ async function applyRunReplacement(
 const GET_RUN_DESCRIPTION =
   'Read one workflow run in the Space, including every node execution recorded against it, so you can see which step the run is on. Rejects run_not_found when the run is absent or owned by another Space, space_not_resolved when no Space is in scope, and caller_not_admitted when the calling session may not read this Space.';
 
-const UPDATE_RUN_DESCRIPTION =
-  'Reword the description of an unfinished workflow run in place, leaving the run and its in-flight work untouched. Returns the updated run. Rejects run_not_found when the run is absent or owned by another Space, run_finished for a run already done or cancelled, space_not_resolved when no Space is in scope, and caller_not_admitted when the calling session is not an active member of this Space.';
-
-const REPLACE_RUN_DESCRIPTION =
-  'Cancel an unfinished workflow run and start a fresh one on another workflow with the same title, naming the target by workflowId or workflowHandle and optionally replacing the description. This is destructive: the current run is cancelled before the replacement starts, so its in-flight work is lost. Returns outcome "switched" with the new run, its seeded tasks and the cancelled previousRunId, or "switch_failed" with previousRunId when the replacement could not start — the original run stays cancelled either way. Rejects run_not_found, run_finished for a run already done or cancelled, workflow_not_found and workflow_disabled for an unusable target, space_not_resolved when no Space is in scope, and caller_not_admitted when the calling session is not an active member of this Space.';
+const CHANGE_PLAN_DESCRIPTION =
+  'Change the plan of an unfinished workflow run: pass description alone to reword it in place, or pass workflowId or workflowHandle to cancel the run and start a fresh one on that workflow with the same title. Switching is destructive — the current run is cancelled before the replacement starts, so its in-flight work is lost. Returns outcome "described" with the reworded run, "switched" with the new run plus its seeded tasks and the cancelled previousRunId, or "switch_failed" with previousRunId when the replacement could not start (the original run stays cancelled). Rejects run_not_found, run_finished for a run already done or cancelled, nothing_to_change when no reword and no target were supplied, workflow_not_found and workflow_disabled for an unusable target, space_not_resolved when no Space is in scope, and caller_not_admitted when the calling session is not an active member of this Space.';
 
 export function createWorkflowRunOperations(deps: WorkflowRunDependencies): OperationDefinition[] {
   const getRun = (superpipe({ deps })('get-space-workflow-run') as PipelineAPI)
@@ -199,25 +198,16 @@ export function createWorkflowRunOperations(deps: WorkflowRunDependencies): Oper
     .pipe(loadRunDetail, ['input', 'outcome', 'deps'], 'result:outcome')
     .end('outcome') as (input: GetRunInput, caller: OperationCaller) => GetRunResult;
 
-  const updateRun = (superpipe({ deps })('update-space-workflow-run') as PipelineAPI)
+  const changePlan = (superpipe({ deps })('change-space-workflow-plan') as PipelineAPI)
     .input(['input', 'caller'])
-    .pipe(admitRunWriter, ['input', 'caller', 'deps'], 'result:outcome')
+    .pipe(admitPlanChanger, ['input', 'caller', 'deps'], 'result:outcome')
     .pipe(loadChangeableRun, ['input', 'outcome', 'deps'], 'result:outcome')
-    .pipe(applyRunDescription, ['input', 'outcome', 'deps'], 'outcome')
-    .end('outcome') as (input: UpdateRunInput, caller: OperationCaller) => UpdateRunResult;
-
-  const replaceRun = (superpipe({ deps })('replace-space-workflow-run') as PipelineAPI)
-    .input(['input', 'caller'])
-    .pipe(admitRunWriter, ['input', 'caller', 'deps'], 'result:outcome')
-    .pipe(loadChangeableRun, ['input', 'outcome', 'deps'], 'result:outcome')
-    .pipe((run: SpaceWorkflowRun) => run, 'outcome', 'run')
-    .pipe(resolveReplacementWorkflow, ['input', 'run', 'deps'], 'result:outcome')
-    .pipe((target: SpaceWorkflow) => target, 'outcome', 'target')
-    .pipe(applyRunReplacement, ['input', 'run', 'target', 'deps'], 'outcome')
+    .pipe(planPlanChange, ['input', 'outcome', 'deps'], 'result:outcome')
+    .pipe(applyPlanChange, ['outcome', 'deps'], 'outcome')
     .endAsync('outcome') as (
-    input: ReplaceRunInput,
+    input: ChangePlanInput,
     caller: OperationCaller
-  ) => Promise<ReplaceRunResult>;
+  ) => Promise<ChangePlanResult>;
 
   return [
     defineOperation({
@@ -229,20 +219,12 @@ export function createWorkflowRunOperations(deps: WorkflowRunDependencies): Oper
       execute: async (input, caller) => getRun(input, caller),
     }),
     defineOperation({
-      name: 'workflow.run.update',
-      description: UPDATE_RUN_DESCRIPTION,
-      policy: { safetyClass: 'mutate', roles: WORKFLOW_MUTATE_ROLES },
-      inputSchema: updateRunInputSchema,
-      resultSchema: UpdateRunResultSchema,
-      execute: async (input, caller) => updateRun(input, caller),
-    }),
-    defineOperation({
-      name: 'workflow.run.replace',
-      description: REPLACE_RUN_DESCRIPTION,
+      name: 'workflow.changePlan',
+      description: CHANGE_PLAN_DESCRIPTION,
       policy: { safetyClass: 'destructive', roles: WORKFLOW_MUTATE_ROLES },
-      inputSchema: replaceRunInputSchema,
-      resultSchema: ReplaceRunResultSchema,
-      execute: async (input, caller) => replaceRun(input, caller),
+      inputSchema: changePlanInputSchema,
+      resultSchema: ChangePlanResultSchema,
+      execute: async (input, caller) => changePlan(input, caller),
     }),
   ];
 }

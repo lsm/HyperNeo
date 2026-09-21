@@ -169,8 +169,8 @@ describe('workflow run read operation', () => {
   });
 });
 
-describe('workflow run write operations', () => {
-  test('workflow.run.update rewords an active run in place', async () => {
+describe('workflow plan change operation', () => {
+  test('workflow.changePlan rewords an active run in place', async () => {
     const written: string[] = [];
     let cancelled = 0;
     const value = await invoke(
@@ -184,16 +184,16 @@ describe('workflow run write operations', () => {
           return run({ status: 'cancelled' });
         },
       }),
-      'workflow.run.update',
+      'workflow.changePlan',
       { runId: 'run-1', description: 'reworded' },
       mcpCaller('ad_hoc_member')
     );
     expect(written).toEqual(['reworded']);
     expect(cancelled).toBe(0);
-    expect(value).toEqual({ run: run({ description: 'reworded' }) });
+    expect(value).toEqual({ outcome: 'described', run: run({ description: 'reworded' }) });
   });
 
-  test('workflow.run.replace cancels the old run and starts the target workflow', async () => {
+  test('workflow.changePlan cancels the old run and starts the target workflow', async () => {
     const calls: string[] = [];
     const value = await invoke(
       deps({
@@ -206,7 +206,7 @@ describe('workflow run write operations', () => {
           return { run: run({ id: 'run-2', workflowId }), tasks: [] };
         },
       }),
-      'workflow.run.replace',
+      'workflow.changePlan',
       { runId: 'run-1', workflowId: 'wf-2' },
       mcpCaller('long_term_agent')
     );
@@ -219,14 +219,14 @@ describe('workflow run write operations', () => {
     });
   });
 
-  test('workflow.run.replace reports switch_failed when the replacement cannot start', async () => {
+  test('workflow.changePlan reports switch_failed when the replacement cannot start', async () => {
     const value = await invoke(
       deps({
         startWorkflowRun: async () => {
           throw new Error('missing endNodeId');
         },
       }),
-      'workflow.run.replace',
+      'workflow.changePlan',
       { runId: 'run-1', workflowId: 'wf-2' },
       mcpCaller('ad_hoc_member')
     );
@@ -237,40 +237,40 @@ describe('workflow run write operations', () => {
     });
   });
 
-  test('workflow.run.update refuses a run that already finished', async () => {
+  test('workflow.changePlan refuses a run that already finished', async () => {
     const value = await invoke(
       deps({ getRun: () => run({ status: 'done' }) }),
-      'workflow.run.update',
+      'workflow.changePlan',
       { runId: 'run-1', description: 'reworded' },
       mcpCaller('ad_hoc_member')
     );
     expect(value).toBe('run_finished');
   });
 
-  test('workflow.run.replace refuses a target workflow owned by another Space', async () => {
+  test('workflow.changePlan refuses a target workflow owned by another Space', async () => {
     const value = await invoke(
       deps({ getWorkflow: () => workflow({ spaceId: 'other-space' }) }),
-      'workflow.run.replace',
+      'workflow.changePlan',
       { runId: 'run-1', workflowId: 'wf-2' },
       mcpCaller('ad_hoc_member')
     );
     expect(value).toBe('workflow_not_found');
   });
 
-  test('workflow.run.replace refuses a disabled target workflow', async () => {
+  test('workflow.changePlan refuses a disabled target workflow', async () => {
     const value = await invoke(
       deps({
         getWorkflow: () => workflow({ disabled: true }),
         getWorkflowByHandle: () => workflow({ disabled: true }),
       }),
-      'workflow.run.replace',
+      'workflow.changePlan',
       { runId: 'run-1', workflowId: 'wf-2' },
       mcpCaller('ad_hoc_member')
     );
     expect(value).toBe('workflow_disabled');
   });
 
-  test('workflow.run.update refuses an archived session in the owning Space and changes nothing', async () => {
+  test('workflow.changePlan refuses an archived session in the owning Space and changes nothing', async () => {
     const calls: string[] = [];
     const value = await invoke(
       deps({
@@ -284,7 +284,7 @@ describe('workflow run write operations', () => {
           return run({ status: 'cancelled' });
         },
       }),
-      'workflow.run.update',
+      'workflow.changePlan',
       { runId: 'run-1', description: 'reworded' },
       mcpCaller('ad_hoc_member')
     );
@@ -292,17 +292,17 @@ describe('workflow run write operations', () => {
     expect(calls).toEqual([]);
   });
 
-  test('workflow.run.update refuses an active session belonging to another Space', async () => {
+  test('workflow.changePlan refuses an active session belonging to another Space', async () => {
     const value = await invoke(
       deps({ getSession: () => activeSession('active', 'other-space') }),
-      'workflow.run.update',
+      'workflow.changePlan',
       { runId: 'run-1', description: 'reworded' },
       mcpCaller('ad_hoc_member')
     );
     expect(value).toBe('caller_not_admitted');
   });
 
-  test('workflow.run.update admits a workflow_worker whose session is active in the Space', async () => {
+  test('workflow.changePlan admits a workflow_worker whose session is active in the Space', async () => {
     const written: string[] = [];
     const outcome = await outcomeOf(
       deps({
@@ -311,50 +311,30 @@ describe('workflow run write operations', () => {
           return run({ description });
         },
       }),
-      'workflow.run.update',
+      'workflow.changePlan',
       { runId: 'run-1', description: 'reworded' },
       mcpCaller('workflow_worker')
     );
     expect(outcome).toMatchObject({
       kind: 'completed',
-      value: { run: run({ description: 'reworded' }) },
+      value: { outcome: 'described', run: run({ description: 'reworded' }) },
     });
     expect(written).toEqual(['reworded']);
   });
 
-  test('workflow.run.replace rejects a call that names no target workflow', async () => {
+  test('workflow.changePlan rejects a call that names no change', async () => {
     const outcome = await outcomeOf(
       deps(),
-      'workflow.run.replace',
+      'workflow.changePlan',
       { runId: 'run-1' },
       mcpCaller('ad_hoc_member')
     );
     expect(outcome).toMatchObject({ kind: 'failed', code: 'invalid_input' });
   });
-
-  test('workflow.run.update never cancels the run it rewords', async () => {
-    const calls: string[] = [];
-    await invoke(
-      deps({
-        cancelWorkflowRun: async () => {
-          calls.push('cancel');
-          return run({ status: 'cancelled' });
-        },
-        startWorkflowRun: async () => {
-          calls.push('start');
-          return { run: run({ id: 'run-2' }), tasks: [] };
-        },
-      }),
-      'workflow.run.update',
-      { runId: 'run-1', description: 'reworded' },
-      mcpCaller('ad_hoc_member')
-    );
-    expect(calls).toEqual([]);
-  });
 });
 
 describe('workflow run optional Space scope', () => {
-  test('RPC and internal reads and run writes inherit the caller Space', async () => {
+  test('RPC and internal reads and plan changes inherit the caller Space', async () => {
     for (const source of ['rpc', 'internal'] as const) {
       const caller = { source, spaceId: SPACE_ID };
       expect(await invoke(deps(), 'workflow.run.get', { runId: 'run-1' }, caller)).toMatchObject({
@@ -363,11 +343,14 @@ describe('workflow run optional Space scope', () => {
       expect(
         await invoke(
           deps(),
-          'workflow.run.update',
+          'workflow.changePlan',
           { runId: 'run-1', description: 'Reworded' },
           caller
         )
-      ).toMatchObject({ run: { spaceId: SPACE_ID, description: 'Reworded' } });
+      ).toMatchObject({
+        outcome: 'described',
+        run: { spaceId: SPACE_ID, description: 'Reworded' },
+      });
       expect(
         await invoke(
           deps({ getRun: () => run({ spaceId: 'other' }) }),
