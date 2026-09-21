@@ -22,4 +22,22 @@ describe('migration 266', () => {
     expect(index?.sql).toContain("WHERE message_type = 'assistant'");
     db.close();
   });
+
+  test('skips an sdk_messages table that predates task_id', () => {
+    const db = new Database(':memory:');
+    db.exec(`CREATE TABLE sdk_messages (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      message_type TEXT NOT NULL,
+      timestamp TEXT NOT NULL
+    )`);
+
+    expect(() => runMigration266(db)).not.toThrow();
+
+    const index = db
+      .prepare("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?")
+      .get('idx_sdk_messages_task_assistant');
+    expect(index).toBeNull();
+    db.close();
+  });
 });
