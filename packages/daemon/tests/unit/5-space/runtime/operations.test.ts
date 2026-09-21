@@ -409,25 +409,25 @@ test('cached and future MCP use the same pending completion operation as RPC', a
   registry = provider({}, deps)();
   const later = createOperationMcpHandler(getRegistry, () => ({ sessionId: 'reviewer' }));
   const rpc = createOperationRpcHandler(getRegistry, () => ({}));
-  for (const invoke of [
-    () => rpc(request, context),
-    async () => JSON.parse((await mcp(request)).content[0].text),
-    async () => JSON.parse((await later(request)).content[0].text),
-  ]) {
+  for (const [invoke, approvalSource] of [
+    [() => rpc(request, context), 'human'],
+    [async () => JSON.parse((await mcp(request)).content[0].text), 'agent'],
+    [async () => JSON.parse((await later(request)).content[0].text), 'agent'],
+  ] as const) {
     const previous = reviewTask();
     expect(await invoke()).toMatchObject({
       id: taskId,
       spaceId,
       taskNumber: expect.any(Number),
       status: 'approved',
-      approvalSource: 'human',
+      approvalSource,
       approvalReason: '  accepted  ',
       postApprovalBlockedReason: expect.stringContaining('Dispatcher unavailable'),
     });
     expect(deps.dispatchApproval).toHaveBeenLastCalledWith(
       spaceId,
       taskId,
-      'human',
+      approvalSource,
       '  accepted  ',
       { expectedPendingCompletionGeneration: previous.pendingCompletionGeneration }
     );

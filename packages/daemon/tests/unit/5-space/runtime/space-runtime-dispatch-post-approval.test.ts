@@ -741,7 +741,7 @@ test.each(['rpc', 'mcp'] as const)(
             );
       expect(approved).toMatchObject({
         status: 'done',
-        approvalSource: 'human',
+        approvalSource: source === 'rpc' ? 'human' : 'agent',
         approvalReason: 'Accepted',
       });
       expect(taskRepo.getTask(task.id)).toMatchObject({
