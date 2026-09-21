@@ -153,45 +153,61 @@ const CREATE_DESCRIPTION = `Schedule a one-shot reminder delivered to a long-hor
 
 const LIST_DESCRIPTION = `List the reminders of a long-horizon agent, soonest due first, each with its message, state, and delivery time. Pass state to keep only reminders in that state: active, paused, done, or cancelled. ${SCOPE_DOC} Read access is admitted for any caller scoped to the Space; a caller with no Space is rejected with agent_denied.`;
 
-export function cancelAgentReminder(
+export function loadCancellableReminder(
   spaceId: string,
   input: CancelInput,
+  deps: AgentReminderDependencies
+): { value: SpaceLongHorizonAgentReminder } | { reason: CancelResult } {
+  const existing = deps.getReminder(input.reminderId);
+  if (!existing || existing.spaceId !== spaceId || existing.agentId !== input.agentId) {
+    return { reason: rejectAgent('reminder_not_found', `Reminder not found: ${input.reminderId}`) };
+  }
+  return existing.status === 'cancelled'
+    ? { reason: { reminder: reminderRecord(existing) } }
+    : { value: existing };
+}
+
+export function admitReminderCancellation(
+  reminder: SpaceLongHorizonAgentReminder,
+  deps: AgentReminderDependencies
+): { value: SpaceLongHorizonAgentReminder } | { reason: CancelResult } {
+  const claimed =
+    deps.occurrenceIsClaimed?.(
+      reminder.spaceId,
+      reminder.agentId,
+      reminderOccurrenceKey(reminder.id, reminder.nextRunAt)
+    ) ?? false;
+  return isReminderDeliveryInFlight(reminder.id) || claimed
+    ? {
+        reason: rejectAgent(
+          'reminder_not_cancellable',
+          `Reminder ${reminder.id} has already been delivered to the agent and can no longer be cancelled`
+        ),
+      }
+    : { value: reminder };
+}
+
+export function commitReminderCancellation(
+  reminder: SpaceLongHorizonAgentReminder,
   caller: OperationCaller,
   deps: AgentReminderDependencies
 ): CancelResult {
-  const existing = deps.getReminder(input.reminderId);
-  if (!existing || existing.spaceId !== spaceId || existing.agentId !== input.agentId) {
-    return rejectAgent('reminder_not_found', `Reminder not found: ${input.reminderId}`);
-  }
-  if (existing.status === 'cancelled') return { reminder: reminderRecord(existing) };
-  const claimed =
-    deps.occurrenceIsClaimed?.(
-      existing.spaceId,
-      existing.agentId,
-      reminderOccurrenceKey(existing.id, existing.nextRunAt)
-    ) ?? false;
-  if (isReminderDeliveryInFlight(input.reminderId) || claimed) {
-    return rejectAgent(
-      'reminder_not_cancellable',
-      `Reminder ${input.reminderId} has already been delivered to the agent and can no longer be cancelled`
-    );
-  }
-  if (!deps.cancelReminder(input.reminderId)) {
-    const settled = deps.getReminder(input.reminderId);
-    if (settled?.status === 'cancelled') return { reminder: reminderRecord(settled) };
-    return rejectAgent(
-      'reminder_not_cancellable',
-      `Reminder ${input.reminderId} already fired and cannot be cancelled`
-    );
+  if (!deps.cancelReminder(reminder.id)) {
+    const settled = deps.getReminder(reminder.id);
+    return settled?.status === 'cancelled'
+      ? { reminder: reminderRecord(settled) }
+      : rejectAgent(
+          'reminder_not_cancellable',
+          `Reminder ${reminder.id} already fired and cannot be cancelled`
+        );
   }
   deps.audit(
     'agent.reminders.cancel',
-    { agentId: input.agentId, reminderId: input.reminderId },
+    { agentId: reminder.agentId, reminderId: reminder.id },
     caller,
-    spaceId
+    reminder.spaceId
   );
-  const cancelled = deps.getReminder(input.reminderId) ?? existing;
-  return { reminder: reminderRecord(cancelled) };
+  return { reminder: reminderRecord(deps.getReminder(reminder.id) ?? reminder) };
 }
 
 export function createCreateAgentReminderOperation(deps: AgentReminderDependencies) {
@@ -242,7 +258,10 @@ export function createCancelAgentReminderOperation(deps: AgentReminderDependenci
     .input(['input', 'caller'])
     .pipe(admitAgentCaller, ['input', 'caller', 'deps', 'access'], 'result:outcome')
     .pipe(gateReminderAgent, ['outcome', 'input', 'deps'], 'result:outcome')
-    .pipe(cancelAgentReminder, ['outcome', 'input', 'caller', 'deps'], 'outcome')
+    .pipe(loadCancellableReminder, ['outcome', 'input', 'deps'], 'result:outcome')
+    .pipe(admitReminderCancellation, ['outcome', 'deps'], 'result:outcome')
+    .pipe((reminder: SpaceLongHorizonAgentReminder) => reminder, 'outcome', 'reminder')
+    .pipe(commitReminderCancellation, ['reminder', 'caller', 'deps'], 'outcome')
     .endAsync('outcome') as (input: CancelInput, caller: OperationCaller) => Promise<CancelResult>;
   return defineOperation({
     name: 'agent.reminders.cancel',
