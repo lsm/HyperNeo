@@ -42,7 +42,7 @@ export interface AgentOperationDependencies extends AgentOperationDeps {
     SpaceAgentReminderRepository,
     'createReminder' | 'listReminders' | 'getReminder' | 'cancelReminder'
   >;
-  readonly getOccurrenceDeliveryState?: AgentReminderDependencies['getOccurrenceDeliveryState'];
+  readonly occurrenceIsClaimed?: AgentReminderDependencies['occurrenceIsClaimed'];
   readonly publishAgentCreated: CreateAgentDependencies['publishAgentCreated'];
   readonly publishAgentUpdated: UpdateAgentDependencies['publishAgentUpdated'];
   readonly refreshAgentSubscriptions: UpdateAgentDependencies['refreshAgentSubscriptions'];
@@ -91,7 +91,7 @@ function reminderDeps(deps: AgentOperationDependencies): AgentReminderDependenci
     listReminders: (agentId) => deps.reminderRepo.listReminders(agentId),
     getReminder: (reminderId) => deps.reminderRepo.getReminder(reminderId),
     cancelReminder: (reminderId) => deps.reminderRepo.cancelReminder(reminderId),
-    getOccurrenceDeliveryState: deps.getOccurrenceDeliveryState,
+    occurrenceIsClaimed: deps.occurrenceIsClaimed,
   };
 }
 
