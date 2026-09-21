@@ -2566,7 +2566,7 @@ const SPACE_TASK_CONV_ARTIFACT_STATE_CTES = `artifact_tool_blocks AS (
     json_extract(b.value, '$.name') AS toolName,
     json_extract(b.value, '$.input.file_path') AS filePath
   FROM target_task tt
-  JOIN sdk_messages sm ON sm.task_id = tt.id
+  JOIN sdk_messages sm INDEXED BY idx_sdk_messages_task_assistant ON sm.task_id = tt.id
   CROSS JOIN json_each(
     CASE
       WHEN json_valid(sm.sdk_message)

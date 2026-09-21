@@ -20,6 +20,7 @@ import { DEFAULT_GLOBAL_TOOLS_CONFIG, DEFAULT_GLOBAL_SETTINGS } from '@hyperneo/
 // knip-ignore-next-line
 export { runMigrations } from './migrations.ts';
 export { runMigration265 } from './m265-workflow-run-blocked-retries.ts';
+export { runMigration266 } from './m266-task-assistant-messages-index.ts';
 export { reclaimPendingMigrationSpace } from './migration-space-reclaim.ts';
 // knip-ignore-next-line
 export { runMigration12 } from './migrations.ts';
@@ -1004,6 +1005,9 @@ function createIndexes(db: BunDatabase): void {
       ON sdk_messages(task_id, conversation_turn_index)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_session_turn
       ON sdk_messages(task_id, session_id, conversation_turn_index)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_assistant
+      ON sdk_messages(task_id, timestamp DESC)
+      WHERE message_type = 'assistant'`);
 
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_space_agent_memory_space ON space_agent_memory(space_id)`

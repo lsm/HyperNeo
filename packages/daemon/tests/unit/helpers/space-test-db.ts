@@ -681,7 +681,10 @@ export function createSpaceTables(db: BunDatabase): void {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_turn
 		ON sdk_messages(task_id, conversation_turn_index)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_session_turn
-		ON sdk_messages(task_id, session_id, conversation_turn_index)`);
+      ON sdk_messages(task_id, session_id, conversation_turn_index)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_assistant
+      ON sdk_messages(task_id, timestamp DESC)
+      WHERE message_type = 'assistant'`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_session_uuid
 		ON sdk_messages(session_id, sdk_uuid)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_unnormalized_replacements
