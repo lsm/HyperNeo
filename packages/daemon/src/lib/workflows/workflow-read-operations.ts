@@ -25,7 +25,15 @@ const WorkflowListSchema = z.object({
   scope: z.object({ spaceId: z.string() }),
 });
 
-const listInputSchema = z.object({ spaceId: z.string().min(1).optional() }).strict();
+const listInputSchema = z
+  .object({
+    enabled: z
+      .boolean()
+      .optional()
+      .describe('Keep only enabled workflows; omit to list every workflow in the Space'),
+    spaceId: z.string().min(1).optional(),
+  })
+  .strict();
 const suggestInputSchema = z
   .object({ description: z.string(), spaceId: z.string().min(1).optional() })
   .strict();
@@ -42,6 +50,7 @@ const getInputSchema = z
   });
 
 type ScopedInput = { spaceId?: string };
+type ListInput = z.infer<typeof listInputSchema>;
 type GetInput = z.infer<typeof getInputSchema>;
 type WorkflowList = z.infer<typeof WorkflowListSchema>;
 type ListResult = WorkflowList | WorkflowScopeRejection;
@@ -53,8 +62,16 @@ function admitReader(
   return admitWorkflowScope(caller, input.spaceId);
 }
 
-function listSummaries(spaceId: string, deps: WorkflowReadDependencies): WorkflowList {
-  return { workflows: deps.listWorkflowSummaries(spaceId), scope: { spaceId } };
+function listSummaries(
+  spaceId: string,
+  input: ListInput,
+  deps: WorkflowReadDependencies
+): WorkflowList {
+  const summaries = deps.listWorkflowSummaries(spaceId);
+  return {
+    workflows: input.enabled === true ? summaries.filter((entry) => !entry.disabled) : summaries,
+    scope: { spaceId },
+  };
 }
 
 function listEnabledSummaries(spaceId: string, deps: WorkflowReadDependencies): WorkflowList {
@@ -81,7 +98,7 @@ export function resolveWorkflowRef(
 }
 
 const LIST_DESCRIPTION =
-  'List every workflow in the Space, enabled or not. Returns one summary per workflow with id, handle, name, description, tags, node count, and completion autonomy level. Omitted spaceId defaults to the trusted caller Space. scope reports the Space that answered. MCP callers cannot select another Space. Rejects space_not_resolved when no Space is in scope and caller_not_admitted when the calling session may not read this Space.';
+  'List the workflows in the Space, every one by default or only the enabled ones with enabled: true. Returns one summary per workflow with id, handle, name, description, tags, node count, and completion autonomy level. Omitted spaceId defaults to the trusted caller Space. scope reports the Space that answered. MCP callers cannot select another Space. Rejects space_not_resolved when no Space is in scope and caller_not_admitted when the calling session may not read this Space.';
 
 const SUGGEST_DESCRIPTION =
   'List the enabled workflows in the Space so you can pick one for a described piece of work. description is context for your own reasoning only — every enabled workflow is returned, and nothing is ranked or filtered by it. Returns the same summaries as workflow.list minus disabled workflows. Rejects space_not_resolved when no Space is in scope and caller_not_admitted when the calling session may not read this Space.';
@@ -95,8 +112,8 @@ export function createWorkflowReadOperations(
   const list = (superpipe({ deps })('list-space-workflows') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitReader, ['input', 'caller'], 'result:outcome')
-    .pipe(listSummaries, ['outcome', 'deps'], 'outcome')
-    .end('outcome') as (input: ScopedInput, caller: OperationCaller) => ListResult;
+    .pipe(listSummaries, ['outcome', 'input', 'deps'], 'outcome')
+    .end('outcome') as (input: ListInput, caller: OperationCaller) => ListResult;
 
   const suggest = (superpipe({ deps })('suggest-space-workflow') as PipelineAPI)
     .input(['input', 'caller'])

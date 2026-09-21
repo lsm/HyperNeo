@@ -166,6 +166,29 @@ describe('workflow catalog read operations', () => {
     expect(await invoke(deps(), 'workflow.list', {}, { source: 'rpc' })).toBe('space_not_resolved');
   });
 
+  test('workflow.list drops disabled workflows when enabled is true', async () => {
+    const value = await invoke(
+      deps({
+        listWorkflowSummaries: () => [summary(), summary({ id: 'wf-2', disabled: true })],
+      }),
+      'workflow.list',
+      { enabled: true },
+      mcpCaller('long_term_agent')
+    );
+    expect(value).toEqual({ scope: { spaceId: SPACE_ID }, workflows: [summary()] });
+  });
+
+  test('workflow.list keeps disabled workflows when enabled is omitted', async () => {
+    const disabled = summary({ id: 'wf-2', disabled: true });
+    const value = await invoke(
+      deps({ listWorkflowSummaries: () => [summary(), disabled] }),
+      'workflow.list',
+      {},
+      mcpCaller('long_term_agent')
+    );
+    expect(value).toEqual({ scope: { spaceId: SPACE_ID }, workflows: [summary(), disabled] });
+  });
+
   test('workflow.suggest drops disabled workflows', async () => {
     const value = await invoke(
       deps({
