@@ -450,17 +450,17 @@ describe('TaskAgentManager — worker operations attach (#4600)', () => {
     expect(fake.state.session.config.mcpServers).toEqual({});
   });
 
-  test('a worker session reaches audit.list through the operations door', async () => {
+  test('a worker session reaches space.audit.list through the operations door', async () => {
     const auditDb = new Database(':memory:');
     createSpaceTables(auditDb);
     const auditOperations = createAuditOperations({
       auditLogRepo: new McpAuditLogRepository(auditDb),
     });
     const registry = catalogRegistry(auditOperations);
-    expect(registry.entries.some((operation) => operation.name === 'audit.list')).toBe(true);
+    expect(registry.entries.some((operation) => operation.name === 'space.audit.list')).toBe(true);
     const outcome = await invokeOperation(
       registry,
-      'audit.list',
+      'space.audit.list',
       { spaceId: SPACE_ID },
       {
         source: 'mcp',
