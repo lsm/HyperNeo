@@ -153,7 +153,7 @@ function syncForgeScopeAutomation(
 export function findForgeScopeInSpace(
   scopeId: string,
   spaceId: string | undefined,
-  forge: ForgeScopeOperationDependencies
+  forge: { scopeService: Pick<EvolutionScopeService, 'getScope'> }
 ): EvolutionScope | null {
   const scope = forge.scopeService.getScope(scopeId);
   return scope && (!spaceId || scope.spaceId === spaceId) ? scope : null;
