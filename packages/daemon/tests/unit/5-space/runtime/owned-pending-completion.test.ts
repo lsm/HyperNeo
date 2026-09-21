@@ -26,6 +26,7 @@ let tasks: SpaceTaskRepository;
 let sessions: SessionRepository;
 let dependencies: OwnedPendingCompletionDependencies;
 let order: string[];
+let approvalSources: ('human' | 'agent')[];
 const coordinator = { id: 'default-agent' } as SpaceLongHorizonAgent;
 
 beforeEach(() => {
@@ -41,6 +42,7 @@ beforeEach(() => {
   const created = tasks.createTask({ spaceId, title: 'Task', description: '', status: 'review' });
   task = tasks.updateTask(created.id, { pendingCheckpointType: 'task_completion' })!;
   order = [];
+  approvalSources = [];
   dependencies = {
     getSession: (id) => sessions.getSession(id),
     getTask: (id) => tasks.getTask(id),
@@ -53,7 +55,7 @@ beforeEach(() => {
     getTaskManager: mock((id) => new SpaceTaskManager(db, id)),
     dispatchApproval: mock(async (owner, id, source, reason, guard) => {
       expect(owner).toBe(spaceId);
-      expect(source).toBe('human');
+      approvalSources.push(source);
       await new SpaceTaskManager(db, owner).setTaskStatus(id, 'approved', {
         ...guard,
         approvalSource: source,
@@ -124,12 +126,13 @@ test.each(['default-agent', 'legacy-task'] as const)(
     expect(outcome.value).toMatchObject({
       id: task.id,
       status: 'approved',
-      approvalSource: 'human',
+      approvalSource: 'agent',
       approvalReason: '  raw  ',
       approvedAt: expect.any(Number),
       pendingCheckpointType: null,
     });
     expect(order).toEqual(['dispatch', 'event', 'audit']);
+    expect(approvalSources).toEqual(['agent']);
     expect(dependencies.audit).toHaveBeenCalledWith(
       expect.objectContaining({ id: session.id }),
       expect.objectContaining({ status: 'review' }),
@@ -144,6 +147,8 @@ test.each(['rpc', 'internal'] as const)(
   async (source) => {
     expect((await invoke(undefined, undefined, source)).kind).toBe('completed');
     expect(order).toEqual(['dispatch', 'event']);
+    expect(approvalSources).toEqual(['human']);
+    expect(tasks.getTask(task.id)?.approvalSource).toBe('human');
     expect(dependencies.audit).not.toHaveBeenCalled();
   }
 );
@@ -331,7 +336,7 @@ test('rejection preserves reason and ignores best-effort event/audit failures', 
   const outcome = await invoke(session.id, { taskId: task.id, approved: false, reason: '' });
   expect(outcome).toMatchObject({
     kind: 'completed',
-    value: { status: 'in_progress', approvalReason: '' },
+    value: { status: 'in_progress', approvalReason: '', approvalSource: null },
   });
   expect(order).toEqual(['event', 'audit']);
   expect(dependencies.dispatchApproval).not.toHaveBeenCalled();
@@ -401,7 +406,7 @@ function orphan(): SpaceTask {
   })!;
 }
 
-test('a task orphaned in review can still be approved by a human (#4033)', async () => {
+test('a task orphaned in review can still be approved (#4033)', async () => {
   orphan();
   const session = persist(
     'worker',
@@ -415,7 +420,7 @@ test('a task orphaned in review can still be approved by a human (#4033)', async
   expect(outcome).toMatchObject({ kind: 'completed' });
   expect(tasks.getTask(task.id)).toMatchObject({
     status: 'approved',
-    approvalSource: 'human',
+    approvalSource: 'agent',
     pendingCheckpointType: null,
   });
   expect(order).toContain('dispatch');

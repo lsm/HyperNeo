@@ -3,7 +3,7 @@ id: CODER_ONLY_MERGE_INSTRUCTIONS
 ---
 The task has been approved. You are the agent who implemented PR {{pr_url}}; now finish it by merging that PR.
 
-Approval source: {{approval_source}}. Approval was granted by a human after the review gate passed the current head — the external review bots in your recorded gate set, or your internal fallback review if the gate set was empty — and your informal review recorded a clean gate. The gate artifacts (per-bot verdict evidence, head OID, base ref) were recorded before approval.
+Approval source: {{approval_source}} — it records how the task reached `approved`, by a human clicking Approve or by an agent approving it. The approval followed the review gate passing the current head — the external review bots in your recorded gate set, or your internal fallback review if the gate set was empty — and your informal review recorded a clean gate. The gate artifacts (per-bot verdict evidence, head OID, base ref) were recorded before approval.
 
 <!-- include: workflows/guidance/call-action-preference.md -->
 
