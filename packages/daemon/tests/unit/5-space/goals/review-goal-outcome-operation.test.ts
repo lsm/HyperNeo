@@ -154,6 +154,25 @@ function ownerCaller(ctx: ReturnType<typeof makeCtx>): OperationCaller {
 }
 
 describe('the goal outcome operations door', () => {
+  test('goal.outcome.list accepts an omitted input from the MCP door', async () => {
+    const ctx = makeCtx();
+    try {
+      const notification = ctx.notify();
+      const outcome = await invokeOperation(
+        ctx.registry,
+        'goal.outcome.list',
+        undefined,
+        ownerCaller(ctx)
+      );
+      expect(outcome).toMatchObject({
+        kind: 'completed',
+        value: { accepted: true, notifications: [{ id: notification.id }] },
+      });
+    } finally {
+      ctx.db.close();
+    }
+  });
+
   test('goal.outcome.list returns the notifications the calling agent owns', async () => {
     const ctx = makeCtx();
     try {

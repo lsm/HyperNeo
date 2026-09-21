@@ -267,7 +267,7 @@ export function createListGoalOutcomeNotificationsOperation(deps: ReviewGoalOutc
     name: 'goal.outcome.list',
     description: LIST_DESCRIPTION,
     policy: GOAL_OWNER_POLICY,
-    inputSchema: listInputSchema,
+    inputSchema: listInputSchema.default({}),
     resultSchema: z.union([
       z.object({
         accepted: z.literal(true),
