@@ -32,6 +32,28 @@ describe('standalone task ownership migration', () => {
   });
   afterEach(() => db.close());
 
+  test('is not failed by a broken reference in an unrelated table', () => {
+    db.exec('PRAGMA foreign_keys = OFF');
+    db.exec("INSERT INTO children VALUES ('stray', 'no-such-task')");
+    db.exec('PRAGMA foreign_keys = ON');
+
+    expect(() => migrateStandaloneTaskOwnership(db)).not.toThrow();
+    expect(db.prepare('SELECT COUNT(*) AS n FROM children').get()).toEqual({ n: 2 });
+  });
+
+  test('checks only the rebuilt table, not every foreign key in the database', () => {
+    const checked: string[] = [];
+    const realPrepare = db.prepare.bind(db);
+    (db as { prepare: unknown }).prepare = (sql: string) => {
+      if (sql.includes('foreign_key_check')) checked.push(sql);
+      return realPrepare(sql);
+    };
+
+    migrateStandaloneTaskOwnership(db);
+
+    expect(checked).toEqual(['PRAGMA foreign_key_check(space_tasks)']);
+  });
+
   test('preserves data, indexes, triggers, views and cascading child references', () => {
     const rows = db.prepare('SELECT * FROM space_tasks').all();
     const objects = db
@@ -81,15 +103,20 @@ describe('standalone task ownership migration', () => {
 
   test('rolls back a failed rebuild without losing original data or schema', () => {
     db.exec('PRAGMA foreign_keys = OFF');
-    db.exec("INSERT INTO children VALUES ('orphan', 'absent')");
+    db.exec(
+      "INSERT INTO space_tasks (id, space_id, task_number, title) VALUES ('orphan', 'absent', 8, 'X')"
+    );
     db.exec('PRAGMA foreign_keys = ON');
     const before = db.prepare('SELECT type, name, sql FROM sqlite_master ORDER BY name').all();
     expect(() => migrateStandaloneTaskOwnership(db)).toThrow('foreign-key violations');
     expect(db.prepare('SELECT type, name, sql FROM sqlite_master ORDER BY name').all()).toEqual(
       before
     );
-    expect(db.prepare('SELECT id FROM space_tasks').all()).toEqual([{ id: 'task' }]);
-    expect(db.prepare('SELECT * FROM children').all()).toHaveLength(2);
+    expect(db.prepare('SELECT id FROM space_tasks ORDER BY id').all()).toEqual([
+      { id: 'orphan' },
+      { id: 'task' },
+    ]);
+    expect(db.prepare('SELECT * FROM children').all()).toHaveLength(1);
     expect(db.prepare('PRAGMA foreign_keys').get()).toEqual({ foreign_keys: 1 });
     expect(db.prepare('PRAGMA legacy_alter_table').get()).toEqual({ legacy_alter_table: 0 });
   });
