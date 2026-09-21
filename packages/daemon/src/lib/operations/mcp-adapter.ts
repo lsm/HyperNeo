@@ -6,7 +6,7 @@ import type { OperationRegistrySource } from './registry.ts';
 
 export const OperationMcpInvocationSchema = z.object({
   name: z.string().min(1),
-  input: z.unknown().optional(),
+  input: z.looseObject({}).optional(),
 });
 
 function mcpResult(value: unknown, isError = false) {

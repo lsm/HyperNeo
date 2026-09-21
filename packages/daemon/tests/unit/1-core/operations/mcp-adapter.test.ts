@@ -4,11 +4,11 @@ import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-ad
 import { createOperationRegistry, defineOperation } from '../../../../src/lib/operations/registry';
 
 function fixture() {
-  const execute = mock(async (input: string) => ({ text: input }));
+  const execute = mock(async (input: { text: string }) => ({ text: input.text }));
   const definition = defineOperation({
     name: 'example',
     description: 'Example',
-    inputSchema: z.string(),
+    inputSchema: z.object({ text: z.string() }),
     resultSchema: z.object({ text: z.string() }),
     execute,
   });
@@ -21,22 +21,25 @@ describe('generic operation MCP adapter', () => {
   test('formats the shared result and ignores caller metadata in arguments', async () => {
     const { handler, caller, execute } = fixture();
     expect(
-      await handler({ name: 'example', input: 'hello', caller: { sessionId: 'spoofed' } })
+      await handler({ name: 'example', input: { text: 'hello' }, caller: { sessionId: 'spoofed' } })
     ).toEqual({ content: [{ type: 'text', text: '{"text":"hello"}' }] });
     expect(caller).toHaveBeenCalledTimes(1);
-    expect(execute).toHaveBeenCalledWith('hello', { source: 'mcp', sessionId: 'trusted-sender' });
+    expect(execute).toHaveBeenCalledWith(
+      { text: 'hello' },
+      { source: 'mcp', sessionId: 'trusted-sender' }
+    );
     expect(execute).toHaveBeenCalledTimes(1);
   });
   test('rejects malformed invocations before resolving the caller', async () => {
     const { handler, caller, execute } = fixture();
-    const result = await handler({ input: 'hello' });
+    const result = await handler({ input: { text: 'hello' } });
     expect(result.isError).toBe(true);
     expect(JSON.parse(result.content[0].text).code).toBe('invalid_input');
     expect(caller).not.toHaveBeenCalled();
     expect(execute).not.toHaveBeenCalled();
   });
   test.each([
-    { name: 'missing', input: 'hello', code: 'unknown_operation' },
+    { name: 'missing', input: { text: 'hello' }, code: 'unknown_operation' },
     { name: 'example', input: 42, code: 'invalid_input' },
   ])('formats $code as an MCP tool error without executing', async ({ name, input, code }) => {
     const { handler, execute } = fixture();
@@ -45,10 +48,27 @@ describe('generic operation MCP adapter', () => {
     expect(JSON.parse(result.content[0].text).code).toBe(code);
     expect(execute).not.toHaveBeenCalled();
   });
+  test.each([
+    { input: 'hello' },
+    { input: '{"text":"hello"}' },
+    { input: 42 },
+    { input: null },
+    { input: ['hello'] },
+  ])(
+    'rejects the coerced or primitive input $input before resolving the caller',
+    async ({ input }) => {
+      const { handler, caller, execute } = fixture();
+      const result = await handler({ name: 'example', input });
+      expect(result.isError).toBe(true);
+      expect(JSON.parse(result.content[0].text).code).toBe('invalid_input');
+      expect(caller).not.toHaveBeenCalled();
+      expect(execute).not.toHaveBeenCalled();
+    }
+  );
   test('formats execution failures without retrying', async () => {
     const { handler, execute } = fixture();
     execute.mockRejectedValue(new Error('unavailable'));
-    const result = await handler({ name: 'example', input: 'hello' });
+    const result = await handler({ name: 'example', input: { text: 'hello' } });
     expect(result.isError).toBe(true);
     expect(JSON.parse(result.content[0].text)).toEqual({
       code: 'execution_failed',
@@ -61,7 +81,7 @@ describe('generic operation MCP adapter', () => {
     const handler = createOperationMcpHandler(createOperationRegistry([definition]), async () => {
       throw new Error('caller unavailable');
     });
-    const result = await handler({ name: 'example', input: 'hello' });
+    const result = await handler({ name: 'example', input: { text: 'hello' } });
     expect(result.isError).toBe(true);
     expect(JSON.parse(result.content[0].text)).toEqual({
       code: 'invocation_failed',
