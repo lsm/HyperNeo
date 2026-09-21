@@ -125,7 +125,6 @@ import {
   enqueueLongHorizonAgentReminderScanIfMissing,
   handleLongHorizonAgentReminderFire,
 } from './lib/job-handlers/long-horizon-agent-reminder-fire.handler.ts';
-import { longTermAgentSessionId } from './lib/space/long-term-agent-session.ts';
 import { readReminderOccurrenceState } from './lib/agents/reminder-delivery-registry.ts';
 import { TaskScheduleRepository } from './storage/repositories/task-schedule-repository.ts';
 import { SpaceRepository } from './storage/repositories/space-repository.ts';
