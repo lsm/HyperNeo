@@ -189,11 +189,23 @@ describe('workflow catalog read operations', () => {
     expect(value).toEqual({ scope: { spaceId: SPACE_ID }, workflows: [summary(), disabled] });
   });
 
-  test('workflow.list admits a legacy_task_agent caller scoped to the Space', async () => {
+  test('workflow.suggest drops disabled workflows', async () => {
+    const value = await invoke(
+      deps({
+        listWorkflowSummaries: () => [summary(), summary({ id: 'wf-2', disabled: true })],
+      }),
+      'workflow.suggest',
+      { description: 'fix a bug' },
+      mcpCaller('long_term_agent')
+    );
+    expect(value).toEqual({ scope: { spaceId: SPACE_ID }, workflows: [summary()] });
+  });
+
+  test('workflow.suggest admits a legacy_task_agent caller scoped to the Space', async () => {
     const outcome = await outcomeOf(
       deps(),
-      'workflow.list',
-      { enabled: true },
+      'workflow.suggest',
+      { description: 'fix a bug' },
       mcpCaller('legacy_task_agent')
     );
     expect(outcome).toMatchObject({ kind: 'completed', value: { workflows: [summary()] } });
@@ -297,7 +309,7 @@ describe('workflow catalog read operations', () => {
 
 describe('workflow optional Space scope', () => {
   for (const source of ['rpc', 'internal', 'mcp'] as const) {
-    test(`${source} lists only the trusted caller Space when input omits it`, async () => {
+    test(`${source} lists and suggests only the trusted caller Space when input omits it`, async () => {
       const seen: string[] = [];
       const dependencies = deps({
         listWorkflowSummaries: (spaceId) => {
@@ -306,8 +318,9 @@ describe('workflow optional Space scope', () => {
         },
       });
       const caller: OperationCaller = { source, spaceId: SPACE_ID, role: 'ad_hoc_member' };
-      for (const input of [{}, { enabled: true }]) {
-        expect(await invoke(dependencies, 'workflow.list', input, caller)).toEqual({
+      for (const name of ['workflow.list', 'workflow.suggest']) {
+        const input = name === 'workflow.list' ? {} : { description: 'Ship' };
+        expect(await invoke(dependencies, name, input, caller)).toEqual({
           workflows: [],
           scope: { spaceId: SPACE_ID },
         });

@@ -54,7 +54,11 @@ Call the task reassign RPC with `taskId` and either a built-in agent type or wor
 
 ### workflow.list()
 
-Call the workflow list RPC with `spaceId`. It answers with every workflow in the Space, disabled ones included, and takes no filter — drop the disabled summaries yourself before recommending anything. Return workflow ids, names, descriptions, tags, and node counts. To recommend a workflow for a described piece of work, list them and reason over the summaries yourself; nothing ranks them for you.
+Call the workflow list RPC with `spaceId`. Return workflow ids, names, descriptions, tags, and node counts.
+
+### workflow.suggest(description)
+
+The MCP tool intentionally returns all workflows and lets the model reason over them. Do the same here: list workflows, compare them against the description, and explain your recommended workflow.
 
 ### workflow.get(workflowId)
 
