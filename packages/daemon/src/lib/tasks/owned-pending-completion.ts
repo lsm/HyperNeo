@@ -48,7 +48,7 @@ export interface OwnedPendingCompletionDependencies {
   dispatchApproval: (
     spaceId: string,
     taskId: string,
-    source: 'human',
+    source: 'human' | 'agent',
     reason: string | null,
     guard: { expectedPendingCompletionGeneration: number }
   ) => Promise<unknown>;
@@ -160,18 +160,23 @@ export async function loadCompletionTarget(
   return requireCompletionTarget(await getTask(input.taskId), input, actor);
 }
 
+function resolveCompletionApprovalSource(actor: CompletionActor): 'human' | 'agent' {
+  return actor.source === 'mcp' ? 'agent' : 'human';
+}
+
 function bindOwnedCompletion(
   previous: SpaceTask,
+  actor: CompletionActor,
   getTaskManager: OwnedPendingCompletionDependencies['getTaskManager'],
   dispatchApproval: OwnedPendingCompletionDependencies['dispatchApproval'],
   warn: OwnedPendingCompletionDependencies['warn']
 ): PendingCompletionDependencies {
   const manager = getTaskManager(previous.spaceId);
   const guard = { expectedPendingCompletionGeneration: previous.pendingCompletionGeneration ?? 0 };
+  const source = resolveCompletionApprovalSource(actor);
   return {
     getTask: (id) => manager.getTask(id),
-    dispatchApproval: (id, reason) =>
-      dispatchApproval(previous.spaceId, id, 'human', reason, guard),
+    dispatchApproval: (id, reason) => dispatchApproval(previous.spaceId, id, source, reason, guard),
     reopenTask: (id, reason) => manager.reopenPendingCompletion(id, reason, guard),
     updateTask: (id, fields) => manager.updateTask(id, fields),
     warn,
@@ -220,7 +225,7 @@ export function createOwnedPendingCompletionOperation(
     .pipe(restageOrphanedCheckpoint, ['task', 'getTaskManager'], 'previous')
     .pipe(
       bindOwnedCompletion,
-      ['previous', 'getTaskManager', 'dispatchApproval', 'warn'],
+      ['previous', 'actor', 'getTaskManager', 'dispatchApproval', 'warn'],
       [
         'getTask:readOwnedTask',
         'dispatchApproval:dispatchOwnedApproval',
