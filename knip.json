@@ -19,6 +19,7 @@
     "packages/desktop/**",
     "packages/daemon/scripts/**",
     "packages/prompts/scripts/**",
+    "knip.ts",
     "npm/**",
     "packages/e2e/**",
     "packages/neo/**",
