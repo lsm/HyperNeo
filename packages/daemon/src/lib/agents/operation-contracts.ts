@@ -82,6 +82,8 @@ export const AGENT_REJECTION_REASONS = [
   'goal_not_found',
   'scope_not_found',
   'template_rejected',
+  'reminder_not_found',
+  'reminder_not_cancellable',
 ] as const;
 
 export const AgentRejectionSchema = z

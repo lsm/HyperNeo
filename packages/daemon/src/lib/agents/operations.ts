@@ -21,6 +21,7 @@ import {
 } from './assign-agent-operation.ts';
 import type { AgentOperationDeps } from './operation-contracts.ts';
 import {
+  createCancelAgentReminderOperation,
   createCreateAgentReminderOperation,
   createListAgentRemindersOperation,
   type AgentReminderDependencies,
@@ -37,7 +38,11 @@ export interface AgentOperationDependencies extends AgentOperationDeps {
     SpaceLongHorizonAgentRepository,
     'getById' | 'listBySpaceId' | 'create' | 'update'
   >;
-  readonly reminderRepo: Pick<SpaceAgentReminderRepository, 'createReminder' | 'listReminders'>;
+  readonly reminderRepo: Pick<
+    SpaceAgentReminderRepository,
+    'createReminder' | 'listReminders' | 'getReminder' | 'cancelReminder'
+  >;
+  readonly occurrenceIsClaimed?: AgentReminderDependencies['occurrenceIsClaimed'];
   readonly publishAgentCreated: CreateAgentDependencies['publishAgentCreated'];
   readonly publishAgentUpdated: UpdateAgentDependencies['publishAgentUpdated'];
   readonly refreshAgentSubscriptions: UpdateAgentDependencies['refreshAgentSubscriptions'];
@@ -84,6 +89,9 @@ function reminderDeps(deps: AgentOperationDependencies): AgentReminderDependenci
     getAgent: (agentId) => deps.longHorizonAgentRepo.getById(agentId),
     createReminder: (params) => deps.reminderRepo.createReminder(params),
     listReminders: (agentId) => deps.reminderRepo.listReminders(agentId),
+    getReminder: (reminderId) => deps.reminderRepo.getReminder(reminderId),
+    cancelReminder: (reminderId) => deps.reminderRepo.cancelReminder(reminderId),
+    occurrenceIsClaimed: deps.occurrenceIsClaimed,
   };
 }
 
@@ -116,5 +124,6 @@ export function createAgentOperations(deps: AgentOperationDependencies): Operati
     createUnassignAgentFromForgeScopeOperation(assignmentDeps(deps)),
     createCreateAgentReminderOperation(reminderDeps(deps)),
     createListAgentRemindersOperation(reminderDeps(deps)),
+    createCancelAgentReminderOperation(reminderDeps(deps)),
   ];
 }

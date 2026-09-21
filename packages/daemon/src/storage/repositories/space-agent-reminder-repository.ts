@@ -138,6 +138,17 @@ export class SpaceAgentReminderRepository {
       .run(nextRunAt, Date.now(), id);
   }
 
+  cancelReminder(id: string): boolean {
+    const result = this.db
+      .prepare(
+        `UPDATE space_long_horizon_agent_reminders
+            SET status = 'cancelled', next_run_at = NULL, updated_at = ?
+            WHERE id = ? AND status IN ('active', 'paused')`
+      )
+      .run(Date.now(), id);
+    return result.changes > 0;
+  }
+
   deleteReminder(id: string): void {
     this.db.prepare(`DELETE FROM space_long_horizon_agent_reminders WHERE id = ?`).run(id);
   }

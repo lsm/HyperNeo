@@ -14,6 +14,11 @@ import {
 } from '../../../../src/lib/operations/registry';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
 import { resolveSessionCallerScope } from '../../../../src/lib/space/runtime/space-caller-scope';
+import {
+  claimReminderDelivery,
+  reminderOccurrenceIsClaimed,
+} from '../../../../src/lib/agents/reminder-delivery-registry';
+import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session';
 
 let db: Database;
 let agentRepo: SpaceLongHorizonAgentRepository;
@@ -24,6 +29,7 @@ let agent: SpaceLongHorizonAgent;
 let stranger: SpaceLongHorizonAgent;
 let sessions: Map<string, Session>;
 let audited: Array<{ name: string; summary: Record<string, unknown> }>;
+let occurrenceClaimed: boolean;
 
 const MEMBER_SESSION = 'space:chat:member';
 const READ_ONLY_SESSION = 'chat:read-only';
@@ -62,6 +68,7 @@ function registry() {
       getSession: (sessionId) => sessions.get(sessionId) ?? null,
       longHorizonAgentRepo: agentRepo,
       reminderRepo,
+      occurrenceIsClaimed: () => occurrenceClaimed,
       publishAgentCreated: () => {},
       audit: (name, summary) => audited.push({ name, summary }),
     })
@@ -108,6 +115,7 @@ beforeEach(() => {
     ],
   ]);
   audited = [];
+  occurrenceClaimed = false;
 });
 
 describe('the agent.reminders.create operation', () => {
@@ -263,5 +271,208 @@ describe('the agent.reminders.list operation', () => {
       { source: 'rpc' }
     );
     expect(outcome.value?.reminders?.map((entry) => entry.message)).toEqual(['visible']);
+  });
+});
+
+describe('the agent.reminders.cancel operation', () => {
+  async function seed(remindAt = 1_000) {
+    const created = await run('agent.reminders.create', {
+      agentId: agent.id,
+      message: 'Ship the release',
+      remindAt,
+    });
+    audited = [];
+    return created.value?.reminder?.id as string;
+  }
+
+  test('cancels a pending reminder and stops it coming due', async () => {
+    const reminderId = await seed();
+    expect(reminderRepo.listDueReminders(2_000)).toHaveLength(1);
+
+    const outcome = await run('agent.reminders.cancel', { agentId: agent.id, reminderId });
+
+    expect(outcome.value?.reminder).toMatchObject({ id: reminderId, state: 'cancelled' });
+    expect(reminderRepo.listDueReminders(2_000)).toHaveLength(0);
+    expect(reminderRepo.getReminder(reminderId)?.status).toBe('cancelled');
+  });
+
+  test('a cancelled reminder is reachable through the list state filter', async () => {
+    const reminderId = await seed();
+    await run('agent.reminders.cancel', { agentId: agent.id, reminderId });
+
+    const listed = await run('agent.reminders.list', { agentId: agent.id, state: 'cancelled' });
+
+    expect(listed.value?.reminders).toHaveLength(1);
+    expect(listed.value?.reminders?.[0]).toMatchObject({ id: reminderId, state: 'cancelled' });
+  });
+
+  test('cancelling again succeeds without a second write or audit entry', async () => {
+    const reminderId = await seed();
+    await run('agent.reminders.cancel', { agentId: agent.id, reminderId });
+    const updatedAt = reminderRepo.getReminder(reminderId)?.updatedAt;
+    audited = [];
+
+    const repeat = await run('agent.reminders.cancel', { agentId: agent.id, reminderId });
+
+    expect(repeat.value?.reminder).toMatchObject({ id: reminderId, state: 'cancelled' });
+    expect(reminderRepo.getReminder(reminderId)?.updatedAt).toBe(updatedAt as number);
+    expect(audited).toEqual([]);
+  });
+
+  test('the audit entry names the operation and the reminder', async () => {
+    const reminderId = await seed();
+    await run('agent.reminders.cancel', { agentId: agent.id, reminderId });
+    expect(audited).toEqual([
+      { name: 'agent.reminders.cancel', summary: { agentId: agent.id, reminderId } },
+    ]);
+  });
+
+  test('rejects a reminder that already fired', async () => {
+    const reminderId = await seed();
+    reminderRepo.advanceReminderAfterFire(reminderId, 1_000, {
+      status: 'fired',
+      nextRunAt: null,
+      lastFiredAt: 1_000,
+    });
+
+    const outcome = await run('agent.reminders.cancel', { agentId: agent.id, reminderId });
+
+    expect(outcome.value?.reason).toBe('reminder_not_cancellable');
+    expect(reminderRepo.getReminder(reminderId)?.status).toBe('fired');
+  });
+
+  test('rejects a reminder whose delivery is already in flight', async () => {
+    const reminderId = await seed();
+    let release = () => {};
+    claimReminderDelivery(
+      reminderId,
+      new Promise<void>((resolve) => {
+        release = resolve;
+      })
+    );
+
+    const outcome = await run('agent.reminders.cancel', { agentId: agent.id, reminderId });
+
+    expect(outcome.value?.reason).toBe('reminder_not_cancellable');
+    expect(reminderRepo.getReminder(reminderId)?.status).toBe('active');
+    release();
+  });
+
+  test('a caller that loses a cancel race still sees the reminder cancelled', async () => {
+    const reminderId = await seed();
+    const real = reminderRepo;
+    reminderRepo = {
+      ...real,
+      getReminder: (id: string) => real.getReminder(id),
+      listReminders: (id: string) => real.listReminders(id),
+      createReminder: real.createReminder.bind(real),
+      cancelReminder: (id: string) => {
+        real.cancelReminder(id);
+        return false;
+      },
+    } as unknown as SpaceAgentReminderRepository;
+
+    const outcome = await run('agent.reminders.cancel', { agentId: agent.id, reminderId });
+
+    expect(outcome.value?.reminder).toMatchObject({ id: reminderId, state: 'cancelled' });
+    expect(outcome.value?.reason).toBeUndefined();
+    reminderRepo = real;
+  });
+
+  test('rejects a reminder whose occurrence is already claimed for delivery', async () => {
+    const reminderId = await seed();
+    occurrenceClaimed = true;
+
+    const outcome = await run('agent.reminders.cancel', { agentId: agent.id, reminderId });
+
+    expect(outcome.value?.reason).toBe('reminder_not_cancellable');
+    expect(reminderRepo.getReminder(reminderId)?.status).toBe('active');
+  });
+
+  test('rejects a reminder that belongs to another agent', async () => {
+    const reminderId = await seed();
+    const other = agentRepo.create({
+      spaceId,
+      handle: 'other',
+      displayName: 'Other',
+      instructions: '',
+    });
+
+    const outcome = await run('agent.reminders.cancel', { agentId: other.id, reminderId });
+
+    expect(outcome.value?.reason).toBe('reminder_not_found');
+    expect(reminderRepo.getReminder(reminderId)?.status).toBe('active');
+  });
+
+  test('denies a read-only caller before any write', async () => {
+    const reminderId = await seed();
+
+    const outcome = await run(
+      'agent.reminders.cancel',
+      { agentId: agent.id, reminderId },
+      readOnlyCaller()
+    );
+
+    expect(outcome.value?.reason).toBe('agent_denied');
+    expect(reminderRepo.getReminder(reminderId)?.status).toBe('active');
+  });
+});
+
+describe('reminderOccurrenceIsClaimed', () => {
+  const KEY = 'reminder:rem-1:1000';
+
+  function reader(options: { jobs?: number; status?: string; consumedSeq?: boolean } = {}) {
+    const queries: Array<{ queue: string; matchPayload: Record<string, unknown> }> = [];
+    return {
+      queries,
+      getSDKMessageRepo: () => ({
+        hasConsumptionEvidence: (_sessionId: string, messageId: string) =>
+          options.consumedSeq === true && messageId === KEY,
+      }),
+      getJobQueueRepo: () => ({
+        listActiveByPayload: (queue: string, matchPayload: Record<string, unknown>) => {
+          queries.push({ queue, matchPayload });
+          return new Array(options.jobs ?? 0).fill({});
+        },
+      }),
+      getMessageByStatusAndUuid: (_sessionId: string, status: string, uuid: string) =>
+        status === options.status && uuid === KEY ? {} : null,
+    };
+  }
+
+  test('an active mailbox job alone claims the occurrence', () => {
+    const db = reader({ jobs: 1 });
+    expect(reminderOccurrenceIsClaimed(db, spaceId, agent.id, KEY)).toBe(true);
+    expect(db.queries).toEqual([
+      {
+        queue: 'mailbox',
+        matchPayload: {
+          'to.sessionId': longTermAgentSessionId(spaceId, agent.id),
+          messageUuid: KEY,
+        },
+      },
+    ]);
+  });
+
+  test.each(['deferred', 'enqueued', 'submitted', 'consumed'] as const)(
+    'a persisted %s message claims the occurrence',
+    (status) => {
+      expect(reminderOccurrenceIsClaimed(reader({ status }), spaceId, agent.id, KEY)).toBe(true);
+    }
+  );
+
+  test('a failed message that was never consumed leaves the occurrence unclaimed', () => {
+    expect(reminderOccurrenceIsClaimed(reader({ status: 'failed' }), spaceId, agent.id, KEY)).toBe(
+      false
+    );
+  });
+
+  test('a consumed message later failed inclusively still claims the occurrence', () => {
+    const db = reader({ status: 'failed', consumedSeq: true });
+    expect(reminderOccurrenceIsClaimed(db, spaceId, agent.id, KEY)).toBe(true);
+  });
+
+  test('no reader means nothing is claimed', () => {
+    expect(reminderOccurrenceIsClaimed(null, spaceId, agent.id, KEY)).toBe(false);
   });
 });

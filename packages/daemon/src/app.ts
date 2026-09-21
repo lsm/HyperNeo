@@ -125,7 +125,7 @@ import {
   enqueueLongHorizonAgentReminderScanIfMissing,
   handleLongHorizonAgentReminderFire,
 } from './lib/job-handlers/long-horizon-agent-reminder-fire.handler.ts';
-import { longTermAgentSessionId } from './lib/space/long-term-agent-session.ts';
+import { readReminderOccurrenceState } from './lib/agents/reminder-delivery-registry.ts';
 import { TaskScheduleRepository } from './storage/repositories/task-schedule-repository.ts';
 import { SpaceRepository } from './storage/repositories/space-repository.ts';
 import { SpaceTaskRepository } from './storage/repositories/space-task-repository.ts';
@@ -1111,18 +1111,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         spaceRepo: lhAgentReminderSpaceRepo,
         jobQueue,
         deliver: (args) => spaceRuntimeService.deliverLongHorizonAgentReminder(args),
-        getOccurrenceDeliveryState: (spaceId, agentId, idempotencyKey) => {
-          const sessionId = longTermAgentSessionId(spaceId, agentId);
-          const messageDb = reactiveDb?.db;
-          if (!messageDb) return 'absent';
-          if (messageDb.getMessageByStatusAndUuid(sessionId, 'consumed', idempotencyKey) != null) {
-            return 'consumed';
-          }
-          if (messageDb.getMessageByStatusAndUuid(sessionId, 'enqueued', idempotencyKey) != null) {
-            return 'enqueued';
-          }
-          return 'absent';
-        },
+        getOccurrenceDeliveryState: (spaceId, agentId, idempotencyKey) =>
+          readReminderOccurrenceState(reactiveDb?.db, spaceId, agentId, idempotencyKey),
       });
     });
 

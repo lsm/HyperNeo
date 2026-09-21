@@ -4,6 +4,7 @@ import {
   createAgentTemplateOperations,
 } from '../../agents/agent-template-operations.ts';
 import type { CreateAgentDependencies } from '../../agents/create-agent-operation.ts';
+import { reminderOccurrenceIsClaimed } from '../../agents/reminder-delivery-registry.ts';
 import { createAgentOperations } from '../../agents/operations.ts';
 import {
   publishSpaceAgentV2Mirror,
@@ -46,6 +47,8 @@ export function registerAgentOperations(context: FamilyOperationContext): Operat
       getSession: (sessionId) => context.deps.db.getSession(sessionId),
       longHorizonAgentRepo: context.longHorizonAgentRepo,
       reminderRepo: context.spaceAgentReminderRepo,
+      occurrenceIsClaimed: (spaceId, agentId, idempotencyKey) =>
+        reminderOccurrenceIsClaimed(context.deps.db, spaceId, agentId, idempotencyKey),
       taskRepo: context.spaceTaskRepo,
       nodeExecutionRepo: context.nodeExecutionRepo,
       publishAgentCreated,
