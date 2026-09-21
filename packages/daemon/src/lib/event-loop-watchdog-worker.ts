@@ -1,4 +1,4 @@
-import { writeSync } from 'node:fs';
+import { writeFileSync, writeSync } from 'node:fs';
 import { parentPort, workerData } from 'node:worker_threads';
 
 interface EventLoopWatchdogWorkerData {
@@ -7,6 +7,7 @@ interface EventLoopWatchdogWorkerData {
   stallMs: number;
   checkIntervalMs: number;
   killMode: 'sigkill' | 'observe';
+  markerPath?: string;
 }
 
 type WatchdogCommand =
@@ -16,9 +17,10 @@ type WatchdogCommand =
 
 type WatchdogNotice =
   | { type: 'stall-detected'; stalledForMs: number }
+  | { type: 'stall-recovered'; stalledForMs: number }
   | { type: 'fuse-expired'; overdueMs: number };
 
-const { pid, stallMs, checkIntervalMs, killMode, deferStallDetection } =
+const { pid, stallMs, checkIntervalMs, killMode, deferStallDetection, markerPath } =
   workerData as EventLoopWatchdogWorkerData;
 
 const SUSPENSION_GAP_MS = Math.max(checkIntervalMs * 4, 1000);
@@ -28,9 +30,16 @@ let lastHeartbeatMs = Date.now();
 let lastCheckMs = Date.now();
 let fuseDeadlineMs: number | null = null;
 let acted = false;
+let episodeReportedForMs: number | null = null;
 
 parentPort?.on('message', (command: WatchdogCommand) => {
   if (command.type === 'heartbeat') {
+    if (episodeReportedForMs !== null) {
+      const stalledForMs = Date.now() - lastHeartbeatMs;
+      writeSync(2, `[EventLoopWatchdog] event loop recovered after ${stalledForMs}ms\n`);
+      parentPort?.postMessage({ type: 'stall-recovered', stalledForMs } satisfies WatchdogNotice);
+      episodeReportedForMs = null;
+    }
     lastHeartbeatMs = Date.now();
   } else if (command.type === 'arm-stall-detection' && !stallDetectionArmed) {
     lastHeartbeatMs = Date.now();
@@ -53,8 +62,9 @@ setInterval(() => {
     return;
   }
   const stalledForMs = now - lastHeartbeatMs;
-  if (stallDetectionArmed && stalledForMs >= stallMs) {
-    acted = true;
+  if (stallDetectionArmed && stalledForMs >= stallMs && episodeReportedForMs === null) {
+    episodeReportedForMs = stalledForMs;
+    if (killMode === 'sigkill') acted = true;
     report(`event loop stalled for ${stalledForMs}ms (stall threshold ${stallMs}ms)`, {
       type: 'stall-detected',
       stalledForMs,
@@ -68,11 +78,24 @@ setInterval(() => {
   }
 }, checkIntervalMs);
 
+function writeMarker(reason: string, action: 'killed' | 'observed'): void {
+  if (!markerPath) return;
+  try {
+    writeFileSync(
+      markerPath,
+      `${JSON.stringify({ pid, detectedAt: Date.now(), stallMs, action, reason })}\n`
+    );
+  } catch {}
+}
+
 function report(reason: string, notice: WatchdogNotice): void {
+  const action = killMode === 'sigkill' ? 'killed' : 'observed';
+  writeMarker(reason, action);
   if (killMode === 'sigkill') {
     writeSync(2, `[EventLoopWatchdog] killing daemon pid=${pid}: ${reason}\n`);
     process.kill(pid, 'SIGKILL');
     return;
   }
+  writeSync(2, `[EventLoopWatchdog] daemon pid=${pid} unresponsive: ${reason}\n`);
   parentPort?.postMessage(notice);
 }

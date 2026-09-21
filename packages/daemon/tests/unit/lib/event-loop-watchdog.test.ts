@@ -1,13 +1,16 @@
 import { describe, expect, test, afterEach } from 'bun:test';
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { existsSync, rmSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readAndClearEventLoopStallMarker } from '../../../src/lib/event-loop-stall-marker';
 import {
+  armStallDetectionWhenStartupSettles,
   startEventLoopWatchdog,
   type EventLoopWatchdogHandle,
   type EventLoopWatchdogNotice,
+  type StallArmReason,
 } from '../../../src/lib/event-loop-watchdog';
 
 function blockMainThreadFor(ms: number): void {
@@ -41,10 +44,14 @@ interface SpawnedFixture {
   stderrText: () => string;
 }
 
-function spawnBunFixture(fixtureFileName: string): SpawnedFixture {
+function spawnBunFixture(
+  fixtureFileName: string,
+  env: Record<string, string> = {}
+): SpawnedFixture {
   const fixturePath = fileURLToPath(new URL(`./${fixtureFileName}`, import.meta.url));
   const child = spawn(resolveBunExecutable(), [fixturePath], {
     stdio: ['ignore', 'ignore', 'pipe'],
+    env: { ...process.env, ...env },
   });
   const stderrChunks: Buffer[] = [];
   child.stderr.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
@@ -197,15 +204,41 @@ describe('event-loop-watchdog', () => {
     }
   });
 
-  test('kills a process whose event loop spins forever', async () => {
-    const { child, closed, stderrText } = spawnBunFixture('event-loop-watchdog-kill-fixture.ts');
+  test('kills a process whose event loop spins forever when sigkill is opted into', async () => {
+    const markerPath = join(tmpdir(), `watchdog-marker-${process.pid}-${Date.now()}.json`);
+    const { child, closed, stderrText } = spawnBunFixture('event-loop-watchdog-kill-fixture.ts', {
+      WATCHDOG_MARKER_PATH: markerPath,
+    });
     try {
       const outcome = await withTimeout(closed, 10_000, 'watchdog kill');
       expect(stderrText()).toContain('fixture: spinning forever');
       expect(stderrText()).toContain('[EventLoopWatchdog] killing daemon');
       expect(outcome.signal).toBe('SIGKILL');
+
+      const marker = readAndClearEventLoopStallMarker(markerPath);
+      expect(marker).toMatchObject({ action: 'killed', pid: child.pid });
+      expect(marker?.reason).toContain('event loop stalled');
+      expect(readAndClearEventLoopStallMarker(markerPath)).toBeNull();
     } finally {
       child.kill('SIGKILL');
+      rmSync(markerPath, { force: true });
+    }
+  }, 12_000);
+
+  test('a spinning process is left alive by default and still leaves a marker', async () => {
+    const markerPath = join(tmpdir(), `watchdog-observe-${process.pid}-${Date.now()}.json`);
+    const { child, stderrText } = spawnBunFixture('event-loop-watchdog-observe-fixture.ts', {
+      WATCHDOG_MARKER_PATH: markerPath,
+    });
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 2500));
+      expect(child.kill(0)).toBe(true);
+      expect(stderrText()).toContain('[EventLoopWatchdog] daemon pid=');
+      expect(stderrText()).not.toContain('killing daemon');
+      expect(readAndClearEventLoopStallMarker(markerPath)).toMatchObject({ action: 'observed' });
+    } finally {
+      child.kill('SIGKILL');
+      rmSync(markerPath, { force: true });
     }
   }, 12_000);
 
@@ -227,4 +260,92 @@ describe('event-loop-watchdog', () => {
       child.kill('SIGKILL');
     }
   }, 10_000);
+});
+
+describe('armStallDetectionWhenStartupSettles', () => {
+  function fakeHandle() {
+    const calls: string[] = [];
+    const handle = {
+      armStallDetection: () => calls.push('arm'),
+      armShutdownFuse: () => {},
+      stop: () => {},
+    } as EventLoopWatchdogHandle;
+    return { handle, calls };
+  }
+
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  test('arms once the startup work settles, not when createDaemonApp returns', async () => {
+    const { handle, calls } = fakeHandle();
+    let finishStartup: (() => void) | undefined;
+    const startup = new Promise<void>((resolve) => {
+      finishStartup = resolve;
+    });
+    const reasons: StallArmReason[] = [];
+
+    armStallDetectionWhenStartupSettles(handle, startup, {
+      graceMs: 60_000,
+      onArm: (reason) => reasons.push(reason),
+    });
+    await settle();
+    expect(calls).toEqual([]);
+
+    finishStartup?.();
+    await settle();
+
+    expect(calls).toEqual(['arm']);
+    expect(reasons).toEqual(['startup_settled']);
+  });
+
+  test('startup work that fails still arms rather than leaving the daemon unguarded', async () => {
+    const { handle, calls } = fakeHandle();
+
+    armStallDetectionWhenStartupSettles(handle, Promise.reject(new Error('provisioning failed')), {
+      graceMs: 60_000,
+    });
+    await settle();
+
+    expect(calls).toEqual(['arm']);
+  });
+
+  test('startup work that never settles arms on the grace backstop', async () => {
+    const { handle, calls } = fakeHandle();
+    const reasons: StallArmReason[] = [];
+
+    armStallDetectionWhenStartupSettles(handle, new Promise<void>(() => {}), {
+      graceMs: 10,
+      onArm: (reason) => reasons.push(reason),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+
+    expect(calls).toEqual(['arm']);
+    expect(reasons).toEqual(['grace_expired']);
+  });
+
+  test('a late settle after the backstop does not arm a second time', async () => {
+    const { handle, calls } = fakeHandle();
+    let finishStartup: (() => void) | undefined;
+    const startup = new Promise<void>((resolve) => {
+      finishStartup = resolve;
+    });
+    const reasons: StallArmReason[] = [];
+
+    armStallDetectionWhenStartupSettles(handle, startup, {
+      graceMs: 10,
+      onArm: (reason) => reasons.push(reason),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    finishStartup?.();
+    await settle();
+
+    expect(calls).toEqual(['arm']);
+    expect(reasons).toEqual(['grace_expired']);
+  });
+
+  test('a disabled watchdog is a no-op rather than a crash', async () => {
+    expect(() =>
+      armStallDetectionWhenStartupSettles(null, Promise.resolve(), { graceMs: 10 })
+    ).not.toThrow();
+    await settle();
+  });
 });
