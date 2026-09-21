@@ -5,6 +5,38 @@ export const EVENT_LOOP_WATCHDOG_HEARTBEAT_MS = 2_000;
 export const EVENT_LOOP_WATCHDOG_STALL_MS = 60_000;
 export const EVENT_LOOP_WATCHDOG_SHUTDOWN_FUSE_MS = 30_000;
 export const EVENT_LOOP_WATCHDOG_MAX_CHECK_INTERVAL_MS = 500;
+export const EVENT_LOOP_WATCHDOG_STARTUP_GRACE_MS = 10 * 60_000;
+
+export type StallArmReason = 'startup_settled' | 'grace_expired';
+
+export interface ArmStallDetectionOptions {
+  graceMs?: number;
+  onArm?: (reason: StallArmReason) => void;
+}
+
+export function armStallDetectionWhenStartupSettles(
+  handle: EventLoopWatchdogHandle | null,
+  startupSettled: PromiseLike<unknown>,
+  options: ArmStallDetectionOptions = {}
+): void {
+  if (!handle) return;
+  const graceMs = options.graceMs ?? EVENT_LOOP_WATCHDOG_STARTUP_GRACE_MS;
+  let armed = false;
+  let graceTimer: ReturnType<typeof setTimeout> | undefined;
+  const arm = (reason: StallArmReason): void => {
+    if (armed) return;
+    armed = true;
+    if (graceTimer) clearTimeout(graceTimer);
+    handle.armStallDetection();
+    options.onArm?.(reason);
+  };
+  graceTimer = setTimeout(() => arm('grace_expired'), graceMs);
+  graceTimer.unref?.();
+  startupSettled.then(
+    () => arm('startup_settled'),
+    () => arm('startup_settled')
+  );
+}
 
 export type EventLoopWatchdogNotice =
   | { type: 'stall-detected'; stalledForMs: number }

@@ -5,9 +5,11 @@ import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  armStallDetectionWhenStartupSettles,
   startEventLoopWatchdog,
   type EventLoopWatchdogHandle,
   type EventLoopWatchdogNotice,
+  type StallArmReason,
 } from '../../../src/lib/event-loop-watchdog';
 
 function blockMainThreadFor(ms: number): void {
@@ -227,4 +229,92 @@ describe('event-loop-watchdog', () => {
       child.kill('SIGKILL');
     }
   }, 10_000);
+});
+
+describe('armStallDetectionWhenStartupSettles', () => {
+  function fakeHandle() {
+    const calls: string[] = [];
+    const handle = {
+      armStallDetection: () => calls.push('arm'),
+      armShutdownFuse: () => {},
+      stop: () => {},
+    } as EventLoopWatchdogHandle;
+    return { handle, calls };
+  }
+
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  test('arms once the startup work settles, not when createDaemonApp returns', async () => {
+    const { handle, calls } = fakeHandle();
+    let finishStartup: (() => void) | undefined;
+    const startup = new Promise<void>((resolve) => {
+      finishStartup = resolve;
+    });
+    const reasons: StallArmReason[] = [];
+
+    armStallDetectionWhenStartupSettles(handle, startup, {
+      graceMs: 60_000,
+      onArm: (reason) => reasons.push(reason),
+    });
+    await settle();
+    expect(calls).toEqual([]);
+
+    finishStartup?.();
+    await settle();
+
+    expect(calls).toEqual(['arm']);
+    expect(reasons).toEqual(['startup_settled']);
+  });
+
+  test('startup work that fails still arms rather than leaving the daemon unguarded', async () => {
+    const { handle, calls } = fakeHandle();
+
+    armStallDetectionWhenStartupSettles(handle, Promise.reject(new Error('provisioning failed')), {
+      graceMs: 60_000,
+    });
+    await settle();
+
+    expect(calls).toEqual(['arm']);
+  });
+
+  test('startup work that never settles arms on the grace backstop', async () => {
+    const { handle, calls } = fakeHandle();
+    const reasons: StallArmReason[] = [];
+
+    armStallDetectionWhenStartupSettles(handle, new Promise<void>(() => {}), {
+      graceMs: 10,
+      onArm: (reason) => reasons.push(reason),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+
+    expect(calls).toEqual(['arm']);
+    expect(reasons).toEqual(['grace_expired']);
+  });
+
+  test('a late settle after the backstop does not arm a second time', async () => {
+    const { handle, calls } = fakeHandle();
+    let finishStartup: (() => void) | undefined;
+    const startup = new Promise<void>((resolve) => {
+      finishStartup = resolve;
+    });
+    const reasons: StallArmReason[] = [];
+
+    armStallDetectionWhenStartupSettles(handle, startup, {
+      graceMs: 10,
+      onArm: (reason) => reasons.push(reason),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    finishStartup?.();
+    await settle();
+
+    expect(calls).toEqual(['arm']);
+    expect(reasons).toEqual(['grace_expired']);
+  });
+
+  test('a disabled watchdog is a no-op rather than a crash', async () => {
+    expect(() =>
+      armStallDetectionWhenStartupSettles(null, Promise.resolve(), { graceMs: 10 })
+    ).not.toThrow();
+    await settle();
+  });
 });
