@@ -4,7 +4,7 @@ import { createSubmitTaskForReviewOperation } from './submit-for-review.ts';
 import { createSpaceCreateTaskOperation, type SpaceCreateTaskDependencies } from './create-task.ts';
 import { createCompleteTaskOperation, type CompleteTaskDependencies } from './complete-task.ts';
 import {
-  createOwnedPendingCompletionOperation,
+  createOwnedPendingCompletionOperations,
   type OwnedPendingCompletionDependencies,
 } from './owned-pending-completion.ts';
 import {
@@ -197,7 +197,7 @@ export function createSpaceOperationRegistryProvider(
             })
           : undefined,
         pendingCompletion: pendingCompletion
-          ? createOwnedPendingCompletionOperation(pendingCompletion)
+          ? createOwnedPendingCompletionOperations(pendingCompletion)
           : undefined,
         editTask: (input, caller) =>
           createSpaceTaskMetadataEditor({

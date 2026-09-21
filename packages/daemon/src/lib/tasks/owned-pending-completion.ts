@@ -2,7 +2,11 @@ import type { Session, SpaceTask } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { Logger } from '../logger.ts';
-import { defineOperation, type OperationCaller } from '../operations/registry.ts';
+import {
+  defineOperation,
+  type OperationCaller,
+  type OperationDefinition,
+} from '../operations/registry.ts';
 import { TaskWithSpaceFieldsSchema } from './get-operation.ts';
 import type { SpaceTaskManager } from './task-manager.ts';
 import {
@@ -54,7 +58,12 @@ export interface OwnedPendingCompletionDependencies {
   ) => Promise<unknown>;
   warn: (taskId: string, detail: string) => void;
   emitTaskUpdated: (spaceId: string, task: SpaceTask) => Promise<void>;
-  audit: (session: Session, previousTask: SpaceTask, input: PendingCompletionInput) => void;
+  audit: (
+    operationName: string,
+    session: Session,
+    previousTask: SpaceTask,
+    input: PendingCompletionInput
+  ) => void;
 }
 
 export function resolveCompletionActor(
@@ -82,6 +91,7 @@ export function resolveCompletionActor(
 
 export async function requireCompletionAutonomy(
   actor: CompletionActor,
+  operationName: string,
   policyContext: SpaceMcpSessionPolicyContext,
   getSpaceAutonomyLevel: OwnedPendingCompletionDependencies['getSpaceAutonomyLevel']
 ): Promise<Gate<CompletionActor>> {
@@ -102,7 +112,7 @@ export async function requireCompletionAutonomy(
   const agentLevel = agent.autonomyLevel ?? null;
   const effective = resolveEffectiveAutonomyLevel({ spaceLevel, agentLevel });
   const admission = decideAutonomyAdmission({
-    toolName: 'task.resolvePendingCompletion',
+    toolName: operationName,
     level: effective.level,
     required: HUMAN_ONLY_AUTONOMY_LEVEL,
     agentLevel,
@@ -184,6 +194,7 @@ function bindOwnedCompletion(
 }
 
 async function notifyOwnedCompletion(
+  operationName: string,
   actor: CompletionActor,
   previous: SpaceTask,
   input: PendingCompletionInput,
@@ -196,14 +207,14 @@ async function notifyOwnedCompletion(
   );
   if (actor.source === 'mcp' && actor.session) {
     try {
-      audit(actor.session, previous, input);
+      audit(operationName, actor.session, previous, input);
     } catch {}
   }
 }
 
-export function createOwnedPendingCompletionOperation(
+export function createOwnedPendingCompletionOperations(
   dependencies: OwnedPendingCompletionDependencies
-) {
+): OperationDefinition[] {
   const resolve = (
     superpipe({
       ...dependencies,
@@ -212,12 +223,12 @@ export function createOwnedPendingCompletionOperation(
       },
     })('resolve-owned-pending-completion') as PipelineAPI
   )
-    .input(['input', 'caller'])
+    .input(['input', 'caller', 'operationName'])
     .pipe(resolveCompletionActor, ['caller', 'getSession', 'policyContext'], 'result:task')
     .pipe((actor: CompletionActor) => actor, 'task', 'actor')
     .pipe(
       requireCompletionAutonomy,
-      ['actor', 'policyContext', 'getSpaceAutonomyLevel'],
+      ['actor', 'operationName', 'policyContext', 'getSpaceAutonomyLevel'],
       'result:task'
     )
     .pipe((actor: CompletionActor) => actor, 'task', 'actor')
@@ -243,12 +254,36 @@ export function createOwnedPendingCompletionOperation(
       'warn',
     ])
     .pipe(readPendingCompletionResult, ['readOwnedTask', 'decision', 'rejection'], 'result:task')
-    .pipe(notifyOwnedCompletion, ['actor', 'previous', 'input', 'task', 'emitTaskUpdated', 'audit'])
+    .pipe(notifyOwnedCompletion, [
+      'operationName',
+      'actor',
+      'previous',
+      'input',
+      'task',
+      'emitTaskUpdated',
+      'audit',
+    ])
     .endAsync('task') as (
     input: PendingCompletionInput,
-    caller: OperationCaller
+    caller: OperationCaller,
+    operationName: string
   ) => Promise<SpaceTask | Error>;
-  return defineOperation({
+  const PendingCompletionResultSchema = TaskWithSpaceFieldsSchema.extend({
+    pendingCheckpointType: z.literal('task_completion').nullable(),
+    approvalSource: z.enum(['human', 'agent', 'auto_policy']).nullable(),
+    approvalReason: z.string().nullable(),
+    approvedAt: z.number().nullable(),
+    postApprovalBlockedReason: z.string().nullable().optional(),
+  });
+
+  const DecisionInputSchema = z
+    .object({ taskId: z.string().min(1), reason: z.string().nullable().optional() })
+    .strict();
+
+  const DECISION_ADMISSION_DOC =
+    'MCP requires a Space agent session in the owning space or a legacy task-agent session, and a long-term agent caller needs the human-only autonomy level while a legacy task-agent session is exempt from that gate. Standalone tasks are unsupported.';
+
+  const legacy = defineOperation({
     name: 'task.resolvePendingCompletion',
     description:
       'Approve or reject a Space task awaiting completion review. MCP requires a Space agent session in the owning space or a legacy task-agent session. Both transports carry the same human approval weight, and a long-term agent caller needs the human-only autonomy level to be admitted while a legacy task-agent session is exempt from that gate, but an approval records who made it: approvalSource is agent for an MCP caller and human for an RPC or internal one. A rejection reopens the task to in_progress and leaves approvalSource null. Standalone tasks are unsupported. Approval may return postApprovalBlockedReason when post-approval work could not dispatch.',
@@ -259,17 +294,40 @@ export function createOwnedPendingCompletionOperation(
         reason: z.string().nullable().optional(),
       })
       .strict(),
-    resultSchema: TaskWithSpaceFieldsSchema.extend({
-      pendingCheckpointType: z.literal('task_completion').nullable(),
-      approvalSource: z.enum(['human', 'agent', 'auto_policy']).nullable(),
-      approvalReason: z.string().nullable(),
-      approvedAt: z.number().nullable(),
-      postApprovalBlockedReason: z.string().nullable().optional(),
-    }),
+    resultSchema: PendingCompletionResultSchema,
     execute: async (input, caller) => {
-      const result = await resolve(input, caller);
+      const result = await resolve(input, caller, 'task.resolvePendingCompletion');
       if (result instanceof Error) throw result;
       return result;
     },
   });
+
+  const decide = async (
+    input: { taskId: string; reason?: string | null },
+    caller: OperationCaller,
+    approved: boolean,
+    operationName: string
+  ) => {
+    const result = await resolve({ ...input, approved }, caller, operationName);
+    if (result instanceof Error) throw result;
+    return result;
+  };
+
+  return [
+    legacy,
+    defineOperation({
+      name: 'task.approve',
+      description: `Approve a Space task awaiting completion review, moving it out of review and dispatching the post-approval work. ${DECISION_ADMISSION_DOC} The approval records who made it: approvalSource is agent for an MCP caller and human for an RPC or internal one. May return postApprovalBlockedReason when the approval committed but the post-approval work could not dispatch.`,
+      inputSchema: DecisionInputSchema,
+      resultSchema: PendingCompletionResultSchema,
+      execute: async (input, caller) => decide(input, caller, true, 'task.approve'),
+    }),
+    defineOperation({
+      name: 'task.reject',
+      description: `Send a Space task awaiting completion review back to in_progress with an optional reason, so the worker can continue. ${DECISION_ADMISSION_DOC} A rejection records no provenance: approvalSource stays null.`,
+      inputSchema: DecisionInputSchema,
+      resultSchema: PendingCompletionResultSchema,
+      execute: async (input, caller) => decide(input, caller, false, 'task.reject'),
+    }),
+  ];
 }

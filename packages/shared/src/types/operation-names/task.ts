@@ -1,4 +1,5 @@
 export const TASK_OPERATION_NAMES = [
+  'task.approve',
   'task.archive',
   'task.cancel',
   'task.complete',
@@ -8,6 +9,7 @@ export const TASK_OPERATION_NAMES = [
   'task.list',
   'task.members.list',
   'task.message.send',
+  'task.reject',
   'task.resolvePendingCompletion',
   'task.retry',
   'task.setPreferredWorkflow',

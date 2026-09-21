@@ -669,11 +669,11 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
         task,
       });
     },
-    audit: (session, previous, input) => {
+    audit: (operationName, session, previous, input) => {
       new McpAuditLogRepository(deps.db.getDatabase()).createEntry({
         sessionId: session.id,
         agentName: session.metadata.promptProvenance?.agentName,
-        toolName: 'task.resolvePendingCompletion',
+        toolName: operationName,
         spaceId: previous.spaceId,
         taskId: input.taskId,
         paramsSummary: JSON.stringify({
