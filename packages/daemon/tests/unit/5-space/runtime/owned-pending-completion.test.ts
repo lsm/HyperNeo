@@ -135,6 +135,7 @@ test.each(['default-agent', 'legacy-task'] as const)(
     expect(order).toEqual(['dispatch', 'event', 'audit']);
     expect(approvalSources).toEqual(['agent']);
     expect(dependencies.audit).toHaveBeenCalledWith(
+      'task.resolvePendingCompletion',
       expect.objectContaining({ id: session.id }),
       expect.objectContaining({ status: 'review' }),
       { taskId: task.id, approved: true, reason: '  raw  ' }
@@ -549,4 +550,22 @@ test('task.approve refuses an approved flag smuggled through the input', async (
   expect(outcome.kind).toBe('failed');
   expect(outcome.kind === 'failed' && outcome.code).toBe('invalid_input');
   expect(tasks.getTask(task.id)?.status).toBe('review');
+});
+
+test('the audit entry names the door that was called', async () => {
+  const session = persist(
+    'worker',
+    longTermAgentSessionId(spaceId, coordinator.id),
+    spaceId,
+    coordinator.id
+  );
+
+  await invoke(session.id, { taskId: task.id }, 'mcp', 'task.approve');
+
+  expect(dependencies.audit).toHaveBeenCalledWith(
+    'task.approve',
+    expect.objectContaining({ id: session.id }),
+    expect.objectContaining({ status: 'review' }),
+    { taskId: task.id, approved: true }
+  );
 });

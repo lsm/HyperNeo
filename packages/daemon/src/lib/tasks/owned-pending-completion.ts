@@ -58,7 +58,12 @@ export interface OwnedPendingCompletionDependencies {
   ) => Promise<unknown>;
   warn: (taskId: string, detail: string) => void;
   emitTaskUpdated: (spaceId: string, task: SpaceTask) => Promise<void>;
-  audit: (session: Session, previousTask: SpaceTask, input: PendingCompletionInput) => void;
+  audit: (
+    operationName: string,
+    session: Session,
+    previousTask: SpaceTask,
+    input: PendingCompletionInput
+  ) => void;
 }
 
 export function resolveCompletionActor(
@@ -86,6 +91,7 @@ export function resolveCompletionActor(
 
 export async function requireCompletionAutonomy(
   actor: CompletionActor,
+  operationName: string,
   policyContext: SpaceMcpSessionPolicyContext,
   getSpaceAutonomyLevel: OwnedPendingCompletionDependencies['getSpaceAutonomyLevel']
 ): Promise<Gate<CompletionActor>> {
@@ -106,7 +112,7 @@ export async function requireCompletionAutonomy(
   const agentLevel = agent.autonomyLevel ?? null;
   const effective = resolveEffectiveAutonomyLevel({ spaceLevel, agentLevel });
   const admission = decideAutonomyAdmission({
-    toolName: 'task.resolvePendingCompletion',
+    toolName: operationName,
     level: effective.level,
     required: HUMAN_ONLY_AUTONOMY_LEVEL,
     agentLevel,
@@ -188,6 +194,7 @@ function bindOwnedCompletion(
 }
 
 async function notifyOwnedCompletion(
+  operationName: string,
   actor: CompletionActor,
   previous: SpaceTask,
   input: PendingCompletionInput,
@@ -200,7 +207,7 @@ async function notifyOwnedCompletion(
   );
   if (actor.source === 'mcp' && actor.session) {
     try {
-      audit(actor.session, previous, input);
+      audit(operationName, actor.session, previous, input);
     } catch {}
   }
 }
@@ -216,12 +223,12 @@ export function createOwnedPendingCompletionOperations(
       },
     })('resolve-owned-pending-completion') as PipelineAPI
   )
-    .input(['input', 'caller'])
+    .input(['input', 'caller', 'operationName'])
     .pipe(resolveCompletionActor, ['caller', 'getSession', 'policyContext'], 'result:task')
     .pipe((actor: CompletionActor) => actor, 'task', 'actor')
     .pipe(
       requireCompletionAutonomy,
-      ['actor', 'policyContext', 'getSpaceAutonomyLevel'],
+      ['actor', 'operationName', 'policyContext', 'getSpaceAutonomyLevel'],
       'result:task'
     )
     .pipe((actor: CompletionActor) => actor, 'task', 'actor')
@@ -247,10 +254,19 @@ export function createOwnedPendingCompletionOperations(
       'warn',
     ])
     .pipe(readPendingCompletionResult, ['readOwnedTask', 'decision', 'rejection'], 'result:task')
-    .pipe(notifyOwnedCompletion, ['actor', 'previous', 'input', 'task', 'emitTaskUpdated', 'audit'])
+    .pipe(notifyOwnedCompletion, [
+      'operationName',
+      'actor',
+      'previous',
+      'input',
+      'task',
+      'emitTaskUpdated',
+      'audit',
+    ])
     .endAsync('task') as (
     input: PendingCompletionInput,
-    caller: OperationCaller
+    caller: OperationCaller,
+    operationName: string
   ) => Promise<SpaceTask | Error>;
   const PendingCompletionResultSchema = TaskWithSpaceFieldsSchema.extend({
     pendingCheckpointType: z.literal('task_completion').nullable(),
@@ -280,7 +296,7 @@ export function createOwnedPendingCompletionOperations(
       .strict(),
     resultSchema: PendingCompletionResultSchema,
     execute: async (input, caller) => {
-      const result = await resolve(input, caller);
+      const result = await resolve(input, caller, 'task.resolvePendingCompletion');
       if (result instanceof Error) throw result;
       return result;
     },
@@ -289,9 +305,10 @@ export function createOwnedPendingCompletionOperations(
   const decide = async (
     input: { taskId: string; reason?: string | null },
     caller: OperationCaller,
-    approved: boolean
+    approved: boolean,
+    operationName: string
   ) => {
-    const result = await resolve({ ...input, approved }, caller);
+    const result = await resolve({ ...input, approved }, caller, operationName);
     if (result instanceof Error) throw result;
     return result;
   };
@@ -303,14 +320,14 @@ export function createOwnedPendingCompletionOperations(
       description: `Approve a Space task awaiting completion review, moving it out of review and dispatching the post-approval work. ${DECISION_ADMISSION_DOC} The approval records who made it: approvalSource is agent for an MCP caller and human for an RPC or internal one. May return postApprovalBlockedReason when the approval committed but the post-approval work could not dispatch.`,
       inputSchema: DecisionInputSchema,
       resultSchema: PendingCompletionResultSchema,
-      execute: async (input, caller) => decide(input, caller, true),
+      execute: async (input, caller) => decide(input, caller, true, 'task.approve'),
     }),
     defineOperation({
       name: 'task.reject',
       description: `Send a Space task awaiting completion review back to in_progress with an optional reason, so the worker can continue. ${DECISION_ADMISSION_DOC} A rejection records no provenance: approvalSource stays null.`,
       inputSchema: DecisionInputSchema,
       resultSchema: PendingCompletionResultSchema,
-      execute: async (input, caller) => decide(input, caller, false),
+      execute: async (input, caller) => decide(input, caller, false, 'task.reject'),
     }),
   ];
 }
