@@ -2,7 +2,11 @@ import type { Session, SpaceTask } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { Logger } from '../logger.ts';
-import { defineOperation, type OperationCaller } from '../operations/registry.ts';
+import {
+  defineOperation,
+  type OperationCaller,
+  type OperationDefinition,
+} from '../operations/registry.ts';
 import { TaskWithSpaceFieldsSchema } from './get-operation.ts';
 import type { SpaceTaskManager } from './task-manager.ts';
 import {
@@ -201,9 +205,9 @@ async function notifyOwnedCompletion(
   }
 }
 
-export function createOwnedPendingCompletionOperation(
+export function createOwnedPendingCompletionOperations(
   dependencies: OwnedPendingCompletionDependencies
-) {
+): OperationDefinition[] {
   const resolve = (
     superpipe({
       ...dependencies,
@@ -248,7 +252,22 @@ export function createOwnedPendingCompletionOperation(
     input: PendingCompletionInput,
     caller: OperationCaller
   ) => Promise<SpaceTask | Error>;
-  return defineOperation({
+  const PendingCompletionResultSchema = TaskWithSpaceFieldsSchema.extend({
+    pendingCheckpointType: z.literal('task_completion').nullable(),
+    approvalSource: z.enum(['human', 'agent', 'auto_policy']).nullable(),
+    approvalReason: z.string().nullable(),
+    approvedAt: z.number().nullable(),
+    postApprovalBlockedReason: z.string().nullable().optional(),
+  });
+
+  const DecisionInputSchema = z
+    .object({ taskId: z.string().min(1), reason: z.string().nullable().optional() })
+    .strict();
+
+  const DECISION_ADMISSION_DOC =
+    'MCP requires a Space agent session in the owning space or a legacy task-agent session, and a long-term agent caller needs the human-only autonomy level while a legacy task-agent session is exempt from that gate. Standalone tasks are unsupported.';
+
+  const legacy = defineOperation({
     name: 'task.resolvePendingCompletion',
     description:
       'Approve or reject a Space task awaiting completion review. MCP requires a Space agent session in the owning space or a legacy task-agent session. Both transports carry the same human approval weight, and a long-term agent caller needs the human-only autonomy level to be admitted while a legacy task-agent session is exempt from that gate, but an approval records who made it: approvalSource is agent for an MCP caller and human for an RPC or internal one. A rejection reopens the task to in_progress and leaves approvalSource null. Standalone tasks are unsupported. Approval may return postApprovalBlockedReason when post-approval work could not dispatch.',
@@ -259,17 +278,39 @@ export function createOwnedPendingCompletionOperation(
         reason: z.string().nullable().optional(),
       })
       .strict(),
-    resultSchema: TaskWithSpaceFieldsSchema.extend({
-      pendingCheckpointType: z.literal('task_completion').nullable(),
-      approvalSource: z.enum(['human', 'agent', 'auto_policy']).nullable(),
-      approvalReason: z.string().nullable(),
-      approvedAt: z.number().nullable(),
-      postApprovalBlockedReason: z.string().nullable().optional(),
-    }),
+    resultSchema: PendingCompletionResultSchema,
     execute: async (input, caller) => {
       const result = await resolve(input, caller);
       if (result instanceof Error) throw result;
       return result;
     },
   });
+
+  const decide = async (
+    input: { taskId: string; reason?: string | null },
+    caller: OperationCaller,
+    approved: boolean
+  ) => {
+    const result = await resolve({ ...input, approved }, caller);
+    if (result instanceof Error) throw result;
+    return result;
+  };
+
+  return [
+    legacy,
+    defineOperation({
+      name: 'task.approve',
+      description: `Approve a Space task awaiting completion review, moving it out of review and dispatching the post-approval work. ${DECISION_ADMISSION_DOC} The approval records who made it: approvalSource is agent for an MCP caller and human for an RPC or internal one. May return postApprovalBlockedReason when the approval committed but the post-approval work could not dispatch.`,
+      inputSchema: DecisionInputSchema,
+      resultSchema: PendingCompletionResultSchema,
+      execute: async (input, caller) => decide(input, caller, true),
+    }),
+    defineOperation({
+      name: 'task.reject',
+      description: `Send a Space task awaiting completion review back to in_progress with an optional reason, so the worker can continue. ${DECISION_ADMISSION_DOC} A rejection records no provenance: approvalSource stays null.`,
+      inputSchema: DecisionInputSchema,
+      resultSchema: PendingCompletionResultSchema,
+      execute: async (input, caller) => decide(input, caller, false),
+    }),
+  ];
 }

@@ -1,9 +1,11 @@
 export const TASK_OPERATION_NAMES = [
+  'task.approve',
   'task.archive',
   'task.cancel',
   'task.complete',
   'task.create',
   'task.dependencies.set',
+  'task.reject',
   'task.get',
   'task.list',
   'task.members.list',

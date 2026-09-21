@@ -5,7 +5,7 @@ import { createOperationRegistry } from '../../../../src/lib/operations/registry
 import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session';
 import { SpaceTaskManager } from '../../../../src/lib/tasks/task-manager';
 import {
-  createOwnedPendingCompletionOperation,
+  createOwnedPendingCompletionOperations,
   loadCompletionTarget,
   type OwnedPendingCompletionDependencies,
   requireCompletionTarget,
@@ -94,11 +94,12 @@ function persist(
 function invoke(
   sessionId?: string,
   input: unknown = { taskId: task.id, approved: true },
-  source: 'rpc' | 'mcp' | 'internal' = 'mcp'
+  source: 'rpc' | 'mcp' | 'internal' = 'mcp',
+  name = 'task.resolvePendingCompletion'
 ) {
   return invokeOperation(
-    createOperationRegistry([createOwnedPendingCompletionOperation(dependencies)]),
-    'task.resolvePendingCompletion',
+    createOperationRegistry(createOwnedPendingCompletionOperations(dependencies)),
+    name,
     input,
     { source, sessionId }
   );
@@ -481,4 +482,71 @@ test('a healthy review task is not restaged and keeps its generation', async () 
   const same = await restageOrphanedCheckpoint(before, (id) => new SpaceTaskManager(db, id));
 
   expect(same).toBe(before);
+});
+
+test('task.approve takes the same decision as the legacy door without an approved flag', async () => {
+  const session = persist(
+    'worker',
+    longTermAgentSessionId(spaceId, coordinator.id),
+    spaceId,
+    coordinator.id
+  );
+
+  const outcome = await invoke(
+    session.id,
+    { taskId: task.id, reason: 'ship it' },
+    'mcp',
+    'task.approve'
+  );
+
+  expect(outcome.kind).toBe('completed');
+  expect(tasks.getTask(task.id)).toMatchObject({
+    status: 'approved',
+    approvalSource: 'agent',
+    approvalReason: 'ship it',
+  });
+  expect(approvalSources).toEqual(['agent']);
+});
+
+test('task.reject reopens the task to in_progress with no provenance', async () => {
+  const session = persist(
+    'worker',
+    longTermAgentSessionId(spaceId, coordinator.id),
+    spaceId,
+    coordinator.id
+  );
+
+  const outcome = await invoke(
+    session.id,
+    { taskId: task.id, reason: 'needs more' },
+    'mcp',
+    'task.reject'
+  );
+
+  expect(outcome.kind).toBe('completed');
+  expect(tasks.getTask(task.id)).toMatchObject({
+    status: 'in_progress',
+    approvalSource: null,
+  });
+  expect(approvalSources).toEqual([]);
+});
+
+test('task.approve refuses an approved flag smuggled through the input', async () => {
+  const session = persist(
+    'worker',
+    longTermAgentSessionId(spaceId, coordinator.id),
+    spaceId,
+    coordinator.id
+  );
+
+  const outcome = await invoke(
+    session.id,
+    { taskId: task.id, approved: false },
+    'mcp',
+    'task.approve'
+  );
+
+  expect(outcome.kind).toBe('failed');
+  expect(outcome.kind === 'failed' && outcome.code).toBe('invalid_input');
+  expect(tasks.getTask(task.id)?.status).toBe('review');
 });
