@@ -336,7 +336,7 @@ test('rejection preserves reason and ignores best-effort event/audit failures', 
   const outcome = await invoke(session.id, { taskId: task.id, approved: false, reason: '' });
   expect(outcome).toMatchObject({
     kind: 'completed',
-    value: { status: 'in_progress', approvalReason: '' },
+    value: { status: 'in_progress', approvalReason: '', approvalSource: null },
   });
   expect(order).toEqual(['event', 'audit']);
   expect(dependencies.dispatchApproval).not.toHaveBeenCalled();

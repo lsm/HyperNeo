@@ -251,7 +251,7 @@ export function createOwnedPendingCompletionOperation(
   return defineOperation({
     name: 'task.resolvePendingCompletion',
     description:
-      'Approve or reject a Space task awaiting completion review. MCP requires a Space agent session in the owning space or a legacy task-agent session. Both transports carry the same human approval weight, and a long-term agent caller needs the human-only autonomy level to be admitted while a legacy task-agent session is exempt from that gate, but the decision is recorded for who made it: approvalSource is agent for an MCP caller and human for an RPC or internal one. Standalone tasks are unsupported. Approval may return postApprovalBlockedReason when post-approval work could not dispatch.',
+      'Approve or reject a Space task awaiting completion review. MCP requires a Space agent session in the owning space or a legacy task-agent session. Both transports carry the same human approval weight, and a long-term agent caller needs the human-only autonomy level to be admitted while a legacy task-agent session is exempt from that gate, but an approval records who made it: approvalSource is agent for an MCP caller and human for an RPC or internal one. A rejection reopens the task to in_progress and leaves approvalSource null. Standalone tasks are unsupported. Approval may return postApprovalBlockedReason when post-approval work could not dispatch.',
     inputSchema: z
       .object({
         taskId: z.string().min(1),
