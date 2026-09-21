@@ -65,7 +65,9 @@ const inputSchema = z
     ...GoalSpaceScopeShape,
     goalId: z.string().min(1).describe('Goal ID'),
     ...GoalWritableFieldsShape,
-    status: GoalStatusSchema.optional().describe('New lifecycle status'),
+    status: GoalStatusSchema.optional().describe(
+      'New lifecycle status. The linked check-in schedule follows it: paused, completed and archived pause the schedule and clear nextCheckInAt, while active re-enables it and restores the next fire. Archived goals cannot be reactivated.'
+    ),
   })
   .strict();
 
@@ -113,7 +115,7 @@ export async function applyGoalUpdate(
 }
 
 const DESCRIPTION =
-  'Update goal fields and rolling state (summary, progress, metrics, nextSteps), or edit its check-in schedule in place. Internal pointers such as activeTaskId are not writable. Requires an active session in the owning Space. Returns { accepted: true, goal } or { accepted: false, reason }.';
+  'Update goal fields and rolling state (summary, progress, metrics, nextSteps), move the goal between lifecycle statuses, or edit its check-in schedule in place. Set status to "paused" to pause a goal and its linked check-in schedule, or to "active" to resume both. Internal pointers such as activeTaskId are not writable. Requires an active session in the owning Space. Returns { accepted: true, goal } or { accepted: false, reason }.';
 
 export function createUpdateGoalOperation(deps: UpdateGoalDependencies) {
   const update = (superpipe({ deps })('goal-update') as PipelineAPI)

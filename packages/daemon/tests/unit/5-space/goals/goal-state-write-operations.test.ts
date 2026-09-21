@@ -15,7 +15,7 @@ import { SpaceGoalRepository } from '../../../../src/storage/repositories/space-
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { TaskScheduleRepository } from '../../../../src/storage/repositories/task-schedule-repository.ts';
-import { runMigrations } from '../../../../src/storage/schema/index.ts';
+import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 
 const SPACE_ID = 'space-goal-writes';
@@ -44,22 +44,24 @@ function makeCtx(sessionStatus = 'active') {
   const db = new BunDatabase(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
   runMigrations(db, () => {});
+  createTables(db);
   insertSpace(db, SPACE_ID);
   insertSpace(db, OTHER_SPACE_ID);
   const spaceRepo = new SpaceRepository(db);
   const taskRepo = new SpaceTaskRepository(db);
   const auditLogRepo = new McpAuditLogRepository(db);
+  const scheduleService = new ScheduleService({
+    db,
+    scheduleRepo: new TaskScheduleRepository(db),
+    jobQueue: new JobQueueRepository(db),
+    spaceRepo,
+  });
   const goalService = new SpaceGoalService({
     goalRepo: new SpaceGoalRepository(db),
     goalEventRepo: new SpaceGoalEventRepository(db),
     taskRepo,
     spaceRepo,
-    scheduleService: new ScheduleService({
-      db,
-      scheduleRepo: new TaskScheduleRepository(db),
-      jobQueue: new JobQueueRepository(db),
-      spaceRepo,
-    }),
+    scheduleService,
     resolveWorkspacePath: async (_spaceId: string, rawPath: string) => rawPath,
     db,
   });
@@ -81,7 +83,9 @@ function makeCtx(sessionStatus = 'active') {
       params_summary: string;
       task_id: string | null;
     }>;
-  return { db, registry, goalService, auditRows, seed };
+  const seedScheduled = (spaceId: string, title: string): SpaceGoal =>
+    goalService.createGoal({ spaceId, title, checkInCronExpression: '0 9 * * 1' });
+  return { db, registry, goalService, scheduleService, auditRows, seed, seedScheduled };
 }
 
 type WriteResult = {
@@ -235,6 +239,44 @@ describe('goal.update through the operations door', () => {
         goalId: goal.id,
         fields: ['summary', 'progress', 'nextSteps'],
       });
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('pauses the goal and its linked check-in schedule through the status field', async () => {
+    const ctx = makeCtx();
+    try {
+      const goal = ctx.seedScheduled(SPACE_ID, 'Weekly check-in');
+      const scheduleId = goal.taskScheduleId as string;
+      const result = await invoke(
+        ctx,
+        'goal.update',
+        { goalId: goal.id, status: 'paused' },
+        agent('ad_hoc_member')
+      );
+      expect(result.accepted).toBe(true);
+      expect(result.goal?.status).toBe('paused');
+      expect(result.goal?.nextCheckInAt).toBeNull();
+      expect(ctx.scheduleService.getSchedule(scheduleId)?.status).toBe('paused');
+      expect(ctx.goalService.listGoalEvents(goal.id)[0]?.eventType).toBe('status_changed');
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('resumes a paused goal and restores its next check-in through the status field', async () => {
+    const ctx = makeCtx();
+    try {
+      const goal = ctx.seedScheduled(SPACE_ID, 'Weekly check-in');
+      const scheduleId = goal.taskScheduleId as string;
+      ctx.goalService.updateGoal(goal.id, { status: 'paused' });
+      const result = await invoke(ctx, 'goal.update', { goalId: goal.id, status: 'active' }, HUMAN);
+      expect(result.accepted).toBe(true);
+      expect(result.goal?.status).toBe('active');
+      expect(result.goal?.nextCheckInAt).not.toBeNull();
+      expect(ctx.scheduleService.getSchedule(scheduleId)?.status).toBe('active');
+      expect(ctx.goalService.listGoalEvents(goal.id)[0]?.eventType).toBe('status_changed');
     } finally {
       ctx.db.close();
     }

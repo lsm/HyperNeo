@@ -4,5 +4,4 @@ export const WORKFLOW_OPERATION_NAMES = [
   'workflow.run.get',
   'workflow.run.replace',
   'workflow.run.update',
-  'workflow.suggest',
 ] as const;
