@@ -208,6 +208,9 @@ describe('NAMED_QUERY_REGISTRY', () => {
 				);
 			`);
       db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_id ON sdk_messages(task_id)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_assistant
+        ON sdk_messages(task_id, timestamp DESC)
+        WHERE message_type = 'assistant'`);
       db.exec(
         `INSERT OR IGNORE INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
 				 VALUES ('${spaceId}', '${spaceId}', '/tmp/test-space', 'Test Space', ${now}, ${now})`
@@ -3953,6 +3956,18 @@ describe('NAMED_QUERY_REGISTRY', () => {
         const rows = db.prepare(entry.sql).all(taskId, limit) as Record<string, unknown>[];
         return entry.mapRow ? rows.map(entry.mapRow) : rows;
       }
+
+      test('artifact candidates use the task assistant partial index', () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        const entry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask.compact')!;
+        const plan = db.prepare(`EXPLAIN QUERY PLAN ${entry.sql}`).all(taskId, 100) as Array<{
+          detail: string;
+        }>;
+
+        expect(plan.map((row) => row.detail).join('\n')).toContain(
+          'idx_sdk_messages_task_assistant'
+        );
+      });
 
       test('includes DB message origin in compact rows', () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
