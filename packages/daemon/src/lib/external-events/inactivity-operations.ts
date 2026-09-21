@@ -42,6 +42,7 @@ const SetEnabledInput = z.object({ ...targetFields, enabled: z.boolean() }).stri
 const SetInput = z
   .object({
     ...targetFields,
+    enabled: z.boolean().optional(),
     thresholdMs: z.number().int().positive().optional(),
     prompt: z.string().optional(),
   })
@@ -55,7 +56,7 @@ interface Scope {
 }
 
 export interface InactivityDependencies extends EventCallerDependencies {
-  configRepo: Pick<SpaceAgentInactivityConfigRepository, 'getByAgent' | 'setEnabled' | 'upsert'>;
+  configRepo: Pick<SpaceAgentInactivityConfigRepository, 'getByAgent' | 'upsert'>;
   claimRepo: Pick<SpaceAgentInactivityClaimRepository, 'getByAgent' | 'clearDegraded'>;
   runNow: (spaceId: string, agentId: string) => Promise<void>;
 }
@@ -95,13 +96,19 @@ function readConfig(scope: Scope, _input: unknown, agents: InactivityDependencie
   };
 }
 
-function applyEnabled(
+function applyConfig(
   scope: Scope,
-  input: z.infer<typeof SetEnabledInput>,
+  input: z.infer<typeof SetInput>,
   agents: InactivityDependencies
 ): SpaceAgentInactivityConfig {
-  const config = agents.configRepo.setEnabled(scope.spaceId, scope.agentId, input.enabled);
-  if (!input.enabled) return config;
+  const config = agents.configRepo.upsert({
+    spaceId: scope.spaceId,
+    agentId: scope.agentId,
+    enabled: input.enabled,
+    thresholdMs: input.thresholdMs,
+    prompt: input.prompt,
+  });
+  if (input.enabled !== true) return config;
   agents.claimRepo.clearDegraded(scope.spaceId, scope.agentId);
   return config.thresholdMs === null
     ? agents.configRepo.upsert({
@@ -110,19 +117,6 @@ function applyEnabled(
         thresholdMs: DEFAULT_INACTIVITY_THRESHOLD_MS,
       })
     : config;
-}
-
-function applyConfig(
-  scope: Scope,
-  input: z.infer<typeof SetInput>,
-  agents: InactivityDependencies
-): SpaceAgentInactivityConfig {
-  return agents.configRepo.upsert({
-    spaceId: scope.spaceId,
-    agentId: scope.agentId,
-    thresholdMs: input.thresholdMs,
-    prompt: input.prompt,
-  });
 }
 
 async function runScanNow(scope: Scope, _input: unknown, agents: InactivityDependencies) {
@@ -189,12 +183,12 @@ export function createInactivityOperations(agents: InactivityDependencies): Oper
       description: `Enable, pause, or resume an agent inactivity watchdog. Pausing keeps the threshold and prompt but stops new nags until resumed; resuming clears the degraded flag and restores the default threshold when none is set. ${SCOPE_DOC}, and session_inactive when the calling MCP session is not active in that Space.`,
       inputSchema: SetEnabledInput,
       resultSchema: z.union([InactivityConfigSchema, REJECTIONS]),
-      execute: writePipeline('inactivity-config-set-enabled', agents, applyEnabled),
+      execute: writePipeline('inactivity-config-set-enabled', agents, applyConfig),
     }),
     defineOperation({
       name: 'inactivity.config.set',
       policy: { safetyClass: 'mutate', roles: INACTIVITY_ROLES },
-      description: `Adjust an agent inactivity watchdog threshold (ms of idleness before a nag) or nag prompt; an empty prompt clears it. Changing either bumps the config revision so a pending nag revalidates against the new settings. ${SCOPE_DOC}, and session_inactive when the calling MCP session is not active in that Space.`,
+      description: `Adjust an agent inactivity watchdog: enable, pause, or resume it, and set the idle threshold (ms before a nag) or nag prompt; an empty prompt clears it. Omitted fields keep their current value. Enabling clears the degraded flag and restores the default threshold when none is set; pausing keeps the threshold and prompt but stops new nags until resumed. Any change bumps the config revision so a pending nag revalidates against the new settings. ${SCOPE_DOC}, and session_inactive when the calling MCP session is not active in that Space.`,
       inputSchema: SetInput,
       resultSchema: z.union([InactivityConfigSchema, REJECTIONS]),
       execute: writePipeline('inactivity-config-set', agents, applyConfig),

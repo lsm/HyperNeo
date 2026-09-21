@@ -46,6 +46,31 @@ function agentCaller(sessionId: string, agentId = AGENT, spaceId = SPACE): Opera
   return { source: 'mcp', sessionId, spaceId, role: 'long_term_agent', agentId };
 }
 
+function degradeClaim() {
+  const { claim } = claimRepo.acquire({
+    spaceId: SPACE,
+    agentId: AGENT,
+    claimKey: 'nag-1',
+    windowAnchoredAt: 1,
+    attemptGeneration: 0,
+    ownerToken: 'owner-1',
+    configRevision: configRepo.getByAgent(SPACE, AGENT)?.configRevision ?? null,
+  });
+  claimRepo.applyReset(
+    SPACE,
+    AGENT,
+    claim.id,
+    claim.claimKey,
+    claim.ownerToken,
+    claim.configRevision,
+    {
+      releaseClaim: false,
+      markDegraded: true,
+      advanceAttemptGeneration: false,
+    }
+  );
+}
+
 function run(name: string, input: unknown, caller: OperationCaller) {
   const operation = operations.get(name);
   if (!operation) throw new Error(`operation ${name} not registered`);
@@ -93,9 +118,9 @@ describe('inactivity watchdog operations', () => {
     expect(result.degraded).toBe(false);
   });
 
-  test('enabling restores the default threshold and clears the degraded claim', async () => {
+  test('enabling restores the default threshold', async () => {
     const caller = agentCaller(longTermSession('s-enable', SPACE));
-    const enabled = (await run('inactivity.config.setEnabled', { enabled: true }, caller)) as {
+    const enabled = (await run('inactivity.config.set', { enabled: true }, caller)) as {
       enabled: boolean;
       thresholdMs: number | null;
     };
@@ -106,14 +131,47 @@ describe('inactivity watchdog operations', () => {
     expect(configRepo.getByAgent(SPACE, AGENT)?.thresholdMs).toBe(DEFAULT_INACTIVITY_THRESHOLD_MS);
   });
 
+  test('enabling clears the degraded claim', async () => {
+    configRepo.upsert({ spaceId: SPACE, agentId: AGENT, enabled: false, thresholdMs: 5000 });
+    degradeClaim();
+    expect(claimRepo.getByAgent(SPACE, AGENT)?.degraded).toBe(true);
+    const caller = agentCaller(longTermSession('s-degraded', SPACE));
+    await run('inactivity.config.set', { enabled: true }, caller);
+    expect(claimRepo.getByAgent(SPACE, AGENT)?.degraded).toBe(false);
+  });
+
+  test('enabling alone keeps the configured threshold and prompt', async () => {
+    configRepo.upsert({
+      spaceId: SPACE,
+      agentId: AGENT,
+      enabled: false,
+      thresholdMs: 5000,
+      prompt: 'poke',
+    });
+    const caller = agentCaller(longTermSession('s-preserve', SPACE));
+    expect(await run('inactivity.config.set', { enabled: true }, caller)).toMatchObject({
+      enabled: true,
+      thresholdMs: 5000,
+      prompt: 'poke',
+    });
+  });
+
   test('pausing keeps the configured threshold', async () => {
     configRepo.upsert({ spaceId: SPACE, agentId: AGENT, enabled: true, thresholdMs: 5000 });
     const caller = agentCaller(longTermSession('s-pause', SPACE));
-    const paused = (await run('inactivity.config.setEnabled', { enabled: false }, caller)) as {
+    const paused = (await run('inactivity.config.set', { enabled: false }, caller)) as {
       enabled: boolean;
       thresholdMs: number | null;
     };
     expect(paused).toMatchObject({ enabled: false, thresholdMs: 5000 });
+  });
+
+  test('setEnabled still resolves through the merged config writer', async () => {
+    const caller = agentCaller(longTermSession('s-set-enabled', SPACE));
+    expect(await run('inactivity.config.setEnabled', { enabled: true }, caller)).toMatchObject({
+      enabled: true,
+      thresholdMs: DEFAULT_INACTIVITY_THRESHOLD_MS,
+    });
   });
 
   test('setting the threshold and prompt bumps the config revision', async () => {
@@ -168,9 +226,7 @@ describe('inactivity watchdog operations', () => {
   test('refuses mutations from an archived session and changes nothing', async () => {
     configRepo.upsert({ spaceId: SPACE, agentId: AGENT, enabled: false, thresholdMs: 7000 });
     const caller = agentCaller(longTermSession('s-archived', SPACE, 'archived'));
-    expect(await run('inactivity.config.setEnabled', { enabled: true }, caller)).toBe(
-      'session_inactive'
-    );
+    expect(await run('inactivity.config.set', { enabled: true }, caller)).toBe('session_inactive');
     expect(await run('inactivity.runNow', {}, caller)).toBe('session_inactive');
     expect(configRepo.getByAgent(SPACE, AGENT)).toMatchObject({
       enabled: false,
