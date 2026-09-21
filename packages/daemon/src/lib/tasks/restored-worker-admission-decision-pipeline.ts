@@ -1,4 +1,10 @@
-import type { NodeExecution, Space, SpaceTask, SpaceWorkflowRun } from '@hyperneo/shared';
+import {
+  isRateOrUsageLimited,
+  type NodeExecution,
+  type Space,
+  type SpaceTask,
+  type SpaceWorkflowRun,
+} from '@hyperneo/shared';
 import superpipe, { type PipelineAPI, type Result } from 'superpipe';
 import { isCanonicalTaskTerminalForSpawn } from '../workflows/run-spawn-decisions.ts';
 
@@ -56,6 +62,13 @@ export function applyBlockedTaskGate(
   ctx: RestoredWorkerAdmissionCtx
 ): RestoredWorkerAdmissionResult {
   return readLazyInput(ctx.task)?.status === 'blocked' ? decided(false) : continued(ctx);
+}
+
+export function applyRateOrUsageLimitedTaskGate(
+  ctx: RestoredWorkerAdmissionCtx
+): RestoredWorkerAdmissionResult {
+  const task = readLazyInput(ctx.task);
+  return task && isRateOrUsageLimited(task.status) ? decided(false) : continued(ctx);
 }
 
 export function applyWorkflowRunGate(
@@ -122,6 +135,7 @@ const restoredWorkerAdmissionRun = (superpipe()('restored-worker-start-admission
   .pipe(applyDaemonCleanupGate, 'ctx', 'result:decision')
   .pipe(applyTaskGate, 'ctx', 'result:decision')
   .pipe(applyBlockedTaskGate, 'ctx', 'result:decision')
+  .pipe(applyRateOrUsageLimitedTaskGate, 'ctx', 'result:decision')
   .pipe(applyWorkflowRunGate, 'ctx', 'result:decision')
   .pipe(applySpaceLookupGate, 'ctx', 'result:decision')
   .pipe(applySessionStatusGate, 'ctx', 'result:decision')

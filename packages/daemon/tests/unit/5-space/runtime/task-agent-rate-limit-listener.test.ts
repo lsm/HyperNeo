@@ -163,6 +163,32 @@ describe('TaskAgentManager rate-limit pause/resume listener', () => {
     expect(task?.restrictions).toBeNull();
   });
 
+  it('re-admits restored workers after the task leaves its persisted limit state', async () => {
+    taskRepo.updateTask(taskId, {
+      status: 'usage_limited',
+      restrictions: {
+        type: 'usage_limit',
+        limit: 'parsed-reset',
+        resetAt: Date.now() + 60000,
+        sessionRole: 'worker',
+      },
+    });
+    const resumed: string[] = [];
+    (
+      manager as unknown as {
+        startRestoredWorkerForResume: (session: { id: string }) => Promise<void>;
+      }
+    ).startRestoredWorkerForResume = async (session) => {
+      resumed.push(session.id);
+    };
+
+    bus.publish('session.rate_limit_resume', { sessionId: subSessionId });
+    await flush();
+
+    expect(taskRepo.getTask(taskId)?.status).toBe('in_progress');
+    expect(resumed).toEqual([subSessionId]);
+  });
+
   it('restores the task to in_progress and clears restrictions on resume', async () => {
     const resetAt = Date.now() + 60 * 60 * 1000;
     bus.publish('session.rate_limit_pause', {

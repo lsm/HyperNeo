@@ -381,7 +381,9 @@ export class QueryModeHandler {
     return { replayedWork, clearedContext, replayFailed };
   }
 
-  async replayPendingMessagesForAutomaticTurnEnd(): Promise<boolean> {
+  async replayPendingMessagesForAutomaticTurnEnd(
+    options: { waitForPostSettlementFlush?: boolean } = {}
+  ): Promise<boolean> {
     const replayStatus = this.ctx.stateManager?.getState().status ?? 'unknown';
     if (this.ctx.session.config.queryMode === 'manual') {
       this.emitReplayTrace('skipped_manual', replayStatus);
@@ -391,7 +393,7 @@ export class QueryModeHandler {
       this.emitReplayTrace('skipped_waiting_for_input', replayStatus);
       return true;
     }
-    const outcome = await this.replayPendingMessagesForImmediateMode();
+    const outcome = await this.replayPendingMessagesForImmediateMode(options);
     this.emitReplayTrace('completed', replayStatus, { outcome: outcome ? 1 : 0 });
     return outcome;
   }
@@ -412,41 +414,46 @@ export class QueryModeHandler {
     } catch {}
   }
 
-  async replayPendingMessagesForImmediateMode(): Promise<boolean> {
+  async replayPendingMessagesForImmediateMode(
+    options: { waitForPostSettlementFlush?: boolean } = {}
+  ): Promise<boolean> {
     const { clearedContext, replayFailed } = await this.sendEnqueuedMessagesOnTurnEnd();
     if (replayFailed) return false;
     if (!clearedContext) {
       const jobQueue = this.ctx.db.getJobQueueRepo?.();
       if (jobQueue?.activeDeliveryMessageUuids?.(this.ctx.session.id).size) {
-        this.schedulePostSettlementFlush();
-        return true;
+        const postSettlementFlush = this.schedulePostSettlementFlush();
+        return options.waitForPostSettlementFlush ? postSettlementFlush : true;
       }
     }
     const replay = await this.handleQueryTrigger({ skipContextReset: clearedContext });
     return replay.success;
   }
 
-  private postSettlementFlushScheduled = false;
+  private postSettlementFlush: Promise<boolean> | null = null;
 
-  private schedulePostSettlementFlush(): void {
-    if (this.postSettlementFlushScheduled) return;
-    this.postSettlementFlushScheduled = true;
-    void (async () => {
+  private schedulePostSettlementFlush(): Promise<boolean> {
+    if (this.postSettlementFlush) return this.postSettlementFlush;
+    const scheduled = (async () => {
       try {
         const jobQueue = this.ctx.db.getJobQueueRepo?.();
         for (let i = 0; i < 240; i++) {
           await new Promise((resolve) => setTimeout(resolve, 500));
           if (!jobQueue?.activeDeliveryMessageUuids?.(this.ctx.session.id).size) break;
         }
-        await this.handleQueryTrigger();
+        return (await this.handleQueryTrigger()).success;
       } catch (error) {
         this.ctx.logger.warn(
           `post-settlement deferred flush failed for session ${this.ctx.session.id}:`,
           error
         );
-      } finally {
-        this.postSettlementFlushScheduled = false;
+        return false;
       }
     })();
+    this.postSettlementFlush = scheduled;
+    void scheduled.then(() => {
+      if (this.postSettlementFlush === scheduled) this.postSettlementFlush = null;
+    });
+    return scheduled;
   }
 }

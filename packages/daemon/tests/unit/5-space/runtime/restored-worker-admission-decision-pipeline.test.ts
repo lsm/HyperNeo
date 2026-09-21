@@ -129,6 +129,20 @@ describe('restored worker admission decisionRun gates', () => {
     ).resolves.toBe(false);
   });
 
+  test('a persisted rate or usage limit denies restored worker replay', async () => {
+    for (const status of ['rate_limited', 'usage_limited'] as const) {
+      await expect(
+        decideRestoredWorkerAdmission(
+          undecided({
+            task: makeTask({ status }),
+            settleReplayProvisioning: true,
+            execution: makeExecution({ status: 'blocked' }),
+          })
+        )
+      ).resolves.toBe(false);
+    }
+  });
+
   test('missing or cancelled workflow run denies', async () => {
     await expect(decideRestoredWorkerAdmission(undecided({ workflowRun: null }))).resolves.toBe(
       false
