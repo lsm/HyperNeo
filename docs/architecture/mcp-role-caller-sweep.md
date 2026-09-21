@@ -166,7 +166,7 @@ which tools a session can see.
 | forge (read) | yes | yes | yes | no | no |
 | forge (mutate/destructive) | yes | yes | no | no | no |
 | workflow (list/suggest/get/run.get) | yes | yes | yes | yes | no |
-| workflow (run.update, run.replace) | yes | yes | no | no | no |
+| workflow (changePlan) | yes | yes | no | no | no |
 | schedule/session/audit (read) | yes | yes | yes | yes | no |
 | schedule/session (mutate/destructive) | yes | yes | no | no | no |
 | node.* / send_message / artifact.* | no | no | no | yes | no |
