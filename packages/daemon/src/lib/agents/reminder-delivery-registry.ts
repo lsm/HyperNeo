@@ -20,6 +20,7 @@ export interface ReminderClaimReader extends ReminderOccurrenceReader {
   getJobQueueRepo(): {
     listActiveByPayload(queue: string, matchPayload: Record<string, unknown>): unknown[];
   };
+  getSDKMessageRepo(): { hasConsumptionEvidence(sessionId: string, messageId: string): boolean };
 }
 
 const reminderDeliveriesInFlight = new Map<string, Promise<unknown>>();
@@ -72,6 +73,7 @@ export function reminderOccurrenceIsClaimed(
     messageUuid: idempotencyKey,
   });
   if (queued.length > 0) return true;
+  if (db.getSDKMessageRepo().hasConsumptionEvidence(sessionId, idempotencyKey)) return true;
   return CLAIMED_SEND_STATUSES.some(
     (status) => db.getMessageByStatusAndUuid(sessionId, status, idempotencyKey) != null
   );

@@ -421,10 +421,14 @@ describe('the agent.reminders.cancel operation', () => {
 describe('reminderOccurrenceIsClaimed', () => {
   const KEY = 'reminder:rem-1:1000';
 
-  function reader(options: { jobs?: number; status?: string } = {}) {
+  function reader(options: { jobs?: number; status?: string; consumedSeq?: boolean } = {}) {
     const queries: Array<{ queue: string; matchPayload: Record<string, unknown> }> = [];
     return {
       queries,
+      getSDKMessageRepo: () => ({
+        hasConsumptionEvidence: (_sessionId: string, messageId: string) =>
+          options.consumedSeq === true && messageId === KEY,
+      }),
       getJobQueueRepo: () => ({
         listActiveByPayload: (queue: string, matchPayload: Record<string, unknown>) => {
           queries.push({ queue, matchPayload });
@@ -457,10 +461,15 @@ describe('reminderOccurrenceIsClaimed', () => {
     }
   );
 
-  test('a failed message leaves the occurrence unclaimed', () => {
+  test('a failed message that was never consumed leaves the occurrence unclaimed', () => {
     expect(reminderOccurrenceIsClaimed(reader({ status: 'failed' }), spaceId, agent.id, KEY)).toBe(
       false
     );
+  });
+
+  test('a consumed message later failed inclusively still claims the occurrence', () => {
+    const db = reader({ status: 'failed', consumedSeq: true });
+    expect(reminderOccurrenceIsClaimed(db, spaceId, agent.id, KEY)).toBe(true);
   });
 
   test('no reader means nothing is claimed', () => {
