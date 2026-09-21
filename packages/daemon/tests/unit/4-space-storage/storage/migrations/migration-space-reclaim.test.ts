@@ -46,6 +46,7 @@ describe('migration space reclaim', () => {
         timestamp TEXT NOT NULL,
         send_status TEXT DEFAULT 'consumed'
           CHECK(send_status IN ('deferred', 'enqueued', 'consumed', 'failed')),
+        task_id TEXT,
         FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
       );
       CREATE INDEX idx_sdk_messages_session_timestamp
