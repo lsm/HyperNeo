@@ -63,6 +63,20 @@ export function setupSpaceGoalHandlers(messageHub: MessageHub, deps: SpaceGoalHa
     await invokeOperationFromHandler<{ accepted: true }>(operations, operationName, input);
   }
 
+  async function setGoalStatus(
+    params: { spaceId: string; goalId: string },
+    status: SpaceGoalStatus
+  ): Promise<{ goal: SpaceGoal }> {
+    await requireSpace(params.spaceId);
+    requireGoalId(params.goalId);
+    const result = await invokeOperationFromHandler<{ accepted: true; goal: SpaceGoal }>(
+      operations,
+      'goal.update',
+      { ...params, status }
+    );
+    return { goal: result.goal };
+  }
+
   function requireGoalInSpace(goalId: string, spaceId: string) {
     requireGoalId(goalId);
     const goal = goalService.getGoal(goalId);
@@ -117,29 +131,13 @@ export function setupSpaceGoalHandlers(messageHub: MessageHub, deps: SpaceGoalHa
     return { goal: result.goal };
   });
 
-  messageHub.onRequest('spaceGoal.pause', async (data) => {
-    const params = data as { spaceId: string; goalId: string };
-    await requireSpace(params.spaceId);
-    requireGoalId(params.goalId);
-    const result = await invokeOperationFromHandler<{ accepted: true; goal: SpaceGoal }>(
-      operations,
-      'goal.pause',
-      params
-    );
-    return { goal: result.goal };
-  });
+  messageHub.onRequest('spaceGoal.pause', async (data) =>
+    setGoalStatus(data as { spaceId: string; goalId: string }, 'paused')
+  );
 
-  messageHub.onRequest('spaceGoal.resume', async (data) => {
-    const params = data as { spaceId: string; goalId: string };
-    await requireSpace(params.spaceId);
-    requireGoalId(params.goalId);
-    const result = await invokeOperationFromHandler<{ accepted: true; goal: SpaceGoal }>(
-      operations,
-      'goal.resume',
-      params
-    );
-    return { goal: result.goal };
-  });
+  messageHub.onRequest('spaceGoal.resume', async (data) =>
+    setGoalStatus(data as { spaceId: string; goalId: string }, 'active')
+  );
 
   messageHub.onRequest('spaceGoal.createImmediateTask', async (data) => {
     const params = data as { spaceId: string; goalId: string };

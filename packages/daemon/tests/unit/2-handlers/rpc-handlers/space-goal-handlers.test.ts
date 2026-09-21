@@ -702,26 +702,26 @@ describe('spaceGoal handler gates', () => {
     expect(Object.keys(updates).sort()).toEqual(['status', 'title', 'workspacePath']);
   });
 
-  it('spaceGoal.pause and spaceGoal.resume delegate with the rpc source', async () => {
+  it('spaceGoal.pause and spaceGoal.resume set the status through the update door', async () => {
     const { handlers, goalService } = makeGateHarness();
     const paused = await handlers.get('spaceGoal.pause')!(
       { spaceId: SPACE_ID, goalId: GOAL_ID },
       makeContext()
     );
-    expect(goalService.pauseGoal).toHaveBeenCalledWith(GOAL_ID, {
-      source: 'rpc',
-      sourceSessionId: null,
-    });
-    expect(paused).toEqual({ goal: { ...GOAL, status: 'paused' } });
-    const resumed = await handlers.get('spaceGoal.resume')!(
-      { spaceId: SPACE_ID, goalId: GOAL_ID },
-      makeContext()
+    expect(goalService.pauseGoal).not.toHaveBeenCalled();
+    expect(goalService.updateGoal).toHaveBeenCalledWith(
+      GOAL_ID,
+      expect.objectContaining({ status: 'paused' }),
+      { source: 'rpc', sourceSessionId: null }
     );
-    expect(goalService.resumeGoal).toHaveBeenCalledWith(GOAL_ID, {
-      source: 'rpc',
-      sourceSessionId: null,
-    });
-    expect(resumed).toEqual({ goal: { ...GOAL, status: 'active' } });
+    expect(paused).toEqual({ goal: GOAL });
+    await handlers.get('spaceGoal.resume')!({ spaceId: SPACE_ID, goalId: GOAL_ID }, makeContext());
+    expect(goalService.resumeGoal).not.toHaveBeenCalled();
+    expect(goalService.updateGoal).toHaveBeenCalledWith(
+      GOAL_ID,
+      expect.objectContaining({ status: 'active' }),
+      { source: 'rpc', sourceSessionId: null }
+    );
   });
 
   it('spaceGoal.createImmediateTask returns the service result unwrapped', async () => {
