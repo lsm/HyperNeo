@@ -3288,7 +3288,7 @@ export class TaskAgentManager {
     );
     if (isEndNode) {
       lines.push(
-        'For this workflow worker, this runtime contract overrides earlier terminal-action guidance: submit completion with task.submitForReview at every autonomy level. Workflow workers cannot use task.resolvePendingCompletion; submission creates the checkpoint required for a later authorized approval.'
+        'For this workflow worker, this runtime contract overrides earlier terminal-action guidance: submit completion with task.submitForReview at every autonomy level. Workflow workers cannot use task.approve; submission creates the checkpoint required for a later authorized approval.'
       );
       if (approveUnlocked) {
         lines.push(

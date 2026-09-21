@@ -1,6 +1,7 @@
 import {
   CALL_ACTION_PREFERENCE_GUIDANCE,
   CALL_ACTION_PREFERENCE_GUIDANCE_PRE_OPERATION_NAMES,
+  CALL_ACTION_PREFERENCE_GUIDANCE_PRE_TASK_APPROVE,
   CODER_ONLY_PROMPT,
   CODER_OWNED_MERGE_PROMPT,
   CODER_OWNED_PR_SUBSCRIBE_GUIDANCE,
@@ -235,6 +236,10 @@ const RETIRED_TYPE_RESULT_EVERY_CYCLE =
   'Use save_artifact every cycle. Nest pr_url inside artifact data for post-approval dispatch.\n\n';
 const CURRENT_REVIEW_ONLY_TERMINAL_ACTIONS =
   'invoke(name="artifact.save", input={ shape: "link", kind: "pr", data: { url: "<url>" } }) ' +
+  'to record the PR, then invoke(name="task.approve", input={ taskId: "<task id>" }) ' +
+  'or invoke(name="task.submitForReview", input={ taskId: "<task id>" }) only on APPROVE';
+const RETIRED_RESOLVE_REVIEW_ONLY_TERMINAL_ACTIONS =
+  'invoke(name="artifact.save", input={ shape: "link", kind: "pr", data: { url: "<url>" } }) ' +
   'to record the PR, then invoke(name="task.resolvePendingCompletion", input={ taskId: "<task id>", approved: true }) ' +
   'or invoke(name="task.submitForReview", input={ taskId: "<task id>" }) only on APPROVE';
 const RETIRED_TYPED_TOOL_REVIEW_ONLY_TERMINAL_ACTIONS =
@@ -264,6 +269,41 @@ const RETIRED_TYPE_RESULT_QA_ALL_GREEN =
   '`pr_url` inside `data` is what `dispatchPostApproval` reads when interpolating `{{pr_url}}` into the ' +
   'merge template — top-level keys outside `data` are silently stripped by the tool schema, so nest it ' +
   'correctly.\n';
+
+const CURRENT_APPROVE_ZERO_FINDINGS_GATE = 'do not call task.approve or task.submitForReview';
+const RETIRED_RESOLVE_ZERO_FINDINGS_GATE =
+  'do not call task.resolvePendingCompletion or task.submitForReview';
+const CURRENT_APPROVE_QA_POST_APPROVAL = 'call task.approve as your final action';
+const RETIRED_RESOLVE_QA_POST_APPROVAL = 'call task.resolvePendingCompletion as your final action';
+const CURRENT_APPROVE_CODER_ONLY_NEVER = 'never call task.approve for this workflow';
+const RETIRED_RESOLVE_CODER_ONLY_NEVER =
+  'never call task.resolvePendingCompletion for this workflow';
+const CURRENT_APPROVE_CODER_ONLY_REGARDLESS = 'you must not use task.approve regardless';
+const RETIRED_RESOLVE_CODER_ONLY_REGARDLESS =
+  'you must not use task.resolvePendingCompletion regardless';
+const CURRENT_APPROVE_EXTERNAL_GATE_TERMINAL = 'terminal action (task.approve, or the next-stage';
+const RETIRED_RESOLVE_EXTERNAL_GATE_TERMINAL =
+  'terminal action (task.resolvePendingCompletion, or the next-stage';
+const CURRENT_APPROVE_QA_GATES_BEFORE =
+  'terminal gates immediately before `task.approve` or `task.submitForReview`';
+const RETIRED_RESOLVE_QA_GATES_BEFORE =
+  'terminal gates immediately before `task.resolvePendingCompletion` or `task.submitForReview`';
+const CURRENT_APPROVE_QA_THEN_CALL =
+  'decision artifact, then call `task.approve` or `task.submitForReview`';
+const RETIRED_RESOLVE_QA_THEN_CALL =
+  'decision artifact, then call `task.resolvePendingCompletion` or `task.submitForReview`';
+const CURRENT_APPROVE_QA_REVIEW_NOT_END = 'so you do NOT call task.approve or task.submitForReview';
+const RETIRED_RESOLVE_QA_REVIEW_NOT_END =
+  'so you do NOT call task.resolvePendingCompletion or task.submitForReview';
+const CURRENT_APPROVE_REVIEW_TERMINAL =
+  'save the PR link artifact and call task.approve, or task.submitForReview';
+const RETIRED_RESOLVE_REVIEW_TERMINAL =
+  'save the PR link artifact and call task.resolvePendingCompletion, or task.submitForReview';
+const CURRENT_APPROVE_RESEARCH_REVIEW_TERMINAL =
+  'then invoke(name="task.approve", input={ taskId: "<task id>" }) or task.submitForReview.';
+const RETIRED_RESOLVE_RESEARCH_REVIEW_TERMINAL =
+  'then invoke(name="task.resolvePendingCompletion", input={ taskId: "<task id>", approved: true }) ' +
+  'or task.submitForReview.';
 
 const BUILT_IN_PROMPT_PATCH_VARIANTS = [
   ...RETIRED_INLINE_OPERATION_PROMPT_PAIRS.map((pair) => [pair]),
@@ -384,6 +424,24 @@ const BUILT_IN_PROMPT_PATCH_VARIANTS = [
   [[RETIRED_INLINE_EXTERNAL_REVIEW_BOTS_GUIDANCE, EXTERNAL_REVIEW_BOTS_GUIDANCE_PRE_CHECK_SEEDING]],
   [[EXTERNAL_REVIEW_BOTS_GUIDANCE, EXTERNAL_REVIEW_BOTS_GUIDANCE_PRE_CHECK_SEEDING]],
   [[EXTERNAL_REVIEW_BOTS_GUIDANCE_PRE_CHECK_SEEDING, EXTERNAL_REVIEW_BOTS_GUIDANCE_PRE_TYPENAME]],
+  [[CALL_ACTION_PREFERENCE_GUIDANCE, CALL_ACTION_PREFERENCE_GUIDANCE_PRE_TASK_APPROVE]],
+  [[CALL_ACTION_PREFERENCE_GUIDANCE_PRE_TASK_APPROVE, '']],
+  [[`\n${CALL_ACTION_PREFERENCE_GUIDANCE_PRE_TASK_APPROVE}`, '']],
+  [[CURRENT_APPROVE_ZERO_FINDINGS_GATE, RETIRED_RESOLVE_ZERO_FINDINGS_GATE]],
+  [[CURRENT_APPROVE_QA_POST_APPROVAL, RETIRED_RESOLVE_QA_POST_APPROVAL]],
+  [
+    [CURRENT_APPROVE_CODER_ONLY_NEVER, RETIRED_RESOLVE_CODER_ONLY_NEVER],
+    [CURRENT_APPROVE_CODER_ONLY_REGARDLESS, RETIRED_RESOLVE_CODER_ONLY_REGARDLESS],
+  ],
+  [[CURRENT_APPROVE_EXTERNAL_GATE_TERMINAL, RETIRED_RESOLVE_EXTERNAL_GATE_TERMINAL]],
+  [
+    [CURRENT_APPROVE_QA_GATES_BEFORE, RETIRED_RESOLVE_QA_GATES_BEFORE],
+    [CURRENT_APPROVE_QA_THEN_CALL, RETIRED_RESOLVE_QA_THEN_CALL],
+  ],
+  [[CURRENT_APPROVE_QA_REVIEW_NOT_END, RETIRED_RESOLVE_QA_REVIEW_NOT_END]],
+  [[CURRENT_APPROVE_REVIEW_TERMINAL, RETIRED_RESOLVE_REVIEW_TERMINAL]],
+  [[CURRENT_APPROVE_RESEARCH_REVIEW_TERMINAL, RETIRED_RESOLVE_RESEARCH_REVIEW_TERMINAL]],
+  [[CURRENT_REVIEW_ONLY_TERMINAL_ACTIONS, RETIRED_RESOLVE_REVIEW_ONLY_TERMINAL_ACTIONS]],
 ] as const;
 
 export function patchKnownBuiltInPromptDrift<T extends WorkflowNodeAgentOverride | undefined>(

@@ -98,22 +98,22 @@ describe('Post-approval route declarations', () => {
   });
 });
 
-describe('End-node prompts save runtime post-approval data before task.resolvePendingCompletion', () => {
+describe('End-node prompts save runtime post-approval data before task.approve', () => {
   for (const [label, wf] of IMPLEMENTER_ROUTED_WORKFLOWS) {
     test(`${label} end-node prompt instructs the agent to record the PR and not relay to the task-agent`, () => {
       const prompt = endNodePrompt(wf);
       expect(prompt).toMatch(/artifact\.save|save the PR link/);
-      expect(prompt).toContain('task.resolvePendingCompletion');
+      expect(prompt).toContain('task.approve');
       expect(prompt).not.toContain('target: "task-agent"');
     });
 
-    test(`${label} end-node prompt places the record-PR step BEFORE the final task.resolvePendingCompletion call`, () => {
+    test(`${label} end-node prompt places the record-PR step BEFORE the final task.approve call`, () => {
       const prompt = endNodePrompt(wf);
       const signalIdx = Math.max(
         prompt.lastIndexOf('invoke(name="artifact.save"'),
         prompt.lastIndexOf('save the PR link')
       );
-      const approveIdx = prompt.lastIndexOf('task.resolvePendingCompletion');
+      const approveIdx = prompt.lastIndexOf('task.approve');
       expect(signalIdx).toBeGreaterThan(-1);
       expect(approveIdx).toBeGreaterThan(-1);
       expect(signalIdx).toBeLessThan(approveIdx);
@@ -241,6 +241,6 @@ describe('Review-Only end-node prompt loses verification boilerplate', () => {
     const prompt = endNodePrompt(REVIEW_ONLY_WORKFLOW);
     expect(prompt).toContain('post a visible GitHub review');
     expect(prompt).toContain('invoke(name="artifact.save"');
-    expect(prompt).toContain('invoke(name="task.resolvePendingCompletion"');
+    expect(prompt).toContain('invoke(name="task.approve"');
   });
 });

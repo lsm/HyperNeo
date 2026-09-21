@@ -118,7 +118,7 @@ export function routeTaskUpdate(input: TaskUpdateRoutingInput): TaskUpdateRoutin
         reason: 'approved_direct',
         message:
           `task.update cannot transition a task into 'approved' directly. ` +
-          `Use task.resolvePendingCompletion after task.submitForReview, or let the ` +
+          `Use task.approve after task.submitForReview, or let the ` +
           `runtime's post-approval router handle the transition — both stamp ` +
           `the approval metadata and dispatch the configured post-approval step.`,
       };
@@ -147,7 +147,7 @@ export function routeTaskUpdate(input: TaskUpdateRoutingInput): TaskUpdateRoutin
         reason: 'review_to_done',
         message:
           `task.update cannot transition a task from 'review' to 'done' directly. ` +
-          `Use task.resolvePendingCompletion (subject to the workflow's completion ` +
+          `Use task.approve (subject to the workflow's completion ` +
           `autonomy level) or task.submitForReview so a human can approve via the UI — ` +
           `both stamp the approval metadata and dispatch the configured post-approval step.`,
       };
@@ -355,7 +355,7 @@ export function routeApproveTask(input: ApproveTaskRoutingInput): ApproveTaskRou
         agentLevel: input.agentLevel,
         spaceLevel: input.spaceLevel,
         required: input.required,
-        message: `task.resolvePendingCompletion not permitted: agent autonomy ceiling ${input.agentLevel} (space ${input.spaceLevel}) < workflow completionAutonomyLevel ${input.required}. Use task.submitForReview to request human review.`,
+        message: `task.approve not permitted: agent autonomy ceiling ${input.agentLevel} (space ${input.spaceLevel}) < workflow completionAutonomyLevel ${input.required}. Use task.submitForReview to request human review.`,
       };
     }
     return {
@@ -363,7 +363,7 @@ export function routeApproveTask(input: ApproveTaskRoutingInput): ApproveTaskRou
       reason: 'space_autonomy_level',
       spaceLevel: input.spaceLevel,
       required: input.required,
-      message: `task.resolvePendingCompletion not permitted: space autonomy level ${input.spaceLevel} < workflow completionAutonomyLevel ${input.required}. Use task.submitForReview to request human review.`,
+      message: `task.approve not permitted: space autonomy level ${input.spaceLevel} < workflow completionAutonomyLevel ${input.required}. Use task.submitForReview to request human review.`,
     };
   }
   if (input.currentStatus !== 'review') {
