@@ -4180,7 +4180,7 @@ describe('buildLongHorizonAgentSessionConfig — owner-review contract injection
     const append = systemPromptAppend(config);
     expect(append).toContain(staleInstructions);
     expect(append).toContain('## Goal Ownership & Outcome Review Contract');
-    expect(append).toContain('goal.reviewOutcome');
+    expect(append).toContain('goal.outcome.resolve');
   });
 
   test('user-customized instructions are preserved, not replaced, by the contract append', async () => {

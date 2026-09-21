@@ -127,12 +127,20 @@ type ReviewResult = {
 async function invoke(
   ctx: ReturnType<typeof makeCtx>,
   input: unknown,
-  caller: OperationCaller
+  caller: OperationCaller,
+  name = 'goal.outcome.resolve'
 ): Promise<ReviewResult> {
-  const outcome = await invokeOperation(ctx.registry, 'goal.reviewOutcome', input, caller);
-  if (outcome.kind !== 'completed')
-    throw new Error(`goal.reviewOutcome failed: ${outcome.message}`);
+  const outcome = await invokeOperation(ctx.registry, name, input, caller);
+  if (outcome.kind !== 'completed') throw new Error(`${name} failed: ${outcome.message}`);
   return outcome.value as ReviewResult;
+}
+
+function list(
+  ctx: ReturnType<typeof makeCtx>,
+  caller: OperationCaller,
+  input: unknown = {}
+): Promise<ReviewResult> {
+  return invoke(ctx, input, caller, 'goal.outcome.list');
 }
 
 function ownerCaller(ctx: ReturnType<typeof makeCtx>): OperationCaller {
@@ -145,13 +153,13 @@ function ownerCaller(ctx: ReturnType<typeof makeCtx>): OperationCaller {
   };
 }
 
-describe('goal.reviewOutcome through the operations door', () => {
-  test('lists the notifications the calling agent owns when no notificationId is given', async () => {
+describe('the goal outcome operations door', () => {
+  test('goal.outcome.list returns the notifications the calling agent owns', async () => {
     const ctx = makeCtx();
     try {
       const notification = ctx.notify();
-      const result = await invoke(ctx, {}, ownerCaller(ctx));
-      expect(result.kind).toBe('discovery');
+      const result = await list(ctx, ownerCaller(ctx));
+      expect(result.accepted).toBe(true);
       expect(result.notifications?.map((entry) => entry.id)).toEqual([notification.id]);
     } finally {
       ctx.db.close();
@@ -162,17 +170,13 @@ describe('goal.reviewOutcome through the operations door', () => {
     const ctx = makeCtx();
     try {
       ctx.notify();
-      const result = await invoke(
-        ctx,
-        {},
-        {
-          source: 'mcp',
-          sessionId: SESSION_ID,
-          spaceId: SPACE_ID,
-          role: 'long_term_agent',
-        }
-      );
-      expect(result.kind).toBe('discovery');
+      const result = await list(ctx, {
+        source: 'mcp',
+        sessionId: SESSION_ID,
+        spaceId: SPACE_ID,
+        role: 'long_term_agent',
+      });
+      expect(result.accepted).toBe(true);
       expect(result.notifications).toEqual([]);
     } finally {
       ctx.db.close();
@@ -194,21 +198,26 @@ describe('goal.reviewOutcome through the operations door', () => {
         },
         ownerCaller(ctx)
       );
-      expect(result.kind).toBe('claimed');
+      expect(result.accepted).toBe(true);
       expect(result.status).toBe('claimed');
       expect(ctx.goalService.getGoal(ctx.goal.id)?.summary).toBe('Outcome reviewed');
-      expect(ctx.auditRows()[0].tool_name).toBe('goal.reviewOutcome');
+      expect(ctx.auditRows()[0].tool_name).toBe('goal.outcome.resolve');
     } finally {
       ctx.db.close();
     }
   });
 
-  test('refuses a goal-state update that names no notification', async () => {
+  test('goal.outcome.resolve refuses a goal-state update that names no notification', async () => {
     const ctx = makeCtx();
     try {
-      const result = await invoke(ctx, { summary: 'Sneaky' }, ownerCaller(ctx));
-      expect(result.kind).toBe('rejected');
-      expect(result.reason).toBe('review_input_invalid');
+      const outcome = await invokeOperation(
+        ctx.registry,
+        'goal.outcome.resolve',
+        { summary: 'Sneaky' },
+        ownerCaller(ctx)
+      );
+      expect(outcome.kind).toBe('failed');
+      expect(outcome.kind === 'failed' && outcome.code).toBe('invalid_input');
       expect(ctx.goalService.getGoal(ctx.goal.id)?.summary).toBe('');
     } finally {
       ctx.db.close();
@@ -230,7 +239,7 @@ describe('goal.reviewOutcome through the operations door', () => {
         },
         ownerCaller(ctx)
       );
-      expect(result.kind).toBe('rejected');
+      expect(result.accepted).toBe(false);
       expect(result.reason).toBe('review_input_invalid');
       expect(ctx.goalService.getGoal(ctx.goal.id)?.summary).toBe('');
     } finally {
@@ -251,7 +260,7 @@ describe('goal.reviewOutcome through the operations door', () => {
         },
         ownerCaller(ctx)
       );
-      expect(result.kind).toBe('rejected');
+      expect(result.accepted).toBe(false);
       expect(result.reason).toBe('notification_not_found');
     } finally {
       ctx.db.close();
@@ -272,7 +281,7 @@ describe('goal.reviewOutcome through the operations door', () => {
         },
         ownerCaller(ctx)
       );
-      expect(result.kind).toBe('rejected');
+      expect(result.accepted).toBe(false);
       expect(result.reason).toBe('review_denied');
       expect(result.message).toContain('identity_mismatch');
     } finally {
@@ -294,7 +303,7 @@ describe('goal.reviewOutcome through the operations door', () => {
         },
         ownerCaller(ctx)
       );
-      expect(result.kind).toBe('rejected');
+      expect(result.accepted).toBe(false);
       expect(result.reason).toBe('session_not_admitted');
       expect(ctx.goalService.getGoal(ctx.goal.id)?.summary).toBe('');
       expect(ctx.auditRows()).toEqual([]);
@@ -309,7 +318,7 @@ describe('goal.reviewOutcome through the operations door', () => {
       const notification = ctx.notify();
       const outcome = await invokeOperation(
         ctx.registry,
-        'goal.reviewOutcome',
+        'goal.outcome.list',
         {},
         {
           source: 'mcp',
@@ -321,7 +330,7 @@ describe('goal.reviewOutcome through the operations door', () => {
       );
       expect(outcome).toMatchObject({
         kind: 'completed',
-        value: { kind: 'discovery', notifications: [{ id: notification.id }] },
+        value: { accepted: true, notifications: [{ id: notification.id }] },
       });
     } finally {
       ctx.db.close();
@@ -333,7 +342,7 @@ describe('goal.reviewOutcome through the operations door', () => {
     try {
       const outcome = await invokeOperation(
         ctx.registry,
-        'goal.reviewOutcome',
+        'goal.outcome.list',
         { actorAgentId: 'agent-x' },
         ownerCaller(ctx)
       );

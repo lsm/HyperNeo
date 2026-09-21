@@ -23,16 +23,14 @@ import type { SpaceGoalService } from './service.ts';
 const DISCOVERY_LIMIT = 100;
 const HUMAN_ADMISSION_ALLOWED = false;
 
-const inputSchema = z
+const listInputSchema = z.object({ ...GoalSpaceScopeShape }).strict();
+
+const resolveInputSchema = z
   .object({
     ...GoalSpaceScopeShape,
-    notificationId: z
-      .string()
-      .min(1)
-      .optional()
-      .describe('Pending notification identity; omit to discover owned pending notifications'),
-    goalId: z.string().min(1).optional().describe('Goal the outcome belongs to'),
-    taskId: z.string().min(1).optional().describe('Completed task the outcome belongs to'),
+    notificationId: z.string().min(1).describe('Pending notification identity'),
+    goalId: z.string().min(1).describe('Goal the outcome belongs to'),
+    taskId: z.string().min(1).describe('Completed task the outcome belongs to'),
     disposition: z
       .enum(['acknowledge', 'reject', 'supersede'])
       .optional()
@@ -60,7 +58,8 @@ const inputSchema = z
   })
   .strict();
 
-type Input = z.infer<typeof inputSchema>;
+type ListInput = z.infer<typeof listInputSchema>;
+type ResolveInput = z.infer<typeof resolveInputSchema>;
 
 type Claim = {
   spaceId: string;
@@ -71,17 +70,18 @@ type Claim = {
   hasGoalUpdate: boolean;
 };
 
+export type ListOutcomeNotificationsResult =
+  | { accepted: true; notifications: SpaceGoalOutcomeNotification[] }
+  | GoalRejection;
+
 export type ReviewGoalOutcomeResult =
-  | { kind: 'discovery'; accepted: true; notifications: SpaceGoalOutcomeNotification[] }
   | {
-      kind: 'claimed';
       accepted: true;
       status: 'claimed' | 'already_applied';
       notification: SpaceGoalOutcomeNotification;
       goal: SpaceGoal;
     }
   | {
-      kind: 'rejected';
       accepted: false;
       reason: GoalRejectionReason;
       message: string;
@@ -100,7 +100,7 @@ export interface ReviewGoalOutcomeDependencies extends GoalCallerContext {
   >;
 }
 
-export function hasGoalStateUpdate(input: Input): boolean {
+export function hasGoalStateUpdate(input: ResolveInput): boolean {
   return (
     input.summary !== undefined ||
     input.nextSteps !== undefined ||
@@ -111,7 +111,7 @@ export function hasGoalStateUpdate(input: Input): boolean {
 }
 
 function rejected(rejection: GoalRejection): ReviewGoalOutcomeResult {
-  return { kind: 'rejected', ...rejection };
+  return { ...rejection };
 }
 
 function invalid(message: string): { reason: ReviewGoalOutcomeResult } {
@@ -119,7 +119,7 @@ function invalid(message: string): { reason: ReviewGoalOutcomeResult } {
 }
 
 export function admitOutcomeReviewer(
-  input: Input,
+  input: { spaceId?: string },
   caller: OperationCaller,
   deps: ReviewGoalOutcomeDependencies
 ): { value: string } | { reason: ReviewGoalOutcomeResult } {
@@ -127,42 +127,35 @@ export function admitOutcomeReviewer(
   return 'reason' in space ? { reason: rejected(space.reason) } : space;
 }
 
-export function routeOutcomeReview(
+export function listOutcomeNotifications(
   spaceId: string,
-  input: Input,
   caller: OperationCaller,
+  deps: ReviewGoalOutcomeDependencies
+): ListOutcomeNotificationsResult {
+  return {
+    accepted: true,
+    notifications: deps.goalService.listClaimableOutcomeNotifications({
+      spaceId,
+      callerAgentId: caller.agentId ?? null,
+      humanAdmissionAllowed: HUMAN_ADMISSION_ALLOWED,
+      limit: DISCOVERY_LIMIT,
+    }),
+  };
+}
+
+export function routeOutcomeClaim(
+  spaceId: string,
+  input: ResolveInput,
   deps: ReviewGoalOutcomeDependencies
 ): { value: Claim } | { reason: ReviewGoalOutcomeResult } {
   const hasGoalUpdate = hasGoalStateUpdate(input);
-  if (!input.notificationId) {
-    if (hasGoalUpdate) {
-      return invalid(
-        'goal-state updates require notificationId; call without update fields to discover pending notifications'
-      );
-    }
-    return {
-      reason: {
-        kind: 'discovery',
-        accepted: true,
-        notifications: deps.goalService.listClaimableOutcomeNotifications({
-          spaceId,
-          callerAgentId: caller.agentId ?? null,
-          humanAdmissionAllowed: HUMAN_ADMISSION_ALLOWED,
-          limit: DISCOVERY_LIMIT,
-        }),
-      },
-    };
-  }
   if (!input.disposition && !hasGoalUpdate) {
     return invalid(
-      'disposition (acknowledge, reject, or supersede) or a goal-state update is required when notificationId is provided'
+      'disposition (acknowledge, reject, or supersede) or a goal-state update is required'
     );
   }
   if (input.disposition && input.disposition !== 'acknowledge' && hasGoalUpdate) {
     return invalid('goal-state updates require the acknowledge disposition');
-  }
-  if (!input.goalId || !input.taskId) {
-    return invalid('goalId and taskId are required when notificationId is provided');
   }
   const goal = deps.goalService.getGoal(input.goalId);
   if (!goal || goal.spaceId !== spaceId) {
@@ -190,7 +183,7 @@ export function routeOutcomeReview(
 
 export function applyOutcomeClaim(
   claim: Claim,
-  input: Input,
+  input: ResolveInput,
   caller: OperationCaller,
   deps: ReviewGoalOutcomeDependencies
 ): ReviewGoalOutcomeResult {
@@ -223,7 +216,7 @@ export function applyOutcomeClaim(
       deps,
       caller,
       claim.spaceId,
-      'goal.reviewOutcome',
+      'goal.outcome.resolve',
       {
         notificationId: claim.notificationId,
         goalId: claim.goalId,
@@ -234,7 +227,6 @@ export function applyOutcomeClaim(
       claim.taskId
     );
     return {
-      kind: 'claimed',
       accepted: true,
       status: result.status,
       notification: result.notification,
@@ -243,7 +235,6 @@ export function applyOutcomeClaim(
   }
   if (result.status === 'denied') {
     return {
-      kind: 'rejected',
       accepted: false,
       reason: 'review_denied',
       message: `Outcome claim denied: ${result.reason}`,
@@ -257,39 +248,64 @@ export function applyOutcomeClaim(
   );
 }
 
-const DESCRIPTION =
-  'Review a terminal goal-outcome notification. Call without notificationId to discover the pending notifications you own, then terminalize one with a disposition (acknowledge, reject, supersede) or acknowledge it while persisting goal-state updates (summary, nextSteps, metrics, observations, progress). Goal-state updates require the acknowledge disposition and both goalId and taskId. Only the goal owner identity resolved from the calling session may claim; the reviewing actor is never taken from input.';
+const LIST_DESCRIPTION =
+  'List the terminal goal-outcome notifications you can claim, newest first. The owner identity is resolved from the calling session and never taken from input, so this returns only what you may act on. Resolve one with goal.outcome.resolve.';
 
-export function createReviewGoalOutcomeOperation(deps: ReviewGoalOutcomeDependencies) {
-  const review = (superpipe({ deps })('goal-review-outcome') as PipelineAPI)
+const RESOLVE_DESCRIPTION =
+  'Terminalize one goal-outcome notification with a disposition (acknowledge, reject, supersede), or acknowledge it while persisting goal-state updates (summary, nextSteps, metrics, observations, progress). notificationId, goalId and taskId are all required — copy them from goal.outcome.list or the wake. Goal-state updates require the acknowledge disposition. Only the goal owner identity resolved from the calling session may claim; the reviewing actor is never taken from input. Claims are single-owner and idempotent, so a retry of the same claim returns already_applied without duplicating effects.';
+
+export function createListGoalOutcomeNotificationsOperation(deps: ReviewGoalOutcomeDependencies) {
+  const list = (superpipe({ deps })('goal-outcome-list') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitOutcomeReviewer, ['input', 'caller', 'deps'], 'result:outcome')
-    .pipe(routeOutcomeReview, ['outcome', 'input', 'caller', 'deps'], 'result:outcome')
-    .pipe(applyOutcomeClaim, ['outcome', 'input', 'caller', 'deps'], 'outcome')
-    .endAsync('outcome') as (
-    input: Input,
+    .pipe(listOutcomeNotifications, ['outcome', 'caller', 'deps'], 'outcome')
+    .end('outcome') as (
+    input: ListInput,
     caller: OperationCaller
-  ) => Promise<ReviewGoalOutcomeResult>;
+  ) => ListOutcomeNotificationsResult;
   return defineOperation({
-    name: 'goal.reviewOutcome',
-    description: DESCRIPTION,
+    name: 'goal.outcome.list',
+    description: LIST_DESCRIPTION,
     policy: GOAL_OWNER_POLICY,
-    inputSchema,
-    resultSchema: z.discriminatedUnion('kind', [
+    inputSchema: listInputSchema,
+    resultSchema: z.union([
       z.object({
-        kind: z.literal('discovery'),
         accepted: z.literal(true),
         notifications: z.array(GoalOutcomeNotificationSchema),
       }),
       z.object({
-        kind: z.literal('claimed'),
+        accepted: z.literal(false),
+        reason: z.enum(GOAL_REJECTION_REASONS),
+        message: z.string(),
+      }),
+    ]),
+    execute: async (input, caller) => list(input, caller),
+  });
+}
+
+export function createResolveGoalOutcomeOperation(deps: ReviewGoalOutcomeDependencies) {
+  const resolve = (superpipe({ deps })('goal-outcome-resolve') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(admitOutcomeReviewer, ['input', 'caller', 'deps'], 'result:outcome')
+    .pipe(routeOutcomeClaim, ['outcome', 'input', 'deps'], 'result:outcome')
+    .pipe(applyOutcomeClaim, ['outcome', 'input', 'caller', 'deps'], 'outcome')
+    .endAsync('outcome') as (
+    input: ResolveInput,
+    caller: OperationCaller
+  ) => Promise<ReviewGoalOutcomeResult>;
+  return defineOperation({
+    name: 'goal.outcome.resolve',
+    description: RESOLVE_DESCRIPTION,
+    policy: GOAL_OWNER_POLICY,
+    inputSchema: resolveInputSchema,
+    resultSchema: z.union([
+      z.object({
         accepted: z.literal(true),
         status: z.enum(['claimed', 'already_applied']),
         notification: GoalOutcomeNotificationSchema,
         goal: SpaceGoalSchema,
       }),
       z.object({
-        kind: z.literal('rejected'),
         accepted: z.literal(false),
         reason: z.enum(GOAL_REJECTION_REASONS),
         message: z.string(),
@@ -300,6 +316,6 @@ export function createReviewGoalOutcomeOperation(deps: ReviewGoalOutcomeDependen
         goal: SpaceGoalSchema.optional(),
       }),
     ]),
-    execute: async (input, caller) => review(input, caller),
+    execute: async (input, caller) => resolve(input, caller),
   });
 }

@@ -11,7 +11,7 @@ describe('MC2-C injection sequencing flip (MC5-B)', () => {
   });
 
   test('the prompt half of the sequencing condition teaches the live review tool', () => {
-    expect(LONG_HORIZON_OWNER_REVIEW_CONTRACT).toContain('goal.reviewOutcome');
+    expect(LONG_HORIZON_OWNER_REVIEW_CONTRACT).toContain('goal.outcome.resolve');
     expect(LONG_HORIZON_OWNER_REVIEW_CONTRACT).toContain('notification_id');
     expect(LONG_HORIZON_OWNER_REVIEW_CONTRACT.length).toBeGreaterThan(
       LONG_HORIZON_SCHEDULING_GUARDRAIL.length / 4
