@@ -17,7 +17,6 @@ export const PLANNER_HOT_ACTIONS: readonly string[] = [
   'task.list',
   'workflow.list',
   'workflow.get',
-  'workflow.suggest',
 ];
 
 export const RESEARCH_HOT_ACTIONS: readonly string[] = [
