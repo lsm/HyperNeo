@@ -118,7 +118,7 @@ describe('goal.list through the operations door', () => {
     const ctx = makeCtx();
     try {
       const active = ctx.seed(SPACE_ID, 'Active goal');
-      ctx.goalService.pauseGoal(ctx.seed(SPACE_ID, 'Paused goal').id);
+      ctx.goalService.updateGoal(ctx.seed(SPACE_ID, 'Paused goal').id, { status: 'paused' });
       const all = await invoke(ctx, 'goal.list', {}, agent('ad_hoc_member'));
       expect(all.goals).toHaveLength(2);
       const onlyActive = await invoke(

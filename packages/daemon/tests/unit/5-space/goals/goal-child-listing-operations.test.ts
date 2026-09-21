@@ -195,7 +195,7 @@ describe('goal.events.list through the operations door', () => {
     const ctx = makeCtx();
     try {
       const goal = ctx.seed(SPACE_ID, 'Tracked goal');
-      ctx.goalService.pauseGoal(goal.id);
+      ctx.goalService.updateGoal(goal.id, { status: 'paused' });
       const result = await invoke(
         ctx,
         'goal.events.list',
@@ -215,8 +215,8 @@ describe('goal.events.list through the operations door', () => {
     const ctx = makeCtx();
     try {
       const goal = ctx.seed(SPACE_ID, 'Busy goal');
-      ctx.goalService.pauseGoal(goal.id);
-      ctx.goalService.resumeGoal(goal.id);
+      ctx.goalService.updateGoal(goal.id, { status: 'paused' });
+      ctx.goalService.updateGoal(goal.id, { status: 'active' });
       const result = await invoke(
         ctx,
         'goal.events.list',

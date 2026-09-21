@@ -24,13 +24,7 @@ import type { GoalAutomationService } from './automation-service.ts';
 import { updateScheduledCheckIn } from './check-in-schedule.ts';
 import type { ClaimAdmissionDenyReason } from './claim-admission-gates.ts';
 import { listGoalEvents } from './event-recording.ts';
-import {
-  createGoal,
-  pauseGoal,
-  resolveGoalWorkspacePath,
-  resumeGoal,
-  updateGoal,
-} from './lifecycle.ts';
+import { createGoal, resolveGoalWorkspacePath, updateGoal } from './lifecycle.ts';
 import {
   applyOutcomeGoalUpdate,
   claimOutcomeNotification,
@@ -166,14 +160,6 @@ export class SpaceGoalService {
     context?: SpaceGoalMutationContext
   ): SpaceGoal {
     return updateGoal(this.deps, goalId, params, context);
-  }
-
-  pauseGoal(goalId: string, context?: SpaceGoalMutationContext): SpaceGoal {
-    return pauseGoal(this.deps, goalId, context);
-  }
-
-  resumeGoal(goalId: string, context?: SpaceGoalMutationContext): SpaceGoal {
-    return resumeGoal(this.deps, goalId, context);
   }
 
   createImmediateTask(

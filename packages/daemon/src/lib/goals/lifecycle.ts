@@ -1,10 +1,5 @@
 import type { CreateSpaceGoalParams, SpaceGoal, UpdateSpaceGoalParams } from '@hyperneo/shared';
-import {
-  pauseLinkedScheduleOrClear,
-  resumeLinkedScheduleOrClear,
-  synchronizeScheduleForStatus,
-  syncLinkedScheduleIfNeeded,
-} from './check-in-schedule.ts';
+import { synchronizeScheduleForStatus, syncLinkedScheduleIfNeeded } from './check-in-schedule.ts';
 import { readGoalCadence, recordGoalEvent } from './event-recording.ts';
 import { requireGoal, runAtomic } from './persistence.ts';
 import type {
@@ -147,39 +142,6 @@ export function updateGoal(
   if (params.status === 'active' && existing.status !== 'active') {
     deps.onGoalResumed?.(goalId, existing.spaceId);
   }
-  return updated;
-}
-
-export function pauseGoal(
-  deps: SpaceGoalServiceDeps,
-  goalId: string,
-  context?: SpaceGoalMutationContext
-): SpaceGoal {
-  const goal = requireGoal(deps, goalId);
-  if (goal.status !== 'active') throw new Error(`Goal is not active (current: ${goal.status})`);
-  if (goal.taskScheduleId) pauseLinkedScheduleOrClear(deps, goal);
-  const updated = deps.goalRepo.update(goalId, { status: 'paused', nextCheckInAt: null });
-  if (!updated) throw new Error(`Goal not found: ${goalId}`);
-  recordGoalEvent(deps, updated, 'status_changed', goal, updated, context);
-  return updated;
-}
-
-export function resumeGoal(
-  deps: SpaceGoalServiceDeps,
-  goalId: string,
-  context?: SpaceGoalMutationContext
-): SpaceGoal {
-  const goal = requireGoal(deps, goalId);
-  if (goal.status !== 'paused') throw new Error(`Goal is not paused (current: ${goal.status})`);
-  let nextCheckInAt = goal.nextCheckInAt;
-  if (goal.taskScheduleId) {
-    const schedule = resumeLinkedScheduleOrClear(deps, goal);
-    nextCheckInAt = schedule?.nextRunAt ?? null;
-  }
-  const updated = deps.goalRepo.update(goalId, { status: 'active', nextCheckInAt });
-  if (!updated) throw new Error(`Goal not found: ${goalId}`);
-  recordGoalEvent(deps, updated, 'status_changed', goal, updated, context);
-  deps.onGoalResumed?.(goalId, goal.spaceId);
   return updated;
 }
 
