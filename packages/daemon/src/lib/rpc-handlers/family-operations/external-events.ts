@@ -31,6 +31,12 @@ export function registerExternalEventOperations(
       longHorizonAgentRepo: context.longHorizonAgentRepo,
     }),
     ...createSubscriptionOperations({
+      subscriptionRepo: context.spaceAgentSubscriptionRepo,
+      refreshSubscription: (spaceId, subscriptionId) =>
+        context.spaceRuntimeService.refreshLongHorizonSubscription(spaceId, subscriptionId),
+      removeSubscription: (spaceId, subscriptionId) =>
+        context.spaceRuntimeService.removeLongHorizonSubscription(spaceId, subscriptionId),
+      auditLogRepo: new McpAuditLogRepository(context.deps.db.getDatabase()),
       registerSubscription: (slot, topicPattern) =>
         context.spaceRuntimeService.registerSubscription(
           slot.workflowRunId,

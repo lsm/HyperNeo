@@ -8,9 +8,17 @@ import {
 } from '../operations/registry.ts';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
 import {
+  type AgentSubscriptionDependencies,
+  type AgentSubscriptionScope,
+  gateAgentSubscription,
+  subscribeAgentTopic,
+  SubscriptionRecordSchema,
+  unsubscribeAgentTopic,
+} from './agent-subscription-operations.ts';
+import {
   admitEventCallerSpace,
+  AGENT_EVENT_ROLES,
   callerSessionActiveIn,
-  type EventCallerDependencies,
   NODE_EVENT_ROLES,
   resolveWorkerNodeSlot,
   type WorkerNodeSlot,
@@ -25,7 +33,7 @@ type RunOutcome = { success: boolean; error?: string };
 type ListOutcome = ReturnType<SpaceRuntimeService['listSubscriptions']>;
 type SubscriptionList = Extract<ListOutcome, { success: true }>['result'];
 
-export interface SubscriptionDependencies extends EventCallerDependencies {
+export interface SubscriptionDependencies extends AgentSubscriptionDependencies {
   registerSubscription: (slot: SubscriptionSlot, topicPattern: string) => RunOutcome;
   unregisterSubscription: (slot: SubscriptionSlot, topicPattern: string) => RunOutcome;
   listRunSubscriptions: (workflowRunId: string, spaceId: string, nodeId?: string) => ListOutcome;
@@ -35,16 +43,47 @@ export interface SubscriptionDependencies extends EventCallerDependencies {
 const REJECTIONS = z.enum(['caller_denied', 'session_inactive', 'node_unresolved']);
 type Rejection = z.infer<typeof REJECTIONS>;
 
+const SUBJECT_REJECTIONS = z.enum([
+  'caller_denied',
+  'session_inactive',
+  'node_unresolved',
+  'agent_not_found',
+  'invalid_pattern',
+  'refresh_failed',
+]);
+type SubjectRejection = z.infer<typeof SUBJECT_REJECTIONS>;
+
 const OutcomeSchema = z.union([
   z.object({ ok: z.literal(true), topicPattern: z.string() }),
   z.object({ ok: z.literal(false), error: z.string() }),
 ]);
 type Outcome = z.infer<typeof OutcomeSchema>;
 
+const SubjectSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('node') }).strict(),
+  z.object({ type: z.literal('agent'), agentId: z.string().min(1) }).strict(),
+]);
+type Subject = z.infer<typeof SubjectSchema>;
+
+export type SubscriptionSubject =
+  | { kind: 'node'; slot: SubscriptionSlot }
+  | { kind: 'agent'; scope: AgentSubscriptionScope };
+
 const SubscribeInput = z
-  .object({ topicPattern: z.string().min(1), label: z.string().optional() })
+  .object({
+    topicPattern: z.string().min(1),
+    label: z.string().optional(),
+    subject: SubjectSchema.optional(),
+    spaceId: z.string().min(1).optional(),
+  })
   .strict();
-const UnsubscribeInput = z.object({ topicPattern: z.string().min(1) }).strict();
+const UnsubscribeInput = z
+  .object({
+    topicPattern: z.string().min(1),
+    subject: SubjectSchema.optional(),
+    spaceId: z.string().min(1).optional(),
+  })
+  .strict();
 const PrInput = z.object({ prUrl: z.string().optional(), label: z.string().optional() }).strict();
 const ListInput = z
   .object({
@@ -97,16 +136,50 @@ const SubscriptionListSchema = z.object({
   }),
 }) satisfies z.ZodType<SubscriptionList>;
 
+export function admitSubscriptionSpace(
+  input: { spaceId?: string },
+  caller: OperationCaller,
+  subs: SubscriptionDependencies
+): { value: string } | { reason: 'caller_denied' | 'session_inactive' } {
+  const space = admitEventCallerSpace(input, caller);
+  if ('reason' in space) return { reason: 'caller_denied' };
+  return callerSessionActiveIn(caller, space.value, subs)
+    ? { value: space.value }
+    : { reason: 'session_inactive' };
+}
+
+function resolveWriterSlot(
+  caller: OperationCaller,
+  subs: SubscriptionDependencies
+): { value: SubscriptionSlot } | { reason: 'node_unresolved' } {
+  const slot = resolveWorkerNodeSlot(caller, subs);
+  return slot?.taskId ? { value: { ...slot, taskId: slot.taskId } } : { reason: 'node_unresolved' };
+}
+
 export function admitSubscriptionWriter(
   input: { spaceId?: string },
   caller: OperationCaller,
   subs: SubscriptionDependencies
 ): { value: SubscriptionSlot } | { reason: Rejection } {
-  const space = admitEventCallerSpace(input, caller);
-  if ('reason' in space) return { reason: 'caller_denied' };
-  if (!callerSessionActiveIn(caller, space.value, subs)) return { reason: 'session_inactive' };
-  const slot = resolveWorkerNodeSlot(caller, subs);
-  return slot?.taskId ? { value: { ...slot, taskId: slot.taskId } } : { reason: 'node_unresolved' };
+  const space = admitSubscriptionSpace(input, caller, subs);
+  return 'reason' in space ? space : resolveWriterSlot(caller, subs);
+}
+
+export function resolveSubscriptionSubject(
+  spaceId: string,
+  input: { subject?: Subject },
+  caller: OperationCaller,
+  subs: SubscriptionDependencies
+): { value: SubscriptionSubject } | { reason: SubjectRejection } {
+  const subject: Subject = input.subject ?? { type: 'node' };
+  if (subject.type === 'node') {
+    const slot = resolveWriterSlot(caller, subs);
+    return 'reason' in slot ? slot : { value: { kind: 'node', slot: slot.value } };
+  }
+  const gated = gateAgentSubscription(spaceId, { agent_id: subject.agentId }, subs);
+  return 'reason' in gated
+    ? { reason: 'agent_not_found' }
+    : { value: { kind: 'agent', scope: gated.value } };
 }
 
 export function admitSubscriptionReader(
@@ -157,6 +230,44 @@ function unsubscribeTopic(
   return applyOutcome(input.topicPattern, subs.unregisterSubscription(slot, input.topicPattern));
 }
 
+function subscribeSubject(
+  subject: SubscriptionSubject,
+  input: z.infer<typeof SubscribeInput>,
+  caller: OperationCaller,
+  subs: SubscriptionDependencies
+): Outcome | { subscription: z.infer<typeof SubscriptionRecordSchema> } | SubjectRejection {
+  if (subject.kind === 'node') return subscribeTopic(subject.slot, input, subs);
+  const result = subscribeAgentTopic(
+    subject.scope,
+    {
+      agent_id: subject.scope.agentId,
+      topic_pattern: input.topicPattern,
+      label: input.label,
+    },
+    caller,
+    subs,
+    'externalEvent.subscribe'
+  );
+  return 'accepted' in result ? result.reason : result;
+}
+
+function unsubscribeSubject(
+  subject: SubscriptionSubject,
+  input: z.infer<typeof UnsubscribeInput>,
+  caller: OperationCaller,
+  subs: SubscriptionDependencies
+): Outcome | SubjectRejection {
+  if (subject.kind === 'node') return unsubscribeTopic(subject.slot, input, subs);
+  const result = unsubscribeAgentTopic(
+    subject.scope,
+    { agent_id: subject.scope.agentId, topic_pattern: input.topicPattern },
+    caller,
+    subs,
+    'externalEvent.unsubscribe'
+  );
+  return 'accepted' in result ? result.reason : result;
+}
+
 function subscribePrEvents(
   slot: SubscriptionSlot,
   input: z.infer<typeof PrInput>,
@@ -203,8 +314,34 @@ function writePipeline<Input, Result>(
     .endAsync('outcome') as (input: Input, caller: OperationCaller) => Promise<Result | Rejection>;
 }
 
+function subjectPipeline<Input extends { subject?: Subject }, Result>(
+  name: string,
+  subs: SubscriptionDependencies,
+  apply: (
+    subject: SubscriptionSubject,
+    input: Input,
+    caller: OperationCaller,
+    subs: SubscriptionDependencies
+  ) => Result
+) {
+  return (superpipe({ subs })(name) as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(admitSubscriptionSpace, ['input', 'caller', 'subs'], 'result:outcome')
+    .pipe(resolveSubscriptionSubject, ['outcome', 'input', 'caller', 'subs'], 'result:outcome')
+    .pipe(apply, ['outcome', 'input', 'caller', 'subs'], 'outcome')
+    .endAsync('outcome') as (
+    input: Input,
+    caller: OperationCaller
+  ) => Promise<Result | SubjectRejection>;
+}
+
 const SLOT_DOC =
   'The subscribing slot (workflow run, node, agent, task) is resolved from the calling session, never from input, so only an active workflow worker can change its own subscriptions. Rejects caller_denied for any other caller, session_inactive when that session is not active in its Space, and node_unresolved when no node execution backs it.';
+
+const SUBJECT_DOC =
+  'subject names what the subscription is recorded against and defaults to { type: "node" }. For the node subject the slot (workflow run, node, agent, task) is resolved from the calling session and never from input, so a worker can only change its own subscriptions. For { type: "agent", agentId } the target long-horizon agent must belong to the caller Space, which is derived from the calling session; an omitted spaceId defaults to that Space. Rejections are returned as a bare reason: caller_denied for a caller with no Space scope or one naming another Space, session_inactive when the calling session is not active in that Space, node_unresolved when no node execution backs a node-subject caller, agent_not_found when the named agent is unknown or belongs to another Space, and invalid_pattern when topicPattern is not a valid topic glob.';
+
+const SUBSCRIPTION_ROLES = [...NODE_EVENT_ROLES, ...AGENT_EVENT_ROLES];
 
 export function createSubscriptionOperations(
   subs: SubscriptionDependencies
@@ -212,19 +349,23 @@ export function createSubscriptionOperations(
   return [
     defineOperation({
       name: 'externalEvent.subscribe',
-      policy: { safetyClass: 'mutate', roles: NODE_EVENT_ROLES },
-      description: `Subscribe this node-agent session to external events matching a topic glob (e.g. github/lsm/neokai/pull_request/*.review_*). ${SLOT_DOC}`,
+      policy: { safetyClass: 'mutate', roles: SUBSCRIPTION_ROLES },
+      description: `Subscribe a subject to external events matching a topic glob (e.g. github/lsm/neokai/pull_request/*.review_*). A node subject registers the calling worker slot on its workflow run and returns { ok, topicPattern }; an agent subject upserts the stored long-horizon subscription, refreshes the live delivery trie, and returns the stored record, rejecting refresh_failed when the trie could not be refreshed. ${SUBJECT_DOC}`,
       inputSchema: SubscribeInput,
-      resultSchema: z.union([OutcomeSchema, REJECTIONS]),
-      execute: writePipeline('subscribe-external-event', subs, subscribeTopic),
+      resultSchema: z.union([
+        OutcomeSchema,
+        z.object({ subscription: SubscriptionRecordSchema }),
+        SUBJECT_REJECTIONS,
+      ]),
+      execute: subjectPipeline('subscribe-external-event', subs, subscribeSubject),
     }),
     defineOperation({
       name: 'externalEvent.unsubscribe',
-      policy: { safetyClass: 'mutate', roles: NODE_EVENT_ROLES },
-      description: `Remove this session external-event subscription for a topic pattern. ${SLOT_DOC}`,
+      policy: { safetyClass: 'mutate', roles: SUBSCRIPTION_ROLES },
+      description: `Remove a subject external-event subscription for a topic glob. A node subject drops the calling worker registration on its workflow run; an agent subject deletes the stored long-horizon record and its live delivery-trie entry, and is idempotent when the agent never subscribed to that pattern. ${SUBJECT_DOC}`,
       inputSchema: UnsubscribeInput,
-      resultSchema: z.union([OutcomeSchema, REJECTIONS]),
-      execute: writePipeline('unsubscribe-external-event', subs, unsubscribeTopic),
+      resultSchema: z.union([OutcomeSchema, SUBJECT_REJECTIONS]),
+      execute: subjectPipeline('unsubscribe-external-event', subs, unsubscribeSubject),
     }),
     defineOperation({
       name: 'subscribe_pr_events',
