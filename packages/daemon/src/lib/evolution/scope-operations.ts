@@ -9,8 +9,6 @@ import type {
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository.ts';
-import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
-import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository.ts';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import { syncGoalAutomationSelfNagScheduleForScope } from '../goals/automation-schedule-sync.ts';
 import { validateGoalAutomationSelfNagPolicy } from './evolution-policy-validation.ts';
@@ -57,8 +55,6 @@ export interface ForgeScopeOperationDependencies extends ForgeAdmissionDependenc
   readonly getGoal: (
     goalId: string
   ) => { id: string; spaceId: string; title: string; description: string } | null;
-  readonly taskRepo: Pick<SpaceTaskRepository, 'getTask'>;
-  readonly workflowRunRepo: Pick<SpaceWorkflowRunRepository, 'getRun'>;
   readonly db?: BunDatabase;
   readonly goalRepo?: SpaceGoalRepository;
   readonly scheduleService?: ScheduleService;
