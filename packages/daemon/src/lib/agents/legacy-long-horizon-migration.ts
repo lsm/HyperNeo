@@ -104,10 +104,19 @@ function copyLegacyGoals(db: BunDatabase): number {
     .run().changes;
 }
 
+function scopeLinksTable(db: BunDatabase): string {
+  const present = db
+    .prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?`)
+    .get('space_long_horizon_agent_evolution_scopes');
+  return present
+    ? 'space_long_horizon_agent_evolution_scopes'
+    : 'space_long_horizon_agent_forge_scopes';
+}
+
 function copyLegacyForgeScopes(db: BunDatabase): number {
   return db
     .prepare(
-      `INSERT OR IGNORE INTO space_long_horizon_agent_evolution_scopes (
+      `INSERT OR IGNORE INTO ${scopeLinksTable(db)} (
         agent_id, scope_id, relationship, created_at, updated_at
       )
       SELECT legacy.agent_id, legacy.scope_id, 'owner', legacy.created_at, legacy.created_at
