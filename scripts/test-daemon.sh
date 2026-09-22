@@ -548,10 +548,32 @@ take_results_lock() {
 	trap 'exit 143' TERM
 }
 
+# The winner of the mkdir writes its pid on the next line, not atomically with
+# it, so a run that loses the race can find the lock dir with no pid yet. Read
+# it with a short retry: an empty pid that never fills in means the owner died
+# inside that window, which is the only case that should reclaim the lock.
+# Without the retry the loser reclaims a live owner's lock and both runs go on
+# to clobber the junit files the lock exists to protect.
+read_lock_owner() {
+	local attempt=0
+	local owner=''
+	while [ "$attempt" -lt 20 ]; do
+		owner=$(cat "$LOCK_DIR/pid" 2>/dev/null)
+		if [ -n "$owner" ]; then
+			printf '%s' "$owner"
+			return 0
+		fi
+		[ -d "$LOCK_DIR" ] || return 0
+		sleep 0.05
+		attempt=$((attempt + 1))
+	done
+	return 0
+}
+
 acquire_results_lock() {
 	local owner
 	take_results_lock && return 0
-	owner=$(cat "$LOCK_DIR/pid" 2>/dev/null)
+	owner=$(read_lock_owner)
 	if [ -n "$owner" ] && kill -0 "$owner" 2>/dev/null; then
 		echo "Another ./scripts/test-daemon.sh run (pid $owner) already owns $RESULTS_DIR." >&2
 		echo "  Both runs rewrite junit-<shard>.xml and failures.txt there, so their results" >&2
