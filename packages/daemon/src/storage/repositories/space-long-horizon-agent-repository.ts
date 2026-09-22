@@ -312,6 +312,15 @@ export class SpaceLongHorizonAgentRepository {
     return rows.map(rowToForgeScopeLink);
   }
 
+  listForgeScopeAssignments(scopeId: string): SpaceLongHorizonAgentForgeScope[] {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM space_long_horizon_agent_forge_scopes WHERE scope_id = ? ORDER BY created_at ASC`
+      )
+      .all(scopeId) as Record<string, unknown>[];
+    return rows.map(rowToForgeScopeLink);
+  }
+
   deleteForgeScopeAssignment(agentId: string, scopeId: string): void {
     this.db
       .prepare(

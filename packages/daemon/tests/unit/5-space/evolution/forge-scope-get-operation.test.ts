@@ -104,9 +104,10 @@ function makeCtx() {
     audited.push(entry);
   };
 
+  const longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(db);
   const operations = createForgeOperations({
     getSession: (sessionId) => sessions.get(sessionId) ?? null,
-    longHorizonAgentRepo: new SpaceLongHorizonAgentRepository(db),
+    longHorizonAgentRepo,
     nodeExecutionRepo: new NodeExecutionRepository(db),
     taskRepo,
     workflowRunRepo,
@@ -124,7 +125,17 @@ function makeCtx() {
     if (!found) throw new Error(`operation missing: ${name}`);
     return found;
   };
-  return { db, goalRepo, taskRepo, evolutionRepo, scopeService, audited, registry, op };
+  return {
+    db,
+    goalRepo,
+    taskRepo,
+    evolutionRepo,
+    scopeService,
+    longHorizonAgentRepo,
+    audited,
+    registry,
+    op,
+  };
 }
 
 type Ctx = ReturnType<typeof makeCtx>;
@@ -209,6 +220,39 @@ describe('evolution.scope.get', () => {
         scope: ctx.scopeService.getScope(scope.id) ?? undefined,
       });
       expect(Object.keys(result).sort()).toEqual(['accepted', 'scope']);
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('reads back the agents a scope is routed to', async () => {
+    const ctx = makeCtx();
+    try {
+      const scope = seedScope(ctx);
+      const agent = ctx.longHorizonAgentRepo.create({
+        spaceId: SPACE_ID,
+        handle: 'steward',
+        instructions: 'steward',
+      });
+      ctx.longHorizonAgentRepo.assignForgeScope(agent.id, scope.id);
+
+      const result = await read(ctx, { scopeId: scope.id, include: ['agents'] });
+
+      expect(result.agents).toEqual([
+        { agentId: agent.id, relationship: 'owner', createdAt: expect.any(Number) },
+      ]);
+      expect(Object.keys(result).sort()).toEqual(['accepted', 'agents']);
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('reports no agents for a scope nothing is routed to', async () => {
+    const ctx = makeCtx();
+    try {
+      const scope = seedScope(ctx);
+      const result = await read(ctx, { scopeId: scope.id, include: ['agents'] });
+      expect(result.agents).toEqual([]);
     } finally {
       ctx.db.close();
     }
