@@ -1,6 +1,5 @@
 import type { SpaceTaskStatus } from '@hyperneo/shared';
 import { isRateOrUsageLimited } from '@hyperneo/shared';
-import { requireDraftTask } from '../../tasks/publication.ts';
 
 export interface TaskUpdateRoutingInput {
   hasChanges: boolean;
@@ -244,64 +243,4 @@ export function routeRetryTask(input: RetryTaskRoutingInput): RetryTaskRouting {
     };
   }
   return { action: 'retry_task' };
-}
-
-export interface CancelTaskRoutingInput {
-  cancelWorkflowRunRequested: boolean;
-  hasWorkflowRun: boolean;
-  runExists: boolean;
-}
-
-export type CancelTaskRouting =
-  | { action: 'cancel_only' }
-  | { action: 'cancel_run'; runExists: boolean };
-
-export function routeCancelTask(input: CancelTaskRoutingInput): CancelTaskRouting {
-  if (!input.cancelWorkflowRunRequested || !input.hasWorkflowRun) {
-    return { action: 'cancel_only' };
-  }
-  return { action: 'cancel_run', runExists: input.runExists };
-}
-
-export interface PublishTaskRoutingInput extends TaskTargetGateInput {
-  currentStatus: string;
-}
-
-export type PublishTaskRouting =
-  | { action: 'reject'; reason: TaskTargetRejectReason | 'not_draft'; message: string }
-  | { action: 'publish' };
-
-export function routePublishTask(input: PublishTaskRoutingInput): PublishTaskRouting {
-  const target = routeTaskTarget(input);
-  if (target.action === 'reject') {
-    return target;
-  }
-  if ('reason' in requireDraftTask(input.currentStatus)) {
-    return {
-      action: 'reject',
-      reason: 'not_draft',
-      message: `Task is in '${input.currentStatus}' status, not 'draft'. Only draft tasks can be published.`,
-    };
-  }
-  return { action: 'publish' };
-}
-
-export interface ReassignTaskRoutingInput {
-  customAgentId: string | null | undefined;
-  workerAgentExists: boolean;
-}
-
-export type ReassignTaskRouting =
-  | { action: 'reject'; reason: 'worker_agent_not_found'; message: string }
-  | { action: 'reassign' };
-
-export function routeReassignTask(input: ReassignTaskRoutingInput): ReassignTaskRouting {
-  if (input.customAgentId != null && !input.workerAgentExists) {
-    return {
-      action: 'reject',
-      reason: 'worker_agent_not_found',
-      message: `Worker agent not found: ${input.customAgentId}`,
-    };
-  }
-  return { action: 'reassign' };
 }
