@@ -1,15 +1,10 @@
 import type { Session, SpaceTask, UpdateSpaceTaskParams } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/sqlite-compat.ts';
-import {
-  setStandaloneTaskDependencies,
-  type SetTaskDependenciesInput,
-} from '../../storage/tasks/set-task-dependencies.ts';
-import { createTaskDependencyEditor, type TaskDependencyOwner } from './dependency-editor.ts';
+import type { SetTaskDependenciesInput } from '../../storage/tasks/set-task-dependencies.ts';
 import type { SpaceTaskManager } from './task-manager.ts';
 import type { SpaceMcpSessionPolicyContext } from '../space/runtime/space-mcp-session-policy.ts';
 import { requireDependencyExecutionBlock } from '../space/tools/update-task-fields.ts';
-import { admitSpaceTaskMutation } from './metadata.ts';
 
 import {
   persistSpaceTaskFields,
@@ -99,26 +94,4 @@ export function createBoundSpaceTaskDependencyEditor(
 ) {
   const replace = createSpaceDependencyReplacer(dependencies);
   return (input: SetTaskDependenciesInput) => replace(spaceId, input);
-}
-
-export function createSpaceTaskDependencyEditor(dependencies: SpaceTaskDependencyDependencies) {
-  const { db, notifyStandalone } = dependencies;
-  return createTaskDependencyEditor({
-    resolveOwner: (taskId): TaskDependencyOwner | null => {
-      const row = db.prepare('SELECT space_id FROM space_tasks WHERE id = ?').get(taskId) as {
-        space_id: string | null;
-      } | null;
-      return !row
-        ? null
-        : row.space_id === null
-          ? { kind: 'standalone' }
-          : { kind: 'space', spaceId: row.space_id };
-    },
-    admit: (owner, caller) => {
-      const scope = admitSpaceTaskMutation(owner, caller, dependencies);
-      if ('reason' in scope) return { accepted: false, reason: 'task_dependencies_denied' };
-    },
-    replaceStandalone: (input) => setStandaloneTaskDependencies(db, input, notifyStandalone),
-    replaceSpace: createSpaceDependencyReplacer(dependencies),
-  });
 }
