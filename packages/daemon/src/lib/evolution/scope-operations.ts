@@ -43,7 +43,6 @@ import {
 } from './forge-result-schemas.ts';
 import { mergeEvolutionPolicy } from './scope-policy.ts';
 import type { EvolutionScopeService } from './scope-service.ts';
-import type { ScopeTimeline } from './scope-service-types.ts';
 
 export interface ForgeScopeOperationDependencies extends ForgeAdmissionDependencies {
   readonly scopeService: Pick<
@@ -55,12 +54,7 @@ export interface ForgeScopeOperationDependencies extends ForgeAdmissionDependenc
     | 'createScope'
     | 'createScopeFromGoal'
     | 'getScope'
-    | 'listEvidence'
-    | 'listMetricSnapshots'
     | 'listScopes'
-    | 'listTimeline'
-    | 'resolveScopeForGoal'
-    | 'resolveScopeForTask'
     | 'updateScope'
   >;
   readonly getGoal: (
@@ -80,12 +74,6 @@ const SCOPE_CREATE_REJECTIONS = [
   'goal_not_found',
   'invalid_policy',
 ] as const;
-const SCOPE_RESOLVE_REJECTIONS = [
-  ...SCOPE_ID_REJECTIONS,
-  'goal_not_found',
-  'task_not_found',
-  'resolve_target_required',
-] as const;
 const EVIDENCE_ATTACH_REJECTIONS = [
   ...SCOPE_ID_REJECTIONS,
   'task_not_found',
@@ -95,7 +83,6 @@ const EVIDENCE_ATTACH_REJECTIONS = [
 
 type ScopeIdRejection = (typeof SCOPE_ID_REJECTIONS)[number];
 type ScopeCreateRejection = (typeof SCOPE_CREATE_REJECTIONS)[number];
-type ScopeResolveRejection = (typeof SCOPE_RESOLVE_REJECTIONS)[number];
 type EvidenceAttachRejection = (typeof EVIDENCE_ATTACH_REJECTIONS)[number];
 
 const FORGE_READ_POLICY = {
@@ -407,53 +394,6 @@ export function applyForgeScopeUpdate(
   return { value: { accepted: true, scope } };
 }
 
-const ScopeResolveInputSchema = z
-  .object({
-    ...SpaceScoped,
-    goalId: z.string().min(1).optional(),
-    taskId: z.string().min(1).optional(),
-  })
-  .strict();
-
-export function resolveForgeScopeTarget(
-  input: z.infer<typeof ScopeResolveInputSchema>,
-  scope: { spaceId?: string },
-  caller: OperationCaller,
-  forge: ForgeScopeOperationDependencies
-): ForgeGate<{ accepted: true; scope: EvolutionScope }, ScopeResolveRejection> {
-  let resolved: EvolutionScope | null;
-  if (input.goalId) {
-    const goal = forge.getGoal(input.goalId);
-    if (!goal || (scope.spaceId && goal.spaceId !== scope.spaceId)) {
-      return denyForge('goal_not_found', `Goal not found: ${input.goalId}`);
-    }
-    resolved = forge.scopeService.resolveScopeForGoal({ spaceGoalId: input.goalId });
-  } else if (input.taskId) {
-    const task = forge.taskRepo.getTask(input.taskId);
-    if (!task || (scope.spaceId && task.spaceId !== scope.spaceId)) {
-      return denyForge('task_not_found', `Task not found: ${input.taskId}`);
-    }
-    resolved = forge.scopeService.resolveScopeForTask({ taskId: input.taskId });
-  } else {
-    return denyForge('resolve_target_required', 'Provide goalId or taskId');
-  }
-  if (!resolved) return denyForge('scope_not_found', 'No scope found');
-  forge.audit?.({
-    toolName: 'forge.scope.resolve',
-    paramsSummary: { goalId: input.goalId, taskId: input.taskId, scopeId: resolved.id },
-    caller,
-    spaceId: resolved.spaceId,
-  });
-  return { value: { accepted: true, scope: resolved } };
-}
-
-export function readForgeTimeline(
-  scope: EvolutionScope,
-  forge: ForgeScopeOperationDependencies
-): { accepted: true } & ScopeTimeline {
-  return { accepted: true, ...forge.scopeService.listTimeline(scope.id) };
-}
-
 const NoteAddInputSchema = z
   .object({
     ...ScopeTargeted,
@@ -577,17 +517,6 @@ export function applyForgeWorkflowRunEvidence(
   return { value: { accepted: true, evidence } };
 }
 
-export function readForgeEvidence(
-  scope: EvolutionScope,
-  forge: ForgeScopeOperationDependencies
-): { accepted: true; evidence: EvidenceRef[]; scope: { spaceId: string } } {
-  return {
-    accepted: true,
-    evidence: forge.scopeService.listEvidence(scope.id).evidence,
-    scope: { spaceId: scope.spaceId },
-  };
-}
-
 const MetricAddInputSchema = z
   .object({
     ...ScopeTargeted,
@@ -622,33 +551,6 @@ export function applyForgeMetricAdd(
     spaceId: scope.spaceId,
   });
   return { accepted: true, ...result };
-}
-
-export function readForgeMetricSnapshots(
-  scope: EvolutionScope,
-  forge: ForgeScopeOperationDependencies
-): { accepted: true; snapshots: MetricSnapshot[]; scope: { spaceId: string } } {
-  return {
-    accepted: true,
-    snapshots: forge.scopeService.listMetricSnapshots(scope.id),
-    scope: { spaceId: scope.spaceId },
-  };
-}
-
-function scopeReadPipeline<Result>(
-  name: string,
-  forge: ForgeScopeOperationDependencies,
-  read: (scope: EvolutionScope, deps: ForgeScopeOperationDependencies) => Result
-) {
-  return (superpipe({ forge })(name) as PipelineAPI)
-    .input(['input', 'caller'])
-    .pipe(admitForgeReader, ['input', 'caller'], 'result:outcome')
-    .pipe(requireForgeScope, ['input', 'outcome', 'forge'], 'result:outcome')
-    .pipe(read, ['outcome', 'forge'], 'outcome')
-    .endAsync('outcome') as (
-    input: { scopeId: string; spaceId?: string },
-    caller: OperationCaller
-  ) => Promise<Result>;
 }
 
 export function createForgeScopeOperations(forge: ForgeScopeOperationDependencies) {
@@ -691,12 +593,6 @@ export function createForgeScopeOperations(forge: ForgeScopeOperationDependencie
     )
     .endAsync('outcome');
 
-  const resolve = (superpipe({ forge })('forge-scope-resolve') as PipelineAPI)
-    .input(['input', 'caller'])
-    .pipe(admitForgeReader, ['input', 'caller'], 'result:outcome')
-    .pipe(resolveForgeScopeTarget, ['input', 'outcome', 'caller', 'forge'], 'result:outcome')
-    .endAsync('outcome');
-
   const noteAdd = (superpipe({ forge })('forge-note-add') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitForgeMutator, ['input', 'caller', 'forge'], 'result:outcome')
@@ -722,10 +618,6 @@ export function createForgeScopeOperations(forge: ForgeScopeOperationDependencie
     .pipe(requireForgeScope, ['input', 'outcome', 'forge'], 'result:outcome')
     .pipe(applyForgeMetricAdd, ['input', 'outcome', 'caller', 'forge'], 'outcome')
     .endAsync('outcome');
-
-  const timeline = scopeReadPipeline('forge-timeline-get', forge, readForgeTimeline);
-  const evidenceList = scopeReadPipeline('forge-evidence-list', forge, readForgeEvidence);
-  const metricList = scopeReadPipeline('forge-metric-list', forge, readForgeMetricSnapshots);
 
   const scopeResult = accepted({ scope: ForgeScopeSchema });
   const evidenceResult = accepted({ evidence: ForgeEvidenceRefSchema });
@@ -771,31 +663,6 @@ export function createForgeScopeOperations(forge: ForgeScopeOperationDependencie
       execute: async (input, caller) => update(input, caller),
     }),
     defineOperation({
-      name: 'forge.scope.resolve',
-      policy: FORGE_READ_POLICY,
-      description:
-        'Resolve the Forge scope behind a goal or a task when the scope id is unknown. Rejects resolve_target_required when neither goalId nor taskId is given, goal_not_found or task_not_found when the target is absent or outside the caller Space, and scope_not_found when nothing is linked.',
-      inputSchema: ScopeResolveInputSchema,
-      resultSchema: z.union([scopeResult, forgeDenialSchema(SCOPE_RESOLVE_REJECTIONS)]),
-      execute: async (input, caller) => resolve(input, caller),
-    }),
-    defineOperation({
-      name: 'forge.timeline.get',
-      policy: FORGE_READ_POLICY,
-      description:
-        'Read a Forge scope overview: the scope itself with its evidence and metric snapshots in one bundle. Rejects scope_not_found when the scope is absent or outside the caller Space.',
-      inputSchema: z.object(ScopeTargeted).strict(),
-      resultSchema: z.union([
-        accepted({
-          scope: ForgeScopeSchema,
-          evidence: z.array(ForgeEvidenceRefSchema),
-          metricSnapshots: z.array(ForgeMetricSnapshotSchema),
-        }),
-        forgeDenialSchema(SCOPE_ID_REJECTIONS),
-      ]),
-      execute: async (input, caller) => timeline(input, caller),
-    }),
-    defineOperation({
       name: 'forge.note.add',
       policy: FORGE_MUTATE_POLICY,
       description:
@@ -823,21 +690,6 @@ export function createForgeScopeOperations(forge: ForgeScopeOperationDependencie
       execute: async (input, caller) => attachRun(input, caller),
     }),
     defineOperation({
-      name: 'forge.evidence.list',
-      policy: FORGE_READ_POLICY,
-      description:
-        'List the evidence refs attached to a Forge scope. Rejects scope_not_found when the scope is absent or outside the caller Space.',
-      inputSchema: z.object(ScopeTargeted).strict(),
-      resultSchema: z.union([
-        accepted({
-          evidence: z.array(ForgeEvidenceRefSchema),
-          scope: z.object({ spaceId: z.string() }),
-        }),
-        forgeDenialSchema(SCOPE_ID_REJECTIONS),
-      ]),
-      execute: async (input, caller) => evidenceList(input, caller),
-    }),
-    defineOperation({
       name: 'forge.metric.add',
       policy: FORGE_MUTATE_POLICY,
       description:
@@ -848,21 +700,6 @@ export function createForgeScopeOperations(forge: ForgeScopeOperationDependencie
         forgeDenialSchema(SCOPE_ID_REJECTIONS),
       ]),
       execute: async (input, caller) => metricAdd(input, caller),
-    }),
-    defineOperation({
-      name: 'forge.metric.list',
-      policy: FORGE_READ_POLICY,
-      description:
-        'List the metric snapshots recorded on a Forge scope. Rejects scope_not_found when the scope is absent or outside the caller Space.',
-      inputSchema: z.object(ScopeTargeted).strict(),
-      resultSchema: z.union([
-        accepted({
-          snapshots: z.array(ForgeMetricSnapshotSchema),
-          scope: z.object({ spaceId: z.string() }),
-        }),
-        forgeDenialSchema(SCOPE_ID_REJECTIONS),
-      ]),
-      execute: async (input, caller) => metricList(input, caller),
     }),
   ];
 }
