@@ -1427,8 +1427,10 @@ describe('EvolutionEpisodeService', () => {
       artifactRepo,
       artifactProfile,
     });
-    const scope = scopeService.createScopeFromGoal({
+    const scope = scopeService.createScope({
+      spaceId,
       spaceGoalId: goal.id,
+      kind: 'mission',
       name: 'Improve Forge evidence quality',
       objective: 'Validate evidence collection across the full episode lifecycle',
       metricDefinitions: [
@@ -1634,8 +1636,10 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
     });
-    const scope = scopeService.createScopeFromGoal({
+    const scope = scopeService.createScope({
+      spaceId,
       spaceGoalId: goal.id,
+      kind: 'mission',
       name: 'Build HyperNeo Forge MVP',
       objective: 'Verify a usable end-to-end Forge scoped learning loop',
       metricDefinitions: [

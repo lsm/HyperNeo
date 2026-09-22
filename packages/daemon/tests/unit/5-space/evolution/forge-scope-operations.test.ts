@@ -192,7 +192,6 @@ const SCOPE_OPERATION_NAMES = [
   'forge.metric.list',
   'forge.note.add',
   'forge.scope.create',
-  'forge.scope.createFromGoal',
   'forge.scope.get',
   'forge.scope.list',
   'forge.scope.resolve',
@@ -430,33 +429,6 @@ describe('forge.scope.create', () => {
   });
 });
 
-describe('forge.scope.createFromGoal', () => {
-  test('creates a mission scope defaulting its name from the goal', async () => {
-    const ctx = makeCtx();
-    try {
-      const goal = ctx.goalRepo.create({
-        spaceId: SPACE_ID,
-        title: 'Weekly review',
-        description: 'recurring fixture',
-        type: 'recurring',
-      });
-      const result = (await ctx
-        .op('forge.scope.createFromGoal')
-        .execute({ goalId: goal.id }, memberCaller)) as {
-        accepted: true;
-        scope: { kind: string; name: string; spaceGoalId: string | null };
-      };
-      expect(result.scope).toMatchObject({
-        kind: 'mission',
-        name: 'Weekly review',
-        spaceGoalId: goal.id,
-      });
-    } finally {
-      ctx.db.close();
-    }
-  });
-});
-
 describe('forge.scope.list', () => {
   test('lists scopes for a universal_read caller and rejects RPC callers without a Space', async () => {
     const ctx = makeCtx();
@@ -608,7 +580,7 @@ describe('forge scope input min-length parity', () => {
     }
   });
 
-  test('forge.scope.createFromGoal rejects a blank name or objective override', async () => {
+  test('forge.scope.create rejects a blank name or objective override on a linked goal', async () => {
     const ctx = makeCtx();
     try {
       const goal = ctx.goalRepo.create({
@@ -620,16 +592,16 @@ describe('forge scope input min-length parity', () => {
       expect(
         await invokeOperation(
           ctx.registry,
-          'forge.scope.createFromGoal',
-          { goalId: goal.id, objective: '' },
+          'forge.scope.create',
+          { kind: 'mission', goalId: goal.id, objective: '' },
           memberCaller
         )
       ).toMatchObject({ kind: 'failed', code: 'invalid_input' });
       expect(
         await invokeOperation(
           ctx.registry,
-          'forge.scope.createFromGoal',
-          { goalId: goal.id, name: '' },
+          'forge.scope.create',
+          { kind: 'mission', goalId: goal.id, name: '' },
           memberCaller
         )
       ).toMatchObject({ kind: 'failed', code: 'invalid_input' });
@@ -651,8 +623,11 @@ describe('forge.scope.resolve', () => {
         type: 'recurring',
       });
       const created = (await ctx
-        .op('forge.scope.createFromGoal')
-        .execute({ goalId: goal.id }, memberCaller)) as { accepted: true; scope: { id: string } };
+        .op('forge.scope.create')
+        .execute({ kind: 'mission', goalId: goal.id }, memberCaller)) as {
+        accepted: true;
+        scope: { id: string };
+      };
       const resolved = (await ctx
         .op('forge.scope.resolve')
         .execute({ goalId: goal.id }, memberCaller)) as { accepted: true; scope: { id: string } };

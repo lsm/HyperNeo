@@ -17,7 +17,6 @@ export const FORGE_OPERATION_NAMES = [
   'forge.reviewBundle.list',
   'forge.rollup.apply',
   'forge.scope.create',
-  'forge.scope.createFromGoal',
   'forge.scope.get',
   'forge.scope.list',
   'forge.scope.resolve',

@@ -1,5 +1,4 @@
 import type {
-  CreateEvolutionScopeParams,
   CreateMetricSnapshotParams,
   EvidenceRef,
   EvolutionScope,
@@ -24,14 +23,6 @@ export interface EvolutionScopeServiceDeps {
   artifactRepo?: WorkflowRunArtifactRepository;
   traceEvidenceService?: EvolutionTraceEvidenceService;
   jobQueue?: Pick<JobQueueRepository, 'enqueueUniquePending'>;
-}
-
-export interface CreateScopeFromGoalParams {
-  spaceGoalId: string;
-  name?: string;
-  objective?: string;
-  metricDefinitions?: CreateEvolutionScopeParams['metricDefinitions'];
-  policy?: CreateEvolutionScopeParams['policy'];
 }
 
 export interface ResolveScopeForGoalParams {

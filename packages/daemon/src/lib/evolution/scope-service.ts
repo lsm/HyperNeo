@@ -18,7 +18,6 @@ import type {
   AttachWorkflowRunEvidenceParams,
   CaptureCompletedTaskEvidenceParams,
   CaptureCompletedTaskEvidenceResult,
-  CreateScopeFromGoalParams,
   EvolutionScopeServiceDeps,
   ResolveScopeForGoalParams,
   ResolveScopeForTaskParams,
@@ -79,19 +78,6 @@ export class EvolutionScopeService {
       requireScopeInSpace(this.deps, params.parentScopeId, params.spaceId);
     }
     return this.deps.evolutionRepo.createScope(params);
-  }
-
-  createScopeFromGoal(params: CreateScopeFromGoalParams): EvolutionScope {
-    const goal = requireGoal(this.deps, params.spaceGoalId);
-    return this.deps.evolutionRepo.createScope({
-      spaceId: goal.spaceId,
-      spaceGoalId: goal.id,
-      kind: 'mission',
-      name: params.name ?? goal.title,
-      objective: params.objective ?? (goal.description || goal.title),
-      metricDefinitions: params.metricDefinitions,
-      policy: params.policy,
-    });
   }
 
   getScope(id: string): EvolutionScope | null {

@@ -53,7 +53,6 @@ export interface ForgeScopeOperationDependencies extends ForgeAdmissionDependenc
     | 'attachTaskEvidence'
     | 'attachWorkflowRunEvidence'
     | 'createScope'
-    | 'createScopeFromGoal'
     | 'getScope'
     | 'listEvidence'
     | 'listMetricSnapshots'
@@ -241,55 +240,6 @@ export function applyForgeScopeCreate(
     paramsSummary: { name: params.name, kind: params.kind, goalId: params.spaceGoalId },
     caller,
     spaceId: params.spaceId,
-  });
-  return { accepted: true, scope };
-}
-
-const ScopeCreateFromGoalInputSchema = z
-  .object({
-    ...SpaceScoped,
-    goalId: z.string().min(1),
-    name: z.string().min(1).optional(),
-    objective: z.string().min(1).optional(),
-    metricDefinitions: z.array(ForgeMetricDefinitionInputSchema).optional(),
-    policy: ForgePolicySchema.optional(),
-  })
-  .strict();
-
-export function planForgeScopeCreateFromGoal(
-  input: z.infer<typeof ScopeCreateFromGoalInputSchema>,
-  scope: { spaceId?: string },
-  forge: ForgeScopeOperationDependencies
-): ForgeGate<z.infer<typeof ScopeCreateFromGoalInputSchema>, ScopeCreateRejection> {
-  const goal = forge.getGoal(input.goalId);
-  if (!goal || (scope.spaceId && goal.spaceId !== scope.spaceId)) {
-    return denyForge('goal_not_found', `Goal not found: ${input.goalId}`);
-  }
-  const invalid = input.policy ? validateForgePolicy(input.policy) : undefined;
-  return invalid ? denyForge('invalid_policy', invalid) : { value: input };
-}
-
-export function applyForgeScopeCreateFromGoal(
-  input: z.infer<typeof ScopeCreateFromGoalInputSchema>,
-  caller: OperationCaller,
-  forge: ForgeScopeOperationDependencies
-): { accepted: true; scope: EvolutionScope } {
-  const scope = runForgeScopeWrite(forge, () => {
-    const created = forge.scopeService.createScopeFromGoal({
-      spaceGoalId: input.goalId,
-      name: input.name,
-      objective: input.objective,
-      metricDefinitions: input.metricDefinitions,
-      policy: input.policy,
-    });
-    syncForgeScopeAutomation(created, forge);
-    return created;
-  });
-  forge.audit?.({
-    toolName: 'forge.scope.createFromGoal',
-    paramsSummary: { goalId: input.goalId, name: input.name },
-    caller,
-    spaceId: scope.spaceId,
   });
   return { accepted: true, scope };
 }
@@ -660,13 +610,6 @@ export function createForgeScopeOperations(forge: ForgeScopeOperationDependencie
     .pipe(applyForgeScopeCreate, ['outcome', 'caller', 'forge'], 'outcome')
     .endAsync('outcome');
 
-  const createFromGoal = (superpipe({ forge })('forge-scope-create-from-goal') as PipelineAPI)
-    .input(['input', 'caller'])
-    .pipe(admitForgeMutator, ['input', 'caller', 'forge'], 'result:outcome')
-    .pipe(planForgeScopeCreateFromGoal, ['input', 'outcome', 'forge'], 'result:outcome')
-    .pipe(applyForgeScopeCreateFromGoal, ['outcome', 'caller', 'forge'], 'outcome')
-    .endAsync('outcome');
-
   const list = (superpipe({ forge })('forge-scope-list') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitForgeReader, ['input', 'caller'], 'result:outcome')
@@ -739,15 +682,6 @@ export function createForgeScopeOperations(forge: ForgeScopeOperationDependencie
       inputSchema: ScopeCreateInputSchema,
       resultSchema: z.union([scopeResult, forgeDenialSchema(SCOPE_CREATE_REJECTIONS)]),
       execute: async (input, caller) => create(input, caller),
-    }),
-    defineOperation({
-      name: 'forge.scope.createFromGoal',
-      policy: FORGE_MUTATE_POLICY,
-      description:
-        'Create a mission Forge scope linked to an existing goal, defaulting name and objective from the goal. Rejects goal_not_found when the goal is absent or outside the caller Space, and invalid_policy when the judge policy fails validation.',
-      inputSchema: ScopeCreateFromGoalInputSchema,
-      resultSchema: z.union([scopeResult, forgeDenialSchema(SCOPE_CREATE_REJECTIONS)]),
-      execute: async (input, caller) => createFromGoal(input, caller),
     }),
     defineOperation({
       name: 'forge.scope.list',

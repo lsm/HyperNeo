@@ -55,7 +55,17 @@ describe('EvolutionScopeService', () => {
     db.close();
   });
 
-  it('creates a mission scope from an existing recurring SpaceGoal', () => {
+  function missionScopeForGoal(goal: { id: string; title: string }) {
+    return service.createScope({
+      spaceId,
+      spaceGoalId: goal.id,
+      kind: 'mission',
+      name: goal.title,
+      objective: goal.title,
+    });
+  }
+
+  it('resolves a mission scope back through the recurring SpaceGoal it links', () => {
     const goal = goalRepo.create({
       spaceId,
       title: 'Recurring Forge check-in',
@@ -63,7 +73,13 @@ describe('EvolutionScopeService', () => {
       type: 'recurring',
     });
 
-    const scope = service.createScopeFromGoal({ spaceGoalId: goal.id });
+    const scope = service.createScope({
+      spaceId,
+      spaceGoalId: goal.id,
+      kind: 'mission',
+      name: goal.title,
+      objective: goal.description,
+    });
 
     expect(scope).toMatchObject({
       spaceId,
@@ -110,7 +126,7 @@ describe('EvolutionScopeService', () => {
 
   it('attaches scheduled goal task evidence by resolving scope through spaceGoalId', () => {
     const goal = goalRepo.create({ spaceId, title: 'Weekly check-in', type: 'recurring' });
-    const scope = service.createScopeFromGoal({ spaceGoalId: goal.id });
+    const scope = missionScopeForGoal(goal);
     const task = taskRepo.createTask({
       spaceId,
       title: 'Scheduled check-in task',
@@ -158,7 +174,7 @@ describe('EvolutionScopeService', () => {
 
   it('resolves task scope through linked goal and selects top 3 active lessons', () => {
     const goal = goalRepo.create({ spaceId, title: 'Weekly check-in', type: 'recurring' });
-    const scope = service.createScopeFromGoal({ spaceGoalId: goal.id });
+    const scope = missionScopeForGoal(goal);
     const task = taskRepo.createTask({
       spaceId,
       title: 'Scheduled check-in task',
@@ -186,7 +202,7 @@ describe('EvolutionScopeService', () => {
 
   it('ranks lessons by tag overlap with task labels', () => {
     const goal = goalRepo.create({ spaceId, title: 'Tag ranking check', type: 'recurring' });
-    const scope = service.createScopeFromGoal({ spaceGoalId: goal.id });
+    const scope = missionScopeForGoal(goal);
     const task = taskRepo.createTask({
       spaceId,
       title: 'Fix gate writer config',
@@ -217,7 +233,7 @@ describe('EvolutionScopeService', () => {
 
   it('ranks lessons by keyword overlap when tags do not match', () => {
     const goal = goalRepo.create({ spaceId, title: 'Keyword ranking check', type: 'recurring' });
-    const scope = service.createScopeFromGoal({ spaceGoalId: goal.id });
+    const scope = missionScopeForGoal(goal);
     const task = taskRepo.createTask({
       spaceId,
       title: 'Refactor context panel switch cases',
@@ -245,7 +261,7 @@ describe('EvolutionScopeService', () => {
 
   it('falls back to confidence and recency when no tag or keyword overlap', () => {
     const goal = goalRepo.create({ spaceId, title: 'Fallback ranking check', type: 'recurring' });
-    const scope = service.createScopeFromGoal({ spaceGoalId: goal.id });
+    const scope = missionScopeForGoal(goal);
     const task = taskRepo.createTask({
       spaceId,
       title: 'Unrelated task',
@@ -382,7 +398,7 @@ describe('EvolutionScopeService', () => {
 
   it('attaches workflow-run evidence through its goal-linked parent task', () => {
     const goal = goalRepo.create({ spaceId, title: 'Runtime check-in', type: 'recurring' });
-    const scope = service.createScopeFromGoal({ spaceGoalId: goal.id });
+    const scope = missionScopeForGoal(goal);
     const workflow = workflowRepo.createWorkflow({
       spaceId,
       name: 'Check-in workflow',
