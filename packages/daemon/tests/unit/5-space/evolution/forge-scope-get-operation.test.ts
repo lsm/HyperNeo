@@ -1,9 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import type { Session } from '@hyperneo/shared';
 import type {
-  ForgeAuditEntry,
-  ForgeAuditWriter,
-} from '../../../../src/lib/evolution/forge-admission.ts';
+  EvolutionAuditEntry,
+  EvolutionAuditWriter,
+} from '../../../../src/lib/evolution/admission.ts';
 import { EvolutionEpisodeService } from '../../../../src/lib/evolution/episode-service.ts';
 import { createForgeOperations } from '../../../../src/lib/evolution/operations.ts';
 import { EvolutionScopeService } from '../../../../src/lib/evolution/scope-service.ts';
@@ -99,8 +99,8 @@ function makeCtx() {
   const sessions = new Map<string, Session>([
     ['session-member', makeSession('session-member', SPACE_ID)],
   ]);
-  const audited: ForgeAuditEntry[] = [];
-  const audit: ForgeAuditWriter = (entry) => {
+  const audited: EvolutionAuditEntry[] = [];
+  const audit: EvolutionAuditWriter = (entry) => {
     audited.push(entry);
   };
 

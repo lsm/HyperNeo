@@ -7,7 +7,7 @@ import type {
 } from '@hyperneo/shared';
 import { z } from 'zod';
 
-export const ForgeScopeKindSchema = z.enum([
+export const EvolutionScopeKindSchema = z.enum([
   'mission',
   'project',
   'campaign',
@@ -15,14 +15,14 @@ export const ForgeScopeKindSchema = z.enum([
   'custom',
 ]);
 
-export const ForgeMetricValuesSchema = z.record(
+export const EvolutionMetricValuesSchema = z.record(
   z.string(),
   z.union([z.string(), z.number(), z.boolean(), z.null()])
 );
 
-export const ForgeMetadataSchema = z.record(z.string(), z.unknown());
+export const EvolutionMetadataSchema = z.record(z.string(), z.unknown());
 
-export const ForgeMetricDefinitionSchema = z.object({
+export const EvolutionMetricDefinitionSchema = z.object({
   key: z.string(),
   label: z.string(),
   description: z.string().optional(),
@@ -31,7 +31,7 @@ export const ForgeMetricDefinitionSchema = z.object({
   unit: z.string().optional(),
 }) satisfies z.ZodType<MetricDefinition>;
 
-export const ForgeAutomationPolicySchema = z.object({
+export const EvolutionAutomationPolicySchema = z.object({
   completedTaskThreshold: z.number().optional(),
   completedTaskAutomationEnabled: z.boolean().optional(),
   selfNagCronExpression: z.string().optional(),
@@ -41,36 +41,36 @@ export const ForgeAutomationPolicySchema = z.object({
       z.object({
         topic: z.string(),
         source: z.string().optional(),
-        filter: ForgeMetricValuesSchema.optional(),
+        filter: EvolutionMetricValuesSchema.optional(),
       })
     )
     .optional(),
   maxEvidencePerEpisode: z.number().optional(),
 });
 
-export const ForgePolicySchema = z
+export const EvolutionPolicySchema = z
   .object({
     episodeJudgeModel: z.string().optional(),
     episodeJudgeProvider: z.string().optional(),
-    automation: ForgeAutomationPolicySchema.optional(),
+    automation: EvolutionAutomationPolicySchema.optional(),
   })
   .catchall(z.unknown()) satisfies z.ZodType<EvolutionPolicy>;
 
-export const ForgeScopeSchema = z.object({
+export const EvolutionScopeSchema = z.object({
   id: z.string(),
   spaceId: z.string(),
   spaceGoalId: z.string().nullable(),
-  kind: ForgeScopeKindSchema,
+  kind: EvolutionScopeKindSchema,
   name: z.string(),
   objective: z.string(),
   parentScopeId: z.string().nullable(),
-  metricDefinitions: z.array(ForgeMetricDefinitionSchema),
-  policy: ForgePolicySchema,
+  metricDefinitions: z.array(EvolutionMetricDefinitionSchema),
+  policy: EvolutionPolicySchema,
   createdAt: z.number(),
   updatedAt: z.number(),
 }) satisfies z.ZodType<EvolutionScope>;
 
-export const ForgeEvidenceKindSchema = z.enum([
+export const EvolutionEvidenceKindSchema = z.enum([
   'task',
   'workflow_run',
   'session',
@@ -94,21 +94,21 @@ export const ForgeEvidenceKindSchema = z.enum([
   'verification_triage',
 ]);
 
-export const ForgeEvidenceRefSchema = z.object({
+export const EvolutionEvidenceRefSchema = z.object({
   id: z.string(),
   scopeId: z.string(),
-  kind: ForgeEvidenceKindSchema,
+  kind: EvolutionEvidenceKindSchema,
   summary: z.string(),
   sourceId: z.string().nullable(),
-  metadata: ForgeMetadataSchema,
+  metadata: EvolutionMetadataSchema,
   createdAt: z.number(),
 }) satisfies z.ZodType<EvidenceRef>;
 
-export const ForgeMetricSnapshotSchema = z.object({
+export const EvolutionMetricSnapshotSchema = z.object({
   id: z.string(),
   scopeId: z.string(),
   capturedAt: z.number(),
-  values: ForgeMetricValuesSchema,
+  values: EvolutionMetricValuesSchema,
   source: z.string(),
   note: z.string().nullable(),
   createdAt: z.number(),

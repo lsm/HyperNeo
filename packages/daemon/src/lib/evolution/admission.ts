@@ -4,20 +4,20 @@ import type { OperationCaller } from '../operations/registry.ts';
 import { resolveSessionSpaceId } from '../space/runtime/space-caller-scope.ts';
 import type { SpaceMcpSessionPolicyContext } from '../space/runtime/space-mcp-session-policy.ts';
 
-export type ForgeDenial<Reason extends string> = {
+export type EvolutionDenial<Reason extends string> = {
   accepted: false;
   reason: Reason;
   detail?: string;
 };
 
-export type ForgeGate<Value, Reason extends string> =
+export type EvolutionGate<Value, Reason extends string> =
   | { value: Value }
-  | { reason: ForgeDenial<Reason> };
+  | { reason: EvolutionDenial<Reason> };
 
 export function denyForge<Reason extends string>(
   reason: Reason,
   detail?: string
-): { reason: ForgeDenial<Reason> } {
+): { reason: EvolutionDenial<Reason> } {
   return {
     reason:
       detail === undefined ? { accepted: false, reason } : { accepted: false, reason, detail },
@@ -40,17 +40,17 @@ export const FORGE_CALLER_REJECTIONS = [
   'space_mismatch',
 ] as const;
 
-export type ForgeCallerRejection = (typeof FORGE_CALLER_REJECTIONS)[number];
+export type EvolutionCallerRejection = (typeof FORGE_CALLER_REJECTIONS)[number];
 
-export interface ForgeAdmissionDependencies extends SpaceMcpSessionPolicyContext {
+export interface EvolutionAdmissionDependencies extends SpaceMcpSessionPolicyContext {
   readonly getSession: (sessionId: string) => Session | null;
 }
 
-export interface ForgeSpaceScope {
+export interface EvolutionSpaceScope {
   readonly spaceId?: string;
 }
 
-export interface ForgeAuditEntry {
+export interface EvolutionAuditEntry {
   readonly toolName: string;
   readonly paramsSummary: Record<string, unknown>;
   readonly caller: OperationCaller;
@@ -58,12 +58,12 @@ export interface ForgeAuditEntry {
   readonly taskId?: string;
 }
 
-export type ForgeAuditWriter = (entry: ForgeAuditEntry) => void;
+export type EvolutionAuditWriter = (entry: EvolutionAuditEntry) => void;
 
 export function admitForgeReader(
-  input: ForgeSpaceScope,
+  input: EvolutionSpaceScope,
   caller: OperationCaller
-): ForgeGate<ForgeSpaceScope, ForgeCallerRejection> {
+): EvolutionGate<EvolutionSpaceScope, EvolutionCallerRejection> {
   if (caller.source !== 'mcp') {
     const spaceId = input.spaceId ?? caller.spaceId;
     return spaceId
@@ -79,10 +79,10 @@ export function admitForgeReader(
 }
 
 export function admitForgeMutator(
-  input: ForgeSpaceScope,
+  input: EvolutionSpaceScope,
   caller: OperationCaller,
-  forge: ForgeAdmissionDependencies
-): ForgeGate<ForgeSpaceScope, ForgeCallerRejection> {
+  forge: EvolutionAdmissionDependencies
+): EvolutionGate<EvolutionSpaceScope, EvolutionCallerRejection> {
   const admitted = admitForgeReader(input, caller);
   if ('reason' in admitted || caller.source !== 'mcp') return admitted;
   const session = caller.sessionId ? forge.getSession(caller.sessionId) : null;
@@ -92,7 +92,9 @@ export function admitForgeMutator(
     : denyForge('forge_denied', 'Forge mutations require an active session in the owning Space');
 }
 
-export function requireForgeSpace(scope: ForgeSpaceScope): ForgeGate<string, ForgeCallerRejection> {
+export function requireForgeSpace(
+  scope: EvolutionSpaceScope
+): EvolutionGate<string, EvolutionCallerRejection> {
   return scope.spaceId
     ? { value: scope.spaceId }
     : denyForge('space_required', 'spaceId is required for callers outside a Space session');

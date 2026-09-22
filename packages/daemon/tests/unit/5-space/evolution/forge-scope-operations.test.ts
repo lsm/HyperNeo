@@ -3,9 +3,9 @@ import type { Session } from '@hyperneo/shared';
 import { createForgeScopeOperations } from '../../../../src/lib/evolution/scope-operations.ts';
 import { createForgeScopeGetOperation } from '../../../../src/lib/evolution/scope-get-operation.ts';
 import type {
-  ForgeAuditEntry,
-  ForgeAuditWriter,
-} from '../../../../src/lib/evolution/forge-admission.ts';
+  EvolutionAuditEntry,
+  EvolutionAuditWriter,
+} from '../../../../src/lib/evolution/admission.ts';
 import { EvolutionEpisodeService } from '../../../../src/lib/evolution/episode-service.ts';
 import { EvolutionScopeService } from '../../../../src/lib/evolution/scope-service.ts';
 import { SpaceGoalService } from '../../../../src/lib/goals/service.ts';
@@ -105,8 +105,8 @@ function makeCtx() {
     ['session-archived', makeSession('session-archived', SPACE_ID, 'archived')],
     ['session-outsider', makeSession('session-outsider', OTHER_SPACE_ID, 'active')],
   ]);
-  const audited: ForgeAuditEntry[] = [];
-  const audit: ForgeAuditWriter = (entry) => {
+  const audited: EvolutionAuditEntry[] = [];
+  const audit: EvolutionAuditWriter = (entry) => {
     audited.push(entry);
   };
 
