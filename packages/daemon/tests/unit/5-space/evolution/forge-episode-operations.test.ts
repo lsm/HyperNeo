@@ -207,7 +207,7 @@ async function seedEpisode(ctx: Ctx, scopeId: string) {
     summary: 'Manual evidence for the judge',
   });
   const created = (await ctx
-    .op('forge.episode.create')
+    .op('evolution.episode.create')
     .execute(
       { scopeId, evidenceIds: [evidence.id], confirmLowConfidence: true },
       memberCaller
@@ -216,13 +216,13 @@ async function seedEpisode(ctx: Ctx, scopeId: string) {
 }
 
 const EPISODE_OPERATION_NAMES = [
-  'forge.episode.create',
-  'forge.episode.update',
-  'forge.lesson.update',
-  'forge.proposal.create',
-  'forge.proposal.createTask',
-  'forge.proposal.update',
-  'forge.rollup.apply',
+  'evolution.episode.create',
+  'evolution.episode.update',
+  'evolution.lesson.update',
+  'evolution.proposal.create',
+  'evolution.proposal.createTask',
+  'evolution.proposal.update',
+  'evolution.rollup.apply',
 ];
 
 describe('Forge episode catalog', () => {
@@ -237,7 +237,7 @@ describe('Forge episode catalog', () => {
   });
 });
 
-describe('forge.episode.create', () => {
+describe('evolution.episode.create', () => {
   test('generates a draft episode with lessons, proposals, and a preflight', async () => {
     const ctx = makeCtx();
     try {
@@ -268,7 +268,7 @@ describe('forge.episode.create', () => {
       });
       expect(
         await ctx
-          .op('forge.episode.create')
+          .op('evolution.episode.create')
           .execute(
             { scopeId: scope.id, evidenceIds: [evidence.id], confirmLowConfidence: true },
             workerCaller
@@ -281,14 +281,14 @@ describe('forge.episode.create', () => {
   });
 });
 
-describe('forge.episode.update', () => {
+describe('evolution.episode.update', () => {
   test('accepts a draft and then refuses to reopen the terminal episode', async () => {
     const ctx = makeCtx();
     try {
       const scope = seedScope(ctx);
       const created = await seedEpisode(ctx, scope.id);
       const acceptedEpisode = (await ctx
-        .op('forge.episode.update')
+        .op('evolution.episode.update')
         .execute({ episodeId: created.episode.id, status: 'accepted' }, memberCaller)) as {
         accepted: true;
         episode: { status: string };
@@ -296,7 +296,7 @@ describe('forge.episode.update', () => {
       expect(acceptedEpisode.episode.status).toBe('accepted');
       expect(
         await ctx
-          .op('forge.episode.update')
+          .op('evolution.episode.update')
           .execute({ episodeId: created.episode.id, status: 'dismissed' }, memberCaller)
       ).toMatchObject({ accepted: false, reason: 'episode_terminal' });
       expect(ctx.evolutionRepo.getEpisode(created.episode.id)?.status).toBe('accepted');
@@ -312,7 +312,7 @@ describe('forge.episode.update', () => {
       const created = await seedEpisode(ctx, scope.id);
       expect(
         await ctx
-          .op('forge.episode.update')
+          .op('evolution.episode.update')
           .execute({ episodeId: created.episode.id, status: 'accepted' }, archivedCaller)
       ).toMatchObject({ accepted: false, reason: 'forge_denied' });
       expect(ctx.evolutionRepo.getEpisode(created.episode.id)?.status).toBe('draft');
@@ -330,9 +330,9 @@ describe('forge.episode.update', () => {
         title: 'Audited episode',
       });
       await ctx
-        .op('forge.episode.update')
+        .op('evolution.episode.update')
         .execute({ episodeId: episode.id, title: 'renamed' }, memberCaller);
-      const entry = ctx.audited.find((row) => row.toolName === 'forge.episode.update');
+      const entry = ctx.audited.find((row) => row.toolName === 'evolution.episode.update');
       expect(entry?.spaceId).toBe(SPACE_ID);
     } finally {
       ctx.db.close();
@@ -349,7 +349,7 @@ describe('forge.episode.update', () => {
       });
       expect(
         await ctx
-          .op('forge.episode.update')
+          .op('evolution.episode.update')
           .execute({ episodeId: episode.id, title: 'renamed' }, memberCaller)
       ).toMatchObject({ accepted: false, reason: 'episode_not_found' });
       expect(ctx.evolutionRepo.getEpisode(episode.id)?.title).toBe('Foreign episode');
@@ -359,7 +359,7 @@ describe('forge.episode.update', () => {
   });
 });
 
-describe('forge.lesson.update', () => {
+describe('evolution.lesson.update', () => {
   test('activates a candidate and then refuses to reactivate a dismissed lesson', async () => {
     const ctx = makeCtx();
     try {
@@ -367,15 +367,19 @@ describe('forge.lesson.update', () => {
       await seedEpisode(ctx, scope.id);
       const lessonId = ctx.episodeService.listLessons(scope.id)[0].id;
       const activated = (await ctx
-        .op('forge.lesson.update')
+        .op('evolution.lesson.update')
         .execute({ lessonId, status: 'active' }, memberCaller)) as {
         accepted: true;
         lesson: { status: string };
       };
       expect(activated.lesson.status).toBe('active');
-      await ctx.op('forge.lesson.update').execute({ lessonId, status: 'dismissed' }, memberCaller);
+      await ctx
+        .op('evolution.lesson.update')
+        .execute({ lessonId, status: 'dismissed' }, memberCaller);
       expect(
-        await ctx.op('forge.lesson.update').execute({ lessonId, status: 'active' }, memberCaller)
+        await ctx
+          .op('evolution.lesson.update')
+          .execute({ lessonId, status: 'active' }, memberCaller)
       ).toMatchObject({ accepted: false, reason: 'lesson_dismissed' });
       expect(ctx.episodeService.getLesson(lessonId)?.status).toBe('dismissed');
     } finally {
@@ -384,7 +388,7 @@ describe('forge.lesson.update', () => {
   });
 });
 
-describe('forge.proposal.create', () => {
+describe('evolution.proposal.create', () => {
   test('rejects an evidence episode that belongs to another scope', async () => {
     const ctx = makeCtx();
     try {
@@ -400,7 +404,7 @@ describe('forge.proposal.create', () => {
         title: 'Elsewhere episode',
       });
       expect(
-        await ctx.op('forge.proposal.create').execute(
+        await ctx.op('evolution.proposal.create').execute(
           {
             scopeId: scope.id,
             title: 'Cross-scope proposal',
@@ -418,23 +422,23 @@ describe('forge.proposal.create', () => {
   });
 });
 
-describe('forge.proposal.update', () => {
+describe('evolution.proposal.update', () => {
   test('dismisses a proposal and then refuses to reopen it', async () => {
     const ctx = makeCtx();
     try {
       const scope = seedScope(ctx);
       const created = (await ctx
-        .op('forge.proposal.create')
+        .op('evolution.proposal.create')
         .execute(
           { scopeId: scope.id, title: 'Manual proposal', description: 'd', reason: 'r' },
           memberCaller
         )) as { accepted: true; proposal: { id: string } };
       await ctx
-        .op('forge.proposal.update')
+        .op('evolution.proposal.update')
         .execute({ proposalId: created.proposal.id, status: 'dismissed' }, memberCaller);
       expect(
         await ctx
-          .op('forge.proposal.update')
+          .op('evolution.proposal.update')
           .execute({ proposalId: created.proposal.id, status: 'accepted' }, memberCaller)
       ).toMatchObject({ accepted: false, reason: 'proposal_dismissed' });
       expect(ctx.episodeService.getTaskProposal(created.proposal.id)?.status).toBe('dismissed');
@@ -444,19 +448,19 @@ describe('forge.proposal.update', () => {
   });
 });
 
-describe('forge.proposal.createTask', () => {
+describe('evolution.proposal.createTask', () => {
   test('creates the Space task once and returns the same task on a repeat call', async () => {
     const ctx = makeCtx();
     try {
       const scope = seedScope(ctx);
       const created = (await ctx
-        .op('forge.proposal.create')
+        .op('evolution.proposal.create')
         .execute(
           { scopeId: scope.id, title: 'Manual proposal', description: 'd', reason: 'r' },
           memberCaller
         )) as { accepted: true; proposal: { id: string } };
       const first = (await ctx
-        .op('forge.proposal.createTask')
+        .op('evolution.proposal.createTask')
         .execute({ proposalId: created.proposal.id }, memberCaller)) as {
         accepted: true;
         proposal: { status: string };
@@ -465,14 +469,14 @@ describe('forge.proposal.createTask', () => {
       expect(first.proposal.status).toBe('created');
       expect(first.task.evolutionScopeId).toBe(scope.id);
       const second = (await ctx
-        .op('forge.proposal.createTask')
+        .op('evolution.proposal.createTask')
         .execute({ proposalId: created.proposal.id }, memberCaller)) as {
         accepted: true;
         task: { id: string };
       };
       expect(second.task.id).toBe(first.task.id);
       expect(ctx.taskRepo.listBySpace(SPACE_ID, true)).toHaveLength(1);
-      const entry = ctx.audited.find((row) => row.toolName === 'forge.proposal.createTask');
+      const entry = ctx.audited.find((row) => row.toolName === 'evolution.proposal.createTask');
       expect(entry?.spaceId).toBe(SPACE_ID);
     } finally {
       ctx.db.close();
@@ -484,17 +488,17 @@ describe('forge.proposal.createTask', () => {
     try {
       const scope = seedScope(ctx);
       const created = (await ctx
-        .op('forge.proposal.create')
+        .op('evolution.proposal.create')
         .execute(
           { scopeId: scope.id, title: 'Manual proposal', description: 'd', reason: 'r' },
           memberCaller
         )) as { accepted: true; proposal: { id: string } };
       await ctx
-        .op('forge.proposal.update')
+        .op('evolution.proposal.update')
         .execute({ proposalId: created.proposal.id, status: 'dismissed' }, memberCaller);
       expect(
         await ctx
-          .op('forge.proposal.createTask')
+          .op('evolution.proposal.createTask')
           .execute({ proposalId: created.proposal.id }, memberCaller)
       ).toMatchObject({ accepted: false, reason: 'task_not_created' });
       expect(ctx.taskRepo.listBySpace(SPACE_ID, true)).toHaveLength(0);
@@ -504,7 +508,7 @@ describe('forge.proposal.createTask', () => {
   });
 });
 
-describe('forge.rollup.apply', () => {
+describe('evolution.rollup.apply', () => {
   test('rolls the episode summary into the recurring goal and refuses a second pass', async () => {
     const ctx = makeCtx();
     try {
@@ -516,7 +520,7 @@ describe('forge.rollup.apply', () => {
       });
       const scope = seedScope(ctx, SPACE_ID, goal.id);
       const created = await seedEpisode(ctx, scope.id);
-      const applied = (await ctx.op('forge.rollup.apply').execute(
+      const applied = (await ctx.op('evolution.rollup.apply').execute(
         {
           episodeId: created.episode.id,
           goalUpdate: { summary: 'Flakes down', nextSteps: ['keep watching'] },
@@ -527,7 +531,7 @@ describe('forge.rollup.apply', () => {
       expect(applied.goal.summary).toBe('Flakes down');
       expect(
         await ctx
-          .op('forge.rollup.apply')
+          .op('evolution.rollup.apply')
           .execute(
             { episodeId: created.episode.id, goalUpdate: { summary: 'again' } },
             memberCaller
@@ -546,7 +550,7 @@ describe('forge.rollup.apply', () => {
       const created = await seedEpisode(ctx, scope.id);
       expect(
         await ctx
-          .op('forge.rollup.apply')
+          .op('evolution.rollup.apply')
           .execute({ episodeId: created.episode.id, goalUpdate: { summary: 's' } }, memberCaller)
       ).toMatchObject({ accepted: false, reason: 'goal_not_recurring' });
       expect(ctx.evolutionRepo.getEpisode(created.episode.id)?.rollupAppliedAt).toBeNull();
@@ -570,7 +574,7 @@ describe('invokeOperation', () => {
       const created = await seedEpisode(ctx, scope.id);
       const rollup = await invokeOperation(
         ctx.registry,
-        'forge.rollup.apply',
+        'evolution.rollup.apply',
         { episodeId: created.episode.id, goalUpdate: { summary: 'rolled up' } },
         memberCaller
       );
@@ -581,7 +585,7 @@ describe('invokeOperation', () => {
       const proposals = ctx.episodeService.listTaskProposals(scope.id);
       const task = await invokeOperation(
         ctx.registry,
-        'forge.proposal.createTask',
+        'evolution.proposal.createTask',
         { proposalId: proposals[0].id },
         memberCaller
       );

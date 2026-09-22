@@ -194,10 +194,10 @@ function seedParts(ctx: Ctx, scopeId: string) {
 }
 
 async function read(ctx: Ctx, input: Record<string, unknown>, caller = readerCaller) {
-  return (await ctx.op('forge.scope.get').execute(input, caller)) as Record<string, unknown>;
+  return (await ctx.op('evolution.scope.get').execute(input, caller)) as Record<string, unknown>;
 }
 
-describe('forge.scope.get', () => {
+describe('evolution.scope.get', () => {
   test('defaults to the scope row alone and reads no list', async () => {
     const ctx = makeCtx();
     try {
@@ -351,8 +351,8 @@ describe('forge.scope.get', () => {
       await read(ctx, { scopeId: scope.id, include: ['lessons'] }, memberCaller);
       await read(ctx, { goalId: goal.id }, memberCaller);
       expect(ctx.audited.map((entry) => entry.toolName)).toEqual([
-        'forge.scope.get',
-        'forge.scope.get',
+        'evolution.scope.get',
+        'evolution.scope.get',
       ]);
       expect(ctx.audited[0]?.paramsSummary).toMatchObject({
         scopeId: scope.id,
@@ -372,7 +372,7 @@ describe('forge.scope.get', () => {
       expect(
         await invokeOperation(
           ctx.registry,
-          'forge.scope.get',
+          'evolution.scope.get',
           {
             scopeId: scope.id,
             include: ['scope', 'evidence', 'metrics', 'episodes', 'lessons', 'proposals'],
@@ -383,7 +383,7 @@ describe('forge.scope.get', () => {
       expect(
         await invokeOperation(
           ctx.registry,
-          'forge.scope.get',
+          'evolution.scope.get',
           { scopeId: scope.id },
           spacelessCaller
         )
@@ -391,7 +391,7 @@ describe('forge.scope.get', () => {
       expect(
         await invokeOperation(
           ctx.registry,
-          'forge.scope.get',
+          'evolution.scope.get',
           { scopeId: scope.id, include: ['unknown'] },
           memberCaller
         )

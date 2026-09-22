@@ -45,11 +45,7 @@ import type { EvolutionScopeService } from './scope-service.ts';
 export interface ForgeScopeOperationDependencies extends ForgeAdmissionDependencies {
   readonly scopeService: Pick<
     EvolutionScopeService,
-    | 'addMetricSnapshotEvidence'
-    | 'createScope'
-    | 'getScope'
-    | 'listScopes'
-    | 'updateScope'
+    'addMetricSnapshotEvidence' | 'createScope' | 'getScope' | 'listScopes' | 'updateScope'
   >;
   readonly getGoal: (
     goalId: string
@@ -209,7 +205,7 @@ export function applyForgeScopeCreate(
     return created;
   });
   forge.audit?.({
-    toolName: 'forge.scope.create',
+    toolName: 'evolution.scope.create',
     paramsSummary: { name: params.name, kind: params.kind, goalId: params.spaceGoalId },
     caller,
     spaceId: params.spaceId,
@@ -320,7 +316,7 @@ export function applyForgeScopeUpdate(
 ): ForgeGate<{ accepted: true; scope: EvolutionScope }, ScopeIdRejection> {
   const scope = forge.scopeService.updateScope(scopeId, params);
   forge.audit?.({
-    toolName: 'forge.scope.update',
+    toolName: 'evolution.scope.update',
     paramsSummary: { scopeId },
     caller,
     spaceId: scope?.spaceId,
@@ -358,7 +354,7 @@ export function applyForgeMetricAdd(
     metadata: input.metadata,
   });
   forge.audit?.({
-    toolName: 'forge.metric.add',
+    toolName: 'evolution.metric.add',
     paramsSummary: { scopeId: scope.id, source: input.source },
     caller,
     spaceId: scope.spaceId,
@@ -410,7 +406,7 @@ export function createForgeScopeOperations(forge: ForgeScopeOperationDependencie
 
   return [
     defineOperation({
-      name: 'forge.scope.create',
+      name: 'evolution.scope.create',
       policy: FORGE_MUTATE_POLICY,
       description:
         'Create a Forge scope in a Space, optionally linked to a goal and a parent scope, with metric definitions and judge policy. Naming a goalId takes name and objective from that goal unless they are given explicitly; without a goalId both are required. MCP callers are scoped to their own Space; RPC callers pass spaceId. Rejects goal_not_found, scope_not_found (parent), invalid_policy, and forge_denied for sessions without Forge write access.',
@@ -419,7 +415,7 @@ export function createForgeScopeOperations(forge: ForgeScopeOperationDependencie
       execute: async (input, caller) => create(input, caller),
     }),
     defineOperation({
-      name: 'forge.scope.list',
+      name: 'evolution.scope.list',
       policy: FORGE_READ_POLICY,
       description:
         'List Forge scopes in a Space, optionally filtered by linked goal (null lists unlinked scopes) or by kind. Rejects space_required when no Space can be resolved and goal_not_found for a goal outside the Space.',
@@ -431,7 +427,7 @@ export function createForgeScopeOperations(forge: ForgeScopeOperationDependencie
       execute: async (input, caller) => list(input, caller),
     }),
     defineOperation({
-      name: 'forge.scope.update',
+      name: 'evolution.scope.update',
       policy: FORGE_MUTATE_POLICY,
       description:
         'Update a Forge scope: link or unlink a goal, rename, re-parent, replace metric definitions, and change judge policy. Prefer policyPatch to deep-merge policy fields without clobbering the rest; episodeJudgeModel and episodeJudgeProvider are patched the same way. Rejects scope_not_found, goal_not_found, and invalid_policy.',
@@ -440,7 +436,7 @@ export function createForgeScopeOperations(forge: ForgeScopeOperationDependencie
       execute: async (input, caller) => update(input, caller),
     }),
     defineOperation({
-      name: 'forge.metric.add',
+      name: 'evolution.metric.add',
       policy: FORGE_MUTATE_POLICY,
       description:
         'Record a metric snapshot on a Forge scope and attach it as evidence. Rejects scope_not_found when the scope is absent or outside the caller Space.',

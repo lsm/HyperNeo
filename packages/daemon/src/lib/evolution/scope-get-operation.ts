@@ -217,7 +217,7 @@ export function readForgeScopeParts(
   const resolved = input.goalId !== undefined || input.taskId !== undefined;
   if (resolved || parts.some((part) => AUDITED_SCOPE_GET_PARTS.includes(part))) {
     forge.audit?.({
-      toolName: 'forge.scope.get',
+      toolName: 'evolution.scope.get',
       paramsSummary: {
         scopeId: scope.id,
         goalId: input.goalId,
@@ -240,7 +240,7 @@ export function createForgeScopeGetOperation(forge: ForgeScopeGetDependencies) {
     .endAsync('outcome');
 
   return defineOperation({
-    name: 'forge.scope.get',
+    name: 'evolution.scope.get',
     policy: FORGE_READ_POLICY,
     description:
       'Read one Forge scope and whatever parts of it you need in a single call. Address the scope by scopeId, or by goalId or taskId to resolve the scope linked to that goal or task (scopeId wins, then goalId, then taskId). include names the parts to return — scope, evidence, metrics, episodes, lessons, proposals — and defaults to ["scope"], the scope row with its linked goal, metric definitions, and policy, which reads no lists; every other part costs one unfiltered read of that scope. Filter with lessonStatus and proposalStatus. Parts you do not ask for are absent from the result. Rejects resolve_target_required when no address is given, goal_not_found or task_not_found when the target is absent or outside the caller Space, and scope_not_found when the scope is absent, outside the caller Space, or not linked to the target.',

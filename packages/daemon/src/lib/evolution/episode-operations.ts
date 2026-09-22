@@ -192,7 +192,7 @@ export async function applyForgeEpisodeCreate(
       confirmLowConfidence: input.confirmLowConfidence,
     });
     forge.audit?.({
-      toolName: 'forge.episode.create',
+      toolName: 'evolution.episode.create',
       paramsSummary: { scopeId: scope.id, evidenceCount: input.evidenceIds.length },
       caller,
       spaceId: scope.spaceId,
@@ -228,7 +228,7 @@ export function applyForgeEpisodeUpdate(
     outcomeSummary: input.outcomeSummary,
   });
   forge.audit?.({
-    toolName: 'forge.episode.update',
+    toolName: 'evolution.episode.update',
     paramsSummary: { episodeId: existing.id, status: input.status },
     caller,
     spaceId: forge.scopeService.getScope(existing.scopeId)?.spaceId,
@@ -267,7 +267,7 @@ export function applyForgeLessonUpdate(
     confidence: input.confidence,
   });
   forge.audit?.({
-    toolName: 'forge.lesson.update',
+    toolName: 'evolution.lesson.update',
     paramsSummary: { lessonId: existing.id, status: input.status },
     caller,
     spaceId: forge.scopeService.getScope(existing.scopeId)?.spaceId,
@@ -309,7 +309,7 @@ export function applyForgeProposalCreate(
     evidenceEpisodeIds: input.evidenceEpisodeIds,
   });
   forge.audit?.({
-    toolName: 'forge.proposal.create',
+    toolName: 'evolution.proposal.create',
     paramsSummary: { scopeId: scope.id, title: input.title },
     caller,
     spaceId: scope.spaceId,
@@ -349,7 +349,7 @@ export function applyForgeProposalUpdate(
     status: input.status,
   });
   forge.audit?.({
-    toolName: 'forge.proposal.update',
+    toolName: 'evolution.proposal.update',
     paramsSummary: { proposalId: existing.id, status: input.status },
     caller,
     spaceId: forge.scopeService.getScope(existing.scopeId)?.spaceId,
@@ -386,7 +386,7 @@ export function applyForgeProposalTask(
       dependsOn: input.dependsOn,
     });
     forge.audit?.({
-      toolName: 'forge.proposal.createTask',
+      toolName: 'evolution.proposal.createTask',
       paramsSummary: { proposalId: existing.id, dependsOn: input.dependsOn },
       caller,
       spaceId: result.task.spaceId,
@@ -435,7 +435,7 @@ export function applyForgeRollup(
     goalUpdate: input.goalUpdate,
   });
   forge.audit?.({
-    toolName: 'forge.rollup.apply',
+    toolName: 'evolution.rollup.apply',
     paramsSummary: { episodeId: episode.id },
     caller,
     spaceId: scope.spaceId,
@@ -495,7 +495,7 @@ export function createForgeEpisodeOperations(forge: ForgeEpisodeOperationDepende
 
   return [
     defineOperation({
-      name: 'forge.episode.create',
+      name: 'evolution.episode.create',
       policy: FORGE_MUTATE_POLICY,
       description:
         'Generate a draft Forge episode from selected evidence through the episode judge, returning the episode with its candidate lessons, task proposals, and the evidence-quality preflight. Set confirmLowConfidence when the preflight warns that evidence is thin. Rejects scope_not_found, and episode_not_generated when the judge, model, or credentials fail (the cause is in detail).',
@@ -512,7 +512,7 @@ export function createForgeEpisodeOperations(forge: ForgeEpisodeOperationDepende
       execute: async (input, caller) => episodeCreate(input, caller),
     }),
     defineOperation({
-      name: 'forge.episode.update',
+      name: 'evolution.episode.update',
       policy: FORGE_MUTATE_POLICY,
       description:
         'Accept, dismiss, or edit a Forge episode draft — accept and dismiss are terminal, so use them only after an explicit decision. Rejects episode_not_found and episode_terminal when the episode already left draft. Autonomy metadata: editing a draft needs the Space session-write level, and changing a terminal episode is destructive; enforcement lands with the autonomy subsystem.',
@@ -524,7 +524,7 @@ export function createForgeEpisodeOperations(forge: ForgeEpisodeOperationDepende
       execute: async (input, caller) => episodeUpdate(input, caller),
     }),
     defineOperation({
-      name: 'forge.lesson.update',
+      name: 'evolution.lesson.update',
       policy: FORGE_MUTATE_POLICY,
       description:
         'Activate, dismiss, or edit a candidate Forge lesson — activation is never implicit, it takes this call. Rejects lesson_not_found and lesson_dismissed, since a dismissed lesson cannot be reactivated. Autonomy metadata: editing a candidate needs the Space session-write level, and changing an active or dismissed lesson is destructive; enforcement lands with the autonomy subsystem.',
@@ -536,10 +536,10 @@ export function createForgeEpisodeOperations(forge: ForgeEpisodeOperationDepende
       execute: async (input, caller) => lessonUpdate(input, caller),
     }),
     defineOperation({
-      name: 'forge.proposal.create',
+      name: 'evolution.proposal.create',
       policy: FORGE_MUTATE_POLICY,
       description:
-        'Create a Forge task proposal on a scope by hand. This does not create a Space task; forge.proposal.createTask does that in a separate, explicit step. Rejects scope_not_found and episode_not_found when a cited evidence episode is missing or belongs to another scope.',
+        'Create a Forge task proposal on a scope by hand. This does not create a Space task; evolution.proposal.createTask does that in a separate, explicit step. Rejects scope_not_found and episode_not_found when a cited evidence episode is missing or belongs to another scope.',
       inputSchema: ProposalCreateInputSchema,
       resultSchema: z.union([
         accepted({ proposal: ForgeProposalSchema }),
@@ -548,10 +548,10 @@ export function createForgeEpisodeOperations(forge: ForgeEpisodeOperationDepende
       execute: async (input, caller) => proposalCreate(input, caller),
     }),
     defineOperation({
-      name: 'forge.proposal.update',
+      name: 'evolution.proposal.update',
       policy: FORGE_MUTATE_POLICY,
       description:
-        'Edit, accept, or dismiss a Forge task proposal. The created status is not settable here — call forge.proposal.createTask to turn a proposal into a real task. Rejects proposal_not_found, proposal_created, and proposal_dismissed, since neither terminal state reopens. Autonomy metadata: editing a proposed record needs the Space session-write level, and changing an accepted or dismissed one is destructive; enforcement lands with the autonomy subsystem.',
+        'Edit, accept, or dismiss a Forge task proposal. The created status is not settable here — call evolution.proposal.createTask to turn a proposal into a real task. Rejects proposal_not_found, proposal_created, and proposal_dismissed, since neither terminal state reopens. Autonomy metadata: editing a proposed record needs the Space session-write level, and changing an accepted or dismissed one is destructive; enforcement lands with the autonomy subsystem.',
       inputSchema: ProposalUpdateInputSchema,
       resultSchema: z.union([
         accepted({ proposal: ForgeProposalSchema }),
@@ -560,7 +560,7 @@ export function createForgeEpisodeOperations(forge: ForgeEpisodeOperationDepende
       execute: async (input, caller) => proposalUpdate(input, caller),
     }),
     defineOperation({
-      name: 'forge.proposal.createTask',
+      name: 'evolution.proposal.createTask',
       policy: FORGE_DESTRUCTIVE_POLICY,
       description:
         'Create a real Space task from a Forge proposal, preserving the linked goal and scope bindings and attaching dependencies during creation. Idempotent: a proposal already marked created returns its existing task. Rejects proposal_not_found, and task_not_created when the proposal was dismissed, a dependency is invalid, or a concurrent call already claimed it (the cause is in detail). Autonomy metadata: this is a destructive action at the Space session-write level; enforcement lands with the autonomy subsystem.',
@@ -572,7 +572,7 @@ export function createForgeEpisodeOperations(forge: ForgeEpisodeOperationDepende
       execute: async (input, caller) => proposalTask(input, caller),
     }),
     defineOperation({
-      name: 'forge.rollup.apply',
+      name: 'evolution.rollup.apply',
       policy: FORGE_DESTRUCTIVE_POLICY,
       description:
         "Accept a Forge episode and roll its summary, next steps, and metrics into the recurring goal behind the episode's scope. Progress is not rolled up. Rejects episode_not_found, rollup_already_applied, episode_dismissed, and goal_not_recurring when the scope has no recurring goal. Autonomy metadata: this is a destructive action at the Space session-write level; enforcement lands with the autonomy subsystem.",
