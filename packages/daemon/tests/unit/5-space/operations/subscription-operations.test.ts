@@ -264,6 +264,14 @@ describe('node external-event subscription operations', () => {
     });
   });
 
+  test('subscribe_pr_events rejects a label it would never have stored', () => {
+    const schema = operations.get('subscribe_pr_events')!.inputSchema;
+    expect(schema.safeParse({ prUrl: 'https://github.com/acme/widgets/pull/7' }).success).toBe(
+      true
+    );
+    expect(schema.safeParse({ label: 'nightly' }).success).toBe(false);
+  });
+
   test('subscribe_pr_events explains an unresolved run PR', async () => {
     const caller = worker(workerSession('s-pr3'));
     expect(await run('subscribe_pr_events', {}, caller)).toEqual({
