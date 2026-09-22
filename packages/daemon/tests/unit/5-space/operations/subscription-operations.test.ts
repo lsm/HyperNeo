@@ -551,3 +551,75 @@ describe('node subscriptions optional Space scope', () => {
     }
   });
 });
+
+describe('agent subscriptions written by the UI and by the door', () => {
+  const UI_SOURCE = 'github';
+  const UI_TOPIC = 'acme/widgets/pull_request/*.review_*';
+
+  function createThroughUi() {
+    return agentSubscriptions.createSubscription({
+      spaceId: SPACE,
+      agentId: AGENT,
+      source: UI_SOURCE,
+      topic: UI_TOPIC,
+    });
+  }
+
+  test('the door updates the row the UI wrote instead of adding a second', async () => {
+    const fromUi = createThroughUi();
+    const caller = member(memberSession('s-converge'));
+
+    await run(
+      'event.external.subscribe',
+      { topicPattern: AGENT_TOPIC, label: 'watch', subject: { type: 'agent', agentId: AGENT } },
+      caller
+    );
+
+    const stored = agentSubscriptions.listSubscriptions(AGENT);
+    expect(stored).toHaveLength(1);
+    expect(stored[0]).toMatchObject({
+      id: fromUi.id,
+      source: UI_SOURCE,
+      topic: UI_TOPIC,
+      filter: { label: 'watch' },
+    });
+  });
+
+  test('the door unsubscribes the row the UI wrote and drops its live entry', async () => {
+    const fromUi = createThroughUi();
+    const caller = member(memberSession('s-cross-unsub'));
+
+    expect(
+      await run(
+        'event.external.unsubscribe',
+        { topicPattern: AGENT_TOPIC, subject: { type: 'agent', agentId: AGENT } },
+        caller
+      )
+    ).toEqual({ ok: true, topicPattern: AGENT_TOPIC });
+
+    expect(agentSubscriptions.listSubscriptions(AGENT)).toEqual([]);
+    expect(removed).toEqual([{ spaceId: SPACE, subscriptionId: fromUi.id }]);
+  });
+
+  test('an unsubscribe clears every row that composes to the pattern', async () => {
+    const fromUi = createThroughUi();
+    const fromDoor = agentSubscriptions.createSubscription({
+      spaceId: SPACE,
+      agentId: AGENT,
+      source: UI_SOURCE,
+      topic: AGENT_TOPIC,
+    });
+    const caller = member(memberSession('s-clear-both'));
+
+    await run(
+      'event.external.unsubscribe',
+      { topicPattern: AGENT_TOPIC, subject: { type: 'agent', agentId: AGENT } },
+      caller
+    );
+
+    expect(agentSubscriptions.listSubscriptions(AGENT)).toEqual([]);
+    expect(removed.map((entry) => entry.subscriptionId).sort()).toEqual(
+      [fromUi.id, fromDoor.id].sort()
+    );
+  });
+});
