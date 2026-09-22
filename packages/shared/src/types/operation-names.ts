@@ -5,6 +5,7 @@ import { DAEMON_OPERATION_NAMES } from './operation-names/daemon.ts';
 import { EXTERNAL_EVENT_OPERATION_NAMES } from './operation-names/external-event.ts';
 import { FORGE_OPERATION_NAMES } from './operation-names/forge.ts';
 import { GOAL_OPERATION_NAMES } from './operation-names/goal.ts';
+import { INACTIVITY_OPERATION_NAMES } from './operation-names/inactivity.ts';
 import { MESSAGING_OPERATION_NAMES } from './operation-names/messaging.ts';
 import { NODE_OPERATION_NAMES } from './operation-names/node.ts';
 import { SCHEDULE_OPERATION_NAMES } from './operation-names/schedule.ts';
@@ -21,6 +22,7 @@ export const OPERATION_NAME_FAMILIES = {
   externalEvent: EXTERNAL_EVENT_OPERATION_NAMES,
   forge: FORGE_OPERATION_NAMES,
   goal: GOAL_OPERATION_NAMES,
+  inactivity: INACTIVITY_OPERATION_NAMES,
   messaging: MESSAGING_OPERATION_NAMES,
   node: NODE_OPERATION_NAMES,
   schedule: SCHEDULE_OPERATION_NAMES,
@@ -38,6 +40,7 @@ export const OPERATION_NAMES = [
   ...EXTERNAL_EVENT_OPERATION_NAMES,
   ...FORGE_OPERATION_NAMES,
   ...GOAL_OPERATION_NAMES,
+  ...INACTIVITY_OPERATION_NAMES,
   ...MESSAGING_OPERATION_NAMES,
   ...NODE_OPERATION_NAMES,
   ...SCHEDULE_OPERATION_NAMES,

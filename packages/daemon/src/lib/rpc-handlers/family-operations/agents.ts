@@ -4,6 +4,7 @@ import {
   createAgentTemplateOperations,
 } from '../../agents/agent-template-operations.ts';
 import type { CreateAgentDependencies } from '../../agents/create-agent-operation.ts';
+import { createInactivityOperations } from '../../agents/inactivity-operations.ts';
 import { reminderOccurrenceIsClaimed } from '../../agents/reminder-delivery-registry.ts';
 import { createAgentOperations } from '../../agents/operations.ts';
 import {
@@ -94,6 +95,16 @@ export function registerAgentOperations(context: FamilyOperationContext): Operat
       },
       publishAgentCreated,
       audit,
+    }),
+    ...createInactivityOperations({
+      configRepo: context.spaceAgentInactivityConfigRepo,
+      claimRepo: context.spaceAgentInactivityClaimRepo,
+      runNow: (spaceId, agentId) =>
+        context.spaceRuntimeService.runInactivityScanNow(spaceId, agentId),
+      getSession: (sessionId) => context.deps.db.getSession(sessionId),
+      taskRepo: context.spaceTaskRepo,
+      nodeExecutionRepo: context.nodeExecutionRepo,
+      longHorizonAgentRepo: context.longHorizonAgentRepo,
     }),
   ];
 }
