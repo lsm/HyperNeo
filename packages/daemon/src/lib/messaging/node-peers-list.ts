@@ -259,7 +259,7 @@ export function createListNodePeersOperation(deps: NodeMessagingDependencies) {
     .pipe(listNodePeers, ['outcome', 'deps'], 'outcome')
     .endAsync('outcome') as (caller: OperationCaller) => Promise<Result>;
   return defineOperation({
-    name: 'node.peers.list',
+    name: 'workflow.run.peer.list',
     policy: { safetyClass: 'read', roles: ['workflow_worker'] },
     description: LIST_PEERS_DESCRIPTION,
     inputSchema,

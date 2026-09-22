@@ -200,7 +200,7 @@ describe('createListNodePeersOperation', () => {
   });
 });
 
-describe('node.peers.list policy', () => {
+describe('workflow.run.peer.list policy', () => {
   test('declares a read policy, but the generic door no longer restricts it to workflow workers', () => {
     const operation = createListNodePeersOperation(
       depsFor(baseExecutions(), runtimeFor(workflowWith([])))
