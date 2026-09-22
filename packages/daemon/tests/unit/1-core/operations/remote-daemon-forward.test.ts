@@ -278,7 +278,7 @@ describe('attaching a remote daemon', () => {
       value: {
         kind: 'attached',
         daemonId: 'b',
-        addressExample: 'daemon:b::session:%3CsessionId%3E',
+        addressExample: 'daemon:b::session:<sessionId>',
       },
     });
 

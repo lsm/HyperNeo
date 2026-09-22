@@ -36,7 +36,7 @@ function invocations(): Invocation[] {
 }
 
 function attached(daemonId: string, url: string) {
-  return { daemonId, url, addressExample: `daemon:${daemonId}::session:%3CsessionId%3E` };
+  return { daemonId, url, addressExample: `daemon:${daemonId}::session:<sessionId>` };
 }
 
 function respondWith(listPages: Array<ReturnType<typeof attached>[]>) {
@@ -94,7 +94,7 @@ describe('RemoteDaemonsSettings', () => {
     await waitFor(() => expect(screen.getByText('b')).toBeTruthy());
     expect(screen.getByText('ws://127.0.0.1:9/ws')).toBeTruthy();
     expect(screen.getByText('c')).toBeTruthy();
-    expect(screen.getByText('daemon:c::session:%3CsessionId%3E')).toBeTruthy();
+    expect(screen.getByText('daemon:c::session:<sessionId>')).toBeTruthy();
     expect(invocations()[0]).toEqual({ name: 'daemon.list', input: {} });
   });
 

@@ -98,12 +98,12 @@ describe('listing and detaching attached remote daemons', () => {
           {
             daemonId: 'b',
             url: 'ws://127.0.0.1:9/ws',
-            addressExample: 'daemon:b::session:%3CsessionId%3E',
+            addressExample: 'daemon:b::session:<sessionId>',
           },
           {
             daemonId: 'c',
             url: 'wss://elsewhere.test/ws',
-            addressExample: 'daemon:c::session:%3CsessionId%3E',
+            addressExample: 'daemon:c::session:<sessionId>',
           },
         ],
       },

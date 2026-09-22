@@ -1,6 +1,6 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
-import { renderRemoteAddress } from '../mailbox/address.ts';
+import { renderRemoteAddressExample } from '../mailbox/address.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import type { RemoteDaemonRegistry } from './registry.ts';
 
@@ -55,11 +55,7 @@ export function attachRemoteDaemon(
     kind: 'attached',
     daemonId: input.daemonId,
     url: input.url,
-    addressExample: renderRemoteAddress({
-      kind: 'remote-session',
-      daemonId: input.daemonId,
-      sessionId: '<sessionId>',
-    }),
+    addressExample: renderRemoteAddressExample(input.daemonId),
   };
 }
 
