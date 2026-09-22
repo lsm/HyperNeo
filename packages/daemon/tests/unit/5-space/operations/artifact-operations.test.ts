@@ -114,7 +114,7 @@ describe('artifact operations', () => {
     const sessionId = workerSession('s-save');
     const result = (await run(
       operations,
-      'artifact.save',
+      'workflow.run.artifact.save',
       { shape: 'note', summary: 'shipping' },
       worker(sessionId)
     )) as {
@@ -137,7 +137,7 @@ describe('artifact operations', () => {
     const sessionId = workerSession('s-audit');
     await run(
       operations,
-      'artifact.save',
+      'workflow.run.artifact.save',
       { shape: 'note', summary: 'audited' },
       worker(sessionId)
     );
@@ -160,7 +160,7 @@ describe('artifact operations', () => {
     const sessionId = workerSession('s-invalid');
     const empty = (await run(
       operations,
-      'artifact.save',
+      'workflow.run.artifact.save',
       { shape: 'note' },
       worker(sessionId)
     )) as {
@@ -173,7 +173,7 @@ describe('artifact operations', () => {
     });
     const badLink = (await run(
       operations,
-      'artifact.save',
+      'workflow.run.artifact.save',
       { shape: 'link', data: { url: 'not-a-url' } },
       worker(sessionId)
     )) as { success: boolean; error: string };
@@ -186,16 +186,26 @@ describe('artifact operations', () => {
   test('lists run artifacts narrowed by nodeId and shape', async () => {
     const nodeA = workerSession('s-a');
     const nodeB = workerSession('s-b', { nodeId: 'node-b' });
-    await run(operations, 'artifact.save', { shape: 'note', summary: 'a note' }, worker(nodeA));
     await run(
       operations,
-      'artifact.save',
+      'workflow.run.artifact.save',
+      { shape: 'note', summary: 'a note' },
+      worker(nodeA)
+    );
+    await run(
+      operations,
+      'workflow.run.artifact.save',
       { shape: 'link', kind: 'pr', data: { url: 'https://github.com/acme/widgets/pull/7' } },
       worker(nodeA)
     );
-    await run(operations, 'artifact.save', { shape: 'note', summary: 'b note' }, worker(nodeB));
+    await run(
+      operations,
+      'workflow.run.artifact.save',
+      { shape: 'note', summary: 'b note' },
+      worker(nodeB)
+    );
 
-    const all = (await run(operations, 'artifact.list', {}, worker(nodeA))) as {
+    const all = (await run(operations, 'workflow.run.artifact.list', {}, worker(nodeA))) as {
       success: boolean;
       artifacts: Array<{
         nodeId: string;
@@ -209,7 +219,7 @@ describe('artifact operations', () => {
 
     const nodeScoped = (await run(
       operations,
-      'artifact.list',
+      'workflow.run.artifact.list',
       { nodeId: 'node-a' },
       worker(nodeA)
     )) as {
@@ -217,7 +227,12 @@ describe('artifact operations', () => {
     };
     expect(nodeScoped.artifacts.map((artifact) => artifact.nodeId)).toEqual(['node-a', 'node-a']);
 
-    const links = (await run(operations, 'artifact.list', { type: 'link' }, worker(nodeA))) as {
+    const links = (await run(
+      operations,
+      'workflow.run.artifact.list',
+      { type: 'link' },
+      worker(nodeA)
+    )) as {
       artifacts: Array<{ type: string; key: string; data: Record<string, unknown> }>;
     };
     expect(links.artifacts).toHaveLength(1);
@@ -233,10 +248,10 @@ describe('artifact operations', () => {
       spaceId: SPACE,
       role: 'ad_hoc_member',
     };
-    expect(await run(operations, 'artifact.save', { shape: 'note', summary: 'x' }, caller)).toEqual(
-      { accepted: false, reason: 'node_caller_denied' }
-    );
-    expect(await run(operations, 'artifact.list', {}, caller)).toEqual({
+    expect(
+      await run(operations, 'workflow.run.artifact.save', { shape: 'note', summary: 'x' }, caller)
+    ).toEqual({ accepted: false, reason: 'node_caller_denied' });
+    expect(await run(operations, 'workflow.run.artifact.list', {}, caller)).toEqual({
       accepted: false,
       reason: 'node_caller_denied',
     });
@@ -245,16 +260,16 @@ describe('artifact operations', () => {
 
   test('rejects not_a_node_agent without a session or node execution', async () => {
     const caller = worker(workerSession('s-orphan', { withExecution: false }));
-    expect(await run(operations, 'artifact.save', { shape: 'note', summary: 'x' }, caller)).toEqual(
-      { accepted: false, reason: 'not_a_node_agent' }
-    );
-    expect(await run(operations, 'artifact.list', {}, caller)).toEqual({
+    expect(
+      await run(operations, 'workflow.run.artifact.save', { shape: 'note', summary: 'x' }, caller)
+    ).toEqual({ accepted: false, reason: 'not_a_node_agent' });
+    expect(await run(operations, 'workflow.run.artifact.list', {}, caller)).toEqual({
       accepted: false,
       reason: 'not_a_node_agent',
     });
 
     const missingSession = worker('s-never-created');
-    expect(await run(operations, 'artifact.list', {}, missingSession)).toEqual({
+    expect(await run(operations, 'workflow.run.artifact.list', {}, missingSession)).toEqual({
       accepted: false,
       reason: 'not_a_node_agent',
     });
@@ -264,7 +279,7 @@ describe('artifact operations', () => {
       spaceId: SPACE,
       role: 'workflow_worker',
     };
-    expect(await run(operations, 'artifact.list', {}, sessionless)).toEqual({
+    expect(await run(operations, 'workflow.run.artifact.list', {}, sessionless)).toEqual({
       accepted: false,
       reason: 'not_a_node_agent',
     });
@@ -290,7 +305,7 @@ describe('artifact operations', () => {
     );
     const result = (await run(
       operations,
-      'artifact.save',
+      'workflow.run.artifact.save',
       { shape: 'note', summary: 'via fallback' },
       worker(sessionId)
     )) as { success: boolean; artifact: { nodeId: string } };
@@ -302,7 +317,7 @@ describe('artifact operations', () => {
     const sessionId = workerSession('s-bare');
     const result = (await run(
       bareOperations,
-      'artifact.save',
+      'workflow.run.artifact.save',
       { shape: 'note', summary: 'bare' },
       worker(sessionId)
     )) as { success: boolean };
@@ -311,10 +326,10 @@ describe('artifact operations', () => {
   });
 });
 
-test.each(['artifact.save', 'artifact.list'])(
+test.each(['workflow.run.artifact.save', 'workflow.run.artifact.list'])(
   '%s exposes a recognized rejection through the operation door',
   async (name) => {
-    const input = name === 'artifact.save' ? { shape: 'note', summary: 'x' } : {};
+    const input = name === 'workflow.run.artifact.save' ? { shape: 'note', summary: 'x' } : {};
     const outcome = await invokeOperation(operations, name, input, { source: 'rpc' });
     expect(outcome).toEqual({
       kind: 'completed',

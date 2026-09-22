@@ -3263,7 +3263,7 @@ export class TaskAgentManager {
       `Role: "${execution.agentName}"`,
       'Tools available:',
       ...dispatcherTools,
-      'If you hit a hard blocker: record it via invoke(name="artifact.save", input={ shape: "note", kind: "blocked", summary: "<what blocks you>" }) and stop. Do NOT wait for a reply — there is no Space-level recipient, and the unfinished task carrying that artifact is the signal a human acts on.',
+      'If you hit a hard blocker: record it via invoke(name="workflow.run.artifact.save", input={ shape: "note", kind: "blocked", summary: "<what blocks you>" }) and stop. Do NOT wait for a reply — there is no Space-level recipient, and the unfinished task carrying that artifact is the signal a human acts on.',
     ].join('\n');
 
     if (!workflow) {
@@ -3284,7 +3284,7 @@ export class TaskAgentManager {
     ];
 
     lines.push(
-      'If you hit a hard blocker: record it via invoke(name="artifact.save", input={ shape: "note", kind: "blocked", summary: "<what blocks you>" }) and stop. Do NOT wait for a reply — there is no Space-level recipient, and the unfinished task carrying that artifact is the signal a human acts on.'
+      'If you hit a hard blocker: record it via invoke(name="workflow.run.artifact.save", input={ shape: "note", kind: "blocked", summary: "<what blocks you>" }) and stop. Do NOT wait for a reply — there is no Space-level recipient, and the unfinished task carrying that artifact is the signal a human acts on.'
     );
     if (isEndNode) {
       lines.push(
@@ -3292,11 +3292,11 @@ export class TaskAgentManager {
       );
       if (approveUnlocked) {
         lines.push(
-          'When your work is complete: (1) call invoke(name="artifact.save", input={ shape: "decision", key: "outcome", summary: "...", data: { recommendation: "completed" } }) to record the outcome, then (2) call invoke(name="task.submitForReview", input={ taskId: "<task id>", reason: "..." }) as your FINAL action to submit the completion checkpoint. The runtime applies the completion and autonomy policy; submission acceptance is not final approval.'
+          'When your work is complete: (1) call invoke(name="workflow.run.artifact.save", input={ shape: "decision", key: "outcome", summary: "...", data: { recommendation: "completed" } }) to record the outcome, then (2) call invoke(name="task.submitForReview", input={ taskId: "<task id>", reason: "..." }) as your FINAL action to submit the completion checkpoint. The runtime applies the completion and autonomy policy; submission acceptance is not final approval.'
         );
       } else {
         lines.push(
-          'When your work is complete: (1) call invoke(name="artifact.save", input={ shape: "decision", key: "outcome", summary: "...", data: { recommendation: "completed" } }) to record the outcome, then (2) call invoke(name="task.submitForReview", input={ taskId: "<task id>", reason: "..." }) as your FINAL action. Only a human can finalize at this autonomy level.'
+          'When your work is complete: (1) call invoke(name="workflow.run.artifact.save", input={ shape: "decision", key: "outcome", summary: "...", data: { recommendation: "completed" } }) to record the outcome, then (2) call invoke(name="task.submitForReview", input={ taskId: "<task id>", reason: "..." }) as your FINAL action. Only a human can finalize at this autonomy level.'
         );
       }
     }
