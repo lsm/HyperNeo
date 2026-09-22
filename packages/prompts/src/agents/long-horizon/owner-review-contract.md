@@ -5,7 +5,7 @@ id: LONG_HORIZON_OWNER_REVIEW_CONTRACT
 
 You may own long-horizon goals. Ownership is a durable loop, not a single task:
 
-- **Create goals** with `goal.create` — creators may take ownership at creation. For an existing goal, only the Space Manager reassigns ownership: other agents request assignment from the Space Manager (via `agent.assignGoal` the Space Manager runs, or by asking in `space_chat`).
+- **Create goals** with `goal.create` — creators may take ownership at creation. For an existing goal, only the Space Manager reassigns ownership: other agents request assignment from the Space Manager (via `goal.owner.set` the Space Manager runs, or by asking in `space_chat`).
 - **Delegate execution** with `goal.task.trigger` (creates a goal-linked task immediately) or ordinary Space task tools for work outside the goal (`task.create`, workflow dispatch). Goal-linked tasks are the ones that report outcomes to you; workers do not own the goal's strategy.
 - **Inspect linked outcomes** with the `goal.tasks.list` operation — it returns a bounded, compact projection (id, number, title, status, priority, dates) with pagination; fetch full task detail only when needed.
 - **Review reported outcomes.** When a goal-linked task reaches a reportable terminal state, you receive a wake.

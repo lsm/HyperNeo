@@ -57,10 +57,14 @@ export function setupSpaceGoalHandlers(messageHub: MessageHub, deps: SpaceGoalHa
   }
 
   async function mutateGoalOwner(
-    operationName: 'agent.assignGoal' | 'agent.unassignGoal',
+    assigned: boolean,
     input: { spaceId: string; goalId: string; agentId: string }
   ): Promise<void> {
-    await invokeOperationFromHandler<{ accepted: true }>(operations, operationName, input);
+    await invokeOperationFromHandler<{ accepted: true; assigned: boolean }>(
+      operations,
+      'goal.owner.set',
+      { ...input, assigned }
+    );
   }
 
   async function setGoalStatus(
@@ -186,7 +190,7 @@ export function setupSpaceGoalHandlers(messageHub: MessageHub, deps: SpaceGoalHa
     await requireSpace(params.spaceId);
     requireGoalInSpace(params.goalId, params.spaceId);
     assertOwnerMutationAuthorized(context);
-    await mutateGoalOwner('agent.assignGoal', {
+    await mutateGoalOwner(true, {
       spaceId: params.spaceId,
       goalId: params.goalId,
       agentId: params.agentId,
@@ -209,7 +213,7 @@ export function setupSpaceGoalHandlers(messageHub: MessageHub, deps: SpaceGoalHa
           'owner'
         );
       } else {
-        await mutateGoalOwner('agent.unassignGoal', {
+        await mutateGoalOwner(false, {
           spaceId: params.spaceId,
           goalId: params.goalId,
           agentId: resolution.owner.agentId,

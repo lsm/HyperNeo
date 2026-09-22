@@ -1,6 +1,4 @@
 export const AGENT_OPERATION_NAMES = [
-  'agent.assignForgeScope',
-  'agent.assignGoal',
   'agent.create',
   'agent.get',
   'agent.list',
@@ -13,7 +11,5 @@ export const AGENT_OPERATION_NAMES = [
   'agent.template.instantiate',
   'agent.template.list',
   'agent.template.update',
-  'agent.unassignForgeScope',
-  'agent.unassignGoal',
   'agent.update',
 ] as const;

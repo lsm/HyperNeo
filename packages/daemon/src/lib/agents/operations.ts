@@ -13,12 +13,8 @@ import {
 import { createGetAgentOperation } from './get-agent-operation.ts';
 import { createListAgentsOperation } from './list-agents-operation.ts';
 import {
-  createAssignAgentToForgeScopeOperation,
-  createAssignAgentToGoalOperation,
   createSetGoalOwnerOperation,
   createSetScopeOwnerOperation,
-  createUnassignAgentFromForgeScopeOperation,
-  createUnassignAgentFromGoalOperation,
   type AgentAssignmentDependencies,
 } from './assign-agent-operation.ts';
 import type { AgentOperationDeps } from './operation-contracts.ts';
@@ -116,10 +112,6 @@ export function createAgentOperations(deps: AgentOperationDependencies): Operati
       createAgent: (params) => deps.longHorizonAgentRepo.create(params),
     }),
     createUpdateAgentOperation(updateDeps(deps)),
-    createAssignAgentToGoalOperation(assignmentDeps(deps)),
-    createUnassignAgentFromGoalOperation(assignmentDeps(deps)),
-    createAssignAgentToForgeScopeOperation(assignmentDeps(deps)),
-    createUnassignAgentFromForgeScopeOperation(assignmentDeps(deps)),
     createSetGoalOwnerOperation(assignmentDeps(deps)),
     createSetScopeOwnerOperation(assignmentDeps(deps)),
     createCreateAgentReminderOperation(reminderDeps(deps)),

@@ -21,10 +21,7 @@ import { createTriggerGoalTaskOperation } from '../../../../src/lib/goals/goal-s
 import { createListGoalEventsOperation } from '../../../../src/lib/goals/list-goal-events-operation.ts';
 import { createUpdateGoalOperation } from '../../../../src/lib/goals/update-goal-operation.ts';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
-import {
-  createAssignAgentToGoalOperation,
-  createUnassignAgentFromGoalOperation,
-} from '../../../../src/lib/agents/assign-agent-operation.ts';
+import { createSetGoalOwnerOperation } from '../../../../src/lib/agents/assign-agent-operation.ts';
 
 const SPACE_ID = 'space-1';
 const GOAL_ID = 'goal-1';
@@ -151,8 +148,7 @@ function makeOperations(
     audit: () => {},
   };
   return createOperationRegistry([
-    createAssignAgentToGoalOperation(assignmentDeps),
-    createUnassignAgentFromGoalOperation(assignmentDeps),
+    createSetGoalOwnerOperation(assignmentDeps),
     createGetGoalOwnerOperation({
       goalService,
       goalScopeRepo: goalScopeRepo as never,
