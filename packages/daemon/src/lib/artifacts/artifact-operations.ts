@@ -210,7 +210,7 @@ export function createArtifactSaveOperation(deps: ArtifactOperationDependencies)
     caller: OperationCaller
   ) => Promise<SaveArtifactResult>;
   return defineOperation({
-    name: 'artifact.save',
+    name: 'workflow.run.artifact.save',
     policy: { safetyClass: 'mutate', roles: ['workflow_worker'] },
     description: SAVE_DESCRIPTION,
     inputSchema: SaveArtifactSchema,
@@ -230,7 +230,7 @@ export function createArtifactListOperation(deps: ArtifactOperationDependencies)
     caller: OperationCaller
   ) => Promise<ListArtifactsResult>;
   return defineOperation({
-    name: 'artifact.list',
+    name: 'workflow.run.artifact.list',
     policy: { safetyClass: 'read', roles: ['workflow_worker'] },
     description: LIST_DESCRIPTION,
     inputSchema: ListArtifactsSchema,

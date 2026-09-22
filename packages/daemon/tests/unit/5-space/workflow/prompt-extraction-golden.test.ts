@@ -54,27 +54,27 @@ import { appendPostApprovalCompletionInstructions } from '../../../../src/lib/wo
 const GOLDEN: Record<string, string> = {
   CODEX_REACTION_APPROVAL_GUIDANCE:
     '2e1dbf1a39b2c9b47dc930c2614e3d85c93d0ea2175d3149162262725a4966be',
-  CODER_EXTERNAL_GATE_BLOCK: '46759a7df7b261a2977e3edc20927754ca7611f06ab71d74f353bff4e5e51ad8',
-  CODER_ONLY_MERGE_INSTRUCTIONS: 'ad5092a4c19d0fec5ffc056bd938ddef1a75c67476a7107d3f8c0e5d7a63a75f',
-  CODER_ONLY_PROMPT: '510215c53af575aaae96b3c3ffc772915c250144591e17dd71d3cd9178ec23fe',
+  CODER_EXTERNAL_GATE_BLOCK: 'c6ead6d78a14a82de9e2cea7517f6635b2b8bde679f4e803ee07fef718f1add0',
+  CODER_ONLY_MERGE_INSTRUCTIONS: 'f3004759c582e8eda8c8e5e7f86d8a4ea79fe5c7ffa880410a3172a4669692d3',
+  CODER_ONLY_PROMPT: '53d6ae8f3b857d9f0ba884678c7b26d409fb6b7b756c01cb99303a9636da384f',
   CODER_OWNED_MERGE_INSTRUCTIONS:
-    'e042e6d3cd7f4f97d2b91e5ec59aba983ac779244932575a68be35a81becca5c',
-  CODER_OWNED_MERGE_PROMPT: '126116ddc44a30d4cdcec547ade394e5a948950bf54a0c4be5d8a0a429be4486',
+    '9beb81a53bb62391039bd1622fe12c62fa473f8163c7b57ac83037ab81cd4b67',
+  CODER_OWNED_MERGE_PROMPT: '28d38335598e35927e52425ce6bb2b337cbbdeb42e36ad7861c9548a686e5e1c',
   CODER_OWNED_PR_SUBSCRIBE_GUIDANCE:
     '849ec685a272e0a751689014bd717b5e2103ccfb02d6b5b18e90eaad86bbb6e1',
-  CODER_OWNED_QA_PROMPT: '7f9bef2bb746df3d8dc7f030f14722a4d9b5fc5f5b172283139aad928ef60420',
-  CODER_OWNED_QA_REVIEW_PROMPT: '65ea0b5305f3eaa717c8d09d811ac76722e80f3b7d83c6fc098fff76d85dc594',
-  CODER_OWNED_REVIEW_PROMPT: '367547613c795cf9cbb3fc7d1db6c534c9d88b0a0542f12f42a6f9f82292830e',
-  EXTERNAL_REVIEW_BOTS_GUIDANCE: 'ab4d0a12c242d503c87fba14ffb379001b5228bfdbfdb3262a2832eaee85d1fd',
+  CODER_OWNED_QA_PROMPT: 'dc4a8076d32dcdd6a055605fd33f57f8c18befe3de6acb496fb6ae3c41c888e2',
+  CODER_OWNED_QA_REVIEW_PROMPT: '491fddd9b3de4ac03ea6f0b2e4f87d353b8be0aafbfe3163dca7ee65b105dadf',
+  CODER_OWNED_REVIEW_PROMPT: '3854cb503429a12a50c95760a3ed0d105bc931039454c0c172d968e73996927b',
+  EXTERNAL_REVIEW_BOTS_GUIDANCE: 'a175421bc964e9a358ae65b9ac991ef4b39d16e8485e75d56107934b56c37b6d',
   FULLSTACK_CODING_NOCHANGE_GUIDANCE:
-    '299ca05ccf28d04d57273b4988dc986a2a89f799eee91955075eed8d096f6977',
+    '1fd1e433787a2e4223a866a5a9c83c414a73ce045b7293fdd868e5ce70568617',
   FULLSTACK_QA_POST_APPROVAL_PARAGRAPH:
     'd84327ea3ab84bca4fc17f30a65c8b90ddefc7d0720520f8607c09962fdaf483',
-  RESEARCH_PROMPT: '6275916abb91f9f7d3092481c85e4b4d4e910b74bcada7c9979aee454dacf5eb',
-  RESEARCH_REVIEW_PROMPT: 'ba731f0e99a63d69ba00ff82f8824db4a1a23f45b6bda5bfde5fc90d0dd4593f',
-  REVIEW_ONLY_REVIEW_PROMPT: 'cd6c01f89e09ca0ac1c98a44f9ad1acfc9126496caaa4b7a084790f849621a63',
+  RESEARCH_PROMPT: 'e589d275bed070899f53cf2aad0f496045c3a2f93ed453b3ef83f6ad28abde67',
+  RESEARCH_REVIEW_PROMPT: 'cfe5032ef76684aa3dd6dfb314cecb12108efa09ccfa2df4b75152cd34bee9d7',
+  REVIEW_ONLY_REVIEW_PROMPT: '9c3ec2512356155aa09cd460dab7cdd56a3747dae4c6be8f79f8b4888323da8a',
   CALL_ACTION_PREFERENCE_GUIDANCE:
-    'ffe7bd6605340b0665b922007c698e8582f99d3b9869178fc795c9ce35665851',
+    'dc4419bd4dccc5500284a8e8a888e2963a07b2ff627d8f9d558c8d90a3645ade',
   REVIEW_POLICY_GUIDANCE: '6ba821ea3dd2c230a4bd44cf70f17f24bcecf0741e99f68978a689c7904fddf7',
   REVIEWER_POST_APPROVAL_BLOCKER_PARAGRAPH:
     'a86da78d4d26ac27bf38510364b449a905abc3421297fffd180f62ee1c585c60',
@@ -90,7 +90,7 @@ const GOLDEN: Record<string, string> = {
   PRESET_CODER_PROMPT: '57b0ef8003e8e0ddea9aa4bb44404e1a8367fe43991c421046ca348d96fb1911',
   PRESET_RESEARCH_PROMPT: 'acc05ba0296ae52784b5477f97bd7246446644510c8e8228540f6387bcd8495e',
   QA_SYSTEM_CONTRACT: '88a923c55c6bc59e1e8be18f9f2fde2b8fe3441a0bc4598eaeb9f24cb57021d3',
-  REVIEWER_SYSTEM_CONTRACT: 'ef659dcd6ad7264a2aa4a22c3b8fdda01f4e07ae2601295b5d245f42383cd478',
+  REVIEWER_SYSTEM_CONTRACT: '29fc5297ee3c2996a0b5a737806a777f503919f509e62be0782acf709805883e',
   COORDINATOR_PROMPT: '28f30cf29ed5764a703a90029dc468c5e905dc8eb057abf1779e3e5ce9e25487',
   GITHUB_SECURITY_SYSTEM_PROMPT: '486aff88bf9a9c66ac69abe074270c5c538a1433c81dc126228f97de5f65c9bd',
   SUBAGENT_CODER_PROMPT: '5f01cfb2266c6f8a2d154da7aea4162e2297236545bcad2248447a974d6a1dac',
@@ -214,7 +214,7 @@ describe('workflow prompts prefer the operations door with named-operation fallb
   test('the preference prose maps each retired typed tool to a declared operation', () => {
     expect(CALL_ACTION_PREFERENCE_GUIDANCE).not.toContain('identical to the action name');
     for (const [tool, operation] of [
-      ['save_artifact', 'artifact.save'],
+      ['save_artifact', 'workflow.run.artifact.save'],
       ['submit_for_approval', 'task.submitForReview'],
       ['approve_task', 'task.approve'],
       ['mark_complete', 'task.complete'],
@@ -234,9 +234,9 @@ describe('workflow prompts prefer the operations door with named-operation fallb
     };
     for (const [id, text] of Object.entries(named)) {
       const targets = [...text.matchAll(/invoke\(name="([^"]+)"/g)].map((match) => match[1]!);
-      const references = [...text.matchAll(/\b(?:artifact|task)\.[A-Za-z]+\b/g)].map(
-        (match) => match[0]
-      );
+      const references = [
+        ...text.matchAll(/\b(?:(?:workflow\.run\.)?artifact|task)\.[A-Za-z]+\b/g),
+      ].map((match) => match[0]);
       targets.push(...references);
       for (const target of targets) {
         expect(isOperationName(target), `${id}: ${target}`).toBe(true);

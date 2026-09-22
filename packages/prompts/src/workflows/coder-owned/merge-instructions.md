@@ -70,7 +70,7 @@ The merge must satisfy ALL of the following against the PR's CURRENT head before
         Then STOP. Do NOT self-approve, resolve others' threads, or run gh pr merge again until {{approval_authority}} tells you to continue.
    c. When {{approval_authority}} replies to continue: the head likely changed (or you just pushed a fix), so re-verify from scratch — re-run step 1 (state/CI), step 2 (unresolved threads), and step 3 (a real approval covering the CURRENT head). A stale approval on the old head does NOT cover the new one. Only then re-attempt the merge bound to the head you just verified. If it fails again, loop to 4a with the fresh reasons (never reuse stale blockers or headRefOid).
    d. Cycle cap / genuinely stuck: this implementer ↔ {{approval_authority}} loop is bounded by the channel cycle budget (check `list_channels` — the Coding ↔ {{approval_authority}} budget specifically; do NOT read an unrelated route). If a handoff is rejected because the cap is reached, or the blocker is unresolvable (data reason "unresolvable" — administrative, neither of you can fix it), stop and leave a durable record. There is no Space-level recipient to escalate to; the unfinished task carrying this artifact is the signal a human acts on:
-        invoke(name="artifact.save", input={ shape: "note", kind: "merge_blocked",
+        invoke(name="workflow.run.artifact.save", input={ shape: "note", kind: "merge_blocked",
           summary: "Merge blocked on PR {{pr_url}} (<N> attempts, <exit>)",
           data: { pr_url: "{{pr_url}}", blockers: ["..."], attempts: <N>,
                   exit_reason: "<cycle_cap|unresolvable>" } })
@@ -109,5 +109,5 @@ The merge must satisfy ALL of the following against the PR's CURRENT head before
           fi
         fi
 7. Save an audit artifact:
-     invoke(name="artifact.save", input={ shape: "link", kind: "merge",
+     invoke(name="workflow.run.artifact.save", input={ shape: "link", kind: "merge",
                      data: { url: <merged_pr_url>, merged_at, approval_source: "{{approval_source}}" } })

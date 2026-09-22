@@ -2294,7 +2294,9 @@ describe('seedBuiltInWorkflows()', () => {
     expect(qaPrompt).toContain('task.approve');
     expect(qaPrompt).toContain('task.submitForReview');
     expect(qaPrompt).toContain('Do not merge');
-    expect(qaPrompt).not.toContain('invoke(name="artifact.save", input={ type: "result"');
+    expect(qaPrompt).not.toContain(
+      'invoke(name="workflow.run.artifact.save", input={ type: "result"'
+    );
   });
 
   test('stable Coding reviewer prompt is behavioral and carries post-approval blocker handling', () => {
@@ -3374,7 +3376,7 @@ describe('seedBuiltInWorkflows()', () => {
     const researchNode = wf.nodes.find((n) => n.name === 'Research');
     expect(researchNode?.agents[0].customPrompt?.value).toContain('gh pr create');
     const reviewNode = wf.nodes.find((n) => n.name === 'Review');
-    expect(reviewNode?.agents[0].customPrompt?.value).toContain('artifact.save');
+    expect(reviewNode?.agents[0].customPrompt?.value).toContain('workflow.run.artifact.save');
   });
 
   test('all seeded channels have non-empty id fields', () => {
@@ -3811,7 +3813,7 @@ describe('CODING_WORKFLOW agent slot customPrompt', () => {
   });
 });
 
-describe('REVIEW_ONLY_WORKFLOW reviewer customPrompt requires a visible review before artifact.save', () => {
+describe('REVIEW_ONLY_WORKFLOW reviewer customPrompt requires a visible review before workflow.run.artifact.save', () => {
   test('reviewer prompt mandates a visible review before handoff', () => {
     const agent = REVIEW_ONLY_WORKFLOW.nodes[0].agents[0];
     const prompt = agent.customPrompt!.value;
@@ -4185,6 +4187,39 @@ test('persisted Coder-Only prompts carrying the retired escalation target reconc
   expect(mergedPrompt).toBe(templatePrompt);
 });
 
+test('persisted prompts naming the retired artifact.* operations reconcile to workflow.run.*', () => {
+  const workflows = [
+    CODER_ONLY_WORKFLOW,
+    CODING_WITH_QA_WORKFLOW,
+    CODING_WORKFLOW,
+    RESEARCH_WORKFLOW,
+    REVIEW_ONLY_WORKFLOW,
+  ];
+  let reconciled = 0;
+  for (const workflow of workflows) {
+    for (const templateNode of workflow.nodes) {
+      for (let index = 0; index < templateNode.agents.length; index++) {
+        const templatePrompt = templateNode.agents[index]!.customPrompt?.value;
+        if (!templatePrompt?.includes('workflow.run.artifact.')) continue;
+        const persisted = templatePrompt.replaceAll('workflow.run.artifact.', 'artifact.');
+        expect(persisted).not.toBe(templatePrompt);
+        const existingNode: WorkflowNode = {
+          ...templateNode,
+          agents: templateNode.agents.map((agent, i) =>
+            i === index ? { ...agent, customPrompt: { value: persisted } } : agent
+          ),
+        };
+        const merged = mergeNodeStructuralFieldsFromTemplate([existingNode], workflow.nodes);
+        const mergedPrompt = merged.find((n) => n.name === templateNode.name)!.agents[index]!
+          .customPrompt!.value;
+        expect(mergedPrompt, `${workflow.name} / ${templateNode.name}`).toBe(templatePrompt);
+        reconciled++;
+      }
+    }
+  }
+  expect(reconciled).toBe(9);
+});
+
 test('the Coding-with-QA coder legacy seed is frozen, not composed from the live guidance', () => {
   const seed = LEGACY_CODING_SLOT_PROMPTS['Coding with QA|coder']!.find((candidate) =>
     candidate.includes('escalation target listed in your Runtime Execution Contract')
@@ -4243,9 +4278,13 @@ test('persisted pre-call-action prompts migrate to the dispatcher preference tem
         const previous = RETIRED_INLINE_OPERATION_PROMPT_PAIRS.find(
           ([current]) => current === value
         )![1];
+        const retiredGuidance = CALL_ACTION_PREFERENCE_GUIDANCE_PRE_TASK_APPROVE.replaceAll(
+          'workflow.run.artifact.',
+          'artifact.'
+        );
         const persisted = [
-          previous.replace(`\n${CALL_ACTION_PREFERENCE_GUIDANCE_PRE_TASK_APPROVE}`, ''),
-          previous.replace(CALL_ACTION_PREFERENCE_GUIDANCE_PRE_TASK_APPROVE, ''),
+          previous.replace(`\n${retiredGuidance}`, ''),
+          previous.replace(retiredGuidance, ''),
         ].find((stripped) => sha(stripped) === expectedHash);
         expect(persisted, `${workflow.name}/${node.name}/${agent.name}`).toBeDefined();
         const existingNode: WorkflowNode = {
@@ -4270,7 +4309,7 @@ test('persisted pre-call-action prompts migrate to the dispatcher preference tem
 
 test('persisted typed-tool prompts migrate to the operation-name templates', () => {
   const currentTerminalActions =
-    'invoke(name="artifact.save", input={ shape: "link", kind: "pr", data: { url: "<url>" } }) ' +
+    'invoke(name="workflow.run.artifact.save", input={ shape: "link", kind: "pr", data: { url: "<url>" } }) ' +
     'to record the PR, then invoke(name="task.approve", input={ taskId: "<task id>" }) ' +
     'or invoke(name="task.submitForReview", input={ taskId: "<task id>" }) only on APPROVE';
   const retiredTerminalActions =

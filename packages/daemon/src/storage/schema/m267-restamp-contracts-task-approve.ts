@@ -6,9 +6,12 @@ import type { Database as BunDatabase } from '../sqlite-compat.ts';
 
 const log = new Logger('migration-267');
 
-export const PRE_TASK_APPROVE_CONTRACT_SHA256: Record<string, string> = {
-  Reviewer: '64435f09c601a45f250b7f97b98469fd4eec272604de3634160ce53639d2d85e',
-  QA: 'bf7cd7b5b14b14ae54f08640bf714c07b7749da0990a3392c2d0018457254614',
+export const PRE_TASK_APPROVE_CONTRACT_SHA256: Record<string, readonly string[]> = {
+  Reviewer: [
+    '5a5522aa2b9bef20750d8abda7ee86ba9c7d5e322589113dc7418c2570dbad4b',
+    '64435f09c601a45f250b7f97b98469fd4eec272604de3634160ce53639d2d85e',
+  ],
+  QA: ['bf7cd7b5b14b14ae54f08640bf714c07b7749da0990a3392c2d0018457254614'],
 };
 
 interface ContractRow {
@@ -35,7 +38,8 @@ export function runMigration267(db: BunDatabase): void {
   const presets = getPresetAgentTemplates();
   let updated = 0;
 
-  for (const [presetName, staleHash] of Object.entries(PRE_TASK_APPROVE_CONTRACT_SHA256)) {
+  for (const [presetName, staleHashes] of Object.entries(PRE_TASK_APPROVE_CONTRACT_SHA256)) {
+    const stale = new Set(staleHashes);
     const preset = presets.find((candidate) => candidate.name === presetName);
     if (!preset) continue;
 
@@ -50,7 +54,7 @@ export function runMigration267(db: BunDatabase): void {
         `UPDATE space_long_horizon_agents SET instructions = ? WHERE id = ?`
       );
       for (const row of rows) {
-        if (!row.instructions || sha256(row.instructions) !== staleHash) continue;
+        if (!row.instructions || !stale.has(sha256(row.instructions))) continue;
         update.run(preset.customPrompt, row.id);
         updated++;
       }
@@ -62,7 +66,7 @@ export function runMigration267(db: BunDatabase): void {
         .all(`${MIGRATED_AGENT_TEMPLATE_KEY_PREFIX}.%`) as TemplateRow[];
       const update = db.prepare(`UPDATE space_agent_templates SET instructions = ? WHERE key = ?`);
       for (const row of rows) {
-        if (!row.instructions || sha256(row.instructions) !== staleHash) continue;
+        if (!row.instructions || !stale.has(sha256(row.instructions))) continue;
         update.run(preset.customPrompt, row.key);
         updated++;
       }

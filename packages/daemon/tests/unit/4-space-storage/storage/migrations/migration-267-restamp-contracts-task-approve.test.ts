@@ -67,11 +67,11 @@ describe('migration 267 — restamp agent contracts naming task.resolvePendingCo
     db = makeDb();
   });
 
-  test('the recorded hashes are the current contracts with the retired operation name', () => {
-    expect(sha256(retire(REVIEWER_SYSTEM_CONTRACT))).toBe(
-      PRE_TASK_APPROVE_CONTRACT_SHA256.Reviewer
+  test('the recorded hashes include the current contracts with the retired operation name', () => {
+    expect(PRE_TASK_APPROVE_CONTRACT_SHA256.Reviewer).toContain(
+      sha256(retire(REVIEWER_SYSTEM_CONTRACT))
     );
-    expect(sha256(retire(QA_SYSTEM_CONTRACT))).toBe(PRE_TASK_APPROVE_CONTRACT_SHA256.QA);
+    expect(PRE_TASK_APPROVE_CONTRACT_SHA256.QA).toContain(sha256(retire(QA_SYSTEM_CONTRACT)));
   });
 
   test('restamps a Reviewer and a QA agent carrying the retired contract', () => {

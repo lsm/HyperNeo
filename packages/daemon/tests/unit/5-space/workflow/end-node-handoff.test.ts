@@ -110,7 +110,7 @@ describe('End-node prompts save runtime post-approval data before task.approve',
     test(`${label} end-node prompt places the record-PR step BEFORE the final task.approve call`, () => {
       const prompt = endNodePrompt(wf);
       const signalIdx = Math.max(
-        prompt.lastIndexOf('invoke(name="artifact.save"'),
+        prompt.lastIndexOf('invoke(name="workflow.run.artifact.save"'),
         prompt.lastIndexOf('save the PR link')
       );
       const approveIdx = prompt.lastIndexOf('task.approve');
@@ -240,7 +240,7 @@ describe('Review-Only end-node prompt loses verification boilerplate', () => {
   test('REVIEW_ONLY_WORKFLOW prompt still requires a visible review before approval', () => {
     const prompt = endNodePrompt(REVIEW_ONLY_WORKFLOW);
     expect(prompt).toContain('post a visible GitHub review');
-    expect(prompt).toContain('invoke(name="artifact.save"');
+    expect(prompt).toContain('invoke(name="workflow.run.artifact.save"');
     expect(prompt).toContain('invoke(name="task.approve"');
   });
 });
