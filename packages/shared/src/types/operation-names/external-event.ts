@@ -9,7 +9,6 @@ export const EXTERNAL_EVENT_OPERATION_NAMES = [
   'externalEvent.unsubscribe',
   'inactivity.config.get',
   'inactivity.config.set',
-  'inactivity.config.setEnabled',
   'inactivity.runNow',
   'nodeAgent.restore',
   'subscribe_pr_events',

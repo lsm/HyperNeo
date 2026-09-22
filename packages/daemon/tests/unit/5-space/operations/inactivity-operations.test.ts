@@ -166,14 +166,6 @@ describe('inactivity watchdog operations', () => {
     expect(paused).toMatchObject({ enabled: false, thresholdMs: 5000 });
   });
 
-  test('setEnabled still resolves through the merged config writer', async () => {
-    const caller = agentCaller(longTermSession('s-set-enabled', SPACE));
-    expect(await run('inactivity.config.setEnabled', { enabled: true }, caller)).toMatchObject({
-      enabled: true,
-      thresholdMs: DEFAULT_INACTIVITY_THRESHOLD_MS,
-    });
-  });
-
   test('setting the threshold and prompt bumps the config revision', async () => {
     const caller = agentCaller(longTermSession('s-set', SPACE));
     const first = (await run('inactivity.config.set', { thresholdMs: 2000 }, caller)) as {
