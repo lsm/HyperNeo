@@ -134,7 +134,7 @@ test.each(['default-agent', 'legacy-task'] as const)(
       'task.approve',
       expect.objectContaining({ id: session.id }),
       expect.objectContaining({ status: 'review' }),
-      { taskId: task.id, reason: '  raw  ' }
+      { taskId: task.id, approved: true, reason: '  raw  ' }
     );
     expect(dependencies.emitTaskUpdated).toHaveBeenCalledTimes(1);
   }
