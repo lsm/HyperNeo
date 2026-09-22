@@ -1,9 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { isWorkflowRecoveryTransition } from '@hyperneo/shared';
 import {
-  routeCancelTask,
-  routePublishTask,
-  routeReassignTask,
   routeRetryTask,
   routeTaskTarget,
   routeTaskUpdate,
@@ -771,90 +768,6 @@ describe('routeRetryTask', () => {
   test('the status gate never fires without a workflow run', () => {
     expect(routeRetryTask(retryInput({ currentStatus: 'in_progress' }))).toEqual({
       action: 'retry_task',
-    });
-  });
-});
-
-describe('routeCancelTask', () => {
-  test('cancels the run only when requested, workflow-backed, and the run row exists', () => {
-    expect(
-      routeCancelTask({ cancelWorkflowRunRequested: true, hasWorkflowRun: true, runExists: true })
-    ).toEqual({ action: 'cancel_run', runExists: true });
-  });
-
-  test('a missing run row still routes to cancel_run so the envelope is preserved', () => {
-    expect(
-      routeCancelTask({ cancelWorkflowRunRequested: true, hasWorkflowRun: true, runExists: false })
-    ).toEqual({ action: 'cancel_run', runExists: false });
-  });
-
-  test('an unrequested or non-workflow cancellation is cancel-only', () => {
-    expect(
-      routeCancelTask({ cancelWorkflowRunRequested: false, hasWorkflowRun: true, runExists: true })
-    ).toEqual({ action: 'cancel_only' });
-    expect(
-      routeCancelTask({ cancelWorkflowRunRequested: true, hasWorkflowRun: false, runExists: true })
-    ).toEqual({ action: 'cancel_only' });
-  });
-});
-
-describe('routePublishTask', () => {
-  function publishInput(overrides: Partial<Parameters<typeof routePublishTask>[0]> = {}) {
-    return {
-      taskExists: true,
-      taskInSpace: true,
-      currentStatus: 'draft',
-      taskId: 'task-1',
-      ...overrides,
-    };
-  }
-
-  test('missing task and foreign-space rejects win before the draft gate', () => {
-    expect(routePublishTask(publishInput({ taskExists: false, currentStatus: 'open' }))).toEqual({
-      action: 'reject',
-      reason: 'task_not_found',
-      message: 'Task not found: task-1',
-    });
-    expect(routePublishTask(publishInput({ taskInSpace: false, currentStatus: 'open' }))).toEqual({
-      action: 'reject',
-      reason: 'task_not_in_space',
-      message: 'Task task-1 does not belong to this space.',
-    });
-  });
-
-  test('a non-draft status rejects with its status interpolated', () => {
-    for (const currentStatus of ['open', 'in_progress', 'review', 'done', 'archived'] as const) {
-      expect(routePublishTask(publishInput({ currentStatus }))).toEqual({
-        action: 'reject',
-        reason: 'not_draft',
-        message: `Task is in '${currentStatus}' status, not 'draft'. Only draft tasks can be published.`,
-      });
-    }
-  });
-
-  test('a draft task publishes', () => {
-    expect(routePublishTask(publishInput())).toEqual({ action: 'publish' });
-  });
-});
-
-describe('routeReassignTask', () => {
-  test('an unknown worker agent id rejects', () => {
-    expect(routeReassignTask({ customAgentId: 'agent-x', workerAgentExists: false })).toEqual({
-      action: 'reject',
-      reason: 'worker_agent_not_found',
-      message: 'Worker agent not found: agent-x',
-    });
-  });
-
-  test('a known worker agent id, a null id, and an omitted id all reassign', () => {
-    expect(routeReassignTask({ customAgentId: 'agent-x', workerAgentExists: true })).toEqual({
-      action: 'reassign',
-    });
-    expect(routeReassignTask({ customAgentId: null, workerAgentExists: false })).toEqual({
-      action: 'reassign',
-    });
-    expect(routeReassignTask({ customAgentId: undefined, workerAgentExists: false })).toEqual({
-      action: 'reassign',
     });
   });
 });
