@@ -18,25 +18,25 @@ import {
   denyForge,
   FORGE_CALLER_REJECTIONS,
   forgeDenialSchema,
-  type ForgeAdmissionDependencies,
-  type ForgeAuditWriter,
-  type ForgeGate,
-} from './forge-admission.ts';
+  type EvolutionAdmissionDependencies,
+  type EvolutionAuditWriter,
+  type EvolutionGate,
+} from './admission.ts';
 import {
-  ForgeEpisodeSchema,
-  ForgeEpisodeStatusSchema,
-  ForgeGoalSchema,
-  ForgeLessonSchema,
-  ForgeLessonStatusSchema,
-  ForgePreflightSchema,
-  ForgePrioritySchema,
-  ForgeProposalSchema,
-} from './forge-episode-schemas.ts';
-import { ForgeMetricValuesSchema } from './forge-result-schemas.ts';
+  EvolutionEpisodeSchema,
+  EvolutionEpisodeStatusSchema,
+  EvolutionGoalSchema,
+  EvolutionLessonSchema,
+  EvolutionLessonStatusSchema,
+  EvolutionPreflightSchema,
+  EvolutionPrioritySchema,
+  EvolutionProposalSchema,
+} from './episode-schemas.ts';
+import { EvolutionMetricValuesSchema } from './result-schemas.ts';
 import type { EvolutionEpisodeService } from './episode-service.ts';
 import type { EvolutionScopeService } from './scope-service.ts';
 
-export interface ForgeEpisodeOperationDependencies extends ForgeAdmissionDependencies {
+export interface EvolutionEpisodeOperationDependencies extends EvolutionAdmissionDependencies {
   readonly episodeService: Pick<
     EvolutionEpisodeService,
     | 'applyRollupGoalUpdate'
@@ -52,7 +52,7 @@ export interface ForgeEpisodeOperationDependencies extends ForgeAdmissionDepende
   >;
   readonly scopeService: Pick<EvolutionScopeService, 'getScope'>;
   readonly getGoal: (goalId: string) => { id: string; spaceId: string; type: SpaceGoalType } | null;
-  readonly audit?: ForgeAuditWriter;
+  readonly audit?: EvolutionAuditWriter;
 }
 
 const SCOPE_REJECTIONS = [...FORGE_CALLER_REJECTIONS, 'scope_not_found'] as const;
@@ -116,7 +116,7 @@ function failureDetail(err: unknown): string {
 function forgeScopeInSpace(
   scopeId: string,
   spaceId: string | undefined,
-  forge: ForgeEpisodeOperationDependencies
+  forge: EvolutionEpisodeOperationDependencies
 ): EvolutionScope | null {
   const scope = forge.scopeService.getScope(scopeId);
   return scope && (!spaceId || scope.spaceId === spaceId) ? scope : null;
@@ -125,8 +125,8 @@ function forgeScopeInSpace(
 export function requireEpisodeScope(
   input: { scopeId: string },
   scope: { spaceId?: string },
-  forge: ForgeEpisodeOperationDependencies
-): ForgeGate<EvolutionScope, ScopeRejection> {
+  forge: EvolutionEpisodeOperationDependencies
+): EvolutionGate<EvolutionScope, ScopeRejection> {
   const found = forgeScopeInSpace(input.scopeId, scope.spaceId, forge);
   return found
     ? { value: found }
@@ -136,8 +136,8 @@ export function requireEpisodeScope(
 export function requireForgeEpisode(
   input: { episodeId: string },
   scope: { spaceId?: string },
-  forge: ForgeEpisodeOperationDependencies
-): ForgeGate<EvolutionEpisode, EpisodeRejection> {
+  forge: EvolutionEpisodeOperationDependencies
+): EvolutionGate<EvolutionEpisode, EpisodeRejection> {
   const episode = forge.episodeService.getEpisode(input.episodeId);
   if (!episode || !forgeScopeInSpace(episode.scopeId, scope.spaceId, forge)) {
     return denyForge('episode_not_found', `EvolutionEpisode not found: ${input.episodeId}`);
@@ -148,8 +148,8 @@ export function requireForgeEpisode(
 export function requireForgeLesson(
   input: { lessonId: string },
   scope: { spaceId?: string },
-  forge: ForgeEpisodeOperationDependencies
-): ForgeGate<EvolutionLesson, LessonRejection> {
+  forge: EvolutionEpisodeOperationDependencies
+): EvolutionGate<EvolutionLesson, LessonRejection> {
   const lesson = forge.episodeService.getLesson(input.lessonId);
   if (!lesson || !forgeScopeInSpace(lesson.scopeId, scope.spaceId, forge)) {
     return denyForge('lesson_not_found', `EvolutionLesson not found: ${input.lessonId}`);
@@ -160,8 +160,8 @@ export function requireForgeLesson(
 export function requireForgeProposal(
   input: { proposalId: string },
   scope: { spaceId?: string },
-  forge: ForgeEpisodeOperationDependencies
-): ForgeGate<TaskProposal, ProposalRejection> {
+  forge: EvolutionEpisodeOperationDependencies
+): EvolutionGate<TaskProposal, ProposalRejection> {
   const proposal = forge.episodeService.getTaskProposal(input.proposalId);
   if (!proposal || !forgeScopeInSpace(proposal.scopeId, scope.spaceId, forge)) {
     return denyForge('proposal_not_found', `TaskProposal not found: ${input.proposalId}`);
@@ -182,8 +182,8 @@ export async function applyForgeEpisodeCreate(
   input: z.infer<typeof EpisodeCreateInputSchema>,
   scope: EvolutionScope,
   caller: OperationCaller,
-  forge: ForgeEpisodeOperationDependencies
-): Promise<ForgeGate<Record<string, unknown>, EpisodeCreateRejection>> {
+  forge: EvolutionEpisodeOperationDependencies
+): Promise<EvolutionGate<Record<string, unknown>, EpisodeCreateRejection>> {
   try {
     const result = await forge.episodeService.createFromEvidence({
       scopeId: scope.id,
@@ -207,7 +207,7 @@ const EpisodeUpdateInputSchema = z
   .object({
     ...SpaceScoped,
     episodeId: z.string().min(1),
-    status: ForgeEpisodeStatusSchema.optional(),
+    status: EvolutionEpisodeStatusSchema.optional(),
     title: z.string().min(1).optional(),
     outcomeSummary: z.string().optional(),
   })
@@ -217,8 +217,8 @@ export function applyForgeEpisodeUpdate(
   input: z.infer<typeof EpisodeUpdateInputSchema>,
   existing: EvolutionEpisode,
   caller: OperationCaller,
-  forge: ForgeEpisodeOperationDependencies
-): ForgeGate<{ accepted: true; episode: EvolutionEpisode }, EpisodeUpdateRejection> {
+  forge: EvolutionEpisodeOperationDependencies
+): EvolutionGate<{ accepted: true; episode: EvolutionEpisode }, EpisodeUpdateRejection> {
   if (existing.status !== 'draft' && input.status && input.status !== existing.status) {
     return denyForge('episode_terminal', 'Terminal Forge episodes cannot be reopened');
   }
@@ -242,7 +242,7 @@ const LessonUpdateInputSchema = z
   .object({
     ...SpaceScoped,
     lessonId: z.string().min(1),
-    status: ForgeLessonStatusSchema.optional(),
+    status: EvolutionLessonStatusSchema.optional(),
     appliesTo: z.array(z.string()).optional(),
     rule: z.string().min(1).optional(),
     why: z.string().optional(),
@@ -254,8 +254,8 @@ export function applyForgeLessonUpdate(
   input: z.infer<typeof LessonUpdateInputSchema>,
   existing: EvolutionLesson,
   caller: OperationCaller,
-  forge: ForgeEpisodeOperationDependencies
-): ForgeGate<{ accepted: true; lesson: EvolutionLesson }, LessonUpdateRejection> {
+  forge: EvolutionEpisodeOperationDependencies
+): EvolutionGate<{ accepted: true; lesson: EvolutionLesson }, LessonUpdateRejection> {
   if (existing.status === 'dismissed' && input.status && input.status !== 'dismissed') {
     return denyForge('lesson_dismissed', 'Dismissed lessons cannot be reactivated');
   }
@@ -283,7 +283,7 @@ const ProposalCreateInputSchema = z
     title: z.string().min(1),
     description: z.string(),
     reason: z.string(),
-    priority: ForgePrioritySchema.optional(),
+    priority: EvolutionPrioritySchema.optional(),
     evidenceEpisodeIds: z.array(z.string().min(1)).optional(),
   })
   .strict();
@@ -292,8 +292,8 @@ export function applyForgeProposalCreate(
   input: z.infer<typeof ProposalCreateInputSchema>,
   scope: EvolutionScope,
   caller: OperationCaller,
-  forge: ForgeEpisodeOperationDependencies
-): ForgeGate<{ accepted: true; proposal: TaskProposal }, EpisodeRejection> {
+  forge: EvolutionEpisodeOperationDependencies
+): EvolutionGate<{ accepted: true; proposal: TaskProposal }, EpisodeRejection> {
   for (const episodeId of input.evidenceEpisodeIds ?? []) {
     const episode = forge.episodeService.getEpisode(episodeId);
     if (!episode || episode.scopeId !== scope.id) {
@@ -324,7 +324,7 @@ const ProposalUpdateInputSchema = z
     title: z.string().min(1).optional(),
     description: z.string().optional(),
     reason: z.string().optional(),
-    priority: ForgePrioritySchema.optional(),
+    priority: EvolutionPrioritySchema.optional(),
     status: z.enum(['proposed', 'accepted', 'dismissed']).optional(),
   })
   .strict();
@@ -333,8 +333,8 @@ export function applyForgeProposalUpdate(
   input: z.infer<typeof ProposalUpdateInputSchema>,
   existing: TaskProposal,
   caller: OperationCaller,
-  forge: ForgeEpisodeOperationDependencies
-): ForgeGate<{ accepted: true; proposal: TaskProposal }, ProposalUpdateRejection> {
+  forge: EvolutionEpisodeOperationDependencies
+): EvolutionGate<{ accepted: true; proposal: TaskProposal }, ProposalUpdateRejection> {
   if (existing.status === 'created' && input.status) {
     return denyForge('proposal_created', 'Created task proposals cannot be reopened');
   }
@@ -366,7 +366,7 @@ const ProposalCreateTaskInputSchema = z
     title: z.string().min(1).optional(),
     description: z.string().optional(),
     reason: z.string().optional(),
-    priority: ForgePrioritySchema.optional(),
+    priority: EvolutionPrioritySchema.optional(),
     dependsOn: z.array(z.string().min(1)).optional(),
   })
   .strict();
@@ -375,8 +375,8 @@ export function applyForgeProposalTask(
   input: z.infer<typeof ProposalCreateTaskInputSchema>,
   existing: TaskProposal,
   caller: OperationCaller,
-  forge: ForgeEpisodeOperationDependencies
-): ForgeGate<Record<string, unknown>, ProposalTaskRejection> {
+  forge: EvolutionEpisodeOperationDependencies
+): EvolutionGate<Record<string, unknown>, ProposalTaskRejection> {
   try {
     const result = forge.episodeService.createTaskFromProposal(existing.id, {
       title: input.title,
@@ -407,7 +407,7 @@ const RollupApplyInputSchema = z
         summary: z.string().optional(),
         progress: z.number().int().min(0).max(100).optional(),
         nextSteps: z.array(z.string()).optional(),
-        metrics: ForgeMetricValuesSchema.optional(),
+        metrics: EvolutionMetricValuesSchema.optional(),
       })
       .strict(),
   })
@@ -417,8 +417,8 @@ export function applyForgeRollup(
   input: z.infer<typeof RollupApplyInputSchema>,
   episode: EvolutionEpisode,
   caller: OperationCaller,
-  forge: ForgeEpisodeOperationDependencies
-): ForgeGate<Record<string, unknown>, RollupRejection> {
+  forge: EvolutionEpisodeOperationDependencies
+): EvolutionGate<Record<string, unknown>, RollupRejection> {
   if (episode.rollupAppliedAt !== null) {
     return denyForge('rollup_already_applied', 'Episode rollup already applied');
   }
@@ -443,7 +443,7 @@ export function applyForgeRollup(
   return { value: { accepted: true, ...result } };
 }
 
-export function createForgeEpisodeOperations(forge: ForgeEpisodeOperationDependencies) {
+export function createForgeEpisodeOperations(forge: EvolutionEpisodeOperationDependencies) {
   const episodeCreate = (superpipe({ forge })('forge-episode-create') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitForgeMutator, ['input', 'caller', 'forge'], 'result:outcome')
@@ -502,10 +502,10 @@ export function createForgeEpisodeOperations(forge: ForgeEpisodeOperationDepende
       inputSchema: EpisodeCreateInputSchema,
       resultSchema: z.union([
         accepted({
-          episode: ForgeEpisodeSchema,
-          lessons: z.array(ForgeLessonSchema),
-          proposals: z.array(ForgeProposalSchema),
-          preflight: ForgePreflightSchema,
+          episode: EvolutionEpisodeSchema,
+          lessons: z.array(EvolutionLessonSchema),
+          proposals: z.array(EvolutionProposalSchema),
+          preflight: EvolutionPreflightSchema,
         }),
         forgeDenialSchema(EPISODE_CREATE_REJECTIONS),
       ]),
@@ -518,7 +518,7 @@ export function createForgeEpisodeOperations(forge: ForgeEpisodeOperationDepende
         'Accept, dismiss, or edit a Forge episode draft — accept and dismiss are terminal, so use them only after an explicit decision. Rejects episode_not_found and episode_terminal when the episode already left draft. Autonomy metadata: editing a draft needs the Space session-write level, and changing a terminal episode is destructive; enforcement lands with the autonomy subsystem.',
       inputSchema: EpisodeUpdateInputSchema,
       resultSchema: z.union([
-        accepted({ episode: ForgeEpisodeSchema }),
+        accepted({ episode: EvolutionEpisodeSchema }),
         forgeDenialSchema(EPISODE_UPDATE_REJECTIONS),
       ]),
       execute: async (input, caller) => episodeUpdate(input, caller),
@@ -530,7 +530,7 @@ export function createForgeEpisodeOperations(forge: ForgeEpisodeOperationDepende
         'Activate, dismiss, or edit a candidate Forge lesson — activation is never implicit, it takes this call. Rejects lesson_not_found and lesson_dismissed, since a dismissed lesson cannot be reactivated. Autonomy metadata: editing a candidate needs the Space session-write level, and changing an active or dismissed lesson is destructive; enforcement lands with the autonomy subsystem.',
       inputSchema: LessonUpdateInputSchema,
       resultSchema: z.union([
-        accepted({ lesson: ForgeLessonSchema }),
+        accepted({ lesson: EvolutionLessonSchema }),
         forgeDenialSchema(LESSON_UPDATE_REJECTIONS),
       ]),
       execute: async (input, caller) => lessonUpdate(input, caller),
@@ -542,7 +542,7 @@ export function createForgeEpisodeOperations(forge: ForgeEpisodeOperationDepende
         'Create a Forge task proposal on a scope by hand. This does not create a Space task; evolution.proposal.createTask does that in a separate, explicit step. Rejects scope_not_found and episode_not_found when a cited evidence episode is missing or belongs to another scope.',
       inputSchema: ProposalCreateInputSchema,
       resultSchema: z.union([
-        accepted({ proposal: ForgeProposalSchema }),
+        accepted({ proposal: EvolutionProposalSchema }),
         forgeDenialSchema(EPISODE_REJECTIONS),
       ]),
       execute: async (input, caller) => proposalCreate(input, caller),
@@ -554,7 +554,7 @@ export function createForgeEpisodeOperations(forge: ForgeEpisodeOperationDepende
         'Edit, accept, or dismiss a Forge task proposal. The created status is not settable here — call evolution.proposal.createTask to turn a proposal into a real task. Rejects proposal_not_found, proposal_created, and proposal_dismissed, since neither terminal state reopens. Autonomy metadata: editing a proposed record needs the Space session-write level, and changing an accepted or dismissed one is destructive; enforcement lands with the autonomy subsystem.',
       inputSchema: ProposalUpdateInputSchema,
       resultSchema: z.union([
-        accepted({ proposal: ForgeProposalSchema }),
+        accepted({ proposal: EvolutionProposalSchema }),
         forgeDenialSchema(PROPOSAL_UPDATE_REJECTIONS),
       ]),
       execute: async (input, caller) => proposalUpdate(input, caller),
@@ -566,7 +566,7 @@ export function createForgeEpisodeOperations(forge: ForgeEpisodeOperationDepende
         'Create a real Space task from a Forge proposal, preserving the linked goal and scope bindings and attaching dependencies during creation. Idempotent: a proposal already marked created returns its existing task. Rejects proposal_not_found, and task_not_created when the proposal was dismissed, a dependency is invalid, or a concurrent call already claimed it (the cause is in detail). Autonomy metadata: this is a destructive action at the Space session-write level; enforcement lands with the autonomy subsystem.',
       inputSchema: ProposalCreateTaskInputSchema,
       resultSchema: z.union([
-        accepted({ proposal: ForgeProposalSchema, task: TaskWithSpaceFieldsSchema }),
+        accepted({ proposal: EvolutionProposalSchema, task: TaskWithSpaceFieldsSchema }),
         forgeDenialSchema(PROPOSAL_TASK_REJECTIONS),
       ]),
       execute: async (input, caller) => proposalTask(input, caller),
@@ -578,7 +578,7 @@ export function createForgeEpisodeOperations(forge: ForgeEpisodeOperationDepende
         "Accept a Forge episode and roll its summary, next steps, and metrics into the recurring goal behind the episode's scope. Progress is not rolled up. Rejects episode_not_found, rollup_already_applied, episode_dismissed, and goal_not_recurring when the scope has no recurring goal. Autonomy metadata: this is a destructive action at the Space session-write level; enforcement lands with the autonomy subsystem.",
       inputSchema: RollupApplyInputSchema,
       resultSchema: z.union([
-        accepted({ episode: ForgeEpisodeSchema, goal: ForgeGoalSchema }),
+        accepted({ episode: EvolutionEpisodeSchema, goal: EvolutionGoalSchema }),
         forgeDenialSchema(ROLLUP_REJECTIONS),
       ]),
       execute: async (input, caller) => rollupApply(input, caller),

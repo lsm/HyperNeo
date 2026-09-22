@@ -2,29 +2,31 @@ import type { SpaceGoal } from '@hyperneo/shared';
 import type { OperationDefinition } from '../operations/registry.ts';
 import {
   createForgeEpisodeOperations,
-  type ForgeEpisodeOperationDependencies,
+  type EvolutionEpisodeOperationDependencies,
 } from './episode-operations.ts';
 import {
   createForgeEvidenceAttachOperation,
-  type ForgeEvidenceAttachDependencies,
+  type EvolutionEvidenceAttachDependencies,
 } from './evidence-attach-operation.ts';
 import {
   createForgeScopeGetOperation,
-  type ForgeScopeGetDependencies,
+  type EvolutionScopeGetDependencies,
 } from './scope-get-operation.ts';
 import {
   createForgeScopeOperations,
-  type ForgeScopeOperationDependencies,
+  type EvolutionScopeOperationDependencies,
 } from './scope-operations.ts';
 
-export type ForgeOperationDependencies = Omit<ForgeScopeOperationDependencies, 'getGoal'> &
-  Omit<ForgeEpisodeOperationDependencies, 'getGoal'> &
-  Omit<ForgeScopeGetDependencies, 'getGoal'> &
-  ForgeEvidenceAttachDependencies & {
+export type EvolutionOperationDependencies = Omit<EvolutionScopeOperationDependencies, 'getGoal'> &
+  Omit<EvolutionEpisodeOperationDependencies, 'getGoal'> &
+  Omit<EvolutionScopeGetDependencies, 'getGoal'> &
+  EvolutionEvidenceAttachDependencies & {
     readonly getGoal: (goalId: string) => SpaceGoal | null;
   };
 
-export function createForgeOperations(forge: ForgeOperationDependencies): OperationDefinition[] {
+export function createForgeOperations(
+  forge: EvolutionOperationDependencies
+): OperationDefinition[] {
   return [
     ...createForgeScopeOperations(forge),
     ...createForgeEpisodeOperations(forge),

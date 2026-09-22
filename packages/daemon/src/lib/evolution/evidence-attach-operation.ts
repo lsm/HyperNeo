@@ -13,23 +13,23 @@ import {
   denyForge,
   FORGE_CALLER_REJECTIONS,
   forgeDenialSchema,
-  type ForgeAdmissionDependencies,
-  type ForgeAuditEntry,
-  type ForgeAuditWriter,
-  type ForgeGate,
-  type ForgeSpaceScope,
-} from './forge-admission.ts';
-import { ForgeEvidenceRefSchema, ForgeMetadataSchema } from './forge-result-schemas.ts';
+  type EvolutionAdmissionDependencies,
+  type EvolutionAuditEntry,
+  type EvolutionAuditWriter,
+  type EvolutionGate,
+  type EvolutionSpaceScope,
+} from './admission.ts';
+import { EvolutionEvidenceRefSchema, EvolutionMetadataSchema } from './result-schemas.ts';
 import type { EvolutionScopeService } from './scope-service.ts';
 
-export interface ForgeEvidenceAttachDependencies extends ForgeAdmissionDependencies {
+export interface EvolutionEvidenceAttachDependencies extends EvolutionAdmissionDependencies {
   readonly scopeService: Pick<
     EvolutionScopeService,
     'addManualNoteEvidence' | 'attachTaskEvidence' | 'attachWorkflowRunEvidence' | 'getScope'
   >;
   readonly taskRepo: Pick<SpaceTaskRepository, 'getTask'>;
   readonly workflowRunRepo: Pick<SpaceWorkflowRunRepository, 'getRun'>;
-  readonly audit?: ForgeAuditWriter;
+  readonly audit?: EvolutionAuditWriter;
 }
 
 const EVIDENCE_ATTACH_REJECTIONS = [
@@ -62,7 +62,7 @@ const ResolvableScope = {
     .optional()
     .describe('Omit to resolve the scope from the attached subject.'),
   summary: z.string().optional(),
-  metadata: ForgeMetadataSchema.optional(),
+  metadata: EvolutionMetadataSchema.optional(),
 };
 
 const EvidenceAttachInputSchema = z.discriminatedUnion('kind', [
@@ -72,7 +72,7 @@ const EvidenceAttachInputSchema = z.discriminatedUnion('kind', [
       kind: z.literal('manual_note'),
       scopeId: z.string().min(1),
       summary: z.string().min(1),
-      metadata: ForgeMetadataSchema.optional(),
+      metadata: EvolutionMetadataSchema.optional(),
       createdAt: z.number().int().optional(),
     })
     .strict(),
@@ -96,14 +96,14 @@ const EvidenceAttachInputSchema = z.discriminatedUnion('kind', [
 
 type EvidenceAttachInput = z.infer<typeof EvidenceAttachInputSchema>;
 
-interface EvidenceAttachTarget extends ForgeSpaceScope {
+interface EvidenceAttachTarget extends EvolutionSpaceScope {
   readonly scopeId?: string;
 }
 
 function findEvidenceScopeInSpace(
   scopeId: string,
   spaceId: string | undefined,
-  forge: ForgeEvidenceAttachDependencies
+  forge: EvolutionEvidenceAttachDependencies
 ): EvolutionScope | null {
   const scope = forge.scopeService.getScope(scopeId);
   return scope && (!spaceId || scope.spaceId === spaceId) ? scope : null;
@@ -111,9 +111,9 @@ function findEvidenceScopeInSpace(
 
 export function requireForgeEvidenceSubject(
   input: EvidenceAttachInput,
-  scope: ForgeSpaceScope,
-  forge: ForgeEvidenceAttachDependencies
-): ForgeGate<ForgeSpaceScope, EvidenceAttachRejection> {
+  scope: EvolutionSpaceScope,
+  forge: EvolutionEvidenceAttachDependencies
+): EvolutionGate<EvolutionSpaceScope, EvidenceAttachRejection> {
   if (input.kind === 'task') {
     const task = forge.taskRepo.getTask(input.taskId);
     return task && (!scope.spaceId || task.spaceId === scope.spaceId)
@@ -131,9 +131,9 @@ export function requireForgeEvidenceSubject(
 
 export function requireForgeEvidenceTarget(
   input: EvidenceAttachInput,
-  scope: ForgeSpaceScope,
-  forge: ForgeEvidenceAttachDependencies
-): ForgeGate<EvidenceAttachTarget, EvidenceAttachRejection> {
+  scope: EvolutionSpaceScope,
+  forge: EvolutionEvidenceAttachDependencies
+): EvolutionGate<EvidenceAttachTarget, EvidenceAttachRejection> {
   if (input.scopeId && !findEvidenceScopeInSpace(input.scopeId, scope.spaceId, forge)) {
     return denyForge('scope_not_found', `EvolutionScope not found: ${input.scopeId}`);
   }
@@ -142,7 +142,7 @@ export function requireForgeEvidenceTarget(
 
 function writeForgeEvidence(
   input: EvidenceAttachInput,
-  forge: ForgeEvidenceAttachDependencies
+  forge: EvolutionEvidenceAttachDependencies
 ): EvidenceRef {
   if (input.kind === 'task') {
     return forge.scopeService.attachTaskEvidence({
@@ -173,7 +173,7 @@ function evidenceAuditEntry(
   evidence: EvidenceRef,
   target: EvidenceAttachTarget,
   caller: OperationCaller
-): ForgeAuditEntry {
+): EvolutionAuditEntry {
   const subject =
     input.kind === 'task'
       ? { taskId: input.taskId }
@@ -193,8 +193,8 @@ export function attachForgeEvidence(
   input: EvidenceAttachInput,
   target: EvidenceAttachTarget,
   caller: OperationCaller,
-  forge: ForgeEvidenceAttachDependencies
-): ForgeGate<{ accepted: true; evidence: EvidenceRef }, EvidenceAttachRejection> {
+  forge: EvolutionEvidenceAttachDependencies
+): EvolutionGate<{ accepted: true; evidence: EvidenceRef }, EvidenceAttachRejection> {
   let evidence: EvidenceRef;
   try {
     evidence = writeForgeEvidence(input, forge);
@@ -208,7 +208,7 @@ export function attachForgeEvidence(
   return { value: { accepted: true, evidence } };
 }
 
-export function createForgeEvidenceAttachOperation(forge: ForgeEvidenceAttachDependencies) {
+export function createForgeEvidenceAttachOperation(forge: EvolutionEvidenceAttachDependencies) {
   const attach = (superpipe({ forge })('forge-evidence-attach') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitForgeMutator, ['input', 'caller', 'forge'], 'result:outcome')
@@ -224,7 +224,7 @@ export function createForgeEvidenceAttachOperation(forge: ForgeEvidenceAttachDep
       'Attach one evidence item to a Forge scope, discriminated by kind: a manual_note on an explicit scope, a task, or a workflow_run. Task and workflow_run resolve their scope from the subject when scopeId is omitted; manual_note requires scopeId. Rejects task_not_found, workflow_run_not_found, scope_not_found, and evidence_not_attached when no scope can be resolved for the subject.',
     inputSchema: EvidenceAttachInputSchema,
     resultSchema: z.union([
-      z.object({ accepted: z.literal(true), evidence: ForgeEvidenceRefSchema }),
+      z.object({ accepted: z.literal(true), evidence: EvolutionEvidenceRefSchema }),
       forgeDenialSchema(EVIDENCE_ATTACH_REJECTIONS),
     ]),
     execute: async (input, caller) => attach(input, caller),

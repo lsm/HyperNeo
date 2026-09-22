@@ -24,25 +24,25 @@ import {
   denyForge,
   FORGE_CALLER_REJECTIONS,
   forgeDenialSchema,
-  type ForgeAdmissionDependencies,
-  type ForgeAuditWriter,
-  type ForgeGate,
+  type EvolutionAdmissionDependencies,
+  type EvolutionAuditWriter,
+  type EvolutionGate,
   requireForgeSpace,
-} from './forge-admission.ts';
+} from './admission.ts';
 import {
-  ForgeEvidenceRefSchema,
-  ForgeMetadataSchema,
-  ForgeMetricDefinitionSchema,
-  ForgeMetricSnapshotSchema,
-  ForgeMetricValuesSchema,
-  ForgePolicySchema,
-  ForgeScopeKindSchema,
-  ForgeScopeSchema,
-} from './forge-result-schemas.ts';
+  EvolutionEvidenceRefSchema,
+  EvolutionMetadataSchema,
+  EvolutionMetricDefinitionSchema,
+  EvolutionMetricSnapshotSchema,
+  EvolutionMetricValuesSchema,
+  EvolutionPolicySchema,
+  EvolutionScopeKindSchema,
+  EvolutionScopeSchema,
+} from './result-schemas.ts';
 import { mergeEvolutionPolicy } from './scope-policy.ts';
 import type { EvolutionScopeService } from './scope-service.ts';
 
-export interface ForgeScopeOperationDependencies extends ForgeAdmissionDependencies {
+export interface EvolutionScopeOperationDependencies extends EvolutionAdmissionDependencies {
   readonly scopeService: Pick<
     EvolutionScopeService,
     'addMetricSnapshotEvidence' | 'createScope' | 'getScope' | 'listScopes' | 'updateScope'
@@ -53,7 +53,7 @@ export interface ForgeScopeOperationDependencies extends ForgeAdmissionDependenc
   readonly db?: BunDatabase;
   readonly goalRepo?: SpaceGoalRepository;
   readonly scheduleService?: ScheduleService;
-  readonly audit?: ForgeAuditWriter;
+  readonly audit?: EvolutionAuditWriter;
 }
 
 const SCOPE_ID_REJECTIONS = [...FORGE_CALLER_REJECTIONS, 'scope_not_found'] as const;
@@ -98,18 +98,18 @@ function validateForgePolicy(policy: EvolutionPolicy): string | undefined {
   }
 }
 
-function runForgeScopeWrite<T>(forge: ForgeScopeOperationDependencies, write: () => T): T {
+function runForgeScopeWrite<T>(forge: EvolutionScopeOperationDependencies, write: () => T): T {
   return forge.db ? forge.db.transaction(write)() : write();
 }
 
-const ForgeMetricDefinitionInputSchema = ForgeMetricDefinitionSchema.extend({
+const EvolutionMetricDefinitionInputSchema = EvolutionMetricDefinitionSchema.extend({
   key: z.string().min(1),
   label: z.string().min(1),
 });
 
 function syncForgeScopeAutomation(
   scope: EvolutionScope,
-  forge: ForgeScopeOperationDependencies
+  forge: EvolutionScopeOperationDependencies
 ): void {
   if (!forge.goalRepo || !forge.scheduleService) return;
   syncGoalAutomationSelfNagScheduleForScope({
@@ -132,8 +132,8 @@ export function findForgeScopeInSpace(
 export function requireForgeScope(
   input: { scopeId: string },
   scope: { spaceId?: string },
-  forge: ForgeScopeOperationDependencies
-): ForgeGate<EvolutionScope, ScopeIdRejection> {
+  forge: EvolutionScopeOperationDependencies
+): EvolutionGate<EvolutionScope, ScopeIdRejection> {
   const found = findForgeScopeInSpace(input.scopeId, scope.spaceId, forge);
   return found
     ? { value: found }
@@ -143,7 +143,7 @@ export function requireForgeScope(
 const ScopeCreateInputSchema = z
   .object({
     ...SpaceScoped,
-    kind: ForgeScopeKindSchema,
+    kind: EvolutionScopeKindSchema,
     name: z
       .string()
       .min(1)
@@ -156,8 +156,8 @@ const ScopeCreateInputSchema = z
       .describe('Defaults to the linked goal description; required when no goalId is given.'),
     goalId: z.string().min(1).nullable().optional(),
     parentScopeId: z.string().min(1).nullable().optional(),
-    metricDefinitions: z.array(ForgeMetricDefinitionInputSchema).optional(),
-    policy: ForgePolicySchema.optional(),
+    metricDefinitions: z.array(EvolutionMetricDefinitionInputSchema).optional(),
+    policy: EvolutionPolicySchema.optional(),
   })
   .strict()
   .refine(
@@ -168,8 +168,8 @@ const ScopeCreateInputSchema = z
 export function planForgeScopeCreate(
   input: z.infer<typeof ScopeCreateInputSchema>,
   spaceId: string,
-  forge: ForgeScopeOperationDependencies
-): ForgeGate<CreateEvolutionScopeParams, ScopeCreateRejection> {
+  forge: EvolutionScopeOperationDependencies
+): EvolutionGate<CreateEvolutionScopeParams, ScopeCreateRejection> {
   const goal = input.goalId ? forge.getGoal(input.goalId) : null;
   if (input.goalId && (!goal || goal.spaceId !== spaceId)) {
     return denyForge('goal_not_found', `Goal not found: ${input.goalId}`);
@@ -197,7 +197,7 @@ export function planForgeScopeCreate(
 export function applyForgeScopeCreate(
   params: CreateEvolutionScopeParams,
   caller: OperationCaller,
-  forge: ForgeScopeOperationDependencies
+  forge: EvolutionScopeOperationDependencies
 ): { accepted: true; scope: EvolutionScope } {
   const scope = runForgeScopeWrite(forge, () => {
     const created = forge.scopeService.createScope(params);
@@ -217,15 +217,15 @@ const ScopeListInputSchema = z
   .object({
     ...SpaceScoped,
     goalId: z.string().min(1).nullable().optional(),
-    kind: ForgeScopeKindSchema.optional(),
+    kind: EvolutionScopeKindSchema.optional(),
   })
   .strict();
 
 export function readForgeScopeList(
   input: z.infer<typeof ScopeListInputSchema>,
   spaceId: string,
-  forge: ForgeScopeOperationDependencies
-): ForgeGate<
+  forge: EvolutionScopeOperationDependencies
+): EvolutionGate<
   { accepted: true; scopes: EvolutionScope[]; scope: { spaceId: string } },
   ScopeCreateRejection
 > {
@@ -252,13 +252,13 @@ const ScopeUpdateInputSchema = z
   .object({
     ...ScopeTargeted,
     goalId: z.string().min(1).nullable().optional(),
-    kind: ForgeScopeKindSchema.optional(),
+    kind: EvolutionScopeKindSchema.optional(),
     name: z.string().min(1).optional(),
     objective: z.string().min(1).optional(),
     parentScopeId: z.string().min(1).nullable().optional(),
-    metricDefinitions: z.array(ForgeMetricDefinitionInputSchema).optional(),
-    policy: ForgePolicySchema.optional(),
-    policyPatch: ForgePolicySchema.optional(),
+    metricDefinitions: z.array(EvolutionMetricDefinitionInputSchema).optional(),
+    policy: EvolutionPolicySchema.optional(),
+    policyPatch: EvolutionPolicySchema.optional(),
     episodeJudgeModel: z.string().nullable().optional(),
     episodeJudgeProvider: z.string().nullable().optional(),
   })
@@ -267,8 +267,8 @@ const ScopeUpdateInputSchema = z
 export function planForgeScopeUpdate(
   input: z.infer<typeof ScopeUpdateInputSchema>,
   existing: EvolutionScope,
-  forge: ForgeScopeOperationDependencies
-): ForgeGate<UpdateEvolutionScopeParams, ScopeCreateRejection> {
+  forge: EvolutionScopeOperationDependencies
+): EvolutionGate<UpdateEvolutionScopeParams, ScopeCreateRejection> {
   if (input.goalId) {
     const goal = forge.getGoal(input.goalId);
     if (!goal || goal.spaceId !== existing.spaceId) {
@@ -312,8 +312,8 @@ export function applyForgeScopeUpdate(
   scopeId: string,
   params: UpdateEvolutionScopeParams,
   caller: OperationCaller,
-  forge: ForgeScopeOperationDependencies
-): ForgeGate<{ accepted: true; scope: EvolutionScope }, ScopeIdRejection> {
+  forge: EvolutionScopeOperationDependencies
+): EvolutionGate<{ accepted: true; scope: EvolutionScope }, ScopeIdRejection> {
   const scope = forge.scopeService.updateScope(scopeId, params);
   forge.audit?.({
     toolName: 'evolution.scope.update',
@@ -329,12 +329,12 @@ export function applyForgeScopeUpdate(
 const MetricAddInputSchema = z
   .object({
     ...ScopeTargeted,
-    values: ForgeMetricValuesSchema,
+    values: EvolutionMetricValuesSchema,
     source: z.string().min(1),
     note: z.string().nullable().optional(),
     capturedAt: z.number().int().optional(),
     summary: z.string().optional(),
-    metadata: ForgeMetadataSchema.optional(),
+    metadata: EvolutionMetadataSchema.optional(),
   })
   .strict();
 
@@ -342,7 +342,7 @@ export function applyForgeMetricAdd(
   input: z.infer<typeof MetricAddInputSchema>,
   scope: EvolutionScope,
   caller: OperationCaller,
-  forge: ForgeScopeOperationDependencies
+  forge: EvolutionScopeOperationDependencies
 ): { accepted: true; snapshot: MetricSnapshot; evidence: EvidenceRef } {
   const result = forge.scopeService.addMetricSnapshotEvidence({
     scopeId: scope.id,
@@ -362,7 +362,7 @@ export function applyForgeMetricAdd(
   return { accepted: true, ...result };
 }
 
-export function createForgeScopeOperations(forge: ForgeScopeOperationDependencies) {
+export function createForgeScopeOperations(forge: EvolutionScopeOperationDependencies) {
   const create = (superpipe({ forge })('forge-scope-create') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitForgeMutator, ['input', 'caller', 'forge'], 'result:outcome')
@@ -388,7 +388,7 @@ export function createForgeScopeOperations(forge: ForgeScopeOperationDependencie
         input: z.infer<typeof ScopeUpdateInputSchema>,
         params: UpdateEvolutionScopeParams,
         caller: OperationCaller,
-        deps: ForgeScopeOperationDependencies
+        deps: EvolutionScopeOperationDependencies
       ) => applyForgeScopeUpdate(input.scopeId, params, caller, deps),
       ['input', 'outcome', 'caller', 'forge'],
       'result:outcome'
@@ -402,7 +402,7 @@ export function createForgeScopeOperations(forge: ForgeScopeOperationDependencie
     .pipe(applyForgeMetricAdd, ['input', 'outcome', 'caller', 'forge'], 'outcome')
     .endAsync('outcome');
 
-  const scopeResult = accepted({ scope: ForgeScopeSchema });
+  const scopeResult = accepted({ scope: EvolutionScopeSchema });
 
   return [
     defineOperation({
@@ -421,7 +421,10 @@ export function createForgeScopeOperations(forge: ForgeScopeOperationDependencie
         'List Forge scopes in a Space, optionally filtered by linked goal (null lists unlinked scopes) or by kind. Rejects space_required when no Space can be resolved and goal_not_found for a goal outside the Space.',
       inputSchema: ScopeListInputSchema,
       resultSchema: z.union([
-        accepted({ scopes: z.array(ForgeScopeSchema), scope: z.object({ spaceId: z.string() }) }),
+        accepted({
+          scopes: z.array(EvolutionScopeSchema),
+          scope: z.object({ spaceId: z.string() }),
+        }),
         forgeDenialSchema(SCOPE_CREATE_REJECTIONS),
       ]),
       execute: async (input, caller) => list(input, caller),
@@ -442,7 +445,7 @@ export function createForgeScopeOperations(forge: ForgeScopeOperationDependencie
         'Record a metric snapshot on a Forge scope and attach it as evidence. Rejects scope_not_found when the scope is absent or outside the caller Space.',
       inputSchema: MetricAddInputSchema,
       resultSchema: z.union([
-        accepted({ snapshot: ForgeMetricSnapshotSchema, evidence: ForgeEvidenceRefSchema }),
+        accepted({ snapshot: EvolutionMetricSnapshotSchema, evidence: EvolutionEvidenceRefSchema }),
         forgeDenialSchema(SCOPE_ID_REJECTIONS),
       ]),
       execute: async (input, caller) => metricAdd(input, caller),

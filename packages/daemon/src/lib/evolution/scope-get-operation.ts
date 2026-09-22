@@ -21,27 +21,27 @@ import {
   denyForge,
   FORGE_CALLER_REJECTIONS,
   forgeDenialSchema,
-  type ForgeAdmissionDependencies,
-  type ForgeAuditWriter,
-  type ForgeGate,
-  type ForgeSpaceScope,
-} from './forge-admission.ts';
+  type EvolutionAdmissionDependencies,
+  type EvolutionAuditWriter,
+  type EvolutionGate,
+  type EvolutionSpaceScope,
+} from './admission.ts';
 import {
-  ForgeEpisodeSchema,
-  ForgeLessonSchema,
-  ForgeLessonStatusSchema,
-  ForgeProposalSchema,
-  ForgeProposalStatusSchema,
-} from './forge-episode-schemas.ts';
+  EvolutionEpisodeSchema,
+  EvolutionLessonSchema,
+  EvolutionLessonStatusSchema,
+  EvolutionProposalSchema,
+  EvolutionProposalStatusSchema,
+} from './episode-schemas.ts';
 import {
-  ForgeEvidenceRefSchema,
-  ForgeMetricSnapshotSchema,
-  ForgeScopeSchema,
-} from './forge-result-schemas.ts';
+  EvolutionEvidenceRefSchema,
+  EvolutionMetricSnapshotSchema,
+  EvolutionScopeSchema,
+} from './result-schemas.ts';
 import { findForgeScopeInSpace } from './scope-operations.ts';
 import type { EvolutionScopeService } from './scope-service.ts';
 
-export interface ForgeScopeGetDependencies extends ForgeAdmissionDependencies {
+export interface EvolutionScopeGetDependencies extends EvolutionAdmissionDependencies {
   readonly scopeService: Pick<
     EvolutionScopeService,
     | 'getScope'
@@ -60,7 +60,7 @@ export interface ForgeScopeGetDependencies extends ForgeAdmissionDependencies {
     SpaceLongHorizonAgentRepository,
     'getById' | 'listForgeScopeAssignments'
   >;
-  readonly audit?: ForgeAuditWriter;
+  readonly audit?: EvolutionAuditWriter;
 }
 
 const SCOPE_GET_REJECTIONS = [
@@ -109,8 +109,8 @@ const ScopeGetInputSchema = z
       .array(z.enum(SCOPE_GET_PARTS))
       .optional()
       .describe('Parts to return; defaults to ["scope"], which reads no lists.'),
-    lessonStatus: ForgeLessonStatusSchema.optional(),
-    proposalStatus: ForgeProposalStatusSchema.optional(),
+    lessonStatus: EvolutionLessonStatusSchema.optional(),
+    proposalStatus: EvolutionProposalStatusSchema.optional(),
   })
   .strict();
 
@@ -134,19 +134,19 @@ const ScopeGetAgentSchema = z.object({
 
 const ScopeGetResultSchema = z.object({
   accepted: z.literal(true),
-  scope: ForgeScopeSchema.optional(),
+  scope: EvolutionScopeSchema.optional(),
   agents: z.array(ScopeGetAgentSchema).optional(),
-  evidence: z.array(ForgeEvidenceRefSchema).optional(),
-  metricSnapshots: z.array(ForgeMetricSnapshotSchema).optional(),
-  episodes: z.array(ForgeEpisodeSchema).optional(),
-  lessons: z.array(ForgeLessonSchema).optional(),
-  proposals: z.array(ForgeProposalSchema).optional(),
+  evidence: z.array(EvolutionEvidenceRefSchema).optional(),
+  metricSnapshots: z.array(EvolutionMetricSnapshotSchema).optional(),
+  episodes: z.array(EvolutionEpisodeSchema).optional(),
+  lessons: z.array(EvolutionLessonSchema).optional(),
+  proposals: z.array(EvolutionProposalSchema).optional(),
 });
 
 type ScopeGetPartReader = (
   input: ScopeGetInput,
   scope: EvolutionScope,
-  forge: ForgeScopeGetDependencies
+  forge: EvolutionScopeGetDependencies
 ) => ScopeGetParts;
 
 const SCOPE_GET_PART_READERS: Record<ScopeGetPart, ScopeGetPartReader> = {
@@ -179,9 +179,9 @@ export function selectForgeScopeGetParts(input: ScopeGetInput): ScopeGetPart[] {
 
 function resolveScopeForGoal(
   goalId: string,
-  scope: ForgeSpaceScope,
-  forge: ForgeScopeGetDependencies
-): ForgeGate<EvolutionScope, ScopeGetRejection> {
+  scope: EvolutionSpaceScope,
+  forge: EvolutionScopeGetDependencies
+): EvolutionGate<EvolutionScope, ScopeGetRejection> {
   const goal = forge.getGoal(goalId);
   if (!goal || (scope.spaceId && goal.spaceId !== scope.spaceId)) {
     return denyForge('goal_not_found', `Goal not found: ${goalId}`);
@@ -194,9 +194,9 @@ function resolveScopeForGoal(
 
 function resolveScopeForTask(
   taskId: string,
-  scope: ForgeSpaceScope,
-  forge: ForgeScopeGetDependencies
-): ForgeGate<EvolutionScope, ScopeGetRejection> {
+  scope: EvolutionSpaceScope,
+  forge: EvolutionScopeGetDependencies
+): EvolutionGate<EvolutionScope, ScopeGetRejection> {
   const task = forge.taskRepo.getTask(taskId);
   if (!task || (scope.spaceId && task.spaceId !== scope.spaceId)) {
     return denyForge('task_not_found', `Task not found: ${taskId}`);
@@ -209,9 +209,9 @@ function resolveScopeForTask(
 
 export function resolveForgeScopeAddress(
   input: ScopeGetInput,
-  scope: ForgeSpaceScope,
-  forge: ForgeScopeGetDependencies
-): ForgeGate<EvolutionScope, ScopeGetRejection> {
+  scope: EvolutionSpaceScope,
+  forge: EvolutionScopeGetDependencies
+): EvolutionGate<EvolutionScope, ScopeGetRejection> {
   if (input.scopeId) {
     const found = findForgeScopeInSpace(input.scopeId, scope.spaceId, forge);
     return found
@@ -227,7 +227,7 @@ export function readForgeScopeParts(
   input: ScopeGetInput,
   scope: EvolutionScope,
   caller: OperationCaller,
-  forge: ForgeScopeGetDependencies
+  forge: EvolutionScopeGetDependencies
 ): { accepted: true } & ScopeGetParts {
   const parts = selectForgeScopeGetParts(input);
   const read = parts.reduce<ScopeGetParts>(
@@ -252,7 +252,7 @@ export function readForgeScopeParts(
   return { accepted: true, ...read };
 }
 
-export function createForgeScopeGetOperation(forge: ForgeScopeGetDependencies) {
+export function createForgeScopeGetOperation(forge: EvolutionScopeGetDependencies) {
   const get = (superpipe({ forge })('forge-scope-get') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitForgeReader, ['input', 'caller'], 'result:outcome')

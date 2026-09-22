@@ -7,14 +7,19 @@ import type {
   TaskProposal,
 } from '@hyperneo/shared';
 import { z } from 'zod';
-import { ForgeMetricValuesSchema } from './forge-result-schemas.ts';
+import { EvolutionMetricValuesSchema } from './result-schemas.ts';
 
-export const ForgePrioritySchema = z.enum(['low', 'normal', 'high', 'urgent']);
-export const ForgeEpisodeStatusSchema = z.enum(['draft', 'accepted', 'dismissed']);
-export const ForgeLessonStatusSchema = z.enum(['candidate', 'active', 'dismissed']);
-export const ForgeProposalStatusSchema = z.enum(['proposed', 'accepted', 'dismissed', 'created']);
+export const EvolutionPrioritySchema = z.enum(['low', 'normal', 'high', 'urgent']);
+export const EvolutionEpisodeStatusSchema = z.enum(['draft', 'accepted', 'dismissed']);
+export const EvolutionLessonStatusSchema = z.enum(['candidate', 'active', 'dismissed']);
+export const EvolutionProposalStatusSchema = z.enum([
+  'proposed',
+  'accepted',
+  'dismissed',
+  'created',
+]);
 
-export const ForgeFindingSchema = z.object({
+export const EvolutionFindingSchema = z.object({
   domain: z.enum(['workflow', 'target_artifact', 'hyperneo_product']),
   kind: z.enum(['friction', 'bug', 'optimization', 'missing_capability', 'new_opportunity']),
   impact: z.enum(['low', 'medium', 'high']),
@@ -23,24 +28,24 @@ export const ForgeFindingSchema = z.object({
   proposedAction: z.string(),
 }) satisfies z.ZodType<EvolutionFinding>;
 
-export const ForgeEpisodeSchema = z.object({
+export const EvolutionEpisodeSchema = z.object({
   id: z.string(),
   scopeId: z.string(),
-  status: ForgeEpisodeStatusSchema,
+  status: EvolutionEpisodeStatusSchema,
   rollupAppliedAt: z.number().nullable(),
   title: z.string(),
   timeWindow: z.object({ start: z.number(), end: z.number() }).nullable(),
   evidenceIds: z.array(z.string()),
   outcomeSummary: z.string(),
-  findings: z.array(ForgeFindingSchema),
+  findings: z.array(EvolutionFindingSchema),
   createdAt: z.number(),
   updatedAt: z.number(),
 }) satisfies z.ZodType<EvolutionEpisode>;
 
-export const ForgeLessonSchema = z.object({
+export const EvolutionLessonSchema = z.object({
   id: z.string(),
   scopeId: z.string(),
-  status: ForgeLessonStatusSchema,
+  status: EvolutionLessonStatusSchema,
   appliesTo: z.array(z.string()),
   rule: z.string(),
   why: z.string(),
@@ -50,21 +55,21 @@ export const ForgeLessonSchema = z.object({
   updatedAt: z.number(),
 }) satisfies z.ZodType<EvolutionLesson>;
 
-export const ForgeProposalSchema = z.object({
+export const EvolutionProposalSchema = z.object({
   id: z.string(),
   scopeId: z.string(),
   title: z.string(),
   description: z.string(),
   reason: z.string(),
-  priority: ForgePrioritySchema,
-  status: ForgeProposalStatusSchema,
+  priority: EvolutionPrioritySchema,
+  status: EvolutionProposalStatusSchema,
   evidenceEpisodeIds: z.array(z.string()),
   createdTaskId: z.string().nullable(),
   createdAt: z.number(),
   updatedAt: z.number(),
 }) satisfies z.ZodType<TaskProposal>;
 
-export const ForgePreflightSchema = z.object({
+export const EvolutionPreflightSchema = z.object({
   level: z.enum(['low', 'medium', 'high']),
   score: z.number(),
   maxScore: z.number(),
@@ -88,16 +93,16 @@ export const ForgePreflightSchema = z.object({
   }),
 }) satisfies z.ZodType<EvidenceQualityPreflight>;
 
-export const ForgeGoalSchema = z.object({
+export const EvolutionGoalSchema = z.object({
   id: z.string(),
   spaceId: z.string(),
   title: z.string(),
   description: z.string(),
   status: z.enum(['active', 'paused', 'completed', 'archived']),
   type: z.enum(['one_shot', 'measurable', 'recurring']),
-  priority: ForgePrioritySchema,
+  priority: EvolutionPrioritySchema,
   labels: z.array(z.string()),
-  metrics: ForgeMetricValuesSchema,
+  metrics: EvolutionMetricValuesSchema,
   summary: z.string(),
   progress: z.number(),
   nextSteps: z.array(z.string()),
