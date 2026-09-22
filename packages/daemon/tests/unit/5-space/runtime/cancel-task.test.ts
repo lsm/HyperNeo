@@ -18,6 +18,8 @@ import { DirectTaskExecutionRepository } from '../../../../src/storage/repositor
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import { createDirectTaskStarter } from '../../../../src/lib/tasks/start-direct-task';
 import { createCancelTaskOperation } from '../../../../src/lib/tasks/cancel-task';
+import { createSpaceTransitionTaskOperation } from '../../../../src/lib/tasks/transition-task';
+import { enqueueDirectOutcome } from '../../../../src/lib/tasks/direct-outcome-jobs';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
 import { readDirectFinalizationRequest } from '../../../../src/lib/tasks/finalize-direct-attempt';
@@ -600,3 +602,128 @@ test('a plain-task transition rejection surfaces cancellation_invalid_transition
     reason: 'cancellation_invalid_transition',
   });
 });
+
+function transitionOperation(overrides: Record<string, unknown> = {}) {
+  const emitTaskUpdated = mock(async () => {});
+  const operationUnderTest = createSpaceTransitionTaskOperation({
+    db,
+    getSession: (id) => sessions.getSession(id),
+    getTaskManager: (id) => new SpaceTaskManager(db, id),
+    notifyStandalone: () => {},
+    emitTaskUpdated,
+    isWorkflowRunActive: () => false,
+    requestDirectOutcome: (input) => enqueueDirectOutcome(db, jobs, input),
+    ...overrides,
+  } as Parameters<typeof createSpaceTransitionTaskOperation>[0]);
+  return { operation: operationUnderTest, emitTaskUpdated };
+}
+
+test('task.transition to cancelled queues the same durable outcome task.cancel does', async () => {
+  const { operation: transition } = transitionOperation();
+
+  const viaTransition = await transition.execute(
+    { taskId, status: 'cancelled' },
+    { source: 'rpc' }
+  );
+
+  expect(viaTransition).toMatchObject({ accepted: true, jobId: expect.any(String) });
+  expect(tasks.getTask(taskId)?.status).toBe('in_progress');
+  expect(attempts.isStopRequested(attemptId, sessionId)).toBe(true);
+  expect(readDirectFinalizationRequest(db, { attemptId, sessionId })).toMatchObject({
+    status: 'cancelled',
+  });
+  expect(outcomeCount()).toBe(1);
+});
+
+test('task.transition fences a reserved attempt instead of queueing an outcome', async () => {
+  db.prepare("UPDATE direct_task_execution_attempts SET phase='reserved' WHERE id=?").run(
+    attemptId
+  );
+  const { operation: transition, emitTaskUpdated } = transitionOperation();
+
+  expect(await transition.execute({ taskId, status: 'cancelled' }, { source: 'rpc' })).toEqual({
+    accepted: true,
+    jobId: null,
+  });
+
+  expect(outcomeCount()).toBe(0);
+  expect(attempts.isStopRequested(attemptId, sessionId)).toBe(true);
+  expect(attempts.get(attemptId)?.phase).toBe('reserved');
+  expect(tasks.getTask(taskId)?.status).toBe('cancelled');
+  expect(emitTaskUpdated).toHaveBeenCalledTimes(1);
+});
+
+test('an inactive MCP session is refused at the transition door, before the cancel stage', async () => {
+  db.prepare("UPDATE sessions SET status='ended' WHERE id=?").run(sessionId);
+  const { operation: transition } = transitionOperation();
+
+  expect(
+    await transition.execute({ taskId, status: 'cancelled' }, { source: 'mcp', sessionId })
+  ).toMatchObject({ accepted: false, reason: 'task_transition_denied' });
+  expect(outcomeCount()).toBe(0);
+  expect(attempts.isStopRequested(attemptId, sessionId)).toBe(false);
+});
+
+test('the attempt worker itself still cancels through the transition door', async () => {
+  const { operation: transition } = transitionOperation();
+
+  expect(
+    await transition.execute({ taskId, status: 'cancelled' }, { source: 'mcp', sessionId })
+  ).toMatchObject({ accepted: true, jobId: expect.any(String) });
+  expect(readDirectFinalizationRequest(db, { attemptId, sessionId })).toMatchObject({
+    status: 'cancelled',
+  });
+  expect(outcomeCount()).toBe(1);
+});
+
+test('task.transition reports cancellation_unavailable for an already terminal plain task', async () => {
+  const spaceId = tasks.getTask(taskId)!.spaceId!;
+  const plainTaskId = tasks.createTask({
+    spaceId,
+    title: 'Plain',
+    description: '',
+    status: 'done',
+  }).id;
+  const { operation: transition } = transitionOperation();
+
+  expect(
+    await transition.execute({ taskId: plainTaskId, status: 'cancelled' }, { source: 'rpc' })
+  ).toEqual({ accepted: false, reason: 'cancellation_unavailable' });
+  expect(tasks.getTask(plainTaskId)?.status).toBe('done');
+});
+
+test.each(['task.cancel', 'task.transition'] as const)(
+  'a direct start claimed between the route read and the write is refused by %s',
+  async (door) => {
+    const spaceId = tasks.getTask(taskId)!.spaceId!;
+    const plainTaskId = tasks.createTask({ spaceId, title: 'Plain', description: '' }).id;
+    attempts.select(plainTaskId);
+
+    const realGetActive = DirectTaskExecutionRepository.prototype.getActive;
+    let reads = 0;
+    const spy = spyOn(DirectTaskExecutionRepository.prototype, 'getActive').mockImplementation(
+      function (this: DirectTaskExecutionRepository, id: string) {
+        reads += 1;
+        if (reads === 1 && id === plainTaskId) return null;
+        return realGetActive.call(this, id);
+      }
+    );
+    attempts.claim(plainTaskId, 'late-claim', 'late-session');
+
+    const run =
+      door === 'task.cancel'
+        ? createCancelTaskOperation(() => db, jobs, {
+            getTaskManager: (id) => new SpaceTaskManager(db, id),
+            emitTaskUpdated: async () => {},
+          }).execute({ taskId: plainTaskId }, { source: 'rpc' })
+        : transitionOperation().operation.execute(
+            { taskId: plainTaskId, status: 'cancelled' },
+            { source: 'rpc' }
+          );
+
+    expect(await run).toEqual({ accepted: false, reason: 'cancellation_unavailable' });
+    expect(tasks.getTask(plainTaskId)?.status).toBe('open');
+    expect(attempts.get('late-claim')?.phase).toBe('reserved');
+    spy.mockRestore();
+  }
+);

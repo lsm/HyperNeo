@@ -32,7 +32,12 @@ export type SpaceTaskTransitionDecision =
   | { action: 'reject'; result: RejectResult }
   | {
       action: 'runtime';
-      executor: 'park_stopped' | 'recover_transition' | 'stop_for_status' | 'submit_review';
+      executor:
+        | 'park_stopped'
+        | 'recover_transition'
+        | 'stop_for_status'
+        | 'submit_review'
+        | 'cancel_task';
       approvalSource: 'human' | undefined;
     };
 type Input = SpaceTaskTransitionDecisionInput;
@@ -42,6 +47,7 @@ const RUNTIME_ACTIONS = [
   'recover_transition',
   'stop_for_status',
   'submit_review',
+  'cancel_task',
 ] as const;
 type RuntimeExecutor = (typeof RUNTIME_ACTIONS)[number];
 const REJECT_UNSUPPORTED = { action: 'reject', result: 'unsupported_status' } as const;
@@ -113,6 +119,11 @@ export function routeReviewSubmission(routing: TaskUpdateRouting): Gate {
     ? { reason: { action: 'runtime', executor: 'submit_review', approvalSource: undefined } }
     : { value: routing };
 }
+export function routeCancellation(routing: TaskUpdateRouting): Gate {
+  return routing.action === 'cancel_task'
+    ? { reason: { action: 'runtime', executor: 'cancel_task', approvalSource: undefined } }
+    : { value: routing };
+}
 export function requireTableTransition(routing: TaskUpdateRouting, input: Input): Gate {
   return isValidTaskTransition(input.currentStatus, input.requestedStatus)
     ? { value: routing }
@@ -155,6 +166,7 @@ export const decideSpaceTaskTransition = (superpipe({})('space-task-transition')
   .pipe(requireBlockReasonOnlyWithBlocked, ['decision', 'input'], 'result:decision')
   .pipe(requireReviewReasonOnlyWithReview, ['decision', 'input'], 'result:decision')
   .pipe(routeReviewSubmission, 'decision', 'result:decision')
+  .pipe(routeCancellation, 'decision', 'result:decision')
   .pipe(requireTableTransition, ['decision', 'input'], 'result:decision')
   .pipe(routeRuntimeAction, ['decision', 'input'], 'result:decision')
   .pipe(stampApproval, 'input', 'decision')

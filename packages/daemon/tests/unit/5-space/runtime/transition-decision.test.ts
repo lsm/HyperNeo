@@ -256,8 +256,18 @@ const cases: Case[] = [
   ],
   [
     'a table-invalid transition is rejected',
-    { ...base, currentStatus: 'done', requestedStatus: 'cancelled', callerSource: 'rpc' },
+    { ...base, currentStatus: 'draft', requestedStatus: 'in_progress', callerSource: 'rpc' },
     { action: 'reject', result: 'invalid_transition' },
+  ],
+  [
+    'requesting cancelled routes to the cancel stage',
+    { ...base, currentStatus: 'in_progress', requestedStatus: 'cancelled', callerSource: 'rpc' },
+    { action: 'runtime', executor: 'cancel_task', approvalSource: undefined },
+  ],
+  [
+    'a task already cancelled still routes to the cancel stage',
+    { ...base, currentStatus: 'cancelled', requestedStatus: 'cancelled', callerSource: 'rpc' },
+    { action: 'runtime', executor: 'cancel_task', approvalSource: undefined },
   ],
   [
     'requesting the current status is rejected',

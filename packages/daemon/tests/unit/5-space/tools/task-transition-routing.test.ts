@@ -267,29 +267,32 @@ describe('routeTaskUpdate action branches', () => {
     });
   });
 
-  test('workflow-backed active tasks moving to open or cancelled stop for status', () => {
-    for (const requestedStatus of ['open', 'cancelled'] as const) {
+  test('workflow-backed active tasks moving to open stop for status', () => {
+    expect(
+      routeTaskUpdate(
+        baseInput({ currentStatus: 'in_progress', requestedStatus: 'open', hasWorkflowRun: true })
+      )
+    ).toEqual({
+      action: 'stop_for_status',
+      auditParamsShape: 'transition',
+      emitTaskUpdated: 'never',
+    });
+  });
+
+  test.each([true, false])(
+    'cancelled takes the cancel stage whatever the run state is (workflow=%s)',
+    (hasWorkflowRun) => {
       expect(
         routeTaskUpdate(
-          baseInput({ currentStatus: 'in_progress', requestedStatus, hasWorkflowRun: true })
+          baseInput({ currentStatus: 'in_progress', requestedStatus: 'cancelled', hasWorkflowRun })
         )
       ).toEqual({
-        action: 'stop_for_status',
+        action: 'cancel_task',
         auditParamsShape: 'transition',
         emitTaskUpdated: 'never',
       });
     }
-  });
-
-  test('an active-to-cancelled transition without a workflow run is a plain status set', () => {
-    expect(
-      routeTaskUpdate(baseInput({ currentStatus: 'in_progress', requestedStatus: 'cancelled' }))
-    ).toEqual({
-      action: 'set_status',
-      auditParamsShape: 'transition',
-      emitTaskUpdated: 'always',
-    });
-  });
+  );
 
   test('any other status change is a plain status set', () => {
     expect(
@@ -381,7 +384,7 @@ describe('routeTaskUpdate precedence', () => {
   test('stop-for-status wins over the plain status set only with a workflow run', () => {
     const shared = {
       currentStatus: 'in_progress',
-      requestedStatus: 'cancelled',
+      requestedStatus: 'open',
     };
     expect(routeTaskUpdate(baseInput({ ...shared, hasWorkflowRun: true }))).toEqual({
       action: 'stop_for_status',
@@ -506,7 +509,7 @@ describe('routeTaskUpdate terminal writes under an active run', () => {
 });
 
 describe('routeTaskUpdate fromActivePaused boundaries', () => {
-  test('every active-or-paused status stops for status when cancelled', () => {
+  test('every active-or-paused status stops for status when reopened', () => {
     for (const currentStatus of [
       'in_progress',
       'blocked',
@@ -515,9 +518,7 @@ describe('routeTaskUpdate fromActivePaused boundaries', () => {
       'usage_limited',
     ] as const) {
       expect(
-        routeTaskUpdate(
-          baseInput({ currentStatus, requestedStatus: 'cancelled', hasWorkflowRun: true })
-        )
+        routeTaskUpdate(baseInput({ currentStatus, requestedStatus: 'open', hasWorkflowRun: true }))
       ).toEqual({
         action: 'stop_for_status',
         auditParamsShape: 'transition',
@@ -579,9 +580,9 @@ describe('routeTaskUpdate fromActivePaused boundaries', () => {
         routeTaskUpdate(
           baseInput({
             currentStatus,
-            requestedStatus: 'cancelled',
+            requestedStatus: 'archived',
             hasWorkflowRun: true,
-            isRecoveryTransition: isWorkflowRecoveryTransition(currentStatus, 'cancelled'),
+            isRecoveryTransition: isWorkflowRecoveryTransition(currentStatus, 'archived'),
           })
         )
       ).toEqual({

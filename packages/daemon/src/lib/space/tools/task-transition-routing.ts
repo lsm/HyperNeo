@@ -31,6 +31,7 @@ export type TaskUpdateRejectReason =
 export type TaskUpdateRouting =
   | { action: 'reject'; reason: TaskUpdateRejectReason; message: string }
   | { action: 'submit_review'; auditParamsShape: 'transition'; emitTaskUpdated: 'never' }
+  | { action: 'cancel_task'; auditParamsShape: 'transition'; emitTaskUpdated: 'never' }
   | {
       action: 'park_stopped';
       auditParamsShape: 'transition';
@@ -103,6 +104,9 @@ export function routeTaskUpdate(input: TaskUpdateRoutingInput): TaskUpdateRoutin
   }
   if (requestedStatus === 'review') {
     return { action: 'submit_review', auditParamsShape: 'transition', emitTaskUpdated: 'never' };
+  }
+  if (requestedStatus === 'cancelled') {
+    return { action: 'cancel_task', auditParamsShape: 'transition', emitTaskUpdated: 'never' };
   }
   if (requestedStatus !== undefined && statusDiffers) {
     if (requestedStatus === 'approved') {
