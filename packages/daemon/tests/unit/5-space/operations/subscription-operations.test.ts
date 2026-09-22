@@ -243,38 +243,42 @@ describe('node external-event subscription operations', () => {
     expect(unregistered[0]!.topicPattern).toBe('github/a/b/*');
   });
 
-  test('subscribe_pr_events derives the topic from the run primary link', async () => {
+  test('event.external.pr.subscribe derives the topic from the run primary link', async () => {
     primaryLinkUrl = 'https://github.com/acme/widgets/pull/42';
     const caller = worker(workerSession('s-pr'));
-    expect(await run('subscribe_pr_events', {}, caller)).toEqual({
+    expect(await run('event.external.pr.subscribe', {}, caller)).toEqual({
       ok: true,
       topicPattern: 'github/acme/widgets/pull_request/42.*',
     });
   });
 
-  test('subscribe_pr_events prefers an explicit prUrl and reports an unparseable one', async () => {
+  test('event.external.pr.subscribe prefers an explicit prUrl and reports an unparseable one', async () => {
     primaryLinkUrl = 'https://github.com/acme/widgets/pull/42';
     const caller = worker(workerSession('s-pr2'));
     expect(
-      await run('subscribe_pr_events', { prUrl: 'https://github.com/acme/widgets/pull/7' }, caller)
+      await run(
+        'event.external.pr.subscribe',
+        { prUrl: 'https://github.com/acme/widgets/pull/7' },
+        caller
+      )
     ).toEqual({ ok: true, topicPattern: 'github/acme/widgets/pull_request/7.*' });
-    expect(await run('subscribe_pr_events', { prUrl: 'not-a-url' }, caller)).toEqual({
+    expect(await run('event.external.pr.subscribe', { prUrl: 'not-a-url' }, caller)).toEqual({
       ok: false,
       error: 'Could not parse GitHub PR URL: not-a-url',
     });
   });
 
-  test('subscribe_pr_events rejects a label it would never have stored', () => {
-    const schema = operations.get('subscribe_pr_events')!.inputSchema;
+  test('event.external.pr.subscribe rejects a label it would never have stored', () => {
+    const schema = operations.get('event.external.pr.subscribe')!.inputSchema;
     expect(schema.safeParse({ prUrl: 'https://github.com/acme/widgets/pull/7' }).success).toBe(
       true
     );
     expect(schema.safeParse({ label: 'nightly' }).success).toBe(false);
   });
 
-  test('subscribe_pr_events explains an unresolved run PR', async () => {
+  test('event.external.pr.subscribe explains an unresolved run PR', async () => {
     const caller = worker(workerSession('s-pr3'));
-    expect(await run('subscribe_pr_events', {}, caller)).toEqual({
+    expect(await run('event.external.pr.subscribe', {}, caller)).toEqual({
       ok: false,
       error: 'No PR URL found for this workflow run. Open a PR first or pass prUrl explicitly.',
     });
