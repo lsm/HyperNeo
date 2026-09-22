@@ -8,6 +8,7 @@ import type {
 } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
+import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
 import {
   defineOperation,
@@ -55,6 +56,10 @@ export interface ForgeScopeGetDependencies extends ForgeAdmissionDependencies {
   >;
   readonly getGoal: (goalId: string) => { id: string; spaceId: string } | null;
   readonly taskRepo: Pick<SpaceTaskRepository, 'getTask'>;
+  readonly longHorizonAgentRepo: Pick<
+    SpaceLongHorizonAgentRepository,
+    'getById' | 'listForgeScopeAssignments'
+  >;
   readonly audit?: ForgeAuditWriter;
 }
 
@@ -70,6 +75,7 @@ type ScopeGetRejection = (typeof SCOPE_GET_REJECTIONS)[number];
 
 const SCOPE_GET_PARTS = [
   'scope',
+  'agents',
   'evidence',
   'metrics',
   'episodes',
@@ -112,6 +118,7 @@ type ScopeGetInput = z.infer<typeof ScopeGetInputSchema>;
 
 interface ScopeGetParts {
   scope?: EvolutionScope;
+  agents?: { agentId: string; relationship: string; createdAt: number }[];
   evidence?: EvidenceRef[];
   metricSnapshots?: MetricSnapshot[];
   episodes?: EvolutionEpisode[];
@@ -119,9 +126,16 @@ interface ScopeGetParts {
   proposals?: TaskProposal[];
 }
 
+const ScopeGetAgentSchema = z.object({
+  agentId: z.string(),
+  relationship: z.string(),
+  createdAt: z.number(),
+});
+
 const ScopeGetResultSchema = z.object({
   accepted: z.literal(true),
   scope: ForgeScopeSchema.optional(),
+  agents: z.array(ScopeGetAgentSchema).optional(),
   evidence: z.array(ForgeEvidenceRefSchema).optional(),
   metricSnapshots: z.array(ForgeMetricSnapshotSchema).optional(),
   episodes: z.array(ForgeEpisodeSchema).optional(),
@@ -137,6 +151,13 @@ type ScopeGetPartReader = (
 
 const SCOPE_GET_PART_READERS: Record<ScopeGetPart, ScopeGetPartReader> = {
   scope: (_input, scope) => ({ scope }),
+  agents: (_input, scope, forge) => ({
+    agents: forge.longHorizonAgentRepo.listForgeScopeAssignments(scope.id).map((link) => ({
+      agentId: link.agentId,
+      relationship: link.relationship,
+      createdAt: link.createdAt,
+    })),
+  }),
   evidence: (_input, scope, forge) => ({
     evidence: forge.scopeService.listEvidence(scope.id).evidence,
   }),
@@ -243,7 +264,7 @@ export function createForgeScopeGetOperation(forge: ForgeScopeGetDependencies) {
     name: 'evolution.scope.get',
     policy: FORGE_READ_POLICY,
     description:
-      'Read one Forge scope and whatever parts of it you need in a single call. Address the scope by scopeId, or by goalId or taskId to resolve the scope linked to that goal or task (scopeId wins, then goalId, then taskId). include names the parts to return — scope, evidence, metrics, episodes, lessons, proposals — and defaults to ["scope"], the scope row with its linked goal, metric definitions, and policy, which reads no lists; every other part costs one unfiltered read of that scope. Filter with lessonStatus and proposalStatus. Parts you do not ask for are absent from the result. Rejects resolve_target_required when no address is given, goal_not_found or task_not_found when the target is absent or outside the caller Space, and scope_not_found when the scope is absent, outside the caller Space, or not linked to the target.',
+      'Read one Forge scope and whatever parts of it you need in a single call. Address the scope by scopeId, or by goalId or taskId to resolve the scope linked to that goal or task (scopeId wins, then goalId, then taskId). include names the parts to return — scope, agents, evidence, metrics, episodes, lessons, proposals — and defaults to ["scope"], the scope row with its linked goal, metric definitions, and policy, which reads no lists; every other part costs one unfiltered read of that scope. agents returns the long-horizon agents this scope is routed to, which is what agent.assignForgeScope writes. Filter with lessonStatus and proposalStatus. Parts you do not ask for are absent from the result. Rejects resolve_target_required when no address is given, goal_not_found or task_not_found when the target is absent or outside the caller Space, and scope_not_found when the scope is absent, outside the caller Space, or not linked to the target.',
     inputSchema: ScopeGetInputSchema,
     resultSchema: z.union([ScopeGetResultSchema, forgeDenialSchema(SCOPE_GET_REJECTIONS)]),
     execute: async (input, caller) => get(input, caller),
