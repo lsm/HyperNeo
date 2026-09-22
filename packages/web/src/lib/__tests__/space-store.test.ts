@@ -306,9 +306,13 @@ function makeMockHub() {
           taskDetailResult ?? { ...makeTask(input.taskId as string), description: 'full text' }
         );
       }
-      if (method === 'operation.invoke' && params?.name === 'task.resolvePendingCompletion') {
+      if (method === 'operation.invoke' && params?.name === 'task.approve') {
         const input = (params?.input ?? {}) as Record<string, unknown>;
-        return makeTask(input.taskId as string, input.approved ? 'approved' : 'in_progress');
+        return makeTask(input.taskId as string, 'approved');
+      }
+      if (method === 'operation.invoke' && params?.name === 'task.reject') {
+        const input = (params?.input ?? {}) as Record<string, unknown>;
+        return makeTask(input.taskId as string, 'in_progress');
       }
       if (method === 'operation.invoke' && params?.name === 'task.update') {
         if (taskUpdateResult !== undefined) return taskUpdateResult;
@@ -3190,7 +3194,7 @@ describe('SpaceStore — pending completion approval', () => {
   });
   afterEach(() => vi.clearAllMocks());
 
-  it('resolves a pending completion through the operations door without a spaceId', async () => {
+  it('approves a pending completion through task.approve without a spaceId', async () => {
     await spaceStore.selectSpace('space-1');
     mockHub.request.mockClear();
 
@@ -3199,17 +3203,17 @@ describe('SpaceStore — pending completion approval', () => {
     const calls = mockHub.request.mock.calls.filter(
       (c: unknown[]) =>
         c[0] === 'operation.invoke' &&
-        (c[1] as { name?: string } | undefined)?.name === 'task.resolvePendingCompletion'
+        (c[1] as { name?: string } | undefined)?.name === 'task.approve'
     );
     expect(calls).toHaveLength(1);
     expect(calls[0][1]).toEqual({
-      name: 'task.resolvePendingCompletion',
-      input: { taskId: 't1', approved: true, reason: '  ships  ' },
+      name: 'task.approve',
+      input: { taskId: 't1', reason: '  ships  ' },
     });
     expect(task.status).toBe('approved');
   });
 
-  it('sends a null reason when none is given and carries rejection through', async () => {
+  it('routes a rejection to task.reject with a null reason when none is given', async () => {
     await spaceStore.selectSpace('space-1');
     mockHub.request.mockClear();
 
@@ -3218,11 +3222,12 @@ describe('SpaceStore — pending completion approval', () => {
     const calls = mockHub.request.mock.calls.filter(
       (c: unknown[]) =>
         c[0] === 'operation.invoke' &&
-        (c[1] as { name?: string } | undefined)?.name === 'task.resolvePendingCompletion'
+        (c[1] as { name?: string } | undefined)?.name === 'task.reject'
     );
+    expect(calls).toHaveLength(1);
     expect(calls[0][1]).toEqual({
-      name: 'task.resolvePendingCompletion',
-      input: { taskId: 't1', approved: false, reason: null },
+      name: 'task.reject',
+      input: { taskId: 't1', reason: null },
     });
     expect(task.status).toBe('in_progress');
   });

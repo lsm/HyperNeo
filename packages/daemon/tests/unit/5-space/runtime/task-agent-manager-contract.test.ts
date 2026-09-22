@@ -71,7 +71,7 @@ describe('TaskAgentManager Runtime Execution Contract', () => {
     expect(contract).toContain(
       'invoke(name="task.submitForReview", input={ taskId: "<task id>", reason: "..." })'
     );
-    expect(contract).not.toContain('invoke(name="task.resolvePendingCompletion"');
+    expect(contract).not.toContain('invoke(name="task.approve"');
     expect(contract).toContain('overrides earlier terminal-action guidance');
     expect(contract).not.toContain('Escalation: send_message');
   });

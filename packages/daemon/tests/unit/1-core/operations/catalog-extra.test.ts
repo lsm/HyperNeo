@@ -18,7 +18,6 @@ const tasks = {
   listTasks: unused,
   editTask: unused,
   transitionTask: unused,
-  setDependencies: unused,
   sessionExists: () => true,
 } as unknown as TaskOperationDependencies;
 

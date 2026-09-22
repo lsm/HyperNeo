@@ -176,12 +176,6 @@ const memberCaller: OperationCaller = {
   role: 'ad_hoc_member',
   agentName: 'alice',
 };
-const readerCaller: OperationCaller = {
-  source: 'mcp',
-  sessionId: 'session-member',
-  spaceId: SPACE_ID,
-  role: 'universal_read',
-};
 const workerCaller: OperationCaller = {
   source: 'mcp',
   sessionId: 'session-member',
@@ -224,13 +218,10 @@ async function seedEpisode(ctx: Ctx, scopeId: string) {
 const EPISODE_OPERATION_NAMES = [
   'forge.episode.create',
   'forge.episode.update',
-  'forge.lesson.list',
   'forge.lesson.update',
   'forge.proposal.create',
   'forge.proposal.createTask',
-  'forge.proposal.list',
   'forge.proposal.update',
-  'forge.reviewBundle.list',
   'forge.rollup.apply',
 ];
 
@@ -284,93 +275,6 @@ describe('forge.episode.create', () => {
           )
       ).toMatchObject({ accepted: true });
       expect(ctx.episodeService.listReviewBundle(scope.id).episodes).toHaveLength(1);
-    } finally {
-      ctx.db.close();
-    }
-  });
-});
-
-describe('forge.reviewBundle.list', () => {
-  test('reports the episodes, lessons, and proposals a universal_read caller may review', async () => {
-    const ctx = makeCtx();
-    try {
-      const scope = seedScope(ctx);
-      await seedEpisode(ctx, scope.id);
-      const bundle = (await ctx
-        .op('forge.reviewBundle.list')
-        .execute({ scopeId: scope.id }, readerCaller)) as {
-        accepted: true;
-        episodes: Array<{ title: string }>;
-        lessons: Array<{ rule: string }>;
-        proposals: Array<{ title: string }>;
-      };
-      expect(bundle.episodes.map((episode) => episode.title)).toEqual(['Judged episode']);
-      expect(bundle.lessons).toHaveLength(1);
-      expect(bundle.proposals).toHaveLength(1);
-    } finally {
-      ctx.db.close();
-    }
-  });
-
-  test('hides a scope owned by another Space behind scope_not_found', async () => {
-    const ctx = makeCtx();
-    try {
-      const foreign = seedScope(ctx, OTHER_SPACE_ID);
-      expect(
-        await ctx.op('forge.reviewBundle.list').execute({ scopeId: foreign.id }, memberCaller)
-      ).toMatchObject({ accepted: false, reason: 'scope_not_found' });
-    } finally {
-      ctx.db.close();
-    }
-  });
-});
-
-describe('forge.lesson.list', () => {
-  test('filters lessons by status', async () => {
-    const ctx = makeCtx();
-    try {
-      const scope = seedScope(ctx);
-      await seedEpisode(ctx, scope.id);
-      const candidates = (await ctx
-        .op('forge.lesson.list')
-        .execute({ scopeId: scope.id, status: 'candidate' }, readerCaller)) as {
-        accepted: true;
-        lessons: Array<{ id: string }>;
-      };
-      expect(candidates.lessons).toHaveLength(1);
-      const active = (await ctx
-        .op('forge.lesson.list')
-        .execute({ scopeId: scope.id, status: 'active' }, readerCaller)) as {
-        accepted: true;
-        lessons: Array<{ id: string }>;
-      };
-      expect(active.lessons).toHaveLength(0);
-    } finally {
-      ctx.db.close();
-    }
-  });
-});
-
-describe('forge.proposal.list', () => {
-  test('filters proposals by status', async () => {
-    const ctx = makeCtx();
-    try {
-      const scope = seedScope(ctx);
-      await seedEpisode(ctx, scope.id);
-      const proposed = (await ctx
-        .op('forge.proposal.list')
-        .execute({ scopeId: scope.id, status: 'proposed' }, readerCaller)) as {
-        accepted: true;
-        proposals: Array<{ title: string }>;
-      };
-      expect(proposed.proposals.map((proposal) => proposal.title)).toEqual(['Judge proposal']);
-      const created = (await ctx
-        .op('forge.proposal.list')
-        .execute({ scopeId: scope.id, status: 'created' }, readerCaller)) as {
-        accepted: true;
-        proposals: Array<{ title: string }>;
-      };
-      expect(created.proposals).toHaveLength(0);
     } finally {
       ctx.db.close();
     }
@@ -461,13 +365,7 @@ describe('forge.lesson.update', () => {
     try {
       const scope = seedScope(ctx);
       await seedEpisode(ctx, scope.id);
-      const listed = (await ctx
-        .op('forge.lesson.list')
-        .execute({ scopeId: scope.id }, readerCaller)) as {
-        accepted: true;
-        lessons: Array<{ id: string }>;
-      };
-      const lessonId = listed.lessons[0].id;
+      const lessonId = ctx.episodeService.listLessons(scope.id)[0].id;
       const activated = (await ctx
         .op('forge.lesson.update')
         .execute({ lessonId, status: 'active' }, memberCaller)) as {
@@ -691,41 +589,6 @@ describe('invokeOperation', () => {
         kind: 'completed',
         value: { accepted: true, proposal: { status: 'created' } },
       });
-    } finally {
-      ctx.db.close();
-    }
-  });
-});
-
-describe('Forge episode optional Space scope', () => {
-  test('lists report the inherited Space and cannot read another Space or silently search globally', async () => {
-    const ctx = makeCtx();
-    try {
-      const own = seedScope(ctx);
-      const foreign = seedScope(ctx, OTHER_SPACE_ID);
-      for (const source of ['rpc', 'internal', 'mcp'] as const) {
-        const caller: OperationCaller = { source, spaceId: SPACE_ID, role: 'ad_hoc_member' };
-        for (const name of [
-          'forge.reviewBundle.list',
-          'forge.lesson.list',
-          'forge.proposal.list',
-        ]) {
-          expect(
-            await invokeOperation(ctx.registry, name, { scopeId: own.id }, caller)
-          ).toMatchObject({
-            kind: 'completed',
-            value: { accepted: true, scope: { spaceId: SPACE_ID } },
-          });
-          expect(await ctx.op(name).execute({ scopeId: foreign.id }, caller)).toMatchObject({
-            accepted: false,
-            reason: 'scope_not_found',
-          });
-          expect(await ctx.op(name).execute({ scopeId: own.id }, { source })).toMatchObject({
-            accepted: false,
-            reason: 'space_required',
-          });
-        }
-      }
     } finally {
       ctx.db.close();
     }

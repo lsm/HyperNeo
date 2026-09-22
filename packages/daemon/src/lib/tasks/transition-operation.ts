@@ -21,6 +21,7 @@ export type TransitionTaskRejection =
   | 'result_requires_done'
   | 'block_reason_requires_blocked'
   | 'space_at_task_capacity'
+  | 'approved_requires_complete'
   | 'archive_active_run';
 
 export type TransitionTaskOutput =
@@ -83,6 +84,7 @@ export function createTransitionTaskOperation<Input = TransitionStandaloneTaskIn
         'result_requires_done',
         'block_reason_requires_blocked',
         'space_at_task_capacity',
+        'approved_requires_complete',
         'archive_active_run',
       ]),
     ]),

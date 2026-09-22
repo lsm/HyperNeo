@@ -123,7 +123,7 @@ export function createListNodeReachableAgentsOperation(deps: NodeMessagingDepend
     .pipe(listNodeReachableAgents, ['outcome', 'deps'], 'outcome')
     .endAsync('outcome') as (caller: OperationCaller) => Promise<Result>;
   return defineOperation({
-    name: 'node.reachableAgents.list',
+    name: 'workflow.run.reachableAgent.list',
     policy: { safetyClass: 'read', roles: ['workflow_worker'] },
     description: LIST_REACHABLE_AGENTS_DESCRIPTION,
     inputSchema,

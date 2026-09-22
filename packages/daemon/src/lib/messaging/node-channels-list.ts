@@ -59,7 +59,7 @@ export function createListNodeChannelsOperation(deps: NodeMessagingDependencies)
     .pipe(listNodeChannels, 'outcome', 'outcome')
     .endAsync('outcome') as (caller: OperationCaller) => Promise<Result>;
   return defineOperation({
-    name: 'node.channels.list',
+    name: 'workflow.run.channel.list',
     policy: { safetyClass: 'read', roles: ['workflow_worker'] },
     description: LIST_CHANNELS_DESCRIPTION,
     inputSchema,
