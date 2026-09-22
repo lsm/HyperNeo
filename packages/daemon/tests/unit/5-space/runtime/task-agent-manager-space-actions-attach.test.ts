@@ -492,11 +492,11 @@ describe('TaskAgentManager — worker operations attach (#4600)', () => {
 
   test('global template operations reach execution for the worker session now that the generic door is removed', async () => {
     const TEMPLATE_OPS = [
-      'agentTemplate.create',
-      'agentTemplate.update',
-      'agentTemplate.delete',
-      'agentTemplate.list',
-      'agent.createFromTemplate',
+      'agent.template.create',
+      'agent.template.update',
+      'agent.template.delete',
+      'agent.template.list',
+      'agent.template.instantiate',
     ];
     const ops = TEMPLATE_OPS.map((name) =>
       defineOperation({

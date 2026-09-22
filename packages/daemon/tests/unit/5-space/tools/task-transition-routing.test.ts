@@ -72,7 +72,7 @@ describe('routeTaskUpdate reject reasons', () => {
       action: 'reject',
       reason: 'review_direct',
       message:
-        `task.update cannot transition a task into 'review' directly. ` +
+        `Cannot transition a task into 'review' directly. ` +
         `Use task.submitForReview so the pending-completion fields get stamped ` +
         `and the approval banner renders.`,
     });
@@ -92,7 +92,7 @@ describe('routeTaskUpdate reject reasons', () => {
       action: 'reject',
       reason: 'approved_direct',
       message:
-        `task.update cannot transition a task into 'approved' directly. ` +
+        `Cannot transition a task into 'approved' directly. ` +
         `Use task.approve after task.submitForReview, or let the ` +
         `runtime's post-approval router handle the transition — both stamp ` +
         `the approval metadata and dispatch the configured post-approval step.`,
@@ -115,7 +115,7 @@ describe('routeTaskUpdate reject reasons', () => {
         action: 'reject',
         reason: 'limited_direct',
         message:
-          `task.update cannot transition a task into '${requestedStatus}' directly. ` +
+          `Cannot transition a task into '${requestedStatus}' directly. ` +
           `rate_limited and usage_limited are runtime-owned: the rate-limit pause ` +
           `path sets them with a restrictions payload and the resume path clears ` +
           `them automatically.`,
@@ -132,7 +132,7 @@ describe('routeTaskUpdate reject reasons', () => {
       action: 'reject',
       reason: 'review_to_done',
       message:
-        `task.update cannot transition a task from 'review' to 'done' directly. ` +
+        `Cannot transition a task from 'review' to 'done' directly. ` +
         `Use task.approve (subject to the workflow's completion ` +
         `autonomy level) or task.submitForReview so a human can approve via the UI — ` +
         `both stamp the approval metadata and dispatch the configured post-approval step.`,

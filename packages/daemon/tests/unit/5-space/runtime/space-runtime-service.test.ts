@@ -2883,13 +2883,13 @@ describe('SpaceRuntimeService', () => {
       expect(agent.mergeRuntimeMcpServers).not.toHaveBeenCalled();
     });
 
-    describe('agentTemplate operations reach the member session registry', () => {
+    describe('agent.template operations reach the member session registry', () => {
       const TEMPLATE_OP_NAMES = [
-        'agentTemplate.create',
-        'agentTemplate.update',
-        'agentTemplate.delete',
-        'agentTemplate.list',
-        'agent.createFromTemplate',
+        'agent.template.create',
+        'agent.template.update',
+        'agent.template.delete',
+        'agent.template.list',
+        'agent.template.instantiate',
       ];
 
       function templateOps(): OperationDefinition[] {
@@ -2902,9 +2902,9 @@ describe('SpaceRuntimeService', () => {
             resultSchema: z.unknown(),
             policy: {
               safetyClass:
-                name === 'agentTemplate.list'
+                name === 'agent.template.list'
                   ? 'read'
-                  : name === 'agentTemplate.delete'
+                  : name === 'agent.template.delete'
                     ? 'destructive'
                     : 'mutate',
               roles,
@@ -2960,14 +2960,14 @@ describe('SpaceRuntimeService', () => {
         const registry = registryOf(sessionManager);
         const outcome = await invokeOperation(
           registry,
-          'agentTemplate.list',
+          'agent.template.list',
           {},
           {
             ...memberCaller,
             role: 'workflow_worker',
           }
         );
-        expect(outcome).toEqual({ kind: 'completed', value: 'ran agentTemplate.list' });
+        expect(outcome).toEqual({ kind: 'completed', value: 'ran agent.template.list' });
       });
     });
 

@@ -105,9 +105,9 @@ beforeEach(() => {
   published = [];
 });
 
-describe('the agentTemplate.create operation', () => {
+describe('the agent.template.create operation', () => {
   test('creates a user-authored template and returns the stored record with its version', async () => {
-    const outcome = await run('agentTemplate.create', {
+    const outcome = await run('agent.template.create', {
       key: 'custom.reviewer',
       handle: 'custom-reviewer',
       displayName: 'Custom Reviewer',
@@ -129,8 +129,8 @@ describe('the agentTemplate.create operation', () => {
   });
 
   test('a duplicate key is rejected with template_rejected and nothing is overwritten', async () => {
-    await run('agentTemplate.create', { key: 'custom.reviewer', handle: 'custom-reviewer' });
-    const outcome = await run('agentTemplate.create', {
+    await run('agent.template.create', { key: 'custom.reviewer', handle: 'custom-reviewer' });
+    const outcome = await run('agent.template.create', {
       key: 'custom.reviewer',
       handle: 'another-reviewer',
       displayName: 'Impostor',
@@ -140,7 +140,7 @@ describe('the agentTemplate.create operation', () => {
   });
 
   test('the audit entry names the underlying template tool', async () => {
-    await run('agentTemplate.create', { key: 'custom.reviewer', handle: 'custom-reviewer' });
+    await run('agent.template.create', { key: 'custom.reviewer', handle: 'custom-reviewer' });
     expect(audited).toEqual([
       {
         toolName: 'create_agent_template',
@@ -150,10 +150,10 @@ describe('the agentTemplate.create operation', () => {
   });
 });
 
-describe('the agentTemplate.update operation', () => {
+describe('the agent.template.update operation', () => {
   test('updates an owned template and bumps its version', async () => {
-    await run('agentTemplate.create', { key: 'custom.reviewer', handle: 'custom-reviewer' });
-    const outcome = await run('agentTemplate.update', {
+    await run('agent.template.create', { key: 'custom.reviewer', handle: 'custom-reviewer' });
+    const outcome = await run('agent.template.update', {
       key: 'custom.reviewer',
       expectedVersion: 1,
       displayName: 'Renamed Reviewer',
@@ -166,9 +166,9 @@ describe('the agentTemplate.update operation', () => {
   });
 
   test('a stale expectedVersion is rejected and the template is unchanged', async () => {
-    await run('agentTemplate.create', { key: 'custom.reviewer', handle: 'custom-reviewer' });
-    await run('agentTemplate.update', { key: 'custom.reviewer', displayName: 'Renamed' });
-    const outcome = await run('agentTemplate.update', {
+    await run('agent.template.create', { key: 'custom.reviewer', handle: 'custom-reviewer' });
+    await run('agent.template.update', { key: 'custom.reviewer', displayName: 'Renamed' });
+    const outcome = await run('agent.template.update', {
       key: 'custom.reviewer',
       expectedVersion: 1,
       displayName: 'Should Not Apply',
@@ -181,7 +181,7 @@ describe('the agentTemplate.update operation', () => {
   });
 
   test('a built-in template key is rejected', async () => {
-    const outcome = await run('agentTemplate.update', {
+    const outcome = await run('agent.template.update', {
       key: 'worker.swe',
       displayName: 'Nope',
     });
@@ -190,33 +190,33 @@ describe('the agentTemplate.update operation', () => {
   });
 });
 
-describe('the agentTemplate.delete operation', () => {
+describe('the agent.template.delete operation', () => {
   test('deletes an owned template by key', async () => {
-    await run('agentTemplate.create', { key: 'custom.reviewer', handle: 'custom-reviewer' });
-    const outcome = await run('agentTemplate.delete', { key: 'custom.reviewer' });
+    await run('agent.template.create', { key: 'custom.reviewer', handle: 'custom-reviewer' });
+    const outcome = await run('agent.template.delete', { key: 'custom.reviewer' });
     expect(outcome.value?.deleted).toBe('custom.reviewer');
     expect(templateRepo.getOwned(spaceId, 'custom.reviewer')).toBeNull();
   });
 
   test('a built-in template key is rejected', async () => {
-    const outcome = await run('agentTemplate.delete', { key: 'worker.swe' });
+    const outcome = await run('agent.template.delete', { key: 'worker.swe' });
     expect(outcome.value?.reason).toBe('template_rejected');
     expect(outcome.value?.message).toContain('cannot be deleted');
   });
 
   test('a space below autonomy level 4 is refused and the template survives', async () => {
-    await run('agentTemplate.create', { key: 'custom.reviewer', handle: 'custom-reviewer' });
+    await run('agent.template.create', { key: 'custom.reviewer', handle: 'custom-reviewer' });
     spaceAutonomyLevel = 3;
-    const outcome = await run('agentTemplate.delete', { key: 'custom.reviewer' });
+    const outcome = await run('agent.template.delete', { key: 'custom.reviewer' });
     expect(outcome.value?.reason).toBe('template_rejected');
     expect(outcome.value?.message).toContain('not permitted');
     expect(templateRepo.getOwned(spaceId, 'custom.reviewer')?.key).toBe('custom.reviewer');
   });
 });
 
-describe('the agentTemplate.list operation', () => {
+describe('the agent.template.list operation', () => {
   test('lists built-in templates flagged builtin with a null owned version', async () => {
-    const outcome = await run('agentTemplate.list', {});
+    const outcome = await run('agent.template.list', {});
     const entries = outcome.value?.templates ?? [];
     const swe = entries.find((entry) => entry.templateName === 'worker.swe');
     expect(swe).toMatchObject({ builtin: true, version: null });
@@ -224,8 +224,8 @@ describe('the agentTemplate.list operation', () => {
   });
 
   test('a user-created template appears with its version', async () => {
-    await run('agentTemplate.create', { key: 'custom.reviewer', handle: 'custom-reviewer' });
-    const outcome = await run('agentTemplate.list', {});
+    await run('agent.template.create', { key: 'custom.reviewer', handle: 'custom-reviewer' });
+    const outcome = await run('agent.template.list', {});
     const owned = (outcome.value?.templates ?? []).find(
       (entry) => entry.templateName === 'custom.reviewer'
     );
@@ -233,30 +233,30 @@ describe('the agentTemplate.list operation', () => {
   });
 
   test('a human caller naming the Space reads the list', async () => {
-    const outcome = await run('agentTemplate.list', { spaceId }, { source: 'rpc' });
+    const outcome = await run('agent.template.list', { spaceId }, { source: 'rpc' });
     expect(outcome.value?.templates?.length).toBeGreaterThan(0);
   });
 
   test('a human caller omitting the Space is rejected with space_required', async () => {
-    const outcome = await run('agentTemplate.list', {}, { source: 'rpc' });
+    const outcome = await run('agent.template.list', {}, { source: 'rpc' });
     expect(outcome.value?.reason).toBe('space_required');
   });
 
   test('a member naming a different Space is rejected with space_mismatch', async () => {
-    const outcome = await run('agentTemplate.list', { spaceId: otherSpaceId });
+    const outcome = await run('agent.template.list', { spaceId: otherSpaceId });
     expect(outcome.value?.reason).toBe('space_mismatch');
   });
 
   test('a workflow worker reads the template list of its own Space', async () => {
-    const outcome = await run('agentTemplate.list', {}, memberCaller('workflow_worker'));
+    const outcome = await run('agent.template.list', {}, memberCaller('workflow_worker'));
     expect(outcome.kind).toBe('completed');
     expect(outcome.value?.templates?.length).toBeGreaterThan(0);
   });
 });
 
-describe('the agent.createFromTemplate operation', () => {
+describe('the agent.template.instantiate operation', () => {
   test('creates a long-horizon agent from a built-in worker template', async () => {
-    const outcome = await run('agent.createFromTemplate', { templateName: 'worker.swe' });
+    const outcome = await run('agent.template.instantiate', { templateName: 'worker.swe' });
     expect(outcome.value?.agent).toMatchObject({
       templateKey: 'worker.swe',
       status: 'active',
@@ -269,14 +269,14 @@ describe('the agent.createFromTemplate operation', () => {
   });
 
   test('a repeated creation derives a unique display name and handle', async () => {
-    await run('agent.createFromTemplate', { templateName: 'worker.swe' });
-    const second = await run('agent.createFromTemplate', { templateName: 'worker.swe' });
+    await run('agent.template.instantiate', { templateName: 'worker.swe' });
+    const second = await run('agent.template.instantiate', { templateName: 'worker.swe' });
     expect(second.value?.agent).toMatchObject({ displayName: 'SWE (2)', handle: 'swe-2' });
   });
 
   test('an explicit name that is already taken is rejected', async () => {
-    await run('agent.createFromTemplate', { templateName: 'worker.swe', name: 'Duplicate' });
-    const outcome = await run('agent.createFromTemplate', {
+    await run('agent.template.instantiate', { templateName: 'worker.swe', name: 'Duplicate' });
+    const outcome = await run('agent.template.instantiate', {
       templateName: 'worker.research',
       name: 'Duplicate',
     });
@@ -285,7 +285,9 @@ describe('the agent.createFromTemplate operation', () => {
   });
 
   test('template reminder defaults are seeded for the new agent', async () => {
-    const outcome = await run('agent.createFromTemplate', { templateName: 'task-manager.default' });
+    const outcome = await run('agent.template.instantiate', {
+      templateName: 'task-manager.default',
+    });
     const agentId = String(outcome.value?.agent?.id);
     expect(outcome.value?.seededReminders).toEqual([{ title: 'Review stalled work' }]);
     expect(outcome.value?.skippedReminders).toEqual([]);
@@ -295,7 +297,7 @@ describe('the agent.createFromTemplate operation', () => {
   });
 
   test('an unknown template key is rejected with template_rejected', async () => {
-    const outcome = await run('agent.createFromTemplate', { templateName: 'worker.nope' });
+    const outcome = await run('agent.template.instantiate', { templateName: 'worker.nope' });
     expect(outcome.value?.reason).toBe('template_rejected');
     expect(outcome.value?.message).toContain('not found');
     expect(agentRepo.listBySpaceId(spaceId)).toHaveLength(0);
@@ -303,7 +305,7 @@ describe('the agent.createFromTemplate operation', () => {
 
   test('the creating session must be active in the Space', async () => {
     sessions.set(MEMBER_SESSION, sessionRow({ id: MEMBER_SESSION, status: 'archived' }));
-    const outcome = await run('agent.createFromTemplate', { templateName: 'worker.swe' });
+    const outcome = await run('agent.template.instantiate', { templateName: 'worker.swe' });
     expect(outcome.value?.reason).toBe('agent_denied');
     expect(agentRepo.listBySpaceId(spaceId)).toHaveLength(0);
   });
