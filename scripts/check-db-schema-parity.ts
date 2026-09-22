@@ -86,7 +86,7 @@ export const HELPER_SCHEMA_TABLES = [
   'space_goal_outcome_notifications',
   'space_goals',
   'space_long_horizon_agent_event_subscriptions',
-  'space_long_horizon_agent_forge_scopes',
+  'space_long_horizon_agent_evolution_scopes',
   'space_long_horizon_agent_goals',
   'space_long_horizon_agent_reminders',
   'space_long_horizon_agents',

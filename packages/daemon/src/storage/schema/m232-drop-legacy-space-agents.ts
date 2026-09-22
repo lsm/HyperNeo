@@ -44,6 +44,9 @@ function warnUncopiedAgents(db: BunDatabase): void {
 }
 
 function warnDroppedAssignmentGhosts(db: BunDatabase): void {
+  const scopeLinks = tableExists(db, 'space_long_horizon_agent_evolution_scopes')
+    ? 'space_long_horizon_agent_evolution_scopes'
+    : 'space_long_horizon_agent_forge_scopes';
   const ghostChecks: Array<{ tableName: string; sql: string }> = [
     {
       tableName: 'space_agent_goal_assignments',
@@ -69,7 +72,7 @@ function warnDroppedAssignmentGhosts(db: BunDatabase): void {
         JOIN space_long_horizon_agents live
           ON live.id = legacy.agent_id AND live.space_id = legacy.space_id
         WHERE NOT EXISTS (
-          SELECT 1 FROM space_long_horizon_agent_forge_scopes copied
+          SELECT 1 FROM ${scopeLinks} copied
           WHERE copied.agent_id = legacy.agent_id AND copied.scope_id = legacy.scope_id
         )
         AND EXISTS (

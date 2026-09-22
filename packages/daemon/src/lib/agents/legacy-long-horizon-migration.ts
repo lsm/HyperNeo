@@ -107,7 +107,7 @@ function copyLegacyGoals(db: BunDatabase): number {
 function copyLegacyForgeScopes(db: BunDatabase): number {
   return db
     .prepare(
-      `INSERT OR IGNORE INTO space_long_horizon_agent_forge_scopes (
+      `INSERT OR IGNORE INTO space_long_horizon_agent_evolution_scopes (
         agent_id, scope_id, relationship, created_at, updated_at
       )
       SELECT legacy.agent_id, legacy.scope_id, 'owner', legacy.created_at, legacy.created_at
