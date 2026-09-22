@@ -58,15 +58,38 @@ describe('SDKMessageRepository → LiveQueryEngine reactivity (spaceSessions.byS
       );
     bunDb
       .prepare(
-        `INSERT INTO sessions (id, title, created_at, last_active_at, status, config, metadata)
-         VALUES (?, '', ?, ?, 'active', '{}', '{}')`
+        `INSERT INTO sessions (id, title, created_at, last_active_at, status, config, metadata, session_context)
+         VALUES (?, '', ?, ?, 'active', '{}', '{}', ?)`
       )
-      .run(SESSION_ID, iso, iso);
+      .run(SESSION_ID, iso, iso, JSON.stringify({ spaceId: SPACE_ID }));
   });
 
   afterEach(() => {
     engine.dispose();
     bunDb.close();
+  });
+
+  test('a task-worker session the Space never listed is still in the panel', () => {
+    const iso = new Date().toISOString();
+    bunDb
+      .prepare(
+        `INSERT INTO sessions (id, title, created_at, last_active_at, status, type, config, metadata, session_context)
+         VALUES (?, 'Worker', ?, ?, 'active', 'worker', '{}', '{}', ?)`
+      )
+      .run('worker-session', iso, iso, JSON.stringify({ spaceId: SPACE_ID, taskId: 'task-1' }));
+
+    const rows = bunDb.prepare(sql).all(SPACE_ID) as { id: string }[];
+
+    expect(rows.map((row) => row.id)).toContain('worker-session');
+    expect(
+      JSON.parse(
+        (
+          bunDb.prepare('SELECT session_ids FROM spaces WHERE id = ?').get(SPACE_ID) as {
+            session_ids: string;
+          }
+        ).session_ids
+      )
+    ).not.toContain('worker-session');
   });
 
   test('a visible SDK message save re-evaluates the badge with the new count', async () => {
