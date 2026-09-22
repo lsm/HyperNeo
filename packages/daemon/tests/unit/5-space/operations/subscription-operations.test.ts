@@ -362,6 +362,46 @@ describe('subscribe and unsubscribe take a subject', () => {
     expect(registered).toEqual([]);
   });
 
+  test('an unlabelled agent subject stores an empty filter and upserts its route', async () => {
+    const caller = member(memberSession('s-agent-upsert'));
+    const subject = { type: 'agent', agentId: AGENT } as const;
+    await run('externalEvent.subscribe', { topicPattern: AGENT_TOPIC, subject }, caller);
+    expect(agentSubscriptions.listSubscriptions(AGENT)[0]!.filter).toEqual({});
+    await run(
+      'externalEvent.subscribe',
+      { topicPattern: AGENT_TOPIC, label: 'second', subject },
+      caller
+    );
+    const stored = agentSubscriptions.listSubscriptions(AGENT);
+    expect(stored).toHaveLength(1);
+    expect(stored[0]!.filter).toEqual({ label: 'second' });
+  });
+
+  test('an agent subject unsubscribe is idempotent and rejects a bad agent or pattern', async () => {
+    const caller = member(memberSession('s-agent-unsub-bad'));
+    const subject = { type: 'agent', agentId: AGENT } as const;
+    await run('externalEvent.subscribe', { topicPattern: AGENT_TOPIC, subject }, caller);
+    expect(
+      await run(
+        'externalEvent.unsubscribe',
+        { topicPattern: 'github/acme/widgets/issues/*', subject },
+        caller
+      )
+    ).toEqual({ ok: true, topicPattern: 'github/acme/widgets/issues/*' });
+    expect(agentSubscriptions.listSubscriptions(AGENT)).toHaveLength(1);
+    expect(removed).toEqual([]);
+    expect(
+      await run(
+        'externalEvent.unsubscribe',
+        { topicPattern: AGENT_TOPIC, subject: { type: 'agent', agentId: FOREIGN_AGENT } },
+        caller
+      )
+    ).toBe('agent_not_found');
+    expect(
+      await run('externalEvent.unsubscribe', { topicPattern: 'a/**/b', subject }, caller)
+    ).toBe('invalid_pattern');
+  });
+
   test('an agent subject unsubscribes the stored record and its live entry', async () => {
     const caller = member(memberSession('s-agent-unsub'));
     await run(

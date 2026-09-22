@@ -12,7 +12,6 @@ import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service
 import {
   admitEventCallerSpace,
   AGENT_EVENT_ROLES,
-  callerSessionActiveIn,
   type EventCallerDependencies,
 } from './operation-admission.ts';
 import { validateGlobPattern } from './topic-validator.ts';
@@ -113,18 +112,6 @@ export function subscriptionRecord(
     createdAt: subscription.createdAt,
     updatedAt: subscription.updatedAt,
   };
-}
-
-export function admitAgentSubscriptionWriter(
-  input: { spaceId?: string },
-  caller: OperationCaller,
-  deps: AgentSubscriptionDependencies
-): { value: string } | { reason: Rejection } {
-  const space = admitEventCallerSpace(input, caller);
-  if ('reason' in space) return { reason: { accepted: false, reason: 'caller_denied' } };
-  if (!callerSessionActiveIn(caller, space.value, deps))
-    return { reason: { accepted: false, reason: 'session_inactive' } };
-  return { value: space.value };
 }
 
 export function admitAgentSubscriptionReader(
@@ -261,41 +248,10 @@ function agentPipeline<Input, Result>(
     .endAsync('outcome') as (input: Input, caller: OperationCaller) => Promise<Result>;
 }
 
-const SCOPE_DOC =
-  'The target long-horizon agent is taken from agent_id and must belong to the caller Space; the Space is derived from the calling session, never guessed, and omitted spaceId defaults to the trusted caller Space. List results report the resolved Space in scope. Returns { accepted: false, reason } on rejection: caller_denied for any other caller, session_inactive when the calling session is not active in that Space, agent_not_found when the agent is unknown or belongs to another Space, and invalid_pattern when topic_pattern is not a valid topic glob.';
-
 export function createAgentSubscriptionOperations(
   deps: AgentSubscriptionDependencies
 ): OperationDefinition[] {
   return [
-    defineOperation({
-      name: 'externalEvent.agent.subscribe',
-      policy: { safetyClass: 'mutate', roles: AGENT_EVENT_ROLES },
-      description: `Subscribe a long-horizon agent to external events matching a topic glob (e.g. github/lsm/neokai/pull_request/*.review_*), upserting the stored subscription and refreshing the live delivery trie. ${SCOPE_DOC} Returns the stored subscription record; rejects refresh_failed when the live trie could not be refreshed.`,
-      inputSchema: SubscribeInput,
-      resultSchema: SubscribeResultSchema,
-      execute: agentPipeline(
-        'subscribe-agent-external-event',
-        deps,
-        admitAgentSubscriptionWriter,
-        (scope, input: z.infer<typeof SubscribeInput>, caller, agentDeps) =>
-          subscribeAgentTopic(scope, input, caller, agentDeps, 'externalEvent.agent.subscribe')
-      ),
-    }),
-    defineOperation({
-      name: 'externalEvent.agent.unsubscribe',
-      policy: { safetyClass: 'mutate', roles: AGENT_EVENT_ROLES },
-      description: `Remove a long-horizon agent subscription for a topic glob, deleting the stored record and its live delivery-trie entry. Idempotent: removing a pattern the agent never subscribed to still succeeds. ${SCOPE_DOC}`,
-      inputSchema: UnsubscribeInput,
-      resultSchema: UnsubscribeResultSchema,
-      execute: agentPipeline(
-        'unsubscribe-agent-external-event',
-        deps,
-        admitAgentSubscriptionWriter,
-        (scope, input: z.infer<typeof UnsubscribeInput>, caller, agentDeps) =>
-          unsubscribeAgentTopic(scope, input, caller, agentDeps, 'externalEvent.agent.unsubscribe')
-      ),
-    }),
     defineOperation({
       name: 'externalEvent.agent.listSubscriptions',
       policy: { safetyClass: 'read', roles: AGENT_EVENT_ROLES },
