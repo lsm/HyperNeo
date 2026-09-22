@@ -204,7 +204,7 @@ web's swap and remove nothing from the deletion budget.
 | --- | --- | --- |
 | session | 49 | No lane. Session lifecycle, drafts, model/thinking switches, rewind, references, voice, git, dialogs. Almost none of it is a Space business path; `message.send` and `session.message.send` are the only operations that exist. |
 | provider | 18 | No lane, and arguably none is wanted: `auth.*`, `providers.*`, `customEndpoints.*` are daemon configuration, not agent-callable capability. |
-| skills/MCP | 18 | No lane. Enablement overrides are a policy surface (session > room > space > default) that an operation catalog has no vocabulary for yet. |
+| skills/MCP | 18 | No lane. Enablement overrides are a policy surface (session > space > default) that an operation catalog has no vocabulary for yet. |
 | space | 14 | Partly covered by #4625's watchdog ops. `space.create/delete/archive/start/stop/pause/resume`, export and import have no lane. |
 | workspace | 7 | No lane. `space.workspace.*` is the registered-workspace surface from `docs/features/space-workspaces.md`. |
 | template | 5 | No lane. |
