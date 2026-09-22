@@ -90,8 +90,9 @@ export function routeActiveDirectAttempt<T extends OwnedTask>(
   const directStatus = input.status as 'done' | 'blocked' | 'cancelled' | 'stopped';
   if (!(['done', 'blocked', 'cancelled', 'stopped'] as const).includes(directStatus))
     return { reason: 'unsupported_status' };
+  const requiresRunningAttempt = directStatus !== 'cancelled';
   if (
-    attempt.phase !== 'running' ||
+    (requiresRunningAttempt && attempt.phase !== 'running') ||
     owned.task.taskAgentSessionId !== attempt.sessionId ||
     !deps.requestDirectOutcome
   )

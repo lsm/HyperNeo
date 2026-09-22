@@ -182,6 +182,42 @@ describe('routeActiveDirectAttempt', () => {
     ).toEqual({ reason: ack });
   });
 
+  test('cancelling takes a reserved attempt, which task.cancel fenced on its own', () => {
+    const task = stage('reserved');
+    expect(
+      routeActiveDirectAttempt(
+        { spaceId, task },
+        { taskId: task.id, status: 'cancelled' },
+        deps({ requestDirectOutcome: () => ack })
+      )
+    ).toEqual({ reason: ack });
+  });
+
+  test('the other direct edges still require a running attempt', () => {
+    const task = stage('reserved');
+    for (const status of ['done', 'blocked', 'stopped'] as const) {
+      expect(
+        routeActiveDirectAttempt(
+          { spaceId, task },
+          { taskId: task.id, status },
+          deps({ requestDirectOutcome: () => ack })
+        ),
+        status
+      ).toEqual({ reason: 'direct_attempt_not_running' });
+    }
+  });
+
+  test('cancelling a reserved attempt owned by another session is still refused', () => {
+    const task = tasks.updateTask(stage('reserved').id, { taskAgentSessionId: 'someone-else' })!;
+    expect(
+      routeActiveDirectAttempt(
+        { spaceId, task },
+        { taskId: task.id, status: 'cancelled' },
+        deps({ requestDirectOutcome: () => ack })
+      )
+    ).toEqual({ reason: 'direct_attempt_not_running' });
+  });
+
   test('a status the direct route does not carry is still unsupported_status', () => {
     const task = stage('running');
     expect(
