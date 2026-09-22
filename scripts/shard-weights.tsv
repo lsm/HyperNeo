@@ -151,7 +151,6 @@
 2473	packages/daemon/tests/unit/5-space/runtime/task-status-transitions.test.ts
 3	packages/daemon/tests/unit/5-space/runtime/topic-trie.test.ts
 27	packages/daemon/tests/unit/5-space/runtime/verified-stop-flow.test.ts
-11	packages/daemon/tests/unit/5-space/tools/space-tool-pipeline.test.ts
 15	packages/daemon/tests/unit/5-space/tools/task-transition-routing.test.ts
 6	packages/daemon/tests/unit/5-space/tools/tool-admission-gates.test.ts
 10940	packages/daemon/tests/unit/5-space/workflow/built-in-workflows.test.ts
