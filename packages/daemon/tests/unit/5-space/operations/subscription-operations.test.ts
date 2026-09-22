@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
+import { McpAuditLogRepository } from '../../../../src/storage/repositories/mcp-audit-log-repository';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
+import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
+import { SpaceAgentSubscriptionRepository } from '../../../../src/storage/repositories/space-agent-subscription-repository';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
@@ -19,15 +22,26 @@ import { createTestSession } from '../../../helpers/database';
 let db: Database;
 let sessions: SessionRepository;
 let nodeExecutions: NodeExecutionRepository;
+let agents: SpaceLongHorizonAgentRepository;
+let agentSubscriptions: SpaceAgentSubscriptionRepository;
+let auditLogRepo: McpAuditLogRepository;
 let operations: Map<string, OperationDefinition>;
 let registered: Array<{ slot: SubscriptionSlot; topicPattern: string }>;
 let unregistered: Array<{ slot: SubscriptionSlot; topicPattern: string }>;
+let refreshed: Array<{ spaceId: string; subscriptionId: string }>;
+let removed: Array<{ spaceId: string; subscriptionId: string }>;
+let refreshOutcome: { success: boolean; error?: string };
 let registerOutcome: { success: boolean; error?: string };
 let registerThrows: Error | null;
 let primaryLinkUrl: string;
 let SPACE: string;
+let OTHER_SPACE: string;
 let RUN: string;
 let TASK: string;
+let AGENT: string;
+let FOREIGN_AGENT: string;
+
+const AGENT_TOPIC = 'github/acme/widgets/pull_request/*.review_*';
 
 const LIST_RESULT = {
   workflowRunId: 'placeholder',
@@ -68,6 +82,30 @@ function worker(sessionId: string): OperationCaller {
   return { source: 'mcp', sessionId, spaceId: SPACE, role: 'workflow_worker', agentName: 'coder' };
 }
 
+function memberSession(id: string) {
+  sessions.createSession(
+    {
+      ...createTestSession(id),
+      workspacePath: '/repo',
+      type: 'space_chat',
+      status: 'active',
+      context: { spaceId: SPACE },
+    },
+    { enforceWorkspaceOwnership: false }
+  );
+  return id;
+}
+
+function member(sessionId: string): OperationCaller {
+  return {
+    source: 'mcp',
+    sessionId,
+    spaceId: SPACE,
+    role: 'long_term_agent',
+    agentName: 'watcher',
+  };
+}
+
 function run(name: string, input: unknown, caller: OperationCaller) {
   const operation = operations.get(name);
   if (!operation) throw new Error(`operation ${name} not registered`);
@@ -82,6 +120,11 @@ beforeEach(() => {
     slug: 'subs',
     workspacePath: '/repo',
   }).id;
+  OTHER_SPACE = new SpaceRepository(db).createSpace({
+    name: 'Other',
+    slug: 'other',
+    workspacePath: '/other',
+  }).id;
   const workflow = new SpaceWorkflowRepository(db).createWorkflow({ spaceId: SPACE, name: 'W' });
   RUN = new SpaceWorkflowRunRepository(db).createRun({
     spaceId: SPACE,
@@ -92,12 +135,29 @@ beforeEach(() => {
   TASK = taskRepo.createTask({ spaceId: SPACE, title: 'T', description: '' }).id;
   sessions = new SessionRepository(db);
   nodeExecutions = new NodeExecutionRepository(db);
+  agents = new SpaceLongHorizonAgentRepository(db);
+  AGENT = agents.create({ spaceId: SPACE, handle: 'watcher' }).id;
+  FOREIGN_AGENT = agents.create({ spaceId: OTHER_SPACE, handle: 'outsider' }).id;
+  agentSubscriptions = new SpaceAgentSubscriptionRepository(db, new SpaceAgentRepository(db));
+  auditLogRepo = new McpAuditLogRepository(db);
   registered = [];
   unregistered = [];
+  refreshed = [];
+  removed = [];
+  refreshOutcome = { success: true };
   registerOutcome = { success: true };
   registerThrows = null;
   primaryLinkUrl = '';
   const deps: SubscriptionDependencies = {
+    subscriptionRepo: agentSubscriptions,
+    refreshSubscription: (spaceId, subscriptionId) => {
+      refreshed.push({ spaceId, subscriptionId });
+      return refreshOutcome;
+    },
+    removeSubscription: (spaceId, subscriptionId) => {
+      removed.push({ spaceId, subscriptionId });
+    },
+    auditLogRepo,
     registerSubscription: (slot, topicPattern) => {
       if (registerThrows) throw registerThrows;
       registered.push({ slot, topicPattern });
@@ -115,7 +175,7 @@ beforeEach(() => {
     getSession: (id) => sessions.getSession(id),
     taskRepo,
     nodeExecutionRepo: nodeExecutions,
-    longHorizonAgentRepo: new SpaceLongHorizonAgentRepository(db),
+    longHorizonAgentRepo: agents,
   };
   operations = new Map(
     createSubscriptionOperations(deps).map((operation) => [operation.name, operation])
@@ -264,6 +324,144 @@ describe('node external-event subscription operations', () => {
       subscriptions: { ...LIST_RESULT, workflowRunId: RUN },
       scope: { spaceId: SPACE },
     });
+  });
+});
+
+describe('subscribe and unsubscribe take a subject', () => {
+  test('an explicit node subject still resolves the slot from the calling session', async () => {
+    const caller = worker(workerSession('s-node-subject'));
+    expect(
+      await run(
+        'externalEvent.subscribe',
+        { topicPattern: 'github/a/b/*', subject: { type: 'node' } },
+        caller
+      )
+    ).toEqual({ ok: true, topicPattern: 'github/a/b/*' });
+    expect(registered[0]!.slot).toEqual({
+      workflowRunId: RUN,
+      nodeId: 'node-a',
+      agentName: 'coder',
+      taskId: TASK,
+    });
+  });
+
+  test('an agent subject stores the subscription against that agent and refreshes the trie', async () => {
+    const caller = member(memberSession('s-agent-sub'));
+    const result = await run(
+      'externalEvent.subscribe',
+      { topicPattern: AGENT_TOPIC, label: 'reviews', subject: { type: 'agent', agentId: AGENT } },
+      caller
+    );
+    expect(operations.get('externalEvent.subscribe')?.resultSchema.parse(result)).toMatchObject({
+      subscription: { agentId: AGENT, source: 'github', topic: AGENT_TOPIC, status: 'active' },
+    });
+    const stored = agentSubscriptions.listSubscriptions(AGENT);
+    expect(stored).toHaveLength(1);
+    expect(stored[0]!.filter).toEqual({ label: 'reviews' });
+    expect(refreshed).toEqual([{ spaceId: SPACE, subscriptionId: stored[0]!.id }]);
+    expect(registered).toEqual([]);
+  });
+
+  test('an agent subject unsubscribes the stored record and its live entry', async () => {
+    const caller = member(memberSession('s-agent-unsub'));
+    await run(
+      'externalEvent.subscribe',
+      { topicPattern: AGENT_TOPIC, subject: { type: 'agent', agentId: AGENT } },
+      caller
+    );
+    const stored = agentSubscriptions.listSubscriptions(AGENT)[0]!;
+    expect(
+      await run(
+        'externalEvent.unsubscribe',
+        { topicPattern: AGENT_TOPIC, subject: { type: 'agent', agentId: AGENT } },
+        caller
+      )
+    ).toEqual({ ok: true, topicPattern: AGENT_TOPIC });
+    expect(agentSubscriptions.listSubscriptions(AGENT)).toEqual([]);
+    expect(removed).toEqual([{ spaceId: SPACE, subscriptionId: stored.id }]);
+    expect(unregistered).toEqual([]);
+  });
+
+  test('an agent subject succeeds for a caller with no node execution behind it', async () => {
+    const caller = member(memberSession('s-agent-nonode'));
+    expect(await run('externalEvent.subscribe', { topicPattern: AGENT_TOPIC }, caller)).toBe(
+      'node_unresolved'
+    );
+    const result = (await run(
+      'externalEvent.subscribe',
+      { topicPattern: AGENT_TOPIC, subject: { type: 'agent', agentId: AGENT } },
+      caller
+    )) as { subscription: { agentId: string } };
+    expect(result.subscription.agentId).toBe(AGENT);
+  });
+
+  test('rejects an unknown or cross-space agent subject', async () => {
+    const caller = member(memberSession('s-agent-foreign'));
+    expect(
+      await run(
+        'externalEvent.subscribe',
+        { topicPattern: AGENT_TOPIC, subject: { type: 'agent', agentId: 'agent-none' } },
+        caller
+      )
+    ).toBe('agent_not_found');
+    expect(
+      await run(
+        'externalEvent.subscribe',
+        { topicPattern: AGENT_TOPIC, subject: { type: 'agent', agentId: FOREIGN_AGENT } },
+        caller
+      )
+    ).toBe('agent_not_found');
+    expect(agentSubscriptions.listSubscriptions(AGENT)).toEqual([]);
+  });
+
+  test('reports invalid_pattern and refresh_failed for an agent subject', async () => {
+    const caller = member(memberSession('s-agent-reject'));
+    expect(
+      await run(
+        'externalEvent.subscribe',
+        { topicPattern: 'nosource', subject: { type: 'agent', agentId: AGENT } },
+        caller
+      )
+    ).toBe('invalid_pattern');
+    expect(agentSubscriptions.listSubscriptions(AGENT)).toEqual([]);
+    refreshOutcome = { success: false, error: 'trie unavailable' };
+    expect(
+      await run(
+        'externalEvent.subscribe',
+        { topicPattern: AGENT_TOPIC, subject: { type: 'agent', agentId: AGENT } },
+        caller
+      )
+    ).toBe('refresh_failed');
+  });
+
+  test('audits an agent-subject mutation under the operation that was called', async () => {
+    const sessionId = memberSession('s-agent-audit');
+    await run(
+      'externalEvent.subscribe',
+      { topicPattern: AGENT_TOPIC, subject: { type: 'agent', agentId: AGENT } },
+      member(sessionId)
+    );
+    expect(auditLogRepo.listBySession(sessionId)[0]!).toMatchObject({
+      toolName: 'externalEvent.subscribe',
+      agentName: 'watcher',
+      spaceId: SPACE,
+    });
+  });
+
+  test('denies an agent subject when the caller names another Space', async () => {
+    const caller = member(memberSession('s-agent-space'));
+    expect(
+      await run(
+        'externalEvent.subscribe',
+        {
+          topicPattern: AGENT_TOPIC,
+          spaceId: OTHER_SPACE,
+          subject: { type: 'agent', agentId: AGENT },
+        },
+        caller
+      )
+    ).toBe('caller_denied');
+    expect(agentSubscriptions.listSubscriptions(AGENT)).toEqual([]);
   });
 });
 

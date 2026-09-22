@@ -27,8 +27,6 @@ import {
   type AgentReminderDependencies,
 } from './reminder-operations.ts';
 import {
-  createArchiveAgentOperation,
-  createPauseAgentOperation,
   createUpdateAgentOperation,
   type UpdateAgentDependencies,
 } from './update-agent-operation.ts';
@@ -116,8 +114,6 @@ export function createAgentOperations(deps: AgentOperationDependencies): Operati
       createAgent: (params) => deps.longHorizonAgentRepo.create(params),
     }),
     createUpdateAgentOperation(updateDeps(deps)),
-    createPauseAgentOperation(updateDeps(deps)),
-    createArchiveAgentOperation(updateDeps(deps)),
     createAssignAgentToGoalOperation(assignmentDeps(deps)),
     createUnassignAgentFromGoalOperation(assignmentDeps(deps)),
     createAssignAgentToForgeScopeOperation(assignmentDeps(deps)),

@@ -2,7 +2,11 @@ import { isWorkflowRecoveryTransition, type SpaceTaskStatus } from '@hyperneo/sh
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { OperationCaller } from '../operations/registry.ts';
 import { isValidTaskTransition } from './transitions.ts';
-import { routeTaskUpdate, type TaskUpdateRouting } from '../space/tools/task-transition-routing.ts';
+import {
+  routeTaskUpdate,
+  type TaskUpdateRejectReason,
+  type TaskUpdateRouting,
+} from '../space/tools/task-transition-routing.ts';
 export interface SpaceTaskTransitionDecisionInput {
   taskId: string;
   currentStatus: SpaceTaskStatus;
@@ -17,7 +21,8 @@ type RejectResult =
   | 'unsupported_status'
   | 'invalid_transition'
   | 'result_requires_done'
-  | 'block_reason_requires_blocked';
+  | 'block_reason_requires_blocked'
+  | 'archive_active_run';
 export type SpaceTaskTransitionDecision =
   | { action: 'write'; approvalSource: 'human' | undefined; allowActiveRun: boolean }
   | { action: 'reject'; result: RejectResult }
@@ -37,6 +42,13 @@ const REJECT_BLOCK_REASON_REQUIRES_BLOCKED = {
   action: 'reject',
   result: 'block_reason_requires_blocked',
 } as const;
+const REJECT_ARCHIVE_ACTIVE_RUN = { action: 'reject', result: 'archive_active_run' } as const;
+const REJECT_BY_ROUTING_REASON: Partial<
+  Record<TaskUpdateRejectReason, SpaceTaskTransitionDecision>
+> = {
+  review_to_done: REJECT_INVALID,
+  archive_active_run: REJECT_ARCHIVE_ACTIVE_RUN,
+};
 export function classifyRequest(input: Input): TaskUpdateRouting {
   const { currentStatus, requestedStatus, workflowRunId, runActive } = input;
   const statusDiffers = currentStatus !== requestedStatus;
@@ -60,9 +72,7 @@ export function classifyRequest(input: Input): TaskUpdateRouting {
 export function rejectUnsupportedRequest(routing: TaskUpdateRouting): Gate {
   if (routing.action === 'fields_only') return { reason: REJECT_INVALID };
   if (routing.action !== 'reject') return { value: routing };
-  return routing.reason === 'review_to_done'
-    ? { reason: REJECT_INVALID }
-    : { reason: REJECT_UNSUPPORTED };
+  return { reason: REJECT_BY_ROUTING_REASON[routing.reason] ?? REJECT_UNSUPPORTED };
 }
 export function requireResultOnlyWithDone(routing: TaskUpdateRouting, input: Input): Gate {
   return input.hasResult && input.requestedStatus !== 'done'

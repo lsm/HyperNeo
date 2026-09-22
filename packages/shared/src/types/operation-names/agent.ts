@@ -1,5 +1,4 @@
 export const AGENT_OPERATION_NAMES = [
-  'agent.archive',
   'agent.assignForgeScope',
   'agent.assignGoal',
   'agent.create',
@@ -7,7 +6,6 @@ export const AGENT_OPERATION_NAMES = [
   'agent.ensureSession',
   'agent.get',
   'agent.list',
-  'agent.pause',
   'agent.reminders.cancel',
   'agent.reminders.create',
   'agent.reminders.list',

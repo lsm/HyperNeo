@@ -254,14 +254,32 @@ test.each(['review', 'approved', 'rate_limited'] as const)(
   }
 );
 
-test('archiving a task with an active workflow run is unsupported', async () => {
+test('archiving a task with an active workflow run names the active run', async () => {
   const task = tasks.createTask({ spaceId, title: 'T', description: '' });
   tasks.updateTask(task.id, { workflowRunId: createWorkflowRun().id });
   isWorkflowRunActive.mockImplementation(() => true);
   expect(await invoke({ taskId: task.id, status: 'archived' }, rpc)).toEqual({
     kind: 'completed',
-    value: 'unsupported_status',
+    value: 'archive_active_run',
   });
+  expect(tasks.getTask(task.id)?.archivedAt).toBeNull();
+});
+
+test('an mcp session in the owning Space archives a task off the board', async () => {
+  const task = tasks.createTask({ spaceId, title: 'T', description: '' });
+  const result = await invoke({ taskId: task.id, status: 'archived' }, worker('member', spaceId));
+  expect(result).toMatchObject({ kind: 'completed', value: { id: task.id, status: 'archived' } });
+  expect(tasks.getTask(task.id)?.archivedAt).not.toBeNull();
+});
+
+test('an archive denial stays distinct from the active-run refusal', async () => {
+  const task = tasks.createTask({ spaceId, title: 'T', description: '' });
+  const caller = worker('outsider', 'other-space');
+  expect(await invoke({ taskId: task.id, status: 'archived' }, caller)).toEqual({
+    kind: 'completed',
+    value: { accepted: false, reason: 'task_transition_denied' },
+  });
+  expect(tasks.getTask(task.id)?.archivedAt).toBeNull();
 });
 
 test('archiving a task with an inactive workflow run writes', async () => {

@@ -6,16 +6,16 @@ import type {
   SpaceAgentInactivityConfigRepository,
 } from '../../storage/repositories/space-agent-inactivity-repository.ts';
 import {
+  admitEventCallerSpace,
+  callerSessionActiveIn,
+  type EventCallerDependencies,
+} from '../external-events/operation-admission.ts';
+import {
   defineOperation,
   type OperationCaller,
   type OperationCallerRole,
   type OperationDefinition,
 } from '../operations/registry.ts';
-import {
-  admitEventCallerSpace,
-  callerSessionActiveIn,
-  type EventCallerDependencies,
-} from './operation-admission.ts';
 
 export const DEFAULT_INACTIVITY_THRESHOLD_MS = 24 * 60 * 60 * 1000;
 
@@ -185,7 +185,7 @@ export function createInactivityOperations(agents: InactivityDependencies): Oper
       execute: writePipeline('inactivity-config-set', agents, applyConfig),
     }),
     defineOperation({
-      name: 'inactivity.runNow',
+      name: 'inactivity.scan.run',
       policy: { safetyClass: 'mutate', roles: INACTIVITY_ROLES },
       description: `Run an agent inactivity watchdog scan immediately, through the same admission gates as the periodic scan. The scan is scheduled in the background, so this returns as soon as it is started. ${SCOPE_DOC}, and session_inactive when the calling MCP session is not active in that Space.`,
       inputSchema: ReadInput,
@@ -193,7 +193,7 @@ export function createInactivityOperations(agents: InactivityDependencies): Oper
         z.object({ started: z.literal(true), scope: z.object({ spaceId: z.string() }) }),
         REJECTIONS,
       ]),
-      execute: writePipeline('inactivity-run-now', agents, runScanNow),
+      execute: writePipeline('inactivity-scan-run', agents, runScanNow),
     }),
   ];
 }

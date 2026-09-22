@@ -73,7 +73,7 @@ const ListInput = z
 
 const SubscriptionStatusSchema = z.enum(['active', 'paused', 'disabled']);
 
-const SubscriptionRecordSchema = z.object({
+export const SubscriptionRecordSchema = z.object({
   id: z.string(),
   agentId: z.string(),
   source: z.string(),
@@ -169,7 +169,8 @@ export function subscribeAgentTopic(
   scope: AgentSubscriptionScope,
   input: z.infer<typeof SubscribeInput>,
   caller: OperationCaller,
-  deps: AgentSubscriptionDependencies
+  deps: AgentSubscriptionDependencies,
+  operationName: string
 ): z.infer<typeof SubscribeResultSchema> {
   const topicPattern = input.topic_pattern.trim();
   const validation = validateGlobPattern(topicPattern);
@@ -184,7 +185,7 @@ export function subscribeAgentTopic(
   });
   if (!deps.refreshSubscription(scope.spaceId, subscription.id).success)
     return { accepted: false, reason: 'refresh_failed' };
-  auditAgentSubscription(deps, caller, scope, 'externalEvent.agent.subscribe', {
+  auditAgentSubscription(deps, caller, scope, operationName, {
     agent_id: input.agent_id,
     topic_pattern: input.topic_pattern,
     label: input.label,
@@ -196,7 +197,8 @@ export function unsubscribeAgentTopic(
   scope: AgentSubscriptionScope,
   input: z.infer<typeof UnsubscribeInput>,
   caller: OperationCaller,
-  deps: AgentSubscriptionDependencies
+  deps: AgentSubscriptionDependencies,
+  operationName: string
 ): z.infer<typeof UnsubscribeResultSchema> {
   const topicPattern = input.topic_pattern.trim();
   const validation = validateGlobPattern(topicPattern);
@@ -215,7 +217,7 @@ export function unsubscribeAgentTopic(
     topicPattern
   );
   if (existing) deps.removeSubscription(scope.spaceId, existing.id);
-  auditAgentSubscription(deps, caller, scope, 'externalEvent.agent.unsubscribe', {
+  auditAgentSubscription(deps, caller, scope, operationName, {
     agent_id: input.agent_id,
     topic_pattern: input.topic_pattern,
   });
@@ -276,7 +278,8 @@ export function createAgentSubscriptionOperations(
         'subscribe-agent-external-event',
         deps,
         admitAgentSubscriptionWriter,
-        subscribeAgentTopic
+        (scope, input: z.infer<typeof SubscribeInput>, caller, agentDeps) =>
+          subscribeAgentTopic(scope, input, caller, agentDeps, 'externalEvent.agent.subscribe')
       ),
     }),
     defineOperation({
@@ -289,7 +292,8 @@ export function createAgentSubscriptionOperations(
         'unsubscribe-agent-external-event',
         deps,
         admitAgentSubscriptionWriter,
-        unsubscribeAgentTopic
+        (scope, input: z.infer<typeof UnsubscribeInput>, caller, agentDeps) =>
+          unsubscribeAgentTopic(scope, input, caller, agentDeps, 'externalEvent.agent.unsubscribe')
       ),
     }),
     defineOperation({

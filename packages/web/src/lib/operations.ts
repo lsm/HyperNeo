@@ -12,6 +12,8 @@ export function invokeOperation<T>(
 const TRANSITION_REJECTION_MESSAGES: Record<string, string> = {
   space_at_task_capacity:
     'This Space is already running as many tasks as it allows. Stop or finish a running task, or raise the Space task limit, then try again.',
+  archive_active_run:
+    'This task belongs to a workflow run that is still going. Cancel the run first — archiving now would leave it stranded.',
 };
 
 export async function transitionTask(

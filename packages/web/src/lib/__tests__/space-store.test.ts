@@ -1838,6 +1838,15 @@ describe('SpaceStore — CRUD methods', () => {
     );
   });
 
+  it('setTaskStatus explains an archive refused by a live workflow run', async () => {
+    await spaceStore.selectSpace('space-1');
+    transitionResult = 'archive_active_run';
+
+    await expect(spaceStore.setTaskStatus('t1', 'archived')).rejects.toThrow(
+      'This task belongs to a workflow run that is still going. Cancel the run first'
+    );
+  });
+
   it('setTaskStatus returns a durable direct-outcome acknowledgement', async () => {
     await spaceStore.selectSpace('space-1');
     transitionResult = { accepted: true, jobId: 'job-1' };

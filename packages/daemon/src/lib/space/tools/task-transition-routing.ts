@@ -1,8 +1,6 @@
 import type { SpaceTaskStatus } from '@hyperneo/shared';
 import { isRateOrUsageLimited } from '@hyperneo/shared';
 import { requireDraftTask } from '../../tasks/publication.ts';
-import type { AutonomyAdmissionDenyReason } from './tool-admission-gates.ts';
-import { isAgentCeilingBinding } from './tool-admission-gates.ts';
 
 export interface TaskUpdateRoutingInput {
   hasChanges: boolean;
@@ -320,58 +318,4 @@ export function routeReassignTask(input: ReassignTaskRoutingInput): ReassignTask
     };
   }
   return { action: 'reassign' };
-}
-
-export interface ApproveTaskRoutingInput extends TaskTargetGateInput {
-  currentStatus: string;
-  level: number;
-  required: number;
-  agentLevel: number | null;
-  spaceLevel: number;
-}
-
-export type ApproveTaskRouting =
-  | { action: 'reject'; reason: TaskTargetRejectReason | 'not_in_review'; message: string }
-  | {
-      action: 'deny';
-      reason: AutonomyAdmissionDenyReason;
-      agentLevel?: number;
-      spaceLevel: number;
-      required: number;
-      message: string;
-    }
-  | { action: 'approve' };
-
-export function routeApproveTask(input: ApproveTaskRoutingInput): ApproveTaskRouting {
-  const target = routeTaskTarget(input);
-  if (target.action === 'reject') {
-    return target;
-  }
-  if (input.level < input.required) {
-    if (isAgentCeilingBinding(input.spaceLevel, input.agentLevel)) {
-      return {
-        action: 'deny',
-        reason: 'agent_autonomy_ceiling',
-        agentLevel: input.agentLevel,
-        spaceLevel: input.spaceLevel,
-        required: input.required,
-        message: `task.resolvePendingCompletion not permitted: agent autonomy ceiling ${input.agentLevel} (space ${input.spaceLevel}) < workflow completionAutonomyLevel ${input.required}. Use task.submitForReview to request human review.`,
-      };
-    }
-    return {
-      action: 'deny',
-      reason: 'space_autonomy_level',
-      spaceLevel: input.spaceLevel,
-      required: input.required,
-      message: `task.resolvePendingCompletion not permitted: space autonomy level ${input.spaceLevel} < workflow completionAutonomyLevel ${input.required}. Use task.submitForReview to request human review.`,
-    };
-  }
-  if (input.currentStatus !== 'review') {
-    return {
-      action: 'reject',
-      reason: 'not_in_review',
-      message: `Task is in '${input.currentStatus}' status, not 'review'. Only tasks in review can be approved.`,
-    };
-  }
-  return { action: 'approve' };
 }
