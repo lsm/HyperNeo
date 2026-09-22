@@ -10,6 +10,9 @@
 #   ./scripts/test-daemon.sh --rerun        # Rerun only previously failing files
 #   ./scripts/test-daemon.sh --show-failures # Show failure details from last run
 #   ./scripts/test-daemon.sh --verify       # Validate shard config without running tests
+#
+# Only one run at a time per worktree: the results directory is shared and a
+# second concurrent run is refused (see the results lock below).
 
 set -uo pipefail
 
@@ -38,6 +41,7 @@ SHARDS=(
 )
 RESULTS_DIR="$REPO_ROOT/test-results/daemon"
 FAILURES_FILE="$RESULTS_DIR/failures.txt"
+LOCK_DIR="$RESULTS_DIR/.run-lock"
 TEST_ROOT="$REPO_ROOT/packages/daemon/tests/unit"
 
 # Reusable directory sharding by stable hash (no hand-listed file lists).
@@ -523,6 +527,89 @@ if [ "$RERUN" = true ]; then
 	exit $?
 fi
 
+# --- Single-run lock on the shared results directory ---
+# RESULTS_DIR is a fixed path and every run rm -f's + rewrites junit-<shard>.xml
+# and truncates failures.txt in it, so two concurrent runs in one worktree
+# clobber each other's results — that is how a shard came to report tests="0"
+# while the run still exited 0. The path cannot be randomised per run: --rerun
+# and --show-failures read the PREVIOUS run's files from it, and CI uploads
+# test-results/daemon/junit-<shard>.xml by name. So serialise instead and refuse
+# the second run. `mkdir` is the atomic primitive (no flock on macOS); a lock
+# whose owner process is gone is stale and gets reclaimed.
+release_results_lock() {
+	rm -rf "$LOCK_DIR"
+}
+
+take_results_lock() {
+	mkdir "$LOCK_DIR" 2>/dev/null || return 1
+	echo "$$" >"$LOCK_DIR/pid"
+	# Another run that judged this lock stale may have removed the directory and
+	# recreated it between our mkdir and now, so confirm the published pid is
+	# still ours before claiming it. The EXIT trap is installed only after that
+	# check: a losing run that armed it earlier would delete the winner's lock
+	# on its way out.
+	[ "$(cat "$LOCK_DIR/pid" 2>/dev/null)" = "$$" ] || return 1
+	trap release_results_lock EXIT
+	trap 'exit 130' INT
+	trap 'exit 143' TERM
+}
+
+# The winner of the mkdir writes its pid on the next line, not atomically with
+# it, so a run that loses the race can find the lock dir with no pid yet. Read
+# it with a short retry: an empty pid that never fills in means the owner died
+# inside that window, which is the only case that should reclaim the lock.
+# Without the retry the loser reclaims a live owner's lock and both runs go on
+# to clobber the junit files the lock exists to protect.
+read_lock_owner() {
+	local attempt=0
+	local owner=''
+	while [ "$attempt" -lt 20 ]; do
+		owner=$(cat "$LOCK_DIR/pid" 2>/dev/null)
+		if [ -n "$owner" ]; then
+			printf '%s' "$owner"
+			return 0
+		fi
+		[ -d "$LOCK_DIR" ] || return 0
+		sleep 0.05
+		attempt=$((attempt + 1))
+	done
+	return 0
+}
+
+acquire_results_lock() {
+	local owner
+	take_results_lock && return 0
+	owner=$(read_lock_owner)
+	if [ -n "$owner" ] && kill -0 "$owner" 2>/dev/null; then
+		echo "Another ./scripts/test-daemon.sh run (pid $owner) already owns $RESULTS_DIR." >&2
+		echo "  Both runs rewrite junit-<shard>.xml and failures.txt there, so their results" >&2
+		echo "  would overwrite each other. Wait for it, or run from a separate worktree." >&2
+		return 1
+	fi
+	# A lock with no pid at all is only abandoned if it has been sitting there;
+	# a live owner publishes its pid microseconds after the mkdir. Requiring age
+	# keeps a stalled owner from being reclaimed out from under itself.
+	if [ -z "$owner" ] && [ -z "$(find "$LOCK_DIR" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then
+		echo "A results lock at $LOCK_DIR was just created and has not published a pid." >&2
+		echo "  Treating it as live. Retry, or run from a separate worktree." >&2
+		return 1
+	fi
+	echo "Reclaiming a stale results lock at $LOCK_DIR (owner pid ${owner:-unknown} is gone)." >&2
+	# Re-read immediately before removing: another run may have reclaimed this
+	# same stale lock and taken ownership while we were deciding, and removing
+	# it then would delete a live lock rather than an abandoned one.
+	if [ "$(cat "$LOCK_DIR/pid" 2>/dev/null)" != "$owner" ]; then
+		echo "  The lock changed hands while we were deciding; leaving it alone." >&2
+		return 1
+	fi
+	rm -rf "$LOCK_DIR"
+	take_results_lock && return 0
+	echo "Could not acquire the results lock at $LOCK_DIR." >&2
+	return 1
+}
+
+acquire_results_lock || exit 1
+
 # --- Determine shards to run ---
 if [ -n "$TARGET_SHARD" ]; then
 	RUN_SHARDS=("$TARGET_SHARD")
@@ -614,6 +701,8 @@ TOTAL_FAILS=0
 TOTAL_SKIPS=0
 TOTAL_TIME_MS=0
 HAD_FAILURE=0
+ZERO_TEST_COUNT=0
+ZERO_TEST_SHARDS=""
 
 : > "$FAILURES_FILE"
 
@@ -647,6 +736,25 @@ for shard in "${RUN_SHARDS[@]}"; do
 	skipped=${skipped:-0}
 	time_ms=${time_ms:-0}
 	passed=$((tests - failures - skipped))
+
+	# A shard that executed zero tests is never a legitimate outcome: every shard
+	# resolves to at least one test file (the run aborts above otherwise), so an
+	# empty junit means the shard collected nothing — a crash while collecting, a
+	# stale glob after a rebalance, an OOM-killed worker, or a second run in this
+	# worktree rewriting the junit. Without this guard such a shard printed
+	# `0 0 0 0.0s`, contributed nothing to TOTAL_FAILS, and the run ended with
+	# `All tests passed!` and exit 0. An unparseable junit lands here too.
+	if [ "$tests" -eq 0 ]; then
+		printf "%-22s %8s %8s %8s %8s\n" "$shard" "0" "-" "ERROR" "-"
+		HAD_FAILURE=1
+		ZERO_TEST_COUNT=$((ZERO_TEST_COUNT + 1))
+		ZERO_TEST_SHARDS="$ZERO_TEST_SHARDS $shard"
+		if [ -f "$LOG_FILE" ]; then
+			echo "  Last output from $shard:"
+			tail -5 "$LOG_FILE" | sed 's/^/    /'
+		fi
+		continue
+	fi
 
 	TOTAL_TESTS=$((TOTAL_TESTS + tests))
 	TOTAL_FAILS=$((TOTAL_FAILS + failures))
@@ -705,23 +813,37 @@ printf "%-22s %8s %8s %8s %7ss\n" "TOTAL" "$TOTAL_TESTS" "$((TOTAL_TESTS - TOTAL
 WALL_END=$(date +%s)
 WALL_SECS=$((WALL_END - WALL_START))
 
+if [ "$ZERO_TEST_COUNT" -gt 0 ]; then
+	echo ""
+	echo "ZERO-TEST SHARDS ($ZERO_TEST_COUNT):$ZERO_TEST_SHARDS"
+	echo "  These shards have test files but executed none, so nothing was actually"
+	echo "  checked. Look for a collection crash, a stale glob after a rebalance, an"
+	echo "  OOM-killed worker, or a second run rewriting $RESULTS_DIR."
+	echo "  Per-shard output is in $RESULTS_DIR/output-<shard>.log."
+fi
+
 if [ "$HAD_FAILURE" -eq 1 ]; then
-	echo ""
-	FAIL_COUNT=$(sort -u "$FAILURES_FILE" | wc -l | tr -d ' ')
-	echo "FAILURES ($FAIL_COUNT file(s)):"
-	sort -u "$FAILURES_FILE" | while IFS= read -r file; do
-		echo "  $file"
-	done
-	echo ""
+	if [ -s "$FAILURES_FILE" ]; then
+		echo ""
+		FAIL_COUNT=$(sort -u "$FAILURES_FILE" | wc -l | tr -d ' ')
+		echo "FAILURES ($FAIL_COUNT file(s)):"
+		sort -u "$FAILURES_FILE" | while IFS= read -r file; do
+			echo "  $file"
+		done
+		echo ""
+	fi
 	# Dump per-shard log output on failure so CI runners can diagnose the issue
-	# without having to download junit artifacts. Only dump shards that failed.
+	# without having to download junit artifacts. Only dump shards that failed or
+	# collected nothing — for the latter the log is the only clue as to why.
 	if [ -n "${CI:-}" ] || [ "${TEST_DAEMON_DUMP_ON_FAIL:-}" = "1" ]; then
 		for shard in "${RUN_SHARDS[@]}"; do
 			JUNIT_FILE="$RESULTS_DIR/junit-${shard}.xml"
 			LOG_FILE="$RESULTS_DIR/output-${shard}.log"
 			[ -f "$JUNIT_FILE" ] || continue
-			shard_fails=$(grep '<testsuites' "$JUNIT_FILE" | grep -o 'failures="[0-9]*"' | grep -o '[0-9]*')
-			if [ "${shard_fails:-0}" -gt 0 ] && [ -f "$LOG_FILE" ]; then
+			shard_root=$(grep '<testsuites' "$JUNIT_FILE")
+			shard_fails=$(echo "$shard_root" | grep -o 'failures="[0-9]*"' | grep -o '[0-9]*')
+			shard_tests=$(echo "$shard_root" | grep -o 'tests="[0-9]*"' | grep -o '[0-9]*')
+			if { [ "${shard_fails:-0}" -gt 0 ] || [ "${shard_tests:-0}" -eq 0 ]; } && [ -f "$LOG_FILE" ]; then
 				echo "========================================================================"
 				echo "Shard output: $shard"
 				echo "========================================================================"
@@ -731,8 +853,10 @@ if [ "$HAD_FAILURE" -eq 1 ]; then
 			fi
 		done
 	fi
-	echo "To rerun failing tests:"
-	echo "  ./scripts/test-daemon.sh --rerun"
+	if [ -s "$FAILURES_FILE" ]; then
+		echo "To rerun failing tests:"
+		echo "  ./scripts/test-daemon.sh --rerun"
+	fi
 else
 	echo ""
 	echo "All tests passed!"
