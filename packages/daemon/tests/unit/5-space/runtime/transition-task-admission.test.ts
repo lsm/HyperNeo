@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import type { SessionStatus } from '@hyperneo/shared';
 import { SpaceTaskManager } from '../../../../src/lib/tasks/task-manager';
 import {
   admitCaller,
@@ -50,12 +51,13 @@ function deps(
 
 const rpc = { source: 'rpc' as const };
 
-function worker(id: string, memberSpaceId?: string) {
+function worker(id: string, memberSpaceId?: string, status: SessionStatus = 'active') {
   sessions.createSession(
     {
       ...createTestSession(id),
       workspacePath: '/repo',
       type: 'worker',
+      status,
       context: memberSpaceId ? { spaceId: memberSpaceId } : {},
     },
     { enforceWorkspaceOwnership: false }
@@ -112,6 +114,16 @@ describe('admitCaller', () => {
       reason: { accepted: false, reason: 'task_transition_denied' },
     });
   });
+
+  test.each(['ended', 'archived', 'paused'] as const)(
+    'an mcp session in the owning Space that is %s is rejected',
+    (status) => {
+      const caller = worker(status, spaceId, status);
+      expect(admitCaller(spaceId, caller, deps())).toEqual({
+        reason: { accepted: false, reason: 'task_transition_denied' },
+      });
+    }
+  );
 });
 
 describe('loadTask', () => {
