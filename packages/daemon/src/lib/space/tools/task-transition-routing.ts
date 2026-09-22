@@ -286,34 +286,6 @@ export function routePublishTask(input: PublishTaskRoutingInput): PublishTaskRou
   return { action: 'publish' };
 }
 
-export interface ArchiveTaskRoutingInput extends TaskTargetGateInput {
-  hasWorkflowRun: boolean;
-  runActive: boolean;
-  workflowRunId?: string;
-}
-
-export type ArchiveTaskRouting =
-  | { action: 'reject'; reason: TaskTargetRejectReason | 'archive_active_run'; message: string }
-  | { action: 'archive' };
-
-export function routeArchiveTask(input: ArchiveTaskRoutingInput): ArchiveTaskRouting {
-  const target = routeTaskTarget(input);
-  if (target.action === 'reject') {
-    return target;
-  }
-  if (input.hasWorkflowRun && input.runActive) {
-    return {
-      action: 'reject',
-      reason: 'archive_active_run',
-      message:
-        `Cannot archive task ${input.taskId}: it belongs to an active workflow run ` +
-        `(${input.workflowRunId}). Cancel the run instead so its agents and ` +
-        `lifecycle are torn down — archiving would leave the run stranded.`,
-    };
-  }
-  return { action: 'archive' };
-}
-
 export interface ReassignTaskRoutingInput {
   customAgentId: string | null | undefined;
   workerAgentExists: boolean;
