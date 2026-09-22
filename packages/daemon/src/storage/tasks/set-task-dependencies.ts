@@ -4,6 +4,7 @@ import { planTaskDependencies } from '../../lib/tasks/dependency-plan.ts';
 import type { TaskDependencyNode } from '../../lib/tasks/dependency-graph.ts';
 import type { Database } from '../sqlite-compat.ts';
 import { decodeTaskCoreRow } from './task-row.ts';
+import { applyStandaloneTaskEdit, type EditStandaloneTaskInput } from './edit-task.ts';
 
 type Rejection = Extract<ReturnType<typeof planTaskDependencies>, string>;
 export interface SetTaskDependenciesInput {
@@ -66,14 +67,46 @@ const persistTaskDependencies = (
   input: SetTaskDependenciesInput
 ) => TaskCore | Rejection | null;
 
+function requireOwnTransaction(db: Database): void {
+  const active = 'inTransaction' in db ? Boolean(db.inTransaction) : db.isTransaction;
+  if (active) throw new Error('Task dependencies require their own transaction');
+}
+
 export function setStandaloneTaskDependencies(
   db: Database,
   input: SetTaskDependenciesInput,
   notifyChange: () => void
 ): TaskCore | Rejection | null {
-  const active = 'inTransaction' in db ? Boolean(db.inTransaction) : db.isTransaction;
-  if (active) throw new Error('Task dependencies require their own transaction');
+  requireOwnTransaction(db);
   const result = db.transaction(() => persistTaskDependencies(db, input))();
+  if (result !== null && typeof result !== 'string') notifyChange();
+  return result;
+}
+
+export function planStandaloneTaskDependencies(
+  db: Database,
+  input: SetTaskDependenciesInput
+): { value: string[] } | { reason: Rejection | null } {
+  const scope = selectDependencyScope(db, input);
+  return 'reason' in scope ? scope : decideTaskDependencyReplacement(scope.value, input);
+}
+
+export function editStandaloneTaskWithDependencies(
+  db: Database,
+  input: EditStandaloneTaskInput,
+  notifyChange: () => void
+): TaskCore | Rejection | null {
+  requireOwnTransaction(db);
+  const result = db.transaction(() => {
+    if (input.dependsOn === undefined) return applyStandaloneTaskEdit(db, input);
+    const planned = planStandaloneTaskDependencies(db, {
+      taskId: input.taskId,
+      dependsOn: input.dependsOn,
+    });
+    return 'reason' in planned
+      ? planned.reason
+      : applyStandaloneTaskEdit(db, { ...input, dependsOn: planned.value });
+  })();
   if (result !== null && typeof result !== 'string') notifyChange();
   return result;
 }

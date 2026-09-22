@@ -21,10 +21,10 @@ export function createBoundSpaceTaskMetadataEditor(
   return createTaskMetadataEditor({
     resolveOwner: () => ({ kind: 'space', spaceId }),
     admit: () => {},
-    replaceDependencies: (_owner, { taskId, dependsOn }) =>
-      taskManager.updateTask(taskId, { dependsOn }, options),
     editStandalone: () => null,
-    editSpace: (_spaceId, { taskId, ...metadata }) =>
-      taskManager.updateTask(taskId, metadata, options),
+    editSpace: async (_spaceId, { taskId, ...fields }) => ({
+      task: await taskManager.updateTask(taskId, fields, options),
+      handledByRuntime: false,
+    }),
   }) as (input: TaskMetadataInput, caller: OperationCaller) => Promise<SpaceTask>;
 }
