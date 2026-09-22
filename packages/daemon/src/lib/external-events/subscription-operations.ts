@@ -256,7 +256,7 @@ function subscribeSubject(
     'event.external.subscribe'
   );
   if ('accepted' in result) return result.reason;
-  return { ok: true, topicPattern: input.topicPattern, subscription: result.subscription };
+  return { ok: true, topicPattern: result.subscription.topic, subscription: result.subscription };
 }
 
 function unsubscribeSubject(
