@@ -98,7 +98,7 @@ const cases: Case[] = [
     { action: 'reject', result: 'unsupported_status' },
   ],
   [
-    'archiving with an active workflow run is unsupported',
+    'archiving with an active workflow run keeps its own reject reason',
     {
       ...base,
       currentStatus: 'open',
@@ -107,7 +107,7 @@ const cases: Case[] = [
       runActive: true,
       callerSource: 'rpc',
     },
-    { action: 'reject', result: 'unsupported_status' },
+    { action: 'reject', result: 'archive_active_run' },
   ],
   [
     'archiving with an inactive workflow run writes',
@@ -229,6 +229,11 @@ const rejectReviewToDone: TaskUpdateRouting = {
   reason: 'review_to_done',
   message: 'm',
 };
+const rejectArchiveActiveRun: TaskUpdateRouting = {
+  action: 'reject',
+  reason: 'archive_active_run',
+  message: 'm',
+};
 const parkStopped: TaskUpdateRouting = {
   action: 'park_stopped',
   auditParamsShape: 'transition',
@@ -270,6 +275,12 @@ describe('rejectUnsupportedRequest', () => {
       rejectReviewDirect,
       'rpc',
       { reason: { action: 'reject', result: 'unsupported_status' } },
+    ],
+    [
+      'archive_active_run survives instead of flattening to unsupported_status',
+      rejectArchiveActiveRun,
+      'rpc',
+      { reason: { action: 'reject', result: 'archive_active_run' } },
     ],
     [
       'review_to_done via mcp is invalid_transition',
