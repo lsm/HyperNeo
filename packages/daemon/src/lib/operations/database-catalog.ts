@@ -1,5 +1,4 @@
 import type { Database } from '../../storage/database.ts';
-import { setStandaloneTaskDependencies } from '../../storage/tasks/set-task-dependencies.ts';
 import { transitionStandaloneTask } from '../../storage/tasks/transition-task.ts';
 import { listTaskCores } from '../../storage/tasks/list-tasks.ts';
 import { createStandaloneTask } from '../../storage/tasks/create-task.ts';
@@ -54,10 +53,6 @@ export function createDatabaseOperationCatalog(
         ),
       transitionTask: (input) =>
         transitionStandaloneTask(db.getDatabase(), input, () => db.notifyChange('space_tasks')),
-      setDependencies: (input) =>
-        setStandaloneTaskDependencies(db.getDatabase(), input, () =>
-          db.notifyChange('space_tasks')
-        ),
       sessionExists: (sessionId) => sessionRowExists(db, sessionId),
       ...overrides,
     },

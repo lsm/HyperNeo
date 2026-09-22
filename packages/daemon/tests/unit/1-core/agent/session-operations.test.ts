@@ -202,7 +202,7 @@ describe('session operation MCP attachment', () => {
     const linked = await session
       .getOperationMcpServer()
       .tools[0].handler(
-        { name: 'task.dependencies.set', input: { taskId: task.id, dependsOn: [prerequisite.id] } },
+        { name: 'task.update', input: { taskId: task.id, dependsOn: [prerequisite.id] } },
         {}
       );
     expect(linked.isError).not.toBe(true);

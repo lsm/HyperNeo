@@ -1,4 +1,3 @@
-import { createSetTaskDependenciesOperation } from '../tasks/dependencies-operation.ts';
 import { createTransitionTaskOperation } from '../tasks/transition-operation.ts';
 import { createUpdateTaskOperation } from '../tasks/update-operation.ts';
 import { createListTasksOperation } from '../tasks/list-operation.ts';
@@ -47,7 +46,6 @@ export interface TaskOperationDependencies {
   transitionTask: Parameters<
     typeof createTransitionTaskOperation<TransitionStandaloneTaskInput>
   >[0];
-  setDependencies: Parameters<typeof createSetTaskDependenciesOperation>[0];
   sessionExists: SessionExistenceCheck;
 }
 
@@ -71,7 +69,6 @@ export function createDaemonOperationCatalog(
     createListTasksOperation(tasks.listTasks),
     createUpdateTaskOperation(tasks.editTask),
     tasks.transition ?? createTransitionTaskOperation(tasks.transitionTask),
-    createSetTaskDependenciesOperation(tasks.setDependencies),
     ...(tasks.members ? [tasks.members] : []),
     ...(tasks.retry ? [tasks.retry] : []),
     ...(tasks.pendingCompletion ?? []),

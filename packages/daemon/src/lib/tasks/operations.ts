@@ -7,10 +7,7 @@ import {
   createOwnedPendingCompletionOperations,
   type OwnedPendingCompletionDependencies,
 } from './owned-pending-completion.ts';
-import {
-  createSpaceTaskDependencyEditor,
-  type SpaceTaskDependencyDependencies,
-} from './dependencies.ts';
+import type { SpaceTaskDependencyDependencies } from './dependencies.ts';
 import {
   createSpaceTransitionTaskOperation,
   type SpaceTransitionTaskDependencies,
@@ -193,11 +190,6 @@ export function createSpaceOperationRegistryProvider(
           : undefined,
         editTask: (input, caller) =>
           createSpaceTaskMetadataEditor({
-            ...tasks,
-            db: database.getDatabase(),
-          })(input, caller),
-        setDependencies: (input, caller) =>
-          createSpaceTaskDependencyEditor({
             ...tasks,
             db: database.getDatabase(),
           })(input, caller),
