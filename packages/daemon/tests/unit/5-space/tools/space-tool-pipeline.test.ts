@@ -199,7 +199,7 @@ describe('space tool update_task decision pipeline', () => {
         reason: 'approved_direct',
         message:
           `task.update cannot transition a task into 'approved' directly. ` +
-          `Use task.resolvePendingCompletion after task.submitForReview, or let the ` +
+          `Use task.approve after task.submitForReview, or let the ` +
           `runtime's post-approval router handle the transition — both stamp ` +
           `the approval metadata and dispatch the configured post-approval step.`,
       },
@@ -212,7 +212,7 @@ describe('space tool update_task decision pipeline', () => {
         reason: 'review_to_done',
         message:
           `task.update cannot transition a task from 'review' to 'done' directly. ` +
-          `Use task.resolvePendingCompletion (subject to the workflow's completion ` +
+          `Use task.approve (subject to the workflow's completion ` +
           `autonomy level) or task.submitForReview so a human can approve via the UI — ` +
           `both stamp the approval metadata and dispatch the configured post-approval step.`,
       },

@@ -2733,7 +2733,7 @@ describe('SpaceRuntimeService', () => {
       expect(agent.mergeRuntimeMcpServers).toHaveBeenCalled();
     });
 
-    test('long-term agent session registry exposes the externalEvent.agent.* operations', async () => {
+    test('long-term agent session registry exposes externalEvent.agent.listSubscriptions', async () => {
       const agentOperations = createAgentSubscriptionOperations({
         subscriptionRepo: {
           upsertSubscription: mock(() => {
@@ -2785,15 +2785,10 @@ describe('SpaceRuntimeService', () => {
         role: 'long_term_agent',
         agentName: 'Long Term',
       };
-      for (const name of [
-        'externalEvent.agent.subscribe',
-        'externalEvent.agent.unsubscribe',
-        'externalEvent.agent.listSubscriptions',
-      ]) {
-        const operation = registry.get(name);
-        expect(operation, `expected ${name} in the long-term agent session registry`).toBeDefined();
-        expect(isOperationAdmitted(operation!, caller)).toBe(true);
-      }
+      const name = 'externalEvent.agent.listSubscriptions';
+      const operation = registry.get(name);
+      expect(operation, `expected ${name} in the long-term agent session registry`).toBeDefined();
+      expect(isOperationAdmitted(operation!, caller)).toBe(true);
     });
 
     test('long-term agent session: withholds Space tools when the backing agent is paused', async () => {

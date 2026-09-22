@@ -2275,9 +2275,8 @@ class SpaceStore {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
 
-    return invokeOperation<SpaceTask>(hub, 'task.resolvePendingCompletion', {
+    return invokeOperation<SpaceTask>(hub, approved ? 'task.approve' : 'task.reject', {
       taskId,
-      approved,
       reason: reason ?? null,
     });
   }

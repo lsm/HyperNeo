@@ -657,10 +657,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     },
     dispatchApproval: (spaceId, taskId, source, approvalReason, guard) =>
       spaceRuntimeService.dispatchPostApproval(spaceId, taskId, source, { approvalReason }, guard),
-    warn: (taskId, detail) =>
-      log.warn(
-        `task.resolvePendingCompletion: dispatch failed after approval for ${taskId}: ${detail}`
-      ),
+    warn: (operationName, taskId, detail) =>
+      log.warn(`${operationName}: dispatch failed after approval for ${taskId}: ${detail}`),
     emitTaskUpdated: async (spaceId, task) => {
       await deps.internalEventBus.publish('space.task.updated', {
         sessionId: 'global',
@@ -1313,8 +1311,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       getSession: (sessionId) => deps.db.getSession(sessionId),
       getTaskManager: spaceTaskManagerFactory,
       getWorkflow: (workflowId) => spaceWorkflowManager.getWorkflow(workflowId),
-      isWorkflowRunActive: (workflowRunId) =>
-        spaceRuntimeService.isWorkflowRunActive(workflowRunId),
       recoverWorkflowTask: (spaceId, taskId, targetStatus, options) =>
         recoverTaskExecution(
           createWorkflowTaskRecoveryExecutor(spaceId, spaceRuntimeService, options),

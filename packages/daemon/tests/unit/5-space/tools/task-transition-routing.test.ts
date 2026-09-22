@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { isWorkflowRecoveryTransition } from '@hyperneo/shared';
 import {
-  routeArchiveTask,
   routeCancelTask,
   routePublishTask,
   routeReassignTask,
@@ -94,7 +93,7 @@ describe('routeTaskUpdate reject reasons', () => {
       reason: 'approved_direct',
       message:
         `task.update cannot transition a task into 'approved' directly. ` +
-        `Use task.resolvePendingCompletion after task.submitForReview, or let the ` +
+        `Use task.approve after task.submitForReview, or let the ` +
         `runtime's post-approval router handle the transition — both stamp ` +
         `the approval metadata and dispatch the configured post-approval step.`,
     });
@@ -134,9 +133,41 @@ describe('routeTaskUpdate reject reasons', () => {
       reason: 'review_to_done',
       message:
         `task.update cannot transition a task from 'review' to 'done' directly. ` +
-        `Use task.resolvePendingCompletion (subject to the workflow's completion ` +
+        `Use task.approve (subject to the workflow's completion ` +
         `autonomy level) or task.submitForReview so a human can approve via the UI — ` +
         `both stamp the approval metadata and dispatch the configured post-approval step.`,
+    });
+  });
+
+  test('approved_requires_complete rejects even for workflow-backed tasks', () => {
+    expect(
+      routeTaskUpdate(
+        baseInput({ currentStatus: 'approved', requestedStatus: 'done', hasWorkflowRun: true })
+      )
+    ).toEqual({
+      action: 'reject',
+      reason: 'approved_requires_complete',
+      message:
+        `Cannot close approved task task-1 through a status change. ` +
+        `Use task.complete, which fences the transition on the routed post-approval ` +
+        `session and applies the workflow's completion gate — for a coder-owned-merge ` +
+        `workflow that gate holds the task open until its pull request is merged.`,
+    });
+  });
+
+  test('approved to done is allowed once the caller is granted the edge', () => {
+    expect(
+      routeTaskUpdate(
+        baseInput({
+          currentStatus: 'approved',
+          requestedStatus: 'done',
+          allowApprovedToDone: true,
+        })
+      )
+    ).toEqual({
+      action: 'set_status',
+      auditParamsShape: 'transition',
+      emitTaskUpdated: 'always',
     });
   });
 
@@ -406,6 +437,7 @@ describe('routeTaskUpdate terminal writes under an active run', () => {
           requestedStatus: 'done',
           hasWorkflowRun: true,
           runActive: true,
+          allowApprovedToDone: true,
         })
       )
     ).toEqual(STOP);
@@ -450,6 +482,19 @@ describe('routeTaskUpdate terminal writes under an active run', () => {
     );
     expect(routing.action).toBe('reject');
     expect(routing).toMatchObject({ reason: 'review_to_done' });
+  });
+
+  test('approved to done still rejects ahead of the stop routing', () => {
+    const routing = routeTaskUpdate(
+      baseInput({
+        currentStatus: 'approved',
+        requestedStatus: 'done',
+        hasWorkflowRun: true,
+        runActive: true,
+      })
+    );
+    expect(routing.action).toBe('reject');
+    expect(routing).toMatchObject({ reason: 'approved_requires_complete' });
   });
 
   test('archived still rejects rather than stopping the run', () => {
@@ -789,61 +834,6 @@ describe('routePublishTask', () => {
 
   test('a draft task publishes', () => {
     expect(routePublishTask(publishInput())).toEqual({ action: 'publish' });
-  });
-});
-
-describe('routeArchiveTask', () => {
-  function archiveInput(overrides: Partial<Parameters<typeof routeArchiveTask>[0]> = {}) {
-    return {
-      taskExists: true,
-      taskInSpace: true,
-      hasWorkflowRun: false,
-      runActive: false,
-      taskId: 'task-1',
-      workflowRunId: 'run-1',
-      ...overrides,
-    };
-  }
-
-  test('missing task and foreign-space rejects win before the active-run guard', () => {
-    expect(
-      routeArchiveTask(archiveInput({ taskExists: false, hasWorkflowRun: true, runActive: true }))
-    ).toEqual({
-      action: 'reject',
-      reason: 'task_not_found',
-      message: 'Task not found: task-1',
-    });
-    expect(
-      routeArchiveTask(archiveInput({ taskInSpace: false, hasWorkflowRun: true, runActive: true }))
-    ).toEqual({
-      action: 'reject',
-      reason: 'task_not_in_space',
-      message: 'Task task-1 does not belong to this space.',
-    });
-  });
-
-  test('an active workflow run rejects and points at cancelling the run', () => {
-    expect(
-      routeArchiveTask(
-        archiveInput({ hasWorkflowRun: true, runActive: true, workflowRunId: 'run-9' })
-      )
-    ).toEqual({
-      action: 'reject',
-      reason: 'archive_active_run',
-      message:
-        `Cannot archive task task-1: it belongs to an active workflow run ` +
-        `(run-9). Cancel the run instead so its agents and ` +
-        `lifecycle are torn down — archiving would leave the run stranded.`,
-    });
-  });
-
-  test('a terminal or missing workflow run still archives', () => {
-    expect(routeArchiveTask(archiveInput({ hasWorkflowRun: true, runActive: false }))).toEqual({
-      action: 'archive',
-    });
-    expect(routeArchiveTask(archiveInput({ hasWorkflowRun: false, runActive: true }))).toEqual({
-      action: 'archive',
-    });
   });
 });
 

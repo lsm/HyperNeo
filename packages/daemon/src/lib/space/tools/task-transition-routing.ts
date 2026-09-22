@@ -16,6 +16,7 @@ export interface TaskUpdateRoutingInput {
   taskId: string;
   workflowRunId?: string;
   allowReviewToDone?: boolean;
+  allowApprovedToDone?: boolean;
 }
 
 export type TaskUpdateRejectReason =
@@ -26,6 +27,7 @@ export type TaskUpdateRejectReason =
   | 'approved_direct'
   | 'limited_direct'
   | 'review_to_done'
+  | 'approved_requires_complete'
   | 'archive_active_run';
 
 export type TaskUpdateRouting =
@@ -86,6 +88,7 @@ export function routeTaskUpdate(input: TaskUpdateRoutingInput): TaskUpdateRoutin
     taskId,
     workflowRunId,
     allowReviewToDone,
+    allowApprovedToDone,
   } = input;
   if (!hasChanges) {
     return {
@@ -116,7 +119,7 @@ export function routeTaskUpdate(input: TaskUpdateRoutingInput): TaskUpdateRoutin
         reason: 'approved_direct',
         message:
           `task.update cannot transition a task into 'approved' directly. ` +
-          `Use task.resolvePendingCompletion after task.submitForReview, or let the ` +
+          `Use task.approve after task.submitForReview, or let the ` +
           `runtime's post-approval router handle the transition — both stamp ` +
           `the approval metadata and dispatch the configured post-approval step.`,
       };
@@ -145,9 +148,20 @@ export function routeTaskUpdate(input: TaskUpdateRoutingInput): TaskUpdateRoutin
         reason: 'review_to_done',
         message:
           `task.update cannot transition a task from 'review' to 'done' directly. ` +
-          `Use task.resolvePendingCompletion (subject to the workflow's completion ` +
+          `Use task.approve (subject to the workflow's completion ` +
           `autonomy level) or task.submitForReview so a human can approve via the UI — ` +
           `both stamp the approval metadata and dispatch the configured post-approval step.`,
+      };
+    }
+    if (requestedStatus === 'done' && currentStatus === 'approved' && !allowApprovedToDone) {
+      return {
+        action: 'reject',
+        reason: 'approved_requires_complete',
+        message:
+          `Cannot close approved task ${taskId} through a status change. ` +
+          `Use task.complete, which fences the transition on the routed post-approval ` +
+          `session and applies the workflow's completion gate — for a coder-owned-merge ` +
+          `workflow that gate holds the task open until its pull request is merged.`,
       };
     }
     if (requestedStatus === 'archived' && hasWorkflowRun && runActive) {
@@ -270,34 +284,6 @@ export function routePublishTask(input: PublishTaskRoutingInput): PublishTaskRou
     };
   }
   return { action: 'publish' };
-}
-
-export interface ArchiveTaskRoutingInput extends TaskTargetGateInput {
-  hasWorkflowRun: boolean;
-  runActive: boolean;
-  workflowRunId?: string;
-}
-
-export type ArchiveTaskRouting =
-  | { action: 'reject'; reason: TaskTargetRejectReason | 'archive_active_run'; message: string }
-  | { action: 'archive' };
-
-export function routeArchiveTask(input: ArchiveTaskRoutingInput): ArchiveTaskRouting {
-  const target = routeTaskTarget(input);
-  if (target.action === 'reject') {
-    return target;
-  }
-  if (input.hasWorkflowRun && input.runActive) {
-    return {
-      action: 'reject',
-      reason: 'archive_active_run',
-      message:
-        `Cannot archive task ${input.taskId}: it belongs to an active workflow run ` +
-        `(${input.workflowRunId}). Cancel the run instead so its agents and ` +
-        `lifecycle are torn down — archiving would leave the run stranded.`,
-    };
-  }
-  return { action: 'archive' };
 }
 
 export interface ReassignTaskRoutingInput {

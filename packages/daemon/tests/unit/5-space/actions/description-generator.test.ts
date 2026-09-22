@@ -43,9 +43,9 @@ describe('worker node hot fill seed', () => {
   test('exposes exactly the dispatcher contract hot-fill names', () => {
     expect(CODER_HOT_ACTIONS).toContain('task.create');
     expect([...WORKER_NODE_HOT_FILL]).toEqual([
-      'node.peers.list',
-      'node.reachableAgents.list',
-      'node.channels.list',
+      'workflow.run.peer.list',
+      'workflow.run.reachableAgent.list',
+      'workflow.run.channel.list',
       'send_message',
       'nodeAgent.restore',
     ]);
