@@ -2,9 +2,9 @@ import type { SpaceMcpSessionRole } from '../runtime/space-mcp-session-policy.ts
 import { GENERAL_HOT_ACTIONS, ROLE_HOT_ACTIONS } from './description-generator.ts';
 
 export const WORKER_NODE_HOT_FILL = [
-  'node.peers.list',
-  'node.reachableAgents.list',
-  'node.channels.list',
+  'workflow.run.peer.list',
+  'workflow.run.reachableAgent.list',
+  'workflow.run.channel.list',
   'send_message',
   'nodeAgent.restore',
 ] as const;
