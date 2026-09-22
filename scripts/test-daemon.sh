@@ -31,8 +31,12 @@ export HYPERNEO_ALLOW_ROOT_TEST=1
 #   tree; the migration chain is dealt 3-way across the three directory
 #   legs). These are ~6x the 2026-08-24 figures they replace, and three
 #   shards now sit at or past the old 12-minute step cap — see #4987, which
-#   tracks the rebalance. Rebalance with the CI balance report +
-#   test:generate-shard-weights.
+#   tracks the rebalance. The CI step cap must cover the flaky retry policy,
+#   not one pass: flaky-test-runner.ts reruns the WHOLE shard command up to
+#   policy.maxRetries extra times (2, so 3 attempts), and the slowest shard
+#   carries a registered flaky test, so the budget is 3 x 763s ~= 38min.
+#   Rebalance with the CI balance report + test:generate-shard-weights; a
+#   rebalance that lowers per-attempt time should lower the cap with it.
 SHARDS=(
 	shared
 	1-core
