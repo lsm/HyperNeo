@@ -24,13 +24,15 @@ export HYPERNEO_ALLOW_ROOT_TEST=1
 # Free-tier squeeze (task #1399 rebalance): the CI matrix runs these 6 shards
 # — one runner each, ~50s fixed setup per job, so shards are duration-merged
 # to keep the whole PR run inside the repo's 20 concurrent runners. Measured
-# CI junit times (2026-08-24 rebalance run) per shard:
-#   shared 7s · 1-core ~80s (whole tree + migration bucket 0) ·
-#   handlers-migrations ~130s · storage-migrations ~105s · 5-space-a/b ~117s
-#   each (weighted 2-way over the whole 5-space tree; the 117s migration
-#   chain is dealt 3-way across the three directory legs). Rebalance with the
-#   CI balance report + test:generate-shard-weights; no shard should exceed
-#   ~2min of test time.
+# times per shard (2026-09-21, 22598 tests, six shards in parallel):
+#   shared 7s · 1-core 713s (whole tree + migration bucket 0) ·
+#   handlers-migrations 665s · storage-migrations 763s ·
+#   5-space-a 499s · 5-space-b 314s (weighted 2-way over the whole 5-space
+#   tree; the migration chain is dealt 3-way across the three directory
+#   legs). These are ~6x the 2026-08-24 figures they replace, and three
+#   shards now sit at or past the old 12-minute step cap — see #4987, which
+#   tracks the rebalance. Rebalance with the CI balance report +
+#   test:generate-shard-weights.
 SHARDS=(
 	shared
 	1-core
