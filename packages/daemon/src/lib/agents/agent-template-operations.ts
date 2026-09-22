@@ -425,7 +425,7 @@ const deleteTemplateInputSchema = AgentSpaceScopeSchema.extend({
     .min(1)
     .optional()
     .describe(
-      'Version the caller last saw (from a create/update result or agentTemplate.list); the delete fails when the stored version differs. Omit to delete unconditionally.'
+      'Version the caller last saw (from a create/update result or agent.template.list); the delete fails when the stored version differs. Omit to delete unconditionally.'
     ),
 }).strict();
 
@@ -632,7 +632,7 @@ const CREATE_TEMPLATE_DESCRIPTION = `Create a user-authored agent template in a 
 
 const UPDATE_TEMPLATE_DESCRIPTION = `Update a user-authored agent template by key with compare-and-swap versioning: pass expectedVersion from a prior create/update result and the update fails when the stored version differs; omit it to update against the current stored version. Nullable fields (model, provider, modelPool, thinkingLevel, settingSources, tools, labels) accept null to inherit defaults or clear them. Built-in templates are rejected. ${SCOPE_DOC} Admitted for MCP callers whose session is active in the owning Space.`;
 
-const DELETE_TEMPLATE_DESCRIPTION = `Delete a user-authored agent template by key with compare-and-swap versioning: pass expectedVersion from a create/update result or agentTemplate.list and the delete fails when the stored version differs; omit it to delete unconditionally. Built-in templates are rejected. Deleting a template does not touch agents already created from it. ${SCOPE_DOC} Requires space autonomy level 4 or an agent ceiling at that level; admitted for MCP callers whose session is active in the owning Space.`;
+const DELETE_TEMPLATE_DESCRIPTION = `Delete a user-authored agent template by key with compare-and-swap versioning: pass expectedVersion from a create/update result or agent.template.list and the delete fails when the stored version differs; omit it to delete unconditionally. Built-in templates are rejected. Deleting a template does not touch agents already created from it. ${SCOPE_DOC} Requires space autonomy level 4 or an agent ceiling at that level; admitted for MCP callers whose session is active in the owning Space.`;
 
 const LIST_TEMPLATES_DESCRIPTION = `List the agent templates available in a Space: built-in long-horizon templates plus user-authored ones, each with key (templateName), handle, display name, description, suggested autonomy level, labels, whether it is built-in, and its owned version when the Space has one. Reserved auto-created handles are hidden. ${SCOPE_DOC} Read access is admitted for any caller scoped to the Space.`;
 
@@ -649,7 +649,7 @@ export function createCreateAgentTemplateOperation(deps: AgentTemplateOperationD
     caller: OperationCaller
   ) => Promise<TemplateMutationResult>;
   return defineOperation({
-    name: 'agentTemplate.create',
+    name: 'agent.template.create',
     policy: AGENT_MUTATE_POLICY,
     description: CREATE_TEMPLATE_DESCRIPTION,
     inputSchema: createTemplateInputSchema,
@@ -672,7 +672,7 @@ export function createUpdateAgentTemplateOperation(deps: AgentTemplateOperationD
     caller: OperationCaller
   ) => Promise<TemplateMutationResult>;
   return defineOperation({
-    name: 'agentTemplate.update',
+    name: 'agent.template.update',
     policy: AGENT_MUTATE_POLICY,
     description: UPDATE_TEMPLATE_DESCRIPTION,
     inputSchema: updateTemplateInputSchema,
@@ -695,7 +695,7 @@ export function createDeleteAgentTemplateOperation(deps: AgentTemplateOperationD
     caller: OperationCaller
   ) => Promise<DeleteTemplateResult>;
   return defineOperation({
-    name: 'agentTemplate.delete',
+    name: 'agent.template.delete',
     policy: AGENT_TEMPLATE_DELETE_POLICY,
     description: DELETE_TEMPLATE_DESCRIPTION,
     inputSchema: deleteTemplateInputSchema,
@@ -715,7 +715,7 @@ export function createListAgentTemplatesOperation(deps: AgentTemplateOperationDe
     caller: OperationCaller
   ) => Promise<ListTemplatesResult>;
   return defineOperation({
-    name: 'agentTemplate.list',
+    name: 'agent.template.list',
     policy: AGENT_READ_POLICY,
     description: LIST_TEMPLATES_DESCRIPTION,
     inputSchema: listTemplatesInputSchema,
@@ -738,7 +738,7 @@ export function createCreateAgentFromTemplateOperation(deps: AgentTemplateOperat
     caller: OperationCaller
   ) => Promise<CreateFromTemplateResult>;
   return defineOperation({
-    name: 'agent.createFromTemplate',
+    name: 'agent.template.instantiate',
     policy: AGENT_MUTATE_POLICY,
     description: CREATE_FROM_TEMPLATE_DESCRIPTION,
     inputSchema: createFromTemplateInputSchema,
