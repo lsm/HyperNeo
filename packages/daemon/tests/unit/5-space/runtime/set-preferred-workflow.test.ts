@@ -57,7 +57,7 @@ function invoke(
   overrides?: Partial<SetPreferredWorkflowDependencies>
 ) {
   const registry = createOperationRegistry([createSetPreferredWorkflowOperation(deps(overrides))]);
-  return invokeOperation(registry, 'task.setPreferredWorkflow', input, caller);
+  return invokeOperation(registry, 'task.preferredWorkflow.set', input, caller);
 }
 
 function makeWorkflow(name = 'Workflow', disabled = false) {

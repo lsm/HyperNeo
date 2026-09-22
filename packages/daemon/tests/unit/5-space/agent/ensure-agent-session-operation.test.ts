@@ -62,7 +62,7 @@ function registry() {
 }
 
 async function ensureSession(input: Record<string, unknown>, caller: OperationCaller) {
-  const outcome = await invokeOperation(registry(), 'agent.ensureSession', input, caller);
+  const outcome = await invokeOperation(registry(), 'agent.session.ensure', input, caller);
   return outcome as { kind: string; value?: Record<string, unknown> };
 }
 
@@ -88,7 +88,7 @@ beforeEach(() => {
   ensureOutcome = { getSessionData: () => ({ status: 'active' }) };
 });
 
-describe('the agent.ensureSession operation', () => {
+describe('the agent.session.ensure operation', () => {
   test('a human caller opens the first session of an agent that has never run', async () => {
     expect(agentRepo.getById(agent.id)?.sessionId).toBeNull();
 

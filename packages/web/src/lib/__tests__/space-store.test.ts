@@ -319,7 +319,7 @@ function makeMockHub() {
         const input = (params?.input ?? {}) as Record<string, unknown>;
         return { ...makeTask(input.taskId as string), ...input };
       }
-      if (method === 'operation.invoke' && params?.name === 'task.setPreferredWorkflow') {
+      if (method === 'operation.invoke' && params?.name === 'task.preferredWorkflow.set') {
         if (preferredWorkflowResult !== undefined) return preferredWorkflowResult;
         const input = (params?.input ?? {}) as Record<string, unknown>;
         return { ...makeTask(input.taskId as string), preferredWorkflowId: input.workflowId };
@@ -1902,7 +1902,7 @@ describe('SpaceStore — CRUD methods', () => {
     const task = await spaceStore.setPreferredWorkflow('t1', 'workflow-1');
 
     expect(mockHub.request).toHaveBeenCalledWith('operation.invoke', {
-      name: 'task.setPreferredWorkflow',
+      name: 'task.preferredWorkflow.set',
       input: { taskId: 't1', workflowId: 'workflow-1' },
     });
     expect(task.preferredWorkflowId).toBe('workflow-1');
