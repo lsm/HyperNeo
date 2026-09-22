@@ -23,6 +23,7 @@ import {
   type CancelPolicyContext,
 } from '../../../../src/lib/tasks/cancel-task';
 import { createSpaceTransitionTaskOperation } from '../../../../src/lib/tasks/transition-task';
+import { SpaceTransitionTaskInputSchema } from '../../../../src/lib/tasks/transition-task-admission';
 import { enqueueDirectOutcome } from '../../../../src/lib/tasks/direct-outcome-jobs';
 import {
   createOperationRegistry,
@@ -159,7 +160,10 @@ test('missing task rejects and schema does not accept caller-owned execution ide
   expect(await operation.execute({ taskId: 'missing' }, { source: 'rpc' })).toMatchObject({
     accepted: false,
   });
-  expect(operation.inputSchema.safeParse({ taskId, attemptId, sessionId }).success).toBe(false);
+  expect(
+    SpaceTransitionTaskInputSchema.safeParse({ taskId, status: 'cancelled', attemptId, sessionId })
+      .success
+  ).toBe(false);
   expect(outcomeCount()).toBe(0);
 });
 test('enqueue failure rolls back stop request and later cancellation can succeed', async () => {
