@@ -181,7 +181,7 @@ describe('routeTaskUpdate reject reasons', () => {
       reason: 'archive_active_run',
       message:
         `Cannot archive task task-1: it belongs to an active workflow run ` +
-        `(run-9). Cancel the task instead (task.cancel) so its ` +
+        `(run-9). Move it to cancelled instead so its ` +
         `agents and lifecycle are torn down — archiving would leave the run stranded.`,
     });
   });
