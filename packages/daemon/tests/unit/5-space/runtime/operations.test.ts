@@ -352,7 +352,7 @@ function completionDependencies(): OwnedPendingCompletionDependencies {
     audit: mock(() => {}),
   };
 }
-const completionName = 'task.resolvePendingCompletion';
+const completionName = 'task.approve';
 function reviewTask() {
   return tasks.updateTask(taskId, { status: 'review', pendingCheckpointType: 'task_completion' })!;
 }
@@ -402,7 +402,7 @@ test('cached and future MCP use the same pending completion operation as RPC', a
   const mcp = createOperationMcpHandler(getRegistry, () => ({ sessionId: 'reviewer' }));
   const request = {
     name: completionName,
-    input: { taskId, approved: true, reason: '  accepted  ' },
+    input: { taskId, reason: '  accepted  ' },
   };
   expect((await mcp(request)).isError).toBe(true);
   const deps = completionDependencies();
@@ -442,7 +442,7 @@ test('discovered pending completion rejects an ordinary Space member before effe
   const previous = reviewTask();
   const deps = completionDependencies();
   const mcp = createOperationMcpHandler(provider({}, deps), () => caller);
-  const result = await mcp({ name: completionName, input: { taskId, approved: false } });
+  const result = await mcp({ name: completionName, input: { taskId } });
   expect(result.isError).toBe(true);
   expect(JSON.parse(result.content[0].text)).toMatchObject({
     code: 'execution_failed',
