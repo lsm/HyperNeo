@@ -260,7 +260,7 @@ test('rpc closing an approved task records the human approval source', async () 
   expect(tasks.getTask(task.id)?.approvalSource).toBe('human');
 });
 
-test.each(['review', 'approved', 'rate_limited'] as const)(
+test.each(['approved', 'rate_limited'] as const)(
   'requesting %s directly is unsupported',
   async (status) => {
     const task = tasks.createTask({ spaceId, title: 'T', description: '' });
@@ -386,12 +386,15 @@ test('a direct outcome refusal is returned without a fallback status write', asy
 
 test('a stale-status guard failure surfaces as invalid_transition', async () => {
   const task = tasks.createTask({ spaceId, title: 'T', description: '' });
-  const staleManager: Pick<SpaceTaskManager, 'getTask' | 'setTaskStatus'> = {
+  const staleManager = {
     getTask: async (id) => tasks.getTask(id),
     setTaskStatus: async () => {
       throw new StaleTaskGuardError(`Task ${task.id} is no longer 'open'`);
     },
-  };
+    submitTaskForReview: async () => {
+      throw new StaleTaskGuardError(`Task ${task.id} is no longer 'open'`);
+    },
+  } satisfies Pick<SpaceTaskManager, 'getTask' | 'setTaskStatus' | 'submitTaskForReview'>;
   const result = await invoke({ taskId: task.id, status: 'in_progress' }, rpc, {
     getTaskManager: () => staleManager,
   });
@@ -425,7 +428,7 @@ test('writeStatus threads expectedWorkflowRunId from the loaded task into setTas
       `Task ${task.id} is no longer attached to workflow run '${run.id}' (now 'null')`
     );
   });
-  const staleManager: Pick<SpaceTaskManager, 'getTask' | 'setTaskStatus'> = {
+  const staleManager = {
     getTask: async (id) => tasks.getTask(id),
     setTaskStatus,
   };
@@ -581,7 +584,6 @@ describe('decide', () => {
   });
 
   test.each([
-    ['requesting review directly is unsupported', 'open', 'review', 'unsupported_status'],
     ['requesting the current status is invalid', 'open', 'open', 'invalid_transition'],
   ] as const)('%s', async (_name, currentStatus, requestedStatus, rejection) => {
     const owned = createOwned(currentStatus);
@@ -860,7 +862,7 @@ describe('writeStatus', () => {
   test('a stale-guard error maps to invalid_transition', async () => {
     const owned = createOwned('open');
     const decided = { ...owned, approvalSource: undefined, allowActiveRun: false };
-    const staleManager: Pick<SpaceTaskManager, 'getTask' | 'setTaskStatus'> = {
+    const staleManager = {
       getTask: async (id) => tasks.getTask(id),
       setTaskStatus: async () => {
         throw new StaleTaskGuardError('stale');
@@ -890,5 +892,114 @@ describe('writeStatus', () => {
         deps({ getTaskManager: () => brokenManager })
       )
     ).rejects.toThrow('boom');
+  });
+});
+
+describe('the review edge', () => {
+  test('a running direct attempt submits through the durable outcome queue', async () => {
+    const task = tasks.createTask({ spaceId, title: 'T', description: '' });
+    attempts.select(task.id);
+    attempts.claim(task.id, 'attempt', 'worker');
+    attempts.activate('attempt', 'worker');
+    tasks.updateTask(task.id, { status: 'in_progress', taskAgentSessionId: 'worker' });
+    const requestDirectOutcome = mock(() => ({ accepted: true as const, jobId: 'job-1' }));
+
+    const result = await invoke({ taskId: task.id, status: 'review', reviewReason: 'Ready' }, rpc, {
+      requestDirectOutcome,
+    });
+
+    expect(result).toEqual({ kind: 'completed', value: { accepted: true, jobId: 'job-1' } });
+    expect(requestDirectOutcome).toHaveBeenCalledWith({
+      attemptId: 'attempt',
+      sessionId: 'worker',
+      generation: 1,
+      status: 'review',
+      reviewReason: 'Ready',
+    });
+    expect(tasks.getTask(task.id)?.status).toBe('in_progress');
+  });
+
+  test('a Space-owned task stamps the pending-completion checkpoint synchronously', async () => {
+    const task = tasks.createTask({ spaceId, title: 'T', description: '' });
+    tasks.updateTask(task.id, { status: 'in_progress', workflowRunId: createWorkflowRun().id });
+
+    const result = await invoke({ taskId: task.id, status: 'review', reviewReason: 'Ready' }, rpc);
+
+    expect(result).toEqual({ kind: 'completed', value: { accepted: true, jobId: null } });
+    expect(tasks.getTask(task.id)).toMatchObject({
+      status: 'review',
+      pendingCheckpointType: 'task_completion',
+      pendingCompletionReason: 'Ready',
+    });
+    expect(emitTaskUpdated).toHaveBeenCalledTimes(1);
+  });
+
+  test('a task already in review refreshes its task_completion checkpoint', async () => {
+    const task = tasks.createTask({ spaceId, title: 'T', description: '' });
+    tasks.updateTask(task.id, { status: 'in_progress', workflowRunId: createWorkflowRun().id });
+    await invoke({ taskId: task.id, status: 'review', reviewReason: 'First' }, rpc);
+
+    const result = await invoke({ taskId: task.id, status: 'review', reviewReason: 'Second' }, rpc);
+
+    expect(result).toEqual({ kind: 'completed', value: { accepted: true, jobId: null } });
+    expect(tasks.getTask(task.id)).toMatchObject({
+      status: 'review',
+      pendingCompletionReason: 'Second',
+    });
+  });
+
+  test('a queued direct start on a plain task is not submittable', async () => {
+    const task = tasks.createTask({ spaceId, title: 'T', description: '' });
+    attempts.select(task.id);
+    attempts.claim(task.id, 'attempt', 'worker');
+
+    const result = await invoke({ taskId: task.id, status: 'review' }, rpc);
+
+    expect(result).toEqual({
+      kind: 'completed',
+      value: { accepted: false, reason: 'review_submission_unavailable' },
+    });
+    expect(tasks.getTask(task.id)?.status).toBe('open');
+  });
+
+  test('a done task cannot be walked back into review', async () => {
+    const task = tasks.createTask({ spaceId, title: 'T', description: '' });
+    tasks.updateTask(task.id, { status: 'done' });
+
+    expect(await invoke({ taskId: task.id, status: 'review' }, rpc)).toEqual({
+      kind: 'completed',
+      value: { accepted: false, reason: 'review_submission_invalid_transition' },
+    });
+    expect(tasks.getTask(task.id)?.status).toBe('done');
+  });
+
+  test('an archived task cannot be submitted for review', async () => {
+    const task = tasks.createTask({ spaceId, title: 'T', description: '' });
+    tasks.updateTask(task.id, { archivedAt: Date.now() });
+
+    expect(await invoke({ taskId: task.id, status: 'review' }, rpc)).toEqual({
+      kind: 'completed',
+      value: { accepted: false, reason: 'review_submission_unavailable' },
+    });
+  });
+
+  test('an MCP caller outside the owning Space is denied', async () => {
+    const task = tasks.createTask({ spaceId, title: 'T', description: '' });
+    tasks.updateTask(task.id, { status: 'in_progress', workflowRunId: createWorkflowRun().id });
+    const outsider = worker('outsider', 'another-space');
+
+    expect(await invoke({ taskId: task.id, status: 'review' }, outsider)).toEqual({
+      kind: 'completed',
+      value: { accepted: false, reason: 'task_transition_denied' },
+    });
+    expect(tasks.getTask(task.id)?.status).toBe('in_progress');
+  });
+
+  test('a reviewReason is rejected unless the target status is review', async () => {
+    const task = tasks.createTask({ spaceId, title: 'T', description: '' });
+
+    expect(
+      await invoke({ taskId: task.id, status: 'in_progress', reviewReason: 'Ready' }, rpc)
+    ).toEqual({ kind: 'completed', value: 'review_reason_requires_review' });
   });
 });

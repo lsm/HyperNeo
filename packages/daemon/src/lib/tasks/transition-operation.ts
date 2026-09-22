@@ -21,6 +21,7 @@ export type TransitionTaskRejection =
   | 'invalid_transition'
   | 'result_requires_done'
   | 'block_reason_requires_blocked'
+  | 'review_reason_requires_review'
   | 'space_at_task_capacity'
   | 'approved_requires_complete'
   | 'archive_active_run';
@@ -85,6 +86,7 @@ export function createTransitionTaskOperation<Input = TransitionStandaloneTaskIn
         'invalid_transition',
         'result_requires_done',
         'block_reason_requires_blocked',
+        'review_reason_requires_review',
         'space_at_task_capacity',
         'approved_requires_complete',
         'archive_active_run',

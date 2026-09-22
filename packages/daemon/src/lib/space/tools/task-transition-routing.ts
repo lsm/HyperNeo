@@ -22,7 +22,6 @@ export type TaskUpdateRejectReason =
   | 'no_updatable_fields'
   | 'task_not_found'
   | 'task_not_in_space'
-  | 'review_direct'
   | 'approved_direct'
   | 'limited_direct'
   | 'review_to_done'
@@ -31,6 +30,7 @@ export type TaskUpdateRejectReason =
 
 export type TaskUpdateRouting =
   | { action: 'reject'; reason: TaskUpdateRejectReason; message: string }
+  | { action: 'submit_review'; auditParamsShape: 'transition'; emitTaskUpdated: 'never' }
   | {
       action: 'park_stopped';
       auditParamsShape: 'transition';
@@ -101,17 +101,10 @@ export function routeTaskUpdate(input: TaskUpdateRoutingInput): TaskUpdateRoutin
   if (target.action === 'reject') {
     return target;
   }
+  if (requestedStatus === 'review') {
+    return { action: 'submit_review', auditParamsShape: 'transition', emitTaskUpdated: 'never' };
+  }
   if (requestedStatus !== undefined && statusDiffers) {
-    if (requestedStatus === 'review') {
-      return {
-        action: 'reject',
-        reason: 'review_direct',
-        message:
-          `Cannot transition a task into 'review' directly. ` +
-          `Use task.submitForReview so the pending-completion fields get stamped ` +
-          `and the approval banner renders.`,
-      };
-    }
     if (requestedStatus === 'approved') {
       return {
         action: 'reject',

@@ -20,6 +20,7 @@ const base = {
   taskId: 't1',
   hasResult: false,
   hasBlockReason: false,
+  hasReviewReason: false,
   workflowRunId: null,
   runActive: false,
   approvalSource: null,
@@ -107,14 +108,30 @@ const cases: Case[] = [
     { action: 'reject', result: 'approved_requires_complete' },
   ],
   [
-    'directly requesting review is unsupported for rpc',
+    'requesting review routes to the checkpoint stage for rpc',
     { ...base, currentStatus: 'open', requestedStatus: 'review', callerSource: 'rpc' },
-    { action: 'reject', result: 'unsupported_status' },
+    { action: 'runtime', executor: 'submit_review', approvalSource: undefined },
   ],
   [
-    'directly requesting review is unsupported for mcp',
+    'requesting review routes to the checkpoint stage for mcp',
     { ...base, currentStatus: 'open', requestedStatus: 'review', callerSource: 'mcp' },
-    { action: 'reject', result: 'unsupported_status' },
+    { action: 'runtime', executor: 'submit_review', approvalSource: undefined },
+  ],
+  [
+    'a task already in review still routes to the checkpoint stage',
+    { ...base, currentStatus: 'review', requestedStatus: 'review', callerSource: 'rpc' },
+    { action: 'runtime', executor: 'submit_review', approvalSource: undefined },
+  ],
+  [
+    'a reviewReason outside a review transition is rejected',
+    {
+      ...base,
+      currentStatus: 'open',
+      requestedStatus: 'in_progress',
+      hasReviewReason: true,
+      callerSource: 'rpc',
+    },
+    { action: 'reject', result: 'review_reason_requires_review' },
   ],
   [
     'directly requesting approved is unsupported for rpc',
@@ -268,9 +285,9 @@ const fieldsOnly: TaskUpdateRouting = {
   auditParamsShape: 'fields_only',
   emitTaskUpdated: 'always',
 };
-const rejectReviewDirect: TaskUpdateRouting = {
+const rejectLimitedDirect: TaskUpdateRouting = {
   action: 'reject',
-  reason: 'review_direct',
+  reason: 'limited_direct',
   message: 'm',
 };
 const rejectReviewToDone: TaskUpdateRouting = {
@@ -303,7 +320,8 @@ const stopForStatus: TaskUpdateRouting = {
 describe('classifyRequest', () => {
   test.each([
     ['open to in_progress classifies as set_status', 'open', 'in_progress', 'set_status'],
-    ['requesting review classifies as reject', 'open', 'review', 'reject'],
+    ['requesting review classifies as submit_review', 'open', 'review', 'submit_review'],
+    ['review to review also classifies as submit_review', 'review', 'review', 'submit_review'],
     ['same status classifies as fields_only', 'open', 'open', 'fields_only'],
   ] as const)('%s', (_name, currentStatus, requestedStatus, expectedAction) => {
     const routing = classifyRequest({
@@ -325,8 +343,8 @@ describe('rejectUnsupportedRequest', () => {
       { reason: { action: 'reject', result: 'invalid_transition' } },
     ],
     [
-      'a non-review reject reason is unsupported',
-      rejectReviewDirect,
+      'a reject reason with no mapping is unsupported',
+      rejectLimitedDirect,
       'rpc',
       { reason: { action: 'reject', result: 'unsupported_status' } },
     ],

@@ -55,7 +55,7 @@ describe('routeTaskUpdate reject reasons', () => {
     });
   });
 
-  test('review_direct rejects even for workflow-backed recovery-shaped requests', () => {
+  test('submit_review wins over the workflow-backed recovery shape', () => {
     expect(
       routeTaskUpdate(
         baseInput({
@@ -66,12 +66,9 @@ describe('routeTaskUpdate reject reasons', () => {
         })
       )
     ).toEqual({
-      action: 'reject',
-      reason: 'review_direct',
-      message:
-        `Cannot transition a task into 'review' directly. ` +
-        `Use task.submitForReview so the pending-completion fields get stamped ` +
-        `and the approval banner renders.`,
+      action: 'submit_review',
+      auditParamsShape: 'transition',
+      emitTaskUpdated: 'never',
     });
   });
 

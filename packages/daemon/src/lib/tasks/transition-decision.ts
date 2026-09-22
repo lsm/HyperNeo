@@ -13,6 +13,7 @@ export interface SpaceTaskTransitionDecisionInput {
   requestedStatus: SpaceTaskStatus;
   hasResult: boolean;
   hasBlockReason: boolean;
+  hasReviewReason: boolean;
   workflowRunId: string | null;
   runActive: boolean;
   callerSource: OperationCaller['source'];
@@ -23,6 +24,7 @@ type RejectResult =
   | 'invalid_transition'
   | 'result_requires_done'
   | 'block_reason_requires_blocked'
+  | 'review_reason_requires_review'
   | 'approved_requires_complete'
   | 'archive_active_run';
 export type SpaceTaskTransitionDecision =
@@ -30,12 +32,17 @@ export type SpaceTaskTransitionDecision =
   | { action: 'reject'; result: RejectResult }
   | {
       action: 'runtime';
-      executor: 'park_stopped' | 'recover_transition' | 'stop_for_status';
+      executor: 'park_stopped' | 'recover_transition' | 'stop_for_status' | 'submit_review';
       approvalSource: 'human' | undefined;
     };
 type Input = SpaceTaskTransitionDecisionInput;
 type Gate = { value: TaskUpdateRouting } | { reason: SpaceTaskTransitionDecision };
-const RUNTIME_ACTIONS = ['park_stopped', 'recover_transition', 'stop_for_status'] as const;
+const RUNTIME_ACTIONS = [
+  'park_stopped',
+  'recover_transition',
+  'stop_for_status',
+  'submit_review',
+] as const;
 type RuntimeExecutor = (typeof RUNTIME_ACTIONS)[number];
 const REJECT_UNSUPPORTED = { action: 'reject', result: 'unsupported_status' } as const;
 const REJECT_INVALID = { action: 'reject', result: 'invalid_transition' } as const;
@@ -43,6 +50,10 @@ const REJECT_RESULT_REQUIRES_DONE = { action: 'reject', result: 'result_requires
 const REJECT_BLOCK_REASON_REQUIRES_BLOCKED = {
   action: 'reject',
   result: 'block_reason_requires_blocked',
+} as const;
+const REJECT_REVIEW_REASON_REQUIRES_REVIEW = {
+  action: 'reject',
+  result: 'review_reason_requires_review',
 } as const;
 const REJECT_ARCHIVE_ACTIVE_RUN = { action: 'reject', result: 'archive_active_run' } as const;
 const REJECT_APPROVED_REQUIRES_COMPLETE = {
@@ -92,6 +103,16 @@ export function requireBlockReasonOnlyWithBlocked(routing: TaskUpdateRouting, in
     ? { reason: REJECT_BLOCK_REASON_REQUIRES_BLOCKED }
     : { value: routing };
 }
+export function requireReviewReasonOnlyWithReview(routing: TaskUpdateRouting, input: Input): Gate {
+  return input.hasReviewReason && input.requestedStatus !== 'review'
+    ? { reason: REJECT_REVIEW_REASON_REQUIRES_REVIEW }
+    : { value: routing };
+}
+export function routeReviewSubmission(routing: TaskUpdateRouting): Gate {
+  return routing.action === 'submit_review'
+    ? { reason: { action: 'runtime', executor: 'submit_review', approvalSource: undefined } }
+    : { value: routing };
+}
 export function requireTableTransition(routing: TaskUpdateRouting, input: Input): Gate {
   return isValidTaskTransition(input.currentStatus, input.requestedStatus)
     ? { value: routing }
@@ -132,6 +153,8 @@ export const decideSpaceTaskTransition = (superpipe({})('space-task-transition')
   .pipe(rejectUnsupportedRequest, 'routing', 'result:decision')
   .pipe(requireResultOnlyWithDone, ['decision', 'input'], 'result:decision')
   .pipe(requireBlockReasonOnlyWithBlocked, ['decision', 'input'], 'result:decision')
+  .pipe(requireReviewReasonOnlyWithReview, ['decision', 'input'], 'result:decision')
+  .pipe(routeReviewSubmission, 'decision', 'result:decision')
   .pipe(requireTableTransition, ['decision', 'input'], 'result:decision')
   .pipe(routeRuntimeAction, ['decision', 'input'], 'result:decision')
   .pipe(stampApproval, 'input', 'decision')

@@ -20,6 +20,7 @@ export const SpaceTransitionTaskInputSchema = z
     status: TaskCoreSchema.shape.status,
     result: z.string().optional(),
     blockReason: z.literal('human_input_requested').optional(),
+    reviewReason: z.string().optional(),
     expectedStatus: TaskCoreSchema.shape.status.optional(),
   })
   .strict();

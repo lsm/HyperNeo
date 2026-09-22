@@ -10,6 +10,7 @@ import { defineOperation, type OperationCaller } from '../operations/registry.ts
 import type { SpaceMcpSessionPolicyContext } from '../space/runtime/space-mcp-session-policy.ts';
 import { requireDirectTaskWorkerIdentity } from './direct-task-worker-identity.ts';
 import { resolveMetadataSessionSpace, type SpaceTaskMetadataDependencies } from './metadata.ts';
+import type { SpaceTaskManager } from './task-manager.ts';
 import { Logger } from '../logger.ts';
 import {
   readDirectFinalizationRequest,
@@ -22,6 +23,11 @@ const inputSchema = z
   .object({ taskId: z.string().min(1), reason: z.string().nullable().optional() })
   .strict();
 type Input = z.infer<typeof inputSchema>;
+export type ReviewSubmissionRequest = Input;
+export type ReviewSubmissionDependencies = Pick<SpaceTaskMetadataDependencies, 'emitTaskUpdated'> &
+  SpaceMcpSessionPolicyContext & {
+    getTaskManager: (spaceId: string) => Pick<SpaceTaskManager, 'submitTaskForReview'>;
+  };
 type SubmitForReviewTaskDependencies = Pick<
   SpaceTaskMetadataDependencies,
   'getTaskManager' | 'emitTaskUpdated'
@@ -51,11 +57,11 @@ function reviewBackedByFrozenDirectRequest(db: Database, taskId: string, session
   return readDirectFinalizationRequest(db, { attemptId: row.id, sessionId })?.status === 'review';
 }
 
-async function admitManagedSubmission(
+export async function admitManagedSubmission(
   db: Database,
   input: Input,
   caller: OperationCaller,
-  tasks: SubmitForReviewTaskDependencies
+  tasks: ReviewSubmissionDependencies
 ): Promise<{ value: true } | { reason: DirectOutcomeAcknowledgement }> {
   const task = new SpaceTaskRepository(db).getTask(input.taskId);
   const hasActiveDirectAttempt =
@@ -102,7 +108,7 @@ async function admitManagedSubmission(
   }
 }
 
-function admitSubmission(
+export function admitSubmission(
   db: Database,
   input: Input,
   caller: OperationCaller
