@@ -1,8 +1,4 @@
-import type {
-  SpaceLongHorizonAgent,
-  SpaceLongHorizonAgentStatus,
-  UpdateSpaceLongHorizonAgentParams,
-} from '@hyperneo/shared';
+import type { SpaceLongHorizonAgent, UpdateSpaceLongHorizonAgentParams } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
@@ -50,10 +46,7 @@ const inputSchema = targetSchema
   })
   .strict();
 
-const targetOnlySchema = targetSchema.strict();
-
 type Input = z.infer<typeof inputSchema>;
-type TargetInput = z.infer<typeof targetOnlySchema>;
 type Result = { agent: SpaceLongHorizonAgent } | AgentRejection;
 type Gate<T> = { value: T } | { reason: AgentRejection };
 
@@ -195,10 +188,6 @@ const REJECTION_DOC =
 
 const UPDATE_AGENT_DESCRIPTION = `Update a long-horizon agent: name, lifecycle status, description, operator prompt, model, provider, thinking level, setting sources, or tool allowlist. Setting status is how an agent is paused, archived, and revived; see the status field for what each one leaves behind. Fields left out are untouched; null clears a clearable override, and tools set to null clears the allowlist. Clearing the provider also clears it from the agent's live session. Reviving an archived agent re-checks its name against live peers. ${REJECTION_DOC}`;
 
-const PAUSE_AGENT_DESCRIPTION = `Pause a long-horizon agent, the status-only form of agent.update: the agent stops being scheduled but keeps its configuration, subscriptions, and reminders, and agent.update with status active revives it. ${REJECTION_DOC}`;
-
-const ARCHIVE_AGENT_DESCRIPTION = `Archive a long-horizon agent, the status-only form of agent.update: the agent leaves active lookups and frees its display name for reuse, and agent.update with another status revives it, subject to the name still being free. ${REJECTION_DOC}`;
-
 export function createUpdateAgentOperation(deps: UpdateAgentDependencies) {
   const update = buildUpdatePipeline(deps);
   return defineOperation({
@@ -208,34 +197,5 @@ export function createUpdateAgentOperation(deps: UpdateAgentDependencies) {
     inputSchema,
     resultSchema,
     execute: async (input, caller) => update(input, caller),
-  });
-}
-
-function statusSetter(deps: UpdateAgentDependencies, status: SpaceLongHorizonAgentStatus) {
-  const update = buildUpdatePipeline(deps);
-  return (input: TargetInput, caller: OperationCaller) => update({ ...input, status }, caller);
-}
-
-export function createPauseAgentOperation(deps: UpdateAgentDependencies) {
-  const pause = statusSetter(deps, 'paused');
-  return defineOperation({
-    name: 'agent.pause',
-    policy: AGENT_MUTATE_POLICY,
-    description: PAUSE_AGENT_DESCRIPTION,
-    inputSchema: targetOnlySchema,
-    resultSchema,
-    execute: async (input, caller) => pause(input, caller),
-  });
-}
-
-export function createArchiveAgentOperation(deps: UpdateAgentDependencies) {
-  const archive = statusSetter(deps, 'archived');
-  return defineOperation({
-    name: 'agent.archive',
-    policy: AGENT_MUTATE_POLICY,
-    description: ARCHIVE_AGENT_DESCRIPTION,
-    inputSchema: targetOnlySchema,
-    resultSchema,
-    execute: async (input, caller) => archive(input, caller),
   });
 }
