@@ -140,18 +140,58 @@ describe('loadTask', () => {
 });
 
 describe('routeActiveDirectAttempt', () => {
-  test.each(['reserved', 'running'] as const)(
-    'a task with a %s direct attempt is rejected',
-    (phase) => {
-      const task = tasks.createTask({ spaceId, title: 'T', description: '' });
-      attempts.select(task.id);
-      attempts.claim(task.id, 'attempt', 'worker');
-      if (phase === 'running') attempts.activate('attempt', 'worker');
-      expect(
-        routeActiveDirectAttempt({ spaceId, task }, { taskId: task.id, status: 'done' }, deps())
-      ).toEqual({ reason: 'unsupported_status' });
-    }
-  );
+  const ack = { accepted: true as const, jobId: 'job' };
+  function stage(phase: 'reserved' | 'running') {
+    const task = tasks.createTask({ spaceId, title: 'T', description: '' });
+    attempts.select(task.id);
+    attempts.claim(task.id, 'attempt', 'worker');
+    if (phase === 'running') attempts.activate('attempt', 'worker');
+    return tasks.updateTask(task.id, { taskAgentSessionId: 'worker' })!;
+  }
+
+  test('a reserved attempt is refused as not running, not as an unsupported status', () => {
+    const task = stage('reserved');
+    expect(
+      routeActiveDirectAttempt(
+        { spaceId, task },
+        { taskId: task.id, status: 'done' },
+        deps({ requestDirectOutcome: () => ack })
+      )
+    ).toEqual({ reason: 'direct_attempt_not_running' });
+  });
+
+  test('a running attempt owned by another session is refused the same way', () => {
+    const task = tasks.updateTask(stage('running').id, { taskAgentSessionId: 'someone-else' })!;
+    expect(
+      routeActiveDirectAttempt(
+        { spaceId, task },
+        { taskId: task.id, status: 'done' },
+        deps({ requestDirectOutcome: () => ack })
+      )
+    ).toEqual({ reason: 'direct_attempt_not_running' });
+  });
+
+  test('a running attempt the caller owns is handed to the outcome queue', () => {
+    const task = stage('running');
+    expect(
+      routeActiveDirectAttempt(
+        { spaceId, task },
+        { taskId: task.id, status: 'done' },
+        deps({ requestDirectOutcome: () => ack })
+      )
+    ).toEqual({ reason: ack });
+  });
+
+  test('a status the direct route does not carry is still unsupported_status', () => {
+    const task = stage('running');
+    expect(
+      routeActiveDirectAttempt(
+        { spaceId, task },
+        { taskId: task.id, status: 'open' },
+        deps({ requestDirectOutcome: () => ack })
+      )
+    ).toEqual({ reason: 'unsupported_status' });
+  });
 
   test('a task without an active attempt passes through unchanged', () => {
     const task = tasks.createTask({ spaceId, title: 'T', description: '' });
