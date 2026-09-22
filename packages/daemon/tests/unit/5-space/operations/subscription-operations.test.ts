@@ -357,6 +357,8 @@ describe('subscribe and unsubscribe take a subject', () => {
       caller
     );
     expect(operations.get('event.external.subscribe')?.resultSchema.parse(result)).toMatchObject({
+      ok: true,
+      topicPattern: AGENT_TOPIC,
       subscription: { agentId: AGENT, source: 'github', topic: AGENT_TOPIC, status: 'active' },
     });
     const stored = agentSubscriptions.listSubscriptions(AGENT);
