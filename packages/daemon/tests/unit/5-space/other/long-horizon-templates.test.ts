@@ -85,7 +85,7 @@ describe('long-horizon agent templates', () => {
     expect(taskManager?.instructions).toContain('Tasks waiting in review are not yours to move');
     expect(taskManager?.instructions).toContain('next slices');
     expect(taskManager?.instructions).toContain('no routing powers over other agents');
-    expect(taskManager?.instructions).toContain('goal.triggerTask');
+    expect(taskManager?.instructions).toContain('goal.task.trigger');
     expect(taskManager?.instructions).not.toContain('reassign_task');
     expect(taskManager?.instructions).not.toContain('send_session_message');
     expect(taskManager?.instructions).not.toContain('escalate to the space manager');

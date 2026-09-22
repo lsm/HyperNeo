@@ -296,7 +296,7 @@ export class SpaceLongHorizonAgentRepository {
     const now = Date.now();
     this.db
       .prepare(
-        `INSERT INTO space_long_horizon_agent_forge_scopes (agent_id, scope_id, relationship, created_at, updated_at)
+        `INSERT INTO space_long_horizon_agent_evolution_scopes (agent_id, scope_id, relationship, created_at, updated_at)
 				 VALUES (?, ?, ?, ?, ?)
 				 ON CONFLICT(agent_id, scope_id, relationship) DO UPDATE SET updated_at = excluded.updated_at`
       )
@@ -306,7 +306,7 @@ export class SpaceLongHorizonAgentRepository {
   listForgeScopes(agentId: string): SpaceLongHorizonAgentForgeScope[] {
     const rows = this.db
       .prepare(
-        `SELECT * FROM space_long_horizon_agent_forge_scopes WHERE agent_id = ? ORDER BY created_at ASC`
+        `SELECT * FROM space_long_horizon_agent_evolution_scopes WHERE agent_id = ? ORDER BY created_at ASC`
       )
       .all(agentId) as Record<string, unknown>[];
     return rows.map(rowToForgeScopeLink);
@@ -315,7 +315,7 @@ export class SpaceLongHorizonAgentRepository {
   listForgeScopeAssignments(scopeId: string): SpaceLongHorizonAgentForgeScope[] {
     const rows = this.db
       .prepare(
-        `SELECT * FROM space_long_horizon_agent_forge_scopes WHERE scope_id = ? ORDER BY created_at ASC`
+        `SELECT * FROM space_long_horizon_agent_evolution_scopes WHERE scope_id = ? ORDER BY created_at ASC`
       )
       .all(scopeId) as Record<string, unknown>[];
     return rows.map(rowToForgeScopeLink);
@@ -324,7 +324,7 @@ export class SpaceLongHorizonAgentRepository {
   deleteForgeScopeAssignment(agentId: string, scopeId: string): void {
     this.db
       .prepare(
-        `DELETE FROM space_long_horizon_agent_forge_scopes WHERE agent_id = ? AND scope_id = ?`
+        `DELETE FROM space_long_horizon_agent_evolution_scopes WHERE agent_id = ? AND scope_id = ?`
       )
       .run(agentId, scopeId);
   }
