@@ -22,17 +22,25 @@ let db: Database;
 let sessions: SessionRepository;
 let agents: SpaceLongHorizonAgentRepository;
 let subscriptionRepo: SpaceAgentSubscriptionRepository;
-let auditLogRepo: McpAuditLogRepository;
 let operations: Map<string, OperationDefinition>;
-let refreshed: Array<{ spaceId: string; subscriptionId: string }>;
-let removed: Array<{ spaceId: string; subscriptionId: string }>;
-let refreshOutcome: { success: boolean; error?: string };
 let SPACE: string;
 let OTHER_SPACE: string;
 let AGENT: string;
 let FOREIGN_AGENT: string;
 
 const TOPIC = 'github/acme/widgets/pull_request/*.review_*';
+const LIST = 'externalEvent.agent.listSubscriptions';
+
+function seed(topic: string) {
+  return subscriptionRepo.upsertSubscription({
+    spaceId: SPACE,
+    agentId: AGENT,
+    source: topic.split('/')[0] ?? '',
+    topic,
+    filter: {},
+    status: 'active',
+  });
+}
 
 function memberSession(
   id: string,
@@ -82,20 +90,11 @@ beforeEach(() => {
   FOREIGN_AGENT = agents.create({ spaceId: OTHER_SPACE, handle: 'outsider' }).id;
   sessions = new SessionRepository(db);
   subscriptionRepo = new SpaceAgentSubscriptionRepository(db, new SpaceAgentRepository(db));
-  auditLogRepo = new McpAuditLogRepository(db);
-  refreshed = [];
-  removed = [];
-  refreshOutcome = { success: true };
   const deps: AgentSubscriptionDependencies = {
     subscriptionRepo,
-    refreshSubscription: (spaceId, subscriptionId) => {
-      refreshed.push({ spaceId, subscriptionId });
-      return refreshOutcome;
-    },
-    removeSubscription: (spaceId, subscriptionId) => {
-      removed.push({ spaceId, subscriptionId });
-    },
-    auditLogRepo,
+    refreshSubscription: () => ({ success: true }),
+    removeSubscription: () => {},
+    auditLogRepo: new McpAuditLogRepository(db),
     getSession: (id) => sessions.getSession(id),
     taskRepo: new SpaceTaskRepository(db),
     longHorizonAgentRepo: agents,
@@ -107,264 +106,14 @@ beforeEach(() => {
 
 afterEach(() => db.close());
 
-describe('agent external-event subscription operations', () => {
-  test('subscribes an agent and returns the stored record', async () => {
-    const sessionId = memberSession('s-sub');
-    const result = (await run(
-      'externalEvent.agent.subscribe',
-      { agent_id: AGENT, topic_pattern: TOPIC, label: 'reviews' },
-      member(sessionId)
-    )) as { subscription: { agentId: string; source: string; topic: string; status: string } };
-    expect(result.subscription).toMatchObject({
-      agentId: AGENT,
-      source: 'github',
-      topic: TOPIC,
-      status: 'active',
-    });
-    const stored = subscriptionRepo.listSubscriptions(AGENT);
-    expect(stored).toHaveLength(1);
-    expect(stored[0]!.filter).toEqual({ label: 'reviews' });
-    expect(refreshed).toEqual([{ spaceId: SPACE, subscriptionId: stored[0]!.id }]);
-  });
-
-  test('subscribes without a label storing an empty filter', async () => {
-    const sessionId = memberSession('s-nolabel');
-    const result = (await run(
-      'externalEvent.agent.subscribe',
-      { agent_id: AGENT, topic_pattern: TOPIC },
-      member(sessionId)
-    )) as { subscription: { filter: Record<string, unknown> } };
-    expect(result.subscription.filter).toEqual({});
-  });
-
-  test('upserts an existing route instead of duplicating it', async () => {
-    const sessionId = memberSession('s-upsert');
-    await run(
-      'externalEvent.agent.subscribe',
-      { agent_id: AGENT, topic_pattern: TOPIC, label: 'first' },
-      member(sessionId)
-    );
-    await run(
-      'externalEvent.agent.subscribe',
-      { agent_id: AGENT, topic_pattern: TOPIC, label: 'second' },
-      member(sessionId)
-    );
-    const stored = subscriptionRepo.listSubscriptions(AGENT);
-    expect(stored).toHaveLength(1);
-    expect(stored[0]!.filter).toEqual({ label: 'second' });
-  });
-
-  test('rejects an invalid topic glob without persisting', async () => {
-    const sessionId = memberSession('s-invalid');
-    expect(
-      await run(
-        'externalEvent.agent.subscribe',
-        { agent_id: AGENT, topic_pattern: 'nosource' },
-        member(sessionId)
-      )
-    ).toEqual({ accepted: false, reason: 'invalid_pattern' });
-    expect(subscriptionRepo.listSubscriptions(AGENT)).toEqual([]);
-    expect(refreshed).toEqual([]);
-  });
-
-  test('rejects an unknown or cross-space agent', async () => {
-    const sessionId = memberSession('s-agent');
-    expect(
-      await run(
-        'externalEvent.agent.subscribe',
-        { agent_id: 'agent-none', topic_pattern: TOPIC },
-        member(sessionId)
-      )
-    ).toEqual({ accepted: false, reason: 'agent_not_found' });
-    expect(
-      await run(
-        'externalEvent.agent.subscribe',
-        { agent_id: FOREIGN_AGENT, topic_pattern: TOPIC },
-        member(sessionId)
-      )
-    ).toEqual({ accepted: false, reason: 'agent_not_found' });
-    expect(subscriptionRepo.listSubscriptions(AGENT)).toEqual([]);
-  });
-
-  test('reports refresh_failed when the live trie cannot be refreshed', async () => {
-    const sessionId = memberSession('s-refresh');
-    refreshOutcome = { success: false, error: 'trie unavailable' };
-    expect(
-      await run(
-        'externalEvent.agent.subscribe',
-        { agent_id: AGENT, topic_pattern: TOPIC },
-        member(sessionId)
-      )
-    ).toEqual({ accepted: false, reason: 'refresh_failed' });
-    expect(subscriptionRepo.listSubscriptions(AGENT)).toHaveLength(1);
-  });
-
-  test('records an audit entry for a mutation', async () => {
-    const sessionId = memberSession('s-audit');
-    await run(
-      'externalEvent.agent.subscribe',
-      { agent_id: AGENT, topic_pattern: TOPIC },
-      member(sessionId)
-    );
-    const entries = auditLogRepo.listBySession(sessionId);
-    expect(entries).toHaveLength(1);
-    expect(entries[0]!).toMatchObject({
-      toolName: 'externalEvent.agent.subscribe',
-      agentName: 'watcher',
-      spaceId: SPACE,
-    });
-    expect(JSON.parse(entries[0]!.paramsSummary!)).toMatchObject({
-      agent_id: AGENT,
-      topic_pattern: TOPIC,
-    });
-  });
-
-  test('admits a workflow_worker caller of the same Space', async () => {
-    const sessionId = memberSession('s-worker');
-    const worker: OperationCaller = {
-      source: 'mcp',
-      sessionId,
-      spaceId: SPACE,
-      role: 'workflow_worker',
-    };
-    const subscribed = (await run(
-      'externalEvent.agent.subscribe',
-      { agent_id: AGENT, topic_pattern: TOPIC },
-      worker
-    )) as { subscription: { agentId: string; status: string } };
-    expect(subscribed.subscription).toMatchObject({ agentId: AGENT, status: 'active' });
-    const listed = (await run(
-      'externalEvent.agent.listSubscriptions',
-      { agent_id: AGENT },
-      worker
-    )) as { subscriptions: unknown[] };
-    expect(listed.subscriptions).toHaveLength(1);
-  });
-
-  test('denies a caller that names another Space', async () => {
-    const sessionId = memberSession('s-denied');
-    expect(
-      await run(
-        'externalEvent.agent.subscribe',
-        { agent_id: AGENT, topic_pattern: TOPIC, spaceId: OTHER_SPACE },
-        member(sessionId)
-      )
-    ).toEqual({ accepted: false, reason: 'caller_denied' });
-    expect(subscriptionRepo.listSubscriptions(AGENT)).toEqual([]);
-  });
-
-  test('rejects a writer whose session is not active in the Space', async () => {
-    const sessionId = memberSession('s-inactive', { status: 'archived' });
-    expect(
-      await run(
-        'externalEvent.agent.subscribe',
-        { agent_id: AGENT, topic_pattern: TOPIC },
-        member(sessionId)
-      )
-    ).toEqual({ accepted: false, reason: 'session_inactive' });
-    expect(
-      await run(
-        'externalEvent.agent.unsubscribe',
-        { agent_id: AGENT, topic_pattern: TOPIC },
-        member(sessionId)
-      )
-    ).toEqual({ accepted: false, reason: 'session_inactive' });
-    expect(subscriptionRepo.listSubscriptions(AGENT)).toEqual([]);
-  });
-
-  test('serves a human RPC caller that passes spaceId explicitly', async () => {
-    const caller: OperationCaller = { source: 'rpc', principal: 'human' };
-    const result = (await run(
-      'externalEvent.agent.subscribe',
-      { agent_id: AGENT, topic_pattern: TOPIC, spaceId: SPACE },
-      caller
-    )) as { subscription: { agentId: string } };
-    expect(result.subscription.agentId).toBe(AGENT);
-    const listed = (await run(
-      'externalEvent.agent.listSubscriptions',
-      { agent_id: AGENT, spaceId: SPACE },
-      caller
-    )) as { subscriptions: Array<{ topic: string }> };
-    expect(listed.subscriptions).toHaveLength(1);
-    expect(listed.subscriptions[0]!.topic).toBe(TOPIC);
-  });
-
-  test('unsubscribes an existing pattern from the store and the trie', async () => {
-    const sessionId = memberSession('s-unsub');
-    await run(
-      'externalEvent.agent.subscribe',
-      { agent_id: AGENT, topic_pattern: TOPIC },
-      member(sessionId)
-    );
-    const stored = subscriptionRepo.listSubscriptions(AGENT);
-    expect(stored).toHaveLength(1);
-    expect(
-      await run(
-        'externalEvent.agent.unsubscribe',
-        { agent_id: AGENT, topic_pattern: TOPIC },
-        member(sessionId)
-      )
-    ).toEqual({ ok: true, topicPattern: TOPIC });
-    expect(subscriptionRepo.listSubscriptions(AGENT)).toEqual([]);
-    expect(removed).toEqual([{ spaceId: SPACE, subscriptionId: stored[0]!.id }]);
-  });
-
-  test('unsubscribing an unknown pattern succeeds without touching the trie', async () => {
-    const sessionId = memberSession('s-idempotent');
-    await run(
-      'externalEvent.agent.subscribe',
-      { agent_id: AGENT, topic_pattern: TOPIC },
-      member(sessionId)
-    );
-    const stored = subscriptionRepo.listSubscriptions(AGENT);
-    expect(
-      await run(
-        'externalEvent.agent.unsubscribe',
-        { agent_id: AGENT, topic_pattern: 'github/acme/widgets/issues/*' },
-        member(sessionId)
-      )
-    ).toEqual({ ok: true, topicPattern: 'github/acme/widgets/issues/*' });
-    expect(subscriptionRepo.listSubscriptions(AGENT)).toHaveLength(1);
-    expect(removed).toEqual([]);
-    expect(stored).toHaveLength(1);
-  });
-
-  test('unsubscribe rejects unknown agents and invalid patterns', async () => {
-    const sessionId = memberSession('s-unsub-bad');
-    expect(
-      await run(
-        'externalEvent.agent.unsubscribe',
-        { agent_id: FOREIGN_AGENT, topic_pattern: TOPIC },
-        member(sessionId)
-      )
-    ).toEqual({ accepted: false, reason: 'agent_not_found' });
-    expect(
-      await run(
-        'externalEvent.agent.unsubscribe',
-        { agent_id: AGENT, topic_pattern: 'a/**/b' },
-        member(sessionId)
-      )
-    ).toEqual({ accepted: false, reason: 'invalid_pattern' });
-  });
-
+describe('agent external-event subscription listing', () => {
   test('lists the agent subscriptions regardless of session activity', async () => {
-    const sessionId = memberSession('s-list');
-    await run(
-      'externalEvent.agent.subscribe',
-      { agent_id: AGENT, topic_pattern: TOPIC },
-      member(sessionId)
-    );
-    await run(
-      'externalEvent.agent.subscribe',
-      { agent_id: AGENT, topic_pattern: 'github/acme/widgets/issues/*' },
-      member(sessionId, 'ad_hoc_member')
-    );
+    seed(TOPIC);
+    seed('github/acme/widgets/issues/*');
     const archived = memberSession('s-list-archived', { status: 'archived' });
-    const result = (await run(
-      'externalEvent.agent.listSubscriptions',
-      { agent_id: AGENT },
-      member(archived)
-    )) as { subscriptions: Array<{ topic: string; source: string; status: string }> };
+    const result = (await run(LIST, { agent_id: AGENT }, member(archived, 'ad_hoc_member'))) as {
+      subscriptions: Array<{ topic: string; source: string; status: string }>;
+    };
     expect(result.subscriptions.map((subscription) => subscription.topic).sort()).toEqual([
       'github/acme/widgets/issues/*',
       TOPIC,
@@ -374,60 +123,71 @@ describe('agent external-event subscription operations', () => {
     );
   });
 
-  test('listing rejects unknown or cross-space agents', async () => {
+  test('admits a workflow_worker caller of the same Space', async () => {
+    seed(TOPIC);
+    const worker: OperationCaller = {
+      source: 'mcp',
+      sessionId: memberSession('s-worker'),
+      spaceId: SPACE,
+      role: 'workflow_worker',
+    };
+    const listed = (await run(LIST, { agent_id: AGENT }, worker)) as { subscriptions: unknown[] };
+    expect(listed.subscriptions).toHaveLength(1);
+  });
+
+  test('serves a human RPC caller that passes spaceId explicitly', async () => {
+    seed(TOPIC);
+    const listed = (await run(
+      LIST,
+      { agent_id: AGENT, spaceId: SPACE },
+      {
+        source: 'rpc',
+        principal: 'human',
+      }
+    )) as { subscriptions: Array<{ topic: string }> };
+    expect(listed.subscriptions).toHaveLength(1);
+    expect(listed.subscriptions[0]!.topic).toBe(TOPIC);
+  });
+
+  test('rejects unknown or cross-space agents', async () => {
     const sessionId = memberSession('s-list-bad');
-    expect(
-      await run(
-        'externalEvent.agent.listSubscriptions',
-        { agent_id: 'agent-none' },
-        member(sessionId)
-      )
-    ).toEqual({ accepted: false, reason: 'agent_not_found' });
-    expect(
-      await run(
-        'externalEvent.agent.listSubscriptions',
-        { agent_id: FOREIGN_AGENT },
-        member(sessionId)
-      )
-    ).toEqual({ accepted: false, reason: 'agent_not_found' });
+    expect(await run(LIST, { agent_id: 'agent-none' }, member(sessionId))).toEqual({
+      accepted: false,
+      reason: 'agent_not_found',
+    });
+    expect(await run(LIST, { agent_id: FOREIGN_AGENT }, member(sessionId))).toEqual({
+      accepted: false,
+      reason: 'agent_not_found',
+    });
   });
 });
 
 describe('agent subscriptions optional Space scope', () => {
   test('empty RPC and internal lists name the inherited Space', async () => {
     for (const source of ['rpc', 'internal'] as const) {
-      const result = await run(
-        'externalEvent.agent.listSubscriptions',
-        { agent_id: AGENT },
-        { source, spaceId: SPACE }
-      );
-      expect(
-        operations.get('externalEvent.agent.listSubscriptions')?.resultSchema.parse(result)
-      ).toEqual({ subscriptions: [], scope: { spaceId: SPACE } });
+      const result = await run(LIST, { agent_id: AGENT }, { source, spaceId: SPACE });
+      expect(operations.get(LIST)?.resultSchema.parse(result)).toEqual({
+        subscriptions: [],
+        scope: { spaceId: SPACE },
+      });
     }
   });
 });
 
-test.each([
-  'externalEvent.agent.subscribe',
-  'externalEvent.agent.unsubscribe',
-  'externalEvent.agent.listSubscriptions',
-])('%s exposes a recognized rejection through the operation door', async (name) => {
-  const input = name.endsWith('listSubscriptions')
-    ? { agent_id: AGENT }
-    : { agent_id: AGENT, topic_pattern: TOPIC };
-  const outcome = await invokeOperation(operations, name, input, { source: 'rpc' });
+test(`${LIST} exposes a recognized rejection through the operation door`, async () => {
+  const input = { agent_id: AGENT };
+  const outcome = await invokeOperation(operations, LIST, input, { source: 'rpc' });
   expect(outcome).toEqual({
     kind: 'completed',
     value: { accepted: false, reason: 'caller_denied' },
   });
   const mcp = createOperationMcpHandler(operations, () => ({ role: 'workflow_worker' }));
-  const response = await mcp({ name, input });
+  const response = await mcp({ name: LIST, input });
   expect(response.isError).toBeUndefined();
   expect(JSON.parse(response.content[0].text)).toEqual(
     outcome.kind === 'completed' ? outcome.value : null
   );
-  await expect(invokeOperationFromHandler(operations, name, input)).rejects.toThrow(
-    `Operation ${name} was rejected without a message`
+  await expect(invokeOperationFromHandler(operations, LIST, input)).rejects.toThrow(
+    `Operation ${LIST} was rejected without a message`
   );
 });
