@@ -38,6 +38,7 @@ type Rejection =
   | 'result_requires_done'
   | 'block_reason_requires_blocked'
   | 'space_at_task_capacity'
+  | 'approved_requires_complete'
   | 'archive_active_run';
 type Result = TaskCore | Rejection | TaskMutationDenial | DirectOutcomeAcknowledgement | null;
 export interface SpaceTransitionTaskDependencies extends SpaceTransitionAdmissionDependencies {
@@ -135,6 +136,7 @@ export async function decide(
     workflowRunId: task.workflowRunId ?? null,
     runActive,
     callerSource: caller.source,
+    approvalSource: task.approvalSource ?? null,
   });
   if (decision.action === 'reject') return { reason: decision.result };
   if (decision.action === 'runtime') {
@@ -228,7 +230,7 @@ export async function writeStatus(decided: DecidedTask, input: In, deps: Deps): 
   }
 }
 const SPACE_TRANSITION_TASK_DESCRIPTION =
-  'Space-scoped callers change the lifecycle state of a task in their Space; review and approved are entered only through the submit-for-review and approval operations, and rate_limited/usage_limited are runtime-owned. A running direct-execution attempt moving to done, blocked, cancelled, or stopped is shut down through the durable outcome queue before the task status commits; that route returns { accepted, jobId } instead of task data. Reserved attempts remain fenced and must use task.cancel. result may accompany only a transition to done, and blockReason only a transition to blocked, where human_input_requested is the single caller-settable value because every other block reason is stamped by the runtime that observed it. Supply expectedStatus to reject with invalid_transition unless the task is still in that state; it is applied at the status write, including transitions handed to a runtime. Moving a task with no workflow run and no agent session into in_progress claims one of the Space concurrency slots, so it rejects with space_at_task_capacity when the Space has none free; stop or finish a running task, or raise the Space limit, and retry. Moving a task to archived takes it off the active board and is terminal, and it rejects with archive_active_run while the task belongs to a workflow run that is still going, since archiving would strand the run — cancel the run first. Returns core task data, a durable outcome acknowledgement for a running direct attempt, null for absent tasks, { accepted: false, reason: "task_transition_denied" } when the calling MCP session is not active in the owning Space, or unsupported_status, invalid_transition, result_requires_done, block_reason_requires_blocked, space_at_task_capacity, or archive_active_run when rejected.';
+  'Space-scoped callers change the lifecycle state of a task in their Space; review and approved are entered only through the submit-for-review and approval operations, and rate_limited/usage_limited are runtime-owned. A running direct-execution attempt moving to done, blocked, cancelled, or stopped is shut down through the durable outcome queue before the task status commits; that route returns { accepted, jobId } instead of task data. Reserved attempts remain fenced and must use task.cancel. result may accompany only a transition to done, and blockReason only a transition to blocked, where human_input_requested is the single caller-settable value because every other block reason is stamped by the runtime that observed it. Supply expectedStatus to reject with invalid_transition unless the task is still in that state; it is applied at the status write, including transitions handed to a runtime. Moving a task with no workflow run and no agent session into in_progress claims one of the Space concurrency slots, so it rejects with space_at_task_capacity when the Space has none free; stop or finish a running task, or raise the Space limit, and retry. Moving a task to archived takes it off the active board and is terminal, and it rejects with archive_active_run while the task belongs to a workflow run that is still going, since archiving would strand the run — cancel the run first. Leaving approved for done is likewise not a status change here and rejects with approved_requires_complete: task.complete owns that edge because it fences the write on the task’s routed post-approval session and applies the workflow’s completion gate, which for a coder-owned-merge workflow holds the task open until its pull request is merged. Returns core task data, a durable outcome acknowledgement for a running direct attempt, null for absent tasks, { accepted: false, reason: "task_transition_denied" } when the calling MCP session is not active in the owning Space, or unsupported_status, invalid_transition, result_requires_done, block_reason_requires_blocked, space_at_task_capacity, approved_requires_complete, or archive_active_run when rejected.';
 export function createSpaceTransitionTaskOperation(deps: Deps) {
   const transition = (superpipe({ deps })('transition-space-task') as PipelineAPI)
     .input(['input', 'caller'])

@@ -243,6 +243,23 @@ test('mcp cannot move review to done directly', async () => {
   expect(tasks.getTask(task.id)?.status).toBe('review');
 });
 
+test('mcp cannot close an approved task and must go through task.complete', async () => {
+  const task = tasks.createTask({ spaceId, title: 'T', description: '' });
+  tasks.updateTask(task.id, { status: 'approved' });
+  const caller = worker('member', spaceId);
+  const result = await invoke({ taskId: task.id, status: 'done' }, caller);
+  expect(result).toEqual({ kind: 'completed', value: 'approved_requires_complete' });
+  expect(tasks.getTask(task.id)?.status).toBe('approved');
+});
+
+test('rpc closing an approved task records the human approval source', async () => {
+  const task = tasks.createTask({ spaceId, title: 'T', description: '' });
+  tasks.updateTask(task.id, { status: 'approved' });
+  const result = await invoke({ taskId: task.id, status: 'done' }, rpc);
+  expect(result).toMatchObject({ kind: 'completed', value: { id: task.id, status: 'done' } });
+  expect(tasks.getTask(task.id)?.approvalSource).toBe('human');
+});
+
 test.each(['review', 'approved', 'rate_limited'] as const)(
   'requesting %s directly is unsupported',
   async (status) => {

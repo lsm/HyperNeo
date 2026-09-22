@@ -140,6 +140,38 @@ describe('routeTaskUpdate reject reasons', () => {
     });
   });
 
+  test('approved_requires_complete rejects even for workflow-backed tasks', () => {
+    expect(
+      routeTaskUpdate(
+        baseInput({ currentStatus: 'approved', requestedStatus: 'done', hasWorkflowRun: true })
+      )
+    ).toEqual({
+      action: 'reject',
+      reason: 'approved_requires_complete',
+      message:
+        `Cannot close approved task task-1 through a status change. ` +
+        `Use task.complete, which fences the transition on the routed post-approval ` +
+        `session and applies the workflow's completion gate — for a coder-owned-merge ` +
+        `workflow that gate holds the task open until its pull request is merged.`,
+    });
+  });
+
+  test('approved to done is allowed once the caller is granted the edge', () => {
+    expect(
+      routeTaskUpdate(
+        baseInput({
+          currentStatus: 'approved',
+          requestedStatus: 'done',
+          allowApprovedToDone: true,
+        })
+      )
+    ).toEqual({
+      action: 'set_status',
+      auditParamsShape: 'transition',
+      emitTaskUpdated: 'always',
+    });
+  });
+
   test('archive_active_run interpolates the task id and workflow run id', () => {
     expect(
       routeTaskUpdate(
@@ -406,6 +438,7 @@ describe('routeTaskUpdate terminal writes under an active run', () => {
           requestedStatus: 'done',
           hasWorkflowRun: true,
           runActive: true,
+          allowApprovedToDone: true,
         })
       )
     ).toEqual(STOP);
@@ -450,6 +483,19 @@ describe('routeTaskUpdate terminal writes under an active run', () => {
     );
     expect(routing.action).toBe('reject');
     expect(routing).toMatchObject({ reason: 'review_to_done' });
+  });
+
+  test('approved to done still rejects ahead of the stop routing', () => {
+    const routing = routeTaskUpdate(
+      baseInput({
+        currentStatus: 'approved',
+        requestedStatus: 'done',
+        hasWorkflowRun: true,
+        runActive: true,
+      })
+    );
+    expect(routing.action).toBe('reject');
+    expect(routing).toMatchObject({ reason: 'approved_requires_complete' });
   });
 
   test('archived still rejects rather than stopping the run', () => {
