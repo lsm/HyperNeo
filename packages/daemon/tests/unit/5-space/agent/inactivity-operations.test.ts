@@ -12,7 +12,7 @@ import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-
 import {
   createInactivityOperations,
   DEFAULT_INACTIVITY_THRESHOLD_MS,
-} from '../../../../src/lib/external-events/inactivity-operations';
+} from '../../../../src/lib/agents/inactivity-operations';
 import type { OperationCaller, OperationDefinition } from '../../../../src/lib/operations/registry';
 import { createSpaceTables } from '../../helpers/space-test-db';
 import { createTestSession } from '../../../helpers/database';
@@ -179,9 +179,9 @@ describe('inactivity watchdog operations', () => {
     expect(second.configRevision).toBeGreaterThan(first.configRevision);
   });
 
-  test('runNow schedules a scan for the calling agent', async () => {
+  test('inactivity.scan.run schedules a scan for the calling agent', async () => {
     const caller = agentCaller(longTermSession('s-run', SPACE));
-    expect(await run('inactivity.runNow', {}, caller)).toEqual({
+    expect(await run('inactivity.scan.run', {}, caller)).toEqual({
       started: true,
       scope: { spaceId: SPACE },
     });
@@ -219,7 +219,7 @@ describe('inactivity watchdog operations', () => {
     configRepo.upsert({ spaceId: SPACE, agentId: AGENT, enabled: false, thresholdMs: 7000 });
     const caller = agentCaller(longTermSession('s-archived', SPACE, 'archived'));
     expect(await run('inactivity.config.set', { enabled: true }, caller)).toBe('session_inactive');
-    expect(await run('inactivity.runNow', {}, caller)).toBe('session_inactive');
+    expect(await run('inactivity.scan.run', {}, caller)).toBe('session_inactive');
     expect(configRepo.getByAgent(SPACE, AGENT)).toMatchObject({
       enabled: false,
       thresholdMs: 7000,
@@ -238,11 +238,11 @@ describe('inactivity watchdog operations', () => {
 
   test('an RPC caller names the space and agent explicitly', async () => {
     const rpc: OperationCaller = { source: 'rpc' };
-    expect(await run('inactivity.runNow', { spaceId: SPACE, agentId: AGENT }, rpc)).toEqual({
+    expect(await run('inactivity.scan.run', { spaceId: SPACE, agentId: AGENT }, rpc)).toEqual({
       started: true,
       scope: { spaceId: SPACE },
     });
-    expect(await run('inactivity.runNow', { agentId: AGENT }, rpc)).toBe('caller_denied');
+    expect(await run('inactivity.scan.run', { agentId: AGENT }, rpc)).toBe('caller_denied');
     expect(scans).toEqual([{ spaceId: SPACE, agentId: AGENT }]);
   });
 });
