@@ -29,3 +29,11 @@ export function composeLongHorizonSubscriptionPattern(source: string, topic: str
     return composeGitHubSubscriptionPattern(trimmedSource, trimmedTopic);
   return `${trimmedSource}/${trimmedTopic}`;
 }
+
+export function composeSubscriptionRouteKey(source: string, topic: string): string {
+  try {
+    return composeLongHorizonSubscriptionPattern(source, topic).toLowerCase();
+  } catch {
+    return `${source.trim()}/${topic.trim()}`.toLowerCase();
+  }
+}

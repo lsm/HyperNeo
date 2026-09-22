@@ -5,6 +5,7 @@ import type {
 } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
+import { composeSubscriptionRouteKey } from '../../lib/external-events/long-horizon-subscription-pattern.ts';
 import type { SpaceAgentRepository } from './space-agent-repository.ts';
 
 export class SpaceAgentSubscriptionRepository {
@@ -89,21 +90,35 @@ export class SpaceAgentSubscriptionRepository {
     return row ? rowToSubscription(row) : null;
   }
 
+  listSubscriptionsByRoute(
+    spaceId: string,
+    agentId: string,
+    source: string,
+    topic: string
+  ): SpaceLongHorizonAgentEventSubscription[] {
+    const wanted = composeSubscriptionRouteKey(source, topic);
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM space_long_horizon_agent_event_subscriptions
+           WHERE space_id = ? AND agent_id = ?
+           ORDER BY created_at ASC`
+      )
+      .all(spaceId, agentId) as Record<string, unknown>[];
+    return rows
+      .map(rowToSubscription)
+      .filter(
+        (subscription) =>
+          composeSubscriptionRouteKey(subscription.source, subscription.topic) === wanted
+      );
+  }
+
   getSubscriptionByRoute(
     spaceId: string,
     agentId: string,
     source: string,
     topic: string
   ): SpaceLongHorizonAgentEventSubscription | null {
-    const row = this.db
-      .prepare(
-        `SELECT * FROM space_long_horizon_agent_event_subscriptions
-           WHERE space_id = ? AND agent_id = ? AND source = ? AND topic = ?
-           ORDER BY created_at ASC
-           LIMIT 1`
-      )
-      .get(spaceId, agentId, source, topic) as Record<string, unknown> | undefined;
-    return row ? rowToSubscription(row) : null;
+    return this.listSubscriptionsByRoute(spaceId, agentId, source, topic)[0] ?? null;
   }
 
   listSubscriptions(agentId: string): SpaceLongHorizonAgentEventSubscription[] {
@@ -159,12 +174,12 @@ export class SpaceAgentSubscriptionRepository {
   }
 
   deleteSubscriptionByRoute(spaceId: string, agentId: string, source: string, topic: string): void {
-    this.db
-      .prepare(
-        `DELETE FROM space_long_horizon_agent_event_subscriptions
-           WHERE space_id = ? AND agent_id = ? AND source = ? AND topic = ?`
-      )
-      .run(spaceId, agentId, source, topic);
+    const statement = this.db.prepare(
+      `DELETE FROM space_long_horizon_agent_event_subscriptions WHERE id = ?`
+    );
+    for (const subscription of this.listSubscriptionsByRoute(spaceId, agentId, source, topic)) {
+      statement.run(subscription.id);
+    }
   }
 
   private requireAgentInSpace(agentId: string, spaceId: string): void {

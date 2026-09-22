@@ -20,6 +20,7 @@ export type AgentSubscriptionRepo = Pick<
   SpaceAgentSubscriptionRepository,
   | 'upsertSubscription'
   | 'getSubscriptionByRoute'
+  | 'listSubscriptionsByRoute'
   | 'deleteSubscriptionByRoute'
   | 'listSubscriptions'
 >;
@@ -191,7 +192,7 @@ export function unsubscribeAgentTopic(
   const validation = validateGlobPattern(topicPattern);
   if (!validation.valid) return { accepted: false, reason: 'invalid_pattern' };
   const source = topicPattern.split('/')[0] ?? '';
-  const existing = deps.subscriptionRepo.getSubscriptionByRoute(
+  const existing = deps.subscriptionRepo.listSubscriptionsByRoute(
     scope.spaceId,
     scope.agentId,
     source,
@@ -203,7 +204,7 @@ export function unsubscribeAgentTopic(
     source,
     topicPattern
   );
-  if (existing) deps.removeSubscription(scope.spaceId, existing.id);
+  for (const subscription of existing) deps.removeSubscription(scope.spaceId, subscription.id);
   auditAgentSubscription(deps, caller, scope, operationName, {
     agent_id: input.agent_id,
     topic_pattern: input.topic_pattern,
