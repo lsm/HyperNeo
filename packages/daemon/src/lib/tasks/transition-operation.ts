@@ -17,6 +17,7 @@ type TransitionResult = ReturnType<typeof transitionStandaloneTask>;
 
 export type TransitionTaskRejection =
   | 'unsupported_status'
+  | 'direct_attempt_not_running'
   | 'invalid_transition'
   | 'result_requires_done'
   | 'block_reason_requires_blocked'
@@ -80,6 +81,7 @@ export function createTransitionTaskOperation<Input = TransitionStandaloneTaskIn
       TaskWithSpaceFieldsSchema.nullable(),
       z.enum([
         'unsupported_status',
+        'direct_attempt_not_running',
         'invalid_transition',
         'result_requires_done',
         'block_reason_requires_blocked',

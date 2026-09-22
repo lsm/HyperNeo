@@ -27,6 +27,7 @@ export type SpaceTransitionTaskInput = z.infer<typeof SpaceTransitionTaskInputSc
 type In = SpaceTransitionTaskInput;
 type Rejection =
   | 'unsupported_status'
+  | 'direct_attempt_not_running'
   | 'invalid_transition'
   | 'result_requires_done'
   | 'block_reason_requires_blocked'
@@ -83,17 +84,18 @@ export function routeActiveDirectAttempt<T extends OwnedTask>(
   owned: T,
   input: In,
   deps: Deps
-): Gate<T, 'unsupported_status' | DirectOutcomeAcknowledgement> {
+): Gate<T, 'unsupported_status' | 'direct_attempt_not_running' | DirectOutcomeAcknowledgement> {
   const attempt = new DirectTaskExecutionRepository(deps.db).getActive(owned.task.id);
   if (!attempt) return { value: owned };
   const directStatus = input.status as 'done' | 'blocked' | 'cancelled' | 'stopped';
+  if (!(['done', 'blocked', 'cancelled', 'stopped'] as const).includes(directStatus))
+    return { reason: 'unsupported_status' };
   if (
     attempt.phase !== 'running' ||
     owned.task.taskAgentSessionId !== attempt.sessionId ||
-    !deps.requestDirectOutcome ||
-    !(['done', 'blocked', 'cancelled', 'stopped'] as const).includes(directStatus)
+    !deps.requestDirectOutcome
   )
-    return { reason: 'unsupported_status' };
+    return { reason: 'direct_attempt_not_running' };
   const options = {
     ...(input.result === undefined ? {} : { result: input.result }),
     ...(input.blockReason === undefined ? {} : { blockReason: input.blockReason }),
