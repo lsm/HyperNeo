@@ -84,7 +84,7 @@ const UnsubscribeInput = z
     spaceId: z.string().min(1).optional(),
   })
   .strict();
-const PrInput = z.object({ prUrl: z.string().optional(), label: z.string().optional() }).strict();
+const PrInput = z.object({ prUrl: z.string().optional() }).strict();
 const ListInput = z
   .object({
     workflowRunId: z.string().min(1).optional(),
