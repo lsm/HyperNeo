@@ -38,7 +38,6 @@ const targetFields = {
   agentId: z.string().min(1).optional(),
 };
 const ReadInput = z.object(targetFields).strict();
-const SetEnabledInput = z.object({ ...targetFields, enabled: z.boolean() }).strict();
 const SetInput = z
   .object({
     ...targetFields,
@@ -176,14 +175,6 @@ export function createInactivityOperations(agents: InactivityDependencies): Oper
         REJECTIONS,
       ]),
       execute: readPipeline('inactivity-config-get', agents, readConfig),
-    }),
-    defineOperation({
-      name: 'inactivity.config.setEnabled',
-      policy: { safetyClass: 'mutate', roles: INACTIVITY_ROLES },
-      description: `Enable, pause, or resume an agent inactivity watchdog. Pausing keeps the threshold and prompt but stops new nags until resumed; resuming clears the degraded flag and restores the default threshold when none is set. ${SCOPE_DOC}, and session_inactive when the calling MCP session is not active in that Space.`,
-      inputSchema: SetEnabledInput,
-      resultSchema: z.union([InactivityConfigSchema, REJECTIONS]),
-      execute: writePipeline('inactivity-config-set-enabled', agents, applyConfig),
     }),
     defineOperation({
       name: 'inactivity.config.set',
