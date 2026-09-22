@@ -12,7 +12,6 @@ export const FORGE_OPERATION_NAMES = [
   'forge.proposal.update',
   'forge.rollup.apply',
   'forge.scope.create',
-  'forge.scope.createFromGoal',
   'forge.scope.get',
   'forge.scope.list',
   'forge.scope.update',

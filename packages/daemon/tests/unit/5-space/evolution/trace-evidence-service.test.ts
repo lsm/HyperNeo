@@ -859,7 +859,13 @@ describe('EvolutionTraceEvidenceService', () => {
 
   function createScopedTask(title: string) {
     const goal = goalRepo.create({ spaceId, title: `${title} goal`, type: 'recurring' });
-    const scope = scopeService.createScopeFromGoal({ spaceGoalId: goal.id });
+    const scope = scopeService.createScope({
+      spaceId,
+      spaceGoalId: goal.id,
+      kind: 'mission',
+      name: goal.title,
+      objective: goal.title,
+    });
     const task = taskRepo.createTask({ spaceId, title, description: title, goalId: goal.id });
     return { scope, task };
   }
