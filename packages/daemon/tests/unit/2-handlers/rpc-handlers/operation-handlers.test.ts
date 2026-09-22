@@ -218,9 +218,31 @@ describe('operation.invoke RPC registration', () => {
       })
     ).toMatchObject({
       found: true,
-      inputSchema: { properties: { taskId: { type: 'string' }, title: { type: 'string' } } },
+      inputSchema: {
+        properties: {
+          taskId: { type: 'string' },
+          title: { type: 'string' },
+          dependsOn: { type: 'array' },
+        },
+      },
     });
     expect(mailbox.rows()).toEqual([]);
+  });
+
+  test('replaces standalone dependencies through the update door', async () => {
+    const task = createStandaloneTask(taskDb, { title: 'Work' }, undefined, () => {});
+    const first = createStandaloneTask(taskDb, { title: 'First' }, undefined, () => {});
+    const second = createStandaloneTask(taskDb, { title: 'Second' }, undefined, () => {});
+    const update = (dependsOn: string[]) =>
+      client.request<TaskCore>('operation.invoke', {
+        name: 'task.update',
+        input: { taskId: task.id, dependsOn },
+      });
+    expect(await update([first.id])).toMatchObject({ dependsOn: [first.id] });
+    expect(await update([second.id])).toMatchObject({ dependsOn: [second.id] });
+    expect(await update([])).toMatchObject({ dependsOn: [] });
+    expect(await update([task.id])).toBe('self_dependency');
+    expect(readTaskCore(taskDb, task.id)).toMatchObject({ title: 'Work', dependsOn: [] });
   });
 
   test.each([
@@ -230,7 +252,8 @@ describe('operation.invoke RPC registration', () => {
     { labels: [1] },
     { status: 'done' },
     { spaceId: 'space' },
-    { dependsOn: [] },
+    { dependsOn: [''] },
+    { dependsOn: 'task' },
   ])('rejects invalid metadata patches without changing the task: %j', async (patch) => {
     const task = createStandaloneTask(taskDb, { title: 'Original' }, undefined, () => {});
     await expect(

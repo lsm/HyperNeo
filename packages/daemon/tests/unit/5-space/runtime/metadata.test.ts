@@ -8,8 +8,11 @@ import { createSpaceTables } from '../../helpers/space-test-db';
 import { createTestSession } from '../../../helpers/database';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
+import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
+import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
 import { createStandaloneTask } from '../../../../src/storage/tasks/create-task';
+import { readTaskCore } from '../../../../src/storage/tasks/task-reader';
 import { SpaceTaskManager } from '../../../../src/lib/tasks/task-manager';
 import {
   createSpaceTaskMetadataEditor,
@@ -186,7 +189,6 @@ test('excludes lifecycle and workflow fields before manager mutation', async () 
     title: 'Changed',
     status: 'done',
     workflowRunId: 'run',
-    dependsOn: ['missing'],
     workspacePath: '/other',
   };
   const updated = await editor()(input, { source: 'rpc' });
@@ -196,6 +198,119 @@ test('excludes lifecycle and workflow fields before manager mutation', async () 
     workflowRunId: original.workflowRunId,
     workspacePath: original.workspacePath,
   });
+});
+
+test('replaces the whole Space dependency list in one update', async () => {
+  const first = tasks.createTask({ spaceId, title: 'First', description: '' });
+  const second = tasks.createTask({ spaceId, title: 'Second', description: '' });
+  const edit = editor();
+  expect(await edit({ taskId, dependsOn: [first.id] }, { source: 'rpc' })).toMatchObject({
+    dependsOn: [first.id],
+  });
+  expect(await edit({ taskId, dependsOn: [second.id] }, { source: 'rpc' })).toMatchObject({
+    dependsOn: [second.id],
+  });
+  expect(await edit({ taskId, dependsOn: [] }, { source: 'rpc' })).toMatchObject({ dependsOn: [] });
+  expect(tasks.getTask(taskId)?.title).toBe('Original');
+  expect(emit).toHaveBeenCalledTimes(3);
+});
+
+test('writes dependencies and metadata together', async () => {
+  const dependency = tasks.createTask({ spaceId, title: 'Dependency', description: '' });
+  expect(
+    await editor()({ taskId, title: 'Changed', dependsOn: [dependency.id] }, { source: 'rpc' })
+  ).toMatchObject({ title: 'Changed', dependsOn: [dependency.id] });
+  expect(tasks.getTask(taskId)).toMatchObject({
+    title: 'Changed',
+    dependsOn: [dependency.id],
+  });
+});
+
+test('stops execution when a new dependency blocks a running workflow task', async () => {
+  const workflow = new SpaceWorkflowRepository(db).createWorkflow({
+    spaceId,
+    name: 'Workflow',
+    nodes: [{ id: 'node', name: 'Node', agents: [] }],
+  });
+  const run = new SpaceWorkflowRunRepository(db).createRun({
+    spaceId,
+    workflowId: workflow.id,
+    title: 'Run',
+  });
+  tasks.updateTask(taskId, { status: 'in_progress', workflowRunId: run.id });
+  const dependency = tasks.createTask({ spaceId, title: 'Dependency', description: '' });
+  const blockExecution = mock(async () => tasks.getTask(taskId));
+  expect(
+    await editor({ blockExecution })({ taskId, dependsOn: [dependency.id] }, { source: 'rpc' })
+  ).toMatchObject({ status: 'blocked', blockReason: 'dependency_added' });
+  expect(blockExecution).toHaveBeenCalledTimes(1);
+  expect(blockExecution.mock.calls[0]).toMatchObject([
+    spaceId,
+    taskId,
+    { status: 'blocked', blockReason: 'dependency_added' },
+  ]);
+});
+
+test('clearing dependencies reopens a dependency-blocked Space task', async () => {
+  const dependency = tasks.createTask({ spaceId, title: 'Dependency', description: '' });
+  tasks.updateTask(taskId, {
+    status: 'blocked',
+    blockReason: 'dependency_added',
+    dependsOn: [dependency.id],
+  });
+  expect(await editor()({ taskId, dependsOn: [] }, { source: 'rpc' })).toMatchObject({
+    status: 'open',
+    dependsOn: [],
+  });
+});
+
+test.each([
+  ['self', 'self_dependency'],
+  ['duplicate', 'duplicate_dependency'],
+  ['missing', 'dependency_not_found'],
+  ['cycle', 'dependency_cycle'],
+] as const)('rejects a standalone %s edge and writes nothing', async (shape, reason) => {
+  const own = createStandaloneTask(db, { title: 'Standalone' }, undefined, notify);
+  const other = createStandaloneTask(db, { title: 'Other' }, undefined, notify);
+  await editor()({ taskId: other.id, dependsOn: [own.id] }, { source: 'rpc' });
+  notify.mockClear();
+  const dependsOn =
+    shape === 'self'
+      ? [own.id]
+      : shape === 'duplicate'
+        ? [other.id, other.id]
+        : shape === 'missing'
+          ? ['absent']
+          : [other.id];
+  expect(await editor()({ taskId: own.id, title: 'Changed', dependsOn }, { source: 'rpc' })).toBe(
+    reason
+  );
+  expect(readTaskCore(db, own.id)).toMatchObject({ title: 'Standalone', dependsOn: [] });
+  expect(notify).not.toHaveBeenCalled();
+});
+
+test('denied MCP callers never reach the dependency write', async () => {
+  const session = persistSession({ type: 'worker', context: { spaceId: 'other' } });
+  const dependency = tasks.createTask({ spaceId, title: 'Dependency', description: '' });
+  await expect(
+    editor()({ taskId, dependsOn: [dependency.id] }, { source: 'mcp', sessionId: session.id })
+  ).resolves.toEqual({ accepted: false, reason: 'task_update_denied' });
+  expect(tasks.getTask(taskId)?.dependsOn).toEqual([]);
+  expect(emit).not.toHaveBeenCalled();
+});
+
+test('operation accepts a dependency-only update over the door', async () => {
+  const dependency = tasks.createTask({ spaceId, title: 'Dependency', description: '' });
+  const registry = createOperationRegistry([createUpdateTaskOperation(editor())]);
+  expect(
+    await invokeOperation(
+      registry,
+      'task.update',
+      { taskId, dependsOn: [dependency.id] },
+      { source: 'rpc' }
+    )
+  ).toMatchObject({ kind: 'completed', value: { dependsOn: [dependency.id] } });
+  expect(tasks.getTask(taskId)?.dependsOn).toEqual([dependency.id]);
 });
 
 test('event rejection preserves committed metadata and is attempted once', async () => {

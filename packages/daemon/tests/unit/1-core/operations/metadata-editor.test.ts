@@ -4,8 +4,10 @@ import {
   admitTaskMetadataEdit,
   createTaskMetadataEditor,
   persistTaskMetadata,
+  replaceTaskMetadataDependencies,
   resolveTaskMetadataOwner,
   selectTaskMetadata,
+  writesTaskMetadata,
   type TaskMetadataDependencies,
   type TaskMetadataOwner,
 } from '../../../../src/lib/tasks/metadata-editor.ts';
@@ -30,17 +32,20 @@ const input = { taskId: task.id, title: ' Updated ' };
 const caller: OperationCaller = { source: 'mcp', sessionId: 'session-1' };
 const owners: TaskMetadataOwner[] = [{ kind: 'standalone' }, { kind: 'space', spaceId: 'space-1' }];
 
+const depended: TaskCore = { ...task, dependsOn: ['other'] };
+
 function dependencies(owner: TaskMetadataOwner | null = owners[0]) {
   return {
     resolveOwner: mock(async () => owner),
     admit: mock(async () => {}),
+    replaceDependencies: mock(async () => depended),
     editStandalone: mock(async () => task),
     editSpace: mock(async () => task),
   } satisfies TaskMetadataDependencies;
 }
 
 describe('shared task metadata stages', () => {
-  test('copies only metadata without changing text or omitted fields', () => {
+  test('copies only editable fields without changing text or omitted fields', () => {
     const source = {
       ...input,
       description: '',
@@ -56,10 +61,46 @@ describe('shared task metadata stages', () => {
       description: '',
       priority: undefined,
       labels: [],
+      dependsOn: ['other'],
     });
     expect(selectTaskMetadata({ taskId: task.id })).toEqual({ taskId: task.id });
     expect(source.status).toBe('done');
   });
+
+  test.each([
+    [{ taskId: task.id }, true],
+    [{ taskId: task.id, dependsOn: ['other'] }, false],
+    [{ taskId: task.id, priority: undefined, dependsOn: [] }, false],
+    [{ taskId: task.id, description: '' }, true],
+    [{ taskId: task.id, labels: [], dependsOn: [] }, true],
+  ])('writes metadata for %j only alongside an editable field', (candidate, writes) => {
+    expect(writesTaskMetadata(candidate)).toBe(writes);
+  });
+
+  test('skips replacement entirely when dependsOn is absent', async () => {
+    const replaceDependencies = mock(async () => depended);
+    expect(await replaceTaskMetadataDependencies(replaceDependencies, owners[0], input)).toEqual({
+      value: null,
+    });
+    expect(replaceDependencies).not.toHaveBeenCalled();
+  });
+
+  test.each([depended, null, 'dependency_cycle' as const])(
+    'forwards the owner and dependency list, keeping %j on its own arm',
+    async (outcome) => {
+      const replaceDependencies = mock(async () => outcome);
+      expect(
+        await replaceTaskMetadataDependencies(replaceDependencies, owners[1], {
+          ...input,
+          dependsOn: ['other'],
+        })
+      ).toEqual(outcome === depended ? { value: outcome } : { reason: outcome });
+      expect(replaceDependencies).toHaveBeenCalledWith(owners[1], {
+        taskId: task.id,
+        dependsOn: ['other'],
+      });
+    }
+  );
 
   test.each([...owners, null])(
     'resolves trusted owner %j with explicit missing arm',
@@ -103,6 +144,36 @@ describe('shared task metadata stages', () => {
         expect(editStandalone).not.toHaveBeenCalled();
       }
     }
+  });
+
+  test.each(owners)('returns the replaced task without a metadata write for %j', async (owner) => {
+    const editStandalone = mock(async () => task);
+    const editSpace = mock(async () => task);
+    expect(
+      await persistTaskMetadata(
+        editStandalone,
+        editSpace,
+        owner,
+        { taskId: task.id, dependsOn: ['other'] },
+        depended
+      )
+    ).toEqual({ value: depended });
+    expect(editStandalone).not.toHaveBeenCalled();
+    expect(editSpace).not.toHaveBeenCalled();
+  });
+
+  test.each(owners)('keeps dependsOn out of the metadata write for %j', async (owner) => {
+    const editStandalone = mock(async () => task);
+    const editSpace = mock(async () => task);
+    await persistTaskMetadata(
+      editStandalone,
+      editSpace,
+      owner,
+      { ...input, dependsOn: ['other'] },
+      depended
+    );
+    const write = owner.kind === 'standalone' ? editStandalone : editSpace;
+    expect(write.mock.calls[0]?.at(-1)).toEqual(input);
   });
 });
 
@@ -181,6 +252,60 @@ describe('shared task metadata editor', () => {
     }
   );
 
+  test.each(owners)('replaces dependencies before metadata for %j', async (owner) => {
+    const order: string[] = [];
+    const deps = dependencies(owner);
+    const edit = createTaskMetadataEditor({
+      ...deps,
+      replaceDependencies: async () => {
+        order.push('dependencies');
+        return depended;
+      },
+      editStandalone: async () => {
+        order.push('metadata');
+        return task;
+      },
+      editSpace: async () => {
+        order.push('metadata');
+        return task;
+      },
+    });
+    expect(await edit({ ...input, dependsOn: ['other'] }, caller)).toBe(task);
+    expect(order).toEqual(['dependencies', 'metadata']);
+  });
+
+  test.each(owners)('returns the replaced task for a dependency-only edit of %j', async (owner) => {
+    const deps = dependencies(owner);
+    expect(
+      await createTaskMetadataEditor(deps)({ taskId: task.id, dependsOn: ['other'] }, caller)
+    ).toBe(depended);
+    expect(deps.replaceDependencies).toHaveBeenCalledWith(owner, {
+      taskId: task.id,
+      dependsOn: ['other'],
+    });
+    expect(deps.editStandalone).not.toHaveBeenCalled();
+    expect(deps.editSpace).not.toHaveBeenCalled();
+  });
+
+  test.each(['dependency_cycle', 'self_dependency', null] as const)(
+    'halts before the metadata write on %j',
+    async (outcome) => {
+      const deps = dependencies(owners[1]);
+      const edit = createTaskMetadataEditor({ ...deps, replaceDependencies: async () => outcome });
+      expect(await edit({ ...input, dependsOn: ['other'] }, caller)).toBe(outcome);
+      expect(deps.editSpace).not.toHaveBeenCalled();
+      expect(deps.editStandalone).not.toHaveBeenCalled();
+    }
+  );
+
+  test('denied callers never reach the dependency replacement', async () => {
+    const deps = dependencies(owners[1]);
+    const denial = { accepted: false, reason: 'task_update_denied' } as const;
+    const edit = createTaskMetadataEditor({ ...deps, admit: async () => denial });
+    expect(await edit({ taskId: task.id, dependsOn: ['other'] }, caller)).toEqual(denial);
+    expect(deps.replaceDependencies).not.toHaveBeenCalled();
+  });
+
   test('delegates empty metadata unchanged rather than inventing validation', async () => {
     const deps = dependencies();
     await createTaskMetadataEditor(deps)({ taskId: task.id }, { source: 'rpc' });
@@ -200,6 +325,16 @@ test.each([task, null])('post-edit effects run only for a persisted task %j', as
   if (result === null) expect(afterEdit).not.toHaveBeenCalled();
   else {
     expect(afterEdit).toHaveBeenCalledTimes(1);
-    expect(afterEdit).toHaveBeenCalledWith(owners[1], task);
+    expect(afterEdit).toHaveBeenCalledWith(owners[1], task, input);
   }
+});
+
+test('post-edit effects see the requested dependency list', async () => {
+  const afterEdit = mock(async () => {});
+  const edit = createTaskMetadataEditor({ ...dependencies(owners[1]), afterEdit });
+  await edit({ taskId: task.id, dependsOn: ['other'] }, caller);
+  expect(afterEdit).toHaveBeenCalledWith(owners[1], depended, {
+    taskId: task.id,
+    dependsOn: ['other'],
+  });
 });
