@@ -691,3 +691,39 @@ test('task.transition reports cancellation_unavailable for an already terminal p
   ).toEqual({ accepted: false, reason: 'cancellation_unavailable' });
   expect(tasks.getTask(plainTaskId)?.status).toBe('done');
 });
+
+test.each(['task.cancel', 'task.transition'] as const)(
+  'a direct start claimed between the route read and the write is refused by %s',
+  async (door) => {
+    const spaceId = tasks.getTask(taskId)!.spaceId!;
+    const plainTaskId = tasks.createTask({ spaceId, title: 'Plain', description: '' }).id;
+    attempts.select(plainTaskId);
+
+    const realGetActive = DirectTaskExecutionRepository.prototype.getActive;
+    let reads = 0;
+    const spy = spyOn(DirectTaskExecutionRepository.prototype, 'getActive').mockImplementation(
+      function (this: DirectTaskExecutionRepository, id: string) {
+        reads += 1;
+        if (reads === 1 && id === plainTaskId) return null;
+        return realGetActive.call(this, id);
+      }
+    );
+    attempts.claim(plainTaskId, 'late-claim', 'late-session');
+
+    const run =
+      door === 'task.cancel'
+        ? createCancelTaskOperation(() => db, jobs, {
+            getTaskManager: (id) => new SpaceTaskManager(db, id),
+            emitTaskUpdated: async () => {},
+          }).execute({ taskId: plainTaskId }, { source: 'rpc' })
+        : transitionOperation().operation.execute(
+            { taskId: plainTaskId, status: 'cancelled' },
+            { source: 'rpc' }
+          );
+
+    expect(await run).toEqual({ accepted: false, reason: 'cancellation_unavailable' });
+    expect(tasks.getTask(plainTaskId)?.status).toBe('open');
+    expect(attempts.get('late-claim')?.phase).toBe('reserved');
+    spy.mockRestore();
+  }
+);

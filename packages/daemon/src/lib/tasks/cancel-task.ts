@@ -81,14 +81,15 @@ export async function admitManagedCancellation(
   }
   const getTaskManager = policy.getTaskManager;
   if (!getTaskManager) return { reason: { accepted: false, reason: 'cancellation_unavailable' } };
-  const guardWrite =
-    route.kind === 'reserved'
-      ? (current: SpaceTask): string | undefined => {
-          if (current.archivedAt || current.status === 'cancelled' || current.status === 'done')
-            return 'already_terminal';
-          return supersedeReservedAttempt(db, route.attempt) ? undefined : 'reserved_attempt_race';
-        }
+  const guardWrite = (current: SpaceTask): string | undefined => {
+    if (current.archivedAt || current.status === 'cancelled' || current.status === 'done')
+      return 'already_terminal';
+    if (route.kind === 'reserved')
+      return supersedeReservedAttempt(db, route.attempt) ? undefined : 'reserved_attempt_race';
+    return new DirectTaskExecutionRepository(db).getActive(current.id)
+      ? 'attempt_claimed_after_route'
       : undefined;
+  };
   try {
     const updated = await getTaskManager(task.spaceId).setTaskStatus(task.id, 'cancelled', {
       guardWrite,
