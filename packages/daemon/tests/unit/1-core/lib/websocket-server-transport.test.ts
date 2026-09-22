@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach, mock, afterEach } from 'bun:test';
+import { describe, expect, it, beforeEach, jest, mock, afterEach } from 'bun:test';
 import { WebSocketServerTransport } from '../../../../src/lib/websocket-server-transport';
 import { MessageHubRouter } from '@hyperneo/shared';
 import type { ClientConnection, HubMessage } from '@hyperneo/shared';
@@ -458,76 +458,92 @@ describe('WebSocketServerTransport', () => {
 
   describe('stale connection checking', () => {
     it('should close stale connections after timeout', async () => {
-      const shortTimeoutTransport = new WebSocketServerTransport({
-        router: mockRouter,
-        name: 'stale-test-transport',
-        staleTimeout: 50,
-        staleCheckInterval: 20,
-      });
+      jest.useFakeTimers();
+      try {
+        const shortTimeoutTransport = new WebSocketServerTransport({
+          router: mockRouter,
+          name: 'stale-test-transport',
+          staleTimeout: 50,
+          staleCheckInterval: 20,
+        });
 
-      await shortTimeoutTransport.initialize();
+        await shortTimeoutTransport.initialize();
 
-      const mockWs = createMockWebSocket();
-      shortTimeoutTransport.registerClient(mockWs, 'session-1');
+        const mockWs = createMockWebSocket();
+        shortTimeoutTransport.registerClient(mockWs, 'session-1');
 
-      await new Promise((resolve) => setTimeout(resolve, 100));
+        jest.advanceTimersByTime(100);
 
-      expect(mockWs.close).toHaveBeenCalled();
+        expect(mockWs.close).toHaveBeenCalled();
 
-      await shortTimeoutTransport.close();
+        await shortTimeoutTransport.close();
+      } finally {
+        jest.useRealTimers();
+      }
     });
 
     it('should not close active connections', async () => {
-      const shortTimeoutTransport = new WebSocketServerTransport({
-        router: mockRouter,
-        name: 'active-test-transport',
-        staleTimeout: 100,
-        staleCheckInterval: 20,
-      });
+      jest.useFakeTimers();
+      try {
+        const shortTimeoutTransport = new WebSocketServerTransport({
+          router: mockRouter,
+          name: 'active-test-transport',
+          staleTimeout: 100,
+          staleCheckInterval: 20,
+        });
 
-      await shortTimeoutTransport.initialize();
+        await shortTimeoutTransport.initialize();
 
-      const mockWs = createMockWebSocket();
-      const clientId = shortTimeoutTransport.registerClient(mockWs, 'session-1');
+        const mockWs = createMockWebSocket();
+        const clientId = shortTimeoutTransport.registerClient(mockWs, 'session-1');
 
-      const activityInterval = setInterval(() => {
-        shortTimeoutTransport.updateClientActivity(clientId);
-      }, 30);
+        for (let elapsed = 0; elapsed < 300; elapsed += 30) {
+          jest.advanceTimersByTime(30);
+          shortTimeoutTransport.updateClientActivity(clientId);
+        }
 
-      await new Promise((resolve) => setTimeout(resolve, 100));
+        expect(mockWs.close).not.toHaveBeenCalled();
 
-      clearInterval(activityInterval);
+        jest.advanceTimersByTime(150);
 
-      expect(mockWs.close).not.toHaveBeenCalled();
+        expect(mockWs.close).toHaveBeenCalled();
 
-      await shortTimeoutTransport.close();
+        await shortTimeoutTransport.close();
+      } finally {
+        jest.useRealTimers();
+      }
     });
 
     it('should handle errors when closing stale connections', async () => {
-      const shortTimeoutTransport = new WebSocketServerTransport({
-        router: mockRouter,
-        name: 'error-test-transport',
-        staleTimeout: 50,
-        staleCheckInterval: 20,
-      });
+      jest.useFakeTimers();
+      try {
+        const shortTimeoutTransport = new WebSocketServerTransport({
+          router: mockRouter,
+          name: 'error-test-transport',
+          staleTimeout: 50,
+          staleCheckInterval: 20,
+        });
 
-      await shortTimeoutTransport.initialize();
+        await shortTimeoutTransport.initialize();
 
-      const errorWs = {
-        send: mock(() => {}),
-        close: mock(() => {
-          throw new Error('Close error');
-        }),
-        readyState: 1,
-      } as unknown as import('bun').ServerWebSocket<unknown>;
+        const errorWs = {
+          send: mock(() => {}),
+          close: mock(() => {
+            throw new Error('Close error');
+          }),
+          readyState: 1,
+        } as unknown as import('bun').ServerWebSocket<unknown>;
 
-      shortTimeoutTransport.registerClient(errorWs, 'session-1');
+        shortTimeoutTransport.registerClient(errorWs, 'session-1');
 
-      await new Promise((resolve) => setTimeout(resolve, 100));
+        jest.advanceTimersByTime(100);
 
-      expect(errorWs.close).toHaveBeenCalled();
+        expect(errorWs.close).toHaveBeenCalled();
 
-      await shortTimeoutTransport.close();
+        await shortTimeoutTransport.close();
+      } finally {
+        jest.useRealTimers();
+      }
     });
   });
 });
