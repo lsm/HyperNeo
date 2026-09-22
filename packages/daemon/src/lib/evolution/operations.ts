@@ -4,7 +4,10 @@ import {
   createForgeEpisodeOperations,
   type ForgeEpisodeOperationDependencies,
 } from './episode-operations.ts';
-import { createForgeEvidenceAttachOperation } from './evidence-attach-operation.ts';
+import {
+  createForgeEvidenceAttachOperation,
+  type ForgeEvidenceAttachDependencies,
+} from './evidence-attach-operation.ts';
 import {
   createForgeScopeGetOperation,
   type ForgeScopeGetDependencies,
@@ -16,7 +19,8 @@ import {
 
 export type ForgeOperationDependencies = Omit<ForgeScopeOperationDependencies, 'getGoal'> &
   Omit<ForgeEpisodeOperationDependencies, 'getGoal'> &
-  Omit<ForgeScopeGetDependencies, 'getGoal'> & {
+  Omit<ForgeScopeGetDependencies, 'getGoal'> &
+  ForgeEvidenceAttachDependencies & {
     readonly getGoal: (goalId: string) => SpaceGoal | null;
   };
 
