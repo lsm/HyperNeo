@@ -334,3 +334,75 @@ describe('the agent.assignForgeScope and agent.unassignForgeScope operations', (
     expect(agentRepo.listForgeScopes(stranger.id)).toHaveLength(0);
   });
 });
+
+describe('the goal.owner.set and evolution.scope.owner.set operations', () => {
+  test('assigned reports the resulting state in both directions', async () => {
+    const assigned = await run(
+      'goal.owner.set',
+      { agentId: agent.id, goalId: GOAL_ID, assigned: true },
+      caller('long_term_agent', agent.id)
+    );
+    expect(assigned.value).toEqual({ accepted: true, assigned: true });
+    expect(agentRepo.listGoals(agent.id)).toHaveLength(1);
+
+    const dropped = await run(
+      'goal.owner.set',
+      { agentId: agent.id, goalId: GOAL_ID, assigned: false },
+      caller('long_term_agent', agent.id)
+    );
+    expect(dropped.value).toEqual({ accepted: true, assigned: false });
+    expect(agentRepo.listGoals(agent.id)).toHaveLength(0);
+  });
+
+  test('setting a goal owner announces the ownership change either way', async () => {
+    await run(
+      'goal.owner.set',
+      { agentId: agent.id, goalId: GOAL_ID, assigned: true },
+      caller('long_term_agent', agent.id)
+    );
+    await run(
+      'goal.owner.set',
+      { agentId: agent.id, goalId: GOAL_ID, assigned: false },
+      caller('long_term_agent', agent.id)
+    );
+    expect(ownerChanges).toHaveLength(2);
+  });
+
+  test('scope owner set routes and stops routing, and announces no goal change', async () => {
+    const routed = await run(
+      'evolution.scope.owner.set',
+      { agentId: agent.id, scopeId: SCOPE_ID, assigned: true },
+      caller('ad_hoc_member')
+    );
+    expect(routed.value).toEqual({ accepted: true, assigned: true });
+    expect(agentRepo.listForgeScopes(agent.id).map((entry) => entry.scopeId)).toEqual([SCOPE_ID]);
+
+    const stopped = await run(
+      'evolution.scope.owner.set',
+      { agentId: agent.id, scopeId: SCOPE_ID, assigned: false },
+      caller('ad_hoc_member')
+    );
+    expect(stopped.value).toEqual({ accepted: true, assigned: false });
+    expect(agentRepo.listForgeScopes(agent.id)).toHaveLength(0);
+    expect(ownerChanges).toEqual([]);
+  });
+
+  test('dropping an assignment that is not there succeeds', async () => {
+    const outcome = await run(
+      'evolution.scope.owner.set',
+      { agentId: agent.id, scopeId: SCOPE_ID, assigned: false },
+      caller('ad_hoc_member')
+    );
+    expect(outcome.value).toEqual({ accepted: true, assigned: false });
+  });
+
+  test('the target gates still apply to the merged door', async () => {
+    seedScope('scope-elsewhere', otherSpace());
+    const outcome = await run(
+      'evolution.scope.owner.set',
+      { agentId: agent.id, scopeId: 'scope-elsewhere', assigned: true },
+      caller('ad_hoc_member')
+    );
+    expect(outcome.value?.reason).toBe('scope_not_found');
+  });
+});
