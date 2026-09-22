@@ -3,9 +3,11 @@ import type { NodeExecution, SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
 import { parseAddress } from '../../../../../messaging/src/address.ts';
 import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types.ts';
 import type { ResolveTargetsResult } from '../../../../../messaging/src/contracts.ts';
+import type { OperationCaller } from '../../../../src/lib/operations/registry.ts';
 import {
   createSendTaskMessageOperation,
   sendTaskMessage,
+  SENDER_IDENTITY_UNAVAILABLE_ERROR,
 } from '../../../../src/lib/messaging/task-message-send.ts';
 
 const SPACE_ID = 'space-send-test';
@@ -121,15 +123,21 @@ const baseInput = {
   spaceId: SPACE_ID,
   taskId: 'task-1',
   message: 'Hello',
-  outboundSenderLevel: 'session-agent' as const,
-  outboundSenderDisplayName: 'tester',
+};
+
+const baseCaller = {
+  source: 'mcp' as const,
+  sessionId: 'my-session-1',
+  spaceId: SPACE_ID,
+  role: 'ad_hoc_member' as const,
+  agentName: 'tester',
 };
 
 describe('sendTaskMessage', () => {
   test('rejects missing task', async () => {
     const result = await sendTaskMessage(
       { ...baseInput },
-      { source: 'mcp' as const },
+      baseCaller,
       baseDeps({ getTask: () => null })
     );
     expect(result.success).toBe(false);
@@ -139,7 +147,7 @@ describe('sendTaskMessage', () => {
   test('rejects archived task', async () => {
     const result = await sendTaskMessage(
       { ...baseInput },
-      { source: 'mcp' as const },
+      baseCaller,
       baseDeps({ getTask: () => task({ status: 'archived' }) })
     );
     expect(result.success).toBe(false);
@@ -149,7 +157,7 @@ describe('sendTaskMessage', () => {
   test('rejects task in a different space', async () => {
     const result = await sendTaskMessage(
       { ...baseInput },
-      { source: 'mcp' as const },
+      baseCaller,
       baseDeps({ getTask: () => task({ spaceId: 'other-space' }) })
     );
     expect(result.success).toBe(false);
@@ -159,7 +167,7 @@ describe('sendTaskMessage', () => {
   test('rejects missing target', async () => {
     const result = await sendTaskMessage(
       { ...baseInput, nodeId: undefined, target: undefined },
-      { source: 'mcp' as const },
+      baseCaller,
       baseDeps()
     );
     expect(result.success).toBe(false);
@@ -171,7 +179,7 @@ describe('sendTaskMessage', () => {
   test('rejects task without workflow run', async () => {
     const result = await sendTaskMessage(
       { ...baseInput, nodeId: 'coder' },
-      { source: 'mcp' as const },
+      baseCaller,
       baseDeps({ getTask: () => task({ workflowRunId: null }) })
     );
     expect(result.success).toBe(false);
@@ -189,7 +197,7 @@ describe('sendTaskMessage', () => {
     });
     const result = await sendTaskMessage(
       { ...baseInput, nodeId: 'coder' },
-      { source: 'mcp' as const },
+      baseCaller,
       baseDeps({
         taskAgentManager: { injectSubSessionMessage: injected },
         ensureTargetSession: ensure,
@@ -213,7 +221,7 @@ describe('sendTaskMessage', () => {
     const getById = () => refreshed;
     const result = await sendTaskMessage(
       { ...baseInput, target: '@worker:run-1/Work/coder' },
-      { source: 'mcp' as const },
+      baseCaller,
       baseDeps({
         ensureTargetSession: ensure,
         activateNode: activated,
@@ -236,7 +244,7 @@ describe('sendTaskMessage', () => {
     );
     const result = await sendTaskMessage(
       { ...baseInput, target: '@session:session-3' },
-      { source: 'mcp' as const },
+      baseCaller,
       baseDeps({
         listNodeExecutions: () => [exec],
         taskAgentManager: { injectSubSessionMessage: byId },
@@ -257,10 +265,8 @@ describe('sendTaskMessage', () => {
         taskNumber: 1,
         message: 'Hello',
         nodeId: 'coder',
-        outboundSenderLevel: 'session-agent' as const,
-        outboundSenderDisplayName: 'tester',
       },
-      { source: 'mcp' as const },
+      baseCaller,
       baseDeps({
         getTaskByNumber: getByNumber,
         ensureTargetSession: async () =>
@@ -311,7 +317,7 @@ describe('sendTaskMessage — handle and role targets', () => {
     const actor = longHorizonActor('coder');
     const result = await sendTaskMessage(
       { ...baseInput, target: '@coder' },
-      { source: 'mcp' as const },
+      baseCaller,
       baseDeps({
         listNodeExecutions: () => [execution({ agentName: 'other' })],
         messageResolver: messageResolverFor(actor),
@@ -325,7 +331,7 @@ describe('sendTaskMessage — handle and role targets', () => {
     const injected = mock(async () => 'sdk-msg-5');
     const result = await sendTaskMessage(
       { ...baseInput, target: '@coder' },
-      { source: 'mcp' as const },
+      baseCaller,
       baseDeps({
         messageResolver: messageResolverFor(null),
         ensureTargetSession: async () =>
@@ -343,7 +349,7 @@ describe('sendTaskMessage — handle and role targets', () => {
     const injected = mock(async () => 'sdk-msg-6');
     const result = await sendTaskMessage(
       { ...baseInput, target: '@coder', nodeId: 'exec-1' },
-      { source: 'mcp' as const },
+      baseCaller,
       baseDeps({
         messageResolver: messageResolverFor(actor),
         ensureTargetSession: async () =>
@@ -359,7 +365,7 @@ describe('sendTaskMessage — handle and role targets', () => {
     const actor = longHorizonActor('coder');
     const result = await sendTaskMessage(
       { ...baseInput, target: '@coder' },
-      { source: 'mcp' as const },
+      baseCaller,
       baseDeps({
         messageResolver: messageResolverFor(actor),
       })
@@ -373,7 +379,7 @@ describe('sendTaskMessage — handle and role targets', () => {
     const actor = longHorizonActor('coder');
     const result = await sendTaskMessage(
       { ...baseInput, target: '@coder', nodeId: 'other' },
-      { source: 'mcp' as const },
+      baseCaller,
       baseDeps({
         listNodeExecutions: () => [execution({ agentName: 'other' })],
         messageResolver: messageResolverFor(actor),
@@ -387,7 +393,7 @@ describe('sendTaskMessage — handle and role targets', () => {
     const other = execution({ id: 'exec-2', agentName: 'other', workflowNodeId: 'node-2' });
     const result = await sendTaskMessage(
       { ...baseInput, target: '@coder', nodeId: 'other' },
-      { source: 'mcp' as const },
+      baseCaller,
       baseDeps({
         listNodeExecutions: () => [execution(), other],
         getWorkflowForRun: () =>
@@ -408,7 +414,7 @@ describe('sendTaskMessage — handle and role targets', () => {
     const deliverToSession = mock(async () => 'session-role-1');
     const result = await sendTaskMessage(
       { ...baseInput, target: '@role:task-manager' },
-      { source: 'mcp' as const },
+      baseCaller,
       baseDeps({
         messageResolver: messageResolverFor(actor, (target) => target.startsWith('@role:')),
         longTermAgentDelivery: {
@@ -428,7 +434,7 @@ describe('sendTaskMessage — handle and role targets', () => {
     const queueForActivation = mock(async () => 'session-queued-1');
     const result = await sendTaskMessage(
       { ...baseInput, target: '@role:task-manager' },
-      { source: 'mcp' as const },
+      baseCaller,
       baseDeps({
         messageResolver: messageResolverFor(actor, (target) => target.startsWith('@role:')),
         longTermAgentDelivery: {
@@ -446,7 +452,7 @@ describe('sendTaskMessage — handle and role targets', () => {
   test('reports failed delivery when no actor matches @handle', async () => {
     const result = await sendTaskMessage(
       { ...baseInput, target: '@unknown' },
-      { source: 'mcp' as const },
+      baseCaller,
       baseDeps({
         listNodeExecutions: () => [],
         messageResolver: messageResolverFor(null),
@@ -467,7 +473,7 @@ describe('sendTaskMessage — handle and role targets', () => {
   test('rejects handle or role delivery when long-term agent messaging is unavailable', async () => {
     const result = await sendTaskMessage(
       { ...baseInput, target: '@role:task-manager' },
-      { source: 'mcp' as const },
+      baseCaller,
       baseDeps({
         messageResolver: undefined,
         longTermAgentDelivery: undefined,
@@ -477,12 +483,12 @@ describe('sendTaskMessage — handle and role targets', () => {
     expect(result.error).toBe('Long-term agent messaging is not available in this context.');
   });
 
-  test('registers reply routing for worker targets when mySessionId is provided', async () => {
+  test('registers reply routing for worker targets against the calling session', async () => {
     const setRouting = mock(() => {});
     const injected = mock(async () => 'sdk-msg-7');
     const result = await sendTaskMessage(
-      { ...baseInput, nodeId: 'coder', mySessionId: 'my-session-1' },
-      { source: 'mcp' as const },
+      { ...baseInput, nodeId: 'coder' },
+      baseCaller,
       baseDeps({
         replyRoutingRegistry: { set: setRouting },
         ensureTargetSession: async () =>
@@ -493,11 +499,143 @@ describe('sendTaskMessage — handle and role targets', () => {
     expect(result.success).toBe(true);
     expect(setRouting).toHaveBeenCalledWith('task-1', 'my-session-1', 'coder');
   });
+
+  test('ignores a caller-named session and routes replies to the calling session', async () => {
+    const setRouting = mock(() => {});
+    const result = await sendTaskMessage(
+      { ...baseInput, nodeId: 'coder' },
+      { ...baseCaller, sessionId: 'real-caller-session' },
+      baseDeps({
+        replyRoutingRegistry: { set: setRouting },
+        ensureTargetSession: async () =>
+          ({ kind: 'resolved', sessionId: 'session-8', created: false }) as const,
+        taskAgentManager: { injectSubSessionMessage: mock(async () => 'sdk-msg-8') },
+      })
+    );
+    expect(result.success).toBe(true);
+    expect(setRouting).toHaveBeenCalledWith('task-1', 'real-caller-session', 'coder');
+  });
+
+  test('rejects a caller with no Space agent role before touching the task', async () => {
+    const setRouting = mock(() => {});
+    const getTask = mock(() => task());
+    const result = await sendTaskMessage(
+      { ...baseInput, nodeId: 'coder' },
+      { source: 'rpc', principal: 'local' },
+      baseDeps({ getTask, replyRoutingRegistry: { set: setRouting } })
+    );
+    expect(result.success).toBe(false);
+    expect(result.error).toBe(SENDER_IDENTITY_UNAVAILABLE_ERROR);
+    expect(getTask).not.toHaveBeenCalled();
+    expect(setRouting).not.toHaveBeenCalled();
+  });
+
+  test('rejects a Space agent caller with no session id', async () => {
+    const result = await sendTaskMessage(
+      { ...baseInput, nodeId: 'coder' },
+      { source: 'mcp', spaceId: SPACE_ID, role: 'ad_hoc_member', agentName: 'tester' },
+      baseDeps()
+    );
+    expect(result.success).toBe(false);
+    expect(result.error).toBe(SENDER_IDENTITY_UNAVAILABLE_ERROR);
+  });
+});
+
+describe('sendTaskMessage — sender attribution', () => {
+  async function deliverAs(caller: OperationCaller): Promise<string> {
+    let envelope = '';
+    const injected = mock(async (_sessionId: string, message: string) => {
+      envelope = message;
+      return 'sdk-msg-attribution';
+    });
+    await sendTaskMessage(
+      { ...baseInput, nodeId: 'coder' },
+      caller,
+      baseDeps({
+        ensureTargetSession: async () =>
+          ({ kind: 'resolved', sessionId: 'session-attribution', created: false }) as const,
+        taskAgentManager: { injectSubSessionMessage: injected },
+      })
+    );
+    return envelope;
+  }
+
+  test('attributes a workflow worker as its node agent, not as the name it asks for', async () => {
+    const envelope = await deliverAs({
+      source: 'mcp',
+      sessionId: 'worker-session',
+      spaceId: SPACE_ID,
+      role: 'workflow_worker',
+      agentName: 'reviewer',
+    });
+    expect(envelope).toContain('─── Message from reviewer ───');
+    expect(envelope).toContain('To reply, use: send_message with target "reviewer"');
+    expect(envelope).toContain('<reply-routing replyToSessionId="worker-session" />');
+  });
+
+  test('attributes a long-horizon caller at the long-horizon level', async () => {
+    const envelope = await deliverAs({
+      source: 'mcp',
+      sessionId: 'lha-session',
+      spaceId: SPACE_ID,
+      role: 'long_term_agent',
+      agentName: 'task-manager',
+    });
+    expect(envelope).toContain('─── Message from task-manager ───');
+    expect(envelope).toContain('To reply, use: send_message with target "@task-manager"');
+  });
+
+  test('names an unnamed member session by its kind and routes replies to its session', async () => {
+    const envelope = await deliverAs({
+      source: 'mcp',
+      sessionId: 'member-session',
+      spaceId: SPACE_ID,
+      role: 'ad_hoc_member',
+    });
+    expect(envelope).toContain('─── Message from space-member ───');
+    expect(envelope).toContain('To reply, use: send_message with target "@session:member-session"');
+  });
+
+  test('stamps the long-horizon envelope with the calling session as sender actor', async () => {
+    const actor = longHorizonActor('task-manager');
+    let record: MessageRecord | null = null;
+    const deliverToSession = mock(async (_actor: ActorRef, message: MessageRecord) => {
+      record = message;
+      return 'session-role-2';
+    });
+    await sendTaskMessage(
+      { ...baseInput, target: '@role:task-manager' },
+      { ...baseCaller, sessionId: 'member-session', agentName: undefined },
+      baseDeps({
+        messageResolver: messageResolverFor(actor, (target) => target.startsWith('@role:')),
+        longTermAgentDelivery: {
+          deliverToSession,
+          queueForActivation: mock(async () => undefined),
+        },
+      })
+    );
+    expect(record).not.toBeNull();
+    expect(record!.senderActorId).toBe('session:member-session');
+    expect(record!.body).toContain('─── Message from space-member');
+  });
 });
 
 describe('createSendTaskMessageOperation', () => {
   test('define operation with name task.message.send', () => {
     const op = createSendTaskMessageOperation(baseDeps());
     expect(op.name).toBe('task.message.send');
+  });
+
+  test('rejects caller-asserted sender identity in the input schema', () => {
+    const op = createSendTaskMessageOperation(baseDeps());
+    const parsed = op.inputSchema.safeParse({
+      ...baseInput,
+      nodeId: 'coder',
+      mySessionId: 'someone-elses-session',
+      outboundSenderLevel: 'long-horizon-agent',
+      outboundSenderDisplayName: 'task-manager',
+      outboundReplyTargetHandle: '@task-manager',
+    });
+    expect(parsed.success).toBe(false);
   });
 });
