@@ -3,7 +3,5 @@ export const SCHEDULE_OPERATION_NAMES = [
   'schedule.delete',
   'schedule.get',
   'schedule.list',
-  'schedule.pause',
-  'schedule.resume',
   'schedule.update',
 ] as const;
