@@ -19,6 +19,7 @@ import type {
   McpEnablementSetOverrideRequest,
   McpEnablementSetOverrideResponse,
 } from '@hyperneo/shared';
+import { isBuiltInMcpServerName } from '../mcp/built-in-servers.ts';
 import { scopeChainForSession } from '../mcp/resolve-mcp-servers.ts';
 import { Logger } from '../logger.ts';
 
@@ -27,6 +28,14 @@ const log = new Logger('app-mcp-handlers');
 export interface AppMcpHandlerContext {
   db: { appMcpServers: AppMcpServerRepository };
   internalEventBus: InternalEventBus<DaemonInternalEventMap>;
+}
+
+function requireUnreservedName(name: string): void {
+  if (!isBuiltInMcpServerName(name)) return;
+  throw new Error(
+    `"${name}" is reserved for a built-in MCP server. Choose another name — a server registered ` +
+      `under a reserved name is attached to sessions under a suffixed name instead.`
+  );
 }
 
 function emitChanged(internalEventBus: InternalEventBus<DaemonInternalEventMap>): void {
@@ -52,6 +61,7 @@ export function registerAppMcpHandlers(messageHub: MessageHub, ctx: AppMcpHandle
     if (!params.sourceType) {
       throw new Error('sourceType is required');
     }
+    requireUnreservedName(params.name.trim());
 
     const server = db.appMcpServers.create(params);
     emitChanged(internalEventBus);
@@ -67,6 +77,7 @@ export function registerAppMcpHandlers(messageHub: MessageHub, ctx: AppMcpHandle
     }
 
     const { id, ...updates } = params;
+    if (updates.name !== undefined) requireUnreservedName(updates.name.trim());
     const server = db.appMcpServers.update(id, updates);
     if (!server) {
       throw new Error(`MCP server not found: ${id}`);
