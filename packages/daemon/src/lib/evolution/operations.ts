@@ -3,6 +3,7 @@ import {
   createForgeEpisodeOperations,
   type ForgeEpisodeOperationDependencies,
 } from './episode-operations.ts';
+import { createForgeEvidenceAttachOperation } from './evidence-attach-operation.ts';
 import {
   createForgeScopeOperations,
   type ForgeScopeOperationDependencies,
@@ -12,5 +13,9 @@ export type ForgeOperationDependencies = Omit<ForgeScopeOperationDependencies, '
   ForgeEpisodeOperationDependencies;
 
 export function createForgeOperations(forge: ForgeOperationDependencies): OperationDefinition[] {
-  return [...createForgeScopeOperations(forge), ...createForgeEpisodeOperations(forge)];
+  return [
+    ...createForgeScopeOperations(forge),
+    ...createForgeEpisodeOperations(forge),
+    createForgeEvidenceAttachOperation(forge),
+  ];
 }

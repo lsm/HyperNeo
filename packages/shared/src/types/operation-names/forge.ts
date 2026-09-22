@@ -1,6 +1,7 @@
 export const FORGE_OPERATION_NAMES = [
   'forge.episode.create',
   'forge.episode.update',
+  'forge.evidence.attach',
   'forge.evidence.attachTask',
   'forge.evidence.attachWorkflowRun',
   'forge.evidence.list',
