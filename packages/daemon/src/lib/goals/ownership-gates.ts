@@ -15,7 +15,6 @@ export function decideGoalOwnershipMutationAdmission(
   return {
     action: 'deny',
     reason: 'not_space_agent_or_human',
-    message:
-      'agent.assignGoal/agent.unassignGoal owner mutations require a Space agent session or explicit human authorization.',
+    message: 'goal.owner.set requires a Space agent session or explicit human authorization.',
   };
 }
