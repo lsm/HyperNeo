@@ -48,10 +48,7 @@ import type { ScopeTimeline } from './scope-service-types.ts';
 export interface ForgeScopeOperationDependencies extends ForgeAdmissionDependencies {
   readonly scopeService: Pick<
     EvolutionScopeService,
-    | 'addManualNoteEvidence'
     | 'addMetricSnapshotEvidence'
-    | 'attachTaskEvidence'
-    | 'attachWorkflowRunEvidence'
     | 'createScope'
     | 'createScopeFromGoal'
     | 'getScope'
@@ -86,17 +83,9 @@ const SCOPE_RESOLVE_REJECTIONS = [
   'task_not_found',
   'resolve_target_required',
 ] as const;
-const EVIDENCE_ATTACH_REJECTIONS = [
-  ...SCOPE_ID_REJECTIONS,
-  'task_not_found',
-  'workflow_run_not_found',
-  'evidence_not_attached',
-] as const;
-
 type ScopeIdRejection = (typeof SCOPE_ID_REJECTIONS)[number];
 type ScopeCreateRejection = (typeof SCOPE_CREATE_REJECTIONS)[number];
 type ScopeResolveRejection = (typeof SCOPE_RESOLVE_REJECTIONS)[number];
-type EvidenceAttachRejection = (typeof EVIDENCE_ATTACH_REJECTIONS)[number];
 
 const FORGE_READ_POLICY = {
   safetyClass: 'read',
@@ -454,129 +443,6 @@ export function readForgeTimeline(
   return { accepted: true, ...forge.scopeService.listTimeline(scope.id) };
 }
 
-const NoteAddInputSchema = z
-  .object({
-    ...ScopeTargeted,
-    summary: z.string().min(1),
-    metadata: ForgeMetadataSchema.optional(),
-    createdAt: z.number().int().optional(),
-  })
-  .strict();
-
-export function applyForgeNoteAdd(
-  input: z.infer<typeof NoteAddInputSchema>,
-  scope: EvolutionScope,
-  caller: OperationCaller,
-  forge: ForgeScopeOperationDependencies
-): { accepted: true; evidence: EvidenceRef } {
-  const evidence = forge.scopeService.addManualNoteEvidence({
-    scopeId: scope.id,
-    summary: input.summary,
-    metadata: input.metadata,
-    createdAt: input.createdAt,
-  });
-  forge.audit?.({
-    toolName: 'forge.note.add',
-    paramsSummary: { scopeId: scope.id },
-    caller,
-    spaceId: scope.spaceId,
-  });
-  return { accepted: true, evidence };
-}
-
-const EvidenceAttachTaskInputSchema = z
-  .object({
-    ...SpaceScoped,
-    taskId: z.string().min(1),
-    scopeId: z.string().min(1).optional(),
-    summary: z.string().optional(),
-    metadata: ForgeMetadataSchema.optional(),
-  })
-  .strict();
-
-export function applyForgeTaskEvidence(
-  input: z.infer<typeof EvidenceAttachTaskInputSchema>,
-  scope: { spaceId?: string },
-  caller: OperationCaller,
-  forge: ForgeScopeOperationDependencies
-): ForgeGate<{ accepted: true; evidence: EvidenceRef }, EvidenceAttachRejection> {
-  const task = forge.taskRepo.getTask(input.taskId);
-  if (!task || (scope.spaceId && task.spaceId !== scope.spaceId)) {
-    return denyForge('task_not_found', `Task not found: ${input.taskId}`);
-  }
-  if (input.scopeId && !findForgeScopeInSpace(input.scopeId, scope.spaceId, forge)) {
-    return denyForge('scope_not_found', `EvolutionScope not found: ${input.scopeId}`);
-  }
-  let evidence: EvidenceRef;
-  try {
-    evidence = forge.scopeService.attachTaskEvidence({
-      taskId: input.taskId,
-      scopeId: input.scopeId,
-      summary: input.summary,
-      metadata: input.metadata,
-    });
-  } catch (err) {
-    return denyForge('evidence_not_attached', err instanceof Error ? err.message : String(err));
-  }
-  if (!findForgeScopeInSpace(evidence.scopeId, scope.spaceId, forge)) {
-    return denyForge('scope_not_found', `EvolutionScope not found: ${evidence.scopeId}`);
-  }
-  forge.audit?.({
-    toolName: 'forge.evidence.attachTask',
-    paramsSummary: { scopeId: evidence.scopeId, taskId: input.taskId },
-    caller,
-    spaceId: scope.spaceId,
-    taskId: input.taskId,
-  });
-  return { value: { accepted: true, evidence } };
-}
-
-const EvidenceAttachRunInputSchema = z
-  .object({
-    ...SpaceScoped,
-    workflowRunId: z.string().min(1),
-    scopeId: z.string().min(1).optional(),
-    summary: z.string().optional(),
-    metadata: ForgeMetadataSchema.optional(),
-  })
-  .strict();
-
-export function applyForgeWorkflowRunEvidence(
-  input: z.infer<typeof EvidenceAttachRunInputSchema>,
-  scope: { spaceId?: string },
-  caller: OperationCaller,
-  forge: ForgeScopeOperationDependencies
-): ForgeGate<{ accepted: true; evidence: EvidenceRef }, EvidenceAttachRejection> {
-  const run = forge.workflowRunRepo.getRun(input.workflowRunId);
-  if (!run || (scope.spaceId && run.spaceId !== scope.spaceId)) {
-    return denyForge('workflow_run_not_found', `Workflow run not found: ${input.workflowRunId}`);
-  }
-  if (input.scopeId && !findForgeScopeInSpace(input.scopeId, scope.spaceId, forge)) {
-    return denyForge('scope_not_found', `EvolutionScope not found: ${input.scopeId}`);
-  }
-  let evidence: EvidenceRef;
-  try {
-    evidence = forge.scopeService.attachWorkflowRunEvidence({
-      workflowRunId: input.workflowRunId,
-      scopeId: input.scopeId,
-      summary: input.summary,
-      metadata: input.metadata,
-    });
-  } catch (err) {
-    return denyForge('evidence_not_attached', err instanceof Error ? err.message : String(err));
-  }
-  if (!findForgeScopeInSpace(evidence.scopeId, scope.spaceId, forge)) {
-    return denyForge('scope_not_found', `EvolutionScope not found: ${evidence.scopeId}`);
-  }
-  forge.audit?.({
-    toolName: 'forge.evidence.attachWorkflowRun',
-    paramsSummary: { scopeId: evidence.scopeId, workflowRunId: input.workflowRunId },
-    caller,
-    spaceId: scope.spaceId,
-  });
-  return { value: { accepted: true, evidence } };
-}
-
 export function readForgeEvidence(
   scope: EvolutionScope,
   forge: ForgeScopeOperationDependencies
@@ -697,25 +563,6 @@ export function createForgeScopeOperations(forge: ForgeScopeOperationDependencie
     .pipe(resolveForgeScopeTarget, ['input', 'outcome', 'caller', 'forge'], 'result:outcome')
     .endAsync('outcome');
 
-  const noteAdd = (superpipe({ forge })('forge-note-add') as PipelineAPI)
-    .input(['input', 'caller'])
-    .pipe(admitForgeMutator, ['input', 'caller', 'forge'], 'result:outcome')
-    .pipe(requireForgeScope, ['input', 'outcome', 'forge'], 'result:outcome')
-    .pipe(applyForgeNoteAdd, ['input', 'outcome', 'caller', 'forge'], 'outcome')
-    .endAsync('outcome');
-
-  const attachTask = (superpipe({ forge })('forge-evidence-attach-task') as PipelineAPI)
-    .input(['input', 'caller'])
-    .pipe(admitForgeMutator, ['input', 'caller', 'forge'], 'result:outcome')
-    .pipe(applyForgeTaskEvidence, ['input', 'outcome', 'caller', 'forge'], 'result:outcome')
-    .endAsync('outcome');
-
-  const attachRun = (superpipe({ forge })('forge-evidence-attach-workflow-run') as PipelineAPI)
-    .input(['input', 'caller'])
-    .pipe(admitForgeMutator, ['input', 'caller', 'forge'], 'result:outcome')
-    .pipe(applyForgeWorkflowRunEvidence, ['input', 'outcome', 'caller', 'forge'], 'result:outcome')
-    .endAsync('outcome');
-
   const metricAdd = (superpipe({ forge })('forge-metric-add') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitForgeMutator, ['input', 'caller', 'forge'], 'result:outcome')
@@ -728,7 +575,6 @@ export function createForgeScopeOperations(forge: ForgeScopeOperationDependencie
   const metricList = scopeReadPipeline('forge-metric-list', forge, readForgeMetricSnapshots);
 
   const scopeResult = accepted({ scope: ForgeScopeSchema });
-  const evidenceResult = accepted({ evidence: ForgeEvidenceRefSchema });
 
   return [
     defineOperation({
@@ -794,33 +640,6 @@ export function createForgeScopeOperations(forge: ForgeScopeOperationDependencie
         forgeDenialSchema(SCOPE_ID_REJECTIONS),
       ]),
       execute: async (input, caller) => timeline(input, caller),
-    }),
-    defineOperation({
-      name: 'forge.note.add',
-      policy: FORGE_MUTATE_POLICY,
-      description:
-        'Attach a manual-note evidence item to a Forge scope. Rejects scope_not_found when the scope is absent or outside the caller Space.',
-      inputSchema: NoteAddInputSchema,
-      resultSchema: z.union([evidenceResult, forgeDenialSchema(SCOPE_ID_REJECTIONS)]),
-      execute: async (input, caller) => noteAdd(input, caller),
-    }),
-    defineOperation({
-      name: 'forge.evidence.attachTask',
-      policy: FORGE_MUTATE_POLICY,
-      description:
-        'Attach a task as Forge evidence, resolving the scope from the task when scopeId is omitted. Rejects task_not_found, scope_not_found, and evidence_not_attached when no scope can be resolved for the task.',
-      inputSchema: EvidenceAttachTaskInputSchema,
-      resultSchema: z.union([evidenceResult, forgeDenialSchema(EVIDENCE_ATTACH_REJECTIONS)]),
-      execute: async (input, caller) => attachTask(input, caller),
-    }),
-    defineOperation({
-      name: 'forge.evidence.attachWorkflowRun',
-      policy: FORGE_MUTATE_POLICY,
-      description:
-        "Attach a workflow run as Forge evidence, resolving the scope via the run's tasks when scopeId is omitted. Rejects workflow_run_not_found, scope_not_found, and evidence_not_attached when no scope can be resolved for the run.",
-      inputSchema: EvidenceAttachRunInputSchema,
-      resultSchema: z.union([evidenceResult, forgeDenialSchema(EVIDENCE_ATTACH_REJECTIONS)]),
-      execute: async (input, caller) => attachRun(input, caller),
     }),
     defineOperation({
       name: 'forge.evidence.list',

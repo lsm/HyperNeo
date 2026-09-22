@@ -185,12 +185,9 @@ const scopeInput = {
 };
 
 const SCOPE_OPERATION_NAMES = [
-  'forge.evidence.attachTask',
-  'forge.evidence.attachWorkflowRun',
   'forge.evidence.list',
   'forge.metric.add',
   'forge.metric.list',
-  'forge.note.add',
   'forge.scope.create',
   'forge.scope.createFromGoal',
   'forge.scope.get',
@@ -667,141 +664,6 @@ describe('forge.scope.resolve', () => {
   });
 });
 
-describe('forge.note.add', () => {
-  test('attaches a manual note and surfaces it through forge.evidence.list', async () => {
-    const ctx = makeCtx();
-    try {
-      const created = (await ctx.op('forge.scope.create').execute(scopeInput, memberCaller)) as {
-        accepted: true;
-        scope: { id: string };
-      };
-      const added = (await ctx
-        .op('forge.note.add')
-        .execute({ scopeId: created.scope.id, summary: 'Flakes down 20%' }, memberCaller)) as {
-        accepted: true;
-        evidence: { kind: string; summary: string };
-      };
-      expect(added.evidence).toMatchObject({ kind: 'manual_note', summary: 'Flakes down 20%' });
-      const listed = (await ctx
-        .op('forge.evidence.list')
-        .execute({ scopeId: created.scope.id }, readerCaller)) as {
-        accepted: true;
-        evidence: Array<{ summary: string }>;
-      };
-      expect(listed.evidence.map((item) => item.summary)).toEqual(['Flakes down 20%']);
-    } finally {
-      ctx.db.close();
-    }
-  });
-
-  test('denies an archived session and writes no evidence', async () => {
-    const ctx = makeCtx();
-    try {
-      const created = (await ctx.op('forge.scope.create').execute(scopeInput, memberCaller)) as {
-        accepted: true;
-        scope: { id: string };
-      };
-      expect(
-        await ctx
-          .op('forge.note.add')
-          .execute({ scopeId: created.scope.id, summary: 'should not land' }, archivedCaller)
-      ).toMatchObject({ accepted: false, reason: 'forge_denied' });
-      expect(ctx.scopeService.listEvidence(created.scope.id).evidence).toHaveLength(0);
-    } finally {
-      ctx.db.close();
-    }
-  });
-});
-
-describe('forge.evidence.attachTask', () => {
-  test('attaches an in-Space task to an explicit scope and rejects a foreign task', async () => {
-    const ctx = makeCtx();
-    try {
-      const created = (await ctx.op('forge.scope.create').execute(scopeInput, memberCaller)) as {
-        accepted: true;
-        scope: { id: string };
-      };
-      const task = ctx.taskRepo.createTask({
-        spaceId: SPACE_ID,
-        title: 'Evidence task',
-        description: '',
-      });
-      const foreign = ctx.taskRepo.createTask({
-        spaceId: OTHER_SPACE_ID,
-        title: 'Foreign task',
-        description: '',
-      });
-      const attached = (await ctx
-        .op('forge.evidence.attachTask')
-        .execute({ taskId: task.id, scopeId: created.scope.id }, memberCaller)) as {
-        accepted: true;
-        evidence: { kind: string; sourceId: string | null };
-      };
-      expect(attached.evidence).toMatchObject({ kind: 'task', sourceId: task.id });
-      expect(
-        await ctx
-          .op('forge.evidence.attachTask')
-          .execute({ taskId: foreign.id, scopeId: created.scope.id }, memberCaller)
-      ).toMatchObject({ accepted: false, reason: 'task_not_found' });
-    } finally {
-      ctx.db.close();
-    }
-  });
-
-  test('reports evidence_not_attached when no scope can be resolved for the task', async () => {
-    const ctx = makeCtx();
-    try {
-      const task = ctx.taskRepo.createTask({
-        spaceId: SPACE_ID,
-        title: 'Unlinked task',
-        description: '',
-      });
-      expect(
-        await ctx.op('forge.evidence.attachTask').execute({ taskId: task.id }, memberCaller)
-      ).toMatchObject({ accepted: false, reason: 'evidence_not_attached' });
-    } finally {
-      ctx.db.close();
-    }
-  });
-});
-
-describe('forge.evidence.attachWorkflowRun', () => {
-  test('attaches a run to an explicit scope and rejects an unknown run', async () => {
-    const ctx = makeCtx();
-    try {
-      const created = (await ctx.op('forge.scope.create').execute(scopeInput, memberCaller)) as {
-        accepted: true;
-        scope: { id: string };
-      };
-      const workflow = ctx.workflowManager.createWorkflow({
-        spaceId: SPACE_ID,
-        name: 'Forge evidence run',
-        nodes: [{ name: 'Work', agents: [{ agentId: 'agent-1', name: 'Coder' }] }],
-        tags: [],
-      });
-      const run = ctx.workflowRunRepo.createRun({
-        spaceId: SPACE_ID,
-        workflowId: workflow.id,
-        title: 'Run',
-      });
-      const attached = (await ctx
-        .op('forge.evidence.attachWorkflowRun')
-        .execute({ workflowRunId: run.id, scopeId: created.scope.id }, memberCaller)) as {
-        accepted: true;
-        evidence: { kind: string; sourceId: string | null };
-      };
-      expect(attached.evidence).toMatchObject({ kind: 'workflow_run', sourceId: run.id });
-      expect(
-        await ctx
-          .op('forge.evidence.attachWorkflowRun')
-          .execute({ workflowRunId: 'missing-run', scopeId: created.scope.id }, memberCaller)
-      ).toMatchObject({ accepted: false, reason: 'workflow_run_not_found' });
-    } finally {
-      ctx.db.close();
-    }
-  });
-});
-
 describe('forge.metric.add', () => {
   test('records a snapshot that forge.metric.list and forge.timeline.get both report', async () => {
     const ctx = makeCtx();
@@ -850,9 +712,7 @@ describe('invokeOperation', () => {
         accepted: true;
         scope: { id: string };
       };
-      await ctx
-        .op('forge.note.add')
-        .execute({ scopeId: created.scope.id, summary: 'note' }, memberCaller);
+      ctx.scopeService.addManualNoteEvidence({ scopeId: created.scope.id, summary: 'note' });
       const outcome = await invokeOperation(
         ctx.registry,
         'forge.timeline.get',
