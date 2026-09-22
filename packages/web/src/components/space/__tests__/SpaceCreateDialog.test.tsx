@@ -172,6 +172,32 @@ describe('SpaceCreateDialog', () => {
     expect(nameInput.value).toBe('my-cool-app');
   });
 
+  it('selects the suggested name on focus so typing replaces it', () => {
+    const { getByPlaceholderText } = render(<SpaceCreateDialog isOpen={true} onClose={onClose} />);
+    fireEvent.input(getByPlaceholderText('/Users/you/projects/my-app'), {
+      target: { value: '/projects/qa-space-repo' },
+    });
+
+    const nameInput = getByPlaceholderText('e.g., My App') as HTMLInputElement;
+    expect(nameInput.value).toBe('qa-space-repo');
+    fireEvent.focus(nameInput);
+
+    expect(nameInput.selectionStart).toBe(0);
+    expect(nameInput.selectionEnd).toBe('qa-space-repo'.length);
+  });
+
+  it('leaves a name the user typed unselected on a later focus', () => {
+    const { getByPlaceholderText } = render(<SpaceCreateDialog isOpen={true} onClose={onClose} />);
+    const nameInput = getByPlaceholderText('e.g., My App') as HTMLInputElement;
+    fireEvent.input(nameInput, { target: { value: 'QA Space One' } });
+
+    nameInput.setSelectionRange(4, 4);
+    fireEvent.focus(nameInput);
+
+    expect(nameInput.selectionStart).toBe(4);
+    expect(nameInput.selectionEnd).toBe(4);
+  });
+
   it('does not override name when user has already typed it', () => {
     const { getByPlaceholderText } = render(<SpaceCreateDialog isOpen={true} onClose={onClose} />);
     const nameInput = getByPlaceholderText('e.g., My App') as HTMLInputElement;

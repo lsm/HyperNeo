@@ -295,6 +295,9 @@ export function SpaceCreateDialog({ isOpen, onClose }: SpaceCreateDialogProps) {
           <input
             type="text"
             value={name}
+            onFocus={(e) => {
+              if (!nameTouched && name) (e.target as HTMLInputElement).select();
+            }}
             onInput={(e) => {
               setName((e.target as HTMLInputElement).value);
               setNameTouched(true);
