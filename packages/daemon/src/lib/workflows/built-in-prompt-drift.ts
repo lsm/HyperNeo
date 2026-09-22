@@ -237,6 +237,10 @@ const RETIRED_TYPE_RESULT_EVERY_CYCLE =
 const CURRENT_REVIEW_ONLY_TERMINAL_ACTIONS =
   'invoke(name="workflow.run.artifact.save", input={ shape: "link", kind: "pr", data: { url: "<url>" } }) ' +
   'to record the PR, then invoke(name="task.approve", input={ taskId: "<task id>" }) ' +
+  'or invoke(name="task.transition", input={ taskId: "<task id>", status: "review" }) only on APPROVE';
+const RETIRED_SUBMIT_REVIEW_ONLY_TERMINAL_ACTIONS =
+  'invoke(name="workflow.run.artifact.save", input={ shape: "link", kind: "pr", data: { url: "<url>" } }) ' +
+  'to record the PR, then invoke(name="task.approve", input={ taskId: "<task id>" }) ' +
   'or invoke(name="task.submitForReview", input={ taskId: "<task id>" }) only on APPROVE';
 const RETIRED_RESOLVE_REVIEW_ONLY_TERMINAL_ACTIONS =
   'invoke(name="workflow.run.artifact.save", input={ shape: "link", kind: "pr", data: { url: "<url>" } }) ' +
@@ -270,7 +274,9 @@ const RETIRED_TYPE_RESULT_QA_ALL_GREEN =
   'merge template — top-level keys outside `data` are silently stripped by the tool schema, so nest it ' +
   'correctly.\n';
 
-const CURRENT_APPROVE_ZERO_FINDINGS_GATE = 'do not call task.approve or task.submitForReview';
+const CURRENT_APPROVE_ZERO_FINDINGS_GATE =
+  'do not call task.approve or a task.transition to review';
+const RETIRED_SUBMIT_ZERO_FINDINGS_GATE = 'do not call task.approve or task.submitForReview';
 const RETIRED_RESOLVE_ZERO_FINDINGS_GATE =
   'do not call task.resolvePendingCompletion or task.submitForReview';
 const CURRENT_APPROVE_QA_POST_APPROVAL = 'call task.approve as your final action';
@@ -285,22 +291,43 @@ const CURRENT_APPROVE_EXTERNAL_GATE_TERMINAL = 'terminal action (task.approve, o
 const RETIRED_RESOLVE_EXTERNAL_GATE_TERMINAL =
   'terminal action (task.resolvePendingCompletion, or the next-stage';
 const CURRENT_APPROVE_QA_GATES_BEFORE =
+  'terminal gates immediately before `task.approve` or a `task.transition` to `review`';
+const RETIRED_SUBMIT_QA_GATES_BEFORE =
   'terminal gates immediately before `task.approve` or `task.submitForReview`';
 const RETIRED_RESOLVE_QA_GATES_BEFORE =
   'terminal gates immediately before `task.resolvePendingCompletion` or `task.submitForReview`';
 const CURRENT_APPROVE_QA_THEN_CALL =
+  'decision artifact, then call `task.approve` or a `task.transition` to `review`';
+const RETIRED_SUBMIT_QA_THEN_CALL =
   'decision artifact, then call `task.approve` or `task.submitForReview`';
 const RETIRED_RESOLVE_QA_THEN_CALL =
   'decision artifact, then call `task.resolvePendingCompletion` or `task.submitForReview`';
-const CURRENT_APPROVE_QA_REVIEW_NOT_END = 'so you do NOT call task.approve or task.submitForReview';
+const CURRENT_APPROVE_QA_REVIEW_NOT_END =
+  'so you do NOT call task.approve or a task.transition to review';
+const RETIRED_SUBMIT_QA_REVIEW_NOT_END = 'so you do NOT call task.approve or task.submitForReview';
 const RETIRED_RESOLVE_QA_REVIEW_NOT_END =
   'so you do NOT call task.resolvePendingCompletion or task.submitForReview';
 const CURRENT_APPROVE_REVIEW_TERMINAL =
+  'save the PR link artifact and call task.approve, or a task.transition to review';
+const RETIRED_SUBMIT_REVIEW_TERMINAL =
   'save the PR link artifact and call task.approve, or task.submitForReview';
 const RETIRED_RESOLVE_REVIEW_TERMINAL =
   'save the PR link artifact and call task.resolvePendingCompletion, or task.submitForReview';
 const CURRENT_APPROVE_RESEARCH_REVIEW_TERMINAL =
+  'then invoke(name="task.approve", input={ taskId: "<task id>" }) ' +
+  'or invoke(name="task.transition", input={ taskId: "<task id>", status: "review" }).';
+const RETIRED_SUBMIT_RESEARCH_REVIEW_TERMINAL =
   'then invoke(name="task.approve", input={ taskId: "<task id>" }) or task.submitForReview.';
+const CURRENT_TRANSITION_CODER_ONLY_SUBMIT =
+  'call invoke(name="task.transition", input={ taskId: "<task id>", status: "review", reviewReason: "External gate on';
+const RETIRED_SUBMIT_CODER_ONLY_SUBMIT =
+  'call invoke(name="task.submitForReview", input={ taskId: "<task id>", reason: "External gate on';
+const CURRENT_TRANSITION_CODER_ONLY_ROUTES =
+  'always routes completion through a task.transition to review,';
+const RETIRED_SUBMIT_CODER_ONLY_ROUTES = 'always routes completion through task.submitForReview,';
+const CURRENT_TRANSITION_CALL_ACTION_PREFERENCE =
+  '`submit_for_approval` is `task.transition` with `status: "review"`';
+const RETIRED_SUBMIT_CALL_ACTION_PREFERENCE = '`submit_for_approval` is `task.submitForReview`';
 const RETIRED_RESOLVE_RESEARCH_REVIEW_TERMINAL =
   'then invoke(name="task.resolvePendingCompletion", input={ taskId: "<task id>", approved: true }) ' +
   'or task.submitForReview.';
@@ -321,6 +348,20 @@ const RETIRED_ARTIFACT_FAMILY_CALL_ACTION_PREFERENCE_PRE_TASK_APPROVE = retiredA
 );
 
 const BUILT_IN_PROMPT_PATCH_VARIANTS = [
+  [
+    [CURRENT_TRANSITION_CODER_ONLY_SUBMIT, RETIRED_SUBMIT_CODER_ONLY_SUBMIT],
+    [CURRENT_TRANSITION_CODER_ONLY_ROUTES, RETIRED_SUBMIT_CODER_ONLY_ROUTES],
+  ],
+  [[CURRENT_TRANSITION_CALL_ACTION_PREFERENCE, RETIRED_SUBMIT_CALL_ACTION_PREFERENCE]],
+  [[CURRENT_APPROVE_ZERO_FINDINGS_GATE, RETIRED_SUBMIT_ZERO_FINDINGS_GATE]],
+  [
+    [CURRENT_APPROVE_QA_GATES_BEFORE, RETIRED_SUBMIT_QA_GATES_BEFORE],
+    [CURRENT_APPROVE_QA_THEN_CALL, RETIRED_SUBMIT_QA_THEN_CALL],
+  ],
+  [[CURRENT_APPROVE_QA_REVIEW_NOT_END, RETIRED_SUBMIT_QA_REVIEW_NOT_END]],
+  [[CURRENT_APPROVE_REVIEW_TERMINAL, RETIRED_SUBMIT_REVIEW_TERMINAL]],
+  [[CURRENT_APPROVE_RESEARCH_REVIEW_TERMINAL, RETIRED_SUBMIT_RESEARCH_REVIEW_TERMINAL]],
+  [[CURRENT_REVIEW_ONLY_TERMINAL_ACTIONS, RETIRED_SUBMIT_REVIEW_ONLY_TERMINAL_ACTIONS]],
   ...RETIRED_INLINE_OPERATION_PROMPT_PAIRS.map((pair) => [pair]),
   [[REVIEW_THREAD_RESOLUTION_GUIDANCE, RETIRED_REVIEW_THREAD_RESOLUTION_GUIDANCE]],
   [

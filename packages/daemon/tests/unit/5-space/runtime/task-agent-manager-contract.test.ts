@@ -69,7 +69,7 @@ describe('TaskAgentManager Runtime Execution Contract', () => {
     expect(contract).toContain('Node: "Coding" (node-1)');
     expect(contract).not.toMatch(/approve_task|submit_for_approval/);
     expect(contract).toContain(
-      'invoke(name="task.submitForReview", input={ taskId: "<task id>", reason: "..." })'
+      'invoke(name="task.transition", input={ taskId: "<task id>", status: "review", reviewReason: "..." })'
     );
     expect(contract).not.toContain('invoke(name="task.approve"');
     expect(contract).toContain('overrides earlier terminal-action guidance');

@@ -6,12 +6,12 @@ import {
   REVIEWER_SYSTEM_CONTRACT,
 } from '../../../../../src/lib/agents/system-contracts.ts';
 import {
-  PRE_TASK_APPROVE_CONTRACT_SHA256,
-  runMigration267,
-} from '../../../../../src/storage/schema/m267-restamp-contracts-task-approve.ts';
+  PRE_TRANSITION_REVIEW_CONTRACT_SHA256,
+  runMigration270,
+} from '../../../../../src/storage/schema/m270-restamp-contracts-task-transition-review.ts';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
 
-const RETIRED_NAME = 'task.resolvePendingCompletion';
+const RETIRED_NAME = 'task.submitForReview';
 
 const SUBMIT_FOR_REVIEW_WORDING: [current: string, retired: string][] = [
   [
@@ -33,7 +33,7 @@ function retire(contract: string): string {
   return SUBMIT_FOR_REVIEW_WORDING.reduce(
     (text, [current, retired]) => text.replace(current, retired),
     contract
-  ).replaceAll('task.approve', RETIRED_NAME);
+  );
 }
 
 function sha256(value: string): string {
@@ -80,17 +80,17 @@ function instructionsOf(db: BunDatabase, id: string): string {
   return row.instructions;
 }
 
-describe('migration 267 — restamp agent contracts naming task.resolvePendingCompletion', () => {
+describe('migration 270 — restamp agent contracts naming task.submitForReview', () => {
   let db: BunDatabase;
   beforeEach(() => {
     db = makeDb();
   });
 
   test('the recorded hashes include the current contracts with the retired operation name', () => {
-    expect(PRE_TASK_APPROVE_CONTRACT_SHA256.Reviewer).toContain(
+    expect(PRE_TRANSITION_REVIEW_CONTRACT_SHA256.Reviewer).toContain(
       sha256(retire(REVIEWER_SYSTEM_CONTRACT))
     );
-    expect(PRE_TASK_APPROVE_CONTRACT_SHA256.QA).toContain(sha256(retire(QA_SYSTEM_CONTRACT)));
+    expect(PRE_TRANSITION_REVIEW_CONTRACT_SHA256.QA).toContain(sha256(retire(QA_SYSTEM_CONTRACT)));
   });
 
   test('restamps a Reviewer and a QA agent carrying the retired contract', () => {
@@ -98,7 +98,7 @@ describe('migration 267 — restamp agent contracts naming task.resolvePendingCo
     insertAgent(db, 'agent-qa', 'qa', retire(QA_SYSTEM_CONTRACT));
     expect(instructionsOf(db, 'agent-reviewer')).toContain(RETIRED_NAME);
 
-    runMigration267(db);
+    runMigration270(db);
 
     expect(instructionsOf(db, 'agent-reviewer')).toBe(REVIEWER_SYSTEM_CONTRACT);
     expect(instructionsOf(db, 'agent-qa')).toBe(QA_SYSTEM_CONTRACT);
@@ -109,7 +109,7 @@ describe('migration 267 — restamp agent contracts naming task.resolvePendingCo
     const edited = `${retire(REVIEWER_SYSTEM_CONTRACT)}\n\nOperator addendum.`;
     insertAgent(db, 'agent-edited', 'reviewer', edited);
 
-    runMigration267(db);
+    runMigration270(db);
 
     expect(instructionsOf(db, 'agent-edited')).toBe(edited);
   });
@@ -118,8 +118,8 @@ describe('migration 267 — restamp agent contracts naming task.resolvePendingCo
     insertAgent(db, 'agent-current', 'reviewer', REVIEWER_SYSTEM_CONTRACT);
     insertAgent(db, 'agent-stale', 'qa', retire(QA_SYSTEM_CONTRACT));
 
-    runMigration267(db);
-    runMigration267(db);
+    runMigration270(db);
+    runMigration270(db);
 
     expect(instructionsOf(db, 'agent-current')).toBe(REVIEWER_SYSTEM_CONTRACT);
     expect(instructionsOf(db, 'agent-stale')).toBe(QA_SYSTEM_CONTRACT);
@@ -132,7 +132,7 @@ describe('migration 267 — restamp agent contracts naming task.resolvePendingCo
        VALUES (?, 'reviewer', 'Reviewer', ?, 1, ?, ?)`
     ).run('migrated.agent.agent-1', retire(REVIEWER_SYSTEM_CONTRACT), now, now);
 
-    runMigration267(db);
+    runMigration270(db);
 
     const row = db
       .prepare(`SELECT instructions FROM space_agent_templates WHERE key = ?`)
@@ -142,12 +142,12 @@ describe('migration 267 — restamp agent contracts naming task.resolvePendingCo
 
   test('runs without a space_long_horizon_agents table', () => {
     const bare = new BunDatabase(':memory:');
-    expect(() => runMigration267(bare)).not.toThrow();
+    expect(() => runMigration270(bare)).not.toThrow();
   });
 
   test('every preset the migration names still exists', () => {
     const names = getPresetAgentTemplates().map((preset) => preset.name);
-    for (const presetName of Object.keys(PRE_TASK_APPROVE_CONTRACT_SHA256)) {
+    for (const presetName of Object.keys(PRE_TRANSITION_REVIEW_CONTRACT_SHA256)) {
       expect(names, presetName).toContain(presetName);
     }
   });

@@ -3288,15 +3288,15 @@ export class TaskAgentManager {
     );
     if (isEndNode) {
       lines.push(
-        'For this workflow worker, this runtime contract overrides earlier terminal-action guidance: submit completion with task.submitForReview at every autonomy level. Workflow workers cannot use task.approve; submission creates the checkpoint required for a later authorized approval.'
+        'For this workflow worker, this runtime contract overrides earlier terminal-action guidance: submit completion with a task.transition to review at every autonomy level. Workflow workers cannot use task.approve; submission creates the checkpoint required for a later authorized approval.'
       );
       if (approveUnlocked) {
         lines.push(
-          'When your work is complete: (1) call invoke(name="workflow.run.artifact.save", input={ shape: "decision", key: "outcome", summary: "...", data: { recommendation: "completed" } }) to record the outcome, then (2) call invoke(name="task.submitForReview", input={ taskId: "<task id>", reason: "..." }) as your FINAL action to submit the completion checkpoint. The runtime applies the completion and autonomy policy; submission acceptance is not final approval.'
+          'When your work is complete: (1) call invoke(name="workflow.run.artifact.save", input={ shape: "decision", key: "outcome", summary: "...", data: { recommendation: "completed" } }) to record the outcome, then (2) call invoke(name="task.transition", input={ taskId: "<task id>", status: "review", reviewReason: "..." }) as your FINAL action to submit the completion checkpoint. The runtime applies the completion and autonomy policy; submission acceptance is not final approval.'
         );
       } else {
         lines.push(
-          'When your work is complete: (1) call invoke(name="workflow.run.artifact.save", input={ shape: "decision", key: "outcome", summary: "...", data: { recommendation: "completed" } }) to record the outcome, then (2) call invoke(name="task.submitForReview", input={ taskId: "<task id>", reason: "..." }) as your FINAL action. Only a human can finalize at this autonomy level.'
+          'When your work is complete: (1) call invoke(name="workflow.run.artifact.save", input={ shape: "decision", key: "outcome", summary: "...", data: { recommendation: "completed" } }) to record the outcome, then (2) call invoke(name="task.transition", input={ taskId: "<task id>", status: "review", reviewReason: "..." }) as your FINAL action. Only a human can finalize at this autonomy level.'
         );
       }
     }

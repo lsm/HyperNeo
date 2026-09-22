@@ -322,7 +322,9 @@ describe('coder-only workflow template', () => {
     expect(CODER_ONLY_PROMPT).toContain('Copilot');
     expect(CODER_ONLY_PROMPT).toContain('CodeRabbit');
     expect(CODER_ONLY_PROMPT).toContain('informal review');
-    expect(CODER_ONLY_PROMPT).toContain('task.submitForReview');
+    expect(CODER_ONLY_PROMPT).toContain(
+      'invoke(name="task.transition", input={ taskId: "<task id>", status: "review"'
+    );
     expect(CODER_ONLY_PROMPT).toContain('Runtime Execution Contract');
     expect(CODER_ONLY_PROMPT).not.toContain('invoke(name="task.approve"');
     expect(CODER_ONLY_PROMPT).not.toContain('Do NOT merge PRs');
@@ -2292,7 +2294,7 @@ describe('seedBuiltInWorkflows()', () => {
       .customPrompt!.value;
     expect(qaPrompt).toContain('save the PR link and a passing decision artifact');
     expect(qaPrompt).toContain('task.approve');
-    expect(qaPrompt).toContain('task.submitForReview');
+    expect(qaPrompt).toContain('a `task.transition` to `review`');
     expect(qaPrompt).toContain('Do not merge');
     expect(qaPrompt).not.toContain(
       'invoke(name="workflow.run.artifact.save", input={ type: "result"'
@@ -3858,7 +3860,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
       /terminal-action tool contract|Terminal-action contract|terminal hand-off|terminal action|terminal calls|terminal actions|terminal-action tool descriptions/
     );
     expect(prompt).toContain('task.approve');
-    expect(prompt).toContain('task.submitForReview');
+    expect(prompt).toContain('task.transition');
     expect(prompt).toMatch(
       /P0[–-]P2|zero findings|zero P0-P2|findings remain|blocking findings|QA passes|Reviewer System Contract/i
     );
@@ -3872,7 +3874,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
       /do not .*task.approve|Never use.*findings|If findings remain|If changes needed|If dispatch is incomplete|If QA fails|only on APPROVE|If requesting changes|If more research is needed/i
     );
     expect(prompt).toMatch(
-      /do not .*task.submitForReview|Never use.*findings|If findings remain|If changes needed|If dispatch is incomplete|If QA fails|only on APPROVE|If requesting changes|If more research is needed/i
+      /do not .*task.transition|Never use.*findings|If findings remain|If changes needed|If dispatch is incomplete|If QA fails|only on APPROVE|If requesting changes|If more research is needed/i
     );
     expect(prompt).toContain(`send_message(target="${opts.upstream}"`);
     expect(prompt).toMatch(
@@ -3884,7 +3886,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     const reviewNode = CODING_WORKFLOW.nodes.find((n) => n.name === 'Review')!;
     const prompt = reviewNode.agents[0].customPrompt!.value;
     expect(prompt).toContain('task.approve');
-    expect(prompt).toContain('task.submitForReview');
+    expect(prompt).toContain('task.transition');
     expect(prompt).toMatch(/When the current head is clean and all review threads are resolved/i);
     expect(prompt).toContain('Do not merge');
   });
@@ -3911,7 +3913,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
       /If more research is needed|If findings remain|do not .*task.approve/i
     );
     expect(requestBranch).toMatch(
-      /If more research is needed|If findings remain|do not .*task.submitForReview/i
+      /If more research is needed|If findings remain|do not .*task.transition/i
     );
   });
 
@@ -3932,12 +3934,12 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
       /P0[–-]P2|zero findings|zero P0-P2|findings remain|blocking findings|QA passes|Reviewer System Contract/i
     );
     expect(prompt).toContain('task.approve');
-    expect(prompt).toContain('task.submitForReview');
+    expect(prompt).toContain('task.transition');
     expect(prompt).toMatch(
       /do not .*task.approve|Never use.*findings|If findings remain|If changes needed|If dispatch is incomplete|If QA fails|only on APPROVE|If requesting changes|If more research is needed/i
     );
     expect(prompt).toMatch(
-      /do not .*task.submitForReview|Never use.*findings|If findings remain|If changes needed|If dispatch is incomplete|If QA fails|only on APPROVE|If requesting changes|If more research is needed/i
+      /do not .*task.transition|Never use.*findings|If findings remain|If changes needed|If dispatch is incomplete|If QA fails|only on APPROVE|If requesting changes|If more research is needed/i
     );
     expect(prompt).toMatch(
       /same approval semantic|terminal-action tool contract|terminal hand-off|terminal.*contract/i
@@ -4311,7 +4313,7 @@ test('persisted typed-tool prompts migrate to the operation-name templates', () 
   const currentTerminalActions =
     'invoke(name="workflow.run.artifact.save", input={ shape: "link", kind: "pr", data: { url: "<url>" } }) ' +
     'to record the PR, then invoke(name="task.approve", input={ taskId: "<task id>" }) ' +
-    'or invoke(name="task.submitForReview", input={ taskId: "<task id>" }) only on APPROVE';
+    'or invoke(name="task.transition", input={ taskId: "<task id>", status: "review" }) only on APPROVE';
   const retiredTerminalActions =
     'save_artifact({ shape: "link", kind: "pr", data: { url: "<url>" } }) to record the PR, ' +
     'then approve_task() or submit_for_approval only on APPROVE';
@@ -4338,9 +4340,86 @@ test('persisted typed-tool prompts migrate to the operation-name templates', () 
   );
 });
 
+const SUBMIT_FOR_REVIEW_WORDING: [current: string, retired: string][] = [
+  [
+    'call invoke(name="task.transition", input={ taskId: "<task id>", status: "review", reviewReason: "External gate on',
+    'call invoke(name="task.submitForReview", input={ taskId: "<task id>", reason: "External gate on',
+  ],
+  [
+    'always routes completion through a task.transition to review,',
+    'always routes completion through task.submitForReview,',
+  ],
+  [
+    '`submit_for_approval` is `task.transition` with `status: "review"`',
+    '`submit_for_approval` is `task.submitForReview`',
+  ],
+  [
+    'do not call task.approve or a task.transition to review',
+    'do not call task.approve or task.submitForReview',
+  ],
+  [
+    'terminal gates immediately before `task.approve` or a `task.transition` to `review`',
+    'terminal gates immediately before `task.approve` or `task.submitForReview`',
+  ],
+  [
+    'decision artifact, then call `task.approve` or a `task.transition` to `review`',
+    'decision artifact, then call `task.approve` or `task.submitForReview`',
+  ],
+  [
+    'so you do NOT call task.approve or a task.transition to review',
+    'so you do NOT call task.approve or task.submitForReview',
+  ],
+  [
+    'save the PR link artifact and call task.approve, or a task.transition to review',
+    'save the PR link artifact and call task.approve, or task.submitForReview',
+  ],
+  [
+    'or invoke(name="task.transition", input={ taskId: "<task id>", status: "review" }).',
+    'or task.submitForReview.',
+  ],
+  [
+    'or invoke(name="task.transition", input={ taskId: "<task id>", status: "review" }) only on APPROVE',
+    'or invoke(name="task.submitForReview", input={ taskId: "<task id>" }) only on APPROVE',
+  ],
+];
+
+function retireTransitionReview(value: string): string {
+  return SUBMIT_FOR_REVIEW_WORDING.reduce(
+    (text, [current, retired]) => text.replaceAll(current, retired),
+    value
+  );
+}
+
+test('prompts persisted with task.submitForReview migrate forward to task.transition', () => {
+  const covered: string[] = [];
+  for (const workflow of getBuiltInWorkflows()) {
+    for (const node of workflow.nodes) {
+      const current = node.agents[0]?.customPrompt?.value;
+      if (!current) continue;
+      const persisted = retireTransitionReview(current);
+      if (persisted === current) continue;
+      expect(persisted).toContain('task.submitForReview');
+      const existingNode: WorkflowNode = {
+        ...node,
+        agents: node.agents.map((agent, index) =>
+          index === 0 ? { ...agent, customPrompt: { value: persisted } } : agent
+        ),
+      };
+      const merged = mergeNodeStructuralFieldsFromTemplate([existingNode], workflow.nodes);
+      const label = `${workflow.name}/${node.name}`;
+      expect(
+        merged.find((candidate) => candidate.name === node.name)?.agents[0].customPrompt?.value,
+        label
+      ).toBe(current);
+      covered.push(label);
+    }
+  }
+  expect(covered.length).toBe(9);
+});
+
 test('prompts persisted with task.resolvePendingCompletion migrate forward to task.approve', () => {
   const retire = (value: string) =>
-    value
+    retireTransitionReview(value)
       .replaceAll(
         'invoke(name="task.approve", input={ taskId: "<task id>" })',
         'invoke(name="task.resolvePendingCompletion", input={ taskId: "<task id>", approved: true })'
@@ -4457,7 +4536,7 @@ test('CODING_WITH_QA_WORKFLOW QA node validates the PR and approves only when gr
   expect(prompt).toContain('non-terminal QA note');
   expect(prompt).toMatch(/save the PR link and a passing decision artifact/i);
   expect(prompt).toContain('task.approve');
-  expect(prompt).toContain('task.submitForReview');
+  expect(prompt).toContain('a `task.transition` to `review`');
   expect(prompt).toContain('Do not merge');
   expect(prompt).toContain('post-approval merge blocker');
 });
