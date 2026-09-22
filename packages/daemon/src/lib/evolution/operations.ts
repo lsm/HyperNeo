@@ -1,3 +1,4 @@
+import type { SpaceGoal } from '@hyperneo/shared';
 import type { OperationDefinition } from '../operations/registry.ts';
 import {
   createForgeEpisodeOperations,
@@ -14,8 +15,10 @@ import {
 } from './scope-operations.ts';
 
 export type ForgeOperationDependencies = Omit<ForgeScopeOperationDependencies, 'getGoal'> &
-  ForgeEpisodeOperationDependencies &
-  Omit<ForgeScopeGetDependencies, 'getGoal'>;
+  Omit<ForgeEpisodeOperationDependencies, 'getGoal'> &
+  Omit<ForgeScopeGetDependencies, 'getGoal'> & {
+    readonly getGoal: (goalId: string) => SpaceGoal | null;
+  };
 
 export function createForgeOperations(forge: ForgeOperationDependencies): OperationDefinition[] {
   return [
