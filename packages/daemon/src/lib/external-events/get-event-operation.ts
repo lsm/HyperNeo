@@ -66,7 +66,7 @@ export function createGetExternalEventOperation(events: GetExternalEventDependen
     .pipe(readScopedEvent, ['outcome', 'input', 'events'], 'outcome')
     .endAsync('outcome') as (input: Input, caller: OperationCaller) => Promise<Result>;
   return defineOperation({
-    name: 'externalEvent.get',
+    name: 'event.external.get',
     description: GET_EXTERNAL_EVENT_DESCRIPTION,
     policy: { safetyClass: 'read', roles: EXTERNAL_EVENT_READ_ROLES },
     inputSchema,

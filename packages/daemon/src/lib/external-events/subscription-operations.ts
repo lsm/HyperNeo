@@ -246,7 +246,7 @@ function subscribeSubject(
     },
     caller,
     subs,
-    'externalEvent.subscribe'
+    'event.external.subscribe'
   );
   return 'accepted' in result ? result.reason : result;
 }
@@ -263,7 +263,7 @@ function unsubscribeSubject(
     { agent_id: subject.scope.agentId, topic_pattern: input.topicPattern },
     caller,
     subs,
-    'externalEvent.unsubscribe'
+    'event.external.unsubscribe'
   );
   return 'accepted' in result ? result.reason : result;
 }
@@ -348,7 +348,7 @@ export function createSubscriptionOperations(
 ): OperationDefinition[] {
   return [
     defineOperation({
-      name: 'externalEvent.subscribe',
+      name: 'event.external.subscribe',
       policy: { safetyClass: 'mutate', roles: SUBSCRIPTION_ROLES },
       description: `Subscribe a subject to external events matching a topic glob (e.g. github/lsm/neokai/pull_request/*.review_*). A node subject registers the calling worker slot on its workflow run and returns { ok, topicPattern }; an agent subject upserts the stored long-horizon subscription, refreshes the live delivery trie, and returns the stored record, rejecting refresh_failed when the trie could not be refreshed. ${SUBJECT_DOC}`,
       inputSchema: SubscribeInput,
@@ -360,7 +360,7 @@ export function createSubscriptionOperations(
       execute: subjectPipeline('subscribe-external-event', subs, subscribeSubject),
     }),
     defineOperation({
-      name: 'externalEvent.unsubscribe',
+      name: 'event.external.unsubscribe',
       policy: { safetyClass: 'mutate', roles: SUBSCRIPTION_ROLES },
       description: `Remove a subject external-event subscription for a topic glob. A node subject drops the calling worker registration on its workflow run; an agent subject deletes the stored long-horizon record and its live delivery-trie entry, and is idempotent when the agent never subscribed to that pattern. ${SUBJECT_DOC}`,
       inputSchema: UnsubscribeInput,
@@ -376,7 +376,7 @@ export function createSubscriptionOperations(
       execute: writePipeline('subscribe-pr-events', subs, subscribePrEvents),
     }),
     defineOperation({
-      name: 'externalEvent.listSubscriptions',
+      name: 'event.external.subscription.list',
       policy: { safetyClass: 'read', roles: NODE_EVENT_ROLES },
       description:
         'Snapshot a workflow run external-event subscriptions across the declared, persisted, and active layers, with the mismatch counts between them. Defaults to the calling worker own run. Rejects caller_denied when the caller carries no Space scope and node_unresolved when no run can be determined.',

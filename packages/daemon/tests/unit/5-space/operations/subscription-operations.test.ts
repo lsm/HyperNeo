@@ -188,7 +188,7 @@ describe('node external-event subscription operations', () => {
   test('subscribes with the slot resolved from the calling session', async () => {
     const caller = worker(workerSession('s-sub'));
     const result = await run(
-      'externalEvent.subscribe',
+      'event.external.subscribe',
       { topicPattern: 'github/acme/widgets/pull_request/*' },
       caller
     );
@@ -204,7 +204,7 @@ describe('node external-event subscription operations', () => {
 
   test('refuses an invalid topic glob without touching the runtime', async () => {
     const caller = worker(workerSession('s-bad'));
-    const result = (await run('externalEvent.subscribe', { topicPattern: '///' }, caller)) as {
+    const result = (await run('event.external.subscribe', { topicPattern: '///' }, caller)) as {
       ok: boolean;
       error: string;
     };
@@ -216,25 +216,29 @@ describe('node external-event subscription operations', () => {
   test('reports a runtime rejection as a result value', async () => {
     registerOutcome = { success: false, error: 'Workflow run not found: x' };
     const caller = worker(workerSession('s-reject'));
-    expect(await run('externalEvent.subscribe', { topicPattern: 'github/a/b/*' }, caller)).toEqual({
-      ok: false,
-      error: 'Workflow run not found: x',
-    });
+    expect(await run('event.external.subscribe', { topicPattern: 'github/a/b/*' }, caller)).toEqual(
+      {
+        ok: false,
+        error: 'Workflow run not found: x',
+      }
+    );
   });
 
   test('turns an interest-cap throw into a result value', async () => {
     registerThrows = new Error('cannot register more than 8 event interests');
     const caller = worker(workerSession('s-cap'));
-    expect(await run('externalEvent.subscribe', { topicPattern: 'github/a/b/*' }, caller)).toEqual({
-      ok: false,
-      error: 'cannot register more than 8 event interests',
-    });
+    expect(await run('event.external.subscribe', { topicPattern: 'github/a/b/*' }, caller)).toEqual(
+      {
+        ok: false,
+        error: 'cannot register more than 8 event interests',
+      }
+    );
   });
 
   test('unsubscribes the same slot', async () => {
     const caller = worker(workerSession('s-unsub'));
     expect(
-      await run('externalEvent.unsubscribe', { topicPattern: 'github/a/b/*' }, caller)
+      await run('event.external.unsubscribe', { topicPattern: 'github/a/b/*' }, caller)
     ).toEqual({ ok: true, topicPattern: 'github/a/b/*' });
     expect(unregistered[0]!.topicPattern).toBe('github/a/b/*');
   });
@@ -276,7 +280,7 @@ describe('node external-event subscription operations', () => {
       spaceId: SPACE,
       role: 'ad_hoc_member',
     };
-    expect(await run('externalEvent.subscribe', { topicPattern: 'github/a/b/*' }, caller)).toBe(
+    expect(await run('event.external.subscribe', { topicPattern: 'github/a/b/*' }, caller)).toBe(
       'node_unresolved'
     );
     expect(registered).toEqual([]);
@@ -284,10 +288,10 @@ describe('node external-event subscription operations', () => {
 
   test('refuses a subscription from an archived session and changes nothing', async () => {
     const caller = worker(workerSession('s-archived', { status: 'archived' }));
-    expect(await run('externalEvent.subscribe', { topicPattern: 'github/a/b/*' }, caller)).toBe(
+    expect(await run('event.external.subscribe', { topicPattern: 'github/a/b/*' }, caller)).toBe(
       'session_inactive'
     );
-    expect(await run('externalEvent.unsubscribe', { topicPattern: 'github/a/b/*' }, caller)).toBe(
+    expect(await run('event.external.unsubscribe', { topicPattern: 'github/a/b/*' }, caller)).toBe(
       'session_inactive'
     );
     expect(registered).toEqual([]);
@@ -296,20 +300,20 @@ describe('node external-event subscription operations', () => {
 
   test('rejects node_unresolved when no node execution backs the session', async () => {
     const caller = worker(workerSession('s-orphan', { withExecution: false }));
-    expect(await run('externalEvent.subscribe', { topicPattern: 'github/a/b/*' }, caller)).toBe(
+    expect(await run('event.external.subscribe', { topicPattern: 'github/a/b/*' }, caller)).toBe(
       'node_unresolved'
     );
   });
 
   test('lists the run subscriptions resolved from the caller and accepts an explicit run', async () => {
     const caller = worker(workerSession('s-list'));
-    expect(await run('externalEvent.listSubscriptions', {}, caller)).toEqual({
+    expect(await run('event.external.subscription.list', {}, caller)).toEqual({
       ok: true,
       subscriptions: { ...LIST_RESULT, workflowRunId: RUN },
       scope: { spaceId: SPACE },
     });
     expect(
-      await run('externalEvent.listSubscriptions', { workflowRunId: 'run-x' }, caller)
+      await run('event.external.subscription.list', { workflowRunId: 'run-x' }, caller)
     ).toEqual({
       ok: true,
       subscriptions: { ...LIST_RESULT, workflowRunId: 'run-x' },
@@ -319,7 +323,7 @@ describe('node external-event subscription operations', () => {
 
   test('an archived worker session may still list subscriptions', async () => {
     const caller = worker(workerSession('s-list-archived', { status: 'archived' }));
-    expect(await run('externalEvent.listSubscriptions', {}, caller)).toEqual({
+    expect(await run('event.external.subscription.list', {}, caller)).toEqual({
       ok: true,
       subscriptions: { ...LIST_RESULT, workflowRunId: RUN },
       scope: { spaceId: SPACE },
@@ -332,7 +336,7 @@ describe('subscribe and unsubscribe take a subject', () => {
     const caller = worker(workerSession('s-node-subject'));
     expect(
       await run(
-        'externalEvent.subscribe',
+        'event.external.subscribe',
         { topicPattern: 'github/a/b/*', subject: { type: 'node' } },
         caller
       )
@@ -348,11 +352,11 @@ describe('subscribe and unsubscribe take a subject', () => {
   test('an agent subject stores the subscription against that agent and refreshes the trie', async () => {
     const caller = member(memberSession('s-agent-sub'));
     const result = await run(
-      'externalEvent.subscribe',
+      'event.external.subscribe',
       { topicPattern: AGENT_TOPIC, label: 'reviews', subject: { type: 'agent', agentId: AGENT } },
       caller
     );
-    expect(operations.get('externalEvent.subscribe')?.resultSchema.parse(result)).toMatchObject({
+    expect(operations.get('event.external.subscribe')?.resultSchema.parse(result)).toMatchObject({
       subscription: { agentId: AGENT, source: 'github', topic: AGENT_TOPIC, status: 'active' },
     });
     const stored = agentSubscriptions.listSubscriptions(AGENT);
@@ -365,10 +369,10 @@ describe('subscribe and unsubscribe take a subject', () => {
   test('an unlabelled agent subject stores an empty filter and upserts its route', async () => {
     const caller = member(memberSession('s-agent-upsert'));
     const subject = { type: 'agent', agentId: AGENT } as const;
-    await run('externalEvent.subscribe', { topicPattern: AGENT_TOPIC, subject }, caller);
+    await run('event.external.subscribe', { topicPattern: AGENT_TOPIC, subject }, caller);
     expect(agentSubscriptions.listSubscriptions(AGENT)[0]!.filter).toEqual({});
     await run(
-      'externalEvent.subscribe',
+      'event.external.subscribe',
       { topicPattern: AGENT_TOPIC, label: 'second', subject },
       caller
     );
@@ -380,10 +384,10 @@ describe('subscribe and unsubscribe take a subject', () => {
   test('an agent subject unsubscribe is idempotent and rejects a bad agent or pattern', async () => {
     const caller = member(memberSession('s-agent-unsub-bad'));
     const subject = { type: 'agent', agentId: AGENT } as const;
-    await run('externalEvent.subscribe', { topicPattern: AGENT_TOPIC, subject }, caller);
+    await run('event.external.subscribe', { topicPattern: AGENT_TOPIC, subject }, caller);
     expect(
       await run(
-        'externalEvent.unsubscribe',
+        'event.external.unsubscribe',
         { topicPattern: 'github/acme/widgets/issues/*', subject },
         caller
       )
@@ -392,27 +396,27 @@ describe('subscribe and unsubscribe take a subject', () => {
     expect(removed).toEqual([]);
     expect(
       await run(
-        'externalEvent.unsubscribe',
+        'event.external.unsubscribe',
         { topicPattern: AGENT_TOPIC, subject: { type: 'agent', agentId: FOREIGN_AGENT } },
         caller
       )
     ).toBe('agent_not_found');
     expect(
-      await run('externalEvent.unsubscribe', { topicPattern: 'a/**/b', subject }, caller)
+      await run('event.external.unsubscribe', { topicPattern: 'a/**/b', subject }, caller)
     ).toBe('invalid_pattern');
   });
 
   test('an agent subject unsubscribes the stored record and its live entry', async () => {
     const caller = member(memberSession('s-agent-unsub'));
     await run(
-      'externalEvent.subscribe',
+      'event.external.subscribe',
       { topicPattern: AGENT_TOPIC, subject: { type: 'agent', agentId: AGENT } },
       caller
     );
     const stored = agentSubscriptions.listSubscriptions(AGENT)[0]!;
     expect(
       await run(
-        'externalEvent.unsubscribe',
+        'event.external.unsubscribe',
         { topicPattern: AGENT_TOPIC, subject: { type: 'agent', agentId: AGENT } },
         caller
       )
@@ -424,11 +428,11 @@ describe('subscribe and unsubscribe take a subject', () => {
 
   test('an agent subject succeeds for a caller with no node execution behind it', async () => {
     const caller = member(memberSession('s-agent-nonode'));
-    expect(await run('externalEvent.subscribe', { topicPattern: AGENT_TOPIC }, caller)).toBe(
+    expect(await run('event.external.subscribe', { topicPattern: AGENT_TOPIC }, caller)).toBe(
       'node_unresolved'
     );
     const result = (await run(
-      'externalEvent.subscribe',
+      'event.external.subscribe',
       { topicPattern: AGENT_TOPIC, subject: { type: 'agent', agentId: AGENT } },
       caller
     )) as { subscription: { agentId: string } };
@@ -439,14 +443,14 @@ describe('subscribe and unsubscribe take a subject', () => {
     const caller = member(memberSession('s-agent-foreign'));
     expect(
       await run(
-        'externalEvent.subscribe',
+        'event.external.subscribe',
         { topicPattern: AGENT_TOPIC, subject: { type: 'agent', agentId: 'agent-none' } },
         caller
       )
     ).toBe('agent_not_found');
     expect(
       await run(
-        'externalEvent.subscribe',
+        'event.external.subscribe',
         { topicPattern: AGENT_TOPIC, subject: { type: 'agent', agentId: FOREIGN_AGENT } },
         caller
       )
@@ -458,7 +462,7 @@ describe('subscribe and unsubscribe take a subject', () => {
     const caller = member(memberSession('s-agent-reject'));
     expect(
       await run(
-        'externalEvent.subscribe',
+        'event.external.subscribe',
         { topicPattern: 'nosource', subject: { type: 'agent', agentId: AGENT } },
         caller
       )
@@ -467,7 +471,7 @@ describe('subscribe and unsubscribe take a subject', () => {
     refreshOutcome = { success: false, error: 'trie unavailable' };
     expect(
       await run(
-        'externalEvent.subscribe',
+        'event.external.subscribe',
         { topicPattern: AGENT_TOPIC, subject: { type: 'agent', agentId: AGENT } },
         caller
       )
@@ -477,12 +481,12 @@ describe('subscribe and unsubscribe take a subject', () => {
   test('audits an agent-subject mutation under the operation that was called', async () => {
     const sessionId = memberSession('s-agent-audit');
     await run(
-      'externalEvent.subscribe',
+      'event.external.subscribe',
       { topicPattern: AGENT_TOPIC, subject: { type: 'agent', agentId: AGENT } },
       member(sessionId)
     );
     expect(auditLogRepo.listBySession(sessionId)[0]!).toMatchObject({
-      toolName: 'externalEvent.subscribe',
+      toolName: 'event.external.subscribe',
       agentName: 'watcher',
       spaceId: SPACE,
     });
@@ -492,7 +496,7 @@ describe('subscribe and unsubscribe take a subject', () => {
     const caller = member(memberSession('s-agent-space'));
     expect(
       await run(
-        'externalEvent.subscribe',
+        'event.external.subscribe',
         {
           topicPattern: AGENT_TOPIC,
           spaceId: OTHER_SPACE,
@@ -509,12 +513,12 @@ describe('node subscriptions optional Space scope', () => {
   test('RPC and internal lists use the trusted caller Space', async () => {
     for (const source of ['rpc', 'internal'] as const) {
       const result = await run(
-        'externalEvent.listSubscriptions',
+        'event.external.subscription.list',
         { workflowRunId: RUN },
         { source, spaceId: SPACE }
       );
       expect(
-        operations.get('externalEvent.listSubscriptions')?.resultSchema.parse(result)
+        operations.get('event.external.subscription.list')?.resultSchema.parse(result)
       ).toMatchObject({
         ok: true,
         scope: { spaceId: SPACE },

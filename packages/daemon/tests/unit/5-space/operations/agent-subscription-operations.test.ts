@@ -29,7 +29,7 @@ let AGENT: string;
 let FOREIGN_AGENT: string;
 
 const TOPIC = 'github/acme/widgets/pull_request/*.review_*';
-const LIST = 'externalEvent.agent.listSubscriptions';
+const LIST = 'event.external.agent.subscription.list';
 
 function seed(topic: string) {
   return subscriptionRepo.upsertSubscription({

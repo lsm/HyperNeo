@@ -2733,7 +2733,7 @@ describe('SpaceRuntimeService', () => {
       expect(agent.mergeRuntimeMcpServers).toHaveBeenCalled();
     });
 
-    test('long-term agent session registry exposes externalEvent.agent.listSubscriptions', async () => {
+    test('long-term agent session registry exposes event.external.agent.subscription.list', async () => {
       const agentOperations = createAgentSubscriptionOperations({
         subscriptionRepo: {
           upsertSubscription: mock(() => {
@@ -2785,7 +2785,7 @@ describe('SpaceRuntimeService', () => {
         role: 'long_term_agent',
         agentName: 'Long Term',
       };
-      const name = 'externalEvent.agent.listSubscriptions';
+      const name = 'event.external.agent.subscription.list';
       const operation = registry.get(name);
       expect(operation, `expected ${name} in the long-term agent session registry`).toBeDefined();
       expect(isOperationAdmitted(operation!, caller)).toBe(true);
