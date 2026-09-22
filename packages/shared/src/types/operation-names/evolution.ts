@@ -11,5 +11,6 @@ export const EVOLUTION_OPERATION_NAMES = [
   'evolution.scope.create',
   'evolution.scope.get',
   'evolution.scope.list',
+  'evolution.scope.owner.set',
   'evolution.scope.update',
 ] as const;
