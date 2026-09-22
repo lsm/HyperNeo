@@ -2254,10 +2254,14 @@ class SpaceStore {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
 
-    const result = await invokeOperation<ReviewSubmissionResult>(hub, 'task.submitForReview', {
-      taskId,
-      reason: reason ?? null,
-    });
+    const result = await invokeOperation<ReviewSubmissionResult | string | null>(
+      hub,
+      'task.transition',
+      { taskId, status: 'review', ...(reason == null ? {} : { reviewReason: reason }) }
+    );
+    if (result === null || typeof result === 'string') {
+      throw new Error(formatReviewSubmissionRejection(result ?? 'review_submission_unavailable'));
+    }
     if (!result.accepted) {
       throw new Error(formatReviewSubmissionRejection(result.reason));
     }

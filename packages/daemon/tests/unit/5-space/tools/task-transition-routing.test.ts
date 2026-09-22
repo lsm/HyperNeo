@@ -87,7 +87,7 @@ describe('routeTaskUpdate reject reasons', () => {
       reason: 'approved_direct',
       message:
         `Cannot transition a task into 'approved' directly. ` +
-        `Use task.approve after task.submitForReview, or let the ` +
+        `Use task.approve after a transition to review, or let the ` +
         `runtime's post-approval router handle the transition — both stamp ` +
         `the approval metadata and dispatch the configured post-approval step.`,
     });
@@ -128,7 +128,7 @@ describe('routeTaskUpdate reject reasons', () => {
       message:
         `Cannot transition a task from 'review' to 'done' directly. ` +
         `Use task.approve (subject to the workflow's completion ` +
-        `autonomy level) or task.submitForReview so a human can approve via the UI — ` +
+        `autonomy level) or transition to review so a human can approve via the UI — ` +
         `both stamp the approval metadata and dispatch the configured post-approval step.`,
     });
   });

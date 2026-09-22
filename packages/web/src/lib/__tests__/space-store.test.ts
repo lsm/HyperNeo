@@ -2561,29 +2561,47 @@ describe('SpaceStore — submitForReview', () => {
   beforeEach(resetStore);
   afterEach(() => vi.clearAllMocks());
 
-  it('sends operation.invoke with task.submitForReview and no spaceId, returning the acknowledgement', async () => {
+  it('sends operation.invoke with a task.transition to review and no spaceId, returning the acknowledgement', async () => {
     await spaceStore.selectSpace('space-1');
     mockHub.request.mockResolvedValueOnce({ accepted: true, jobId: 'job-1' });
 
     const result = await spaceStore.submitForReview('task-1', 'please verify');
 
     expect(mockHub.request).toHaveBeenCalledWith('operation.invoke', {
-      name: 'task.submitForReview',
-      input: { taskId: 'task-1', reason: 'please verify' },
+      name: 'task.transition',
+      input: { taskId: 'task-1', status: 'review', reviewReason: 'please verify' },
     });
     expect(result).toEqual({ accepted: true, jobId: 'job-1' });
   });
 
-  it('defaults reason to null when omitted', async () => {
+  it('omits reviewReason when no reason is given', async () => {
     await spaceStore.selectSpace('space-1');
     mockHub.request.mockResolvedValueOnce({ accepted: true, jobId: null });
 
     await spaceStore.submitForReview('task-1');
 
     expect(mockHub.request).toHaveBeenCalledWith('operation.invoke', {
-      name: 'task.submitForReview',
-      input: { taskId: 'task-1', reason: null },
+      name: 'task.transition',
+      input: { taskId: 'task-1', status: 'review' },
     });
+  });
+
+  it('reports a missing task as unavailable', async () => {
+    await spaceStore.selectSpace('space-1');
+    mockHub.request.mockResolvedValueOnce(null);
+
+    await expect(spaceStore.submitForReview('task-1')).rejects.toThrow(
+      'This task is not available for review submission right now. Try again after it changes.'
+    );
+  });
+
+  it('reports a bare transition rejection code', async () => {
+    await spaceStore.selectSpace('space-1');
+    mockHub.request.mockResolvedValueOnce('unsupported_status');
+
+    await expect(spaceStore.submitForReview('task-1')).rejects.toThrow(
+      'Review submission rejected: unsupported_status'
+    );
   });
 
   it.each([
