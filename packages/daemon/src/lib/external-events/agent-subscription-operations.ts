@@ -253,7 +253,7 @@ export function createAgentSubscriptionOperations(
 ): OperationDefinition[] {
   return [
     defineOperation({
-      name: 'externalEvent.agent.listSubscriptions',
+      name: 'event.external.agent.subscription.list',
       policy: { safetyClass: 'read', roles: AGENT_EVENT_ROLES },
       description:
         'List the external-event subscriptions of a long-horizon agent, oldest first, each with its source, topic glob, filter, and status. Returns { accepted: false, reason } on rejection: caller_denied for any other caller and agent_not_found when the agent is unknown or belongs to another Space.',

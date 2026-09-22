@@ -124,7 +124,7 @@ export function createListDeliveriesOperation(events: ListDeliveriesDependencies
     .pipe(readDeliveryLog, ['outcome', 'input', 'events'], 'outcome')
     .endAsync('outcome') as (input: Input, caller: OperationCaller) => Promise<Result>;
   return defineOperation({
-    name: 'externalEvent.listDeliveries',
+    name: 'event.external.delivery.list',
     description: LIST_DELIVERIES_DESCRIPTION,
     policy: { safetyClass: 'read', roles: NODE_EVENT_ROLES },
     inputSchema,

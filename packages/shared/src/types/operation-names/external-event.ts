@@ -1,10 +1,10 @@
 export const EXTERNAL_EVENT_OPERATION_NAMES = [
-  'externalEvent.agent.listSubscriptions',
-  'externalEvent.get',
-  'externalEvent.listDeliveries',
-  'externalEvent.listSubscriptions',
-  'externalEvent.subscribe',
-  'externalEvent.unsubscribe',
+  'event.external.agent.subscription.list',
+  'event.external.delivery.list',
+  'event.external.get',
+  'event.external.subscribe',
+  'event.external.subscription.list',
+  'event.external.unsubscribe',
   'nodeAgent.restore',
   'subscribe_pr_events',
 ] as const;

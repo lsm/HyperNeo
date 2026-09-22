@@ -103,7 +103,7 @@ describe('createGetExternalEventOperation', () => {
       spaceId: SPACE,
       role: 'ad_hoc_member',
     };
-    const result = await run('externalEvent.get', { eventId: 'evt-1' }, caller);
+    const result = await run('event.external.get', { eventId: 'evt-1' }, caller);
     expect(result).toEqual({
       event: expect.objectContaining({ id: 'evt-1', summary: 'summary evt-1' }),
       state: 'published',
@@ -118,7 +118,7 @@ describe('createGetExternalEventOperation', () => {
       spaceId: SPACE,
       role: 'ad_hoc_member',
     };
-    expect(await run('externalEvent.get', { eventId: 'evt-2' }, caller)).toBe('event_not_found');
+    expect(await run('event.external.get', { eventId: 'evt-2' }, caller)).toBe('event_not_found');
   });
 
   test('reads an event of its own space for a role outside the old read allowlist', async () => {
@@ -129,7 +129,7 @@ describe('createGetExternalEventOperation', () => {
       spaceId: SPACE,
       role: 'universal_read',
     };
-    expect(await run('externalEvent.get', { eventId: 'evt-3' }, caller)).toEqual({
+    expect(await run('event.external.get', { eventId: 'evt-3' }, caller)).toEqual({
       event: expect.objectContaining({ id: 'evt-3' }),
       state: 'published',
     });
@@ -143,17 +143,17 @@ describe('createGetExternalEventOperation', () => {
       spaceId: SPACE,
       role: 'long_term_agent',
     };
-    expect(await run('externalEvent.get', { eventId: 'evt-4', spaceId: OTHER_SPACE }, caller)).toBe(
-      'caller_denied'
-    );
+    expect(
+      await run('event.external.get', { eventId: 'evt-4', spaceId: OTHER_SPACE }, caller)
+    ).toBe('caller_denied');
   });
 
   test('reads with the spaceId an RPC caller supplies and denies one that omits it', async () => {
     store.store(event('evt-5', SPACE));
     expect(
-      await run('externalEvent.get', { eventId: 'evt-5', spaceId: SPACE }, { source: 'rpc' })
+      await run('event.external.get', { eventId: 'evt-5', spaceId: SPACE }, { source: 'rpc' })
     ).toEqual({ event: expect.objectContaining({ id: 'evt-5' }), state: 'published' });
-    expect(await run('externalEvent.get', { eventId: 'evt-5' }, { source: 'rpc' })).toBe(
+    expect(await run('event.external.get', { eventId: 'evt-5' }, { source: 'rpc' })).toBe(
       'caller_denied'
     );
   });
@@ -179,7 +179,7 @@ describe('createListDeliveriesOperation', () => {
       agentName: 'coder',
       agentSessionId: sessionId,
     });
-    const result = (await run('externalEvent.listDeliveries', {}, worker(sessionId))) as {
+    const result = (await run('event.external.delivery.list', {}, worker(sessionId))) as {
       deliveries: Array<{ eventId: string; nodeId: string; state: string }>;
     };
     expect(result.deliveries).toHaveLength(1);
@@ -193,7 +193,7 @@ describe('createListDeliveriesOperation', () => {
   test('rejects run_unresolved when no node execution backs the caller session', async () => {
     delivery('evt-d2', 'node-b', 'task-2');
     const sessionId = session('s-orphan', SPACE, { taskId: 'task-2' });
-    expect(await run('externalEvent.listDeliveries', {}, worker(sessionId))).toBe('run_unresolved');
+    expect(await run('event.external.delivery.list', {}, worker(sessionId))).toBe('run_unresolved');
   });
 
   test('lists a named run for a space member that is not a workflow worker', async () => {
@@ -204,7 +204,7 @@ describe('createListDeliveriesOperation', () => {
       spaceId: SPACE,
       role: 'ad_hoc_member',
     };
-    const result = (await run('externalEvent.listDeliveries', { workflowRunId: RUN }, caller)) as {
+    const result = (await run('event.external.delivery.list', { workflowRunId: RUN }, caller)) as {
       deliveries: Array<{ eventId: string }>;
     };
     expect(result.deliveries.map((entry) => entry.eventId)).toContain('evt-d3');
@@ -214,7 +214,7 @@ describe('createListDeliveriesOperation', () => {
     delivery('evt-d4', 'node-d', 'task-4');
     delivery('evt-d5', 'node-e', 'task-4');
     const result = (await run(
-      'externalEvent.listDeliveries',
+      'event.external.delivery.list',
       { workflowRunId: RUN, nodeId: 'node-e', spaceId: SPACE },
       { source: 'rpc' }
     )) as { deliveries: Array<{ eventId: string }> };
@@ -228,14 +228,14 @@ describe('external event optional Space scope', () => {
     store.store(event('foreign', OTHER_SPACE));
     for (const source of ['rpc', 'internal'] as const) {
       const caller = { source, spaceId: SPACE };
-      expect(await run('externalEvent.get', { eventId: 'owned' }, caller)).toMatchObject({
+      expect(await run('event.external.get', { eventId: 'owned' }, caller)).toMatchObject({
         event: { id: 'owned', spaceId: SPACE },
       });
-      expect(await run('externalEvent.get', { eventId: 'foreign' }, caller)).toBe(
+      expect(await run('event.external.get', { eventId: 'foreign' }, caller)).toBe(
         'event_not_found'
       );
-      const value = await run('externalEvent.listDeliveries', { workflowRunId: RUN }, caller);
-      expect(operations.get('externalEvent.listDeliveries')?.resultSchema.parse(value)).toEqual({
+      const value = await run('event.external.delivery.list', { workflowRunId: RUN }, caller);
+      expect(operations.get('event.external.delivery.list')?.resultSchema.parse(value)).toEqual({
         deliveries: [],
         scope: { spaceId: SPACE },
       });
