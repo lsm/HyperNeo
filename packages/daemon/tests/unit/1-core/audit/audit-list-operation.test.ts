@@ -134,15 +134,15 @@ beforeEach(() => {
 });
 
 function run(input: unknown, caller: OperationCaller = RPC_CALLER) {
-  const operation = h.operations.get('audit.list');
+  const operation = h.operations.get('space.audit.list');
   if (!operation) throw new Error('missing operation: audit.list');
   return operation.execute(input, caller);
 }
 
-describe('audit.list operation', () => {
-  test('registers audit.list with a read policy for the door', () => {
-    expect([...h.operations.keys()]).toEqual(['audit.list']);
-    const policy = h.operations.get('audit.list')?.policy;
+describe('space.audit.list operation', () => {
+  test('registers space.audit.list with a read policy for the door', () => {
+    expect([...h.operations.keys()]).toEqual(['space.audit.list']);
+    const policy = h.operations.get('space.audit.list')?.policy;
     expect(policy?.safetyClass).toBe('read');
     expect(policy?.roles).toEqual(READ_ROLES);
   });
@@ -303,14 +303,14 @@ describe('audit.list operation', () => {
     const registry = createOperationRegistry([...h.operations.values()]);
     const invalid = await invokeOperation(
       registry,
-      'audit.list',
+      'space.audit.list',
       { spaceId: SPACE_ID, limit: 0 },
       RPC_CALLER
     );
     expect(invalid).toMatchObject({ kind: 'failed', code: 'invalid_input' });
     const completed = await invokeOperation(
       registry,
-      'audit.list',
+      'space.audit.list',
       { spaceId: SPACE_ID, limit: 1 },
       RPC_CALLER
     );
@@ -341,7 +341,7 @@ describe('audit.list operation', () => {
     const registry = createOperationRegistry([...h.operations.values()]);
     const outcome = await invokeOperation(
       registry,
-      'audit.list',
+      'space.audit.list',
       { spaceId: SPACE_ID },
       mcpCaller('legacy_task_agent')
     );

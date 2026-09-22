@@ -17,11 +17,7 @@ import { setupSpaceGoalHandlers } from '../../../../src/lib/rpc-handlers/space-g
 import { createCreateGoalOperation } from '../../../../src/lib/goals/create-goal-operation.ts';
 import { createGetGoalOperation } from '../../../../src/lib/goals/get-goal-operation.ts';
 import { createGetGoalOwnerOperation } from '../../../../src/lib/goals/get-goal-owner-operation.ts';
-import {
-  createPauseGoalOperation,
-  createResumeGoalOperation,
-  createTriggerGoalTaskOperation,
-} from '../../../../src/lib/goals/goal-state-operations.ts';
+import { createTriggerGoalTaskOperation } from '../../../../src/lib/goals/goal-state-operations.ts';
 import { createListGoalEventsOperation } from '../../../../src/lib/goals/list-goal-events-operation.ts';
 import { createUpdateGoalOperation } from '../../../../src/lib/goals/update-goal-operation.ts';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
@@ -167,8 +163,6 @@ function makeOperations(
     createListGoalEventsOperation({ goalService, getSession: () => null }),
     createCreateGoalOperation(writeDeps),
     createUpdateGoalOperation(writeDeps),
-    createPauseGoalOperation(writeDeps),
-    createResumeGoalOperation(writeDeps),
     createTriggerGoalTaskOperation(writeDeps),
   ]);
 }
@@ -572,8 +566,6 @@ describe('spaceGoal handler gates', () => {
       resolveGoalWorkspacePath: mock(async (_spaceId: string, path?: string) => path),
       createGoal: mock(() => GOAL),
       updateGoal: mock(() => GOAL),
-      pauseGoal: mock(() => ({ ...GOAL, status: 'paused' })),
-      resumeGoal: mock(() => ({ ...GOAL, status: 'active' })),
       createImmediateTask: mock(() => ({ goal: GOAL, task: TRIGGERED_TASK, queued: false })),
       listGoals: mock(() => [GOAL]),
       listGoalEvents: mock(() => [GOAL_EVENT]),
@@ -708,7 +700,6 @@ describe('spaceGoal handler gates', () => {
       { spaceId: SPACE_ID, goalId: GOAL_ID },
       makeContext()
     );
-    expect(goalService.pauseGoal).not.toHaveBeenCalled();
     expect(goalService.updateGoal).toHaveBeenCalledWith(
       GOAL_ID,
       expect.objectContaining({ status: 'paused' }),
@@ -716,7 +707,6 @@ describe('spaceGoal handler gates', () => {
     );
     expect(paused).toEqual({ goal: GOAL });
     await handlers.get('spaceGoal.resume')!({ spaceId: SPACE_ID, goalId: GOAL_ID }, makeContext());
-    expect(goalService.resumeGoal).not.toHaveBeenCalled();
     expect(goalService.updateGoal).toHaveBeenCalledWith(
       GOAL_ID,
       expect.objectContaining({ status: 'active' }),

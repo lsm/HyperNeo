@@ -127,9 +127,22 @@ const ScheduleRefInputSchema = z
   .object({ spaceId: SpaceScopeSchema, scheduleId: z.string().min(1) })
   .strict();
 
+const UpdateScheduleInputSchema = z
+  .object({
+    spaceId: SpaceScopeSchema,
+    scheduleId: z.string().min(1),
+    status: z
+      .enum(['active', 'paused'])
+      .describe('The status the schedule should have once the call returns.'),
+  })
+  .strict();
+
 type CreateScheduleInput = z.infer<typeof CreateScheduleInputSchema>;
 type ListSchedulesInput = z.infer<typeof ListSchedulesInputSchema>;
 type ScheduleRefInput = z.infer<typeof ScheduleRefInputSchema>;
+type UpdateScheduleInput = z.infer<typeof UpdateScheduleInputSchema>;
+
+export type ScheduleTransition = 'pause' | 'resume' | 'none';
 
 const SCOPE_MESSAGES: Record<SpaceCallerRejection, string> = {
   space_scope_required: 'A Space is required: pass spaceId, or call from a session inside a Space.',
@@ -232,26 +245,37 @@ export function readScheduleRecord(schedule: TaskSchedule): ScheduleResult {
   return { ok: true, schedule };
 }
 
+export function planScheduleStatusUpdate(
+  schedule: TaskSchedule,
+  input: UpdateScheduleInput
+): ScheduleTransition {
+  if (schedule.status === input.status) return 'none';
+  return input.status === 'paused' ? 'pause' : 'resume';
+}
+
 export function applyScheduleTransition(
   schedule: TaskSchedule,
   caller: OperationCaller,
   deps: ScheduleOperationDependencies,
-  transition: 'pause' | 'resume'
+  transition: ScheduleTransition,
+  operationName: string
 ): ScheduleResult {
-  let updated: TaskSchedule;
-  try {
-    updated =
-      transition === 'pause'
-        ? deps.schedules.pauseSchedule(schedule.id)
-        : deps.schedules.resumeSchedule(schedule.id);
-  } catch (err) {
-    return reject('rejected', failureMessage(err));
+  let updated = schedule;
+  if (transition !== 'none') {
+    try {
+      updated =
+        transition === 'pause'
+          ? deps.schedules.pauseSchedule(schedule.id)
+          : deps.schedules.resumeSchedule(schedule.id);
+    } catch (err) {
+      return reject('rejected', failureMessage(err));
+    }
   }
   recordScheduleAudit(deps, {
-    toolName: `schedule.${transition}`,
+    toolName: operationName,
     spaceId: schedule.spaceId,
     caller,
-    paramsSummary: { schedule_id: schedule.id },
+    paramsSummary: { schedule_id: schedule.id, transition },
   });
   return { ok: true, schedule: updated };
 }
@@ -336,21 +360,18 @@ export function createScheduleOperations(
       .pipe(requireScheduleInSpace, ['outcome', 'input', 'deps'], 'result:outcome')
       .pipe(readScheduleRecord, 'outcome', 'outcome')
   );
-  const pause = schedulePipeline<ScheduleRefInput, ScheduleResult>(
-    'schedule-pause',
-    { ...write, transition: 'pause' },
+  const update = schedulePipeline<UpdateScheduleInput, ScheduleResult>(
+    'schedule-update',
+    { ...write, operationName: 'schedule.update' },
     (pipeline) =>
       pipeline
         .pipe(requireScheduleInSpace, ['outcome', 'input', 'deps'], 'result:outcome')
-        .pipe(applyScheduleTransition, ['outcome', 'caller', 'deps', 'transition'], 'outcome')
-  );
-  const resume = schedulePipeline<ScheduleRefInput, ScheduleResult>(
-    'schedule-resume',
-    { ...write, transition: 'resume' },
-    (pipeline) =>
-      pipeline
-        .pipe(requireScheduleInSpace, ['outcome', 'input', 'deps'], 'result:outcome')
-        .pipe(applyScheduleTransition, ['outcome', 'caller', 'deps', 'transition'], 'outcome')
+        .pipe(planScheduleStatusUpdate, ['outcome', 'input'], 'transition')
+        .pipe(
+          applyScheduleTransition,
+          ['outcome', 'caller', 'deps', 'transition', 'operationName'],
+          'outcome'
+        )
   );
   const remove = schedulePipeline<ScheduleRefInput, ScheduleDeleteResult>(
     'schedule-delete',
@@ -387,20 +408,12 @@ export function createScheduleOperations(
       execute: (input, caller) => get(input, caller),
     }),
     defineOperation({
-      name: 'schedule.pause',
+      name: 'schedule.update',
       policy: MUTATE_POLICY,
-      description: `Pause a schedule so it stops creating tasks until resumed. ${SCOPE_NOTE} Returns the paused schedule, schedule_not_found, or rejected when the schedule is not active.`,
-      inputSchema: ScheduleRefInputSchema,
+      description: `Set a schedule's status: paused stops it creating tasks, active returns it to service, recomputing the next run time and re-enqueueing the fire job. ${SCOPE_NOTE} Asking for the status the schedule already has is accepted and changes nothing. Returns the schedule, schedule_not_found, or rejected when the schedule has already completed.`,
+      inputSchema: UpdateScheduleInputSchema,
       resultSchema: ScheduleResultSchema,
-      execute: (input, caller) => pause(input, caller),
-    }),
-    defineOperation({
-      name: 'schedule.resume',
-      policy: MUTATE_POLICY,
-      description: `Resume a paused schedule, recomputing the next run time and re-enqueueing the fire job. ${SCOPE_NOTE} Returns the resumed schedule, schedule_not_found, or rejected when the schedule is not paused.`,
-      inputSchema: ScheduleRefInputSchema,
-      resultSchema: ScheduleResultSchema,
-      execute: (input, caller) => resume(input, caller),
+      execute: (input, caller) => update(input, caller),
     }),
     defineOperation({
       name: 'schedule.delete',

@@ -10,7 +10,7 @@ import { TaskCoreSchema } from './get-operation.ts';
 import type { StandaloneTaskStatus } from './standalone-lifecycle.ts';
 import type { SpaceTaskManager } from './task-manager.ts';
 import type { SpaceMcpSessionPolicyContext } from '../space/runtime/space-mcp-session-policy.ts';
-import { admitSpaceTaskCaller, resolveSpaceTaskOwner } from './metadata.ts';
+import { admitSpaceTaskMutation, resolveSpaceTaskOwner } from './metadata.ts';
 import type { DirectFinalizationInput } from './finalize-direct-attempt.ts';
 import type { DirectOutcomeAcknowledgement } from './direct-outcome-jobs.ts';
 
@@ -61,7 +61,7 @@ export function admitCaller(
   caller: OperationCaller,
   deps: Deps
 ): Gate<string, TaskMutationDenial> {
-  const admitted = admitSpaceTaskCaller({ kind: 'space', spaceId }, caller, deps);
+  const admitted = admitSpaceTaskMutation({ kind: 'space', spaceId }, caller, deps);
   return 'reason' in admitted
     ? { reason: { accepted: false, reason: 'task_transition_denied' } }
     : { value: spaceId };

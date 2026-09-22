@@ -21,16 +21,12 @@ const inputSchema = z
   .strict();
 
 type Input = z.infer<typeof inputSchema>;
-type GoalResult = { accepted: true; goal: SpaceGoal } | GoalRejection;
 type TriggerResult =
   | { accepted: true; goal: SpaceGoal; task: SpaceTask | null; queued: boolean }
   | GoalRejection;
 
 export interface GoalStateDependencies extends GoalCallerContext {
-  readonly goalService: Pick<
-    SpaceGoalService,
-    'getGoal' | 'pauseGoal' | 'resumeGoal' | 'createImmediateTask'
-  >;
+  readonly goalService: Pick<SpaceGoalService, 'getGoal' | 'createImmediateTask'>;
 }
 
 export function admitGoalStateWrite(
@@ -41,26 +37,6 @@ export function admitGoalStateWrite(
   return admitGoalAccess(caller, input, 'mutate', deps, (goalId) =>
     deps.goalService.getGoal(goalId)
   );
-}
-
-export function applyGoalPause(
-  goal: SpaceGoal,
-  caller: OperationCaller,
-  deps: GoalStateDependencies
-): GoalResult {
-  const paused = deps.goalService.pauseGoal(goal.id, goalMutationContext(caller));
-  recordGoalAudit(deps, caller, goal.spaceId, 'goal.pause', { goalId: goal.id });
-  return { accepted: true, goal: paused };
-}
-
-export function applyGoalResume(
-  goal: SpaceGoal,
-  caller: OperationCaller,
-  deps: GoalStateDependencies
-): GoalResult {
-  const resumed = deps.goalService.resumeGoal(goal.id, goalMutationContext(caller));
-  recordGoalAudit(deps, caller, goal.spaceId, 'goal.resume', { goalId: goal.id });
-  return { accepted: true, goal: resumed };
 }
 
 export function applyGoalTrigger(
@@ -85,11 +61,6 @@ export function applyGoalTrigger(
   };
 }
 
-const goalResultSchema = z.discriminatedUnion('accepted', [
-  z.object({ accepted: z.literal(true), goal: SpaceGoalSchema }),
-  GoalRejectionSchema,
-]);
-
 function stateWritePipeline<Result>(
   name: string,
   apply: (goal: SpaceGoal, caller: OperationCaller, deps: GoalStateDependencies) => Result,
@@ -103,32 +74,6 @@ function stateWritePipeline<Result>(
     input: Input,
     caller: OperationCaller
   ) => Promise<Result | GoalRejection>;
-}
-
-export function createPauseGoalOperation(deps: GoalStateDependencies) {
-  const pause = stateWritePipeline('goal-pause', applyGoalPause, deps);
-  return defineOperation({
-    name: 'goal.pause',
-    description:
-      'Pause an active goal and its linked check-in schedule if present. Requires an active session in the owning Space. Returns { accepted: true, goal } or { accepted: false, reason }.',
-    policy: GOAL_WRITE_POLICY,
-    inputSchema,
-    resultSchema: goalResultSchema,
-    execute: async (input, caller) => pause(input, caller),
-  });
-}
-
-export function createResumeGoalOperation(deps: GoalStateDependencies) {
-  const resume = stateWritePipeline('goal-resume', applyGoalResume, deps);
-  return defineOperation({
-    name: 'goal.resume',
-    description:
-      'Resume a paused goal and re-enable its linked check-in schedule if present. Requires an active session in the owning Space. Returns { accepted: true, goal } or { accepted: false, reason }.',
-    policy: GOAL_WRITE_POLICY,
-    inputSchema,
-    resultSchema: goalResultSchema,
-    execute: async (input, caller) => resume(input, caller),
-  });
 }
 
 export function createTriggerGoalTaskOperation(deps: GoalStateDependencies) {

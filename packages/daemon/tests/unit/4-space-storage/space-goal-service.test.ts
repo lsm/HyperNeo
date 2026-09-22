@@ -257,9 +257,9 @@ describe('SpaceGoalService', () => {
     );
     expect(updated.progress).toBe(50);
 
-    const paused = service.pauseGoal(goal.id, { source: 'rpc' });
+    const paused = service.updateGoal(goal.id, { status: 'paused' }, { source: 'rpc' });
     expect(paused.status).toBe('paused');
-    service.resumeGoal(goal.id, { source: 'rpc' });
+    service.updateGoal(goal.id, { status: 'active' }, { source: 'rpc' });
     service.updateScheduledCheckIn(goal.id, Date.now() + 60_000);
 
     const first = service.createImmediateTask(goal.id);
@@ -504,12 +504,12 @@ describe('SpaceGoalService', () => {
     });
     const scheduleId = goal.taskScheduleId as string;
 
-    const paused = service.pauseGoal(goal.id);
+    const paused = service.updateGoal(goal.id, { status: 'paused' });
     expect(paused.status).toBe('paused');
     expect(paused.nextCheckInAt).toBeNull();
     expect(scheduleRepo.getById(scheduleId)?.status).toBe('paused');
 
-    const resumed = service.resumeGoal(goal.id);
+    const resumed = service.updateGoal(goal.id, { status: 'active' });
     expect(resumed.status).toBe('active');
     expect(resumed.nextCheckInAt).not.toBeNull();
     expect(scheduleRepo.getById(scheduleId)?.status).toBe('active');
@@ -569,7 +569,7 @@ describe('SpaceGoalService', () => {
     });
     scheduleRepo.delete(goal.taskScheduleId as string);
 
-    const paused = service.pauseGoal(goal.id);
+    const paused = service.updateGoal(goal.id, { status: 'paused' });
     expect(paused.status).toBe('paused');
     expect(paused.taskScheduleId).toBeNull();
   });
@@ -701,7 +701,7 @@ describe('SpaceGoalService', () => {
       type: 'recurring',
       checkInCronExpression: '0 9 * * 1',
     });
-    service.pauseGoal(goal.id);
+    service.updateGoal(goal.id, { status: 'paused' });
     const scheduleId = goal.taskScheduleId as string;
     expect(scheduleRepo.getById(scheduleId)?.status).toBe('paused');
     expect(pendingFireJobCount(scheduleId)).toBe(0);
@@ -714,7 +714,7 @@ describe('SpaceGoalService', () => {
     expect(updated.nextCheckInAt).toBeNull();
     expect(pendingFireJobCount(scheduleId)).toBe(0);
 
-    const resumed = service.resumeGoal(goal.id);
+    const resumed = service.updateGoal(goal.id, { status: 'active' });
     expect(resumed.nextCheckInAt).not.toBeNull();
     expect(scheduleRepo.getById(scheduleId)?.status).toBe('active');
     expect(pendingFireJobCount(scheduleId)).toBe(1);
@@ -747,7 +747,7 @@ describe('SpaceGoalService', () => {
       checkInCronExpression: '0 9 * * 1',
     });
     const scheduleId = goal.taskScheduleId as string;
-    service.pauseGoal(goal.id);
+    service.updateGoal(goal.id, { status: 'paused' });
     scheduleService.resumeSchedule(scheduleId);
     expect(scheduleRepo.getById(scheduleId)?.status).toBe('active');
 
@@ -984,7 +984,7 @@ describe('SpaceGoalService', () => {
       type: 'recurring',
       checkInCronExpression: '0 9 * * 1',
     });
-    service.pauseGoal(goal.id);
+    service.updateGoal(goal.id, { status: 'paused' });
 
     service.updateGoal(goal.id, { checkInCronExpression: '0 * * * *' });
 
@@ -1000,7 +1000,7 @@ describe('SpaceGoalService', () => {
     const frozen = spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
     try {
       const goal = service.createGoal({ spaceId, title: 'Same millisecond' });
-      service.pauseGoal(goal.id);
+      service.updateGoal(goal.id, { status: 'paused' });
       service.updateGoal(goal.id, { summary: 'edited within the millisecond' });
 
       expect(service.listGoalEvents(goal.id).map((event) => event.eventType)).toEqual([

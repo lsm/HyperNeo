@@ -6,8 +6,6 @@ import {
 } from './get-goal-owner-operation.ts';
 import { createGetGoalOperation, type GetGoalDependencies } from './get-goal-operation.ts';
 import {
-  createPauseGoalOperation,
-  createResumeGoalOperation,
   createTriggerGoalTaskOperation,
   type GoalStateDependencies,
 } from './goal-state-operations.ts';
@@ -46,8 +44,6 @@ export function createGoalOperations(deps: GoalOperationDependencies): Operation
     createListGoalEventsOperation(deps),
     createCreateGoalOperation(deps),
     createUpdateGoalOperation(deps),
-    createPauseGoalOperation(deps),
-    createResumeGoalOperation(deps),
     createTriggerGoalTaskOperation(deps),
     createListGoalOutcomeNotificationsOperation(deps),
     createResolveGoalOutcomeOperation(deps),
