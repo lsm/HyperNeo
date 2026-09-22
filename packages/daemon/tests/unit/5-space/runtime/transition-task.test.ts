@@ -2,6 +2,10 @@ import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { SpaceTaskStatus } from '@hyperneo/shared';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry';
+import {
+  type CompleteTaskDependencies,
+  createTaskCompletion,
+} from '../../../../src/lib/tasks/complete-task';
 import { SpaceTaskManager, StaleTaskGuardError } from '../../../../src/lib/tasks/task-manager';
 import {
   createSpaceTransitionTaskOperation,
@@ -81,6 +85,27 @@ function worker(id: string, memberSpaceId?: string) {
     { enforceWorkspaceOwnership: false }
   );
   return { source: 'mcp' as const, sessionId: id };
+}
+
+function taskWorker(id: string, taskId: string) {
+  sessions.createSession(
+    {
+      ...createTestSession(id),
+      workspacePath: '/repo',
+      type: 'worker',
+      context: { spaceId, taskId },
+    },
+    { enforceWorkspaceOwnership: false }
+  );
+  return { source: 'mcp' as const, sessionId: id };
+}
+
+function completion(overrides: Partial<CompleteTaskDependencies> = {}) {
+  return createTaskCompletion(() => db, {
+    getTaskManager: (id) => new SpaceTaskManager(db, id),
+    emitTaskUpdated,
+    ...overrides,
+  });
 }
 
 function deps(
@@ -258,12 +283,51 @@ test('mcp cannot move review to done directly', async () => {
   expect(tasks.getTask(task.id)?.status).toBe('review');
 });
 
-test('mcp cannot close an approved task and must go through task.complete', async () => {
+test('the task’s own worker completes an approved task through the completion binding', async () => {
+  const task = tasks.createTask({ spaceId, title: 'T', description: '' });
+  tasks.updateTask(task.id, { status: 'approved' });
+  const caller = taskWorker('own-worker', task.id);
+  const result = await invoke({ taskId: task.id, status: 'done', result: 'Shipped' }, caller, {
+    completeTask: completion(),
+  });
+  expect(result).toMatchObject({
+    kind: 'completed',
+    value: { id: task.id, status: 'done', result: 'Shipped' },
+  });
+  expect(tasks.getTask(task.id)?.approvalSource).toBe('agent');
+});
+
+test('another member session cannot complete an approved task', async () => {
   const task = tasks.createTask({ spaceId, title: 'T', description: '' });
   tasks.updateTask(task.id, { status: 'approved' });
   const caller = worker('member', spaceId);
-  const result = await invoke({ taskId: task.id, status: 'done' }, caller);
-  expect(result).toEqual({ kind: 'completed', value: 'approved_requires_complete' });
+  const result = await invoke({ taskId: task.id, status: 'done' }, caller, {
+    completeTask: completion(),
+  });
+  expect(result).toEqual({
+    kind: 'completed',
+    value: { accepted: false, reason: 'task_completion_denied' },
+  });
+  expect(tasks.getTask(task.id)?.status).toBe('approved');
+});
+
+test('the completion gate holds an approved task open and says why', async () => {
+  const task = tasks.createTask({ spaceId, title: 'T', description: '' });
+  tasks.updateTask(task.id, { status: 'approved' });
+  const caller = taskWorker('own-worker', task.id);
+  const result = await invoke({ taskId: task.id, status: 'done' }, caller, {
+    completeTask: completion({
+      completionGate: async () => ({ ok: false, error: 'the pull request is not merged' }),
+    }),
+  });
+  expect(result).toEqual({
+    kind: 'completed',
+    value: {
+      accepted: false,
+      reason: 'task_completion_unavailable',
+      detail: 'the pull request is not merged',
+    },
+  });
   expect(tasks.getTask(task.id)?.status).toBe('approved');
 });
 

@@ -25,7 +25,6 @@ type RejectResult =
   | 'result_requires_done'
   | 'block_reason_requires_blocked'
   | 'review_reason_requires_review'
-  | 'approved_requires_complete'
   | 'archive_active_run';
 export type SpaceTaskTransitionDecision =
   | { action: 'write'; approvalSource: 'human' | undefined; allowActiveRun: boolean }
@@ -37,7 +36,8 @@ export type SpaceTaskTransitionDecision =
         | 'recover_transition'
         | 'stop_for_status'
         | 'submit_review'
-        | 'cancel_task';
+        | 'cancel_task'
+        | 'complete_task';
       approvalSource: 'human' | undefined;
     };
 type Input = SpaceTaskTransitionDecisionInput;
@@ -48,6 +48,7 @@ const RUNTIME_ACTIONS = [
   'stop_for_status',
   'submit_review',
   'cancel_task',
+  'complete_task',
 ] as const;
 type RuntimeExecutor = (typeof RUNTIME_ACTIONS)[number];
 const REJECT_UNSUPPORTED = { action: 'reject', result: 'unsupported_status' } as const;
@@ -62,15 +63,10 @@ const REJECT_REVIEW_REASON_REQUIRES_REVIEW = {
   result: 'review_reason_requires_review',
 } as const;
 const REJECT_ARCHIVE_ACTIVE_RUN = { action: 'reject', result: 'archive_active_run' } as const;
-const REJECT_APPROVED_REQUIRES_COMPLETE = {
-  action: 'reject',
-  result: 'approved_requires_complete',
-} as const;
 const REJECT_BY_ROUTING_REASON: Partial<
   Record<TaskUpdateRejectReason, SpaceTaskTransitionDecision>
 > = {
   review_to_done: REJECT_INVALID,
-  approved_requires_complete: REJECT_APPROVED_REQUIRES_COMPLETE,
   archive_active_run: REJECT_ARCHIVE_ACTIVE_RUN,
 };
 export function classifyRequest(input: Input): TaskUpdateRouting {
@@ -124,6 +120,11 @@ export function routeCancellation(routing: TaskUpdateRouting): Gate {
     ? { reason: { action: 'runtime', executor: 'cancel_task', approvalSource: undefined } }
     : { value: routing };
 }
+export function routeCompletion(routing: TaskUpdateRouting): Gate {
+  return routing.action === 'complete_task'
+    ? { reason: { action: 'runtime', executor: 'complete_task', approvalSource: undefined } }
+    : { value: routing };
+}
 export function requireTableTransition(routing: TaskUpdateRouting, input: Input): Gate {
   return isValidTaskTransition(input.currentStatus, input.requestedStatus)
     ? { value: routing }
@@ -167,6 +168,7 @@ export const decideSpaceTaskTransition = (superpipe({})('space-task-transition')
   .pipe(requireReviewReasonOnlyWithReview, ['decision', 'input'], 'result:decision')
   .pipe(routeReviewSubmission, 'decision', 'result:decision')
   .pipe(routeCancellation, 'decision', 'result:decision')
+  .pipe(routeCompletion, 'decision', 'result:decision')
   .pipe(requireTableTransition, ['decision', 'input'], 'result:decision')
   .pipe(routeRuntimeAction, ['decision', 'input'], 'result:decision')
   .pipe(stampApproval, 'input', 'decision')

@@ -23,7 +23,6 @@ export type TransitionTaskRejection =
   | 'block_reason_requires_blocked'
   | 'review_reason_requires_review'
   | 'space_at_task_capacity'
-  | 'approved_requires_complete'
   | 'archive_active_run';
 
 export type TransitionTaskOutput =
@@ -78,7 +77,7 @@ export function createTransitionTaskOperation<Input = TransitionStandaloneTaskIn
     resultSchema: z.union([
       TaskMutationDenialSchema,
       z.object({ accepted: z.literal(true), jobId: z.string().nullable() }),
-      z.object({ accepted: z.literal(false), reason: z.string() }),
+      z.object({ accepted: z.literal(false), reason: z.string(), detail: z.string().optional() }),
       TaskWithSpaceFieldsSchema.nullable(),
       z.enum([
         'unsupported_status',
@@ -88,7 +87,6 @@ export function createTransitionTaskOperation<Input = TransitionStandaloneTaskIn
         'block_reason_requires_blocked',
         'review_reason_requires_review',
         'space_at_task_capacity',
-        'approved_requires_complete',
         'archive_active_run',
       ]),
     ]),
