@@ -148,7 +148,7 @@ export function setupSpaceGoalHandlers(messageHub: MessageHub, deps: SpaceGoalHa
       goal: SpaceGoal;
       task: SpaceTask | null;
       queued: boolean;
-    }>(operations, 'goal.triggerTask', params);
+    }>(operations, 'goal.task.trigger', params);
     return { goal: result.goal, task: result.task, queued: result.queued };
   });
 

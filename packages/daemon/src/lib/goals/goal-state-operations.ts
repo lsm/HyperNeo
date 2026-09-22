@@ -49,7 +49,7 @@ export function applyGoalTrigger(
     deps,
     caller,
     goal.spaceId,
-    'goal.triggerTask',
+    'goal.task.trigger',
     { goalId: goal.id },
     triggered.task?.id
   );
@@ -79,7 +79,7 @@ function stateWritePipeline<Result>(
 export function createTriggerGoalTaskOperation(deps: GoalStateDependencies) {
   const trigger = stateWritePipeline('goal-trigger-task', applyGoalTrigger, deps);
   return defineOperation({
-    name: 'goal.triggerTask',
+    name: 'goal.task.trigger',
     description:
       'Create an immediate task for a goal, queueing one follow-up instead when another goal task is active and autoTriggerNext is set. Requires an active session in the owning Space. Returns { accepted: true, goal, task, queued } or { accepted: false, reason }.',
     policy: GOAL_WRITE_POLICY,
