@@ -63,7 +63,9 @@ export interface ForgeScopeOperationDependencies extends ForgeAdmissionDependenc
     | 'resolveScopeForTask'
     | 'updateScope'
   >;
-  readonly getGoal: (goalId: string) => { id: string; spaceId: string } | null;
+  readonly getGoal: (
+    goalId: string
+  ) => { id: string; spaceId: string; title: string; description: string } | null;
   readonly taskRepo: Pick<SpaceTaskRepository, 'getTask'>;
   readonly workflowRunRepo: Pick<SpaceWorkflowRunRepository, 'getRun'>;
   readonly db?: BunDatabase;
@@ -174,38 +176,49 @@ const ScopeCreateInputSchema = z
   .object({
     ...SpaceScoped,
     kind: ForgeScopeKindSchema,
-    name: z.string().min(1),
-    objective: z.string().min(1),
+    name: z
+      .string()
+      .min(1)
+      .optional()
+      .describe('Defaults to the linked goal title; required when no goalId is given.'),
+    objective: z
+      .string()
+      .min(1)
+      .optional()
+      .describe('Defaults to the linked goal description; required when no goalId is given.'),
     goalId: z.string().min(1).nullable().optional(),
     parentScopeId: z.string().min(1).nullable().optional(),
     metricDefinitions: z.array(ForgeMetricDefinitionInputSchema).optional(),
     policy: ForgePolicySchema.optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (input) => Boolean(input.goalId) || (Boolean(input.name) && Boolean(input.objective)),
+    'Provide name and objective, or a goalId to take them from'
+  );
 
 export function planForgeScopeCreate(
   input: z.infer<typeof ScopeCreateInputSchema>,
   spaceId: string,
   forge: ForgeScopeOperationDependencies
 ): ForgeGate<CreateEvolutionScopeParams, ScopeCreateRejection> {
-  if (input.goalId) {
-    const goal = forge.getGoal(input.goalId);
-    if (!goal || goal.spaceId !== spaceId) {
-      return denyForge('goal_not_found', `Goal not found: ${input.goalId}`);
-    }
+  const goal = input.goalId ? forge.getGoal(input.goalId) : null;
+  if (input.goalId && (!goal || goal.spaceId !== spaceId)) {
+    return denyForge('goal_not_found', `Goal not found: ${input.goalId}`);
   }
   if (input.parentScopeId && !findForgeScopeInSpace(input.parentScopeId, spaceId, forge)) {
     return denyForge('scope_not_found', `EvolutionScope not found: ${input.parentScopeId}`);
   }
   const invalid = input.policy ? validateForgePolicy(input.policy) : undefined;
   if (invalid) return denyForge('invalid_policy', invalid);
+  const name = input.name ?? goal?.title ?? '';
   return {
     value: {
       spaceId,
       spaceGoalId: input.goalId ?? null,
       kind: input.kind,
-      name: input.name,
-      objective: input.objective,
+      name,
+      objective: input.objective ?? goal?.description ?? name,
       parentScopeId: input.parentScopeId ?? null,
       metricDefinitions: input.metricDefinitions,
       policy: input.policy,
@@ -722,7 +735,7 @@ export function createForgeScopeOperations(forge: ForgeScopeOperationDependencie
       name: 'forge.scope.create',
       policy: FORGE_MUTATE_POLICY,
       description:
-        'Create a Forge scope in a Space, optionally linked to a goal and a parent scope, with metric definitions and judge policy. MCP callers are scoped to their own Space; RPC callers pass spaceId. Rejects goal_not_found, scope_not_found (parent), invalid_policy, and forge_denied for sessions without Forge write access.',
+        'Create a Forge scope in a Space, optionally linked to a goal and a parent scope, with metric definitions and judge policy. Naming a goalId takes name and objective from that goal unless they are given explicitly; without a goalId both are required. MCP callers are scoped to their own Space; RPC callers pass spaceId. Rejects goal_not_found, scope_not_found (parent), invalid_policy, and forge_denied for sessions without Forge write access.',
       inputSchema: ScopeCreateInputSchema,
       resultSchema: z.union([scopeResult, forgeDenialSchema(SCOPE_CREATE_REJECTIONS)]),
       execute: async (input, caller) => create(input, caller),

@@ -334,6 +334,79 @@ describe('forge.scope.create', () => {
       ctx.db.close();
     }
   });
+
+  test('takes name and objective from the linked goal when they are omitted', async () => {
+    const ctx = makeCtx();
+    try {
+      const goal = ctx.goalRepo.create({
+        spaceId: SPACE_ID,
+        title: 'Weekly review',
+        description: 'Keep the cadence honest',
+        type: 'recurring',
+      });
+      const result = (await ctx
+        .op('forge.scope.create')
+        .execute({ kind: 'mission', goalId: goal.id }, memberCaller)) as {
+        accepted: true;
+        scope: { kind: string; name: string; objective: string; spaceGoalId: string | null };
+      };
+      expect(result.scope).toMatchObject({
+        kind: 'mission',
+        name: 'Weekly review',
+        objective: 'Keep the cadence honest',
+        spaceGoalId: goal.id,
+      });
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('prefers an explicit name and objective over the linked goal', async () => {
+    const ctx = makeCtx();
+    try {
+      const goal = ctx.goalRepo.create({
+        spaceId: SPACE_ID,
+        title: 'Weekly review',
+        description: 'Keep the cadence honest',
+        type: 'recurring',
+      });
+      const result = (await ctx.op('forge.scope.create').execute(
+        {
+          kind: 'mission',
+          goalId: goal.id,
+          name: 'Review the review',
+          objective: 'Halve the meeting',
+        },
+        memberCaller
+      )) as { accepted: true; scope: { name: string; objective: string } };
+      expect(result.scope).toMatchObject({
+        name: 'Review the review',
+        objective: 'Halve the meeting',
+      });
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('rejects a create that names neither a goal nor a name and objective', async () => {
+    const ctx = makeCtx();
+    try {
+      expect(
+        await invokeOperation(ctx.registry, 'forge.scope.create', { kind: 'project' }, memberCaller)
+      ).toMatchObject({ kind: 'failed', code: 'invalid_input' });
+      expect(
+        await invokeOperation(
+          ctx.registry,
+          'forge.scope.create',
+          { kind: 'project', name: 'Reliability' },
+          memberCaller
+        )
+      ).toMatchObject({ kind: 'failed', code: 'invalid_input' });
+      expect(ctx.scopeService.listScopes({ spaceId: SPACE_ID })).toHaveLength(0);
+    } finally {
+      ctx.db.close();
+    }
+  });
 });
 
 describe('forge.scope.createFromGoal', () => {
