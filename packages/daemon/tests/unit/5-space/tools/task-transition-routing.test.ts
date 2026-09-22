@@ -133,19 +133,15 @@ describe('routeTaskUpdate reject reasons', () => {
     });
   });
 
-  test('approved_requires_complete rejects even for workflow-backed tasks', () => {
+  test('approved to done routes to the completion stage even for workflow-backed tasks', () => {
     expect(
       routeTaskUpdate(
         baseInput({ currentStatus: 'approved', requestedStatus: 'done', hasWorkflowRun: true })
       )
     ).toEqual({
-      action: 'reject',
-      reason: 'approved_requires_complete',
-      message:
-        `Cannot close approved task task-1 through a status change. ` +
-        `Use task.complete, which fences the transition on the routed post-approval ` +
-        `session and applies the workflow's completion gate — for a coder-owned-merge ` +
-        `workflow that gate holds the task open until its pull request is merged.`,
+      action: 'complete_task',
+      auditParamsShape: 'transition',
+      emitTaskUpdated: 'never',
     });
   });
 
@@ -481,7 +477,7 @@ describe('routeTaskUpdate terminal writes under an active run', () => {
     expect(routing).toMatchObject({ reason: 'review_to_done' });
   });
 
-  test('approved to done still rejects ahead of the stop routing', () => {
+  test('approved to done reaches the completion stage ahead of the stop routing', () => {
     const routing = routeTaskUpdate(
       baseInput({
         currentStatus: 'approved',
@@ -490,8 +486,7 @@ describe('routeTaskUpdate terminal writes under an active run', () => {
         runActive: true,
       })
     );
-    expect(routing.action).toBe('reject');
-    expect(routing).toMatchObject({ reason: 'approved_requires_complete' });
+    expect(routing.action).toBe('complete_task');
   });
 
   test('archived still rejects rather than stopping the run', () => {

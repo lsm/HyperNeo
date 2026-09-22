@@ -16,9 +16,10 @@ const warnEmit = (error: unknown) => log.warn('Failed to emit space.task.updated
 const inputSchema = z.object({ taskId: z.string().min(1), result: z.string().optional() }).strict();
 type Input = z.infer<typeof inputSchema>;
 
-type CompletionResult =
+export type CompletionResult =
   | { accepted: true; task: SpaceTask }
   | { accepted: false; reason: string; detail?: string };
+export type TaskCompletion = (input: Input, caller: OperationCaller) => Promise<CompletionResult>;
 
 const reject = (reason: string, detail?: string) => ({
   reason: { accepted: false as const, reason, ...(detail === undefined ? {} : { detail }) },
@@ -118,11 +119,11 @@ async function completeApprovedTask(
   return { accepted: true, task: updated };
 }
 
-export function createCompleteTaskOperation(
+export function createTaskCompletion(
   getDatabase: () => Database,
   dependencies: CompleteTaskDependencies
-) {
-  const complete = (superpipe({ getDatabase, deps: dependencies })('complete-task') as PipelineAPI)
+): TaskCompletion {
+  return (superpipe({ getDatabase, deps: dependencies })('complete-task') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(getDatabase, undefined, 'db')
     .pipe(admitCompletion, ['db', 'input', 'caller', 'deps'], 'result:outcome')
@@ -135,7 +136,14 @@ export function createCompleteTaskOperation(
       ['outcome', 'input', 'deps', 'artifactSummary', 'reportedSummary', 'approvalSource'],
       'outcome'
     )
-    .endAsync('outcome') as (input: Input, caller: OperationCaller) => Promise<CompletionResult>;
+    .endAsync('outcome') as TaskCompletion;
+}
+
+export function createCompleteTaskOperation(
+  getDatabase: () => Database,
+  dependencies: CompleteTaskDependencies
+) {
+  const complete = createTaskCompletion(getDatabase, dependencies);
   return defineOperation({
     name: 'task.complete',
     description:

@@ -25,13 +25,13 @@ export type TaskUpdateRejectReason =
   | 'approved_direct'
   | 'limited_direct'
   | 'review_to_done'
-  | 'approved_requires_complete'
   | 'archive_active_run';
 
 export type TaskUpdateRouting =
   | { action: 'reject'; reason: TaskUpdateRejectReason; message: string }
   | { action: 'submit_review'; auditParamsShape: 'transition'; emitTaskUpdated: 'never' }
   | { action: 'cancel_task'; auditParamsShape: 'transition'; emitTaskUpdated: 'never' }
+  | { action: 'complete_task'; auditParamsShape: 'transition'; emitTaskUpdated: 'never' }
   | {
       action: 'park_stopped';
       auditParamsShape: 'transition';
@@ -150,15 +150,7 @@ export function routeTaskUpdate(input: TaskUpdateRoutingInput): TaskUpdateRoutin
       };
     }
     if (requestedStatus === 'done' && currentStatus === 'approved' && !allowApprovedToDone) {
-      return {
-        action: 'reject',
-        reason: 'approved_requires_complete',
-        message:
-          `Cannot close approved task ${taskId} through a status change. ` +
-          `Use task.complete, which fences the transition on the routed post-approval ` +
-          `session and applies the workflow's completion gate — for a coder-owned-merge ` +
-          `workflow that gate holds the task open until its pull request is merged.`,
-      };
+      return { action: 'complete_task', auditParamsShape: 'transition', emitTaskUpdated: 'never' };
     }
     if (requestedStatus === 'archived' && hasWorkflowRun && runActive) {
       return {
