@@ -1,10 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import type { Session } from '@hyperneo/shared';
 import { createForgeScopeOperations } from '../../../../src/lib/evolution/scope-operations.ts';
+import { createForgeScopeGetOperation } from '../../../../src/lib/evolution/scope-get-operation.ts';
 import type {
   ForgeAuditEntry,
   ForgeAuditWriter,
 } from '../../../../src/lib/evolution/forge-admission.ts';
+import { EvolutionEpisodeService } from '../../../../src/lib/evolution/episode-service.ts';
 import { EvolutionScopeService } from '../../../../src/lib/evolution/scope-service.ts';
 import { SpaceGoalService } from '../../../../src/lib/goals/service.ts';
 import { ScheduleService } from '../../../../src/lib/schedule/schedule-service.ts';
@@ -26,6 +28,7 @@ import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
 import { TaskScheduleRepository } from '../../../../src/storage/repositories/task-schedule-repository.ts';
+import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository.ts';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 
@@ -88,6 +91,14 @@ function makeCtx() {
     taskRepo,
     workflowRunRepo,
   });
+  const episodeService = new EvolutionEpisodeService({
+    evolutionRepo,
+    taskRepo,
+    workflowRunRepo,
+    artifactRepo: new WorkflowRunArtifactRepository(db),
+    goalService,
+    db,
+  });
 
   const sessions = new Map<string, Session>([
     ['session-member', makeSession('session-member', SPACE_ID, 'active')],
@@ -99,19 +110,21 @@ function makeCtx() {
     audited.push(entry);
   };
 
-  const operations = createForgeScopeOperations({
-    getSession: (sessionId) => sessions.get(sessionId) ?? null,
+  const deps = {
+    getSession: (sessionId: string) => sessions.get(sessionId) ?? null,
     longHorizonAgentRepo: new SpaceLongHorizonAgentRepository(db),
     nodeExecutionRepo: new NodeExecutionRepository(db),
     taskRepo,
     workflowRunRepo,
     scopeService,
-    getGoal: (goalId) => goalService.getGoal(goalId),
+    episodeService,
+    getGoal: (goalId: string) => goalService.getGoal(goalId),
     db,
     goalRepo,
     scheduleService,
     audit,
-  });
+  };
+  const operations = [...createForgeScopeOperations(deps), createForgeScopeGetOperation(deps)];
   const registry = createOperationRegistry(operations);
   const op = (name: string): OperationDefinition => {
     const found = registry.get(name);

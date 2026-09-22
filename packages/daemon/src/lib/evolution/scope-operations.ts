@@ -661,13 +661,6 @@ export function createForgeScopeOperations(forge: ForgeScopeOperationDependencie
     .pipe(readForgeScopeList, ['input', 'outcome', 'forge'], 'result:outcome')
     .endAsync('outcome');
 
-  const get = (superpipe({ forge })('forge-scope-get') as PipelineAPI)
-    .input(['input', 'caller'])
-    .pipe(admitForgeReader, ['input', 'caller'], 'result:outcome')
-    .pipe(requireForgeScope, ['input', 'outcome', 'forge'], 'result:outcome')
-    .pipe((scope: EvolutionScope) => ({ accepted: true as const, scope }), 'outcome', 'outcome')
-    .endAsync('outcome');
-
   const update = (superpipe({ forge })('forge-scope-update') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitForgeMutator, ['input', 'caller', 'forge'], 'result:outcome')
@@ -754,15 +747,6 @@ export function createForgeScopeOperations(forge: ForgeScopeOperationDependencie
         forgeDenialSchema(SCOPE_CREATE_REJECTIONS),
       ]),
       execute: async (input, caller) => list(input, caller),
-    }),
-    defineOperation({
-      name: 'forge.scope.get',
-      policy: FORGE_READ_POLICY,
-      description:
-        'Read one Forge scope with its linked goal, metric definitions, and policy. Rejects scope_not_found when the scope is absent or outside the caller Space.',
-      inputSchema: z.object(ScopeTargeted).strict(),
-      resultSchema: z.union([scopeResult, forgeDenialSchema(SCOPE_ID_REJECTIONS)]),
-      execute: async (input, caller) => get(input, caller),
     }),
     defineOperation({
       name: 'forge.scope.update',

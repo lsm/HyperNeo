@@ -19,7 +19,6 @@ export const FORGE_OPERATION_NAMES = [
   'forge.scope.createFromGoal',
   'forge.scope.get',
   'forge.scope.list',
-  'forge.scope.read',
   'forge.scope.resolve',
   'forge.scope.update',
   'forge.timeline.get',

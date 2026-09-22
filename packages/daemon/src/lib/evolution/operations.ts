@@ -4,9 +4,9 @@ import {
   type ForgeEpisodeOperationDependencies,
 } from './episode-operations.ts';
 import {
-  createForgeScopeReadOperation,
-  type ForgeScopeReadDependencies,
-} from './scope-read-operation.ts';
+  createForgeScopeGetOperation,
+  type ForgeScopeGetDependencies,
+} from './scope-get-operation.ts';
 import {
   createForgeScopeOperations,
   type ForgeScopeOperationDependencies,
@@ -14,12 +14,12 @@ import {
 
 export type ForgeOperationDependencies = Omit<ForgeScopeOperationDependencies, 'getGoal'> &
   ForgeEpisodeOperationDependencies &
-  Omit<ForgeScopeReadDependencies, 'getGoal'>;
+  Omit<ForgeScopeGetDependencies, 'getGoal'>;
 
 export function createForgeOperations(forge: ForgeOperationDependencies): OperationDefinition[] {
   return [
     ...createForgeScopeOperations(forge),
     ...createForgeEpisodeOperations(forge),
-    createForgeScopeReadOperation(forge),
+    createForgeScopeGetOperation(forge),
   ];
 }

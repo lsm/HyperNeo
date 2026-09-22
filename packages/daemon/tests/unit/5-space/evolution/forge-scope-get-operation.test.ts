@@ -29,8 +29,8 @@ import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositor
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 
-const SPACE_ID = 'space-forge-scope-read';
-const OTHER_SPACE_ID = 'space-forge-scope-read-other';
+const SPACE_ID = 'space-forge-scope-get';
+const OTHER_SPACE_ID = 'space-forge-scope-get-other';
 
 function insertSpace(db: BunDatabase, id: string): void {
   db.prepare(
@@ -194,10 +194,10 @@ function seedParts(ctx: Ctx, scopeId: string) {
 }
 
 async function read(ctx: Ctx, input: Record<string, unknown>, caller = readerCaller) {
-  return (await ctx.op('forge.scope.read').execute(input, caller)) as Record<string, unknown>;
+  return (await ctx.op('forge.scope.get').execute(input, caller)) as Record<string, unknown>;
 }
 
-describe('forge.scope.read', () => {
+describe('forge.scope.get', () => {
   test('defaults to the scope row alone and reads no list', async () => {
     const ctx = makeCtx();
     try {
@@ -355,8 +355,8 @@ describe('forge.scope.read', () => {
       await read(ctx, { scopeId: scope.id, include: ['lessons'] }, memberCaller);
       await read(ctx, { goalId: goal.id }, memberCaller);
       expect(ctx.audited.map((entry) => entry.toolName)).toEqual([
-        'forge.scope.read',
-        'forge.scope.read',
+        'forge.scope.get',
+        'forge.scope.get',
       ]);
       expect(ctx.audited[0]?.paramsSummary).toMatchObject({
         scopeId: scope.id,
@@ -376,7 +376,7 @@ describe('forge.scope.read', () => {
       expect(
         await invokeOperation(
           ctx.registry,
-          'forge.scope.read',
+          'forge.scope.get',
           {
             scopeId: scope.id,
             include: ['scope', 'evidence', 'metrics', 'episodes', 'lessons', 'proposals'],
@@ -387,7 +387,7 @@ describe('forge.scope.read', () => {
       expect(
         await invokeOperation(
           ctx.registry,
-          'forge.scope.read',
+          'forge.scope.get',
           { scopeId: scope.id },
           spacelessCaller
         )
@@ -395,7 +395,7 @@ describe('forge.scope.read', () => {
       expect(
         await invokeOperation(
           ctx.registry,
-          'forge.scope.read',
+          'forge.scope.get',
           { scopeId: scope.id, include: ['unknown'] },
           memberCaller
         )
