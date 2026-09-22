@@ -2232,19 +2232,28 @@ class SpaceStore {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
 
-    const result = await invokeOperation<CancelTaskResult>(hub, 'task.cancel', { taskId });
-    if (!result.accepted) {
+    const result = await invokeOperation<CancelTaskResult | string | null>(hub, 'task.transition', {
+      taskId,
+      status: 'cancelled',
+    });
+    const outcome: CancelTaskResult =
+      result === null
+        ? { accepted: false, reason: 'cancellation_unavailable' }
+        : typeof result === 'string'
+          ? { accepted: false, reason: result }
+          : result;
+    if (!outcome.accepted) {
       const status = this.tasks.value.find((task) => task.id === taskId)?.status;
-      const decision = decideCancelRejection(status, result.reason);
+      const decision = decideCancelRejection(status, outcome.reason);
       if (decision.kind === 'silent') {
-        return result;
+        return outcome;
       }
       if (decision.kind === 'finished') {
         throw new Error('This task has already finished and cannot be cancelled.');
       }
       throw new Error(decision.message);
     }
-    return result;
+    return outcome;
   }
 
   async submitForReview(taskId: string, reason?: string | null): Promise<ReviewSubmissionResult> {

@@ -2643,17 +2643,35 @@ describe('SpaceStore — cancelTask', () => {
   beforeEach(resetStore);
   afterEach(() => vi.clearAllMocks());
 
-  it('sends operation.invoke with task.cancel and the task id, returning the acknowledgement', async () => {
+  it('sends operation.invoke with a task.transition to cancelled, returning the acknowledgement', async () => {
     await spaceStore.selectSpace('space-1');
     mockHub.request.mockResolvedValueOnce({ accepted: true, jobId: 'job-1' });
 
     const result = await spaceStore.cancelTask('task-1');
 
     expect(mockHub.request).toHaveBeenCalledWith('operation.invoke', {
-      name: 'task.cancel',
-      input: { taskId: 'task-1' },
+      name: 'task.transition',
+      input: { taskId: 'task-1', status: 'cancelled' },
     });
     expect(result).toEqual({ accepted: true, jobId: 'job-1' });
+  });
+
+  it('reports a missing task as unavailable', async () => {
+    await spaceStore.selectSpace('space-1');
+    mockHub.request.mockResolvedValueOnce(null);
+
+    await expect(spaceStore.cancelTask('task-1')).rejects.toThrow(
+      'This task is not available for cancellation right now. Try again after it changes.'
+    );
+  });
+
+  it('reports a bare transition rejection code', async () => {
+    await spaceStore.selectSpace('space-1');
+    mockHub.request.mockResolvedValueOnce('unsupported_status');
+
+    await expect(spaceStore.cancelTask('task-1')).rejects.toThrow(
+      'Cancellation rejected: unsupported_status'
+    );
   });
 
   it('throws a mapped message when cancellation is rejected', async () => {

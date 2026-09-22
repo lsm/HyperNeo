@@ -44,9 +44,9 @@ Invoke the `task.get` operation with `taskId` and present the task status, resul
 
 Invoke the `task.retry` operation with `taskId` and optional replacement/updated description. Only use after confirming the retry is valid for the current task status.
 
-### task.cancel(taskId)
+### task.transition(taskId, status: "cancelled")
 
-Invoke the `task.cancel` operation with `taskId`. If the user wants the workflow run cancelled too, include the operation's cancel-workflow flag when available.
+Invoke the `task.transition` operation with `taskId` and `status: "cancelled"`. A running attempt or the task's workflow execution is torn down as part of the cancellation.
 
 ### reassign_task(task_id, agent)
 
