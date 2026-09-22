@@ -93,9 +93,9 @@ function persist(
 
 function invoke(
   sessionId?: string,
-  input: unknown = { taskId: task.id, approved: true },
+  input: unknown = { taskId: task.id },
   source: 'rpc' | 'mcp' | 'internal' = 'mcp',
-  name = 'task.resolvePendingCompletion'
+  name = 'task.approve'
 ) {
   return invokeOperation(
     createOperationRegistry(createOwnedPendingCompletionOperations(dependencies)),
@@ -117,11 +117,7 @@ test.each(['default-agent', 'legacy-task'] as const)(
             coordinator.id
           )
         : persist('space_task_agent');
-    const outcome = await invoke(session.id, {
-      taskId: task.id,
-      approved: true,
-      reason: '  raw  ',
-    });
+    const outcome = await invoke(session.id, { taskId: task.id, reason: '  raw  ' });
     expect(outcome.kind).toBe('completed');
     if (outcome.kind !== 'completed') throw new Error(outcome.message);
     expect(outcome.value).toMatchObject({
@@ -135,7 +131,7 @@ test.each(['default-agent', 'legacy-task'] as const)(
     expect(order).toEqual(['dispatch', 'event', 'audit']);
     expect(approvalSources).toEqual(['agent']);
     expect(dependencies.audit).toHaveBeenCalledWith(
-      'task.resolvePendingCompletion',
+      'task.approve',
       expect.objectContaining({ id: session.id }),
       expect.objectContaining({ status: 'review' }),
       { taskId: task.id, approved: true, reason: '  raw  ' }
@@ -308,11 +304,7 @@ test('committed dispatch warning survives catalog result validation', async () =
       postApprovalBlockedReason: expect.stringContaining('Approval recorded'),
     },
   });
-  expect(dependencies.warn).toHaveBeenCalledWith(
-    'task.resolvePendingCompletion',
-    task.id,
-    'interrupted'
-  );
+  expect(dependencies.warn).toHaveBeenCalledWith('task.approve', task.id, 'interrupted');
   expect(order).toEqual(['event']);
 });
 
@@ -339,7 +331,7 @@ test('rejection preserves reason and ignores best-effort event/audit failures', 
     order.push('audit');
     throw new Error('audit');
   };
-  const outcome = await invoke(session.id, { taskId: task.id, approved: false, reason: '' });
+  const outcome = await invoke(session.id, { taskId: task.id, reason: '' }, 'mcp', 'task.reject');
   expect(outcome).toMatchObject({
     kind: 'completed',
     value: { status: 'in_progress', approvalReason: '', approvalSource: null },
@@ -362,8 +354,8 @@ test('opposing owned decisions admit one generation and produce one successful n
     return snapshot;
   };
   const results = await Promise.all([
-    invoke(session.id, { taskId: task.id, approved: true }),
-    invoke(session.id, { taskId: task.id, approved: false }),
+    invoke(session.id, { taskId: task.id }),
+    invoke(session.id, { taskId: task.id }, 'mcp', 'task.reject'),
   ]);
   expect(results.filter((result) => result.kind === 'completed')).toHaveLength(1);
   expect(results.find((result) => result.kind === 'failed')).toMatchObject({
@@ -387,7 +379,12 @@ test.each([true, false])(
       });
       return new SpaceTaskManager(db, owner);
     };
-    const outcome = await invoke(session.id, { taskId: task.id, approved });
+    const outcome = await invoke(
+      session.id,
+      { taskId: task.id },
+      'mcp',
+      approved ? 'task.approve' : 'task.reject'
+    );
     expect(outcome).toMatchObject({
       kind: 'failed',
       code: 'execution_failed',
@@ -421,7 +418,7 @@ test('a task orphaned in review can still be approved (#4033)', async () => {
     coordinator.id
   );
 
-  const outcome = await invoke(session.id, { taskId: task.id, approved: true });
+  const outcome = await invoke(session.id, { taskId: task.id });
 
   expect(outcome).toMatchObject({ kind: 'completed' });
   expect(tasks.getTask(task.id)).toMatchObject({
@@ -441,11 +438,12 @@ test('a task orphaned in review can still be rejected back to in_progress (#4033
     coordinator.id
   );
 
-  const outcome = await invoke(session.id, {
-    taskId: task.id,
-    approved: false,
-    reason: 'needs more',
-  });
+  const outcome = await invoke(
+    session.id,
+    { taskId: task.id, reason: 'needs more' },
+    'mcp',
+    'task.reject'
+  );
 
   expect(outcome).toMatchObject({ kind: 'completed' });
   expect(tasks.getTask(task.id)).toMatchObject({ status: 'in_progress', reportedStatus: null });
@@ -489,7 +487,7 @@ test('a healthy review task is not restaged and keeps its generation', async () 
   expect(same).toBe(before);
 });
 
-test('task.approve takes the same decision as the legacy door without an approved flag', async () => {
+test('task.approve takes the approval decision without an approved flag', async () => {
   const session = persist(
     'worker',
     longTermAgentSessionId(spaceId, coordinator.id),

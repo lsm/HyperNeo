@@ -285,25 +285,6 @@ export function createOwnedPendingCompletionOperations(
   const DECISION_ADMISSION_DOC =
     'MCP requires a Space agent session in the owning space or a legacy task-agent session, and a long-term agent caller needs the human-only autonomy level while a legacy task-agent session is exempt from that gate. Standalone tasks are unsupported.';
 
-  const legacy = defineOperation({
-    name: 'task.resolvePendingCompletion',
-    description:
-      'Approve or reject a Space task awaiting completion review. MCP requires a Space agent session in the owning space or a legacy task-agent session. Both transports carry the same human approval weight, and a long-term agent caller needs the human-only autonomy level to be admitted while a legacy task-agent session is exempt from that gate, but an approval records who made it: approvalSource is agent for an MCP caller and human for an RPC or internal one. A rejection reopens the task to in_progress and leaves approvalSource null. Standalone tasks are unsupported. Approval may return postApprovalBlockedReason when post-approval work could not dispatch.',
-    inputSchema: z
-      .object({
-        taskId: z.string().min(1),
-        approved: z.boolean(),
-        reason: z.string().nullable().optional(),
-      })
-      .strict(),
-    resultSchema: PendingCompletionResultSchema,
-    execute: async (input, caller) => {
-      const result = await resolve(input, caller, 'task.resolvePendingCompletion');
-      if (result instanceof Error) throw result;
-      return result;
-    },
-  });
-
   const decide = async (
     input: { taskId: string; reason?: string | null },
     caller: OperationCaller,
@@ -316,7 +297,6 @@ export function createOwnedPendingCompletionOperations(
   };
 
   return [
-    legacy,
     defineOperation({
       name: 'task.approve',
       description: `Approve a Space task awaiting completion review, moving it out of review and dispatching the post-approval work. ${DECISION_ADMISSION_DOC} The approval records who made it: approvalSource is agent for an MCP caller and human for an RPC or internal one. May return postApprovalBlockedReason when the approval committed but the post-approval work could not dispatch.`,

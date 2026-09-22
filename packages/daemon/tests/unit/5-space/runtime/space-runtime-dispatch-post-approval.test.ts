@@ -726,8 +726,8 @@ test.each(['rpc', 'mcp'] as const)(
       });
       expect(attempts.getActive(task.id)).toBeNull();
       const invocation = {
-        name: 'task.resolvePendingCompletion',
-        input: { taskId: task.id, approved: true, reason: 'Accepted' },
+        name: 'task.approve',
+        input: { taskId: task.id, reason: 'Accepted' },
       };
       const approved =
         source === 'rpc'
