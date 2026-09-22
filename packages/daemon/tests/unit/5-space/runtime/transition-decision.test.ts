@@ -22,9 +22,31 @@ const base = {
   hasBlockReason: false,
   workflowRunId: null,
   runActive: false,
+  approvalSource: null,
 };
 
 const cases: Case[] = [
+  [
+    'a human close keeps the agent attribution that approved the task',
+    {
+      ...base,
+      approvalSource: 'agent',
+      currentStatus: 'approved',
+      requestedStatus: 'done',
+      callerSource: 'rpc',
+    },
+    { action: 'write', approvalSource: undefined, allowActiveRun: false },
+  ],
+  [
+    'a human close stamps human when nothing approved the task yet',
+    {
+      ...base,
+      currentStatus: 'review',
+      requestedStatus: 'done',
+      callerSource: 'rpc',
+    },
+    { action: 'write', approvalSource: 'human', allowActiveRun: false },
+  ],
   [
     'a block reason accompanying a move to blocked is accepted',
     {

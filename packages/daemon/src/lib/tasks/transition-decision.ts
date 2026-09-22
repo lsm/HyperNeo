@@ -16,6 +16,7 @@ export interface SpaceTaskTransitionDecisionInput {
   workflowRunId: string | null;
   runActive: boolean;
   callerSource: OperationCaller['source'];
+  approvalSource: string | null;
 }
 type RejectResult =
   | 'unsupported_status'
@@ -108,10 +109,9 @@ export function routeRuntimeAction(routing: TaskUpdateRouting, input: Input): Ga
     : { value: routing };
 }
 function resolveApprovalSource(input: Input): 'human' | undefined {
-  return input.requestedStatus === 'done' &&
-    (input.currentStatus === 'review' || input.currentStatus === 'approved')
-    ? 'human'
-    : undefined;
+  if (input.requestedStatus !== 'done') return undefined;
+  if (input.currentStatus !== 'review' && input.currentStatus !== 'approved') return undefined;
+  return input.approvalSource ? undefined : 'human';
 }
 export function allowsWriteBesideActiveRun(input: Input): boolean {
   return (

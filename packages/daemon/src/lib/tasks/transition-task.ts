@@ -136,6 +136,7 @@ export async function decide(
     workflowRunId: task.workflowRunId ?? null,
     runActive,
     callerSource: caller.source,
+    approvalSource: task.approvalSource ?? null,
   });
   if (decision.action === 'reject') return { reason: decision.result };
   if (decision.action === 'runtime') {
