@@ -88,7 +88,7 @@ describe('describeResolvedOperations', () => {
   test('derives the count and areas from the registry, never a written list', () => {
     const registry = createOperationRegistry([
       stubOperation('task.create'),
-      stubOperation('task.cancel'),
+      stubOperation('task.retry'),
       stubOperation('goal.list'),
       stubOperation('operations.list'),
       stubOperation('operations.describe'),
