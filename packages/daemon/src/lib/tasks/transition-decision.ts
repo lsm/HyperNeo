@@ -22,6 +22,7 @@ type RejectResult =
   | 'invalid_transition'
   | 'result_requires_done'
   | 'block_reason_requires_blocked'
+  | 'approved_requires_complete'
   | 'archive_active_run';
 export type SpaceTaskTransitionDecision =
   | { action: 'write'; approvalSource: 'human' | undefined; allowActiveRun: boolean }
@@ -43,10 +44,15 @@ const REJECT_BLOCK_REASON_REQUIRES_BLOCKED = {
   result: 'block_reason_requires_blocked',
 } as const;
 const REJECT_ARCHIVE_ACTIVE_RUN = { action: 'reject', result: 'archive_active_run' } as const;
+const REJECT_APPROVED_REQUIRES_COMPLETE = {
+  action: 'reject',
+  result: 'approved_requires_complete',
+} as const;
 const REJECT_BY_ROUTING_REASON: Partial<
   Record<TaskUpdateRejectReason, SpaceTaskTransitionDecision>
 > = {
   review_to_done: REJECT_INVALID,
+  approved_requires_complete: REJECT_APPROVED_REQUIRES_COMPLETE,
   archive_active_run: REJECT_ARCHIVE_ACTIVE_RUN,
 };
 export function classifyRequest(input: Input): TaskUpdateRouting {
@@ -67,6 +73,7 @@ export function classifyRequest(input: Input): TaskUpdateRouting {
     taskId: input.taskId,
     workflowRunId: workflowRunId ?? undefined,
     allowReviewToDone: input.callerSource === 'rpc',
+    allowApprovedToDone: input.callerSource === 'rpc',
   });
 }
 export function rejectUnsupportedRequest(routing: TaskUpdateRouting): Gate {
@@ -101,7 +108,10 @@ export function routeRuntimeAction(routing: TaskUpdateRouting, input: Input): Ga
     : { value: routing };
 }
 function resolveApprovalSource(input: Input): 'human' | undefined {
-  return input.currentStatus === 'review' && input.requestedStatus === 'done' ? 'human' : undefined;
+  return input.requestedStatus === 'done' &&
+    (input.currentStatus === 'review' || input.currentStatus === 'approved')
+    ? 'human'
+    : undefined;
 }
 export function allowsWriteBesideActiveRun(input: Input): boolean {
   return (

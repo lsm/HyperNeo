@@ -58,6 +58,33 @@ const cases: Case[] = [
     { action: 'reject', result: 'invalid_transition' },
   ],
   [
+    'approved to done via rpc caller writes with human approval',
+    { ...base, currentStatus: 'approved', requestedStatus: 'done', callerSource: 'rpc' },
+    { action: 'write', approvalSource: 'human', allowActiveRun: false },
+  ],
+  [
+    'approved to done via mcp caller is sent to task.complete',
+    { ...base, currentStatus: 'approved', requestedStatus: 'done', callerSource: 'mcp' },
+    { action: 'reject', result: 'approved_requires_complete' },
+  ],
+  [
+    'approved to done via internal caller is sent to task.complete',
+    { ...base, currentStatus: 'approved', requestedStatus: 'done', callerSource: 'internal' },
+    { action: 'reject', result: 'approved_requires_complete' },
+  ],
+  [
+    'approved to done via mcp is refused before the stop executor takes the live run',
+    {
+      ...base,
+      currentStatus: 'approved',
+      requestedStatus: 'done',
+      workflowRunId: 'run-1',
+      runActive: true,
+      callerSource: 'mcp',
+    },
+    { action: 'reject', result: 'approved_requires_complete' },
+  ],
+  [
     'directly requesting review is unsupported for rpc',
     { ...base, currentStatus: 'open', requestedStatus: 'review', callerSource: 'rpc' },
     { action: 'reject', result: 'unsupported_status' },
@@ -234,6 +261,11 @@ const rejectArchiveActiveRun: TaskUpdateRouting = {
   reason: 'archive_active_run',
   message: 'm',
 };
+const rejectApprovedRequiresComplete: TaskUpdateRouting = {
+  action: 'reject',
+  reason: 'approved_requires_complete',
+  message: 'm',
+};
 const parkStopped: TaskUpdateRouting = {
   action: 'park_stopped',
   auditParamsShape: 'transition',
@@ -281,6 +313,12 @@ describe('rejectUnsupportedRequest', () => {
       rejectArchiveActiveRun,
       'rpc',
       { reason: { action: 'reject', result: 'archive_active_run' } },
+    ],
+    [
+      'approved_requires_complete survives instead of flattening to unsupported_status',
+      rejectApprovedRequiresComplete,
+      'mcp',
+      { reason: { action: 'reject', result: 'approved_requires_complete' } },
     ],
     [
       'review_to_done via mcp is invalid_transition',
@@ -396,6 +434,17 @@ describe('routeRuntimeAction', () => {
       reason: { action: 'runtime', executor: 'stop_for_status', approvalSource: 'human' },
     });
   });
+  test('a runtime action out of approved into done stamps human approval', () => {
+    expect(
+      routeRuntimeAction(stopForStatus, {
+        ...base,
+        currentStatus: 'approved',
+        requestedStatus: 'done',
+      })
+    ).toEqual({
+      reason: { action: 'runtime', executor: 'stop_for_status', approvalSource: 'human' },
+    });
+  });
   test('a non-runtime action passes through', () => {
     expect(
       routeRuntimeAction(setStatus, { ...base, currentStatus: 'open', requestedStatus: 'done' })
@@ -406,6 +455,7 @@ describe('routeRuntimeAction', () => {
 describe('stampApproval', () => {
   test.each([
     ['review to done stamps human approval', 'review', 'done', 'human'],
+    ['approved to done stamps human approval', 'approved', 'done', 'human'],
     ['any other transition writes without approval', 'open', 'in_progress', undefined],
   ] as const)('%s', (_name, currentStatus, requestedStatus, approvalSource) => {
     const decision = stampApproval({
