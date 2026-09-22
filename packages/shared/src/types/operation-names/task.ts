@@ -10,7 +10,6 @@ export const TASK_OPERATION_NAMES = [
   'task.reject',
   'task.retry',
   'task.start',
-  'task.submitForReview',
   'task.transition',
   'task.update',
 ] as const;

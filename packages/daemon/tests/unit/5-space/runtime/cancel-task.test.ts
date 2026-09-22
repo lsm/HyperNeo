@@ -1,6 +1,6 @@
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
-import { createSubmitTaskForReviewOperation } from '../../../../src/lib/tasks/submit-for-review';
+import { admitSubmission } from '../../../../src/lib/tasks/submit-for-review';
 import type { CallContext, UpdateSpaceTaskParams } from '@hyperneo/shared';
 import type { Database as AppDatabase } from '../../../../src/storage/database';
 import { createSpaceOperationRegistryProvider } from '../../../../src/lib/tasks/operations';
@@ -140,11 +140,9 @@ test.each(['missing', 'different', 'wrong-context', 'ended'] as const)(
   }
 );
 test('a frozen review request cannot be replaced with cancellation', async () => {
-  const review = createSubmitTaskForReviewOperation(() => db, jobs, {
-    getTaskManager: () => new SpaceTaskManager(db, ''),
-    emitTaskUpdated: async () => {},
-  });
-  expect(await review.execute({ taskId }, { source: 'rpc' })).toMatchObject({ accepted: true });
+  const review = admitSubmission(db, { taskId }, { source: 'rpc' });
+  if ('reason' in review) throw new Error('review submission was not admitted');
+  expect(enqueueDirectOutcome(db, jobs, review.value)).toMatchObject({ accepted: true });
   expect(await operation.execute({ taskId }, { source: 'rpc' })).toMatchObject({ accepted: false });
   expect(readDirectFinalizationRequest(db, { attemptId, sessionId })?.status).toBe('review');
   expect(outcomeCount()).toBe(1);

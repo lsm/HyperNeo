@@ -86,17 +86,17 @@ const cases: Case[] = [
     { action: 'write', approvalSource: 'human', allowActiveRun: false },
   ],
   [
-    'approved to done via mcp caller is sent to task.complete',
+    'approved to done via mcp caller routes to the completion stage',
     { ...base, currentStatus: 'approved', requestedStatus: 'done', callerSource: 'mcp' },
-    { action: 'reject', result: 'approved_requires_complete' },
+    { action: 'runtime', executor: 'complete_task', approvalSource: undefined },
   ],
   [
-    'approved to done via internal caller is sent to task.complete',
+    'approved to done via internal caller routes to the completion stage',
     { ...base, currentStatus: 'approved', requestedStatus: 'done', callerSource: 'internal' },
-    { action: 'reject', result: 'approved_requires_complete' },
+    { action: 'runtime', executor: 'complete_task', approvalSource: undefined },
   ],
   [
-    'approved to done via mcp is refused before the stop executor takes the live run',
+    'approved to done via mcp reaches the completion stage before the stop executor takes the live run',
     {
       ...base,
       currentStatus: 'approved',
@@ -105,7 +105,7 @@ const cases: Case[] = [
       runActive: true,
       callerSource: 'mcp',
     },
-    { action: 'reject', result: 'approved_requires_complete' },
+    { action: 'runtime', executor: 'complete_task', approvalSource: undefined },
   ],
   [
     'requesting review routes to the checkpoint stage for rpc',
@@ -310,11 +310,6 @@ const rejectArchiveActiveRun: TaskUpdateRouting = {
   reason: 'archive_active_run',
   message: 'm',
 };
-const rejectApprovedRequiresComplete: TaskUpdateRouting = {
-  action: 'reject',
-  reason: 'approved_requires_complete',
-  message: 'm',
-};
 const parkStopped: TaskUpdateRouting = {
   action: 'park_stopped',
   auditParamsShape: 'transition',
@@ -363,12 +358,6 @@ describe('rejectUnsupportedRequest', () => {
       rejectArchiveActiveRun,
       'rpc',
       { reason: { action: 'reject', result: 'archive_active_run' } },
-    ],
-    [
-      'approved_requires_complete survives instead of flattening to unsupported_status',
-      rejectApprovedRequiresComplete,
-      'mcp',
-      { reason: { action: 'reject', result: 'approved_requires_complete' } },
     ],
     [
       'review_to_done via mcp is invalid_transition',
