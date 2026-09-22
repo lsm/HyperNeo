@@ -111,8 +111,8 @@ function sendMessageOperation(): OperationDefinition {
 
 function artifactSaveOperation(): OperationDefinition {
   return defineOperation({
-    name: 'artifact.save',
-    description: 'artifact.save',
+    name: 'workflow.run.artifact.save',
+    description: 'workflow.run.artifact.save',
     inputSchema: z.unknown(),
     resultSchema: z.unknown(),
     execute: async () => 'saved',
@@ -121,8 +121,8 @@ function artifactSaveOperation(): OperationDefinition {
 
 function artifactListOperation(): OperationDefinition {
   return defineOperation({
-    name: 'artifact.list',
-    description: 'artifact.list',
+    name: 'workflow.run.artifact.list',
+    description: 'workflow.run.artifact.list',
     inputSchema: z.unknown(),
     resultSchema: z.unknown(),
     execute: async () => [],
@@ -377,7 +377,7 @@ describe('TaskAgentManager — space-actions dispatcher attach', () => {
       'invoke({ name, input? }) on the operations server — one door for every operation available to the Coder role'
     );
     expect(contract).toContain('invoke(name="operations.list")');
-    expect(contract).toContain('invoke(name="artifact.save"');
+    expect(contract).toContain('invoke(name="workflow.run.artifact.save"');
     expect(contract).not.toContain('invoke(name="update_task")');
     expect(contract).not.toContain('invoke(name="create_standalone_task")');
     expect(contract).not.toContain('send_message({ target, message, data? })');
@@ -393,7 +393,7 @@ describe('TaskAgentManager — space-actions dispatcher attach', () => {
       const suggested = [...contract.matchAll(/invoke\(name="([a-z_.]+)"/g)].map(
         (match) => match[1]
       );
-      expect(suggested).toContain('artifact.save');
+      expect(suggested).toContain('workflow.run.artifact.save');
       expect(suggested).toContain('operations.list');
       for (const name of suggested) {
         expect(names.has(name)).toBe(true);
@@ -404,14 +404,14 @@ describe('TaskAgentManager — space-actions dispatcher attach', () => {
       'reviewer',
       catalogNames([artifactSaveOperation()])
     );
-    expect(reviewerContract).toContain('invoke(name="artifact.save"');
+    expect(reviewerContract).toContain('invoke(name="workflow.run.artifact.save"');
   });
 
   test('worker contract suggestions carry operations the action registry no longer defines', () => {
     const operations = [sendMessageOperation(), artifactSaveOperation()];
     const names = catalogNames(operations);
     expect(names.has('send_message')).toBe(true);
-    expect(names.has('artifact.save')).toBe(true);
+    expect(names.has('workflow.run.artifact.save')).toBe(true);
   });
 
   test('the contract still suggests send_message once it is only an operation', () => {

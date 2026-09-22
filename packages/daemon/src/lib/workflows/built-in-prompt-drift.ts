@@ -234,7 +234,7 @@ const SHAPE_PR_EVERY_CYCLE =
 const RETIRED_TYPE_RESULT_EVERY_CYCLE =
   'Use save_artifact every cycle. Nest pr_url inside artifact data for post-approval dispatch.\n\n';
 const CURRENT_REVIEW_ONLY_TERMINAL_ACTIONS =
-  'invoke(name="artifact.save", input={ shape: "link", kind: "pr", data: { url: "<url>" } }) ' +
+  'invoke(name="workflow.run.artifact.save", input={ shape: "link", kind: "pr", data: { url: "<url>" } }) ' +
   'to record the PR, then invoke(name="task.resolvePendingCompletion", input={ taskId: "<task id>", approved: true }) ' +
   'or invoke(name="task.submitForReview", input={ taskId: "<task id>" }) only on APPROVE';
 const RETIRED_TYPED_TOOL_REVIEW_ONLY_TERMINAL_ACTIONS =
@@ -264,6 +264,18 @@ const RETIRED_TYPE_RESULT_QA_ALL_GREEN =
   '`pr_url` inside `data` is what `dispatchPostApproval` reads when interpolating `{{pr_url}}` into the ' +
   'merge template — top-level keys outside `data` are silently stripped by the tool schema, so nest it ' +
   'correctly.\n';
+
+function retiredArtifactFamilyText(value: string): string {
+  return value.replaceAll('workflow.run.artifact.', 'artifact.');
+}
+
+const RETIRED_ARTIFACT_FAMILY_CALL_ACTION_PREFERENCE_GUIDANCE = retiredArtifactFamilyText(
+  CALL_ACTION_PREFERENCE_GUIDANCE
+);
+
+const RETIRED_ARTIFACT_FAMILY_REVIEW_ONLY_TERMINAL_ACTIONS = retiredArtifactFamilyText(
+  CURRENT_REVIEW_ONLY_TERMINAL_ACTIONS
+);
 
 const BUILT_IN_PROMPT_PATCH_VARIANTS = [
   ...RETIRED_INLINE_OPERATION_PROMPT_PAIRS.map((pair) => [pair]),
@@ -295,9 +307,23 @@ const BUILT_IN_PROMPT_PATCH_VARIANTS = [
   [[CURRENT_RESEARCH_PR_STEP_PROMPT, RETIRED_NOARG_RESEARCH_PR_STEP_PROMPT]],
   [[CODER_OWNED_PR_SUBSCRIBE_GUIDANCE, '']],
   [[CALL_ACTION_PREFERENCE_GUIDANCE, CALL_ACTION_PREFERENCE_GUIDANCE_PRE_OPERATION_NAMES]],
+  [
+    [
+      RETIRED_ARTIFACT_FAMILY_CALL_ACTION_PREFERENCE_GUIDANCE,
+      CALL_ACTION_PREFERENCE_GUIDANCE_PRE_OPERATION_NAMES,
+    ],
+  ],
   [[CURRENT_REVIEW_ONLY_TERMINAL_ACTIONS, RETIRED_TYPED_TOOL_REVIEW_ONLY_TERMINAL_ACTIONS]],
+  [
+    [
+      RETIRED_ARTIFACT_FAMILY_REVIEW_ONLY_TERMINAL_ACTIONS,
+      RETIRED_TYPED_TOOL_REVIEW_ONLY_TERMINAL_ACTIONS,
+    ],
+  ],
   [[CALL_ACTION_PREFERENCE_GUIDANCE, '']],
+  [[RETIRED_ARTIFACT_FAMILY_CALL_ACTION_PREFERENCE_GUIDANCE, '']],
   [[`\n${CALL_ACTION_PREFERENCE_GUIDANCE}`, '']],
+  [[`\n${RETIRED_ARTIFACT_FAMILY_CALL_ACTION_PREFERENCE_GUIDANCE}`, '']],
   [[REVIEWER_ZERO_FINDINGS_GATE, '']],
   [[REVIEWER_ZERO_FINDINGS_GATE, RETIRED_P3_REVIEWER_ZERO_FINDINGS_GATE]],
   [[CURRENT_FULLSTACK_REVIEW_HANDOFF_PROMPT, RETIRED_P3_FULLSTACK_REVIEW_HANDOFF_PROMPT]],
@@ -422,6 +448,11 @@ function buildRetiredBuiltInPromptValues(templateValue: string): string[] {
       }
     }
     candidates = nextCandidates;
+  }
+
+  for (const value of [templateValue, ...values]) {
+    const retired = retiredArtifactFamilyText(value);
+    if (retired !== value) values.add(retired);
   }
 
   return [...values];
