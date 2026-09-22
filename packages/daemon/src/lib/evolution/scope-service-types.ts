@@ -1,9 +1,4 @@
-import type {
-  CreateMetricSnapshotParams,
-  EvidenceRef,
-  EvolutionScope,
-  MetricSnapshot,
-} from '@hyperneo/shared';
+import type { CreateMetricSnapshotParams, EvidenceRef, EvolutionScope } from '@hyperneo/shared';
 import type { EvolutionRepository } from '../../storage/repositories/evolution-repository.ts';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import type { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository.ts';
@@ -77,10 +72,4 @@ export interface CaptureCompletedTaskEvidenceResult {
   scope: EvolutionScope | null;
   evidence: EvidenceRef[];
   traceDiagnostic?: TraceEvidenceDiagnostic;
-}
-
-export interface ScopeTimeline {
-  scope: EvolutionScope;
-  evidence: EvidenceRef[];
-  metricSnapshots: MetricSnapshot[];
 }
