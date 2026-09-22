@@ -23,6 +23,7 @@ import { stopTaskExecution, type TaskStoppingExecutor } from './stop-task-execut
 const log = new Logger('CancelTask');
 const inputSchema = z.object({ taskId: z.string().min(1) }).strict();
 type Input = z.infer<typeof inputSchema>;
+export type CancelInput = Input;
 export type CancelPolicyContext = SpaceMcpSessionPolicyContext &
   Pick<SpaceTaskDependencyDependencies, 'stopForStatus'> & {
     getTaskManager?: (spaceId: string) => Pick<SpaceTaskManager, 'setTaskStatus'>;
@@ -38,7 +39,7 @@ function resolveWorkflowCancellationRejection(error: unknown): string | undefine
   return WORKFLOW_CANCELLATION_REJECTIONS.find(([substring]) => message.includes(substring))?.[1];
 }
 
-async function admitManagedCancellation(
+export async function admitManagedCancellation(
   db: Database,
   input: Input,
   caller: OperationCaller,
@@ -112,7 +113,7 @@ async function admitManagedCancellation(
   }
 }
 
-function admitCancellation(
+export function admitCancellation(
   db: Database,
   input: Input,
   caller: OperationCaller,
