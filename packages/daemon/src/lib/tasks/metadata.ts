@@ -49,16 +49,50 @@ export function resolveSpaceTaskOwner(db: Database, taskId: string): TaskMetadat
       : { kind: 'space', spaceId: row.space_id };
 }
 
+export type TaskCallerAdmissionDependencies = Pick<SpaceTaskMetadataDependencies, 'getSession'> &
+  SpaceMcpSessionPolicyContext;
+
+function resolveAdmittedSession(
+  owner: TaskMetadataOwner,
+  caller: OperationCaller,
+  deps: TaskCallerAdmissionDependencies
+): Session | null {
+  return owner.kind === 'space' && caller.source === 'mcp' && caller.sessionId
+    ? deps.getSession(caller.sessionId)
+    : null;
+}
+
+export function requireActiveMetadataCallerSession(
+  owner: TaskMetadataOwner,
+  caller: OperationCaller,
+  session: Session | null
+): { value: true } | { reason: string } {
+  return owner.kind === 'standalone' || caller.source !== 'mcp' || session?.status === 'active'
+    ? { value: true }
+    : { reason: 'Task mutations require an active session in the owning Space' };
+}
+
 export function admitSpaceTaskCaller(
   owner: TaskMetadataOwner,
   caller: OperationCaller,
-  deps: Pick<SpaceTaskMetadataDependencies, 'getSession'> & SpaceMcpSessionPolicyContext
+  deps: TaskCallerAdmissionDependencies
 ): { value: true } | { reason: string } {
-  const session =
-    owner.kind === 'space' && caller.source === 'mcp' && caller.sessionId
-      ? deps.getSession(caller.sessionId)
-      : null;
+  const session = resolveAdmittedSession(owner, caller, deps);
   return requireMetadataCallerScope(owner, caller, resolveMetadataSessionSpace(session, deps));
+}
+
+export function admitSpaceTaskMutation(
+  owner: TaskMetadataOwner,
+  caller: OperationCaller,
+  deps: TaskCallerAdmissionDependencies
+): { value: true } | { reason: string } {
+  const session = resolveAdmittedSession(owner, caller, deps);
+  const scope = requireMetadataCallerScope(
+    owner,
+    caller,
+    resolveMetadataSessionSpace(session, deps)
+  );
+  return 'reason' in scope ? scope : requireActiveMetadataCallerSession(owner, caller, session);
 }
 
 export function createSpaceTaskMetadataEditor(dependencies: SpaceTaskMetadataDependencies) {
@@ -66,7 +100,7 @@ export function createSpaceTaskMetadataEditor(dependencies: SpaceTaskMetadataDep
   return createTaskMetadataEditor({
     resolveOwner: (taskId) => resolveSpaceTaskOwner(db, taskId),
     admit: (owner, caller) => {
-      const scope = admitSpaceTaskCaller(owner, caller, dependencies);
+      const scope = admitSpaceTaskMutation(owner, caller, dependencies);
       if ('reason' in scope) return { accepted: false, reason: 'task_update_denied' };
     },
     editStandalone: (input) => editStandaloneTask(db, input, notifyStandalone),

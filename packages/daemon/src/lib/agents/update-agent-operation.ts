@@ -29,7 +29,9 @@ const targetSchema = AgentSpaceScopeSchema.extend({
 const inputSchema = targetSchema
   .extend({
     name: z.string().optional().describe('New agent name'),
-    status: AgentStatusSchema.optional().describe('Lifecycle status'),
+    status: AgentStatusSchema.optional().describe(
+      'Lifecycle status. "paused" parks the agent so it stops being scheduled while keeping its configuration, subscriptions, and reminders; "archived" additionally drops it out of active lookups and frees its display name for reuse; "active" revives a paused or archived agent, subject to the name still being free'
+    ),
     description: z.string().nullable().optional().describe('New description'),
     model: z.string().nullable().optional().describe('Model override, or null to clear'),
     thinkingLevel: AgentThinkingLevelSchema.nullable()
@@ -191,7 +193,7 @@ const resultSchema = z.union([
 const REJECTION_DOC =
   'Rejects agent_not_found when the agent is absent or belongs to another Space, invalid_name when the new name is blank or already used by a non-archived peer, invalid_tools for a tool outside the known allowlist, invalid_model when the resulting model and provider pair is unrecognized, and runtime_refresh_failed when the stored change landed but its event subscriptions could not be reloaded. Admitted for MCP callers whose session is active in the owning Space; a caller with no Space, or one whose session is not active in it, is rejected with agent_denied.';
 
-const UPDATE_AGENT_DESCRIPTION = `Update a long-horizon agent: name, lifecycle status, description, operator prompt, model, provider, thinking level, setting sources, or tool allowlist. Fields left out are untouched; null clears a clearable override, and tools set to null clears the allowlist. Clearing the provider also clears it from the agent's live session. Reviving an archived agent re-checks its name against live peers. ${REJECTION_DOC}`;
+const UPDATE_AGENT_DESCRIPTION = `Update a long-horizon agent: name, lifecycle status, description, operator prompt, model, provider, thinking level, setting sources, or tool allowlist. Setting status is how an agent is paused, archived, and revived; see the status field for what each one leaves behind. Fields left out are untouched; null clears a clearable override, and tools set to null clears the allowlist. Clearing the provider also clears it from the agent's live session. Reviving an archived agent re-checks its name against live peers. ${REJECTION_DOC}`;
 
 const PAUSE_AGENT_DESCRIPTION = `Pause a long-horizon agent, the status-only form of agent.update: the agent stops being scheduled but keeps its configuration, subscriptions, and reminders, and agent.update with status active revives it. ${REJECTION_DOC}`;
 

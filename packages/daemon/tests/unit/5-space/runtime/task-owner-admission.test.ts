@@ -1,4 +1,5 @@
 import { beforeEach, afterEach, expect, test } from 'bun:test';
+import type { SessionStatus } from '@hyperneo/shared';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
@@ -6,7 +7,11 @@ import { SessionRepository } from '../../../../src/storage/repositories/session-
 import { createStandaloneTask } from '../../../../src/storage/tasks/create-task';
 import { createSpaceTables } from '../../helpers/space-test-db';
 import { createTestSession } from '../../../helpers/database';
-import { admitSpaceTaskCaller, resolveSpaceTaskOwner } from '../../../../src/lib/tasks/metadata';
+import {
+  admitSpaceTaskCaller,
+  admitSpaceTaskMutation,
+  resolveSpaceTaskOwner,
+} from '../../../../src/lib/tasks/metadata';
 
 let db: Database;
 let spaces: SpaceRepository;
@@ -24,12 +29,13 @@ beforeEach(() => {
 });
 afterEach(() => db.close());
 
-function member(id: string, owner?: string) {
+function member(id: string, owner?: string, status: SessionStatus = 'active') {
   sessions.createSession(
     {
       ...createTestSession(id),
       workspacePath: '/repo',
       type: 'worker',
+      status,
       context: owner ? { spaceId: owner } : {},
     },
     { enforceWorkspaceOwnership: false }
@@ -89,6 +95,51 @@ test('admitSpaceTaskCaller rejects an mcp caller with no session id', () => {
   const owner = { kind: 'space' as const, spaceId };
   const caller = { source: 'mcp' as const };
   expect(admitSpaceTaskCaller(owner, caller, deps())).toEqual({
+    reason: 'Task metadata updates require a session in the owning Space',
+  });
+});
+
+test('admitSpaceTaskCaller still reads a task for an ended session in the owning Space', () => {
+  const owner = { kind: 'space' as const, spaceId };
+  const caller = { source: 'mcp' as const, sessionId: member('stale', spaceId, 'ended') };
+  expect(admitSpaceTaskCaller(owner, caller, deps())).toEqual({ value: true });
+});
+
+test.each(['ended', 'archived', 'paused', 'pending_worktree_choice'] as const)(
+  'admitSpaceTaskMutation rejects a %s session in the owning Space',
+  (status) => {
+    const owner = { kind: 'space' as const, spaceId };
+    const caller = { source: 'mcp' as const, sessionId: member(status, spaceId, status) };
+    expect(admitSpaceTaskMutation(owner, caller, deps())).toEqual({
+      reason: 'Task mutations require an active session in the owning Space',
+    });
+  }
+);
+
+test('admitSpaceTaskMutation allows an active mcp session in the owning Space', () => {
+  const owner = { kind: 'space' as const, spaceId };
+  const caller = { source: 'mcp' as const, sessionId: member('member', spaceId) };
+  expect(admitSpaceTaskMutation(owner, caller, deps())).toEqual({ value: true });
+});
+
+test.each(['rpc', 'internal'] as const)(
+  'admitSpaceTaskMutation allows a trusted %s caller without a session',
+  (source) => {
+    const owner = { kind: 'space' as const, spaceId };
+    expect(admitSpaceTaskMutation(owner, { source }, deps())).toEqual({ value: true });
+  }
+);
+
+test('admitSpaceTaskMutation keeps standalone tasks open to an ended session', () => {
+  const owner = { kind: 'standalone' as const };
+  const caller = { source: 'mcp' as const, sessionId: member('stale-solo', undefined, 'ended') };
+  expect(admitSpaceTaskMutation(owner, caller, deps())).toEqual({ value: true });
+});
+
+test('admitSpaceTaskMutation reports scope before liveness for another Space', () => {
+  const owner = { kind: 'space' as const, spaceId };
+  const caller = { source: 'mcp' as const, sessionId: member('outsider-ended', 'other', 'ended') };
+  expect(admitSpaceTaskMutation(owner, caller, deps())).toEqual({
     reason: 'Task metadata updates require a session in the owning Space',
   });
 });

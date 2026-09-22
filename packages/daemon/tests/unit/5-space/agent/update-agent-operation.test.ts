@@ -148,6 +148,27 @@ describe('the agent.update operation', () => {
     expect(agentRepo.getById(agent.id)?.status).toBe('archived');
   });
 
+  test('status paused parks the agent without touching its configuration', async () => {
+    const outcome = await run('agent.update', { agentId: agent.id, status: 'paused' });
+    expect((outcome.value.agent as SpaceLongHorizonAgent).status).toBe('paused');
+    expect(agentRepo.getById(agent.id)?.instructions).toBe('Plan.');
+    expect(agentRepo.getById(agent.id)?.model).toBe('sonnet');
+  });
+
+  test('status active revives a paused agent', async () => {
+    await run('agent.update', { agentId: agent.id, status: 'paused' });
+    const outcome = await run('agent.update', { agentId: agent.id, status: 'active' });
+    expect((outcome.value.agent as SpaceLongHorizonAgent).status).toBe('active');
+    expect(agentRepo.getById(agent.id)?.status).toBe('active');
+  });
+
+  test('status archived frees the display name for a new agent', async () => {
+    const archived = await run('agent.update', { agentId: agent.id, status: 'archived' });
+    expect((archived.value.agent as SpaceLongHorizonAgent).status).toBe('archived');
+    const outcome = await run('agent.create', { name: 'Planner' });
+    expect((outcome.value.agent as SpaceLongHorizonAgent).displayName).toBe('Planner');
+  });
+
   test('an unknown tool is rejected and nothing is written', async () => {
     const outcome = await run('agent.update', { agentId: agent.id, tools: ['Telepathy'] });
     expect(outcome.value.reason).toBe('invalid_tools');

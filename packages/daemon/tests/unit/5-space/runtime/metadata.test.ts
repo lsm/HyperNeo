@@ -149,6 +149,19 @@ test.each([undefined, {}, { spaceId: 'other' }])(
   }
 );
 
+test.each(['ended', 'archived', 'paused'] as const)(
+  'refuses a %s session that still names the owning Space',
+  async (status) => {
+    const session = persistSession({ type: 'worker', status, context: { spaceId } });
+    await expect(
+      editor()({ taskId, title: 'Changed' }, { source: 'mcp', sessionId: session.id })
+    ).resolves.toEqual({ accepted: false, reason: 'task_update_denied' });
+    expect(tasks.getTask(taskId)?.title).toBe('Original');
+    expect(getTaskManager).not.toHaveBeenCalled();
+    expect(emit).not.toHaveBeenCalled();
+  }
+);
+
 test('standalone edits remain available without a persisted caller', async () => {
   const standalone = createStandaloneTask(db, { title: 'Standalone' }, undefined, () => {});
   expect(

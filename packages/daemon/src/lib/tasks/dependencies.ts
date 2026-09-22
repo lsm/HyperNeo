@@ -9,7 +9,7 @@ import { createTaskDependencyEditor, type TaskDependencyOwner } from './dependen
 import type { SpaceTaskManager } from './task-manager.ts';
 import type { SpaceMcpSessionPolicyContext } from '../space/runtime/space-mcp-session-policy.ts';
 import { requireDependencyExecutionBlock } from '../space/tools/update-task-fields.ts';
-import { requireMetadataCallerScope, resolveMetadataSessionSpace } from './metadata.ts';
+import { admitSpaceTaskMutation } from './metadata.ts';
 
 import {
   persistSpaceTaskFields,
@@ -102,7 +102,7 @@ export function createBoundSpaceTaskDependencyEditor(
 }
 
 export function createSpaceTaskDependencyEditor(dependencies: SpaceTaskDependencyDependencies) {
-  const { db, getSession, notifyStandalone } = dependencies;
+  const { db, notifyStandalone } = dependencies;
   return createTaskDependencyEditor({
     resolveOwner: (taskId): TaskDependencyOwner | null => {
       const row = db.prepare('SELECT space_id FROM space_tasks WHERE id = ?').get(taskId) as {
@@ -115,15 +115,7 @@ export function createSpaceTaskDependencyEditor(dependencies: SpaceTaskDependenc
           : { kind: 'space', spaceId: row.space_id };
     },
     admit: (owner, caller) => {
-      const session =
-        owner.kind === 'space' && caller.source === 'mcp' && caller.sessionId
-          ? getSession(caller.sessionId)
-          : null;
-      const scope = requireMetadataCallerScope(
-        owner,
-        caller,
-        resolveMetadataSessionSpace(session, dependencies)
-      );
+      const scope = admitSpaceTaskMutation(owner, caller, dependencies);
       if ('reason' in scope) return { accepted: false, reason: 'task_dependencies_denied' };
     },
     replaceStandalone: (input) => setStandaloneTaskDependencies(db, input, notifyStandalone),
