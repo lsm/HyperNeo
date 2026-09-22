@@ -4,7 +4,8 @@ import { createDeliverTaskWorkerMessagePipeline } from '../tasks/task-message-de
 import type { TaskAgentManager } from '../space/runtime/task-agent-manager.ts';
 import type { ToolResult } from '../space/tools/tool-result.ts';
 import { SpaceDeliveryFacade } from './delivery-facade.ts';
-import { formatAgentMessage, type AgentMessageLevel } from './envelope.ts';
+import { formatAgentMessage } from './envelope.ts';
+import type { OutboundSender } from './outbound-sender-identity.ts';
 import { resolveActorResolver } from './task-message-send-target.ts';
 import type {
   TaskMessageSendDependencies,
@@ -22,6 +23,7 @@ function parsePipelineResult(toolResult: ToolResult): TaskMessageSendResult {
 
 export async function deliverToWorker(
   input: TaskMessageSendInput,
+  sender: OutboundSender,
   task: SpaceTask,
   workflow: SpaceWorkflow | null,
   resolved: NodeExecution,
@@ -34,10 +36,10 @@ export async function deliverToWorker(
     nodeExecutionRepo: { getById: deps.getNodeExecutionById },
     ensureTargetSession: deps.ensureTargetSession,
     activateNode: deps.activateNode,
-    mySessionId: input.mySessionId,
-    outboundSenderLevel: input.outboundSenderLevel as AgentMessageLevel,
-    outboundSenderDisplayName: input.outboundSenderDisplayName,
-    outboundReplyTargetHandle: input.outboundReplyTargetHandle ?? null,
+    mySessionId: sender.sessionId,
+    outboundSenderLevel: sender.level,
+    outboundSenderDisplayName: sender.displayName,
+    outboundReplyTargetHandle: sender.replyTargetHandle,
   });
 
   const ctx = await pipeline({
@@ -62,23 +64,24 @@ export async function deliverToWorker(
 
 function buildAgentMessageRecord(
   input: TaskMessageSendInput,
+  sender: OutboundSender,
   task: SpaceTask,
   genericTarget: string
 ): MessageRecord {
   return {
     messageId: `msg_space_tool_${Date.now()}_${Math.random().toString(36).slice(2)}`,
     spaceId: input.spaceId,
-    senderActorId: input.mySessionId ? `session:${input.mySessionId}` : 'system:runtime',
+    senderActorId: `session:${sender.sessionId}`,
     targets: [genericTarget],
     body: formatAgentMessage({
-      fromLevel: input.outboundSenderLevel as AgentMessageLevel,
-      fromAgentName: input.outboundSenderDisplayName,
+      fromLevel: sender.level,
+      fromAgentName: sender.displayName,
       toLevel: 'long-horizon-agent',
       body: input.message,
       taskId: task.id,
       taskNumber: task.taskNumber,
-      replyToSessionId: input.mySessionId,
-      replyTargetHandle: input.outboundReplyTargetHandle ?? null,
+      replyToSessionId: sender.sessionId,
+      replyTargetHandle: sender.replyTargetHandle,
     }),
     kind: 'message',
     workflowRunId: task.workflowRunId!,
@@ -100,11 +103,12 @@ function summarizeAgentDelivery(deliveries: DeliveryRecord[]): {
 
 export async function deliverToAgent(
   input: TaskMessageSendInput,
+  sender: OutboundSender,
   task: SpaceTask,
   genericTarget: string,
   deps: TaskMessageSendDependencies
 ): Promise<TaskMessageSendResult> {
-  const messageRecord = buildAgentMessageRecord(input, task, genericTarget);
+  const messageRecord = buildAgentMessageRecord(input, sender, task, genericTarget);
   const messageResolver = resolveActorResolver(
     input.spaceId,
     { workflowRunId: task.workflowRunId!, nodeId: input.nodeId },

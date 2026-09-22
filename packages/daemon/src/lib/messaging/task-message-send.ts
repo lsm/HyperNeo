@@ -7,15 +7,12 @@ import { defineOperation } from '../operations/registry.ts';
 import type { EnsureSessionOutcome, SessionTarget } from '../session-resolution/target.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
 import type { TaskAgentManager } from '../space/runtime/task-agent-manager.ts';
+import { resolveOutboundSender } from './outbound-sender-identity.ts';
 import { deliverToAgent, deliverToWorker } from './task-message-send-delivery.ts';
 import { locateTask, resolveMessageTarget, resolveWorkflow } from './task-message-send-target.ts';
 
-const SenderLevelSchema = z.enum([
-  'long-horizon-agent',
-  'task-agent',
-  'node-agent',
-  'session-agent',
-]);
+export const SENDER_IDENTITY_UNAVAILABLE_ERROR =
+  'Sender identity is unavailable — only Space agent sessions can send task messages.';
 
 const TaskMessageByIdSchema = z
   .object({
@@ -24,10 +21,6 @@ const TaskMessageByIdSchema = z
     message: z.string().min(1).max(100_000),
     nodeId: z.string().min(1).optional(),
     target: z.string().min(1).optional(),
-    mySessionId: z.string().min(1).optional(),
-    outboundSenderLevel: SenderLevelSchema,
-    outboundSenderDisplayName: z.string().min(1),
-    outboundReplyTargetHandle: z.string().nullable().optional(),
   })
   .strict();
 
@@ -38,10 +31,6 @@ const TaskMessageByNumberSchema = z
     message: z.string().min(1).max(100_000),
     nodeId: z.string().min(1).optional(),
     target: z.string().min(1).optional(),
-    mySessionId: z.string().min(1).optional(),
-    outboundSenderLevel: SenderLevelSchema,
-    outboundSenderDisplayName: z.string().min(1),
-    outboundReplyTargetHandle: z.string().nullable().optional(),
   })
   .strict();
 
@@ -107,9 +96,18 @@ export interface TaskMessageSendDependencies {
 
 export async function sendTaskMessage(
   input: TaskMessageSendInput,
-  _caller: OperationCaller,
+  caller: OperationCaller,
   deps: TaskMessageSendDependencies
 ): Promise<TaskMessageSendResult> {
+  const sender = resolveOutboundSender(caller);
+  if ('reason' in sender) {
+    return {
+      success: false,
+      task_id: 'taskId' in input ? input.taskId : '',
+      error: SENDER_IDENTITY_UNAVAILABLE_ERROR,
+    };
+  }
+
   const located = locateTask(input, deps);
   if ('reason' in located) {
     return {
@@ -143,19 +141,24 @@ export async function sendTaskMessage(
     }
 
     if (targetOutcome.value.kind === 'agent') {
-      return await deliverToAgent(input, task, targetOutcome.value.genericTarget, deps);
-    }
-
-    if (deps.replyRoutingRegistry && input.mySessionId) {
-      deps.replyRoutingRegistry.set(
-        task.id,
-        input.mySessionId,
-        targetOutcome.value.resolved.agentName
+      return await deliverToAgent(
+        input,
+        sender.value,
+        task,
+        targetOutcome.value.genericTarget,
+        deps
       );
     }
 
+    deps.replyRoutingRegistry?.set(
+      task.id,
+      sender.value.sessionId,
+      targetOutcome.value.resolved.agentName
+    );
+
     return await deliverToWorker(
       input,
+      sender.value,
       task,
       workflow,
       targetOutcome.value.resolved,
@@ -172,7 +175,7 @@ export function createSendTaskMessageOperation(deps: TaskMessageSendDependencies
   return defineOperation({
     name: 'task.message.send',
     description:
-      'Send a message to a workflow node agent or long-horizon agent on a task, resolving the target by node_id, @handle, @role, @worker, or @session. The node is activated automatically if it has no live session.',
+      'Send a message to a workflow node agent or long-horizon agent on a task, resolving the target by node_id, @handle, @role, @worker, or @session. The node is activated automatically if it has no live session. Sender attribution and the reply route are taken from the calling session, so only Space agent sessions can send.',
     inputSchema: TaskMessageSendInputSchema,
     resultSchema: TaskMessageSendResultSchema,
     execute: (input, caller) => sendTaskMessage(input, caller, deps),
