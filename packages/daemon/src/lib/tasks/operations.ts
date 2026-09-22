@@ -1,6 +1,5 @@
 import { createStartTaskOperation, type DirectStartOperationDependencies } from './start-task.ts';
 import { createCancelTaskOperation, type CancelPolicyContext } from './cancel-task.ts';
-import { createSubmitTaskForReviewOperation } from './submit-for-review.ts';
 import { createSpaceCreateTaskOperation, type SpaceCreateTaskDependencies } from './create-task.ts';
 import {
   createCompleteTaskOperation,
@@ -173,11 +172,6 @@ export function createSpaceOperationRegistryProvider(
                 readCoreTask: (taskId) => readTaskCore(database.getDatabase(), taskId),
               })
             : undefined,
-        submitForReview: createSubmitTaskForReviewOperation(
-          () => database.getDatabase(),
-          jobQueue,
-          tasks
-        ),
         complete: createCompleteTaskOperation(() => database.getDatabase(), tasks),
         transition: transition
           ? createSpaceTransitionTaskOperation({

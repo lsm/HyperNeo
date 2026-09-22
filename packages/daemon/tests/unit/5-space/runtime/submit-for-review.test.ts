@@ -17,11 +17,18 @@ import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/sp
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
 import { createDirectTaskStarter } from '../../../../src/lib/tasks/start-direct-task';
-import { createSubmitTaskForReviewOperation } from '../../../../src/lib/tasks/submit-for-review';
-import { createOperationRegistry } from '../../../../src/lib/operations/registry';
+import {
+  admitManagedSubmission,
+  admitSubmission,
+} from '../../../../src/lib/tasks/submit-for-review';
+import type { OperationCaller } from '../../../../src/lib/operations/registry';
+import { SpaceTransitionTaskInputSchema } from '../../../../src/lib/tasks/transition-task-admission';
 import { readDirectFinalizationRequest } from '../../../../src/lib/tasks/finalize-direct-attempt';
 import { SessionManager } from '../../../../src/lib/session/session-manager';
-import { createDirectOutcomeHandler } from '../../../../src/lib/tasks/direct-outcome-jobs';
+import {
+  createDirectOutcomeHandler,
+  enqueueDirectOutcome,
+} from '../../../../src/lib/tasks/direct-outcome-jobs';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session';
 
 let db: Database;
@@ -32,7 +39,17 @@ let attempts: DirectTaskExecutionRepository;
 let taskId: string;
 let sessionId: string;
 let attemptId: string;
-let operation: ReturnType<typeof createSubmitTaskForReviewOperation>;
+type SubmissionDependencies = Parameters<typeof admitManagedSubmission>[3];
+function submitter(submissionDeps: SubmissionDependencies) {
+  return async (input: { taskId: string; reason?: string | null }, caller: OperationCaller) => {
+    const managed = await admitManagedSubmission(db, input, caller, submissionDeps);
+    if ('reason' in managed) return managed.reason;
+    const direct = admitSubmission(db, input, caller);
+    if ('reason' in direct) return direct.reason;
+    return enqueueDirectOutcome(db, jobs, direct.value);
+  };
+}
+let submit: ReturnType<typeof submitter>;
 let emitTaskUpdated: ReturnType<typeof mock>;
 beforeEach(async () => {
   db = new Database(':memory:');
@@ -70,7 +87,7 @@ beforeEach(async () => {
   sessionId = started.attempt.sessionId;
   attemptId = started.attempt.id;
   emitTaskUpdated = mock(async () => {});
-  operation = createSubmitTaskForReviewOperation(() => db, jobs, {
+  submit = submitter({
     getTaskManager: (id) => new SpaceTaskManager(db, id),
     emitTaskUpdated,
   });
@@ -87,10 +104,7 @@ function outcomeCount() {
 test.each(['rpc', 'internal', 'mcp'] as const)(
   '%s invocation returns durable acknowledgement before shutdown/status changes',
   async (source) => {
-    const registry = createOperationRegistry([operation]);
-    const result = await registry
-      .get('task.submitForReview')!
-      .execute({ taskId, reason: '  Ready  ' }, { source, sessionId });
+    const result = await submit({ taskId, reason: '  Ready  ' }, { source, sessionId });
     expect(result).toMatchObject({ accepted: true, jobId: expect.any(String) });
     expect(tasks.getTask(taskId)?.status).toBe('in_progress');
     expect(attempts.getActive(taskId)?.phase).toBe('running');
@@ -99,9 +113,7 @@ test.each(['rpc', 'internal', 'mcp'] as const)(
       status: 'review',
       reviewReason: '  Ready  ',
     });
-    expect(await operation.execute({ taskId, reason: '  Ready  ' }, { source, sessionId })).toEqual(
-      result
-    );
+    expect(await submit({ taskId, reason: '  Ready  ' }, { source, sessionId })).toEqual(result);
     expect(outcomeCount()).toBe(1);
   }
 );
@@ -118,7 +130,7 @@ test.each(['missing', 'different', 'wrong-context', 'wrong-type', 'ended'] as co
     if (kind === 'ended')
       db.prepare("UPDATE sessions SET status='ended' WHERE id=?").run(sessionId);
     expect(
-      await operation.execute(
+      await submit(
         { taskId },
         {
           source: 'mcp',
@@ -131,44 +143,47 @@ test.each(['missing', 'different', 'wrong-context', 'wrong-type', 'ended'] as co
   }
 );
 test('changed reason cannot overwrite frozen outcome or duplicate its job', async () => {
-  await operation.execute({ taskId, reason: 'first' }, { source: 'mcp', sessionId });
-  expect(
-    await operation.execute({ taskId, reason: 'second' }, { source: 'mcp', sessionId })
-  ).toMatchObject({ accepted: false });
+  await submit({ taskId, reason: 'first' }, { source: 'mcp', sessionId });
+  expect(await submit({ taskId, reason: 'second' }, { source: 'mcp', sessionId })).toMatchObject({
+    accepted: false,
+  });
   expect(readDirectFinalizationRequest(db, { attemptId, sessionId })?.reviewReason).toBe('first');
   expect(outcomeCount()).toBe(1);
 });
 test('a replacement task pointer cannot be submitted by the earlier worker', async () => {
   tasks.updateTask(taskId, { taskAgentSessionId: 'replacement' });
-  expect(await operation.execute({ taskId }, { source: 'mcp', sessionId })).toMatchObject({
+  expect(await submit({ taskId }, { source: 'mcp', sessionId })).toMatchObject({
     accepted: false,
   });
   expect(outcomeCount()).toBe(0);
 });
 test('missing task rejects and schema does not accept caller-owned execution identity', async () => {
-  expect(await operation.execute({ taskId: 'missing' }, { source: 'rpc' })).toMatchObject({
+  expect(await submit({ taskId: 'missing' }, { source: 'rpc' })).toMatchObject({
     accepted: false,
     reason: 'direct_review_submission_unavailable',
   });
-  expect(operation.inputSchema.safeParse({ taskId, attemptId, sessionId }).success).toBe(false);
+  expect(
+    SpaceTransitionTaskInputSchema.safeParse({ taskId, status: 'review', attemptId, sessionId })
+      .success
+  ).toBe(false);
   expect(outcomeCount()).toBe(0);
 });
 test('enqueue failure rolls back stop request and later submission can succeed', async () => {
   db.exec(
     "CREATE TRIGGER fail_outcome BEFORE INSERT ON job_queue WHEN NEW.queue='direct_task_outcome' BEGIN SELECT RAISE(ABORT,'queue failed'); END"
   );
-  await expect(operation.execute({ taskId }, { source: 'rpc' })).rejects.toThrow('queue failed');
+  await expect(submit({ taskId }, { source: 'rpc' })).rejects.toThrow('queue failed');
   expect(attempts.isStopRequested(attemptId, sessionId)).toBe(false);
   expect(outcomeCount()).toBe(0);
   db.exec('DROP TRIGGER fail_outcome');
-  expect(await operation.execute({ taskId }, { source: 'rpc' })).toMatchObject({ accepted: true });
+  expect(await submit({ taskId }, { source: 'rpc' })).toMatchObject({ accepted: true });
 });
 
 test('completed frozen submission acknowledges again without granting execution authority', async () => {
-  const accepted = (await operation.execute(
-    { taskId, reason: 'Ready' },
-    { source: 'mcp', sessionId }
-  )) as { accepted: true; jobId: string };
+  const accepted = (await submit({ taskId, reason: 'Ready' }, { source: 'mcp', sessionId })) as {
+    accepted: true;
+    jobId: string;
+  };
   let cached = {
     getSessionData: () => sessions.getSession(sessionId)!,
     getProcessingState: () => ({ status: 'idle' }),
@@ -196,12 +211,10 @@ test('completed frozen submission acknowledges again without granting execution 
   expect(attempts.getActive(taskId)).toBeNull();
   expect(tasks.getTask(taskId)?.status).toBe('review');
   db.prepare("UPDATE sessions SET status='ended' WHERE id=?").run(sessionId);
-  expect(
-    await operation.execute({ taskId, reason: 'Ready' }, { source: 'mcp', sessionId })
-  ).toEqual(accepted);
-  expect(
-    await operation.execute({ taskId, reason: 'Changed' }, { source: 'mcp', sessionId })
-  ).toMatchObject({ accepted: false });
+  expect(await submit({ taskId, reason: 'Ready' }, { source: 'mcp', sessionId })).toEqual(accepted);
+  expect(await submit({ taskId, reason: 'Changed' }, { source: 'mcp', sessionId })).toMatchObject({
+    accepted: false,
+  });
   expect(outcomeCount()).toBe(1);
 });
 
@@ -219,7 +232,7 @@ function markTaskWorkflowOwned() {
 
 test('workflow-owned task via RPC caller completes synchronously with the reason persisted', async () => {
   const runId = markTaskWorkflowOwned();
-  expect(await operation.execute({ taskId, reason: 'Ready' }, { source: 'rpc' })).toEqual({
+  expect(await submit({ taskId, reason: 'Ready' }, { source: 'rpc' })).toEqual({
     accepted: true,
     jobId: null,
   });
@@ -248,10 +261,7 @@ test('an MCP caller executing a node persists the derived node id, not client in
     agentSessionId: nodeSessionId,
   });
   expect(
-    await operation.execute(
-      { taskId, reason: 'Ready' },
-      { source: 'mcp', sessionId: nodeSessionId }
-    )
+    await submit({ taskId, reason: 'Ready' }, { source: 'mcp', sessionId: nodeSessionId })
   ).toEqual({ accepted: true, jobId: null });
   expect(tasks.getTask(taskId)).toMatchObject({
     status: 'review',
@@ -284,10 +294,7 @@ test('an MCP caller executing a node for a different run does not get its node i
     agentSessionId: nodeSessionId,
   });
   expect(
-    await operation.execute(
-      { taskId, reason: 'Ready' },
-      { source: 'mcp', sessionId: nodeSessionId }
-    )
+    await submit({ taskId, reason: 'Ready' }, { source: 'mcp', sessionId: nodeSessionId })
   ).toEqual({ accepted: true, jobId: null });
   expect(tasks.getTask(taskId)).toMatchObject({
     status: 'review',
@@ -297,7 +304,7 @@ test('an MCP caller executing a node for a different run does not get its node i
 
 test('an rpc caller never gets a submitting node id even without deriving one', async () => {
   markTaskWorkflowOwned();
-  expect(await operation.execute({ taskId, reason: 'Ready' }, { source: 'rpc' })).toEqual({
+  expect(await submit({ taskId, reason: 'Ready' }, { source: 'rpc' })).toEqual({
     accepted: true,
     jobId: null,
   });
@@ -319,9 +326,10 @@ test('workflow-owned task via MCP caller in the owning Space is admitted', async
     },
     { enforceWorkspaceOwnership: false }
   );
-  expect(
-    await operation.execute({ taskId }, { source: 'mcp', sessionId: 'caller-in-space' })
-  ).toEqual({ accepted: true, jobId: null });
+  expect(await submit({ taskId }, { source: 'mcp', sessionId: 'caller-in-space' })).toEqual({
+    accepted: true,
+    jobId: null,
+  });
 });
 
 test('workflow-owned task via MCP caller outside the Space is denied', async () => {
@@ -332,7 +340,7 @@ test('workflow-owned task via MCP caller outside the Space is denied', async () 
     { enforceWorkspaceOwnership: false }
   );
   expect(
-    await operation.execute({ taskId }, { source: 'mcp', sessionId: 'caller-outside-space' })
+    await submit({ taskId }, { source: 'mcp', sessionId: 'caller-outside-space' })
   ).toMatchObject({ accepted: false, reason: 'review_submission_denied' });
   expect(tasks.getTask(taskId)?.status).not.toBe('review');
   expect(emitTaskUpdated).not.toHaveBeenCalled();
@@ -341,7 +349,7 @@ test('workflow-owned task via MCP caller outside the Space is denied', async () 
 test('workflow-owned task with an invalid transition is rejected without throwing', async () => {
   markTaskWorkflowOwned();
   tasks.updateTask(taskId, { status: 'done' });
-  expect(await operation.execute({ taskId }, { source: 'rpc' })).toEqual({
+  expect(await submit({ taskId }, { source: 'rpc' })).toEqual({
     accepted: false,
     reason: 'review_submission_invalid_transition',
   });
@@ -355,7 +363,7 @@ function createPlainTask(status: 'open' | 'in_progress') {
 
 test('rpc caller submits a plain in_progress Space task through the manager path', async () => {
   const plainId = createPlainTask('in_progress');
-  expect(await operation.execute({ taskId: plainId, reason: 'Ready' }, { source: 'rpc' })).toEqual({
+  expect(await submit({ taskId: plainId, reason: 'Ready' }, { source: 'rpc' })).toEqual({
     accepted: true,
     jobId: null,
   });
@@ -365,7 +373,7 @@ test('rpc caller submits a plain in_progress Space task through the manager path
 
 test('rpc caller submits a plain open Space task through the manager path', async () => {
   const plainId = createPlainTask('open');
-  expect(await operation.execute({ taskId: plainId }, { source: 'rpc' })).toEqual({
+  expect(await submit({ taskId: plainId }, { source: 'rpc' })).toEqual({
     accepted: true,
     jobId: null,
   });
@@ -375,7 +383,7 @@ test('rpc caller submits a plain open Space task through the manager path', asyn
 test('archived plain Space task is rejected as unavailable', async () => {
   const plainId = createPlainTask('in_progress');
   tasks.updateTask(plainId, { archivedAt: Date.now() });
-  expect(await operation.execute({ taskId: plainId }, { source: 'rpc' })).toEqual({
+  expect(await submit({ taskId: plainId }, { source: 'rpc' })).toEqual({
     accepted: false,
     reason: 'review_submission_unavailable',
   });
@@ -395,10 +403,7 @@ test('MCP caller outside the Space is denied on a plain Space task without writi
     { enforceWorkspaceOwnership: false }
   );
   expect(
-    await operation.execute(
-      { taskId: plainId },
-      { source: 'mcp', sessionId: 'plain-caller-outside-space' }
-    )
+    await submit({ taskId: plainId }, { source: 'mcp', sessionId: 'plain-caller-outside-space' })
   ).toMatchObject({ accepted: false, reason: 'review_submission_denied' });
   expect(tasks.getTask(plainId)?.status).toBe('in_progress');
   expect(emitTaskUpdated).not.toHaveBeenCalled();
@@ -406,7 +411,7 @@ test('MCP caller outside the Space is denied on a plain Space task without writi
 
 test('a manually reopened task with a stopped direct attempt submits through the manager path', async () => {
   db.prepare("UPDATE direct_task_execution_attempts SET phase='stopped' WHERE id=?").run(attemptId);
-  expect(await operation.execute({ taskId, reason: 'Ready again' }, { source: 'rpc' })).toEqual({
+  expect(await submit({ taskId, reason: 'Ready again' }, { source: 'rpc' })).toEqual({
     accepted: true,
     jobId: null,
   });
@@ -417,9 +422,9 @@ test('a manually reopened task with a stopped direct attempt submits through the
 
 test('an immediate retry after that reopened submission stays on the manager path', async () => {
   db.prepare("UPDATE direct_task_execution_attempts SET phase='stopped' WHERE id=?").run(attemptId);
-  await operation.execute({ taskId, reason: 'Ready again' }, { source: 'rpc' });
+  await submit({ taskId, reason: 'Ready again' }, { source: 'rpc' });
   expect(tasks.getTask(taskId)?.status).toBe('review');
-  expect(await operation.execute({ taskId, reason: 'Ready again' }, { source: 'rpc' })).toEqual({
+  expect(await submit({ taskId, reason: 'Ready again' }, { source: 'rpc' })).toEqual({
     accepted: true,
     jobId: null,
   });
@@ -430,15 +435,16 @@ test('a plain task racing a concurrent direct claim is rejected instead of writi
   const plainId = createPlainTask('open');
   attempts.select(plainId);
   expect(attempts.claim(plainId, 'direct-reserved', 'reserved-session')).not.toBeNull();
-  expect(
-    await operation.execute({ taskId: plainId, reason: 'too soon' }, { source: 'rpc' })
-  ).toMatchObject({ accepted: false, reason: 'review_submission_unavailable' });
+  expect(await submit({ taskId: plainId, reason: 'too soon' }, { source: 'rpc' })).toMatchObject({
+    accepted: false,
+    reason: 'review_submission_unavailable',
+  });
   expect(tasks.getTask(plainId)?.status).toBe('open');
 });
 
 test('a non-domain manager throw propagates instead of becoming a domain rejection', async () => {
   markTaskWorkflowOwned();
-  const broken = createSubmitTaskForReviewOperation(() => db, jobs, {
+  const broken = submitter({
     getTaskManager: () =>
       ({
         submitTaskForReview: async () => {
@@ -447,38 +453,56 @@ test('a non-domain manager throw propagates instead of becoming a domain rejecti
       }) as Pick<SpaceTaskManager, 'updateTask' | 'submitTaskForReview'>,
     emitTaskUpdated,
   });
-  await expect(broken.execute({ taskId }, { source: 'rpc' })).rejects.toThrow('boom');
+  await expect(broken({ taskId }, { source: 'rpc' })).rejects.toThrow('boom');
   expect(emitTaskUpdated).not.toHaveBeenCalled();
 });
 
 test('configured shared catalog discovers lazily and both transports persist the same request', async () => {
   const getDatabase = mock(() => db);
   const database = { getDatabase, notifyChange: () => {} } as unknown as AppDatabase;
-  const provider = createSpaceOperationRegistryProvider(database, jobs, {
-    getSession: (id) => sessions.getSession(id),
-    getTaskManager: (id) => new SpaceTaskManager(db, id),
-    taskRepo: tasks,
-    notifyStandalone: () => {},
-    emitTaskUpdated: async () => {},
-    emitTaskCreated: async () => {},
-    getSpace: (id: string) => new SpaceRepository(db).getSpace(id),
-    validateDefaultTaskWorkspace: async () => null,
-    blockExecution: async () => {
-      throw new Error('unexpected workflow cleanup');
+  const provider = createSpaceOperationRegistryProvider(
+    database,
+    jobs,
+    {
+      getSession: (id) => sessions.getSession(id),
+      getTaskManager: (id) => new SpaceTaskManager(db, id),
+      taskRepo: tasks,
+      notifyStandalone: () => {},
+      emitTaskUpdated: async () => {},
+      emitTaskCreated: async () => {},
+      getSpace: (id: string) => new SpaceRepository(db).getSpace(id),
+      validateDefaultTaskWorkspace: async () => null,
+      blockExecution: async () => {
+        throw new Error('unexpected workflow cleanup');
+      },
+      requiresPostApprovalOwner: () => false,
+      completionGate: async () => ({ ok: true as const }),
     },
-    requiresPostApprovalOwner: () => false,
-    completionGate: async () => ({ ok: true as const }),
-  });
+    undefined,
+    undefined,
+    {
+      getSession: (id) => sessions.getSession(id),
+      getTaskManager: (id) => new SpaceTaskManager(db, id),
+      notifyStandalone: () => {},
+      emitTaskUpdated: async () => {},
+      isWorkflowRunActive: () => false,
+    }
+  );
   const rpc = createOperationRpcHandler(provider, () => ({}));
   const mcp = createOperationMcpHandler(provider, () => ({ sessionId }));
   const context = {} as CallContext;
-  const invocation = { name: 'task.submitForReview', input: { taskId, reason: 'Ready' } };
+  const invocation = {
+    name: 'task.transition',
+    input: { taskId, status: 'review', reviewReason: 'Ready' },
+  };
   expect(provider()).toBe(provider());
   expect(
     await rpc({ name: 'operations.describe', input: { name: invocation.name } }, context)
   ).toMatchObject({ found: true, name: invocation.name });
   expect(getDatabase).not.toHaveBeenCalled();
-  expect(createDatabaseOperationCatalog(database, jobs).get(invocation.name)).toBeUndefined();
+  expect(createDatabaseOperationCatalog(database, jobs).get(invocation.name)?.description).not.toBe(
+    provider().get(invocation.name)?.description
+  );
   const foreign = createOperationMcpHandler(provider, () => ({ sessionId: 'foreign' }));
   expect(JSON.parse((await foreign(invocation)).content[0].text)).toMatchObject({
     accepted: false,

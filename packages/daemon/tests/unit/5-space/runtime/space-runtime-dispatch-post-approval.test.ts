@@ -687,6 +687,14 @@ test.each(['rpc', 'mcp'] as const)(
           },
           emitTaskUpdated,
           audit: () => {},
+        },
+        undefined,
+        {
+          getSession: (id) => sessions.getSession(id),
+          getTaskManager,
+          notifyStandalone: () => {},
+          emitTaskUpdated,
+          isWorkflowRunActive: () => false,
         }
       );
       const worker = createOperationMcpHandler(provider, () => ({
@@ -695,8 +703,8 @@ test.each(['rpc', 'mcp'] as const)(
       const submitted = JSON.parse(
         (
           await worker({
-            name: 'task.submitForReview',
-            input: { taskId: task.id, reason: 'Ready' },
+            name: 'task.transition',
+            input: { taskId: task.id, status: 'review', reviewReason: 'Ready' },
           })
         ).content[0].text
       ) as { accepted: boolean; jobId: string };
