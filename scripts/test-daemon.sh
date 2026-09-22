@@ -543,6 +543,12 @@ release_results_lock() {
 take_results_lock() {
 	mkdir "$LOCK_DIR" 2>/dev/null || return 1
 	echo "$$" >"$LOCK_DIR/pid"
+	# Another run that judged this lock stale may have removed the directory and
+	# recreated it between our mkdir and now, so confirm the published pid is
+	# still ours before claiming it. The EXIT trap is installed only after that
+	# check: a losing run that armed it earlier would delete the winner's lock
+	# on its way out.
+	[ "$(cat "$LOCK_DIR/pid" 2>/dev/null)" = "$$" ] || return 1
 	trap release_results_lock EXIT
 	trap 'exit 130' INT
 	trap 'exit 143' TERM
@@ -580,7 +586,22 @@ acquire_results_lock() {
 		echo "  would overwrite each other. Wait for it, or run from a separate worktree." >&2
 		return 1
 	fi
+	# A lock with no pid at all is only abandoned if it has been sitting there;
+	# a live owner publishes its pid microseconds after the mkdir. Requiring age
+	# keeps a stalled owner from being reclaimed out from under itself.
+	if [ -z "$owner" ] && [ -z "$(find "$LOCK_DIR" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then
+		echo "A results lock at $LOCK_DIR was just created and has not published a pid." >&2
+		echo "  Treating it as live. Retry, or run from a separate worktree." >&2
+		return 1
+	fi
 	echo "Reclaiming a stale results lock at $LOCK_DIR (owner pid ${owner:-unknown} is gone)." >&2
+	# Re-read immediately before removing: another run may have reclaimed this
+	# same stale lock and taken ownership while we were deciding, and removing
+	# it then would delete a live lock rather than an abandoned one.
+	if [ "$(cat "$LOCK_DIR/pid" 2>/dev/null)" != "$owner" ]; then
+		echo "  The lock changed hands while we were deciding; leaving it alone." >&2
+		return 1
+	fi
 	rm -rf "$LOCK_DIR"
 	take_results_lock && return 0
 	echo "Could not acquire the results lock at $LOCK_DIR." >&2
