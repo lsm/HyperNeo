@@ -1196,7 +1196,7 @@ async function seedSpace(ws: WebSocket): Promise<{ spaceId: string; taskIds: str
     input: { taskId: t8, status: 'blocked', blockReason: 'human_input_requested' },
   });
   await rpcCall(ws, 'operation.invoke', {
-    name: 'task.dependencies.set',
+    name: 'task.update',
     input: { taskId: t9, dependsOn: [t6] },
   });
 

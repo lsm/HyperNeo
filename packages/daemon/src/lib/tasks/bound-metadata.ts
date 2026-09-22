@@ -21,6 +21,8 @@ export function createBoundSpaceTaskMetadataEditor(
   return createTaskMetadataEditor({
     resolveOwner: () => ({ kind: 'space', spaceId }),
     admit: () => {},
+    replaceDependencies: (_owner, { taskId, dependsOn }) =>
+      taskManager.updateTask(taskId, { dependsOn }, options),
     editStandalone: () => null,
     editSpace: (_spaceId, { taskId, ...metadata }) =>
       taskManager.updateTask(taskId, metadata, options),
