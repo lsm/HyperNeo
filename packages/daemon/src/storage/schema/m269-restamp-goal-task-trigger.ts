@@ -26,8 +26,11 @@ function sha256(value: string): string {
 export function runMigration269(db: BunDatabase): void {
   if (!tableExists(db, 'space_long_horizon_agents')) return;
   const rows = db
-    .prepare(`SELECT id, instructions FROM space_long_horizon_agents WHERE handle = ?`)
-    .all('task-manager') as InstructionRow[];
+    .prepare(
+      `SELECT id, instructions FROM space_long_horizon_agents
+       WHERE handle = ? OR template_key = ?`
+    )
+    .all('task-manager', 'task-manager.default') as InstructionRow[];
   const update = db.prepare(`UPDATE space_long_horizon_agents SET instructions = ? WHERE id = ?`);
   let updated = 0;
   for (const row of rows) {

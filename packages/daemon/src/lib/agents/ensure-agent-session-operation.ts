@@ -66,7 +66,7 @@ export function createEnsureAgentSessionOperation(deps: EnsureAgentSessionDepend
     .pipe(provisionAgentSession, ['outcome', 'deps'], 'outcome')
     .endAsync('outcome') as (input: Input, caller: OperationCaller) => Promise<Result>;
   return defineOperation({
-    name: 'agent.ensureSession',
+    name: 'agent.session.ensure',
     policy: AGENT_MUTATE_POLICY,
     description: ENSURE_AGENT_SESSION_DESCRIPTION,
     inputSchema,

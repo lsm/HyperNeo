@@ -14,7 +14,7 @@ function retired(): string {
 function seed(): Database {
   const db = new Database(':memory:');
   db.exec(
-    `CREATE TABLE space_long_horizon_agents (id TEXT PRIMARY KEY, handle TEXT, instructions TEXT)`
+    `CREATE TABLE space_long_horizon_agents (id TEXT PRIMARY KEY, handle TEXT, template_key TEXT, instructions TEXT)`
   );
   return db;
 }
@@ -33,14 +33,16 @@ describe('migration 269', () => {
     const db = seed();
     try {
       const edited = `${retired()}\n\nOperator note: keep an eye on stale reviews.`;
-      db.prepare(`INSERT INTO space_long_horizon_agents VALUES (?, ?, ?)`).run(
+      db.prepare(`INSERT INTO space_long_horizon_agents VALUES (?, ?, ?, ?)`).run(
         'a1',
         'task-manager',
+        'task-manager.default',
         retired()
       );
-      db.prepare(`INSERT INTO space_long_horizon_agents VALUES (?, ?, ?)`).run(
+      db.prepare(`INSERT INTO space_long_horizon_agents VALUES (?, ?, ?, ?)`).run(
         'a2',
         'task-manager',
+        'task-manager.default',
         edited
       );
 
@@ -51,6 +53,35 @@ describe('migration 269', () => {
         .all() as Array<{ id: string; instructions: string }>;
       expect(rows[0]!.instructions).toBe(LH_TASK_MANAGER_INSTRUCTIONS);
       expect(rows[1]!.instructions).toBe(edited);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('restamps a template copy whose handle was overridden or suffixed', () => {
+    const db = seed();
+    try {
+      db.prepare(`INSERT INTO space_long_horizon_agents VALUES (?, ?, ?, ?)`).run(
+        'renamed',
+        'triage-bot',
+        'task-manager.default',
+        retired()
+      );
+      db.prepare(`INSERT INTO space_long_horizon_agents VALUES (?, ?, ?, ?)`).run(
+        'second',
+        'task-manager-2',
+        'task-manager.default',
+        retired()
+      );
+
+      runMigration269(db);
+
+      const rows = db.prepare(`SELECT instructions FROM space_long_horizon_agents`).all() as Array<{
+        instructions: string;
+      }>;
+      for (const row of rows) {
+        expect(row.instructions).toBe(LH_TASK_MANAGER_INSTRUCTIONS);
+      }
     } finally {
       db.close();
     }

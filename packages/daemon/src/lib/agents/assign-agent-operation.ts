@@ -22,9 +22,26 @@ const scopeInputSchema = AgentSpaceScopeSchema.extend({
   scopeId: z.string().min(1).describe('Forge scope ID'),
 }).strict();
 
+const goalOwnerSetInputSchema = goalInputSchema
+  .extend({
+    assigned: z.boolean().describe('True to make the agent the owner, false to drop the ownership'),
+  })
+  .strict();
+
+const scopeOwnerSetInputSchema = scopeInputSchema
+  .extend({
+    assigned: z
+      .boolean()
+      .describe('True to route the scope to the agent, false to stop routing it'),
+  })
+  .strict();
+
 type GoalInput = z.infer<typeof goalInputSchema>;
 type ScopeInput = z.infer<typeof scopeInputSchema>;
+type GoalOwnerSetInput = z.infer<typeof goalOwnerSetInputSchema>;
+type ScopeOwnerSetInput = z.infer<typeof scopeOwnerSetInputSchema>;
 type Result = { accepted: true; assigned: true } | AgentRejection;
+type OwnerSetResult = { accepted: true; assigned: boolean } | AgentRejection;
 type Gate<T> = { value: T } | { reason: AgentRejection };
 
 export interface AgentAssignmentDependencies extends AgentOperationDeps {
@@ -145,6 +162,41 @@ function scopeWriter(operationName: 'agent.assignForgeScope' | 'agent.unassignFo
   };
 }
 
+function goalOwnerWriter(
+  spaceId: string,
+  input: GoalOwnerSetInput,
+  caller: OperationCaller,
+  deps: AgentAssignmentDependencies
+): OwnerSetResult {
+  if (input.assigned) deps.assignGoal(input.agentId, input.goalId);
+  else deps.unassignGoal(input.agentId, input.goalId);
+  deps.publishGoalOwnerChanged(spaceId, input.goalId, caller.sessionId ?? 'space-agent-tools');
+  deps.audit(
+    'goal.owner.set',
+    { agentId: input.agentId, goalId: input.goalId, assigned: input.assigned },
+    caller,
+    spaceId
+  );
+  return { accepted: true, assigned: input.assigned };
+}
+
+function scopeOwnerWriter(
+  spaceId: string,
+  input: ScopeOwnerSetInput,
+  caller: OperationCaller,
+  deps: AgentAssignmentDependencies
+): OwnerSetResult {
+  if (input.assigned) deps.assignForgeScope(input.agentId, input.scopeId);
+  else deps.unassignForgeScope(input.agentId, input.scopeId);
+  deps.audit(
+    'evolution.scope.owner.set',
+    { agentId: input.agentId, scopeId: input.scopeId, assigned: input.assigned },
+    caller,
+    spaceId
+  );
+  return { accepted: true, assigned: input.assigned };
+}
+
 function buildGoalPipeline(
   deps: AgentAssignmentDependencies,
   operationName: 'agent.assignGoal' | 'agent.unassignGoal'
@@ -228,5 +280,53 @@ export function createUnassignAgentFromForgeScopeOperation(deps: AgentAssignment
     inputSchema: scopeInputSchema,
     resultSchema,
     execute: async (input, caller) => unassign(input, caller),
+  });
+}
+
+const ownerSetResultSchema = z.union([
+  z.object({ accepted: z.literal(true), assigned: z.boolean() }).strict(),
+  AgentRejectionSchema,
+]);
+
+export function createSetGoalOwnerOperation(deps: AgentAssignmentDependencies) {
+  const access = 'mutate' as const;
+  const set = (superpipe({ deps, access })('goal-owner-set-pipeline') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(admitAgentCaller, ['input', 'caller', 'deps', 'access'], 'result:outcome')
+    .pipe(admitGoalOwnershipCaller, ['outcome', 'caller', 'deps'], 'result:outcome')
+    .pipe(gateGoalTargets, ['outcome', 'input', 'deps'], 'result:outcome')
+    .pipe(goalOwnerWriter, ['outcome', 'input', 'caller', 'deps'], 'outcome')
+    .endAsync('outcome') as (
+    input: GoalOwnerSetInput,
+    caller: OperationCaller
+  ) => Promise<OwnerSetResult>;
+  return defineOperation({
+    name: 'goal.owner.set',
+    description: `Set or drop the long-horizon agent that owns a goal in its Space, and announce the ownership change. assigned true makes the agent the owner, false drops the relationship; dropping one that is not there succeeds. The result reports the resulting state, so it echoes what you asked for. ${GOAL_OWNERSHIP_DOC}`,
+    policy: AGENT_MUTATE_POLICY,
+    inputSchema: goalOwnerSetInputSchema,
+    resultSchema: ownerSetResultSchema,
+    execute: async (input, caller) => set(input, caller),
+  });
+}
+
+export function createSetScopeOwnerOperation(deps: AgentAssignmentDependencies) {
+  const access = 'mutate' as const;
+  const set = (superpipe({ deps, access })('scope-owner-set-pipeline') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(admitAgentCaller, ['input', 'caller', 'deps', 'access'], 'result:outcome')
+    .pipe(gateScopeTargets, ['outcome', 'input', 'deps'], 'result:outcome')
+    .pipe(scopeOwnerWriter, ['outcome', 'input', 'caller', 'deps'], 'outcome')
+    .endAsync('outcome') as (
+    input: ScopeOwnerSetInput,
+    caller: OperationCaller
+  ) => Promise<OwnerSetResult>;
+  return defineOperation({
+    name: 'evolution.scope.owner.set',
+    description: `Set or drop the long-horizon agent a Forge scope's evidence loop routes to. assigned true routes the scope to the agent, false stops routing it; dropping one that is not there succeeds. The result reports the resulting state. Read the current routing with evolution.scope.get include ["agents"]. ${FORGE_SCOPE_DOC}`,
+    policy: AGENT_MUTATE_POLICY,
+    inputSchema: scopeOwnerSetInputSchema,
+    resultSchema: ownerSetResultSchema,
+    execute: async (input, caller) => set(input, caller),
   });
 }

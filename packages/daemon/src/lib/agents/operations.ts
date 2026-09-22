@@ -15,6 +15,8 @@ import { createListAgentsOperation } from './list-agents-operation.ts';
 import {
   createAssignAgentToForgeScopeOperation,
   createAssignAgentToGoalOperation,
+  createSetGoalOwnerOperation,
+  createSetScopeOwnerOperation,
   createUnassignAgentFromForgeScopeOperation,
   createUnassignAgentFromGoalOperation,
   type AgentAssignmentDependencies,
@@ -118,6 +120,8 @@ export function createAgentOperations(deps: AgentOperationDependencies): Operati
     createUnassignAgentFromGoalOperation(assignmentDeps(deps)),
     createAssignAgentToForgeScopeOperation(assignmentDeps(deps)),
     createUnassignAgentFromForgeScopeOperation(assignmentDeps(deps)),
+    createSetGoalOwnerOperation(assignmentDeps(deps)),
+    createSetScopeOwnerOperation(assignmentDeps(deps)),
     createCreateAgentReminderOperation(reminderDeps(deps)),
     createListAgentRemindersOperation(reminderDeps(deps)),
     createCancelAgentReminderOperation(reminderDeps(deps)),
