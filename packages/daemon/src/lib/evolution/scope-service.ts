@@ -21,7 +21,6 @@ import type {
   EvolutionScopeServiceDeps,
   ResolveScopeForGoalParams,
   ResolveScopeForTaskParams,
-  ScopeTimeline,
   SelectTaskLessonsParams,
 } from './scope-service-types.ts';
 import { mergeEvolutionPolicy } from './scope-policy.ts';
@@ -349,14 +348,5 @@ export class EvolutionScopeService {
   listMetricSnapshots(scopeId: string, pagination?: EvolutionListPagination): MetricSnapshot[] {
     requireScope(this.deps, scopeId);
     return this.deps.evolutionRepo.listMetricSnapshots(scopeId, pagination);
-  }
-
-  listTimeline(scopeId: string): ScopeTimeline {
-    const scope = requireScope(this.deps, scopeId);
-    return {
-      scope,
-      evidence: this.deps.evolutionRepo.listEvidence(scopeId),
-      metricSnapshots: this.deps.evolutionRepo.listMetricSnapshots(scopeId),
-    };
   }
 }

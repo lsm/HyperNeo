@@ -428,7 +428,7 @@ describe('EvolutionScopeService', () => {
     expect(evidence.metadata.workflowId).toBe(workflow.id);
   });
 
-  it('adds manual notes and metric snapshots to scope timeline', () => {
+  it('adds manual notes and metric snapshots as scope evidence', () => {
     const scope = service.createScope({
       spaceId,
       kind: 'custom',
@@ -447,12 +447,10 @@ describe('EvolutionScopeService', () => {
       capturedAt: 123,
     });
 
-    const timeline = service.listTimeline(scope.id);
+    const { evidence: listed } = service.listEvidence(scope.id);
 
-    expect(timeline.scope.id).toBe(scope.id);
-    expect(timeline.evidence.map((item) => item.id)).toContain(note.id);
-    expect(timeline.evidence.map((item) => item.id)).toContain(evidence.id);
-    expect(timeline.metricSnapshots[0]?.id).toBe(snapshot.id);
+    expect(listed.map((item) => item.id)).toContain(note.id);
+    expect(listed.map((item) => item.id)).toContain(evidence.id);
     expect(service.listMetricSnapshots(scope.id)[0]?.id).toBe(snapshot.id);
   });
 
