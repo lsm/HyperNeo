@@ -20,8 +20,8 @@ import { getNextRunAt, isValidCronExpression } from '../schedule/cron-utils.ts';
 import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit } from '../space/slug.ts';
 import {
   decideAutonomyAdmission,
-  getToolAutonomyRequirement,
   resolveEffectiveAutonomyLevel,
+  SESSION_WRITE_AUTONOMY_LEVEL,
 } from '../space/tools/tool-admission-gates.ts';
 import type { ToolResult } from '../space/tools/tool-result.ts';
 import {
@@ -116,12 +116,10 @@ export function buildAgentTemplateHandlerDeps(
     const spaceLevel = await deps.getSpaceAutonomyLevel(spaceId);
     const agentLevel = getCallingAgentAutonomyLevel();
     const { level } = resolveEffectiveAutonomyLevel({ spaceLevel, agentLevel });
-    const required = getToolAutonomyRequirement(toolName);
-    if (required === undefined) return;
     const admission = decideAutonomyAdmission({
       toolName,
       level,
-      required,
+      required: SESSION_WRITE_AUTONOMY_LEVEL,
       agentLevel,
       spaceLevel,
     });
