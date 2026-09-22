@@ -232,7 +232,7 @@ describe('evolution.scope.get', () => {
       const agent = ctx.longHorizonAgentRepo.create({
         spaceId: SPACE_ID,
         handle: 'steward',
-        systemPrompt: 'steward',
+        instructions: 'steward',
       });
       ctx.longHorizonAgentRepo.assignForgeScope(agent.id, scope.id);
 
