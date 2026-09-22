@@ -6,6 +6,15 @@
 - [Unified Message Fabric Architecture Design](./unified-message-fabric-design.md)
 - [Space Runtime Decomposition Design](./space-runtime-decomposition.md)
 
+> **The operation and event names below are illustrative, not a registry.** This document
+> describes a target shape that assumes `MessageFabric` and the decomposed Space runtime
+> are already in place, and it names the reads it would want rather than the ones that
+> exist. Several — `forge.scope.detail`, `forge.metricSnapshot.list`, `forge.reviewBundle.get`,
+> `forge.taskProposal.updated` — have never existed under any name, and the `forge.*` prefix
+> itself is now `evolution.*`. For the operations that actually exist, read
+> `packages/shared/src/types/operation-names.ts`, which `check:operation-names` keeps
+> exhaustive in both directions.
+
 ---
 
 ## 1. Overview
