@@ -49,7 +49,8 @@ export function resolveOwner(input: In, deps: Deps): Gate<string, Result> {
   const owner = resolveSpaceTaskOwner(deps.db, input.taskId);
   if (owner === null) return { reason: null };
   if (owner.kind !== 'standalone') return { value: owner.spaceId };
-  if (input.blockReason !== undefined) return { reason: 'unsupported_status' };
+  if (input.blockReason !== undefined || input.reviewReason !== undefined)
+    return { reason: 'unsupported_status' };
   const standalone = {
     taskId: input.taskId,
     status: input.status as StandaloneTaskStatus,

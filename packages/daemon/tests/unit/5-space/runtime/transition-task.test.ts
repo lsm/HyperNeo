@@ -172,13 +172,13 @@ test('the workflow stop path receives the block reason in one status write', asy
   expect(tasks.getTask(task.id)?.blockReason).toBe('human_input_requested');
 });
 
-test('a standalone task rejects a block reason instead of dropping it', async () => {
+test.each([
+  ['a block reason', { status: 'blocked', blockReason: 'human_input_requested' }],
+  ['a review reason', { status: 'done', reviewReason: 'Ready' }],
+] as const)('a standalone task rejects %s instead of dropping it', async (_name, fields) => {
   const task = createStandaloneTask(db, { title: 'Solo' }, undefined, () => {});
 
-  const result = await invoke(
-    { taskId: task.id, status: 'blocked', blockReason: 'human_input_requested' },
-    rpc
-  );
+  const result = await invoke({ taskId: task.id, ...fields }, rpc);
 
   expect(result).toEqual({ kind: 'completed', value: 'unsupported_status' });
   expect(readStandaloneStatus(task.id)).toBe('open');

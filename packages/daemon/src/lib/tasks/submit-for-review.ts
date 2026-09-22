@@ -23,7 +23,6 @@ const inputSchema = z
   .object({ taskId: z.string().min(1), reason: z.string().nullable().optional() })
   .strict();
 type Input = z.infer<typeof inputSchema>;
-export type ReviewSubmissionRequest = Input;
 export type ReviewSubmissionDependencies = Pick<SpaceTaskMetadataDependencies, 'emitTaskUpdated'> &
   SpaceMcpSessionPolicyContext & {
     getTaskManager: (spaceId: string) => Pick<SpaceTaskManager, 'submitTaskForReview'>;
