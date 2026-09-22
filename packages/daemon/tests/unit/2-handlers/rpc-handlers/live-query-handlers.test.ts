@@ -7571,14 +7571,27 @@ describe('NAMED_QUERY_REGISTRY', () => {
       beforeEach(() => {
         scopedDb = new BunDatabase(':memory:');
         scopedDb.exec(`
-					CREATE TABLE spaces (
+					CREATE TABLE sessions (
 						id TEXT PRIMARY KEY,
-						session_ids TEXT NOT NULL DEFAULT '[]'
+						title TEXT,
+						status TEXT,
+						processing_state TEXT,
+						last_active_at TEXT,
+						type TEXT,
+						session_context TEXT,
+						space_id TEXT GENERATED ALWAYS AS (
+							CASE WHEN json_valid(session_context)
+								THEN json_extract(session_context, '$.spaceId') END
+						) VIRTUAL,
+						visible_message_count INTEGER NOT NULL DEFAULT 0
 					)
 				`);
-        scopedDb.exec(
-          `INSERT INTO spaces (id, session_ids) VALUES ('${SPACE_ID}', '["existing-1","existing-2"]')`
-        );
+        for (const id of ['existing-1', 'existing-2']) {
+          scopedDb.exec(
+            `INSERT INTO sessions (id, type, status, session_context) ` +
+              `VALUES ('${id}', 'worker', 'active', '{"spaceId":"${SPACE_ID}"}')`
+          );
+        }
       });
 
       afterEach(() => {
@@ -7601,64 +7614,64 @@ describe('NAMED_QUERY_REGISTRY', () => {
         ).toBe(true);
       });
 
-      test('accepts writes for sessions currently in the live membership set', () => {
+      test('accepts writes for sessions whose context names the watched space', () => {
         const filter = buildFilter();
         expect(filter({ sessionId: 'existing-1' })).toBe(true);
         expect(filter({ sessionId: 'existing-2' })).toBe(true);
       });
 
-      test('reads membership live so members added after subscription are in scope', () => {
+      test('reads membership live so a session created after subscription is in scope', () => {
         const filter = buildFilter();
-        expect(filter({ sessionId: 'late-joiner' })).toBe(false);
-        scopedDb.exec(
-          `UPDATE spaces SET session_ids = '["existing-1","existing-2","late-joiner"]' WHERE id = '${SPACE_ID}'`
-        );
         expect(filter({ sessionId: 'late-joiner' })).toBe(true);
+        scopedDb.exec(
+          `INSERT INTO sessions (id, type, status, session_context) ` +
+            `VALUES ('late-joiner', 'worker', 'active', '{"spaceId":"another-space"}')`
+        );
+        expect(filter({ sessionId: 'late-joiner' })).toBe(false);
       });
 
-      test('drops sessions removed from membership without requiring resubscribe', () => {
+      test('drops a session moved to another space without requiring resubscribe', () => {
         const filter = buildFilter();
         expect(filter({ sessionId: 'existing-2' })).toBe(true);
-        scopedDb.exec(`UPDATE spaces SET session_ids = '["existing-1"]' WHERE id = '${SPACE_ID}'`);
+        scopedDb.exec(
+          `UPDATE sessions SET session_context = '{"spaceId":"elsewhere"}' WHERE id = 'existing-2'`
+        );
         expect(filter({ sessionId: 'existing-2' })).toBe(false);
       });
 
-      test('falls through when scope has no sessionId (e.g. a spaces-table write)', () => {
+      test('a session with no space context is out of scope', () => {
+        scopedDb.exec(
+          `INSERT INTO sessions (id, type, status, session_context) ` +
+            `VALUES ('contextless', 'general', 'active', NULL)`
+        );
+        expect(buildFilter()({ sessionId: 'contextless' })).toBe(false);
+      });
+
+      test('falls through when scope has no sessionId (e.g. a sessions-table-wide write)', () => {
         const filter = buildFilter();
         expect(filter({})).toBe(true);
       });
 
       test('rejects sessions belonging to a different space', () => {
-        const filter = buildFilter();
-        expect(
-          filter({
-            sessionId: 'other-session',
-            spaceId: 'some-other-space',
-          })
-        ).toBe(false);
+        scopedDb.exec(
+          `INSERT INTO sessions (id, type, status, session_context) ` +
+            `VALUES ('other-session', 'worker', 'active', '{"spaceId":"some-other-space"}')`
+        );
+        expect(buildFilter()({ sessionId: 'other-session', spaceId: 'some-other-space' })).toBe(
+          false
+        );
       });
 
       test('row mapping carries processingState and messageCount like global sessions', () => {
         scopedDb.exec(`
-          CREATE TABLE sessions (
-            id TEXT PRIMARY KEY,
-            title TEXT,
-            status TEXT,
-            processing_state TEXT,
-            last_active_at TEXT,
-            type TEXT,
-            visible_message_count INTEGER NOT NULL DEFAULT 0
-          )
+          UPDATE sessions SET title = 'My session',
+            processing_state = '{"status":"processing","phase":"thinking"}',
+            last_active_at = '2026-07-31 12:00:00', visible_message_count = 2
+          WHERE id = 'existing-1'
         `);
         scopedDb.exec(`
-          INSERT INTO sessions (id, title, status, processing_state, last_active_at, type, visible_message_count)
-          VALUES ('existing-1', 'My session', 'active',
-                  '{"status":"processing","phase":"thinking"}',
-                  '2026-07-31 12:00:00', 'worker', 2)
-        `);
-        scopedDb.exec(`
-          INSERT INTO sessions (id, title, status, processing_state, last_active_at, type, visible_message_count)
-          VALUES ('existing-2', 'Quiet session', 'active', NULL, '2026-07-31 12:00:00', 'worker', 0)
+          UPDATE sessions SET title = 'Quiet session', last_active_at = '2026-07-31 12:00:00'
+          WHERE id = 'existing-2'
         `);
 
         const entry = NAMED_QUERY_REGISTRY.get('spaceSessions.bySpace')!;
@@ -7675,17 +7688,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
 
       test('messageCount is decoupled from sdk_messages — no per-session COUNT(*)', () => {
         scopedDb.exec(`
-          CREATE TABLE sessions (
-            id TEXT PRIMARY KEY,
-            title TEXT,
-            status TEXT,
-            processing_state TEXT,
-            last_active_at TEXT,
-            type TEXT,
-            visible_message_count INTEGER NOT NULL DEFAULT 0
-          )
-        `);
-        scopedDb.exec(`
           CREATE TABLE sdk_messages (
             id TEXT,
             session_id TEXT,
@@ -7698,9 +7700,10 @@ describe('NAMED_QUERY_REGISTRY', () => {
           )
         `);
         scopedDb.exec(`
-          INSERT INTO sessions (id, title, status, processing_state, last_active_at, type, visible_message_count)
-          VALUES ('existing-1', 'My session', 'active', NULL, '2026-07-31 12:00:00', 'worker', 5)
+          UPDATE sessions SET title = 'My session', last_active_at = '2026-07-31 12:00:00',
+            visible_message_count = 5 WHERE id = 'existing-1'
         `);
+        scopedDb.exec(`DELETE FROM sessions WHERE id = 'existing-2'`);
 
         const entry = NAMED_QUERY_REGISTRY.get('spaceSessions.bySpace')!;
         const readCount = (): number => {

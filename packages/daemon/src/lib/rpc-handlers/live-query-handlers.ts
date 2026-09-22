@@ -3607,9 +3607,7 @@ SELECT
   s.visible_message_count as messageCount,
   (unixepoch(s.last_active_at) - 0) * 1000 as lastActiveAt
 FROM sessions s
-INNER JOIN spaces sp ON sp.id = ?
-CROSS JOIN json_each(sp.session_ids) j
-WHERE j.value = s.id AND s.status != 'archived' AND s.type != 'space_chat'
+WHERE s.space_id = ? AND s.status != 'archived' AND s.type != 'space_chat'
 ORDER BY s.last_active_at DESC, s.id DESC
 `.trim();
 
@@ -4073,31 +4071,19 @@ function buildSpaceSessionsScopeFilter(
   db: BunDatabase
 ): (scope: TableChangeScope) => boolean {
   const spaceId = params[0] as string;
-  const memberStmt = db.prepare('SELECT session_ids FROM spaces WHERE id = ?');
-  const readMembership = (): Set<string> | null => {
-    try {
-      const row = memberStmt.get(spaceId) as { session_ids: string | null } | undefined;
-      if (!row?.session_ids) return new Set();
-      const parsed = JSON.parse(row.session_ids) as unknown;
-      if (!Array.isArray(parsed)) return new Set();
-      const out = new Set<string>();
-      for (const value of parsed) {
-        if (typeof value === 'string') out.add(value);
-      }
-      return out;
-    } catch {
-      return null;
-    }
-  };
+  const sessionSpaceStmt = db.prepare('SELECT space_id FROM sessions WHERE id = ?');
 
   return (scope) => {
     if (scope.spaceId === spaceId) return true;
 
     if (!scope.sessionId) return true;
 
-    const members = readMembership();
-    if (members === null) return true;
-    return members.has(scope.sessionId);
+    try {
+      const row = sessionSpaceStmt.get(scope.sessionId) as { space_id: string | null } | undefined;
+      return row === undefined || row.space_id === spaceId;
+    } catch {
+      return true;
+    }
   };
 }
 
