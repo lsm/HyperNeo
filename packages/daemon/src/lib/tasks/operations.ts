@@ -81,6 +81,7 @@ interface TaskMessageSendCapability {
   longTermAgentDelivery?: TaskMessageSendDependencies['longTermAgentDelivery'];
   replyRoutingRegistry?: TaskMessageSendDependencies['replyRoutingRegistry'];
   audit?: TaskMessageSendDependencies['audit'];
+  sendNodeMessage?: OperationDefinition;
 }
 
 export function createSpaceOperationRegistryProvider(
@@ -261,6 +262,7 @@ export function createSpaceOperationRegistryProvider(
                 audit: tasks.audit,
               })
             : undefined,
+        sendNodeMessage: tasks.sendNodeMessage,
       },
       extra
     ));

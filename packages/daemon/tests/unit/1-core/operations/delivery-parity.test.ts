@@ -86,7 +86,7 @@ describe('shared operation delivery parity', () => {
         getSession,
         isSessionArchived: () => false,
       });
-      const input = { sessionId: target.id, message };
+      const input = { to: { kind: 'session', sessionId: target.id }, message };
       let receipt: Receipt;
       if (source === 'rpc') {
         receipt = await client.request<Receipt>('operation.invoke', {

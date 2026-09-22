@@ -6,7 +6,7 @@ export function createRemoteSendForwarder(registry: RemoteDaemonRegistry): Remot
   return async (target, input) => {
     try {
       const reply = await registry.invoke(target.daemonId, 'message.send', {
-        sessionId: target.sessionId,
+        to: { kind: 'session', sessionId: target.sessionId },
         message: input.message,
         ...(input.deliveryMode === undefined ? {} : { deliveryMode: input.deliveryMode }),
       });

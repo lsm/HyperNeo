@@ -290,7 +290,7 @@ describe('session operation MCP attachment', () => {
         {
           name: 'message.send',
           input: {
-            sessionId: 'destination',
+            to: { kind: 'session', sessionId: 'destination' },
             message: { type: 'user', message: { content: 'hello' }, parent_tool_use_id: null },
           },
         },
@@ -340,7 +340,7 @@ describe('session operation MCP attachment', () => {
       {
         name: 'message.send',
         input: {
-          sessionId: 'destination',
+          to: { kind: 'session', sessionId: 'destination' },
           message: {
             type: 'user',
             message: { content: 'hello' },

@@ -6,6 +6,7 @@ import { recoverTaskExecution } from '../tasks/recover-task-execution.ts';
 import { McpAuditLogRepository } from '../../storage/repositories/mcp-audit-log-repository.ts';
 import { createSpaceOperationRegistryProvider } from '../tasks/operations.ts';
 import { collectFamilyOperations, type FamilyOperationContext } from './family-operations/index.ts';
+import { createNodeSendMessageArm } from './family-operations/messaging.ts';
 import { createCompletionGateBindings } from '../tasks/complete-task-gates.ts';
 import { isCoderOwnedMergeWorkflow } from '../workflows/post-approval-router.ts';
 import { createGithubConnector } from '../github/connectors/github-connector.ts';
@@ -1301,6 +1302,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     replyRoutingRegistry,
   };
   const familyOperations = collectFamilyOperations(familyContext);
+  const nodeSendMessageArm = createNodeSendMessageArm(familyContext);
 
   const spaceOperationRegistryProvider = createSpaceOperationRegistryProvider(
     deps.db,
@@ -1336,6 +1338,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
         spaceRuntimeService.createMessageResolver(spaceId, context),
       longTermAgentDelivery: spaceRuntimeService.longTermAgentDeliveryCallbacks(),
       replyRoutingRegistry,
+      sendNodeMessage: nodeSendMessageArm,
       emitTaskUpdated: async (spaceId, task) => {
         await deps.internalEventBus.publish('space.task.updated', {
           sessionId: 'global',

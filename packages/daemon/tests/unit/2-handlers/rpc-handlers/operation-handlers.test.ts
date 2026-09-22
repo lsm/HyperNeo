@@ -60,7 +60,10 @@ describe('operation.invoke RPC registration', () => {
   test('responds with persisted acceptance over the actual hub protocol', async () => {
     const receipt = await client.request<{ kind: string; mailboxId: string; messageId: string }>(
       'operation.invoke',
-      { name: 'message.send', input: { sessionId: 'destination', message } }
+      {
+        name: 'message.send',
+        input: { to: { kind: 'session', sessionId: 'destination' }, message },
+      }
     );
     expect(receipt.kind).toBe('accepted');
     expect(mailbox.rows()).toHaveLength(1);
@@ -93,15 +96,16 @@ describe('operation.invoke RPC registration', () => {
     ]);
     const described = await client.request<{
       found: boolean;
-      inputSchema: { properties: Record<string, unknown> };
+      inputSchema: { anyOf: Array<{ properties: Record<string, unknown> }> };
       resultSchema: Record<string, unknown>;
     }>('operation.invoke', {
       name: 'operations.describe',
       input: { name: 'message.send' },
     });
     expect(described.found).toBe(true);
-    expect(described.inputSchema.properties).toHaveProperty('sessionId');
-    expect(described.inputSchema.properties).toHaveProperty('message');
+    expect(described.inputSchema.anyOf[0].properties).toHaveProperty('to');
+    expect(described.inputSchema.anyOf[0].properties).toHaveProperty('message');
+    expect(JSON.stringify(described.inputSchema)).toContain('"spaceSession"');
     expect(JSON.stringify(described.resultSchema)).toContain('"accepted"');
     for (const name of ['operations.list', 'operations.describe']) {
       expect(

@@ -30,7 +30,7 @@ describe('shared message.send operation', () => {
         registry,
         'message.send',
         {
-          sessionId: 'destination',
+          to: { kind: 'session', sessionId: 'destination' },
           message,
         },
         { source, sessionId: 'sender' }
@@ -78,7 +78,7 @@ describe('shared message.send operation', () => {
       registry,
       'message.send',
       {
-        sessionId: 'destination',
+        to: { kind: 'session', sessionId: 'destination' },
         message: prepared,
         deliveryMode: 'defer',
       },
@@ -91,11 +91,21 @@ describe('shared message.send operation', () => {
   });
 
   test.each([
-    { sessionId: '', message },
-    { sessionId: '\ud800', message },
-    { sessionId: 'destination', message: { ...message, message: { content: '' } } },
-    { sessionId: 'destination', message: { ...message, type: 'assistant' } },
-    { sessionId: 'destination', message, deliveryMode: 'unknown' },
+    { to: { kind: 'session', sessionId: '' }, message },
+    { to: { kind: 'session', sessionId: '\ud800' }, message },
+    {
+      to: { kind: 'session', sessionId: 'destination' },
+      message: { ...message, message: { content: '' } },
+    },
+    {
+      to: { kind: 'session', sessionId: 'destination' },
+      message: { ...message, type: 'assistant' },
+    },
+    { to: { kind: 'session', sessionId: 'destination' }, message, deliveryMode: 'unknown' },
+    { sessionId: 'destination', message },
+    { to: { kind: 'peer', target: 'reviewer' }, message: '' },
+    { to: { kind: 'task', spaceId: 'space-1', taskId: 't-1' }, message: 'nag' },
+    { to: { kind: 'spaceSession', sessionId: 'destination' }, message: 'hello' },
   ])('rejects invalid input without persistence: %j', async (input) => {
     const registry = createOperationRegistry([
       createSendMessageOperation(mailbox.jobQueue, () => true),
@@ -119,20 +129,24 @@ describe('shared message.send operation', () => {
         registry,
         'message.send',
         {
-          sessionId: 'destination',
+          to: { kind: 'session', sessionId: 'destination' },
           message,
         },
         { source: 'mcp' }
       )
     ).toMatchObject({ kind: 'completed', value: { kind: 'rejected' } });
   });
-  test('describes the message envelope and content blocks structurally', () => {
+  test('describes every recipient arm and the session content blocks structurally', () => {
     const schema = z.toJSONSchema(SendMessageInputSchema, { io: 'input' });
     const serialized = JSON.stringify(schema);
     expect(serialized).toContain('parent_tool_use_id');
     expect(serialized).toContain('media_type');
     expect(serialized).toContain('referenceMetadata');
-    expect(schema.properties?.message).toMatchObject({ type: 'object' });
+    expect(serialized).toContain('outboundSenderDisplayName');
+    expect(schema.anyOf).toHaveLength(4);
+    for (const kind of ['session', 'spaceSession', 'task', 'peer']) {
+      expect(serialized).toContain(`"const":"${kind}"`);
+    }
   });
 
   test('origin and receipt stages preserve provenance and rejection details', () => {
@@ -158,7 +172,7 @@ describe('shared message.send operation', () => {
     const outcome = await invokeOperation(
       registry,
       'message.send',
-      { sessionId: 'session-ghost', message },
+      { to: { kind: 'session', sessionId: 'session-ghost' }, message },
       { source: 'mcp', sessionId: 'agent-session' }
     );
     expect(outcome).toEqual({
@@ -175,7 +189,7 @@ describe('shared message.send operation', () => {
     const outcome = await invokeOperation(
       registry,
       'message.send',
-      { sessionId: 'space-b-session', message },
+      { to: { kind: 'session', sessionId: 'space-b-session' }, message },
       { source: 'mcp', sessionId: 'space-a-session', spaceId: 'space-a', role: 'ad_hoc_member' }
     );
     expect(outcome.kind === 'completed' && outcome.value).toMatchObject({ kind: 'accepted' });

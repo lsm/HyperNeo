@@ -140,7 +140,7 @@ describe('forwarding message.send to an attached daemon', () => {
     return invokeOperation(
       localRegistry(),
       'message.send',
-      { sessionId, message },
+      { to: { kind: 'session', sessionId }, message },
       { source: 'mcp', sessionId: 'agent-on-a' }
     );
   }
@@ -200,7 +200,7 @@ describe('forwarding message.send to an attached daemon', () => {
       localRegistry(),
       'message.send',
       {
-        sessionId: 'daemon:b::session:session-on-b',
+        to: { kind: 'session', sessionId: 'daemon:b::session:session-on-b' },
         message: { ...message, inputKind: 'human' },
       },
       { source: 'mcp', sessionId: 'agent-on-a' }
@@ -285,7 +285,7 @@ describe('attaching a remote daemon', () => {
     const sent = await invokeOperation(
       registry,
       'message.send',
-      { sessionId: 'daemon:b::session:session-on-b', message },
+      { to: { kind: 'session', sessionId: 'daemon:b::session:session-on-b' }, message },
       { source: 'mcp', sessionId: 'agent-on-a' }
     );
     expect(sent).toMatchObject({ kind: 'completed', value: { kind: 'accepted' } });
@@ -324,7 +324,7 @@ describe('attaching a remote daemon', () => {
       const sent = await invokeOperation(
         registry,
         'message.send',
-        { sessionId: 'daemon:b::session:session-on-b', message },
+        { to: { kind: 'session', sessionId: 'daemon:b::session:session-on-b' }, message },
         { source: 'mcp', sessionId: 'agent-on-a' }
       );
       expect(sent).toMatchObject({
@@ -345,11 +345,17 @@ describe('tearing down a failed connection', () => {
     const remote = await startRemoteDaemon('session-on-b');
     const daemons = new RemoteDaemonRegistry();
     daemons.attach('b', remote.url);
-    await daemons.invoke('b', 'message.send', { sessionId: 'session-on-b', message });
+    await daemons.invoke('b', 'message.send', {
+      to: { kind: 'session', sessionId: 'session-on-b' },
+      message,
+    });
 
     const stale = settled(daemons.invoke('b', 'no.such.operation', {}));
     daemons.attach('b', remote.url);
-    const fresh = daemons.invoke('b', 'message.send', { sessionId: 'session-on-b', message });
+    const fresh = daemons.invoke('b', 'message.send', {
+      to: { kind: 'session', sessionId: 'session-on-b' },
+      message,
+    });
 
     expect(await stale).toBeInstanceOf(Error);
     expect(await fresh).toMatchObject({ kind: 'accepted' });
@@ -390,7 +396,7 @@ describe('connect deadline on a forwarded send', () => {
     const outcome = await invokeOperation(
       registry,
       'message.send',
-      { sessionId: 'daemon:stuck::session:session-on-b', message },
+      { to: { kind: 'session', sessionId: 'daemon:stuck::session:session-on-b' }, message },
       { source: 'mcp', sessionId: 'agent-on-a' }
     );
 

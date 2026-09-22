@@ -40,6 +40,7 @@ export interface TaskOperationDependencies {
   retry?: OperationDefinition;
   sendSessionMessage?: OperationDefinition;
   sendTaskMessage?: OperationDefinition;
+  sendNodeMessage?: OperationDefinition;
   readTask: Parameters<typeof createGetTaskOperation>[0];
   readTaskByNumber?: Parameters<typeof createGetTaskOperation>[1];
   createTask: Parameters<typeof createCreateTaskOperation<CreateStandaloneTaskInput>>[0];
@@ -61,7 +62,12 @@ export function createDaemonOperationCatalog(
     createSendMessageOperation(
       jobQueue,
       tasks.sessionExists,
-      createRemoteSendForwarder(remoteDaemons)
+      createRemoteSendForwarder(remoteDaemons),
+      {
+        ...(tasks.sendSessionMessage ? { spaceSession: tasks.sendSessionMessage } : {}),
+        ...(tasks.sendTaskMessage ? { task: tasks.sendTaskMessage } : {}),
+        ...(tasks.sendNodeMessage ? { peer: tasks.sendNodeMessage } : {}),
+      }
     ),
     createAttachDaemonOperation(remoteDaemons),
     createProbeDaemonOperation(remoteDaemons),
