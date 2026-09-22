@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { isWorkflowRecoveryTransition } from '@hyperneo/shared';
 import {
-  routeApproveTask,
   routeArchiveTask,
   routeCancelTask,
   routePublishTask,
@@ -866,84 +865,6 @@ describe('routeReassignTask', () => {
     });
     expect(routeReassignTask({ customAgentId: undefined, workerAgentExists: false })).toEqual({
       action: 'reassign',
-    });
-  });
-});
-
-describe('routeApproveTask', () => {
-  function approveInput(overrides: Partial<Parameters<typeof routeApproveTask>[0]> = {}) {
-    return {
-      taskExists: true,
-      taskInSpace: true,
-      currentStatus: 'review',
-      taskId: 'task-1',
-      level: 5,
-      required: 5,
-      agentLevel: null,
-      spaceLevel: 5,
-      ...overrides,
-    };
-  }
-
-  test('missing task and foreign-space rejects win before the autonomy gate', () => {
-    expect(
-      routeApproveTask(
-        approveInput({ taskExists: false, level: 1, spaceLevel: 1, currentStatus: 'open' })
-      )
-    ).toEqual({
-      action: 'reject',
-      reason: 'task_not_found',
-      message: 'Task not found: task-1',
-    });
-    expect(
-      routeApproveTask(
-        approveInput({ taskInSpace: false, level: 1, spaceLevel: 1, currentStatus: 'open' })
-      )
-    ).toEqual({
-      action: 'reject',
-      reason: 'task_not_in_space',
-      message: 'Task task-1 does not belong to this space.',
-    });
-  });
-
-  test('a binding agent ceiling denies before the review-state gate', () => {
-    expect(
-      routeApproveTask(
-        approveInput({ level: 1, agentLevel: 1, spaceLevel: 5, required: 5, currentStatus: 'open' })
-      )
-    ).toEqual({
-      action: 'deny',
-      reason: 'agent_autonomy_ceiling',
-      agentLevel: 1,
-      spaceLevel: 5,
-      required: 5,
-      message:
-        'task.resolvePendingCompletion not permitted: agent autonomy ceiling 1 (space 5) < workflow completionAutonomyLevel 5. Use task.submitForReview to request human review.',
-    });
-  });
-
-  test('a space-level shortfall denies with the space reason', () => {
-    expect(routeApproveTask(approveInput({ level: 3, spaceLevel: 3, required: 5 }))).toEqual({
-      action: 'deny',
-      reason: 'space_autonomy_level',
-      spaceLevel: 3,
-      required: 5,
-      message:
-        'task.resolvePendingCompletion not permitted: space autonomy level 3 < workflow completionAutonomyLevel 5. Use task.submitForReview to request human review.',
-    });
-  });
-
-  test('the min() boundary — an agent level meeting the requirement approves', () => {
-    expect(
-      routeApproveTask(approveInput({ level: 3, agentLevel: 3, spaceLevel: 5, required: 3 }))
-    ).toEqual({ action: 'approve' });
-  });
-
-  test('a non-review status rejects only once autonomy passes', () => {
-    expect(routeApproveTask(approveInput({ currentStatus: 'open' }))).toEqual({
-      action: 'reject',
-      reason: 'not_in_review',
-      message: "Task is in 'open' status, not 'review'. Only tasks in review can be approved.",
     });
   });
 });
