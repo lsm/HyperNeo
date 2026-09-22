@@ -1,6 +1,5 @@
 export const TASK_OPERATION_NAMES = [
   'task.approve',
-  'task.archive',
   'task.cancel',
   'task.complete',
   'task.create',

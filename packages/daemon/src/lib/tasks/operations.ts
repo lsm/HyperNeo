@@ -32,7 +32,6 @@ import {
   createListTaskMembersOperation,
   type TaskMemberRepositories,
 } from './list-task-members.ts';
-import { createArchiveTaskOperation, type ArchiveTaskDependencies } from './archive-task.ts';
 import { createRetryTaskOperation, type RetryTaskDependencies } from './retry-task.ts';
 import { listScopedTasks, readScopedTask, readScopedTaskByNumber } from './scoped-task-reads.ts';
 import { stampActiveAttempt, stampActiveAttempts } from './direct-attempt-flag.ts';
@@ -46,11 +45,6 @@ import {
   type TaskMessageSendDependencies,
 } from '../messaging/task-message-send.ts';
 import { enqueueDirectOutcome } from './direct-outcome-jobs.ts';
-
-interface ArchiveTaskCapability {
-  getTaskManager: ArchiveTaskDependencies['getTaskManager'];
-  isWorkflowRunActive: ArchiveTaskDependencies['isWorkflowRunActive'];
-}
 
 interface RetryTaskCapability {
   getTaskManager: RetryTaskDependencies['getTaskManager'];
@@ -92,7 +86,6 @@ export function createSpaceOperationRegistryProvider(
   > &
     CancelPolicyContext &
     TaskMemberRepositories &
-    ArchiveTaskCapability &
     RetryTaskCapability &
     TaskNumberRepository &
     PreferredWorkflowCapability &
@@ -170,7 +163,6 @@ export function createSpaceOperationRegistryProvider(
               db: database.getDatabase(),
             })
           : undefined,
-        archive: createArchiveTaskOperation(() => database.getDatabase(), tasks),
         retry: createRetryTaskOperation(() => database.getDatabase(), tasks),
         members:
           tasks.taskRepo && tasks.nodeExecutionRepo

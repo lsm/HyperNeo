@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { isWorkflowRecoveryTransition } from '@hyperneo/shared';
 import {
-  routeArchiveTask,
   routeCancelTask,
   routePublishTask,
   routeReassignTask,
@@ -789,61 +788,6 @@ describe('routePublishTask', () => {
 
   test('a draft task publishes', () => {
     expect(routePublishTask(publishInput())).toEqual({ action: 'publish' });
-  });
-});
-
-describe('routeArchiveTask', () => {
-  function archiveInput(overrides: Partial<Parameters<typeof routeArchiveTask>[0]> = {}) {
-    return {
-      taskExists: true,
-      taskInSpace: true,
-      hasWorkflowRun: false,
-      runActive: false,
-      taskId: 'task-1',
-      workflowRunId: 'run-1',
-      ...overrides,
-    };
-  }
-
-  test('missing task and foreign-space rejects win before the active-run guard', () => {
-    expect(
-      routeArchiveTask(archiveInput({ taskExists: false, hasWorkflowRun: true, runActive: true }))
-    ).toEqual({
-      action: 'reject',
-      reason: 'task_not_found',
-      message: 'Task not found: task-1',
-    });
-    expect(
-      routeArchiveTask(archiveInput({ taskInSpace: false, hasWorkflowRun: true, runActive: true }))
-    ).toEqual({
-      action: 'reject',
-      reason: 'task_not_in_space',
-      message: 'Task task-1 does not belong to this space.',
-    });
-  });
-
-  test('an active workflow run rejects and points at cancelling the run', () => {
-    expect(
-      routeArchiveTask(
-        archiveInput({ hasWorkflowRun: true, runActive: true, workflowRunId: 'run-9' })
-      )
-    ).toEqual({
-      action: 'reject',
-      reason: 'archive_active_run',
-      message:
-        `Cannot archive task task-1: it belongs to an active workflow run ` +
-        `(run-9). Cancel the run instead so its agents and ` +
-        `lifecycle are torn down — archiving would leave the run stranded.`,
-    });
-  });
-
-  test('a terminal or missing workflow run still archives', () => {
-    expect(routeArchiveTask(archiveInput({ hasWorkflowRun: true, runActive: false }))).toEqual({
-      action: 'archive',
-    });
-    expect(routeArchiveTask(archiveInput({ hasWorkflowRun: false, runActive: true }))).toEqual({
-      action: 'archive',
-    });
   });
 });
 

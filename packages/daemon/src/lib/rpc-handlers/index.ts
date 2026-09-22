@@ -1313,8 +1313,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       getSession: (sessionId) => deps.db.getSession(sessionId),
       getTaskManager: spaceTaskManagerFactory,
       getWorkflow: (workflowId) => spaceWorkflowManager.getWorkflow(workflowId),
-      isWorkflowRunActive: (workflowRunId) =>
-        spaceRuntimeService.isWorkflowRunActive(workflowRunId),
       recoverWorkflowTask: (spaceId, taskId, targetStatus, options) =>
         recoverTaskExecution(
           createWorkflowTaskRecoveryExecutor(spaceId, spaceRuntimeService, options),

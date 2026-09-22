@@ -36,7 +36,6 @@ export interface TaskOperationDependencies {
   setPreferredWorkflow?: OperationDefinition;
   create?: OperationDefinition;
   transition?: OperationDefinition;
-  archive?: OperationDefinition;
   retry?: OperationDefinition;
   sendSessionMessage?: OperationDefinition;
   sendTaskMessage?: OperationDefinition;
@@ -74,7 +73,6 @@ export function createDaemonOperationCatalog(
     tasks.transition ?? createTransitionTaskOperation(tasks.transitionTask),
     createSetTaskDependenciesOperation(tasks.setDependencies),
     ...(tasks.members ? [tasks.members] : []),
-    ...(tasks.archive ? [tasks.archive] : []),
     ...(tasks.retry ? [tasks.retry] : []),
     ...(tasks.pendingCompletion ?? []),
     ...(tasks.submitForReview ? [tasks.submitForReview] : []),
