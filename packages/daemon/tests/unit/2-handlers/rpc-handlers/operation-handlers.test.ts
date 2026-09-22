@@ -1,5 +1,4 @@
 import { createDaemonOperationCatalog } from '../../../../src/lib/operations/catalog.ts';
-import { setStandaloneTaskDependencies } from '../../../../src/storage/tasks/set-task-dependencies';
 import { transitionStandaloneTask } from '../../../../src/storage/tasks/transition-task';
 import { createStandaloneTaskMetadataEditor } from '../../../../src/lib/tasks/metadata-standalone';
 import { listTaskCores } from '../../../../src/storage/tasks/list-tasks';
@@ -43,7 +42,6 @@ describe('operation.invoke RPC registration', () => {
         listTasks: (input) => listTaskCores(taskDb, input),
         editTask: createStandaloneTaskMetadataEditor(taskDb, () => {}),
         transitionTask: (input) => transitionStandaloneTask(taskDb, input, () => {}),
-        setDependencies: (input) => setStandaloneTaskDependencies(taskDb, input, () => {}),
       })
     );
     await Promise.all(transports.map((transport) => transport.initialize()));
@@ -87,7 +85,6 @@ describe('operation.invoke RPC registration', () => {
       'task.list',
       'task.update',
       'task.transition',
-      'task.dependencies.set',
       'operations.list',
       'operations.describe',
     ]);
@@ -351,58 +348,6 @@ describe('operation.invoke RPC registration', () => {
         })
       ).rejects.toThrow();
     }
-    expect(readTaskCore(taskDb, task.id)).toEqual(task);
-  });
-
-  test('sets and clears standalone dependencies through RPC and rejects cycles', async () => {
-    const a = createStandaloneTask(taskDb, { title: 'A' }, undefined, () => {});
-    const b = createStandaloneTask(taskDb, { title: 'B' }, undefined, () => {});
-    const set = (taskId: string, dependsOn: string[]) =>
-      client.request('operation.invoke', {
-        name: 'task.dependencies.set',
-        input: { taskId, dependsOn },
-      });
-    expect(await set(a.id, [b.id])).toMatchObject({ id: a.id, dependsOn: [b.id] });
-    expect(await set(b.id, [a.id])).toBe('dependency_cycle');
-    expect(readTaskCore(taskDb, b.id)).toEqual(b);
-    expect(await set(a.id, [b.id, b.id])).toBe('duplicate_dependency');
-    expect(await set(a.id, [a.id])).toBe('self_dependency');
-    expect(await set(a.id, ['absent'])).toBe('dependency_not_found');
-    expect(await set(a.id, [])).toMatchObject({ id: a.id, dependsOn: [] });
-    expect(await set('absent', [])).toBeNull();
-    const space = new SpaceRepository(taskDb).createSpace({
-      name: 'Test',
-      slug: 'dependencies',
-      workspacePath: '/workspace/dependencies',
-    });
-    const tasks = new SpaceTaskRepository(taskDb);
-    const owned = tasks.createTask({ spaceId: space.id, title: 'Owned', description: '' });
-    expect(await set(owned.id, [a.id])).toBeNull();
-    expect(await set(a.id, [owned.id])).toBe('dependency_not_found');
-    expect(tasks.getTask(owned.id)).toEqual(owned);
-    expect(
-      await client.request('operation.invoke', {
-        name: 'operations.describe',
-        input: { name: 'task.dependencies.set' },
-      })
-    ).toMatchObject({ found: true, inputSchema: { properties: { dependsOn: { type: 'array' } } } });
-    expect(mailbox.rows()).toEqual([]);
-  });
-
-  test.each([
-    {},
-    { dependsOn: null },
-    { dependsOn: [''] },
-    { dependsOn: [1] },
-    { dependsOn: [], status: 'done' },
-  ])('rejects invalid dependency input: %j', async (patch) => {
-    const task = createStandaloneTask(taskDb, { title: 'Work' }, undefined, () => {});
-    await expect(
-      client.request('operation.invoke', {
-        name: 'task.dependencies.set',
-        input: { taskId: task.id, ...patch },
-      })
-    ).rejects.toThrow();
     expect(readTaskCore(taskDb, task.id)).toEqual(task);
   });
 

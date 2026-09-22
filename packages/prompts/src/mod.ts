@@ -88,6 +88,9 @@ import mdworkflowsGuidanceFullstackQaPostApproval from './workflows/guidance/ful
 import mdworkflowsGuidanceRetiredCallActionPreferencePreOperationNames from './workflows/guidance/retired/call-action-preference-pre-operation-names.md' with {
   type: 'text',
 };
+import mdworkflowsGuidanceRetiredCallActionPreferencePreTaskApprove from './workflows/guidance/retired/call-action-preference-pre-task-approve.md' with {
+  type: 'text',
+};
 import mdworkflowsGuidanceRetiredExternalReviewBotsPreCheckSeeding from './workflows/guidance/retired/external-review-bots-pre-check-seeding.md' with {
   type: 'text',
 };
@@ -166,6 +169,8 @@ const registry: Record<string, string> = {
   'workflows/guidance/external-review-bots.md': mdworkflowsGuidanceExternalReviewBots,
   'workflows/guidance/retired/call-action-preference-pre-operation-names.md':
     mdworkflowsGuidanceRetiredCallActionPreferencePreOperationNames,
+  'workflows/guidance/retired/call-action-preference-pre-task-approve.md':
+    mdworkflowsGuidanceRetiredCallActionPreferencePreTaskApprove,
   'workflows/guidance/retired/external-review-bots-pre-check-seeding.md':
     mdworkflowsGuidanceRetiredExternalReviewBotsPreCheckSeeding,
   'workflows/guidance/retired/external-review-bots-pre-typename.md':
@@ -225,6 +230,7 @@ export const {
   CODER_OWNED_REVIEW_PROMPT,
   CALL_ACTION_PREFERENCE_GUIDANCE,
   CALL_ACTION_PREFERENCE_GUIDANCE_PRE_OPERATION_NAMES,
+  CALL_ACTION_PREFERENCE_GUIDANCE_PRE_TASK_APPROVE,
   CODEX_REACTION_APPROVAL_GUIDANCE,
   EXTERNAL_REVIEW_BOTS_GUIDANCE,
   EXTERNAL_REVIEW_BOTS_GUIDANCE_PRE_CHECK_SEEDING,

@@ -214,41 +214,37 @@ describe('forge.scope.get', () => {
     }
   });
 
-  test('returns the same parts forge.timeline.get returns when asked for them', async () => {
+  test('returns the scope with its evidence and metric snapshots', async () => {
     const ctx = makeCtx();
     try {
       const scope = seedScope(ctx);
       seedParts(ctx, scope.id);
-      const timeline = (await ctx
-        .op('forge.timeline.get')
-        .execute({ scopeId: scope.id }, readerCaller)) as Record<string, unknown>;
       const result = await read(ctx, {
         scopeId: scope.id,
         include: ['scope', 'evidence', 'metrics'],
       });
-      expect(result).toEqual(timeline);
-      expect((result.evidence as unknown[]).length).toBe(2);
-      expect((result.metricSnapshots as unknown[]).length).toBe(1);
+      expect((result.scope as { id: string }).id).toBe(scope.id);
+      expect(result.evidence).toEqual(ctx.scopeService.listEvidence(scope.id).evidence);
+      expect(result.metricSnapshots).toEqual(ctx.scopeService.listMetricSnapshots(scope.id));
     } finally {
       ctx.db.close();
     }
   });
 
-  test('returns the same parts forge.reviewBundle.list returns when asked for them', async () => {
+  test('returns the episodes, lessons, and proposals without the scope row', async () => {
     const ctx = makeCtx();
     try {
       const scope = seedScope(ctx);
       seedParts(ctx, scope.id);
-      const bundle = (await ctx
-        .op('forge.reviewBundle.list')
-        .execute({ scopeId: scope.id }, readerCaller)) as Record<string, unknown>;
       const result = await read(ctx, {
         scopeId: scope.id,
         include: ['episodes', 'lessons', 'proposals'],
       });
-      expect(result.episodes).toEqual(bundle.episodes);
-      expect(result.lessons).toEqual(bundle.lessons);
-      expect(result.proposals).toEqual(bundle.proposals);
+      expect((result.episodes as Array<{ title: string }>).map((entry) => entry.title)).toEqual([
+        'Week one',
+      ]);
+      expect((result.lessons as unknown[]).length).toBe(2);
+      expect((result.proposals as unknown[]).length).toBe(2);
       expect(result.scope).toBeUndefined();
     } finally {
       ctx.db.close();

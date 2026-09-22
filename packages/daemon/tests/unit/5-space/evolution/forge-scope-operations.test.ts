@@ -171,11 +171,6 @@ const archivedCaller: OperationCaller = {
   spaceId: SPACE_ID,
   role: 'ad_hoc_member',
 };
-const spacelessCaller: OperationCaller = {
-  source: 'mcp',
-  sessionId: 'session-member',
-  role: 'ad_hoc_member',
-};
 const rpcCaller: OperationCaller = { source: 'rpc' };
 
 const scopeInput = {
@@ -187,20 +182,16 @@ const scopeInput = {
 const SCOPE_OPERATION_NAMES = [
   'forge.evidence.attachTask',
   'forge.evidence.attachWorkflowRun',
-  'forge.evidence.list',
   'forge.metric.add',
-  'forge.metric.list',
   'forge.note.add',
   'forge.scope.create',
   'forge.scope.get',
   'forge.scope.list',
-  'forge.scope.resolve',
   'forge.scope.update',
-  'forge.timeline.get',
 ];
 
 describe('Forge operation catalog', () => {
-  test('registers every scope, timeline, evidence, and metric operation name', () => {
+  test('registers every scope, evidence, and metric operation name', () => {
     const ctx = makeCtx();
     try {
       const registered = new Set(ctx.operations.map((entry) => entry.name));
@@ -612,38 +603,8 @@ describe('forge scope input min-length parity', () => {
   });
 });
 
-describe('forge.scope.resolve', () => {
-  test('resolves the scope linked to a goal and demands a target otherwise', async () => {
-    const ctx = makeCtx();
-    try {
-      const goal = ctx.goalRepo.create({
-        spaceId: SPACE_ID,
-        title: 'Linked goal',
-        description: '',
-        type: 'recurring',
-      });
-      const created = (await ctx
-        .op('forge.scope.create')
-        .execute({ kind: 'mission', goalId: goal.id }, memberCaller)) as {
-        accepted: true;
-        scope: { id: string };
-      };
-      const resolved = (await ctx
-        .op('forge.scope.resolve')
-        .execute({ goalId: goal.id }, memberCaller)) as { accepted: true; scope: { id: string } };
-      expect(resolved.scope.id).toBe(created.scope.id);
-      expect(await ctx.op('forge.scope.resolve').execute({}, memberCaller)).toMatchObject({
-        accepted: false,
-        reason: 'resolve_target_required',
-      });
-    } finally {
-      ctx.db.close();
-    }
-  });
-});
-
 describe('forge.note.add', () => {
-  test('attaches a manual note and surfaces it through forge.evidence.list', async () => {
+  test('attaches a manual note and stores it as scope evidence', async () => {
     const ctx = makeCtx();
     try {
       const created = (await ctx.op('forge.scope.create').execute(scopeInput, memberCaller)) as {
@@ -657,13 +618,11 @@ describe('forge.note.add', () => {
         evidence: { kind: string; summary: string };
       };
       expect(added.evidence).toMatchObject({ kind: 'manual_note', summary: 'Flakes down 20%' });
-      const listed = (await ctx
-        .op('forge.evidence.list')
-        .execute({ scopeId: created.scope.id }, readerCaller)) as {
-        accepted: true;
-        evidence: Array<{ summary: string }>;
-      };
-      expect(listed.evidence.map((item) => item.summary)).toEqual(['Flakes down 20%']);
+      expect(
+        ctx.scopeService
+          .listEvidence(created.scope.id)
+          .evidence.map((item: { summary: string }) => item.summary)
+      ).toEqual(['Flakes down 20%']);
     } finally {
       ctx.db.close();
     }
@@ -778,7 +737,7 @@ describe('forge.evidence.attachWorkflowRun', () => {
 });
 
 describe('forge.metric.add', () => {
-  test('records a snapshot that forge.metric.list and forge.timeline.get both report', async () => {
+  test('records a snapshot on the scope and attaches it as evidence', async () => {
     const ctx = makeCtx();
     try {
       const created = (await ctx.op('forge.scope.create').execute(scopeInput, memberCaller)) as {
@@ -795,62 +754,9 @@ describe('forge.metric.add', () => {
         memberCaller
       )) as { accepted: true; snapshot: { id: string }; evidence: { kind: string } };
       expect(added.evidence.kind).toBe('metric_snapshot');
-      const listed = (await ctx
-        .op('forge.metric.list')
-        .execute({ scopeId: created.scope.id }, readerCaller)) as {
-        accepted: true;
-        snapshots: Array<{ id: string; source: string }>;
-      };
-      expect(listed.snapshots.map((snapshot) => snapshot.id)).toEqual([added.snapshot.id]);
-      const timeline = (await ctx
-        .op('forge.timeline.get')
-        .execute({ scopeId: created.scope.id }, readerCaller)) as {
-        accepted: true;
-        scope: { id: string };
-        metricSnapshots: Array<{ source: string }>;
-      };
-      expect(timeline.scope.id).toBe(created.scope.id);
-      expect(timeline.metricSnapshots.map((snapshot) => snapshot.source)).toEqual(['ci']);
-    } finally {
-      ctx.db.close();
-    }
-  });
-});
-
-describe('invokeOperation', () => {
-  test('validates the forge.timeline.get result against its declared schema', async () => {
-    const ctx = makeCtx();
-    try {
-      const created = (await ctx.op('forge.scope.create').execute(scopeInput, memberCaller)) as {
-        accepted: true;
-        scope: { id: string };
-      };
-      await ctx
-        .op('forge.note.add')
-        .execute({ scopeId: created.scope.id, summary: 'note' }, memberCaller);
-      const outcome = await invokeOperation(
-        ctx.registry,
-        'forge.timeline.get',
-        { scopeId: created.scope.id },
-        memberCaller
-      );
-      expect(outcome).toMatchObject({
-        kind: 'completed',
-        value: { accepted: true, scope: { id: created.scope.id } },
-      });
-      const denied = await invokeOperation(
-        ctx.registry,
-        'forge.timeline.get',
-        { scopeId: created.scope.id },
-        spacelessCaller
-      );
-      expect(denied).toMatchObject({
-        kind: 'completed',
-        value: { accepted: false, reason: 'space_required' },
-      });
-      expect(
-        await ctx.op('forge.timeline.get').execute({ scopeId: created.scope.id }, spacelessCaller)
-      ).toMatchObject({ accepted: false, reason: 'space_required' });
+      const snapshots = ctx.scopeService.listMetricSnapshots(created.scope.id);
+      expect(snapshots.map((snapshot: { id: string }) => snapshot.id)).toEqual([added.snapshot.id]);
+      expect(snapshots.map((snapshot: { source: string }) => snapshot.source)).toEqual(['ci']);
     } finally {
       ctx.db.close();
     }
@@ -882,13 +788,6 @@ describe('Forge optional Space scope', () => {
         expect(
           await ctx.op('forge.scope.get').execute({ scopeId: foreign.id }, caller)
         ).toMatchObject({ accepted: false, reason: 'scope_not_found' });
-        for (const name of ['forge.evidence.list', 'forge.metric.list']) {
-          const result = await invokeOperation(ctx.registry, name, { scopeId: own.id }, caller);
-          expect(result).toMatchObject({
-            kind: 'completed',
-            value: { accepted: true, scope: { spaceId: SPACE_ID } },
-          });
-        }
         expect(
           await ctx.op('forge.scope.get').execute({ scopeId: own.id }, { source })
         ).toMatchObject({ accepted: false, reason: 'space_required' });

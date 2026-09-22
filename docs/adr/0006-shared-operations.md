@@ -209,11 +209,11 @@ Operations are the **domain layer**; the pre-invocation pipelines and the ADR
   state); migrating them is ordinary wire work under this ADR.
 - The generic `invoke` tool on the `hyperneo-operations` server is attached to
   every agent session and today carries the full wired catalog, unfiltered by
-  admission kind: `task.cancel`, `task.resolvePendingCompletion`,
-  `task.update`, and `task.dependencies.set` are reachable alongside the
-  execution-ownership operations, each enforcing Space membership and role
-  inside its own admission stage (the transitional debt decision 3
-  describes) rather than through a caller-scoped invoke surface. The
+  admission kind: `task.cancel`, `task.resolvePendingCompletion` and
+  `task.update` are reachable alongside the execution-ownership operations,
+  each enforcing Space membership and role inside its own admission stage
+  (the transitional debt decision 3 describes) rather than through a
+  caller-scoped invoke surface. The
   intended rule — new operations reach the generic invoke tool only when
   their admission is execution ownership, with Space-policy operations
   routed through `call_action` instead — governs additions until the MCP
@@ -334,7 +334,7 @@ messages and events; there is no conversation-wide correlation scheme.
 | RPC adapter | `packages/daemon/src/lib/operations/rpc-adapter.ts` | `operation.invoke` handler, `resolveCaller` seam, error-code mapping |
 | MCP adapter/server | `packages/daemon/src/lib/operations/mcp-adapter.ts`, `mcp-server.ts` | `invoke` tool on the `hyperneo-operations` server, `resolveCaller` seam |
 | Discovery | `packages/daemon/src/lib/operations/discovery.ts` | `operations.list`, `operations.describe` |
-| Common catalog | `packages/daemon/src/lib/operations/catalog.ts`, `database-catalog.ts` | `message.send`, `task.get/create/list/update/transition`, `task.dependencies.set` |
+| Common catalog | `packages/daemon/src/lib/operations/catalog.ts`, `database-catalog.ts` | `message.send`, `task.get/create/list/update/transition` |
 | Space catalog | `packages/daemon/src/lib/space/operations/registry.ts` | adds `task.submitForReview`, `task.cancel`, `task.resolvePendingCompletion`, Space-aware metadata/dependency editors |
 | Shared operation example | `packages/daemon/src/lib/space/operations/submit-for-review.ts` | execution-ownership admission + durable acknowledgement |
 | Durable outcome | `packages/daemon/src/lib/space/runtime/direct-outcome-jobs.ts` | receipt, enqueue, verified finalization |
