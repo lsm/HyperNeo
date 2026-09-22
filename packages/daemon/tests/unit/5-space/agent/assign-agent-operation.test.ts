@@ -145,11 +145,11 @@ beforeEach(() => {
   ownerChanges = [];
 });
 
-describe('the agent.assignGoal and agent.unassignGoal operations', () => {
+describe('goal.owner.set admission', () => {
   test('a long-term agent with an active identity takes goal ownership', async () => {
     const outcome = await run(
-      'agent.assignGoal',
-      { agentId: agent.id, goalId: GOAL_ID },
+      'goal.owner.set',
+      { agentId: agent.id, goalId: GOAL_ID, assigned: true },
       caller('long_term_agent', agent.id)
     );
     expect(outcome.value).toEqual({ accepted: true, assigned: true });
@@ -159,8 +159,8 @@ describe('the agent.assignGoal and agent.unassignGoal operations', () => {
 
   test('a human caller takes goal ownership without a Space agent identity', async () => {
     const outcome = await run(
-      'agent.assignGoal',
-      { spaceId, agentId: agent.id, goalId: GOAL_ID },
+      'goal.owner.set',
+      { spaceId, agentId: agent.id, goalId: GOAL_ID, assigned: true },
       {
         source: 'rpc',
       }
@@ -171,8 +171,8 @@ describe('the agent.assignGoal and agent.unassignGoal operations', () => {
 
   test('an ad-hoc member session carrying no agent identity may reassign goal ownership', async () => {
     const outcome = await run(
-      'agent.assignGoal',
-      { agentId: agent.id, goalId: GOAL_ID },
+      'goal.owner.set',
+      { agentId: agent.id, goalId: GOAL_ID, assigned: true },
       caller('ad_hoc_member')
     );
     expect(outcome.value).toEqual({ accepted: true, assigned: true });
@@ -187,8 +187,8 @@ describe('the agent.assignGoal and agent.unassignGoal operations', () => {
       instructions: '',
     });
     const outcome = await run(
-      'agent.assignGoal',
-      { agentId: agent.id, goalId: GOAL_ID },
+      'goal.owner.set',
+      { agentId: agent.id, goalId: GOAL_ID, assigned: true },
       caller('ad_hoc_member', stranger.id)
     );
     expect(outcome.value?.reason).toBe('agent_denied');
@@ -198,8 +198,8 @@ describe('the agent.assignGoal and agent.unassignGoal operations', () => {
   test('a caller whose own agent record is paused may not reassign ownership', async () => {
     agentRepo.update(agent.id, { status: 'paused' });
     const outcome = await run(
-      'agent.assignGoal',
-      { agentId: agent.id, goalId: GOAL_ID },
+      'goal.owner.set',
+      { agentId: agent.id, goalId: GOAL_ID, assigned: true },
       caller('long_term_agent', agent.id)
     );
     expect(outcome.value?.reason).toBe('agent_denied');
@@ -209,34 +209,34 @@ describe('the agent.assignGoal and agent.unassignGoal operations', () => {
   test('a goal in another Space is not found', async () => {
     seedGoal('goal-elsewhere', otherSpace());
     const outcome = await run(
-      'agent.assignGoal',
-      { agentId: agent.id, goalId: 'goal-elsewhere' },
+      'goal.owner.set',
+      { agentId: agent.id, goalId: 'goal-elsewhere', assigned: true },
       caller('long_term_agent', agent.id)
     );
     expect(outcome.value?.reason).toBe('goal_not_found');
     expect(agentRepo.listGoals(agent.id)).toHaveLength(0);
   });
 
-  test('agent.unassignGoal drops the owner relationship', async () => {
+  test('dropping the owner relationship reports assigned false', async () => {
     await run(
-      'agent.assignGoal',
-      { agentId: agent.id, goalId: GOAL_ID },
+      'goal.owner.set',
+      { agentId: agent.id, goalId: GOAL_ID, assigned: true },
       caller('long_term_agent', agent.id)
     );
     const outcome = await run(
-      'agent.unassignGoal',
-      { agentId: agent.id, goalId: GOAL_ID },
+      'goal.owner.set',
+      { agentId: agent.id, goalId: GOAL_ID, assigned: false },
       caller('long_term_agent', agent.id)
     );
-    expect(outcome.value).toEqual({ accepted: true, assigned: true });
+    expect(outcome.value).toEqual({ accepted: true, assigned: false });
     expect(agentRepo.listGoals(agent.id)).toHaveLength(0);
   });
 
   test('an archived session in the owning Space may not reassign ownership', async () => {
     sessions.set(MEMBER_SESSION, sessionRow({ id: MEMBER_SESSION, status: 'archived' }));
     const outcome = await run(
-      'agent.assignGoal',
-      { agentId: agent.id, goalId: GOAL_ID },
+      'goal.owner.set',
+      { agentId: agent.id, goalId: GOAL_ID, assigned: true },
       caller('long_term_agent', agent.id)
     );
     expect(outcome.value?.reason).toBe('agent_denied');
@@ -251,8 +251,8 @@ describe('the agent.assignGoal and agent.unassignGoal operations', () => {
       role: 'universal_read',
     });
     const outcome = await run(
-      'agent.assignGoal',
-      { spaceId, agentId: agent.id, goalId: GOAL_ID },
+      'goal.owner.set',
+      { spaceId, agentId: agent.id, goalId: GOAL_ID, assigned: true },
       readOnlyCaller()
     );
     expect(outcome.kind).toBe('completed');
@@ -261,11 +261,11 @@ describe('the agent.assignGoal and agent.unassignGoal operations', () => {
   });
 });
 
-describe('the agent.assignForgeScope and agent.unassignForgeScope operations', () => {
+describe('evolution.scope.owner.set admission', () => {
   test('an ad-hoc member may assign a Forge scope, unlike goal ownership', async () => {
     const outcome = await run(
-      'agent.assignForgeScope',
-      { agentId: agent.id, scopeId: SCOPE_ID },
+      'evolution.scope.owner.set',
+      { agentId: agent.id, scopeId: SCOPE_ID, assigned: true },
       caller('ad_hoc_member')
     );
     expect(outcome.value).toEqual({ accepted: true, assigned: true });
@@ -274,8 +274,8 @@ describe('the agent.assignForgeScope and agent.unassignForgeScope operations', (
 
   test('assigning a Forge scope announces no goal ownership change', async () => {
     await run(
-      'agent.assignForgeScope',
-      { agentId: agent.id, scopeId: SCOPE_ID },
+      'evolution.scope.owner.set',
+      { agentId: agent.id, scopeId: SCOPE_ID, assigned: true },
       caller('ad_hoc_member')
     );
     expect(ownerChanges).toEqual([]);
@@ -284,34 +284,34 @@ describe('the agent.assignForgeScope and agent.unassignForgeScope operations', (
   test('a scope in another Space is not found', async () => {
     seedScope('scope-elsewhere', otherSpace());
     const outcome = await run(
-      'agent.assignForgeScope',
-      { agentId: agent.id, scopeId: 'scope-elsewhere' },
+      'evolution.scope.owner.set',
+      { agentId: agent.id, scopeId: 'scope-elsewhere', assigned: true },
       caller('ad_hoc_member')
     );
     expect(outcome.value?.reason).toBe('scope_not_found');
     expect(agentRepo.listForgeScopes(agent.id)).toHaveLength(0);
   });
 
-  test('agent.unassignForgeScope removes the assignment', async () => {
+  test('dropping the scope routing reports assigned false', async () => {
     await run(
-      'agent.assignForgeScope',
-      { agentId: agent.id, scopeId: SCOPE_ID },
+      'evolution.scope.owner.set',
+      { agentId: agent.id, scopeId: SCOPE_ID, assigned: true },
       caller('ad_hoc_member')
     );
     const outcome = await run(
-      'agent.unassignForgeScope',
-      { agentId: agent.id, scopeId: SCOPE_ID },
+      'evolution.scope.owner.set',
+      { agentId: agent.id, scopeId: SCOPE_ID, assigned: false },
       caller('ad_hoc_member')
     );
-    expect(outcome.value).toEqual({ accepted: true, assigned: true });
+    expect(outcome.value).toEqual({ accepted: true, assigned: false });
     expect(agentRepo.listForgeScopes(agent.id)).toHaveLength(0);
   });
 
   test('an archived session in the owning Space may not assign a Forge scope', async () => {
     sessions.set(MEMBER_SESSION, sessionRow({ id: MEMBER_SESSION, status: 'archived' }));
     const outcome = await run(
-      'agent.assignForgeScope',
-      { agentId: agent.id, scopeId: SCOPE_ID },
+      'evolution.scope.owner.set',
+      { agentId: agent.id, scopeId: SCOPE_ID, assigned: true },
       caller('ad_hoc_member')
     );
     expect(outcome.value?.reason).toBe('agent_denied');
@@ -326,8 +326,8 @@ describe('the agent.assignForgeScope and agent.unassignForgeScope operations', (
       instructions: '',
     });
     const outcome = await run(
-      'agent.assignForgeScope',
-      { agentId: stranger.id, scopeId: SCOPE_ID },
+      'evolution.scope.owner.set',
+      { agentId: stranger.id, scopeId: SCOPE_ID, assigned: true },
       caller('ad_hoc_member')
     );
     expect(outcome.value?.reason).toBe('agent_not_found');
