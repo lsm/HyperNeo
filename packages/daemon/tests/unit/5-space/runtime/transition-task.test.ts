@@ -46,6 +46,21 @@ afterEach(() => db.close());
 
 const rpc = { source: 'rpc' as const };
 
+type TaskManagerStub = Pick<SpaceTaskManager, 'getTask' | 'setTaskStatus' | 'submitTaskForReview'>;
+
+function managerStub(overrides: Partial<TaskManagerStub>): TaskManagerStub {
+  return {
+    getTask: async (id: string) => tasks.getTask(id),
+    setTaskStatus: async () => {
+      throw new Error('setTaskStatus is not stubbed for this test');
+    },
+    submitTaskForReview: async () => {
+      throw new Error('submitTaskForReview is not stubbed for this test');
+    },
+    ...overrides,
+  };
+}
+
 function createWorkflowRun() {
   const workflow = new SpaceWorkflowRepository(db).createWorkflow({ spaceId, name: 'Workflow' });
   return new SpaceWorkflowRunRepository(db).createRun({
@@ -386,15 +401,11 @@ test('a direct outcome refusal is returned without a fallback status write', asy
 
 test('a stale-status guard failure surfaces as invalid_transition', async () => {
   const task = tasks.createTask({ spaceId, title: 'T', description: '' });
-  const staleManager = {
-    getTask: async (id) => tasks.getTask(id),
+  const staleManager = managerStub({
     setTaskStatus: async () => {
       throw new StaleTaskGuardError(`Task ${task.id} is no longer 'open'`);
     },
-    submitTaskForReview: async () => {
-      throw new StaleTaskGuardError(`Task ${task.id} is no longer 'open'`);
-    },
-  } satisfies Pick<SpaceTaskManager, 'getTask' | 'setTaskStatus' | 'submitTaskForReview'>;
+  });
   const result = await invoke({ taskId: task.id, status: 'in_progress' }, rpc, {
     getTaskManager: () => staleManager,
   });
@@ -403,12 +414,11 @@ test('a stale-status guard failure surfaces as invalid_transition', async () => 
 
 test('an unrelated failure that merely mentions "is no longer" is not misclassified', async () => {
   const task = tasks.createTask({ spaceId, title: 'T', description: '' });
-  const brokenManager: Pick<SpaceTaskManager, 'getTask' | 'setTaskStatus'> = {
-    getTask: async (id) => tasks.getTask(id),
+  const brokenManager = managerStub({
     setTaskStatus: async () => {
       throw new Error(`Session worker-1 is no longer alive`);
     },
-  };
+  });
   const result = await invoke({ taskId: task.id, status: 'in_progress' }, rpc, {
     getTaskManager: () => brokenManager,
   });
@@ -428,10 +438,7 @@ test('writeStatus threads expectedWorkflowRunId from the loaded task into setTas
       `Task ${task.id} is no longer attached to workflow run '${run.id}' (now 'null')`
     );
   });
-  const staleManager = {
-    getTask: async (id) => tasks.getTask(id),
-    setTaskStatus,
-  };
+  const staleManager = managerStub({ setTaskStatus });
   const result = await invoke({ taskId: task.id, status: 'archived' }, rpc, {
     getTaskManager: () => staleManager,
   });
@@ -498,7 +505,7 @@ test('an omitted expectedStatus still guards on the loaded status', async () => 
   const task = tasks.createTask({ spaceId, title: 'T', description: '' });
   const setTaskStatus = mock(async () => tasks.getTask(task.id)!);
   await invoke({ taskId: task.id, status: 'in_progress' }, rpc, {
-    getTaskManager: () => ({ getTask: async (id) => tasks.getTask(id), setTaskStatus }),
+    getTaskManager: () => managerStub({ setTaskStatus }),
   });
   expect(setTaskStatus).toHaveBeenCalledWith(
     task.id,
@@ -668,12 +675,12 @@ describe('decide', () => {
   test('a lifecycle change after the snapshot refuses the runtime executor', async () => {
     const owned = createOwned('blocked', createWorkflowRun().id);
     const recoverTransition = mock(async () => owned.task);
-    const movedOn: Pick<SpaceTaskManager, 'getTask' | 'setTaskStatus'> = {
+    const movedOn = managerStub({
       getTask: async () => ({ ...owned.task, status: 'in_progress' }),
       setTaskStatus: async () => {
         throw new Error('should not write');
       },
-    };
+    });
     const result = await decide(
       owned,
       { taskId: owned.task.id, status: 'in_progress' },
@@ -687,12 +694,12 @@ describe('decide', () => {
   test('a workflow run swapped after the snapshot refuses the runtime executor', async () => {
     const owned = createOwned('in_progress', createWorkflowRun().id);
     const parkStopped = mock(async () => owned.task);
-    const rebound: Pick<SpaceTaskManager, 'getTask' | 'setTaskStatus'> = {
+    const rebound = managerStub({
       getTask: async () => ({ ...owned.task, workflowRunId: createWorkflowRun().id }),
       setTaskStatus: async () => {
         throw new Error('should not write');
       },
-    };
+    });
     const result = await decide(
       owned,
       { taskId: owned.task.id, status: 'stopped' },
@@ -862,12 +869,11 @@ describe('writeStatus', () => {
   test('a stale-guard error maps to invalid_transition', async () => {
     const owned = createOwned('open');
     const decided = { ...owned, approvalSource: undefined, allowActiveRun: false };
-    const staleManager = {
-      getTask: async (id) => tasks.getTask(id),
+    const staleManager = managerStub({
       setTaskStatus: async () => {
         throw new StaleTaskGuardError('stale');
       },
-    };
+    });
     const result = await writeStatus(
       decided,
       { taskId: owned.task.id, status: 'in_progress' },
@@ -879,12 +885,11 @@ describe('writeStatus', () => {
   test('an unrelated error rethrows', async () => {
     const owned = createOwned('open');
     const decided = { ...owned, approvalSource: undefined, allowActiveRun: false };
-    const brokenManager: Pick<SpaceTaskManager, 'getTask' | 'setTaskStatus'> = {
-      getTask: async (id) => tasks.getTask(id),
+    const brokenManager = managerStub({
       setTaskStatus: async () => {
         throw new Error('boom');
       },
-    };
+    });
     await expect(
       writeStatus(
         decided,
