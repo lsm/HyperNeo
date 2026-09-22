@@ -56,7 +56,7 @@ export interface OwnedPendingCompletionDependencies {
     reason: string | null,
     guard: { expectedPendingCompletionGeneration: number }
   ) => Promise<unknown>;
-  warn: (taskId: string, detail: string) => void;
+  warn: (operationName: string, taskId: string, detail: string) => void;
   emitTaskUpdated: (spaceId: string, task: SpaceTask) => Promise<void>;
   audit: (
     operationName: string,
@@ -175,6 +175,7 @@ function resolveCompletionApprovalSource(actor: CompletionActor): 'human' | 'age
 }
 
 function bindOwnedCompletion(
+  operationName: string,
   previous: SpaceTask,
   actor: CompletionActor,
   getTaskManager: OwnedPendingCompletionDependencies['getTaskManager'],
@@ -189,7 +190,7 @@ function bindOwnedCompletion(
     dispatchApproval: (id, reason) => dispatchApproval(previous.spaceId, id, source, reason, guard),
     reopenTask: (id, reason) => manager.reopenPendingCompletion(id, reason, guard),
     updateTask: (id, fields) => manager.updateTask(id, fields),
-    warn,
+    warn: (taskId, detail) => warn(operationName, taskId, detail),
   };
 }
 
@@ -236,12 +237,13 @@ export function createOwnedPendingCompletionOperations(
     .pipe(restageOrphanedCheckpoint, ['task', 'getTaskManager'], 'previous')
     .pipe(
       bindOwnedCompletion,
-      ['previous', 'actor', 'getTaskManager', 'dispatchApproval', 'warn'],
+      ['operationName', 'previous', 'actor', 'getTaskManager', 'dispatchApproval', 'warn'],
       [
         'getTask:readOwnedTask',
         'dispatchApproval:dispatchOwnedApproval',
         'reopenTask',
         'updateTask',
+        'warn:warnOwnedCompletion',
       ]
     )
     .pipe(normalizePendingCompletion, 'input', 'decision')
@@ -251,7 +253,7 @@ export function createOwnedPendingCompletionOperations(
       'dispatchOwnedApproval',
       'readOwnedTask',
       'updateTask',
-      'warn',
+      'warnOwnedCompletion',
     ])
     .pipe(readPendingCompletionResult, ['readOwnedTask', 'decision', 'rejection'], 'result:task')
     .pipe(notifyOwnedCompletion, [

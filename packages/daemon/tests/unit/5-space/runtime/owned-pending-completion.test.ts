@@ -308,7 +308,11 @@ test('committed dispatch warning survives catalog result validation', async () =
       postApprovalBlockedReason: expect.stringContaining('Approval recorded'),
     },
   });
-  expect(dependencies.warn).toHaveBeenCalledWith(task.id, 'interrupted');
+  expect(dependencies.warn).toHaveBeenCalledWith(
+    'task.resolvePendingCompletion',
+    task.id,
+    'interrupted'
+  );
   expect(order).toEqual(['event']);
 });
 

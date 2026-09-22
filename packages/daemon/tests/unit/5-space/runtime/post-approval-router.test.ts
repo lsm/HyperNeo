@@ -221,9 +221,7 @@ describe('PostApprovalRouter.route', () => {
     expect(delegates.spawned[0].targetAgent).toBe('deployer');
     expect(delegates.spawned[0].kickoffMessage).toContain(task.title ?? '');
     expect(delegates.spawned[0].kickoffMessage).toContain('invoke(name="task.complete"');
-    expect(delegates.spawned[0].kickoffMessage).toContain(
-      'Do NOT call `task.resolvePendingCompletion`'
-    );
+    expect(delegates.spawned[0].kickoffMessage).toContain('Do NOT call `task.approve`');
     expect(delegates.spawned[0].kickoffMessage).not.toContain('request_human_input');
     expect(delegates.spawned[0].kickoffMessage).toMatch(/NON-result artifact/);
     expect(delegates.spawned[0].kickoffMessage).toContain('shape:"note", kind:"blocked"');
