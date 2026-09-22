@@ -513,7 +513,7 @@ const EXCLUDED_TABLE_NAMES: string[] = [
   'messages',
   'tool_calls',
   'space_long_horizon_agent_goals',
-  'space_long_horizon_agent_forge_scopes',
+  'space_long_horizon_agent_evolution_scopes',
   'space_long_horizon_agent_reminders',
   'space_long_horizon_agent_event_subscriptions',
   'space_agent_template_version_seq',

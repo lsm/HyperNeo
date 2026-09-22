@@ -218,6 +218,7 @@ function referencedAgentIds(db: BunDatabase): Set<string> {
 function linkedStateProbe(db: BunDatabase): (agentId: string) => boolean {
   const sources: Array<[string, string]> = [
     ['space_long_horizon_agent_goals', 'agent_id'],
+    ['space_long_horizon_agent_evolution_scopes', 'agent_id'],
     ['space_long_horizon_agent_forge_scopes', 'agent_id'],
     ['space_long_horizon_agent_reminders', 'agent_id'],
     ['space_long_horizon_agent_event_subscriptions', 'agent_id'],
