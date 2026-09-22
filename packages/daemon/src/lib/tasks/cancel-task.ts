@@ -23,7 +23,6 @@ import { stopTaskExecution, type TaskStoppingExecutor } from './stop-task-execut
 const log = new Logger('CancelTask');
 const inputSchema = z.object({ taskId: z.string().min(1) }).strict();
 type Input = z.infer<typeof inputSchema>;
-export type CancelInput = Input;
 export type CancelPolicyContext = SpaceMcpSessionPolicyContext &
   Pick<SpaceTaskDependencyDependencies, 'stopForStatus'> & {
     getTaskManager?: (spaceId: string) => Pick<SpaceTaskManager, 'setTaskStatus'>;
