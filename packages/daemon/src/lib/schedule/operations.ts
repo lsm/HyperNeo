@@ -360,30 +360,6 @@ export function createScheduleOperations(
       .pipe(requireScheduleInSpace, ['outcome', 'input', 'deps'], 'result:outcome')
       .pipe(readScheduleRecord, 'outcome', 'outcome')
   );
-  const pause = schedulePipeline<ScheduleRefInput, ScheduleResult>(
-    'schedule-pause',
-    { ...write, transition: 'pause', operationName: 'schedule.pause' },
-    (pipeline) =>
-      pipeline
-        .pipe(requireScheduleInSpace, ['outcome', 'input', 'deps'], 'result:outcome')
-        .pipe(
-          applyScheduleTransition,
-          ['outcome', 'caller', 'deps', 'transition', 'operationName'],
-          'outcome'
-        )
-  );
-  const resume = schedulePipeline<ScheduleRefInput, ScheduleResult>(
-    'schedule-resume',
-    { ...write, transition: 'resume', operationName: 'schedule.resume' },
-    (pipeline) =>
-      pipeline
-        .pipe(requireScheduleInSpace, ['outcome', 'input', 'deps'], 'result:outcome')
-        .pipe(
-          applyScheduleTransition,
-          ['outcome', 'caller', 'deps', 'transition', 'operationName'],
-          'outcome'
-        )
-  );
   const update = schedulePipeline<UpdateScheduleInput, ScheduleResult>(
     'schedule-update',
     { ...write, operationName: 'schedule.update' },
@@ -430,22 +406,6 @@ export function createScheduleOperations(
       inputSchema: ScheduleRefInputSchema,
       resultSchema: ScheduleResultSchema,
       execute: (input, caller) => get(input, caller),
-    }),
-    defineOperation({
-      name: 'schedule.pause',
-      policy: MUTATE_POLICY,
-      description: `Pause a schedule so it stops creating tasks until resumed. ${SCOPE_NOTE} Returns the paused schedule, schedule_not_found, or rejected when the schedule is not active.`,
-      inputSchema: ScheduleRefInputSchema,
-      resultSchema: ScheduleResultSchema,
-      execute: (input, caller) => pause(input, caller),
-    }),
-    defineOperation({
-      name: 'schedule.resume',
-      policy: MUTATE_POLICY,
-      description: `Resume a paused schedule, recomputing the next run time and re-enqueueing the fire job. ${SCOPE_NOTE} Returns the resumed schedule, schedule_not_found, or rejected when the schedule is not paused.`,
-      inputSchema: ScheduleRefInputSchema,
-      resultSchema: ScheduleResultSchema,
-      execute: (input, caller) => resume(input, caller),
     }),
     defineOperation({
       name: 'schedule.update',

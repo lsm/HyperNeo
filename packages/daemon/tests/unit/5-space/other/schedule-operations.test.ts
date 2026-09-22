@@ -160,14 +160,12 @@ function run(name: string, input: unknown, caller: OperationCaller) {
 }
 
 describe('schedule operation catalog', () => {
-  test('registers the seven schedule operations', () => {
+  test('registers the five schedule operations', () => {
     expect([...h.operations.keys()].sort()).toEqual([
       'schedule.create',
       'schedule.delete',
       'schedule.get',
       'schedule.list',
-      'schedule.pause',
-      'schedule.resume',
       'schedule.update',
     ]);
   });
@@ -182,8 +180,6 @@ describe('schedule operation catalog', () => {
       ['schedule.create', 'mutate', WRITE_ROLES],
       ['schedule.list', 'read', READ_ROLES],
       ['schedule.get', 'read', READ_ROLES],
-      ['schedule.pause', 'mutate', WRITE_ROLES],
-      ['schedule.resume', 'mutate', WRITE_ROLES],
       ['schedule.update', 'mutate', WRITE_ROLES],
       ['schedule.delete', 'destructive', WRITE_ROLES],
     ]);
@@ -291,17 +287,6 @@ describe('schedule operation catalog', () => {
       reason: 'schedule_not_found',
       message: 'Schedule not found: sched-1',
     });
-  });
-
-  test('pause and resume act on the caller own space schedules', async () => {
-    expect(
-      await run('schedule.pause', { scheduleId: 'sched-1' }, mcpCaller('long_term_agent'))
-    ).toEqual({ ok: true, schedule: schedule({ status: 'paused' }) });
-    expect(
-      await run('schedule.resume', { scheduleId: 'sched-1' }, mcpCaller('long_term_agent'))
-    ).toEqual({ ok: true, schedule: schedule({ status: 'active' }) });
-    expect(h.calls).toEqual(['pauseSchedule', 'resumeSchedule']);
-    expect(h.audits.map((entry) => entry.toolName)).toEqual(['schedule.pause', 'schedule.resume']);
   });
 
   test('update pauses an active schedule and audits the door that was called', async () => {
@@ -425,12 +410,17 @@ describe('schedule operation role admission', () => {
   });
 
   test('workflow workers may mutate schedules', async () => {
-    for (const name of ['schedule.pause', 'schedule.resume', 'schedule.delete']) {
-      expect(
-        await run(name, { scheduleId: 'sched-1' }, mcpCaller('workflow_worker'))
-      ).toMatchObject({ ok: true });
-    }
-    expect(h.calls).toEqual(['pauseSchedule', 'resumeSchedule', 'deleteSchedule']);
+    expect(
+      await run(
+        'schedule.update',
+        { scheduleId: 'sched-1', status: 'paused' },
+        mcpCaller('workflow_worker')
+      )
+    ).toMatchObject({ ok: true });
+    expect(
+      await run('schedule.delete', { scheduleId: 'sched-1' }, mcpCaller('workflow_worker'))
+    ).toMatchObject({ ok: true });
+    expect(h.calls).toEqual(['pauseSchedule', 'deleteSchedule']);
   });
 
   test('roles outside the space family may read as well', async () => {
@@ -459,7 +449,11 @@ describe('schedule operation role admission', () => {
   test('a caller session that left the owning space may not mutate', async () => {
     h.sessions.set('member-1', session('active', OTHER_SPACE_ID));
     expect(
-      await run('schedule.pause', { scheduleId: 'sched-1' }, mcpCaller('ad_hoc_member'))
+      await run(
+        'schedule.update',
+        { scheduleId: 'sched-1', status: 'paused' },
+        mcpCaller('ad_hoc_member')
+      )
     ).toEqual({
       ok: false,
       reason: 'denied',
