@@ -157,6 +157,13 @@ which tools a session can see.
 
 ### Roles admitted per family (identical before and after #4726, enforced by the family gate)
 
+Operation names below are as they stood at `57723b053`, and several have since been renamed,
+folded, or deleted — `forge.*` is now `evolution.*`, the agent family is smaller, and
+`goal.pause`/`goal.resume`/`reviewOutcome` are not operation names at all. Read the rows as a
+record of which roles each family admitted at that commit, not as a current name list;
+`packages/shared/src/types/operation-names/` is the source of truth for what exists today, and
+each operation's own `policy.roles` for who may call it.
+
 | Family | `ad_hoc_member` | `long_term_agent` | `universal_read` | `workflow_worker` | `direct_task_worker` / `legacy_task_agent` / `outside_space` |
 |---|---|---|---|---|---|
 | agent (all 17) | yes | yes | no | no | no |
