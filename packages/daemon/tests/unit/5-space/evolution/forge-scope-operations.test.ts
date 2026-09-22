@@ -180,11 +180,11 @@ const scopeInput = {
 };
 
 const SCOPE_OPERATION_NAMES = [
-  'forge.metric.add',
-  'forge.scope.create',
-  'forge.scope.get',
-  'forge.scope.list',
-  'forge.scope.update',
+  'evolution.metric.add',
+  'evolution.scope.create',
+  'evolution.scope.get',
+  'evolution.scope.list',
+  'evolution.scope.update',
 ];
 
 describe('Forge operation catalog', () => {
@@ -199,18 +199,18 @@ describe('Forge operation catalog', () => {
   });
 });
 
-describe('forge.scope.create', () => {
+describe('evolution.scope.create', () => {
   test('creates a scope in the caller Space and writes an audit entry', async () => {
     const ctx = makeCtx();
     try {
-      const result = (await ctx.op('forge.scope.create').execute(scopeInput, memberCaller)) as {
+      const result = (await ctx.op('evolution.scope.create').execute(scopeInput, memberCaller)) as {
         accepted: true;
         scope: { id: string; spaceId: string; name: string };
       };
       expect(result.accepted).toBe(true);
       expect(result.scope.spaceId).toBe(SPACE_ID);
       expect(ctx.evolutionRepo.getScope(result.scope.id)?.name).toBe('Reliability');
-      expect(ctx.audited.map((entry) => entry.toolName)).toEqual(['forge.scope.create']);
+      expect(ctx.audited.map((entry) => entry.toolName)).toEqual(['evolution.scope.create']);
     } finally {
       ctx.db.close();
     }
@@ -220,7 +220,7 @@ describe('forge.scope.create', () => {
     const ctx = makeCtx();
     try {
       const mismatch = (await ctx
-        .op('forge.scope.create')
+        .op('evolution.scope.create')
         .execute({ ...scopeInput, spaceId: OTHER_SPACE_ID }, memberCaller)) as {
         accepted: false;
         reason: string;
@@ -235,7 +235,9 @@ describe('forge.scope.create', () => {
   test('admits a workflow_worker caller and creates the scope in its Space', async () => {
     const ctx = makeCtx();
     try {
-      const created = (await ctx.op('forge.scope.create').execute(scopeInput, workerCaller)) as {
+      const created = (await ctx
+        .op('evolution.scope.create')
+        .execute(scopeInput, workerCaller)) as {
         accepted: true;
       };
       expect(created).toMatchObject({ accepted: true });
@@ -248,7 +250,9 @@ describe('forge.scope.create', () => {
   test('admits a universal_read caller to the mutation as well', async () => {
     const ctx = makeCtx();
     try {
-      const created = (await ctx.op('forge.scope.create').execute(scopeInput, readerCaller)) as {
+      const created = (await ctx
+        .op('evolution.scope.create')
+        .execute(scopeInput, readerCaller)) as {
         accepted: true;
       };
       expect(created).toMatchObject({ accepted: true });
@@ -261,7 +265,9 @@ describe('forge.scope.create', () => {
   test('denies an archived session in the owning Space and changes nothing', async () => {
     const ctx = makeCtx();
     try {
-      const denied = (await ctx.op('forge.scope.create').execute(scopeInput, archivedCaller)) as {
+      const denied = (await ctx
+        .op('evolution.scope.create')
+        .execute(scopeInput, archivedCaller)) as {
         accepted: false;
         reason: string;
       };
@@ -276,13 +282,13 @@ describe('forge.scope.create', () => {
   test('requires an explicit spaceId from an RPC caller', async () => {
     const ctx = makeCtx();
     try {
-      const missing = (await ctx.op('forge.scope.create').execute(scopeInput, rpcCaller)) as {
+      const missing = (await ctx.op('evolution.scope.create').execute(scopeInput, rpcCaller)) as {
         accepted: false;
         reason: string;
       };
       expect(missing).toMatchObject({ accepted: false, reason: 'space_required' });
       const created = (await ctx
-        .op('forge.scope.create')
+        .op('evolution.scope.create')
         .execute({ ...scopeInput, spaceId: SPACE_ID }, rpcCaller)) as {
         accepted: true;
         scope: { spaceId: string };
@@ -304,11 +310,11 @@ describe('forge.scope.create', () => {
       });
       expect(
         await ctx
-          .op('forge.scope.create')
+          .op('evolution.scope.create')
           .execute({ ...scopeInput, goalId: foreignGoal.id }, memberCaller)
       ).toMatchObject({ accepted: false, reason: 'goal_not_found' });
       expect(
-        await ctx.op('forge.scope.create').execute(
+        await ctx.op('evolution.scope.create').execute(
           {
             ...scopeInput,
             policy: { automation: { selfNagCronExpression: 'not a cron' } },
@@ -332,7 +338,7 @@ describe('forge.scope.create', () => {
         type: 'recurring',
       });
       const result = (await ctx
-        .op('forge.scope.create')
+        .op('evolution.scope.create')
         .execute({ kind: 'mission', goalId: goal.id }, memberCaller)) as {
         accepted: true;
         scope: { kind: string; name: string; objective: string; spaceGoalId: string | null };
@@ -358,7 +364,7 @@ describe('forge.scope.create', () => {
       });
       expect(ctx.goalRepo.getById(goal.id)?.description).toBe('');
       const result = (await ctx
-        .op('forge.scope.create')
+        .op('evolution.scope.create')
         .execute({ kind: 'mission', goalId: goal.id }, memberCaller)) as {
         accepted: true;
         scope: { name: string; objective: string };
@@ -378,7 +384,7 @@ describe('forge.scope.create', () => {
         description: 'Keep the cadence honest',
         type: 'recurring',
       });
-      const result = (await ctx.op('forge.scope.create').execute(
+      const result = (await ctx.op('evolution.scope.create').execute(
         {
           kind: 'mission',
           goalId: goal.id,
@@ -400,12 +406,17 @@ describe('forge.scope.create', () => {
     const ctx = makeCtx();
     try {
       expect(
-        await invokeOperation(ctx.registry, 'forge.scope.create', { kind: 'project' }, memberCaller)
+        await invokeOperation(
+          ctx.registry,
+          'evolution.scope.create',
+          { kind: 'project' },
+          memberCaller
+        )
       ).toMatchObject({ kind: 'failed', code: 'invalid_input' });
       expect(
         await invokeOperation(
           ctx.registry,
-          'forge.scope.create',
+          'evolution.scope.create',
           { kind: 'project', name: 'Reliability' },
           memberCaller
         )
@@ -417,17 +428,17 @@ describe('forge.scope.create', () => {
   });
 });
 
-describe('forge.scope.list', () => {
+describe('evolution.scope.list', () => {
   test('lists scopes for a universal_read caller and rejects RPC callers without a Space', async () => {
     const ctx = makeCtx();
     try {
-      await ctx.op('forge.scope.create').execute(scopeInput, memberCaller);
-      const listed = (await ctx.op('forge.scope.list').execute({}, readerCaller)) as {
+      await ctx.op('evolution.scope.create').execute(scopeInput, memberCaller);
+      const listed = (await ctx.op('evolution.scope.list').execute({}, readerCaller)) as {
         accepted: true;
         scopes: Array<{ name: string }>;
       };
       expect(listed.scopes.map((scope) => scope.name)).toEqual(['Reliability']);
-      expect(await ctx.op('forge.scope.list').execute({}, rpcCaller)).toMatchObject({
+      expect(await ctx.op('evolution.scope.list').execute({}, rpcCaller)).toMatchObject({
         accepted: false,
         reason: 'space_required',
       });
@@ -437,7 +448,7 @@ describe('forge.scope.list', () => {
   });
 });
 
-describe('forge.scope.get', () => {
+describe('evolution.scope.get', () => {
   test('hides a scope owned by another Space behind scope_not_found', async () => {
     const ctx = makeCtx();
     try {
@@ -448,10 +459,10 @@ describe('forge.scope.get', () => {
         objective: 'other space',
       });
       expect(
-        await ctx.op('forge.scope.get').execute({ scopeId: foreign.id }, memberCaller)
+        await ctx.op('evolution.scope.get').execute({ scopeId: foreign.id }, memberCaller)
       ).toMatchObject({ accepted: false, reason: 'scope_not_found' });
       const visible = (await ctx
-        .op('forge.scope.get')
+        .op('evolution.scope.get')
         .execute({ scopeId: foreign.id, spaceId: OTHER_SPACE_ID }, rpcCaller)) as {
         accepted: true;
         scope: { id: string };
@@ -463,18 +474,18 @@ describe('forge.scope.get', () => {
   });
 });
 
-describe('forge.scope.update', () => {
+describe('evolution.scope.update', () => {
   test('deep-merges policyPatch and the judge model without clobbering the rest', async () => {
     const ctx = makeCtx();
     try {
-      const created = (await ctx.op('forge.scope.create').execute(
+      const created = (await ctx.op('evolution.scope.create').execute(
         {
           ...scopeInput,
           policy: { episodeJudgeProvider: 'anthropic', automation: { completedTaskThreshold: 3 } },
         },
         memberCaller
       )) as { accepted: true; scope: { id: string } };
-      const updated = (await ctx.op('forge.scope.update').execute(
+      const updated = (await ctx.op('evolution.scope.update').execute(
         {
           scopeId: created.scope.id,
           policyPatch: { automation: { completedTaskThreshold: 5 } },
@@ -497,7 +508,7 @@ describe('forge.scope.update', () => {
     try {
       expect(
         await ctx
-          .op('forge.scope.update')
+          .op('evolution.scope.update')
           .execute({ scopeId: 'missing-scope', name: 'x' }, memberCaller)
       ).toMatchObject({ accepted: false, reason: 'scope_not_found' });
       expect(ctx.scopeService.listScopes({ spaceId: SPACE_ID })).toHaveLength(0);
@@ -508,13 +519,13 @@ describe('forge.scope.update', () => {
 });
 
 describe('forge scope input min-length parity', () => {
-  test('forge.scope.create rejects a blank objective and a blank metric key or label', async () => {
+  test('evolution.scope.create rejects a blank objective and a blank metric key or label', async () => {
     const ctx = makeCtx();
     try {
       expect(
         await invokeOperation(
           ctx.registry,
-          'forge.scope.create',
+          'evolution.scope.create',
           { ...scopeInput, objective: '' },
           memberCaller
         )
@@ -522,7 +533,7 @@ describe('forge scope input min-length parity', () => {
       expect(
         await invokeOperation(
           ctx.registry,
-          'forge.scope.create',
+          'evolution.scope.create',
           {
             ...scopeInput,
             metricDefinitions: [{ key: '', label: 'Flake rate', direction: 'decrease' }],
@@ -533,7 +544,7 @@ describe('forge scope input min-length parity', () => {
       expect(
         await invokeOperation(
           ctx.registry,
-          'forge.scope.create',
+          'evolution.scope.create',
           {
             ...scopeInput,
             metricDefinitions: [{ key: 'flake_rate', label: '', direction: 'decrease' }],
@@ -547,17 +558,19 @@ describe('forge scope input min-length parity', () => {
     }
   });
 
-  test('forge.scope.update rejects a blank objective and leaves the stored scope intact', async () => {
+  test('evolution.scope.update rejects a blank objective and leaves the stored scope intact', async () => {
     const ctx = makeCtx();
     try {
-      const created = (await ctx.op('forge.scope.create').execute(scopeInput, memberCaller)) as {
+      const created = (await ctx
+        .op('evolution.scope.create')
+        .execute(scopeInput, memberCaller)) as {
         accepted: true;
         scope: { id: string };
       };
       expect(
         await invokeOperation(
           ctx.registry,
-          'forge.scope.update',
+          'evolution.scope.update',
           { scopeId: created.scope.id, objective: '' },
           memberCaller
         )
@@ -568,7 +581,7 @@ describe('forge scope input min-length parity', () => {
     }
   });
 
-  test('forge.scope.create rejects a blank name or objective override on a linked goal', async () => {
+  test('evolution.scope.create rejects a blank name or objective override on a linked goal', async () => {
     const ctx = makeCtx();
     try {
       const goal = ctx.goalRepo.create({
@@ -580,7 +593,7 @@ describe('forge scope input min-length parity', () => {
       expect(
         await invokeOperation(
           ctx.registry,
-          'forge.scope.create',
+          'evolution.scope.create',
           { kind: 'mission', goalId: goal.id, objective: '' },
           memberCaller
         )
@@ -588,7 +601,7 @@ describe('forge scope input min-length parity', () => {
       expect(
         await invokeOperation(
           ctx.registry,
-          'forge.scope.create',
+          'evolution.scope.create',
           { kind: 'mission', goalId: goal.id, name: '' },
           memberCaller
         )
@@ -600,15 +613,17 @@ describe('forge scope input min-length parity', () => {
   });
 });
 
-describe('forge.metric.add', () => {
+describe('evolution.metric.add', () => {
   test('records a snapshot on the scope and attaches it as evidence', async () => {
     const ctx = makeCtx();
     try {
-      const created = (await ctx.op('forge.scope.create').execute(scopeInput, memberCaller)) as {
+      const created = (await ctx
+        .op('evolution.scope.create')
+        .execute(scopeInput, memberCaller)) as {
         accepted: true;
         scope: { id: string };
       };
-      const added = (await ctx.op('forge.metric.add').execute(
+      const added = (await ctx.op('evolution.metric.add').execute(
         {
           scopeId: created.scope.id,
           values: { flakeRate: 0.02 },
@@ -645,15 +660,17 @@ describe('Forge optional Space scope', () => {
       });
       for (const source of ['rpc', 'internal'] as const) {
         const caller = { source, spaceId: SPACE_ID };
-        expect(await invokeOperation(ctx.registry, 'forge.scope.list', {}, caller)).toMatchObject({
+        expect(
+          await invokeOperation(ctx.registry, 'evolution.scope.list', {}, caller)
+        ).toMatchObject({
           kind: 'completed',
           value: { scopes: [{ id: own.id }], scope: { spaceId: SPACE_ID } },
         });
         expect(
-          await ctx.op('forge.scope.get').execute({ scopeId: foreign.id }, caller)
+          await ctx.op('evolution.scope.get').execute({ scopeId: foreign.id }, caller)
         ).toMatchObject({ accepted: false, reason: 'scope_not_found' });
         expect(
-          await ctx.op('forge.scope.get').execute({ scopeId: own.id }, { source })
+          await ctx.op('evolution.scope.get').execute({ scopeId: own.id }, { source })
         ).toMatchObject({ accepted: false, reason: 'space_required' });
       }
     } finally {

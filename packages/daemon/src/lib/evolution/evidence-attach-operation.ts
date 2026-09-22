@@ -181,7 +181,7 @@ function evidenceAuditEntry(
         ? { workflowRunId: input.workflowRunId }
         : {};
   return {
-    toolName: 'forge.evidence.attach',
+    toolName: 'evolution.evidence.attach',
     paramsSummary: { kind: input.kind, scopeId: evidence.scopeId, ...subject },
     caller,
     spaceId: target.spaceId,
@@ -218,7 +218,7 @@ export function createForgeEvidenceAttachOperation(forge: ForgeEvidenceAttachDep
     .endAsync('outcome');
 
   return defineOperation({
-    name: 'forge.evidence.attach',
+    name: 'evolution.evidence.attach',
     policy: FORGE_MUTATE_POLICY,
     description:
       'Attach one evidence item to a Forge scope, discriminated by kind: a manual_note on an explicit scope, a task, or a workflow_run. Task and workflow_run resolve their scope from the subject when scopeId is omitted; manual_note requires scopeId. Rejects task_not_found, workflow_run_not_found, scope_not_found, and evidence_not_attached when no scope can be resolved for the subject.',

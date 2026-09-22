@@ -1,0 +1,15 @@
+export const EVOLUTION_OPERATION_NAMES = [
+  'evolution.episode.create',
+  'evolution.episode.update',
+  'evolution.evidence.attach',
+  'evolution.lesson.update',
+  'evolution.metric.add',
+  'evolution.proposal.create',
+  'evolution.proposal.createTask',
+  'evolution.proposal.update',
+  'evolution.rollup.apply',
+  'evolution.scope.create',
+  'evolution.scope.get',
+  'evolution.scope.list',
+  'evolution.scope.update',
+] as const;

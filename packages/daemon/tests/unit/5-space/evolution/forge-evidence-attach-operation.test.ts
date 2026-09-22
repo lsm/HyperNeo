@@ -122,7 +122,7 @@ type AttachedEvidence = {
   evidence: { id: string; scopeId: string; kind: string; summary: string; sourceId: string | null };
 };
 
-describe('forge.evidence.attach', () => {
+describe('evolution.evidence.attach', () => {
   test('writes a manual note against an explicit scope', async () => {
     const ctx = makeCtx();
     try {
@@ -272,7 +272,7 @@ describe('forge.evidence.attach', () => {
       await ctx.attach.execute({ kind: 'task', taskId: task.id, scopeId: scope.id }, memberCaller);
       expect(ctx.audited).toMatchObject([
         {
-          toolName: 'forge.evidence.attach',
+          toolName: 'evolution.evidence.attach',
           paramsSummary: { kind: 'task', scopeId: scope.id, taskId: task.id },
           spaceId: SPACE_ID,
           taskId: task.id,
@@ -297,7 +297,7 @@ describe('invokeOperation', () => {
       expect(
         await invokeOperation(
           ctx.registry,
-          'forge.evidence.attach',
+          'evolution.evidence.attach',
           { kind: 'manual_note', scopeId: scope.id, summary: 'note' },
           memberCaller
         )
@@ -308,7 +308,7 @@ describe('invokeOperation', () => {
       expect(
         await invokeOperation(
           ctx.registry,
-          'forge.evidence.attach',
+          'evolution.evidence.attach',
           { kind: 'manual_note', scopeId: scope.id, summary: 'note', taskId: task.id },
           memberCaller
         )
