@@ -59,6 +59,13 @@ const OutcomeSchema = z.union([
 ]);
 type Outcome = z.infer<typeof OutcomeSchema>;
 
+const AgentSubscribeOutcomeSchema = z.object({
+  ok: z.literal(true),
+  topicPattern: z.string(),
+  subscription: SubscriptionRecordSchema,
+});
+type AgentSubscribeOutcome = z.infer<typeof AgentSubscribeOutcomeSchema>;
+
 const SubjectSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('node') }).strict(),
   z.object({ type: z.literal('agent'), agentId: z.string().min(1) }).strict(),
@@ -235,7 +242,7 @@ function subscribeSubject(
   input: z.infer<typeof SubscribeInput>,
   caller: OperationCaller,
   subs: SubscriptionDependencies
-): Outcome | { subscription: z.infer<typeof SubscriptionRecordSchema> } | SubjectRejection {
+): Outcome | AgentSubscribeOutcome | SubjectRejection {
   if (subject.kind === 'node') return subscribeTopic(subject.slot, input, subs);
   const result = subscribeAgentTopic(
     subject.scope,
@@ -248,7 +255,8 @@ function subscribeSubject(
     subs,
     'event.external.subscribe'
   );
-  return 'accepted' in result ? result.reason : result;
+  if ('accepted' in result) return result.reason;
+  return { ok: true, topicPattern: result.subscription.topic, subscription: result.subscription };
 }
 
 function unsubscribeSubject(
@@ -350,13 +358,9 @@ export function createSubscriptionOperations(
     defineOperation({
       name: 'event.external.subscribe',
       policy: { safetyClass: 'mutate', roles: SUBSCRIPTION_ROLES },
-      description: `Subscribe a subject to external events matching a topic glob (e.g. github/lsm/neokai/pull_request/*.review_*). A node subject registers the calling worker slot on its workflow run and returns { ok, topicPattern }; an agent subject upserts the stored long-horizon subscription, refreshes the live delivery trie, and returns the stored record, rejecting refresh_failed when the trie could not be refreshed. ${SUBJECT_DOC}`,
+      description: `Subscribe a subject to external events matching a topic glob (e.g. github/lsm/neokai/pull_request/*.review_*). A node subject registers the calling worker slot on its workflow run and returns { ok, topicPattern }; an agent subject upserts the stored long-horizon subscription, refreshes the live delivery trie, and returns the same { ok, topicPattern } with the stored record under subscription, rejecting refresh_failed when the trie could not be refreshed. Both subjects answer in the same shape, so a caller reads ok without knowing which subject it passed. ${SUBJECT_DOC}`,
       inputSchema: SubscribeInput,
-      resultSchema: z.union([
-        OutcomeSchema,
-        z.object({ subscription: SubscriptionRecordSchema }),
-        SUBJECT_REJECTIONS,
-      ]),
+      resultSchema: z.union([AgentSubscribeOutcomeSchema, OutcomeSchema, SUBJECT_REJECTIONS]),
       execute: subjectPipeline('subscribe-external-event', subs, subscribeSubject),
     }),
     defineOperation({

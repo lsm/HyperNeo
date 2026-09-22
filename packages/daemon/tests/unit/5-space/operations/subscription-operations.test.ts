@@ -365,6 +365,8 @@ describe('subscribe and unsubscribe take a subject', () => {
       caller
     );
     expect(operations.get('event.external.subscribe')?.resultSchema.parse(result)).toMatchObject({
+      ok: true,
+      topicPattern: AGENT_TOPIC,
       subscription: { agentId: AGENT, source: 'github', topic: AGENT_TOPIC, status: 'active' },
     });
     const stored = agentSubscriptions.listSubscriptions(AGENT);
@@ -372,6 +374,20 @@ describe('subscribe and unsubscribe take a subject', () => {
     expect(stored[0]!.filter).toEqual({ label: 'reviews' });
     expect(refreshed).toEqual([{ spaceId: SPACE, subscriptionId: stored[0]!.id }]);
     expect(registered).toEqual([]);
+  });
+
+  test('an agent subject echoes the stored topic, not the untrimmed input', async () => {
+    const caller = member(memberSession('s-agent-trim'));
+    const result = await run(
+      'event.external.subscribe',
+      { topicPattern: `  ${AGENT_TOPIC}  `, subject: { type: 'agent', agentId: AGENT } },
+      caller
+    );
+    expect(operations.get('event.external.subscribe')?.resultSchema.parse(result)).toMatchObject({
+      ok: true,
+      topicPattern: AGENT_TOPIC,
+      subscription: { topic: AGENT_TOPIC },
+    });
   });
 
   test('an unlabelled agent subject stores an empty filter and upserts its route', async () => {
