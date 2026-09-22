@@ -7,7 +7,7 @@ export const GOAL_OPERATION_NAMES = [
   'goal.outcome.resolve',
   'goal.owner.get',
   'goal.owner.set',
+  'goal.task.trigger',
   'goal.tasks.list',
-  'goal.triggerTask',
   'goal.update',
 ] as const;

@@ -113,14 +113,14 @@ function agent(role: OperationCaller['role'], spaceId = SPACE_ID): OperationCall
   return { source: 'mcp', sessionId: SESSION_ID, spaceId, role, agentName: 'planner' };
 }
 
-describe('goal.triggerTask through the operations door', () => {
+describe('goal.task.trigger through the operations door', () => {
   test('creates an immediate goal task and audits it against that task', async () => {
     const ctx = makeCtx();
     try {
       const goal = ctx.seed(SPACE_ID, 'Triggerable');
       const result = await invoke(
         ctx,
-        'goal.triggerTask',
+        'goal.task.trigger',
         { goalId: goal.id },
         agent('long_term_agent')
       );
@@ -129,7 +129,7 @@ describe('goal.triggerTask through the operations door', () => {
       expect(result.task?.goalId).toBe(goal.id);
       expect(ctx.auditRows()).toEqual([
         {
-          tool_name: 'goal.triggerTask',
+          tool_name: 'goal.task.trigger',
           params_summary: JSON.stringify({ goalId: goal.id }),
           task_id: result.task?.id ?? null,
         },
