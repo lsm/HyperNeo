@@ -243,6 +243,7 @@ export function createOwnedPendingCompletionOperations(
         'dispatchApproval:dispatchOwnedApproval',
         'reopenTask',
         'updateTask',
+        'warn:warnOwnedCompletion',
       ]
     )
     .pipe(normalizePendingCompletion, 'input', 'decision')
@@ -252,7 +253,7 @@ export function createOwnedPendingCompletionOperations(
       'dispatchOwnedApproval',
       'readOwnedTask',
       'updateTask',
-      'warn',
+      'warnOwnedCompletion',
     ])
     .pipe(readPendingCompletionResult, ['readOwnedTask', 'decision', 'rejection'], 'result:task')
     .pipe(notifyOwnedCompletion, [
