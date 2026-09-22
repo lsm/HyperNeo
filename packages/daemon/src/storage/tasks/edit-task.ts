@@ -10,6 +10,7 @@ export interface EditStandaloneTaskInput {
   description?: string;
   priority?: TaskPriority;
   labels?: string[];
+  dependsOn?: string[];
 }
 
 interface TaskEditQuery {
@@ -20,11 +21,13 @@ interface TaskEditQuery {
 function buildTaskEditQuery(input: EditStandaloneTaskInput, now: number): TaskEditQuery {
   const assignments: string[] = [];
   const values: SQLiteValue[] = [];
-  for (const key of ['title', 'description', 'priority', 'labels'] as const) {
+  for (const key of ['title', 'description', 'priority', 'labels', 'dependsOn'] as const) {
     const value = input[key];
     if (value === undefined) continue;
-    assignments.push(`${key} = ?`);
-    values.push(key === 'labels' ? JSON.stringify(value) : (value as string));
+    assignments.push(`${key === 'dependsOn' ? 'depends_on' : key} = ?`);
+    values.push(
+      key === 'labels' || key === 'dependsOn' ? JSON.stringify(value) : (value as string)
+    );
   }
   if (assignments.length === 0) throw new Error('Task edit requires at least one field');
   assignments.push('updated_at = ?');
@@ -45,6 +48,14 @@ function updateStandaloneTask(
 
 function notifyTaskEdited(notifyChange: () => void): void {
   notifyChange();
+}
+
+export function applyStandaloneTaskEdit(
+  db: Database,
+  input: EditStandaloneTaskInput
+): TaskCore | null {
+  const written = updateStandaloneTask(db, buildTaskEditQuery(input, Date.now()));
+  return 'reason' in written ? null : decodeTaskCoreRow(written.value);
 }
 
 export const editStandaloneTask = (superpipe({})('edit-standalone-task') as PipelineAPI)

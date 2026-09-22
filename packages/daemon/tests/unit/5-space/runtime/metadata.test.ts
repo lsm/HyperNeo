@@ -2,7 +2,7 @@ import { invokeOperation } from '../../../../src/lib/operations/invoke';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry';
 import { createUpdateTaskOperation } from '../../../../src/lib/tasks/update-operation';
 import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
-import type { NodeExecution, Session } from '@hyperneo/shared';
+import type { NodeExecution, Session, SpaceTask } from '@hyperneo/shared';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { createSpaceTables } from '../../helpers/space-test-db';
 import { createTestSession } from '../../../helpers/database';
@@ -349,3 +349,56 @@ test.each([false, true])(
     expect(emit).not.toHaveBeenCalled();
   }
 );
+
+test('a combined Space update reaches the task manager once', async () => {
+  const dependency = tasks.createTask({ spaceId, title: 'Dependency', description: '' });
+  const updateTask = mock(
+    (id: string, fields: Record<string, unknown>, options?: Record<string, unknown>) =>
+      new SpaceTaskManager(db, spaceId).updateTask(
+        id,
+        fields as never,
+        options as never
+      ) as Promise<SpaceTask>
+  );
+
+  const updated = await editor({
+    getTaskManager: () => ({ getTask: (id: string) => tasks.getTask(id), updateTask }),
+  })({ taskId, title: 'Changed', dependsOn: [dependency.id] }, { source: 'rpc' });
+
+  expect(updated).toMatchObject({ title: 'Changed', dependsOn: [dependency.id] });
+  expect(updateTask).toHaveBeenCalledTimes(1);
+  expect(updateTask.mock.calls[0][1]).toMatchObject({
+    title: 'Changed',
+    dependsOn: [dependency.id],
+  });
+  expect(emit).toHaveBeenCalledTimes(1);
+});
+
+test('a rejected combined standalone update leaves both halves unwritten', async () => {
+  const own = createStandaloneTask(db, { title: 'Standalone' }, undefined, notify);
+  const other = createStandaloneTask(db, { title: 'Other' }, undefined, notify);
+  await editor()({ taskId: other.id, dependsOn: [own.id] }, { source: 'rpc' });
+  notify.mockClear();
+
+  expect(
+    await editor()({ taskId: own.id, title: 'Changed', dependsOn: [other.id] }, { source: 'rpc' })
+  ).toBe('dependency_cycle');
+
+  expect(readTaskCore(db, own.id)).toMatchObject({ title: 'Standalone', dependsOn: [] });
+  expect(notify).not.toHaveBeenCalled();
+});
+
+test('a combined standalone update writes both halves in one notification', async () => {
+  const own = createStandaloneTask(db, { title: 'Standalone' }, undefined, notify);
+  const other = createStandaloneTask(db, { title: 'Other' }, undefined, notify);
+  notify.mockClear();
+
+  const updated = await editor()(
+    { taskId: own.id, title: 'Changed', dependsOn: [other.id] },
+    { source: 'rpc' }
+  );
+
+  expect(updated).toMatchObject({ title: 'Changed', dependsOn: [other.id] });
+  expect(readTaskCore(db, own.id)).toMatchObject({ title: 'Changed', dependsOn: [other.id] });
+  expect(notify).toHaveBeenCalledTimes(1);
+});

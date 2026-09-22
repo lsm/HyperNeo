@@ -3,7 +3,6 @@ import type { TaskCore, TaskPriority } from '@hyperneo/shared/types/task-core';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { OperationCaller } from '../operations/registry.ts';
 import type { planTaskDependencies } from './dependency-plan.ts';
-import type { SetTaskDependenciesInput } from '../../storage/tasks/set-task-dependencies.ts';
 
 export type TaskDependencyRejection = Extract<ReturnType<typeof planTaskDependencies>, string>;
 
@@ -26,16 +25,18 @@ export interface TaskMetadataDependencies {
     owner: TaskMetadataOwner,
     caller: OperationCaller
   ) => Awaitable<void | TaskMutationDenial>;
-  replaceDependencies: (
-    owner: TaskMetadataOwner,
-    input: SetTaskDependenciesInput
+  editStandalone: (
+    input: TaskMetadataInput
   ) => Awaitable<TaskCore | TaskDependencyRejection | null>;
-  editStandalone: (input: TaskMetadataInput) => Awaitable<TaskCore | null>;
-  editSpace: (spaceId: string, input: TaskMetadataInput) => Awaitable<TaskCore | null>;
+  editSpace: (
+    spaceId: string,
+    input: TaskMetadataInput
+  ) => Awaitable<{ task: TaskCore; handledByRuntime: boolean } | null>;
   afterEdit?: (
     owner: TaskMetadataOwner,
     task: TaskCore,
-    input: TaskMetadataInput
+    input: TaskMetadataInput,
+    handledByRuntime: boolean
   ) => Awaitable<void>;
 }
 
@@ -48,15 +49,6 @@ export function selectTaskMetadata(input: TaskMetadataInput): TaskMetadataInput 
     ...(Object.hasOwn(input, 'labels') ? { labels: input.labels } : {}),
     ...(Object.hasOwn(input, 'dependsOn') ? { dependsOn: input.dependsOn } : {}),
   };
-}
-
-export function writesTaskMetadata(input: TaskMetadataInput): boolean {
-  return (
-    input.dependsOn === undefined ||
-    [input.title, input.description, input.priority, input.labels].some(
-      (value) => value !== undefined
-    )
-  );
 }
 
 export async function resolveTaskMetadataOwner(
@@ -76,35 +68,33 @@ export async function admitTaskMetadataEdit(
   return denial ? { reason: denial } : { value: owner };
 }
 
-export async function replaceTaskMetadataDependencies(
-  replaceDependencies: TaskMetadataDependencies['replaceDependencies'],
-  owner: TaskMetadataOwner,
-  input: TaskMetadataInput
-): Promise<{ value: TaskCore | null } | { reason: TaskDependencyRejection | null }> {
-  if (input.dependsOn === undefined) return { value: null };
-  const replaced = await replaceDependencies(owner, {
-    taskId: input.taskId,
-    dependsOn: input.dependsOn,
-  });
-  return replaced === null || typeof replaced === 'string'
-    ? { reason: replaced }
-    : { value: replaced };
+type WrittenTask = { task: TaskCore; handledByRuntime: boolean };
+
+export function takeHandledByRuntime(written: WrittenTask): boolean {
+  return written.handledByRuntime;
+}
+
+export function takeEditedTask(written: WrittenTask): TaskCore {
+  return written.task;
 }
 
 export async function persistTaskMetadata(
   editStandalone: TaskMetadataDependencies['editStandalone'],
   editSpace: TaskMetadataDependencies['editSpace'],
   owner: TaskMetadataOwner,
-  input: TaskMetadataInput,
-  replaced?: TaskCore | null
-): Promise<{ value: TaskCore } | { reason: null }> {
-  const { dependsOn: _dependsOn, ...fields } = input;
-  const task = writesTaskMetadata(input)
-    ? await (owner.kind === 'standalone'
-        ? editStandalone(fields)
-        : editSpace(owner.spaceId, fields))
-    : (replaced ?? null);
-  return task === null ? { reason: null } : { value: task };
+  input: TaskMetadataInput
+): Promise<
+  | { value: { task: TaskCore; handledByRuntime: boolean } }
+  | { reason: TaskDependencyRejection | null }
+> {
+  if (owner.kind === 'standalone') {
+    const edited = await editStandalone(input);
+    return edited === null || typeof edited === 'string'
+      ? { reason: edited }
+      : { value: { task: edited, handledByRuntime: false } };
+  }
+  const edited = await editSpace(owner.spaceId, input);
+  return edited === null ? { reason: null } : { value: edited };
 }
 
 export function createTaskMetadataEditor(dependencies: TaskMetadataDependencies) {
@@ -115,16 +105,13 @@ export function createTaskMetadataEditor(dependencies: TaskMetadataDependencies)
     .pipe(admitTaskMetadataEdit, ['admit', 'editedTask', 'caller'], 'result:editedTask')
     .pipe((owner: TaskMetadataOwner) => owner, 'editedTask', 'owner')
     .pipe(
-      replaceTaskMetadataDependencies,
-      ['replaceDependencies', 'owner', 'metadata'],
-      'result:editedTask'
-    )
-    .pipe(
       persistTaskMetadata,
-      ['editStandalone', 'editSpace', 'owner', 'metadata', 'editedTask'],
+      ['editStandalone', 'editSpace', 'owner', 'metadata'],
       'result:editedTask'
     )
-    .pipe('?afterEdit', ['owner', 'editedTask', 'metadata'])
+    .pipe(takeHandledByRuntime, 'editedTask', 'handledByRuntime')
+    .pipe(takeEditedTask, 'editedTask', 'editedTask')
+    .pipe('?afterEdit', ['owner', 'editedTask', 'metadata', 'handledByRuntime'])
     .endAsync('editedTask') as (
     input: TaskMetadataInput,
     caller: OperationCaller
