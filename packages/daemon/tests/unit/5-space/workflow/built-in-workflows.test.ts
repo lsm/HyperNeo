@@ -4372,6 +4372,40 @@ test('prompts persisted with task.resolvePendingCompletion migrate forward to ta
   expect(covered.length).toBeGreaterThan(0);
 });
 
+test('post-approval merge instructions refresh from the template, retiring dead tool names', () => {
+  const covered: string[] = [];
+  for (const workflow of getBuiltInWorkflows()) {
+    for (const node of workflow.nodes) {
+      const current = node.postApproval?.instructions;
+      if (typeof current !== 'string' || !current.includes('workflow.run.reachableAgent.list')) {
+        continue;
+      }
+      const persisted = current
+        .replaceAll(
+          'Confirm it is reachable via `invoke(name="workflow.run.reachableAgent.list")` first',
+          'Confirm it is reachable via `list_reachable_agents` first'
+        )
+        .replaceAll(
+          'check `invoke(name="workflow.run.channel.list")` —',
+          'check `list_channels` —'
+        );
+      expect(persisted).not.toBe(current);
+      const existingNode: WorkflowNode = {
+        ...node,
+        postApproval: { ...node.postApproval!, instructions: persisted },
+      };
+      const merged = mergeNodeStructuralFieldsFromTemplate([existingNode], workflow.nodes);
+      const label = `${workflow.name}/${node.name}`;
+      expect(
+        merged.find((candidate) => candidate.name === node.name)?.postApproval?.instructions,
+        label
+      ).toBe(current);
+      covered.push(label);
+    }
+  }
+  expect(covered.length).toBeGreaterThan(0);
+});
+
 test('CODING_WITH_QA_WORKFLOW Review node is intermediate and defers final approval to QA', () => {
   const reviewNode = CODING_WITH_QA_WORKFLOW.nodes.find((n) => n.name === 'Review')!;
   const prompt = reviewNode.agents[0].customPrompt!.value;
