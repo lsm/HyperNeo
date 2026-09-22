@@ -218,7 +218,7 @@ export function planForgeScopeCreate(
       spaceGoalId: input.goalId ?? null,
       kind: input.kind,
       name,
-      objective: input.objective ?? goal?.description ?? name,
+      objective: input.objective ?? (goal?.description || name),
       parentScopeId: input.parentScopeId ?? null,
       metricDefinitions: input.metricDefinitions,
       policy: input.policy,

@@ -88,7 +88,7 @@ export class EvolutionScopeService {
       spaceGoalId: goal.id,
       kind: 'mission',
       name: params.name ?? goal.title,
-      objective: params.objective ?? goal.description ?? goal.title,
+      objective: params.objective ?? (goal.description || goal.title),
       metricDefinitions: params.metricDefinitions,
       policy: params.policy,
     });

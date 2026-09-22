@@ -361,6 +361,27 @@ describe('forge.scope.create', () => {
     }
   });
 
+  test('falls back to the goal title when the goal has no description', async () => {
+    const ctx = makeCtx();
+    try {
+      const goal = ctx.goalRepo.create({
+        spaceId: SPACE_ID,
+        title: 'Weekly review',
+        type: 'recurring',
+      });
+      expect(ctx.goalRepo.getById(goal.id)?.description).toBe('');
+      const result = (await ctx
+        .op('forge.scope.create')
+        .execute({ kind: 'mission', goalId: goal.id }, memberCaller)) as {
+        accepted: true;
+        scope: { name: string; objective: string };
+      };
+      expect(result.scope.objective).toBe('Weekly review');
+    } finally {
+      ctx.db.close();
+    }
+  });
+
   test('prefers an explicit name and objective over the linked goal', async () => {
     const ctx = makeCtx();
     try {
