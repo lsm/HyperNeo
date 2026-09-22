@@ -64,7 +64,7 @@ export async function setPreferredWorkflow(
 ): Promise<SpaceTask> {
   const result = await invokeOperation<SpaceTask | string | null>(
     hub,
-    'task.setPreferredWorkflow',
+    'task.preferredWorkflow.set',
     input
   );
   if (result === null) throw new Error(`Task ${input.taskId} is unavailable`);

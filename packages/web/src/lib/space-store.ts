@@ -2712,7 +2712,7 @@ class SpaceStore {
 
     const result = await invokeOperation<
       { sessionId: string } | { rejected: true; message: string }
-    >(hub, 'agent.ensureSession', { spaceId, agentId });
+    >(hub, 'agent.session.ensure', { spaceId, agentId });
     if ('rejected' in result) throw new Error(result.message);
     this.agents.value = this.agents.value.map((agent) =>
       agent.id === agentId ? { ...agent, sessionId: result.sessionId } : agent

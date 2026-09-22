@@ -138,7 +138,7 @@ export function createSetPreferredWorkflowOperation(deps: Deps) {
     .endAsync('outcome') as (input: In, caller: OperationCaller) => Promise<Result>;
 
   return defineOperation({
-    name: 'task.setPreferredWorkflow',
+    name: 'task.preferredWorkflow.set',
     description: SET_PREFERRED_WORKFLOW_DESCRIPTION,
     inputSchema: SetPreferredWorkflowInputSchema,
     resultSchema: z.union([
