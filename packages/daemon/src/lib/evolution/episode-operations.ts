@@ -15,7 +15,6 @@ import {
 import { TaskWithSpaceFieldsSchema } from '../tasks/get-operation.ts';
 import {
   admitForgeMutator,
-  admitForgeReader,
   denyForge,
   FORGE_CALLER_REJECTIONS,
   forgeDenialSchema,
@@ -32,7 +31,6 @@ import {
   ForgePreflightSchema,
   ForgePrioritySchema,
   ForgeProposalSchema,
-  ForgeProposalStatusSchema,
 } from './forge-episode-schemas.ts';
 import { ForgeMetricValuesSchema } from './forge-result-schemas.ts';
 import type { EvolutionEpisodeService } from './episode-service.ts';
@@ -48,9 +46,6 @@ export interface ForgeEpisodeOperationDependencies extends ForgeAdmissionDepende
     | 'getEpisode'
     | 'getLesson'
     | 'getTaskProposal'
-    | 'listLessons'
-    | 'listReviewBundle'
-    | 'listTaskProposals'
     | 'updateEpisode'
     | 'updateLesson'
     | 'updateTaskProposal'
@@ -90,11 +85,6 @@ type LessonUpdateRejection = (typeof LESSON_UPDATE_REJECTIONS)[number];
 type ProposalUpdateRejection = (typeof PROPOSAL_UPDATE_REJECTIONS)[number];
 type ProposalTaskRejection = (typeof PROPOSAL_TASK_REJECTIONS)[number];
 type RollupRejection = (typeof ROLLUP_REJECTIONS)[number];
-
-const FORGE_READ_POLICY = {
-  safetyClass: 'read',
-  roles: ['ad_hoc_member', 'long_term_agent', 'universal_read'],
-} as const satisfies OperationPolicy;
 
 const FORGE_MUTATE_POLICY = {
   safetyClass: 'mutate',
@@ -211,57 +201,6 @@ export async function applyForgeEpisodeCreate(
   } catch (err) {
     return denyForge('episode_not_generated', failureDetail(err));
   }
-}
-
-export function readForgeReviewBundle(
-  scope: EvolutionScope,
-  forge: ForgeEpisodeOperationDependencies
-): Record<string, unknown> {
-  return {
-    accepted: true,
-    ...forge.episodeService.listReviewBundle(scope.id),
-    scope: { spaceId: scope.spaceId },
-  };
-}
-
-const LessonListInputSchema = z
-  .object({ ...ScopeTargeted, status: ForgeLessonStatusSchema.optional() })
-  .strict();
-
-export function readForgeLessons(
-  input: z.infer<typeof LessonListInputSchema>,
-  scope: EvolutionScope,
-  caller: OperationCaller,
-  forge: ForgeEpisodeOperationDependencies
-): { accepted: true; lessons: EvolutionLesson[]; scope: { spaceId: string } } {
-  const lessons = forge.episodeService.listLessons(scope.id, input.status);
-  forge.audit?.({
-    toolName: 'forge.lesson.list',
-    paramsSummary: { scopeId: scope.id, status: input.status },
-    caller,
-    spaceId: scope.spaceId,
-  });
-  return { accepted: true, lessons, scope: { spaceId: scope.spaceId } };
-}
-
-const ProposalListInputSchema = z
-  .object({ ...ScopeTargeted, status: ForgeProposalStatusSchema.optional() })
-  .strict();
-
-export function readForgeProposals(
-  input: z.infer<typeof ProposalListInputSchema>,
-  scope: EvolutionScope,
-  caller: OperationCaller,
-  forge: ForgeEpisodeOperationDependencies
-): { accepted: true; proposals: TaskProposal[]; scope: { spaceId: string } } {
-  const proposals = forge.episodeService.listTaskProposals(scope.id, input.status);
-  forge.audit?.({
-    toolName: 'forge.proposal.list',
-    paramsSummary: { scopeId: scope.id, status: input.status },
-    caller,
-    spaceId: scope.spaceId,
-  });
-  return { accepted: true, proposals, scope: { spaceId: scope.spaceId } };
 }
 
 const EpisodeUpdateInputSchema = z
@@ -512,27 +451,6 @@ export function createForgeEpisodeOperations(forge: ForgeEpisodeOperationDepende
     .pipe(applyForgeEpisodeCreate, ['input', 'outcome', 'caller', 'forge'], 'result:outcome')
     .endAsync('outcome');
 
-  const reviewBundle = (superpipe({ forge })('forge-review-bundle-list') as PipelineAPI)
-    .input(['input', 'caller'])
-    .pipe(admitForgeReader, ['input', 'caller'], 'result:outcome')
-    .pipe(requireEpisodeScope, ['input', 'outcome', 'forge'], 'result:outcome')
-    .pipe(readForgeReviewBundle, ['outcome', 'forge'], 'outcome')
-    .endAsync('outcome');
-
-  const lessonList = (superpipe({ forge })('forge-lesson-list') as PipelineAPI)
-    .input(['input', 'caller'])
-    .pipe(admitForgeReader, ['input', 'caller'], 'result:outcome')
-    .pipe(requireEpisodeScope, ['input', 'outcome', 'forge'], 'result:outcome')
-    .pipe(readForgeLessons, ['input', 'outcome', 'caller', 'forge'], 'outcome')
-    .endAsync('outcome');
-
-  const proposalList = (superpipe({ forge })('forge-proposal-list') as PipelineAPI)
-    .input(['input', 'caller'])
-    .pipe(admitForgeReader, ['input', 'caller'], 'result:outcome')
-    .pipe(requireEpisodeScope, ['input', 'outcome', 'forge'], 'result:outcome')
-    .pipe(readForgeProposals, ['input', 'outcome', 'caller', 'forge'], 'outcome')
-    .endAsync('outcome');
-
   const episodeUpdate = (superpipe({ forge })('forge-episode-update') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitForgeMutator, ['input', 'caller', 'forge'], 'result:outcome')
@@ -592,50 +510,6 @@ export function createForgeEpisodeOperations(forge: ForgeEpisodeOperationDepende
         forgeDenialSchema(EPISODE_CREATE_REJECTIONS),
       ]),
       execute: async (input, caller) => episodeCreate(input, caller),
-    }),
-    defineOperation({
-      name: 'forge.reviewBundle.list',
-      policy: FORGE_READ_POLICY,
-      description:
-        'Read everything needed to review a Forge scope in one call: its episodes, lessons, and task proposals. Rejects scope_not_found when the scope is absent or outside the caller Space.',
-      inputSchema: z.object(ScopeTargeted).strict(),
-      resultSchema: z.union([
-        accepted({
-          scope: z.object({ spaceId: z.string() }),
-          episodes: z.array(ForgeEpisodeSchema),
-          lessons: z.array(ForgeLessonSchema),
-          proposals: z.array(ForgeProposalSchema),
-        }),
-        forgeDenialSchema(SCOPE_REJECTIONS),
-      ]),
-      execute: async (input, caller) => reviewBundle(input, caller),
-    }),
-    defineOperation({
-      name: 'forge.lesson.list',
-      policy: FORGE_READ_POLICY,
-      description:
-        'List the lessons a Forge scope has accumulated, optionally filtered by status (candidate, active, dismissed). Rejects scope_not_found when the scope is absent or outside the caller Space.',
-      inputSchema: LessonListInputSchema,
-      resultSchema: z.union([
-        accepted({ lessons: z.array(ForgeLessonSchema), scope: z.object({ spaceId: z.string() }) }),
-        forgeDenialSchema(SCOPE_REJECTIONS),
-      ]),
-      execute: async (input, caller) => lessonList(input, caller),
-    }),
-    defineOperation({
-      name: 'forge.proposal.list',
-      policy: FORGE_READ_POLICY,
-      description:
-        'List the task proposals on a Forge scope, optionally filtered by status (proposed, accepted, dismissed, created). Rejects scope_not_found when the scope is absent or outside the caller Space.',
-      inputSchema: ProposalListInputSchema,
-      resultSchema: z.union([
-        accepted({
-          proposals: z.array(ForgeProposalSchema),
-          scope: z.object({ spaceId: z.string() }),
-        }),
-        forgeDenialSchema(SCOPE_REJECTIONS),
-      ]),
-      execute: async (input, caller) => proposalList(input, caller),
     }),
     defineOperation({
       name: 'forge.episode.update',
