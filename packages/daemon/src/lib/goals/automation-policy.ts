@@ -1,7 +1,7 @@
 import type {
   EvolutionScope,
-  GoalForgeAutomationEventSubscription,
-  GoalForgeAutomationPolicy,
+  GoalEvolutionAutomationEventSubscription,
+  GoalEvolutionAutomationPolicy,
 } from '@hyperneo/shared';
 import type { ExternalEventPublishedPayload } from '../external-events/external-event-service.ts';
 
@@ -9,11 +9,11 @@ export const DEFAULT_COMPLETED_TASK_THRESHOLD = 10;
 
 export function readAutomationPolicyForScope(
   scope: EvolutionScope | null | undefined
-): GoalForgeAutomationPolicy {
+): GoalEvolutionAutomationPolicy {
   return normalizePolicy(scope?.policy.automation);
 }
 
-export function readCompletedTaskThreshold(policy: GoalForgeAutomationPolicy): number | null {
+export function readCompletedTaskThreshold(policy: GoalEvolutionAutomationPolicy): number | null {
   if (policy.completedTaskAutomationEnabled === false) return null;
   const threshold = policy.completedTaskThreshold;
   if (threshold === undefined) return DEFAULT_COMPLETED_TASK_THRESHOLD;
@@ -23,9 +23,9 @@ export function readCompletedTaskThreshold(policy: GoalForgeAutomationPolicy): n
 }
 
 export function findMatchingSubscription(
-  subscriptions: GoalForgeAutomationEventSubscription[] | undefined,
+  subscriptions: GoalEvolutionAutomationEventSubscription[] | undefined,
   event: ExternalEventPublishedPayload
-): GoalForgeAutomationEventSubscription | null {
+): GoalEvolutionAutomationEventSubscription | null {
   for (const subscription of subscriptions ?? []) {
     if (subscription.source && subscription.source !== event.source) continue;
     if (!topicMatches(subscription.topic, event.topic)) continue;
@@ -35,7 +35,7 @@ export function findMatchingSubscription(
   return null;
 }
 
-function normalizePolicy(value: unknown): GoalForgeAutomationPolicy {
+function normalizePolicy(value: unknown): GoalEvolutionAutomationPolicy {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   const record = value as Record<string, unknown>;
   return {
@@ -59,7 +59,7 @@ function normalizePolicy(value: unknown): GoalForgeAutomationPolicy {
   };
 }
 
-function normalizeSubscription(value: unknown): GoalForgeAutomationEventSubscription[] {
+function normalizeSubscription(value: unknown): GoalEvolutionAutomationEventSubscription[] {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
   const record = value as Record<string, unknown>;
   if (typeof record.topic !== 'string' || !record.topic.trim()) return [];

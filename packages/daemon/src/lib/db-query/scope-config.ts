@@ -349,8 +349,7 @@ const SPACE_SCOPE_TABLES: ScopeTableConfig[] = [
     tableName: 'evolution_scopes',
     scopeColumn: 'space_id',
     blacklistedColumns: [],
-    description:
-      'Forge evolution scopes that define bounded learning loops for a Space or Space goal.',
+    description: 'Evolution scopes that define bounded learning loops for a Space or Space goal.',
   },
   {
     tableName: 'evolution_evidence',
@@ -362,7 +361,7 @@ const SPACE_SCOPE_TABLES: ScopeTableConfig[] = [
     },
     blacklistedColumns: [],
     description:
-      'Evidence references collected for Forge evolution scopes, such as tasks, runs, sessions, notes, and metric snapshots.',
+      'Evidence references collected for Evolution scopes, such as tasks, runs, sessions, notes, and metric snapshots.',
   },
   {
     tableName: 'evolution_episodes',
@@ -374,7 +373,7 @@ const SPACE_SCOPE_TABLES: ScopeTableConfig[] = [
     },
     blacklistedColumns: [],
     description:
-      'Forge learning episodes that summarize evidence, findings, and outcomes for a scope.',
+      'Evolution learning episodes that summarize evidence, findings, and outcomes for a scope.',
   },
   {
     tableName: 'evolution_lessons',
@@ -386,7 +385,7 @@ const SPACE_SCOPE_TABLES: ScopeTableConfig[] = [
     },
     blacklistedColumns: [],
     description:
-      'Candidate and active Forge lessons derived from evolution episodes for future scoped work.',
+      'Candidate and active Evolution lessons derived from evolution episodes for future scoped work.',
   },
   {
     tableName: 'evolution_task_proposals',
@@ -397,8 +396,7 @@ const SPACE_SCOPE_TABLES: ScopeTableConfig[] = [
       scopeColumn: 'space_id',
     },
     blacklistedColumns: [],
-    description:
-      'Follow-up Space task proposals produced from Forge evolution findings and lessons.',
+    description: 'Follow-up Space task proposals produced from evolution findings and lessons.',
   },
   {
     tableName: 'evolution_metric_snapshots',
@@ -409,14 +407,14 @@ const SPACE_SCOPE_TABLES: ScopeTableConfig[] = [
       scopeColumn: 'space_id',
     },
     blacklistedColumns: [],
-    description: 'Metric snapshots captured for Forge evolution scopes over time.',
+    description: 'Metric snapshots captured for Evolution scopes over time.',
   },
   {
     tableName: 'goal_automation_cursors',
     scopeColumn: 'space_id',
     blacklistedColumns: [],
     description:
-      'Forge automation cursor state for deduplicating goal-triggered retrospectives and external event runs.',
+      'Evolution automation cursor state for deduplicating goal-triggered retrospectives and external event runs.',
   },
   {
     tableName: 'sessions',

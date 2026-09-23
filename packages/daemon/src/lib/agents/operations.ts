@@ -46,13 +46,13 @@ export interface AgentOperationDependencies extends AgentOperationDeps {
   readonly ensureAgentSession: EnsureAgentSessionDependencies['ensureAgentSession'];
   readonly audit: CreateAgentDependencies['audit'];
   readonly getGoalSpace: AgentAssignmentDependencies['getGoalSpace'];
-  readonly getForgeScopeSpace: AgentAssignmentDependencies['getForgeScopeSpace'];
+  readonly getEvolutionScopeSpace: AgentAssignmentDependencies['getEvolutionScopeSpace'];
   readonly goalScopeRepo: Pick<
     SpaceAgentGoalScopeRepository,
     | 'assignGoal'
     | 'deleteGoalAssignmentByRelationship'
-    | 'assignForgeScope'
-    | 'deleteForgeScopeAssignment'
+    | 'assignEvolutionScope'
+    | 'deleteEvolutionScopeAssignment'
   >;
   readonly publishGoalOwnerChanged: AgentAssignmentDependencies['publishGoalOwnerChanged'];
 }
@@ -64,9 +64,10 @@ function assignmentDeps(deps: AgentOperationDependencies): AgentAssignmentDepend
     assignGoal: (agentId, goalId) => deps.goalScopeRepo.assignGoal(agentId, goalId),
     unassignGoal: (agentId, goalId) =>
       deps.goalScopeRepo.deleteGoalAssignmentByRelationship(agentId, goalId, 'owner'),
-    assignForgeScope: (agentId, scopeId) => deps.goalScopeRepo.assignForgeScope(agentId, scopeId),
-    unassignForgeScope: (agentId, scopeId) =>
-      deps.goalScopeRepo.deleteForgeScopeAssignment(agentId, scopeId),
+    assignEvolutionScope: (agentId, scopeId) =>
+      deps.goalScopeRepo.assignEvolutionScope(agentId, scopeId),
+    unassignEvolutionScope: (agentId, scopeId) =>
+      deps.goalScopeRepo.deleteEvolutionScopeAssignment(agentId, scopeId),
   };
 }
 

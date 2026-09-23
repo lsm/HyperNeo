@@ -1,13 +1,13 @@
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import { generateUUID } from '@hyperneo/shared';
-import type { GoalForgeAutomationTriggerKind } from '@hyperneo/shared';
+import type { GoalEvolutionAutomationTriggerKind } from '@hyperneo/shared';
 
 export interface GoalAutomationCursor {
   id: string;
   spaceId: string;
   goalId: string;
   scopeId: string;
-  triggerKind: GoalForgeAutomationTriggerKind;
+  triggerKind: GoalEvolutionAutomationTriggerKind;
   triggerKey: string;
   lastEvidenceCreatedAt: number | null;
   lastEvidenceId: string | null;
@@ -24,7 +24,7 @@ export interface UpsertGoalAutomationCursorParams {
   spaceId: string;
   goalId: string;
   scopeId: string;
-  triggerKind: GoalForgeAutomationTriggerKind;
+  triggerKind: GoalEvolutionAutomationTriggerKind;
   triggerKey: string;
   lastEvidenceCreatedAt?: number | null;
   lastEvidenceId?: string | null;
@@ -41,7 +41,7 @@ export class GoalAutomationCursorRepository {
   get(
     goalId: string,
     scopeId: string,
-    triggerKind: GoalForgeAutomationTriggerKind,
+    triggerKind: GoalEvolutionAutomationTriggerKind,
     triggerKey: string
   ): GoalAutomationCursor | null {
     const row = this.db
@@ -56,7 +56,7 @@ export class GoalAutomationCursorRepository {
   getLatestForTriggerKind(
     goalId: string,
     scopeId: string,
-    triggerKind: GoalForgeAutomationTriggerKind
+    triggerKind: GoalEvolutionAutomationTriggerKind
   ): GoalAutomationCursor | null {
     const row = this.db
       .prepare(
@@ -159,7 +159,7 @@ function rowToCursor(row: Record<string, unknown>): GoalAutomationCursor {
     spaceId: row.space_id as string,
     goalId: row.goal_id as string,
     scopeId: row.scope_id as string,
-    triggerKind: row.trigger_kind as GoalForgeAutomationTriggerKind,
+    triggerKind: row.trigger_kind as GoalEvolutionAutomationTriggerKind,
     triggerKey: row.trigger_key as string,
     lastEvidenceCreatedAt: (row.last_evidence_created_at as number | null) ?? null,
     lastEvidenceId: (row.last_evidence_id as string | null) ?? null,

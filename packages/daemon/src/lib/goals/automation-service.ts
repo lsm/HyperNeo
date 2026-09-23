@@ -1,7 +1,7 @@
 import type {
   EvidenceRef,
   EvolutionScope,
-  GoalForgeAutomationEventSubscription,
+  GoalEvolutionAutomationEventSubscription,
   SpaceGoal,
   SpaceTask,
 } from '@hyperneo/shared';
@@ -212,7 +212,7 @@ export function completedTaskTriggerKey(threshold: number): string {
 }
 
 export function externalEventTriggerKey(
-  subscription: GoalForgeAutomationEventSubscription
+  subscription: GoalEvolutionAutomationEventSubscription
 ): string {
   return `event:${subscription.source ?? '*'}:${subscription.topic}`;
 }

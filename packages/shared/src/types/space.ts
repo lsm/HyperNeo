@@ -197,7 +197,7 @@ export type SpaceGoalOwnerResolution =
     }
   | { action: 'no_recipient' };
 
-export interface SpaceLongHorizonAgentForgeScope {
+export interface SpaceLongHorizonAgentEvolutionScope {
   agentId: string;
   scopeId: string;
   relationship: SpaceLongHorizonAgentRelationship;

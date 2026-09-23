@@ -19,7 +19,7 @@ const goalInputSchema = AgentSpaceScopeSchema.extend({
 
 const scopeInputSchema = AgentSpaceScopeSchema.extend({
   agentId: z.string().min(1).describe('Long-horizon agent ID'),
-  scopeId: z.string().min(1).describe('Forge scope ID'),
+  scopeId: z.string().min(1).describe('Evolution scope ID'),
 }).strict();
 
 const goalOwnerSetInputSchema = goalInputSchema
@@ -46,11 +46,11 @@ type Gate<T> = { value: T } | { reason: AgentRejection };
 export interface AgentAssignmentDependencies extends AgentOperationDeps {
   readonly getAgent: (agentId: string) => SpaceLongHorizonAgent | null;
   readonly getGoalSpace: (goalId: string) => string | null;
-  readonly getForgeScopeSpace: (scopeId: string) => string | null;
+  readonly getEvolutionScopeSpace: (scopeId: string) => string | null;
   readonly assignGoal: (agentId: string, goalId: string) => void;
   readonly unassignGoal: (agentId: string, goalId: string) => void;
-  readonly assignForgeScope: (agentId: string, scopeId: string) => void;
-  readonly unassignForgeScope: (agentId: string, scopeId: string) => void;
+  readonly assignEvolutionScope: (agentId: string, scopeId: string) => void;
+  readonly unassignEvolutionScope: (agentId: string, scopeId: string) => void;
   readonly publishGoalOwnerChanged: (spaceId: string, goalId: string, sessionId: string) => void;
   readonly audit: (
     operationName: string,
@@ -125,7 +125,7 @@ function gateScopeTargets(
     spaceId,
     input.agentId,
     input.scopeId,
-    deps.getForgeScopeSpace,
+    deps.getEvolutionScopeSpace,
     'EvolutionScope',
     deps
   );
@@ -155,8 +155,8 @@ function scopeOwnerWriter(
   caller: OperationCaller,
   deps: AgentAssignmentDependencies
 ): OwnerSetResult {
-  if (input.assigned) deps.assignForgeScope(input.agentId, input.scopeId);
-  else deps.unassignForgeScope(input.agentId, input.scopeId);
+  if (input.assigned) deps.assignEvolutionScope(input.agentId, input.scopeId);
+  else deps.unassignEvolutionScope(input.agentId, input.scopeId);
   deps.audit(
     'evolution.scope.owner.set',
     { agentId: input.agentId, scopeId: input.scopeId, assigned: input.assigned },
@@ -169,7 +169,7 @@ function scopeOwnerWriter(
 const GOAL_OWNERSHIP_DOC =
   'Admitted for MCP callers whose session is active in the owning Space; a caller with no Space, or one whose session is not active in it, is rejected with agent_denied. A caller that presents an agent identity must own one that is active in this Space. Rejects agent_not_found or goal_not_found when either side belongs to another Space.';
 
-const FORGE_SCOPE_DOC =
+const EVOLUTION_SCOPE_DOC =
   'Admitted for MCP callers whose session is active in the owning Space; a caller with no Space, or one whose session is not active in it, is rejected with agent_denied. Rejects agent_not_found or scope_not_found when either side belongs to another Space.';
 
 const ownerSetResultSchema = z.union([
@@ -212,7 +212,7 @@ export function createSetScopeOwnerOperation(deps: AgentAssignmentDependencies) 
   ) => Promise<OwnerSetResult>;
   return defineOperation({
     name: 'evolution.scope.owner.set',
-    description: `Set or drop the long-horizon agent a Forge scope's evidence loop routes to. assigned true routes the scope to the agent, false stops routing it; dropping one that is not there succeeds. The result reports the resulting state. Read the current routing with evolution.scope.get include ["agents"]. ${FORGE_SCOPE_DOC}`,
+    description: `Set or drop the long-horizon agent an evolution scope's evidence loop routes to. assigned true routes the scope to the agent, false stops routing it; dropping one that is not there succeeds. The result reports the resulting state. Read the current routing with evolution.scope.get include ["agents"]. ${EVOLUTION_SCOPE_DOC}`,
     policy: AGENT_MUTATE_POLICY,
     inputSchema: scopeOwnerSetInputSchema,
     resultSchema: ownerSetResultSchema,

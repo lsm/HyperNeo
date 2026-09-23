@@ -134,12 +134,12 @@ function makeOperations(
     longHorizonAgentRepo: { getById: () => null } as never,
     getAgent,
     getGoalSpace: (goalId: string) => goalService.getGoal(goalId)?.spaceId ?? null,
-    getForgeScopeSpace: () => null,
+    getEvolutionScopeSpace: () => null,
     assignGoal: (agentId: string, goalId: string) => goalScopeRepo.assignGoal(agentId, goalId),
     unassignGoal: (agentId: string, goalId: string) =>
       goalScopeRepo.deleteGoalAssignmentByRelationship(agentId, goalId, 'owner'),
-    assignForgeScope: () => {},
-    unassignForgeScope: () => {},
+    assignEvolutionScope: () => {},
+    unassignEvolutionScope: () => {},
     publishGoalOwnerChanged: (spaceId: string, goalId: string, sessionId: string) => {
       internalEventBus
         ?.publish('spaceGoal.ownerChanged', { sessionId, spaceId, goalId })

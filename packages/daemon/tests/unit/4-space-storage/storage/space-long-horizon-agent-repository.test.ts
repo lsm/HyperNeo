@@ -111,8 +111,8 @@ describe('SpaceLongHorizonAgentRepository', () => {
     expect(() => repo.assignGoal(agent.id, 'goal-2')).toThrow(
       'Goal goal-2 does not belong to space space-1'
     );
-    expect(() => repo.assignForgeScope(agent.id, 'scope-2')).toThrow(
-      'Forge scope scope-2 does not belong to space space-1'
+    expect(() => repo.assignEvolutionScope(agent.id, 'scope-2')).toThrow(
+      'Evolution scope scope-2 does not belong to space space-1'
     );
     expect(() =>
       repo.createReminder({
@@ -147,7 +147,7 @@ describe('SpaceLongHorizonAgentRepository', () => {
     ).run('scope-1', 'space-1', 'Scope 1', 'Improve Forge', 1, 1);
 
     repo.assignGoal(agent.id, 'goal-1', 'manager');
-    repo.assignForgeScope(agent.id, 'scope-1', 'watcher');
+    repo.assignEvolutionScope(agent.id, 'scope-1', 'watcher');
     const reminder = repo.createReminder({
       spaceId: 'space-1',
       agentId: agent.id,
@@ -168,7 +168,7 @@ describe('SpaceLongHorizonAgentRepository', () => {
     expect(repo.listGoals(agent.id)).toEqual([
       expect.objectContaining({ agentId: agent.id, goalId: 'goal-1', relationship: 'manager' }),
     ]);
-    expect(repo.listForgeScopes(agent.id)).toEqual([
+    expect(repo.listEvolutionScopes(agent.id)).toEqual([
       expect.objectContaining({ agentId: agent.id, scopeId: 'scope-1', relationship: 'watcher' }),
     ]);
     expect(repo.getReminder(reminder.id)).toMatchObject({

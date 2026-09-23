@@ -58,7 +58,7 @@ export interface EvolutionScopeGetDependencies extends EvolutionAdmissionDepende
   readonly taskRepo: Pick<SpaceTaskRepository, 'getTask'>;
   readonly longHorizonAgentRepo: Pick<
     SpaceLongHorizonAgentRepository,
-    'getById' | 'listForgeScopeAssignments'
+    'getById' | 'listEvolutionScopeAssignments'
   >;
   readonly audit?: EvolutionAuditWriter;
 }
@@ -152,7 +152,7 @@ type ScopeGetPartReader = (
 const SCOPE_GET_PART_READERS: Record<ScopeGetPart, ScopeGetPartReader> = {
   scope: (_input, scope) => ({ scope }),
   agents: (_input, scope, forge) => ({
-    agents: forge.longHorizonAgentRepo.listForgeScopeAssignments(scope.id).map((link) => ({
+    agents: forge.longHorizonAgentRepo.listEvolutionScopeAssignments(scope.id).map((link) => ({
       agentId: link.agentId,
       relationship: link.relationship,
       createdAt: link.createdAt,
@@ -264,7 +264,7 @@ export function createForgeScopeGetOperation(forge: EvolutionScopeGetDependencie
     name: 'evolution.scope.get',
     policy: FORGE_READ_POLICY,
     description:
-      'Read one Forge scope and whatever parts of it you need in a single call. Address the scope by scopeId, or by goalId or taskId to resolve the scope linked to that goal or task (scopeId wins, then goalId, then taskId). include names the parts to return — scope, agents, evidence, metrics, episodes, lessons, proposals — and defaults to ["scope"], the scope row with its linked goal, metric definitions, and policy, which reads no lists; every other part costs one unfiltered read of that scope. agents returns the long-horizon agents this scope is routed to, which is what evolution.scope.owner.set writes. Filter with lessonStatus and proposalStatus. Parts you do not ask for are absent from the result. Rejects resolve_target_required when no address is given, goal_not_found or task_not_found when the target is absent or outside the caller Space, and scope_not_found when the scope is absent, outside the caller Space, or not linked to the target.',
+      'Read one Evolution scope and whatever parts of it you need in a single call. Address the scope by scopeId, or by goalId or taskId to resolve the scope linked to that goal or task (scopeId wins, then goalId, then taskId). include names the parts to return — scope, agents, evidence, metrics, episodes, lessons, proposals — and defaults to ["scope"], the scope row with its linked goal, metric definitions, and policy, which reads no lists; every other part costs one unfiltered read of that scope. agents returns the long-horizon agents this scope is routed to, which is what evolution.scope.owner.set writes. Filter with lessonStatus and proposalStatus. Parts you do not ask for are absent from the result. Rejects resolve_target_required when no address is given, goal_not_found or task_not_found when the target is absent or outside the caller Space, and scope_not_found when the scope is absent, outside the caller Space, or not linked to the target.',
     inputSchema: ScopeGetInputSchema,
     resultSchema: z.union([ScopeGetResultSchema, forgeDenialSchema(SCOPE_GET_REJECTIONS)]),
     execute: async (input, caller) => get(input, caller),

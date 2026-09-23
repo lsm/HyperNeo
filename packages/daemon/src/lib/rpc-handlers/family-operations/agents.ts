@@ -70,7 +70,7 @@ export function registerAgentOperations(context: FamilyOperationContext): Operat
       ensureAgentSession: (spaceId, agentId) =>
         context.spaceRuntimeService.ensureAgentSession(spaceId, agentId),
       getGoalSpace: (goalId) => context.spaceGoalService.getGoal(goalId)?.spaceId ?? null,
-      getForgeScopeSpace: (scopeId) =>
+      getEvolutionScopeSpace: (scopeId) =>
         context.evolutionScopeService.getScope(scopeId)?.spaceId ?? null,
       goalScopeRepo: context.spaceAgentGoalScopeRepo,
       publishGoalOwnerChanged: (spaceId, goalId, sessionId) => {

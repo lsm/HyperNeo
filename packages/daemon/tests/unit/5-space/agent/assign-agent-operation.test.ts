@@ -100,7 +100,7 @@ function registry() {
       },
       goalScopeRepo,
       getGoalSpace: (goalId) => readSpaceId('space_goals', goalId),
-      getForgeScopeSpace: (scopeId) => readSpaceId('evolution_scopes', scopeId),
+      getEvolutionScopeSpace: (scopeId) => readSpaceId('evolution_scopes', scopeId),
       publishGoalOwnerChanged: (_space, goalId) => ownerChanges.push(goalId),
       publishAgentCreated: () => {},
       publishAgentUpdated: () => {},
@@ -269,7 +269,9 @@ describe('evolution.scope.owner.set admission', () => {
       caller('ad_hoc_member')
     );
     expect(outcome.value).toEqual({ accepted: true, assigned: true });
-    expect(agentRepo.listForgeScopes(agent.id).map((entry) => entry.scopeId)).toEqual([SCOPE_ID]);
+    expect(agentRepo.listEvolutionScopes(agent.id).map((entry) => entry.scopeId)).toEqual([
+      SCOPE_ID,
+    ]);
   });
 
   test('assigning a Forge scope announces no goal ownership change', async () => {
@@ -289,7 +291,7 @@ describe('evolution.scope.owner.set admission', () => {
       caller('ad_hoc_member')
     );
     expect(outcome.value?.reason).toBe('scope_not_found');
-    expect(agentRepo.listForgeScopes(agent.id)).toHaveLength(0);
+    expect(agentRepo.listEvolutionScopes(agent.id)).toHaveLength(0);
   });
 
   test('dropping the scope routing reports assigned false', async () => {
@@ -304,7 +306,7 @@ describe('evolution.scope.owner.set admission', () => {
       caller('ad_hoc_member')
     );
     expect(outcome.value).toEqual({ accepted: true, assigned: false });
-    expect(agentRepo.listForgeScopes(agent.id)).toHaveLength(0);
+    expect(agentRepo.listEvolutionScopes(agent.id)).toHaveLength(0);
   });
 
   test('an archived session in the owning Space may not assign a Forge scope', async () => {
@@ -315,7 +317,7 @@ describe('evolution.scope.owner.set admission', () => {
       caller('ad_hoc_member')
     );
     expect(outcome.value?.reason).toBe('agent_denied');
-    expect(agentRepo.listForgeScopes(agent.id)).toHaveLength(0);
+    expect(agentRepo.listEvolutionScopes(agent.id)).toHaveLength(0);
   });
 
   test('an agent of another Space is not found', async () => {
@@ -331,7 +333,7 @@ describe('evolution.scope.owner.set admission', () => {
       caller('ad_hoc_member')
     );
     expect(outcome.value?.reason).toBe('agent_not_found');
-    expect(agentRepo.listForgeScopes(stranger.id)).toHaveLength(0);
+    expect(agentRepo.listEvolutionScopes(stranger.id)).toHaveLength(0);
   });
 });
 
@@ -375,7 +377,9 @@ describe('the goal.owner.set and evolution.scope.owner.set operations', () => {
       caller('ad_hoc_member')
     );
     expect(routed.value).toEqual({ accepted: true, assigned: true });
-    expect(agentRepo.listForgeScopes(agent.id).map((entry) => entry.scopeId)).toEqual([SCOPE_ID]);
+    expect(agentRepo.listEvolutionScopes(agent.id).map((entry) => entry.scopeId)).toEqual([
+      SCOPE_ID,
+    ]);
 
     const stopped = await run(
       'evolution.scope.owner.set',
@@ -383,7 +387,7 @@ describe('the goal.owner.set and evolution.scope.owner.set operations', () => {
       caller('ad_hoc_member')
     );
     expect(stopped.value).toEqual({ accepted: true, assigned: false });
-    expect(agentRepo.listForgeScopes(agent.id)).toHaveLength(0);
+    expect(agentRepo.listEvolutionScopes(agent.id)).toHaveLength(0);
     expect(ownerChanges).toEqual([]);
   });
 

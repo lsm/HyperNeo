@@ -5,7 +5,7 @@ import type {
   SpaceAgentAutonomyLevel,
   SpaceLongHorizonAgent,
   SpaceLongHorizonAgentEventSubscription,
-  SpaceLongHorizonAgentForgeScope,
+  SpaceLongHorizonAgentEvolutionScope,
   SpaceLongHorizonAgentGoal,
   SpaceLongHorizonAgentReminder,
   SpaceLongHorizonAgentStatus,
@@ -286,13 +286,13 @@ export class SpaceLongHorizonAgentRepository {
     return decideGoalOwnerResolution({ candidates, agentStates });
   }
 
-  assignForgeScope(
+  assignEvolutionScope(
     agentId: string,
     scopeId: string,
-    relationship: SpaceLongHorizonAgentForgeScope['relationship'] = 'owner'
+    relationship: SpaceLongHorizonAgentEvolutionScope['relationship'] = 'owner'
   ): void {
     const agent = this.requireAgent(agentId);
-    this.requireMatchingSpace('evolution_scopes', scopeId, agent.spaceId, 'Forge scope');
+    this.requireMatchingSpace('evolution_scopes', scopeId, agent.spaceId, 'Evolution scope');
     const now = Date.now();
     this.db
       .prepare(
@@ -303,25 +303,25 @@ export class SpaceLongHorizonAgentRepository {
       .run(agentId, scopeId, relationship, now, now);
   }
 
-  listForgeScopes(agentId: string): SpaceLongHorizonAgentForgeScope[] {
+  listEvolutionScopes(agentId: string): SpaceLongHorizonAgentEvolutionScope[] {
     const rows = this.db
       .prepare(
         `SELECT * FROM space_long_horizon_agent_evolution_scopes WHERE agent_id = ? ORDER BY created_at ASC`
       )
       .all(agentId) as Record<string, unknown>[];
-    return rows.map(rowToForgeScopeLink);
+    return rows.map(rowToEvolutionScopeLink);
   }
 
-  listForgeScopeAssignments(scopeId: string): SpaceLongHorizonAgentForgeScope[] {
+  listEvolutionScopeAssignments(scopeId: string): SpaceLongHorizonAgentEvolutionScope[] {
     const rows = this.db
       .prepare(
         `SELECT * FROM space_long_horizon_agent_evolution_scopes WHERE scope_id = ? ORDER BY created_at ASC`
       )
       .all(scopeId) as Record<string, unknown>[];
-    return rows.map(rowToForgeScopeLink);
+    return rows.map(rowToEvolutionScopeLink);
   }
 
-  deleteForgeScopeAssignment(agentId: string, scopeId: string): void {
+  deleteEvolutionScopeAssignment(agentId: string, scopeId: string): void {
     this.db
       .prepare(
         `DELETE FROM space_long_horizon_agent_evolution_scopes WHERE agent_id = ? AND scope_id = ?`
@@ -680,11 +680,13 @@ function rowToGoalLink(row: Record<string, unknown>): SpaceLongHorizonAgentGoal 
   };
 }
 
-function rowToForgeScopeLink(row: Record<string, unknown>): SpaceLongHorizonAgentForgeScope {
+function rowToEvolutionScopeLink(
+  row: Record<string, unknown>
+): SpaceLongHorizonAgentEvolutionScope {
   return {
     agentId: row.agent_id as string,
     scopeId: row.scope_id as string,
-    relationship: row.relationship as SpaceLongHorizonAgentForgeScope['relationship'],
+    relationship: row.relationship as SpaceLongHorizonAgentEvolutionScope['relationship'],
     createdAt: row.created_at as number,
     updatedAt: row.updated_at as number,
   };

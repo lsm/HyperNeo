@@ -191,7 +191,7 @@ describe('long-horizon agent lifecycle integration', () => {
       },
     });
     agentRepo.assignGoal(agent.id, goal.id, 'manager');
-    agentRepo.assignForgeScope(agent.id, scope.id, 'watcher');
+    agentRepo.assignEvolutionScope(agent.id, scope.id, 'watcher');
     const reminder = agentRepo.createReminder({
       spaceId,
       agentId: agent.id,
@@ -211,7 +211,7 @@ describe('long-horizon agent lifecycle integration', () => {
     expect(agentRepo.listGoals(agent.id)).toEqual([
       expect.objectContaining({ goalId: goal.id, relationship: 'manager' }),
     ]);
-    expect(agentRepo.listForgeScopes(agent.id)).toEqual([
+    expect(agentRepo.listEvolutionScopes(agent.id)).toEqual([
       expect.objectContaining({ scopeId: scope.id, relationship: 'watcher' }),
     ]);
     expect(reminder).toMatchObject({

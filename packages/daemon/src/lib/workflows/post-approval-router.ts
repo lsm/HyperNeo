@@ -186,7 +186,7 @@ export class PostApprovalRouter {
           this.deps.evolutionScopeService?.captureCompletedTaskEvidence({ taskId: task.id });
         } catch (err) {
           log.warn(
-            `Forge evidence capture threw for task "${task.id}": ${err instanceof Error ? err.message : String(err)}`
+            `Evolution evidence capture threw for task "${task.id}": ${err instanceof Error ? err.message : String(err)}`
           );
         }
       }
