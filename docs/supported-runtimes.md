@@ -32,6 +32,40 @@ DB_PATH=/tmp/hyperneo-deno-$(basename $(git rev-parse --show-toplevel)).db deno 
 - There is no `/api/health` route; probe `GET /` (expect 200) or the `/ws` WebSocket handshake.
 - Convenience task, alongside the Bun one: `bun run dev:deno` in `packages/daemon` (runs `deno run -A --watch main.ts`). Stop it with Ctrl+C — a single SIGTERM shuts the daemon down gracefully but can leave the Deno watch supervisor process lingering, so scripted/probe use should prefer the plain `deno run -A main.ts` form (which is what `scripts/deno-smoke.sh` runs).
 
+## Standalone daemon binary (`hyperneod`)
+
+Besides the umbrella `hyperneo` CLI (daemon + web UI in one binary), releases also ship
+`hyperneod`: a Bun-compiled, daemon-only binary for
+`darwin-arm64`, `darwin-x64`, `linux-x64`, and `linux-arm64`. It boots the same daemon
+(`createDaemonApp` with `standalone: true`), serves the `/ws` MessageHub endpoint, extension
+routes (e.g. GitHub webhooks), and a JSON info response on `/` — but no web UI and no Tauri
+shell. Built-in skills are embedded and extracted on first boot, exactly like the umbrella
+binary.
+
+Install from npm (per-platform packages land as optional dependencies):
+
+```bash
+npm install -g hyperneod
+hyperneod --help
+# or one-off:
+npx hyperneod --port 9400
+```
+
+Or grab the binary + `SHA256SUMS` from the GitHub Release assets. CLI flags:
+
+| Flag | Meaning | Default |
+| --- | --- | --- |
+| `-p, --port <port>` | Port to listen on | `9283` |
+| `--host <host>` | Host to bind to | `0.0.0.0` |
+| `--db-path <path>` | SQLite database file | `<data-dir>/data/daemon.db` |
+| `--data-dir <dir>` | Root for all daemon state (db, logs, skills, SDK cache) | `~/.hyperneo` (or `HYPERNEO_DATA_DIR`) |
+| `--workspace <path>` | Default workspace root for file indexing | — |
+
+`--data-dir` sets `HYPERNEO_DATA_DIR` before the daemon boots, so every subsystem that roots
+under `getDataDir()` (database default, logs, skills, worktrees, SDK CLI cache) follows it.
+The same env var works for non-flag launches. Clients connect over the `/ws` MessageHub
+socket; there is no HTML endpoint to probe — use the JSON on `GET /` as a liveness check.
+
 ## Version pin policy
 
 Both runtimes are pinned to **exact versions** — no `^`/`~` ranges, matching the repository-wide exact-pin policy for npm dependencies:

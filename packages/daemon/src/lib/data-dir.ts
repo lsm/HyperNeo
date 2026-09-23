@@ -8,5 +8,5 @@ export function resolveDataDir(home: string = homedir()): string {
 }
 
 export function getDataDir(): string {
-  return resolveDataDir();
+  return process.env.HYPERNEO_DATA_DIR || resolveDataDir();
 }

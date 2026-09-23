@@ -1,0 +1,22 @@
+{
+  "name": "hyperneod",
+  "version": "0.41.0",
+  "description": "HyperNeo standalone daemon binary (no web UI)",
+  "bin": {
+    "hyperneod": "bin/hyperneod.js"
+  },
+  "optionalDependencies": {
+    "@hyperneo/hyperneod-darwin-arm64": "0.41.0",
+    "@hyperneo/hyperneod-darwin-x64": "0.41.0",
+    "@hyperneo/hyperneod-linux-x64": "0.41.0",
+    "@hyperneo/hyperneod-linux-arm64": "0.41.0"
+  },
+  "files": [
+    "bin/"
+  ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lsm/HyperNeo"
+  }
+}

@@ -65,7 +65,7 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
           echo "Checking package versions match tag version: $VERSION"
           MISMATCHES=()
-          for pkg in npm/hyperneo packages/cli packages/daemon packages/e2e packages/prompts packages/shared packages/web packages/desktop; do
+          for pkg in npm/hyperneo npm/hyperneod packages/cli packages/daemon packages/e2e packages/prompts packages/shared packages/web packages/desktop; do
             PKG_VERSION=$(node -p "require('./$pkg/package.json').version")
             if [ "$PKG_VERSION" != "$VERSION" ]; then
               MISMATCHES+=("$pkg/package.json: $PKG_VERSION (expected $VERSION)")
@@ -180,23 +180,57 @@ jobs:
           - runner: macos-latest
             target: bun-darwin-arm64
             binary: hyperneo-darwin-arm64
+            entry: packages/cli/prod-entry.ts
             smoke: true
+            daemon: false
           - runner: macos-15-intel
             target: bun-darwin-x64
             binary: hyperneo-darwin-x64
+            entry: packages/cli/prod-entry.ts
             smoke: true
+            daemon: false
           - runner: ubuntu-latest
             target: bun-linux-x64
             binary: hyperneo-linux-x64
+            entry: packages/cli/prod-entry.ts
             smoke: true
+            daemon: false
           - runner: ubuntu-latest
             target: bun-linux-arm64
             binary: hyperneo-linux-arm64
+            entry: packages/cli/prod-entry.ts
             smoke: false
+            daemon: false
           - runner: windows-latest
             target: bun-windows-x64
             binary: hyperneo-windows-x64.exe
+            entry: packages/cli/prod-entry.ts
             smoke: true
+            daemon: false
+          - runner: macos-latest
+            target: bun-darwin-arm64
+            binary: hyperneod-darwin-arm64
+            entry: packages/cli/daemon-entry.ts
+            smoke: true
+            daemon: true
+          - runner: macos-15-intel
+            target: bun-darwin-x64
+            binary: hyperneod-darwin-x64
+            entry: packages/cli/daemon-entry.ts
+            smoke: true
+            daemon: true
+          - runner: ubuntu-latest
+            target: bun-linux-x64
+            binary: hyperneod-linux-x64
+            entry: packages/cli/daemon-entry.ts
+            smoke: true
+            daemon: true
+          - runner: ubuntu-latest
+            target: bun-linux-arm64
+            binary: hyperneod-linux-arm64
+            entry: packages/cli/daemon-entry.ts
+            smoke: false
+            daemon: true
 
     steps:
       - uses: actions/checkout@v6
@@ -223,11 +257,11 @@ jobs:
         run: bun run scripts/generate-embedded-assets.ts
 
       - name: Compile binary
-        run: bun build --compile --target=${{ matrix.target }} --outfile=dist/bin/${{ matrix.binary }} packages/cli/prod-entry.ts
+        run: bun build --compile --target=${{ matrix.target }} --outfile=dist/bin/${{ matrix.binary }} ${{ matrix.entry }}
 
       - name: Smoke test
         if: matrix.smoke
-        run: bun run scripts/smoke-test.ts ./dist/bin/${{ matrix.binary }}
+        run: bun run scripts/smoke-test.ts ./dist/bin/${{ matrix.binary }} ${{ matrix.daemon && '--daemon' || '' }}
         env:
           GLM_API_KEY: smoke-test
 
@@ -469,13 +503,13 @@ jobs:
       - name: Download release binary artifacts
         uses: actions/download-artifact@v8
         with:
-          pattern: hyperneo-*
+          pattern: hyperneo*
           path: dist/bin/
 
       - name: Move binaries to expected locations
         run: |
           mkdir -p dist/bin-flat
-          for dir in dist/bin/hyperneo-*; do
+          for dir in dist/bin/hyperneo*; do
             mv "$dir"/* "dist/bin-flat/"
           done
           chmod +x dist/bin-flat/* 2>/dev/null || true
@@ -525,7 +559,7 @@ jobs:
       - name: Publish platform packages
         run: |
           FAILED=0
-          for pkg in dist/npm/cli-*; do
+          for pkg in dist/npm/cli-* dist/npm/hyperneod-*; do
             PKG_NAME=$(basename "$pkg")
             echo "Publishing $PKG_NAME..."
             if OUTPUT=$(cd "$pkg" && npm publish --access public --provenance 2>&1); then
@@ -561,6 +595,21 @@ jobs:
             fi
           fi
 
+      - name: Publish daemon main package
+        run: |
+          if OUTPUT=$(cd dist/npm/hyperneod && npm publish --access public --provenance 2>&1); then
+            echo "$OUTPUT"
+            echo "hyperneod published successfully"
+          else
+            echo "$OUTPUT"
+            if echo "$OUTPUT" | grep -qiE "previously published|cannot publish over|EPUBLISHCONFLICT"; then
+              echo "::warning::hyperneod already published, skipping"
+            else
+              echo "::error::Failed to publish hyperneod"
+              exit 1
+            fi
+          fi
+
   # ============================================
   # GITHUB RELEASE
   # Create a GitHub Release with auto-generated notes
@@ -587,10 +636,10 @@ jobs:
           path: dist/desktop/
           merge-multiple: true
 
-      - name: Download CLI binary artifacts
+      - name: Download CLI and daemon binary artifacts
         uses: actions/download-artifact@v8
         with:
-          pattern: hyperneo-*
+          pattern: hyperneo*
           path: dist/bin/
           merge-multiple: true
 

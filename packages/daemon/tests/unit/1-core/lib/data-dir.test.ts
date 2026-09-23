@@ -19,4 +19,32 @@ describe('data-dir', () => {
   test('getDataDir returns ~/.hyperneo', () => {
     expect(getDataDir()).toBe(join(homedir(), '.hyperneo'));
   });
+
+  test('getDataDir prefers HYPERNEO_DATA_DIR when set', () => {
+    const prior = process.env.HYPERNEO_DATA_DIR;
+    process.env.HYPERNEO_DATA_DIR = '/var/lib/hyperneod';
+    try {
+      expect(getDataDir()).toBe('/var/lib/hyperneod');
+    } finally {
+      if (prior === undefined) {
+        delete process.env.HYPERNEO_DATA_DIR;
+      } else {
+        process.env.HYPERNEO_DATA_DIR = prior;
+      }
+    }
+  });
+
+  test('getDataDir falls back to ~/.hyperneo when HYPERNEO_DATA_DIR is empty', () => {
+    const prior = process.env.HYPERNEO_DATA_DIR;
+    process.env.HYPERNEO_DATA_DIR = '';
+    try {
+      expect(getDataDir()).toBe(join(homedir(), '.hyperneo'));
+    } finally {
+      if (prior === undefined) {
+        delete process.env.HYPERNEO_DATA_DIR;
+      } else {
+        process.env.HYPERNEO_DATA_DIR = prior;
+      }
+    }
+  });
 });

@@ -18,6 +18,13 @@
       "@hyperneo/neo": ["../neo/src/index.ts"]
     }
   },
-  "include": ["src/**/*", "main.ts", "prod-entry.ts"],
-  "exclude": ["node_modules", "dist", "tests/**/*", "test-*.ts", "src/embedded-assets.ts"]
+  "include": ["src/**/*", "main.ts", "prod-entry.ts", "daemon-entry.ts"],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "tests/**/*",
+    "test-*.ts",
+    "src/embedded-assets.ts",
+    "src/embedded-skills.ts"
+  ]
 }

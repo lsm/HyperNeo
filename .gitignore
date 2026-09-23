@@ -28,6 +28,7 @@ _fresh/
 
 # Generated embedded assets (created during binary build)
 packages/cli/src/embedded-assets.ts
+packages/cli/src/embedded-skills.ts
 
 # Logs
 *.log
