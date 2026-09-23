@@ -1231,6 +1231,46 @@ describe('SessionStore multi-instance isolation', () => {
     ]);
   });
 
+  it('mergeSnapshotIntoTranscript: keeps subagent rows of a paginated Task even when they are newer than the window', () => {
+    const existing = [
+      {
+        id: 'task',
+        uuid: 'task',
+        timestamp: 10,
+        rowid: 1,
+        message: { content: [{ type: 'tool_use', id: 'toolu_task' }] },
+      },
+      {
+        id: 'child',
+        uuid: 'child',
+        timestamp: 150,
+        rowid: 9,
+        parent_tool_use_id: 'toolu_task',
+        message: { content: [{ type: 'tool_use', id: 'toolu_nested' }] },
+      },
+      {
+        id: 'grandchild',
+        uuid: 'grandchild',
+        timestamp: 160,
+        rowid: 10,
+        parent_tool_use_id: 'toolu_nested',
+      },
+      { id: 'stale', uuid: 'stale', timestamp: 120, rowid: 7 },
+      { id: 'w1', uuid: 'w1', timestamp: 100, rowid: 3 },
+    ] as never[];
+    const snapshot = [
+      { id: 'w1', uuid: 'w1', timestamp: 100, rowid: 3 },
+      { id: 'w2', uuid: 'w2', timestamp: 110, rowid: 4 },
+    ] as never[];
+    expect(mergeSnapshotIntoTranscript(existing, snapshot, true).map((m) => m.id)).toEqual([
+      'task',
+      'w1',
+      'w2',
+      'child',
+      'grandchild',
+    ]);
+  });
+
   it('mergeSnapshotIntoTranscript: keeps same-ms prefix rows via the (timestamp, rowid) cursor', () => {
     const existing = [
       { id: 'p1', uuid: 'p1', timestamp: 100, rowid: 2 },

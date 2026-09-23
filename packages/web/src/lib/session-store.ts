@@ -43,6 +43,45 @@ const rowTimestamp = (m: ChatMessage): number => (m as MessageRow).timestamp || 
 const rowRowid = (m: ChatMessage): number => (m as MessageRow).rowid ?? 0;
 const rowId = (m: ChatMessage): unknown => (m as MessageRow).id;
 
+function toolUseIdsOf(message: ChatMessage): string[] {
+  const content = (message as { message?: { content?: unknown } }).message?.content;
+  if (!Array.isArray(content)) return [];
+  return content.flatMap((block: { type?: unknown; id?: unknown } | null) =>
+    block?.type === 'tool_use' && typeof block.id === 'string' ? [block.id] : []
+  );
+}
+
+function parentToolUseIdOf(message: ChatMessage): string | null {
+  const parent = (message as { parent_tool_use_id?: unknown }).parent_tool_use_id;
+  return typeof parent === 'string' ? parent : null;
+}
+
+function descendantsOfRetained(
+  existing: ChatMessage[],
+  retained: ChatMessage[],
+  snapshotIds: Set<unknown>
+): ChatMessage[] {
+  const kept = new Set(retained);
+  const parents = new Set(retained.flatMap(toolUseIdsOf));
+  const descendants: ChatMessage[] = [];
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const message of existing) {
+      if (kept.has(message)) continue;
+      const id = rowId(message);
+      if (id != null && snapshotIds.has(id)) continue;
+      const parent = parentToolUseIdOf(message);
+      if (!parent || !parents.has(parent)) continue;
+      kept.add(message);
+      descendants.push(message);
+      for (const toolUseId of toolUseIdsOf(message)) parents.add(toolUseId);
+      grew = true;
+    }
+  }
+  return descendants;
+}
+
 const compareByTimestampRowid = (a: ChatMessage, b: ChatMessage): number =>
   rowTimestamp(a) - rowTimestamp(b) || rowRowid(a) - rowRowid(b);
 
@@ -99,7 +138,9 @@ export function mergeSnapshotIntoTranscript(
     if (ts < oldestTs) return true;
     return ts <= oldestTs + SNAPSHOT_TIMESTAMP_JITTER_MS && rowRowid(m) < oldestRowid;
   });
-  return [...prefix, ...sorted];
+  const merged = [...prefix, ...sorted];
+  const descendants = descendantsOfRetained(existing, prefix, snapshotIds);
+  return descendants.length === 0 ? merged : insertByTimestampRowid(merged, descendants);
 }
 
 export class SessionStore {
