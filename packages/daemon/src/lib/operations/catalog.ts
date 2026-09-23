@@ -28,7 +28,6 @@ import {
 export interface TaskOperationDependencies {
   members?: OperationDefinition;
   pendingCompletion?: readonly OperationDefinition[];
-  cancel?: OperationDefinition;
   complete?: OperationDefinition;
   start?: OperationDefinition;
   setPreferredWorkflow?: OperationDefinition;
@@ -71,7 +70,6 @@ export function createDaemonOperationCatalog(
     ...(tasks.members ? [tasks.members] : []),
     ...(tasks.retry ? [tasks.retry] : []),
     ...(tasks.pendingCompletion ?? []),
-    ...(tasks.cancel ? [tasks.cancel] : []),
     ...(tasks.complete ? [tasks.complete] : []),
     ...(tasks.start ? [tasks.start] : []),
     ...(tasks.setPreferredWorkflow ? [tasks.setPreferredWorkflow] : []),
