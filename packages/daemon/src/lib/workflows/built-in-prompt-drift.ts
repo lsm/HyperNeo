@@ -318,6 +318,13 @@ const CURRENT_APPROVE_RESEARCH_REVIEW_TERMINAL =
   'or invoke(name="task.transition", input={ taskId: "<task id>", status: "review" }).';
 const RETIRED_SUBMIT_RESEARCH_REVIEW_TERMINAL =
   'then invoke(name="task.approve", input={ taskId: "<task id>" }) or task.submitForReview.';
+const CURRENT_TRANSITION_DONE_MERGE_STEP =
+  'complete its cleanup and workspace-sync steps, and move the task to done with task.transition.';
+const RETIRED_COMPLETE_MERGE_STEP =
+  'complete its cleanup and workspace-sync steps, and call task.complete.';
+const CURRENT_TRANSITION_DONE_PREFERENCE =
+  '`mark_complete` is `task.transition` with `status: "done"`.';
+const RETIRED_COMPLETE_PREFERENCE = '`mark_complete` is `task.complete`.';
 const CURRENT_PR_SUBSCRIBE_CALL =
   'call `invoke(name="event.external.pr.subscribe", input={ prUrl: "<PR URL>" })`';
 const RETIRED_SNAKE_PR_SUBSCRIBE_CALL = 'call `subscribe_pr_events({ prUrl: "<PR URL>" })`';
@@ -357,6 +364,8 @@ const RETIRED_ARTIFACT_FAMILY_CALL_ACTION_PREFERENCE_PRE_TASK_APPROVE = retiredA
 );
 
 const BUILT_IN_PROMPT_PATCH_VARIANTS = [
+  [[CURRENT_TRANSITION_DONE_MERGE_STEP, RETIRED_COMPLETE_MERGE_STEP]],
+  [[CURRENT_TRANSITION_DONE_PREFERENCE, RETIRED_COMPLETE_PREFERENCE]],
   [[CURRENT_PR_SUBSCRIBE_CALL, RETIRED_SNAKE_PR_SUBSCRIBE_CALL]],
   [[CURRENT_PREFERENCE_OPERATION_NAMES, RETIRED_SNAKE_PREFERENCE_OPERATION_NAMES]],
   [
