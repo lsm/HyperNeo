@@ -61,7 +61,7 @@ export function createListGoalEventsOperation(deps: ListGoalEventsDependencies) 
     .pipe(readGoalEvents, ['outcome', 'input', 'deps'], 'outcome')
     .endAsync('outcome') as (input: Input, caller: OperationCaller) => Promise<Result>;
   return defineOperation({
-    name: 'goal.events.list',
+    name: 'goal.event.list',
     description: DESCRIPTION,
     policy: GOAL_READ_POLICY,
     inputSchema,

@@ -62,7 +62,7 @@ function registry() {
 test('a task that does not exist reads as null, not as an empty roster', async () => {
   const outcome = await invokeOperation(
     registry(),
-    'task.members.list',
+    'task.member.list',
     { taskId: 'ghost' },
     caller
   );
@@ -73,7 +73,7 @@ test('a task with no workflow run has an empty member list', async () => {
   const task = taskRepo.createTask({ spaceId, title: 'Standalone shape', description: '' });
   const outcome = await invokeOperation(
     registry(),
-    'task.members.list',
+    'task.member.list',
     { taskId: task.id },
     caller
   );
@@ -106,7 +106,7 @@ test('members come back oldest first by creation time then id, with every declar
 
   const outcome = await invokeOperation(
     registry(),
-    'task.members.list',
+    'task.member.list',
     { taskId: task.id },
     caller
   );
@@ -166,7 +166,7 @@ test('another run in the same space never leaks into a task roster', async () =>
 
   const outcome = await invokeOperation(
     registry(),
-    'task.members.list',
+    'task.member.list',
     { taskId: task.id },
     caller
   );
@@ -186,7 +186,7 @@ test('the result survives validation instead of being stripped to a bare task id
 
   const outcome = await invokeOperation(
     registry(),
-    'task.members.list',
+    'task.member.list',
     { taskId: task.id },
     caller
   );
@@ -223,7 +223,7 @@ test('a standalone task reads as an empty roster, not as a missing task', async 
 
   const outcome = await invokeOperation(
     registry(),
-    'task.members.list',
+    'task.member.list',
     { taskId: standalone.id },
     caller
   );
@@ -246,7 +246,7 @@ test('a node with two agents contributes one member per execution slot', async (
 
   const outcome = await invokeOperation(
     registry(),
-    'task.members.list',
+    'task.member.list',
     { taskId: task.id },
     caller
   );
@@ -272,7 +272,7 @@ test('a legacy done row from before the idle rename still reads instead of faili
 
   const outcome = await invokeOperation(
     registry(),
-    'task.members.list',
+    'task.member.list',
     { taskId: task.id },
     caller
   );
@@ -286,7 +286,7 @@ test('an unknown input field is refused rather than silently dropped', async () 
   const task = taskRepo.createTask({ spaceId, title: 'Strict input', description: '' });
   const outcome = await invokeOperation(
     registry(),
-    'task.members.list',
+    'task.member.list',
     { taskId: task.id, spaceId },
     caller
   );
@@ -295,15 +295,15 @@ test('an unknown input field is refused rather than silently dropped', async () 
 
 test('the operation is absent from a default-scope catalog and present when a Space supplies it', async () => {
   const bare = catalog({});
-  expect(bare.get('task.members.list')).toBeUndefined();
-  expect(registry().get('task.members.list')).toBeDefined();
+  expect(bare.get('task.member.list')).toBeUndefined();
+  expect(registry().get('task.member.list')).toBeDefined();
 });
 
 test('discovery can render the result schema, so the roster shape is visible to agents', async () => {
   const described = await invokeOperation(
     registry(),
     'operations.describe',
-    { name: 'task.members.list' },
+    { name: 'task.member.list' },
     caller as CallContext & typeof caller
   );
   expect(described.kind).toBe('completed');

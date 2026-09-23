@@ -477,7 +477,7 @@ export function createSessionOperations(deps: SessionOperationDependencies): Ope
       execute: (input, caller) => detail(input, caller),
     }),
     defineOperation({
-      name: 'session.messages.list',
+      name: 'session.message.list',
       policy: READ_POLICY,
       description: `Read one Space session conversation newest-first, with a per-message summary and a pagination cursor to pass back as "before". ${SCOPE_NOTE} Workflow workers may read sessions. Returns the messages, or session_not_found.`,
       inputSchema: SessionMessagesInputSchema,
