@@ -2076,7 +2076,7 @@ describe('SpaceRuntimeService', () => {
       await svc.stop();
     });
 
-    test('stop() unsubscribes from space.created events', async () => {
+    test('stop() undoes every event-bus subscription start() made', async () => {
       const unsubFn = mock(() => {});
       const session = makeSession();
       const sessionManager = makeSessionManager(session);
@@ -2091,9 +2091,12 @@ describe('SpaceRuntimeService', () => {
       const svc = new SpaceRuntimeService(config);
 
       svc.start();
+      const subscriptions = (internalEventBus.subscribe as Mock<typeof internalEventBus.subscribe>)
+        .mock.calls.length;
       await svc.stop();
 
-      expect(unsubFn).toHaveBeenCalledTimes(10);
+      expect(subscriptions).toBeGreaterThan(0);
+      expect(unsubFn).toHaveBeenCalledTimes(subscriptions);
     });
   });
 
