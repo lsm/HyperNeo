@@ -142,10 +142,17 @@ export function parseJUnitErrorFiles(paths: string[]): string[] {
     .flatMap((path) => parseJUnitErrors(readFileSync(path, 'utf8')));
 }
 
+export function isRegistrationExpired(entry: FlakyTestEntry, now: Date): boolean {
+  return (
+    entry.expiresAt !== undefined && entry.expiresAt.slice(0, 10) < now.toISOString().slice(0, 10)
+  );
+}
+
 export function matchKnownFlakyFailures(
   failures: FailedTestCase[],
   registry: FlakyRegistry,
-  suite: FlakySuite
+  suite: FlakySuite,
+  now: Date = new Date()
 ): { known: FlakyTestEntry[]; unknown: FailedTestCase[] } {
   const knownById = new Map<string, FlakyTestEntry>();
   const unknown: FailedTestCase[] = [];
@@ -154,6 +161,7 @@ export function matchKnownFlakyFailures(
     const matched = registry.tests.find(
       (entry) =>
         entry.suite === suite &&
+        !isRegistrationExpired(entry, now) &&
         samePath(entry.path, failure.file) &&
         (failure.name.includes(entry.namePattern) || failure.className.includes(entry.namePattern))
     );
@@ -328,6 +336,13 @@ function writeQuarantineReport(
 export function main(argv = process.argv.slice(2)): number {
   const options = parseArgs(argv);
   const registry = loadRegistry(options.registryPath);
+  for (const entry of registry.tests) {
+    if (entry.suite === options.suite && isRegistrationExpired(entry, new Date())) {
+      console.warn(
+        `Flaky registration ${entry.id} expired on ${entry.expiresAt}; its failures now block CI.`
+      );
+    }
+  }
   mkdirSync(options.resultsDir, { recursive: true });
   let failedAttempts = 0;
   let lastKnown: FlakyTestEntry[] = [];

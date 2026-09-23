@@ -99,6 +99,32 @@ describe('flaky test runner registry policy', () => {
     expect(result.unknown).toEqual([failures[1]]);
   });
 
+  it('treats a registration past its expiresAt date as unregistered', () => {
+    const failure: FailedTestCase = {
+      file: 'packages/web/src/components/space/__tests__/SpaceGoals.test.tsx',
+      name: 'SpaceGoals renders cards',
+      className: '',
+    };
+    const dated = (expiresAt?: string): FlakyRegistry => ({
+      ...registry,
+      tests: [{ ...registry.tests[0]!, ...(expiresAt ? { expiresAt } : {}) }],
+    });
+    const now = new Date('2026-09-22T12:00:00Z');
+
+    expect(matchKnownFlakyFailures([failure], dated('2026-09-21'), 'web', now)).toEqual({
+      known: [],
+      unknown: [failure],
+    });
+    expect(
+      matchKnownFlakyFailures([failure], dated('2026-09-22'), 'web', now).known.map(
+        (entry) => entry.id
+      )
+    ).toEqual(['space-goals']);
+    expect(
+      matchKnownFlakyFailures([failure], dated(), 'web', now).known.map((entry) => entry.id)
+    ).toEqual(['space-goals']);
+  });
+
   it('matches namePattern against className for Bun JUnit describe titles', () => {
     const migrationRegistry: FlakyRegistry = {
       ...registry,
