@@ -33,7 +33,6 @@ let removed: Array<{ spaceId: string; subscriptionId: string }>;
 let refreshOutcome: { success: boolean; error?: string };
 let registerOutcome: { success: boolean; error?: string };
 let registerThrows: Error | null;
-let primaryLinkUrl: string;
 let SPACE: string;
 let OTHER_SPACE: string;
 let RUN: string;
@@ -153,7 +152,6 @@ beforeEach(() => {
   refreshOutcome = { success: true };
   registerOutcome = { success: true };
   registerThrows = null;
-  primaryLinkUrl = '';
   const deps: SubscriptionDependencies = {
     subscriptionRepo: agentSubscriptions,
     refreshSubscription: (spaceId, subscriptionId) => {
@@ -177,7 +175,6 @@ beforeEach(() => {
       success: true,
       result: { ...LIST_RESULT, workflowRunId },
     }),
-    resolvePrimaryLinkUrl: () => primaryLinkUrl,
     getSession: (id) => sessions.getSession(id),
     taskRepo,
     nodeExecutionRepo: nodeExecutions,
@@ -289,47 +286,6 @@ describe('node external-event subscription operations', () => {
     const unparseable = schema.safeParse({ prUrl: 'not-a-url' });
     expect(unparseable.success).toBe(false);
     expect(unparseable.error?.issues[0]?.message).toBe('Could not parse GitHub PR URL: not-a-url');
-  });
-
-  test('event.external.pr.subscribe derives the topic from the run primary link', async () => {
-    primaryLinkUrl = 'https://github.com/acme/widgets/pull/42';
-    const caller = worker(workerSession('s-pr'));
-    expect(await run('event.external.pr.subscribe', {}, caller)).toEqual({
-      ok: true,
-      topicPattern: 'github/acme/widgets/pull_request/42.*',
-    });
-  });
-
-  test('event.external.pr.subscribe prefers an explicit prUrl and reports an unparseable one', async () => {
-    primaryLinkUrl = 'https://github.com/acme/widgets/pull/42';
-    const caller = worker(workerSession('s-pr2'));
-    expect(
-      await run(
-        'event.external.pr.subscribe',
-        { prUrl: 'https://github.com/acme/widgets/pull/7' },
-        caller
-      )
-    ).toEqual({ ok: true, topicPattern: 'github/acme/widgets/pull_request/7.*' });
-    expect(await run('event.external.pr.subscribe', { prUrl: 'not-a-url' }, caller)).toEqual({
-      ok: false,
-      error: 'Could not parse GitHub PR URL: not-a-url',
-    });
-  });
-
-  test('event.external.pr.subscribe rejects a label it would never have stored', () => {
-    const schema = operations.get('event.external.pr.subscribe')!.inputSchema;
-    expect(schema.safeParse({ prUrl: 'https://github.com/acme/widgets/pull/7' }).success).toBe(
-      true
-    );
-    expect(schema.safeParse({ label: 'nightly' }).success).toBe(false);
-  });
-
-  test('event.external.pr.subscribe explains an unresolved run PR', async () => {
-    const caller = worker(workerSession('s-pr3'));
-    expect(await run('event.external.pr.subscribe', {}, caller)).toEqual({
-      ok: false,
-      error: 'No PR URL found for this workflow run. Open a PR first or pass prUrl explicitly.',
-    });
   });
 
   test('reports node_unresolved for a space member with no node execution', async () => {

@@ -53,8 +53,6 @@ export function registerExternalEventOperations(
         ),
       listRunSubscriptions: (workflowRunId, spaceId, nodeId) =>
         context.spaceRuntimeService.listSubscriptions(workflowRunId, spaceId, nodeId),
-      resolvePrimaryLinkUrl: (workflowRunId) =>
-        context.artifactProfile.resolvePrimaryLinkUrl(workflowRunId),
       getSession: (sessionId) => context.deps.db.getSession(sessionId),
       taskRepo: context.spaceTaskRepo,
       nodeExecutionRepo: context.nodeExecutionRepo,
