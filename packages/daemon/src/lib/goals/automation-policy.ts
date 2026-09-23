@@ -3,6 +3,7 @@ import type {
   GoalForgeAutomationEventSubscription,
   GoalForgeAutomationPolicy,
 } from '@hyperneo/shared';
+import { eventMatchesFilter } from '../external-events/event-filter.ts';
 import type { ExternalEventPublishedPayload } from '../external-events/external-event-service.ts';
 
 export const DEFAULT_COMPLETED_TASK_THRESHOLD = 10;
@@ -29,7 +30,7 @@ export function findMatchingSubscription(
   for (const subscription of subscriptions ?? []) {
     if (subscription.source && subscription.source !== event.source) continue;
     if (!topicMatches(subscription.topic, event.topic)) continue;
-    if (!filterMatches(subscription.filter, event.payload)) continue;
+    if (!eventMatchesFilter(subscription.filter, event.payload)) continue;
     return subscription;
   }
   return null;
@@ -83,15 +84,4 @@ function topicMatches(pattern: string, topic: string): boolean {
   if (pattern === topic || pattern === '*') return true;
   const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
   return new RegExp(`^${escaped}$`).test(topic);
-}
-
-function filterMatches(
-  filter: Record<string, string | number | boolean | null> | undefined,
-  payload: Record<string, unknown>
-): boolean {
-  if (!filter) return true;
-  for (const [key, expected] of Object.entries(filter)) {
-    if (payload[key] !== expected) return false;
-  }
-  return true;
 }

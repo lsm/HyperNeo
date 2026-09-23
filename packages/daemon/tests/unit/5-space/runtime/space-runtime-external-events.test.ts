@@ -374,6 +374,53 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(snapshot.counters.enqueueByTargetState).toEqual({ 'long_horizon=active': 1 });
   });
 
+  test('a long-horizon subscription filter gates delivery on the event payload and ignores its label', async () => {
+    const repo = new SpaceLongHorizonAgentRepository(db);
+    const agent = repo.create({
+      id: 'lh-agent-filtered',
+      spaceId: SPACE_ID,
+      handle: 'filtered-watcher',
+      displayName: 'Filtered Watcher',
+    });
+    repo.createSubscription({
+      spaceId: SPACE_ID,
+      agentId: agent.id,
+      source: 'github',
+      topic: DEFAULT_TOPIC,
+      filter: { action: 'review_submitted', state: 'approved', label: 'approvals' },
+    });
+    runtime = new SpaceRuntime({
+      db,
+      spaceManager: new SpaceManager(db),
+      longHorizonAgentRepo: repo,
+      subscriptionRepo: new SpaceAgentSubscriptionRepository(db, new SpaceAgentRepository(db)),
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      internalEventBus: bus,
+      externalEventStore: eventStore,
+      taskAgentManager: tam as never,
+      deliverLongHorizonExternalEvent: async ({ agentId, message, idempotencyKey }) => {
+        longHorizonMessages.push({ agentId, message, idempotencyKey });
+        return { delivered: true };
+      },
+    });
+
+    await runtime.rehydrateExecutors();
+    const changesRequested = makeEvent({
+      payload: { action: 'review_submitted', state: 'changes_requested' },
+    });
+    const approved = makeEvent({ payload: { action: 'review_submitted', state: 'approved' } });
+    await eventService.publish(changesRequested);
+    await eventService.publish(approved);
+
+    expect(eventStore.listDeliveries(changesRequested.id)).toHaveLength(0);
+    expect(eventStore.listDeliveries(approved.id)).toHaveLength(1);
+    expect(longHorizonMessages).toHaveLength(1);
+    expect(longHorizonMessages[0]!.agentId).toBe(agent.id);
+  });
+
   test('requeue of a pending pre-migration event without a stored render derives the message from the record', async () => {
     const repo = new SpaceLongHorizonAgentRepository(db);
     const agent = repo.create({
