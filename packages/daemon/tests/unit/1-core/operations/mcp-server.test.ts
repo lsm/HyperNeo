@@ -55,7 +55,11 @@ describe('operation MCP server', () => {
         type: 'text',
         text: JSON.stringify([
           { name: 'example.echo', description: 'Echo text' },
-          { name: 'operations.list', description: 'List operations available in this catalog.' },
+          {
+            name: 'operations.list',
+            description:
+              'List the operations meant for this session. Pass { all: true } for the full catalog; an unlisted operation can still be described and invoked by name.',
+          },
           {
             name: 'operations.describe',
             description: 'Describe an operation and its input and result schemas.',

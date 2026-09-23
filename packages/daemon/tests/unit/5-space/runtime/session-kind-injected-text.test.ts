@@ -110,7 +110,7 @@ const TEXT_MARKERS: ReadonlyArray<readonly [string, string]> = [
     'Your role in it is a worker session running one assigned Space task directly, outside any workflow.',
   ],
   ['operations-door-tool', 'mcp__hyperneo-operations__invoke'],
-  ['operations-discovery', 'List the operations before concluding that a capability is missing'],
+  ['operations-discovery', 'Check the full catalog before concluding that a capability is missing'],
   ['agent-memory-briefing', '### Space Memory'],
   ['db-query-briefing', '### Reading the Database'],
   ['space-standing-instructions', SPACE_INSTRUCTIONS],
