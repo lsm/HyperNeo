@@ -75,6 +75,10 @@ export class SpaceSessionEventSubscriptionRepository {
     return row ? toSubscription(row) : null;
   }
 
+  delete(id: string): void {
+    this.db.prepare(`DELETE FROM space_session_event_subscriptions WHERE id = ?`).run(id);
+  }
+
   listBySpace(spaceId: string): SpaceSessionEventSubscription[] {
     const rows = this.db
       .prepare(

@@ -1039,6 +1039,11 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(delivery.failureReason).toBe('subscriber_gone');
     expect(attempts).toBe(1);
     expect(runtime.getQueueHealthSnapshot().gauges.retryTimers).toBe(0);
+    expect(new SpaceSessionEventSubscriptionRepository(db).listBySpace(SPACE_ID)).toEqual([]);
+
+    await eventService.publish(makeEvent({ id: 'evt-after-gone' }));
+    expect(attempts).toBe(1);
+    expect(eventStore.listDeliveries('evt-after-gone')).toEqual([]);
     await runtime.stop();
   });
 

@@ -2496,6 +2496,7 @@ export class SpaceRuntime {
       if (this.cancelledLongHorizonDeliveries.has(deliveryKey)) return;
       if (!result.delivered && result.gone) {
         this.clearExternalEventRetry(deliveryKey);
+        if (target.kind === 'session') this.dropSessionSubscription(target);
         store.markDeliveryFailed(event.eventId, deliveryKey, {
           terminal: true,
           reason: 'subscriber_gone',
@@ -4968,6 +4969,14 @@ export class SpaceRuntime {
         );
       }
     }
+  }
+
+  private dropSessionSubscription(target: SessionSubscriptionTarget): void {
+    this.config.sessionSubscriptionRepo?.delete(target.subscriptionId);
+    this.topicTrie.remove(
+      (candidate) =>
+        isSessionSubscriptionTarget(candidate) && candidate.subscriptionId === target.subscriptionId
+    );
   }
 
   private rehydrateSessionSubscriptions(spaceId: string): void {

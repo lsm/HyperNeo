@@ -11,8 +11,7 @@ export function createSpaceSessionEventSubscriptionTables(db: BunDatabase): void
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
       UNIQUE(session_id, topic),
-      FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
-      FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+      FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
     )
   `);
   db.exec(

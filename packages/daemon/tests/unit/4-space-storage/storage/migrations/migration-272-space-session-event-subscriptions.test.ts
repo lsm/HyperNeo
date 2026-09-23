@@ -47,24 +47,6 @@ describe('migration 272: space session event subscriptions', () => {
     expect(() => insert(db, 'sub-3', 'session-1', 'github/a/b/*')).toThrow();
   });
 
-  test('deleting a session removes its subscriptions', () => {
-    const db = new BunDatabase(':memory:');
-    db.exec('PRAGMA foreign_keys = ON');
-    db.exec('CREATE TABLE spaces (id TEXT PRIMARY KEY)');
-    db.exec('CREATE TABLE sessions (id TEXT PRIMARY KEY)');
-    db.exec("INSERT INTO spaces (id) VALUES ('space-1')");
-    db.exec("INSERT INTO sessions (id) VALUES ('session-1')");
-    runMigration272(db);
-    insert(db, 'sub-1', 'session-1', 'github/a/b/*');
-
-    db.exec("DELETE FROM sessions WHERE id = 'session-1'");
-
-    const count = db
-      .prepare(`SELECT COUNT(*) AS count FROM space_session_event_subscriptions`)
-      .get() as { count: number };
-    expect(count.count).toBe(0);
-  });
-
   test('is idempotent and keeps existing rows', () => {
     const db = new BunDatabase(':memory:');
     runMigration272(db);
