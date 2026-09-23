@@ -2388,7 +2388,7 @@ export class SpaceRuntime {
     deliveryKey: string
   ): Promise<void> {
     const store = this.config.externalEventStore;
-    if (!store) return;
+    if (!store || this.pausedSpaceIds.has(target.spaceId)) return;
     this.externalEventDeliveriesInFlight.add(deliveryKey);
     try {
       if (!this.config.deliverLongHorizonExternalEvent) {
@@ -2407,7 +2407,12 @@ export class SpaceRuntime {
       store.markEventDeliveredIfAllDeliveriesDelivered(event.eventId);
       store.markEventFailedIfAllDeliveriesTerminal(event.eventId);
     } catch (err) {
-      if (this.cancelledLongHorizonDeliveries.has(deliveryKey)) return;
+      if (
+        this.cancelledLongHorizonDeliveries.has(deliveryKey) ||
+        this.pausedSpaceIds.has(target.spaceId)
+      ) {
+        return;
+      }
       const failureReason = err instanceof Error ? err.message : String(err);
       store.markDeliveryFailed(event.eventId, deliveryKey, {
         terminal: false,

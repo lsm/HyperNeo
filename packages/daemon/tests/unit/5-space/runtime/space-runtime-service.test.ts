@@ -1497,6 +1497,46 @@ describe('SpaceRuntimeService', () => {
       expect(pendingMailboxEntries(mailbox, nagKey)).toHaveLength(1);
     });
 
+    test('the runtime event hook does not wake a long-horizon agent in a paused space', async () => {
+      const sessionId = longTermAgentSessionId(mockSpace.id, 'lh-agent-1');
+      const mailbox = buildMailboxDeliveryDb([sessionId]);
+      const sessionManager = makeSessionManager(null);
+      const svc = buildDeliveryService({
+        ...buildConfigWithSession(
+          sessionManager,
+          createMockSpaceManager({ ...mockSpace, paused: true })
+        ),
+        db: mailbox.db,
+        reactiveDb: mailbox.reactiveDb,
+        longHorizonAgentRepo: makeActiveLhAgentRepo(),
+      });
+      const runtimeConfig = (
+        svc as unknown as {
+          runtime: {
+            config: {
+              deliverLongHorizonExternalEvent(args: {
+                spaceId: string;
+                agentId: string;
+                message: string;
+                idempotencyKey: string;
+              }): Promise<{ delivered: boolean }>;
+            };
+          };
+        }
+      ).runtime.config;
+
+      const result = await runtimeConfig.deliverLongHorizonExternalEvent({
+        spaceId: mockSpace.id,
+        agentId: 'lh-agent-1',
+        message: 'event payload',
+        idempotencyKey: 'delivery-1',
+      });
+
+      expect(result).toEqual({ delivered: false });
+      expect(sessionManager.createSession).not.toHaveBeenCalled();
+      expect(pendingMailboxEntries(mailbox, 'delivery-1')).toHaveLength(0);
+    });
+
     test('an identical pending mailbox admission does not block re-admission', async () => {
       const sessionId = longTermAgentSessionId(mockSpace.id, 'lh-agent-1');
       const mailbox = buildMailboxDeliveryDb([sessionId]);
