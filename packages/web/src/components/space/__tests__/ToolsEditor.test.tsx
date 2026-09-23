@@ -1,4 +1,4 @@
-import { DENIABLE_TOOLS, KNOWN_TOOLS } from '@hyperneo/shared';
+import { DENIABLE_TOOLS, isScopedBashToolEntry, KNOWN_TOOLS } from '@hyperneo/shared';
 import { cleanup, fireEvent, render } from '@testing-library/preact';
 import { useState } from 'preact/hooks';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -254,8 +254,16 @@ function expectDomMatchesLegacy(container: Element, legacy: LegacyToolsState): v
     const input = chipInput(container, tool);
     const inherited = !legacy.toolsOverridden;
     const checked = inherited || legacy.tools.includes(tool);
+    const scoped =
+      tool === 'Bash' &&
+      legacy.toolsOverridden &&
+      legacy.tools.some((entry) => isScopedBashToolEntry(entry));
     const denied =
-      legacy.toolsOverridden && legacy.tools.length > 0 && DENIABLE_TOOL_SET.has(tool) && !checked;
+      legacy.toolsOverridden &&
+      legacy.tools.length > 0 &&
+      DENIABLE_TOOL_SET.has(tool) &&
+      !checked &&
+      !scoped;
     expect(input.checked, `${tool} checked`).toBe(checked);
     expect(input.disabled, `${tool} disabled`).toBe(inherited);
     expect(
@@ -445,6 +453,34 @@ describe('scoped tool entries', () => {
       { tools: ['Read'], toolsOverridden: true },
       expect.any(String)
     );
+  });
+
+  it('marks Bash as scoped rather than denied when only scoped Bash entries exist', () => {
+    const { container, getByTestId } = render(
+      <ToolsEditor
+        tools={['Read', 'Bash(gh pr view:*)']}
+        toolsOverridden={true}
+        onChange={vi.fn()}
+      />
+    );
+    expect(chipLabel(container, 'Bash').textContent).toContain('Scoped');
+    expect(chipLabel(container, 'Bash').textContent).not.toContain('Denied');
+    expect(chipLabel(container, 'Write').textContent).toContain('Denied');
+    expect(getByTestId('tools-editor').textContent).toContain(
+      'Bash is limited to its scoped entries'
+    );
+  });
+
+  it('keeps bare Bash checked without a scoped marker when both are present', () => {
+    const { container } = render(
+      <ToolsEditor
+        tools={['Bash', 'Bash(gh pr view:*)']}
+        toolsOverridden={true}
+        onChange={vi.fn()}
+      />
+    );
+    expect(chipInput(container, 'Bash').checked).toBe(true);
+    expect(chipLabel(container, 'Bash').textContent).not.toContain('Scoped');
   });
 
   it('lists no scoped chips while tools are inherited, but still offers the input', () => {

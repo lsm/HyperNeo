@@ -1,4 +1,9 @@
-import { DENIABLE_TOOLS, isKnownToolEntry, KNOWN_TOOLS } from '@hyperneo/shared';
+import {
+  DENIABLE_TOOLS,
+  isKnownToolEntry,
+  isScopedBashToolEntry,
+  KNOWN_TOOLS,
+} from '@hyperneo/shared';
 import { useEffect, useRef, useState } from 'preact/hooks';
 
 type ToolName = (typeof KNOWN_TOOLS)[number];
@@ -91,6 +96,7 @@ export function ToolsEditor({
   preservedScopedEntries,
 }: ToolsEditorProps) {
   const activePreset = toolsOverridden ? detectToolsPreset(tools) : 'Inherited';
+  const bashScoped = toolsOverridden && tools.some((tool) => isScopedBashToolEntry(tool));
   const [scopedDraft, setScopedDraft] = useState('');
   const [scopedError, setScopedError] = useState<string | null>(null);
   const scopedInputRef = useRef<HTMLInputElement | null>(null);
@@ -171,7 +177,9 @@ export function ToolsEditor({
         <p class="font-medium">SDK defaults are always inherited.</p>
         <p class="mt-1 text-xs text-accent-soft/80">
           {toolsOverridden && tools.length > 0
-            ? 'Checked tools are explicit profile entries. Bash, Write, Edit, MultiEdit, and NotebookEdit are denied when unchecked; other unchecked SDK tools remain inherited.'
+            ? bashScoped && !tools.includes('Bash')
+              ? 'Checked tools are explicit profile entries. Write, Edit, MultiEdit, and NotebookEdit are denied when unchecked; Bash is limited to its scoped entries; other unchecked SDK tools remain inherited.'
+              : 'Checked tools are explicit profile entries. Bash, Write, Edit, MultiEdit, and NotebookEdit are denied when unchecked; other unchecked SDK tools remain inherited.'
             : 'This agent inherits all SDK built-in tools. No explicit overrides are set.'}
         </p>
       </div>
@@ -186,8 +194,13 @@ export function ToolsEditor({
         {(KNOWN_TOOLS as readonly string[]).map((tool) => {
           const inherited = !toolsOverridden;
           const checked = inherited || tools.includes(tool);
+          const scoped = tool === 'Bash' && bashScoped && !checked;
           const denied =
-            toolsOverridden && tools.length > 0 && DENIABLE_TOOL_SET.has(tool) && !checked;
+            toolsOverridden &&
+            tools.length > 0 &&
+            DENIABLE_TOOL_SET.has(tool) &&
+            !checked &&
+            !scoped;
           return (
             <label
               key={tool}
@@ -233,6 +246,11 @@ export function ToolsEditor({
               {denied && (
                 <span class="ml-auto text-[10px] uppercase tracking-wide text-danger-soft">
                   Denied
+                </span>
+              )}
+              {scoped && (
+                <span class="ml-auto text-[10px] uppercase tracking-wide text-fg-muted">
+                  Scoped
                 </span>
               )}
             </label>
