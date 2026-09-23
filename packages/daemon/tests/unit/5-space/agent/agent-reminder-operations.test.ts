@@ -18,7 +18,7 @@ import {
   claimReminderDelivery,
   reminderOccurrenceIsClaimed,
 } from '../../../../src/lib/agents/reminder-delivery-registry';
-import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session';
+import { longTermAgentSessionId } from '../../helpers/legacy-agent-session-id';
 
 let db: Database;
 let agentRepo: SpaceLongHorizonAgentRepository;

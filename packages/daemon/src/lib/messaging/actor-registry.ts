@@ -78,7 +78,7 @@ export class SpaceActorRegistryAdapter {
 
   private findLongTermAgentSession(spaceId: string, agentId: string): Session | null {
     const canonicalId = resolveAgentSessionId(this.repos.longHorizonAgentRepo, spaceId, agentId);
-    const canonical = this.repos.sessionRepo.getSession(canonicalId);
+    const canonical = canonicalId ? this.repos.sessionRepo.getSession(canonicalId) : null;
     if (canonical && isSessionInSpace(canonical, spaceId)) return canonical;
 
     return (

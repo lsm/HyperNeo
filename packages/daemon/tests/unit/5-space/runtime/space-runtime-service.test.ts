@@ -38,7 +38,7 @@ import {
   LONG_HORIZON_AGENT_BUILTIN_TOOLS,
   LONG_HORIZON_SCHEDULING_GUARDRAIL,
 } from '../../../../src/lib/agents/long-horizon-tools.ts';
-import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session.ts';
+import { longTermAgentSessionId } from '../../helpers/legacy-agent-session-id';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { SpaceManager as SpaceMgr } from '../../../../src/lib/space/managers/space-manager.ts';
 import type { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager.ts';

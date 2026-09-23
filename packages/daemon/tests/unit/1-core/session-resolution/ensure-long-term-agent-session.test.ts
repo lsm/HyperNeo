@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import type { SessionResolutionDeps } from '../../../../src/lib/session-resolution/deps';
 import { ensureLongTermAgentSession } from '../../../../src/lib/session-resolution/ensure-long-term-agent-session';
 import { type SessionTargetAgent } from '../../../../src/lib/session-resolution/target';
-import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session';
+import { longTermAgentSessionId } from '../../helpers/legacy-agent-session-id';
 
 function makeDeps(config?: { existingSessionIds?: string[]; ensureOutcome?: 'create' | 'fail' }): {
   deps: SessionResolutionDeps;

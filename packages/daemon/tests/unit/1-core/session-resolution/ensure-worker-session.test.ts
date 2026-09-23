@@ -1,4 +1,4 @@
-import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session';
+import { longTermAgentSessionId } from '../../helpers/legacy-agent-session-id';
 import { describe, expect, jest, test } from 'bun:test';
 import {
   workerTaskPhaseOf,

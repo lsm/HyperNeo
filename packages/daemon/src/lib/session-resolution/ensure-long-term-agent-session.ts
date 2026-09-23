@@ -5,12 +5,15 @@ export async function ensureLongTermAgentSession(
   target: SessionTargetAgent,
   deps: SessionResolutionDeps
 ): Promise<EnsureSessionOutcome> {
-  const sessionId = deps.agentSessionId(target.spaceId, target.agentId);
-  if ((await deps.getSession(sessionId)) !== null) {
-    return { kind: 'resolved', sessionId, created: false };
+  const existing = deps.agentSessionId(target.spaceId, target.agentId);
+  if (existing && (await deps.getSession(existing)) !== null) {
+    return { kind: 'resolved', sessionId: existing, created: false };
   }
   if ((await deps.ensureLongTermAgent(target.spaceId, target.agentId)) === null) {
     return { kind: 'unresolved', reason: 'ensure_failed' };
   }
-  return { kind: 'resolved', sessionId, created: true };
+  const sessionId = deps.agentSessionId(target.spaceId, target.agentId);
+  return sessionId
+    ? { kind: 'resolved', sessionId, created: true }
+    : { kind: 'unresolved', reason: 'ensure_failed' };
 }

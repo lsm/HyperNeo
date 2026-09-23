@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { NodeExecution, Session, SpaceLongHorizonAgent } from '@hyperneo/shared';
-import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session';
+import { longTermAgentSessionId } from '../../helpers/legacy-agent-session-id';
 import {
   createSpaceCallerScopeResolver,
   resolveSessionSpaceId,

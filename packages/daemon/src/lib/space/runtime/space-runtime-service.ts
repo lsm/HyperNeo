@@ -73,11 +73,7 @@ import { SpaceActorRegistryAdapter } from '../../messaging/actor-registry.ts';
 import { LONG_HORIZON_AGENT_BUILTIN_TOOLS } from '../../agents/long-horizon-tools.ts';
 import type { OwnedAgentLookup } from '../../agents/unified-agent-events.ts';
 import { unifiedAgentRecordExists } from '../../agents/worker-long-horizon-mapper.ts';
-import {
-  agentSessionIdFor,
-  encodeActorIdComponent,
-  resolveAgentSessionId,
-} from '../long-term-agent-session.ts';
+import { encodeActorIdComponent, resolveAgentSessionId } from '../long-term-agent-session.ts';
 import { SpaceAgentTemplateManager } from '../../agents/template-manager.ts';
 import type { SpaceManager } from '../managers/space-manager.ts';
 import type { SpaceWorkflowManager } from '../../workflows/workflow-manager.ts';
@@ -699,7 +695,7 @@ export class SpaceRuntimeService {
     if (!agent || agent.spaceId !== spaceId || agent.status !== 'active') return null;
     const space = await this.config.spaceManager.getSpace(spaceId);
     if (!space) return null;
-    const sessionId = agentSessionIdFor(agent);
+    const sessionId = agent.sessionId ?? generateUUID();
     let session = await sessionManager.getSessionAsync(sessionId);
     if (['ended', 'archived'].includes(session?.getSessionData().status ?? '')) return null;
     const currentConfig = session?.getSessionData().config;
@@ -1632,9 +1628,9 @@ export class SpaceRuntimeService {
   async clearLongTermAgentSessionProvider(spaceId: string, agentId: string): Promise<void> {
     const sessionManager = this.config.sessionManager;
     if (!sessionManager) return;
-    const session = await sessionManager.getSessionAsync(
-      resolveAgentSessionId(this.config.longHorizonAgentRepo, spaceId, agentId)
-    );
+    const sessionId = resolveAgentSessionId(this.config.longHorizonAgentRepo, spaceId, agentId);
+    if (!sessionId) return;
+    const session = await sessionManager.getSessionAsync(sessionId);
     if (!session || session.getSessionData?.().config?.provider === undefined) return;
     await session.updateConfig({ provider: undefined });
   }

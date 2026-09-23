@@ -16,6 +16,7 @@ export async function findSessionForTarget(
   }
   const sessionId = deps.agentSessionId(target.spaceId, target.agentId);
   if (
+    sessionId !== null &&
     (await deps.getSession(sessionId)) !== null &&
     (await deps.isAgentTargetLifecycleEligible(target.spaceId, target.agentId))
   ) {

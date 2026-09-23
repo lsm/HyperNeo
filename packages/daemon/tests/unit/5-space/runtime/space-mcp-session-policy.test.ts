@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { NodeExecution, Session, SpaceLongHorizonAgent, SpaceTask } from '@hyperneo/shared';
-import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session.ts';
+import { longTermAgentSessionId } from '../../helpers/legacy-agent-session-id';
 import {
   missingMcpServers,
   resolveSpaceMcpSessionPolicy,

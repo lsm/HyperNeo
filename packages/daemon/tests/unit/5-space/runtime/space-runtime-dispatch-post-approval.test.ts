@@ -1,4 +1,4 @@
-import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session';
+import { longTermAgentSessionId } from '../../helpers/legacy-agent-session-id';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import { DirectTaskExecutionRepository } from '../../../../src/storage/repositories/direct-task-execution-repository';

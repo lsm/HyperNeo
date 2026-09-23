@@ -6,7 +6,7 @@ import { createTables, runMigrations } from '../../../../src/storage/schema';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { createAgentOperations } from '../../../../src/lib/agents/operations';
-import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session';
+import { longTermAgentSessionId } from '../../helpers/legacy-agent-session-id';
 import {
   createOperationRegistry,
   type OperationCaller,

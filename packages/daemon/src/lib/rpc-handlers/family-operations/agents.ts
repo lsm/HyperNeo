@@ -49,12 +49,12 @@ export function registerAgentOperations(context: FamilyOperationContext): Operat
       getSession: (sessionId) => context.deps.db.getSession(sessionId),
       longHorizonAgentRepo: context.longHorizonAgentRepo,
       reminderRepo: context.spaceAgentReminderRepo,
-      occurrenceIsClaimed: (spaceId, agentId, idempotencyKey) =>
-        reminderOccurrenceIsClaimed(
-          context.deps.db,
-          resolveAgentSessionId(context.longHorizonAgentRepo, spaceId, agentId),
-          idempotencyKey
-        ),
+      occurrenceIsClaimed: (spaceId, agentId, idempotencyKey) => {
+        const sessionId = resolveAgentSessionId(context.longHorizonAgentRepo, spaceId, agentId);
+        return sessionId
+          ? reminderOccurrenceIsClaimed(context.deps.db, sessionId, idempotencyKey)
+          : false;
+      },
       taskRepo: context.spaceTaskRepo,
       nodeExecutionRepo: context.nodeExecutionRepo,
       publishAgentCreated,

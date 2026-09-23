@@ -5,7 +5,7 @@ import {
   canonicalAgentHandle,
   SpaceActorRegistryAdapter,
 } from '../../../src/lib/messaging/actor-registry';
-import { longTermAgentSessionId } from '../../../src/lib/space/long-term-agent-session';
+import { longTermAgentSessionId } from '../helpers/legacy-agent-session-id';
 import { NodeExecutionRepository } from '../../../src/storage/repositories/node-execution-repository';
 import { SessionRepository } from '../../../src/storage/repositories/session-repository';
 import { SpaceLongHorizonAgentRepository } from '../../../src/storage/repositories/space-long-horizon-agent-repository';

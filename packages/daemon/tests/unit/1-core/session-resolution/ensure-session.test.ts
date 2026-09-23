@@ -11,7 +11,7 @@ import {
   findStage,
 } from '../../../../src/lib/session-resolution/ensure-session';
 import type { SessionTarget } from '../../../../src/lib/session-resolution/target';
-import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session';
+import { longTermAgentSessionId } from '../../helpers/legacy-agent-session-id';
 
 const SPACE_ID = 'space-1';
 const TASK_ID = 'task-1';
