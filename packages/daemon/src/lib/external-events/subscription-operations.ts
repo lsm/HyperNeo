@@ -76,21 +76,46 @@ export type SubscriptionSubject =
   | { kind: 'node'; slot: SubscriptionSlot }
   | { kind: 'agent'; scope: AgentSubscriptionScope };
 
+function resolveTopicPattern<Input extends { topicPattern?: string; prUrl?: string }>(
+  input: Input,
+  ctx: z.RefinementCtx
+): Omit<Input, 'prUrl' | 'topicPattern'> & { topicPattern: string } {
+  const { prUrl, topicPattern, ...rest } = input;
+  if ((topicPattern === undefined) === (prUrl === undefined)) {
+    ctx.addIssue({ code: 'custom', message: 'Pass exactly one of topicPattern or prUrl.' });
+    return z.NEVER;
+  }
+  if (topicPattern !== undefined) return { ...rest, topicPattern };
+  const parsed = parsePrUrl(prUrl ?? '');
+  if (!parsed) {
+    ctx.addIssue({ code: 'custom', message: `Could not parse GitHub PR URL: ${prUrl}` });
+    return z.NEVER;
+  }
+  return { ...rest, topicPattern: buildPrEventTopicPattern(parsed) };
+}
+
+const TopicFields = {
+  topicPattern: z.string().min(1).optional(),
+  prUrl: z.string().min(1).optional(),
+};
+
 const SubscribeInput = z
   .object({
-    topicPattern: z.string().min(1),
+    ...TopicFields,
     label: z.string().optional(),
     subject: SubjectSchema.optional(),
     spaceId: z.string().min(1).optional(),
   })
-  .strict();
+  .strict()
+  .transform(resolveTopicPattern);
 const UnsubscribeInput = z
   .object({
-    topicPattern: z.string().min(1),
+    ...TopicFields,
     subject: SubjectSchema.optional(),
     spaceId: z.string().min(1).optional(),
   })
-  .strict();
+  .strict()
+  .transform(resolveTopicPattern);
 const PrInput = z.object({ prUrl: z.string().optional() }).strict();
 const ListInput = z
   .object({
@@ -358,7 +383,7 @@ export function createSubscriptionOperations(
     defineOperation({
       name: 'event.external.subscribe',
       policy: { safetyClass: 'mutate', roles: SUBSCRIPTION_ROLES },
-      description: `Subscribe a subject to external events matching a topic glob (e.g. github/lsm/neokai/pull_request/*.review_*). A node subject registers the calling worker slot on its workflow run and returns { ok, topicPattern }; an agent subject upserts the stored long-horizon subscription, refreshes the live delivery trie, and returns the same { ok, topicPattern } with the stored record under subscription, rejecting refresh_failed when the trie could not be refreshed. Both subjects answer in the same shape, so a caller reads ok without knowing which subject it passed. ${SUBJECT_DOC}`,
+      description: `Subscribe a subject to external events matching a topic glob (e.g. github/lsm/neokai/pull_request/*.review_*), or pass prUrl instead of topicPattern to follow one GitHub pull request; exactly one of the two is required. A node subject registers the calling worker slot on its workflow run and returns { ok, topicPattern }; an agent subject upserts the stored long-horizon subscription, refreshes the live delivery trie, and returns the same { ok, topicPattern } with the stored record under subscription, rejecting refresh_failed when the trie could not be refreshed. Both subjects answer in the same shape, so a caller reads ok without knowing which subject it passed. ${SUBJECT_DOC}`,
       inputSchema: SubscribeInput,
       resultSchema: z.union([AgentSubscribeOutcomeSchema, OutcomeSchema, SUBJECT_REJECTIONS]),
       execute: subjectPipeline('subscribe-external-event', subs, subscribeSubject),
@@ -366,7 +391,7 @@ export function createSubscriptionOperations(
     defineOperation({
       name: 'event.external.unsubscribe',
       policy: { safetyClass: 'mutate', roles: SUBSCRIPTION_ROLES },
-      description: `Remove a subject external-event subscription for a topic glob. A node subject drops the calling worker registration on its workflow run; an agent subject deletes the stored long-horizon record and its live delivery-trie entry, and is idempotent when the agent never subscribed to that pattern. ${SUBJECT_DOC}`,
+      description: `Remove a subject external-event subscription for a topic glob, or for the pull request named by prUrl; exactly one of the two is required. A node subject drops the calling worker registration on its workflow run; an agent subject deletes the stored long-horizon record and its live delivery-trie entry, and is idempotent when the agent never subscribed to that pattern. ${SUBJECT_DOC}`,
       inputSchema: UnsubscribeInput,
       resultSchema: z.union([OutcomeSchema, SUBJECT_REJECTIONS]),
       execute: subjectPipeline('unsubscribe-external-event', subs, unsubscribeSubject),
