@@ -1605,9 +1605,15 @@ describe('SpaceRuntimeService', () => {
       const mailbox = buildMailboxDeliveryDb();
       seedSpaceSession(mailbox, 'session-archived', { status: 'archived' });
       seedSpaceSession(mailbox, 'session-foreign', { spaceId: 'another-space' });
+      seedSpaceSession(mailbox, 'session-ended', { status: 'ended' });
       const deliver = sessionDeliveryHook(buildSessionDeliveryService(mailbox));
 
-      for (const sessionId of ['session-archived', 'session-foreign', 'session-missing']) {
+      for (const sessionId of [
+        'session-archived',
+        'session-ended',
+        'session-foreign',
+        'session-missing',
+      ]) {
         expect(
           await deliver({
             spaceId: mockSpace.id,

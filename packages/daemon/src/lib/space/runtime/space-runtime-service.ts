@@ -373,7 +373,12 @@ export class SpaceRuntimeService {
       return { delivered: false };
     }
     const session = new SessionRepository(this.config.db).getSession(args.sessionId);
-    if (!session || session.status === 'archived' || session.context?.spaceId !== args.spaceId) {
+    if (
+      !session ||
+      session.status === 'archived' ||
+      session.status === 'ended' ||
+      session.context?.spaceId !== args.spaceId
+    ) {
       return { delivered: false, gone: true };
     }
     const outcome = await this.injectLongTermAgentMessage(
