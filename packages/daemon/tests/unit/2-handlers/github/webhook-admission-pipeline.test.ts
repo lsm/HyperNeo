@@ -122,6 +122,21 @@ const deploymentStatusPayload = {
   sender,
 };
 
+const multiPrCheckRunPayload = {
+  action: 'completed',
+  check_run: {
+    id: 555,
+    name: 'ci',
+    status: 'completed',
+    conclusion: 'failure',
+    head_sha: 'abc123',
+    completed_at: '2026-01-01T00:00:00Z',
+    pull_requests: [{ number: 7 }, { number: 9 }],
+  },
+  repository,
+  sender,
+};
+
 function admissionInput(payload: unknown, overrides: Record<string, unknown> = {}) {
   return {
     signature: 'sha256=secret-a',
@@ -217,6 +232,25 @@ describe('generic webhook path', () => {
     });
     expect(state.published.map((p) => p.spaceId)).toEqual(['space-1', 'space-2']);
     expect(state.published.every((p) => p.event.eventType === 'issue_comment')).toBe(true);
+    expect(state.marked).toEqual(['w1', 'w2']);
+  });
+
+  it('fans a check failure out to every pull request on the head sha', async () => {
+    const { deps, state } = makeHarness();
+    const response = await runGithubWebhookAdmission(
+      deps,
+      admissionInput(multiPrCheckRunPayload, { eventType: 'check_run' })
+    );
+    expect(response).toEqual({
+      status: 200,
+      body: { message: 'Webhook received', deliveryId: 'delivery-1', spaces: 2 },
+    });
+    expect(state.published.map((p) => [p.spaceId, p.event.prNumber])).toEqual([
+      ['space-1', 7],
+      ['space-1', 9],
+      ['space-2', 7],
+      ['space-2', 9],
+    ]);
     expect(state.marked).toEqual(['w1', 'w2']);
   });
 
@@ -440,7 +474,7 @@ function stageCtx(partial: Partial<WebhookAdmissionCtx>): WebhookAdmissionCtx {
     matchedRepos: [],
     payload: undefined,
     kind: 'status',
-    normalized: null,
+    normalized: [],
     admissionRepo: null,
     sha: '',
     deploymentRoot: {},

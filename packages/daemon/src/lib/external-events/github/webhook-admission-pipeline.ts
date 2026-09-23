@@ -6,7 +6,7 @@ import {
   normalizeGitHubDeployment,
   normalizeGitHubDeploymentStatus,
   normalizeGitHubStatus,
-  normalizeGitHubWebhook,
+  normalizeGitHubWebhookEvents,
   repoFromPayload,
   type GitHubPollingRepo,
   type NormalizedGitHubEvent,
@@ -61,7 +61,7 @@ export interface WebhookAdmissionCtx {
   matchedRepos: GitHubWatchedRepo[];
   payload: unknown;
   kind: WebhookKind | null;
-  normalized: NormalizedGitHubEvent | null;
+  normalized: NormalizedGitHubEvent[];
   admissionRepo: GitHubPollingRepo | null;
   sha: string;
   deploymentRoot: Record<string, unknown>;
@@ -153,12 +153,13 @@ export function routeByKindStage(ctx: WebhookAdmissionCtx): WebhookAdmissionCtx 
 
 export function normalizeGenericStage(ctx: WebhookAdmissionCtx): WebhookAdmissionCtx {
   if (ctx.kind !== 'generic') return ctx;
-  const normalized = normalizeGitHubWebhook(ctx.eventType, ctx.deliveryId, ctx.payload);
-  if (!normalized) return ignored(ctx);
+  const normalized = normalizeGitHubWebhookEvents(ctx.eventType, ctx.deliveryId, ctx.payload);
+  const primary = normalized[0];
+  if (!primary) return ignored(ctx);
   return {
     ...ctx,
     normalized,
-    admissionRepo: { owner: normalized.repoOwner, repo: normalized.repoName },
+    admissionRepo: { owner: primary.repoOwner, repo: primary.repoName },
   };
 }
 
@@ -250,10 +251,10 @@ export async function resolvePrNumbersStage(
 
 export async function publishPerRepoStage(ctx: WebhookAdmissionCtx): Promise<WebhookAdmissionCtx> {
   const context = ctx.context;
-  if (ctx.kind !== 'generic' || !ctx.normalized || !context) return ctx;
+  if (ctx.kind !== 'generic' || ctx.normalized.length === 0 || !context) return ctx;
   let published = 0;
   for (const watched of ctx.targets) {
-    await context.publishEvent(watched.spaceId, ctx.normalized);
+    for (const event of ctx.normalized) await context.publishEvent(watched.spaceId, event);
     ctx.deps.markWebhookReceived(watched.id);
     published++;
   }
@@ -343,7 +344,7 @@ export async function runGithubWebhookAdmission(
     matchedRepos: [],
     payload: undefined,
     kind: null,
-    normalized: null,
+    normalized: [],
     admissionRepo: null,
     sha: '',
     deploymentRoot: {},

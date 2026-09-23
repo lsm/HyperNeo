@@ -10,6 +10,7 @@ import {
   normalizeGitHubReview,
   normalizeGitHubStatus,
   normalizeGitHubWebhook,
+  normalizeGitHubWebhookEvents,
   toExternalEvent,
   type GitHubPollingRepo,
 } from '../../../../src/lib/external-events/github/github-normalizer';
@@ -715,6 +716,73 @@ describe('NormalizedGitHubEvent reply/resolve handles', () => {
 
       expect(redelivered.dedupeKey).toBe(first.dedupeKey);
       expect(rerun.dedupeKey).not.toBe(first.dedupeKey);
+    });
+  });
+
+  describe('normalizeGitHubWebhookEvents', () => {
+    const repository = { name: 'widgets', owner: { login: 'acme' } };
+    const sender = { login: 'github-actions[bot]', type: 'Bot' };
+
+    test('fans a check_run failure out with PR-scoped dedupe past the first PR', () => {
+      const events = normalizeGitHubWebhookEvents('check_run', 'delivery-1', {
+        action: 'completed',
+        check_run: {
+          id: 555,
+          name: 'ci',
+          status: 'completed',
+          conclusion: 'failure',
+          pull_requests: [{ number: 7 }, { number: 9 }, { number: 7 }],
+        },
+        repository,
+        sender,
+      });
+      expect(events.map((event) => [event.prNumber, event.dedupeKey])).toEqual([
+        [7, 'acme/widgets:check_run:555:failure'],
+        [9, 'acme/widgets:check_run:555:failure:9'],
+      ]);
+    });
+
+    test('fans a check_suite failure out the same way', () => {
+      const events = normalizeGitHubWebhookEvents('check_suite', 'delivery-2', {
+        action: 'completed',
+        check_suite: {
+          id: 777,
+          status: 'completed',
+          conclusion: 'failure',
+          updated_at: '2026-01-01T00:00:00Z',
+          pull_requests: [{ number: 7 }, { number: 9 }],
+        },
+        repository,
+        sender,
+      });
+      expect(events.map((event) => [event.prNumber, event.dedupeKey])).toEqual([
+        [7, 'acme/widgets:check_suite:777:failure:2026-01-01T00:00:00Z'],
+        [9, 'acme/widgets:check_suite:777:failure:2026-01-01T00:00:00Z:9'],
+      ]);
+    });
+
+    test('returns the single event for other kinds and nothing when it is dropped', () => {
+      expect(
+        normalizeGitHubWebhookEvents('check_run', 'delivery-3', {
+          action: 'completed',
+          check_run: { id: 556, status: 'completed', conclusion: 'success', pull_requests: [] },
+          repository,
+          sender,
+        })
+      ).toEqual([]);
+      const single = normalizeGitHubWebhookEvents('check_run', 'delivery-4', {
+        action: 'completed',
+        check_run: {
+          id: 557,
+          name: 'ci',
+          status: 'completed',
+          conclusion: 'failure',
+          pull_requests: [{ number: 7 }],
+        },
+        repository,
+        sender,
+      });
+      expect(single.map((event) => event.prNumber)).toEqual([7]);
     });
   });
 
