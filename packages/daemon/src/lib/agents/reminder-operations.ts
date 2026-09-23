@@ -122,7 +122,7 @@ export function persistReminder(
     createdBySession: caller.sessionId ?? null,
   });
   deps.audit(
-    'agent.reminders.create',
+    'agent.reminder.create',
     { agentId: input.agentId, remindAt: input.remindAt },
     caller,
     spaceId
@@ -202,7 +202,7 @@ export function commitReminderCancellation(
         );
   }
   deps.audit(
-    'agent.reminders.cancel',
+    'agent.reminder.cancel',
     { agentId: reminder.agentId, reminderId: reminder.id },
     caller,
     reminder.spaceId
@@ -219,7 +219,7 @@ export function createCreateAgentReminderOperation(deps: AgentReminderDependenci
     .pipe(persistReminder, ['outcome', 'input', 'caller', 'deps'], 'outcome')
     .endAsync('outcome') as (input: CreateInput, caller: OperationCaller) => Promise<CreateResult>;
   return defineOperation({
-    name: 'agent.reminders.create',
+    name: 'agent.reminder.create',
     policy: AGENT_MUTATE_POLICY,
     description: CREATE_DESCRIPTION,
     inputSchema: createInputSchema,
@@ -240,7 +240,7 @@ export function createListAgentRemindersOperation(deps: AgentReminderDependencie
     .pipe(selectReminders, ['outcome', 'input', 'deps'], 'outcome')
     .end('outcome') as (input: ListInput, caller: OperationCaller) => ListResult;
   return defineOperation({
-    name: 'agent.reminders.list',
+    name: 'agent.reminder.list',
     policy: AGENT_READ_POLICY,
     description: LIST_DESCRIPTION,
     inputSchema: listInputSchema,
@@ -264,7 +264,7 @@ export function createCancelAgentReminderOperation(deps: AgentReminderDependenci
     .pipe(commitReminderCancellation, ['reminder', 'caller', 'deps'], 'outcome')
     .endAsync('outcome') as (input: CancelInput, caller: OperationCaller) => Promise<CancelResult>;
   return defineOperation({
-    name: 'agent.reminders.cancel',
+    name: 'agent.reminder.cancel',
     policy: AGENT_MUTATE_POLICY,
     description: CANCEL_DESCRIPTION,
     inputSchema: cancelInputSchema,

@@ -87,7 +87,7 @@ function agent(role: OperationCaller['role'], spaceId = SPACE_ID): OperationCall
   return { source: 'mcp', sessionId: 'session-1', spaceId, role, agentName: 'planner' };
 }
 
-describe('goal.tasks.list through the operations door', () => {
+describe('goal.task.list through the operations door', () => {
   test('projects goal-linked tasks to compact summaries with a total', async () => {
     const ctx = makeCtx();
     try {
@@ -96,7 +96,7 @@ describe('goal.tasks.list through the operations door', () => {
       expect(triggered.task).not.toBeNull();
       const result = await invoke(
         ctx,
-        'goal.tasks.list',
+        'goal.task.list',
         { goalId: goal.id },
         agent('ad_hoc_member')
       );
@@ -123,7 +123,7 @@ describe('goal.tasks.list through the operations door', () => {
       const goal = ctx.seed(SPACE_ID, 'Nothing linked');
       const result = await invoke(
         ctx,
-        'goal.tasks.list',
+        'goal.task.list',
         { goalId: goal.id },
         agent('universal_read')
       );
@@ -140,7 +140,7 @@ describe('goal.tasks.list through the operations door', () => {
       ctx.goalService.createImmediateTask(foreign.id);
       const result = await invoke(
         ctx,
-        'goal.tasks.list',
+        'goal.task.list',
         { goalId: foreign.id },
         agent('long_term_agent')
       );
@@ -159,7 +159,7 @@ describe('goal.tasks.list through the operations door', () => {
       ctx.goalService.createImmediateTask(goal.id);
       const outcome = await invokeOperation(
         ctx.registry,
-        'goal.tasks.list',
+        'goal.task.list',
         { goalId: goal.id },
         agent('workflow_worker')
       );
@@ -178,7 +178,7 @@ describe('goal.tasks.list through the operations door', () => {
       const foreign = ctx.seed(OTHER_SPACE_ID, 'Worker denied');
       const result = await invoke(
         ctx,
-        'goal.tasks.list',
+        'goal.task.list',
         { goalId: foreign.id },
         agent('workflow_worker')
       );
@@ -190,7 +190,7 @@ describe('goal.tasks.list through the operations door', () => {
   });
 });
 
-describe('goal.events.list through the operations door', () => {
+describe('goal.event.list through the operations door', () => {
   test('returns the append-only history of a goal newest-first', async () => {
     const ctx = makeCtx();
     try {
@@ -198,7 +198,7 @@ describe('goal.events.list through the operations door', () => {
       ctx.goalService.updateGoal(goal.id, { status: 'paused' });
       const result = await invoke(
         ctx,
-        'goal.events.list',
+        'goal.event.list',
         { goalId: goal.id },
         agent('ad_hoc_member')
       );
@@ -219,7 +219,7 @@ describe('goal.events.list through the operations door', () => {
       ctx.goalService.updateGoal(goal.id, { status: 'active' });
       const result = await invoke(
         ctx,
-        'goal.events.list',
+        'goal.event.list',
         { goalId: goal.id, limit: 1 },
         agent('long_term_agent')
       );
@@ -235,7 +235,7 @@ describe('goal.events.list through the operations door', () => {
     try {
       const result = await invoke(
         ctx,
-        'goal.events.list',
+        'goal.event.list',
         { goalId: 'missing-goal' },
         agent('long_term_agent')
       );
@@ -255,7 +255,7 @@ describe('goal.events.list through the operations door', () => {
       const goal = ctx.seed(SPACE_ID, 'Strict input');
       const outcome = await invokeOperation(
         ctx.registry,
-        'goal.events.list',
+        'goal.event.list',
         { goalId: goal.id, sessionId: 'session-elsewhere' },
         agent('workflow_worker')
       );
