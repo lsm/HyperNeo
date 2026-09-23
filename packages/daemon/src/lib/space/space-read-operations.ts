@@ -3,6 +3,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import {
   defineOperation,
+  type OperationCaller,
   type OperationDefinition,
   type OperationPolicy,
 } from '../operations/registry.ts';
@@ -35,14 +36,28 @@ const ListInputSchema = z
   .strict()
   .default({});
 
-const ListResultSchema = z.object({ spaces: z.array(SpaceSummarySchema) }).strict();
+const OutsideSpaceRejectionSchema = z
+  .object({ accepted: z.literal(false), reason: z.literal('outside_space') })
+  .strict();
+
+const ListResultSchema = z.union([
+  z.object({ spaces: z.array(SpaceSummarySchema) }).strict(),
+  OutsideSpaceRejectionSchema,
+]);
 
 const GetInputSchema = z.object({ spaceId: z.string().min(1).describe('Space id') }).strict();
 
-const GetResultSchema = z.discriminatedUnion('found', [
+const GetResultSchema = z.union([
   z.object({ found: z.literal(true), space: SpaceSummarySchema }),
   z.object({ found: z.literal(false), spaceId: z.string() }),
+  OutsideSpaceRejectionSchema,
 ]);
+
+const OUTSIDE_SPACE = { accepted: false, reason: 'outside_space' } as const;
+
+function isOutsideSpace(caller: OperationCaller): boolean {
+  return caller.source === 'mcp' && !SPACE_DISCOVERY_POLICY.roles.some((r) => r === caller.role);
+}
 
 type ListInput = z.infer<typeof ListInputSchema>;
 type ListResult = z.infer<typeof ListResultSchema>;
@@ -51,6 +66,13 @@ type GetResult = z.infer<typeof GetResultSchema>;
 
 export const SPACE_DISCOVERY_POLICY = {
   safetyClass: 'read',
+  roles: [
+    'ad_hoc_member',
+    'long_term_agent',
+    'workflow_worker',
+    'direct_task_worker',
+    'legacy_task_agent',
+  ],
 } as const satisfies OperationPolicy;
 
 export function summarizeSpace(space: Space): SpaceSummary {
@@ -88,7 +110,7 @@ export function presentSpace(space: Space): GetResult {
 }
 
 const OPEN_ACCESS_NOTE =
-  'Readable by every caller on this daemon, including a session with no Space: discovery is the one Space read that cannot gate on the caller Space, because the Space is what the caller is looking for. An agent scoped to one Space can therefore see that the others exist. Only names and lifecycle state are exposed, never Space instructions, workspaces, or configuration.';
+  'Readable by every Space session on this daemon: discovery is the one Space read that cannot gate on the caller Space, because the Space is what the caller is looking for. An agent scoped to one Space can therefore see that the others exist. Sessions outside any Space are refused. Only names and lifecycle state are exposed, never Space instructions, workspaces, or configuration.';
 
 const LIST_DESCRIPTION =
   'List the Spaces on this daemon, most recently updated first, as id, slug, name, status, paused and stopped. Start here when you need a spaceId for a Space-scoped operation and do not have one. Archived Spaces are excluded unless includeArchived is true. ' +
@@ -118,7 +140,8 @@ export function createSpaceReadOperations(deps: SpaceReadDependencies): Operatio
       description: LIST_DESCRIPTION,
       inputSchema: ListInputSchema,
       resultSchema: ListResultSchema,
-      execute: (input) => listSpaces(input),
+      execute: (input, caller) =>
+        isOutsideSpace(caller) ? Promise.resolve(OUTSIDE_SPACE) : listSpaces(input),
     }),
     defineOperation({
       name: 'space.get',
@@ -126,7 +149,8 @@ export function createSpaceReadOperations(deps: SpaceReadDependencies): Operatio
       description: GET_DESCRIPTION,
       inputSchema: GetInputSchema,
       resultSchema: GetResultSchema,
-      execute: (input) => getSpace(input),
+      execute: (input, caller) =>
+        isOutsideSpace(caller) ? Promise.resolve(OUTSIDE_SPACE) : getSpace(input),
     }),
   ];
 }

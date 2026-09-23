@@ -312,7 +312,6 @@ const WRITE_ADMISSION: SpaceCallerAdmission = { readOnly: false };
 const READ_ROLES: readonly OperationCallerRole[] = [
   'ad_hoc_member',
   'long_term_agent',
-  'universal_read',
   'workflow_worker',
 ];
 const WRITE_ROLES: readonly OperationCallerRole[] = ['ad_hoc_member', 'long_term_agent'];
