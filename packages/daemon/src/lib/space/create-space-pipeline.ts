@@ -7,7 +7,6 @@ import {
   type SpaceCreateResult,
 } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI, type Result } from 'superpipe';
-import type { CreateSessionParams } from '../session/session-lifecycle.ts';
 
 const VALID_AUTONOMY_LEVELS: SpaceAutonomyLevel[] = [1, 2, 3, 4, 5];
 
@@ -18,11 +17,6 @@ export interface CreateSpaceDeps {
     templateKeys: readonly string[]
   ): Promise<{ errors: ReadonlyArray<{ key: string; error: string }> }>;
   seedWorkflows(spaceId: string): { errors: ReadonlyArray<{ name: string; error: string }> };
-  chat?: {
-    createSession(params: CreateSessionParams): Promise<string>;
-    addSession(spaceId: string, sessionId: string): Promise<Space>;
-    provisionRuntime?(space: Space): Promise<void>;
-  };
   dispatchSpaceCreated(space: Space): Promise<void>;
   warn(message: string, error?: unknown): void;
 }
@@ -133,32 +127,6 @@ export function seedWorkflows(ctx: CreateSpaceCtx): CreateSpaceCtx {
   }
 }
 
-export async function provisionChatSession(ctx: CreateSpaceCtx): Promise<CreateSpaceCtx> {
-  const space = requireSpace(ctx);
-  if (!ctx.deps.chat) return ctx;
-  const sessionId = `space:chat:${space.id}`;
-  try {
-    await ctx.deps.chat.createSession({
-      sessionId,
-      title: space.name,
-      workspacePath: space.workspacePath,
-      config: { model: space.defaultModel },
-      sessionType: 'space_chat',
-      spaceId: space.id,
-    });
-    await ctx.deps.chat.addSession(space.id, sessionId);
-  } catch (error) {
-    ctx.deps.warn(`Failed to create space chat session for space ${space.id}`, error);
-    return ctx;
-  }
-  try {
-    await ctx.deps.chat.provisionRuntime?.(space);
-  } catch (error) {
-    ctx.deps.warn(`Failed to provision space chat session for space ${space.id}`, error);
-  }
-  return ctx;
-}
-
 export function publishSpaceCreated(ctx: CreateSpaceCtx): CreateSpaceCtx {
   ctx.deps.dispatchSpaceCreated(requireSpace(ctx)).catch((error) => {
     ctx.deps.warn('Failed to emit space.created', error);
@@ -178,7 +146,6 @@ const runCreateSpace = (superpipe()('createSpace') as PipelineAPI)
   .pipe(createSpaceRecord, 'ctx', 'ctx')
   .pipe(seedAgents, 'ctx', 'ctx')
   .pipe(seedWorkflows, 'ctx', 'ctx')
-  .pipe(provisionChatSession, 'ctx', 'ctx')
   .pipe(publishSpaceCreated, 'ctx', 'ctx')
   .pipe(assembleResult, 'ctx', 'ctx')
   .endAsync('ctx') as (ctx: CreateSpaceCtx) => Promise<CreateSpaceCtx | Error>;

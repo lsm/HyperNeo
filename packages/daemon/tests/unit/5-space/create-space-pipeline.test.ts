@@ -6,7 +6,6 @@ import {
   type CreateSpaceDeps,
   createSpace,
   createSpaceRecord,
-  provisionChatSession,
   publishSpaceCreated,
   seedAgents,
   seedWorkflows,
@@ -34,15 +33,14 @@ const space: Space = {
 
 interface CallLog {
   calls: string[];
-  sessionParams: unknown[];
   published: Space[];
 }
 
-function makeDeps(
-  overrides: Partial<CreateSpaceDeps> = {},
-  chat = true
-): { deps: CreateSpaceDeps; log: CallLog } {
-  const log: CallLog = { calls: [], sessionParams: [], published: [] };
+function makeDeps(overrides: Partial<CreateSpaceDeps> = {}): {
+  deps: CreateSpaceDeps;
+  log: CallLog;
+} {
+  const log: CallLog = { calls: [], published: [] };
   const deps: CreateSpaceDeps = {
     createSpaceRecord: async (input) => {
       log.calls.push(`create:${input.name}`);
@@ -56,24 +54,6 @@ function makeDeps(
       log.calls.push(`seed:${spaceId}`);
       return { errors: [] };
     },
-    ...(chat
-      ? {
-          chat: {
-            createSession: async (input) => {
-              log.calls.push(`session:${input.sessionId}`);
-              log.sessionParams.push(input);
-              return input.sessionId ?? 'generated-session';
-            },
-            addSession: async (spaceId, sessionId) => {
-              log.calls.push(`add:${spaceId}:${sessionId}`);
-              return space;
-            },
-            provisionRuntime: async (input) => {
-              log.calls.push(`runtime:${input.id}`);
-            },
-          },
-        }
-      : {}),
     dispatchSpaceCreated: async (input) => {
       log.calls.push(`publish:${input.id}`);
       log.published.push(input);
@@ -306,79 +286,6 @@ describe('createSpace pipeline stages', () => {
     });
   });
 
-  describe('provisionChatSession', () => {
-    test('creates, registers, and provisions the canonical session', async () => {
-      const { deps, log } = makeDeps();
-      const result = await provisionChatSession(makeCtx({ deps, space }));
-      expect(result.warnings).toEqual([]);
-      expect(log.calls).toEqual([
-        'session:space:chat:space-1',
-        'add:space-1:space:chat:space-1',
-        'runtime:space-1',
-      ]);
-      expect(log.sessionParams).toEqual([
-        {
-          sessionId: 'space:chat:space-1',
-          title: 'Test Space',
-          workspacePath: '/workspace',
-          config: { model: 'claude-sonnet-5' },
-          sessionType: 'space_chat',
-          spaceId: 'space-1',
-        },
-      ]);
-    });
-
-    test('is a no-op when chat dependencies are absent', async () => {
-      const { deps, log } = makeDeps({}, false);
-      const ctx = makeCtx({ deps, space });
-      expect(await provisionChatSession(ctx)).toBe(ctx);
-      expect(log.calls).toEqual([]);
-    });
-
-    test('logs a creation failure without warnings and skips later chat effects', async () => {
-      const { deps, log } = makeDeps();
-      if (!deps.chat) throw new Error('expected chat dependencies');
-      deps.chat.createSession = async () => {
-        log.calls.push('session-failed');
-        throw new Error('failed');
-      };
-      const result = await provisionChatSession(makeCtx({ deps, space }));
-      expect(result.warnings).toEqual([]);
-      expect(log.calls).toEqual([
-        'session-failed',
-        'warn:Failed to create space chat session for space space-1',
-      ]);
-    });
-
-    test('logs a registration failure without warnings and skips runtime provisioning', async () => {
-      const { deps, log } = makeDeps();
-      if (!deps.chat) throw new Error('expected chat dependencies');
-      deps.chat.addSession = async () => {
-        log.calls.push('add-failed');
-        throw new Error('failed');
-      };
-      const result = await provisionChatSession(makeCtx({ deps, space }));
-      expect(result.warnings).toEqual([]);
-      expect(log.calls).toEqual([
-        'session:space:chat:space-1',
-        'add-failed',
-        'warn:Failed to create space chat session for space space-1',
-      ]);
-    });
-
-    test('logs a runtime provisioning failure without warnings', async () => {
-      const { deps, log } = makeDeps();
-      if (!deps.chat) throw new Error('expected chat dependencies');
-      deps.chat.provisionRuntime = async () => {
-        log.calls.push('runtime-failed');
-        throw new Error('failed');
-      };
-      const result = await provisionChatSession(makeCtx({ deps, space }));
-      expect(result.warnings).toEqual([]);
-      expect(log.calls).toContain('warn:Failed to provision space chat session for space space-1');
-    });
-  });
-
   describe('publishSpaceCreated', () => {
     test('dispatches without changing context', () => {
       const { deps, log } = makeDeps();
@@ -424,26 +331,16 @@ describe('createSpace pipeline', () => {
   test('runs the complete business path in order', async () => {
     const { deps, log } = makeDeps();
     expect(await createSpace(deps, params)).toBe(space);
-    expect(log.calls).toEqual([
-      'create:Test Space',
-      'seed:space-1',
-      'session:space:chat:space-1',
-      'add:space-1:space:chat:space-1',
-      'runtime:space-1',
-      'publish:space-1',
-    ]);
+    expect(log.calls).toEqual(['create:Test Space', 'seed:space-1', 'publish:space-1']);
   });
 
-  test('seeds requested agents before workflows and the chat session', async () => {
+  test('seeds requested agents before workflows', async () => {
     const { deps, log } = makeDeps();
     await createSpace(deps, { ...params, seedAgentTemplateKeys: ['task-manager.default'] });
     expect(log.calls).toEqual([
       'create:Test Space',
       'agents:space-1:task-manager.default',
       'seed:space-1',
-      'session:space:chat:space-1',
-      'add:space-1:space:chat:space-1',
-      'runtime:space-1',
       'publish:space-1',
     ]);
   });
@@ -495,10 +392,6 @@ describe('createSpace pipeline', () => {
     const { deps, log } = makeDeps({
       seedWorkflows: () => ({ errors: [{ name: 'Coding', error: 'failed' }] }),
     });
-    if (!deps.chat) throw new Error('expected chat dependencies');
-    deps.chat.provisionRuntime = async () => {
-      throw new Error('runtime failed');
-    };
     const result = await createSpace(deps, params);
     expect(result.seedWarnings).toEqual(['Failed to seed workflows: Coding']);
     expect(log.calls.at(-1)).toBe('publish:space-1');

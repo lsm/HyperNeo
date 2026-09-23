@@ -1156,17 +1156,6 @@ export class SpaceRuntimeService {
     const { sessionManager, internalEventBus } = this.config;
     if (!sessionManager || !internalEventBus) return;
 
-    const unsubCreated = internalEventBus.subscribe(
-      'space.created',
-      (event) => {
-        void this.setupSpaceAgentSession(event.space).catch((err) => {
-          log.error(`Failed to provision space chat session for space ${event.spaceId}:`, err);
-        });
-      },
-      { sessionId: 'global', subscriberName: 'SpaceRuntimeService.global' }
-    );
-    this.unsubscribers.push(unsubCreated);
-
     const unsubSessionCreated = internalEventBus.subscribe(
       'session.created',
       (event) => {
@@ -1506,10 +1495,7 @@ export class SpaceRuntimeService {
     const spaceChatSessionId = `space:chat:${space.id}`;
     if (new DirectTaskExecutionRepository(db).hasSessionProvenance(spaceChatSessionId)) return;
     const session = await sessionManager.getSessionAsync(spaceChatSessionId);
-    if (!session) {
-      log.warn(`Space chat session not found for space ${space.id} (${spaceChatSessionId})`);
-      return;
-    }
+    if (!session) return;
 
     const existingDbQueryServer = this.spaceDbQueryServers.get(space.id);
     if (existingDbQueryServer) {

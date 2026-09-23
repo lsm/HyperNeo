@@ -1019,29 +1019,6 @@ describe('SpaceRuntimeService', () => {
       await svc.stop();
     });
 
-    test('start() subscribes to space.created events when internalEventBus provided', async () => {
-      const session = makeSession();
-      const sessionManager = makeSessionManager(session);
-      const internalEventBus = {
-        subscribe: mock(() => () => {}),
-        publish: mock(async () => ({ delivered: 0, failures: [] })),
-        publishAsync: mock(() => {}),
-      } as unknown as SpaceRuntimeServiceConfig['internalEventBus'];
-      const config: SpaceRuntimeServiceConfig = {
-        ...buildConfigWithSession(sessionManager, createMockSpaceManager(), internalEventBus),
-      };
-      const svc = new SpaceRuntimeService(config);
-
-      svc.start();
-
-      const onCalls = (internalEventBus.subscribe as Mock<typeof internalEventBus.subscribe>).mock
-        .calls;
-      const spaceCreatedCall = onCalls.find(([event]) => event === 'space.created');
-      expect(spaceCreatedCall).toBeDefined();
-
-      await svc.stop();
-    });
-
     test('session.reset re-provisions reset Space chats before query replay', async () => {
       const session = makeSession();
       const sessionManager = makeSessionManager(session);
@@ -2099,7 +2076,7 @@ describe('SpaceRuntimeService', () => {
       await svc.stop();
     });
 
-    test('stop() unsubscribes from space.created events', async () => {
+    test('stop() undoes every event-bus subscription start() made', async () => {
       const unsubFn = mock(() => {});
       const session = makeSession();
       const sessionManager = makeSessionManager(session);
@@ -2114,9 +2091,12 @@ describe('SpaceRuntimeService', () => {
       const svc = new SpaceRuntimeService(config);
 
       svc.start();
+      const subscriptions = (internalEventBus.subscribe as Mock<typeof internalEventBus.subscribe>)
+        .mock.calls.length;
       await svc.stop();
 
-      expect(unsubFn).toHaveBeenCalledTimes(10);
+      expect(subscriptions).toBeGreaterThan(0);
+      expect(unsubFn).toHaveBeenCalledTimes(subscriptions);
     });
   });
 
