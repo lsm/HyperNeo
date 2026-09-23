@@ -126,7 +126,12 @@ export function setupSessionHandlers(
   deps?: SessionHandlerDeps
 ): void {
   messageHub.onRequest('session.create', async (data) => {
-    const req = data as CreateSessionRequest;
+    const req = data as CreateSessionRequest & { spaceId?: unknown };
+    if (req.spaceId !== undefined) {
+      throw new Error(
+        'Sessions are no longer created inside a Space; talk to one of its agents instead'
+      );
+    }
     if (
       req.worktreeMode !== undefined &&
       req.worktreeMode !== 'worktree' &&
@@ -144,34 +149,11 @@ export function setupSessionHandlers(
       worktreeBaseBranch: req.worktreeBaseBranch,
       worktreeMode: req.worktreeMode,
       title: req.title,
-      spaceId: req.spaceId,
       createdBy: req.createdBy ?? 'human',
     });
 
-    if (req.spaceId) {
-      const updatedSpace = await spaceManager.addSession(req.spaceId, sessionId);
-      internalEventBus
-        .publish('space.updated', {
-          sessionId: 'global',
-          spaceId: req.spaceId,
-          space: updatedSpace,
-        })
-        .catch(() => {});
-    }
-
     const agentSession = sessionManager.getSession(sessionId);
     const session = agentSession?.getSessionData();
-
-    if (session && session.context?.spaceId && spaceRuntimeService) {
-      try {
-        await spaceRuntimeService.attachSpaceToolsToMemberSession(session);
-      } catch (err) {
-        log.warn(
-          `Failed to attach space tools to session ${sessionId} (space ${session.context.spaceId}):`,
-          err
-        );
-      }
-    }
 
     if (session) {
       internalEventBus.publish('session.created', { sessionId, session }).catch(() => {});

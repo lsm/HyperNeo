@@ -2749,8 +2749,8 @@ describe('Session RPC Handlers — session.create universal-read operations inje
     expect(fixture.mergeRuntimeMcpServers).not.toHaveBeenCalled();
   });
 
-  it('routes space sessions through attachSpaceToolsToMemberSession', async () => {
-    const fixture = makeSessionFixture({ context: { spaceId: 'space-1' } });
+  it('refuses to create a session inside a Space', async () => {
+    const fixture = makeSessionFixture({});
     const attachSpaceToolsToMemberSession = mock(async () => {});
     await setupWith(fixture.sessionManager, {
       attachSpaceToolsToMemberSession,
@@ -2758,10 +2758,11 @@ describe('Session RPC Handlers — session.create universal-read operations inje
 
     const handler = messageHubData.handlers.get('session.create');
     expect(handler).toBeDefined();
-    await handler!({ workspacePath: '/tmp/hyperneo-ws' }, {});
+    await expect(
+      handler!({ workspacePath: '/tmp/hyperneo-ws', spaceId: 'space-1' }, {})
+    ).rejects.toThrow('no longer created inside a Space');
 
-    expect(attachSpaceToolsToMemberSession).toHaveBeenCalledTimes(1);
-    expect(fixture.setOperationRegistryProvider).not.toHaveBeenCalled();
-    expect(fixture.mergeRuntimeMcpServers).not.toHaveBeenCalled();
+    expect(fixture.sessionManager.createSession).not.toHaveBeenCalled();
+    expect(attachSpaceToolsToMemberSession).not.toHaveBeenCalled();
   });
 });
