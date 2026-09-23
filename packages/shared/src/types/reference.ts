@@ -1,6 +1,4 @@
-import type { SpaceTask } from './space.ts';
-
-export type ReferenceType = 'task' | 'goal' | 'file' | 'folder';
+export type ReferenceType = 'file' | 'folder';
 
 export interface ReferenceMention {
   type: ReferenceType;
@@ -20,16 +18,6 @@ export interface ResolvedReference {
   type: ReferenceType;
   id: string;
   data: unknown;
-}
-
-export interface ResolvedTaskReference extends ResolvedReference {
-  type: 'task';
-  data: SpaceTask | object;
-}
-
-export interface ResolvedGoalReference extends ResolvedReference {
-  type: 'goal';
-  data: object;
 }
 
 export interface ResolvedFileData {

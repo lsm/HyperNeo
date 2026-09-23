@@ -10,16 +10,6 @@ export interface MentionTokenProps {
 }
 
 const TYPE_STYLES: Record<ReferenceType, { container: string; icon: string; label: string }> = {
-  task: {
-    container: 'bg-accent/15 text-accent-soft hover:bg-accent/25',
-    icon: 'w-3 h-3 text-accent',
-    label: 'task',
-  },
-  goal: {
-    container: 'bg-cat-purple/15 text-cat-purple hover:bg-cat-purple/25',
-    icon: 'w-3 h-3 text-cat-purple',
-    label: 'goal',
-  },
   file: {
     container: 'bg-success/15 text-success-soft hover:bg-success/25',
     icon: 'w-3 h-3 text-success',

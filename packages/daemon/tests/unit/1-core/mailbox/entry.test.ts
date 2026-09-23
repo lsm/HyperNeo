@@ -160,7 +160,7 @@ describe('toMailboxMessage', () => {
             ],
           },
           referenceMetadata: {
-            '@ref{task:42}': { type: 'task', id: '42', displayText: 'Task 42' },
+            '@ref{file:src/a.ts}': { type: 'file', id: 'src/a.ts', displayText: 'a.ts' },
           },
         },
       ],
@@ -172,6 +172,26 @@ describe('toMailboxMessage', () => {
       ['inputKind system', { ...validMessage, inputKind: 'system' }],
     ])('projects %s to a fresh deep-equal message', (_label, input) => {
       expect(toMailboxMessage(input)).toEqual({ message: input });
+    });
+
+    test('drops retired task and goal reference metadata instead of rejecting the entry', () => {
+      const file = { type: 'file', id: 'src/a.ts', displayText: 'a.ts' } as const;
+      const projected = toMailboxMessage({
+        ...validMessage,
+        referenceMetadata: {
+          '@ref{task:t1}': { type: 'task', id: 't1', displayText: 'Task one' },
+          '@ref{goal:g1}': {
+            type: 'goal',
+            id: 'g1',
+            displayText: 'Goal one',
+            status: 'unresolved',
+          },
+          '@ref{file:src/a.ts}': file,
+        } as unknown as MailboxMessage['referenceMetadata'],
+      });
+      expect(projected).toEqual({
+        message: { ...validMessage, referenceMetadata: { '@ref{file:src/a.ts}': file } },
+      });
     });
 
     test('output keys are exactly the typed fields', () => {
@@ -186,7 +206,7 @@ describe('toMailboxMessage', () => {
         priority: 'next',
         inputKind: 'system',
         referenceMetadata: {
-          '@ref{goal:1}': { type: 'goal', id: '1', displayText: 'Goal 1' },
+          '@ref{folder:src}': { type: 'folder', id: 'src', displayText: 'src' },
         },
       }) as { message: MailboxMessage };
       expect(Object.keys(withOptionalFields.message).sort()).toEqual([
@@ -282,7 +302,7 @@ describe('toMailboxMessage', () => {
         {
           ...validMessage,
           referenceMetadata: {
-            '@ref{task:42}': { type: 'task', id: '', displayText: 'Task 42' },
+            '@ref{file:src/a.ts}': { type: 'file', id: '', displayText: 'a.ts' },
           },
         },
       ],

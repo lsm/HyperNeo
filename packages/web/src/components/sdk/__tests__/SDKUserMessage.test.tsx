@@ -634,9 +634,9 @@ describe('SDKUserMessage', () => {
       expect(container.querySelector('[data-testid="mention-token"]')).toBeNull();
     });
 
-    it('renders @ref{task:t-1} as a MentionToken', () => {
-      const message = createMessageWithRef('Fix @ref{task:t-1} now', {
-        '@ref{task:t-1}': { type: 'task', id: 't-1', displayText: 'Login bug' },
+    it('renders @ref{file:src/login.ts} as a MentionToken', () => {
+      const message = createMessageWithRef('Fix @ref{file:src/login.ts} now', {
+        '@ref{file:src/login.ts}': { type: 'file', id: 'src/login.ts', displayText: 'Login bug' },
       });
       const { container } = render(<SDKUserMessage message={message} />);
 
@@ -645,18 +645,29 @@ describe('SDKUserMessage', () => {
       expect(container.textContent).toContain('Login bug');
     });
 
-    it('renders @ref{goal:g-1} as a MentionToken with correct type', () => {
-      const message = createMessageWithRef('Work on @ref{goal:g-1}', {
-        '@ref{goal:g-1}': { type: 'goal', id: 'g-1', displayText: 'Ship v2' },
+    it('renders @ref{folder:src} as a MentionToken with correct type', () => {
+      const message = createMessageWithRef('Work in @ref{folder:src}', {
+        '@ref{folder:src}': { type: 'folder', id: 'src', displayText: 'src' },
       });
       const { container } = render(<SDKUserMessage message={message} />);
 
       const token = container.querySelector('[data-testid="mention-token"]');
-      expect(token?.getAttribute('data-ref-type')).toBe('goal');
+      expect(token?.getAttribute('data-ref-type')).toBe('folder');
+    });
+
+    it('renders a retired task or goal reference as plain text, not a token', () => {
+      const message = createMessageWithRef('Fix @ref{task:t-1} for @ref{goal:g-1}', {
+        '@ref{task:t-1}': { type: 'task', id: 't-1', displayText: 'Login bug' },
+      });
+      const { container } = render(<SDKUserMessage message={message} />);
+
+      expect(container.querySelector('[data-testid="mention-token"]')).toBeNull();
+      expect(container.textContent).toContain('@ref{task:t-1}');
+      expect(container.textContent).toContain('@ref{goal:g-1}');
     });
 
     it('falls back to raw id when referenceMetadata is absent', () => {
-      const message = createMessageWithRef('Fix @ref{task:t-99}');
+      const message = createMessageWithRef('Fix @ref{file:t-99}');
       const { container } = render(<SDKUserMessage message={message} />);
 
       const token = container.querySelector('[data-testid="mention-token"]');
@@ -673,8 +684,8 @@ describe('SDKUserMessage', () => {
     });
 
     it('renders surrounding text around a token', () => {
-      const message = createMessageWithRef('Please fix @ref{task:t-1} urgently', {
-        '@ref{task:t-1}': { type: 'task', id: 't-1', displayText: 'Bug' },
+      const message = createMessageWithRef('Please fix @ref{file:t-1} urgently', {
+        '@ref{file:t-1}': { type: 'file', id: 't-1', displayText: 'Bug' },
       });
       const { container } = render(<SDKUserMessage message={message} />);
 
@@ -684,8 +695,8 @@ describe('SDKUserMessage', () => {
     });
 
     it('renders multiple tokens in a single message', () => {
-      const message = createMessageWithRef('Fix @ref{task:t-1} and see @ref{file:src/foo.ts}', {
-        '@ref{task:t-1}': { type: 'task', id: 't-1', displayText: 'Bug' },
+      const message = createMessageWithRef('Fix @ref{folder:src} and see @ref{file:src/foo.ts}', {
+        '@ref{folder:src}': { type: 'folder', id: 'src', displayText: 'src' },
         '@ref{file:src/foo.ts}': { type: 'file', id: 'src/foo.ts', displayText: 'foo.ts' },
       });
       const { container } = render(<SDKUserMessage message={message} />);

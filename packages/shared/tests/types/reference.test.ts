@@ -10,21 +10,21 @@ import {
 
 describe('ReferenceType', () => {
   it('accepts all valid values', () => {
-    const values: ReferenceType[] = ['task', 'goal', 'file', 'folder'];
-    expect(values).toHaveLength(4);
+    const values: ReferenceType[] = ['file', 'folder'];
+    expect(values).toHaveLength(2);
   });
 });
 
 describe('ReferenceMention', () => {
   it('has correct shape', () => {
     const mention: ReferenceMention = {
-      type: 'task',
-      id: 't-42',
-      displayText: 'Fix the bug',
+      type: 'folder',
+      id: 'src/lib',
+      displayText: 'lib',
     };
-    expect(mention.type).toBe('task');
-    expect(mention.id).toBe('t-42');
-    expect(mention.displayText).toBe('Fix the bug');
+    expect(mention.type).toBe('folder');
+    expect(mention.id).toBe('src/lib');
+    expect(mention.displayText).toBe('lib');
   });
 });
 
@@ -41,14 +41,14 @@ describe('ReferenceSearchResult', () => {
 
   it('includes optional fields when provided', () => {
     const result: ReferenceSearchResult = {
-      type: 'task',
-      id: 'task-uuid-42',
-      shortId: 't-42',
-      displayText: 'Fix the bug',
-      subtitle: 'in progress',
+      type: 'folder',
+      id: 'src/lib',
+      shortId: 'lib',
+      displayText: 'lib',
+      subtitle: 'src/lib',
     };
-    expect(result.shortId).toBe('t-42');
-    expect(result.subtitle).toBe('in progress');
+    expect(result.shortId).toBe('lib');
+    expect(result.subtitle).toBe('src/lib');
   });
 });
 
@@ -66,17 +66,17 @@ describe('ResolvedReference', () => {
 describe('ReferenceMetadata', () => {
   it('is a plain object (JSON-serializable)', () => {
     const meta: ReferenceMetadata = {
-      '@ref{task:t-42}': {
-        type: 'task',
-        id: 't-42',
-        displayText: 'Fix the bug',
-        status: 'in_progress',
+      '@ref{file:src/app.ts}': {
+        type: 'file',
+        id: 'src/app.ts',
+        displayText: 'app.ts',
+        status: 'unresolved',
       },
     };
     const serialized = JSON.stringify(meta);
     const parsed = JSON.parse(serialized) as ReferenceMetadata;
-    expect(parsed['@ref{task:t-42}'].type).toBe('task');
-    expect(parsed['@ref{task:t-42}'].status).toBe('in_progress');
+    expect(parsed['@ref{file:src/app.ts}'].type).toBe('file');
+    expect(parsed['@ref{file:src/app.ts}'].status).toBe('unresolved');
   });
 });
 

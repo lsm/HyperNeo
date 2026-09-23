@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { Session } from '@hyperneo/shared';
 import type { Database } from '../../../src/storage/database';
 import type { JobQueueRepository } from '../../../src/storage/repositories/job-queue-repository';
@@ -6,7 +9,18 @@ import type { InternalEventBus } from '../../../src/lib/internal-event-bus';
 import { MessagePersistence } from '../../../src/lib/session/message-persistence';
 import { ReferenceResolver } from '../../../src/lib/session/reference-resolver';
 import type { SessionCache } from '../../../src/lib/session/session-cache';
-import type { GoalRepoForReference } from '../../../src/lib/rpc-handlers/reference-handlers';
+
+let workspace: string;
+
+beforeEach(async () => {
+  workspace = await mkdtemp(join(tmpdir(), 'ref-persistence-'));
+  await writeFile(join(workspace, 'a.ts'), 'export const a = 1;\n');
+  await mkdir(join(workspace, 'src'));
+});
+
+afterEach(async () => {
+  await rm(workspace, { recursive: true, force: true });
+});
 
 function makeSession(overrides: Partial<Session> = {}): Session {
   return {
@@ -45,16 +59,9 @@ describe('ReferenceResolver.extractReferences', () => {
     expect(ReferenceResolver.extractReferences('')).toEqual([]);
   });
 
-  it('extracts a single task reference', () => {
-    const result = ReferenceResolver.extractReferences('Please check @ref{task:t-42} for details');
-    expect(result).toHaveLength(1);
-    expect(result[0]).toMatchObject({ type: 'task', id: 't-42' });
-  });
-
-  it('extracts a single goal reference', () => {
-    const result = ReferenceResolver.extractReferences('Goal @ref{goal:g-7} is relevant');
-    expect(result).toHaveLength(1);
-    expect(result[0]).toMatchObject({ type: 'goal', id: 'g-7' });
+  it('ignores the retired task and goal reference types', () => {
+    const result = ReferenceResolver.extractReferences('See @ref{task:t-42} and @ref{goal:g-7}');
+    expect(result).toEqual([]);
   });
 
   it('extracts a file reference', () => {
@@ -70,21 +77,20 @@ describe('ReferenceResolver.extractReferences', () => {
   });
 
   it('extracts multiple references from a single message', () => {
-    const text = 'See @ref{task:t-1} and @ref{goal:g-2} and @ref{file:README.md}';
+    const text = 'See @ref{folder:src} and @ref{file:README.md}';
     const result = ReferenceResolver.extractReferences(text);
-    expect(result).toHaveLength(3);
-    expect(result[0]).toMatchObject({ type: 'task', id: 't-1' });
-    expect(result[1]).toMatchObject({ type: 'goal', id: 'g-2' });
-    expect(result[2]).toMatchObject({ type: 'file', id: 'README.md' });
+    expect(result).toHaveLength(2);
+    expect(result[0]).toMatchObject({ type: 'folder', id: 'src' });
+    expect(result[1]).toMatchObject({ type: 'file', id: 'README.md' });
   });
 
   it('skips malformed tokens that do not match the pattern', () => {
-    const result = ReferenceResolver.extractReferences('Bad: @ref{taskonly} and @ref{} and text');
+    const result = ReferenceResolver.extractReferences('Bad: @ref{fileonly} and @ref{} and text');
     expect(result).toEqual([]);
   });
 
   it('is not affected by stateful regex between multiple calls', () => {
-    const text = '@ref{task:t-10}';
+    const text = '@ref{file:a.ts}';
     const r1 = ReferenceResolver.extractReferences(text);
     const r2 = ReferenceResolver.extractReferences(text);
     const r3 = ReferenceResolver.extractReferences(text);
@@ -95,93 +101,36 @@ describe('ReferenceResolver.extractReferences', () => {
 });
 
 describe('ReferenceResolver.resolveAllReferences', () => {
-  let goalRepo: GoalRepoForReference;
-  let resolver: ReferenceResolver;
-
-  const mockGoal = {
-    id: 'goal-uuid-1',
-    roomId: 'room-1',
-    shortId: 'g-1',
-    title: 'Goal one',
-    description: '',
-    status: 'active',
-    missionType: 'one_shot',
-    autonomyLevel: 'supervised',
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  };
-
-  beforeEach(() => {
-    goalRepo = {
-      getGoal: mock((id: string) => (id === 'goal-uuid-1' ? mockGoal : null)),
-      getGoalByShortId: mock((roomId: string, shortId: string) =>
-        roomId === 'room-1' && shortId === 'g-1' ? mockGoal : null
-      ),
-    };
-
-    resolver = new ReferenceResolver({ goalRepo });
-  });
+  const resolver = new ReferenceResolver();
 
   it('returns empty map when no mentions are provided', async () => {
-    const result = await resolver.resolveAllReferences([], {
-      workspacePath: '/ws',
-      roomId: 'room-1',
-    });
+    expect(await resolver.resolveAllReferences([], { workspacePath: workspace })).toEqual({});
+  });
+
+  it('resolves a file and a folder in the workspace', async () => {
+    const mentions = ReferenceResolver.extractReferences('@ref{file:a.ts} @ref{folder:src}');
+    const result = await resolver.resolveAllReferences(mentions, { workspacePath: workspace });
+    expect(result['@ref{file:a.ts}']).toMatchObject({ type: 'file', id: 'a.ts' });
+    expect(result['@ref{folder:src}']).toMatchObject({ type: 'folder', id: 'src' });
+  });
+
+  it('resolves nothing without a workspace', async () => {
+    const mentions = ReferenceResolver.extractReferences('@ref{file:a.ts}');
+    const result = await resolver.resolveAllReferences(mentions, { workspacePath: null });
     expect(result).toEqual({});
   });
 
-  it('resolves a goal mention by short ID', async () => {
-    const mentions = ReferenceResolver.extractReferences('@ref{goal:g-1}');
-    const result = await resolver.resolveAllReferences(mentions, {
-      workspacePath: '/ws',
-      roomId: 'room-1',
-    });
-    expect(result['@ref{goal:g-1}']).toMatchObject({ type: 'goal', id: 'g-1', data: mockGoal });
-  });
-
-  it('excludes null results (unresolved references)', async () => {
-    const mentions = ReferenceResolver.extractReferences('@ref{task:t-999}');
-    const result = await resolver.resolveAllReferences(mentions, {
-      workspacePath: '/ws',
-      roomId: 'room-1',
-    });
-    expect(Object.keys(result)).toHaveLength(0);
-  });
-
-  it('returns null for task when roomId is null', async () => {
-    const mentions = ReferenceResolver.extractReferences('@ref{task:t-1}');
-    const result = await resolver.resolveAllReferences(mentions, {
-      workspacePath: '/ws',
-      roomId: null,
-    });
-    expect(Object.keys(result)).toHaveLength(0);
-  });
-
   it('handles partial resolution — includes resolved refs, excludes unresolved', async () => {
-    const text = '@ref{goal:g-1} and @ref{goal:g-999}';
-    const mentions = ReferenceResolver.extractReferences(text);
-    const result = await resolver.resolveAllReferences(mentions, {
-      workspacePath: '/ws',
-      roomId: 'room-1',
-    });
-    expect(Object.keys(result)).toHaveLength(1);
-    expect(result['@ref{goal:g-1}']).toBeDefined();
-    expect(result['@ref{goal:g-999}']).toBeUndefined();
+    const mentions = ReferenceResolver.extractReferences('@ref{file:a.ts} and @ref{file:gone.ts}');
+    const result = await resolver.resolveAllReferences(mentions, { workspacePath: workspace });
+    expect(Object.keys(result)).toEqual(['@ref{file:a.ts}']);
   });
 
   it('deduplicates duplicate references before resolving', async () => {
-    const text = '@ref{goal:g-1} and again @ref{goal:g-1}';
-    const mentions = ReferenceResolver.extractReferences(text);
+    const mentions = ReferenceResolver.extractReferences('@ref{file:a.ts} and @ref{file:a.ts}');
     expect(mentions).toHaveLength(2);
-
-    const getGoalSpy = goalRepo.getGoal as ReturnType<typeof mock>;
-    const getByShortIdSpy = goalRepo.getGoalByShortId as ReturnType<typeof mock>;
-
-    await resolver.resolveAllReferences(mentions, { workspacePath: '/ws', roomId: 'room-1' });
-
-    const goalCallCount =
-      (getGoalSpy.mock.calls.length as number) + (getByShortIdSpy.mock.calls.length as number);
-    expect(goalCallCount).toBeLessThanOrEqual(2);
+    const result = await resolver.resolveAllReferences(mentions, { workspacePath: workspace });
+    expect(Object.keys(result)).toEqual(['@ref{file:a.ts}']);
   });
 });
 
@@ -204,9 +153,7 @@ describe('MessagePersistence with ReferenceResolver', () => {
   let mockJobQueue: JobQueueRepository;
 
   beforeEach(() => {
-    mockSession = makeSession({
-      context: { roomId: 'room-1' },
-    });
+    mockSession = makeSession({ workspacePath: workspace });
 
     mockAgentSession = {
       getSessionData: mock(() => mockSession),
@@ -242,7 +189,7 @@ describe('MessagePersistence with ReferenceResolver', () => {
     await persistence.persist({
       sessionId: 'test-session-id',
       messageId: 'msg-1',
-      content: 'hello @ref{goal:g-1}',
+      content: 'hello @ref{file:a.ts}',
     });
 
     expect(enqueueUniquePendingSpy.mock.calls[0]?.[0]?.payload.message).toEqual(
@@ -251,19 +198,12 @@ describe('MessagePersistence with ReferenceResolver', () => {
   });
 
   it('persists without referenceMetadata when message has no @ references', async () => {
-    const resolver = new ReferenceResolver({
-      goalRepo: {
-        getGoal: mock(() => null),
-        getGoalByShortId: mock(() => null),
-      },
-    });
-
     const persistence = new MessagePersistence(
       mockSessionCache,
       mockDb,
       mockInternalEventBus,
       mockJobQueue,
-      resolver
+      new ReferenceResolver()
     );
 
     await persistence.persist({
@@ -277,79 +217,72 @@ describe('MessagePersistence with ReferenceResolver', () => {
     );
   });
 
-  it('embeds referenceMetadata in saved message when resolver resolves a reference', async () => {
-    const mockGoal = {
-      id: 'goal-uuid-1',
-      roomId: 'room-1',
-      shortId: 'g-1',
-      title: 'Goal one',
-      description: '',
-      status: 'active',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-
-    const resolver = new ReferenceResolver({
-      goalRepo: {
-        getGoal: mock(() => null),
-        getGoalByShortId: mock((roomId: string, shortId: string) =>
-          roomId === 'room-1' && shortId === 'g-1' ? mockGoal : null
-        ),
-      },
-    });
-
+  it('drops retired goal and task tokens instead of recording them', async () => {
     const persistence = new MessagePersistence(
       mockSessionCache,
       mockDb,
       mockInternalEventBus,
       mockJobQueue,
-      resolver
+      new ReferenceResolver()
+    );
+
+    await persistence.persist({
+      sessionId: 'test-session-id',
+      messageId: 'msg-retired',
+      content: 'See @ref{goal:g-1} and @ref{task:t-1}',
+    });
+
+    expect(enqueueUniquePendingSpy.mock.calls[0]?.[0]?.payload.message).toEqual(
+      expect.not.objectContaining({ referenceMetadata: expect.anything() })
+    );
+  });
+
+  it('embeds referenceMetadata in saved message when resolver resolves a reference', async () => {
+    const persistence = new MessagePersistence(
+      mockSessionCache,
+      mockDb,
+      mockInternalEventBus,
+      mockJobQueue,
+      new ReferenceResolver()
     );
 
     await persistence.persist({
       sessionId: 'test-session-id',
       messageId: 'msg-3',
-      content: 'Check @ref{goal:g-1} please',
+      content: 'Check @ref{file:a.ts} please',
     });
 
     expect(enqueueUniquePendingSpy.mock.calls[0]?.[0]?.payload.message).toEqual(
       expect.objectContaining({
         referenceMetadata: {
-          '@ref{goal:g-1}': { type: 'goal', id: 'g-1', displayText: 'Goal one' },
+          '@ref{file:a.ts}': { type: 'file', id: 'a.ts', displayText: 'a.ts' },
         },
       })
     );
   });
 
   it('includes unresolved references in metadata with status: unresolved', async () => {
-    const resolver = new ReferenceResolver({
-      goalRepo: {
-        getGoal: mock(() => null),
-        getGoalByShortId: mock(() => null),
-      },
-    });
-
     const persistence = new MessagePersistence(
       mockSessionCache,
       mockDb,
       mockInternalEventBus,
       mockJobQueue,
-      resolver
+      new ReferenceResolver()
     );
 
     await persistence.persist({
       sessionId: 'test-session-id',
       messageId: 'msg-4',
-      content: 'See @ref{task:t-999} which does not exist',
+      content: 'See @ref{file:missing.ts} which does not exist',
     });
 
     expect(enqueueUniquePendingSpy.mock.calls[0]?.[0]?.payload.message).toEqual(
       expect.objectContaining({
         referenceMetadata: {
-          '@ref{task:t-999}': {
-            type: 'task',
-            id: 't-999',
-            displayText: 't-999',
+          '@ref{file:missing.ts}': {
+            type: 'file',
+            id: 'missing.ts',
+            displayText: 'missing.ts',
             status: 'unresolved',
           },
         },
@@ -358,16 +291,11 @@ describe('MessagePersistence with ReferenceResolver', () => {
   });
 
   it('still persists message when resolver throws an error', async () => {
-    const badResolver = new ReferenceResolver({
-      goalRepo: {
-        getGoal: mock(() => {
-          throw new Error('DB connection failed');
-        }),
-        getGoalByShortId: mock(() => {
-          throw new Error('DB connection failed');
-        }),
-      },
-    });
+    const badResolver = {
+      resolveAllReferences: mock(async () => {
+        throw new Error('resolver exploded');
+      }),
+    } as unknown as ReferenceResolver;
 
     const persistence = new MessagePersistence(
       mockSessionCache,
@@ -380,7 +308,7 @@ describe('MessagePersistence with ReferenceResolver', () => {
     await persistence.persist({
       sessionId: 'test-session-id',
       messageId: 'msg-5',
-      content: 'See @ref{goal:g-1}',
+      content: 'See @ref{file:a.ts}',
     });
 
     expect(enqueueUniquePendingSpy.mock.calls[0]?.[0]?.payload).toEqual(
@@ -389,48 +317,28 @@ describe('MessagePersistence with ReferenceResolver', () => {
   });
 
   it('embeds partial metadata when only some references resolve', async () => {
-    const mockGoal = {
-      id: 'goal-uuid-1',
-      roomId: 'room-1',
-      shortId: 'g-1',
-      title: 'Goal one',
-      description: '',
-      status: 'active',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-
-    const resolver = new ReferenceResolver({
-      goalRepo: {
-        getGoal: mock(() => null),
-        getGoalByShortId: mock((roomId: string, shortId: string) =>
-          roomId === 'room-1' && shortId === 'g-1' ? mockGoal : null
-        ),
-      },
-    });
-
     const persistence = new MessagePersistence(
       mockSessionCache,
       mockDb,
       mockInternalEventBus,
       mockJobQueue,
-      resolver
+      new ReferenceResolver()
     );
 
     await persistence.persist({
       sessionId: 'test-session-id',
       messageId: 'msg-6',
-      content: 'See @ref{goal:g-1} and @ref{goal:g-999}',
+      content: 'See @ref{file:a.ts} and @ref{file:gone.ts}',
     });
 
     expect(enqueueUniquePendingSpy.mock.calls[0]?.[0]?.payload.message).toEqual(
       expect.objectContaining({
         referenceMetadata: {
-          '@ref{goal:g-1}': { type: 'goal', id: 'g-1', displayText: 'Goal one' },
-          '@ref{goal:g-999}': {
-            type: 'goal',
-            id: 'g-999',
-            displayText: 'g-999',
+          '@ref{file:a.ts}': { type: 'file', id: 'a.ts', displayText: 'a.ts' },
+          '@ref{file:gone.ts}': {
+            type: 'file',
+            id: 'gone.ts',
+            displayText: 'gone.ts',
             status: 'unresolved',
           },
         },

@@ -3,15 +3,15 @@ import { replaceActiveAtQuery } from '../MessageInput';
 
 describe('replaceActiveAtQuery', () => {
   it('replaces a bare @ at the end of content', () => {
-    expect(replaceActiveAtQuery('@', 'task', 't-1')).toBe('@ref{task:t-1} ');
+    expect(replaceActiveAtQuery('@', 'file', 't-1')).toBe('@ref{file:t-1} ');
   });
 
   it('replaces @query at the end of content', () => {
-    expect(replaceActiveAtQuery('@fix', 'task', 't-1')).toBe('@ref{task:t-1} ');
+    expect(replaceActiveAtQuery('@fix', 'file', 't-1')).toBe('@ref{file:t-1} ');
   });
 
   it('replaces @query after a space', () => {
-    expect(replaceActiveAtQuery('hello @fix', 'task', 't-1')).toBe('hello @ref{task:t-1} ');
+    expect(replaceActiveAtQuery('hello @fix', 'file', 't-1')).toBe('hello @ref{file:t-1} ');
   });
 
   it('preserves prefix text before the @query', () => {
@@ -21,25 +21,25 @@ describe('replaceActiveAtQuery', () => {
   });
 
   it('only replaces the active (last) @query', () => {
-    expect(replaceActiveAtQuery('@ref{task:t-1}  @fix', 'task', 't-2')).toBe(
-      '@ref{task:t-1}  @ref{task:t-2} '
+    expect(replaceActiveAtQuery('@ref{file:t-1}  @fix', 'file', 't-2')).toBe(
+      '@ref{file:t-1}  @ref{file:t-2} '
     );
   });
 
   it('returns original content when there is no active @query', () => {
-    expect(replaceActiveAtQuery('hello world ', 'task', 't-1')).toBe('hello world ');
+    expect(replaceActiveAtQuery('hello world ', 'file', 't-1')).toBe('hello world ');
   });
 
   it('returns original content when content has no @ at all', () => {
-    expect(replaceActiveAtQuery('just some text', 'task', 't-1')).toBe('just some text');
+    expect(replaceActiveAtQuery('just some text', 'file', 't-1')).toBe('just some text');
   });
 
   it('handles empty content', () => {
-    expect(replaceActiveAtQuery('', 'task', 't-1')).toBe('');
+    expect(replaceActiveAtQuery('', 'file', 't-1')).toBe('');
   });
 
   it('appends a trailing space to prevent re-triggering autocomplete', () => {
-    const result = replaceActiveAtQuery('@foo', 'goal', 'g-99');
+    const result = replaceActiveAtQuery('@foo', 'folder', 'g-99');
     expect(result).toMatch(/ $/);
   });
 
@@ -47,9 +47,9 @@ describe('replaceActiveAtQuery', () => {
     expect(replaceActiveAtQuery('@src/', 'folder', 'src/')).toBe('@ref{folder:src/} ');
   });
 
-  it('works with goal type', () => {
-    expect(replaceActiveAtQuery('achieve @launch', 'goal', 'g-42')).toBe(
-      'achieve @ref{goal:g-42} '
+  it('works with folder type', () => {
+    expect(replaceActiveAtQuery('achieve @launch', 'folder', 'g-42')).toBe(
+      'achieve @ref{folder:g-42} '
     );
   });
 });

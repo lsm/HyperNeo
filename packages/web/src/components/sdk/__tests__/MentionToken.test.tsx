@@ -56,35 +56,14 @@ describe('parseTextWithReferences', () => {
   });
 
   describe('known reference types', () => {
-    it('parses @ref{task:t-42} with metadata', () => {
-      const metadata: ReferenceMetadata = {
-        '@ref{task:t-42}': {
-          type: 'task',
-          id: 't-42',
-          displayText: 'Fix login bug',
-          status: 'open',
-        },
-      };
-      const result = parseTextWithReferences('Fix @ref{task:t-42} now', metadata);
-      expect(result).toHaveLength(3);
-      expect(result[0]).toEqual({ kind: 'text', content: 'Fix ' });
-      expect(result[1]).toMatchObject({
-        kind: 'mention',
-        refType: 'task',
-        id: 't-42',
-        displayText: 'Fix login bug',
-        status: 'open',
-      });
-      expect(result[2]).toEqual({ kind: 'text', content: ' now' });
-    });
-
-    it('parses @ref{goal:g-7} with metadata', () => {
-      const metadata: ReferenceMetadata = {
-        '@ref{goal:g-7}': { type: 'goal', id: 'g-7', displayText: 'Ship v2' },
-      };
-      const result = parseTextWithReferences('Work on @ref{goal:g-7}', metadata);
-      expect(result).toHaveLength(2);
-      expect(result[1]).toMatchObject({ kind: 'mention', refType: 'goal', displayText: 'Ship v2' });
+    it('renders retired task and goal tokens as unknown mentions', () => {
+      const result = parseTextWithReferences('Fix @ref{task:t-42} for @ref{goal:g-7}', {});
+      expect(result).toEqual([
+        { kind: 'text', content: 'Fix ' },
+        { kind: 'unknown-mention', content: '@ref{task:t-42}' },
+        { kind: 'text', content: ' for ' },
+        { kind: 'unknown-mention', content: '@ref{goal:g-7}' },
+      ]);
     });
 
     it('parses @ref{file:src/foo.ts} with metadata', () => {
@@ -104,10 +83,10 @@ describe('parseTextWithReferences', () => {
     });
 
     it('uses raw id as displayText when metadata is missing', () => {
-      const result = parseTextWithReferences('Fix @ref{task:t-99}', {});
+      const result = parseTextWithReferences('Fix @ref{file:t-99}', {});
       expect(result[1]).toMatchObject({
         kind: 'mention',
-        refType: 'task',
+        refType: 'file',
         id: 't-99',
         displayText: 't-99',
       });
@@ -115,40 +94,40 @@ describe('parseTextWithReferences', () => {
 
     it('parses multiple references in one message', () => {
       const metadata: ReferenceMetadata = {
-        '@ref{task:t-1}': { type: 'task', id: 't-1', displayText: 'Task One' },
+        '@ref{file:t-1}': { type: 'file', id: 't-1', displayText: 't-1.ts' },
         '@ref{file:a.ts}': { type: 'file', id: 'a.ts', displayText: 'a.ts' },
       };
-      const text = 'Do @ref{task:t-1} and see @ref{file:a.ts} for details';
+      const text = 'Do @ref{file:t-1} and see @ref{file:a.ts} for details';
       const result = parseTextWithReferences(text, metadata);
       expect(result).toHaveLength(5);
-      expect(result[1]).toMatchObject({ kind: 'mention', refType: 'task' });
+      expect(result[1]).toMatchObject({ kind: 'mention', refType: 'file' });
       expect(result[3]).toMatchObject({ kind: 'mention', refType: 'file' });
     });
 
     it('handles reference at start of text', () => {
       const metadata: ReferenceMetadata = {
-        '@ref{task:t-1}': { type: 'task', id: 't-1', displayText: 'Task One' },
+        '@ref{file:t-1}': { type: 'file', id: 't-1', displayText: 't-1.ts' },
       };
-      const result = parseTextWithReferences('@ref{task:t-1} is done', metadata);
-      expect(result[0]).toMatchObject({ kind: 'mention', refType: 'task' });
+      const result = parseTextWithReferences('@ref{file:t-1} is done', metadata);
+      expect(result[0]).toMatchObject({ kind: 'mention', refType: 'file' });
       expect(result[1]).toEqual({ kind: 'text', content: ' is done' });
     });
 
     it('handles reference at end of text', () => {
       const metadata: ReferenceMetadata = {
-        '@ref{task:t-1}': { type: 'task', id: 't-1', displayText: 'Task One' },
+        '@ref{file:t-1}': { type: 'file', id: 't-1', displayText: 't-1.ts' },
       };
-      const result = parseTextWithReferences('Check @ref{task:t-1}', metadata);
+      const result = parseTextWithReferences('Check @ref{file:t-1}', metadata);
       expect(result[0]).toEqual({ kind: 'text', content: 'Check ' });
-      expect(result[1]).toMatchObject({ kind: 'mention', refType: 'task' });
+      expect(result[1]).toMatchObject({ kind: 'mention', refType: 'file' });
     });
 
     it('handles adjacent references with no text between them', () => {
       const metadata: ReferenceMetadata = {
-        '@ref{task:t-1}': { type: 'task', id: 't-1', displayText: 'T1' },
-        '@ref{task:t-2}': { type: 'task', id: 't-2', displayText: 'T2' },
+        '@ref{file:t-1}': { type: 'file', id: 't-1', displayText: 'T1' },
+        '@ref{file:t-2}': { type: 'file', id: 't-2', displayText: 'T2' },
       };
-      const result = parseTextWithReferences('@ref{task:t-1}@ref{task:t-2}', metadata);
+      const result = parseTextWithReferences('@ref{file:t-1}@ref{file:t-2}', metadata);
       expect(result).toHaveLength(2);
       expect(result[0]).toMatchObject({ kind: 'mention', id: 't-1' });
       expect(result[1]).toMatchObject({ kind: 'mention', id: 't-2' });
@@ -172,9 +151,9 @@ describe('parseTextWithReferences', () => {
 
   describe('idempotency', () => {
     it('is safe to call multiple times on the same text (no shared regex state)', () => {
-      const text = 'Fix @ref{task:t-1}';
+      const text = 'Fix @ref{file:t-1}';
       const metadata: ReferenceMetadata = {
-        '@ref{task:t-1}': { type: 'task', id: 't-1', displayText: 'Task One' },
+        '@ref{file:t-1}': { type: 'file', id: 't-1', displayText: 't-1.ts' },
       };
       const result1 = parseTextWithReferences(text, metadata);
       const result2 = parseTextWithReferences(text, metadata);
@@ -187,15 +166,17 @@ describe('MentionToken', () => {
   describe('rendering', () => {
     it('renders a token with the correct display text', () => {
       const { container } = render(
-        <MentionToken refType="task" id="t-42" displayText="Fix login bug" />
+        <MentionToken refType="file" id="t-42" displayText="Fix login bug" />
       );
       expect(container.textContent).toContain('Fix login bug');
     });
 
     it('renders with data-ref-type attribute', () => {
-      const { container } = render(<MentionToken refType="goal" id="g-7" displayText="Ship v2" />);
+      const { container } = render(
+        <MentionToken refType="folder" id="g-7" displayText="Ship v2" />
+      );
       const token = container.querySelector('[data-testid="mention-token"]');
-      expect(token?.getAttribute('data-ref-type')).toBe('goal');
+      expect(token?.getAttribute('data-ref-type')).toBe('folder');
     });
 
     it('renders with data-ref-id attribute', () => {
@@ -204,16 +185,6 @@ describe('MentionToken', () => {
       );
       const token = container.querySelector('[data-testid="mention-token"]');
       expect(token?.getAttribute('data-ref-id')).toBe('src/foo.ts');
-    });
-
-    it('shows type label for task', () => {
-      const { container } = render(<MentionToken refType="task" id="t-1" displayText="My Task" />);
-      expect(container.textContent).toContain('task');
-    });
-
-    it('shows type label for goal', () => {
-      const { container } = render(<MentionToken refType="goal" id="g-1" displayText="My Goal" />);
-      expect(container.textContent).toContain('goal');
     });
 
     it('shows type label for file', () => {
@@ -230,14 +201,14 @@ describe('MentionToken', () => {
   describe('hover popover', () => {
     it('does not show popover before hover', () => {
       const { container } = render(
-        <MentionToken refType="task" id="t-1" displayText="Task" sessionId="s1" />
+        <MentionToken refType="file" id="t-1" displayText="Task" sessionId="s1" />
       );
       expect(container.querySelector('[data-testid="mention-token-popover"]')).toBeNull();
     });
 
     it('shows popover on mouse enter', async () => {
       const { container } = render(
-        <MentionToken refType="task" id="t-1" displayText="Task" sessionId="s1" />
+        <MentionToken refType="file" id="t-1" displayText="Task" sessionId="s1" />
       );
       const token = container.querySelector('[data-testid="mention-token"]');
       fireEvent.mouseEnter(token!);
@@ -249,7 +220,7 @@ describe('MentionToken', () => {
 
     it('hides popover on mouse leave', async () => {
       const { container } = render(
-        <MentionToken refType="task" id="t-1" displayText="Task" sessionId="s1" />
+        <MentionToken refType="file" id="t-1" displayText="Task" sessionId="s1" />
       );
       const token = container.querySelector('[data-testid="mention-token"]');
       fireEvent.mouseEnter(token!);
@@ -264,7 +235,7 @@ describe('MentionToken', () => {
       mockCallIfConnected.mockResolvedValue({ resolved: null });
 
       const { container } = render(
-        <MentionToken refType="task" id="t-42" displayText="Task" sessionId="session-123" />
+        <MentionToken refType="file" id="t-42" displayText="Task" sessionId="session-123" />
       );
       const token = container.querySelector('[data-testid="mention-token"]');
       fireEvent.mouseEnter(token!);
@@ -272,13 +243,13 @@ describe('MentionToken', () => {
       await waitFor(() => {
         expect(mockCallIfConnected).toHaveBeenCalledWith(
           'reference.resolve',
-          expect.objectContaining({ sessionId: 'session-123', type: 'task', id: 't-42' })
+          expect.objectContaining({ sessionId: 'session-123', type: 'file', id: 't-42' })
         );
       });
     });
 
     it('does not call RPC when sessionId is absent', async () => {
-      const { container } = render(<MentionToken refType="task" id="t-1" displayText="Task" />);
+      const { container } = render(<MentionToken refType="file" id="t-1" displayText="Task" />);
       const token = container.querySelector('[data-testid="mention-token"]');
       fireEvent.mouseEnter(token!);
 
@@ -289,14 +260,14 @@ describe('MentionToken', () => {
     it('does not call RPC again on second hover (result is cached)', async () => {
       mockCallIfConnected.mockResolvedValue({
         resolved: {
-          type: 'task',
+          type: 'file',
           id: 't-1',
           data: { title: 'Fix login', status: 'open' },
         },
       });
 
       const { container } = render(
-        <MentionToken refType="task" id="t-1" displayText="Task" sessionId="s1" />
+        <MentionToken refType="file" id="t-1" displayText="Task" sessionId="s1" />
       );
       const token = container.querySelector('[data-testid="mention-token"]');
 
@@ -309,49 +280,6 @@ describe('MentionToken', () => {
       fireEvent.mouseEnter(token!);
       await new Promise((r) => setTimeout(r, 20));
       expect(mockCallIfConnected).toHaveBeenCalledTimes(1);
-    });
-
-    it('shows resolved task data in popover', async () => {
-      mockCallIfConnected.mockResolvedValue({
-        resolved: {
-          type: 'task',
-          id: 't-1',
-          data: { title: 'Fix login bug', status: 'open' },
-        },
-      });
-
-      const { container } = render(
-        <MentionToken refType="task" id="t-1" displayText="Task" sessionId="s1" />
-      );
-      const token = container.querySelector('[data-testid="mention-token"]');
-      fireEvent.mouseEnter(token!);
-
-      await waitFor(() => {
-        const popover = container.querySelector('[data-testid="mention-token-popover"]');
-        expect(popover?.textContent).toContain('Fix login bug');
-        expect(popover?.textContent).toContain('open');
-      });
-    });
-
-    it('shows resolved goal data in popover', async () => {
-      mockCallIfConnected.mockResolvedValue({
-        resolved: {
-          type: 'goal',
-          id: 'g-1',
-          data: { title: 'Ship v2', status: 'active' },
-        },
-      });
-
-      const { container } = render(
-        <MentionToken refType="goal" id="g-1" displayText="Goal" sessionId="s1" />
-      );
-      const token = container.querySelector('[data-testid="mention-token"]');
-      fireEvent.mouseEnter(token!);
-
-      await waitFor(() => {
-        const popover = container.querySelector('[data-testid="mention-token-popover"]');
-        expect(popover?.textContent).toContain('Ship v2');
-      });
     });
 
     it('shows resolved file data in popover', async () => {
@@ -429,7 +357,7 @@ describe('MentionToken', () => {
       mockCallIfConnected.mockResolvedValue({ resolved: null });
 
       const { container } = render(
-        <MentionToken refType="task" id="t-999" displayText="t-999" sessionId="s1" />
+        <MentionToken refType="file" id="t-999" displayText="t-999" sessionId="s1" />
       );
       const token = container.querySelector('[data-testid="mention-token"]');
       fireEvent.mouseEnter(token!);
@@ -444,7 +372,7 @@ describe('MentionToken', () => {
       mockCallIfConnected.mockRejectedValue(new Error('Network error'));
 
       const { container } = render(
-        <MentionToken refType="task" id="t-1" displayText="Task" sessionId="s1" />
+        <MentionToken refType="file" id="t-1" displayText="Task" sessionId="s1" />
       );
       const token = container.querySelector('[data-testid="mention-token"]');
       fireEvent.mouseEnter(token!);
@@ -456,13 +384,13 @@ describe('MentionToken', () => {
     });
 
     it('shows idle state info when no sessionId provided', async () => {
-      const { container } = render(<MentionToken refType="task" id="t-1" displayText="Task" />);
+      const { container } = render(<MentionToken refType="file" id="t-1" displayText="Task" />);
       const token = container.querySelector('[data-testid="mention-token"]');
       fireEvent.mouseEnter(token!);
 
       await waitFor(() => {
         const popover = container.querySelector('[data-testid="mention-token-popover"]');
-        expect(popover?.textContent).toContain('task/t-1');
+        expect(popover?.textContent).toContain('file/t-1');
       });
     });
 
@@ -491,7 +419,7 @@ describe('MentionToken', () => {
   describe('deleted entity visual state', () => {
     it('applies faded strikethrough styling when status is not_found', () => {
       const { container } = render(
-        <MentionToken refType="task" id="t-999" displayText="Deleted Task" status="not_found" />
+        <MentionToken refType="file" id="t-999" displayText="Deleted Task" status="not_found" />
       );
       const token = container.querySelector('[data-testid="mention-token"]');
       expect(token?.className).toContain('opacity-50');
@@ -500,7 +428,7 @@ describe('MentionToken', () => {
 
     it('sets data-not-found attribute when status is not_found', () => {
       const { container } = render(
-        <MentionToken refType="task" id="t-999" displayText="Deleted Task" status="not_found" />
+        <MentionToken refType="file" id="t-999" displayText="Deleted Task" status="not_found" />
       );
       const token = container.querySelector('[data-testid="mention-token"]');
       expect(token?.getAttribute('data-not-found')).toBe('true');
@@ -508,7 +436,7 @@ describe('MentionToken', () => {
 
     it('does not apply deleted styling when status is present and found', () => {
       const { container } = render(
-        <MentionToken refType="task" id="t-1" displayText="Task" status="open" />
+        <MentionToken refType="file" id="t-1" displayText="Task" status="open" />
       );
       const token = container.querySelector('[data-testid="mention-token"]');
       expect(token?.className).not.toContain('opacity-50');
@@ -517,7 +445,7 @@ describe('MentionToken', () => {
     });
 
     it('does not apply deleted styling when no status is provided', () => {
-      const { container } = render(<MentionToken refType="task" id="t-1" displayText="Task" />);
+      const { container } = render(<MentionToken refType="file" id="t-1" displayText="Task" />);
       const token = container.querySelector('[data-testid="mention-token"]');
       expect(token?.className).not.toContain('opacity-50');
       expect(token?.className).not.toContain('line-through');
@@ -527,7 +455,7 @@ describe('MentionToken', () => {
       mockCallIfConnected.mockResolvedValue({ resolved: null });
 
       const { container } = render(
-        <MentionToken refType="task" id="t-999" displayText="Deleted Task" sessionId="s1" />
+        <MentionToken refType="file" id="t-999" displayText="Deleted Task" sessionId="s1" />
       );
       const token = container.querySelector('[data-testid="mention-token"]');
 
@@ -544,11 +472,11 @@ describe('MentionToken', () => {
 
     it('does not apply deleted styling when RPC resolve returns entity data', async () => {
       mockCallIfConnected.mockResolvedValue({
-        resolved: { type: 'task', id: 't-1', data: { title: 'Task', status: 'open' } },
+        resolved: { type: 'file', id: 't-1', data: { title: 'Task', status: 'open' } },
       });
 
       const { container } = render(
-        <MentionToken refType="task" id="t-1" displayText="Task" sessionId="s1" />
+        <MentionToken refType="file" id="t-1" displayText="Task" sessionId="s1" />
       );
       const token = container.querySelector('[data-testid="mention-token"]');
       fireEvent.mouseEnter(token!);

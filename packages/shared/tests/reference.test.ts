@@ -5,44 +5,42 @@ import type {
   ReferenceSearchResult,
   ResolvedFileReference,
   ResolvedFolderReference,
-  ResolvedGoalReference,
   ResolvedReference,
-  ResolvedTaskReference,
   ReferenceType,
 } from '../src/types/reference.ts';
 import { REFERENCE_PATTERN } from '../src/types/reference.ts';
 
 describe('ReferenceType', () => {
   it('accepts all valid values', () => {
-    const valid: ReferenceType[] = ['task', 'goal', 'file', 'folder'];
-    expect(valid).toHaveLength(4);
+    const valid: ReferenceType[] = ['file', 'folder'];
+    expect(valid).toHaveLength(2);
   });
 });
 
 describe('ReferenceMention', () => {
   it('has the expected shape', () => {
     const mention: ReferenceMention = {
-      type: 'task',
-      id: 't-42',
-      displayText: 'Fix the bug',
+      type: 'file',
+      id: 'src/app.ts',
+      displayText: 'app.ts',
     };
-    expect(mention.type).toBe('task');
-    expect(mention.id).toBe('t-42');
-    expect(mention.displayText).toBe('Fix the bug');
+    expect(mention.type).toBe('file');
+    expect(mention.id).toBe('src/app.ts');
+    expect(mention.displayText).toBe('app.ts');
   });
 });
 
 describe('ReferenceSearchResult', () => {
   it('includes optional fields', () => {
     const result: ReferenceSearchResult = {
-      type: 'goal',
-      id: 'g-1',
-      shortId: 'g-1',
-      displayText: 'Improve performance',
-      subtitle: 'Measurable goal',
+      type: 'folder',
+      id: 'src/lib',
+      shortId: 'lib',
+      displayText: 'lib',
+      subtitle: 'src/lib',
     };
-    expect(result.shortId).toBe('g-1');
-    expect(result.subtitle).toBe('Measurable goal');
+    expect(result.shortId).toBe('lib');
+    expect(result.subtitle).toBe('src/lib');
   });
 
   it('works without optional fields', () => {
@@ -57,24 +55,6 @@ describe('ReferenceSearchResult', () => {
 });
 
 describe('ResolvedReference variants', () => {
-  it('ResolvedTaskReference has type task', () => {
-    const ref: ResolvedTaskReference = {
-      type: 'task',
-      id: 't-1',
-      data: { title: 'A task' },
-    };
-    expect(ref.type).toBe('task');
-  });
-
-  it('ResolvedGoalReference has type goal', () => {
-    const ref: ResolvedGoalReference = {
-      type: 'goal',
-      id: 'g-1',
-      data: {},
-    };
-    expect(ref.type).toBe('goal');
-  });
-
   it('ResolvedFileReference has type file', () => {
     const ref: ResolvedFileReference = {
       type: 'file',
@@ -126,7 +106,7 @@ describe('ResolvedReference variants', () => {
   });
 
   it('ResolvedReference accepts unknown data', () => {
-    const ref: ResolvedReference = { type: 'task', id: 't-99', data: null };
+    const ref: ResolvedReference = { type: 'file', id: 'src/missing.ts', data: null };
     expect(ref.data).toBeNull();
   });
 });
@@ -134,20 +114,20 @@ describe('ResolvedReference variants', () => {
 describe('ReferenceMetadata', () => {
   it('stores references keyed by serialized string', () => {
     const meta: ReferenceMetadata = {
-      '@ref{task:t-42}': {
-        type: 'task',
-        id: 't-42',
-        displayText: 'Fix the bug',
-        status: 'in_progress',
+      '@ref{file:src/app.ts}': {
+        type: 'file',
+        id: 'src/app.ts',
+        displayText: 'app.ts',
+        status: 'unresolved',
       },
-      '@ref{goal:g-1}': {
-        type: 'goal',
-        id: 'g-1',
-        displayText: 'Improve performance',
+      '@ref{folder:src/lib}': {
+        type: 'folder',
+        id: 'src/lib',
+        displayText: 'lib',
       },
     };
-    expect(meta['@ref{task:t-42}'].status).toBe('in_progress');
-    expect(meta['@ref{goal:g-1}'].status).toBeUndefined();
+    expect(meta['@ref{file:src/app.ts}'].status).toBe('unresolved');
+    expect(meta['@ref{folder:src/lib}'].status).toBeUndefined();
   });
 
   it('round-trips through JSON serialization', () => {

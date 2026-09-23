@@ -72,7 +72,7 @@ describe('shared message.send operation', () => {
           },
         ],
       },
-      referenceMetadata: { token: { type: 'task', id: 'task-1', displayText: 'Task one' } },
+      referenceMetadata: { token: { type: 'file', id: 'src/a.ts', displayText: 'a.ts' } },
     };
     await invokeOperation(
       registry,

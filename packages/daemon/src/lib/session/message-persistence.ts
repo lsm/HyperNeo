@@ -80,7 +80,6 @@ export class MessagePersistence {
 
       const context: ResolutionContext = {
         workspacePath: session.worktree?.worktreePath ?? session.workspacePath ?? null,
-        roomId: session.context?.roomId ?? null,
       };
 
       const resolved = await this.referenceResolver!.resolveAllReferences(mentions, context);
@@ -297,9 +296,6 @@ export class MessagePersistence {
 function extractDisplayText(type: string, id: string, data: unknown): string {
   if (data !== null && typeof data === 'object') {
     const d = data as Record<string, unknown>;
-    if ((type === 'task' || type === 'goal') && typeof d['title'] === 'string') {
-      return d['title'];
-    }
     if ((type === 'file' || type === 'folder') && typeof d['path'] === 'string') {
       return d['path'];
     }

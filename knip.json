@@ -36,7 +36,6 @@
     ".claude/**"
   ],
   "ignoreFiles": [
-    "packages/daemon/src/lib/agent/reference-resolver.ts",
     "packages/daemon/src/lib/id-resolution.ts",
     "packages/daemon/src/lib/acp/acp-transport.ts",
     "packages/daemon/src/lib/workspaces/workspace-manager.ts",

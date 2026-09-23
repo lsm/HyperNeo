@@ -5,14 +5,10 @@ import type {
   ReferenceType,
   ResolvedReference,
 } from '@hyperneo/shared';
-import type { ReactiveDatabase } from '../../storage/reactive-database.ts';
-import { GoalRepository } from '../../storage/repositories/goal-repository.ts';
-import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import type { FileIndex } from '../file-index.ts';
 import { FileManager } from '../file-manager.ts';
 import { Logger } from '../logger.ts';
 import type { SessionManager } from '../session-manager.ts';
-import type { ShortIdAllocator } from '../short-id-allocator.ts';
 
 const log = new Logger('reference-handlers');
 
@@ -22,50 +18,14 @@ const BINARY_DETECTION_SAMPLE_BYTES = 8_192;
 
 const RESULTS_PER_CATEGORY = 10;
 
-export interface GoalRepoForReference {
-  getGoal(id: string): unknown | null;
-  getGoalByShortId(roomId: string, shortId: string): unknown | null;
-}
-
 export interface ReferenceHandlerDeps {
-  db: BunDatabase;
-  reactiveDb: ReactiveDatabase;
-  shortIdAllocator: ShortIdAllocator;
   sessionManager: SessionManager;
-  goalRepo: GoalRepoForReference;
   workspaceRoot?: string;
   fileIndex: FileIndex;
 }
 
-function scoreResult(displayText: string, query: string): number {
-  const t = displayText.toLowerCase();
-  const q = query.toLowerCase();
-  if (t === q) return 4;
-  if (t.startsWith(q)) return 3;
-  if (t.includes(q)) return 2;
-  return 1;
-}
-
-function filterAndSort(
-  results: ReferenceSearchResult[],
-  query: string,
-  limit: number
-): ReferenceSearchResult[] {
-  const q = query.toLowerCase();
-  const scored = results
-    .filter((r) => {
-      const t = r.displayText.toLowerCase();
-      const s = (r.subtitle ?? '').toLowerCase();
-      return t.includes(q) || s.includes(q);
-    })
-    .map((r) => ({ r, score: scoreResult(r.displayText, query) }));
-
-  scored.sort((a, b) => b.score - a.score);
-  return scored.slice(0, limit).map((s) => s.r);
-}
-
 export function setupReferenceHandlers(messageHub: MessageHub, deps: ReferenceHandlerDeps): void {
-  const { db, reactiveDb, shortIdAllocator, sessionManager, fileIndex } = deps;
+  const { fileIndex } = deps;
 
   messageHub.onRequest(
     'reference.resolve',
@@ -90,13 +50,10 @@ export function setupReferenceHandlers(messageHub: MessageHub, deps: ReferenceHa
         throw new Error('id is required');
       }
 
-      const { workspacePath, roomId } = await resolveSessionContext(params.sessionId, deps);
+      const workspacePath = await resolveSessionWorkspace(params.sessionId, deps);
 
       try {
         switch (params.type) {
-          case 'goal':
-            return { resolved: resolveGoal(params.id, roomId, deps) };
-
           case 'file':
             if (!workspacePath) return { resolved: null };
             return { resolved: await resolveFile(params.id, workspacePath) };
@@ -130,39 +87,17 @@ export function setupReferenceHandlers(messageHub: MessageHub, deps: ReferenceHa
     const query = params.query.trim();
 
     const requestedTypes: ReferenceType[] =
-      params.types && params.types.length > 0 ? params.types : ['task', 'goal', 'file', 'folder'];
+      params.types && params.types.length > 0 ? params.types : ['file', 'folder'];
 
-    const session = sessionManager.getSessionFromDB(params.sessionId);
-    const roomId = session?.context?.roomId;
-
-    if (!query && !roomId) return { results: [] };
+    if (!query) return { results: [] };
 
     const allResults: ReferenceSearchResult[] = [];
-
-    if (requestedTypes.includes('goal')) {
-      if (roomId) {
-        try {
-          const goalRepo = new GoalRepository(db, reactiveDb, shortIdAllocator);
-          const goals = goalRepo.listGoals(roomId);
-          const goalResults: ReferenceSearchResult[] = goals.map((g) => ({
-            type: 'goal' as const,
-            id: g.id,
-            shortId: g.shortId ?? undefined,
-            displayText: g.title,
-            subtitle: g.status,
-          }));
-          allResults.push(...filterAndSort(goalResults, query, RESULTS_PER_CATEGORY));
-        } catch (err) {
-          log.warn('Failed to search goals:', err);
-        }
-      }
-    }
 
     const fileTypes: Array<'file' | 'folder'> = [];
     if (requestedTypes.includes('file')) fileTypes.push('file');
     if (requestedTypes.includes('folder')) fileTypes.push('folder');
 
-    if (fileTypes.length > 0 && query.length > 0) {
+    if (fileTypes.length > 0) {
       if (query.includes('..') || query.startsWith('/')) {
         return { results: allResults };
       }
@@ -194,45 +129,13 @@ export function setupReferenceHandlers(messageHub: MessageHub, deps: ReferenceHa
   });
 }
 
-async function resolveSessionContext(
+async function resolveSessionWorkspace(
   sessionId: string,
   deps: ReferenceHandlerDeps
-): Promise<{ workspacePath: string | undefined; roomId: string | null }> {
+): Promise<string | undefined> {
   const agentSession = await deps.sessionManager.getSessionForControl(sessionId);
-  if (!agentSession) {
-    return { workspacePath: deps.workspaceRoot, roomId: null };
-  }
-
-  const sessionData = agentSession.getSessionData();
-  return {
-    workspacePath: sessionData.workspacePath ?? deps.workspaceRoot,
-    roomId: sessionData.context?.roomId ?? null,
-  };
-}
-
-function resolveGoal(
-  id: string,
-  roomId: string | null,
-  deps: ReferenceHandlerDeps
-): ResolvedReference | null {
-  let goal = deps.goalRepo.getGoal(id);
-  if (!goal && roomId) {
-    goal = deps.goalRepo.getGoalByShortId(roomId, id);
-  }
-
-  if (!goal) {
-    return null;
-  }
-
-  if (roomId && (goal as { roomId?: string }).roomId !== roomId) {
-    return null;
-  }
-
-  return {
-    type: 'goal',
-    id,
-    data: goal,
-  };
+  if (!agentSession) return deps.workspaceRoot;
+  return agentSession.getSessionData().workspacePath ?? deps.workspaceRoot;
 }
 
 export async function resolveFile(
