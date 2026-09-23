@@ -711,6 +711,7 @@ export class SpaceRuntimeService {
     const space = await this.config.spaceManager.getSpace(spaceId);
     if (!space) return null;
     const sessionId = agent.sessionId ?? generateUUID();
+    if (agent.sessionId !== sessionId) repo.update(agent.id, { sessionId });
     let session = await sessionManager.getSessionAsync(sessionId);
     if (['ended', 'archived'].includes(session?.getSessionData().status ?? '')) return null;
     const currentConfig = session?.getSessionData().config;
