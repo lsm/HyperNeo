@@ -95,6 +95,36 @@ function member(id: string, owner?: string) {
   );
   return { sessionId: id };
 }
+function taskWorker(id: string) {
+  sessions.createSession(
+    {
+      ...createTestSession(id),
+      workspacePath: '/repo',
+      type: 'worker',
+      context: { spaceId, taskId },
+    },
+    { enforceWorkspaceOwnership: false }
+  );
+  return { sessionId: id };
+}
+function transitionDeps() {
+  return {
+    getSession: (id: string) => sessions.getSession(id),
+    getTaskManager: (id: string) => new SpaceTaskManager(db, id),
+    notifyStandalone: () => database.notifyChange('space_tasks'),
+    emitTaskUpdated: emit,
+    isWorkflowRunActive: () => false,
+  };
+}
+async function completeAsWorker(extra = {}, input: Record<string, unknown> = {}) {
+  const caller = taskWorker('own-worker');
+  const mcp = createOperationMcpHandler(provider(extra, undefined, transitionDeps()), () => caller);
+  const response = await mcp({
+    name: 'task.transition',
+    input: { taskId, status: 'done', ...input },
+  });
+  return JSON.parse(response.content[0].text) as Record<string, unknown>;
+}
 function update(title: string, id = taskId) {
   return { name: 'task.update', input: { taskId: id, title } };
 }
@@ -340,22 +370,17 @@ test('discovered pending completion rejects an ordinary Space member before effe
   expect(emit).not.toHaveBeenCalled();
 });
 
-test('task.complete is served through the Space registry and completes an approved task', async () => {
+test('the task worker completes an approved task through task.transition in the Space registry', async () => {
   tasks.updateTask(taskId, { status: 'approved' });
-  const rpc = createOperationRpcHandler(provider(), () => ({}));
-  const result = await rpc(
-    { name: 'task.complete', input: { taskId, result: 'Shipped it.' } },
-    context
-  );
-  expect(result).toMatchObject({ accepted: true, task: { id: taskId, status: 'done' } });
+  const result = await completeAsWorker({}, { result: 'Shipped it.' });
+  expect(result).toMatchObject({ id: taskId, status: 'done', result: 'Shipped it.' });
   expect(tasks.getTask(taskId)?.status).toBe('done');
 });
 
 test('a bound completionGate returning ok:false yields task_completion_unavailable through the registry', async () => {
   tasks.updateTask(taskId, { status: 'approved' });
   const completionGate = mock(async () => ({ ok: false as const, error: 'PR not merged yet.' }));
-  const rpc = createOperationRpcHandler(provider({ completionGate }), () => ({}));
-  const result = await rpc({ name: 'task.complete', input: { taskId } }, context);
+  const result = await completeAsWorker({ completionGate });
   expect(result).toEqual({
     accepted: false,
     reason: 'task_completion_unavailable',
@@ -509,15 +534,12 @@ test('task.transition returns full Space fields for a Space-owned task', async (
   });
 });
 
-test('task.complete returns full Space fields on the completed task', async () => {
+test('completing through task.transition returns full Space fields on the completed task', async () => {
   const { goalId, workflowRunId } = attachSpaceFields();
   tasks.updateTask(taskId, { status: 'approved' });
-  const rpc = createOperationRpcHandler(provider(), () => ({}));
-  const result = (await rpc({ name: 'task.complete', input: { taskId } }, context)) as {
-    task: unknown;
-  };
-  expect(result.task).toEqual(tasks.getTask(taskId));
-  expect(result.task).toMatchObject({
+  const result = await completeAsWorker();
+  expect(result).toEqual(tasks.getTask(taskId));
+  expect(result).toMatchObject({
     status: 'done',
     spaceId,
     taskNumber: expect.any(Number),

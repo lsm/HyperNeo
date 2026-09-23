@@ -10,7 +10,7 @@ import {
 } from '../../../../src/lib/workflows/post-approval-route-selection.ts';
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
-import { createCompleteTaskOperation } from '../../../../src/lib/tasks/complete-task.ts';
+import { createTaskCompletion } from '../../../../src/lib/tasks/complete-task.ts';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository.ts';
 import { createTestSession } from '../../../helpers/database';
 import {
@@ -245,11 +245,11 @@ describe('PR 3/5 integration — dispatchPostApproval → spawn → mark_complet
       },
       { enforceWorkspaceOwnership: false }
     );
-    const complete = createCompleteTaskOperation(() => h.db, {
+    const complete = createTaskCompletion(() => h.db, {
       getTaskManager: () => h.taskManager,
       emitTaskUpdated: async () => {},
     });
-    const outcome = await complete.execute(
+    const outcome = await complete(
       { taskId },
       { source: 'mcp', sessionId: result.postApprovalSessionId! }
     );
