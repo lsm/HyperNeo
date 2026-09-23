@@ -47,7 +47,6 @@ describe('worker node hot fill seed', () => {
       'workflow.run.reachableAgent.list',
       'workflow.run.channel.list',
       'send_message',
-      'session.toolSurface.restore',
     ]);
   });
 });

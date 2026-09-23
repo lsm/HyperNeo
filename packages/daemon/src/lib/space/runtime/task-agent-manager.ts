@@ -4521,7 +4521,6 @@ export class TaskAgentManager {
       this.sessionListeners.delete(sessionId);
       this.completionCallbacks.delete(sessionId);
     }
-    this.nodeAgentRestoreContextBySession.delete(sessionId);
     this.nodeMessagingBySession.delete(sessionId);
   }
 
@@ -4929,36 +4928,6 @@ export class TaskAgentManager {
       );
   }
 
-  private nodeAgentRestoreContextBySession = new Map<
-    string,
-    Parameters<TaskAgentManager['reinjectNodeAgentMcpServer']>[1]
-  >();
-
-  async restoreNodeAgentSession(sessionId: string, reason?: string): Promise<boolean> {
-    const ctx = this.nodeAgentRestoreContextBySession.get(sessionId);
-    const liveSession = ctx ? this.getSubSession(sessionId) : null;
-    if (!ctx || !liveSession) {
-      log.warn(
-        `TaskAgentManager.restoreNodeAgentSession: no live AgentSession found for sub-session ${sessionId}. ` +
-          `Reason: ${reason ?? '<unspecified>'}`
-      );
-      return false;
-    }
-    try {
-      await this.reinjectNodeAgentMcpServer(liveSession, ctx);
-      log.info(
-        `TaskAgentManager.restoreNodeAgentSession: re-attached node-agent for sub-session ${sessionId} ` +
-          `(task=${ctx.taskId}, agent=${ctx.agentName}, reason=${reason ?? '<unspecified>'})`
-      );
-      return true;
-    } catch (err) {
-      log.error(
-        `TaskAgentManager.restoreNodeAgentSession: failed to re-attach node-agent for sub-session ${sessionId}: ${err instanceof Error ? err.message : String(err)}`
-      );
-      return false;
-    }
-  }
-
   private nodeMessagingBySession = new Map<string, NodeMessagingRuntime>();
 
   nodeMessagingRuntimeFor(sessionId: string): NodeMessagingRuntime | null {
@@ -5055,15 +5024,6 @@ export class TaskAgentManager {
       taskNumber: this.config.taskRepo.getTask(taskId)?.taskNumber ?? null,
     });
 
-    this.nodeAgentRestoreContextBySession.set(subSessionId, {
-      taskId,
-      subSessionId,
-      agentName,
-      spaceId,
-      workflowRunId,
-      workspacePath,
-      workflowNodeId,
-    });
     let hookEngine: HookEngine | undefined;
     if (workflow?.hooks && workflow.hooks.length > 0) {
       const hookExecutor = new HookExecutor({ workspacePath });
