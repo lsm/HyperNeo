@@ -1,15 +1,13 @@
 import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
-import type { CallContext } from '@hyperneo/shared';
-import type { Database as AppDatabase } from '../../../../src/storage/database';
-import type { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
 import { SpaceTaskManager } from '../../../../src/lib/tasks/task-manager';
-import { createCompleteTaskOperation } from '../../../../src/lib/tasks/complete-task';
-import { createDatabaseOperationCatalog } from '../../../../src/lib/operations/database-catalog';
-import { createOperationRpcHandler } from '../../../../src/lib/operations/rpc-adapter';
+import {
+  type CompleteTaskDependencies,
+  createTaskCompletion,
+} from '../../../../src/lib/tasks/complete-task';
 import { createSpaceTables } from '../../helpers/space-test-db';
 import { createTestSession } from '../../../helpers/database';
 
@@ -19,7 +17,10 @@ let sessions: SessionRepository;
 let spaceId: string;
 let taskId: string;
 let emit: ReturnType<typeof mock>;
-let operation: ReturnType<typeof createCompleteTaskOperation>;
+function completion(dependencies: CompleteTaskDependencies) {
+  return { execute: createTaskCompletion(() => db, dependencies) };
+}
+let operation: ReturnType<typeof completion>;
 
 beforeEach(() => {
   db = new Database(':memory:');
@@ -33,7 +34,7 @@ beforeEach(() => {
   }).id;
   taskId = tasks.createTask({ spaceId, title: 'Task', description: '', status: 'approved' }).id;
   emit = mock(async () => {});
-  operation = createCompleteTaskOperation(() => db, {
+  operation = completion({
     getTaskManager: (id) => new SpaceTaskManager(db, id),
     emitTaskUpdated: emit,
   });
@@ -70,7 +71,7 @@ test.each(['rpc', 'internal'] as const)(
   }
 );
 test('a rejecting emitTaskUpdated does not fail an already-committed completion', async () => {
-  const failingOperation = createCompleteTaskOperation(() => db, {
+  const failingOperation = completion({
     getTaskManager: (id) => new SpaceTaskManager(db, id),
     emitTaskUpdated: mock(async () => {
       throw new Error('subscriber unavailable');
@@ -162,7 +163,7 @@ test('an rpc caller is denied once a post-approval session is routed', async () 
 });
 test('rejects task_completion_unavailable when a post-approval owner is required but not yet routed', async () => {
   const requiresPostApprovalOwner = mock(async () => true);
-  const gatedOperation = createCompleteTaskOperation(() => db, {
+  const gatedOperation = completion({
     getTaskManager: (id) => new SpaceTaskManager(db, id),
     emitTaskUpdated: emit,
     requiresPostApprovalOwner,
@@ -175,7 +176,7 @@ test('rejects task_completion_unavailable when a post-approval owner is required
   });
 });
 test('completes normally when requiresPostApprovalOwner returns false', async () => {
-  const gatedOperation = createCompleteTaskOperation(() => db, {
+  const gatedOperation = completion({
     getTaskManager: (id) => new SpaceTaskManager(db, id),
     emitTaskUpdated: emit,
     requiresPostApprovalOwner: mock(async () => false),
@@ -189,7 +190,7 @@ test('completes normally when requiresPostApprovalOwner is absent', async () => 
 });
 test('a completion gate returning ok:true admits the task', async () => {
   const completionGate = mock(async () => ({ ok: true as const }));
-  const gatedOperation = createCompleteTaskOperation(() => db, {
+  const gatedOperation = completion({
     getTaskManager: (id) => new SpaceTaskManager(db, id),
     emitTaskUpdated: emit,
     completionGate,
@@ -202,7 +203,7 @@ test('a completion gate returning ok:true admits the task', async () => {
 });
 test('a completion gate returning ok:false rejects with task_completion_unavailable and no write', async () => {
   const completionGate = mock(async () => ({ ok: false as const, error: 'PR not merged yet.' }));
-  const gatedOperation = createCompleteTaskOperation(() => db, {
+  const gatedOperation = completion({
     getTaskManager: (id) => new SpaceTaskManager(db, id),
     emitTaskUpdated: emit,
     completionGate,
@@ -224,7 +225,7 @@ test('ownership rejections win before the completion gate runs', async () => {
   const completionGate = mock(async () => ({ ok: true as const }));
   const routedSessionId = worker('post-approval-owner');
   tasks.updateTask(taskId, { postApprovalSessionId: routedSessionId });
-  const gatedOperation = createCompleteTaskOperation(() => db, {
+  const gatedOperation = completion({
     getTaskManager: (id) => new SpaceTaskManager(db, id),
     emitTaskUpdated: emit,
     completionGate,
@@ -237,7 +238,7 @@ test('a post-approval owner reassigned between admission and the manager write i
   const routedSessionId = worker('post-approval-owner');
   const stolenBySessionId = worker('other-worker');
   tasks.updateTask(taskId, { postApprovalSessionId: routedSessionId });
-  const racyOperation = createCompleteTaskOperation(() => db, {
+  const racyOperation = completion({
     getTaskManager: (id) => {
       const manager = new SpaceTaskManager(db, id);
       return {
@@ -256,7 +257,7 @@ test('a post-approval owner reassigned between admission and the manager write i
   expect(tasks.getTask(taskId)?.postApprovalSessionId).toBe(stolenBySessionId);
 });
 test('a task reopened to in_progress between admission and the manager write is rejected', async () => {
-  const racyOperation = createCompleteTaskOperation(() => db, {
+  const racyOperation = completion({
     getTaskManager: (id) => {
       const manager = new SpaceTaskManager(db, id);
       return {
@@ -274,7 +275,7 @@ test('a task reopened to in_progress between admission and the manager write is 
 
 test('an explicit input result wins over the artifact summary and existing result', async () => {
   tasks.updateTask(taskId, { result: 'Existing result.', reportedSummary: 'Reported summary.' });
-  const gatedOperation = createCompleteTaskOperation(() => db, {
+  const gatedOperation = completion({
     getTaskManager: (id) => new SpaceTaskManager(db, id),
     emitTaskUpdated: emit,
     resolveResultArtifactSummary: () => 'Artifact summary.',
@@ -287,7 +288,7 @@ test('an explicit input result wins over the artifact summary and existing resul
 });
 test('falls back to the artifact summary when no result is supplied', async () => {
   tasks.updateTask(taskId, { result: 'Existing result.', reportedSummary: 'Reported summary.' });
-  const gatedOperation = createCompleteTaskOperation(() => db, {
+  const gatedOperation = completion({
     getTaskManager: (id) => new SpaceTaskManager(db, id),
     emitTaskUpdated: emit,
     resolveResultArtifactSummary: () => 'Artifact summary.',
@@ -341,21 +342,4 @@ test('an RPC caller with no stored approvalSource is recorded as human', async (
   const result = await operation.execute({ taskId, result: 'Shipped it.' }, { source: 'rpc' });
   expect(result).toMatchObject({ accepted: true });
   expect(tasks.getTask(taskId)?.approvalSource).toBe('human');
-});
-
-test('catalog discovery reports task.complete when wired through the complete slot', async () => {
-  const getDatabase = mock(() => db);
-  const database = { getDatabase, notifyChange: () => {} } as unknown as AppDatabase;
-  const registry = createDatabaseOperationCatalog(database, {} as JobQueueRepository, {
-    complete: createCompleteTaskOperation(() => db, {
-      getTaskManager: (id) => new SpaceTaskManager(db, id),
-      emitTaskUpdated: emit,
-    }),
-  });
-  const rpc = createOperationRpcHandler(registry, () => ({}));
-  const describe = { name: 'operations.describe', input: { name: 'task.complete' } };
-  expect(await rpc(describe, {} as CallContext)).toMatchObject({
-    found: true,
-    name: 'task.complete',
-  });
 });

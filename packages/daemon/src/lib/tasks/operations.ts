@@ -1,11 +1,7 @@
 import { createStartTaskOperation, type DirectStartOperationDependencies } from './start-task.ts';
 import type { CancelPolicyContext } from './cancel-task.ts';
 import { createSpaceCreateTaskOperation, type SpaceCreateTaskDependencies } from './create-task.ts';
-import {
-  createCompleteTaskOperation,
-  createTaskCompletion,
-  type CompleteTaskDependencies,
-} from './complete-task.ts';
+import { createTaskCompletion, type CompleteTaskDependencies } from './complete-task.ts';
 import {
   createOwnedPendingCompletionOperations,
   type OwnedPendingCompletionDependencies,
@@ -171,7 +167,6 @@ export function createSpaceOperationRegistryProvider(
                 readCoreTask: (taskId) => readTaskCore(database.getDatabase(), taskId),
               })
             : undefined,
-        complete: createCompleteTaskOperation(() => database.getDatabase(), tasks),
         transition: transition
           ? createSpaceTransitionTaskOperation({
               ...transition,

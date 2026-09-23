@@ -1,11 +1,9 @@
 import type { SpaceApprovalSource, SpaceTask } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import { z } from 'zod';
 import { SessionRepository } from '../../storage/repositories/session-repository.ts';
 import { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
 import type { Database } from '../../storage/sqlite-compat.ts';
-import { defineOperation, type OperationCaller } from '../operations/registry.ts';
-import { TaskWithSpaceFieldsSchema } from './get-operation.ts';
+import type { OperationCaller } from '../operations/registry.ts';
 import type { SpaceTaskManager } from './task-manager.ts';
 import { Logger } from '../logger.ts';
 import { normalizeMeaningfulTaskResult } from './result-utils.ts';
@@ -13,8 +11,7 @@ import { normalizeMeaningfulTaskResult } from './result-utils.ts';
 const log = new Logger('CompleteTask');
 const warnEmit = (error: unknown) => log.warn('Failed to emit space.task.updated:', error);
 
-const inputSchema = z.object({ taskId: z.string().min(1), result: z.string().optional() }).strict();
-type Input = z.infer<typeof inputSchema>;
+type Input = { taskId: string; result?: string };
 
 export type CompletionResult =
   | { accepted: true; task: SpaceTask }
@@ -137,22 +134,4 @@ export function createTaskCompletion(
       'outcome'
     )
     .endAsync('outcome') as TaskCompletion;
-}
-
-export function createCompleteTaskOperation(
-  getDatabase: () => Database,
-  dependencies: CompleteTaskDependencies
-) {
-  const complete = createTaskCompletion(getDatabase, dependencies);
-  return defineOperation({
-    name: 'task.complete',
-    description:
-      'Synchronously transition a Space task from `approved` to `done`, with an optional result, and return the updated task. RPC and internal callers are admitted directly; an MCP caller must be the task’s own worker session (session.context.taskId/spaceId match). Once a post-approval session is routed onto the task (`task.postApprovalSessionId`), only that session may complete it — any other caller, including RPC/internal callers without a matching session id, is denied; before routing, a caller-supplied `requiresPostApprovalOwner` dependency can block completion until routing happens. After ownership admits the caller, an optional `completionGate` dependency (bound per task at registration to a workflow completion gate, such as the coder-owned-merge PR-merge check) may still reject with task_completion_unavailable and a `detail` message. Rejects task_completion_unavailable when the task is missing, not Space-owned, archived, not currently `approved`, awaiting a still-unrouted required post-approval session, or blocked by the completion gate (retry after state changes), and task_completion_denied when the calling MCP session is not that worker session or the caller is not the routed post-approval session (do not retry). A task whose status changes between admission and the manager call throws through as execution_failed rather than being reported as task_completion_unavailable. This binding does not yet apply the legacy `goal_update` field. When `result` is omitted, it falls back through the same chain as the `mark_complete` tool: the linked workflow run’s artifact summary, then the task’s existing result, then its reported summary, then the literal `Task completed.`; the resolved artifact summary (or reported summary) is also written back onto the task’s `reportedSummary`. The stored `task.approvalSource` wins when set; otherwise an MCP caller is recorded as `agent` and an RPC or internal caller as `human`.',
-    inputSchema,
-    resultSchema: z.union([
-      z.object({ accepted: z.literal(true), task: TaskWithSpaceFieldsSchema }),
-      z.object({ accepted: z.literal(false), reason: z.string(), detail: z.string().optional() }),
-    ]),
-    execute: async (input, caller) => complete(input, caller),
-  });
 }
