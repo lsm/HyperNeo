@@ -1,17 +1,8 @@
-import type {
-  AgentProcessingState,
-  SessionStatus,
-  SpaceTaskStatus,
-  WorktreeCommitStatus,
-} from '@hyperneo/shared';
+import type { SpaceTaskStatus } from '@hyperneo/shared';
 import type { ComponentChildren } from 'preact';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { ArchiveConfirmDialog } from '../components/ArchiveConfirmDialog';
+import { useCallback, useEffect, useMemo, useState } from 'preact/hooks';
 import { CollapsibleSection } from '../components/ui/CollapsibleSection';
 import { StatusDot } from '../components/ui/StatusDot';
-import { UnreadBadge } from '../components/ui/UnreadBadge';
-import { archiveSession } from '../lib/api-helpers';
-import { useSessionRename } from '../hooks/useSessionRename';
 import {
   navigateToSpace,
   navigateToSpaceAgent,
@@ -28,164 +19,21 @@ import {
   currentSpaceTaskIdSignal,
   currentSpaceViewModeSignal,
 } from '../lib/signals';
-import { spaceStore, type SpaceSessionRow } from '../lib/space-store';
+import { spaceStore } from '../lib/space-store';
 import { isActionRequired, isActiveTask, isDraftTask } from '../lib/task-filters';
-import { getAgentProcessingStateConfig } from '../lib/session-processing-phase';
-import { SESSION_LIFECYCLE_STATUS_CONFIG } from '../lib/session-lifecycle-status';
 import { getTaskStatusConfig } from '../lib/task-status';
 import {
-  getSpaceSessionUnreadCount,
   isSpaceTaskUnread,
   markSpaceSessionRead,
   markSpaceTaskRead,
   seedSpaceTasksSeen,
-  spaceSessionLastSeen,
   syncSpaceSessionSeen,
 } from '../lib/space-unread';
-import { toast } from '../lib/toast';
 import { cn } from '../lib/utils';
 
 type TaskTab = 'active' | 'action' | 'draft';
 
-type SessionIndicatorTone = ReturnType<typeof getAgentProcessingStateConfig>['tone'];
-
 const SIDEBAR_PREVIEW_LIMIT = 10;
-
-function parseAgentState(value?: string): AgentProcessingState {
-  if (!value) return { status: 'idle' };
-  try {
-    return JSON.parse(value) as AgentProcessingState;
-  } catch {
-    return { status: 'idle' };
-  }
-}
-
-function sessionIndicator(session: SpaceSessionRow): {
-  tone: SessionIndicatorTone;
-  pulse: boolean;
-} {
-  const agentState = parseAgentState(session.processingState);
-  if (agentState.status !== 'idle') {
-    const isActive = agentState.status === 'processing' || agentState.status === 'queued';
-    return { tone: getAgentProcessingStateConfig(agentState).tone, pulse: isActive };
-  }
-  const lifecycle = SESSION_LIFECYCLE_STATUS_CONFIG[session.status as SessionStatus];
-  return { tone: lifecycle?.tone ?? 'neutral', pulse: false };
-}
-
-function SpaceDetailSessionRow({
-  session,
-  isSelected,
-  onClick,
-  onArchive,
-}: {
-  session: SpaceSessionRow;
-  isSelected: boolean;
-  onClick: (sessionId: string) => void;
-  onArchive: (sessionId: string) => void | Promise<void>;
-}) {
-  const { isEditing, startEditing, inputProps } = useSessionRename(session.id, session.title);
-  const [confirming, setConfirming] = useState(false);
-  const [archiving, setArchiving] = useState(false);
-
-  const handleArchive = async () => {
-    setArchiving(true);
-    try {
-      await onArchive(session.id);
-    } finally {
-      setArchiving(false);
-      setConfirming(false);
-    }
-  };
-
-  void spaceSessionLastSeen.value;
-  const unread = isSelected ? 0 : getSpaceSessionUnreadCount(session.id, session.messageCount);
-  const { tone, pulse } = sessionIndicator(session);
-
-  if (isEditing) {
-    return (
-      <input
-        type="text"
-        data-testid="space-session-rename-input"
-        {...inputProps}
-        class="w-full mx-3 my-0.5 px-2 py-1 text-sm bg-fill rounded-md text-fg outline-none ring-1 ring-accent/60"
-      />
-    );
-  }
-
-  const openSession = () => onClick(session.id);
-  const handleKeyDown = (e: KeyboardEvent) => {
-    if (e.currentTarget === e.target && (e.key === 'Enter' || e.key === ' ')) {
-      e.preventDefault();
-      openSession();
-    }
-  };
-
-  return (
-    <div
-      class={cn(
-        'group/row relative w-full flex items-center gap-2.5 px-3 py-2 rounded-lg transition-colors cursor-pointer',
-        isSelected ? 'bg-fill' : 'hover:bg-fill-soft'
-      )}
-      role="button"
-      tabIndex={0}
-      onClick={openSession}
-      onKeyDown={handleKeyDown}
-      onMouseLeave={() => {
-        if (!archiving) setConfirming(false);
-      }}
-    >
-      <StatusDot tone={tone} pulse={pulse} />
-      <span
-        class="flex-1 min-w-0 text-sm text-fg-soft truncate"
-        onDblClick={startEditing}
-        title="Double-click to rename"
-      >
-        {session.title || 'Untitled'}
-      </span>
-      {unread > 0 && <UnreadBadge count={unread} />}
-      {session.status !== 'archived' && (
-        <div class="flex items-center">
-          {confirming ? (
-            <button
-              type="button"
-              data-testid="space-session-archive-confirm"
-              onClick={(e) => {
-                e.stopPropagation();
-                void handleArchive();
-              }}
-              disabled={archiving}
-              class="px-2 py-0.5 rounded text-xs font-medium bg-danger text-on-danger transition-colors hover:bg-danger disabled:opacity-60"
-            >
-              {archiving ? 'Archiving…' : 'Archive'}
-            </button>
-          ) : (
-            <button
-              type="button"
-              data-testid="space-session-archive"
-              onClick={(e) => {
-                e.stopPropagation();
-                setConfirming(true);
-              }}
-              title="Archive session"
-              aria-label={`Archive ${session.title || 'session'}`}
-              class="opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100 p-1 rounded text-fg-faint transition-colors hover:text-fg hover:bg-fill"
-            >
-              <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width={1.75}
-                  d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z"
-                />
-              </svg>
-            </button>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
 
 function TaskStatusDot({ status, pulse }: { status: SpaceTaskStatus; pulse?: boolean }) {
   return <StatusDot tone={getTaskStatusConfig(status).tone} pulse={pulse} />;
@@ -289,16 +137,9 @@ export function SpaceDetailPanel({
   const selectedSessionId = currentSpaceSessionIdSignal.value;
   const selectedTaskId = currentSpaceTaskIdSignal.value;
   const [taskTab, setTaskTab] = useState<TaskTab>('action');
-  const [archiveConfirm, setArchiveConfirm] = useState<{
-    sessionId: string;
-    commitStatus: WorktreeCommitStatus;
-  } | null>(null);
-  const [archiveBusy, setArchiveBusy] = useState(false);
-  const spaceIdRef = useRef(spaceId);
 
   useEffect(() => {
-    spaceIdRef.current = spaceId;
-    setArchiveConfirm(null);
+    spaceStore.ensureConfigData().catch(() => {});
   }, [spaceId]);
 
   useEffect(() => {
@@ -389,14 +230,7 @@ export function SpaceDetailPanel({
       .sort((a, b) => (b.lastActiveAt ?? 0) - (a.lastActiveAt ?? 0));
   }, [spaceStore.sessions.value, spaceId]);
 
-  const visibleSessions = useMemo(() => {
-    const capped = sessions.slice(0, SIDEBAR_PREVIEW_LIMIT);
-    const selected = sessions.find((s) => s.id === selectedSessionId);
-    if (selected && !capped.some((s) => s.id === selected.id)) {
-      return [...capped, selected];
-    }
-    return capped;
-  }, [sessions, selectedSessionId]);
+  const agents = spaceStore.agents.value.filter((agent) => agent.status !== 'archived');
 
   const handleOverviewClick = useCallback(() => {
     navigateToSpace(routeSpaceId);
@@ -447,45 +281,14 @@ export function SpaceDetailPanel({
     [routeSpaceId, onNavigate]
   );
 
-  const handleSessionClick = useCallback(
-    (sessionId: string) => {
-      navigateToSpaceSession(routeSpaceId, sessionId);
+  const handleAgentClick = useCallback(
+    (agent: { handle: string; sessionId: string | null }) => {
+      if (agent.sessionId) navigateToSpaceSession(routeSpaceId, agent.sessionId);
+      else navigateToSpaceAgent(routeSpaceId, agent.handle);
       onNavigate?.();
     },
     [routeSpaceId, onNavigate]
   );
-
-  const handleArchive = useCallback(async (sessionId: string) => {
-    const probeSpaceId = spaceIdRef.current;
-    try {
-      const result = await archiveSession(sessionId, false);
-      if (probeSpaceId !== spaceIdRef.current) return;
-      if (result.requiresConfirmation && result.commitStatus) {
-        setArchiveConfirm({ sessionId, commitStatus: result.commitStatus });
-      } else if (result.success) {
-        toast.success('Session archived');
-      }
-    } catch (err) {
-      if (probeSpaceId !== spaceIdRef.current) return;
-      toast.error(err instanceof Error ? err.message : 'Failed to archive session');
-    }
-  }, []);
-
-  const handleConfirmArchive = useCallback(async () => {
-    if (!archiveConfirm) return;
-    setArchiveBusy(true);
-    try {
-      const result = await archiveSession(archiveConfirm.sessionId, true);
-      if (result.success) {
-        toast.success('Session archived');
-        setArchiveConfirm(null);
-      }
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to archive session');
-    } finally {
-      setArchiveBusy(false);
-    }
-  }, [archiveConfirm]);
 
   return (
     <div class="flex-1 flex flex-col overflow-hidden">
@@ -744,41 +547,31 @@ export function SpaceDetailPanel({
           )}
         </CollapsibleSection>
 
-        <CollapsibleSection title="Sessions" count={sessions.length} defaultExpanded={true}>
-          {visibleSessions.length === 0 ? (
-            <div class="px-4 py-2 text-xs text-fg-muted">No sessions</div>
+        <CollapsibleSection title="Agents" count={agents.length} defaultExpanded={true}>
+          {agents.length === 0 ? (
+            <div class="px-4 py-2 text-xs text-fg-muted">No agents</div>
           ) : (
-            visibleSessions.map((session) => (
-              <SpaceDetailSessionRow
-                key={session.id}
-                session={session}
-                isSelected={selectedSessionId === session.id}
-                onClick={handleSessionClick}
-                onArchive={handleArchive}
-              />
+            agents.map((agent) => (
+              <button
+                key={agent.id}
+                type="button"
+                data-testid="space-detail-agent-row"
+                onClick={() => handleAgentClick(agent)}
+                class={`w-full flex items-center gap-2 rounded-md px-3 py-1.5 text-left text-sm transition-colors ${
+                  agent.sessionId !== null && agent.sessionId === selectedSessionId
+                    ? 'bg-fill-soft text-fg'
+                    : 'text-fg-soft hover:bg-fill-soft hover:text-fg'
+                }`}
+              >
+                <span class="min-w-0 flex-1 truncate">{agent.displayName}</span>
+                {agent.status !== 'active' && (
+                  <span class="text-[11px] text-fg-faint">{agent.status}</span>
+                )}
+              </button>
             ))
-          )}
-          {sessions.length > SIDEBAR_PREVIEW_LIMIT && (
-            <button
-              type="button"
-              data-testid="space-sessions-view-all"
-              onClick={() => handleSessionsClick()}
-              class="w-full px-3 py-1.5 text-left text-xs text-fg-muted transition-colors hover:text-fg-soft"
-            >
-              View all {sessions.length}
-            </button>
           )}
         </CollapsibleSection>
       </div>
-
-      {archiveConfirm && (
-        <ArchiveConfirmDialog
-          commitStatus={archiveConfirm.commitStatus}
-          archiving={archiveBusy}
-          onConfirm={handleConfirmArchive}
-          onCancel={() => setArchiveConfirm(null)}
-        />
-      )}
     </div>
   );
 }

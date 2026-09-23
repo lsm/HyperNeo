@@ -34,6 +34,8 @@ let mockSpaceIdSignal!: Signal<string | null>;
 let mockSessionsSignal!: Signal<
   Array<{ id: string; title: string; status: string; lastActiveAt: number }>
 >;
+let mockAgentsSignal!: Signal<unknown[]>;
+const mockEnsureConfigData = vi.fn(() => Promise.resolve());
 let mockGoalsSignal!: Signal<[]>;
 let mockActiveRunsSignal!: Signal<Array<{ id: string }>>;
 let mockCurrentSpaceSessionIdSignal!: Signal<string | null>;
@@ -48,6 +50,7 @@ function initSignals() {
   mockLoadingSignal = signal(false);
   mockSpaceIdSignal = signal('space-1');
   mockSessionsSignal = signal([]);
+  mockAgentsSignal = signal([]);
   mockGoalsSignal = signal([]);
   mockActiveRunsSignal = signal([]);
   mockCurrentSpaceSessionIdSignal = signal(null);
@@ -67,6 +70,8 @@ vi.mock('../../lib/space-store.ts', () => ({
       loading: mockLoadingSignal,
       spaceId: mockSpaceIdSignal,
       sessions: mockSessionsSignal,
+      agents: mockAgentsSignal,
+      ensureConfigData: mockEnsureConfigData,
       goals: mockGoalsSignal,
       activeRuns: mockActiveRunsSignal,
     };
@@ -186,7 +191,7 @@ describe('SpaceDetailPanel', () => {
   it('renders Overview and Agents buttons', () => {
     render(<SpaceDetailPanel spaceId="space-1" />);
     expect(screen.getByText('Overview')).toBeTruthy();
-    expect(screen.getByText('Agents')).toBeTruthy();
+    expect(screen.getByTestId('space-detail-agent')).toBeTruthy();
   });
 
   it('removes the old Space Activity header block', () => {
@@ -207,7 +212,7 @@ describe('SpaceDetailPanel', () => {
   it('uses the route space id for sidebar navigation', () => {
     render(<SpaceDetailPanel spaceId="space-1" navigationSpaceId="space-slug" />);
     fireEvent.click(screen.getByText('Overview'));
-    fireEvent.click(screen.getByText('Agents'));
+    fireEvent.click(screen.getByTestId('space-detail-agent'));
 
     expect(mockNavigateToSpace).toHaveBeenCalledWith('space-slug');
     expect(mockNavigateToSpaceAgent).toHaveBeenCalledWith('space-slug');
@@ -216,7 +221,7 @@ describe('SpaceDetailPanel', () => {
   it('navigates to the space agent and calls onNavigate', () => {
     const onNavigate = vi.fn();
     render(<SpaceDetailPanel spaceId="space-1" onNavigate={onNavigate} />);
-    fireEvent.click(screen.getByText('Agents'));
+    fireEvent.click(screen.getByTestId('space-detail-agent'));
     expect(mockNavigateToSpaceAgent).toHaveBeenCalledWith('space-1');
     expect(onNavigate).toHaveBeenCalledOnce();
   });
@@ -230,7 +235,7 @@ describe('SpaceDetailPanel', () => {
   it('highlights Agents when the agents view mode is active', () => {
     mockCurrentSpaceViewModeSignal.value = 'agents';
     render(<SpaceDetailPanel spaceId="space-1" />);
-    const button = screen.getByText('Agents').closest('button');
+    const button = screen.getByTestId('space-detail-agent').closest('button');
     expect(button?.className).toContain('bg-fill');
   });
 
@@ -302,161 +307,48 @@ describe('SpaceDetailPanel', () => {
     expect(onNavigate).toHaveBeenCalledOnce();
   });
 
-  it('renders Sessions expanded by default', () => {
+  it('lists the Space agents instead of sessions', () => {
     mockSessionsSignal.value = [
       { id: 'manual-session-abc123', title: 'manual-s', status: 'active', lastActiveAt: 0 },
     ];
-    render(<SpaceDetailPanel spaceId="space-1" />);
-    expect(screen.getByText('manual-s')).toBeTruthy();
-  });
-
-  it('filters out system sessions from the Sessions section', () => {
-    mockSessionsSignal.value = [
-      {
-        id: 'space:space-1:task:task-123',
-        title: 'task-session',
-        status: 'active',
-        lastActiveAt: 0,
-      },
-      {
-        id: 'space:space-1:workflow:run-1',
-        title: 'workflow-session',
-        status: 'active',
-        lastActiveAt: 0,
-      },
-      { id: 'manual-session-abc123', title: 'manual-s', status: 'active', lastActiveAt: 0 },
+    mockAgentsSignal.value = [
+      { id: 'a1', handle: 'lead', displayName: 'Lead', status: 'active', sessionId: 'sess-a1' },
+      { id: 'a2', handle: 'old', displayName: 'Old', status: 'archived', sessionId: null },
     ];
     render(<SpaceDetailPanel spaceId="space-1" />);
 
-    expect(screen.queryByText('task-session')).toBeNull();
-    expect(screen.queryByText('workflow-session')).toBeNull();
-    expect(screen.getByText('manual-s')).toBeTruthy();
+    expect(screen.getAllByText('Agents')).toHaveLength(2);
+    expect(screen.getByText('Lead')).toBeTruthy();
+    expect(screen.queryByText('Old')).toBeNull();
+    expect(screen.queryByText('manual-s')).toBeNull();
   });
 
-  it('opens overlay on session click and calls onNavigate', () => {
+  it('opens an agent session on click and calls onNavigate', () => {
     const onNavigate = vi.fn();
-    mockSpaceOverlaySessionIdSignal.value = null;
-    mockSessionsSignal.value = [
-      { id: 'manual-session-abc123', title: 'manual-s', status: 'active', lastActiveAt: 0 },
+    mockAgentsSignal.value = [
+      { id: 'a1', handle: 'lead', displayName: 'Lead', status: 'active', sessionId: 'sess-a1' },
     ];
     render(<SpaceDetailPanel spaceId="space-1" onNavigate={onNavigate} />);
 
-    fireEvent.click(screen.getByText('manual-s'));
-    expect(mockNavigateToSpaceSession).toHaveBeenCalledWith('space-1', 'manual-session-abc123');
+    fireEvent.click(screen.getByText('Lead'));
+    expect(mockNavigateToSpaceSession).toHaveBeenCalledWith('space-1', 'sess-a1');
     expect(onNavigate).toHaveBeenCalledOnce();
   });
 
-  describe('session row actions', () => {
-    beforeEach(() => {
-      mockArchiveSession.mockReset();
-      mockToastSuccess.mockReset();
-      mockToastError.mockReset();
-    });
+  it('loads the Space agents when the panel mounts', () => {
+    render(<SpaceDetailPanel spaceId="space-1" />);
+    expect(mockEnsureConfigData).toHaveBeenCalled();
+  });
 
-    it('shows an archive action but no inline rename pencil on session rows', () => {
-      mockSessionsSignal.value = [
-        { id: 's1', title: 'session one', status: 'active', lastActiveAt: 0 },
-      ];
-      render(<SpaceDetailPanel spaceId="space-1" />);
+  it('opens the agent page for an agent that has no session yet', () => {
+    mockAgentsSignal.value = [
+      { id: 'a2', handle: 'fresh', displayName: 'Fresh', status: 'active', sessionId: null },
+    ];
+    render(<SpaceDetailPanel spaceId="space-1" />);
 
-      expect(screen.queryByTestId('space-session-rename')).toBeNull();
-      expect(screen.getByTestId('space-session-archive')).toBeTruthy();
-    });
-
-    it('enters rename mode on double-click of a session title', () => {
-      mockSessionsSignal.value = [
-        { id: 's1', title: 'session one', status: 'active', lastActiveAt: 0 },
-      ];
-      const { container } = render(<SpaceDetailPanel spaceId="space-1" />);
-
-      fireEvent.dblClick(screen.getByText('session one'));
-
-      expect(
-        container.querySelector('input[data-testid="space-session-rename-input"]')
-      ).toBeTruthy();
-    });
-
-    it('archives a session after the inline confirmation click', async () => {
-      mockArchiveSession.mockResolvedValue({ success: true, requiresConfirmation: false });
-      mockSessionsSignal.value = [
-        { id: 's1', title: 'session one', status: 'active', lastActiveAt: 0 },
-      ];
-      render(<SpaceDetailPanel spaceId="space-1" />);
-
-      fireEvent.click(screen.getByTestId('space-session-archive'));
-      fireEvent.click(screen.getByTestId('space-session-archive-confirm'));
-
-      await waitFor(() => expect(mockArchiveSession).toHaveBeenCalledWith('s1', false));
-      expect(mockToastSuccess).toHaveBeenCalledWith('Session archived');
-    });
-
-    it('opens the commit-loss confirm dialog when archive requires confirmation', async () => {
-      mockArchiveSession.mockResolvedValue({
-        success: false,
-        requiresConfirmation: true,
-        commitStatus: { hasCommitsAhead: true, commits: [], baseBranch: 'main' },
-      });
-      mockSessionsSignal.value = [
-        { id: 's1', title: 'session one', status: 'active', lastActiveAt: 0 },
-      ];
-      render(<SpaceDetailPanel spaceId="space-1" />);
-
-      fireEvent.click(screen.getByTestId('space-session-archive'));
-      fireEvent.click(screen.getByTestId('space-session-archive-confirm'));
-
-      await waitFor(() => expect(mockArchiveSession).toHaveBeenCalledWith('s1', false));
-      expect(screen.getByText('Confirm Archive')).toBeTruthy();
-      expect(mockToastSuccess).not.toHaveBeenCalled();
-    });
-
-    it('drops the archive confirmation when navigating to a different space', async () => {
-      mockArchiveSession.mockResolvedValue({
-        success: false,
-        requiresConfirmation: true,
-        commitStatus: { hasCommitsAhead: true, commits: [], baseBranch: 'main' },
-      });
-      mockSessionsSignal.value = [
-        { id: 's1', title: 'session one', status: 'active', lastActiveAt: 0 },
-      ];
-      const { rerender } = render(<SpaceDetailPanel spaceId="space-1" />);
-
-      fireEvent.click(screen.getByTestId('space-session-archive'));
-      fireEvent.click(screen.getByTestId('space-session-archive-confirm'));
-      await waitFor(() => expect(screen.getByText('Confirm Archive')).toBeTruthy());
-
-      mockSpaceIdSignal.value = 'space-2';
-      rerender(<SpaceDetailPanel spaceId="space-2" />);
-
-      await waitFor(() => expect(screen.queryByText('Confirm Archive')).toBeNull());
-    });
-
-    it('ignores an archive probe that resolves after navigating to a different space', async () => {
-      let resolveProbe: (value: Record<string, unknown>) => void = () => {};
-      mockArchiveSession.mockReturnValue(
-        new Promise<Record<string, unknown>>((resolve) => {
-          resolveProbe = resolve;
-        })
-      );
-      mockSessionsSignal.value = [
-        { id: 's1', title: 'session one', status: 'active', lastActiveAt: 0 },
-      ];
-      const { rerender } = render(<SpaceDetailPanel spaceId="space-1" />);
-
-      fireEvent.click(screen.getByTestId('space-session-archive'));
-      fireEvent.click(screen.getByTestId('space-session-archive-confirm'));
-
-      mockSpaceIdSignal.value = 'space-2';
-      rerender(<SpaceDetailPanel spaceId="space-2" />);
-
-      resolveProbe({
-        success: false,
-        requiresConfirmation: true,
-        commitStatus: { hasCommitsAhead: true, commits: [], baseBranch: 'main' },
-      });
-
-      await waitFor(() => expect(mockArchiveSession).toHaveBeenCalledWith('s1', false));
-      expect(screen.queryByText('Confirm Archive')).toBeNull();
-    });
+    fireEvent.click(screen.getByText('Fresh'));
+    expect(mockNavigateToSpaceAgent).toHaveBeenCalledWith('space-1', 'fresh');
+    expect(mockNavigateToSpaceSession).not.toHaveBeenCalled();
   });
 
   describe('task visibility in context panel', () => {
@@ -614,15 +506,6 @@ describe('SpaceDetailPanel', () => {
       );
     }
 
-    function makeSessions(count: number) {
-      return Array.from({ length: count }, (_, i) => ({
-        id: `s${i}`,
-        title: `Session ${String(i)}`,
-        status: 'active',
-        lastActiveAt: i,
-      }));
-    }
-
     it('renders exactly LIMIT tasks with no View all button', () => {
       mockTasksSignal.value = makeTasks(10);
       render(<SpaceDetailPanel spaceId="space-1" />);
@@ -662,37 +545,6 @@ describe('SpaceDetailPanel', () => {
       render(<SpaceDetailPanel spaceId="space-1" />);
       fireEvent.click(screen.getByTestId('space-detail-tasks'));
       expect(mockNavigateToSpaceTasks).toHaveBeenCalledWith('space-1', 'active');
-    });
-
-    it('renders exactly LIMIT sessions with no View all button', () => {
-      mockSessionsSignal.value = makeSessions(10);
-      render(<SpaceDetailPanel spaceId="space-1" />);
-      expect(screen.queryByTestId('space-sessions-view-all')).toBeNull();
-    });
-
-    it('caps sessions at LIMIT (most-recent-first) and shows a View all button with the full count', () => {
-      mockSessionsSignal.value = makeSessions(12);
-      render(<SpaceDetailPanel spaceId="space-1" />);
-      expect(screen.queryByText('Session 0')).toBeNull();
-      expect(screen.queryByText('Session 1')).toBeNull();
-      expect(screen.getByText('Session 2')).toBeTruthy();
-      const btn = screen.getByTestId('space-sessions-view-all');
-      expect(btn.textContent).toContain('12');
-    });
-
-    it('keeps a selected session that falls past the cap visible', () => {
-      mockSessionsSignal.value = makeSessions(12);
-      mockCurrentSpaceSessionIdSignal.value = 's0';
-      render(<SpaceDetailPanel spaceId="space-1" />);
-      expect(screen.getByText('Session 0')).toBeTruthy();
-      expect(screen.queryByText('Session 1')).toBeNull();
-    });
-
-    it('View all sessions navigates to the sessions page', () => {
-      mockSessionsSignal.value = makeSessions(12);
-      render(<SpaceDetailPanel spaceId="space-1" />);
-      fireEvent.click(screen.getByTestId('space-sessions-view-all'));
-      expect(mockNavigateToSpaceSessions).toHaveBeenCalledWith('space-1');
     });
   });
 });
