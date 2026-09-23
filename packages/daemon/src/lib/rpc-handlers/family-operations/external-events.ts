@@ -1,6 +1,5 @@
 import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository.ts';
 import { createAgentSubscriptionOperations } from '../../external-events/agent-subscription-operations.ts';
-import { createNodeAgentRestoreOperation } from '../../external-events/node-agent-restore-operation.ts';
 import { createExternalEventOperations } from '../../external-events/operations.ts';
 import { createSubscriptionOperations } from '../../external-events/subscription-operations.ts';
 import type { OperationDefinition } from '../../operations/registry.ts';
@@ -56,14 +55,6 @@ export function registerExternalEventOperations(
         context.spaceRuntimeService.listSubscriptions(workflowRunId, spaceId, nodeId),
       resolvePrimaryLinkUrl: (workflowRunId) =>
         context.artifactProfile.resolvePrimaryLinkUrl(workflowRunId),
-      getSession: (sessionId) => context.deps.db.getSession(sessionId),
-      taskRepo: context.spaceTaskRepo,
-      nodeExecutionRepo: context.nodeExecutionRepo,
-      longHorizonAgentRepo: context.longHorizonAgentRepo,
-    }),
-    createNodeAgentRestoreOperation({
-      restoreNodeAgent: (sessionId, reason) =>
-        context.taskAgentManager.restoreNodeAgentSession(sessionId, reason),
       getSession: (sessionId) => context.deps.db.getSession(sessionId),
       taskRepo: context.spaceTaskRepo,
       nodeExecutionRepo: context.nodeExecutionRepo,
