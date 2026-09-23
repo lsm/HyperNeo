@@ -49,6 +49,7 @@ function makeHarness(
     globallyEnabled?: boolean;
     started?: boolean;
     resolutions?: WebhookPrResolution[];
+    storedPrNumbers?: Record<string, number>;
   } = {}
 ): Harness {
   const state: Harness['state'] = { published: [], marked: [], verifyCalls: [], resolved: [] };
@@ -72,6 +73,8 @@ function makeHarness(
             publishEvent: async (spaceId: string, event: NormalizedGitHubEvent) => {
               state.published.push({ spaceId, event });
             },
+            storedEventPrNumber: (spaceId: string, dedupeKey: string) =>
+              options.storedPrNumbers?.[`${spaceId}|${dedupeKey}`],
           },
     listWebhookValidationRepos: () => options.repos ?? defaultRepos(),
     verifySignature: async (raw, signature, secret) => {
@@ -118,6 +121,21 @@ const deploymentPayload = {
 const deploymentStatusPayload = {
   action: 'created',
   deployment_status: { id: 9, state: 'success', deployment: { id: 7, ref: 'main', sha: 'abc123' } },
+  repository,
+  sender,
+};
+
+const multiPrCheckRunPayload = {
+  action: 'completed',
+  check_run: {
+    id: 555,
+    name: 'ci',
+    status: 'completed',
+    conclusion: 'failure',
+    head_sha: 'abc123',
+    completed_at: '2026-01-01T00:00:00Z',
+    pull_requests: [{ number: 7 }, { number: 9 }],
+  },
   repository,
   sender,
 };
@@ -218,6 +236,54 @@ describe('generic webhook path', () => {
     expect(state.published.map((p) => p.spaceId)).toEqual(['space-1', 'space-2']);
     expect(state.published.every((p) => p.event.eventType === 'issue_comment')).toBe(true);
     expect(state.marked).toEqual(['w1', 'w2']);
+  });
+
+  it('fans a check failure out to every pull request on the head sha', async () => {
+    const { deps, state } = makeHarness();
+    const response = await runGithubWebhookAdmission(
+      deps,
+      admissionInput(multiPrCheckRunPayload, { eventType: 'check_run' })
+    );
+    expect(response).toEqual({
+      status: 200,
+      body: { message: 'Webhook received', deliveryId: 'delivery-1', spaces: 2 },
+    });
+    expect(state.published.map((p) => [p.spaceId, p.event.prNumber])).toEqual([
+      ['space-1', 7],
+      ['space-1', 9],
+      ['space-2', 7],
+      ['space-2', 9],
+    ]);
+    expect(state.marked).toEqual(['w1', 'w2']);
+  });
+
+  it('keeps the unscoped dedupe key with the PR that already owns it in each space', async () => {
+    const { deps, state } = makeHarness({
+      storedPrNumbers: { 'space-1|acme/widgets:check_run:555:failure': 9 },
+    });
+    await runGithubWebhookAdmission(
+      deps,
+      admissionInput(multiPrCheckRunPayload, { eventType: 'check_run' })
+    );
+    expect(state.published.map((p) => [p.spaceId, p.event.prNumber, p.event.dedupeKey])).toEqual([
+      ['space-1', 7, 'acme/widgets:check_run:555:failure:7'],
+      ['space-1', 9, 'acme/widgets:check_run:555:failure'],
+      ['space-2', 7, 'acme/widgets:check_run:555:failure'],
+      ['space-2', 9, 'acme/widgets:check_run:555:failure:9'],
+    ]);
+  });
+
+  it('scopes every PR when the stored owner is not on the delivery', async () => {
+    const { deps, state } = makeHarness({
+      storedPrNumbers: { 'space-1|acme/widgets:check_run:555:failure': 11 },
+    });
+    await runGithubWebhookAdmission(
+      deps,
+      admissionInput(multiPrCheckRunPayload, { eventType: 'check_run' })
+    );
+    expect(
+      state.published.filter((p) => p.spaceId === 'space-1').map((p) => p.event.dedupeKey)
+    ).toEqual(['acme/widgets:check_run:555:failure:7', 'acme/widgets:check_run:555:failure:9']);
   });
 
   it('ignores unknown event kinds with 202', async () => {
@@ -440,7 +506,7 @@ function stageCtx(partial: Partial<WebhookAdmissionCtx>): WebhookAdmissionCtx {
     matchedRepos: [],
     payload: undefined,
     kind: 'status',
-    normalized: null,
+    normalized: [],
     admissionRepo: null,
     sha: '',
     deploymentRoot: {},

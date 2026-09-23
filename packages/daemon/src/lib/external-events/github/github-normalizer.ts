@@ -136,6 +136,53 @@ function isBotActor(login: string, type: string): boolean {
   return type === 'Bot' || login.endsWith('[bot]');
 }
 
+function checkPullRequestNumbers(subject: unknown): number[] {
+  const prs = asObject(subject).pull_requests;
+  if (!Array.isArray(prs)) return [];
+  const numbers: number[] = [];
+  for (const pr of prs) {
+    const number = getNumber(asObject(pr).number);
+    if (number && !numbers.includes(number)) numbers.push(number);
+  }
+  return numbers;
+}
+
+export function normalizeGitHubWebhookEvents(
+  eventType: string,
+  deliveryId: string,
+  payload: unknown,
+  unscopedOwner?: number
+): NormalizedGitHubEvent[] {
+  if (eventType !== 'check_run' && eventType !== 'check_suite') {
+    const single = normalizeGitHubWebhook(eventType, deliveryId, payload);
+    return single ? [single] : [];
+  }
+  const root = asObject(payload);
+  const common = {
+    repo: repoFromPayload(root),
+    deliveryId,
+    rawPayload: payload,
+    sender: root.sender,
+  };
+  const subject = eventType === 'check_run' ? root.check_run : root.check_suite;
+  const prNumbers = checkPullRequestNumbers(subject);
+  const owner = unscopedOwner ?? prNumbers[0];
+  return prNumbers
+    .map((prNumber) => {
+      const prScopedDedupe = prNumber !== owner;
+      return eventType === 'check_run'
+        ? normalizeGitHubCheckRun({
+            ...common,
+            checkRun: subject,
+            source: 'webhook',
+            prNumber,
+            prScopedDedupe,
+          })
+        : normalizeGitHubCheckSuite({ ...common, checkSuite: subject, prNumber, prScopedDedupe });
+    })
+    .filter((event): event is NormalizedGitHubEvent => event !== null);
+}
+
 export function normalizeGitHubWebhook(
   eventType: string,
   deliveryId: string,
@@ -649,6 +696,8 @@ export function normalizeGitHubCheckSuite(params: {
   deliveryId: string;
   rawPayload: unknown;
   sender?: unknown;
+  prNumber?: number;
+  prScopedDedupe?: boolean;
 }): NormalizedGitHubEvent | null {
   const checkSuite = asObject(params.checkSuite);
   const action = getString(asObject(params.rawPayload).action);
@@ -660,7 +709,7 @@ export function normalizeGitHubCheckSuite(params: {
   if (!topicAction || topicAction === 'skipped') return null;
   const prs = Array.isArray(checkSuite.pull_requests) ? checkSuite.pull_requests : [];
   const pr = asObject(prs[0]);
-  const prNumber = getNumber(pr.number);
+  const prNumber = params.prNumber ?? getNumber(pr.number);
   const repo = params.repo;
   if (!repo.owner || !repo.repo || !prNumber) return null;
   const id = getNumber(checkSuite.id);
@@ -673,9 +722,10 @@ export function normalizeGitHubCheckSuite(params: {
   const canonicalOwner = repo.owner.toLowerCase();
   const canonicalRepo = repo.repo.toLowerCase();
   const updatedAt = getString(checkSuite.updated_at);
-  const externalId = updatedAt
+  const suiteId = updatedAt
     ? `check_suite:${id}:${conclusion}:${updatedAt}`
     : `check_suite:${id}:${conclusion}`;
+  const externalId = params.prScopedDedupe ? `${suiteId}:${prNumber}` : suiteId;
   const body = `check suite concluded with ${conclusion}`;
   return {
     deliveryId: params.deliveryId,

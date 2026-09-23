@@ -710,6 +710,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
             const ok = await this.publishEvent(spaceId, event, context, tokenLoginSnapshot);
             if (!ok) dropped++;
           },
+          storedEventPrNumber: (spaceId: string, dedupeKey: string) => {
+            const prNumber = this.eventStore.getByDedupe(spaceId, this.sourceId, dedupeKey)?.event
+              .payload.prNumber;
+            return typeof prNumber === 'number' ? prNumber : undefined;
+          },
         } as WebhookAdmissionContext;
       },
       listWebhookValidationRepos: () => this.repo.listWebhookValidationRepos(),
