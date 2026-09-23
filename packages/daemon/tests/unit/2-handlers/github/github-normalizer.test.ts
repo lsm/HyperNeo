@@ -690,6 +690,34 @@ describe('NormalizedGitHubEvent reply/resolve handles', () => {
     });
   });
 
+  describe('normalizeGitHubCheckSuite rerun dedupe', () => {
+    function completedSuite(updatedAt: string, deliveryId: string) {
+      return normalizeGitHubCheckSuite({
+        repo: watched,
+        checkSuite: {
+          id: 123459,
+          status: 'completed',
+          conclusion: 'failure',
+          head_sha: 'abc123',
+          updated_at: updatedAt,
+          pull_requests: [{ number: 7 }],
+        },
+        deliveryId,
+        rawPayload: { action: 'completed' },
+        sender: { login: 'github-actions[bot]', type: 'Bot' },
+      })!;
+    }
+
+    test('a rerun that fails again gets its own dedupe key while a redelivery keeps it', () => {
+      const first = completedSuite('2026-01-01T00:00:00Z', 'delivery-a');
+      const redelivered = completedSuite('2026-01-01T00:00:00Z', 'delivery-b');
+      const rerun = completedSuite('2026-01-01T01:00:00Z', 'delivery-c');
+
+      expect(redelivered.dedupeKey).toBe(first.dedupeKey);
+      expect(rerun.dedupeKey).not.toBe(first.dedupeKey);
+    });
+  });
+
   describe('normalizeGitHubMergeConflict', () => {
     test('conflicting transitions map to pull_request merge_conflict topics', () => {
       const normalized = normalizeGitHubMergeConflict({
