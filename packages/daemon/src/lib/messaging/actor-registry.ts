@@ -193,7 +193,8 @@ function isSessionInSpace(session: Session, spaceId: string): boolean {
 }
 
 function isAdHocMemberSession(session: Session): boolean {
-  if (session.metadata.promptProvenance?.agentId) return false;
+  if (session.id.startsWith('space:agent:') || session.metadata.promptProvenance?.agentId)
+    return false;
   if (session.type === 'space_chat' || session.type === 'space_task_agent') return false;
   if (session.id.includes(':task:') && session.id.includes(':exec:')) return false;
   if (session.metadata.promptProvenance?.workflowRunId) return false;

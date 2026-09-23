@@ -222,7 +222,8 @@ export function BottomTabBar({ inline }: { inline?: boolean } = {}) {
       const isSpaceChatSession = routeSpaceIds.some((id) => spaceSessionId === `space:chat:${id}`);
       const isLongHorizonAgentSession =
         spaceSessionId !== null &&
-        spaceStore.agents.value.some((agent) => agent.sessionId === spaceSessionId);
+        (spaceSessionId.startsWith('space:agent:') ||
+          spaceStore.agents.value.some((agent) => agent.sessionId === spaceSessionId));
 
       if (id === 'space-settings') return spaceViewMode === 'configure';
       if (id === 'space-sessions')

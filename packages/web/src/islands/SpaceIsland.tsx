@@ -196,7 +196,9 @@ export default function SpaceIsland({
   if (sessionViewId) {
     const isSpaceChatSession = sessionViewId === `space:chat:${spaceId}`;
     const isAgentSession =
-      isSpaceChatSession || spaceStore.agents.value.some((a) => a.sessionId === sessionViewId);
+      isSpaceChatSession ||
+      sessionViewId.startsWith('space:agent:') ||
+      spaceStore.agents.value.some((a) => a.sessionId === sessionViewId);
     return (
       <>
         <div
