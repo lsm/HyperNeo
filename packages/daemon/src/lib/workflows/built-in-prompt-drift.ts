@@ -318,6 +318,15 @@ const CURRENT_APPROVE_RESEARCH_REVIEW_TERMINAL =
   'or invoke(name="task.transition", input={ taskId: "<task id>", status: "review" }).';
 const RETIRED_SUBMIT_RESEARCH_REVIEW_TERMINAL =
   'then invoke(name="task.approve", input={ taskId: "<task id>" }) or task.submitForReview.';
+const CURRENT_PR_SUBSCRIBE_CALL =
+  'call `invoke(name="event.external.pr.subscribe", input={ prUrl: "<PR URL>" })`';
+const RETIRED_SNAKE_PR_SUBSCRIBE_CALL = 'call `subscribe_pr_events({ prUrl: "<PR URL>" })`';
+const RETIRED_SNAKE_PR_SUBSCRIBE_GUIDANCE =
+  'After `gh pr create`, call `subscribe_pr_events({ prUrl: "<PR URL>" })`, passing the PR URL from the `gh pr create` output explicitly (it is not auto-resolved from the run until the PR is recorded). This subscribes you to review comments, CI failures, and reactions for your PR so you receive them directly and can act on them. Do this once per PR. ';
+const CURRENT_PREFERENCE_OPERATION_NAMES =
+  '`subscribe_pr_events` is `event.external.pr.subscribe`, and `send_message` is an operation name already.';
+const RETIRED_SNAKE_PREFERENCE_OPERATION_NAMES =
+  '`send_message` and `subscribe_pr_events` are operation names already.';
 const CURRENT_TRANSITION_CODER_ONLY_SUBMIT =
   'call invoke(name="task.transition", input={ taskId: "<task id>", status: "review", reviewReason: "External gate on';
 const RETIRED_SUBMIT_CODER_ONLY_SUBMIT =
@@ -348,6 +357,8 @@ const RETIRED_ARTIFACT_FAMILY_CALL_ACTION_PREFERENCE_PRE_TASK_APPROVE = retiredA
 );
 
 const BUILT_IN_PROMPT_PATCH_VARIANTS = [
+  [[CURRENT_PR_SUBSCRIBE_CALL, RETIRED_SNAKE_PR_SUBSCRIBE_CALL]],
+  [[CURRENT_PREFERENCE_OPERATION_NAMES, RETIRED_SNAKE_PREFERENCE_OPERATION_NAMES]],
   [
     [CURRENT_TRANSITION_CODER_ONLY_SUBMIT, RETIRED_SUBMIT_CODER_ONLY_SUBMIT],
     [CURRENT_TRANSITION_CODER_ONLY_ROUTES, RETIRED_SUBMIT_CODER_ONLY_ROUTES],
@@ -390,6 +401,7 @@ const BUILT_IN_PROMPT_PATCH_VARIANTS = [
   [[CURRENT_FULLSTACK_CODING_PR_STEP_PROMPT, RETIRED_NOARG_FULLSTACK_CODING_PR_STEP_PROMPT]],
   [[CURRENT_RESEARCH_PR_STEP_PROMPT, RETIRED_NOARG_RESEARCH_PR_STEP_PROMPT]],
   [[CODER_OWNED_PR_SUBSCRIBE_GUIDANCE, '']],
+  [[RETIRED_SNAKE_PR_SUBSCRIBE_GUIDANCE, '']],
   [[CALL_ACTION_PREFERENCE_GUIDANCE, CALL_ACTION_PREFERENCE_GUIDANCE_PRE_OPERATION_NAMES]],
   [
     [

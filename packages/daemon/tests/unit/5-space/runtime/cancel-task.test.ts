@@ -17,10 +17,18 @@ import { SessionRepository } from '../../../../src/storage/repositories/session-
 import { DirectTaskExecutionRepository } from '../../../../src/storage/repositories/direct-task-execution-repository';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import { createDirectTaskStarter } from '../../../../src/lib/tasks/start-direct-task';
-import { createCancelTaskOperation } from '../../../../src/lib/tasks/cancel-task';
+import {
+  admitCancellation,
+  admitManagedCancellation,
+  type CancelPolicyContext,
+} from '../../../../src/lib/tasks/cancel-task';
 import { createSpaceTransitionTaskOperation } from '../../../../src/lib/tasks/transition-task';
+import { SpaceTransitionTaskInputSchema } from '../../../../src/lib/tasks/transition-task-admission';
 import { enqueueDirectOutcome } from '../../../../src/lib/tasks/direct-outcome-jobs';
-import { createOperationRegistry } from '../../../../src/lib/operations/registry';
+import {
+  createOperationRegistry,
+  type OperationCaller,
+} from '../../../../src/lib/operations/registry';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
 import { readDirectFinalizationRequest } from '../../../../src/lib/tasks/finalize-direct-attempt';
 import { SessionManager } from '../../../../src/lib/session/session-manager';
@@ -35,7 +43,18 @@ let attempts: DirectTaskExecutionRepository;
 let taskId: string;
 let sessionId: string;
 let attemptId: string;
-let operation: ReturnType<typeof createCancelTaskOperation>;
+function canceller(policy: CancelPolicyContext) {
+  return {
+    execute: async (input: { taskId: string }, caller: OperationCaller) => {
+      const managed = await admitManagedCancellation(db, input, caller, policy);
+      if ('reason' in managed) return managed.reason;
+      const direct = admitCancellation(db, input, caller, policy);
+      if ('reason' in direct) return direct.reason;
+      return enqueueDirectOutcome(db, jobs, direct.value);
+    },
+  };
+}
+let operation: ReturnType<typeof canceller>;
 beforeEach(async () => {
   db = new Database(':memory:');
   runMigrations(db, () => {});
@@ -71,7 +90,7 @@ beforeEach(async () => {
   if (!started.started) throw new Error(started.reason);
   sessionId = started.attempt.sessionId;
   attemptId = started.attempt.id;
-  operation = createCancelTaskOperation(() => db, jobs, {});
+  operation = canceller({});
 });
 afterEach(() => db.close());
 function outcomeCount() {
@@ -85,8 +104,7 @@ function outcomeCount() {
 test.each(['rpc', 'internal', 'mcp'] as const)(
   '%s invocation returns a durable acknowledgement before shutdown, and repeating it while the stop is merely requested (attempt still running) replays the same ack idempotently',
   async (source) => {
-    const registry = createOperationRegistry([operation]);
-    const result = await registry.get('task.cancel')!.execute({ taskId }, { source, sessionId });
+    const result = await operation.execute({ taskId }, { source, sessionId });
     expect(result).toMatchObject({ accepted: true, jobId: expect.any(String) });
     expect(tasks.getTask(taskId)?.status).toBe('in_progress');
     expect(attempts.getActive(taskId)?.phase).toBe('running');
@@ -140,7 +158,10 @@ test('missing task rejects and schema does not accept caller-owned execution ide
   expect(await operation.execute({ taskId: 'missing' }, { source: 'rpc' })).toMatchObject({
     accepted: false,
   });
-  expect(operation.inputSchema.safeParse({ taskId, attemptId, sessionId }).success).toBe(false);
+  expect(
+    SpaceTransitionTaskInputSchema.safeParse({ taskId, status: 'cancelled', attemptId, sessionId })
+      .success
+  ).toBe(false);
   expect(outcomeCount()).toBe(0);
 });
 test('enqueue failure rolls back stop request and later cancellation can succeed', async () => {
@@ -209,31 +230,46 @@ test.each(['rpc', 'internal', 'mcp'] as const)(
 test('configured shared catalog discovers lazily and both transports persist the same request', async () => {
   const getDatabase = mock(() => db);
   const database = { getDatabase, notifyChange: () => {} } as unknown as AppDatabase;
-  const provider = createSpaceOperationRegistryProvider(database, jobs, {
-    getSession: (id) => sessions.getSession(id),
-    getTaskManager: (id) => new SpaceTaskManager(db, id),
-    taskRepo: tasks,
-    notifyStandalone: () => {},
-    emitTaskUpdated: async () => {},
-    emitTaskCreated: async () => {},
-    getSpace: (id: string) => new SpaceRepository(db).getSpace(id),
-    validateDefaultTaskWorkspace: async () => null,
-    blockExecution: async () => {
-      throw new Error('unexpected workflow cleanup');
+  const provider = createSpaceOperationRegistryProvider(
+    database,
+    jobs,
+    {
+      getSession: (id) => sessions.getSession(id),
+      getTaskManager: (id) => new SpaceTaskManager(db, id),
+      taskRepo: tasks,
+      notifyStandalone: () => {},
+      emitTaskUpdated: async () => {},
+      emitTaskCreated: async () => {},
+      getSpace: (id: string) => new SpaceRepository(db).getSpace(id),
+      validateDefaultTaskWorkspace: async () => null,
+      blockExecution: async () => {
+        throw new Error('unexpected workflow cleanup');
+      },
+      requiresPostApprovalOwner: () => false,
+      completionGate: async () => ({ ok: true as const }),
     },
-    requiresPostApprovalOwner: () => false,
-    completionGate: async () => ({ ok: true as const }),
-  });
+    undefined,
+    undefined,
+    {
+      getSession: (id) => sessions.getSession(id),
+      getTaskManager: (id) => new SpaceTaskManager(db, id),
+      notifyStandalone: () => {},
+      emitTaskUpdated: async () => {},
+      isWorkflowRunActive: () => false,
+    }
+  );
   const rpc = createOperationRpcHandler(provider, () => ({}));
   const mcp = createOperationMcpHandler(provider, () => ({ sessionId }));
   const context = {} as CallContext;
-  const invocation = { name: 'task.cancel', input: { taskId } };
+  const invocation = { name: 'task.transition', input: { taskId, status: 'cancelled' } };
   expect(provider()).toBe(provider());
   expect(
     await rpc({ name: 'operations.describe', input: { name: invocation.name } }, context)
   ).toMatchObject({ found: true, name: invocation.name });
   expect(getDatabase).not.toHaveBeenCalled();
-  expect(createDatabaseOperationCatalog(database, jobs).get(invocation.name)).toBeUndefined();
+  expect(createDatabaseOperationCatalog(database, jobs).get(invocation.name)?.description).not.toBe(
+    provider().get(invocation.name)?.description
+  );
   const foreign = createOperationMcpHandler(provider, () => ({ sessionId: 'foreign' }));
   expect(JSON.parse((await foreign(invocation)).content[0].text)).toMatchObject({
     accepted: false,
@@ -268,7 +304,7 @@ test('a reserved attempt with a retained task session is fenced and cancelled th
     attemptId
   );
   const emitTaskUpdated = mock(async () => {});
-  const managedOp = createCancelTaskOperation(() => db, jobs, {
+  const managedOp = canceller({
     getTaskManager: (id) => new SpaceTaskManager(db, id),
     emitTaskUpdated,
   });
@@ -299,7 +335,7 @@ test('a completion landing between the read and the guarded write blocks both th
     return row;
   });
   const emitTaskUpdated = mock(async () => {});
-  const managedOp = createCancelTaskOperation(() => db, jobs, {
+  const managedOp = canceller({
     getTaskManager: (id) => new SpaceTaskManager(db, id),
     emitTaskUpdated,
   });
@@ -320,7 +356,7 @@ test('a completion landing between the read and the guarded write blocks both th
 test('a task with a retained agent session whose attempt already stopped is cancelled through the manager, not the direct binding', async () => {
   db.prepare("UPDATE direct_task_execution_attempts SET phase='stopped' WHERE id=?").run(attemptId);
   const emitTaskUpdated = mock(async () => {});
-  const managedOp = createCancelTaskOperation(() => db, jobs, {
+  const managedOp = canceller({
     getTaskManager: (id) => new SpaceTaskManager(db, id),
     emitTaskUpdated,
   });
@@ -368,7 +404,7 @@ test.each(['rpc', 'internal'] as const)(
     const stopForStatus = mockStopForStatus();
     const blockExecution = unusedBlockExecution();
     const deps = { stopForStatus, blockExecution };
-    const workflowOp = createCancelTaskOperation(() => db, jobs, deps);
+    const workflowOp = canceller(deps);
     expect(await workflowOp.execute({ taskId }, { source })).toEqual({
       accepted: true,
       jobId: null,
@@ -391,7 +427,7 @@ test('MCP caller in the owning Space is admitted for a workflow-owned task', asy
     { enforceWorkspaceOwnership: false }
   );
   const stopForStatus = mockStopForStatus();
-  const workflowOp = createCancelTaskOperation(() => db, jobs, { stopForStatus });
+  const workflowOp = canceller({ stopForStatus });
   expect(await workflowOp.execute({ taskId }, { source: 'mcp', sessionId: 'coordinator' })).toEqual(
     { accepted: true, jobId: null }
   );
@@ -407,7 +443,7 @@ test('MCP caller outside the owning Space is denied for a workflow-owned task', 
     { enforceWorkspaceOwnership: false }
   );
   const stopForStatus = mockStopForStatus();
-  const workflowOp = createCancelTaskOperation(() => db, jobs, { stopForStatus });
+  const workflowOp = canceller({ stopForStatus });
   expect(
     await workflowOp.execute({ taskId }, { source: 'mcp', sessionId: 'coordinator' })
   ).toMatchObject({ accepted: false, reason: 'cancellation_denied' });
@@ -418,7 +454,7 @@ test('an already-cancelled workflow-owned task returns unavailable', async () =>
   const spaceId = tasks.getTask(taskId)!.spaceId!;
   tasks.updateTask(taskId, { workflowRunId: createWorkflowRunId(spaceId), status: 'cancelled' });
   const stopForStatus = mockStopForStatus();
-  const workflowOp = createCancelTaskOperation(() => db, jobs, { stopForStatus });
+  const workflowOp = canceller({ stopForStatus });
   expect(await workflowOp.execute({ taskId }, { source: 'rpc' })).toMatchObject({
     accepted: false,
     reason: 'cancellation_unavailable',
@@ -429,7 +465,7 @@ test('an already-cancelled workflow-owned task returns unavailable', async () =>
 test('workflow-owned cancellation is unavailable when the stop binding is not configured', async () => {
   const spaceId = tasks.getTask(taskId)!.spaceId!;
   tasks.updateTask(taskId, { workflowRunId: createWorkflowRunId(spaceId) });
-  const workflowOp = createCancelTaskOperation(() => db, jobs, {});
+  const workflowOp = canceller({});
   expect(await workflowOp.execute({ taskId }, { source: 'rpc' })).toMatchObject({
     accepted: false,
     reason: 'cancellation_unavailable',
@@ -441,7 +477,7 @@ test('an archived workflow-owned task returns cancellation_unavailable, not dire
   tasks.updateTask(taskId, { workflowRunId: createWorkflowRunId(spaceId) });
   tasks.archiveTask(taskId);
   const stopForStatus = mockStopForStatus();
-  const workflowOp = createCancelTaskOperation(() => db, jobs, { stopForStatus });
+  const workflowOp = canceller({ stopForStatus });
   expect(await workflowOp.execute({ taskId }, { source: 'rpc' })).toMatchObject({
     accepted: false,
     reason: 'cancellation_unavailable',
@@ -455,7 +491,7 @@ test('a stop rejection naming an invalid transition surfaces cancellation_invali
   const stopForStatus = mock(async () => {
     throw new Error("Invalid status transition from 'in_progress' to 'cancelled'. Allowed: none");
   });
-  const workflowOp = createCancelTaskOperation(() => db, jobs, { stopForStatus });
+  const workflowOp = canceller({ stopForStatus });
   expect(await workflowOp.execute({ taskId }, { source: 'rpc' })).toMatchObject({
     accepted: false,
     reason: 'cancellation_invalid_transition',
@@ -468,7 +504,7 @@ test('a stale workflow stop guard surfaces cancellation_unavailable', async () =
   const stopForStatus = mock(async () => {
     throw new StaleTaskGuardError('Task transition snapshot is stale');
   });
-  const workflowOp = createCancelTaskOperation(() => db, jobs, { stopForStatus });
+  const workflowOp = canceller({ stopForStatus });
   expect(await workflowOp.execute({ taskId }, { source: 'rpc' })).toMatchObject({
     accepted: false,
     reason: 'cancellation_unavailable',
@@ -481,9 +517,13 @@ test('an unrelated stop failure is not swallowed as a domain rejection and surfa
   const stopForStatus = mock(async () => {
     throw new Error('ECONNRESET');
   });
-  const workflowOp = createCancelTaskOperation(() => db, jobs, { stopForStatus });
-  const registry = createOperationRegistry([workflowOp]);
-  const outcome = await invokeOperation(registry, 'task.cancel', { taskId }, { source: 'rpc' });
+  const registry = createOperationRegistry([transitionOperation({ stopForStatus }).operation]);
+  const outcome = await invokeOperation(
+    registry,
+    'task.transition',
+    { taskId, status: 'cancelled' },
+    { source: 'rpc' }
+  );
   expect(outcome).toMatchObject({ kind: 'failed', code: 'execution_failed' });
 });
 
@@ -497,7 +537,7 @@ test('a plain in_progress task is cancelled directly through the task manager, w
   }).id;
   const emitTaskUpdated = mock(async () => {});
   const stopForStatus = mockStopForStatus();
-  const plainOp = createCancelTaskOperation(() => db, jobs, {
+  const plainOp = canceller({
     getTaskManager: (id) => new SpaceTaskManager(db, id),
     emitTaskUpdated,
     stopForStatus,
@@ -514,7 +554,7 @@ test('a plain in_progress task is cancelled directly through the task manager, w
 test('a plain open task can be cancelled', async () => {
   const spaceId = tasks.getTask(taskId)!.spaceId!;
   const plainTaskId = tasks.createTask({ spaceId, title: 'Plain', description: '' }).id;
-  const plainOp = createCancelTaskOperation(() => db, jobs, {
+  const plainOp = canceller({
     getTaskManager: (id) => new SpaceTaskManager(db, id),
     emitTaskUpdated: async () => {},
   });
@@ -532,7 +572,7 @@ test('a plain task with a reserved direct attempt and no session yet is fenced t
   const reserved = attempts.claim(plainTaskId, 'direct-reserved', 'reserved-session');
   expect(reserved).not.toBeNull();
   const emitTaskUpdated = mock(async () => {});
-  const plainOp = createCancelTaskOperation(() => db, jobs, {
+  const plainOp = canceller({
     getTaskManager: (id) => new SpaceTaskManager(db, id),
     emitTaskUpdated,
   });
@@ -554,7 +594,7 @@ test('a plain done task returns cancellation_unavailable', async () => {
     description: '',
     status: 'done',
   }).id;
-  const plainOp = createCancelTaskOperation(() => db, jobs, {
+  const plainOp = canceller({
     getTaskManager: (id) => new SpaceTaskManager(db, id),
     emitTaskUpdated: async () => {},
   });
@@ -573,7 +613,7 @@ test('an MCP session in another Space cannot cancel a plain task', async () => {
     { enforceWorkspaceOwnership: false }
   );
   const getTaskManager = mock((id: string) => new SpaceTaskManager(db, id));
-  const plainOp = createCancelTaskOperation(() => db, jobs, {
+  const plainOp = canceller({
     getTaskManager,
     emitTaskUpdated: async () => {},
   });
@@ -587,7 +627,7 @@ test('an MCP session in another Space cannot cancel a plain task', async () => {
 test('a plain-task transition rejection surfaces cancellation_invalid_transition', async () => {
   const spaceId = tasks.getTask(taskId)!.spaceId!;
   const plainTaskId = tasks.createTask({ spaceId, title: 'Plain', description: '' }).id;
-  const plainOp = createCancelTaskOperation(() => db, jobs, {
+  const plainOp = canceller({
     getTaskManager: () => ({
       setTaskStatus: async () => {
         throw new Error("Invalid status transition from 'open' to 'cancelled'. Allowed: none");
@@ -616,7 +656,7 @@ function transitionOperation(overrides: Record<string, unknown> = {}) {
   return { operation: operationUnderTest, emitTaskUpdated };
 }
 
-test('task.transition to cancelled queues the same durable outcome task.cancel does', async () => {
+test('task.transition to cancelled queues a durable outcome for a running attempt', async () => {
   const { operation: transition } = transitionOperation();
 
   const viaTransition = await transition.execute(
@@ -690,38 +730,29 @@ test('task.transition reports cancellation_unavailable for an already terminal p
   expect(tasks.getTask(plainTaskId)?.status).toBe('done');
 });
 
-test.each(['task.cancel', 'task.transition'] as const)(
-  'a direct start claimed between the route read and the write is refused by %s',
-  async (door) => {
-    const spaceId = tasks.getTask(taskId)!.spaceId!;
-    const plainTaskId = tasks.createTask({ spaceId, title: 'Plain', description: '' }).id;
-    attempts.select(plainTaskId);
+test('a direct start claimed between the route read and the write is refused', async () => {
+  const spaceId = tasks.getTask(taskId)!.spaceId!;
+  const plainTaskId = tasks.createTask({ spaceId, title: 'Plain', description: '' }).id;
+  attempts.select(plainTaskId);
 
-    const realGetActive = DirectTaskExecutionRepository.prototype.getActive;
-    let reads = 0;
-    const spy = spyOn(DirectTaskExecutionRepository.prototype, 'getActive').mockImplementation(
-      function (this: DirectTaskExecutionRepository, id: string) {
-        reads += 1;
-        if (reads === 1 && id === plainTaskId) return null;
-        return realGetActive.call(this, id);
-      }
-    );
-    attempts.claim(plainTaskId, 'late-claim', 'late-session');
+  const realGetActive = DirectTaskExecutionRepository.prototype.getActive;
+  let reads = 0;
+  const spy = spyOn(DirectTaskExecutionRepository.prototype, 'getActive').mockImplementation(
+    function (this: DirectTaskExecutionRepository, id: string) {
+      reads += 1;
+      if (reads === 1 && id === plainTaskId) return null;
+      return realGetActive.call(this, id);
+    }
+  );
+  attempts.claim(plainTaskId, 'late-claim', 'late-session');
 
-    const run =
-      door === 'task.cancel'
-        ? createCancelTaskOperation(() => db, jobs, {
-            getTaskManager: (id) => new SpaceTaskManager(db, id),
-            emitTaskUpdated: async () => {},
-          }).execute({ taskId: plainTaskId }, { source: 'rpc' })
-        : transitionOperation().operation.execute(
-            { taskId: plainTaskId, status: 'cancelled' },
-            { source: 'rpc' }
-          );
+  const run = transitionOperation().operation.execute(
+    { taskId: plainTaskId, status: 'cancelled' },
+    { source: 'rpc' }
+  );
 
-    expect(await run).toEqual({ accepted: false, reason: 'cancellation_unavailable' });
-    expect(tasks.getTask(plainTaskId)?.status).toBe('open');
-    expect(attempts.get('late-claim')?.phase).toBe('reserved');
-    spy.mockRestore();
-  }
-);
+  expect(await run).toEqual({ accepted: false, reason: 'cancellation_unavailable' });
+  expect(tasks.getTask(plainTaskId)?.status).toBe('open');
+  expect(attempts.get('late-claim')?.phase).toBe('reserved');
+  spy.mockRestore();
+});

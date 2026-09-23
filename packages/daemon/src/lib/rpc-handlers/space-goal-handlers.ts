@@ -170,7 +170,7 @@ export function setupSpaceGoalHandlers(messageHub: MessageHub, deps: SpaceGoalHa
       accepted: true;
       total: number;
       events: SpaceGoalEvent[];
-    }>(operations, 'goal.events.list', params);
+    }>(operations, 'goal.event.list', params);
     return { events: result.events };
   });
 

@@ -372,7 +372,7 @@ export function createSubscriptionOperations(
       execute: subjectPipeline('unsubscribe-external-event', subs, unsubscribeSubject),
     }),
     defineOperation({
-      name: 'subscribe_pr_events',
+      name: 'event.external.pr.subscribe',
       policy: { safetyClass: 'mutate', roles: NODE_EVENT_ROLES },
       description: `Subscribe to GitHub PR events scoped to this run's PR, or to an explicit prUrl when the PR is not recorded on the run yet. ${SLOT_DOC}`,
       inputSchema: PrInput,

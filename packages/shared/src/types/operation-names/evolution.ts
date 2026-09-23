@@ -5,7 +5,7 @@ export const EVOLUTION_OPERATION_NAMES = [
   'evolution.lesson.update',
   'evolution.metric.add',
   'evolution.proposal.create',
-  'evolution.proposal.createTask',
+  'evolution.proposal.task.create',
   'evolution.proposal.update',
   'evolution.rollup.apply',
   'evolution.scope.create',

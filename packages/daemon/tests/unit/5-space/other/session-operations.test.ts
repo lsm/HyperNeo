@@ -179,7 +179,7 @@ describe('session operation catalog', () => {
       'session.get',
       'session.interrupt',
       'session.list',
-      'session.messages.list',
+      'session.message.list',
       'session.state.update',
     ]);
   });
@@ -193,7 +193,7 @@ describe('session operation catalog', () => {
     expect(policies).toEqual([
       ['session.list', 'read', READ_ROLES],
       ['session.get', 'read', READ_ROLES],
-      ['session.messages.list', 'read', READ_ROLES],
+      ['session.message.list', 'read', READ_ROLES],
       ['session.state.update', 'mutate', WRITE_ROLES],
       ['session.interrupt', 'destructive', WRITE_ROLES],
     ]);
@@ -328,7 +328,7 @@ describe('session operation catalog', () => {
     insertMessage(h.db, 'm1', '2026-01-03T00:00:00.000Z', 'first');
     insertMessage(h.db, 'm2', '2026-01-04T00:00:00.000Z', 'second');
     const all = await run(
-      'session.messages.list',
+      'session.message.list',
       { sessionId: TARGET },
       mcpCaller('ad_hoc_member')
     );
@@ -337,7 +337,7 @@ describe('session operation catalog', () => {
       'm1',
     ]);
     const paged = await run(
-      'session.messages.list',
+      'session.message.list',
       { sessionId: TARGET, before: '2026-01-04T00:00:00.000Z|m2' },
       mcpCaller('ad_hoc_member')
     );
@@ -455,7 +455,7 @@ describe('session operation role admission', () => {
       await run('session.get', { sessionId: TARGET }, mcpCaller('workflow_worker'))
     ).toMatchObject({ ok: true });
     expect(
-      await run('session.messages.list', { sessionId: TARGET }, mcpCaller('workflow_worker'))
+      await run('session.message.list', { sessionId: TARGET }, mcpCaller('workflow_worker'))
     ).toMatchObject({ ok: true });
   });
 

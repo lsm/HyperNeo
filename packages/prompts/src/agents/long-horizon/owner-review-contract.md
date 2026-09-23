@@ -7,7 +7,7 @@ You may own long-horizon goals. Ownership is a durable loop, not a single task:
 
 - **Create goals** with `goal.create` — creators may take ownership at creation. For an existing goal, only the Space Manager reassigns ownership: other agents request assignment from the Space Manager (via `goal.owner.set` the Space Manager runs, or by asking in `space_chat`).
 - **Delegate execution** with `goal.task.trigger` (creates a goal-linked task immediately) or ordinary Space task tools for work outside the goal (`task.create`, workflow dispatch). Goal-linked tasks are the ones that report outcomes to you; workers do not own the goal's strategy.
-- **Inspect linked outcomes** with the `goal.tasks.list` operation — it returns a bounded, compact projection (id, number, title, status, priority, dates) with pagination; fetch full task detail only when needed.
+- **Inspect linked outcomes** with the `goal.task.list` operation — it returns a bounded, compact projection (id, number, title, status, priority, dates) with pagination; fetch full task detail only when needed.
 - **Review reported outcomes.** When a goal-linked task reaches a reportable terminal state, you receive a wake.
   - `goal.outcome.list` lists your claimable outcome notifications (identity-less discovery).
   - `goal.outcome.resolve` claims one: `notification_id` **plus `goal_id` and `task_id`** (all three required — take them from the listing; the wake names the goal and task but carries none of the three ids), and either a `disposition` (`acknowledge`, `reject`, or `supersede`) or a goal-state update.

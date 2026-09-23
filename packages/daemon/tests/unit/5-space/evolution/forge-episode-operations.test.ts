@@ -220,7 +220,7 @@ const EPISODE_OPERATION_NAMES = [
   'evolution.episode.update',
   'evolution.lesson.update',
   'evolution.proposal.create',
-  'evolution.proposal.createTask',
+  'evolution.proposal.task.create',
   'evolution.proposal.update',
   'evolution.rollup.apply',
 ];
@@ -448,7 +448,7 @@ describe('evolution.proposal.update', () => {
   });
 });
 
-describe('evolution.proposal.createTask', () => {
+describe('evolution.proposal.task.create', () => {
   test('creates the Space task once and returns the same task on a repeat call', async () => {
     const ctx = makeCtx();
     try {
@@ -460,7 +460,7 @@ describe('evolution.proposal.createTask', () => {
           memberCaller
         )) as { accepted: true; proposal: { id: string } };
       const first = (await ctx
-        .op('evolution.proposal.createTask')
+        .op('evolution.proposal.task.create')
         .execute({ proposalId: created.proposal.id }, memberCaller)) as {
         accepted: true;
         proposal: { status: string };
@@ -469,14 +469,14 @@ describe('evolution.proposal.createTask', () => {
       expect(first.proposal.status).toBe('created');
       expect(first.task.evolutionScopeId).toBe(scope.id);
       const second = (await ctx
-        .op('evolution.proposal.createTask')
+        .op('evolution.proposal.task.create')
         .execute({ proposalId: created.proposal.id }, memberCaller)) as {
         accepted: true;
         task: { id: string };
       };
       expect(second.task.id).toBe(first.task.id);
       expect(ctx.taskRepo.listBySpace(SPACE_ID, true)).toHaveLength(1);
-      const entry = ctx.audited.find((row) => row.toolName === 'evolution.proposal.createTask');
+      const entry = ctx.audited.find((row) => row.toolName === 'evolution.proposal.task.create');
       expect(entry?.spaceId).toBe(SPACE_ID);
     } finally {
       ctx.db.close();
@@ -498,7 +498,7 @@ describe('evolution.proposal.createTask', () => {
         .execute({ proposalId: created.proposal.id, status: 'dismissed' }, memberCaller);
       expect(
         await ctx
-          .op('evolution.proposal.createTask')
+          .op('evolution.proposal.task.create')
           .execute({ proposalId: created.proposal.id }, memberCaller)
       ).toMatchObject({ accepted: false, reason: 'task_not_created' });
       expect(ctx.taskRepo.listBySpace(SPACE_ID, true)).toHaveLength(0);
@@ -585,7 +585,7 @@ describe('invokeOperation', () => {
       const proposals = ctx.episodeService.listTaskProposals(scope.id);
       const task = await invokeOperation(
         ctx.registry,
-        'evolution.proposal.createTask',
+        'evolution.proposal.task.create',
         { proposalId: proposals[0].id },
         memberCaller
       );
