@@ -81,13 +81,13 @@ export function admitForgeReader(
 export function admitForgeMutator(
   input: EvolutionSpaceScope,
   caller: OperationCaller,
-  forge: EvolutionAdmissionDependencies
+  evolution: EvolutionAdmissionDependencies
 ): EvolutionGate<EvolutionSpaceScope, EvolutionCallerRejection> {
   const admitted = admitForgeReader(input, caller);
   if ('reason' in admitted || caller.source !== 'mcp') return admitted;
-  const session = caller.sessionId ? forge.getSession(caller.sessionId) : null;
+  const session = caller.sessionId ? evolution.getSession(caller.sessionId) : null;
   return session?.status === 'active' &&
-    resolveSessionSpaceId(session, forge) === admitted.value.spaceId
+    resolveSessionSpaceId(session, evolution) === admitted.value.spaceId
     ? admitted
     : denyForge('forge_denied', 'Forge mutations require an active session in the owning Space');
 }

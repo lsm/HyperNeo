@@ -116,18 +116,18 @@ function failureDetail(err: unknown): string {
 function forgeScopeInSpace(
   scopeId: string,
   spaceId: string | undefined,
-  forge: EvolutionEpisodeOperationDependencies
+  evolution: EvolutionEpisodeOperationDependencies
 ): EvolutionScope | null {
-  const scope = forge.scopeService.getScope(scopeId);
+  const scope = evolution.scopeService.getScope(scopeId);
   return scope && (!spaceId || scope.spaceId === spaceId) ? scope : null;
 }
 
 export function requireEpisodeScope(
   input: { scopeId: string },
   scope: { spaceId?: string },
-  forge: EvolutionEpisodeOperationDependencies
+  evolution: EvolutionEpisodeOperationDependencies
 ): EvolutionGate<EvolutionScope, ScopeRejection> {
-  const found = forgeScopeInSpace(input.scopeId, scope.spaceId, forge);
+  const found = forgeScopeInSpace(input.scopeId, scope.spaceId, evolution);
   return found
     ? { value: found }
     : denyForge('scope_not_found', `EvolutionScope not found: ${input.scopeId}`);
@@ -136,10 +136,10 @@ export function requireEpisodeScope(
 export function requireForgeEpisode(
   input: { episodeId: string },
   scope: { spaceId?: string },
-  forge: EvolutionEpisodeOperationDependencies
+  evolution: EvolutionEpisodeOperationDependencies
 ): EvolutionGate<EvolutionEpisode, EpisodeRejection> {
-  const episode = forge.episodeService.getEpisode(input.episodeId);
-  if (!episode || !forgeScopeInSpace(episode.scopeId, scope.spaceId, forge)) {
+  const episode = evolution.episodeService.getEpisode(input.episodeId);
+  if (!episode || !forgeScopeInSpace(episode.scopeId, scope.spaceId, evolution)) {
     return denyForge('episode_not_found', `EvolutionEpisode not found: ${input.episodeId}`);
   }
   return { value: episode };
@@ -148,10 +148,10 @@ export function requireForgeEpisode(
 export function requireForgeLesson(
   input: { lessonId: string },
   scope: { spaceId?: string },
-  forge: EvolutionEpisodeOperationDependencies
+  evolution: EvolutionEpisodeOperationDependencies
 ): EvolutionGate<EvolutionLesson, LessonRejection> {
-  const lesson = forge.episodeService.getLesson(input.lessonId);
-  if (!lesson || !forgeScopeInSpace(lesson.scopeId, scope.spaceId, forge)) {
+  const lesson = evolution.episodeService.getLesson(input.lessonId);
+  if (!lesson || !forgeScopeInSpace(lesson.scopeId, scope.spaceId, evolution)) {
     return denyForge('lesson_not_found', `EvolutionLesson not found: ${input.lessonId}`);
   }
   return { value: lesson };
@@ -160,10 +160,10 @@ export function requireForgeLesson(
 export function requireForgeProposal(
   input: { proposalId: string },
   scope: { spaceId?: string },
-  forge: EvolutionEpisodeOperationDependencies
+  evolution: EvolutionEpisodeOperationDependencies
 ): EvolutionGate<TaskProposal, ProposalRejection> {
-  const proposal = forge.episodeService.getTaskProposal(input.proposalId);
-  if (!proposal || !forgeScopeInSpace(proposal.scopeId, scope.spaceId, forge)) {
+  const proposal = evolution.episodeService.getTaskProposal(input.proposalId);
+  if (!proposal || !forgeScopeInSpace(proposal.scopeId, scope.spaceId, evolution)) {
     return denyForge('proposal_not_found', `TaskProposal not found: ${input.proposalId}`);
   }
   return { value: proposal };
@@ -182,16 +182,16 @@ export async function applyForgeEpisodeCreate(
   input: z.infer<typeof EpisodeCreateInputSchema>,
   scope: EvolutionScope,
   caller: OperationCaller,
-  forge: EvolutionEpisodeOperationDependencies
+  evolution: EvolutionEpisodeOperationDependencies
 ): Promise<EvolutionGate<Record<string, unknown>, EpisodeCreateRejection>> {
   try {
-    const result = await forge.episodeService.createFromEvidence({
+    const result = await evolution.episodeService.createFromEvidence({
       scopeId: scope.id,
       evidenceIds: input.evidenceIds,
       timeWindow: input.timeWindow,
       confirmLowConfidence: input.confirmLowConfidence,
     });
-    forge.audit?.({
+    evolution.audit?.({
       toolName: 'evolution.episode.create',
       paramsSummary: { scopeId: scope.id, evidenceCount: input.evidenceIds.length },
       caller,
@@ -217,21 +217,21 @@ export function applyForgeEpisodeUpdate(
   input: z.infer<typeof EpisodeUpdateInputSchema>,
   existing: EvolutionEpisode,
   caller: OperationCaller,
-  forge: EvolutionEpisodeOperationDependencies
+  evolution: EvolutionEpisodeOperationDependencies
 ): EvolutionGate<{ accepted: true; episode: EvolutionEpisode }, EpisodeUpdateRejection> {
   if (existing.status !== 'draft' && input.status && input.status !== existing.status) {
     return denyForge('episode_terminal', 'Terminal Forge episodes cannot be reopened');
   }
-  const episode = forge.episodeService.updateEpisode(existing.id, {
+  const episode = evolution.episodeService.updateEpisode(existing.id, {
     status: input.status,
     title: input.title,
     outcomeSummary: input.outcomeSummary,
   });
-  forge.audit?.({
+  evolution.audit?.({
     toolName: 'evolution.episode.update',
     paramsSummary: { episodeId: existing.id, status: input.status },
     caller,
-    spaceId: forge.scopeService.getScope(existing.scopeId)?.spaceId,
+    spaceId: evolution.scopeService.getScope(existing.scopeId)?.spaceId,
   });
   return episode
     ? { value: { accepted: true, episode } }
@@ -254,23 +254,23 @@ export function applyForgeLessonUpdate(
   input: z.infer<typeof LessonUpdateInputSchema>,
   existing: EvolutionLesson,
   caller: OperationCaller,
-  forge: EvolutionEpisodeOperationDependencies
+  evolution: EvolutionEpisodeOperationDependencies
 ): EvolutionGate<{ accepted: true; lesson: EvolutionLesson }, LessonUpdateRejection> {
   if (existing.status === 'dismissed' && input.status && input.status !== 'dismissed') {
     return denyForge('lesson_dismissed', 'Dismissed lessons cannot be reactivated');
   }
-  const lesson = forge.episodeService.updateLesson(existing.id, {
+  const lesson = evolution.episodeService.updateLesson(existing.id, {
     status: input.status,
     appliesTo: input.appliesTo,
     rule: input.rule,
     why: input.why,
     confidence: input.confidence,
   });
-  forge.audit?.({
+  evolution.audit?.({
     toolName: 'evolution.lesson.update',
     paramsSummary: { lessonId: existing.id, status: input.status },
     caller,
-    spaceId: forge.scopeService.getScope(existing.scopeId)?.spaceId,
+    spaceId: evolution.scopeService.getScope(existing.scopeId)?.spaceId,
   });
   return lesson
     ? { value: { accepted: true, lesson } }
@@ -292,15 +292,15 @@ export function applyForgeProposalCreate(
   input: z.infer<typeof ProposalCreateInputSchema>,
   scope: EvolutionScope,
   caller: OperationCaller,
-  forge: EvolutionEpisodeOperationDependencies
+  evolution: EvolutionEpisodeOperationDependencies
 ): EvolutionGate<{ accepted: true; proposal: TaskProposal }, EpisodeRejection> {
   for (const episodeId of input.evidenceEpisodeIds ?? []) {
-    const episode = forge.episodeService.getEpisode(episodeId);
+    const episode = evolution.episodeService.getEpisode(episodeId);
     if (!episode || episode.scopeId !== scope.id) {
       return denyForge('episode_not_found', `EvolutionEpisode not found in scope: ${episodeId}`);
     }
   }
-  const proposal = forge.episodeService.createTaskProposal({
+  const proposal = evolution.episodeService.createTaskProposal({
     scopeId: scope.id,
     title: input.title,
     description: input.description,
@@ -308,7 +308,7 @@ export function applyForgeProposalCreate(
     priority: input.priority,
     evidenceEpisodeIds: input.evidenceEpisodeIds,
   });
-  forge.audit?.({
+  evolution.audit?.({
     toolName: 'evolution.proposal.create',
     paramsSummary: { scopeId: scope.id, title: input.title },
     caller,
@@ -333,7 +333,7 @@ export function applyForgeProposalUpdate(
   input: z.infer<typeof ProposalUpdateInputSchema>,
   existing: TaskProposal,
   caller: OperationCaller,
-  forge: EvolutionEpisodeOperationDependencies
+  evolution: EvolutionEpisodeOperationDependencies
 ): EvolutionGate<{ accepted: true; proposal: TaskProposal }, ProposalUpdateRejection> {
   if (existing.status === 'created' && input.status) {
     return denyForge('proposal_created', 'Created task proposals cannot be reopened');
@@ -341,18 +341,18 @@ export function applyForgeProposalUpdate(
   if (existing.status === 'dismissed' && input.status && input.status !== 'dismissed') {
     return denyForge('proposal_dismissed', 'Dismissed proposals cannot be reopened');
   }
-  const proposal = forge.episodeService.updateTaskProposal(existing.id, {
+  const proposal = evolution.episodeService.updateTaskProposal(existing.id, {
     title: input.title,
     description: input.description,
     reason: input.reason,
     priority: input.priority,
     status: input.status,
   });
-  forge.audit?.({
+  evolution.audit?.({
     toolName: 'evolution.proposal.update',
     paramsSummary: { proposalId: existing.id, status: input.status },
     caller,
-    spaceId: forge.scopeService.getScope(existing.scopeId)?.spaceId,
+    spaceId: evolution.scopeService.getScope(existing.scopeId)?.spaceId,
   });
   return proposal
     ? { value: { accepted: true, proposal } }
@@ -375,17 +375,17 @@ export function applyForgeProposalTask(
   input: z.infer<typeof ProposalCreateTaskInputSchema>,
   existing: TaskProposal,
   caller: OperationCaller,
-  forge: EvolutionEpisodeOperationDependencies
+  evolution: EvolutionEpisodeOperationDependencies
 ): EvolutionGate<Record<string, unknown>, ProposalTaskRejection> {
   try {
-    const result = forge.episodeService.createTaskFromProposal(existing.id, {
+    const result = evolution.episodeService.createTaskFromProposal(existing.id, {
       title: input.title,
       description: input.description,
       reason: input.reason,
       priority: input.priority,
       dependsOn: input.dependsOn,
     });
-    forge.audit?.({
+    evolution.audit?.({
       toolName: 'evolution.proposal.task.create',
       paramsSummary: { proposalId: existing.id, dependsOn: input.dependsOn },
       caller,
@@ -417,7 +417,7 @@ export function applyForgeRollup(
   input: z.infer<typeof RollupApplyInputSchema>,
   episode: EvolutionEpisode,
   caller: OperationCaller,
-  forge: EvolutionEpisodeOperationDependencies
+  evolution: EvolutionEpisodeOperationDependencies
 ): EvolutionGate<Record<string, unknown>, RollupRejection> {
   if (episode.rollupAppliedAt !== null) {
     return denyForge('rollup_already_applied', 'Episode rollup already applied');
@@ -425,16 +425,16 @@ export function applyForgeRollup(
   if (episode.status === 'dismissed') {
     return denyForge('episode_dismissed', 'Dismissed episode cannot accept rollup');
   }
-  const scope = forge.scopeService.getScope(episode.scopeId);
-  const goal = scope?.spaceGoalId ? forge.getGoal(scope.spaceGoalId) : null;
+  const scope = evolution.scopeService.getScope(episode.scopeId);
+  const goal = scope?.spaceGoalId ? evolution.getGoal(scope.spaceGoalId) : null;
   if (!scope || !goal || goal.spaceId !== scope.spaceId || goal.type !== 'recurring') {
     return denyForge('goal_not_recurring', 'Episode scope is not linked to a recurring goal');
   }
-  const result = forge.episodeService.applyRollupGoalUpdate({
+  const result = evolution.episodeService.applyRollupGoalUpdate({
     episodeId: episode.id,
     goalUpdate: input.goalUpdate,
   });
-  forge.audit?.({
+  evolution.audit?.({
     toolName: 'evolution.rollup.apply',
     paramsSummary: { episodeId: episode.id },
     caller,
@@ -443,54 +443,54 @@ export function applyForgeRollup(
   return { value: { accepted: true, ...result } };
 }
 
-export function createForgeEpisodeOperations(forge: EvolutionEpisodeOperationDependencies) {
-  const episodeCreate = (superpipe({ forge })('forge-episode-create') as PipelineAPI)
+export function createForgeEpisodeOperations(evolution: EvolutionEpisodeOperationDependencies) {
+  const episodeCreate = (superpipe({ evolution })('evolution-episode-create') as PipelineAPI)
     .input(['input', 'caller'])
-    .pipe(admitForgeMutator, ['input', 'caller', 'forge'], 'result:outcome')
-    .pipe(requireEpisodeScope, ['input', 'outcome', 'forge'], 'result:outcome')
-    .pipe(applyForgeEpisodeCreate, ['input', 'outcome', 'caller', 'forge'], 'result:outcome')
+    .pipe(admitForgeMutator, ['input', 'caller', 'evolution'], 'result:outcome')
+    .pipe(requireEpisodeScope, ['input', 'outcome', 'evolution'], 'result:outcome')
+    .pipe(applyForgeEpisodeCreate, ['input', 'outcome', 'caller', 'evolution'], 'result:outcome')
     .endAsync('outcome');
 
-  const episodeUpdate = (superpipe({ forge })('forge-episode-update') as PipelineAPI)
+  const episodeUpdate = (superpipe({ evolution })('evolution-episode-update') as PipelineAPI)
     .input(['input', 'caller'])
-    .pipe(admitForgeMutator, ['input', 'caller', 'forge'], 'result:outcome')
-    .pipe(requireForgeEpisode, ['input', 'outcome', 'forge'], 'result:outcome')
-    .pipe(applyForgeEpisodeUpdate, ['input', 'outcome', 'caller', 'forge'], 'result:outcome')
+    .pipe(admitForgeMutator, ['input', 'caller', 'evolution'], 'result:outcome')
+    .pipe(requireForgeEpisode, ['input', 'outcome', 'evolution'], 'result:outcome')
+    .pipe(applyForgeEpisodeUpdate, ['input', 'outcome', 'caller', 'evolution'], 'result:outcome')
     .endAsync('outcome');
 
-  const lessonUpdate = (superpipe({ forge })('forge-lesson-update') as PipelineAPI)
+  const lessonUpdate = (superpipe({ evolution })('evolution-lesson-update') as PipelineAPI)
     .input(['input', 'caller'])
-    .pipe(admitForgeMutator, ['input', 'caller', 'forge'], 'result:outcome')
-    .pipe(requireForgeLesson, ['input', 'outcome', 'forge'], 'result:outcome')
-    .pipe(applyForgeLessonUpdate, ['input', 'outcome', 'caller', 'forge'], 'result:outcome')
+    .pipe(admitForgeMutator, ['input', 'caller', 'evolution'], 'result:outcome')
+    .pipe(requireForgeLesson, ['input', 'outcome', 'evolution'], 'result:outcome')
+    .pipe(applyForgeLessonUpdate, ['input', 'outcome', 'caller', 'evolution'], 'result:outcome')
     .endAsync('outcome');
 
-  const proposalCreate = (superpipe({ forge })('forge-proposal-create') as PipelineAPI)
+  const proposalCreate = (superpipe({ evolution })('evolution-proposal-create') as PipelineAPI)
     .input(['input', 'caller'])
-    .pipe(admitForgeMutator, ['input', 'caller', 'forge'], 'result:outcome')
-    .pipe(requireEpisodeScope, ['input', 'outcome', 'forge'], 'result:outcome')
-    .pipe(applyForgeProposalCreate, ['input', 'outcome', 'caller', 'forge'], 'result:outcome')
+    .pipe(admitForgeMutator, ['input', 'caller', 'evolution'], 'result:outcome')
+    .pipe(requireEpisodeScope, ['input', 'outcome', 'evolution'], 'result:outcome')
+    .pipe(applyForgeProposalCreate, ['input', 'outcome', 'caller', 'evolution'], 'result:outcome')
     .endAsync('outcome');
 
-  const proposalUpdate = (superpipe({ forge })('forge-proposal-update') as PipelineAPI)
+  const proposalUpdate = (superpipe({ evolution })('evolution-proposal-update') as PipelineAPI)
     .input(['input', 'caller'])
-    .pipe(admitForgeMutator, ['input', 'caller', 'forge'], 'result:outcome')
-    .pipe(requireForgeProposal, ['input', 'outcome', 'forge'], 'result:outcome')
-    .pipe(applyForgeProposalUpdate, ['input', 'outcome', 'caller', 'forge'], 'result:outcome')
+    .pipe(admitForgeMutator, ['input', 'caller', 'evolution'], 'result:outcome')
+    .pipe(requireForgeProposal, ['input', 'outcome', 'evolution'], 'result:outcome')
+    .pipe(applyForgeProposalUpdate, ['input', 'outcome', 'caller', 'evolution'], 'result:outcome')
     .endAsync('outcome');
 
-  const proposalTask = (superpipe({ forge })('forge-proposal-create-task') as PipelineAPI)
+  const proposalTask = (superpipe({ evolution })('evolution-proposal-create-task') as PipelineAPI)
     .input(['input', 'caller'])
-    .pipe(admitForgeMutator, ['input', 'caller', 'forge'], 'result:outcome')
-    .pipe(requireForgeProposal, ['input', 'outcome', 'forge'], 'result:outcome')
-    .pipe(applyForgeProposalTask, ['input', 'outcome', 'caller', 'forge'], 'result:outcome')
+    .pipe(admitForgeMutator, ['input', 'caller', 'evolution'], 'result:outcome')
+    .pipe(requireForgeProposal, ['input', 'outcome', 'evolution'], 'result:outcome')
+    .pipe(applyForgeProposalTask, ['input', 'outcome', 'caller', 'evolution'], 'result:outcome')
     .endAsync('outcome');
 
-  const rollupApply = (superpipe({ forge })('forge-rollup-apply') as PipelineAPI)
+  const rollupApply = (superpipe({ evolution })('evolution-rollup-apply') as PipelineAPI)
     .input(['input', 'caller'])
-    .pipe(admitForgeMutator, ['input', 'caller', 'forge'], 'result:outcome')
-    .pipe(requireForgeEpisode, ['input', 'outcome', 'forge'], 'result:outcome')
-    .pipe(applyForgeRollup, ['input', 'outcome', 'caller', 'forge'], 'result:outcome')
+    .pipe(admitForgeMutator, ['input', 'caller', 'evolution'], 'result:outcome')
+    .pipe(requireForgeEpisode, ['input', 'outcome', 'evolution'], 'result:outcome')
+    .pipe(applyForgeRollup, ['input', 'outcome', 'caller', 'evolution'], 'result:outcome')
     .endAsync('outcome');
 
   return [

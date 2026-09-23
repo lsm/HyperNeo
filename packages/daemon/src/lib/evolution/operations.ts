@@ -25,12 +25,12 @@ export type EvolutionOperationDependencies = Omit<EvolutionScopeOperationDepende
   };
 
 export function createForgeOperations(
-  forge: EvolutionOperationDependencies
+  evolution: EvolutionOperationDependencies
 ): OperationDefinition[] {
   return [
-    ...createForgeScopeOperations(forge),
-    ...createForgeEpisodeOperations(forge),
-    createForgeEvidenceAttachOperation(forge),
-    createForgeScopeGetOperation(forge),
+    ...createForgeScopeOperations(evolution),
+    ...createForgeEpisodeOperations(evolution),
+    createForgeEvidenceAttachOperation(evolution),
+    createForgeScopeGetOperation(evolution),
   ];
 }
