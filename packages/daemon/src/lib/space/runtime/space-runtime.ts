@@ -44,6 +44,7 @@ import { JobQueueRepository } from '../../../storage/repositories/job-queue-repo
 import { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository.ts';
 import type { SpaceAgentTemplateRepository } from '../../../storage/repositories/space-agent-template-repository.ts';
 import type { SpaceAgentSubscriptionRepository } from '../../../storage/repositories/space-agent-subscription-repository.ts';
+import type { SpaceSessionEventSubscriptionRepository } from '../../../storage/repositories/space-session-event-subscription-repository.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import { SpaceWorkflowEventSubscriptionRepository } from '../../../storage/repositories/space-workflow-event-subscription-repository.ts';
@@ -219,6 +220,7 @@ export interface SpaceRuntimeConfig {
   spaceManager: SpaceManager;
   longHorizonAgentRepo?: SpaceLongHorizonAgentRepository;
   subscriptionRepo?: SpaceAgentSubscriptionRepository;
+  sessionSubscriptionRepo?: SpaceSessionEventSubscriptionRepository;
   templateRepo?: SpaceAgentTemplateRepository;
   workflowEventSubscriptionRepo?: SpaceWorkflowEventSubscriptionRepository;
   spaceWorkflowManager: SpaceWorkflowManager;
@@ -266,6 +268,12 @@ export interface SpaceRuntimeConfig {
     message: string;
     idempotencyKey: string;
   }) => Promise<{ delivered: boolean }>;
+  deliverSessionExternalEvent?: (args: {
+    spaceId: string;
+    sessionId: string;
+    message: string;
+    idempotencyKey: string;
+  }) => Promise<{ delivered: boolean; gone?: boolean }>;
 }
 
 interface StartWorkflowRunOptions {
@@ -322,12 +330,54 @@ interface LongHorizonSubscriptionTarget {
   filter: Record<string, unknown>;
 }
 
-type SubscriptionTarget = WorkflowSubscriptionTarget | LongHorizonSubscriptionTarget;
+interface SessionSubscriptionTarget {
+  kind: 'session';
+  spaceId: string;
+  sessionId: string;
+  topic: string;
+  subscriptionId: string;
+}
+
+type StoredSubscriberTarget = LongHorizonSubscriptionTarget | SessionSubscriptionTarget;
+
+type SubscriptionTarget = WorkflowSubscriptionTarget | StoredSubscriberTarget;
 
 function isWorkflowSubscriptionTarget(
   target: SubscriptionTarget
 ): target is WorkflowSubscriptionTarget {
-  return target.kind !== 'long_horizon_agent';
+  return target.kind === undefined || target.kind === 'workflow';
+}
+
+function isSessionSubscriptionTarget(
+  target: SubscriptionTarget
+): target is SessionSubscriptionTarget {
+  return target.kind === 'session';
+}
+
+function isStoredSubscriberTarget(target: SubscriptionTarget): target is StoredSubscriberTarget {
+  return target.kind === 'long_horizon_agent' || target.kind === 'session';
+}
+
+function storedSubscriberDeliveryTarget(target: StoredSubscriberTarget) {
+  return target.kind === 'session'
+    ? {
+        workflowRunId: `session:${target.spaceId}`,
+        taskId: target.subscriptionId,
+        nodeId: target.sessionId,
+        agentName: target.sessionId,
+      }
+    : {
+        workflowRunId: `long_horizon:${target.spaceId}`,
+        taskId: target.subscriptionId,
+        nodeId: target.agentId,
+        agentName: target.agentId,
+      };
+}
+
+function describeStoredSubscriber(target: StoredSubscriberTarget): string {
+  return target.kind === 'session'
+    ? `session ${target.sessionId}`
+    : `long-horizon agent ${target.agentId}`;
 }
 
 function isLongHorizonSubscriptionTarget(
@@ -549,6 +599,18 @@ function formatCommandError(error: unknown): string {
 function longHorizonSpaceIdFromWorkflowRunId(workflowRunId: string): string | null {
   const prefix = 'long_horizon:';
   return workflowRunId.startsWith(prefix) ? workflowRunId.slice(prefix.length) : null;
+}
+
+function sessionSpaceIdFromWorkflowRunId(workflowRunId: string): string | null {
+  const prefix = 'session:';
+  return workflowRunId.startsWith(prefix) ? workflowRunId.slice(prefix.length) : null;
+}
+
+function isStoredSubscriberRunId(workflowRunId: string): boolean {
+  return (
+    longHorizonSpaceIdFromWorkflowRunId(workflowRunId) !== null ||
+    sessionSpaceIdFromWorkflowRunId(workflowRunId) !== null
+  );
 }
 
 function mapNotificationEventToInternalEvent(event: SpaceNotificationEvent): {
@@ -1538,6 +1600,7 @@ export class SpaceRuntime {
         return (
           target.spaceId === payload.spaceId && eventMatchesFilter(target.filter, payload.payload)
         );
+      if (isSessionSubscriptionTarget(target)) return target.spaceId === payload.spaceId;
       return this.isWorkflowTargetOwnedBySpace(target, payload.spaceId);
     });
 
@@ -1561,24 +1624,27 @@ export class SpaceRuntime {
       string,
       { target: WorkflowSubscriptionTarget; deliveryKey: string }
     >();
-    const longHorizonDeliveries = new Map<
+    const storedDeliveries = new Map<
       string,
-      { target: LongHorizonSubscriptionTarget; deliveryKey: string }
+      { target: StoredSubscriberTarget; deliveryKey: string }
     >();
     for (const match of matches) {
       try {
-        if (isLongHorizonSubscriptionTarget(match)) {
-          const deliveryKey = this.buildLongHorizonDeliveryKey(match, payload);
-          const longHorizonTarget = {
-            workflowRunId: `long_horizon:${match.spaceId}`,
-            taskId: match.subscriptionId,
-            nodeId: match.agentId,
-            agentName: match.agentId,
-          };
-          if (store.registerExpectedDelivery(payload.eventId, deliveryKey, longHorizonTarget)) {
-            this.queueHealthMetrics.recordEnqueue(payload.source, 'long_horizon=active');
+        if (isStoredSubscriberTarget(match)) {
+          const deliveryKey = this.buildStoredSubscriberDeliveryKey(match, payload);
+          if (
+            store.registerExpectedDelivery(
+              payload.eventId,
+              deliveryKey,
+              storedSubscriberDeliveryTarget(match)
+            )
+          ) {
+            this.queueHealthMetrics.recordEnqueue(
+              payload.source,
+              match.kind === 'session' ? 'session=active' : 'long_horizon=active'
+            );
           }
-          longHorizonDeliveries.set(deliveryKey, { target: match, deliveryKey });
+          storedDeliveries.set(deliveryKey, { target: match, deliveryKey });
           continue;
         }
         const target = this.resolveSubscriptionTarget(match);
@@ -1593,7 +1659,9 @@ export class SpaceRuntime {
       } catch (err) {
         const targetDescription = isLongHorizonSubscriptionTarget(match)
           ? `${match.spaceId}/${match.agentId}`
-          : `${match.workflowRunId}/${match.nodeId}/${match.agentName}`;
+          : isSessionSubscriptionTarget(match)
+            ? `${match.spaceId}/${match.sessionId}`
+            : `${match.workflowRunId}/${match.nodeId}/${match.agentName}`;
         log.warn(
           `SpaceRuntime: failed to register external event ${payload.eventId} for ` +
             `${targetDescription}: ${formatCommandError(err)}`
@@ -1601,7 +1669,7 @@ export class SpaceRuntime {
       }
     }
 
-    for (const { target, deliveryKey } of longHorizonDeliveries.values()) {
+    for (const { target, deliveryKey } of storedDeliveries.values()) {
       if (store.isDeliveryTerminal(payload.eventId, deliveryKey)) {
         continue;
       }
@@ -1609,7 +1677,7 @@ export class SpaceRuntime {
         this.queueHealthMetrics.recordClaimConflict();
         continue;
       }
-      await this.deliverToLongHorizonAgent(target, payload, deliveryKey);
+      await this.deliverToStoredSubscriber(target, payload, deliveryKey);
     }
 
     const immediateRecord = store.getById(payload.eventId);
@@ -2384,8 +2452,35 @@ export class SpaceRuntime {
     return entry ? renderEventBlock(entry) : '';
   }
 
-  private async deliverToLongHorizonAgent(
-    target: LongHorizonSubscriptionTarget,
+  private sendToStoredSubscriber(
+    target: StoredSubscriberTarget,
+    message: string,
+    idempotencyKey: string
+  ): Promise<{ delivered: boolean; gone?: boolean }> {
+    if (target.kind === 'session') {
+      if (!this.config.deliverSessionExternalEvent) {
+        throw new Error('session event delivery unavailable');
+      }
+      return this.config.deliverSessionExternalEvent({
+        spaceId: target.spaceId,
+        sessionId: target.sessionId,
+        message,
+        idempotencyKey,
+      });
+    }
+    if (!this.config.deliverLongHorizonExternalEvent) {
+      throw new Error('long-horizon event delivery unavailable');
+    }
+    return this.config.deliverLongHorizonExternalEvent({
+      spaceId: target.spaceId,
+      agentId: target.agentId,
+      message,
+      idempotencyKey,
+    });
+  }
+
+  private async deliverToStoredSubscriber(
+    target: StoredSubscriberTarget,
     event: ExternalEventPublishedPayload,
     deliveryKey: string
   ): Promise<void> {
@@ -2393,17 +2488,27 @@ export class SpaceRuntime {
     if (!store || this.pausedSpaceIds.has(target.spaceId)) return;
     this.externalEventDeliveriesInFlight.add(deliveryKey);
     try {
-      if (!this.config.deliverLongHorizonExternalEvent) {
-        throw new Error('long-horizon event delivery unavailable');
-      }
-      const result = await this.config.deliverLongHorizonExternalEvent({
-        spaceId: target.spaceId,
-        agentId: target.agentId,
-        message: this.externalEventDeliveryMessage(event),
-        idempotencyKey: deliveryKey,
-      });
+      const result = await this.sendToStoredSubscriber(
+        target,
+        this.externalEventDeliveryMessage(event),
+        deliveryKey
+      );
       if (this.cancelledLongHorizonDeliveries.has(deliveryKey)) return;
-      if (!result.delivered) throw new Error('long-horizon agent unavailable');
+      if (!result.delivered && result.gone) {
+        this.clearExternalEventRetry(deliveryKey);
+        if (target.kind === 'session') this.dropSessionSubscription(target);
+        store.markDeliveryFailed(event.eventId, deliveryKey, {
+          terminal: true,
+          reason: 'subscriber_gone',
+        });
+        store.markEventFailedIfAllDeliveriesTerminal(event.eventId);
+        return;
+      }
+      if (!result.delivered) {
+        throw new Error(
+          target.kind === 'session' ? 'session unavailable' : 'long-horizon agent unavailable'
+        );
+      }
       this.clearExternalEventRetry(deliveryKey);
       store.markDeliveryMailboxAccepted(event.eventId, deliveryKey);
       store.markEventDeliveredIfAllDeliveriesDelivered(event.eventId);
@@ -2420,10 +2525,10 @@ export class SpaceRuntime {
         terminal: false,
         reason: failureReason,
       });
-      this.scheduleLongHorizonEventRetry(target, event, deliveryKey, failureReason);
+      this.scheduleStoredSubscriberRetry(target, event, deliveryKey, failureReason);
       log.warn(
-        `SpaceRuntime: failed to deliver external event ${event.eventId} to long-horizon agent ` +
-          `${target.agentId}: ${failureReason}`
+        `SpaceRuntime: failed to deliver external event ${event.eventId} to ` +
+          `${describeStoredSubscriber(target)}: ${failureReason}`
       );
     } finally {
       this.externalEventDeliveriesInFlight.delete(deliveryKey);
@@ -2463,8 +2568,8 @@ export class SpaceRuntime {
     }
   }
 
-  private scheduleLongHorizonEventRetry(
-    target: LongHorizonSubscriptionTarget,
+  private scheduleStoredSubscriberRetry(
+    target: StoredSubscriberTarget,
     event: ExternalEventPublishedPayload,
     deliveryKey: string,
     failureReason: string
@@ -2489,10 +2594,10 @@ export class SpaceRuntime {
       }
       if (this.externalEventDeliveriesInFlight.has(deliveryKey)) {
         this.queueHealthMetrics.recordClaimConflict();
-        this.scheduleLongHorizonEventRetry(target, event, deliveryKey, failureReason);
+        this.scheduleStoredSubscriberRetry(target, event, deliveryKey, failureReason);
         return;
       }
-      void this.deliverToLongHorizonAgent(target, event, deliveryKey);
+      void this.deliverToStoredSubscriber(target, event, deliveryKey);
     }, EXTERNAL_EVENT_RETRY_DELAY_MS);
     this.externalEventRetryTimers.set(deliveryKey, timer);
   }
@@ -2711,16 +2816,16 @@ export class SpaceRuntime {
     ]);
   }
 
-  private buildLongHorizonDeliveryKey(
-    target: LongHorizonSubscriptionTarget,
+  private buildStoredSubscriberDeliveryKey(
+    target: StoredSubscriberTarget,
     event: ExternalEventPublishedPayload
   ): string {
     return JSON.stringify([
-      'long_horizon_agent',
+      target.kind,
       event.source,
       event.dedupeKey,
       target.spaceId,
-      target.agentId,
+      target.kind === 'session' ? target.sessionId : target.agentId,
       target.subscriptionId,
     ]);
   }
@@ -4464,7 +4569,7 @@ export class SpaceRuntime {
       listPendingDeliveries: (scope) =>
         store
           .listPendingDeliveries(scope)
-          .filter((delivery) => !longHorizonSpaceIdFromWorkflowRunId(delivery.workflowRunId)),
+          .filter((delivery) => !isStoredSubscriberRunId(delivery.workflowRunId)),
       getEventRecord: (eventId) => store.getById(eventId),
       isDeliveryInFlight: (deliveryKey) =>
         this.externalEventDeliveriesInFlight.has(deliveryKey) ||
@@ -4635,6 +4740,11 @@ export class SpaceRuntime {
     for (const delivery of store.listPendingDeliveries(workflowRunId)) {
       const eventRecord = store.getById(delivery.eventId);
       if (!eventRecord || eventRecord.state !== 'published') continue;
+      const sessionSpaceId = sessionSpaceIdFromWorkflowRunId(delivery.workflowRunId);
+      if (sessionSpaceId) {
+        this.requeueSessionPendingDelivery(delivery, eventRecord, sessionSpaceId);
+        continue;
+      }
       const longHorizonSpaceId = longHorizonSpaceIdFromWorkflowRunId(delivery.workflowRunId);
       if (!longHorizonSpaceId) {
         this.requeueWorkflowPendingDelivery(delivery, eventRecord, pausedSpaceIds);
@@ -4700,8 +4810,40 @@ export class SpaceRuntime {
         continue;
       }
       if (this.pausedSpaceIds.has(longHorizonSpaceId)) continue;
-      void this.deliverToLongHorizonAgent(target, eventPayload, delivery.deliveryKey);
+      void this.deliverToStoredSubscriber(target, eventPayload, delivery.deliveryKey);
     }
+  }
+
+  private requeueSessionPendingDelivery(
+    delivery: ExternalEventDeliveryRecord,
+    eventRecord: ExternalEventRecord,
+    spaceId: string
+  ): void {
+    const store = this.config.externalEventStore;
+    if (!store || this.externalEventDeliveriesInFlight.has(delivery.deliveryKey)) return;
+    const failTerminal = (reason: string) => {
+      store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, { terminal: true, reason });
+      store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
+    };
+    if (
+      isQueuedExternalEventExpired(eventRecord.createdAt, Date.now(), EXTERNAL_EVENT_QUEUE_TTL_MS)
+    ) {
+      failTerminal('ttl_expired');
+      return;
+    }
+    const eventPayload = this.externalEventPayloadFromRecord(eventRecord.event);
+    const target = this.lookupSubscriptionTargets(eventPayload.topic).find(
+      (match): match is SessionSubscriptionTarget =>
+        isSessionSubscriptionTarget(match) &&
+        match.spaceId === spaceId &&
+        match.subscriptionId === delivery.taskId
+    );
+    if (!target) {
+      failTerminal('subscription_no_longer_active');
+      return;
+    }
+    if (this.pausedSpaceIds.has(spaceId)) return;
+    void this.deliverToStoredSubscriber(target, eventPayload, delivery.deliveryKey);
   }
 
   private requeueWorkflowPendingDelivery(
@@ -4767,7 +4909,9 @@ export class SpaceRuntime {
     }
     this.rehydrateWorkflowSubscriptions(spaceId, resumedRuns, tasksByRun);
     this.rehydrateLongHorizonSubscriptions(spaceId);
+    this.rehydrateSessionSubscriptions(spaceId);
     this.tryRequeuePendingDeliveries(this.pausedSpaceIds, `long_horizon:${spaceId}`);
+    this.tryRequeuePendingDeliveries(this.pausedSpaceIds, `session:${spaceId}`);
     for (const run of resumedRuns) {
       await this.recoverPendingDeliveries(this.pausedSpaceIds, run.id);
     }
@@ -4825,6 +4969,57 @@ export class SpaceRuntime {
         );
       }
     }
+  }
+
+  private dropSessionSubscription(target: SessionSubscriptionTarget): void {
+    this.config.sessionSubscriptionRepo?.delete(target.subscriptionId);
+    this.topicTrie.remove(
+      (candidate) =>
+        isSessionSubscriptionTarget(candidate) && candidate.subscriptionId === target.subscriptionId
+    );
+  }
+
+  private rehydrateSessionSubscriptions(spaceId: string): void {
+    const repo = this.config.sessionSubscriptionRepo;
+    if (!repo) return;
+    this.topicTrie.remove(
+      (target) => isSessionSubscriptionTarget(target) && target.spaceId === spaceId
+    );
+    for (const subscription of repo.listBySpace(spaceId)) {
+      const result = this.refreshSessionSubscription(spaceId, subscription.id);
+      if (!result.success) {
+        log.warn(
+          `SpaceRuntime: skipping invalid session subscription ${subscription.id}: ` +
+            (result.error ?? 'invalid pattern')
+        );
+      }
+    }
+  }
+
+  refreshSessionSubscription(
+    spaceId: string,
+    subscriptionId: string
+  ): { success: boolean; error?: string } {
+    const repo = this.config.sessionSubscriptionRepo;
+    if (!repo) return { success: false, error: 'Session subscription repository unavailable.' };
+    this.topicTrie.remove(
+      (target) =>
+        isSessionSubscriptionTarget(target) &&
+        target.spaceId === spaceId &&
+        target.subscriptionId === subscriptionId
+    );
+    const subscription = repo.get(subscriptionId);
+    if (!subscription || subscription.spaceId !== spaceId) return { success: true };
+    const validation = validateGlobPattern(subscription.topic);
+    if (!validation.valid) return { success: false, error: validation.reason ?? 'invalid pattern' };
+    this.topicTrie.insert(subscription.topic, {
+      kind: 'session',
+      spaceId,
+      sessionId: subscription.sessionId,
+      topic: subscription.topic,
+      subscriptionId,
+    });
+    return { success: true };
   }
 
   private groupTasksByRun(tasks: SpaceTask[]): Map<string, SpaceTask[]> {
@@ -4965,6 +5160,7 @@ export class SpaceRuntime {
         await this.ensureExecutorRegistered(run, space);
       }
       this.rehydrateLongHorizonSubscriptions(space.id);
+      this.rehydrateSessionSubscriptions(space.id);
       const spaceRuns = this.config.workflowRunRepo.listBySpace(space.id);
       const tasksByRun = this.groupTasksByRun(
         this.config.taskRepo.listByWorkflowRunIdsIncludingArchived(spaceRuns.map((run) => run.id))

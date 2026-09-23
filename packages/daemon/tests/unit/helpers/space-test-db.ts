@@ -11,6 +11,7 @@ import { runMigration250 } from '../../../src/storage/schema/m250-direct-stop-re
 import { runMigration248 } from '../../../src/storage/schema/m248-direct-task-execution';
 import { createEvolutionTables } from '../../../src/storage/schema/evolution';
 import { createLongHorizonAgentTables } from '../../../src/storage/schema/long-horizon-agents';
+import { createSpaceSessionEventSubscriptionTables } from '../../../src/storage/schema/space-session-event-subscriptions';
 import { createSessionCounters } from '../../../src/storage/schema/session-counters';
 import { createWorkflowEventSubscriptionTables } from '../../../src/storage/schema/workflow-event-subscriptions';
 import type { Database as BunDatabase } from '../../../src/storage/sqlite-compat';
@@ -513,6 +514,7 @@ export function createSpaceTables(db: BunDatabase): void {
 
   createEvolutionTables(db);
   createLongHorizonAgentTables(db);
+  createSpaceSessionEventSubscriptionTables(db);
   db.exec(
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_space_lh_agent_goals_one_owner ` +
       `ON space_long_horizon_agent_goals(goal_id) WHERE relationship = 'owner'`

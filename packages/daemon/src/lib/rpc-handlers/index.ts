@@ -101,6 +101,7 @@ import { SpaceAgentGoalScopeRepository } from '../../storage/repositories/space-
 import { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository.ts';
 import { SpaceAgentReminderRepository } from '../../storage/repositories/space-agent-reminder-repository.ts';
 import { SpaceAgentSubscriptionRepository } from '../../storage/repositories/space-agent-subscription-repository.ts';
+import { SpaceSessionEventSubscriptionRepository } from '../../storage/repositories/space-session-event-subscription-repository.ts';
 import { SpaceAgentTemplateManager } from '../agents/template-manager.ts';
 import { createAgentTemplateResolverFactory } from '../workflows/run-template-snapshot.ts';
 import {
@@ -765,6 +766,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.db.getDatabase(),
     spaceAgentRepo
   );
+  const spaceSessionEventSubscriptionRepo = new SpaceSessionEventSubscriptionRepository(
+    deps.db.getDatabase()
+  );
 
   const spaceRuntimeService: SpaceRuntimeService = new SpaceRuntimeService({
     ownedAgents: spaceAgentRepo,
@@ -774,6 +778,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     longHorizonAgentRepo,
     goalScopeRepo: spaceAgentGoalScopeRepo,
     subscriptionRepo: spaceAgentSubscriptionRepo,
+    sessionSubscriptionRepo: spaceSessionEventSubscriptionRepo,
     reminderRepo: spaceAgentReminderRepo,
     spaceWorkflowManager,
     workflowRunRepo: spaceWorkflowRunRepo,
