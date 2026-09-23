@@ -3,7 +3,7 @@ import { Database } from '../../../../src/storage/sqlite-compat';
 import type { CreateEvidenceRefParams, StructuredLogEvent } from '@hyperneo/shared';
 import {
   EvolutionLogEvidenceService,
-  PRODUCT_FORGE_SCOPE_ID,
+  PRODUCT_EVOLUTION_SCOPE_ID,
 } from '../../../../src/lib/evolution/log-evidence-service';
 import { EvolutionRepository } from '../../../../src/storage/repositories/evolution-repository';
 import type { EvidenceRef } from '@hyperneo/shared';
@@ -109,7 +109,7 @@ describe('EvolutionLogEvidenceService', () => {
       },
       subscriptionRefreshMs: 0,
     });
-    expect(evolutionRepo.getScope(PRODUCT_FORGE_SCOPE_ID)).toBeNull();
+    expect(evolutionRepo.getScope(PRODUCT_EVOLUTION_SCOPE_ID)).toBeNull();
 
     service.capture(createEvent({ level: 'error', message: 'dynamic scope failure' }));
     service.capture(createEvent({ level: 'warn', message: 'dynamic scope warning' }));
@@ -297,13 +297,13 @@ describe('EvolutionLogEvidenceService', () => {
 				id, space_id, space_goal_id, kind, name, objective, parent_scope_id,
 				metric_definitions_json, policy_json, created_at, updated_at
 			) VALUES (?, ?, NULL, 'project', 'Fixed product scope', 'Fixed scope', NULL, '[]', '{}', ?, ?)`
-    ).run(PRODUCT_FORGE_SCOPE_ID, fixedSpaceId, Date.now(), Date.now());
+    ).run(PRODUCT_EVOLUTION_SCOPE_ID, fixedSpaceId, Date.now(), Date.now());
 
     service.capture(createEvent({ level: 'error', message: 'fixed after refresh' }));
     service.flush();
 
     expect(evolutionRepo.listEvidence(dynamicScope!.id)).toHaveLength(1);
-    expect(evolutionRepo.listEvidence(PRODUCT_FORGE_SCOPE_ID)).toHaveLength(1);
+    expect(evolutionRepo.listEvidence(PRODUCT_EVOLUTION_SCOPE_ID)).toHaveLength(1);
   });
 
   it('limits source lookup to the latest matching evidence', () => {

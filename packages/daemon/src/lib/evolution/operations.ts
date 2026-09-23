@@ -1,19 +1,19 @@
 import type { SpaceGoal } from '@hyperneo/shared';
 import type { OperationDefinition } from '../operations/registry.ts';
 import {
-  createForgeEpisodeOperations,
+  createEvolutionEpisodeOperations,
   type EvolutionEpisodeOperationDependencies,
 } from './episode-operations.ts';
 import {
-  createForgeEvidenceAttachOperation,
+  createEvolutionEvidenceAttachOperation,
   type EvolutionEvidenceAttachDependencies,
 } from './evidence-attach-operation.ts';
 import {
-  createForgeScopeGetOperation,
+  createEvolutionScopeGetOperation,
   type EvolutionScopeGetDependencies,
 } from './scope-get-operation.ts';
 import {
-  createForgeScopeOperations,
+  createEvolutionScopeOperations,
   type EvolutionScopeOperationDependencies,
 } from './scope-operations.ts';
 
@@ -24,13 +24,13 @@ export type EvolutionOperationDependencies = Omit<EvolutionScopeOperationDepende
     readonly getGoal: (goalId: string) => SpaceGoal | null;
   };
 
-export function createForgeOperations(
+export function createEvolutionOperations(
   evolution: EvolutionOperationDependencies
 ): OperationDefinition[] {
   return [
-    ...createForgeScopeOperations(evolution),
-    ...createForgeEpisodeOperations(evolution),
-    createForgeEvidenceAttachOperation(evolution),
-    createForgeScopeGetOperation(evolution),
+    ...createEvolutionScopeOperations(evolution),
+    ...createEvolutionEpisodeOperations(evolution),
+    createEvolutionEvidenceAttachOperation(evolution),
+    createEvolutionScopeGetOperation(evolution),
   ];
 }

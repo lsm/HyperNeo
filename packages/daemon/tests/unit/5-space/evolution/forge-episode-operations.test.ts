@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { Session } from '@hyperneo/shared';
-import { createForgeOperations } from '../../../../src/lib/evolution/operations.ts';
+import { createEvolutionOperations } from '../../../../src/lib/evolution/operations.ts';
 import type {
   EvolutionAuditEntry,
   EvolutionAuditWriter,
@@ -136,7 +136,7 @@ function makeCtx() {
     audited.push(entry);
   };
 
-  const operations = createForgeOperations({
+  const operations = createEvolutionOperations({
     getSession: (sessionId) => sessions.get(sessionId) ?? null,
     longHorizonAgentRepo: new SpaceLongHorizonAgentRepository(db),
     nodeExecutionRepo: new NodeExecutionRepository(db),
@@ -314,7 +314,7 @@ describe('evolution.episode.update', () => {
         await ctx
           .op('evolution.episode.update')
           .execute({ episodeId: created.episode.id, status: 'accepted' }, archivedCaller)
-      ).toMatchObject({ accepted: false, reason: 'forge_denied' });
+      ).toMatchObject({ accepted: false, reason: 'evolution_denied' });
       expect(ctx.evolutionRepo.getEpisode(created.episode.id)?.status).toBe('draft');
     } finally {
       ctx.db.close();

@@ -1,12 +1,12 @@
 import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository.ts';
-import { createForgeOperations } from '../../evolution/operations.ts';
+import { createEvolutionOperations } from '../../evolution/operations.ts';
 import type { OperationDefinition } from '../../operations/registry.ts';
 import type { FamilyOperationContext } from './context.ts';
 
 export function registerEvolutionOperations(
   context: FamilyOperationContext
 ): OperationDefinition[] {
-  return createForgeOperations({
+  return createEvolutionOperations({
     getSession: (sessionId) => context.deps.db.getSession(sessionId),
     longHorizonAgentRepo: context.longHorizonAgentRepo,
     nodeExecutionRepo: context.nodeExecutionRepo,

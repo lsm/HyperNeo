@@ -9,10 +9,10 @@ import {
   type OperationPolicy,
 } from '../operations/registry.ts';
 import {
-  admitForgeMutator,
-  denyForge,
-  FORGE_CALLER_REJECTIONS,
-  forgeDenialSchema,
+  admitEvolutionMutator,
+  denyEvolution,
+  EVOLUTION_CALLER_REJECTIONS,
+  evolutionDenialSchema,
   type EvolutionAdmissionDependencies,
   type EvolutionAuditEntry,
   type EvolutionAuditWriter,
@@ -33,7 +33,7 @@ export interface EvolutionEvidenceAttachDependencies extends EvolutionAdmissionD
 }
 
 const EVIDENCE_ATTACH_REJECTIONS = [
-  ...FORGE_CALLER_REJECTIONS,
+  ...EVOLUTION_CALLER_REJECTIONS,
   'scope_not_found',
   'task_not_found',
   'workflow_run_not_found',
@@ -42,7 +42,7 @@ const EVIDENCE_ATTACH_REJECTIONS = [
 
 type EvidenceAttachRejection = (typeof EVIDENCE_ATTACH_REJECTIONS)[number];
 
-const FORGE_MUTATE_POLICY = {
+const EVOLUTION_MUTATE_POLICY = {
   safetyClass: 'mutate',
   roles: ['ad_hoc_member', 'long_term_agent'],
 } as const satisfies OperationPolicy;
@@ -109,7 +109,7 @@ function findEvidenceScopeInSpace(
   return scope && (!spaceId || scope.spaceId === spaceId) ? scope : null;
 }
 
-export function requireForgeEvidenceSubject(
+export function requireEvolutionEvidenceSubject(
   input: EvidenceAttachInput,
   scope: EvolutionSpaceScope,
   evolution: EvolutionEvidenceAttachDependencies
@@ -118,29 +118,29 @@ export function requireForgeEvidenceSubject(
     const task = evolution.taskRepo.getTask(input.taskId);
     return task && (!scope.spaceId || task.spaceId === scope.spaceId)
       ? { value: scope }
-      : denyForge('task_not_found', `Task not found: ${input.taskId}`);
+      : denyEvolution('task_not_found', `Task not found: ${input.taskId}`);
   }
   if (input.kind === 'workflow_run') {
     const run = evolution.workflowRunRepo.getRun(input.workflowRunId);
     return run && (!scope.spaceId || run.spaceId === scope.spaceId)
       ? { value: scope }
-      : denyForge('workflow_run_not_found', `Workflow run not found: ${input.workflowRunId}`);
+      : denyEvolution('workflow_run_not_found', `Workflow run not found: ${input.workflowRunId}`);
   }
   return { value: scope };
 }
 
-export function requireForgeEvidenceTarget(
+export function requireEvolutionEvidenceTarget(
   input: EvidenceAttachInput,
   scope: EvolutionSpaceScope,
   evolution: EvolutionEvidenceAttachDependencies
 ): EvolutionGate<EvidenceAttachTarget, EvidenceAttachRejection> {
   if (input.scopeId && !findEvidenceScopeInSpace(input.scopeId, scope.spaceId, evolution)) {
-    return denyForge('scope_not_found', `EvolutionScope not found: ${input.scopeId}`);
+    return denyEvolution('scope_not_found', `EvolutionScope not found: ${input.scopeId}`);
   }
   return { value: { spaceId: scope.spaceId, scopeId: input.scopeId } };
 }
 
-function writeForgeEvidence(
+function writeEvolutionEvidence(
   input: EvidenceAttachInput,
   evolution: EvolutionEvidenceAttachDependencies
 ): EvidenceRef {
@@ -189,7 +189,7 @@ function evidenceAuditEntry(
   };
 }
 
-export function attachForgeEvidence(
+export function attachEvolutionEvidence(
   input: EvidenceAttachInput,
   target: EvidenceAttachTarget,
   caller: OperationCaller,
@@ -197,35 +197,37 @@ export function attachForgeEvidence(
 ): EvolutionGate<{ accepted: true; evidence: EvidenceRef }, EvidenceAttachRejection> {
   let evidence: EvidenceRef;
   try {
-    evidence = writeForgeEvidence(input, evolution);
+    evidence = writeEvolutionEvidence(input, evolution);
   } catch (err) {
-    return denyForge('evidence_not_attached', err instanceof Error ? err.message : String(err));
+    return denyEvolution('evidence_not_attached', err instanceof Error ? err.message : String(err));
   }
   if (!findEvidenceScopeInSpace(evidence.scopeId, target.spaceId, evolution)) {
-    return denyForge('scope_not_found', `EvolutionScope not found: ${evidence.scopeId}`);
+    return denyEvolution('scope_not_found', `EvolutionScope not found: ${evidence.scopeId}`);
   }
   evolution.audit?.(evidenceAuditEntry(input, evidence, target, caller));
   return { value: { accepted: true, evidence } };
 }
 
-export function createForgeEvidenceAttachOperation(evolution: EvolutionEvidenceAttachDependencies) {
+export function createEvolutionEvidenceAttachOperation(
+  evolution: EvolutionEvidenceAttachDependencies
+) {
   const attach = (superpipe({ evolution })('evolution-evidence-attach') as PipelineAPI)
     .input(['input', 'caller'])
-    .pipe(admitForgeMutator, ['input', 'caller', 'evolution'], 'result:outcome')
-    .pipe(requireForgeEvidenceSubject, ['input', 'outcome', 'evolution'], 'result:outcome')
-    .pipe(requireForgeEvidenceTarget, ['input', 'outcome', 'evolution'], 'result:outcome')
-    .pipe(attachForgeEvidence, ['input', 'outcome', 'caller', 'evolution'], 'result:outcome')
+    .pipe(admitEvolutionMutator, ['input', 'caller', 'evolution'], 'result:outcome')
+    .pipe(requireEvolutionEvidenceSubject, ['input', 'outcome', 'evolution'], 'result:outcome')
+    .pipe(requireEvolutionEvidenceTarget, ['input', 'outcome', 'evolution'], 'result:outcome')
+    .pipe(attachEvolutionEvidence, ['input', 'outcome', 'caller', 'evolution'], 'result:outcome')
     .endAsync('outcome');
 
   return defineOperation({
     name: 'evolution.evidence.attach',
-    policy: FORGE_MUTATE_POLICY,
+    policy: EVOLUTION_MUTATE_POLICY,
     description:
-      'Attach one evidence item to a Forge scope, discriminated by kind: a manual_note on an explicit scope, a task, or a workflow_run. Task and workflow_run resolve their scope from the subject when scopeId is omitted; manual_note requires scopeId. Rejects task_not_found, workflow_run_not_found, scope_not_found, and evidence_not_attached when no scope can be resolved for the subject.',
+      'Attach one evidence item to an Evolution scope, discriminated by kind: a manual_note on an explicit scope, a task, or a workflow_run. Task and workflow_run resolve their scope from the subject when scopeId is omitted; manual_note requires scopeId. Rejects task_not_found, workflow_run_not_found, scope_not_found, and evidence_not_attached when no scope can be resolved for the subject.',
     inputSchema: EvidenceAttachInputSchema,
     resultSchema: z.union([
       z.object({ accepted: z.literal(true), evidence: EvolutionEvidenceRefSchema }),
-      forgeDenialSchema(EVIDENCE_ATTACH_REJECTIONS),
+      evolutionDenialSchema(EVIDENCE_ATTACH_REJECTIONS),
     ]),
     execute: async (input, caller) => attach(input, caller),
   });
