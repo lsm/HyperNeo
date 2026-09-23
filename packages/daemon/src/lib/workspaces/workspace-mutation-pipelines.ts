@@ -7,6 +7,7 @@ import {
   type WorkspaceValidationIo,
   type WorkspaceValidationVerdict,
 } from './validation-pipeline.ts';
+import { admitWorkspaceLabel } from './workspace-label.ts';
 import {
   buildRegistrySnapshot,
   WorkspaceRegistrationError,
@@ -58,6 +59,12 @@ function registerEnsureAccepted(ctx: RegisterWorkspaceCtx): RegisterWorkspaceCtx
     ...ctx,
     error: new WorkspaceRegistrationError(verdict.message, verdict.reason, verdict),
   };
+}
+
+function registerAdmitLabel(ctx: RegisterWorkspaceCtx): RegisterWorkspaceCtx {
+  const admitted = admitWorkspaceLabel(ctx.label, ctx.workspaces.listBySpace(ctx.spaceId));
+  if ('reason' in admitted) return { ...ctx, error: new Error(admitted.reason) };
+  return { ...ctx, label: admitted.value };
 }
 
 function registerInsertWorkspace(ctx: RegisterWorkspaceCtx): RegisterWorkspaceCtx {
@@ -113,6 +120,8 @@ export const runRegisterWorkspace = (
   .pipe(registerBuildSnapshot, 'ctx', 'ctx')
   .pipe(registerRunValidationGates, 'ctx', 'ctx')
   .pipe(registerEnsureAccepted, 'ctx', 'ctx')
+  .pipe('!hasError', 'ctx')
+  .pipe(registerAdmitLabel, 'ctx', 'ctx')
   .pipe('!hasError', 'ctx')
   .pipe(registerInsertWorkspace, 'ctx', 'ctx')
   .endAsync('ctx') as (input: RegisterWorkspaceCtx) => Promise<RegisterWorkspaceCtx>;
@@ -225,12 +234,23 @@ export interface UpdateLabelCtx {
   label: string;
   workspace?: SpaceWorkspaceRecord;
   updated: boolean;
+  error?: Error;
 }
 
 function updateLabelLoadWorkspace(ctx: UpdateLabelCtx): UpdateLabelCtx {
   const workspace = ctx.workspaces.getById(ctx.workspaceId);
   if (!workspace || workspace.spaceId !== ctx.spaceId) return ctx;
   return { ...ctx, workspace };
+}
+
+function updateLabelAdmit(ctx: UpdateLabelCtx): UpdateLabelCtx {
+  const admitted = admitWorkspaceLabel(
+    ctx.label,
+    ctx.workspaces.listBySpace(ctx.spaceId),
+    ctx.workspaceId
+  );
+  if ('reason' in admitted) return { ...ctx, error: new Error(admitted.reason) };
+  return { ...ctx, label: admitted.value };
 }
 
 function updateLabelWrite(ctx: UpdateLabelCtx): UpdateLabelCtx {
@@ -243,10 +263,13 @@ function updateLabelWrite(ctx: UpdateLabelCtx): UpdateLabelCtx {
 export const runUpdateWorkspaceLabel = (
   superpipe({
     workspaceMissing: (ctx: UpdateLabelCtx) => ctx.workspace === undefined,
+    labelRejected: (ctx: UpdateLabelCtx) => ctx.error !== undefined,
   })('workspace-update-label') as PipelineAPI
 )
   .input(['ctx'])
   .pipe(updateLabelLoadWorkspace, 'ctx', 'ctx')
   .pipe('!workspaceMissing', 'ctx')
+  .pipe(updateLabelAdmit, 'ctx', 'ctx')
+  .pipe('!labelRejected', 'ctx')
   .pipe(updateLabelWrite, 'ctx', 'ctx')
   .end('ctx') as (input: UpdateLabelCtx) => UpdateLabelCtx;
