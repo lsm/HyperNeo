@@ -12,6 +12,7 @@ import { runMigration248 } from './m248-direct-task-execution.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import { createEvolutionTables } from './evolution.ts';
 import { createLongHorizonAgentTables } from './long-horizon-agents.ts';
+import { createSpaceSessionEventSubscriptionTables } from './space-session-event-subscriptions.ts';
 import { createSpaceAgentTemplatesTable } from './space-agent-templates.ts';
 import { createWorkflowEventSubscriptionTables } from './workflow-event-subscriptions.ts';
 import { backfillSessionCounters, createSessionCounters } from './session-counters.ts';
@@ -879,6 +880,7 @@ export function createTables(db: BunDatabase): void {
   createAgentMemoryTables(db);
   createEvolutionTables(db);
   createLongHorizonAgentTables(db);
+  createSpaceSessionEventSubscriptionTables(db);
   createSpaceAgentTemplatesTable(db);
   createWorkflowEventSubscriptionTables(db);
   runMigration248(db);

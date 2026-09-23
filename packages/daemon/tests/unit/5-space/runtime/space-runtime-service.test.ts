@@ -1537,6 +1537,106 @@ describe('SpaceRuntimeService', () => {
       expect(pendingMailboxEntries(mailbox, 'delivery-1')).toHaveLength(0);
     });
 
+    function seedSpaceSession(
+      mailbox: ReturnType<typeof buildMailboxDeliveryDb>,
+      sessionId: string,
+      options: { spaceId?: string; status?: string } = {}
+    ): void {
+      mailbox.db
+        .prepare(
+          `INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, session_context)
+           VALUES (?, 'subscriber', '/tmp/ws', ?, ?, ?, '{}', '{}', ?)`
+        )
+        .run(
+          sessionId,
+          new Date().toISOString(),
+          new Date().toISOString(),
+          options.status ?? 'active',
+          JSON.stringify({ spaceId: options.spaceId ?? mockSpace.id })
+        );
+    }
+
+    function sessionDeliveryHook(svc: SpaceRuntimeService) {
+      return (
+        svc as unknown as {
+          runtime: {
+            config: {
+              deliverSessionExternalEvent(args: {
+                spaceId: string;
+                sessionId: string;
+                message: string;
+                idempotencyKey: string;
+              }): Promise<{ delivered: boolean; gone?: boolean }>;
+            };
+          };
+        }
+      ).runtime.config.deliverSessionExternalEvent;
+    }
+
+    function buildSessionDeliveryService(
+      mailbox: ReturnType<typeof buildMailboxDeliveryDb>,
+      space: Space = mockSpace
+    ): SpaceRuntimeService {
+      return buildDeliveryService({
+        ...buildConfigWithSession(makeSessionManager(null), createMockSpaceManager(space)),
+        db: mailbox.db,
+        reactiveDb: mailbox.reactiveDb,
+      });
+    }
+
+    test('the runtime session hook admits an event into the subscribing session mailbox', async () => {
+      const mailbox = buildMailboxDeliveryDb();
+      seedSpaceSession(mailbox, 'session-subscriber');
+
+      const result = await sessionDeliveryHook(buildSessionDeliveryService(mailbox))({
+        spaceId: mockSpace.id,
+        sessionId: 'session-subscriber',
+        message: 'event payload',
+        idempotencyKey: 'session-delivery-1',
+      });
+
+      expect(result).toEqual({ delivered: true });
+      const entries = pendingMailboxEntries(mailbox, 'session-delivery-1');
+      expect(entries).toHaveLength(1);
+      expect(entries[0]!.origin).toBe('space_inject');
+    });
+
+    test('the runtime session hook reports an archived or foreign session as gone', async () => {
+      const mailbox = buildMailboxDeliveryDb();
+      seedSpaceSession(mailbox, 'session-archived', { status: 'archived' });
+      seedSpaceSession(mailbox, 'session-foreign', { spaceId: 'another-space' });
+      const deliver = sessionDeliveryHook(buildSessionDeliveryService(mailbox));
+
+      for (const sessionId of ['session-archived', 'session-foreign', 'session-missing']) {
+        expect(
+          await deliver({
+            spaceId: mockSpace.id,
+            sessionId,
+            message: 'event payload',
+            idempotencyKey: `gone-${sessionId}`,
+          })
+        ).toEqual({ delivered: false, gone: true });
+        expect(pendingMailboxEntries(mailbox, `gone-${sessionId}`)).toHaveLength(0);
+      }
+    });
+
+    test('the runtime session hook holds an event while the Space is paused', async () => {
+      const mailbox = buildMailboxDeliveryDb();
+      seedSpaceSession(mailbox, 'session-paused-space');
+
+      const result = await sessionDeliveryHook(
+        buildSessionDeliveryService(mailbox, { ...mockSpace, paused: true })
+      )({
+        spaceId: mockSpace.id,
+        sessionId: 'session-paused-space',
+        message: 'event payload',
+        idempotencyKey: 'paused-delivery',
+      });
+
+      expect(result).toEqual({ delivered: false });
+      expect(pendingMailboxEntries(mailbox, 'paused-delivery')).toHaveLength(0);
+    });
+
     test('an identical pending mailbox admission does not block re-admission', async () => {
       const sessionId = longTermAgentSessionId(mockSpace.id, 'lh-agent-1');
       const mailbox = buildMailboxDeliveryDb([sessionId]);

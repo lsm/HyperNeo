@@ -17,7 +17,8 @@ import type { ChannelCycleRepository } from '../../../storage/repositories/chann
 import { DirectTaskExecutionRepository } from '../../../storage/repositories/direct-task-execution-repository.ts';
 import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository.ts';
 import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
-import type { SessionRepository } from '../../../storage/repositories/session-repository.ts';
+import { SessionRepository } from '../../../storage/repositories/session-repository.ts';
+import type { SpaceSessionEventSubscriptionRepository } from '../../../storage/repositories/space-session-event-subscription-repository.ts';
 import type { SpaceAgentGoalScopeRepository } from '../../../storage/repositories/space-agent-goal-scope-repository.ts';
 import type { SpaceAgentReminderRepository } from '../../../storage/repositories/space-agent-reminder-repository.ts';
 import type { SpaceAgentSubscriptionRepository } from '../../../storage/repositories/space-agent-subscription-repository.ts';
@@ -136,6 +137,7 @@ export interface SpaceRuntimeServiceConfig {
   longHorizonAgentRepo?: SpaceLongHorizonAgentRepository;
   goalScopeRepo?: SpaceAgentGoalScopeRepository;
   subscriptionRepo?: SpaceAgentSubscriptionRepository;
+  sessionSubscriptionRepo?: SpaceSessionEventSubscriptionRepository;
   reminderRepo?: SpaceAgentReminderRepository;
   ownedAgents?: OwnedAgentLookup;
   templateRepo?: SpaceAgentTemplateRepository;
@@ -257,6 +259,7 @@ export class SpaceRuntimeService {
       },
       deliverLongHorizonExternalEvent: (args) =>
         this.deliverLongHorizonExternalEvent(args, { gateSpaceLifecycle: true }),
+      deliverSessionExternalEvent: (args) => this.deliverSessionExternalEvent(args),
     });
   }
 
@@ -355,6 +358,29 @@ export class SpaceRuntimeService {
       session,
       args.message,
       args.idempotencyKey
+    );
+    return { delivered: outcome.state === 'accepted' };
+  }
+
+  private async deliverSessionExternalEvent(args: {
+    spaceId: string;
+    sessionId: string;
+    message: string;
+    idempotencyKey: string;
+  }): Promise<{ delivered: boolean; gone?: boolean }> {
+    const space = await this.config.spaceManager.getSpace(args.spaceId);
+    if (!space || space.status !== 'active' || space.paused || space.stopped) {
+      return { delivered: false };
+    }
+    const session = new SessionRepository(this.config.db).getSession(args.sessionId);
+    if (!session || session.status === 'archived' || session.context?.spaceId !== args.spaceId) {
+      return { delivered: false, gone: true };
+    }
+    const outcome = await this.injectLongTermAgentMessage(
+      { getSessionData: () => session },
+      args.message,
+      args.idempotencyKey,
+      'space_inject'
     );
     return { delivered: outcome.state === 'accepted' };
   }
@@ -560,7 +586,8 @@ export class SpaceRuntimeService {
   private async injectLongTermAgentMessage(
     session: { getSessionData(): Session },
     message: string,
-    messageId?: string
+    messageId?: string,
+    origin = 'long_term_agent'
   ): Promise<LongTermAgentAdmission> {
     const id = messageId ?? generateRuntimeMessageId();
     const sessionId = session.getSessionData().id;
@@ -585,7 +612,7 @@ export class SpaceRuntimeService {
       entry = createMailboxEntry({
         to: { kind: 'session', sessionId },
         message: projected.message,
-        origin: 'long_term_agent',
+        origin,
         messageUuid: id,
       });
     } catch (error) {
@@ -604,7 +631,7 @@ export class SpaceRuntimeService {
       messageUuid: id,
       message: persistedMessage,
     });
-    this.assertNoPendingMailboxContentConflict(sessionId, id, projected.message, 'long_term_agent');
+    this.assertNoPendingMailboxContentConflict(sessionId, id, projected.message, origin);
     const outcome = enqueueMailboxEntry(jobQueue, entry);
     return outcome.kind === 'enqueued'
       ? { state: 'accepted', mailboxEntryId: outcome.id }

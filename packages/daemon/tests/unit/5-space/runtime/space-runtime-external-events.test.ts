@@ -32,6 +32,7 @@ import { NodeExecutionRepository } from '../../../../src/storage/repositories/no
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
 import { SpaceAgentSubscriptionRepository } from '../../../../src/storage/repositories/space-agent-subscription-repository';
+import { SpaceSessionEventSubscriptionRepository } from '../../../../src/storage/repositories/space-session-event-subscription-repository';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
@@ -968,6 +969,95 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     expect(longHorizonMessages).toHaveLength(0);
     expect(eventStore.getById('evt-after-delete')?.state).toBe('published');
+  });
+
+  function buildSessionSubscriberRuntime(
+    sessionId: string,
+    deliver: SpaceRuntimeConfig['deliverSessionExternalEvent']
+  ): void {
+    new SpaceSessionEventSubscriptionRepository(db).upsert({
+      spaceId: SPACE_ID,
+      sessionId,
+      topic: DEFAULT_TOPIC,
+    });
+    runtime = new SpaceRuntime({
+      db,
+      spaceManager: new SpaceManager(db),
+      sessionSubscriptionRepo: new SpaceSessionEventSubscriptionRepository(db),
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      internalEventBus: bus,
+      externalEventStore: eventStore,
+      taskAgentManager: tam as never,
+      deliverSessionExternalEvent: deliver,
+    });
+  }
+
+  test('rehydrates session subscriptions and delivers matching events to the session', async () => {
+    const sessionMessages: Array<{ sessionId: string; message: string; idempotencyKey: string }> =
+      [];
+    buildSessionSubscriberRuntime('session-watcher', async (args) => {
+      sessionMessages.push(args);
+      return { delivered: true };
+    });
+
+    await runtime.rehydrateExecutors();
+    const event = makeEvent();
+    await eventService.publish(event);
+
+    expect(sessionMessages.map((message) => message.sessionId)).toEqual(['session-watcher']);
+    expect(sessionMessages[0]!.message).toBe(eventStore.getById(event.id)?.event.render);
+    const deliveries = eventStore.listDeliveries(event.id);
+    expect(deliveries.map((delivery) => delivery.state)).toEqual(['delivered']);
+    expect(deliveries[0]!.workflowRunId).toBe(`session:${SPACE_ID}`);
+    expect(sessionMessages[0]!.idempotencyKey).toBe(deliveries[0]!.deliveryKey);
+    expect(eventStore.getById(event.id)?.state).toBe('delivered');
+    expect(runtime.getQueueHealthSnapshot().counters.enqueueByTargetState).toEqual({
+      'session=active': 1,
+    });
+    await runtime.stop();
+  });
+
+  test('ends the delivery to a session that is gone instead of retrying it', async () => {
+    let attempts = 0;
+    buildSessionSubscriberRuntime('session-gone', async () => {
+      attempts += 1;
+      return { delivered: false, gone: true };
+    });
+
+    await runtime.rehydrateExecutors();
+    await eventService.publish(makeEvent({ id: 'evt-session-gone' }));
+
+    const delivery = eventStore.listDeliveries('evt-session-gone')[0]!;
+    expect(delivery.state).toBe('failed');
+    expect(delivery.failureReason).toBe('subscriber_gone');
+    expect(attempts).toBe(1);
+    expect(runtime.getQueueHealthSnapshot().gauges.retryTimers).toBe(0);
+    await runtime.stop();
+  });
+
+  test('holds a session delivery while its space is paused and delivers it on resume', async () => {
+    const delivered: string[] = [];
+    buildSessionSubscriberRuntime('session-held', async ({ sessionId }) => {
+      delivered.push(sessionId);
+      return { delivered: true };
+    });
+    await runtime.rehydrateExecutors();
+    runtime.holdSpaceDeliveries(SPACE_ID);
+
+    await eventService.publish(makeEvent({ id: 'evt-session-held' }));
+
+    expect(delivered).toEqual([]);
+    expect(eventStore.listDeliveries('evt-session-held')[0]!.state).toBe('pending');
+
+    await runtime.onSpaceResumed(SPACE_ID);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(delivered).toEqual(['session-held']);
+    expect(eventStore.listDeliveries('evt-session-held')[0]!.state).toBe('delivered');
+    await runtime.stop();
   });
 
   test('keeps long-horizon events pending until every matched delivery succeeds', async () => {
