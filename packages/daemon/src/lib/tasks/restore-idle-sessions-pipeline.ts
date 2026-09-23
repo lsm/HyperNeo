@@ -30,6 +30,7 @@ export interface RestoreIdleSessionsDeps {
   isExecutionRestorable: (execution: RestoreIdleSessionExecution) => boolean;
   isSessionAdopted: (execution: RestoreIdleSessionExecution) => boolean;
   cancelSession: (sessionId: string) => void;
+  isRestoreSuperseded: () => boolean;
 }
 
 export type RestoreIdleSessionsOutcome =
@@ -39,24 +40,29 @@ export type RestoreIdleSessionsOutcome =
   | { action: 'adopted_by_new_owner'; sessionId: string }
   | { action: 'failed' };
 
+interface AdmittingDelivery {
+  deliveryKey: string;
+  eventId: string;
+}
+
+interface RestoreCandidate {
+  target: RestoreIdleSessionTarget;
+  execution: RestoreIdleSessionExecution;
+  deliveries: AdmittingDelivery[];
+}
+
 export interface RestoreIdleSessionsCtx {
   workflowRunId?: string;
   deps: RestoreIdleSessionsDeps;
-  candidates?: Array<{
-    target: RestoreIdleSessionTarget;
-    execution: RestoreIdleSessionExecution;
-  }>;
+  candidates?: RestoreCandidate[];
   outcomes: RestoreIdleSessionsOutcome[];
 }
 
 export async function collectAdmissibleCandidates(
   ctx: RestoreIdleSessionsCtx
 ): Promise<RestoreIdleSessionsCtx> {
-  const candidates: Array<{
-    target: RestoreIdleSessionTarget;
-    execution: RestoreIdleSessionExecution;
-  }> = [];
-  const admittedTargets = new Set<string>();
+  const candidates: RestoreCandidate[] = [];
+  const admittedTargets = new Map<string, RestoreCandidate>();
   const spaceStateById = new Map<string, { paused: boolean; stopped: boolean } | null>();
   const resolveSpaceState = async (
     spaceId: string
@@ -86,18 +92,48 @@ export async function collectAdmissibleCandidates(
     const execution = ctx.deps.findIdleExecutionWithDeadSession(target);
     if (!execution) continue;
     const targetKey = `${target.workflowRunId}:${target.nodeId}:${target.agentName}`;
-    if (admittedTargets.has(targetKey)) continue;
-    admittedTargets.add(targetKey);
-    candidates.push({ target, execution });
+    const admitting = { deliveryKey: delivery.deliveryKey, eventId: delivery.eventId };
+    const admitted = admittedTargets.get(targetKey);
+    if (admitted) {
+      admitted.deliveries.push(admitting);
+      continue;
+    }
+    const candidate = { target, execution, deliveries: [admitting] };
+    admittedTargets.set(targetKey, candidate);
+    candidates.push(candidate);
   }
   return { ...ctx, candidates };
+}
+
+function deliveryStillAdmits(
+  deps: RestoreIdleSessionsDeps,
+  target: RestoreIdleSessionTarget,
+  delivery: AdmittingDelivery,
+  pendingKeys: Set<string>
+): boolean {
+  if (!pendingKeys.has(delivery.deliveryKey)) return false;
+  const eventRecord = deps.getEventRecord(delivery.eventId);
+  if (!eventRecord || eventRecord.state !== 'published') return false;
+  if (deps.isDeliveryExpired(eventRecord.createdAt, Date.now())) return false;
+  return deps.isTargetStillSubscribed(target, eventRecord.event.topic);
+}
+
+function candidateStillWanted(deps: RestoreIdleSessionsDeps, candidate: RestoreCandidate): boolean {
+  const pendingKeys = new Set(
+    deps.listPendingDeliveries(candidate.target.workflowRunId).map((d) => d.deliveryKey)
+  );
+  return candidate.deliveries.some((delivery) =>
+    deliveryStillAdmits(deps, candidate.target, delivery, pendingKeys)
+  );
 }
 
 export async function restoreWithRevalidation(
   ctx: RestoreIdleSessionsCtx
 ): Promise<RestoreIdleSessionsCtx> {
   const outcomes: RestoreIdleSessionsOutcome[] = [];
-  for (const { target, execution } of ctx.candidates ?? []) {
+  for (const candidate of ctx.candidates ?? []) {
+    if (ctx.deps.isRestoreSuperseded()) break;
+    const { target, execution } = candidate;
     try {
       await ctx.deps.restoreSession(target);
     } catch {
@@ -120,6 +156,11 @@ export async function restoreWithRevalidation(
         ctx.deps.cancelSession(execution.agentSessionId);
         outcomes.push({ action: 'skipped_invalidation', sessionId: execution.agentSessionId });
       }
+      continue;
+    }
+    if (!candidateStillWanted(ctx.deps, candidate)) {
+      ctx.deps.cancelSession(execution.agentSessionId);
+      outcomes.push({ action: 'skipped_invalidation', sessionId: execution.agentSessionId });
       continue;
     }
     outcomes.push({ action: 'restored', sessionId: execution.agentSessionId });

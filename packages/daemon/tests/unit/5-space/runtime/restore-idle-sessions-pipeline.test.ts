@@ -56,6 +56,9 @@ interface DepsState {
   restores: string[];
   cancels: string[];
   failRestore: boolean;
+  pendingAfterRestore: boolean;
+  subscribedAfterRestore: boolean | undefined;
+  supersededAfterRestores: number | undefined;
 }
 
 function makeDeps(state: Partial<DepsState> = {}): RestoreIdleSessionsDeps {
@@ -74,12 +77,16 @@ function makeDeps(state: Partial<DepsState> = {}): RestoreIdleSessionsDeps {
     taskStatusAfterRestore: undefined,
     executionRestorableAfter: undefined,
     sessionAdoptedAfter: true,
+    pendingAfterRestore: true,
+    subscribedAfterRestore: undefined,
+    supersededAfterRestores: undefined,
     ...state,
   };
+  const restored = () => full.restores.length > 0;
   let taskAdmissionCalls = 0;
   let spaceStateCalls = 0;
   return {
-    listPendingDeliveries: () => [DELIVERY],
+    listPendingDeliveries: () => (restored() && !full.pendingAfterRestore ? [] : [DELIVERY]),
     getEventRecord: () => makeEventRecord(),
     isDeliveryInFlight: (key) => full.inFlight.has(key),
     isDeliveryExpired: () => full.expired,
@@ -90,7 +97,10 @@ function makeDeps(state: Partial<DepsState> = {}): RestoreIdleSessionsDeps {
       if (spaceStateCalls <= 1) return full.spaceState ?? { paused: false, stopped: false };
       return full.spaceStateAfterRestore ?? full.spaceState ?? { paused: false, stopped: false };
     },
-    isTargetStillSubscribed: () => full.subscribed,
+    isTargetStillSubscribed: () =>
+      restored() && full.subscribedAfterRestore !== undefined
+        ? full.subscribedAfterRestore
+        : full.subscribed,
     isTaskAdmissible: () => {
       taskAdmissionCalls += 1;
       const status =
@@ -115,6 +125,9 @@ function makeDeps(state: Partial<DepsState> = {}): RestoreIdleSessionsDeps {
     cancelSession: (sessionId) => {
       full.cancels.push(sessionId);
     },
+    isRestoreSuperseded: () =>
+      full.supersededAfterRestores !== undefined &&
+      full.restores.length >= full.supersededAfterRestores,
   };
 }
 
@@ -184,6 +197,38 @@ describe('runRestoreIdleSessions', () => {
       makeDeps({ executionRestorableAfter: false, taskStatusAfterRestore: 'cancelled' })
     );
     expect(outcomes).toEqual([{ action: 'skipped_inactivation', sessionId: 'session-1' }]);
+  });
+
+  test('tears down a restored session whose delivery was claimed mid-restore', async () => {
+    const deps = makeDeps({ pendingAfterRestore: false });
+    expect(await runRestoreIdleSessions(deps)).toEqual([
+      { action: 'skipped_invalidation', sessionId: 'session-1' },
+    ]);
+  });
+
+  test('tears down a restored session whose target unsubscribed mid-restore', async () => {
+    const deps = makeDeps({ subscribedAfterRestore: false });
+    expect(await runRestoreIdleSessions(deps)).toEqual([
+      { action: 'skipped_invalidation', sessionId: 'session-1' },
+    ]);
+  });
+
+  test('stops restoring further targets once the runtime generation is superseded', async () => {
+    const deps = makeDeps({ supersededAfterRestores: 1 });
+    const scopedDeps: RestoreIdleSessionsDeps = {
+      ...deps,
+      listPendingDeliveries: () => [
+        DELIVERY,
+        { ...DELIVERY, eventId: 'evt-2', deliveryKey: 'key-2', agentName: 'reviewer' },
+      ],
+    };
+    expect(await runRestoreIdleSessions(scopedDeps)).toEqual([
+      { action: 'restored', sessionId: 'session-1' },
+    ]);
+  });
+
+  test('restores nothing when superseded before the first restore', async () => {
+    expect(await runRestoreIdleSessions(makeDeps({ supersededAfterRestores: 0 }))).toEqual([]);
   });
 
   test('records a failed outcome when restoration throws', async () => {
