@@ -50,7 +50,6 @@ export interface CreateSessionRequest {
   worktreeMode?: 'worktree' | 'direct';
   title?: string;
   roomId?: string;
-  spaceId?: string;
   createdBy?: 'human';
 }
 
