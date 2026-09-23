@@ -189,7 +189,7 @@ describe('SpaceDetailPanel', () => {
   it('renders Overview and Agents buttons', () => {
     render(<SpaceDetailPanel spaceId="space-1" />);
     expect(screen.getByText('Overview')).toBeTruthy();
-    expect(screen.getByText('Agents')).toBeTruthy();
+    expect(screen.getByTestId('space-detail-agent')).toBeTruthy();
   });
 
   it('removes the old Space Activity header block', () => {
@@ -210,7 +210,7 @@ describe('SpaceDetailPanel', () => {
   it('uses the route space id for sidebar navigation', () => {
     render(<SpaceDetailPanel spaceId="space-1" navigationSpaceId="space-slug" />);
     fireEvent.click(screen.getByText('Overview'));
-    fireEvent.click(screen.getByText('Agents'));
+    fireEvent.click(screen.getByTestId('space-detail-agent'));
 
     expect(mockNavigateToSpace).toHaveBeenCalledWith('space-slug');
     expect(mockNavigateToSpaceAgent).toHaveBeenCalledWith('space-slug');
@@ -219,7 +219,7 @@ describe('SpaceDetailPanel', () => {
   it('navigates to the space agent and calls onNavigate', () => {
     const onNavigate = vi.fn();
     render(<SpaceDetailPanel spaceId="space-1" onNavigate={onNavigate} />);
-    fireEvent.click(screen.getByText('Agents'));
+    fireEvent.click(screen.getByTestId('space-detail-agent'));
     expect(mockNavigateToSpaceAgent).toHaveBeenCalledWith('space-1');
     expect(onNavigate).toHaveBeenCalledOnce();
   });
@@ -233,7 +233,7 @@ describe('SpaceDetailPanel', () => {
   it('highlights Agents when the agents view mode is active', () => {
     mockCurrentSpaceViewModeSignal.value = 'agents';
     render(<SpaceDetailPanel spaceId="space-1" />);
-    const button = screen.getByText('Agents').closest('button');
+    const button = screen.getByTestId('space-detail-agent').closest('button');
     expect(button?.className).toContain('bg-fill');
   });
 
@@ -315,7 +315,7 @@ describe('SpaceDetailPanel', () => {
     ];
     render(<SpaceDetailPanel spaceId="space-1" />);
 
-    expect(screen.getByText('Agents')).toBeTruthy();
+    expect(screen.getAllByText('Agents')).toHaveLength(2);
     expect(screen.getByText('Lead')).toBeTruthy();
     expect(screen.queryByText('Old')).toBeNull();
     expect(screen.queryByText('manual-s')).toBeNull();
