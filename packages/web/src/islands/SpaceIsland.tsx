@@ -103,15 +103,7 @@ export default function SpaceIsland({
   const handleRefreshAgentRecord = useCallback(async () => {
     const viewedId = sessionViewId;
     if (!viewedId) return;
-    let derived: string | undefined;
-    if (viewedId.startsWith('space:agent:')) {
-      try {
-        derived = decodeURIComponent(viewedId.split(':')[3] ?? '');
-      } catch {
-        derived = undefined;
-      }
-    }
-    const agentId = spaceStore.agents.value.find((a) => a.sessionId === viewedId)?.id ?? derived;
+    const agentId = spaceStore.agents.value.find((a) => a.sessionId === viewedId)?.id;
     await spaceStore.refreshAgents();
     if (!stillOnThisRouteSpace()) return;
     if (currentSpaceSessionIdSignal.value !== viewedId) return;
@@ -202,11 +194,7 @@ export default function SpaceIsland({
   }, [navigationSpaceId]);
 
   if (sessionViewId) {
-    const isSpaceChatSession = sessionViewId === `space:chat:${spaceId}`;
-    const isAgentSession =
-      isSpaceChatSession ||
-      sessionViewId.startsWith('space:agent:') ||
-      spaceStore.agents.value.some((a) => a.sessionId === sessionViewId);
+    const isAgentSession = spaceStore.agents.value.some((a) => a.sessionId === sessionViewId);
     return (
       <>
         <div
@@ -218,7 +206,6 @@ export default function SpaceIsland({
             key={sessionViewId}
             sessionId={sessionViewId}
             onBack={handleSessionBack}
-            agentLabel={isSpaceChatSession ? 'space' : undefined}
             onRefreshAgent={isAgentSession ? handleRefreshAgentRecord : undefined}
           />
         </div>
