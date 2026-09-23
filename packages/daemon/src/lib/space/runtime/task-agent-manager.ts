@@ -592,6 +592,9 @@ export class TaskAgentManager {
           );
         }
       }
+      const workflowRunId = this.config.taskRepo.getTask(taskId)?.workflowRunId;
+      if (workflowRunId)
+        this.config.spaceRuntimeService.requeuePendingDeliveriesForRun(workflowRunId);
     }
   }
 

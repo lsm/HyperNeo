@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
+import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager';
 import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager';
@@ -208,6 +208,30 @@ describe('TaskAgentManager rate-limit pause/resume listener', () => {
     expect(task?.status).toBe('in_progress');
     expect(task?.restrictions).toBeNull();
     expect(task?.startedAt).toBeGreaterThanOrEqual(beforeResume);
+  });
+
+  it('re-arms pending deliveries for the task run once the task leaves its limit', async () => {
+    const workflowRunId = 'run-limited';
+    db.exec('PRAGMA foreign_keys = OFF');
+    taskRepo.updateTask(taskId, { workflowRunId });
+    const requeuePendingDeliveriesForRun = mock(() => {});
+    (manager as unknown as { config: Record<string, unknown> }).config.spaceRuntimeService = {
+      requeuePendingDeliveriesForRun,
+    };
+    bus.publish('session.rate_limit_pause', {
+      sessionId: subSessionId,
+      kind: 'rate_limit',
+      reason: 'backoff-ladder',
+    });
+    await flush();
+    expect(taskRepo.getTask(taskId)?.status).toBe('rate_limited');
+    expect(requeuePendingDeliveriesForRun).not.toHaveBeenCalled();
+
+    bus.publish('session.rate_limit_resume', { sessionId: subSessionId });
+    await flush();
+
+    expect(taskRepo.getTask(taskId)?.status).toBe('in_progress');
+    expect(requeuePendingDeliveriesForRun).toHaveBeenCalledWith(workflowRunId);
   });
 
   it('ignores pause events for an unknown session (no parent task)', async () => {
