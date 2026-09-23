@@ -2,11 +2,9 @@ import { lazy, Suspense } from 'preact/compat';
 import { useCallback, useEffect, useState } from 'preact/hooks';
 import { AgentOverlayChat } from '../components/space/AgentOverlayChat';
 import { SpaceCreateTaskDialog } from '../components/space/SpaceCreateTaskDialog';
-import { useSpaceWorkspaceChoice } from '../components/space/SpaceWorkspacePicker';
 import { GlassRouteShell } from '../components/space/glass-workspace';
 import { SpacePageHeader } from '../components/space/SpacePageHeader';
 import { TaskAuxiliaryPanel } from '../components/space/TaskAuxiliaryPanel';
-import { createSession } from '../lib/api-helpers';
 import {
   closeOverlayHistory,
   navigateBack,
@@ -32,7 +30,6 @@ import {
 } from '../lib/signals';
 import { parseLongHorizonAgentSessionId } from '../lib/space-agent-session';
 import { spaceStore } from '../lib/space-store';
-import { toast } from '../lib/toast';
 import ChatContainer from './ChatContainer';
 
 const SpaceConfigurePage = lazy(() =>
@@ -165,8 +162,6 @@ export default function SpaceIsland({
 
   const error = spaceStore.error.value;
   const [createTaskOpen, setCreateTaskOpen] = useState(false);
-  const [creatingSession, setCreatingSession] = useState(false);
-  const [, setActiveSessionRequestId] = useState<number | null>(null);
 
   const space = spaceStore.space.value;
 
@@ -191,11 +186,6 @@ export default function SpaceIsland({
     setCreateTaskOpen(false);
   }, [spaceId]);
 
-  useEffect(() => {
-    setCreatingSession(false);
-    setActiveSessionRequestId(null);
-  }, [spaceId]);
-
   const handleTaskPaneClose = useCallback(() => {
     navigateBack(() => navigateToSpace(navigationSpaceId));
   }, [navigationSpaceId]);
@@ -203,46 +193,6 @@ export default function SpaceIsland({
   const handleSessionBack = useCallback(() => {
     navigateBack(() => navigateToSpace(navigationSpaceId));
   }, [navigationSpaceId]);
-
-  const workspaceChoice = useSpaceWorkspaceChoice(
-    spaceId,
-    space?.workspacePath,
-    `${spaceId}:${viewMode}`
-  );
-
-  const createSessionInWorkspace = useCallback(
-    async (workspacePath?: string, worktreeMode?: 'worktree' | 'direct') => {
-      if (creatingSession) return;
-      const requestId = Date.now();
-      setCreatingSession(true);
-      setActiveSessionRequestId(requestId);
-      const originViewMode = viewMode;
-      try {
-        const response = await createSession({ spaceId, workspacePath, worktreeMode });
-        if (stillOnThisRouteSpace() && currentSpaceViewModeSignal.value === originViewMode) {
-          navigateToSpaceSession(navigationSpaceId, response.sessionId);
-        }
-      } catch (err) {
-        toast.error(err instanceof Error ? err.message : 'Failed to create session');
-      } finally {
-        setActiveSessionRequestId((current) => {
-          if (current === requestId) {
-            setCreatingSession(false);
-            return null;
-          }
-          return current;
-        });
-      }
-    },
-    [spaceId, navigationSpaceId, creatingSession, viewMode, stillOnThisRouteSpace]
-  );
-
-  const handleCreateSession = (e: Event) => {
-    e.stopPropagation();
-    workspaceChoice.chooseWorkspace(
-      (workspacePath, worktreeMode) => void createSessionInWorkspace(workspacePath, worktreeMode)
-    );
-  };
 
   if (sessionViewId) {
     const isSpaceChatSession = sessionViewId === `space:chat:${spaceId}`;
@@ -418,40 +368,9 @@ export default function SpaceIsland({
           testId="space-sessions-view"
           baseLayerProps={baseLayerProps}
           fallback={lazyFallback}
-          actions={
-            <button
-              type="button"
-              onClick={handleCreateSession}
-              disabled={creatingSession}
-              class={`glass-primary-button !h-9 !px-3 sm:!px-4 disabled:cursor-not-allowed disabled:opacity-50`}
-              aria-label="Create session"
-            >
-              <svg
-                class="h-4 w-4"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                aria-hidden="true"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width={2}
-                  d="M12 4v16m8-8H4"
-                />
-              </svg>
-              <span class="ml-1.5 hidden sm:inline">New session</span>
-            </button>
-          }
         >
-          <SpaceSessionsPage
-            spaceId={spaceId}
-            navigationSpaceId={navigationSpaceId}
-            onCreateSession={handleCreateSession}
-            creatingSession={creatingSession}
-          />
+          <SpaceSessionsPage spaceId={spaceId} navigationSpaceId={navigationSpaceId} />
         </GlassRouteShell>
-        {workspaceChoice.dialog}
         {overlay}
       </>
     );

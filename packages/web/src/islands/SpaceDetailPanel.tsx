@@ -7,11 +7,10 @@ import type {
 import type { ComponentChildren } from 'preact';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { ArchiveConfirmDialog } from '../components/ArchiveConfirmDialog';
-import { useSpaceWorkspaceChoice } from '../components/space/SpaceWorkspacePicker';
 import { CollapsibleSection } from '../components/ui/CollapsibleSection';
 import { StatusDot } from '../components/ui/StatusDot';
 import { UnreadBadge } from '../components/ui/UnreadBadge';
-import { archiveSession, createSession } from '../lib/api-helpers';
+import { archiveSession } from '../lib/api-helpers';
 import { useSessionRename } from '../hooks/useSessionRename';
 import {
   navigateToSpace,
@@ -275,7 +274,6 @@ export function SpaceDetailPanel({
   const loadedSpaceId = spaceStore.spaceId.value;
   const tasks = spaceStore.tasks.value;
   const goals = spaceStore.goals.value;
-  const space = spaceStore.space.value;
   const routeSpaceId = navigationSpaceId ?? spaceId;
 
   const isReady = !isLoading && loadedSpaceId === spaceId;
@@ -488,21 +486,6 @@ export function SpaceDetailPanel({
       setArchiveBusy(false);
     }
   }, [archiveConfirm]);
-
-  const workspaceChoice = useSpaceWorkspaceChoice(spaceId, space?.workspacePath);
-
-  const handleCreateSession = (e: Event) => {
-    e.stopPropagation();
-    workspaceChoice.chooseWorkspace((workspacePath, worktreeMode) => {
-      void (async () => {
-        try {
-          const response = await createSession({ spaceId, workspacePath, worktreeMode });
-          navigateToSpaceSession(routeSpaceId, response.sessionId);
-          onNavigate?.();
-        } catch {}
-      })();
-    });
-  };
 
   return (
     <div class="flex-1 flex flex-col overflow-hidden">
@@ -761,34 +744,7 @@ export function SpaceDetailPanel({
           )}
         </CollapsibleSection>
 
-        <CollapsibleSection
-          title="Sessions"
-          count={sessions.length}
-          defaultExpanded={true}
-          headerRight={
-            <button
-              type="button"
-              onClick={handleCreateSession}
-              class="rounded-md p-0.5 text-fg-muted transition-colors hover:bg-fill-soft hover:text-fg-soft"
-              aria-label="Create session"
-            >
-              <svg
-                class="w-3.5 h-3.5"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                aria-hidden="true"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width={2}
-                  d="M12 4v16m8-8H4"
-                />
-              </svg>
-            </button>
-          }
-        >
+        <CollapsibleSection title="Sessions" count={sessions.length} defaultExpanded={true}>
           {visibleSessions.length === 0 ? (
             <div class="px-4 py-2 text-xs text-fg-muted">No sessions</div>
           ) : (
@@ -823,7 +779,6 @@ export function SpaceDetailPanel({
           onCancel={() => setArchiveConfirm(null)}
         />
       )}
-      {workspaceChoice.dialog}
     </div>
   );
 }
