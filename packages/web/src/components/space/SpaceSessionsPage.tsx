@@ -234,16 +234,9 @@ function SessionItem({ classified, spaceId }: { classified: ClassifiedSession; s
 interface SpaceSessionsPageProps {
   spaceId: string;
   navigationSpaceId?: string;
-  onCreateSession?: (event: Event) => void;
-  creatingSession?: boolean;
 }
 
-export function SpaceSessionsPage({
-  spaceId,
-  navigationSpaceId,
-  onCreateSession,
-  creatingSession = false,
-}: SpaceSessionsPageProps) {
+export function SpaceSessionsPage({ spaceId, navigationSpaceId }: SpaceSessionsPageProps) {
   const routeSpaceId = navigationSpaceId ?? spaceId;
   const storeSessions = spaceStore.sessions.value;
   void spaceSessionLastSeen.value;
@@ -302,18 +295,8 @@ export function SpaceSessionsPage({
             </span>
             <p class="text-sm font-semibold text-fg">No sessions yet</p>
             <p class="mt-1 text-xs leading-5 text-fg-muted">
-              Create a session to begin a focused conversation in this space.
+              Sessions appear here when your agents start work in this space.
             </p>
-            {onCreateSession && (
-              <button
-                type="button"
-                class={`glass-primary-button mt-5`}
-                onClick={onCreateSession}
-                disabled={creatingSession}
-              >
-                Create session
-              </button>
-            )}
           </div>
         ) : (
           <div class="space-y-4">

@@ -12,13 +12,11 @@ import {
   navigateToSpaceSession,
   navigateToSpaceTasks,
 } from '../../lib/router';
-import { createSession } from '../../lib/api-helpers';
 import { cn, getRelativeTime } from '../../lib/utils';
 import { toast } from '../../lib/toast';
 import { AUTONOMY_LABELS } from '../../lib/space-constants';
 import { isActionRequired } from '../../lib/task-filters';
 import { SpaceCreateTaskDialog } from './SpaceCreateTaskDialog';
-import { useSpaceWorkspaceChoice } from './SpaceWorkspacePicker';
 import { ConfirmModal } from '../ui/ConfirmModal';
 import { AutonomyWorkflowSummary } from './AutonomyWorkflowSummary';
 
@@ -294,7 +292,6 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
   const [showCreateTask, setShowCreateTask] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [showStopConfirm, setShowStopConfirm] = useState(false);
-  const workspaceChoice = useSpaceWorkspaceChoice(spaceId, spaceStore.space.value?.workspacePath);
 
   const handlePause = useCallback(async () => {
     setActionLoading(true);
@@ -352,14 +349,6 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
       toast.error('Failed to update concurrency');
     }
   }, []);
-
-  const handleNewSession = useCallback(
-    async (workspacePath?: string, worktreeMode?: 'worktree' | 'direct') => {
-      const response = await createSession({ spaceId, workspacePath, worktreeMode });
-      navigateToSpaceSession(routeSpaceId, response.sessionId);
-    },
-    [spaceId, routeSpaceId]
-  );
 
   const loading = spaceStore.loading.value;
   const space = spaceStore.space.value;
@@ -420,7 +409,6 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
     >
       <div class="mx-auto min-h-[calc(100%+1px)] max-w-6xl space-y-6">
         <SpaceCreateTaskDialog isOpen={showCreateTask} onClose={() => setShowCreateTask(false)} />
-        {workspaceChoice.dialog}
 
         {runtimeState && (
           <RuntimeControlBar
@@ -529,18 +517,6 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
                   <h3 class="text-base font-semibold tracking-tight text-fg">Recent Sessions</h3>
                   <p class="mt-0.5 text-[11px] text-fg-faint">Continue recent conversations</p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() =>
-                    workspaceChoice.chooseWorkspace(
-                      (workspacePath, worktreeMode) =>
-                        void handleNewSession(workspacePath, worktreeMode)
-                    )
-                  }
-                  class="text-xs font-medium text-cat-indigo/85 underline-offset-4 transition-colors hover:text-cat-indigo hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cat-indigo/70"
-                >
-                  New Session
-                </button>
               </div>
               <div class="divide-y divide-line">
                 {recentSessions.map((session) => (
