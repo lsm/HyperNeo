@@ -30,7 +30,7 @@ export interface SpaceLongHorizonAgentTemplateEventSubscription {
 }
 
 export interface SpaceLongHorizonAgentTemplateOwnershipPattern {
-  target: 'goal' | 'forge_scope';
+  target: 'goal' | 'evolution_scope';
   relationship: SpaceLongHorizonAgentRelationship;
   description: string;
 }
