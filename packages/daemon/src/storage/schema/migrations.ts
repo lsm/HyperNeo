@@ -21,6 +21,7 @@ import { runMigration262 } from './m262-mcp-attach-error.ts';
 import { runMigration263 } from './m263-message-delivery-uuid-index.ts';
 import { runMigration264 } from './m264-agent-child-processes.ts';
 import { runMigration272 } from './m272-space-session-event-subscriptions.ts';
+import { runMigration273 } from './m273-backfill-agent-session-ids.ts';
 import { runMigration265 } from './m265-workflow-run-blocked-retries.ts';
 import { runMigration266 } from './m266-task-assistant-messages-index.ts';
 import { runMigration267 } from './m267-restamp-contracts-task-approve.ts';
@@ -620,6 +621,7 @@ export function runMigrations(
   run(migrationMarkerKey(270), () => runMigration270(db));
   run(migrationMarkerKey(271), () => runMigration271(db));
   run(migrationMarkerKey(272), () => runMigration272(db));
+  run(migrationMarkerKey(273), () => runMigration273(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }
