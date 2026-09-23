@@ -12,6 +12,13 @@ function tableExists(db: Database, name: string): boolean {
   return !!db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?`).get(name);
 }
 
+function hasColumns(db: Database, table: string, columns: string[]): boolean {
+  const present = new Set(
+    (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((c) => c.name)
+  );
+  return columns.every((column) => present.has(column));
+}
+
 function parseObject(value: string | null): Record<string, unknown> {
   if (!value) return {};
   try {
@@ -46,7 +53,9 @@ export function runMigration274(db: Database, now = Date.now()): void {
   if (
     !tableExists(db, 'sessions') ||
     !tableExists(db, 'spaces') ||
-    !tableExists(db, 'space_long_horizon_agents')
+    !tableExists(db, 'space_long_horizon_agents') ||
+    !hasColumns(db, 'sessions', ['title', 'type', 'metadata', 'session_context']) ||
+    !hasColumns(db, 'space_long_horizon_agents', ['session_id'])
   ) {
     return;
   }
