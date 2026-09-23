@@ -174,6 +174,26 @@ describe('toMailboxMessage', () => {
       expect(toMailboxMessage(input)).toEqual({ message: input });
     });
 
+    test('drops retired task and goal reference metadata instead of rejecting the entry', () => {
+      const file = { type: 'file', id: 'src/a.ts', displayText: 'a.ts' } as const;
+      const projected = toMailboxMessage({
+        ...validMessage,
+        referenceMetadata: {
+          '@ref{task:t1}': { type: 'task', id: 't1', displayText: 'Task one' },
+          '@ref{goal:g1}': {
+            type: 'goal',
+            id: 'g1',
+            displayText: 'Goal one',
+            status: 'unresolved',
+          },
+          '@ref{file:src/a.ts}': file,
+        } as unknown as MailboxMessage['referenceMetadata'],
+      });
+      expect(projected).toEqual({
+        message: { ...validMessage, referenceMetadata: { '@ref{file:src/a.ts}': file } },
+      });
+    });
+
     test('output keys are exactly the typed fields', () => {
       const withoutPriority = toMailboxMessage(validMessage) as { message: MailboxMessage };
       expect(Object.keys(withoutPriority.message).sort()).toEqual([

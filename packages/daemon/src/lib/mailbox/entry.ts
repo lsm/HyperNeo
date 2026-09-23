@@ -53,6 +53,7 @@ const MAILBOX_CONTENT_REASON =
   'message.content must be a non-empty string or a non-empty array of text or image blocks';
 const MAILBOX_IMAGE_MEDIA_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] as const;
 const MAILBOX_REFERENCE_TYPES: readonly ReferenceType[] = ['file', 'folder'];
+const RETIRED_REFERENCE_TYPES: readonly unknown[] = ['task', 'goal'];
 const MAILBOX_INPUT_KINDS: readonly MessageInputKind[] = ['task', 'human', 'system'];
 
 function isMailboxDeliveryMode(value: unknown): value is MailboxDeliveryMode {
@@ -87,6 +88,7 @@ function projectReferenceMetadata(value: ReferenceMetadata): ReferenceMetadata |
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
   const projected: ReferenceMetadata = {};
   for (const [token, metadata] of Object.entries(value)) {
+    if (RETIRED_REFERENCE_TYPES.includes((metadata as { type?: unknown } | null)?.type)) continue;
     if (
       typeof metadata !== 'object' ||
       metadata === null ||
