@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { SessionResolutionDeps } from '../../../../src/lib/session-resolution/deps';
 import { resolveDeliverySession } from '../../../../src/lib/session-resolution/resolve-delivery-session';
-import { agentSessionIdOf } from '../../../../src/lib/session-resolution/target';
+import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session';
 
 interface TestSession {
   id: string;
@@ -30,10 +30,11 @@ function makeDeps(config?: {
       if (config?.getSessionError !== undefined) throw config.getSessionError;
       return sessions.get(sessionId) ?? null;
     },
+    agentSessionId: (spaceId: string, agentId: string) => longTermAgentSessionId(spaceId, agentId),
     ensureLongTermAgent: async (spaceId, agentId) => {
       ensureCalls.push([spaceId, agentId]);
       if (config?.ensureOutcome === 'fail') return null;
-      const sessionId = agentSessionIdOf(spaceId, agentId);
+      const sessionId = longTermAgentSessionId(spaceId, agentId);
       const session = { id: sessionId };
       sessions.set(sessionId, session);
       return session;

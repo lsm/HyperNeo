@@ -1,10 +1,9 @@
 import { describe, expect, test } from 'bun:test';
+import { type FindTarget, type SessionTarget } from '../../../../src/lib/session-resolution/target';
 import {
-  agentSessionIdOf,
-  type FindTarget,
-  type SessionTarget,
-} from '../../../../src/lib/session-resolution/target';
-import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session';
+  longTermAgentSessionId,
+  resolveAgentSessionId,
+} from '../../../../src/lib/space/long-term-agent-session';
 
 describe('session-resolution type assignment tests', () => {
   test('new types accept their literal shapes', () => {
@@ -17,24 +16,23 @@ describe('session-resolution type assignment tests', () => {
   });
 });
 
-describe('agentSessionIdOf', () => {
-  test('the literal coordinator id routes to its own session, never the Space chat session', () => {
-    const spaceId = 'space-1';
-    expect(agentSessionIdOf(spaceId, 'coordinator')).toBe(
-      longTermAgentSessionId(spaceId, 'coordinator')
+describe('resolveAgentSessionId', () => {
+  test('reads the session the agent record stores', () => {
+    const agents = { getById: () => ({ id: 'agent-1', spaceId: 'space-1', sessionId: 'stored' }) };
+    expect(resolveAgentSessionId(agents, 'space-1', 'agent-1')).toBe('stored');
+  });
+
+  test('falls back to the derived id for an agent with no stored session', () => {
+    const agents = { getById: () => ({ id: 'agent-1', spaceId: 'space-1', sessionId: null }) };
+    expect(resolveAgentSessionId(agents, 'space-1', 'agent-1')).toBe(
+      longTermAgentSessionId('space-1', 'agent-1')
     );
-    expect(agentSessionIdOf(spaceId, 'coordinator')).not.toBe(`space:chat:${spaceId}`);
   });
 
-  test('a derived coordinator id without a coordinator row routes to its own long-horizon session', () => {
-    const spaceId = 'space-1';
-    const agentId = `space-lh-agent:coordinator:${spaceId}`;
-    expect(agentSessionIdOf(spaceId, agentId)).toBe(longTermAgentSessionId(spaceId, agentId));
-  });
-
-  test('non-coordinator agentId reuses longTermAgentSessionId', () => {
-    const spaceId = 'space-1';
-    const agentId = 'agent-1';
-    expect(agentSessionIdOf(spaceId, agentId)).toBe(longTermAgentSessionId(spaceId, agentId));
+  test('ignores an agent record from another Space', () => {
+    const agents = { getById: () => ({ id: 'agent-1', spaceId: 'other', sessionId: 'stored' }) };
+    expect(resolveAgentSessionId(agents, 'space-1', 'agent-1')).toBe(
+      longTermAgentSessionId('space-1', 'agent-1')
+    );
   });
 });

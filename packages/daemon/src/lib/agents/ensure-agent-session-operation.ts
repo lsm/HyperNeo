@@ -3,7 +3,7 @@ import type { SpaceLongHorizonAgent } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
-import { longTermAgentSessionId } from '../space/long-term-agent-session.ts';
+import { agentSessionIdFor } from '../space/long-term-agent-session.ts';
 import {
   admitAgentCaller,
   AGENT_MUTATE_POLICY,
@@ -51,7 +51,7 @@ export async function provisionAgentSession(
         ensured === 'agent_missing' ? 'agent_not_found' : 'session_unavailable',
         `No session could be started for agent ${located.agent.id}: ${ensured}.`
       )
-    : { sessionId: longTermAgentSessionId(located.spaceId, located.agent.id) };
+    : { sessionId: agentSessionIdFor(deps.getAgent(located.agent.id) ?? located.agent) };
 }
 
 const ENSURE_AGENT_SESSION_DESCRIPTION =

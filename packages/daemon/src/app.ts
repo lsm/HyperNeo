@@ -126,6 +126,7 @@ import {
   handleLongHorizonAgentReminderFire,
 } from './lib/job-handlers/long-horizon-agent-reminder-fire.handler.ts';
 import { readReminderOccurrenceState } from './lib/agents/reminder-delivery-registry.ts';
+import { resolveAgentSessionId } from './lib/space/long-term-agent-session.ts';
 import { TaskScheduleRepository } from './storage/repositories/task-schedule-repository.ts';
 import { SpaceRepository } from './storage/repositories/space-repository.ts';
 import { SpaceTaskRepository } from './storage/repositories/space-task-repository.ts';
@@ -1105,6 +1106,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       new SpaceAgentRepository(db.getDatabase())
     );
     const lhAgentReminderSpaceRepo = new SpaceRepository(db.getDatabase());
+    const lhAgentReminderAgentRepo = new SpaceLongHorizonAgentRepository(db.getDatabase());
     jobProcessor.register(LONG_HORIZON_AGENT_REMINDER_FIRE, async (job) => {
       return handleLongHorizonAgentReminderFire(job, {
         reminderRepo: lhAgentReminderRepo,
@@ -1112,7 +1114,11 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         jobQueue,
         deliver: (args) => spaceRuntimeService.deliverLongHorizonAgentReminder(args),
         getOccurrenceDeliveryState: (spaceId, agentId, idempotencyKey) =>
-          readReminderOccurrenceState(reactiveDb?.db, spaceId, agentId, idempotencyKey),
+          readReminderOccurrenceState(
+            reactiveDb?.db,
+            resolveAgentSessionId(lhAgentReminderAgentRepo, spaceId, agentId),
+            idempotencyKey
+          ),
       });
     });
 

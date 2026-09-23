@@ -1,5 +1,4 @@
 import type { SessionResolutionDeps } from './deps.ts';
-import { agentSessionIdOf } from './target.ts';
 import type { EnsureSessionOutcome, FindTarget } from './target.ts';
 
 export async function findSessionForTarget(
@@ -15,7 +14,7 @@ export async function findSessionForTarget(
     }
     return { kind: 'unresolved', reason: 'not_found' };
   }
-  const sessionId = agentSessionIdOf(target.spaceId, target.agentId);
+  const sessionId = deps.agentSessionId(target.spaceId, target.agentId);
   if (
     (await deps.getSession(sessionId)) !== null &&
     (await deps.isAgentTargetLifecycleEligible(target.spaceId, target.agentId))

@@ -28,7 +28,6 @@ import {
   spaceOverlaySessionIdSignal,
   spaceOverlayTaskContextSignal,
 } from '../lib/signals';
-import { parseLongHorizonAgentSessionId } from '../lib/space-agent-session';
 import { spaceStore } from '../lib/space-store';
 import ChatContainer from './ChatContainer';
 
@@ -104,12 +103,12 @@ export default function SpaceIsland({
   const handleRefreshAgentRecord = useCallback(async () => {
     const viewedId = sessionViewId;
     if (!viewedId) return;
+    const agentId = spaceStore.agents.value.find((a) => a.sessionId === viewedId)?.id;
     await spaceStore.refreshAgents();
     if (!stillOnThisRouteSpace()) return;
     if (currentSpaceSessionIdSignal.value !== viewedId) return;
-    const parsed = parseLongHorizonAgentSessionId(viewedId);
-    const nextId = parsed
-      ? (spaceStore.agents.value.find((a) => a.id === parsed.agentId)?.sessionId ?? null)
+    const nextId = agentId
+      ? (spaceStore.agents.value.find((a) => a.id === agentId)?.sessionId ?? null)
       : viewedId;
     if (nextId && nextId !== viewedId) {
       navigateToSpaceSession(navigationSpaceId, nextId, true);
@@ -196,7 +195,8 @@ export default function SpaceIsland({
 
   if (sessionViewId) {
     const isSpaceChatSession = sessionViewId === `space:chat:${spaceId}`;
-    const isAgentSession = isSpaceChatSession || sessionViewId.startsWith('space:agent:');
+    const isAgentSession =
+      isSpaceChatSession || spaceStore.agents.value.some((a) => a.sessionId === sessionViewId);
     return (
       <>
         <div

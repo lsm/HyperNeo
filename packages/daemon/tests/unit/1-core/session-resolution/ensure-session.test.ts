@@ -68,6 +68,7 @@ function makeDeps(
       log.rehydrateSubSession.push(sessionId);
       return handlers.rehydrateSubSession ? handlers.rehydrateSubSession(sessionId) : null;
     },
+    agentSessionId: (spaceId: string, agentId: string) => longTermAgentSessionId(spaceId, agentId),
     ensureLongTermAgent: async (spaceId, agentId) => {
       log.ensureLongTermAgent.push([spaceId, agentId]);
       return handlers.ensureLongTermAgent ? handlers.ensureLongTermAgent(spaceId, agentId) : null;
