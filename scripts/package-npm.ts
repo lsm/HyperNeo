@@ -1,4 +1,11 @@
-import { chmodSync, copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 
 const ROOT = join(import.meta.dir, '..');
@@ -27,18 +34,17 @@ for (const { target, os, cpu } of PLATFORMS) {
   const binDir = join(pkgDir, 'bin');
   const ext = os === 'win32' ? '.exe' : '';
 
-  mkdirSync(binDir, { recursive: true });
-
   const srcBinary = join(BIN_DIR, `hyperneo-${target}${ext}`);
   const destBinary = join(binDir, `hyperneo${ext}`);
 
-  try {
-    copyFileSync(srcBinary, destBinary);
-    chmodSync(destBinary, 0o755);
-  } catch {
+  if (!existsSync(srcBinary)) {
     console.warn(`  Warning: Binary not found: ${srcBinary} (skipping ${pkgName})`);
     continue;
   }
+
+  mkdirSync(binDir, { recursive: true });
+  copyFileSync(srcBinary, destBinary);
+  chmodSync(destBinary, 0o755);
 
   writeFileSync(
     join(pkgDir, 'package.json'),
