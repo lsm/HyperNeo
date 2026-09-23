@@ -975,6 +975,10 @@ describe('SpaceRuntime external event subscriptions', () => {
     sessionId: string,
     deliver: SpaceRuntimeConfig['deliverSessionExternalEvent']
   ): void {
+    db.prepare(
+      `INSERT OR IGNORE INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata)
+       VALUES (?, 'subscriber', '/tmp', '1', '1', 'active', '{}', '{}')`
+    ).run(sessionId);
     new SpaceSessionEventSubscriptionRepository(db).upsert({
       spaceId: SPACE_ID,
       sessionId,

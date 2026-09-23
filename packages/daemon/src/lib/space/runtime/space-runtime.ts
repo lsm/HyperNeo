@@ -2452,7 +2452,7 @@ export class SpaceRuntime {
     return entry ? renderEventBlock(entry) : '';
   }
 
-  private async sendToStoredSubscriber(
+  private sendToStoredSubscriber(
     target: StoredSubscriberTarget,
     message: string,
     idempotencyKey: string

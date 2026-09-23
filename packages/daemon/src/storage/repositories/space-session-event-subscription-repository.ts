@@ -78,7 +78,7 @@ export class SpaceSessionEventSubscriptionRepository {
   listBySpace(spaceId: string): SpaceSessionEventSubscription[] {
     const rows = this.db
       .prepare(
-        `SELECT * FROM space_session_event_subscriptions WHERE space_id = ? ORDER BY created_at, id`
+        `SELECT * FROM space_session_event_subscriptions WHERE space_id = ? ORDER BY created_at, rowid`
       )
       .all(spaceId) as SubscriptionRow[];
     return rows.map(toSubscription);

@@ -4,6 +4,13 @@ import { SpaceRepository } from '../../../../src/storage/repositories/space-repo
 import { SpaceSessionEventSubscriptionRepository } from '../../../../src/storage/repositories/space-session-event-subscription-repository';
 import { createSpaceTables } from '../../helpers/space-test-db';
 
+function seedSession(db: Database, id: string): void {
+  db.prepare(
+    `INSERT OR IGNORE INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata)
+     VALUES (?, 'subscriber', '/tmp', '1', '1', 'active', '{}', '{}')`
+  ).run(id);
+}
+
 describe('SpaceSessionEventSubscriptionRepository', () => {
   let db: Database;
   let repo: SpaceSessionEventSubscriptionRepository;
@@ -17,6 +24,7 @@ describe('SpaceSessionEventSubscriptionRepository', () => {
     spaceId = spaces.createSpace({ workspacePath: '/ws/a', slug: 'a', name: 'A' }).id;
     otherSpaceId = spaces.createSpace({ workspacePath: '/ws/b', slug: 'b', name: 'B' }).id;
     repo = new SpaceSessionEventSubscriptionRepository(db as never);
+    for (const id of ['session-1', 'session-2', 'session-3']) seedSession(db, id);
   });
 
   afterEach(() => db.close());
