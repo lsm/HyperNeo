@@ -33,6 +33,7 @@ export interface WebhookAdmissionContext {
   getGlobalConfig(): Promise<ExternalEventExtensionConfig>;
   getSpaceConfig(spaceId: string): Promise<SpaceExternalEventSourceConfig | null>;
   publishEvent(spaceId: string, event: NormalizedGitHubEvent): Promise<void>;
+  storedEventPrNumber(spaceId: string, dedupeKey: string): number | undefined;
 }
 
 export interface WebhookPrResolution {
@@ -249,12 +250,26 @@ export async function resolvePrNumbersStage(
   return { ...ctx, prNumbers: resolution.prNumbers };
 }
 
+function eventsForSpace(
+  ctx: WebhookAdmissionCtx,
+  context: WebhookAdmissionContext,
+  spaceId: string
+): NormalizedGitHubEvent[] {
+  if (ctx.eventType !== 'check_run' && ctx.eventType !== 'check_suite') return ctx.normalized;
+  const primary = ctx.normalized[0]!;
+  const owner = context.storedEventPrNumber(spaceId, primary.dedupeKey);
+  if (owner === undefined || owner === primary.prNumber) return ctx.normalized;
+  return normalizeGitHubWebhookEvents(ctx.eventType, ctx.deliveryId, ctx.payload, owner);
+}
+
 export async function publishPerRepoStage(ctx: WebhookAdmissionCtx): Promise<WebhookAdmissionCtx> {
   const context = ctx.context;
   if (ctx.kind !== 'generic' || ctx.normalized.length === 0 || !context) return ctx;
   let published = 0;
   for (const watched of ctx.targets) {
-    for (const event of ctx.normalized) await context.publishEvent(watched.spaceId, event);
+    for (const event of eventsForSpace(ctx, context, watched.spaceId)) {
+      await context.publishEvent(watched.spaceId, event);
+    }
     ctx.deps.markWebhookReceived(watched.id);
     published++;
   }

@@ -49,6 +49,7 @@ function makeHarness(
     globallyEnabled?: boolean;
     started?: boolean;
     resolutions?: WebhookPrResolution[];
+    storedPrNumbers?: Record<string, number>;
   } = {}
 ): Harness {
   const state: Harness['state'] = { published: [], marked: [], verifyCalls: [], resolved: [] };
@@ -72,6 +73,8 @@ function makeHarness(
             publishEvent: async (spaceId: string, event: NormalizedGitHubEvent) => {
               state.published.push({ spaceId, event });
             },
+            storedEventPrNumber: (spaceId: string, dedupeKey: string) =>
+              options.storedPrNumbers?.[`${spaceId}|${dedupeKey}`],
           },
     listWebhookValidationRepos: () => options.repos ?? defaultRepos(),
     verifySignature: async (raw, signature, secret) => {
@@ -252,6 +255,35 @@ describe('generic webhook path', () => {
       ['space-2', 9],
     ]);
     expect(state.marked).toEqual(['w1', 'w2']);
+  });
+
+  it('keeps the unscoped dedupe key with the PR that already owns it in each space', async () => {
+    const { deps, state } = makeHarness({
+      storedPrNumbers: { 'space-1|acme/widgets:check_run:555:failure': 9 },
+    });
+    await runGithubWebhookAdmission(
+      deps,
+      admissionInput(multiPrCheckRunPayload, { eventType: 'check_run' })
+    );
+    expect(state.published.map((p) => [p.spaceId, p.event.prNumber, p.event.dedupeKey])).toEqual([
+      ['space-1', 7, 'acme/widgets:check_run:555:failure:7'],
+      ['space-1', 9, 'acme/widgets:check_run:555:failure'],
+      ['space-2', 7, 'acme/widgets:check_run:555:failure'],
+      ['space-2', 9, 'acme/widgets:check_run:555:failure:9'],
+    ]);
+  });
+
+  it('scopes every PR when the stored owner is not on the delivery', async () => {
+    const { deps, state } = makeHarness({
+      storedPrNumbers: { 'space-1|acme/widgets:check_run:555:failure': 11 },
+    });
+    await runGithubWebhookAdmission(
+      deps,
+      admissionInput(multiPrCheckRunPayload, { eventType: 'check_run' })
+    );
+    expect(
+      state.published.filter((p) => p.spaceId === 'space-1').map((p) => p.event.dedupeKey)
+    ).toEqual(['acme/widgets:check_run:555:failure:7', 'acme/widgets:check_run:555:failure:9']);
   });
 
   it('ignores unknown event kinds with 202', async () => {

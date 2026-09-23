@@ -150,29 +150,37 @@ function checkPullRequestNumbers(subject: unknown): number[] {
 export function normalizeGitHubWebhookEvents(
   eventType: string,
   deliveryId: string,
-  payload: unknown
+  payload: unknown,
+  unscopedOwner?: number
 ): NormalizedGitHubEvent[] {
-  const primary = normalizeGitHubWebhook(eventType, deliveryId, payload);
-  if (!primary) return [];
-  if (eventType !== 'check_run' && eventType !== 'check_suite') return [primary];
+  if (eventType !== 'check_run' && eventType !== 'check_suite') {
+    const single = normalizeGitHubWebhook(eventType, deliveryId, payload);
+    return single ? [single] : [];
+  }
   const root = asObject(payload);
   const common = {
     repo: repoFromPayload(root),
     deliveryId,
     rawPayload: payload,
     sender: root.sender,
-    prScopedDedupe: true,
   };
   const subject = eventType === 'check_run' ? root.check_run : root.check_suite;
-  const fannedOut = checkPullRequestNumbers(subject)
-    .filter((prNumber) => prNumber !== primary.prNumber)
-    .map((prNumber) =>
-      eventType === 'check_run'
-        ? normalizeGitHubCheckRun({ ...common, checkRun: subject, source: 'webhook', prNumber })
-        : normalizeGitHubCheckSuite({ ...common, checkSuite: subject, prNumber })
-    )
+  const prNumbers = checkPullRequestNumbers(subject);
+  const owner = unscopedOwner ?? prNumbers[0];
+  return prNumbers
+    .map((prNumber) => {
+      const prScopedDedupe = prNumber !== owner;
+      return eventType === 'check_run'
+        ? normalizeGitHubCheckRun({
+            ...common,
+            checkRun: subject,
+            source: 'webhook',
+            prNumber,
+            prScopedDedupe,
+          })
+        : normalizeGitHubCheckSuite({ ...common, checkSuite: subject, prNumber, prScopedDedupe });
+    })
     .filter((event): event is NormalizedGitHubEvent => event !== null);
-  return [primary, ...fannedOut];
 }
 
 export function normalizeGitHubWebhook(

@@ -761,6 +761,31 @@ describe('NormalizedGitHubEvent reply/resolve handles', () => {
       ]);
     });
 
+    test('gives the unscoped key to a named owner, or to no PR when the owner is absent', () => {
+      const payload = {
+        action: 'completed',
+        check_run: {
+          id: 558,
+          name: 'ci',
+          status: 'completed',
+          conclusion: 'failure',
+          pull_requests: [{ number: 7 }, { number: 9 }],
+        },
+        repository,
+        sender,
+      };
+      expect(
+        normalizeGitHubWebhookEvents('check_run', 'delivery-5', payload, 9).map(
+          (event) => event.dedupeKey
+        )
+      ).toEqual(['acme/widgets:check_run:558:failure:7', 'acme/widgets:check_run:558:failure']);
+      expect(
+        normalizeGitHubWebhookEvents('check_run', 'delivery-6', payload, 11).map(
+          (event) => event.dedupeKey
+        )
+      ).toEqual(['acme/widgets:check_run:558:failure:7', 'acme/widgets:check_run:558:failure:9']);
+    });
+
     test('returns the single event for other kinds and nothing when it is dropped', () => {
       expect(
         normalizeGitHubWebhookEvents('check_run', 'delivery-3', {
