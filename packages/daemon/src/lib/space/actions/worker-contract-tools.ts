@@ -6,7 +6,7 @@ export const WORKER_NODE_HOT_FILL = [
   'workflow.run.reachableAgent.list',
   'workflow.run.channel.list',
   'send_message',
-  'nodeAgent.restore',
+  'session.toolSurface.restore',
 ] as const;
 
 export interface RoleHotActionView {

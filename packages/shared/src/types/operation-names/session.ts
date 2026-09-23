@@ -5,4 +5,5 @@ export const SESSION_OPERATION_NAMES = [
   'session.message.list',
   'session.message.send',
   'session.state.update',
+  'session.toolSurface.restore',
 ] as const;
