@@ -3,7 +3,7 @@ import type { SpaceLongHorizonAgent } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
-import { longTermAgentSessionId } from '../space/long-term-agent-session.ts';
+import { agentSessionIdFor } from '../space/long-term-agent-session.ts';
 import {
   admitAgentCaller,
   AGENT_MUTATE_POLICY,
@@ -51,11 +51,11 @@ export async function provisionAgentSession(
         ensured === 'agent_missing' ? 'agent_not_found' : 'session_unavailable',
         `No session could be started for agent ${located.agent.id}: ${ensured}.`
       )
-    : { sessionId: longTermAgentSessionId(located.spaceId, located.agent.id) };
+    : { sessionId: agentSessionIdFor(deps.getAgent(located.agent.id) ?? located.agent) };
 }
 
 const ENSURE_AGENT_SESSION_DESCRIPTION =
-  'Return the chat session of a long-horizon agent, creating it first when the agent has never run. A long-horizon agent keeps one durable session whose id is derived from the Space and the agent, so repeated calls return the same id and an agent that already has a session is left untouched. Rejects agent_not_found for an agent of another Space, and session_unavailable when the runtime declines to start one — a paused, stopped, or archived Space, or an agent that is not active. Human (RPC) callers pass spaceId; agent callers act in their own Space.';
+  'Return the chat session of a long-horizon agent, creating it first when the agent has never run. A long-horizon agent keeps one durable session recorded on the agent (derived from the Space and the agent only when it has never had one), so repeated calls return the same id and an agent that already has a session is left untouched. Rejects agent_not_found for an agent of another Space, and session_unavailable when the runtime declines to start one — a paused, stopped, or archived Space, or an agent that is not active. Human (RPC) callers pass spaceId; agent callers act in their own Space.';
 
 export function createEnsureAgentSessionOperation(deps: EnsureAgentSessionDependencies) {
   const access = 'mutate' as const;

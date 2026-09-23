@@ -1,5 +1,3 @@
-import { longTermAgentSessionId } from '../space/long-term-agent-session.ts';
-
 export interface SessionTargetSession {
   kind: 'session';
   sessionId: string;
@@ -28,7 +26,3 @@ export type FindTarget = Exclude<SessionTarget, SessionTargetWorker>;
 export type EnsureSessionOutcome =
   | { kind: 'resolved'; sessionId: string; created: boolean }
   | { kind: 'unresolved'; reason: string };
-
-export function agentSessionIdOf(spaceId: string, agentId: string): string {
-  return longTermAgentSessionId(spaceId, agentId);
-}

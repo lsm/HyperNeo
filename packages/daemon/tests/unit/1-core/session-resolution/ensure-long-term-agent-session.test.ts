@@ -1,10 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { SessionResolutionDeps } from '../../../../src/lib/session-resolution/deps';
 import { ensureLongTermAgentSession } from '../../../../src/lib/session-resolution/ensure-long-term-agent-session';
-import {
-  agentSessionIdOf,
-  type SessionTargetAgent,
-} from '../../../../src/lib/session-resolution/target';
+import { type SessionTargetAgent } from '../../../../src/lib/session-resolution/target';
 import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session';
 
 function makeDeps(config?: { existingSessionIds?: string[]; ensureOutcome?: 'create' | 'fail' }): {
@@ -15,10 +12,11 @@ function makeDeps(config?: { existingSessionIds?: string[]; ensureOutcome?: 'cre
   const ensureCalls: Array<[string, string]> = [];
   const deps: SessionResolutionDeps = {
     getSession: async (sessionId) => (sessions.has(sessionId) ? { id: sessionId } : null),
+    agentSessionId: (spaceId: string, agentId: string) => longTermAgentSessionId(spaceId, agentId),
     ensureLongTermAgent: async (spaceId, agentId) => {
       ensureCalls.push([spaceId, agentId]);
       if (config?.ensureOutcome === 'fail') return null;
-      const sessionId = agentSessionIdOf(spaceId, agentId);
+      const sessionId = longTermAgentSessionId(spaceId, agentId);
       sessions.add(sessionId);
       return { id: sessionId };
     },

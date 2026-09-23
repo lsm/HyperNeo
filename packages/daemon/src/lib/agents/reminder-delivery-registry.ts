@@ -1,4 +1,3 @@
-import { longTermAgentSessionId } from '../space/long-term-agent-session.ts';
 import { MAILBOX_LANE } from '../mailbox/enqueue.ts';
 
 export type ReminderOccurrenceState = 'absent' | 'enqueued' | 'consumed';
@@ -45,12 +44,10 @@ export function reminderOccurrenceKey(reminderId: string, nextRunAt: number | nu
 
 export function readReminderOccurrenceState(
   db: ReminderOccurrenceReader | null | undefined,
-  spaceId: string,
-  agentId: string,
+  sessionId: string,
   idempotencyKey: string
 ): ReminderOccurrenceState {
   if (!db) return 'absent';
-  const sessionId = longTermAgentSessionId(spaceId, agentId);
   if (db.getMessageByStatusAndUuid(sessionId, 'consumed', idempotencyKey) != null) {
     return 'consumed';
   }
@@ -62,12 +59,10 @@ export function readReminderOccurrenceState(
 
 export function reminderOccurrenceIsClaimed(
   db: ReminderClaimReader | null | undefined,
-  spaceId: string,
-  agentId: string,
+  sessionId: string,
   idempotencyKey: string
 ): boolean {
   if (!db) return false;
-  const sessionId = longTermAgentSessionId(spaceId, agentId);
   const queued = db.getJobQueueRepo().listActiveByPayload(MAILBOX_LANE, {
     'to.sessionId': sessionId,
     messageUuid: idempotencyKey,

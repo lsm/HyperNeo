@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { SpaceLongHorizonAgent } from '@hyperneo/shared';
-import { agentSessionIdOf } from '../../../../src/lib/session-resolution/target';
+import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session';
 import {
   resolveAgentRecord,
   type ResolveAgentRecordDeps,

@@ -1,3 +1,4 @@
+import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session';
 import { describe, expect, jest, test } from 'bun:test';
 import {
   workerTaskPhaseOf,
@@ -38,6 +39,7 @@ const workerTarget = (overrides?: Partial<SessionTargetWorker>): SessionTargetWo
 const buildDeps = (overrides: Partial<SessionResolutionDeps> = {}): SessionResolutionDeps => ({
   getSession: async () => null,
   rehydrateSubSession: async () => null,
+  agentSessionId: (spaceId: string, agentId: string) => longTermAgentSessionId(spaceId, agentId),
   ensureLongTermAgent: async () => null,
   isAgentTargetLifecycleEligible: async () => true,
   listWorkerExecutions: () => [],

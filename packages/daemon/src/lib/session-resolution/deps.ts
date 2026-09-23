@@ -37,6 +37,7 @@ export function workerTaskPhaseOf(
 export interface SessionResolutionDeps {
   getSession(sessionId: string): Promise<unknown | null>;
   rehydrateSubSession(sessionId: string): Promise<unknown | null>;
+  agentSessionId(spaceId: string, agentId: string): string;
   ensureLongTermAgent(spaceId: string, agentId: string): Promise<unknown | null>;
   isAgentTargetLifecycleEligible(spaceId: string, agentId: string): Promise<boolean>;
   listWorkerExecutions(target: SessionTargetWorker): WorkerExecutionSession[];

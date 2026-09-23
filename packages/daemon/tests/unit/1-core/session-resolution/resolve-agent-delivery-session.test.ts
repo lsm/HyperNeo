@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { SessionResolutionDeps } from '../../../../src/lib/session-resolution/deps';
 import { resolveAgentDeliverySession } from '../../../../src/lib/session-resolution/resolve-agent-delivery-session';
-import { agentSessionIdOf } from '../../../../src/lib/session-resolution/target';
+import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session';
 
 interface TestSession {
   id: string;
@@ -29,13 +29,14 @@ function makeDeps(config?: {
       getSessionCalls.push(sessionId);
       return sessions.get(sessionId) ?? null;
     },
+    agentSessionId: (spaceId: string, agentId: string) => longTermAgentSessionId(spaceId, agentId),
     ensureLongTermAgent: async (spaceId, agentId) => {
       ensureCalls.push([spaceId, agentId]);
       if (config?.ensureOutcome === 'fail') return null;
       const ensured =
         config?.ensured ??
         ({
-          id: agentSessionIdOf(spaceId, agentId),
+          id: longTermAgentSessionId(spaceId, agentId),
           generation: 1,
         } as TestSession);
       sessions.set(ensured.id, ensured);
@@ -64,7 +65,7 @@ function makeDeps(config?: {
 
 describe('resolveAgentDeliverySession', () => {
   test('finds, preserves provisioning side effects, and re-fetches the Session object', async () => {
-    const sessionId = agentSessionIdOf('space-1', 'agent-1');
+    const sessionId = longTermAgentSessionId('space-1', 'agent-1');
     const existing = { id: sessionId, generation: 1 };
     const fresh = { id: sessionId, generation: 2 };
     const { deps, getSessionCalls, refetchCalls, ensureCalls } = makeDeps({ existing });

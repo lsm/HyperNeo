@@ -442,7 +442,9 @@ describe('reminderOccurrenceIsClaimed', () => {
 
   test('an active mailbox job alone claims the occurrence', () => {
     const db = reader({ jobs: 1 });
-    expect(reminderOccurrenceIsClaimed(db, spaceId, agent.id, KEY)).toBe(true);
+    expect(reminderOccurrenceIsClaimed(db, longTermAgentSessionId(spaceId, agent.id), KEY)).toBe(
+      true
+    );
     expect(db.queries).toEqual([
       {
         queue: 'mailbox',
@@ -457,22 +459,36 @@ describe('reminderOccurrenceIsClaimed', () => {
   test.each(['deferred', 'enqueued', 'submitted', 'consumed'] as const)(
     'a persisted %s message claims the occurrence',
     (status) => {
-      expect(reminderOccurrenceIsClaimed(reader({ status }), spaceId, agent.id, KEY)).toBe(true);
+      expect(
+        reminderOccurrenceIsClaimed(
+          reader({ status }),
+          longTermAgentSessionId(spaceId, agent.id),
+          KEY
+        )
+      ).toBe(true);
     }
   );
 
   test('a failed message that was never consumed leaves the occurrence unclaimed', () => {
-    expect(reminderOccurrenceIsClaimed(reader({ status: 'failed' }), spaceId, agent.id, KEY)).toBe(
-      false
-    );
+    expect(
+      reminderOccurrenceIsClaimed(
+        reader({ status: 'failed' }),
+        longTermAgentSessionId(spaceId, agent.id),
+        KEY
+      )
+    ).toBe(false);
   });
 
   test('a consumed message later failed inclusively still claims the occurrence', () => {
     const db = reader({ status: 'failed', consumedSeq: true });
-    expect(reminderOccurrenceIsClaimed(db, spaceId, agent.id, KEY)).toBe(true);
+    expect(reminderOccurrenceIsClaimed(db, longTermAgentSessionId(spaceId, agent.id), KEY)).toBe(
+      true
+    );
   });
 
   test('no reader means nothing is claimed', () => {
-    expect(reminderOccurrenceIsClaimed(null, spaceId, agent.id, KEY)).toBe(false);
+    expect(reminderOccurrenceIsClaimed(null, longTermAgentSessionId(spaceId, agent.id), KEY)).toBe(
+      false
+    );
   });
 });

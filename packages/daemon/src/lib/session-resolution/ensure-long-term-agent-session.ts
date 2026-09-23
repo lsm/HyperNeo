@@ -1,11 +1,11 @@
 import type { SessionResolutionDeps } from './deps.ts';
-import { agentSessionIdOf, type EnsureSessionOutcome, type SessionTargetAgent } from './target.ts';
+import type { EnsureSessionOutcome, SessionTargetAgent } from './target.ts';
 
 export async function ensureLongTermAgentSession(
   target: SessionTargetAgent,
   deps: SessionResolutionDeps
 ): Promise<EnsureSessionOutcome> {
-  const sessionId = agentSessionIdOf(target.spaceId, target.agentId);
+  const sessionId = deps.agentSessionId(target.spaceId, target.agentId);
   if ((await deps.getSession(sessionId)) !== null) {
     return { kind: 'resolved', sessionId, created: false };
   }

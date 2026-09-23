@@ -7,10 +7,7 @@ import { MIGRATED_WORKER_TEMPLATE_KEY } from '../agents/worker-long-horizon-mapp
 import type { SpaceRepository } from '../../storage/repositories/space-repository.ts';
 import type { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository.ts';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository.ts';
-import {
-  encodeActorIdComponent,
-  longTermAgentSessionId,
-} from '../space/long-term-agent-session.ts';
+import { encodeActorIdComponent, resolveAgentSessionId } from '../space/long-term-agent-session.ts';
 
 export const SPACE_SYSTEM_ACTORS = [
   { actorId: 'system:runtime', handle: '@system-runtime', roles: ['runtime'] },
@@ -80,7 +77,7 @@ export class SpaceActorRegistryAdapter {
   }
 
   private findLongTermAgentSession(spaceId: string, agentId: string): Session | null {
-    const canonicalId = longTermAgentSessionId(spaceId, agentId);
+    const canonicalId = resolveAgentSessionId(this.repos.longHorizonAgentRepo, spaceId, agentId);
     const canonical = this.repos.sessionRepo.getSession(canonicalId);
     if (canonical && isSessionInSpace(canonical, spaceId)) return canonical;
 
