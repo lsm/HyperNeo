@@ -782,7 +782,7 @@ describe('stable CODING_WORKFLOW template structure', () => {
     expect(prompt).not.toContain('Do NOT merge PRs');
     expect(prompt).not.toContain('send_message(target="Review"');
     expect(prompt).not.toContain('code-ready-gate');
-    expect(prompt).toContain('event.external.pr.subscribe');
+    expect(prompt).toContain('event.external.subscribe');
     expect(prompt).toContain('prUrl');
   });
 
@@ -1762,7 +1762,7 @@ describe('seedBuiltInWorkflows()', () => {
     const nodeName = 'Research';
     const researchNode = workflow.nodes.find((n) => n.name === nodeName)!;
     const templatePrompt = researchNode.agents[0].customPrompt!.value;
-    expect(templatePrompt).toContain('event.external.pr.subscribe');
+    expect(templatePrompt).toContain('event.external.subscribe');
     expect(templatePrompt).toContain('REVIEW_THREAD_RESOLUTION_GUIDANCE'.length ? 'review' : '');
 
     const customizedPrompt = 'Custom Research instructions: dig deep, cite sources.';
@@ -2191,11 +2191,11 @@ describe('seedBuiltInWorkflows()', () => {
     const codingNode = coding.nodes.find((n) => n.name === 'Coding')!;
 
     const templatePrompt = codingNode.agents[0].customPrompt!.value;
-    expect(templatePrompt).toContain('event.external.pr.subscribe');
+    expect(templatePrompt).toContain('event.external.subscribe');
     const retiredPrompt = templatePrompt
       .replace(CODER_OWNED_PR_SUBSCRIBE_GUIDANCE, '')
       .replace(`\n${CALL_ACTION_PREFERENCE_GUIDANCE}`, '');
-    expect(retiredPrompt).not.toContain('event.external.pr.subscribe');
+    expect(retiredPrompt).not.toContain('event.external.subscribe');
     expect(retiredPrompt).not.toContain('call_action');
 
     manager.updateWorkflow(coding.id, {
@@ -2221,7 +2221,7 @@ describe('seedBuiltInWorkflows()', () => {
     const after = manager.getWorkflow(coding.id)!;
     const afterCodingNode = after.nodes.find((n) => n.id === codingNode.id)!;
     expect(afterCodingNode.agents[0].customPrompt?.value).toBe(templatePrompt);
-    expect(afterCodingNode.agents[0].customPrompt?.value).toContain('event.external.pr.subscribe');
+    expect(afterCodingNode.agents[0].customPrompt?.value).toContain('event.external.subscribe');
   });
 
   test('re-stamp restores the zero-findings verdict gate to the stable reviewer prompt', () => {
@@ -2283,7 +2283,7 @@ describe('seedBuiltInWorkflows()', () => {
     const qaCoderPrompt = CODING_WITH_QA_WORKFLOW.nodes.find((n) => n.name === 'Coding')!.agents[0]
       .customPrompt!.value;
     expect(qaCoderPrompt).not.toContain('3. Open or update the PR');
-    expect(qaCoderPrompt).toContain('event.external.pr.subscribe');
+    expect(qaCoderPrompt).toContain('event.external.subscribe');
     expect(qaCoderPrompt).not.toContain('code-pr-gate');
     expect(qaCoderPrompt).toContain('Runtime Execution Contract');
     expect(qaCoderPrompt).toContain('`gh pr merge`');
@@ -4386,7 +4386,7 @@ const SUBMIT_FOR_REVIEW_WORDING: [current: string, retired: string][] = [
 function retireTransitionReview(value: string): string {
   return SUBMIT_FOR_REVIEW_WORDING.reduce(
     (text, [current, retired]) => text.replaceAll(current, retired),
-    retireSubscribeRename(retireTransitionDone(value))
+    retireSubscribeRename(retireTransitionDone(retireGenericPrSubscribe(value)))
   );
 }
 
@@ -4429,6 +4429,48 @@ test('prompts persisted with task.complete migrate forward to a transition to do
   expect(covered.length).toBe(9);
 });
 
+const GENERIC_PR_SUBSCRIBE_CALL =
+  'call `invoke(name="event.external.subscribe", input={ prUrl: "<PR URL>" })`';
+
+function retireGenericPrSubscribe(value: string): string {
+  return value
+    .replaceAll(
+      GENERIC_PR_SUBSCRIBE_CALL,
+      'call `invoke(name="event.external.pr.subscribe", input={ prUrl: "<PR URL>" })`'
+    )
+    .replaceAll(
+      '`subscribe_pr_events` is `event.external.subscribe` with `prUrl`, and `send_message` is an operation name already.',
+      '`subscribe_pr_events` is `event.external.pr.subscribe`, and `send_message` is an operation name already.'
+    );
+}
+
+test('prompts persisted with event.external.pr.subscribe migrate forward to event.external.subscribe', () => {
+  const covered: string[] = [];
+  for (const workflow of getBuiltInWorkflows()) {
+    for (const node of workflow.nodes) {
+      const current = node.agents[0]?.customPrompt?.value;
+      if (!current) continue;
+      const persisted = retireGenericPrSubscribe(current);
+      if (persisted === current) continue;
+      expect(persisted).toContain('event.external.pr.subscribe');
+      const existingNode: WorkflowNode = {
+        ...node,
+        agents: node.agents.map((agent, index) =>
+          index === 0 ? { ...agent, customPrompt: { value: persisted } } : agent
+        ),
+      };
+      const merged = mergeNodeStructuralFieldsFromTemplate([existingNode], workflow.nodes);
+      const label = `${workflow.name}/${node.name}`;
+      expect(
+        merged.find((candidate) => candidate.name === node.name)?.agents[0].customPrompt?.value,
+        label
+      ).toBe(current);
+      covered.push(label);
+    }
+  }
+  expect(covered.length).toBe(9);
+});
+
 function retireSubscribeRename(value: string): string {
   return value
     .replaceAll(
@@ -4441,14 +4483,15 @@ function retireSubscribeRename(value: string): string {
     );
 }
 
-test('prompts persisted with subscribe_pr_events migrate forward to event.external.pr.subscribe', () => {
+test('prompts persisted with subscribe_pr_events migrate forward to event.external.subscribe', () => {
   const covered: string[] = [];
   for (const workflow of getBuiltInWorkflows()) {
     for (const node of workflow.nodes) {
       const current = node.agents[0]?.customPrompt?.value;
-      if (!current?.includes('event.external.pr.subscribe')) continue;
-      const persisted = retireSubscribeRename(current);
+      if (!current || retireGenericPrSubscribe(current) === current) continue;
+      const persisted = retireSubscribeRename(retireGenericPrSubscribe(current));
       expect(persisted).not.toContain('event.external.pr.subscribe');
+      expect(persisted).not.toContain(GENERIC_PR_SUBSCRIBE_CALL);
       const existingNode: WorkflowNode = {
         ...node,
         agents: node.agents.map((agent, index) =>
