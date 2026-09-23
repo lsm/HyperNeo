@@ -45,7 +45,6 @@ import mdruntimeWorkflowSelectorInstructions from './runtime/workflow-selector-i
 };
 import mdsessionTitleGeneration from './session/title-generation.md' with { type: 'text' };
 import mdspaceAgentMemory from './space/agent-memory.md' with { type: 'text' };
-import mdspaceChatSession from './space/chat-session.md' with { type: 'text' };
 import mdspaceDbQuery from './space/db-query.md' with { type: 'text' };
 import mdspaceOperationsDoor from './space/operations-door.md' with { type: 'text' };
 import mdworkflowsCoderOnlyMergeInstructions from './workflows/coder-only/merge-instructions.md' with {
@@ -153,7 +152,6 @@ const registry: Record<string, string> = {
   'runtime/workflow-selector-instructions.md': mdruntimeWorkflowSelectorInstructions,
   'session/title-generation.md': mdsessionTitleGeneration,
   'space/agent-memory.md': mdspaceAgentMemory,
-  'space/chat-session.md': mdspaceChatSession,
   'space/db-query.md': mdspaceDbQuery,
   'space/operations-door.md': mdspaceOperationsDoor,
   'workflows/coder-only/merge-instructions.md': mdworkflowsCoderOnlyMergeInstructions,
@@ -217,7 +215,6 @@ export const {
   WORKFLOW_SELECTOR_INSTRUCTIONS,
   TITLE_GENERATION_PROMPT,
   SPACE_AGENT_MEMORY_BRIEFING,
-  SPACE_CHAT_SESSION_PROMPT,
   SPACE_DB_QUERY_BRIEFING,
   SPACE_OPERATIONS_DOOR,
   CODER_ONLY_MERGE_INSTRUCTIONS,

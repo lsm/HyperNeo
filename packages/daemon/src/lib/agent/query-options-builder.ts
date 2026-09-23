@@ -6,7 +6,6 @@ import type {
   PreToolUseHookInput,
   Settings,
 } from '@anthropic-ai/claude-agent-sdk';
-import { SPACE_CHAT_SESSION_PROMPT } from '@hyperneo/prompts';
 import type {
   AgentDefinition,
   AppMcpServer,
@@ -171,7 +170,7 @@ export function ensureAgentTools(
   sessionType: string
 ): Options['tools'] {
   const hasAgentsConfigured = agents && Object.keys(agents).length > 0;
-  if (!hasAgentsConfigured || sessionType === 'space_chat') {
+  if (!hasAgentsConfigured) {
     return tools;
   }
 
@@ -507,49 +506,6 @@ export class QueryOptionsBuilder {
       },
       supportedDialogKinds: sdkFallbackModel ? ['refusal_fallback_prompt'] : undefined,
     };
-
-    if (this.ctx.session.type === 'space_chat') {
-      const coordinatorToolset = config.sdkToolsPreset;
-      const isCoordinatorPreset = Array.isArray(coordinatorToolset);
-      const spaceAllowedBuiltinTools = isCoordinatorPreset
-        ? (coordinatorToolset as string[])
-        : [
-            'Read',
-            'Glob',
-            'Grep',
-            'Bash',
-            'WebFetch',
-            'WebSearch',
-            'ToolSearch',
-            'AskUserQuestion',
-            'Agent',
-            'Task',
-            'TaskOutput',
-            'TaskStop',
-          ];
-      const spaceRestrictedBuiltinTools = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'];
-
-      queryOptions.systemPrompt = buildHostAuthoredPrompt(
-        this.joinSystemPromptAppendParts([SPACE_CHAT_SESSION_PROMPT, this.ctx.getSpaceBriefing?.()])
-      );
-
-      queryOptions.tools = spaceAllowedBuiltinTools;
-
-      const mcpServerWildcards = Object.keys(queryOptions.mcpServers ?? {}).map(
-        (name) => `${name}__*`
-      );
-      queryOptions.allowedTools = [
-        ...new Set([
-          ...(queryOptions.allowedTools ?? []),
-          ...spaceAllowedBuiltinTools,
-          ...mcpServerWildcards,
-        ]),
-      ];
-
-      queryOptions.disallowedTools = [
-        ...new Set([...(queryOptions.disallowedTools ?? []), ...spaceRestrictedBuiltinTools]),
-      ];
-    }
 
     if (config.coordinatorMode) {
       queryOptions.agent = 'Coordinator';

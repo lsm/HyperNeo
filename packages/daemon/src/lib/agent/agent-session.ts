@@ -416,8 +416,6 @@ export class AgentSession
 
   onMissingWorkflowMcpServers?: (session: AgentSession, missing: string[]) => Promise<void>;
 
-  onMissingSpaceChatMcpServers?: (sessionId: string, missing: string[]) => Promise<void>;
-
   onMissingMemberSpaceMcpServers?: (sessionId: string, missing: string[]) => Promise<void>;
 
   suppressDeferredReplay?: (sessionId: string) => void;
