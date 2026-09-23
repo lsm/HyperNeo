@@ -55,8 +55,12 @@ const GetResultSchema = z.union([
 
 const OUTSIDE_SPACE = { accepted: false, reason: 'outside_space' } as const;
 
-function isOutsideSpace(caller: OperationCaller): boolean {
-  return caller.source === 'mcp' && !SPACE_DISCOVERY_POLICY.roles.some((r) => r === caller.role);
+export function admitDiscoveryCaller(
+  caller: OperationCaller
+): { value: OperationCaller } | { reason: typeof OUTSIDE_SPACE } {
+  const outside =
+    caller.source === 'mcp' && !SPACE_DISCOVERY_POLICY.roles.some((role) => role === caller.role);
+  return outside ? { reason: OUTSIDE_SPACE } : { value: caller };
 }
 
 type ListInput = z.infer<typeof ListInputSchema>;
@@ -122,16 +126,18 @@ const GET_DESCRIPTION =
 
 export function createSpaceReadOperations(deps: SpaceReadDependencies): OperationDefinition[] {
   const listSpaces = (superpipe({ deps })('space-list') as PipelineAPI)
-    .input(['input'])
+    .input(['input', 'caller'])
+    .pipe(admitDiscoveryCaller, 'caller', 'result:listing')
     .pipe(readSpaceListing, ['input', 'deps'], 'spaces')
     .pipe(summarizeSpaceListing, 'spaces', 'listing')
-    .endAsync('listing') as (input: ListInput) => Promise<ListResult>;
+    .endAsync('listing') as (input: ListInput, caller: OperationCaller) => Promise<ListResult>;
 
   const getSpace = (superpipe({ deps })('space-get') as PipelineAPI)
-    .input(['input'])
+    .input(['input', 'caller'])
+    .pipe(admitDiscoveryCaller, 'caller', 'result:outcome')
     .pipe(findSpaceById, ['input', 'deps'], 'result:outcome')
     .pipe(presentSpace, 'outcome', 'outcome')
-    .endAsync('outcome') as (input: GetInput) => Promise<GetResult>;
+    .endAsync('outcome') as (input: GetInput, caller: OperationCaller) => Promise<GetResult>;
 
   return [
     defineOperation({
@@ -140,8 +146,7 @@ export function createSpaceReadOperations(deps: SpaceReadDependencies): Operatio
       description: LIST_DESCRIPTION,
       inputSchema: ListInputSchema,
       resultSchema: ListResultSchema,
-      execute: (input, caller) =>
-        isOutsideSpace(caller) ? Promise.resolve(OUTSIDE_SPACE) : listSpaces(input),
+      execute: (input, caller) => listSpaces(input, caller),
     }),
     defineOperation({
       name: 'space.get',
@@ -149,8 +154,7 @@ export function createSpaceReadOperations(deps: SpaceReadDependencies): Operatio
       description: GET_DESCRIPTION,
       inputSchema: GetInputSchema,
       resultSchema: GetResultSchema,
-      execute: (input, caller) =>
-        isOutsideSpace(caller) ? Promise.resolve(OUTSIDE_SPACE) : getSpace(input),
+      execute: (input, caller) => getSpace(input, caller),
     }),
   ];
 }
