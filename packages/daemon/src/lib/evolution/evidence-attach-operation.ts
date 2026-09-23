@@ -103,25 +103,25 @@ interface EvidenceAttachTarget extends EvolutionSpaceScope {
 function findEvidenceScopeInSpace(
   scopeId: string,
   spaceId: string | undefined,
-  forge: EvolutionEvidenceAttachDependencies
+  evolution: EvolutionEvidenceAttachDependencies
 ): EvolutionScope | null {
-  const scope = forge.scopeService.getScope(scopeId);
+  const scope = evolution.scopeService.getScope(scopeId);
   return scope && (!spaceId || scope.spaceId === spaceId) ? scope : null;
 }
 
 export function requireForgeEvidenceSubject(
   input: EvidenceAttachInput,
   scope: EvolutionSpaceScope,
-  forge: EvolutionEvidenceAttachDependencies
+  evolution: EvolutionEvidenceAttachDependencies
 ): EvolutionGate<EvolutionSpaceScope, EvidenceAttachRejection> {
   if (input.kind === 'task') {
-    const task = forge.taskRepo.getTask(input.taskId);
+    const task = evolution.taskRepo.getTask(input.taskId);
     return task && (!scope.spaceId || task.spaceId === scope.spaceId)
       ? { value: scope }
       : denyForge('task_not_found', `Task not found: ${input.taskId}`);
   }
   if (input.kind === 'workflow_run') {
-    const run = forge.workflowRunRepo.getRun(input.workflowRunId);
+    const run = evolution.workflowRunRepo.getRun(input.workflowRunId);
     return run && (!scope.spaceId || run.spaceId === scope.spaceId)
       ? { value: scope }
       : denyForge('workflow_run_not_found', `Workflow run not found: ${input.workflowRunId}`);
@@ -132,9 +132,9 @@ export function requireForgeEvidenceSubject(
 export function requireForgeEvidenceTarget(
   input: EvidenceAttachInput,
   scope: EvolutionSpaceScope,
-  forge: EvolutionEvidenceAttachDependencies
+  evolution: EvolutionEvidenceAttachDependencies
 ): EvolutionGate<EvidenceAttachTarget, EvidenceAttachRejection> {
-  if (input.scopeId && !findEvidenceScopeInSpace(input.scopeId, scope.spaceId, forge)) {
+  if (input.scopeId && !findEvidenceScopeInSpace(input.scopeId, scope.spaceId, evolution)) {
     return denyForge('scope_not_found', `EvolutionScope not found: ${input.scopeId}`);
   }
   return { value: { spaceId: scope.spaceId, scopeId: input.scopeId } };
@@ -142,10 +142,10 @@ export function requireForgeEvidenceTarget(
 
 function writeForgeEvidence(
   input: EvidenceAttachInput,
-  forge: EvolutionEvidenceAttachDependencies
+  evolution: EvolutionEvidenceAttachDependencies
 ): EvidenceRef {
   if (input.kind === 'task') {
-    return forge.scopeService.attachTaskEvidence({
+    return evolution.scopeService.attachTaskEvidence({
       taskId: input.taskId,
       scopeId: input.scopeId,
       summary: input.summary,
@@ -153,14 +153,14 @@ function writeForgeEvidence(
     });
   }
   if (input.kind === 'workflow_run') {
-    return forge.scopeService.attachWorkflowRunEvidence({
+    return evolution.scopeService.attachWorkflowRunEvidence({
       workflowRunId: input.workflowRunId,
       scopeId: input.scopeId,
       summary: input.summary,
       metadata: input.metadata,
     });
   }
-  return forge.scopeService.addManualNoteEvidence({
+  return evolution.scopeService.addManualNoteEvidence({
     scopeId: input.scopeId,
     summary: input.summary,
     metadata: input.metadata,
@@ -193,28 +193,28 @@ export function attachForgeEvidence(
   input: EvidenceAttachInput,
   target: EvidenceAttachTarget,
   caller: OperationCaller,
-  forge: EvolutionEvidenceAttachDependencies
+  evolution: EvolutionEvidenceAttachDependencies
 ): EvolutionGate<{ accepted: true; evidence: EvidenceRef }, EvidenceAttachRejection> {
   let evidence: EvidenceRef;
   try {
-    evidence = writeForgeEvidence(input, forge);
+    evidence = writeForgeEvidence(input, evolution);
   } catch (err) {
     return denyForge('evidence_not_attached', err instanceof Error ? err.message : String(err));
   }
-  if (!findEvidenceScopeInSpace(evidence.scopeId, target.spaceId, forge)) {
+  if (!findEvidenceScopeInSpace(evidence.scopeId, target.spaceId, evolution)) {
     return denyForge('scope_not_found', `EvolutionScope not found: ${evidence.scopeId}`);
   }
-  forge.audit?.(evidenceAuditEntry(input, evidence, target, caller));
+  evolution.audit?.(evidenceAuditEntry(input, evidence, target, caller));
   return { value: { accepted: true, evidence } };
 }
 
-export function createForgeEvidenceAttachOperation(forge: EvolutionEvidenceAttachDependencies) {
-  const attach = (superpipe({ forge })('forge-evidence-attach') as PipelineAPI)
+export function createForgeEvidenceAttachOperation(evolution: EvolutionEvidenceAttachDependencies) {
+  const attach = (superpipe({ evolution })('evolution-evidence-attach') as PipelineAPI)
     .input(['input', 'caller'])
-    .pipe(admitForgeMutator, ['input', 'caller', 'forge'], 'result:outcome')
-    .pipe(requireForgeEvidenceSubject, ['input', 'outcome', 'forge'], 'result:outcome')
-    .pipe(requireForgeEvidenceTarget, ['input', 'outcome', 'forge'], 'result:outcome')
-    .pipe(attachForgeEvidence, ['input', 'outcome', 'caller', 'forge'], 'result:outcome')
+    .pipe(admitForgeMutator, ['input', 'caller', 'evolution'], 'result:outcome')
+    .pipe(requireForgeEvidenceSubject, ['input', 'outcome', 'evolution'], 'result:outcome')
+    .pipe(requireForgeEvidenceTarget, ['input', 'outcome', 'evolution'], 'result:outcome')
+    .pipe(attachForgeEvidence, ['input', 'outcome', 'caller', 'evolution'], 'result:outcome')
     .endAsync('outcome');
 
   return defineOperation({
