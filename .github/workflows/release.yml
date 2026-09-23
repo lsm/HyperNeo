@@ -3,9 +3,13 @@
 # Triggered by version tags (v*). Waits for CI to pass on the tagged
 # commit before building platform binaries and publishing to npm.
 #
+# Also triggerable manually (workflow_dispatch) as a build-only dry run:
+# with the `publish` input off, the build/package jobs run (validating new
+# targets like Windows) but nothing reaches npm or the GitHub Release.
+#
 # Flow:
 # 1. Wait for CI workflow to pass on this commit (handles race conditions)
-# 2. Build binaries for all platforms (4 targets)
+# 2. Build binaries for all platforms (5 targets)
 # 3. Package into platform-specific npm packages
 # 4. Publish to npm registry (Trusted Publishing via OIDC)
 # 5. Create GitHub Release with auto-generated notes
@@ -15,6 +19,13 @@ name: Release
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish to npm and create the GitHub Release (off = build-only dry run)'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -41,7 +52,11 @@ jobs:
       - name: Extract version from tag
         id: version
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          if [ "${{ github.event_name }}" = "push" ]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION=$(node -p "require('./packages/cli/package.json').version")
+          fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Release version: $VERSION"
 
@@ -75,6 +90,7 @@ jobs:
           echo "All package and desktop bundle versions match v$VERSION"
 
       - name: Verify commit is on dev branch
+        if: github.event_name == 'push'
         run: |
           if ! git branch -r --contains "$GITHUB_SHA" | grep -q 'origin/dev'; then
             echo "ERROR: Tagged commit $GITHUB_SHA is not on the dev branch"
@@ -84,6 +100,7 @@ jobs:
           echo "Commit $GITHUB_SHA is on dev branch"
 
       - name: Wait for CI to pass
+        if: github.event_name == 'push'
         run: |
           echo "Waiting for CI workflow to pass on commit $GITHUB_SHA..."
 
@@ -140,7 +157,10 @@ jobs:
     name: Release Build ${{ matrix.binary }}
     runs-on: ${{ matrix.runner }}
     needs: wait-for-ci
-    timeout-minutes: 10
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
 
     strategy:
       fail-fast: false
@@ -162,6 +182,10 @@ jobs:
             target: bun-linux-arm64
             binary: hyperneo-linux-arm64
             smoke: false
+          - runner: windows-latest
+            target: bun-windows-x64
+            binary: hyperneo-windows-x64.exe
+            smoke: true
 
     steps:
       - uses: actions/checkout@v6
@@ -204,7 +228,7 @@ jobs:
 
   # ============================================
   # DESKTOP RELEASE BUILD
-  # Build, sign, and notarize macOS desktop artifacts; build unsigned Linux artifacts
+  # Build, sign, and notarize macOS desktop artifacts; build unsigned Linux and Windows artifacts
   # ============================================
 
   desktop-release-build:
@@ -212,6 +236,9 @@ jobs:
     runs-on: ${{ matrix.runner }}
     needs: wait-for-ci
     timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
 
     strategy:
       fail-fast: false
@@ -226,6 +253,9 @@ jobs:
           - runner: ubuntu-latest
             rust-target: x86_64-unknown-linux-gnu
             arch: linux-x64
+          - runner: windows-latest
+            rust-target: x86_64-pc-windows-msvc
+            arch: windows-x64
 
     steps:
       - uses: actions/checkout@v6
@@ -318,10 +348,13 @@ jobs:
       - name: Build desktop app
         run: |
           cd packages/desktop
-          bun run build:sidecar
+          bash build-sidecar.sh
           BUNDLES_FLAG=""
           if [ "${{ runner.os }}" = "Linux" ]; then
             BUNDLES_FLAG="--bundles deb,rpm"
+          fi
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            BUNDLES_FLAG="--bundles msi,nsis"
           fi
           cargo tauri build --target ${{ matrix.rust-target }} $BUNDLES_FLAG
         env:
@@ -355,6 +388,16 @@ jobs:
             cp "$rpm" "$ARTIFACT_DIR/HyperNeo_${VERSION}_${{ matrix.arch }}.rpm"
           done
 
+          for msi in "$BUNDLE_ROOT"/msi/*.msi; do
+            [ -e "$msi" ] || continue
+            cp "$msi" "$ARTIFACT_DIR/HyperNeo_${VERSION}_${{ matrix.arch }}.msi"
+          done
+
+          for nsis_exe in "$BUNDLE_ROOT"/nsis/*-setup.exe; do
+            [ -e "$nsis_exe" ] || continue
+            cp "$nsis_exe" "$ARTIFACT_DIR/HyperNeo_${VERSION}_${{ matrix.arch }}_setup.exe"
+          done
+
           if [ -d "$BUNDLE_ROOT/macos" ]; then
             APP_PATH=$(find "$BUNDLE_ROOT/macos" -maxdepth 1 -name '*.app' -type d -print -quit)
           else
@@ -371,8 +414,17 @@ jobs:
 
           if command -v sha256sum >/dev/null 2>&1; then
             (cd "$ARTIFACT_DIR" && sha256sum * > "HyperNeo_${VERSION}_${{ matrix.arch }}_SHA256SUMS.txt")
-          else
+          elif command -v shasum >/dev/null 2>&1; then
             (cd "$ARTIFACT_DIR" && shasum -a 256 * > "HyperNeo_${VERSION}_${{ matrix.arch }}_SHA256SUMS.txt")
+          else
+            SUMS_FILE="HyperNeo_${VERSION}_${{ matrix.arch }}_SHA256SUMS.txt"
+            SUMS_TMP="$RUNNER_TEMP/sums.txt"
+            : > "$SUMS_TMP"
+            for f in "$ARTIFACT_DIR"/*; do
+              HASH=$(certutil -hashfile "$f" SHA256 | sed -n 2p | tr -d ' \r')
+              printf '%s  %s\n' "$HASH" "$(basename "$f")" >> "$SUMS_TMP"
+            done
+            mv "$SUMS_TMP" "$ARTIFACT_DIR/$SUMS_FILE"
           fi
 
       - name: Upload desktop artifacts
@@ -413,10 +465,9 @@ jobs:
         run: |
           mkdir -p dist/bin-flat
           for dir in dist/bin/hyperneo-*; do
-            binary=$(basename "$dir")
-            mv "$dir/$binary" "dist/bin-flat/$binary"
-            chmod +x "dist/bin-flat/$binary"
+            mv "$dir"/* "dist/bin-flat/"
           done
+          chmod +x dist/bin-flat/* 2>/dev/null || true
           rm -rf dist/bin
           mv dist/bin-flat dist/bin
 
@@ -439,6 +490,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     needs: [wait-for-ci, package, desktop-release-build]
+    if: github.event_name == 'push' || inputs.publish == true
     permissions:
       contents: read
       id-token: write
@@ -508,6 +560,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: [wait-for-ci, publish, desktop-release-build]
+    if: github.event_name == 'push' || inputs.publish == true
     permissions:
       contents: write
 
@@ -523,6 +576,13 @@ jobs:
           path: dist/desktop/
           merge-multiple: true
 
+      - name: Download CLI binary artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: hyperneo-*
+          path: dist/bin/
+          merge-multiple: true
+
       - name: Create GitHub Release
         run: |
           VERSION="${{ needs.wait-for-ci.outputs.version }}"
@@ -533,7 +593,7 @@ jobs:
           ASSETS=()
           while IFS= read -r asset; do
             ASSETS+=("$asset")
-          done < <(find dist/desktop -type f | sort)
+          done < <(find dist/desktop dist/bin -type f | sort)
 
           if gh release view "v$VERSION" &>/dev/null; then
             echo "::warning::Release v$VERSION already exists, skipping creation"

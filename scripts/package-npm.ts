@@ -2,8 +2,8 @@ import { chmodSync, copyFileSync, mkdirSync, readFileSync, writeFileSync } from 
 import { join } from 'node:path';
 
 const ROOT = join(import.meta.dir, '..');
-const BIN_DIR = join(ROOT, 'dist', 'bin');
-const NPM_DIR = join(ROOT, 'dist', 'npm');
+const BIN_DIR = process.env.HYPERNEO_PACKAGE_BIN_DIR ?? join(ROOT, 'dist', 'bin');
+const NPM_DIR = process.env.HYPERNEO_PACKAGE_NPM_DIR ?? join(ROOT, 'dist', 'npm');
 
 const versionIdx = process.argv.indexOf('--version');
 const VERSION =
@@ -16,6 +16,7 @@ const PLATFORMS = [
   { target: 'darwin-x64', os: 'darwin', cpu: 'x64' },
   { target: 'linux-x64', os: 'linux', cpu: 'x64' },
   { target: 'linux-arm64', os: 'linux', cpu: 'arm64' },
+  { target: 'windows-x64', os: 'win32', cpu: 'x64' },
 ];
 
 console.log(`Packaging npm packages (version ${VERSION})...\n`);
@@ -24,11 +25,12 @@ for (const { target, os, cpu } of PLATFORMS) {
   const pkgName = `@hyperneo/cli-${target}`;
   const pkgDir = join(NPM_DIR, `cli-${target}`);
   const binDir = join(pkgDir, 'bin');
+  const ext = os === 'win32' ? '.exe' : '';
 
   mkdirSync(binDir, { recursive: true });
 
-  const srcBinary = join(BIN_DIR, `hyperneo-${target}`);
-  const destBinary = join(binDir, 'hyperneo');
+  const srcBinary = join(BIN_DIR, `hyperneo-${target}${ext}`);
+  const destBinary = join(binDir, `hyperneo${ext}`);
 
   try {
     copyFileSync(srcBinary, destBinary);
@@ -47,7 +49,7 @@ for (const { target, os, cpu } of PLATFORMS) {
         description: `HyperNeo binary for ${os} ${cpu}`,
         os: [os],
         cpu: [cpu],
-        bin: { hyperneo: 'bin/hyperneo' },
+        bin: { hyperneo: `bin/hyperneo${ext}` },
         files: ['bin/'],
         license: 'Apache-2.0',
         repository: {

@@ -4,7 +4,14 @@ set -e
 
 BUN_INSTALL="${HOME}/.bun"
 BUN_BIN="${BUN_INSTALL}/bin"
-BUN_PATH="${BUN_BIN}/bun"
+# Git Bash on Windows runners reports MINGW*/MSYS*/CYGWIN* from uname -s and
+# needs the .exe suffix plus native (backslash) paths wherever values escape
+# to non-MSYS consumers (GITHUB_PATH, GITHUB_ENV, bun itself).
+case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) IS_WINDOWS="true"; BUN_EXE=".exe" ;;
+    *)                     IS_WINDOWS="false"; BUN_EXE="" ;;
+esac
+BUN_PATH="${BUN_BIN}/bun${BUN_EXE}"
 REQUESTED_VERSION="${BUN_VERSION:-latest}"
 
 # Output helper
@@ -48,6 +55,7 @@ install_bun() {
     case "$(uname -s)" in
         Linux)  os="linux" ;;
         Darwin) os="darwin" ;;
+        MINGW*|MSYS*|CYGWIN*) os="windows" ;;
         *)      echo "Unsupported OS: $(uname -s)"; exit 1 ;;
     esac
 
@@ -76,12 +84,27 @@ install_bun() {
     curl -fsSL --retry 3 --retry-all-errors --connect-timeout 15 --max-time 120 -o "$zipfile" "$url"
 
     mkdir -p "$BUN_BIN"
-    unzip -o -q "$zipfile" -d "$tmpdir"
+    # Git Bash does not ship unzip; fall back to 7z (preinstalled on GitHub
+    # Windows runners) and then to PowerShell's Expand-Archive with native paths.
+    if command -v unzip >/dev/null 2>&1; then
+        unzip -o -q "$zipfile" -d "$tmpdir"
+    elif command -v 7z >/dev/null 2>&1; then
+        7z x -y -bd -o"$tmpdir" "$zipfile" >/dev/null
+    elif command -v powershell >/dev/null 2>&1; then
+        local win_zipfile win_tmpdir
+        win_zipfile=$(cygpath -w "$zipfile")
+        win_tmpdir=$(cygpath -w "$tmpdir")
+        powershell -NoProfile -Command \
+            "Expand-Archive -LiteralPath '$win_zipfile' -DestinationPath '$win_tmpdir' -Force"
+    else
+        echo "Error: No unzip tool available (unzip, 7z, or powershell)"
+        exit 1
+    fi
 
     # Find and install the bun binary
-    local extracted_bun=$(find "$tmpdir" -name "bun" -type f -executable | head -1)
+    local extracted_bun=$(find "$tmpdir" -name "bun${BUN_EXE}" -type f -executable | head -1)
     if [[ -z "$extracted_bun" ]]; then
-        extracted_bun=$(find "$tmpdir" -name "bun" -type f | head -1)
+        extracted_bun=$(find "$tmpdir" -name "bun${BUN_EXE}" -type f | head -1)
     fi
 
     if [[ -z "$extracted_bun" ]]; then
@@ -90,10 +113,15 @@ install_bun() {
     fi
 
     mv "$extracted_bun" "$BUN_PATH"
-    chmod +x "$BUN_PATH"
+    chmod +x "$BUN_PATH" || [[ "$IS_WINDOWS" == "true" ]]
 
-    # Create bunx symlink
-    ln -sf "$BUN_PATH" "${BUN_BIN}/bunx"
+    # Create bunx symlink (a copy on Windows; MSYS ln -s would copy without
+    # the .exe suffix, which Windows cannot execute)
+    if [[ "$IS_WINDOWS" == "true" ]]; then
+        cp -f "$BUN_PATH" "${BUN_BIN}/bunx.exe"
+    else
+        ln -sf "$BUN_PATH" "${BUN_BIN}/bunx"
+    fi
 
     # Cleanup
     rm -rf "$tmpdir"
@@ -155,7 +183,11 @@ main() {
     fi
 
     # Verify installation
-    if [[ ! -x "$BUN_PATH" ]]; then
+    if [[ ! -x "$BUN_PATH" && "$IS_WINDOWS" != "true" ]]; then
+        echo "Error: Bun installation failed"
+        exit 1
+    fi
+    if [[ ! -f "$BUN_PATH" ]]; then
         echo "Error: Bun installation failed"
         exit 1
     fi
@@ -163,14 +195,23 @@ main() {
     local final_version=$("$BUN_PATH" --version)
     echo "Bun v${final_version} ready"
 
-    # Add to PATH
-    echo "${BUN_BIN}" >> "$GITHUB_PATH"
+    # Add to PATH (native backslash path on Windows so non-MSYS steps —
+    # PowerShell, cmd, and the runner itself — resolve it too)
+    if [[ "$IS_WINDOWS" == "true" ]]; then
+        cygpath -w "$BUN_BIN" >> "$GITHUB_PATH"
+    else
+        echo "${BUN_BIN}" >> "$GITHUB_PATH"
+    fi
 
     # Set BUN_INSTALL_CACHE_DIR for package extraction
     # This is needed for bun install to have a writable tempdir
     local cache_dir="${BUN_INSTALL}/cache"
     mkdir -p "$cache_dir"
-    echo "BUN_INSTALL_CACHE_DIR=${cache_dir}" >> "$GITHUB_ENV"
+    if [[ "$IS_WINDOWS" == "true" ]]; then
+        echo "BUN_INSTALL_CACHE_DIR=$(cygpath -w "$cache_dir")" >> "$GITHUB_ENV"
+    else
+        echo "BUN_INSTALL_CACHE_DIR=${cache_dir}" >> "$GITHUB_ENV"
+    fi
 
     # Set outputs
     output "bun-version" "$final_version"

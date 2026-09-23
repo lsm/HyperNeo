@@ -1,5 +1,5 @@
 import { execSync } from 'node:child_process';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const ROOT = join(import.meta.dir, '..');
@@ -35,10 +35,8 @@ function outputFileForTarget(target: string): string {
 }
 
 function verifyBundledDependency(outputPath: string, needle: string): void {
-  const escapedNeedle = needle.replace(/'/g, "'\\''");
-  try {
-    execSync(`strings '${outputPath}' | grep '${escapedNeedle}'`, { cwd: ROOT, stdio: 'ignore' });
-  } catch {
+  const binary = readFileSync(outputPath);
+  if (!binary.includes(Buffer.from(needle, 'utf8'))) {
     throw new Error(`Compiled binary is missing bundled dependency marker: ${needle}`);
   }
 }
