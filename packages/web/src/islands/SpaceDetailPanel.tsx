@@ -139,6 +139,10 @@ export function SpaceDetailPanel({
   const [taskTab, setTaskTab] = useState<TaskTab>('action');
 
   useEffect(() => {
+    spaceStore.ensureConfigData().catch(() => {});
+  }, [spaceId]);
+
+  useEffect(() => {
     if (!selectedTaskId) return;
     const task = tasks.find((t) => t.id === selectedTaskId);
     if (!task) return;

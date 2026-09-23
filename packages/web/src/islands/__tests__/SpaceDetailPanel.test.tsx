@@ -35,6 +35,7 @@ let mockSessionsSignal!: Signal<
   Array<{ id: string; title: string; status: string; lastActiveAt: number }>
 >;
 let mockAgentsSignal!: Signal<unknown[]>;
+const mockEnsureConfigData = vi.fn(() => Promise.resolve());
 let mockGoalsSignal!: Signal<[]>;
 let mockActiveRunsSignal!: Signal<Array<{ id: string }>>;
 let mockCurrentSpaceSessionIdSignal!: Signal<string | null>;
@@ -70,6 +71,7 @@ vi.mock('../../lib/space-store.ts', () => ({
       spaceId: mockSpaceIdSignal,
       sessions: mockSessionsSignal,
       agents: mockAgentsSignal,
+      ensureConfigData: mockEnsureConfigData,
       goals: mockGoalsSignal,
       activeRuns: mockActiveRunsSignal,
     };
@@ -331,6 +333,11 @@ describe('SpaceDetailPanel', () => {
     fireEvent.click(screen.getByText('Lead'));
     expect(mockNavigateToSpaceSession).toHaveBeenCalledWith('space-1', 'sess-a1');
     expect(onNavigate).toHaveBeenCalledOnce();
+  });
+
+  it('loads the Space agents when the panel mounts', () => {
+    render(<SpaceDetailPanel spaceId="space-1" />);
+    expect(mockEnsureConfigData).toHaveBeenCalled();
   });
 
   it('opens the agent page for an agent that has no session yet', () => {
