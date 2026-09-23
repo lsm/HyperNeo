@@ -217,7 +217,7 @@ describe('workflow prompts prefer the operations door with named-operation fallb
       ['save_artifact', 'workflow.run.artifact.save'],
       ['submit_for_approval', 'task.transition'],
       ['approve_task', 'task.approve'],
-      ['mark_complete', 'task.complete'],
+      ['mark_complete', 'task.transition'],
     ]) {
       expect(CALL_ACTION_PREFERENCE_GUIDANCE, tool).toContain(`\`${tool}\` is \`${operation}\``);
       expect(isOperationName(operation!), operation).toBe(true);

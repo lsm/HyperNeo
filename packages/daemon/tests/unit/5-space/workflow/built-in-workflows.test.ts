@@ -618,7 +618,7 @@ describe('coder-only workflow template', () => {
       'a merge must never proceed under a policy the verified note predates'
     );
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
-      'do NOT call task.complete: report the mismatch'
+      'do NOT move the task to done: report the mismatch'
     );
     expect(CODER_EXTERNAL_GATE_BLOCK).toContain('source: "<external|internal|both|auto>"');
     expect(CODER_EXTERNAL_GATE_BLOCK).toContain('depth: "<light|standard|deep|auto>"');
