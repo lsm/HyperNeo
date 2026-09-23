@@ -3982,6 +3982,42 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
     });
 
+    test('a transient restore failure is retried until the session comes back', async () => {
+      const { event, executionId } = await runWithPendingDelivery();
+      bindLiveSession(executionId, 'session-restore-retry', { status: 'idle' });
+      tam.alive.delete('session-restore-retry');
+      let resumeCalls = 0;
+      tam.tryResumeNodeAgentSession = async () => {
+        resumeCalls += 1;
+        if (resumeCalls === 1) throw new Error('transient restore failure');
+        tam.alive.add('session-restore-retry');
+      };
+
+      await runtime.onSpaceResumed(SPACE_ID);
+      expect(resumeCalls).toBe(1);
+      await wait(1_600);
+
+      expect(resumeCalls).toBe(2);
+      expect(digestRowCount('session-restore-retry')).toBe(1);
+      expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
+    });
+
+    test('restore retries stop after the bounded attempt count', async () => {
+      const { executionId } = await runWithPendingDelivery();
+      bindLiveSession(executionId, 'session-restore-exhaust', { status: 'idle' });
+      tam.alive.delete('session-restore-exhaust');
+      let resumeCalls = 0;
+      tam.tryResumeNodeAgentSession = async () => {
+        resumeCalls += 1;
+        throw new Error('persistent restore failure');
+      };
+
+      await runtime.onSpaceResumed(SPACE_ID);
+      await wait(6_500);
+
+      expect(resumeCalls).toBe(6);
+    }, 15_000);
+
     test('startup rehydrate restores idle sessions owning pending deliveries', async () => {
       const { event, executionId } = await runWithPendingDelivery();
       bindLiveSession(executionId, 'session-startup-parked', { status: 'idle' });

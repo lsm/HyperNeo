@@ -748,6 +748,8 @@ export class SpaceRuntime {
   private readonly digestHandoffDebt = new Map<string, Set<string>>();
   private readonly digestSupersedeRetryTimers = new Map<string, Timer>();
   private readonly digestSupersedeRetryCounts = new Map<string, number>();
+  private readonly restoreRetryTimers = new Map<string, Timer>();
+  private readonly restoreRetryCounts = new Map<string, number>();
   private readonly renderPendingDigestQueues = new Map<
     string,
     Promise<RenderPendingDigestOutcome | null>
@@ -3840,6 +3842,11 @@ export class SpaceRuntime {
     }
     this.digestHandoffRetryTimers.clear();
     this.digestHandoffRetryCounts.clear();
+    for (const timer of this.restoreRetryTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.restoreRetryTimers.clear();
+    this.restoreRetryCounts.clear();
     const staleSupersedeRetryTimers = Array.from(this.digestSupersedeRetryTimers.entries());
     const staleSupersedeRetryCounts = Array.from(this.digestSupersedeRetryCounts.entries());
     const stalePullTriggers = Array.from(this.digestPullTriggers.entries());
@@ -4546,7 +4553,32 @@ export class SpaceRuntime {
       }
       return;
     }
+    if (outcomes.some((outcome) => outcome.action === 'failed')) {
+      this.scheduleRestoreRetry(workflowRunId);
+    } else {
+      this.restoreRetryCounts.delete(workflowRunId ?? '');
+    }
     this.requeuePersistedPendingDeliveries(pausedSpaceIds, workflowRunId);
+  }
+
+  private scheduleRestoreRetry(workflowRunId: string | undefined): void {
+    const key = workflowRunId ?? '';
+    if (this.restoreRetryTimers.has(key)) return;
+    const attempts = (this.restoreRetryCounts.get(key) ?? 0) + 1;
+    if (attempts > EXTERNAL_EVENT_RETRY_MAX_ATTEMPTS) {
+      this.restoreRetryCounts.delete(key);
+      log.warn(
+        `SpaceRuntime: gave up restoring idle sessions for ${workflowRunId ?? 'all runs'} after ${EXTERNAL_EVENT_RETRY_MAX_ATTEMPTS} retries`
+      );
+      return;
+    }
+    this.restoreRetryCounts.set(key, attempts);
+    const timer = setTimeout(() => {
+      this.restoreRetryTimers.delete(key);
+      if (this.isStopped) return;
+      void this.recoverPendingDeliveries(this.pausedSpaceIds, workflowRunId);
+    }, EXTERNAL_EVENT_RETRY_DELAY_MS);
+    this.restoreRetryTimers.set(key, timer);
   }
 
   private isRestoredSessionAdopted(sessionId: string): boolean {
