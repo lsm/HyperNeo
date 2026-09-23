@@ -8,7 +8,6 @@ export type WorkflowScopeRejection = 'space_not_resolved' | 'caller_not_admitted
 export const WORKFLOW_READ_ROLES: readonly OperationCallerRole[] = [
   'ad_hoc_member',
   'long_term_agent',
-  'universal_read',
   'workflow_worker',
 ];
 

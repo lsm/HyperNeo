@@ -15,7 +15,7 @@ import {
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
 
 const SPACE_ID = 'space-1';
-const READ_ROLES = ['ad_hoc_member', 'long_term_agent', 'universal_read', 'workflow_worker'];
+const READ_ROLES = ['ad_hoc_member', 'long_term_agent', 'workflow_worker'];
 const WRITE_ROLES = ['ad_hoc_member', 'long_term_agent'];
 const OTHER_SPACE_ID = 'space-2';
 const TARGET = 'target-1';

@@ -13,7 +13,7 @@ import { createSpaceTables } from '../../helpers/space-test-db';
 
 const SPACE_ID = 'space-1';
 const OTHER_SPACE_ID = 'space-2';
-const READ_ROLES = ['ad_hoc_member', 'long_term_agent', 'universal_read', 'workflow_worker'];
+const READ_ROLES = ['ad_hoc_member', 'long_term_agent', 'workflow_worker'];
 
 interface SeededRow {
   id: string;

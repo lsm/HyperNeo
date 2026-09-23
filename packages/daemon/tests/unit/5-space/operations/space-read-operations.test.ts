@@ -66,8 +66,20 @@ async function list(caller: OperationCaller, input: unknown = {}) {
 }
 
 describe('space discovery operations', () => {
-  test('space.list answers an MCP caller whose session is scoped to no Space', async () => {
+  test('space.list and space.get refuse an MCP caller outside any Space', async () => {
     const { outcome } = await list(UNSCOPED_MCP);
+    expect(outcome).toEqual({
+      kind: 'completed',
+      value: { accepted: false, reason: 'outside_space' },
+    });
+    const { registry } = makeRegistry();
+    expect(
+      await invokeOperation(registry, 'space.get', { spaceId: ALPHA.id }, UNSCOPED_MCP)
+    ).toEqual({ kind: 'completed', value: { accepted: false, reason: 'outside_space' } });
+  });
+
+  test('space.list answers a Space-scoped MCP caller', async () => {
+    const { outcome } = await list(SCOPED_MCP);
     expect(outcome).toEqual({
       kind: 'completed',
       value: {
@@ -95,7 +107,7 @@ describe('space discovery operations', () => {
 
   test('space.list answers an RPC caller the same way', async () => {
     const fromRpc = await list(RPC);
-    const fromMcp = await list(UNSCOPED_MCP);
+    const fromMcp = await list(SCOPED_MCP);
     expect(fromRpc.outcome).toEqual(fromMcp.outcome);
     expect(fromRpc.outcome.kind).toBe('completed');
   });
@@ -108,7 +120,7 @@ describe('space discovery operations', () => {
   });
 
   test('space.list excludes archived Spaces unless includeArchived is set', async () => {
-    const byDefault = await list(UNSCOPED_MCP);
+    const byDefault = await list(SCOPED_MCP);
     expect(byDefault.calls).toEqual([false]);
     expect(
       (byDefault.outcome as { value: { spaces: Array<{ id: string }> } }).value.spaces.map(
@@ -116,7 +128,7 @@ describe('space discovery operations', () => {
       )
     ).toEqual(['space-alpha', 'space-beta']);
 
-    const withArchived = await list(UNSCOPED_MCP, { includeArchived: true });
+    const withArchived = await list(SCOPED_MCP, { includeArchived: true });
     expect(withArchived.calls).toEqual([true]);
     expect(
       (withArchived.outcome as { value: { spaces: Array<{ id: string }> } }).value.spaces.map(
@@ -126,7 +138,7 @@ describe('space discovery operations', () => {
   });
 
   test('space.list returns only the bootstrap fields, never the Space payload', async () => {
-    const { outcome } = await list(UNSCOPED_MCP);
+    const { outcome } = await list(SCOPED_MCP);
     const [first] = (outcome as { value: { spaces: Record<string, unknown>[] } }).value.spaces;
     expect(Object.keys(first).sort()).toEqual([
       'id',
@@ -141,12 +153,7 @@ describe('space discovery operations', () => {
 
   test('space.get returns the same summary for a known id', async () => {
     const { registry } = makeRegistry();
-    const outcome = await invokeOperation(
-      registry,
-      'space.get',
-      { spaceId: BETA.id },
-      UNSCOPED_MCP
-    );
+    const outcome = await invokeOperation(registry, 'space.get', { spaceId: BETA.id }, SCOPED_MCP);
     expect(outcome).toEqual({
       kind: 'completed',
       value: {
@@ -165,7 +172,7 @@ describe('space discovery operations', () => {
 
   test('space.get reports an unknown id instead of throwing', async () => {
     const { registry } = makeRegistry();
-    const outcome = await invokeOperation(registry, 'space.get', { spaceId: 'nope' }, UNSCOPED_MCP);
+    const outcome = await invokeOperation(registry, 'space.get', { spaceId: 'nope' }, SCOPED_MCP);
     expect(outcome).toEqual({ kind: 'completed', value: { found: false, spaceId: 'nope' } });
   });
 });
@@ -188,7 +195,7 @@ describe('registerSpaceOperations', () => {
     const registry = createOperationRegistry(registerSpaceOperations(context));
     expect(registry.entries.map((entry) => entry.name)).toEqual(['space.list', 'space.get']);
 
-    const outcome = await invokeOperation(registry, 'space.list', {}, UNSCOPED_MCP);
+    const outcome = await invokeOperation(registry, 'space.list', {}, SCOPED_MCP);
     expect(seen).toEqual([false]);
     expect(outcome).toEqual({
       kind: 'completed',
