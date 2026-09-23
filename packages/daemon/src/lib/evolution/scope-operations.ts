@@ -98,8 +98,8 @@ function validateForgePolicy(policy: EvolutionPolicy): string | undefined {
   }
 }
 
-function runForgeScopeWrite<T>(forge: EvolutionScopeOperationDependencies, write: () => T): T {
-  return forge.db ? forge.db.transaction(write)() : write();
+function runForgeScopeWrite<T>(evolution: EvolutionScopeOperationDependencies, write: () => T): T {
+  return evolution.db ? evolution.db.transaction(write)() : write();
 }
 
 const EvolutionMetricDefinitionInputSchema = EvolutionMetricDefinitionSchema.extend({
@@ -109,32 +109,32 @@ const EvolutionMetricDefinitionInputSchema = EvolutionMetricDefinitionSchema.ext
 
 function syncForgeScopeAutomation(
   scope: EvolutionScope,
-  forge: EvolutionScopeOperationDependencies
+  evolution: EvolutionScopeOperationDependencies
 ): void {
-  if (!forge.goalRepo || !forge.scheduleService) return;
+  if (!evolution.goalRepo || !evolution.scheduleService) return;
   syncGoalAutomationSelfNagScheduleForScope({
-    goalRepo: forge.goalRepo,
-    scheduleService: forge.scheduleService,
+    goalRepo: evolution.goalRepo,
+    scheduleService: evolution.scheduleService,
     scope,
-    db: forge.db,
+    db: evolution.db,
   });
 }
 
 export function findForgeScopeInSpace(
   scopeId: string,
   spaceId: string | undefined,
-  forge: { scopeService: Pick<EvolutionScopeService, 'getScope'> }
+  evolution: { scopeService: Pick<EvolutionScopeService, 'getScope'> }
 ): EvolutionScope | null {
-  const scope = forge.scopeService.getScope(scopeId);
+  const scope = evolution.scopeService.getScope(scopeId);
   return scope && (!spaceId || scope.spaceId === spaceId) ? scope : null;
 }
 
 export function requireForgeScope(
   input: { scopeId: string },
   scope: { spaceId?: string },
-  forge: EvolutionScopeOperationDependencies
+  evolution: EvolutionScopeOperationDependencies
 ): EvolutionGate<EvolutionScope, ScopeIdRejection> {
-  const found = findForgeScopeInSpace(input.scopeId, scope.spaceId, forge);
+  const found = findForgeScopeInSpace(input.scopeId, scope.spaceId, evolution);
   return found
     ? { value: found }
     : denyForge('scope_not_found', `EvolutionScope not found: ${input.scopeId}`);
@@ -168,13 +168,13 @@ const ScopeCreateInputSchema = z
 export function planForgeScopeCreate(
   input: z.infer<typeof ScopeCreateInputSchema>,
   spaceId: string,
-  forge: EvolutionScopeOperationDependencies
+  evolution: EvolutionScopeOperationDependencies
 ): EvolutionGate<CreateEvolutionScopeParams, ScopeCreateRejection> {
-  const goal = input.goalId ? forge.getGoal(input.goalId) : null;
+  const goal = input.goalId ? evolution.getGoal(input.goalId) : null;
   if (input.goalId && (!goal || goal.spaceId !== spaceId)) {
     return denyForge('goal_not_found', `Goal not found: ${input.goalId}`);
   }
-  if (input.parentScopeId && !findForgeScopeInSpace(input.parentScopeId, spaceId, forge)) {
+  if (input.parentScopeId && !findForgeScopeInSpace(input.parentScopeId, spaceId, evolution)) {
     return denyForge('scope_not_found', `EvolutionScope not found: ${input.parentScopeId}`);
   }
   const invalid = input.policy ? validateForgePolicy(input.policy) : undefined;
@@ -197,14 +197,14 @@ export function planForgeScopeCreate(
 export function applyForgeScopeCreate(
   params: CreateEvolutionScopeParams,
   caller: OperationCaller,
-  forge: EvolutionScopeOperationDependencies
+  evolution: EvolutionScopeOperationDependencies
 ): { accepted: true; scope: EvolutionScope } {
-  const scope = runForgeScopeWrite(forge, () => {
-    const created = forge.scopeService.createScope(params);
-    syncForgeScopeAutomation(created, forge);
+  const scope = runForgeScopeWrite(evolution, () => {
+    const created = evolution.scopeService.createScope(params);
+    syncForgeScopeAutomation(created, evolution);
     return created;
   });
-  forge.audit?.({
+  evolution.audit?.({
     toolName: 'evolution.scope.create',
     paramsSummary: { name: params.name, kind: params.kind, goalId: params.spaceGoalId },
     caller,
@@ -224,13 +224,13 @@ const ScopeListInputSchema = z
 export function readForgeScopeList(
   input: z.infer<typeof ScopeListInputSchema>,
   spaceId: string,
-  forge: EvolutionScopeOperationDependencies
+  evolution: EvolutionScopeOperationDependencies
 ): EvolutionGate<
   { accepted: true; scopes: EvolutionScope[]; scope: { spaceId: string } },
   ScopeCreateRejection
 > {
   if (input.goalId) {
-    const goal = forge.getGoal(input.goalId);
+    const goal = evolution.getGoal(input.goalId);
     if (!goal || goal.spaceId !== spaceId) {
       return denyForge('goal_not_found', `Goal not found: ${input.goalId}`);
     }
@@ -239,7 +239,7 @@ export function readForgeScopeList(
     value: {
       accepted: true,
       scope: { spaceId },
-      scopes: forge.scopeService.listScopes({
+      scopes: evolution.scopeService.listScopes({
         spaceId,
         spaceGoalId: input.goalId,
         kind: input.kind,
@@ -267,15 +267,18 @@ const ScopeUpdateInputSchema = z
 export function planForgeScopeUpdate(
   input: z.infer<typeof ScopeUpdateInputSchema>,
   existing: EvolutionScope,
-  forge: EvolutionScopeOperationDependencies
+  evolution: EvolutionScopeOperationDependencies
 ): EvolutionGate<UpdateEvolutionScopeParams, ScopeCreateRejection> {
   if (input.goalId) {
-    const goal = forge.getGoal(input.goalId);
+    const goal = evolution.getGoal(input.goalId);
     if (!goal || goal.spaceId !== existing.spaceId) {
       return denyForge('goal_not_found', `Goal not found: ${input.goalId}`);
     }
   }
-  if (input.parentScopeId && !findForgeScopeInSpace(input.parentScopeId, existing.spaceId, forge)) {
+  if (
+    input.parentScopeId &&
+    !findForgeScopeInSpace(input.parentScopeId, existing.spaceId, evolution)
+  ) {
     return denyForge('scope_not_found', `EvolutionScope not found: ${input.parentScopeId}`);
   }
   const patch: EvolutionPolicy = { ...input.policyPatch };
@@ -312,17 +315,17 @@ export function applyForgeScopeUpdate(
   scopeId: string,
   params: UpdateEvolutionScopeParams,
   caller: OperationCaller,
-  forge: EvolutionScopeOperationDependencies
+  evolution: EvolutionScopeOperationDependencies
 ): EvolutionGate<{ accepted: true; scope: EvolutionScope }, ScopeIdRejection> {
-  const scope = forge.scopeService.updateScope(scopeId, params);
-  forge.audit?.({
+  const scope = evolution.scopeService.updateScope(scopeId, params);
+  evolution.audit?.({
     toolName: 'evolution.scope.update',
     paramsSummary: { scopeId },
     caller,
     spaceId: scope?.spaceId,
   });
   if (!scope) return denyForge('scope_not_found', `EvolutionScope not found: ${scopeId}`);
-  syncForgeScopeAutomation(scope, forge);
+  syncForgeScopeAutomation(scope, evolution);
   return { value: { accepted: true, scope } };
 }
 
@@ -342,9 +345,9 @@ export function applyForgeMetricAdd(
   input: z.infer<typeof MetricAddInputSchema>,
   scope: EvolutionScope,
   caller: OperationCaller,
-  forge: EvolutionScopeOperationDependencies
+  evolution: EvolutionScopeOperationDependencies
 ): { accepted: true; snapshot: MetricSnapshot; evidence: EvidenceRef } {
-  const result = forge.scopeService.addMetricSnapshotEvidence({
+  const result = evolution.scopeService.addMetricSnapshotEvidence({
     scopeId: scope.id,
     values: input.values,
     source: input.source,
@@ -353,7 +356,7 @@ export function applyForgeMetricAdd(
     summary: input.summary,
     metadata: input.metadata,
   });
-  forge.audit?.({
+  evolution.audit?.({
     toolName: 'evolution.metric.add',
     paramsSummary: { scopeId: scope.id, source: input.source },
     caller,
@@ -362,27 +365,27 @@ export function applyForgeMetricAdd(
   return { accepted: true, ...result };
 }
 
-export function createForgeScopeOperations(forge: EvolutionScopeOperationDependencies) {
-  const create = (superpipe({ forge })('forge-scope-create') as PipelineAPI)
+export function createForgeScopeOperations(evolution: EvolutionScopeOperationDependencies) {
+  const create = (superpipe({ evolution })('evolution-scope-create') as PipelineAPI)
     .input(['input', 'caller'])
-    .pipe(admitForgeMutator, ['input', 'caller', 'forge'], 'result:outcome')
+    .pipe(admitForgeMutator, ['input', 'caller', 'evolution'], 'result:outcome')
     .pipe(requireForgeSpace, 'outcome', 'result:outcome')
-    .pipe(planForgeScopeCreate, ['input', 'outcome', 'forge'], 'result:outcome')
-    .pipe(applyForgeScopeCreate, ['outcome', 'caller', 'forge'], 'outcome')
+    .pipe(planForgeScopeCreate, ['input', 'outcome', 'evolution'], 'result:outcome')
+    .pipe(applyForgeScopeCreate, ['outcome', 'caller', 'evolution'], 'outcome')
     .endAsync('outcome');
 
-  const list = (superpipe({ forge })('forge-scope-list') as PipelineAPI)
+  const list = (superpipe({ evolution })('evolution-scope-list') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitForgeReader, ['input', 'caller'], 'result:outcome')
     .pipe(requireForgeSpace, 'outcome', 'result:outcome')
-    .pipe(readForgeScopeList, ['input', 'outcome', 'forge'], 'result:outcome')
+    .pipe(readForgeScopeList, ['input', 'outcome', 'evolution'], 'result:outcome')
     .endAsync('outcome');
 
-  const update = (superpipe({ forge })('forge-scope-update') as PipelineAPI)
+  const update = (superpipe({ evolution })('evolution-scope-update') as PipelineAPI)
     .input(['input', 'caller'])
-    .pipe(admitForgeMutator, ['input', 'caller', 'forge'], 'result:outcome')
-    .pipe(requireForgeScope, ['input', 'outcome', 'forge'], 'result:outcome')
-    .pipe(planForgeScopeUpdate, ['input', 'outcome', 'forge'], 'result:outcome')
+    .pipe(admitForgeMutator, ['input', 'caller', 'evolution'], 'result:outcome')
+    .pipe(requireForgeScope, ['input', 'outcome', 'evolution'], 'result:outcome')
+    .pipe(planForgeScopeUpdate, ['input', 'outcome', 'evolution'], 'result:outcome')
     .pipe(
       (
         input: z.infer<typeof ScopeUpdateInputSchema>,
@@ -390,16 +393,16 @@ export function createForgeScopeOperations(forge: EvolutionScopeOperationDepende
         caller: OperationCaller,
         deps: EvolutionScopeOperationDependencies
       ) => applyForgeScopeUpdate(input.scopeId, params, caller, deps),
-      ['input', 'outcome', 'caller', 'forge'],
+      ['input', 'outcome', 'caller', 'evolution'],
       'result:outcome'
     )
     .endAsync('outcome');
 
-  const metricAdd = (superpipe({ forge })('forge-metric-add') as PipelineAPI)
+  const metricAdd = (superpipe({ evolution })('evolution-metric-add') as PipelineAPI)
     .input(['input', 'caller'])
-    .pipe(admitForgeMutator, ['input', 'caller', 'forge'], 'result:outcome')
-    .pipe(requireForgeScope, ['input', 'outcome', 'forge'], 'result:outcome')
-    .pipe(applyForgeMetricAdd, ['input', 'outcome', 'caller', 'forge'], 'outcome')
+    .pipe(admitForgeMutator, ['input', 'caller', 'evolution'], 'result:outcome')
+    .pipe(requireForgeScope, ['input', 'outcome', 'evolution'], 'result:outcome')
+    .pipe(applyForgeMetricAdd, ['input', 'outcome', 'caller', 'evolution'], 'outcome')
     .endAsync('outcome');
 
   const scopeResult = accepted({ scope: EvolutionScopeSchema });

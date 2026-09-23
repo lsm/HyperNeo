@@ -56,7 +56,7 @@ export function createNodeAgentRestoreOperation(agents: NodeAgentRestoreDependen
     .pipe(applyRestore, ['outcome', 'input', 'agents'], 'outcome')
     .endAsync('outcome') as (input: Input, caller: OperationCaller) => Promise<Result>;
   return defineOperation({
-    name: 'nodeAgent.restore',
+    name: 'session.toolSurface.restore',
     description: RESTORE_DESCRIPTION,
     policy: { safetyClass: 'mutate', roles: NODE_EVENT_ROLES },
     inputSchema,

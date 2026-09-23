@@ -220,7 +220,9 @@ describe('PostApprovalRouter.route', () => {
     expect(delegates.spawned).toHaveLength(1);
     expect(delegates.spawned[0].targetAgent).toBe('deployer');
     expect(delegates.spawned[0].kickoffMessage).toContain(task.title ?? '');
-    expect(delegates.spawned[0].kickoffMessage).toContain('invoke(name="task.complete"');
+    expect(delegates.spawned[0].kickoffMessage).toContain(
+      'invoke(name="task.transition", input={ taskId: "<task id>", status: "done" })'
+    );
     expect(delegates.spawned[0].kickoffMessage).toContain('Do NOT call `task.approve`');
     expect(delegates.spawned[0].kickoffMessage).not.toContain('request_human_input');
     expect(delegates.spawned[0].kickoffMessage).toMatch(/NON-result artifact/);

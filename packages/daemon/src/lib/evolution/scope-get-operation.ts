@@ -146,30 +146,32 @@ const ScopeGetResultSchema = z.object({
 type ScopeGetPartReader = (
   input: ScopeGetInput,
   scope: EvolutionScope,
-  forge: EvolutionScopeGetDependencies
+  evolution: EvolutionScopeGetDependencies
 ) => ScopeGetParts;
 
 const SCOPE_GET_PART_READERS: Record<ScopeGetPart, ScopeGetPartReader> = {
   scope: (_input, scope) => ({ scope }),
-  agents: (_input, scope, forge) => ({
-    agents: forge.longHorizonAgentRepo.listEvolutionScopeAssignments(scope.id).map((link) => ({
+  agents: (_input, scope, evolution) => ({
+    agents: evolution.longHorizonAgentRepo.listEvolutionScopeAssignments(scope.id).map((link) => ({
       agentId: link.agentId,
       relationship: link.relationship,
       createdAt: link.createdAt,
     })),
   }),
-  evidence: (_input, scope, forge) => ({
-    evidence: forge.scopeService.listEvidence(scope.id).evidence,
+  evidence: (_input, scope, evolution) => ({
+    evidence: evolution.scopeService.listEvidence(scope.id).evidence,
   }),
-  metrics: (_input, scope, forge) => ({
-    metricSnapshots: forge.scopeService.listMetricSnapshots(scope.id),
+  metrics: (_input, scope, evolution) => ({
+    metricSnapshots: evolution.scopeService.listMetricSnapshots(scope.id),
   }),
-  episodes: (_input, scope, forge) => ({ episodes: forge.episodeService.listEpisodes(scope.id) }),
-  lessons: (input, scope, forge) => ({
-    lessons: forge.episodeService.listLessons(scope.id, input.lessonStatus),
+  episodes: (_input, scope, evolution) => ({
+    episodes: evolution.episodeService.listEpisodes(scope.id),
   }),
-  proposals: (input, scope, forge) => ({
-    proposals: forge.episodeService.listTaskProposals(scope.id, input.proposalStatus),
+  lessons: (input, scope, evolution) => ({
+    lessons: evolution.episodeService.listLessons(scope.id, input.lessonStatus),
+  }),
+  proposals: (input, scope, evolution) => ({
+    proposals: evolution.episodeService.listTaskProposals(scope.id, input.proposalStatus),
   }),
 };
 
@@ -180,13 +182,13 @@ export function selectForgeScopeGetParts(input: ScopeGetInput): ScopeGetPart[] {
 function resolveScopeForGoal(
   goalId: string,
   scope: EvolutionSpaceScope,
-  forge: EvolutionScopeGetDependencies
+  evolution: EvolutionScopeGetDependencies
 ): EvolutionGate<EvolutionScope, ScopeGetRejection> {
-  const goal = forge.getGoal(goalId);
+  const goal = evolution.getGoal(goalId);
   if (!goal || (scope.spaceId && goal.spaceId !== scope.spaceId)) {
     return denyForge('goal_not_found', `Goal not found: ${goalId}`);
   }
-  const resolved = forge.scopeService.resolveScopeForGoal({ spaceGoalId: goalId });
+  const resolved = evolution.scopeService.resolveScopeForGoal({ spaceGoalId: goalId });
   return resolved
     ? { value: resolved }
     : denyForge('scope_not_found', `No EvolutionScope is linked to goal: ${goalId}`);
@@ -195,13 +197,13 @@ function resolveScopeForGoal(
 function resolveScopeForTask(
   taskId: string,
   scope: EvolutionSpaceScope,
-  forge: EvolutionScopeGetDependencies
+  evolution: EvolutionScopeGetDependencies
 ): EvolutionGate<EvolutionScope, ScopeGetRejection> {
-  const task = forge.taskRepo.getTask(taskId);
+  const task = evolution.taskRepo.getTask(taskId);
   if (!task || (scope.spaceId && task.spaceId !== scope.spaceId)) {
     return denyForge('task_not_found', `Task not found: ${taskId}`);
   }
-  const resolved = forge.scopeService.resolveScopeForTask({ taskId });
+  const resolved = evolution.scopeService.resolveScopeForTask({ taskId });
   return resolved
     ? { value: resolved }
     : denyForge('scope_not_found', `No EvolutionScope is linked to task: ${taskId}`);
@@ -210,16 +212,16 @@ function resolveScopeForTask(
 export function resolveForgeScopeAddress(
   input: ScopeGetInput,
   scope: EvolutionSpaceScope,
-  forge: EvolutionScopeGetDependencies
+  evolution: EvolutionScopeGetDependencies
 ): EvolutionGate<EvolutionScope, ScopeGetRejection> {
   if (input.scopeId) {
-    const found = findForgeScopeInSpace(input.scopeId, scope.spaceId, forge);
+    const found = findForgeScopeInSpace(input.scopeId, scope.spaceId, evolution);
     return found
       ? { value: found }
       : denyForge('scope_not_found', `EvolutionScope not found: ${input.scopeId}`);
   }
-  if (input.goalId) return resolveScopeForGoal(input.goalId, scope, forge);
-  if (input.taskId) return resolveScopeForTask(input.taskId, scope, forge);
+  if (input.goalId) return resolveScopeForGoal(input.goalId, scope, evolution);
+  if (input.taskId) return resolveScopeForTask(input.taskId, scope, evolution);
   return denyForge('resolve_target_required', 'Provide scopeId, goalId, or taskId');
 }
 
@@ -227,17 +229,17 @@ export function readForgeScopeParts(
   input: ScopeGetInput,
   scope: EvolutionScope,
   caller: OperationCaller,
-  forge: EvolutionScopeGetDependencies
+  evolution: EvolutionScopeGetDependencies
 ): { accepted: true } & ScopeGetParts {
   const parts = selectForgeScopeGetParts(input);
   const read = parts.reduce<ScopeGetParts>(
     (collected, part) =>
-      Object.assign(collected, SCOPE_GET_PART_READERS[part](input, scope, forge)),
+      Object.assign(collected, SCOPE_GET_PART_READERS[part](input, scope, evolution)),
     {}
   );
   const resolved = input.goalId !== undefined || input.taskId !== undefined;
   if (resolved || parts.some((part) => AUDITED_SCOPE_GET_PARTS.includes(part))) {
-    forge.audit?.({
+    evolution.audit?.({
       toolName: 'evolution.scope.get',
       paramsSummary: {
         scopeId: scope.id,
@@ -252,12 +254,12 @@ export function readForgeScopeParts(
   return { accepted: true, ...read };
 }
 
-export function createForgeScopeGetOperation(forge: EvolutionScopeGetDependencies) {
-  const get = (superpipe({ forge })('forge-scope-get') as PipelineAPI)
+export function createForgeScopeGetOperation(evolution: EvolutionScopeGetDependencies) {
+  const get = (superpipe({ evolution })('evolution-scope-get') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitForgeReader, ['input', 'caller'], 'result:outcome')
-    .pipe(resolveForgeScopeAddress, ['input', 'outcome', 'forge'], 'result:outcome')
-    .pipe(readForgeScopeParts, ['input', 'outcome', 'caller', 'forge'], 'outcome')
+    .pipe(resolveForgeScopeAddress, ['input', 'outcome', 'evolution'], 'result:outcome')
+    .pipe(readForgeScopeParts, ['input', 'outcome', 'caller', 'evolution'], 'outcome')
     .endAsync('outcome');
 
   return defineOperation({

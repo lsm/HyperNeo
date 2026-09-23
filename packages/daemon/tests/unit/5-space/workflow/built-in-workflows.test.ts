@@ -618,7 +618,7 @@ describe('coder-only workflow template', () => {
       'a merge must never proceed under a policy the verified note predates'
     );
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
-      'do NOT call task.complete: report the mismatch'
+      'do NOT move the task to done: report the mismatch'
     );
     expect(CODER_EXTERNAL_GATE_BLOCK).toContain('source: "<external|internal|both|auto>"');
     expect(CODER_EXTERNAL_GATE_BLOCK).toContain('depth: "<light|standard|deep|auto>"');
@@ -4386,9 +4386,48 @@ const SUBMIT_FOR_REVIEW_WORDING: [current: string, retired: string][] = [
 function retireTransitionReview(value: string): string {
   return SUBMIT_FOR_REVIEW_WORDING.reduce(
     (text, [current, retired]) => text.replaceAll(current, retired),
-    retireSubscribeRename(value)
+    retireSubscribeRename(retireTransitionDone(value))
   );
 }
+
+function retireTransitionDone(value: string): string {
+  return value
+    .replaceAll(
+      'complete its cleanup and workspace-sync steps, and move the task to done with task.transition.',
+      'complete its cleanup and workspace-sync steps, and call task.complete.'
+    )
+    .replaceAll(
+      '`mark_complete` is `task.transition` with `status: "done"`.',
+      '`mark_complete` is `task.complete`.'
+    );
+}
+
+test('prompts persisted with task.complete migrate forward to a transition to done', () => {
+  const covered: string[] = [];
+  for (const workflow of getBuiltInWorkflows()) {
+    for (const node of workflow.nodes) {
+      const current = node.agents[0]?.customPrompt?.value;
+      if (!current) continue;
+      const persisted = retireTransitionDone(current);
+      if (persisted === current) continue;
+      expect(persisted).toContain('task.complete');
+      const existingNode: WorkflowNode = {
+        ...node,
+        agents: node.agents.map((agent, index) =>
+          index === 0 ? { ...agent, customPrompt: { value: persisted } } : agent
+        ),
+      };
+      const merged = mergeNodeStructuralFieldsFromTemplate([existingNode], workflow.nodes);
+      const label = `${workflow.name}/${node.name}`;
+      expect(
+        merged.find((candidate) => candidate.name === node.name)?.agents[0].customPrompt?.value,
+        label
+      ).toBe(current);
+      covered.push(label);
+    }
+  }
+  expect(covered.length).toBe(9);
+});
 
 function retireSubscribeRename(value: string): string {
   return value
