@@ -17,10 +17,10 @@ import {
 } from '../operations/registry.ts';
 import type { EvolutionEpisodeService } from './episode-service.ts';
 import {
-  admitForgeReader,
-  denyForge,
-  FORGE_CALLER_REJECTIONS,
-  forgeDenialSchema,
+  admitEvolutionReader,
+  denyEvolution,
+  EVOLUTION_CALLER_REJECTIONS,
+  evolutionDenialSchema,
   type EvolutionAdmissionDependencies,
   type EvolutionAuditWriter,
   type EvolutionGate,
@@ -38,7 +38,7 @@ import {
   EvolutionMetricSnapshotSchema,
   EvolutionScopeSchema,
 } from './result-schemas.ts';
-import { findForgeScopeInSpace } from './scope-operations.ts';
+import { findEvolutionScopeInSpace } from './scope-operations.ts';
 import type { EvolutionScopeService } from './scope-service.ts';
 
 export interface EvolutionScopeGetDependencies extends EvolutionAdmissionDependencies {
@@ -64,7 +64,7 @@ export interface EvolutionScopeGetDependencies extends EvolutionAdmissionDepende
 }
 
 const SCOPE_GET_REJECTIONS = [
-  ...FORGE_CALLER_REJECTIONS,
+  ...EVOLUTION_CALLER_REJECTIONS,
   'scope_not_found',
   'goal_not_found',
   'task_not_found',
@@ -88,7 +88,7 @@ type ScopeGetPart = (typeof SCOPE_GET_PARTS)[number];
 const DEFAULT_SCOPE_GET_PARTS: readonly ScopeGetPart[] = ['scope'];
 const AUDITED_SCOPE_GET_PARTS: readonly ScopeGetPart[] = ['lessons', 'proposals'];
 
-const FORGE_READ_POLICY = {
+const EVOLUTION_READ_POLICY = {
   safetyClass: 'read',
   roles: ['ad_hoc_member', 'long_term_agent', 'universal_read'],
 } as const satisfies OperationPolicy;
@@ -175,7 +175,7 @@ const SCOPE_GET_PART_READERS: Record<ScopeGetPart, ScopeGetPartReader> = {
   }),
 };
 
-export function selectForgeScopeGetParts(input: ScopeGetInput): ScopeGetPart[] {
+export function selectEvolutionScopeGetParts(input: ScopeGetInput): ScopeGetPart[] {
   return [...new Set(input.include ?? DEFAULT_SCOPE_GET_PARTS)];
 }
 
@@ -186,12 +186,12 @@ function resolveScopeForGoal(
 ): EvolutionGate<EvolutionScope, ScopeGetRejection> {
   const goal = evolution.getGoal(goalId);
   if (!goal || (scope.spaceId && goal.spaceId !== scope.spaceId)) {
-    return denyForge('goal_not_found', `Goal not found: ${goalId}`);
+    return denyEvolution('goal_not_found', `Goal not found: ${goalId}`);
   }
   const resolved = evolution.scopeService.resolveScopeForGoal({ spaceGoalId: goalId });
   return resolved
     ? { value: resolved }
-    : denyForge('scope_not_found', `No EvolutionScope is linked to goal: ${goalId}`);
+    : denyEvolution('scope_not_found', `No EvolutionScope is linked to goal: ${goalId}`);
 }
 
 function resolveScopeForTask(
@@ -201,37 +201,37 @@ function resolveScopeForTask(
 ): EvolutionGate<EvolutionScope, ScopeGetRejection> {
   const task = evolution.taskRepo.getTask(taskId);
   if (!task || (scope.spaceId && task.spaceId !== scope.spaceId)) {
-    return denyForge('task_not_found', `Task not found: ${taskId}`);
+    return denyEvolution('task_not_found', `Task not found: ${taskId}`);
   }
   const resolved = evolution.scopeService.resolveScopeForTask({ taskId });
   return resolved
     ? { value: resolved }
-    : denyForge('scope_not_found', `No EvolutionScope is linked to task: ${taskId}`);
+    : denyEvolution('scope_not_found', `No EvolutionScope is linked to task: ${taskId}`);
 }
 
-export function resolveForgeScopeAddress(
+export function resolveEvolutionScopeAddress(
   input: ScopeGetInput,
   scope: EvolutionSpaceScope,
   evolution: EvolutionScopeGetDependencies
 ): EvolutionGate<EvolutionScope, ScopeGetRejection> {
   if (input.scopeId) {
-    const found = findForgeScopeInSpace(input.scopeId, scope.spaceId, evolution);
+    const found = findEvolutionScopeInSpace(input.scopeId, scope.spaceId, evolution);
     return found
       ? { value: found }
-      : denyForge('scope_not_found', `EvolutionScope not found: ${input.scopeId}`);
+      : denyEvolution('scope_not_found', `EvolutionScope not found: ${input.scopeId}`);
   }
   if (input.goalId) return resolveScopeForGoal(input.goalId, scope, evolution);
   if (input.taskId) return resolveScopeForTask(input.taskId, scope, evolution);
-  return denyForge('resolve_target_required', 'Provide scopeId, goalId, or taskId');
+  return denyEvolution('resolve_target_required', 'Provide scopeId, goalId, or taskId');
 }
 
-export function readForgeScopeParts(
+export function readEvolutionScopeParts(
   input: ScopeGetInput,
   scope: EvolutionScope,
   caller: OperationCaller,
   evolution: EvolutionScopeGetDependencies
 ): { accepted: true } & ScopeGetParts {
-  const parts = selectForgeScopeGetParts(input);
+  const parts = selectEvolutionScopeGetParts(input);
   const read = parts.reduce<ScopeGetParts>(
     (collected, part) =>
       Object.assign(collected, SCOPE_GET_PART_READERS[part](input, scope, evolution)),
@@ -254,21 +254,21 @@ export function readForgeScopeParts(
   return { accepted: true, ...read };
 }
 
-export function createForgeScopeGetOperation(evolution: EvolutionScopeGetDependencies) {
+export function createEvolutionScopeGetOperation(evolution: EvolutionScopeGetDependencies) {
   const get = (superpipe({ evolution })('evolution-scope-get') as PipelineAPI)
     .input(['input', 'caller'])
-    .pipe(admitForgeReader, ['input', 'caller'], 'result:outcome')
-    .pipe(resolveForgeScopeAddress, ['input', 'outcome', 'evolution'], 'result:outcome')
-    .pipe(readForgeScopeParts, ['input', 'outcome', 'caller', 'evolution'], 'outcome')
+    .pipe(admitEvolutionReader, ['input', 'caller'], 'result:outcome')
+    .pipe(resolveEvolutionScopeAddress, ['input', 'outcome', 'evolution'], 'result:outcome')
+    .pipe(readEvolutionScopeParts, ['input', 'outcome', 'caller', 'evolution'], 'outcome')
     .endAsync('outcome');
 
   return defineOperation({
     name: 'evolution.scope.get',
-    policy: FORGE_READ_POLICY,
+    policy: EVOLUTION_READ_POLICY,
     description:
       'Read one Evolution scope and whatever parts of it you need in a single call. Address the scope by scopeId, or by goalId or taskId to resolve the scope linked to that goal or task (scopeId wins, then goalId, then taskId). include names the parts to return — scope, agents, evidence, metrics, episodes, lessons, proposals — and defaults to ["scope"], the scope row with its linked goal, metric definitions, and policy, which reads no lists; every other part costs one unfiltered read of that scope. agents returns the long-horizon agents this scope is routed to, which is what evolution.scope.owner.set writes. Filter with lessonStatus and proposalStatus. Parts you do not ask for are absent from the result. Rejects resolve_target_required when no address is given, goal_not_found or task_not_found when the target is absent or outside the caller Space, and scope_not_found when the scope is absent, outside the caller Space, or not linked to the target.',
     inputSchema: ScopeGetInputSchema,
-    resultSchema: z.union([ScopeGetResultSchema, forgeDenialSchema(SCOPE_GET_REJECTIONS)]),
+    resultSchema: z.union([ScopeGetResultSchema, evolutionDenialSchema(SCOPE_GET_REJECTIONS)]),
     execute: async (input, caller) => get(input, caller),
   });
 }

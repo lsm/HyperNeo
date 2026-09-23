@@ -13,7 +13,7 @@ export type {
   LogEvidenceSubscription,
 } from './log-evidence-types.ts';
 
-export const PRODUCT_FORGE_SCOPE_ID = 'f4ace1c5-f1b5-4fa7-88b4-6717ab70cfe0';
+export const PRODUCT_EVOLUTION_SCOPE_ID = 'f4ace1c5-f1b5-4fa7-88b4-6717ab70cfe0';
 
 const DEFAULT_SUBSCRIPTION_REFRESH_MS = 30 * 1000;
 const DEFAULT_MAX_BUFFERED_EVENTS = 500;
@@ -278,7 +278,7 @@ export class EvolutionLogEvidenceService {
   }
 
   private resolveDefaultProductScopes(): string[] {
-    const fixedScope = this.deps.evolutionRepo.getScope(PRODUCT_FORGE_SCOPE_ID);
+    const fixedScope = this.deps.evolutionRepo.getScope(PRODUCT_EVOLUTION_SCOPE_ID);
     if (fixedScope) return [fixedScope.id];
     const spaces = this.deps.spaceRepo?.listSpaces(false) ?? [];
     return spaces
@@ -299,7 +299,7 @@ export class EvolutionLogEvidenceService {
         kind: 'project',
         name: 'HyperNeo product runtime evidence',
         objective:
-          'Capture daemon runtime warnings, errors, and crashes for product Forge evidence.',
+          'Capture daemon runtime warnings, errors, and crashes for product Evolution evidence.',
         policy: { logEvidenceProductScope: true },
       }).id;
     } catch {

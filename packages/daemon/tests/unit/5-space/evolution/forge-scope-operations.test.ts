@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { Session } from '@hyperneo/shared';
-import { createForgeScopeOperations } from '../../../../src/lib/evolution/scope-operations.ts';
-import { createForgeScopeGetOperation } from '../../../../src/lib/evolution/scope-get-operation.ts';
+import { createEvolutionScopeOperations } from '../../../../src/lib/evolution/scope-operations.ts';
+import { createEvolutionScopeGetOperation } from '../../../../src/lib/evolution/scope-get-operation.ts';
 import type {
   EvolutionAuditEntry,
   EvolutionAuditWriter,
@@ -124,7 +124,10 @@ function makeCtx() {
     scheduleService,
     audit,
   };
-  const operations = [...createForgeScopeOperations(deps), createForgeScopeGetOperation(deps)];
+  const operations = [
+    ...createEvolutionScopeOperations(deps),
+    createEvolutionScopeGetOperation(deps),
+  ];
   const registry = createOperationRegistry(operations);
   const op = (name: string): OperationDefinition => {
     const found = registry.get(name);
@@ -271,7 +274,7 @@ describe('evolution.scope.create', () => {
         accepted: false;
         reason: string;
       };
-      expect(denied).toMatchObject({ accepted: false, reason: 'forge_denied' });
+      expect(denied).toMatchObject({ accepted: false, reason: 'evolution_denied' });
       expect(ctx.scopeService.listScopes({ spaceId: SPACE_ID })).toHaveLength(0);
       expect(ctx.audited).toHaveLength(0);
     } finally {

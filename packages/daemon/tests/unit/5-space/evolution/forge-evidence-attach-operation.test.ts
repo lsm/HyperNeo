@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { Session } from '@hyperneo/shared';
-import { createForgeEvidenceAttachOperation } from '../../../../src/lib/evolution/evidence-attach-operation.ts';
+import { createEvolutionEvidenceAttachOperation } from '../../../../src/lib/evolution/evidence-attach-operation.ts';
 import type {
   EvolutionAuditEntry,
   EvolutionAuditWriter,
@@ -74,7 +74,7 @@ function makeCtx() {
     audited.push(entry);
   };
 
-  const attach = createForgeEvidenceAttachOperation({
+  const attach = createEvolutionEvidenceAttachOperation({
     getSession: (sessionId) => sessions.get(sessionId) ?? null,
     longHorizonAgentRepo: new SpaceLongHorizonAgentRepository(db),
     nodeExecutionRepo: new NodeExecutionRepository(db),
@@ -252,7 +252,7 @@ describe('evolution.evidence.attach', () => {
           { kind: 'manual_note', scopeId: scope.id, summary: 'should not land' },
           archivedCaller
         )
-      ).toMatchObject({ accepted: false, reason: 'forge_denied' });
+      ).toMatchObject({ accepted: false, reason: 'evolution_denied' });
       expect(ctx.scopeService.listEvidence(scope.id).evidence).toHaveLength(0);
       expect(ctx.audited).toHaveLength(0);
     } finally {
