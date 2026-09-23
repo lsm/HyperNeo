@@ -7015,6 +7015,37 @@ describe('AgentSession', () => {
       );
     });
 
+    it("counts only the operations listed to this session's caller role", () => {
+      const mockSession = createTestSession('session-op-registry-role');
+      const { mockDb, mockMessageHub, mockInternalEventBus, mockGetApiKey } = makeMocks();
+      const agentSession = new AgentSession(
+        mockSession,
+        mockDb,
+        mockMessageHub,
+        mockInternalEventBus,
+        mockGetApiKey
+      );
+
+      agentSession.setOperationRegistryProvider(() =>
+        createOperationRegistry([
+          stubOperation('task.create'),
+          defineOperation({
+            name: 'workflow.run.peer.list',
+            description: 'stub for workflow.run.peer.list',
+            inputSchema: z.object({}),
+            resultSchema: z.unknown(),
+            policy: { safetyClass: 'read', roles: ['workflow_worker'] },
+            execute: async () => undefined,
+          }),
+        ])
+      );
+      agentSession.setCallerScopeResolver(() => ({ spaceId: 'space-1', role: 'ad_hoc_member' }));
+
+      expect(agentSession.getOperationsCapabilityContribution().briefing).toContain(
+        'shows this session 1 operation across 1 area: task.'
+      );
+    });
+
     it('shares the exact registry resolution used to serve the invoke tool', () => {
       const mockSession = createTestSession('session-op-registry-3');
       const { mockDb, mockMessageHub, mockInternalEventBus, mockGetApiKey } = makeMocks();

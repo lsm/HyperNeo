@@ -54,8 +54,12 @@ function policyFixture() {
   return registry;
 }
 
-async function listedNames(registry: OperationRegistry, listCaller: OperationCaller) {
-  const outcome = await invokeOperation(registry, 'operations.list', {}, listCaller);
+async function listedNames(
+  registry: OperationRegistry,
+  listCaller: OperationCaller,
+  input: { all?: boolean } = {}
+) {
+  const outcome = await invokeOperation(registry, 'operations.list', input, listCaller);
   if (outcome.kind !== 'completed') throw new Error(`operations.list failed: ${outcome.message}`);
   return (outcome.value as { name: string }[]).map((summary) => summary.name);
 }
@@ -84,7 +88,11 @@ describe('shared operation discovery', () => {
       kind: 'completed',
       value: [
         { name: 'example', description: 'An example' },
-        { name: 'operations.list', description: 'List operations available in this catalog.' },
+        {
+          name: 'operations.list',
+          description:
+            'List the operations meant for this session. Pass { all: true } for the full catalog; an unlisted operation can still be described and invoked by name.',
+        },
         {
           name: 'operations.describe',
           description: 'Describe an operation and its input and result schemas.',
@@ -111,7 +119,7 @@ describe('shared operation discovery', () => {
   });
   test('returns an explicit missing result without throwing', async () => {
     const { registry } = fixture();
-    expect(findDescribedOperation(registry, 'missing', caller)).toEqual({
+    expect(findDescribedOperation(registry, 'missing')).toEqual({
       reason: { found: false, name: 'missing' },
     });
     expect(
@@ -168,11 +176,17 @@ describe('shared operation discovery', () => {
   });
 });
 
-describe('discovery admission filtering', () => {
+describe('operation listing by caller', () => {
   const ALL_NAMES = [
     'family.read',
     'family.mutate',
     'family.human',
+    'family.unpoliced',
+    'operations.list',
+    'operations.describe',
+  ];
+  const UNRESTRICTED = [
+    'family.read',
     'family.unpoliced',
     'operations.list',
     'operations.describe',
@@ -182,69 +196,60 @@ describe('discovery admission filtering', () => {
     expect(await listedNames(policyFixture(), { source: 'rpc' })).toEqual(ALL_NAMES);
   });
 
-  test('a workflow_worker sees every operation, including human_only, now that the door is removed', async () => {
+  test('an MCP caller sees the operations declared for its role and never human_only ones', async () => {
     const names = await listedNames(policyFixture(), {
       source: 'mcp',
       sessionId: 'worker',
       role: 'workflow_worker',
     });
-    expect(names).toEqual(ALL_NAMES);
+    expect(names).toEqual([
+      'family.read',
+      'family.mutate',
+      'family.unpoliced',
+      'operations.list',
+      'operations.describe',
+    ]);
   });
 
-  test('a role outside the roles list still sees every operation in the catalog', async () => {
+  test('a role outside an operation roles list does not see that operation', async () => {
     const names = await listedNames(policyFixture(), {
       source: 'mcp',
       sessionId: 'member',
       role: 'ad_hoc_member',
     });
+    expect(names).toEqual(UNRESTRICTED);
+  });
+
+  test('an MCP caller without a role sees only the unrestricted operations', async () => {
+    expect(await listedNames(policyFixture(), { source: 'mcp', sessionId: 'plain' })).toEqual(
+      UNRESTRICTED
+    );
+  });
+
+  test('all: true returns the full catalog to an MCP caller', async () => {
+    const names = await listedNames(
+      policyFixture(),
+      { source: 'mcp', sessionId: 'member', role: 'ad_hoc_member' },
+      { all: true }
+    );
     expect(names).toEqual(ALL_NAMES);
   });
 
-  test('universal_read sees every operation, including mutate and human_only', async () => {
-    expect(
-      await listedNames(policyFixture(), {
-        source: 'mcp',
-        sessionId: 'reader',
-        role: 'universal_read',
-      })
-    ).toEqual(ALL_NAMES);
-  });
-
-  test('every operation now describes as found regardless of caller role', async () => {
+  test('an operation left off the list still describes as found', async () => {
     const registry = policyFixture();
-    const worker: OperationCaller = { source: 'mcp', sessionId: 'worker', role: 'workflow_worker' };
-    expect(registry.get('family.human')).toBeDefined();
+    const member: OperationCaller = { source: 'mcp', sessionId: 'member', role: 'ad_hoc_member' };
     expect(
-      await invokeOperation(registry, 'operations.describe', { name: 'family.human' }, worker)
+      await invokeOperation(registry, 'operations.describe', { name: 'family.human' }, member)
     ).toMatchObject({ kind: 'completed', value: { found: true, name: 'family.human' } });
     expect(
-      await invokeOperation(registry, 'operations.describe', { name: 'family.mutate' }, worker)
+      await invokeOperation(registry, 'operations.describe', { name: 'family.mutate' }, member)
     ).toMatchObject({ kind: 'completed', value: { found: true, name: 'family.mutate' } });
-    expect(
-      await invokeOperation(
-        registry,
-        'operations.describe',
-        { name: 'family.human' },
-        {
-          source: 'rpc',
-        }
-      )
-    ).toMatchObject({ kind: 'completed', value: { found: true, name: 'family.human' } });
   });
 
-  test('findDescribedOperation no longer hides any operation from a caller', () => {
+  test('findDescribedOperation resolves by name alone', () => {
     const registry = policyFixture();
-    expect(
-      findDescribedOperation(registry, 'family.mutate', {
-        source: 'mcp',
-        role: 'ad_hoc_member',
-      })
-    ).toEqual({ value: registry.get('family.mutate')! });
-    expect(
-      findDescribedOperation(registry, 'family.mutate', {
-        source: 'mcp',
-        role: 'workflow_worker',
-      })
-    ).toEqual({ value: registry.get('family.mutate')! });
+    expect(findDescribedOperation(registry, 'family.mutate')).toEqual({
+      value: registry.get('family.mutate')!,
+    });
   });
 });

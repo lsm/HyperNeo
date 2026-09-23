@@ -14,6 +14,7 @@ import {
 import {
   createOperationRegistry,
   defineOperation,
+  type OperationPolicy,
 } from '../../../../src/lib/operations/registry.ts';
 
 const ATTACHED: AttachedMcpServerConfig = {
@@ -22,12 +23,13 @@ const ATTACHED: AttachedMcpServerConfig = {
   instance: {} as McpServer,
 };
 
-function stubOperation(name: string) {
+function stubOperation(name: string, policy?: OperationPolicy) {
   return defineOperation({
     name,
     description: `stub for ${name}`,
     inputSchema: z.object({}),
     resultSchema: z.unknown(),
+    ...(policy ? { policy } : {}),
     execute: async () => undefined,
   });
 }
@@ -95,7 +97,7 @@ describe('describeResolvedOperations', () => {
     ]);
 
     expect(describeResolvedOperations(registry)).toBe(
-      "This session's registry currently resolves 3 operations across 2 areas: goal, task."
+      'operations.list shows this session 3 operations across 2 areas: goal, task.'
     );
   });
 
@@ -121,6 +123,21 @@ describe('describeResolvedOperations', () => {
     expect(describeResolvedOperations(registry)).toBe('');
   });
 
+  test('counts only the operations listed to the caller role', () => {
+    const registry = createOperationRegistry([
+      stubOperation('task.create'),
+      stubOperation('workflow.run.peer.list', { safetyClass: 'read', roles: ['workflow_worker'] }),
+      stubOperation('daemon.list', { safetyClass: 'human_only' }),
+    ]);
+
+    expect(describeResolvedOperations(registry, { source: 'mcp', role: 'ad_hoc_member' })).toBe(
+      'operations.list shows this session 1 operation across 1 area: task.'
+    );
+    expect(describeResolvedOperations(registry, { source: 'mcp', role: 'workflow_worker' })).toBe(
+      'operations.list shows this session 2 operations across 2 areas: task, workflow.'
+    );
+  });
+
   test('sorts areas and de-duplicates repeated families', () => {
     const registry = createOperationRegistry([
       stubOperation('workflow.get'),
@@ -129,7 +146,7 @@ describe('describeResolvedOperations', () => {
     ]);
 
     expect(describeResolvedOperations(registry)).toBe(
-      "This session's registry currently resolves 3 operations across 2 areas: agent, workflow."
+      'operations.list shows this session 3 operations across 2 areas: agent, workflow.'
     );
   });
 });
@@ -159,7 +176,7 @@ describe('operationsCapabilityContribution with a resolved registry', () => {
   test('omits the derived section when no registry is supplied, unchanged from before', () => {
     const withoutRegistry = operationsCapabilityContribution(ATTACHED);
 
-    expect(withoutRegistry.briefing).not.toContain('this session');
-    expect(withoutRegistry.briefing.toLowerCase()).not.toContain('resolves');
+    expect(withoutRegistry.briefing).not.toContain('shows this session');
+    expect(withoutRegistry.briefing).not.toContain('areas:');
   });
 });
