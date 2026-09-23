@@ -32,7 +32,7 @@ export function pauseScheduleStrict(scheduleService: ScheduleService, scheduleId
   }
   if (result.status !== 'paused') {
     throw new Error(
-      `Could not pause Forge self-nag schedule ${scheduleId} (concurrently fired/rescheduled). Retry the update.`
+      `Could not pause Evolution self-nag schedule ${scheduleId} (concurrently fired/rescheduled). Retry the update.`
     );
   }
 }

@@ -190,7 +190,7 @@ function createGoalAutomationSelfNagSchedules(
       try {
         syncGoalAutomationSelfNagScheduleForScope({ goalRepo, scheduleService, scope });
       } catch (err) {
-        log.warn('could not create Forge self-nag schedule', err);
+        log.warn('could not create Evolution self-nag schedule', err);
       }
     }
   }

@@ -234,7 +234,7 @@ describe('evolution.scope.get', () => {
         handle: 'steward',
         instructions: 'steward',
       });
-      ctx.longHorizonAgentRepo.assignForgeScope(agent.id, scope.id);
+      ctx.longHorizonAgentRepo.assignEvolutionScope(agent.id, scope.id);
 
       const result = await read(ctx, { scopeId: scope.id, include: ['agents'] });
 

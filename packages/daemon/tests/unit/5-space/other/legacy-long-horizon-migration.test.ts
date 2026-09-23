@@ -143,7 +143,7 @@ describe('legacy long-horizon migration', () => {
     expect(repo.listGoals('shared-agent')).toEqual([
       expect.objectContaining({ agentId: 'shared-agent', goalId: 'goal-a' }),
     ]);
-    expect(repo.listForgeScopes('shared-agent')).toEqual([
+    expect(repo.listEvolutionScopes('shared-agent')).toEqual([
       expect.objectContaining({ agentId: 'shared-agent', scopeId: 'scope-a' }),
     ]);
     expect(repo.listReminders('shared-agent')).toEqual([
@@ -164,7 +164,7 @@ describe('legacy long-horizon migration', () => {
     expect(repo.listGoals('worker-only')).toEqual([
       expect.objectContaining({ agentId: 'worker-only', goalId: 'goal-a' }),
     ]);
-    expect(repo.listForgeScopes('worker-only')).toEqual([
+    expect(repo.listEvolutionScopes('worker-only')).toEqual([
       expect.objectContaining({ agentId: 'worker-only', scopeId: 'scope-a' }),
     ]);
     expect(repo.listReminders('worker-only')).toEqual([

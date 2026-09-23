@@ -333,7 +333,7 @@ export class SpaceTaskManager {
           this.evolutionScopeService?.captureCompletedTaskEvidence({ taskId });
         } catch (err) {
           log.warn(
-            `Forge evidence capture threw for task "${taskId}": ${err instanceof Error ? err.message : String(err)}`
+            `Evolution evidence capture threw for task "${taskId}": ${err instanceof Error ? err.message : String(err)}`
           );
         }
       }

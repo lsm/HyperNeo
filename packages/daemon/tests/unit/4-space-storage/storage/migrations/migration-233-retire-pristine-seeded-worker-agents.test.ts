@@ -262,7 +262,7 @@ describe('migration 233: retire pristine seeded worker agents', () => {
        ) VALUES ('scope-1', 'space-1', 'mission', 'Scope', 'Objective', '[]', '{}', 1, 1)`
     ).run();
     repo.assignGoal(coderId, 'goal-1');
-    repo.assignForgeScope(generalId, 'scope-1');
+    repo.assignEvolutionScope(generalId, 'scope-1');
     repo.createReminder({
       spaceId: 'space-1',
       agentId: plannerId,

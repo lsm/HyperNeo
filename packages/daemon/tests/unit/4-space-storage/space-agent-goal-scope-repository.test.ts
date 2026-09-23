@@ -173,38 +173,38 @@ describe('SpaceAgentGoalScopeRepository', () => {
     });
   });
 
-  describe('assignForgeScope', () => {
+  describe('assignEvolutionScope', () => {
     test('links an agent to a scope in its own space', () => {
-      repo.assignForgeScope('agent-1', 'scope-1');
+      repo.assignEvolutionScope('agent-1', 'scope-1');
 
-      expect(repo.listForgeScopes('agent-1').map((s) => s.scopeId)).toEqual(['scope-1']);
+      expect(repo.listEvolutionScopes('agent-1').map((s) => s.scopeId)).toEqual(['scope-1']);
     });
 
     test('is idempotent for the same relationship', () => {
-      repo.assignForgeScope('agent-1', 'scope-1');
-      repo.assignForgeScope('agent-1', 'scope-1');
+      repo.assignEvolutionScope('agent-1', 'scope-1');
+      repo.assignEvolutionScope('agent-1', 'scope-1');
 
-      expect(repo.listForgeScopes('agent-1')).toHaveLength(1);
+      expect(repo.listEvolutionScopes('agent-1')).toHaveLength(1);
     });
 
     test('rejects an unknown agent', () => {
-      expect(() => repo.assignForgeScope('missing', 'scope-1')).toThrow(
+      expect(() => repo.assignEvolutionScope('missing', 'scope-1')).toThrow(
         'Long-horizon agent not found: missing'
       );
     });
 
     test('rejects a scope from another space', () => {
-      expect(() => repo.assignForgeScope('agent-1', 'scope-2')).toThrow(
-        'Forge scope scope-2 does not belong to space space-1'
+      expect(() => repo.assignEvolutionScope('agent-1', 'scope-2')).toThrow(
+        'Evolution scope scope-2 does not belong to space space-1'
       );
     });
   });
 
-  test('deleteForgeScopeAssignment removes the link', () => {
-    repo.assignForgeScope('agent-1', 'scope-1');
+  test('deleteEvolutionScopeAssignment removes the link', () => {
+    repo.assignEvolutionScope('agent-1', 'scope-1');
 
-    repo.deleteForgeScopeAssignment('agent-1', 'scope-1');
+    repo.deleteEvolutionScopeAssignment('agent-1', 'scope-1');
 
-    expect(repo.listForgeScopes('agent-1')).toEqual([]);
+    expect(repo.listEvolutionScopes('agent-1')).toEqual([]);
   });
 });

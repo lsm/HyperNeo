@@ -1,5 +1,5 @@
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
-import type { EvidenceRef, GoalForgeAutomationTriggerKind, SpaceTask } from '@hyperneo/shared';
+import type { EvidenceRef, GoalEvolutionAutomationTriggerKind, SpaceTask } from '@hyperneo/shared';
 import type { Job, JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import type { EvolutionRepository } from '../../storage/repositories/evolution-repository.ts';
 import type { GoalAutomationCursorRepository } from '../../storage/repositories/goal-automation-cursor-repository.ts';
@@ -40,7 +40,7 @@ export interface GoalAutomationExternalEventSnapshot {
 export interface GoalAutomationExecutePayload extends Record<string, unknown> {
   goalId: string;
   scopeId: string;
-  triggerKind: GoalForgeAutomationTriggerKind;
+  triggerKind: GoalEvolutionAutomationTriggerKind;
   triggerKey: string;
   reason: 'task_completed' | 'self_nag' | 'external_event';
   taskId?: string;
