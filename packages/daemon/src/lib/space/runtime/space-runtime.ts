@@ -54,6 +54,7 @@ import type { WorkflowRunArtifactRepository } from '../../../storage/repositorie
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
 import { renderEventBlock } from '../../external-events/deferred-event-digest.ts';
 import { essenceEntryFromExternalEvent } from '../../external-events/event-essence-entry.ts';
+import { eventMatchesFilter, subscriptionEventFilter } from '../../external-events/event-filter.ts';
 import type { ExternalEventPublishedPayload } from '../../external-events/external-event-service.ts';
 import type { ExternalEventStore } from '../../external-events/external-event-store.ts';
 import { legacyGitHubTopic } from '../../external-events/github-subscription-pattern.ts';
@@ -318,6 +319,7 @@ interface LongHorizonSubscriptionTarget {
   source: string;
   topic: string;
   subscriptionId: string;
+  filter: Record<string, unknown>;
 }
 
 type SubscriptionTarget = WorkflowSubscriptionTarget | LongHorizonSubscriptionTarget;
@@ -1328,6 +1330,7 @@ export class SpaceRuntime {
       source: subscription.source,
       topic: pattern,
       subscriptionId: subscription.id,
+      filter: subscriptionEventFilter(subscription.filter),
     });
     return { success: true };
   }
@@ -1529,7 +1532,10 @@ export class SpaceRuntime {
     const store = this.config.externalEventStore;
     if (!store) return;
     const matches = this.lookupSubscriptionTargets(payload.topic).filter((target) => {
-      if (isLongHorizonSubscriptionTarget(target)) return target.spaceId === payload.spaceId;
+      if (isLongHorizonSubscriptionTarget(target))
+        return (
+          target.spaceId === payload.spaceId && eventMatchesFilter(target.filter, payload.payload)
+        );
       return this.isWorkflowTargetOwnedBySpace(target, payload.spaceId);
     });
 
@@ -2733,6 +2739,7 @@ export class SpaceRuntime {
         source: '',
         topic: '',
         subscriptionId,
+        filter: {},
       };
     } catch {
       return null;
@@ -4620,6 +4627,7 @@ export class SpaceRuntime {
             source: subscription.source,
             topic: composeLongHorizonSubscriptionPattern(subscription.source, subscription.topic),
             subscriptionId: subscription.id,
+            filter: subscriptionEventFilter(subscription.filter),
           };
         } catch (err) {
           store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
