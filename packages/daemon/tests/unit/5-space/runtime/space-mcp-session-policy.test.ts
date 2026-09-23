@@ -299,7 +299,12 @@ describe('resolveSpaceMcpSessionPolicy', () => {
     const policy = resolveSpaceMcpSessionPolicy(session, {
       longHorizonAgentRepo: {
         getById: () =>
-          ({ id: 'agent-1', spaceId: 'space-1', status: 'active' }) as SpaceLongHorizonAgent,
+          ({
+            id: 'agent-1',
+            spaceId: 'space-1',
+            status: 'active',
+            sessionId: longTermAgentSessionId('space-1', 'agent-1'),
+          }) as SpaceLongHorizonAgent,
       },
     });
 

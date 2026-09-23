@@ -687,7 +687,22 @@ export class SpaceRuntimeService {
     });
   }
 
-  private async ensureLongHorizonAgentSession(spaceId: string, agentId: string) {
+  private readonly agentSessionEnsuresInFlight = new Map<
+    string,
+    ReturnType<SpaceRuntimeService['ensureLongHorizonAgentSessionOnce']>
+  >();
+
+  private ensureLongHorizonAgentSession(spaceId: string, agentId: string) {
+    const inFlight = this.agentSessionEnsuresInFlight.get(agentId);
+    if (inFlight) return inFlight;
+    const ensured = this.ensureLongHorizonAgentSessionOnce(spaceId, agentId).finally(() => {
+      this.agentSessionEnsuresInFlight.delete(agentId);
+    });
+    this.agentSessionEnsuresInFlight.set(agentId, ensured);
+    return ensured;
+  }
+
+  private async ensureLongHorizonAgentSessionOnce(spaceId: string, agentId: string) {
     const sessionManager = this.config.sessionManager;
     const repo = this.config.longHorizonAgentRepo;
     if (!sessionManager || !repo) return null;

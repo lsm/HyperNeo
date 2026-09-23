@@ -33,6 +33,7 @@ const planner = {
   spaceId: 'space-3',
   handle: 'planner',
   status: 'active',
+  sessionId: longTermAgentSessionId('space-3', 'agent-7'),
 } as unknown as SpaceLongHorizonAgent;
 
 const PLANNER_SESSION_ID = longTermAgentSessionId('space-3', 'agent-7');

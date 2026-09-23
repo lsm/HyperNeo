@@ -677,7 +677,12 @@ test.each(['rpc', 'mcp'] as const)(
           policyContext: {
             longHorizonAgentRepo: {
               getById: (id: string) =>
-                ({ id, spaceId: SPACE_ID, status: 'active' }) as unknown as SpaceLongHorizonAgent,
+                ({
+                  id,
+                  spaceId: SPACE_ID,
+                  status: 'active',
+                  sessionId: longTermAgentSessionId(SPACE_ID, id),
+                }) as unknown as SpaceLongHorizonAgent,
             },
           },
           dispatchApproval: (_spaceId, id, approvalSource, reason, guard) =>

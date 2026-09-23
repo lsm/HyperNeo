@@ -114,7 +114,7 @@ export function makeSessionKindLongHorizonAgent(
     displayName: 'Card Agent',
     templateKey: null,
     status: 'active',
-    sessionId: null,
+    sessionId: SESSION_IDS.agent_card,
     instructions: '',
     autonomyLevel: 2,
     model: null,

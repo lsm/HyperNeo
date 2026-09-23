@@ -49,7 +49,13 @@ beforeEach(() => {
     getSpaceAutonomyLevel: async () => 5,
     policyContext: {
       longHorizonAgentRepo: {
-        getById: (id) => ({ id, spaceId, status: 'active' }) as unknown as SpaceLongHorizonAgent,
+        getById: (id) =>
+          ({
+            id,
+            spaceId,
+            status: 'active',
+            sessionId: longTermAgentSessionId(spaceId, id),
+          }) as unknown as SpaceLongHorizonAgent,
       },
     },
     getTaskManager: mock((id) => new SpaceTaskManager(db, id)),
@@ -194,7 +200,12 @@ test('admits a long-term agent session whose backing agent is still active', asy
   dependencies.policyContext = {
     longHorizonAgentRepo: {
       getById: () =>
-        ({ id: 'agent-1', spaceId, status: 'active' }) as unknown as SpaceLongHorizonAgent,
+        ({
+          id: 'agent-1',
+          spaceId,
+          status: 'active',
+          sessionId: longTermAgentSessionId(spaceId, 'agent-1'),
+        }) as unknown as SpaceLongHorizonAgent,
     },
   };
   expect((await invoke(session.id)).kind).toBe('completed');
