@@ -672,7 +672,10 @@ export function normalizeGitHubCheckSuite(params: {
   const occurredAt = parseGitHubTimestamp(checkSuite.updated_at ?? checkSuite.created_at);
   const canonicalOwner = repo.owner.toLowerCase();
   const canonicalRepo = repo.repo.toLowerCase();
-  const externalId = `check_suite:${id}:${conclusion}`;
+  const updatedAt = getString(checkSuite.updated_at);
+  const externalId = updatedAt
+    ? `check_suite:${id}:${conclusion}:${updatedAt}`
+    : `check_suite:${id}:${conclusion}`;
   const body = `check suite concluded with ${conclusion}`;
   return {
     deliveryId: params.deliveryId,
