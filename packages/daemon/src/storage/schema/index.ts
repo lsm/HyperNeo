@@ -25,6 +25,7 @@ export { runMigration267 } from './m267-restamp-contracts-task-approve.ts';
 export { runMigration268 } from './m268-rename-agent-forge-scopes.ts';
 export { runMigration269 } from './m269-restamp-goal-task-trigger.ts';
 export { runMigration270 } from './m270-restamp-contracts-task-transition-review.ts';
+export { runMigration271 } from './m271-relocate-built-in-key-templates.ts';
 export { reclaimPendingMigrationSpace } from './migration-space-reclaim.ts';
 // knip-ignore-next-line
 export { runMigration12 } from './migrations.ts';
