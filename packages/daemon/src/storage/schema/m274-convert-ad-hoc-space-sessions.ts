@@ -8,6 +8,8 @@ interface SessionRow {
   session_context: string | null;
 }
 
+const RESERVED_HANDLES = new Set(['system-runtime', 'system-workflow', 'system-messaging']);
+
 function tableExists(db: Database, name: string): boolean {
   return !!db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?`).get(name);
 }
@@ -89,7 +91,8 @@ export function runMigration274(db: Database, now = Date.now()): void {
     const displayName = row.title?.trim() || 'Converted session';
     const base = slugify(displayName) || 'agent';
     let handle = base;
-    for (let n = 2; handleTaken.get(spaceId, handle); n++) handle = `${base}-${n}`;
+    for (let n = 2; RESERVED_HANDLES.has(handle) || handleTaken.get(spaceId, handle); n++)
+      handle = `${base}-${n}`;
     const agentId = crypto.randomUUID();
     insertAgent.run(agentId, spaceId, handle, displayName, row.id, now, now);
     const metadata = parseObject(row.metadata);

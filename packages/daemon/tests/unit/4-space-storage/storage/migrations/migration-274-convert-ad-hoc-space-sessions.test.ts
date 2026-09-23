@@ -119,6 +119,15 @@ describe('migration 274: convert ad-hoc Space sessions into agents', () => {
     ]);
   });
 
+  test('never mints a reserved system handle', () => {
+    const db = makeDb();
+    addSession(db, 'sys', { title: 'System Workflow' });
+
+    runMigration274(db, 1);
+
+    expect(agents(db).map((agent) => agent.handle)).toEqual(['system-workflow-2']);
+  });
+
   test('is a no-op when the tables do not exist', () => {
     expect(() => runMigration274(new BunDatabase(':memory:'))).not.toThrow();
   });
