@@ -110,7 +110,7 @@ const TEXT_MARKERS: ReadonlyArray<readonly [string, string]> = [
     'Your role in it is a worker session running one assigned Space task directly, outside any workflow.',
   ],
   ['operations-door-tool', 'mcp__hyperneo-operations__invoke'],
-  ['operations-discovery', 'List the operations before concluding that a capability is missing'],
+  ['operations-discovery', 'Check the full catalog before concluding that a capability is missing'],
   ['agent-memory-briefing', '### Space Memory'],
   ['db-query-briefing', '### Reading the Database'],
   ['space-standing-instructions', SPACE_INSTRUCTIONS],
@@ -371,11 +371,11 @@ describe('session kind injected text', () => {
           '',
           'Space work does not go through your local tools. The `hyperneo-operations` MCP server exposes a single tool, `mcp__hyperneo-operations__invoke`, and every Space capability you have is reached through it:',
           '',
-          '- `invoke(name="operations.list")` — lists the operations available to you here, one line each.',
+          '- `invoke(name="operations.list")` — lists the operations meant for this session, one line each; add `input={"all":true}` for the full catalog.',
           '- `invoke(name="operations.describe", input={"name":"<operation>"})` — returns that operation\'s input and result schemas.',
           '- `invoke(name="<operation>", input={...})` — runs it.',
           '',
-          "List the operations before concluding that a capability is missing; a capability you do not have is simply absent from that list. The SDK's built-in `Task*` tools are a within-turn scratchpad and are invisible to the rest of the Space.",
+          "Check the full catalog before concluding that a capability is missing; an operation left off your list can still be described and invoked by name. The SDK's built-in `Task*` tools are a within-turn scratchpad and are invisible to the rest of the Space.",
         ].join('\n')
       );
     });

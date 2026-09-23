@@ -314,7 +314,8 @@ export class AgentSession
   getOperationsCapabilityContribution(): AuthoredCapabilityContribution {
     return operationsCapabilityContribution(
       this.getOperationMcpServer(),
-      this.resolveOperationRegistry()
+      this.resolveOperationRegistry(),
+      { ...resolveCallerIdentity(this.callerScopeResolver, this.session.id), source: 'mcp' }
     );
   }
 

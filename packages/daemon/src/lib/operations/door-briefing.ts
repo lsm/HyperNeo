@@ -4,7 +4,8 @@ import type {
   AuthoredCapabilityContribution,
 } from '../briefings/contribution.ts';
 import { OPERATIONS_MCP_SERVER_NAME } from '../mcp/built-in-servers.ts';
-import type { OperationRegistry } from './registry.ts';
+import { isOperationListed } from './discovery.ts';
+import type { OperationCaller, OperationRegistry } from './registry.ts';
 
 const DISCOVERY_OPERATION_NAMES = new Set(['operations.list', 'operations.describe']);
 
@@ -13,8 +14,12 @@ function operationFamily(name: string): string {
   return dotIndex === -1 ? name : name.slice(0, dotIndex);
 }
 
-export function describeResolvedOperations(registry: OperationRegistry): string {
+export function describeResolvedOperations(
+  registry: OperationRegistry,
+  caller: OperationCaller = { source: 'mcp' }
+): string {
   const names = registry.entries
+    .filter((entry) => isOperationListed(entry, caller))
     .map((entry) => entry.name)
     .filter((name) => !DISCOVERY_OPERATION_NAMES.has(name));
   if (names.length === 0) return '';
@@ -23,14 +28,15 @@ export function describeResolvedOperations(registry: OperationRegistry): string 
   );
   const operationWord = names.length === 1 ? 'operation' : 'operations';
   const areaWord = families.length === 1 ? 'area' : 'areas';
-  return `This session's registry currently resolves ${names.length} ${operationWord} across ${families.length} ${areaWord}: ${families.join(', ')}.`;
+  return `operations.list shows this session ${names.length} ${operationWord} across ${families.length} ${areaWord}: ${families.join(', ')}.`;
 }
 
 export function operationsCapabilityContribution(
   config: AttachedMcpServerConfig,
-  registry?: OperationRegistry
+  registry?: OperationRegistry,
+  caller?: OperationCaller
 ): AuthoredCapabilityContribution {
-  const listing = registry ? describeResolvedOperations(registry) : '';
+  const listing = registry ? describeResolvedOperations(registry, caller) : '';
   return {
     kind: 'authored',
     server: { name: OPERATIONS_MCP_SERVER_NAME, config },
