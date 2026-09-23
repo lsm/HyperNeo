@@ -112,6 +112,12 @@ function run(name: string, input: unknown, caller: OperationCaller) {
   return operation.execute(input, caller);
 }
 
+async function runParsed(name: string, input: unknown, caller: OperationCaller) {
+  const operation = operations.get(name);
+  if (!operation) throw new Error(`operation ${name} not registered`);
+  return operation.execute(await operation.inputSchema.parseAsync(input), caller);
+}
+
 beforeEach(() => {
   db = new Database(':memory:');
   createSpaceTables(db);
@@ -241,6 +247,48 @@ describe('node external-event subscription operations', () => {
       await run('event.external.unsubscribe', { topicPattern: 'github/a/b/*' }, caller)
     ).toEqual({ ok: true, topicPattern: 'github/a/b/*' });
     expect(unregistered[0]!.topicPattern).toBe('github/a/b/*');
+  });
+
+  test('subscribe with prUrl registers that pull request topic', async () => {
+    const caller = worker(workerSession('s-pr-url'));
+    expect(
+      await runParsed(
+        'event.external.subscribe',
+        { prUrl: 'https://github.com/acme/widgets/pull/7' },
+        caller
+      )
+    ).toEqual({ ok: true, topicPattern: 'github/acme/widgets/pull_request/7.*' });
+    expect(registered.map((entry) => entry.topicPattern)).toEqual([
+      'github/acme/widgets/pull_request/7.*',
+    ]);
+  });
+
+  test('unsubscribe with prUrl drops the same pull request topic', async () => {
+    const caller = worker(workerSession('s-pr-url-unsub'));
+    expect(
+      await runParsed(
+        'event.external.unsubscribe',
+        { prUrl: 'https://github.com/acme/widgets/pull/7' },
+        caller
+      )
+    ).toEqual({ ok: true, topicPattern: 'github/acme/widgets/pull_request/7.*' });
+    expect(unregistered.map((entry) => entry.topicPattern)).toEqual([
+      'github/acme/widgets/pull_request/7.*',
+    ]);
+  });
+
+  test('subscribe input takes exactly one of topicPattern or a parseable prUrl', () => {
+    const schema = operations.get('event.external.subscribe')!.inputSchema;
+    expect(schema.safeParse({}).success).toBe(false);
+    expect(
+      schema.safeParse({
+        topicPattern: 'github/a/b/*',
+        prUrl: 'https://github.com/acme/widgets/pull/7',
+      }).success
+    ).toBe(false);
+    const unparseable = schema.safeParse({ prUrl: 'not-a-url' });
+    expect(unparseable.success).toBe(false);
+    expect(unparseable.error?.issues[0]?.message).toBe('Could not parse GitHub PR URL: not-a-url');
   });
 
   test('event.external.pr.subscribe derives the topic from the run primary link', async () => {
