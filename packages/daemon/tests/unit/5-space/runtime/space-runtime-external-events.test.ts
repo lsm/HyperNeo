@@ -25,6 +25,7 @@ import type { WorkflowArtifactProfile } from '../../../../src/lib/workflows/arti
 import {
   parsePositiveIntegerEnv,
   SpaceRuntime,
+  type SpaceRuntimeConfig,
 } from '../../../../src/lib/space/runtime/space-runtime';
 import { CodingArtifactProfile } from '../../../../src/lib/workflows/coding-artifact-profile';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
@@ -699,6 +700,70 @@ describe('SpaceRuntime external event subscriptions', () => {
     });
     await eventService.publish(makeEvent({ id: 'evt-after-pause' }));
     expect(longHorizonMessages).toHaveLength(1);
+  });
+
+  function buildLongHorizonRuntime(
+    agentId: string,
+    deliver: SpaceRuntimeConfig['deliverLongHorizonExternalEvent']
+  ): SpaceLongHorizonAgentRepository {
+    const repo = new SpaceLongHorizonAgentRepository(db);
+    repo.create({ id: agentId, spaceId: SPACE_ID, handle: agentId, displayName: agentId });
+    repo.createSubscription({ spaceId: SPACE_ID, agentId, source: 'github', topic: DEFAULT_TOPIC });
+    runtime = new SpaceRuntime({
+      db,
+      spaceManager: new SpaceManager(db),
+      longHorizonAgentRepo: repo,
+      subscriptionRepo: new SpaceAgentSubscriptionRepository(db, new SpaceAgentRepository(db)),
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      internalEventBus: bus,
+      externalEventStore: eventStore,
+      taskAgentManager: tam as never,
+      deliverLongHorizonExternalEvent: deliver,
+    });
+    return repo;
+  }
+
+  test('holds a long-horizon delivery while its space is paused and delivers it on resume', async () => {
+    buildLongHorizonRuntime('lh-agent-held', async ({ agentId, message, idempotencyKey }) => {
+      longHorizonMessages.push({ agentId, message, idempotencyKey });
+      return { delivered: true };
+    });
+    await runtime.rehydrateExecutors();
+    runtime.holdSpaceDeliveries(SPACE_ID);
+
+    await eventService.publish(makeEvent({ id: 'evt-held' }));
+
+    expect(longHorizonMessages).toHaveLength(0);
+    expect(eventStore.listDeliveries('evt-held')[0]!.state).toBe('pending');
+    expect(runtime.hasPendingRetriesForAgent(SPACE_ID, 'lh-agent-held')).toBe(false);
+
+    await runtime.onSpaceResumed(SPACE_ID);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(longHorizonMessages.map((m) => m.agentId)).toEqual(['lh-agent-held']);
+    expect(eventStore.listDeliveries('evt-held')[0]!.state).toBe('delivered');
+    await runtime.stop();
+  });
+
+  test('a pause during a long-horizon dispatch leaves the delivery pending without a retry', async () => {
+    buildLongHorizonRuntime('lh-agent-mid-pause', async ({ agentId, message, idempotencyKey }) => {
+      longHorizonMessages.push({ agentId, message, idempotencyKey });
+      runtime.holdSpaceDeliveries(SPACE_ID);
+      return { delivered: false };
+    });
+    await runtime.rehydrateExecutors();
+
+    await eventService.publish(makeEvent({ id: 'evt-mid-pause' }));
+
+    expect(longHorizonMessages).toHaveLength(1);
+    const delivery = eventStore.listDeliveries('evt-mid-pause')[0]!;
+    expect(delivery.state).toBe('pending');
+    expect(delivery.failureReason).toBeNull();
+    expect(runtime.hasPendingRetriesForAgent(SPACE_ID, 'lh-agent-mid-pause')).toBe(false);
+    await runtime.stop();
   });
 
   test('clears pending long-horizon retries after agent pause', async () => {

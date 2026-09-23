@@ -255,7 +255,8 @@ export class SpaceRuntimeService {
           run,
         });
       },
-      deliverLongHorizonExternalEvent: (args) => this.deliverLongHorizonExternalEvent(args),
+      deliverLongHorizonExternalEvent: (args) =>
+        this.deliverLongHorizonExternalEvent(args, { gateSpaceLifecycle: true }),
     });
   }
 
