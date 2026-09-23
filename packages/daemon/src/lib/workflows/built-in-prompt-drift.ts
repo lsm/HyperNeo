@@ -325,12 +325,16 @@ const RETIRED_COMPLETE_MERGE_STEP =
 const CURRENT_TRANSITION_DONE_PREFERENCE =
   '`mark_complete` is `task.transition` with `status: "done"`.';
 const RETIRED_COMPLETE_PREFERENCE = '`mark_complete` is `task.complete`.';
-const CURRENT_PR_SUBSCRIBE_CALL =
+const CURRENT_GENERIC_PR_SUBSCRIBE_CALL =
+  'call `invoke(name="event.external.subscribe", input={ prUrl: "<PR URL>" })`';
+const RETIRED_PR_SUBSCRIBE_OPERATION_CALL =
   'call `invoke(name="event.external.pr.subscribe", input={ prUrl: "<PR URL>" })`';
 const RETIRED_SNAKE_PR_SUBSCRIBE_CALL = 'call `subscribe_pr_events({ prUrl: "<PR URL>" })`';
 const RETIRED_SNAKE_PR_SUBSCRIBE_GUIDANCE =
   'After `gh pr create`, call `subscribe_pr_events({ prUrl: "<PR URL>" })`, passing the PR URL from the `gh pr create` output explicitly (it is not auto-resolved from the run until the PR is recorded). This subscribes you to review comments, CI failures, and reactions for your PR so you receive them directly and can act on them. Do this once per PR. ';
-const CURRENT_PREFERENCE_OPERATION_NAMES =
+const CURRENT_GENERIC_PR_SUBSCRIBE_PREFERENCE =
+  '`subscribe_pr_events` is `event.external.subscribe` with `prUrl`, and `send_message` is an operation name already.';
+const RETIRED_PR_SUBSCRIBE_OPERATION_PREFERENCE =
   '`subscribe_pr_events` is `event.external.pr.subscribe`, and `send_message` is an operation name already.';
 const RETIRED_SNAKE_PREFERENCE_OPERATION_NAMES =
   '`send_message` and `subscribe_pr_events` are operation names already.';
@@ -364,10 +368,12 @@ const RETIRED_ARTIFACT_FAMILY_CALL_ACTION_PREFERENCE_PRE_TASK_APPROVE = retiredA
 );
 
 const BUILT_IN_PROMPT_PATCH_VARIANTS = [
+  [[CURRENT_GENERIC_PR_SUBSCRIBE_CALL, RETIRED_PR_SUBSCRIBE_OPERATION_CALL]],
+  [[CURRENT_GENERIC_PR_SUBSCRIBE_PREFERENCE, RETIRED_PR_SUBSCRIBE_OPERATION_PREFERENCE]],
   [[CURRENT_TRANSITION_DONE_MERGE_STEP, RETIRED_COMPLETE_MERGE_STEP]],
   [[CURRENT_TRANSITION_DONE_PREFERENCE, RETIRED_COMPLETE_PREFERENCE]],
-  [[CURRENT_PR_SUBSCRIBE_CALL, RETIRED_SNAKE_PR_SUBSCRIBE_CALL]],
-  [[CURRENT_PREFERENCE_OPERATION_NAMES, RETIRED_SNAKE_PREFERENCE_OPERATION_NAMES]],
+  [[RETIRED_PR_SUBSCRIBE_OPERATION_CALL, RETIRED_SNAKE_PR_SUBSCRIBE_CALL]],
+  [[RETIRED_PR_SUBSCRIBE_OPERATION_PREFERENCE, RETIRED_SNAKE_PREFERENCE_OPERATION_NAMES]],
   [
     [CURRENT_TRANSITION_CODER_ONLY_SUBMIT, RETIRED_SUBMIT_CODER_ONLY_SUBMIT],
     [CURRENT_TRANSITION_CODER_ONLY_ROUTES, RETIRED_SUBMIT_CODER_ONLY_ROUTES],
