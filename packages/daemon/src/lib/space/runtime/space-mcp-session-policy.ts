@@ -3,7 +3,6 @@ import type { OperationCallerRole } from '../../operations/registry.ts';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
-import { agentSessionIdFor } from '../long-term-agent-session.ts';
 import type { DirectTaskWorkerIdentity } from '../../tasks/direct-task-worker-identity.ts';
 
 export type SpaceMcpSessionRole = OperationCallerRole;
@@ -182,7 +181,7 @@ function isLongTermAgentSession(
     agent !== null &&
     agent.spaceId === spaceId &&
     agent.status === 'active' &&
-    session.id === agentSessionIdFor(agent)
+    session.id === agent.sessionId
   );
 }
 

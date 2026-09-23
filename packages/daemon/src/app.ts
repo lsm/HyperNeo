@@ -1113,12 +1113,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         spaceRepo: lhAgentReminderSpaceRepo,
         jobQueue,
         deliver: (args) => spaceRuntimeService.deliverLongHorizonAgentReminder(args),
-        getOccurrenceDeliveryState: (spaceId, agentId, idempotencyKey) =>
-          readReminderOccurrenceState(
-            reactiveDb?.db,
-            resolveAgentSessionId(lhAgentReminderAgentRepo, spaceId, agentId),
-            idempotencyKey
-          ),
+        getOccurrenceDeliveryState: (spaceId, agentId, idempotencyKey) => {
+          const sessionId = resolveAgentSessionId(lhAgentReminderAgentRepo, spaceId, agentId);
+          return sessionId
+            ? readReminderOccurrenceState(reactiveDb?.db, sessionId, idempotencyKey)
+            : 'absent';
+        },
       });
     });
 

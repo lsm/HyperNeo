@@ -6,7 +6,6 @@ import { createTables, runMigrations } from '../../../../src/storage/schema';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { createAgentOperations } from '../../../../src/lib/agents/operations';
-import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session';
 import {
   createOperationRegistry,
   type OperationCaller,
@@ -55,6 +54,9 @@ function registry() {
       ensureAgentSession: async (space, agentId) => {
         ensureCalls.push({ spaceId: space, agentId });
         if (ensureFault) throw ensureFault;
+        if (typeof ensureOutcome !== 'string') {
+          agentRepo.update(agentId, { sessionId: `session-of-${agentId}` });
+        }
         return ensureOutcome;
       },
     })
@@ -94,7 +96,7 @@ describe('the agent.session.ensure operation', () => {
 
     const outcome = await ensureSession({ spaceId, agentId: agent.id }, { source: 'rpc' });
 
-    expect(outcome.value).toEqual({ sessionId: longTermAgentSessionId(spaceId, agent.id) });
+    expect(outcome.value).toEqual({ sessionId: `session-of-${agent.id}` });
     expect(ensureCalls).toEqual([{ spaceId, agentId: agent.id }]);
   });
 
@@ -112,7 +114,7 @@ describe('the agent.session.ensure operation', () => {
       { source: 'mcp', sessionId: MEMBER_SESSION, spaceId, role: 'ad_hoc_member' }
     );
 
-    expect(outcome.value).toEqual({ sessionId: longTermAgentSessionId(spaceId, agent.id) });
+    expect(outcome.value).toEqual({ sessionId: `session-of-${agent.id}` });
   });
 
   test('an agent belonging to another Space is not found', async () => {

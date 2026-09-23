@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { NodeExecution, Session, SpaceLongHorizonAgent, SpaceTask } from '@hyperneo/shared';
-import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session.ts';
+import { longTermAgentSessionId } from '../../helpers/legacy-agent-session-id';
 import {
   missingMcpServers,
   resolveSpaceMcpSessionPolicy,
@@ -299,7 +299,12 @@ describe('resolveSpaceMcpSessionPolicy', () => {
     const policy = resolveSpaceMcpSessionPolicy(session, {
       longHorizonAgentRepo: {
         getById: () =>
-          ({ id: 'agent-1', spaceId: 'space-1', status: 'active' }) as SpaceLongHorizonAgent,
+          ({
+            id: 'agent-1',
+            spaceId: 'space-1',
+            status: 'active',
+            sessionId: longTermAgentSessionId('space-1', 'agent-1'),
+          }) as SpaceLongHorizonAgent,
       },
     });
 

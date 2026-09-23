@@ -1,4 +1,4 @@
-import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session';
+import { longTermAgentSessionId } from '../../helpers/legacy-agent-session-id';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import { DirectTaskExecutionRepository } from '../../../../src/storage/repositories/direct-task-execution-repository';
@@ -677,7 +677,12 @@ test.each(['rpc', 'mcp'] as const)(
           policyContext: {
             longHorizonAgentRepo: {
               getById: (id: string) =>
-                ({ id, spaceId: SPACE_ID, status: 'active' }) as unknown as SpaceLongHorizonAgent,
+                ({
+                  id,
+                  spaceId: SPACE_ID,
+                  status: 'active',
+                  sessionId: longTermAgentSessionId(SPACE_ID, id),
+                }) as unknown as SpaceLongHorizonAgent,
             },
           },
           dispatchApproval: (_spaceId, id, approvalSource, reason, guard) =>

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
 import type { NodeExecution, Session, SpaceLongHorizonAgent, SpaceTask } from '@hyperneo/shared';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry';
-import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session';
+import { longTermAgentSessionId } from '../../helpers/legacy-agent-session-id';
 import { SpaceTaskManager } from '../../../../src/lib/tasks/task-manager';
 import {
   createOwnedPendingCompletionOperations,
@@ -49,7 +49,13 @@ beforeEach(() => {
     getSpaceAutonomyLevel: async () => 5,
     policyContext: {
       longHorizonAgentRepo: {
-        getById: (id) => ({ id, spaceId, status: 'active' }) as unknown as SpaceLongHorizonAgent,
+        getById: (id) =>
+          ({
+            id,
+            spaceId,
+            status: 'active',
+            sessionId: longTermAgentSessionId(spaceId, id),
+          }) as unknown as SpaceLongHorizonAgent,
       },
     },
     getTaskManager: mock((id) => new SpaceTaskManager(db, id)),
@@ -194,7 +200,12 @@ test('admits a long-term agent session whose backing agent is still active', asy
   dependencies.policyContext = {
     longHorizonAgentRepo: {
       getById: () =>
-        ({ id: 'agent-1', spaceId, status: 'active' }) as unknown as SpaceLongHorizonAgent,
+        ({
+          id: 'agent-1',
+          spaceId,
+          status: 'active',
+          sessionId: longTermAgentSessionId(spaceId, 'agent-1'),
+        }) as unknown as SpaceLongHorizonAgent,
     },
   };
   expect((await invoke(session.id)).kind).toBe('completed');

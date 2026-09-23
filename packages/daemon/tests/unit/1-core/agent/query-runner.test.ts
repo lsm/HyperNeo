@@ -12,7 +12,7 @@ import {
 import { inferAvailableSpawnRoute } from '../../../../src/lib/providers/registry';
 import { resetSdkStartupGateForTests } from '../../../../src/lib/agent/sdk-startup-gate';
 import type { LimitRetryHint } from '../../../../src/lib/agent/limit-error-classifier';
-import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session';
+import { longTermAgentSessionId } from '../../helpers/legacy-agent-session-id';
 import type { Session, MessageHub } from '@hyperneo/shared';
 import type { Provider } from '@hyperneo/shared/provider';
 import { initializeProviders } from '../../../../src/lib/providers/factory';
