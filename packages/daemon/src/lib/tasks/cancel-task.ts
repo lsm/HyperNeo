@@ -1,12 +1,9 @@
-import superpipe, { type PipelineAPI } from 'superpipe';
-import { z } from 'zod';
 import type { SpaceTask } from '@hyperneo/shared';
 import type { Database } from '../../storage/sqlite-compat.ts';
-import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
 import { SessionRepository } from '../../storage/repositories/session-repository.ts';
 import { DirectTaskExecutionRepository } from '../../storage/repositories/direct-task-execution-repository.ts';
-import { defineOperation, type OperationCaller } from '../operations/registry.ts';
+import type { OperationCaller } from '../operations/registry.ts';
 import type { SpaceMcpSessionPolicyContext } from '../space/runtime/space-mcp-session-policy.ts';
 import { StaleTaskGuardError, type SpaceTaskManager } from './task-manager.ts';
 import { resolveMetadataSessionSpace } from './metadata.ts';
@@ -17,12 +14,11 @@ import {
   readDirectFinalizationRequest,
   type DirectFinalizationInput,
 } from './finalize-direct-attempt.ts';
-import { enqueueDirectOutcome, type DirectOutcomeAcknowledgement } from './direct-outcome-jobs.ts';
+import type { DirectOutcomeAcknowledgement } from './direct-outcome-jobs.ts';
 import { stopTaskExecution, type TaskStoppingExecutor } from './stop-task-execution.ts';
 
 const log = new Logger('CancelTask');
-const inputSchema = z.object({ taskId: z.string().min(1) }).strict();
-type Input = z.infer<typeof inputSchema>;
+type Input = { taskId: string };
 export type CancelPolicyContext = SpaceMcpSessionPolicyContext &
   Pick<SpaceTaskDependencyDependencies, 'stopForStatus'> & {
     getTaskManager?: (spaceId: string) => Pick<SpaceTaskManager, 'setTaskStatus'>;
@@ -157,32 +153,4 @@ export function admitCancellation(
       return denied;
   }
   return { value: target };
-}
-
-export function createCancelTaskOperation(
-  getDatabase: () => Database,
-  jobQueue: JobQueueRepository,
-  policy: CancelPolicyContext
-) {
-  const cancel = (superpipe({ getDatabase, jobQueue, policy })('cancel-direct-task') as PipelineAPI)
-    .input(['input', 'caller'])
-    .pipe(getDatabase, undefined, 'db')
-    .pipe(admitManagedCancellation, ['db', 'input', 'caller', 'policy'], 'result:outcome')
-    .pipe(admitCancellation, ['db', 'input', 'caller', 'policy'], 'result:outcome')
-    .pipe(enqueueDirectOutcome, ['db', 'jobQueue', 'outcome'], 'outcome')
-    .endAsync('outcome') as (
-    input: Input,
-    caller: OperationCaller
-  ) => Promise<DirectOutcomeAcknowledgement>;
-  return defineOperation({
-    name: 'task.cancel',
-    description:
-      'Persist cancellation of one running task, direct-execution or Space-owned, and return its acknowledgement. RPC/internal callers and active persisted MCP sessions in the owning Space use the same operation. Never cascades to dependent tasks: it cancels exactly the named task. The direct-execution binding (a task with no running direct-execution attempt is out of scope for it) returns a durable job acknowledgement ({ accepted: true, jobId }) that a worker later fulfills. The managed binding covers every Space-owned task without a running direct-execution attempt: workflow-owned tasks run the same stopWorkflowBackedTaskForStatus stop path as task.transition — validating the transition, setting status, and tearing down the task-owning workflow agents — while plain tasks (no workflow run), including one with a reserved but not-yet-running attempt (fenced first so a queued start job cannot promote it), get a direct status write through the Space task manager; both complete synchronously with jobId: null. Rejects direct_cancellation_unavailable/direct_cancellation_denied for the direct binding, and cancellation_unavailable/cancellation_denied for the managed binding, on the same unsupported-state-vs-out-of-scope-caller split (unavailable: retry after state changes, including when the required binding is not configured; denied: do not retry); an invalid-transition rejection from the managed path itself returns cancellation_invalid_transition; any other failure (an infrastructure fault, not a domain rejection) throws through as execution_failed. Acceptance does not mean shutdown has completed.',
-    inputSchema,
-    resultSchema: z.union([
-      z.object({ accepted: z.literal(true), jobId: z.string().nullable() }),
-      z.object({ accepted: z.literal(false), reason: z.string() }),
-    ]),
-    execute: async (input, caller) => cancel(input, caller),
-  });
 }
