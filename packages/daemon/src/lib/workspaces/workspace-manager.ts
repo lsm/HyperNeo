@@ -96,6 +96,7 @@ export class SpaceWorkspaceManager {
       label,
       updated: false,
     });
+    if (result.error) throw result.error;
     return result.updated;
   }
 

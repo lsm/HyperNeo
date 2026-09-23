@@ -194,6 +194,31 @@ describe('registerWorkspace', () => {
     expect(workspaces.rows).toEqual([record]);
   });
 
+  test('trims the label and stores a blank label as none', async () => {
+    const { manager } = newManager();
+    expect((await manager.registerWorkspace(SPACE_A, '/one', '  docs  ')).label).toBe('docs');
+    expect((await manager.registerWorkspace(SPACE_A, '/two', '   ')).label).toBe('');
+  });
+
+  test('rejects a label another workspace of the space already uses', async () => {
+    const workspaces = new FakeWorkspaces([row(SPACE_A, '/one', 'w1', false, 'docs')]);
+    const { manager } = newManager({ workspaces, io: fakeIo({ realpath: async () => '/two' }) });
+    const err = await manager.registerWorkspace(SPACE_A, '/two', 'docs').catch((e: unknown) => e);
+    expect((err as Error).message).toBe(
+      'Workspace label "docs" is already used by /one in this space.'
+    );
+    expect(workspaces.rows).toHaveLength(1);
+  });
+
+  test('rejects a label shaped like a path', async () => {
+    const { manager, workspaces } = newManager({ io: fakeIo({ realpath: async () => '/two' }) });
+    const err = await manager.registerWorkspace(SPACE_A, '/two', '/two').catch((e: unknown) => e);
+    expect((err as Error).message).toBe(
+      'Workspace label "/two" looks like a path; choose a name instead.'
+    );
+    expect(workspaces.rows).toEqual([]);
+  });
+
   test('throws a plain error for an unknown space', async () => {
     const { manager } = newManager({ spaces: [] });
     const err = await manager.registerWorkspace('ghost', '/repo').catch((e: unknown) => e);
@@ -576,6 +601,28 @@ describe('updateWorkspaceLabel', () => {
   test('returns false for an unknown workspace id', () => {
     const { manager } = newManager();
     expect(manager.updateWorkspaceLabel(SPACE_A, 'ghost', 'renamed')).toBe(false);
+  });
+
+  test('trims the label and lets a workspace keep its own label', () => {
+    const workspaces = new FakeWorkspaces([row(SPACE_A, '/sec', 'w2', false, 'docs')]);
+    const { manager } = newManager({ workspaces });
+    expect(manager.updateWorkspaceLabel(SPACE_A, 'w2', ' docs ')).toBe(true);
+    expect(workspaces.rows[0]!.label).toBe('docs');
+  });
+
+  test('rejects a duplicate or path-shaped label and leaves the row untouched', () => {
+    const workspaces = new FakeWorkspaces([
+      row(SPACE_A, '/one', 'w1', false, 'docs'),
+      row(SPACE_A, '/sec', 'w2', false, 'api'),
+    ]);
+    const { manager } = newManager({ workspaces });
+    expect(() => manager.updateWorkspaceLabel(SPACE_A, 'w2', 'docs')).toThrow(
+      'Workspace label "docs" is already used by /one in this space.'
+    );
+    expect(() => manager.updateWorkspaceLabel(SPACE_A, 'w2', '~/repo')).toThrow(
+      'Workspace label "~/repo" looks like a path; choose a name instead.'
+    );
+    expect(workspaces.rows[1]!.label).toBe('api');
   });
 
   test('returns false when the workspace belongs to another space and leaves it untouched', () => {
