@@ -118,9 +118,9 @@ beforeEach(() => {
   occurrenceClaimed = false;
 });
 
-describe('the agent.reminders.create operation', () => {
+describe('the agent.reminder.create operation', () => {
   test('creates a one-shot reminder and returns it in agent-facing shape', async () => {
-    const outcome = await run('agent.reminders.create', {
+    const outcome = await run('agent.reminder.create', {
       agentId: agent.id,
       message: 'Ship the release',
       remindAt: 1_800_000,
@@ -142,23 +142,23 @@ describe('the agent.reminders.create operation', () => {
   });
 
   test('the creating session is recorded on the reminder', async () => {
-    await run('agent.reminders.create', { agentId: agent.id, message: 'x', remindAt: 1 });
+    await run('agent.reminder.create', { agentId: agent.id, message: 'x', remindAt: 1 });
     expect(reminderRepo.listReminders(agent.id)[0]?.createdBySession).toBe(MEMBER_SESSION);
   });
 
   test('the audit entry names the operation and omits the message', async () => {
-    await run('agent.reminders.create', {
+    await run('agent.reminder.create', {
       agentId: agent.id,
       message: 'secret plan',
       remindAt: 42,
     });
     expect(audited).toEqual([
-      { name: 'agent.reminders.create', summary: { agentId: agent.id, remindAt: 42 } },
+      { name: 'agent.reminder.create', summary: { agentId: agent.id, remindAt: 42 } },
     ]);
   });
 
   test('an agent of another Space is absent, and nothing is written', async () => {
-    const outcome = await run('agent.reminders.create', {
+    const outcome = await run('agent.reminder.create', {
       agentId: stranger.id,
       message: 'x',
       remindAt: 1,
@@ -169,7 +169,7 @@ describe('the agent.reminders.create operation', () => {
 
   test('an archived session in the owning Space may not create reminders', async () => {
     sessions.set(MEMBER_SESSION, sessionRow({ id: MEMBER_SESSION, status: 'archived' }));
-    const outcome = await run('agent.reminders.create', {
+    const outcome = await run('agent.reminder.create', {
       agentId: agent.id,
       message: 'x',
       remindAt: 1,
@@ -185,7 +185,7 @@ describe('the agent.reminders.create operation', () => {
       role: 'universal_read',
     });
     const outcome = await run(
-      'agent.reminders.create',
+      'agent.reminder.create',
       { spaceId, agentId: agent.id, message: 'x', remindAt: 1 },
       readOnlyCaller()
     );
@@ -196,7 +196,7 @@ describe('the agent.reminders.create operation', () => {
 
   test('a human caller must name the Space', async () => {
     const outcome = await run(
-      'agent.reminders.create',
+      'agent.reminder.create',
       { agentId: agent.id, message: 'x', remindAt: 1 },
       { source: 'rpc' }
     );
@@ -204,7 +204,7 @@ describe('the agent.reminders.create operation', () => {
   });
 });
 
-describe('the agent.reminders.list operation', () => {
+describe('the agent.reminder.list operation', () => {
   function seed(message: string, remindAt: number, status?: 'fired' | 'cancelled') {
     return reminderRepo.createReminder({
       spaceId,
@@ -221,7 +221,7 @@ describe('the agent.reminders.list operation', () => {
     seed('later', 3_000);
     seed('sooner', 1_000);
     seed('middle', 2_000);
-    const outcome = await run('agent.reminders.list', { agentId: agent.id });
+    const outcome = await run('agent.reminder.list', { agentId: agent.id });
     expect(outcome.value?.reminders?.map((entry) => entry.message)).toEqual([
       'sooner',
       'middle',
@@ -231,7 +231,7 @@ describe('the agent.reminders.list operation', () => {
 
   test('a fired reminder reads as done', async () => {
     seed('done one', 1_000, 'fired');
-    const outcome = await run('agent.reminders.list', { agentId: agent.id });
+    const outcome = await run('agent.reminder.list', { agentId: agent.id });
     expect(outcome.value?.reminders?.[0]?.state).toBe('done');
   });
 
@@ -239,23 +239,23 @@ describe('the agent.reminders.list operation', () => {
     seed('live', 1_000);
     seed('fired one', 2_000, 'fired');
     seed('dropped', 3_000, 'cancelled');
-    const done = await run('agent.reminders.list', { agentId: agent.id, state: 'done' });
+    const done = await run('agent.reminder.list', { agentId: agent.id, state: 'done' });
     expect(done.value?.reminders?.map((entry) => entry.message)).toEqual(['fired one']);
-    const cancelled = await run('agent.reminders.list', { agentId: agent.id, state: 'cancelled' });
+    const cancelled = await run('agent.reminder.list', { agentId: agent.id, state: 'cancelled' });
     expect(cancelled.value?.reminders?.map((entry) => entry.message)).toEqual(['dropped']);
-    const active = await run('agent.reminders.list', { agentId: agent.id, state: 'active' });
+    const active = await run('agent.reminder.list', { agentId: agent.id, state: 'active' });
     expect(active.value?.reminders?.map((entry) => entry.message)).toEqual(['live']);
   });
 
   test('an agent of another Space is absent', async () => {
-    const outcome = await run('agent.reminders.list', { agentId: stranger.id });
+    const outcome = await run('agent.reminder.list', { agentId: stranger.id });
     expect(outcome.value?.reason).toBe('agent_not_found');
   });
 
   test('a workflow worker reads the reminder list of an agent in its own Space', async () => {
     seed('worker visible', 1_000);
     const outcome = await run(
-      'agent.reminders.list',
+      'agent.reminder.list',
       { agentId: agent.id },
       memberCaller('workflow_worker')
     );
@@ -266,7 +266,7 @@ describe('the agent.reminders.list operation', () => {
   test('a human caller naming the Space reads the reminders', async () => {
     seed('visible', 1_000);
     const outcome = await run(
-      'agent.reminders.list',
+      'agent.reminder.list',
       { spaceId, agentId: agent.id },
       { source: 'rpc' }
     );
@@ -274,9 +274,9 @@ describe('the agent.reminders.list operation', () => {
   });
 });
 
-describe('the agent.reminders.cancel operation', () => {
+describe('the agent.reminder.cancel operation', () => {
   async function seed(remindAt = 1_000) {
-    const created = await run('agent.reminders.create', {
+    const created = await run('agent.reminder.create', {
       agentId: agent.id,
       message: 'Ship the release',
       remindAt,
@@ -289,7 +289,7 @@ describe('the agent.reminders.cancel operation', () => {
     const reminderId = await seed();
     expect(reminderRepo.listDueReminders(2_000)).toHaveLength(1);
 
-    const outcome = await run('agent.reminders.cancel', { agentId: agent.id, reminderId });
+    const outcome = await run('agent.reminder.cancel', { agentId: agent.id, reminderId });
 
     expect(outcome.value?.reminder).toMatchObject({ id: reminderId, state: 'cancelled' });
     expect(reminderRepo.listDueReminders(2_000)).toHaveLength(0);
@@ -298,9 +298,9 @@ describe('the agent.reminders.cancel operation', () => {
 
   test('a cancelled reminder is reachable through the list state filter', async () => {
     const reminderId = await seed();
-    await run('agent.reminders.cancel', { agentId: agent.id, reminderId });
+    await run('agent.reminder.cancel', { agentId: agent.id, reminderId });
 
-    const listed = await run('agent.reminders.list', { agentId: agent.id, state: 'cancelled' });
+    const listed = await run('agent.reminder.list', { agentId: agent.id, state: 'cancelled' });
 
     expect(listed.value?.reminders).toHaveLength(1);
     expect(listed.value?.reminders?.[0]).toMatchObject({ id: reminderId, state: 'cancelled' });
@@ -308,11 +308,11 @@ describe('the agent.reminders.cancel operation', () => {
 
   test('cancelling again succeeds without a second write or audit entry', async () => {
     const reminderId = await seed();
-    await run('agent.reminders.cancel', { agentId: agent.id, reminderId });
+    await run('agent.reminder.cancel', { agentId: agent.id, reminderId });
     const updatedAt = reminderRepo.getReminder(reminderId)?.updatedAt;
     audited = [];
 
-    const repeat = await run('agent.reminders.cancel', { agentId: agent.id, reminderId });
+    const repeat = await run('agent.reminder.cancel', { agentId: agent.id, reminderId });
 
     expect(repeat.value?.reminder).toMatchObject({ id: reminderId, state: 'cancelled' });
     expect(reminderRepo.getReminder(reminderId)?.updatedAt).toBe(updatedAt as number);
@@ -321,9 +321,9 @@ describe('the agent.reminders.cancel operation', () => {
 
   test('the audit entry names the operation and the reminder', async () => {
     const reminderId = await seed();
-    await run('agent.reminders.cancel', { agentId: agent.id, reminderId });
+    await run('agent.reminder.cancel', { agentId: agent.id, reminderId });
     expect(audited).toEqual([
-      { name: 'agent.reminders.cancel', summary: { agentId: agent.id, reminderId } },
+      { name: 'agent.reminder.cancel', summary: { agentId: agent.id, reminderId } },
     ]);
   });
 
@@ -335,7 +335,7 @@ describe('the agent.reminders.cancel operation', () => {
       lastFiredAt: 1_000,
     });
 
-    const outcome = await run('agent.reminders.cancel', { agentId: agent.id, reminderId });
+    const outcome = await run('agent.reminder.cancel', { agentId: agent.id, reminderId });
 
     expect(outcome.value?.reason).toBe('reminder_not_cancellable');
     expect(reminderRepo.getReminder(reminderId)?.status).toBe('fired');
@@ -351,7 +351,7 @@ describe('the agent.reminders.cancel operation', () => {
       })
     );
 
-    const outcome = await run('agent.reminders.cancel', { agentId: agent.id, reminderId });
+    const outcome = await run('agent.reminder.cancel', { agentId: agent.id, reminderId });
 
     expect(outcome.value?.reason).toBe('reminder_not_cancellable');
     expect(reminderRepo.getReminder(reminderId)?.status).toBe('active');
@@ -372,7 +372,7 @@ describe('the agent.reminders.cancel operation', () => {
       },
     } as unknown as SpaceAgentReminderRepository;
 
-    const outcome = await run('agent.reminders.cancel', { agentId: agent.id, reminderId });
+    const outcome = await run('agent.reminder.cancel', { agentId: agent.id, reminderId });
 
     expect(outcome.value?.reminder).toMatchObject({ id: reminderId, state: 'cancelled' });
     expect(outcome.value?.reason).toBeUndefined();
@@ -383,7 +383,7 @@ describe('the agent.reminders.cancel operation', () => {
     const reminderId = await seed();
     occurrenceClaimed = true;
 
-    const outcome = await run('agent.reminders.cancel', { agentId: agent.id, reminderId });
+    const outcome = await run('agent.reminder.cancel', { agentId: agent.id, reminderId });
 
     expect(outcome.value?.reason).toBe('reminder_not_cancellable');
     expect(reminderRepo.getReminder(reminderId)?.status).toBe('active');
@@ -398,7 +398,7 @@ describe('the agent.reminders.cancel operation', () => {
       instructions: '',
     });
 
-    const outcome = await run('agent.reminders.cancel', { agentId: other.id, reminderId });
+    const outcome = await run('agent.reminder.cancel', { agentId: other.id, reminderId });
 
     expect(outcome.value?.reason).toBe('reminder_not_found');
     expect(reminderRepo.getReminder(reminderId)?.status).toBe('active');
@@ -408,7 +408,7 @@ describe('the agent.reminders.cancel operation', () => {
     const reminderId = await seed();
 
     const outcome = await run(
-      'agent.reminders.cancel',
+      'agent.reminder.cancel',
       { agentId: agent.id, reminderId },
       readOnlyCaller()
     );

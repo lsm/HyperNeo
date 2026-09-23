@@ -386,7 +386,7 @@ export function applyForgeProposalTask(
       dependsOn: input.dependsOn,
     });
     forge.audit?.({
-      toolName: 'evolution.proposal.createTask',
+      toolName: 'evolution.proposal.task.create',
       paramsSummary: { proposalId: existing.id, dependsOn: input.dependsOn },
       caller,
       spaceId: result.task.spaceId,
@@ -539,7 +539,7 @@ export function createForgeEpisodeOperations(forge: EvolutionEpisodeOperationDep
       name: 'evolution.proposal.create',
       policy: FORGE_MUTATE_POLICY,
       description:
-        'Create a Forge task proposal on a scope by hand. This does not create a Space task; evolution.proposal.createTask does that in a separate, explicit step. Rejects scope_not_found and episode_not_found when a cited evidence episode is missing or belongs to another scope.',
+        'Create a Forge task proposal on a scope by hand. This does not create a Space task; evolution.proposal.task.create does that in a separate, explicit step. Rejects scope_not_found and episode_not_found when a cited evidence episode is missing or belongs to another scope.',
       inputSchema: ProposalCreateInputSchema,
       resultSchema: z.union([
         accepted({ proposal: EvolutionProposalSchema }),
@@ -551,7 +551,7 @@ export function createForgeEpisodeOperations(forge: EvolutionEpisodeOperationDep
       name: 'evolution.proposal.update',
       policy: FORGE_MUTATE_POLICY,
       description:
-        'Edit, accept, or dismiss a Forge task proposal. The created status is not settable here — call evolution.proposal.createTask to turn a proposal into a real task. Rejects proposal_not_found, proposal_created, and proposal_dismissed, since neither terminal state reopens. Autonomy metadata: editing a proposed record needs the Space session-write level, and changing an accepted or dismissed one is destructive; enforcement lands with the autonomy subsystem.',
+        'Edit, accept, or dismiss a Forge task proposal. The created status is not settable here — call evolution.proposal.task.create to turn a proposal into a real task. Rejects proposal_not_found, proposal_created, and proposal_dismissed, since neither terminal state reopens. Autonomy metadata: editing a proposed record needs the Space session-write level, and changing an accepted or dismissed one is destructive; enforcement lands with the autonomy subsystem.',
       inputSchema: ProposalUpdateInputSchema,
       resultSchema: z.union([
         accepted({ proposal: EvolutionProposalSchema }),
@@ -560,7 +560,7 @@ export function createForgeEpisodeOperations(forge: EvolutionEpisodeOperationDep
       execute: async (input, caller) => proposalUpdate(input, caller),
     }),
     defineOperation({
-      name: 'evolution.proposal.createTask',
+      name: 'evolution.proposal.task.create',
       policy: FORGE_DESTRUCTIVE_POLICY,
       description:
         'Create a real Space task from a Forge proposal, preserving the linked goal and scope bindings and attaching dependencies during creation. Idempotent: a proposal already marked created returns its existing task. Rejects proposal_not_found, and task_not_created when the proposal was dismissed, a dependency is invalid, or a concurrent call already claimed it (the cause is in detail). Autonomy metadata: this is a destructive action at the Space session-write level; enforcement lands with the autonomy subsystem.',

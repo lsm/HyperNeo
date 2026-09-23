@@ -5,7 +5,7 @@ export const TASK_OPERATION_NAMES = [
   'task.create',
   'task.get',
   'task.list',
-  'task.members.list',
+  'task.member.list',
   'task.message.send',
   'task.preferredWorkflow.set',
   'task.reject',

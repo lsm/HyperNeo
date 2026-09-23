@@ -80,7 +80,7 @@ export function createListGoalTasksOperation(deps: ListGoalTasksDependencies) {
     .pipe(readGoalTaskPage, ['outcome', 'input', 'deps'], 'outcome')
     .endAsync('outcome') as (input: Input, caller: OperationCaller) => Promise<Result>;
   return defineOperation({
-    name: 'goal.tasks.list',
+    name: 'goal.task.list',
     description: DESCRIPTION,
     policy: GOAL_READ_POLICY,
     inputSchema,
