@@ -138,9 +138,7 @@ export class SessionManager {
       createAgentSession
     );
 
-    const referenceResolver = new ReferenceResolver({
-      goalRepo: db.getGoalRepo(),
-    });
+    const referenceResolver = new ReferenceResolver();
     this.messagePersistence = new MessagePersistence(
       this.sessionCache,
       db,

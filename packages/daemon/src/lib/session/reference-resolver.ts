@@ -1,6 +1,5 @@
 import type { ReferenceMention, ReferenceMetadata, ResolvedReference } from '@hyperneo/shared';
 import { REFERENCE_PATTERN } from '@hyperneo/shared';
-import type { GoalRepoForReference } from '../rpc-handlers/reference-handlers.ts';
 import { resolveFile, resolveFolder } from '../rpc-handlers/reference-handlers.ts';
 import { Logger } from '../logger.ts';
 
@@ -8,7 +7,6 @@ const log = new Logger('ReferenceResolver');
 
 export interface ResolutionContext {
   workspacePath: string | null;
-  roomId: string | null;
 }
 
 export interface PreprocessedMessage {
@@ -17,13 +15,7 @@ export interface PreprocessedMessage {
   resolvedReferences: Record<string, ResolvedReference>;
 }
 
-export interface ReferenceResolverDeps {
-  goalRepo: GoalRepoForReference;
-}
-
 export class ReferenceResolver {
-  constructor(private deps: ReferenceResolverDeps) {}
-
   static extractReferences(text: string): ReferenceMention[] {
     REFERENCE_PATTERN.lastIndex = 0;
     const mentions: ReferenceMention[] = [];
@@ -33,7 +25,7 @@ export class ReferenceResolver {
       const type = match[1] as ReferenceMention['type'];
       const id = match[2];
 
-      if (type !== 'task' && type !== 'goal' && type !== 'file' && type !== 'folder') {
+      if (type !== 'file' && type !== 'folder') {
         continue;
       }
 
@@ -49,9 +41,6 @@ export class ReferenceResolver {
   ): Promise<ResolvedReference | null> {
     try {
       switch (mention.type) {
-        case 'goal':
-          return this.resolveGoal(mention.id, context.roomId);
-
         case 'file':
           if (!context.workspacePath) return null;
           return resolveFile(mention.id, context.workspacePath);
@@ -99,22 +88,5 @@ export class ReferenceResolver {
     }
 
     return metadata;
-  }
-
-  private resolveGoal(id: string, roomId: string | null): ResolvedReference | null {
-    let goal = this.deps.goalRepo.getGoal(id);
-    if (!goal && roomId) {
-      goal = this.deps.goalRepo.getGoalByShortId(roomId, id);
-    }
-
-    if (!goal) {
-      return null;
-    }
-
-    if (roomId && (goal as { roomId?: string }).roomId !== roomId) {
-      return null;
-    }
-
-    return { type: 'goal', id, data: goal };
   }
 }

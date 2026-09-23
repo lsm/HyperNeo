@@ -386,11 +386,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     log.warn('FileIndex init failed:', err);
   });
   setupReferenceHandlers(deps.messageHub, {
-    db: deps.db.getDatabase(),
-    reactiveDb: deps.reactiveDb,
-    shortIdAllocator: deps.db.getShortIdAllocator(),
     sessionManager: deps.sessionManager,
-    goalRepo: deps.db.getGoalRepo(),
     workspaceRoot: deps.config.workspaceRoot,
     fileIndex,
   });

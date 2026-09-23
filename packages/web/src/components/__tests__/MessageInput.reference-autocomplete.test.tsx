@@ -255,10 +255,10 @@ describe('MessageInput reference autocomplete', () => {
 
       expect(capturedOnSelect).not.toBeNull();
       act(() => {
-        capturedOnSelect({ type: 'task', id: 't-42', displayText: 'Fix login bug' });
+        capturedOnSelect({ type: 'file', id: 'src/login.ts', displayText: 'login.ts' });
       });
 
-      expect(mockSetContent).toHaveBeenCalledWith('fix @ref{task:t-42} ');
+      expect(mockSetContent).toHaveBeenCalledWith('fix @ref{file:src/login.ts} ');
     });
 
     it('replaces @query when combined with a slash command prefix', () => {
@@ -267,10 +267,10 @@ describe('MessageInput reference autocomplete', () => {
 
       expect(capturedOnSelect).not.toBeNull();
       act(() => {
-        capturedOnSelect({ type: 'task', id: 't-99', displayText: 'Do something' });
+        capturedOnSelect({ type: 'file', id: 'src/agent.ts', displayText: 'agent.ts' });
       });
 
-      expect(mockSetContent).toHaveBeenCalledWith('/agent @ref{task:t-99} ');
+      expect(mockSetContent).toHaveBeenCalledWith('/agent @ref{file:src/agent.ts} ');
     });
 
     it('replaces @-only query (just @ with no query text)', () => {
@@ -279,10 +279,10 @@ describe('MessageInput reference autocomplete', () => {
 
       expect(capturedOnSelect).not.toBeNull();
       act(() => {
-        capturedOnSelect({ type: 'goal', id: 'g-5', displayText: 'Launch v2' });
+        capturedOnSelect({ type: 'folder', id: 'src', displayText: 'src' });
       });
 
-      expect(mockSetContent).toHaveBeenCalledWith('hello @ref{goal:g-5} ');
+      expect(mockSetContent).toHaveBeenCalledWith('hello @ref{folder:src} ');
     });
 
     it('returns early without calling setContent when no active @query in content', () => {
@@ -291,7 +291,7 @@ describe('MessageInput reference autocomplete', () => {
 
       expect(capturedOnSelect).not.toBeNull();
       act(() => {
-        capturedOnSelect({ type: 'task', id: 't-1', displayText: 'Something' });
+        capturedOnSelect({ type: 'file', id: 'a.ts', displayText: 'a.ts' });
       });
 
       expect(mockSetContent).not.toHaveBeenCalled();
@@ -303,11 +303,11 @@ describe('MessageInput reference autocomplete', () => {
       mockReferenceShowAutocomplete = true;
       mockCommandShowAutocomplete = true;
       mockCommandFilteredCommands = ['agent', 'compact'];
-      mockReferenceResults = [{ type: 'task', id: 't-1', displayText: 'Some task' }];
+      mockReferenceResults = [{ type: 'file', id: 'a.ts', displayText: 'Some file' }];
 
       const { getByText, queryByText } = renderInput();
 
-      expect(getByText('References')).toBeTruthy();
+      expect(getByText('Files & Folders')).toBeTruthy();
       expect(queryByText('Slash Commands')).toBeNull();
     });
 
@@ -329,24 +329,23 @@ describe('MessageInput reference autocomplete', () => {
 
       const { container } = renderInput();
 
-      expect(container.textContent).not.toContain('References');
+      expect(container.textContent).not.toContain('Files & Folders');
     });
 
     it('passes showReferenceAutocomplete=true and renders menu when results are present', () => {
       mockReferenceShowAutocomplete = true;
       mockReferenceResults = [
         {
-          type: 'task',
-          id: 't-42',
-          shortId: 't-42',
+          type: 'file',
+          id: 'src/login.ts',
           displayText: 'Fix the login bug',
-          subtitle: 'in progress',
+          subtitle: 'src/login.ts',
         },
       ];
 
       const { getByText } = renderInput();
 
-      expect(getByText('References')).toBeTruthy();
+      expect(getByText('Files & Folders')).toBeTruthy();
       expect(getByText('Fix the login bug')).toBeTruthy();
     });
 
@@ -354,8 +353,8 @@ describe('MessageInput reference autocomplete', () => {
       mockReferenceShowAutocomplete = true;
       mockReferenceSelectedIndex = 1;
       mockReferenceResults = [
-        { type: 'task', id: 't-1', displayText: 'First task' },
-        { type: 'task', id: 't-2', displayText: 'Second task' },
+        { type: 'file', id: 'a.ts', displayText: 'First task' },
+        { type: 'file', id: 'b.ts', displayText: 'Second task' },
       ];
 
       const { container } = renderInput();

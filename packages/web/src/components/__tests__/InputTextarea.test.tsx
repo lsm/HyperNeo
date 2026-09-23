@@ -687,11 +687,10 @@ describe('InputTextarea', () => {
     it('should render ReferenceAutocomplete when showReferenceAutocomplete is true with results', () => {
       const results = [
         {
-          type: 'task' as const,
-          id: 'task-1',
-          shortId: 't-1',
+          type: 'file' as const,
+          id: 'src/login.ts',
           displayText: 'Fix the login bug',
-          subtitle: 'open',
+          subtitle: 'src/login.ts',
         },
       ];
       const onReferenceSelect = vi.fn();
@@ -715,7 +714,9 @@ describe('InputTextarea', () => {
     });
 
     it('should not render ReferenceAutocomplete when callbacks are missing', () => {
-      const results = [{ type: 'task' as const, id: 'task-1', displayText: 'Fix the login bug' }];
+      const results = [
+        { type: 'file' as const, id: 'src/login.ts', displayText: 'Fix the login bug' },
+      ];
 
       const { container } = render(
         <InputTextarea
@@ -755,7 +756,7 @@ describe('InputTextarea', () => {
       const onReferenceClose = vi.fn();
       const onCommandSelect = vi.fn();
       const onCommandClose = vi.fn();
-      const results = [{ type: 'task' as const, id: 'task-1', displayText: 'A Task' }];
+      const results = [{ type: 'file' as const, id: 'src/a.ts', displayText: 'A Task' }];
 
       const { container } = render(
         <InputTextarea
@@ -798,7 +799,7 @@ describe('InputTextarea', () => {
     it('should show badge with count when content has @ref{} tokens', () => {
       const { container } = render(
         <InputTextarea
-          content="check @ref{task:t-1} and @ref{file:src/foo.ts}"
+          content="check @ref{folder:src} and @ref{file:src/foo.ts}"
           onContentChange={() => {}}
           onKeyDown={() => {}}
           onSubmit={() => {}}
@@ -814,7 +815,7 @@ describe('InputTextarea', () => {
     it('should show singular "reference" for a single @ref{} token', () => {
       const { container } = render(
         <InputTextarea
-          content="see @ref{goal:g-5} for details"
+          content="see @ref{folder:src} for details"
           onContentChange={() => {}}
           onKeyDown={() => {}}
           onSubmit={() => {}}
@@ -831,7 +832,7 @@ describe('InputTextarea', () => {
     it('should update badge count when content changes', () => {
       const { container, rerender } = render(
         <InputTextarea
-          content="@ref{task:t-1}"
+          content="@ref{file:a.ts}"
           onContentChange={() => {}}
           onKeyDown={() => {}}
           onSubmit={() => {}}
@@ -844,7 +845,7 @@ describe('InputTextarea', () => {
 
       rerender(
         <InputTextarea
-          content="@ref{task:t-1} and @ref{task:t-2} and @ref{file:src/x.ts}"
+          content="@ref{file:a.ts} and @ref{file:b.ts} and @ref{file:src/x.ts}"
           onContentChange={() => {}}
           onKeyDown={() => {}}
           onSubmit={() => {}}

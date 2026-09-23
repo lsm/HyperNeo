@@ -7,14 +7,6 @@ import type { ReferenceType, ReferenceMetadata, ResolvedReference } from '@hyper
 import { REFERENCE_PATTERN } from '@hyperneo/shared';
 
 const TYPE_STYLES: Record<ReferenceType, { pill: string; label: string }> = {
-  task: {
-    pill: 'bg-accent-hover/20 text-cat-indigo border-indigo-500/40 hover:bg-accent-hover/30',
-    label: 'task',
-  },
-  goal: {
-    pill: 'bg-warning/20 text-warning border-warning/40 hover:bg-warning/30',
-    label: 'goal',
-  },
   file: {
     pill: 'bg-accent/20 text-accent-soft border-accent/40 hover:bg-accent/30',
     label: 'file',
@@ -27,19 +19,6 @@ const TYPE_STYLES: Record<ReferenceType, { pill: string; label: string }> = {
 
 function renderResolvedContent(resolved: ResolvedReference): JSX.Element {
   switch (resolved.type) {
-    case 'task':
-    case 'goal': {
-      const d = resolved.data as { title?: string; status?: string; description?: string };
-      return (
-        <div>
-          {d.title && <div class="font-medium text-fg">{d.title}</div>}
-          {d.status && <div class="text-xs text-fg-muted mt-0.5">Status: {d.status}</div>}
-          {d.description && (
-            <div class="text-xs text-fg-muted mt-1 line-clamp-2">{d.description}</div>
-          )}
-        </div>
-      );
-    }
     case 'file': {
       const d = resolved.data as {
         path: string;
@@ -196,8 +175,6 @@ export type UnknownMentionSegment = { kind: 'unknown-mention'; content: string }
 export type Segment = TextSegment | MentionSegment | UnknownMentionSegment;
 
 const VALID_REF_TYPES: ReadonlySet<string> = new Set<string>([
-  'task',
-  'goal',
   'file',
   'folder',
 ] satisfies readonly ReferenceType[]);

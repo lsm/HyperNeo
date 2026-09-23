@@ -52,7 +52,7 @@ const MAILBOX_MESSAGE_PRIORITIES: readonly MailboxMessage['priority'][] = ['now'
 const MAILBOX_CONTENT_REASON =
   'message.content must be a non-empty string or a non-empty array of text or image blocks';
 const MAILBOX_IMAGE_MEDIA_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] as const;
-const MAILBOX_REFERENCE_TYPES: readonly ReferenceType[] = ['task', 'goal', 'file', 'folder'];
+const MAILBOX_REFERENCE_TYPES: readonly ReferenceType[] = ['file', 'folder'];
 const MAILBOX_INPUT_KINDS: readonly MessageInputKind[] = ['task', 'human', 'system'];
 
 function isMailboxDeliveryMode(value: unknown): value is MailboxDeliveryMode {

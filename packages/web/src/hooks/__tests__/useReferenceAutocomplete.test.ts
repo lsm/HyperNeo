@@ -26,7 +26,7 @@ vi.mock('../../lib/connection-manager.ts', () => ({
 
 const makeResults = (count = 3) =>
   Array.from({ length: count }, (_, i) => ({
-    type: 'task' as const,
+    type: 'file' as const,
     id: `task-${i}`,
     shortId: `t-${i}`,
     displayText: `Task ${i}`,
@@ -67,7 +67,7 @@ describe('extractActiveAtQuery', () => {
   });
 
   it('handles multiple @ with only last active', () => {
-    expect(extractActiveAtQuery('Fix @ref{task:t-1} and @ne')).toBe('ne');
+    expect(extractActiveAtQuery('Fix @ref{file:t-1} and @ne')).toBe('ne');
   });
 
   it('returns empty string for trailing @', () => {
@@ -77,19 +77,19 @@ describe('extractActiveAtQuery', () => {
 
 describe('insertReferenceMention', () => {
   it('replaces @query at end of content with @ref token', () => {
-    const mention = { type: 'task' as const, id: 't-42', displayText: 'Fix bug' };
+    const mention = { type: 'file' as const, id: 't-42', displayText: 'Fix bug' };
     const result = insertReferenceMention('fix @bug', 'bug', mention);
-    expect(result).toBe('fix @ref{task:t-42} ');
+    expect(result).toBe('fix @ref{file:t-42} ');
   });
 
   it('replaces empty query (just @) with @ref token', () => {
-    const mention = { type: 'goal' as const, id: 'g-7', displayText: 'Goal' };
+    const mention = { type: 'folder' as const, id: 'g-7', displayText: 'Goal' };
     const result = insertReferenceMention('hello @', '', mention);
-    expect(result).toBe('hello @ref{goal:g-7} ');
+    expect(result).toBe('hello @ref{folder:g-7} ');
   });
 
   it('returns content unchanged when @query is not at end', () => {
-    const mention = { type: 'task' as const, id: 't-1', displayText: 'Task' };
+    const mention = { type: 'file' as const, id: 't-1', displayText: 'Task' };
     const result = insertReferenceMention('hello world', 'world', mention);
     expect(result).toBe('hello world');
   });
@@ -107,13 +107,13 @@ describe('insertReferenceMention', () => {
   });
 
   it('handles content with existing @ref tokens before the active query', () => {
-    const mention = { type: 'task' as const, id: 't-5', displayText: 'Task 5' };
-    const result = insertReferenceMention('@ref{task:t-1} fix @bug', 'bug', mention);
-    expect(result).toBe('@ref{task:t-1} fix @ref{task:t-5} ');
+    const mention = { type: 'file' as const, id: 't-5', displayText: 'Task 5' };
+    const result = insertReferenceMention('@ref{file:t-1} fix @bug', 'bug', mention);
+    expect(result).toBe('@ref{file:t-1} fix @ref{file:t-5} ');
   });
 
   it('returns unchanged content when suffix does not match', () => {
-    const mention = { type: 'task' as const, id: 't-1', displayText: 'Task' };
+    const mention = { type: 'file' as const, id: 't-1', displayText: 'Task' };
     const result = insertReferenceMention('hello @world', 'xyz', mention);
     expect(result).toBe('hello @world');
   });
@@ -649,7 +649,7 @@ describe('useReferenceAutocomplete', () => {
 
       const { result } = renderHook(() =>
         useReferenceAutocomplete({
-          content: 'Fix @ref{task:t-1} and @ne',
+          content: 'Fix @ref{file:t-1} and @ne',
           onSelect: vi.fn(),
         })
       );

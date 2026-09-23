@@ -6,41 +6,6 @@ import {
 } from '../../../src/lib/agent/reference-context-builder';
 import type { ResolvedReference } from '@hyperneo/shared';
 
-const taskRef: ResolvedReference = {
-  type: 'task',
-  id: 'task-uuid-1',
-  data: {
-    id: 'task-uuid-1',
-    shortId: 't-1',
-    title: 'Fix login bug',
-    status: 'in_progress',
-    priority: 'high',
-    progress: 50,
-    description: 'Users cannot log in with OAuth',
-    currentStep: 'Investigating token refresh',
-    roomId: 'room-1',
-  },
-};
-
-const goalRef: ResolvedReference = {
-  type: 'goal',
-  id: 'goal-uuid-1',
-  data: {
-    id: 'goal-uuid-1',
-    shortId: 'g-1',
-    title: 'Launch v2',
-    missionType: 'measurable',
-    status: 'active',
-    progress: 30,
-    description: 'Release the v2 product',
-    structuredMetrics: [
-      { name: 'features', current: 3, target: 10 },
-      { name: 'coverage', current: 70, target: 90, unit: '%' },
-    ],
-    roomId: 'room-1',
-  },
-};
-
 const fileRef: ResolvedReference = {
   type: 'file',
   id: 'src/lib/utils.ts',
@@ -111,103 +76,6 @@ describe('buildReferenceContext', () => {
     expect(buildReferenceContext({})).toBe('');
   });
 
-  it('formats a task reference', () => {
-    const result = buildReferenceContext({ '@ref{task:task-uuid-1}': taskRef });
-    expect(result).toContain('### Task: t-1');
-    expect(result).toContain('**Title:** Fix login bug');
-    expect(result).toContain('**Status:** in_progress');
-    expect(result).toContain('**Priority:** high');
-    expect(result).toContain('**Progress:** 50%');
-    expect(result).toContain('**Description:** Users cannot log in with OAuth');
-    expect(result).toContain('**Current Step:** Investigating token refresh');
-  });
-
-  it('uses fallback id when task has no shortId', () => {
-    const ref: ResolvedReference = {
-      type: 'task',
-      id: 'task-uuid-2',
-      data: {
-        id: 'task-uuid-2',
-        shortId: null,
-        title: 'No short id task',
-        status: 'pending',
-        priority: 'low',
-        roomId: 'room-1',
-      },
-    };
-    const result = buildReferenceContext({ '@ref{task:task-uuid-2}': ref });
-    expect(result).toContain('### Task: task-uuid-2');
-  });
-
-  it('omits optional task fields when absent', () => {
-    const ref: ResolvedReference = {
-      type: 'task',
-      id: 'task-uuid-3',
-      data: {
-        id: 'task-uuid-3',
-        shortId: 't-3',
-        title: 'Minimal task',
-        status: 'pending',
-        priority: 'medium',
-        roomId: 'room-1',
-      },
-    };
-    const result = buildReferenceContext({ '@ref{task:task-uuid-3}': ref });
-    expect(result).not.toContain('**Progress:**');
-    expect(result).not.toContain('**Description:**');
-    expect(result).not.toContain('**Current Step:**');
-  });
-
-  it('formats a goal reference', () => {
-    const result = buildReferenceContext({ '@ref{goal:goal-uuid-1}': goalRef });
-    expect(result).toContain('### Goal: g-1');
-    expect(result).toContain('**Title:** Launch v2');
-    expect(result).toContain('**Type:** measurable');
-    expect(result).toContain('**Status:** active');
-    expect(result).toContain('**Progress:** 30%');
-    expect(result).toContain('**Description:** Release the v2 product');
-    expect(result).toContain('**Metrics:**');
-    expect(result).toContain('features: 3 / 10');
-    expect(result).toContain('coverage: 70 % / 90 %');
-  });
-
-  it('uses fallback id when goal has no shortId', () => {
-    const ref: ResolvedReference = {
-      type: 'goal',
-      id: 'goal-uuid-2',
-      data: {
-        id: 'goal-uuid-2',
-        shortId: null,
-        title: 'No short id goal',
-        status: 'active',
-        progress: 0,
-        roomId: 'room-1',
-      },
-    };
-    const result = buildReferenceContext({ '@ref{goal:goal-uuid-2}': ref });
-    expect(result).toContain('### Goal: goal-uuid-2');
-  });
-
-  it('omits optional goal fields when absent', () => {
-    const ref: ResolvedReference = {
-      type: 'goal',
-      id: 'goal-uuid-3',
-      data: {
-        id: 'goal-uuid-3',
-        shortId: 'g-3',
-        title: 'Minimal goal',
-        status: 'active',
-        progress: 0,
-        structuredMetrics: [],
-        roomId: 'room-1',
-      },
-    };
-    const result = buildReferenceContext({ '@ref{goal:goal-uuid-3}': ref });
-    expect(result).not.toContain('**Type:**');
-    expect(result).not.toContain('**Description:**');
-    expect(result).not.toContain('**Metrics:**');
-  });
-
   it('formats a file reference with content', () => {
     const result = buildReferenceContext({ '@ref{file:src/lib/utils.ts}': fileRef });
     expect(result).toContain('### File: src/lib/utils.ts');
@@ -254,20 +122,15 @@ describe('buildReferenceContext', () => {
     expect(result).toBe('');
   });
 
-  it('sorts by priority: task > goal > file > folder', () => {
+  it('sorts by priority: file before folder', () => {
     const refs = {
       '@ref{folder:src/lib}': folderRef,
       '@ref{file:src/lib/utils.ts}': fileRef,
-      '@ref{goal:goal-uuid-1}': goalRef,
-      '@ref{task:task-uuid-1}': taskRef,
     };
     const result = buildReferenceContext(refs);
-    const taskPos = result.indexOf('### Task:');
-    const goalPos = result.indexOf('### Goal:');
     const filePos = result.indexOf('### File:');
     const folderPos = result.indexOf('### Folder:');
-    expect(taskPos).toBeLessThan(goalPos);
-    expect(goalPos).toBeLessThan(filePos);
+    expect(filePos).toBeGreaterThan(-1);
     expect(filePos).toBeLessThan(folderPos);
   });
 
@@ -276,10 +139,10 @@ describe('buildReferenceContext', () => {
     const refs = {
       '@ref{folder:src/lib}': folderRef,
       '@ref{metric:x}': unknownRef as ResolvedReference,
-      '@ref{task:task-uuid-1}': taskRef,
+      '@ref{file:src/lib/utils.ts}': fileRef,
     };
     const result = buildReferenceContext(refs);
-    expect(result).toContain('### Task:');
+    expect(result).toContain('### File:');
     expect(result).toContain('### Folder:');
   });
 
@@ -310,10 +173,10 @@ describe('buildReferenceContext', () => {
 
   it('includes multiple references when within size limit', () => {
     const result = buildReferenceContext({
-      '@ref{task:task-uuid-1}': taskRef,
+      '@ref{folder:src/lib}': folderRef,
       '@ref{file:src/lib/utils.ts}': fileRef,
     });
-    expect(result).toContain('### Task:');
+    expect(result).toContain('### Folder:');
     expect(result).toContain('### File:');
   });
 
@@ -326,25 +189,6 @@ describe('buildReferenceContext', () => {
     };
     const result = buildReferenceContext({ '@ref{file:src/enormous.ts}': hugeRef });
     expect(result).toBe('');
-  });
-
-  it('metric without unit shows value without unit suffix', () => {
-    const ref: ResolvedReference = {
-      type: 'goal',
-      id: 'goal-uuid-4',
-      data: {
-        id: 'goal-uuid-4',
-        shortId: 'g-4',
-        title: 'Count goal',
-        status: 'active',
-        progress: 0,
-        structuredMetrics: [{ name: 'items', current: 5, target: 20 }],
-        roomId: 'room-1',
-      },
-    };
-    const result = buildReferenceContext({ '@ref{goal:goal-uuid-4}': ref });
-    expect(result).toContain('items: 5 / 20');
-    expect(result).not.toContain('undefined');
   });
 });
 

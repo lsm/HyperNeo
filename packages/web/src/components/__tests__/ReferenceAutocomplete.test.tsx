@@ -5,25 +5,18 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import ReferenceAutocomplete from '../ReferenceAutocomplete';
 import type { ReferenceSearchResult } from '@hyperneo/shared';
 
-const taskResult: ReferenceSearchResult = {
-  type: 'task',
-  id: 't-1',
-  displayText: 'Fix login bug',
-  subtitle: 'in-progress',
-};
-
-const goalResult: ReferenceSearchResult = {
-  type: 'goal',
-  id: 'g-1',
-  displayText: 'Launch v2',
-  subtitle: 'active',
-};
-
 const fileResult: ReferenceSearchResult = {
   type: 'file',
   id: 'src/app.ts',
   displayText: 'app.ts',
   subtitle: 'src/app.ts',
+};
+
+const otherFileResult: ReferenceSearchResult = {
+  type: 'file',
+  id: 'src/index.ts',
+  displayText: 'index.ts',
+  subtitle: 'src/index.ts',
 };
 
 const folderResult: ReferenceSearchResult = {
@@ -33,8 +26,14 @@ const folderResult: ReferenceSearchResult = {
   subtitle: 'src/',
 };
 
+function sectionLabels(container: Element): Array<string | undefined> {
+  return Array.from(container.querySelectorAll('span.text-\\[10px\\]')).map((el) =>
+    el.textContent?.trim()
+  );
+}
+
 const defaultProps = {
-  results: [taskResult, goalResult, fileResult, folderResult],
+  results: [fileResult, otherFileResult, folderResult],
   selectedIndex: 0,
   onSelect: vi.fn(),
   onClose: vi.fn(),
@@ -60,11 +59,6 @@ describe('ReferenceAutocomplete', () => {
       expect(container.querySelector('div')).toBeTruthy();
     });
 
-    it('shows "References" header when results include tasks or goals', () => {
-      const { container } = render(<ReferenceAutocomplete {...defaultProps} />);
-      expect(container.textContent).toContain('References');
-    });
-
     it('shows "Files & Folders" header when results contain only file/folder types', () => {
       const { container } = render(
         <ReferenceAutocomplete {...defaultProps} results={[fileResult, folderResult]} />
@@ -86,26 +80,31 @@ describe('ReferenceAutocomplete', () => {
       expect(container.textContent).toContain('Files & Folders');
     });
 
-    it('shows "References" header when task results are present alongside files', () => {
+    it('skips results of the retired task and goal types', () => {
+      const retired = [
+        { type: 'task', id: 't-1', displayText: 'Fix login bug' },
+        { type: 'goal', id: 'g-1', displayText: 'Launch v2' },
+      ];
       const { container } = render(
-        <ReferenceAutocomplete {...defaultProps} results={[taskResult, fileResult]} />
+        <ReferenceAutocomplete {...defaultProps} results={[...retired, fileResult]} />
       );
-      expect(container.textContent).toContain('References');
+      expect(container.querySelectorAll('button[type="button"]').length).toBe(1);
+      expect(container.textContent).not.toContain('Fix login bug');
+      expect(container.textContent).not.toContain('Launch v2');
     });
 
     it('renders displayText for each result', () => {
       const { container } = render(<ReferenceAutocomplete {...defaultProps} />);
-      expect(container.textContent).toContain('Fix login bug');
-      expect(container.textContent).toContain('Launch v2');
       expect(container.textContent).toContain('app.ts');
+      expect(container.textContent).toContain('index.ts');
       expect(container.textContent).toContain('src');
     });
 
     it('renders subtitle for results that have it', () => {
       const { container } = render(<ReferenceAutocomplete {...defaultProps} />);
-      expect(container.textContent).toContain('in-progress');
-      expect(container.textContent).toContain('active');
       expect(container.textContent).toContain('src/app.ts');
+      expect(container.textContent).toContain('src/index.ts');
+      expect(container.textContent).toContain('src/');
     });
 
     it('does not render subtitle element when subtitle is absent', () => {
@@ -125,20 +124,14 @@ describe('ReferenceAutocomplete', () => {
 
     it('renders group section labels', () => {
       const { container } = render(<ReferenceAutocomplete {...defaultProps} />);
-      expect(container.textContent).toContain('Tasks');
-      expect(container.textContent).toContain('Goals');
-      expect(container.textContent).toContain('Files');
-      expect(container.textContent).toContain('Folders');
+      expect(sectionLabels(container)).toEqual(['Files', 'Folders']);
     });
 
     it('does not render empty group section labels', () => {
       const { container } = render(
-        <ReferenceAutocomplete {...defaultProps} results={[taskResult]} />
+        <ReferenceAutocomplete {...defaultProps} results={[folderResult]} />
       );
-      expect(container.textContent).toContain('Tasks');
-      expect(container.textContent).not.toContain('Goals');
-      expect(container.textContent).not.toContain('Files');
-      expect(container.textContent).not.toContain('Folders');
+      expect(sectionLabels(container)).toEqual(['Folders']);
     });
 
     it('renders keyboard hint footer', () => {
@@ -183,23 +176,23 @@ describe('ReferenceAutocomplete', () => {
       const buttons = container.querySelectorAll('button[type="button"]');
       fireEvent.click(buttons[0]);
       expect(onSelect).toHaveBeenCalledTimes(1);
-      expect(onSelect).toHaveBeenCalledWith(taskResult);
+      expect(onSelect).toHaveBeenCalledWith(fileResult);
     });
 
-    it('calls onSelect with the goal result when goal button is clicked', () => {
+    it('calls onSelect with the second file result when its button is clicked', () => {
       const onSelect = vi.fn();
       const { container } = render(<ReferenceAutocomplete {...defaultProps} onSelect={onSelect} />);
       const buttons = container.querySelectorAll('button[type="button"]');
       fireEvent.click(buttons[1]);
-      expect(onSelect).toHaveBeenCalledWith(goalResult);
+      expect(onSelect).toHaveBeenCalledWith(otherFileResult);
     });
 
-    it('calls onSelect with the file result when file button is clicked', () => {
+    it('calls onSelect with the folder result when folder button is clicked', () => {
       const onSelect = vi.fn();
       const { container } = render(<ReferenceAutocomplete {...defaultProps} onSelect={onSelect} />);
       const buttons = container.querySelectorAll('button[type="button"]');
       fireEvent.click(buttons[2]);
-      expect(onSelect).toHaveBeenCalledWith(fileResult);
+      expect(onSelect).toHaveBeenCalledWith(folderResult);
     });
   });
 
@@ -266,12 +259,11 @@ describe('ReferenceAutocomplete', () => {
   });
 
   describe('Group ordering', () => {
-    it('renders groups in order: Tasks, Goals, Files, Folders', () => {
-      const { container } = render(<ReferenceAutocomplete {...defaultProps} />);
-      const sectionLabels = Array.from(container.querySelectorAll('span.text-\\[10px\\]')).map(
-        (el) => el.textContent?.trim()
+    it('renders groups in order: Files, Folders', () => {
+      const { container } = render(
+        <ReferenceAutocomplete {...defaultProps} results={[folderResult, fileResult]} />
       );
-      expect(sectionLabels).toEqual(['Tasks', 'Goals', 'Files', 'Folders']);
+      expect(sectionLabels(container)).toEqual(['Files', 'Folders']);
     });
   });
 
@@ -279,12 +271,12 @@ describe('ReferenceAutocomplete', () => {
     it('renders the correct number of result buttons', () => {
       const { container } = render(<ReferenceAutocomplete {...defaultProps} />);
       const buttons = container.querySelectorAll('button[type="button"]');
-      expect(buttons.length).toBe(4);
+      expect(buttons.length).toBe(3);
     });
 
     it('renders only matching buttons for single-type results', () => {
       const { container } = render(
-        <ReferenceAutocomplete {...defaultProps} results={[taskResult]} />
+        <ReferenceAutocomplete {...defaultProps} results={[folderResult]} />
       );
       const buttons = container.querySelectorAll('button[type="button"]');
       expect(buttons.length).toBe(1);

@@ -11,31 +11,20 @@ export interface ReferenceAutocompleteProps {
   position?: { top: number; left: number };
 }
 
-const TYPE_ORDER: ReferenceType[] = ['task', 'goal', 'file', 'folder'];
+const TYPE_ORDER: ReferenceType[] = ['file', 'folder'];
 
 const TYPE_LABELS: Record<ReferenceType, string> = {
-  task: 'Tasks',
-  goal: 'Goals',
   file: 'Files',
   folder: 'Folders',
 };
 
 const TYPE_ICON_CLASS: Record<ReferenceType, string> = {
-  task: 'w-3.5 h-3.5 text-cat-indigo',
-  goal: 'w-3.5 h-3.5 text-warning',
   file: 'w-3.5 h-3.5 text-accent',
   folder: 'w-3.5 h-3.5 text-warning',
 };
 
 function TypeIcon({ type }: { type: ReferenceType }) {
   return <ReferenceTypeIcon type={type} className={TYPE_ICON_CLASS[type]} />;
-}
-
-function resolveHeaderLabel(results: ReferenceSearchResult[]): string {
-  const types = new Set(results.map((r) => r.type));
-  const hasTaskOrGoal = types.has('task') || types.has('goal');
-  if (!hasTaskOrGoal) return 'Files & Folders';
-  return 'References';
 }
 
 export default function ReferenceAutocomplete({
@@ -93,7 +82,7 @@ export default function ReferenceAutocomplete({
     }
   }
 
-  const headerLabel = resolveHeaderLabel(results);
+  const headerLabel = 'Files & Folders';
 
   return (
     <div

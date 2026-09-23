@@ -376,7 +376,7 @@ describe('SDKMessageRepository', () => {
         isSynthetic: true,
         inputKind: 'task',
         priority: 'next',
-        referenceMetadata: { '@task': { type: 'task', id: 'T-1', displayText: 'Task one' } },
+        referenceMetadata: { '@file': { type: 'file', id: 'a.ts', displayText: 'a.ts' } },
         message: { role: 'user', content: 'queued with reference' },
       });
 
@@ -386,7 +386,7 @@ describe('SDKMessageRepository', () => {
         message: { content: 'queued with reference' },
         parent_tool_use_id: null,
         priority: 'next',
-        referenceMetadata: { '@task': { type: 'task', id: 'T-1', displayText: 'Task one' } },
+        referenceMetadata: { '@file': { type: 'file', id: 'a.ts', displayText: 'a.ts' } },
         inputKind: 'task',
         uuid: 'msg-ref',
         session_id: 'session-1',

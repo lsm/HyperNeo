@@ -1,22 +1,11 @@
 import type { ResolvedReference } from '@hyperneo/shared';
-import type { MissionMetric, RoomGoal } from '@hyperneo/shared/types/neo';
 import { Logger } from '../logger.ts';
-
-interface TaskReferenceDetails {
-  title: string;
-  status: string;
-  priority: string;
-  description: string;
-  shortId?: string | null;
-  progress?: number | null;
-  currentStep?: string | null;
-}
 
 const log = new Logger('reference-context-builder');
 
 export const MAX_CONTEXT_BYTES = 200_000;
 
-const PRIORITY_ORDER: ReadonlyArray<ResolvedReference['type']> = ['task', 'goal', 'file', 'folder'];
+const PRIORITY_ORDER: ReadonlyArray<ResolvedReference['type']> = ['file', 'folder'];
 
 export function buildReferenceContext(references: Record<string, ResolvedReference>): string {
   const entries = Object.values(references);
@@ -73,10 +62,6 @@ export function prependContextToMessage(userMessage: string, context: string): s
 
 function formatReference(ref: ResolvedReference): string {
   switch (ref.type) {
-    case 'task':
-      return formatTask(ref.data as TaskReferenceDetails, ref.id);
-    case 'goal':
-      return formatGoal(ref.data as RoomGoal, ref.id);
     case 'file':
       return formatFile(
         ref.data as {
@@ -96,49 +81,6 @@ function formatReference(ref: ResolvedReference): string {
     default:
       return '';
   }
-}
-
-function formatTask(task: TaskReferenceDetails, fallbackId: string): string {
-  const id = task.shortId ?? fallbackId;
-  const lines: string[] = [`### Task: ${id}`];
-  lines.push(`**Title:** ${task.title}`);
-  lines.push(`**Status:** ${task.status}`);
-  lines.push(`**Priority:** ${task.priority}`);
-  if (task.progress !== null && task.progress !== undefined) {
-    lines.push(`**Progress:** ${task.progress}%`);
-  }
-  if (task.description) {
-    lines.push(`**Description:** ${task.description}`);
-  }
-  if (task.currentStep) {
-    lines.push(`**Current Step:** ${task.currentStep}`);
-  }
-  return lines.join('\n') + '\n';
-}
-
-function formatGoal(goal: RoomGoal, fallbackId: string): string {
-  const id = goal.shortId ?? fallbackId;
-  const lines: string[] = [`### Goal: ${id}`];
-  lines.push(`**Title:** ${goal.title}`);
-  if (goal.missionType) {
-    lines.push(`**Type:** ${goal.missionType}`);
-  }
-  lines.push(`**Status:** ${goal.status}`);
-  lines.push(`**Progress:** ${goal.progress}%`);
-  if (goal.description) {
-    lines.push(`**Description:** ${goal.description}`);
-  }
-  if (goal.structuredMetrics && goal.structuredMetrics.length > 0) {
-    const metricsStr = goal.structuredMetrics.map(formatMetric).join(', ');
-    lines.push(`**Metrics:** ${metricsStr}`);
-  }
-  return lines.join('\n') + '\n';
-}
-
-function formatMetric(m: MissionMetric): string {
-  const current = m.unit ? `${m.current} ${m.unit}` : String(m.current);
-  const target = m.unit ? `${m.target} ${m.unit}` : String(m.target);
-  return `${m.name}: ${current} / ${target}`;
 }
 
 function formatFile(data: {

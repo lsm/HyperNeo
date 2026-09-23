@@ -487,14 +487,6 @@
       "maxLines": 541,
       "followUp": "M10 cleanup split when touched"
     },
-    "packages/daemon/src/lib/rpc-handlers/reference-handlers.ts": {
-      "maxLines": 540,
-      "followUp": "M2/M4 fabric bridge split"
-    },
-    "packages/daemon/src/lib/agent/reference-resolver.ts": {
-      "maxLines": 536,
-      "followUp": "M7 agent runtime boundary split"
-    },
     "packages/daemon/src/lib/schedule/schedule-service.ts": {
       "maxLines": 533,
       "followUp": "M10 cleanup split when touched"

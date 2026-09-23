@@ -578,7 +578,7 @@ describe('createMailboxDeliveryHandler', () => {
               priority: 'next',
               inputKind,
               referenceMetadata: {
-                '@ref{task:t1}': { type: 'task', id: 't1', displayText: 'Task one' },
+                '@ref{file:t1.ts}': { type: 'file', id: 't1.ts', displayText: 't1.ts' },
               },
             },
           });

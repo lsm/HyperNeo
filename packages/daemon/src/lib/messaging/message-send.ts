@@ -46,7 +46,7 @@ export const SendMessageInputSchema = z.object({
         .record(
           z.string(),
           z.object({
-            type: z.enum(['task', 'goal', 'file', 'folder']),
+            type: z.enum(['file', 'folder']),
             id: z.string().min(1),
             displayText: z.string().min(1),
             status: z.string().optional(),

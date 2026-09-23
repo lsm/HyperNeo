@@ -19,7 +19,7 @@ const entry: SessionMailboxEntry = {
     parent_tool_use_id: null,
     priority: 'next',
     referenceMetadata: {
-      '@ref{task:t1}': { type: 'task', id: 't1', displayText: 'Task one' },
+      '@ref{file:t1.ts}': { type: 'file', id: 't1.ts', displayText: 't1.ts' },
     },
   },
   status: 'enqueued',
