@@ -4447,6 +4447,7 @@ export class SpaceRuntime {
     const store = this.config.externalEventStore;
     const tam = this.config.taskAgentManager;
     if (!store || !tam || typeof tam.tryResumeNodeAgentSession !== 'function') return [];
+    const generation = this.runtimeGeneration;
     const deps: RestoreIdleSessionsDeps = {
       listPendingDeliveries: (scope) =>
         store
@@ -4510,6 +4511,7 @@ export class SpaceRuntime {
         return !!owner && owner.status !== 'cancelled';
       },
       cancelSession: (sessionId) => tam.cancelBySessionId(sessionId),
+      isRestoreSuperseded: () => this.isStopped || generation !== this.runtimeGeneration,
     };
     const outcomes = await runRestoreIdleSessions(deps, workflowRunId);
     for (const outcome of outcomes) {
