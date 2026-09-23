@@ -410,50 +410,17 @@ describe('space-handlers', () => {
       expect(spaceManager.addSession).not.toHaveBeenCalled();
     });
 
-    it('creates space:chat:${spaceId} session when sessionManager is provided', async () => {
-      const sessionManager = createMockSessionManager();
-      await setup(mockSpace, sessionManager);
-
-      await call('space.create', { workspacePath: '/tmp/x', name: 'X' });
-
-      expect(sessionManager.createSession).toHaveBeenCalledTimes(1);
-      const [params] = (sessionManager.createSession as ReturnType<typeof mock>).mock.calls[0];
-      expect(params.sessionId).toBe(`space:chat:${mockSpace.id}`);
-      expect(params.sessionType).toBe('space_chat');
-      expect(params.spaceId).toBe(mockSpace.id);
-      expect(params.title).toBe(mockSpace.name);
-      expect(params.workspacePath).toBe(mockSpace.workspacePath);
-      expect(params.createdBy).toBeUndefined();
-    });
-
-    it('does not create a session when sessionManager is omitted', async () => {
-      await setup(mockSpace);
-
-      await call('space.create', { workspacePath: '/tmp/x', name: 'X' });
-
-      expect(spaceManager.createSpace).toHaveBeenCalledTimes(1);
-    });
-
-    it('calls spaceManager.addSession to register the session on the space', async () => {
-      const sessionManager = createMockSessionManager();
-      await setup(mockSpace, sessionManager);
-
-      await call('space.create', { workspacePath: '/tmp/x', name: 'X' });
-
-      expect(spaceManager.addSession).toHaveBeenCalledWith(
-        mockSpace.id,
-        `space:chat:${mockSpace.id}`
-      );
-    });
-
-    it('calls setupSpaceAgentSession when spaceRuntimeService is provided', async () => {
+    it('creates no session and provisions no runtime for a new space', async () => {
       const sessionManager = createMockSessionManager();
       const runtimeService = createMockSpaceRuntimeService();
       await setup(mockSpace, sessionManager, runtimeService);
 
       await call('space.create', { workspacePath: '/tmp/x', name: 'X' });
 
-      expect(runtimeService.setupSpaceAgentSession).toHaveBeenCalledWith(mockSpace);
+      expect(spaceManager.createSpace).toHaveBeenCalledTimes(1);
+      expect(sessionManager.createSession).not.toHaveBeenCalled();
+      expect(spaceManager.addSession).not.toHaveBeenCalled();
+      expect(runtimeService.setupSpaceAgentSession).not.toHaveBeenCalled();
     });
 
     it('does not include seedWarnings when all agents seed successfully', async () => {
@@ -520,39 +487,6 @@ describe('space-handlers', () => {
       expect(internalEventBus.publish).toHaveBeenCalledWith(
         'space.created',
         expect.objectContaining({ spaceId: mockSpace.id })
-      );
-    });
-
-    it('still creates space and publishes event even if session creation fails', async () => {
-      const sessionManager = createMockSessionManager();
-      (sessionManager.createSession as ReturnType<typeof mock>).mockImplementation(async () => {
-        throw new Error('Session creation failed');
-      });
-      await setup(mockSpace, sessionManager);
-
-      const result = await call('space.create', { workspacePath: '/tmp/x', name: 'X' });
-      expect(result).toEqual(mockSpace);
-      expect(internalEventBus.publish).toHaveBeenCalledWith('space.created', {
-        sessionId: 'global',
-        spaceId: mockSpace.id,
-        space: mockSpace,
-      });
-    });
-
-    it('still creates space when space chat runtime provisioning fails', async () => {
-      const sessionManager = createMockSessionManager();
-      const runtimeService = createMockSpaceRuntimeService();
-      (runtimeService.setupSpaceAgentSession as ReturnType<typeof mock>).mockRejectedValue(
-        new Error('Runtime provisioning failed')
-      );
-      await setup(mockSpace, sessionManager, runtimeService);
-
-      const result = await call('space.create', { workspacePath: '/tmp/x', name: 'X' });
-
-      expect(result).toEqual(mockSpace);
-      expect(spaceManager.addSession).toHaveBeenCalledWith(
-        mockSpace.id,
-        `space:chat:${mockSpace.id}`
       );
     });
   });

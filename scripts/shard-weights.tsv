@@ -27,7 +27,6 @@
 1363	packages/daemon/tests/online/rpc/rpc-task-lifecycle.test.ts
 10239	packages/daemon/tests/online/rpc/session-handlers.test.ts
 55634	packages/daemon/tests/online/space/prompt-too-long-kimi-recovery.test.ts
-13154	packages/daemon/tests/online/space/space-chat-session.test.ts
 67205	packages/daemon/tests/online/space/task-agent-lifecycle.test.ts
 31648	packages/daemon/tests/online/space/task-agent-skills.test.ts
 78	packages/daemon/tests/unit/5-space/actor-registry.test.ts

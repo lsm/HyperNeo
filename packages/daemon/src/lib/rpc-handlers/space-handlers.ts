@@ -163,20 +163,6 @@ export function setupSpaceHandlers(
         createSpaceRecord: (params) => spaceManager.createSpace(params),
         ...(seedAgents ? { seedAgents } : {}),
         seedWorkflows: (spaceId) => seedBuiltInWorkflows(spaceId, spaceWorkflowManager),
-        ...(sessionManager
-          ? {
-              chat: {
-                createSession: (sessionParams) => sessionManager.createSession(sessionParams),
-                addSession: (spaceId, sessionId) => spaceManager.addSession(spaceId, sessionId),
-                ...(spaceRuntimeService
-                  ? {
-                      provisionRuntime: (space) =>
-                        spaceRuntimeService.setupSpaceAgentSession(space),
-                    }
-                  : {}),
-              },
-            }
-          : {}),
         dispatchSpaceCreated: async (space) => {
           await internalEventBus.publish('space.created', {
             sessionId: 'global',

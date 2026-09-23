@@ -1019,29 +1019,6 @@ describe('SpaceRuntimeService', () => {
       await svc.stop();
     });
 
-    test('start() subscribes to space.created events when internalEventBus provided', async () => {
-      const session = makeSession();
-      const sessionManager = makeSessionManager(session);
-      const internalEventBus = {
-        subscribe: mock(() => () => {}),
-        publish: mock(async () => ({ delivered: 0, failures: [] })),
-        publishAsync: mock(() => {}),
-      } as unknown as SpaceRuntimeServiceConfig['internalEventBus'];
-      const config: SpaceRuntimeServiceConfig = {
-        ...buildConfigWithSession(sessionManager, createMockSpaceManager(), internalEventBus),
-      };
-      const svc = new SpaceRuntimeService(config);
-
-      svc.start();
-
-      const onCalls = (internalEventBus.subscribe as Mock<typeof internalEventBus.subscribe>).mock
-        .calls;
-      const spaceCreatedCall = onCalls.find(([event]) => event === 'space.created');
-      expect(spaceCreatedCall).toBeDefined();
-
-      await svc.stop();
-    });
-
     test('session.reset re-provisions reset Space chats before query replay', async () => {
       const session = makeSession();
       const sessionManager = makeSessionManager(session);
