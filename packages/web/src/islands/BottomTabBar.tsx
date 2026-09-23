@@ -2,7 +2,6 @@ import type { JSX } from 'preact';
 import { useEffect } from 'preact/hooks';
 import {
   navSectionSignal,
-  currentSpaceCanonicalIdSignal,
   currentSpaceIdSignal,
   currentSpaceViewModeSignal,
   currentSpaceTaskIdSignal,
@@ -172,7 +171,6 @@ export function BottomTabBar({ inline }: { inline?: boolean } = {}) {
 
   const navSection = navSectionSignal.value;
   const spaceId = currentSpaceIdSignal.value;
-  const canonicalSpaceId = currentSpaceCanonicalIdSignal.value;
 
   const isInSpaceContext = navSection === 'spaces' && spaceId !== null;
 
@@ -218,21 +216,14 @@ export function BottomTabBar({ inline }: { inline?: boolean } = {}) {
 
   const isTabActive = (id: TabItem['id']): boolean => {
     if (isInSpaceContext) {
-      const routeSpaceIds = [spaceId, canonicalSpaceId].filter((id): id is string => id !== null);
-      const isSpaceChatSession = routeSpaceIds.some((id) => spaceSessionId === `space:chat:${id}`);
       const isLongHorizonAgentSession =
         spaceSessionId !== null &&
-        (spaceSessionId.startsWith('space:agent:') ||
-          spaceStore.agents.value.some((agent) => agent.sessionId === spaceSessionId));
+        spaceStore.agents.value.some((agent) => agent.sessionId === spaceSessionId);
 
       if (id === 'space-settings') return spaceViewMode === 'configure';
       if (id === 'space-sessions')
-        return (
-          spaceViewMode === 'sessions' ||
-          (!!spaceSessionId && !isSpaceChatSession && !isLongHorizonAgentSession)
-        );
-      if (id === 'space-agent')
-        return spaceViewMode === 'agents' || isSpaceChatSession || isLongHorizonAgentSession;
+        return spaceViewMode === 'sessions' || (!!spaceSessionId && !isLongHorizonAgentSession);
+      if (id === 'space-agent') return spaceViewMode === 'agents' || isLongHorizonAgentSession;
       if (id === 'space-tasks') return spaceViewMode === 'tasks' || spaceTaskId !== null;
       if (id === 'space-overview')
         return spaceViewMode === 'overview' && spaceTaskId === null && spaceSessionId === null;

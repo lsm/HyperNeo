@@ -95,36 +95,9 @@ describe('BottomTabBar space active tab', () => {
     expect(selectedTabLabel()).toBe('Tasks');
   });
 
-  it('selects Agents for space manager chat', () => {
-    currentSpaceSessionIdSignal.value = 'space:chat:space-1';
-
-    render(<BottomTabBar />);
-
-    expect(selectedTabLabel()).toBe('Agents');
-  });
-
-  it('selects Agents for slug-routed space manager chat', () => {
-    currentSpaceIdSignal.value = 'space-slug';
-    currentSpaceCanonicalIdSignal.value = 'space-1';
-    currentSpaceSessionIdSignal.value = 'space:chat:space-1';
-
-    render(<BottomTabBar />);
-
-    expect(selectedTabLabel()).toBe('Agents');
-  });
-
   it('selects Agents for long-horizon agent chat', () => {
     currentSpaceSessionIdSignal.value = 'session-agent-1';
     spaceStore.agents.value = [makeLongHorizonAgent('session-agent-1')];
-
-    render(<BottomTabBar />);
-
-    expect(selectedTabLabel()).toBe('Agents');
-  });
-
-  it('selects Agents for direct long-horizon agent session routes before config loads', () => {
-    currentSpaceSessionIdSignal.value = 'space:agent:space-1:agent-1';
-    spaceStore.agents.value = [];
 
     render(<BottomTabBar />);
 
@@ -144,7 +117,8 @@ describe('BottomTabBar space active tab', () => {
     rerender(<BottomTabBar />);
     expect(selectedTabLabel()).toBe('Sessions');
 
-    currentSpaceSessionIdSignal.value = 'space:chat:space-1';
+    spaceStore.agents.value = [makeLongHorizonAgent('session-agent-1')];
+    currentSpaceSessionIdSignal.value = 'session-agent-1';
     rerender(<BottomTabBar />);
     expect(selectedTabLabel()).toBe('Agents');
   });

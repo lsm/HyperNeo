@@ -170,7 +170,6 @@ interface ChatContainerProps {
     deliveryMode?: MessageDeliveryMode
   ) => Promise<boolean>;
   store?: SessionStore;
-  agentLabel?: string;
   onRefreshAgent?: () => void;
 }
 
@@ -183,7 +182,6 @@ export default function ChatContainer({
   pendingAgent,
   onSendOverride,
   store = sessionStore,
-  agentLabel,
   onRefreshAgent,
 }: ChatContainerProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -424,9 +422,6 @@ export default function ChatContainer({
   const features: SessionFeatures = useMemo(() => {
     if (session?.config?.features) {
       return session.config.features;
-    }
-    if (sessionId.startsWith('space:chat:')) {
-      return { ...DEFAULT_WORKER_FEATURES, archive: false };
     }
     if (sessionId.startsWith('lobby:')) {
       return DEFAULT_LOBBY_FEATURES;
@@ -999,7 +994,7 @@ export default function ChatContainer({
     const hardUnavailable = loadErrorKind === 'not-found' || loadErrorKind === 'unauthorized';
     if (onBack) {
       actions.push({
-        label: agentLabel ? `Back to ${agentLabel}` : 'Go back',
+        label: 'Go back',
         onClick: onBack,
         variant: hardUnavailable ? 'primary' : 'secondary',
         testId: 'unavailable-back',
@@ -1015,7 +1010,7 @@ export default function ChatContainer({
       testId: 'unavailable-retry',
     });
     return actions;
-  }, [loadErrorKind, onBack, onRefreshAgent, agentLabel, handleUnavailableRetry]);
+  }, [loadErrorKind, onBack, onRefreshAgent, handleUnavailableRetry]);
 
   if (pendingAgent) {
     return (
