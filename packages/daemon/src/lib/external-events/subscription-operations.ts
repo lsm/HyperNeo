@@ -37,7 +37,6 @@ export interface SubscriptionDependencies extends AgentSubscriptionDependencies 
   registerSubscription: (slot: SubscriptionSlot, topicPattern: string) => RunOutcome;
   unregisterSubscription: (slot: SubscriptionSlot, topicPattern: string) => RunOutcome;
   listRunSubscriptions: (workflowRunId: string, spaceId: string, nodeId?: string) => ListOutcome;
-  resolvePrimaryLinkUrl: (workflowRunId: string) => string;
 }
 
 const REJECTIONS = z.enum(['caller_denied', 'session_inactive', 'node_unresolved']);
@@ -116,7 +115,6 @@ const UnsubscribeInput = z
   })
   .strict()
   .transform(resolveTopicPattern);
-const PrInput = z.object({ prUrl: z.string().optional() }).strict();
 const ListInput = z
   .object({
     workflowRunId: z.string().min(1).optional(),
@@ -186,15 +184,6 @@ function resolveWriterSlot(
 ): { value: SubscriptionSlot } | { reason: 'node_unresolved' } {
   const slot = resolveWorkerNodeSlot(caller, subs);
   return slot?.taskId ? { value: { ...slot, taskId: slot.taskId } } : { reason: 'node_unresolved' };
-}
-
-export function admitSubscriptionWriter(
-  input: { spaceId?: string },
-  caller: OperationCaller,
-  subs: SubscriptionDependencies
-): { value: SubscriptionSlot } | { reason: Rejection } {
-  const space = admitSubscriptionSpace(input, caller, subs);
-  return 'reason' in space ? space : resolveWriterSlot(caller, subs);
 }
 
 export function resolveSubscriptionSubject(
@@ -301,29 +290,6 @@ function unsubscribeSubject(
   return 'accepted' in result ? result.reason : result;
 }
 
-function subscribePrEvents(
-  slot: SubscriptionSlot,
-  input: z.infer<typeof PrInput>,
-  subs: SubscriptionDependencies
-): Outcome {
-  const prUrl = input.prUrl || subs.resolvePrimaryLinkUrl(slot.workflowRunId) || '';
-  const parsed = prUrl ? parsePrUrl(prUrl) : null;
-  if (!parsed) {
-    return {
-      ok: false,
-      error: input.prUrl
-        ? `Could not parse GitHub PR URL: ${input.prUrl}`
-        : 'No PR URL found for this workflow run. Open a PR first or pass prUrl explicitly.',
-    };
-  }
-  const topicPattern = buildPrEventTopicPattern(parsed);
-  try {
-    return applyOutcome(topicPattern, subs.registerSubscription(slot, topicPattern));
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
-  }
-}
-
 function readSubscriptions(
   scope: { spaceId: string; workflowRunId: string },
   input: z.infer<typeof ListInput>,
@@ -333,18 +299,6 @@ function readSubscriptions(
   return outcome.success
     ? { ok: true as const, subscriptions: outcome.result, scope: { spaceId: scope.spaceId } }
     : { ok: false as const, error: outcome.error };
-}
-
-function writePipeline<Input, Result>(
-  name: string,
-  subs: SubscriptionDependencies,
-  apply: (slot: SubscriptionSlot, input: Input, subs: SubscriptionDependencies) => Result
-) {
-  return (superpipe({ subs })(name) as PipelineAPI)
-    .input(['input', 'caller'])
-    .pipe(admitSubscriptionWriter, ['input', 'caller', 'subs'], 'result:outcome')
-    .pipe(apply, ['outcome', 'input', 'subs'], 'outcome')
-    .endAsync('outcome') as (input: Input, caller: OperationCaller) => Promise<Result | Rejection>;
 }
 
 function subjectPipeline<Input extends { subject?: Subject }, Result>(
@@ -367,9 +321,6 @@ function subjectPipeline<Input extends { subject?: Subject }, Result>(
     caller: OperationCaller
   ) => Promise<Result | SubjectRejection>;
 }
-
-const SLOT_DOC =
-  'The subscribing slot (workflow run, node, agent, task) is resolved from the calling session, never from input, so only an active workflow worker can change its own subscriptions. Rejects caller_denied for any other caller, session_inactive when that session is not active in its Space, and node_unresolved when no node execution backs it.';
 
 const SUBJECT_DOC =
   'subject names what the subscription is recorded against and defaults to { type: "node" }. For the node subject the slot (workflow run, node, agent, task) is resolved from the calling session and never from input, so a worker can only change its own subscriptions. For { type: "agent", agentId } the target long-horizon agent must belong to the caller Space, which is derived from the calling session; an omitted spaceId defaults to that Space. Rejections are returned as a bare reason: caller_denied for a caller with no Space scope or one naming another Space, session_inactive when the calling session is not active in that Space, node_unresolved when no node execution backs a node-subject caller, agent_not_found when the named agent is unknown or belongs to another Space, and invalid_pattern when topicPattern is not a valid topic glob.';
@@ -395,14 +346,6 @@ export function createSubscriptionOperations(
       inputSchema: UnsubscribeInput,
       resultSchema: z.union([OutcomeSchema, SUBJECT_REJECTIONS]),
       execute: subjectPipeline('unsubscribe-external-event', subs, unsubscribeSubject),
-    }),
-    defineOperation({
-      name: 'event.external.pr.subscribe',
-      policy: { safetyClass: 'mutate', roles: NODE_EVENT_ROLES },
-      description: `Subscribe to GitHub PR events scoped to this run's PR, or to an explicit prUrl when the PR is not recorded on the run yet. ${SLOT_DOC}`,
-      inputSchema: PrInput,
-      resultSchema: z.union([OutcomeSchema, REJECTIONS]),
-      execute: writePipeline('subscribe-pr-events', subs, subscribePrEvents),
     }),
     defineOperation({
       name: 'event.external.subscription.list',
