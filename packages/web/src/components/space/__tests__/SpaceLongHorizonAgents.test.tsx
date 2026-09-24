@@ -86,7 +86,7 @@ vi.mock('../visual-editor/WorkflowModelSelect', () => ({
     <select
       data-testid={testId}
       value={value ?? ''}
-      onChange={(e) => {
+      onInput={(e) => {
         const next = (e.target as HTMLSelectElement).value || undefined;
         onChange(next, next ? { provider: 'anthropic', modelId: next } : undefined);
       }}

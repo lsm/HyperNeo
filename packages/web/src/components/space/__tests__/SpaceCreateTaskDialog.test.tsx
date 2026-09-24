@@ -35,7 +35,7 @@ vi.mock('../../../lib/toast', () => ({
 }));
 
 vi.mock('../../ui/Modal', () => ({
-  Modal: ({ isOpen, children, title, onClose }) => {
+  Modal: ({ isOpen, children, title, onClose, footer }) => {
     if (!isOpen) return null;
     return (
       <div role="dialog" aria-label={title}>
@@ -43,6 +43,7 @@ vi.mock('../../ui/Modal', () => ({
           X
         </button>
         {children}
+        {footer}
       </div>
     );
   },
@@ -356,12 +357,12 @@ describe('SpaceCreateTaskDialog', () => {
   });
 
   it('shows runAt input for one-time trigger', () => {
-    const { getByLabelText, getByText, container } = render(
+    const { getByLabelText, getByText } = render(
       <SpaceCreateTaskDialog isOpen={true} onClose={onClose} />
     );
     fireEvent.click(getByLabelText('Schedule this task'));
     fireEvent.click(getByText('One-time'));
-    expect(container.querySelector('input[type="datetime-local"]')).toBeTruthy();
+    expect(document.body.querySelector('input[type="datetime-local"]')).toBeTruthy();
   });
 
   it('shows cron input for recurring trigger', () => {
@@ -388,15 +389,16 @@ describe('SpaceCreateTaskDialog', () => {
   });
 
   it('shows validation error when one-time runAt is in the past', async () => {
-    const { getByLabelText, getByText, getByPlaceholderText, getByRole, findByText, container } =
-      render(<SpaceCreateTaskDialog isOpen={true} onClose={onClose} />);
+    const { getByLabelText, getByText, getByPlaceholderText, getByRole, findByText } = render(
+      <SpaceCreateTaskDialog isOpen={true} onClose={onClose} />
+    );
     fireEvent.input(getByPlaceholderText('e.g., Implement authentication module'), {
       target: { value: 'My scheduled task' },
     });
     fireEvent.click(getByLabelText('Schedule this task'));
     fireEvent.click(getByText('One-time'));
 
-    const dtInput = container.querySelector('input[type="datetime-local"]');
+    const dtInput = document.body.querySelector('input[type="datetime-local"]');
     const past = new Date(Date.now() - 172800000);
     const pad = (n) => String(n).padStart(2, '0');
     const pastValue = `${past.getFullYear()}-${pad(past.getMonth() + 1)}-${pad(past.getDate())}T${pad(past.getHours())}:${pad(past.getMinutes())}`;

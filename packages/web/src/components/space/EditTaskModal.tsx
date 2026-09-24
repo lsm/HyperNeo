@@ -98,6 +98,7 @@ export function EditTaskModal({
           onCancel={() => {
             if (!busy) onCancel();
           }}
+          cancelDisabled={busy}
           submitLabel="Save Changes"
           submitting={busy}
           submitDisabled={!canConfirm}

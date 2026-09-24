@@ -162,7 +162,7 @@ describe('EditTaskModal', () => {
     expect(title.disabled).toBe(true);
     expect(description.disabled).toBe(true);
     expect(priority.disabled).toBe(true);
-    expect(confirm.textContent).toContain('Saving');
+    expect(confirm.querySelector('.animate-spin')).toBeTruthy();
   });
 
   it('busy=true does not call onCancel when cancel is clicked', () => {

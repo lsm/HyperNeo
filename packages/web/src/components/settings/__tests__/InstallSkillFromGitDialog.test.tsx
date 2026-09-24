@@ -29,16 +29,19 @@ vi.mock('../../ui/Modal.tsx', () => ({
     onClose,
     title,
     children,
+    footer,
   }: {
     isOpen: boolean;
     onClose: () => void;
     title: string;
     children: import('preact').ComponentChildren;
+    footer?: import('preact').ComponentChildren;
   }) =>
     isOpen ? (
       <div data-testid="modal">
         <h2 data-testid="modal-title">{title}</h2>
         <div data-testid="modal-content">{children}</div>
+        {footer && <div data-testid="modal-footer">{footer}</div>}
         <button data-testid="modal-close" onClick={onClose}>
           Close
         </button>

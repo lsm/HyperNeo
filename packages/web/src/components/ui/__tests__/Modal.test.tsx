@@ -1325,7 +1325,7 @@ describe('Modal', () => {
           <p>Content</p>
         </Modal>
       );
-      const modal = document.body.querySelector('.shadow-2xl');
+      const modal = document.body.querySelector('.shadow-xl');
       expect(modal).toBeTruthy();
     });
 

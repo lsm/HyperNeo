@@ -159,7 +159,7 @@ export function WorkflowModelSelect({
       data-testid={testId}
       id={id}
       value={selectedValue}
-      onChange={(e) => {
+      onInput={(e) => {
         const nextValue = (e.currentTarget as HTMLSelectElement).value;
         if (!nextValue) {
           setSelectedModelId(undefined);

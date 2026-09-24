@@ -290,9 +290,7 @@ export function SpaceCreateTaskDialog({ isOpen, onClose, onCreated }: SpaceCreat
         <FormField label="Priority">
           <select
             value={priority}
-            onChange={(e) =>
-              setPriority((e.target as HTMLSelectElement).value as SpaceTaskPriority)
-            }
+            onInput={(e) => setPriority((e.target as HTMLSelectElement).value as SpaceTaskPriority)}
             class={FORM_CONTROL_CLASS}
           >
             {PRIORITY_OPTIONS.map((opt) => (
@@ -307,7 +305,7 @@ export function SpaceCreateTaskDialog({ isOpen, onClose, onCreated }: SpaceCreat
           <FormField label="Workspace">
             <select
               value={workspacePath ?? undefined}
-              onChange={(e) => setWorkspacePath((e.target as HTMLSelectElement).value)}
+              onInput={(e) => setWorkspacePath((e.target as HTMLSelectElement).value)}
               data-testid="task-workspace-select"
               class={FORM_CONTROL_CLASS}
             >
@@ -420,7 +418,7 @@ export function SpaceCreateTaskDialog({ isOpen, onClose, onCreated }: SpaceCreat
               <FormField label="Timezone">
                 <select
                   value={timezone}
-                  onChange={(e) => setTimezone((e.target as HTMLSelectElement).value)}
+                  onInput={(e) => setTimezone((e.target as HTMLSelectElement).value)}
                   class={FORM_CONTROL_CLASS}
                 >
                   {COMMON_TIMEZONES.map((tz) => (

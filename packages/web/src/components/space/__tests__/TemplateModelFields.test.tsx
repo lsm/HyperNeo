@@ -98,7 +98,7 @@ vi.mock('../visual-editor/WorkflowModelSelect', () => ({
         data-testid={testId}
         id={id}
         value={value ?? ''}
-        onChange={(e) => {
+        onInput={(e) => {
           const select = e.currentTarget as HTMLSelectElement;
           const nextValue = select.value || undefined;
           const selected = select.selectedOptions[0];

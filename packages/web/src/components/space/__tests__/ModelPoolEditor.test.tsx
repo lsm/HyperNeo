@@ -31,7 +31,7 @@ vi.mock('../visual-editor/WorkflowModelSelect', () => ({
       data-testid={testId}
       value={value ?? ''}
       ref={() => onModelsLoad?.(mockLoadedModels)}
-      onChange={(e) => {
+      onInput={(e) => {
         const value = (e.target as HTMLSelectElement).value || undefined;
         const loaded = mockLoadedModels.find((m) => m.id === value);
         onChange(

@@ -1,4 +1,4 @@
-import type { ComponentChildren } from 'preact';
+import { toChildArray, type ComponentChildren, type VNode } from 'preact';
 import { cn } from '../../lib/utils.ts';
 import { Button, type ButtonVariant } from './Button.tsx';
 
@@ -23,13 +23,30 @@ export function FormField({
   class?: string;
   children: ComponentChildren;
 }) {
+  const childArray = toChildArray(children);
+  const onlyChild = childArray.length === 1 ? (childArray[0] as VNode) : null;
+  const wrapsSingleControl =
+    onlyChild != null &&
+    typeof onlyChild.type === 'string' &&
+    ['input', 'textarea', 'select'].includes(onlyChild.type);
+  const caption = (
+    <span class={FORM_LABEL_CLASS}>
+      {label}
+      {required && <span class="ml-1 text-danger">*</span>}
+      {optional && <span class="ml-2 text-xs text-fg-faint">(optional)</span>}
+    </span>
+  );
+  if (!wrapsSingleControl) {
+    return (
+      <div class={cn('block', className)}>
+        {caption}
+        {children}
+      </div>
+    );
+  }
   return (
     <label class={cn('block', className)}>
-      <span class={FORM_LABEL_CLASS}>
-        {label}
-        {required && <span class="ml-1 text-danger">*</span>}
-        {optional && <span class="ml-2 text-xs text-fg-faint">(optional)</span>}
-      </span>
+      {caption}
       {children}
     </label>
   );
