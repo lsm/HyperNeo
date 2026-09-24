@@ -7577,6 +7577,8 @@ describe('NAMED_QUERY_REGISTRY', () => {
 						status TEXT,
 						processing_state TEXT,
 						last_active_at TEXT,
+						metadata TEXT,
+						parent_id TEXT,
 						type TEXT,
 						session_context TEXT,
 						space_id TEXT GENERATED ALWAYS AS (

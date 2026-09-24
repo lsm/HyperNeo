@@ -982,7 +982,7 @@ describe('SessionRepository', () => {
       repository.createSession(createDefaultSession({ id: 'parent' }));
       repository.createSession(createDefaultSession({ id: 'child', parentSessionId: 'parent' }));
 
-      repository.archiveSession('parent');
+      repository.updateSession('parent', { status: 'archived' });
 
       expect(repository.getSession('parent')?.status).toBe('archived');
       expect(repository.getSession('child')?.parentSessionId).toBeNull();

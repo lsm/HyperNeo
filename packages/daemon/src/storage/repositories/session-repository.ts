@@ -299,6 +299,7 @@ export class SessionRepository {
       const shouldRebuildSearchRows =
         updates.status !== undefined || updates.type !== undefined || 'context' in updates;
       if (updates.status === 'archived') {
+        this.db.prepare(`UPDATE sessions SET parent_id = NULL WHERE parent_id = ?`).run(id);
         this.deleteMessageSearchRows(id);
       } else if (shouldRebuildSearchRows) {
         this.rebuildMessageSearchRows(id, now);
@@ -446,16 +447,7 @@ export class SessionRepository {
   }
 
   archiveSession(id: string): void {
-    const stmt = this.db.prepare(`UPDATE sessions SET status = 'archived' WHERE id = ?`);
-    const detachChildren = this.db.prepare(
-      `UPDATE sessions SET parent_id = NULL WHERE parent_id = ?`
-    );
-    const tx = this.db.transaction((sessionId: string) => {
-      stmt.run(sessionId);
-      detachChildren.run(sessionId);
-    });
-    tx(id);
-    this.deleteMessageSearchRows(id);
+    this.updateSession(id, { status: 'archived' });
   }
 
   rowToSession(row: Record<string, unknown>): Session {
