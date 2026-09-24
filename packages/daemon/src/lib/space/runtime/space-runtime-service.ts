@@ -189,7 +189,6 @@ export class SpaceRuntimeService {
   private readonly actorRegistry: SpaceActorRegistryAdapter | null;
   private readonly auditLogRepo: McpAuditLogRepository;
   private readonly templateManager: SpaceAgentTemplateManager;
-  private readonly memberSessionDbQueryServers = new Map<string, DbQueryMcpServer>();
   private readonly longTermAgentDbQueryServers = new Map<string, DbQueryMcpServer>();
   private resumeStalledRecoveryPromise: Promise<void> = Promise.resolve();
   private provisioningPromise: Promise<void> | null = null;
@@ -1165,15 +1164,6 @@ export class SpaceRuntimeService {
     }
     this.unsubscribers.length = 0;
 
-    for (const [sessionId, server] of this.memberSessionDbQueryServers) {
-      try {
-        server.close();
-      } catch (error) {
-        log.warn(`Failed to close db-query server for member session ${sessionId}:`, error);
-      }
-    }
-    this.memberSessionDbQueryServers.clear();
-
     for (const [sessionId, server] of this.longTermAgentDbQueryServers) {
       try {
         server.close();
@@ -1211,7 +1201,6 @@ export class SpaceRuntimeService {
     const unsubSessionDeleted = internalEventBus.subscribe(
       'session.deleted',
       (event) => {
-        this.releaseMemberSessionDbQuery(event.sessionId);
         this.releaseLongTermAgentDbQuery(event.sessionId);
       },
       { subscriberName: 'SpaceRuntimeService.sessionDeleted' }
@@ -1293,17 +1282,6 @@ export class SpaceRuntimeService {
     if (policy.attachLongTermAgentTools) {
       await this.attachLongTermAgentMcpServersForSession(session, options);
     }
-  }
-
-  private releaseMemberSessionDbQuery(sessionId: string): void {
-    const server = this.memberSessionDbQueryServers.get(sessionId);
-    if (!server) return;
-    try {
-      server.close();
-    } catch (err) {
-      log.warn(`Failed to close db-query server for member session ${sessionId}:`, err);
-    }
-    this.memberSessionDbQueryServers.delete(sessionId);
   }
 
   private async provisionExistingSpaces(): Promise<void> {

@@ -1429,6 +1429,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   deps.sessionManager.setCallerScopeResolver(
     createSpaceCallerScopeResolver({
       getSession: (sessionId) => deps.db.getSession(sessionId),
+      hasDirectWorkerProvenance: (sessionId) =>
+        directTaskExecutionRepo.hasSessionProvenance(sessionId),
+      resolveDirectWorker: directTaskWorkerResolver,
       taskRepo: spaceTaskRepo,
       nodeExecutionRepo,
       longHorizonAgentRepo,

@@ -3455,9 +3455,9 @@ describe('SpaceRuntimeService', () => {
 
       const memberDbQueryServers = (
         svc as unknown as {
-          memberSessionDbQueryServers: Map<string, { close: () => void }>;
+          longTermAgentDbQueryServers: Map<string, { close: () => void }>;
         }
-      ).memberSessionDbQueryServers;
+      ).longTermAgentDbQueryServers;
       const closeMock = mock(() => {});
       memberDbQueryServers.set('worker-session-uuid-456', { close: closeMock });
 
