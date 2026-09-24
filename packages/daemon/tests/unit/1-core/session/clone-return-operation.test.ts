@@ -52,6 +52,7 @@ beforeEach(() => {
   deps = {
     getSession: (id) => sessions.getSession(id),
     getSpace: async () => space,
+    sessionSpaceId: (session) => session.context?.spaceId,
     getSessionStatus: () => status,
     markReturned: (id, returnedAt) => {
       const current = sessions.getSession(id)!;

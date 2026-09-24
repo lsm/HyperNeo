@@ -20,8 +20,12 @@ export function registerSessionOperations(context: FamilyOperationContext): Oper
   const returnToParent = createReturnSessionCloneOperation({
     getSession: scopeDeps.getSession,
     getSpace: (spaceId) => context.deps.spaceManager.getSpace(spaceId),
+    sessionSpaceId: (session) => resolveSessionSpaceId(session, scopeDeps),
     getSessionStatus: (sessionId) =>
-      context.deps.sessionManager.getCachedSession(sessionId)?.getProcessingState().status ?? '',
+      (
+        context.taskAgentManager?.getCachedAgentSessionById(sessionId) ??
+        context.deps.sessionManager.getCachedSession(sessionId)
+      )?.getProcessingState().status ?? '',
     markReturned: (sessionId, returnedAt) => {
       const current = context.deps.db.getSession(sessionId);
       if (!current) return;

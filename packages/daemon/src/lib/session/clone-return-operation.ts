@@ -42,6 +42,7 @@ const ReturnResultSchema = z.union([
 export interface ReturnSessionCloneDependencies {
   readonly getSession: (sessionId: string) => Session | null;
   readonly getSpace: (spaceId: string) => Promise<Space | null>;
+  readonly sessionSpaceId: (session: Session) => string | undefined;
   readonly getSessionStatus: (sessionId: string) => string;
   readonly markReturned: (sessionId: string, returnedAt: string) => void;
   readonly getDatabase: () => BunDatabase;
@@ -77,7 +78,7 @@ export async function loadParent(
   if (!parent || parent.status !== 'active') {
     return { reason: reject('parent_unavailable', 'The parent session is not active') };
   }
-  const spaceId = parent.context?.spaceId;
+  const spaceId = deps.sessionSpaceId(parent);
   if (spaceId && 'reason' in admitSpaceStage(await deps.getSpace(spaceId))) {
     return { reason: reject('parent_unavailable', `Space is not active: ${spaceId}`) };
   }
