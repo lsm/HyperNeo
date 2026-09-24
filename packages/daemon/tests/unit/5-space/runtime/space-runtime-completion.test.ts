@@ -206,6 +206,14 @@ class MockTaskAgentManager {
     return this.isSessionAlive(sessionId);
   }
 
+  async resumePersistedSubSession(_sessionId: string): Promise<boolean> {
+    return false;
+  }
+
+  getAgentSessionById(_sessionId: string): null {
+    return null;
+  }
+
   isSessionOnPostApprovalRoute(_args: {
     sessionId: string;
     taskId: string;
@@ -1042,7 +1050,6 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 
     test('multi-agent step: completion detected when canonical task flips terminal', async () => {
       const tam = new MockTaskAgentManager(nodeExecutionRepo);
-      tam.isSessionAlive = () => true;
       const rt = makeRuntimeWithTam({ taskAgentManager: tam as unknown as TaskAgentManager });
       const workflow = workflowManager.createWorkflow({
         spaceId: SPACE_ID,
@@ -1080,7 +1087,9 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
       await rt.executeTick();
 
       expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
+      expect(taskRepo.getTask(tasks[0].id)?.status).toBe('done');
       expect(collector.events.filter((e) => e.kind === 'workflow_run_completed')).toHaveLength(1);
+      expect(collector.events.filter((e) => e.kind === 'workflow_run_blocked')).toHaveLength(0);
 
       await rt.executeTick();
       expect(collector.events.filter((e) => e.kind === 'workflow_run_completed')).toHaveLength(1);

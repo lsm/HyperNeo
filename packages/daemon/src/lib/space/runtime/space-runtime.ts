@@ -6688,6 +6688,8 @@ export class SpaceRuntime {
           );
         }
 
+        if (runIsComplete) continue;
+
         const reason = `Worker session ${execution.agentSessionId} is no longer alive and could not be restored; manual handoff required`;
         await this.blockWorkerForManualHandoff(
           runId,
