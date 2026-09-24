@@ -113,11 +113,3 @@ describe('createSpaceCallerScopeResolver', () => {
     });
   });
 });
-
-describe('resolveSessionSpaceId', () => {
-  test('falls back to the chat session id when the policy has no space', () => {
-    const chat = session('space:chat:space-8', 'space_chat');
-    expect(resolveSessionSpaceId(chat, deps())).toBe('space-8');
-    expect(resolveSessionSpaceId(null, deps())).toBeUndefined();
-  });
-});

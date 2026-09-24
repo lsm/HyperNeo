@@ -206,9 +206,7 @@ function createMockSessionManager(): SessionManager {
 }
 
 function createMockSpaceRuntimeService(): SpaceRuntimeService {
-  return {
-    setupSpaceAgentSession: mock(async () => {}),
-  } as unknown as SpaceRuntimeService;
+  return {} as unknown as SpaceRuntimeService;
 }
 
 describe('space-handlers', () => {
@@ -420,7 +418,6 @@ describe('space-handlers', () => {
       expect(spaceManager.createSpace).toHaveBeenCalledTimes(1);
       expect(sessionManager.createSession).not.toHaveBeenCalled();
       expect(spaceManager.addSession).not.toHaveBeenCalled();
-      expect(runtimeService.setupSpaceAgentSession).not.toHaveBeenCalled();
     });
 
     it('does not include seedWarnings when all agents seed successfully', async () => {
@@ -648,7 +645,6 @@ describe('space-handlers', () => {
 
     beforeEach(async () => {
       mockRuntimeService = {
-        setupSpaceAgentSession: mock(async () => {}),
         stopActiveWork: mock(async () => {}),
       } as unknown as SpaceRuntimeService;
       await setup(mockSpace, undefined, mockRuntimeService);
@@ -758,7 +754,6 @@ describe('space-handlers', () => {
 
     it('stops active work before deleting when a runtime service is present', async () => {
       const mockRuntimeService = {
-        setupSpaceAgentSession: mock(async () => {}),
         stopActiveWork: mock(async () => {}),
       } as unknown as SpaceRuntimeService;
       await setup(mockSpace, undefined, mockRuntimeService);
@@ -792,7 +787,6 @@ describe('space-handlers', () => {
 
     it('fences the space before draining so a racing direct start is refused admission', async () => {
       const mockRuntimeService = {
-        setupSpaceAgentSession: mock(async () => {}),
         stopActiveWork: mock(async () => {}),
       } as unknown as SpaceRuntimeService;
       await setup(mockSpace, undefined, mockRuntimeService);
@@ -817,7 +811,6 @@ describe('space-handlers', () => {
 
     it('refuses space.start while a deletion is draining, then allows it again', async () => {
       const mockRuntimeService = {
-        setupSpaceAgentSession: mock(async () => {}),
         stopActiveWork: mock(async () => {}),
       } as unknown as SpaceRuntimeService;
       await setup(mockSpace, undefined, mockRuntimeService);
@@ -845,7 +838,6 @@ describe('space-handlers', () => {
 
     it('publishes the persisted stop when the drain throws after fencing', async () => {
       const mockRuntimeService = {
-        setupSpaceAgentSession: mock(async () => {}),
         stopActiveWork: mock(async () => {
           throw new Error('drain exploded');
         }),
@@ -895,7 +887,6 @@ describe('space-handlers', () => {
         releaseDrain = resolve;
       });
       const mockRuntimeService = {
-        setupSpaceAgentSession: mock(async () => {}),
         stopActiveWork: mock(() => {
           drainStarted.resolve();
           return drain;
@@ -919,7 +910,6 @@ describe('space-handlers', () => {
     it('publishes the current space, not the pre-drain snapshot, when a delete fails', async () => {
       const renamed = { ...mockSpace, name: 'Renamed mid-drain', stopped: true };
       const mockRuntimeService = {
-        setupSpaceAgentSession: mock(async () => {}),
         stopActiveWork: mock(async () => {
           (spaceManager.getSpace as ReturnType<typeof mock>).mockResolvedValue(renamed);
           throw new Error('drain exploded');
@@ -938,7 +928,6 @@ describe('space-handlers', () => {
 
     it('surfaces the original failure even when the re-read for the event throws', async () => {
       const mockRuntimeService = {
-        setupSpaceAgentSession: mock(async () => {}),
         stopActiveWork: mock(async () => {
           throw new Error('drain exploded');
         }),
@@ -956,7 +945,6 @@ describe('space-handlers', () => {
 
     it('clears the deletion lock when the drain throws', async () => {
       const mockRuntimeService = {
-        setupSpaceAgentSession: mock(async () => {}),
         stopActiveWork: mock(async () => {
           throw new Error('drain exploded');
         }),
@@ -969,7 +957,6 @@ describe('space-handlers', () => {
 
     it('does not fence or drain when the space is absent', async () => {
       const mockRuntimeService = {
-        setupSpaceAgentSession: mock(async () => {}),
         stopActiveWork: mock(async () => {}),
       } as unknown as SpaceRuntimeService;
       await setup(null, undefined, mockRuntimeService);
@@ -981,7 +968,6 @@ describe('space-handlers', () => {
 
     it('rejects a ghost id without calling stopActiveWork', async () => {
       const mockRuntimeService = {
-        setupSpaceAgentSession: mock(async () => {}),
         stopActiveWork: mock(async () => {}),
       } as unknown as SpaceRuntimeService;
       await setup(null, undefined, mockRuntimeService);

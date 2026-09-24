@@ -55,7 +55,6 @@ test('reserved and running identities never inherit legacy or member tools', () 
       isWorkflowWorker: false,
       requiredServers: [],
       attachGenericSpaceTools: false,
-      attachSpaceChatTools: false,
       attachLongTermAgentTools: false,
     });
   }
@@ -180,31 +179,4 @@ test('ordinary query startup still invokes its existing runner', async () => {
   } as unknown as AgentSession;
   await AgentSession.prototype.startStreamingQuery.call(target);
   expect(start).toHaveBeenCalledTimes(1);
-});
-
-test('space chat setup rejects conflicting direct provenance before loading or rewriting its session', async () => {
-  const coordinatorId = `space:chat:${spaceId}`;
-  const coordinator = {
-    ...createTestSession(coordinatorId),
-    type: 'space_chat' as const,
-    context: { spaceId },
-  };
-  sessions.createSession(coordinator, { enforceWorkspaceOwnership: false });
-  const task = tasks.createTask({ spaceId, title: 'Conflict', description: '' });
-  attempts.select(task.id);
-  expect(attempts.claim(task.id, 'conflicting-attempt', coordinatorId)).not.toBeNull();
-  db.prepare('DELETE FROM space_tasks WHERE id = ?').run(task.id);
-  expect(attempts.get('conflicting-attempt')).toBeNull();
-  const getSessionAsync = mock(async () => null);
-  const service = Object.assign(Object.create(SpaceRuntimeService.prototype), {
-    config: { db, sessionManager: { getSessionAsync } },
-  }) as SpaceRuntimeService;
-  await service.setupSpaceAgentSession(new SpaceRepository(db).getSpace(spaceId)!, {
-    replayPendingMessages: true,
-  });
-  expect(getSessionAsync).not.toHaveBeenCalled();
-  expect(sessions.getSession(coordinatorId)).toMatchObject({
-    type: 'space_chat',
-    context: { spaceId },
-  });
 });

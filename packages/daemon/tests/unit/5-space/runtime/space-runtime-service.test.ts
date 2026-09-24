@@ -875,7 +875,7 @@ describe('SpaceRuntimeService', () => {
     });
   });
 
-  describe('setupSpaceAgentSession()', () => {
+  describe('agent session delivery', () => {
     function makeSession() {
       return {
         setRuntimeMcpServers: mock(() => {}),
@@ -924,150 +924,6 @@ describe('SpaceRuntimeService', () => {
         internalEventBus,
       };
     }
-
-    test('attaches the MCP server to the space:chat session (merge, not replace)', async () => {
-      const session = makeSession();
-      const sessionManager = makeSessionManager(session);
-      const svc = new SpaceRuntimeService(buildConfigWithSession(sessionManager));
-
-      await svc.setupSpaceAgentSession(mockSpace);
-
-      expect(sessionManager.getSessionAsync).toHaveBeenCalledWith(`space:chat:${mockSpace.id}`);
-      expect(session.mergeRuntimeMcpServers).toHaveBeenCalledTimes(1);
-      expect(session.setRuntimeMcpServers).not.toHaveBeenCalled();
-      const [mcpArg] = (
-        session.mergeRuntimeMcpServers as Mock<typeof session.mergeRuntimeMcpServers>
-      ).mock.calls[0];
-      expect(typeof session.onMissingSpaceChatMcpServers).toBe('function');
-    });
-
-    test('provisions the space:chat session with the 24-tool sdkToolsPreset (Task #794)', async () => {
-      const session = makeSession();
-      const sessionManager = makeSessionManager(session);
-      const svc = new SpaceRuntimeService(buildConfigWithSession(sessionManager));
-
-      await svc.setupSpaceAgentSession(mockSpace);
-
-      expect(session.updateConfig).toHaveBeenCalledWith(
-        expect.objectContaining({
-          sdkToolsPreset: [...LONG_HORIZON_AGENT_BUILTIN_TOOLS],
-        })
-      );
-    });
-
-    test('does not rewrite sdkToolsPreset when the preset is already set (idempotent)', async () => {
-      const session = makeSession();
-      (session.getSessionData as Mock<typeof session.getSessionData>).mockReturnValue({
-        id: 'session-1',
-        metadata: {},
-        config: { sdkToolsPreset: [...LONG_HORIZON_AGENT_BUILTIN_TOOLS] },
-      } as Session);
-      const sessionManager = makeSessionManager(session);
-      const svc = new SpaceRuntimeService(buildConfigWithSession(sessionManager));
-
-      await svc.setupSpaceAgentSession(mockSpace);
-
-      expect(session.updateConfig).not.toHaveBeenCalled();
-    });
-
-    test('missing Space chat MCP callback re-runs setup and re-attaches tools', async () => {
-      const session = makeSession();
-      const sessionManager = makeSessionManager(session);
-      const svc = new SpaceRuntimeService(buildConfigWithSession(sessionManager));
-
-      await svc.setupSpaceAgentSession(mockSpace);
-      expect(session.mergeRuntimeMcpServers).toHaveBeenCalledTimes(1);
-      expect(typeof session.onMissingSpaceChatMcpServers).toBe('function');
-
-      await session.onMissingSpaceChatMcpServers?.('space:chat:space-1', ['space-actions']);
-
-      expect(sessionManager.getSessionAsync).toHaveBeenCalledTimes(2);
-      expect(session.mergeRuntimeMcpServers).toHaveBeenCalledTimes(2);
-      const [repairedMcpArg] = (
-        session.mergeRuntimeMcpServers as Mock<typeof session.mergeRuntimeMcpServers>
-      ).mock.calls[1];
-    });
-
-    test('no-op when session does not exist in DB', async () => {
-      const sessionManager = makeSessionManager(null);
-      const svc = new SpaceRuntimeService(buildConfigWithSession(sessionManager));
-
-      await expect(svc.setupSpaceAgentSession(mockSpace)).resolves.toBeUndefined();
-    });
-
-    test('no-op when sessionManager is not configured', async () => {
-      const svc = new SpaceRuntimeService(buildConfig(createMockSpaceManager()));
-
-      await expect(svc.setupSpaceAgentSession(mockSpace)).resolves.toBeUndefined();
-    });
-
-    test('start() provisions existing spaces', async () => {
-      const session = makeSession();
-      const sessionManager = makeSessionManager(session);
-      const spaceMgr: SpaceManager = {
-        getSpace: mock(async () => mockSpace),
-        listSpaces: mock(async () => [mockSpace]),
-      } as unknown as SpaceManager;
-      const svc = new SpaceRuntimeService(buildConfigWithSession(sessionManager, spaceMgr));
-
-      svc.start();
-      await new Promise<void>((resolve) => setTimeout(resolve, 0));
-
-      expect(spaceMgr.listSpaces).toHaveBeenCalled();
-      expect(sessionManager.getSessionAsync).toHaveBeenCalledWith(`space:chat:${mockSpace.id}`);
-
-      await svc.stop();
-    });
-
-    test('session.reset re-provisions reset Space chats before query replay', async () => {
-      const session = makeSession();
-      const sessionManager = makeSessionManager(session);
-      let resetHandler:
-        | ((event: { sessionId: string; session: Session; restartQuery: boolean }) => Promise<void>)
-        | undefined;
-      const sessionManagerWithSubscriber = {
-        ...sessionManager,
-        registerSessionResetSubscriber: mock((handler: typeof resetHandler) => {
-          resetHandler = handler;
-          return () => {};
-        }),
-      } as unknown as SessionManager;
-      const internalEventBus = {
-        subscribe: mock(() => () => {}),
-        publish: mock(async () => ({ delivered: 0, failures: [] })),
-        publishAsync: mock(() => {}),
-      } as unknown as SpaceRuntimeServiceConfig['internalEventBus'];
-      const config: SpaceRuntimeServiceConfig = {
-        ...buildConfigWithSession(
-          sessionManagerWithSubscriber,
-          createMockSpaceManager(),
-          internalEventBus
-        ),
-      };
-      const svc = new SpaceRuntimeService(config);
-
-      svc.start();
-      expect(resetHandler).toBeDefined();
-
-      await resetHandler?.({
-        sessionId: 'space:chat:space-1',
-        session: {
-          id: 'space:chat:space-1',
-          type: 'space_chat',
-          context: { spaceId: 'space-1' },
-        } as Session,
-        restartQuery: true,
-      });
-
-      expect(sessionManager.getSessionAsync).toHaveBeenCalledWith('space:chat:space-1');
-      expect(session.mergeRuntimeMcpServers).toHaveBeenCalled();
-      const [mcpArg] = (
-        session.mergeRuntimeMcpServers as Mock<typeof session.mergeRuntimeMcpServers>
-      ).mock.calls.at(-1)!;
-      expect(typeof session.onMissingSpaceChatMcpServers).toBe('function');
-
-      await svc.stop();
-    });
 
     test('long-horizon delivery starts inactive session without worker inbox', async () => {
       const sessionId = longTermAgentSessionId(mockSpace.id, 'lh-agent-1');
@@ -2354,9 +2210,6 @@ describe('SpaceRuntimeService', () => {
         goalService,
         outcomeNotificationRepo,
       });
-      (
-        svc as unknown as { setupSpaceAgentSession: (space: Space) => Promise<void> }
-      ).setupSpaceAgentSession = async () => {};
 
       await svc.deliverGoalOutcomeWake(notification);
 
@@ -3097,18 +2950,6 @@ describe('SpaceRuntimeService', () => {
       });
     });
 
-    test('skips space_chat sessions (handled by setupSpaceAgentSession)', async () => {
-      const agent = makeMemberAgentSession();
-      const sessionManager = makeSessionManager(agent);
-      const svc = new SpaceRuntimeService(buildMemberConfig({ sessionManager }));
-
-      await svc.attachSpaceToolsToMemberSession(
-        makeMemberSession({ type: 'space_chat', id: `space:chat:${mockSpace.id}` })
-      );
-
-      expect(agent.mergeRuntimeMcpServers).not.toHaveBeenCalled();
-    });
-
     test('skips workflow workers identified by node execution ownership', async () => {
       const agent = makeMemberAgentSession();
       const sessionManager = makeSessionManager(agent);
@@ -3734,44 +3575,6 @@ describe('SpaceRuntimeService', () => {
       await svc.stop();
     });
 
-    test('does NOT attach for space_chat sessions (handled by setupSpaceAgentSession)', async () => {
-      const agent = makeMemberAgentSession();
-      const sessionManager = {
-        getSessionAsync: mock(async () => agent),
-        getSession: mock(() => agent),
-        getOperationRegistry: mock(() => createOperationRegistry([])),
-        listSessions: mock(() => [] as Session[]),
-      } as unknown as SessionManager;
-
-      const internalEventBus = await createTestInternalEventBus('space-rts-test-space-chat');
-      const svc = new SpaceRuntimeService({
-        db: {} as BunDatabase,
-        spaceManager: createMockSpaceManager(mockSpace),
-        spaceWorkflowManager: { listWorkflows: mock(() => []) } as unknown as SpaceWorkflowManager,
-        workflowRunRepo: {} as SpaceWorkflowRunRepository,
-        taskRepo: {} as SpaceTaskRepository,
-        nodeExecutionRepo: makeNoopNodeExecutionRepo(),
-        tickIntervalMs: 60_000,
-        sessionManager,
-        internalEventBus,
-      });
-      svc.start();
-
-      const chatSession = makeMemberSession({
-        type: 'space_chat',
-        id: `space:chat:${mockSpace.id}`,
-      });
-      await internalEventBus.publish('session.created', {
-        sessionId: chatSession.id,
-        session: chatSession,
-      });
-      await new Promise<void>((resolve) => setTimeout(resolve, 10));
-
-      expect(agent.mergeRuntimeMcpServers).not.toHaveBeenCalled();
-
-      await svc.stop();
-    });
-
     test('does NOT attach for workflow workers identified by node execution ownership', async () => {
       const agent = makeMemberAgentSession();
       const sessionManager = {
@@ -3893,25 +3696,16 @@ describe('SpaceRuntimeService', () => {
       } as unknown as Session;
     }
 
-    test('ready() resolves only after BOTH the chat-session sweep and the member-session sweep have completed', async () => {
-      const chatAgent = makeSession();
+    test('ready() resolves only after the member-session sweep has completed', async () => {
       const memberAgent = makeMemberAgentSession();
 
-      let resolveChat!: () => void;
-      const chatGate = new Promise<void>((r) => {
-        resolveChat = r;
-      });
       let resolveMember!: () => void;
       const memberGate = new Promise<void>((r) => {
         resolveMember = r;
       });
 
       const sessionManager = {
-        getSessionAsync: mock(async (id: string) => {
-          if (id === `space:chat:${mockSpace.id}`) {
-            await chatGate;
-            return chatAgent;
-          }
+        getSessionAsync: mock(async () => {
           await memberGate;
           return memberAgent;
         }),
@@ -3948,15 +3742,10 @@ describe('SpaceRuntimeService', () => {
       await new Promise<void>((r) => setTimeout(r, 5));
       expect(readyResolved).toBe(false);
 
-      resolveChat();
-      await new Promise<void>((r) => setTimeout(r, 5));
-      expect(readyResolved).toBe(false);
-
       resolveMember();
       await readyPromise;
       expect(readyResolved).toBe(true);
 
-      expect(chatAgent.mergeRuntimeMcpServers).toHaveBeenCalledTimes(1);
       expect(memberAgent.mergeRuntimeMcpServers).toHaveBeenCalledTimes(1);
 
       await svc.stop();
@@ -4470,9 +4259,6 @@ describe('long-term agent delivery — id→session routing table', () => {
     (
       svc as unknown as { attachLongTermAgentMcpServers: () => void }
     ).attachLongTermAgentMcpServers = () => {};
-    (
-      svc as unknown as { setupSpaceAgentSession: (space: Space) => Promise<void> }
-    ).setupSpaceAgentSession = async () => {};
     return { svc, createCalls, lookupIds };
   }
 

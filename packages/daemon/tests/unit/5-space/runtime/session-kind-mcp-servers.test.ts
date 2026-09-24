@@ -173,7 +173,6 @@ describe('session kind MCP server attachment', () => {
 
       expect(resolved).toEqual([
         ['agent_card', 'long_term_agent', 'space-runtime', []],
-        ['space_chat', 'ad_hoc_member', 'space-runtime', []],
         ['ad_hoc_member', 'ad_hoc_member', 'space-runtime', []],
         ['workflow_worker', 'workflow_worker', 'task-agent-manager', []],
         ['direct_task_worker', 'direct_task_worker', 'none', []],
@@ -194,7 +193,6 @@ describe('session kind MCP server attachment', () => {
 
       expect(attached).toEqual([
         ['agent_card', []],
-        ['space_chat', []],
         ['ad_hoc_member', ['agent-memory', 'db-query']],
         ['workflow_worker', []],
         ['direct_task_worker', []],
@@ -244,23 +242,11 @@ describe('session kind MCP server attachment', () => {
 
       expect(attached).toEqual([
         ['agent_card', ['agent-memory', 'db-query']],
-        ['space_chat', []],
         ['ad_hoc_member', ['agent-memory', 'db-query']],
         ['workflow_worker', []],
         ['direct_task_worker', []],
         ['non_space', []],
       ]);
-    });
-  });
-
-  describe('SpaceRuntimeService.setupSpaceAgentSession', () => {
-    test('attaches agent-memory and db-query to the Space chat session, which the member path skips', async () => {
-      const session = makeSessionOfKind('space_chat');
-      const service = buildService('space_chat', makeRecordingAgentSession(session));
-
-      await service.setupSpaceAgentSession(SPACE, { replayPendingMessages: false });
-
-      expect(serverNames(session)).toEqual(['agent-memory', 'db-query']);
     });
   });
 
@@ -331,7 +317,6 @@ describe('session kind MCP server attachment', () => {
     test('adds hyperneo-operations on top of whatever each session kind was attached', () => {
       const attachedByKind: Record<SessionKind, string[]> = {
         agent_card: ['agent-memory', 'db-query'],
-        space_chat: ['agent-memory', 'db-query'],
         ad_hoc_member: ['agent-memory', 'db-query'],
         workflow_worker: ['agent-memory', 'db-query'],
         direct_task_worker: [],
@@ -349,7 +334,6 @@ describe('session kind MCP server attachment', () => {
 
       expect(effective).toEqual([
         ['agent_card', ['agent-memory', 'db-query', 'hyperneo-operations']],
-        ['space_chat', ['agent-memory', 'db-query', 'hyperneo-operations']],
         ['ad_hoc_member', ['agent-memory', 'db-query', 'hyperneo-operations']],
         ['workflow_worker', ['agent-memory', 'db-query', 'hyperneo-operations']],
         ['direct_task_worker', ['hyperneo-operations']],

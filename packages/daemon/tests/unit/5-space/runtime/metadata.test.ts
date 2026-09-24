@@ -114,18 +114,6 @@ test.each(['space_chat', 'space_task_agent', 'worker'] as const)(
   }
 );
 
-test('uses legacy space chat fallback only after looking up its persisted session', async () => {
-  const id = `space:chat:${spaceId}`;
-  await expect(
-    editor()({ taskId, title: 'Changed' }, { source: 'mcp', sessionId: id })
-  ).resolves.toEqual({ accepted: false, reason: 'task_update_denied' });
-  persistSession({ id, type: 'space_chat' });
-  expect(
-    await editor()({ taskId, title: 'Changed' }, { source: 'mcp', sessionId: id })
-  ).toMatchObject({ title: 'Changed' });
-  expect(emit).toHaveBeenCalledTimes(1);
-});
-
 test('reuses workflow worker task ownership fallback', async () => {
   const session = persistSession({ type: 'worker', context: { taskId } });
   const execution = { id: 'execution-1' } as NodeExecution;
