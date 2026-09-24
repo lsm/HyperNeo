@@ -59,6 +59,7 @@ describe('SessionRepository', () => {
 				available_commands TEXT,
 				processing_state TEXT,
 				archived_at TEXT,
+				parent_id TEXT,
 				type TEXT DEFAULT 'worker' CHECK(type IN ('worker', 'room', 'lobby')),
 				session_context TEXT,
 				room_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.roomId') END) VIRTUAL,
@@ -948,6 +949,37 @@ describe('SessionRepository', () => {
           config: { model: 'claude-sonnet-4-5-20250929', extra: circular } as SessionConfig,
         })
       ).toThrow(/updateSession: failed to serialize config/);
+    });
+  });
+
+  describe('parent_id column', () => {
+    function parentIdOf(id: string): unknown {
+      return (db.prepare('SELECT parent_id FROM sessions WHERE id = ?').get(id) as any).parent_id;
+    }
+
+    it('createSession leaves parent_id NULL', () => {
+      repository.createSession(createDefaultSession());
+
+      expect(parentIdOf('session-1')).toBeNull();
+    });
+
+    it('updateSession with metadata.parentSessionId leaves parent_id NULL', () => {
+      repository.createSession(createDefaultSession());
+
+      repository.updateSession('session-1', { metadata: { parentSessionId: 'parent' } as any });
+
+      expect(parentIdOf('session-1')).toBeNull();
+      expect(repository.getSession('session-1')?.metadata.parentSessionId).toBe('parent');
+    });
+
+    it('updateSession with promptProvenance leaves parent_id NULL', () => {
+      repository.createSession(createDefaultSession());
+
+      repository.updateSession('session-1', {
+        metadata: { promptProvenance: { source: 'x', hash: 'h', agentId: 'agent-1' } } as any,
+      });
+
+      expect(parentIdOf('session-1')).toBeNull();
     });
   });
 
