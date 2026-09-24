@@ -210,6 +210,61 @@ describe('createListDeliveriesOperation', () => {
     expect(result.deliveries.map((entry) => entry.eventId)).toContain('evt-d3');
   });
 
+  test('a direct task worker lists the deliveries made to its own session', async () => {
+    const sessionId = session('s-direct', SPACE);
+    store.store(event('evt-s1', SPACE));
+    store.registerExpectedDelivery('evt-s1', 'evt-s1:session', {
+      workflowRunId: `session:${SPACE}`,
+      taskId: 'sub-1',
+      nodeId: sessionId,
+      agentName: sessionId,
+    });
+    store.store(event('evt-s2', SPACE));
+    store.registerExpectedDelivery('evt-s2', 'evt-s2:session', {
+      workflowRunId: `session:${SPACE}`,
+      taskId: 'sub-2',
+      nodeId: 'someone-else',
+      agentName: 'someone-else',
+    });
+    const caller: OperationCaller = {
+      source: 'mcp',
+      sessionId,
+      spaceId: SPACE,
+      role: 'direct_task_worker',
+    };
+    const result = (await run('event.external.delivery.list', {}, caller)) as {
+      deliveries: Array<{ eventId: string }>;
+    };
+    expect(result.deliveries.map((entry) => entry.eventId)).toEqual(['evt-s1']);
+  });
+
+  test('a long-horizon agent lists the deliveries made to its own record', async () => {
+    const sessionId = session('s-agent', SPACE);
+    sessions.updateSession(sessionId, {
+      metadata: {
+        ...sessions.getSession(sessionId)!.metadata,
+        promptProvenance: { source: 'test', hash: 'h', agentId: 'agent-1' },
+      },
+    });
+    store.store(event('evt-a1', SPACE));
+    store.registerExpectedDelivery('evt-a1', 'evt-a1:agent', {
+      workflowRunId: `long_horizon:${SPACE}`,
+      taskId: 'sub-1',
+      nodeId: 'agent-1',
+      agentName: 'agent-1',
+    });
+    const caller: OperationCaller = {
+      source: 'mcp',
+      sessionId,
+      spaceId: SPACE,
+      role: 'long_term_agent',
+    };
+    const result = (await run('event.external.delivery.list', {}, caller)) as {
+      deliveries: Array<{ eventId: string }>;
+    };
+    expect(result.deliveries.map((entry) => entry.eventId)).toEqual(['evt-a1']);
+  });
+
   test('filters by node id', async () => {
     delivery('evt-d4', 'node-d', 'task-4');
     delivery('evt-d5', 'node-e', 'task-4');
