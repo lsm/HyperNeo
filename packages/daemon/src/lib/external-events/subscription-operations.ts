@@ -228,13 +228,50 @@ export function resolveSubscriptionSubject(
     : { value: { kind: 'agent', scope: gated.value } };
 }
 
+type ReaderScope =
+  | { spaceId: string; workflowRunId: string }
+  | { spaceId: string; owner: { type: 'agent' | 'session'; id: string } };
+
+const StoredSubscriptionSchema = z.object({
+  topic: z.string(),
+  label: z.string().nullable(),
+  createdAt: z.number(),
+});
+
+function readStoredSubscriptions(
+  scope: { spaceId: string; owner: { type: 'agent' | 'session'; id: string } },
+  subs: SubscriptionDependencies
+) {
+  const rows =
+    scope.owner.type === 'agent'
+      ? subs.subscriptionRepo.listSubscriptions(scope.owner.id).map((row) => ({
+          topic: row.topic,
+          label: typeof row.filter.label === 'string' ? row.filter.label : null,
+          createdAt: row.createdAt,
+        }))
+      : subs.sessionSubscriptions
+          .listBySpace(scope.spaceId)
+          .filter((row) => row.sessionId === scope.owner.id)
+          .map((row) => ({ topic: row.topic, label: row.label, createdAt: row.createdAt }));
+  return { ok: true as const, owner: scope.owner, stored: rows, scope: { spaceId: scope.spaceId } };
+}
+
 export function admitSubscriptionReader(
   input: z.infer<typeof ListInput>,
   caller: OperationCaller,
   subs: SubscriptionDependencies
-): { value: { spaceId: string; workflowRunId: string } } | { reason: Rejection } {
+): { value: ReaderScope } | { reason: Rejection } {
   const space = admitEventCallerSpace(input, caller);
   if ('reason' in space) return { reason: 'caller_denied' };
+  if (input.workflowRunId === undefined && caller.role !== 'workflow_worker') {
+    const subject = defaultSubject(caller, subs);
+    if (subject?.type === 'agent') {
+      return { value: { spaceId: space.value, owner: { type: 'agent', id: subject.agentId } } };
+    }
+    if (subject?.type === 'session' && caller.sessionId) {
+      return { value: { spaceId: space.value, owner: { type: 'session', id: caller.sessionId } } };
+    }
+  }
   const workflowRunId = input.workflowRunId ?? resolveWorkerNodeSlot(caller, subs)?.workflowRunId;
   return workflowRunId
     ? { value: { spaceId: space.value, workflowRunId } }
@@ -352,10 +389,11 @@ function unsubscribeSubject(
 }
 
 function readSubscriptions(
-  scope: { spaceId: string; workflowRunId: string },
+  scope: ReaderScope,
   input: z.infer<typeof ListInput>,
   subs: SubscriptionDependencies
 ) {
+  if ('owner' in scope) return readStoredSubscriptions(scope, subs);
   const outcome = subs.listRunSubscriptions(scope.workflowRunId, scope.spaceId, input.nodeId);
   return outcome.success
     ? { ok: true as const, subscriptions: outcome.result, scope: { spaceId: scope.spaceId } }
@@ -414,14 +452,20 @@ export function createSubscriptionOperations(
     }),
     defineOperation({
       name: 'event.external.subscription.list',
-      policy: { safetyClass: 'read', roles: NODE_EVENT_ROLES },
+      policy: { safetyClass: 'read', roles: SUBSCRIPTION_ROLES },
       description:
-        'Snapshot a workflow run external-event subscriptions across the declared, persisted, and active layers, with the mismatch counts between them. Defaults to the calling worker own run. Rejects caller_denied when the caller carries no Space scope and node_unresolved when no run can be determined.',
+        'Snapshot a workflow run external-event subscriptions across the declared, persisted, and active layers, with the mismatch counts between them. Defaults to the calling worker own run. A long-horizon agent or direct task worker with no workflowRunId gets its own stored subscriptions as { ok, owner, stored }. Rejects caller_denied when the caller carries no Space scope and node_unresolved when no run can be determined.',
       inputSchema: ListInput,
       resultSchema: z.union([
         z.object({
           ok: z.literal(true),
           subscriptions: SubscriptionListSchema,
+          scope: z.object({ spaceId: z.string() }),
+        }),
+        z.object({
+          ok: z.literal(true),
+          owner: z.object({ type: z.enum(['agent', 'session']), id: z.string() }),
+          stored: z.array(StoredSubscriptionSchema),
           scope: z.object({ spaceId: z.string() }),
         }),
         z.object({ ok: z.literal(false), error: z.string() }),

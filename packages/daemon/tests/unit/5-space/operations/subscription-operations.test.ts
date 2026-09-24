@@ -702,3 +702,40 @@ describe('the session subject', () => {
     );
   });
 });
+
+describe('subscription.list for callers without a run', () => {
+  test('a long-horizon agent lists its own stored subscriptions', async () => {
+    const id = memberSession('s-agent-list');
+    sessions.updateSession(id, {
+      metadata: {
+        ...sessions.getSession(id)!.metadata,
+        promptProvenance: { source: 'test', hash: 'h', agentId: AGENT },
+      },
+    });
+    const caller = member(id);
+    await run('event.external.subscribe', { topicPattern: AGENT_TOPIC, label: 'reviews' }, caller);
+    const result = (await run('event.external.subscription.list', {}, caller)) as {
+      owner: unknown;
+      stored: Array<{ topic: string; label: string | null }>;
+    };
+    expect(result.owner).toEqual({ type: 'agent', id: AGENT });
+    expect(result.stored.map((row) => [row.topic, row.label])).toEqual([[AGENT_TOPIC, 'reviews']]);
+  });
+
+  test('a direct task worker lists its own session subscriptions', async () => {
+    workerSession('s-direct-list', { withExecution: false });
+    const caller: OperationCaller = {
+      source: 'mcp',
+      sessionId: 's-direct-list',
+      spaceId: SPACE,
+      role: 'direct_task_worker',
+    };
+    await run('event.external.subscribe', { topicPattern: AGENT_TOPIC }, caller);
+    const result = (await run('event.external.subscription.list', {}, caller)) as {
+      owner: unknown;
+      stored: Array<{ topic: string }>;
+    };
+    expect(result.owner).toEqual({ type: 'session', id: 's-direct-list' });
+    expect(result.stored.map((row) => row.topic)).toEqual([AGENT_TOPIC]);
+  });
+});
