@@ -1257,7 +1257,7 @@ export default function ChatContainer({
         onToolsClick={toolsModal.open}
         onExportClick={sessionActions.handleExportChat}
         onResetClick={sessionActions.handleResetAgent}
-        onArchiveClick={sessionActions.handleArchiveClick}
+        onArchiveClick={() => sessionActions.handleArchiveClick()}
         onDeleteClick={deleteModal.open}
         archiving={sessionActions.archiving}
         resettingAgent={sessionActions.resettingAgent}
