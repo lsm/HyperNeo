@@ -25,7 +25,7 @@ export function CloneChoiceDialog({
       isOpen
       onClose={onCancel}
       onConfirm={() => onChoose('cascade')}
-      title={`This ${subject} has ${clones.length} 分身`}
+      title={`This ${subject} has ${clones.length} ${clones.length === 1 ? 'clone' : 'clones'} (分身)`}
       message={`${verb} them too, or keep them as ${keepAs}?`}
       confirmText={`${verb} them too`}
       confirmButtonVariant={action === 'delete' ? 'danger' : 'warning'}

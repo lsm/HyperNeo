@@ -1445,7 +1445,7 @@ export default function ChatContainer({
             </Button>
             <Button
               variant="danger"
-              onClick={sessionActions.handleDeleteSession}
+              onClick={() => sessionActions.handleDeleteSession()}
               loading={sessionActions.deleting}
               data-testid="confirm-delete-session"
             >

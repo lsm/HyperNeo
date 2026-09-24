@@ -283,6 +283,44 @@ describe('useSessionActions', () => {
       expect(mockToastSuccess).toHaveBeenCalledWith('Session archived successfully');
     });
 
+    it('keeps the clone choice through the commit confirmation', async () => {
+      mockArchiveSession
+        .mockResolvedValueOnce({
+          success: false,
+          reason: 'has_clones',
+          clones: [{ id: 'c1', title: 'Clone' }],
+        })
+        .mockResolvedValueOnce({
+          success: false,
+          requiresConfirmation: true,
+          commitStatus: { hasCommitsAhead: true, commits: [] },
+        })
+        .mockResolvedValueOnce({ success: true, commitsRemoved: 1 });
+
+      const { result } = renderHook(() =>
+        useSessionActions({
+          sessionId: 'session-1',
+          session: defaultSession,
+          onDeleteModalClose: vi.fn(),
+          onStateReset: vi.fn(),
+        })
+      );
+
+      await act(async () => {
+        await result.current.handleArchiveClick();
+      });
+      await act(async () => {
+        await result.current.handleCloneChoice('cascade');
+      });
+      expect(result.current.cloneChoiceDialog).toBeNull();
+      expect(result.current.archiveConfirmDialog?.children).toBe('cascade');
+
+      await act(async () => {
+        await result.current.handleConfirmArchive();
+      });
+      expect(mockArchiveSession).toHaveBeenLastCalledWith('session-1', true, 'cascade');
+    });
+
     it('asks for a clone choice before deleting', async () => {
       const onDeleteModalClose = vi.fn();
       mockDeleteSession

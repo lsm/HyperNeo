@@ -88,6 +88,7 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
   const [archiveConfirm, setArchiveConfirm] = useState<{
     sessionId: string;
     commitStatus: WorktreeCommitStatus;
+    children?: CloneChildrenChoice;
   } | null>(null);
   const [archiveBusy, setArchiveBusy] = useState(false);
   const [cloneChoice, setCloneChoice] = useState<{
@@ -191,7 +192,7 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
         setCloneChoice({ sessionId, clones: result.clones });
       } else if (result.requiresConfirmation && result.commitStatus) {
         setCloneChoice(null);
-        setArchiveConfirm({ sessionId, commitStatus: result.commitStatus });
+        setArchiveConfirm({ sessionId, commitStatus: result.commitStatus, children });
       } else if (result.success) {
         setCloneChoice(null);
         toast.success('Chat archived');
@@ -207,7 +208,7 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
     if (!archiveConfirm) return;
     setArchiveBusy(true);
     try {
-      const result = await archiveSession(archiveConfirm.sessionId, true);
+      const result = await archiveSession(archiveConfirm.sessionId, true, archiveConfirm.children);
       if (result.success) {
         toast.success('Chat archived');
         setArchiveConfirm(null);

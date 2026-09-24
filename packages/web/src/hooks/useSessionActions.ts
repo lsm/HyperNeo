@@ -14,6 +14,7 @@ import { connectionState } from '../lib/state';
 export interface ArchiveConfirmState {
   show: boolean;
   commitStatus?: ArchiveSessionResponse['commitStatus'];
+  children?: CloneChildrenChoice;
 }
 
 export interface CloneChoiceState {
@@ -99,6 +100,7 @@ export function useSessionActions({
           setArchiveConfirmDialog({
             show: true,
             commitStatus: result.commitStatus,
+            children,
           });
         } else if (result.success) {
           setCloneChoiceDialog(null);
@@ -132,7 +134,7 @@ export function useSessionActions({
   const handleConfirmArchive = useCallback(async () => {
     try {
       setArchiving(true);
-      const result = await archiveSession(sessionId, true);
+      const result = await archiveSession(sessionId, true, archiveConfirmDialog?.children);
       if (result.success) {
         toast.success(`Session archived (${result.commitsRemoved} commits removed)`);
         setArchiveConfirmDialog(null);
@@ -144,7 +146,7 @@ export function useSessionActions({
     } finally {
       setArchiving(false);
     }
-  }, [sessionId]);
+  }, [sessionId, archiveConfirmDialog?.children]);
 
   const handleCancelArchive = useCallback(() => {
     setArchiveConfirmDialog(null);
