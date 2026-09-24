@@ -16,7 +16,7 @@ Use the local daemon URL from the environment when present:
 BASE_URL="${HYPERNEO_BASE_URL:-${KAI_BASE_URL:-http://127.0.0.1:${HYPERNEO_PORT:-${PORT:-8383}}}}"
 ```
 
-Space context is normally available in the session id (`space:chat:<space_id>`) or task metadata. If you do not know the Space id, ask the user or inspect the current session/task context.
+Space context is normally available in the session context or task metadata. If you do not know the Space id, ask the user or inspect the current session/task context.
 
 ## JSON-RPC call helper
 

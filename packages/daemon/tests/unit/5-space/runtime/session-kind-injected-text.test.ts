@@ -473,17 +473,6 @@ describe('session kind injected text', () => {
           ],
         },
         {
-          kind: 'space_chat',
-          scope: 'resolved',
-          says: [
-            'space-identity',
-            'ad-hoc-role',
-            'operations-door-tool',
-            'operations-discovery',
-            'space-standing-instructions',
-          ],
-        },
-        {
           kind: 'ad_hoc_member',
           scope: 'resolved',
           says: [
@@ -544,20 +533,6 @@ describe('session kind injected text', () => {
         'agent-memory-briefing',
         'space-standing-instructions',
       ]);
-    });
-
-    test('names the Space for a Space chat session, and the query builder now keeps it (#4795)', async () => {
-      const session = makeSessionOfKind('space_chat');
-      const service = buildService('space_chat', makeRecordingAgentSession(session));
-
-      await service.setupSpaceAgentSession(SPACE, { replayPendingMessages: false });
-      const briefing = briefingFor('space_chat', session);
-      const options = await new QueryOptionsBuilder(makeBuilderContext(session, briefing)).build();
-
-      expect(briefing).toContain(`the Space "${SPACE_NAME}" (id: ${SESSION_KIND_SPACE_ID})`);
-      const prompt = options.systemPrompt as { type?: string; prompt?: string } | undefined;
-      expect(prompt?.type).toBe('custom');
-      expect(prompt?.prompt).toContain(`the Space "${SPACE_NAME}" (id: ${SESSION_KIND_SPACE_ID})`);
     });
 
     test('tells a direct task worker which Space its session carries (#4807)', async () => {
@@ -643,17 +618,6 @@ describe('session kind injected text', () => {
           ],
         },
         {
-          kind: 'space_chat',
-          shape: 'custom-prompt',
-          says: [
-            'space-identity',
-            'ad-hoc-role',
-            'operations-door-tool',
-            'operations-discovery',
-            'space-standing-instructions',
-          ],
-        },
-        {
           kind: 'ad_hoc_member',
           shape: 'claude-code-preset+append',
           says: [
@@ -709,7 +673,6 @@ describe('session kind injected text', () => {
 
       expect(recording).toEqual([
         { kind: 'agent_card', recorded: false },
-        { kind: 'space_chat', recorded: false },
         { kind: 'ad_hoc_member', recorded: false },
         { kind: 'workflow_worker', recorded: false },
         { kind: 'direct_task_worker', recorded: false },
@@ -726,35 +689,6 @@ describe('session kind injected text', () => {
       expect(append.indexOf(CARD_AGENT_INSTRUCTIONS)).toBeLessThan(append.indexOf('## Your Space'));
       expect(append.indexOf('Goal Ownership & Outcome Review Contract')).toBeLessThan(
         append.indexOf('mcp__hyperneo-operations__invoke')
-      );
-    });
-
-    test('gives a Space chat session the same Space briefing a worker session gets, carried in its own custom prompt rather than an append', async () => {
-      const briefing = assembleSessionBriefing({
-        scope: [
-          spaceScopeContribution({
-            spaceId: SPACE.id,
-            spaceName: SPACE.name,
-            role: 'ad_hoc_member',
-            spaceInstructions: SPACE.instructions,
-          }),
-        ],
-        capabilities: [OPERATIONS_CONTRIBUTION],
-      }).text;
-
-      const chat = await new QueryOptionsBuilder(
-        makeBuilderContext(makeSessionOfKind('space_chat'), briefing)
-      ).build();
-      const member = await new QueryOptionsBuilder(
-        makeBuilderContext(makeSessionOfKind('ad_hoc_member'), briefing)
-      ).build();
-
-      expect((chat.systemPrompt as { type?: string; prompt?: string }).type).toBe('custom');
-      expect((chat.systemPrompt as { prompt?: string }).prompt).toContain(
-        `You are working inside the Space "${SPACE_NAME}"`
-      );
-      expect((member.systemPrompt as { append?: string }).append).toContain(
-        `You are working inside the Space "${SPACE_NAME}"`
       );
     });
   });

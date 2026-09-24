@@ -393,12 +393,6 @@ describe('SessionLifecycle', () => {
       expect(createdSessions[0]!.context).toBeUndefined();
     });
 
-    it('space_chat session without workspacePath throws', async () => {
-      await expect(lifecycle.create({ sessionType: 'space_chat' })).rejects.toThrow(
-        "Session type 'space_chat' requires explicit workspacePath"
-      );
-    });
-
     it('worker session without workspacePath creates unbound session', async () => {
       await lifecycle.create({ sessionType: 'worker' });
 
@@ -614,11 +608,11 @@ describe('SessionLifecycle', () => {
         gitRoot: '/test/repo',
       });
 
-      await lifecycle.create({ sessionType: 'space_chat', workspacePath: '/space/workspace' });
+      await lifecycle.create({ sessionType: 'lobby', workspacePath: '/space/workspace' });
 
       expect(mockDb.createSession).toHaveBeenCalledWith(
         expect.objectContaining({
-          type: 'space_chat',
+          type: 'lobby',
           status: 'active',
           metadata: expect.objectContaining({
             worktreeChoice: undefined,

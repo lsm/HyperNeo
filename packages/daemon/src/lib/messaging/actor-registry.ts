@@ -188,8 +188,7 @@ function encodeWorkerHandleSegment(value: string): string {
 }
 
 function isSessionInSpace(session: Session, spaceId: string): boolean {
-  if (session.context?.spaceId === spaceId) return true;
-  return session.type === 'space_chat' && session.id === `space:chat:${spaceId}`;
+  return session.context?.spaceId === spaceId;
 }
 
 function isAdHocMemberSession(session: Session): boolean {

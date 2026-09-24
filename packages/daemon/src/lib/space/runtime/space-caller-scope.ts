@@ -11,10 +11,6 @@ export interface SpaceCallerScopeDependencies extends SpaceMcpSessionPolicyConte
   readonly getSession: (sessionId: string) => Session | null;
 }
 
-function chatSpaceId(session: Session): string | undefined {
-  return session.type === 'space_chat' ? session.id.match(/^space:chat:(.+)$/)?.[1] : undefined;
-}
-
 export function resolveSessionSpaceId(
   session: Session | null,
   context: SpaceMcpSessionPolicyContext,
@@ -23,7 +19,7 @@ export function resolveSessionSpaceId(
     : null
 ): string | undefined {
   if (!session || !policy) return undefined;
-  return policy.spaceId ?? chatSpaceId(session);
+  return policy.spaceId;
 }
 
 function definedScope(scope: CallerScope): CallerScope {

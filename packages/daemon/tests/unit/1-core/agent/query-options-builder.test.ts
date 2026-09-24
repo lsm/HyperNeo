@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
-import { SPACE_CHAT_SESSION_PROMPT } from '@hyperneo/prompts';
 import type { Session } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type { Provider } from '@hyperneo/shared/provider';
@@ -22,7 +21,6 @@ import {
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
 import { SkillsManager } from '../../../../src/lib/skills-manager';
-import { LONG_HORIZON_AGENT_BUILTIN_TOOLS } from '../../../../src/lib/agents/long-horizon-tools';
 import { AppMcpServerRepository } from '../../../../src/storage/repositories/app-mcp-server-repository';
 import { SkillRepository } from '../../../../src/storage/repositories/skill-repository';
 import { createTables } from '../../../../src/storage/schema';
@@ -1965,192 +1963,6 @@ describe('QueryOptionsBuilder', () => {
     });
   });
 
-  describe('space chat session restrictions', () => {
-    it('should preserve space MCP servers while enforcing strict MCP config', async () => {
-      mockSession.type = 'space_chat';
-      mockSession.config.mcpServers = {
-        'space-actions': { command: 'space-cmd' },
-      };
-
-      const options = await builder.build();
-      expect(options.mcpServers).toEqual({
-        'space-actions': { command: 'space-cmd' },
-      });
-      expect(options.strictMcpConfig).toBe(true);
-      expect(options.settingSources).toEqual(['user', 'project', 'local']);
-    });
-
-    it('should enforce space built-in tool allowlist including Bash and subagents', async () => {
-      mockSession.type = 'space_chat';
-      mockSession.config.permissionMode = 'acceptEdits';
-      const options = await builder.build();
-      expect(options.tools).toEqual([
-        'Read',
-        'Glob',
-        'Grep',
-        'Bash',
-        'WebFetch',
-        'WebSearch',
-        'ToolSearch',
-        'AskUserQuestion',
-        'Agent',
-        'Task',
-        'TaskOutput',
-        'TaskStop',
-      ]);
-      expect(options.allowedTools).toEqual(
-        expect.arrayContaining([
-          'Read',
-          'Glob',
-          'Grep',
-          'Bash',
-          'WebFetch',
-          'WebSearch',
-          'ToolSearch',
-          'AskUserQuestion',
-          'Agent',
-          'Task',
-          'TaskOutput',
-          'TaskStop',
-        ])
-      );
-    });
-
-    it('should keep file editing tools disallowed while allowing subagents', async () => {
-      mockSession.type = 'space_chat';
-      const options = await builder.build();
-
-      expect(options.disallowedTools).toEqual(
-        expect.arrayContaining(['Edit', 'Write', 'NotebookEdit'])
-      );
-      expect(options.disallowedTools).not.toContain('Task');
-      expect(options.disallowedTools).not.toContain('TaskOutput');
-      expect(options.disallowedTools).not.toContain('TaskStop');
-    });
-
-    it('honors a coordinator sdkToolsPreset instead of clobbering it (Task #794)', async () => {
-      mockSession.type = 'space_chat';
-      mockSession.config.permissionMode = 'acceptEdits';
-      mockSession.config.sdkToolsPreset = [...LONG_HORIZON_AGENT_BUILTIN_TOOLS];
-      const options = await builder.build();
-
-      expect(options.tools).toEqual([...LONG_HORIZON_AGENT_BUILTIN_TOOLS]);
-      expect(options.tools).not.toContain('Write');
-      expect(options.tools).not.toContain('Edit');
-      expect(options.tools).not.toContain('MultiEdit');
-      expect(options.tools).toContain('CronCreate');
-      expect(options.tools).toContain('Monitor');
-      expect(options.allowedTools).toEqual(
-        expect.arrayContaining([...LONG_HORIZON_AGENT_BUILTIN_TOOLS])
-      );
-      expect(options.disallowedTools).toEqual(
-        expect.arrayContaining(['Edit', 'Write', 'MultiEdit', 'NotebookEdit'])
-      );
-    });
-
-    it('should not include Write/Edit/NotebookEdit in space chat tool allowlist', async () => {
-      mockSession.type = 'space_chat';
-      const options = await builder.build();
-      expect(options.disallowedTools).toEqual(
-        expect.arrayContaining(['Edit', 'Write', 'NotebookEdit'])
-      );
-      expect(options.tools).not.toContain('Edit');
-      expect(options.tools).not.toContain('Write');
-      expect(options.tools).not.toContain('NotebookEdit');
-    });
-
-    it('should auto-allow wildcards for all configured space MCP servers', async () => {
-      mockSession.type = 'space_chat';
-      mockSession.config.permissionMode = 'acceptEdits';
-      mockSession.config.mcpServers = {
-        'space-actions': { command: 'space-cmd' },
-        'db-query': { type: 'sdk', name: 'db-query', instance: {} },
-      } as never;
-
-      const options = await builder.build();
-      expect(options.allowedTools).toEqual(
-        expect.arrayContaining(['space-actions__*', 'db-query__*'])
-      );
-    });
-
-    it('should give space chat sessions the chat framing prompt instead of the Claude Code preset', async () => {
-      mockSession.type = 'space_chat';
-      const options = await builder.build();
-      expect(options.systemPrompt).toEqual({
-        type: 'custom',
-        prompt: SPACE_CHAT_SESSION_PROMPT,
-        snapshot: false,
-      });
-    });
-
-    it('should replace a custom string system prompt with the chat framing prompt for space chat sessions', async () => {
-      mockSession.type = 'space_chat';
-      mockSession.config.systemPrompt = 'You are the Space coordinator.';
-      const options = await builder.build();
-      expect(options.systemPrompt).toEqual({
-        type: 'custom',
-        prompt: SPACE_CHAT_SESSION_PROMPT,
-        snapshot: false,
-      });
-    });
-
-    it('should replace the prompt of a space chat session created without the preset', async () => {
-      mockSession.type = 'space_chat';
-      mockSession.config.tools = { useClaudeCodePreset: false };
-      mockSession.config.systemPrompt = 'You are the Space coordinator.';
-      const options = await builder.build();
-      expect(options.systemPrompt).toEqual({
-        type: 'custom',
-        prompt: SPACE_CHAT_SESSION_PROMPT,
-        snapshot: false,
-      });
-    });
-
-    it('should replace a preset system prompt carrying an append for space chat sessions', async () => {
-      mockSession.type = 'space_chat';
-      mockSession.config.systemPrompt = {
-        type: 'preset',
-        preset: 'claude_code',
-        append: 'You are the Space coordinator.',
-      };
-      const options = await builder.build();
-      expect(options.systemPrompt).toEqual({
-        type: 'custom',
-        prompt: SPACE_CHAT_SESSION_PROMPT,
-        snapshot: false,
-      });
-    });
-
-    it('should append the Space briefing after the chat framing prompt for space chat sessions', async () => {
-      mockSession.type = 'space_chat';
-      mockContext.getSpaceBriefing = () => 'You are working inside the Space "Demo".';
-      const options = await builder.build();
-      const prompt = options.systemPrompt as { type?: string; prompt?: string };
-      expect(prompt.type).toBe('custom');
-      expect(prompt.prompt?.indexOf(SPACE_CHAT_SESSION_PROMPT)).toBe(0);
-      expect(prompt.prompt).toContain('You are working inside the Space "Demo".');
-    });
-
-    it('should keep the same prompts on a worker session, so the key is the session type', async () => {
-      mockSession.type = 'worker';
-      mockSession.config.tools = { useClaudeCodePreset: false };
-      mockSession.config.systemPrompt = 'You are the Space coordinator.';
-      const options = await builder.build();
-      expect(options.systemPrompt).toEqual({
-        type: 'custom',
-        prompt: 'You are the Space coordinator.',
-        snapshot: false,
-      });
-    });
-
-    it('should not affect worker sessions tool allowlist (coder/reviewer tool access unchanged)', async () => {
-      mockSession.type = 'worker';
-      const options = await builder.build();
-      expect(options.strictMcpConfig).toBe(true);
-      expect(options.tools).toBeUndefined();
-    });
-  });
-
   describe('M5: unconditional strict MCP + configurable settingSources', () => {
     const sessionTypes: Array<'worker' | 'space_task_agent' | 'general' | 'coder' | 'planner'> = [
       'worker',
@@ -3014,16 +2826,6 @@ describe('QueryOptionsBuilder', () => {
         expect(result).toEqual(['Read', 'Write']);
       });
 
-      it('leaves space_chat sessions untouched even with agents', () => {
-        const result = ensureAgentTools(
-          undefined,
-          { Coordinator: { description: 'c', prompt: 'p' } },
-          'anthropic-codex',
-          'space_chat'
-        );
-        expect(result).toBeUndefined();
-      });
-
       it('returns original tools when no agents are configured', () => {
         const result = ensureAgentTools(undefined, undefined, 'anthropic-codex', 'general');
         expect(result).toBeUndefined();
@@ -3355,7 +3157,6 @@ describe('QueryOptionsBuilder', () => {
       const mockSkillsManager = {
         getEnabledSkills: mock(() => [enabledSkills[1]]),
       };
-      mockSession.type = 'space_chat';
       mockSession.config.permissionMode = 'acceptEdits';
       mockSession.config.mcpServers = {
         'space-actions': { command: 'space-cmd' },
@@ -3378,7 +3179,6 @@ describe('QueryOptionsBuilder', () => {
         env: { TEST_API_KEY: 'test-key' },
       });
       expect(options.mcpServers!['space-actions']).toEqual({ command: 'space-cmd' });
-      expect(options.allowedTools).toContain('test-search__*');
     });
 
     it('should inject builtin skills as local plugins pointing at the wrapper plugin directory', async () => {
@@ -4576,23 +4376,6 @@ describe('QueryOptionsBuilder', () => {
   describe('regression: Skill, WebSearch, WebFetch tool availability (Task 7.1)', () => {
     beforeEach(() => {
       mockSession.type = 'space_chat';
-    });
-
-    it('space_chat sessions include WebSearch in tools list', async () => {
-      const options = await new QueryOptionsBuilder(mockContext).build();
-      expect(options.tools).toContain('WebSearch');
-    });
-
-    it('space_chat sessions include WebFetch in tools list', async () => {
-      const options = await new QueryOptionsBuilder(mockContext).build();
-      expect(options.tools).toContain('WebFetch');
-    });
-
-    it('space_chat allowedTools includes WebSearch, WebFetch', async () => {
-      mockSession.config.permissionMode = 'acceptEdits';
-      const options = await new QueryOptionsBuilder(mockContext).build();
-      expect(options.allowedTools).toContain('WebSearch');
-      expect(options.allowedTools).toContain('WebFetch');
     });
 
     it('coordinator mode allowedTools includes Skill, WebSearch, WebFetch', async () => {

@@ -357,8 +357,6 @@ export interface QueryRunnerContext {
 
   onMissingWorkflowMcpServers?: (session: AgentSession, missing: string[]) => Promise<void>;
 
-  onMissingSpaceChatMcpServers?: (sessionId: string, missing: string[]) => Promise<void>;
-
   onMissingMemberSpaceMcpServers?: (sessionId: string, missing: string[]) => Promise<void>;
 
   consumePendingResumeSessionAt?(): string | undefined;

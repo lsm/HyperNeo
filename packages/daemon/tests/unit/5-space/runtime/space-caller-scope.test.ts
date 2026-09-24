@@ -3,7 +3,6 @@ import type { NodeExecution, Session, SpaceLongHorizonAgent } from '@hyperneo/sh
 import { longTermAgentSessionId } from '../../helpers/legacy-agent-session-id';
 import {
   createSpaceCallerScopeResolver,
-  resolveSessionSpaceId,
   type SpaceCallerScopeDependencies,
 } from '../../../../src/lib/space/runtime/space-caller-scope';
 
@@ -111,13 +110,5 @@ describe('createSpaceCallerScopeResolver', () => {
       agentId: 'agent-5',
       agentName: 'reviewer',
     });
-  });
-});
-
-describe('resolveSessionSpaceId', () => {
-  test('falls back to the chat session id when the policy has no space', () => {
-    const chat = session('space:chat:space-8', 'space_chat');
-    expect(resolveSessionSpaceId(chat, deps())).toBe('space-8');
-    expect(resolveSessionSpaceId(null, deps())).toBeUndefined();
   });
 });

@@ -70,7 +70,6 @@ import { resolveAgentDeliverySession } from '../../session-resolution/resolve-ag
 import type { ResolveAgentRecordDeps } from '../../session-resolution/resolve-agent-record.ts';
 import type { EnsureSessionOutcome, SessionTarget } from '../../session-resolution/target.ts';
 import { SpaceActorRegistryAdapter } from '../../messaging/actor-registry.ts';
-import { LONG_HORIZON_AGENT_BUILTIN_TOOLS } from '../../agents/long-horizon-tools.ts';
 import type { OwnedAgentLookup } from '../../agents/unified-agent-events.ts';
 import { unifiedAgentRecordExists } from '../../agents/worker-long-horizon-mapper.ts';
 import { encodeActorIdComponent, resolveAgentSessionId } from '../long-term-agent-session.ts';
@@ -190,7 +189,6 @@ export class SpaceRuntimeService {
   private readonly actorRegistry: SpaceActorRegistryAdapter | null;
   private readonly auditLogRepo: McpAuditLogRepository;
   private readonly templateManager: SpaceAgentTemplateManager;
-  private readonly spaceDbQueryServers = new Map<string, DbQueryMcpServer>();
   private readonly memberSessionDbQueryServers = new Map<string, DbQueryMcpServer>();
   private readonly longTermAgentDbQueryServers = new Map<string, DbQueryMcpServer>();
   private resumeStalledRecoveryPromise: Promise<void> = Promise.resolve();
@@ -1167,15 +1165,6 @@ export class SpaceRuntimeService {
     }
     this.unsubscribers.length = 0;
 
-    for (const [spaceId, server] of this.spaceDbQueryServers) {
-      try {
-        server.close();
-      } catch (error) {
-        log.warn(`Failed to close db-query server for space ${spaceId}:`, error);
-      }
-    }
-    this.spaceDbQueryServers.clear();
-
     for (const [sessionId, server] of this.memberSessionDbQueryServers) {
       try {
         server.close();
@@ -1275,22 +1264,6 @@ export class SpaceRuntimeService {
     });
     this.unsubscribers.push(unsubSpaceDeleted);
 
-    const unsubSpaceUpdated = internalEventBus.subscribe(
-      'space.updated',
-      (event) => {
-        if (event.space) {
-          void this.setupSpaceAgentSession(event.space as Space).catch((err) => {
-            log.error(
-              `Failed to re-provision space chat session after autonomy update for space ${event.spaceId}:`,
-              err
-            );
-          });
-        }
-      },
-      { sessionId: 'global', subscriberName: 'SpaceRuntimeService.global' }
-    );
-    this.unsubscribers.push(unsubSpaceUpdated);
-
     const unsubSessionReset =
       typeof sessionManager.registerSessionResetSubscriber === 'function'
         ? sessionManager.registerSessionResetSubscriber(async (event) => {
@@ -1319,18 +1292,6 @@ export class SpaceRuntimeService {
       });
       return;
     }
-    if (session.type === 'space_chat') {
-      const spaceId = session.context?.spaceId ?? session.id.match(/^space:chat:(.+)$/)?.[1];
-      if (!spaceId) return;
-      const space = await this.config.spaceManager.getSpace(spaceId);
-      if (!space) {
-        log.warn(`reprovisionResetSession: space "${spaceId}" not found (session ${session.id})`);
-        return;
-      }
-      await this.setupSpaceAgentSession(space, options);
-      return;
-    }
-
     const policy = this.resolveMcpSessionPolicy(session);
     if (policy.attachLongTermAgentTools) {
       await this.attachLongTermAgentMcpServersForSession(session, options);
@@ -1356,25 +1317,7 @@ export class SpaceRuntimeService {
     const { sessionManager } = this.config;
     if (!sessionManager) return;
 
-    const chatSweep = this.config.spaceManager
-      .listSpaces()
-      .then((spaces) =>
-        Promise.all(
-          spaces.map((space) =>
-            this.setupSpaceAgentSession(space).catch((err) => {
-              log.error(`Failed to provision space chat session for space ${space.id}:`, err);
-            })
-          )
-        )
-      )
-      .then(() => {})
-      .catch((err) => {
-        log.error('Failed to list spaces for session provisioning:', err);
-      });
-
-    const memberSweep = this.reattachSpaceToolsToExistingSessions();
-
-    await Promise.all([chatSweep, memberSweep]);
+    await this.reattachSpaceToolsToExistingSessions();
   }
 
   private async reattachSpaceToolsToExistingSessions(): Promise<void> {
@@ -1387,7 +1330,7 @@ export class SpaceRuntimeService {
         includeSpaceSessions: true,
       });
       for (const session of all) {
-        if (!session.context?.spaceId && session.type !== 'space_chat') continue;
+        if (!session.context?.spaceId) continue;
 
         const policy = this.resolveMcpSessionPolicy(session);
         if (policy.owner !== 'space-runtime') continue;
@@ -1531,70 +1474,6 @@ export class SpaceRuntimeService {
       return;
     if (!this.taskAgentManager) return;
     await this.taskAgentManager.provisionWorkflowSession(session, options);
-  }
-
-  async setupSpaceAgentSession(
-    space: Space,
-    options: { replayPendingMessages?: boolean } = {}
-  ): Promise<void> {
-    const { sessionManager, db } = this.config;
-    if (!sessionManager) return;
-
-    const spaceChatSessionId = `space:chat:${space.id}`;
-    if (new DirectTaskExecutionRepository(db).hasSessionProvenance(spaceChatSessionId)) return;
-    const session = await sessionManager.getSessionAsync(spaceChatSessionId);
-    if (!session) return;
-
-    const existingDbQueryServer = this.spaceDbQueryServers.get(space.id);
-    if (existingDbQueryServer) {
-      try {
-        existingDbQueryServer.close();
-      } catch (err) {
-        log.warn(`Failed to close stale db-query server for space ${space.id}:`, err);
-      }
-    }
-
-    const mcpServers: Record<string, McpServerConfig> = {};
-    if (this.config.memoryRepo) {
-      mcpServers['agent-memory'] = createAgentMemoryMcpServer({
-        spaceId: space.id,
-        memoryRepo: this.config.memoryRepo,
-        mySessionId: spaceChatSessionId,
-      }) as unknown as McpServerConfig;
-    }
-    if (this.config.dbPath) {
-      const dbQueryServer = createDbQueryMcpServer({
-        dbPath: this.config.dbPath,
-        scopeType: 'space',
-        scopeValue: space.id,
-      });
-      this.spaceDbQueryServers.set(space.id, dbQueryServer);
-      mcpServers['db-query'] = dbQueryServer as unknown as McpServerConfig;
-    }
-
-    session.mergeRuntimeMcpServers(mcpServers);
-    session.onMissingSpaceChatMcpServers = async (_sessionId, missing) => {
-      log.warn(
-        `Space chat session ${spaceChatSessionId} missing MCP servers [${missing.join(', ')}]; re-installing Space operations before query start`
-      );
-      await this.setupSpaceAgentSession(space);
-    };
-
-    const currentToolset = session.getSessionData().config?.sdkToolsPreset;
-    const toolsetMatches =
-      Array.isArray(currentToolset) &&
-      currentToolset.length === LONG_HORIZON_AGENT_BUILTIN_TOOLS.length &&
-      LONG_HORIZON_AGENT_BUILTIN_TOOLS.every((tool, i) => currentToolset[i] === tool);
-    if (!toolsetMatches) {
-      await session.updateConfig({
-        sdkToolsPreset: [...LONG_HORIZON_AGENT_BUILTIN_TOOLS],
-      });
-    }
-
-    log.info(`Space chat session provisioned for space ${space.id}`);
-    if (options.replayPendingMessages !== false) {
-      await this.replayPendingMessagesAfterRuntimeProvisioning(session);
-    }
   }
 
   async createOrGetRuntime(spaceId: string): Promise<SpaceRuntime> {

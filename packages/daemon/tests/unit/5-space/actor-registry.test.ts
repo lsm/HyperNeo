@@ -101,10 +101,6 @@ describe('SpaceActorRegistryAdapter', () => {
     });
     const member = makeSession('member-1', { context: { spaceId: space.id } });
     const legacyMember = makeSession('legacy-member');
-    const coordinator = makeSession(`space:chat:${space.id}`, {
-      type: 'space_chat',
-      context: { spaceId: space.id },
-    });
     const taskAgent = makeSession('task-agent-1', {
       type: 'space_task_agent',
       context: { spaceId: space.id },
@@ -126,13 +122,11 @@ describe('SpaceActorRegistryAdapter', () => {
     });
     sessionRepo.createSession(member);
     sessionRepo.createSession(legacyMember);
-    sessionRepo.createSession(coordinator);
     sessionRepo.createSession(taskAgent);
     sessionRepo.createSession(workerSubSession);
     sessionRepo.createSession(namedAgentSubSession);
     spaceRepo.addSessionToSpace(space.id, member.id);
     spaceRepo.addSessionToSpace(space.id, legacyMember.id);
-    spaceRepo.addSessionToSpace(space.id, coordinator.id);
     spaceRepo.addSessionToSpace(space.id, taskAgent.id);
     spaceRepo.addSessionToSpace(space.id, workerSubSession.id);
     spaceRepo.addSessionToSpace(space.id, namedAgentSubSession.id);
@@ -344,7 +338,6 @@ describe('SpaceActorRegistryAdapter', () => {
       roles: ['runtime'],
       status: 'active',
     });
-    expect(actors.some((actor) => actor.actorId === `session:${coordinator.id}`)).toBe(false);
     expect(actors.some((actor) => actor.actorId === `session:${taskAgent.id}`)).toBe(false);
     expect(actors.some((actor) => actor.actorId === `session:${workerSubSession.id}`)).toBe(false);
     expect(actors.some((actor) => actor.actorId === `session:${namedAgentSubSession.id}`)).toBe(

@@ -64,7 +64,7 @@ export interface CreateSessionParams {
   lobbyId?: string;
   spaceId?: string;
   createdBy?: 'human';
-  sessionType?: 'worker' | 'lobby' | 'space_chat';
+  sessionType?: 'worker' | 'lobby';
   pairedSessionId?: string;
   parentSessionId?: string;
   currentTaskId?: string;
@@ -90,15 +90,8 @@ export class SessionLifecycle {
     const sessionId = params.sessionId || generateUUID();
     const sessionType = params.sessionType ?? 'worker';
 
-    const WORKSPACE_REQUIRING_SESSION_TYPES = ['space_chat'] as const;
     const providedWorkspacePath = params.workspacePath?.trim();
     const baseWorkspacePath = providedWorkspacePath ? providedWorkspacePath : undefined;
-    if (
-      (WORKSPACE_REQUIRING_SESSION_TYPES as readonly string[]).includes(sessionType) &&
-      baseWorkspacePath === undefined
-    ) {
-      throw new Error(`Session type '${sessionType}' requires explicit workspacePath`);
-    }
 
     const requestedWorktreeMode = params.worktreeMode as unknown;
     if (

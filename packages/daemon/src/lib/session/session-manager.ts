@@ -152,7 +152,6 @@ export class SessionManager {
   }
 
   private needsSpaceRuntimeProvisioning(session: Session): boolean {
-    if (session.type === 'space_chat') return true;
     if (session.type === 'space_task_agent') return true;
     return typeof session.context?.spaceId === 'string';
   }
