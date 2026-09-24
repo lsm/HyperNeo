@@ -422,13 +422,14 @@ describe('prompt-too-long replay — recovery escalation: reason & final visible
     const execution = nodeExecutionRepo.getById(executionId)!;
     expect(execution.status).toBe('blocked');
     expect(execution.result).toContain(reasonSubstring);
-    expect(execution.agentSessionId).toBeNull();
+    expect(execution.agentSessionId).not.toBeNull();
+    expect(execution.data?.handoffRequired).toBe(true);
 
     expect(workflowRunRepo.getRun(runId)?.status).toBe('blocked');
 
     const task = taskRepo.listByWorkflowRun(runId)[0]!;
     expect(task.status).toBe('blocked');
-    expect(task.blockReason).toBe('execution_failed');
+    expect(task.blockReason).toBe('agent_handoff_required');
     expect(task.result).toContain(reasonSubstring);
 
     expect(notifications.some((n) => n.kind === 'task_blocked')).toBe(true);

@@ -140,6 +140,7 @@ function makeMockTaskAgentManager(
     cancelBySessionId?: (sessionId: string) => void;
     interruptBySessionId?: (sessionId: string) => Promise<void>;
     restartStuckSubSession?: (sessionId: string) => Promise<void>;
+    resumePersistedSubSession?: (sessionId: string) => Promise<boolean>;
     injectRuntimeRecoveryMessage?: (sessionId: string, message: string) => Promise<string>;
     getAgentSessionById?: (sessionId: string) => unknown;
     prepareSubSessionForWorkflowResume?: (sessionId: string) => Promise<boolean>;
@@ -217,6 +218,7 @@ function makeMockTaskAgentManager(
     cancelBySessionId: overrides.cancelBySessionId ?? (() => {}),
     interruptBySessionId: overrides.interruptBySessionId ?? (async () => {}),
     restartStuckSubSession: overrides.restartStuckSubSession ?? (async () => {}),
+    resumePersistedSubSession: overrides.resumePersistedSubSession ?? (async () => false),
     injectRuntimeRecoveryMessage:
       overrides.injectRuntimeRecoveryMessage ??
       (async (sessionId: string) => `runtime-nag:${sessionId}`),
@@ -1243,6 +1245,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
 
     test('tick picks up tasks added to an existing run between ticks', async () => {
       const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+        isSessionInMemory: () => true,
         isTaskAgentAlive: (taskId: string) => {
           const task = taskRepo.getTask(taskId);
           return !!task?.taskAgentSessionId;
@@ -1840,7 +1843,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
       expect(taskRepo.getTask(tasks[0].id)?.status).toBe('blocked');
     });
 
-    test('does not nag a DB-fallback-alive ghost session and resets it for spawn retry (#3109)', async () => {
+    test('blocks a ghost worker instead of silently handing off to a fresh session', async () => {
       const nags: Array<{ sessionId: string; message: string }> = [];
       const spawned: string[] = [];
       const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
@@ -1880,13 +1883,46 @@ describe('SpaceRuntime — tick loop correctness', () => {
       await rt.executeTick();
 
       expect(nags).toHaveLength(0);
-      expect(spawned).toEqual([execution.id]);
+      expect(spawned).toEqual([]);
       const updated = nodeExecutionRepo.getById(execution.id)!;
-      expect(updated.agentSessionId).toBe(`session:${execution.agentName}:respawn`);
-      expect(updated.status).toBe('in_progress');
+      expect(updated.agentSessionId).toBe('session:ghost-db');
+      expect(updated.status).toBe('blocked');
     });
 
-    test('restarts only the nagged stale agent when no progress follows', async () => {
+    test('restores a ghost worker under its original execution binding', async () => {
+      const restored: string[] = [];
+      const spawned: string[] = [];
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+        isSessionInMemory: () => false,
+        resumePersistedSubSession: async (sessionId) => {
+          restored.push(sessionId);
+          return true;
+        },
+        spawnWorkflowNodeAgentForExecution: async (_task, _space, _workflow, _run, execution) => {
+          spawned.push((execution as NodeExecution).id);
+          return 'session:unwanted';
+        },
+      });
+      const rt = new SpaceRuntime(buildConfig(tam));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Build', agentId: AGENT_CODER },
+      ]);
+      const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'session:ghost-db',
+      });
+
+      await rt.executeTick();
+
+      expect(restored).toEqual(['session:ghost-db']);
+      expect(spawned).toEqual([]);
+      expect(nodeExecutionRepo.getById(execution.id)?.agentSessionId).toBe('session:ghost-db');
+      expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('in_progress');
+    });
+
+    test('restarts only the nagged stale agent in the same session when no progress follows', async () => {
       const restarted: string[] = [];
       const injected: Array<{ sessionId: string; message: string }> = [];
       const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
@@ -1961,15 +1997,58 @@ describe('SpaceRuntime — tick loop correctness', () => {
       expect(restarted).toEqual(['session:Planner']);
       const executions = nodeExecutionRepo.listByWorkflowRun(run.id);
       expect(executions.find((e) => e.agentName === 'Planner')?.agentSessionId).toBe(
-        'session:Planner:new'
+        'session:Planner'
       );
+      expect(executions.find((e) => e.agentName === 'Planner')?.status).toBe('in_progress');
       expect(executions.find((e) => e.agentName === 'Coder')?.agentSessionId).toBe('session:Coder');
       expect(injected.some((entry) => entry.message.includes('[Runtime session recovery]'))).toBe(
         true
       );
     });
 
-    test('does not treat restart notice injection failure as spawn failure', async () => {
+    test('blocks and preserves the old session when same-session recovery fails', async () => {
+      const spawned: string[] = [];
+      const sessionId = 'session:restore-failed';
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+        isSessionAlive: () => true,
+        getAgentSessionById: () => processingState('processing'),
+        injectRuntimeRecoveryMessage: async (target) => `runtime-nag:${target}`,
+        restartStuckSubSession: async () => {
+          throw new Error('SDK transcript unavailable');
+        },
+        spawnWorkflowNodeAgentForExecution: async (_task, _space, _workflow, _run, execution) => {
+          spawned.push((execution as NodeExecution).id);
+          return 'session:unwanted';
+        },
+      });
+      const rt = new SpaceRuntime(
+        buildConfig(tam, { agentNoProgressThresholdMs: 60_000, agentStuckNagGraceMs: 0 })
+      );
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: sessionId,
+        startedAt: Date.now() - 20 * 60_000,
+      });
+      saveAssistantMessage(sessionId, { minutesAgo: 20, toolUse: true });
+
+      await rt.executeTick();
+      await rt.executeTick();
+      await rt.executeTick();
+
+      expect(nodeExecutionRepo.getById(execution.id)?.agentSessionId).toBe(sessionId);
+      expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('blocked');
+      expect(taskRepo.getTask(tasks[0].id)?.status).toBe('blocked');
+      expect(taskRepo.getTask(tasks[0].id)?.blockReason).toBe('agent_handoff_required');
+      expect(taskRepo.getTask(tasks[0].id)?.result).toContain('manual handoff required');
+      expect(spawned).toEqual([]);
+    });
+
+    test('does not discard the resumed session when restart notice injection fails', async () => {
       const injected: Array<{ sessionId: string; message: string }> = [];
       const cancelled: string[] = [];
       const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
@@ -2021,7 +2100,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
       expect(cancelled).toEqual([]);
       expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('in_progress');
       expect(nodeExecutionRepo.getById(execution.id)?.agentSessionId).toBe(
-        'session:restart-notice-failed:new'
+        'session:restart-notice-failed'
       );
       expect(injected.some((entry) => entry.message.includes('[Runtime session recovery]'))).toBe(
         true
@@ -2120,7 +2199,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
       ).toHaveLength(1);
       expect(restarted).toEqual(['session:runtime-nag-progress']);
       expect(nodeExecutionRepo.getById(execution.id)?.agentSessionId).toBe(
-        'session:Plan:after-nag'
+        'session:runtime-nag-progress'
       );
     });
 
@@ -2347,7 +2426,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
       expect(nodeExecutionRepo.getById(execution.id)?.agentSessionId).toBe('session:active-tool');
     });
 
-    test('does not consume restart budget when stopping the stuck session fails', async () => {
+    test('requires manual handoff when stopping the stuck session fails', async () => {
       const restarted: string[] = [];
       const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
         isSessionAlive: () => true,
@@ -2374,12 +2453,15 @@ describe('SpaceRuntime — tick loop correctness', () => {
       saveAssistantMessage('session:restart-fails-once', { minutesAgo: 20, toolUse: true });
 
       await rt.executeTick();
-      await expect(rt.executeTick()).rejects.toThrow('stop failed');
+      await rt.executeTick();
       await rt.executeTick();
 
-      expect(restarted).toEqual(['session:restart-fails-once', 'session:restart-fails-once']);
-      expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('pending');
-      expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+      expect(restarted).toEqual(['session:restart-fails-once']);
+      expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('blocked');
+      expect(nodeExecutionRepo.getById(execution.id)?.agentSessionId).toBe(
+        'session:restart-fails-once'
+      );
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
     });
 
     test('does not nag terminal or waiting-for-input sessions', async () => {
@@ -2721,7 +2803,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
       await rt.executeTick();
       await rt.executeTick();
 
-      expect(nags).toEqual(['session:active-stuck']);
+      expect(nags).toEqual(['session:active-stuck', 'session:active-stuck']);
       expect(restarted).toEqual(['session:active-stuck']);
     });
 

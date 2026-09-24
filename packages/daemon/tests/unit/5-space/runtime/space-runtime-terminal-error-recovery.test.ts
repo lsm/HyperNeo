@@ -114,6 +114,7 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
       isSessionAlive?: (sessionId: string) => boolean;
       isSessionInMemory?: (sessionId: string) => boolean;
       injectRuntimeRecoveryMessage?: (sessionId: string, message: string) => Promise<string>;
+      resumePersistedSubSession?: (sessionId: string) => Promise<boolean>;
     } = {}
   ) {
     const injected: Array<{ sessionId: string; message: string }> = [];
@@ -131,6 +132,7 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
       },
       interruptBySessionId: async () => {},
       restartStuckSubSession: async () => {},
+      resumePersistedSubSession: overrides.resumePersistedSubSession ?? (async () => false),
       getAgentSessionById: () => null,
       spawnWorkflowNodeAgent: async () => SESSION,
       spawnWorkflowNodeAgentForExecution: async (
@@ -533,7 +535,7 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     ).toHaveLength(0);
   });
 
-  test('dead terminal-error session is reset for a FRESH re-spawn (stale session cleared)', async () => {
+  test('dead terminal-error session blocks for handoff when it cannot be restored', async () => {
     const { executionId } = seedIdleErrorRun({
       subtype: 'error_during_execution',
       sessionAlive: false,
@@ -545,10 +547,34 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     await rt.executeTick();
 
     expect(tam._injected).toHaveLength(0);
-    expect(tam._spawnSnapshots.length).toBeGreaterThanOrEqual(1);
-    expect(tam._spawnSnapshots[0].agentSessionIdAtSpawn).toBeNull();
+    expect(tam._spawnSnapshots).toHaveLength(0);
     const updated = nodeExecutionRepo.getById(executionId)!;
-    expect(updated.status).toBe('in_progress');
+    expect(updated.status).toBe('blocked');
+    expect(updated.agentSessionId).toBe(SESSION);
+  });
+
+  test('restored terminal-error worker continues in the predecessor session', async () => {
+    const { executionId } = seedIdleErrorRun({
+      subtype: 'error_during_execution',
+      sessionAlive: false,
+    });
+    let alive = false;
+    const tam = makeTam({
+      isSessionAlive: () => alive,
+      resumePersistedSubSession: async (sessionId) => {
+        expect(sessionId).toBe(SESSION);
+        alive = true;
+        return true;
+      },
+    });
+    const rt = new SpaceRuntime(buildConfig(tam));
+    (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
+
+    await rt.executeTick();
+
+    expect(tam._spawnSnapshots).toHaveLength(0);
+    expect(nodeExecutionRepo.getById(executionId)?.agentSessionId).toBe(SESSION);
+    expect(tam._injected.some((message) => message.sessionId === SESSION)).toBe(true);
   });
 
   test('active tool continuation is preserved (no continue injected)', async () => {
@@ -682,8 +708,8 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
 
     expect(tam._injected).toHaveLength(1);
     expect(nodeExecutionRepo.getById(newest.id)?.status).toBe('blocked');
-    expect(nodeExecutionRepo.getById(newest.id)?.agentSessionId).toBeNull();
-    expect(nodeExecutionRepo.getById(oldestId)?.agentSessionId).toBeNull();
+    expect(nodeExecutionRepo.getById(newest.id)?.agentSessionId).toBe('session:shared');
+    expect(nodeExecutionRepo.getById(oldestId)?.agentSessionId).toBe('session:shared');
     expect(nodeExecutionRepo.getById(oldestId)?.status).toBe('idle');
   });
 
@@ -731,7 +757,7 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     expect(nodeExecutionRepo.getById(idleId)?.status).toBe('idle');
   });
 
-  test('retries up to the cap then escalates to blocked (clearing the stale session)', async () => {
+  test('retries up to the cap then requires a human handoff with the predecessor preserved', async () => {
     const { runId, taskId, executionId } = seedIdleErrorRun({
       subtype: 'error_during_execution',
       errors: ['transient hiccup A'],
@@ -760,11 +786,12 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
 
     const execution = nodeExecutionRepo.getById(executionId)!;
     expect(execution.status).toBe('blocked');
-    expect(execution.agentSessionId).toBeNull();
-    expect(tam._cancelled).toContain(SESSION);
+    expect(execution.agentSessionId).toBe(SESSION);
+    expect(execution.data?.handoffRequired).toBe(true);
+    expect(tam._cancelled).not.toContain(SESSION);
     expect(workflowRunRepo.getRun(runId)?.status).toBe('blocked');
     expect(taskRepo.getTask(taskId)?.status).toBe('blocked');
-    expect(taskRepo.getTask(taskId)?.blockReason).toBe('execution_failed');
+    expect(taskRepo.getTask(taskId)?.blockReason).toBe('agent_handoff_required');
     expect(notifications).toContainEqual(expect.objectContaining({ kind: 'task_blocked' }));
     expect(notifications).toContainEqual(expect.objectContaining({ kind: 'workflow_run_blocked' }));
   });
@@ -790,7 +817,7 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
 
     expect(tam._injected).toHaveLength(1);
     expect(nodeExecutionRepo.getById(executionId)?.status).toBe('blocked');
-    expect(nodeExecutionRepo.getById(executionId)?.agentSessionId).toBeNull();
+    expect(nodeExecutionRepo.getById(executionId)?.agentSessionId).toBe(SESSION);
     expect(workflowRunRepo.getRun(runId)?.status).toBe('blocked');
     expect(taskRepo.getTask(taskId)?.status).toBe('blocked');
   });
@@ -818,8 +845,8 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
 
     expect(tam._injected).toHaveLength(1);
     expect(nodeExecutionRepo.getById(executionId)?.status).toBe('blocked');
-    expect(nodeExecutionRepo.getById(executionId)?.agentSessionId).toBeNull();
-    expect(tam._cancelled).toContain(SESSION);
+    expect(nodeExecutionRepo.getById(executionId)?.agentSessionId).toBe(SESSION);
+    expect(tam._cancelled).not.toContain(SESSION);
     expect(workflowRunRepo.getRun(runId)?.status).toBe('blocked');
     expect(taskRepo.getTask(taskId)?.status).toBe('blocked');
     expect(taskRepo.getTask(taskId)?.result).toContain('Connection refused');
@@ -1000,7 +1027,7 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     await rt.executeTick();
 
     expect(nodeExecutionRepo.getById(executionId)?.status).toBe('blocked');
-    expect(nodeExecutionRepo.getById(executionId)?.agentSessionId).toBeNull();
+    expect(nodeExecutionRepo.getById(executionId)?.agentSessionId).toBe(SESSION);
     expect(workflowRunRepo.getRun(runId)?.status).toBe('blocked');
     expect(taskRepo.getTask(taskId)?.status).toBe('blocked');
   });

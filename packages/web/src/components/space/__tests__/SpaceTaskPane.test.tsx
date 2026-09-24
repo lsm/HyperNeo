@@ -108,6 +108,7 @@ const mockEditTaskMetadata = vi.fn().mockResolvedValue(undefined);
 const mockRunTaskDirectly = vi.fn().mockResolvedValue({ accepted: true, jobId: 'job-1' });
 const mockCancelTask = vi.fn().mockResolvedValue({ accepted: true, jobId: null });
 const mockRecoverWorkflowTask = vi.fn().mockResolvedValue(undefined);
+const mockHandoffWorkerSession = vi.fn().mockResolvedValue(undefined);
 const mockSubmitForReview = vi.fn().mockResolvedValue(undefined);
 const mockEnsureTaskAgentSession = vi.fn();
 const mockSendTaskMessage = vi.fn().mockResolvedValue(undefined);
@@ -137,6 +138,7 @@ vi.mock('../../../lib/space-store', () => ({
       runTaskDirectly: mockRunTaskDirectly,
       cancelTask: mockCancelTask,
       recoverWorkflowTask: mockRecoverWorkflowTask,
+      handoffWorkerSession: mockHandoffWorkerSession,
       submitForReview: mockSubmitForReview,
       ensureTaskAgentSession: mockEnsureTaskAgentSession,
       sendTaskMessage: mockSendTaskMessage,
@@ -326,6 +328,7 @@ describe('SpaceTaskPane', () => {
     mockEditTaskMetadata.mockResolvedValue(undefined);
     mockCancelTask.mockClear();
     mockRecoverWorkflowTask.mockClear();
+    mockHandoffWorkerSession.mockClear();
     mockEnsureTaskAgentSession.mockReset();
     mockEnsureTaskAgentSession.mockImplementation(async () =>
       makeTask({ status: 'in_progress', taskAgentSessionId: 'session-ensured' })
@@ -1813,6 +1816,50 @@ describe('SpaceTaskPane — activity members actions', () => {
       expect(mockRecoverWorkflowTask).toHaveBeenCalledWith('task-1', 'in_progress')
     );
     expect(mockSetTaskStatus).not.toHaveBeenCalled();
+  });
+
+  it('offers only the explicit handoff action for a worker that cannot resume', async () => {
+    mockTasks.value = [
+      makeTask({
+        status: 'blocked',
+        workflowRunId: 'run-1',
+        blockReason: 'agent_handoff_required',
+      }),
+    ];
+    mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', status: 'blocked' })];
+    const { getByTestId, queryByText } = render(<SpaceTaskPane taskId="task-1" />);
+
+    fireEvent.click(getByTestId('task-blocked-handoff-btn'));
+    await waitFor(() => expect(mockHandoffWorkerSession).toHaveBeenCalledWith('task-1'));
+    expect(mockRecoverWorkflowTask).not.toHaveBeenCalled();
+    fireEvent.click(getByTestId('task-actions-menu-trigger'));
+    expect(queryByText('Reopen workflow')).toBeNull();
+    expect(getByTestId('task-blocked-cancel-btn')).toBeTruthy();
+  });
+
+  it('keeps the predecessor session readable after a human handoff', () => {
+    mockTasks.value = [makeTask({ status: 'in_progress', workflowRunId: 'run-1' })];
+    mockNodeExecutions.value = [
+      {
+        id: 'exec-handoff',
+        workflowRunId: 'run-1',
+        workflowNodeId: 'node-1',
+        agentName: 'coder',
+        agentSessionId: 'session:successor',
+        status: 'in_progress',
+        data: { predecessorSessionId: 'session:predecessor' },
+      } as NodeExecution,
+    ];
+    const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" />);
+
+    fireEvent.click(getByTestId('task-actions-menu-trigger'));
+    fireEvent.click(getByText('Open previous coder session'));
+    expect(mockPushOverlayHistory).toHaveBeenCalledWith(
+      'session:predecessor',
+      'coder',
+      undefined,
+      expect.objectContaining({ taskId: 'task-1', readonly: true })
+    );
   });
 
   it('stops an in_progress workflow task with a plain status transition', async () => {

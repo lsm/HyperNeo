@@ -2324,7 +2324,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         nagCount: 1,
         restartCount: 1,
         lastAction: 'restart',
-        lastActionAt: Date.now() - 60_000,
+        lastActionAt: Date.now() - 20 * 60_000,
         lastObservedMessageId: null,
         lastObservedMessageAt: null,
         lastObservedProgressMessageId: null,
@@ -2410,7 +2410,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         nagCount: 1,
         restartCount: 1,
         lastAction: 'restart',
-        lastActionAt: Date.now() - 60_000,
+        lastActionAt: Date.now() - 20 * 60_000,
         lastObservedMessageId: null,
         lastObservedMessageAt: null,
         lastObservedProgressMessageId: null,
@@ -2478,7 +2478,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         nagCount: 1,
         restartCount: 1,
         lastAction: 'restart',
-        lastActionAt: Date.now() - 60_000,
+        lastActionAt: Date.now() - 20 * 60_000,
         lastObservedMessageId: null,
         lastObservedMessageAt: null,
         lastObservedProgressMessageId: null,
@@ -2492,9 +2492,9 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 
       const taskAfter = taskRepo.getTask(task.id)!;
       expect(taskAfter.status).toBe('blocked');
-      expect(taskAfter.blockReason).toBe('execution_failed');
+      expect(taskAfter.blockReason).toBe('agent_handoff_required');
       expect(taskAfter.result).toContain(
-        'Agent stuck without observable progress after runtime nag/restart recovery'
+        'Agent stuck without observable progress after same-session recovery'
       );
       expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
       expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('blocked');

@@ -338,7 +338,6 @@ export interface SessionMetadata {
   };
   sessionType?: SessionType;
   pairedSessionId?: string;
-  parentSessionId?: string;
   currentTaskId?: string;
   clone?: {
     returnedAt?: string;

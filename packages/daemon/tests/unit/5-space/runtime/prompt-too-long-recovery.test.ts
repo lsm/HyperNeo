@@ -904,7 +904,7 @@ describe('SpaceRuntime — prompt-too-long recovery', () => {
     expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('blocked');
   });
 
-  test('detaches the overflowed session when escalating to blocked', async () => {
+  test('preserves the overflowed session until a human authorizes handoff', async () => {
     const injections: Array<{ sessionId: string; message: string }> = [];
     const rt = new SpaceRuntime(buildConfig(makeRecordingTam(injections)));
     const sessionId = 'session:block-clear';
@@ -918,6 +918,7 @@ describe('SpaceRuntime — prompt-too-long recovery', () => {
 
     const blocked = nodeExecutionRepo.getById(execution.id);
     expect(blocked?.status).toBe('blocked');
-    expect(blocked?.agentSessionId).toBeNull();
+    expect(blocked?.agentSessionId).toBe(sessionId);
+    expect(blocked?.data?.handoffRequired).toBe(true);
   });
 });

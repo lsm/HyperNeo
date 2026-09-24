@@ -70,6 +70,27 @@ describe('TaskBlockedBanner', () => {
     expect(getByTestId('task-blocked-cancel-btn')).toBeTruthy();
   });
 
+  it('requires a human handoff action when the predecessor cannot resume', () => {
+    const onHandoff = vi.fn();
+    const onStatusTransition = vi.fn();
+    const task = makeTask({
+      blockReason: 'agent_handoff_required',
+      result: 'Same-session recovery failed',
+    });
+    const { getByTestId, queryByTestId } = render(
+      <TaskBlockedBanner
+        task={task}
+        spaceId="space-1"
+        onHandoff={onHandoff}
+        onStatusTransition={onStatusTransition}
+      />
+    );
+    expect(queryByTestId('task-blocked-reopen-btn')).toBeNull();
+    fireEvent.click(getByTestId('task-blocked-handoff-btn'));
+    expect(onHandoff).toHaveBeenCalledTimes(1);
+    expect(onStatusTransition).not.toHaveBeenCalled();
+  });
+
   it('renders agent_crashed banner with Reopen and Cancel buttons', () => {
     const task = makeTask({ blockReason: 'agent_crashed' });
     const { getByTestId } = render(<TaskBlockedBanner task={task} spaceId="space-1" />);

@@ -299,6 +299,16 @@ describe('TaskAgentManager.stopSessionsVerified', () => {
     expect(sessionManager.unregisterCalls).toEqual(['sess-1']);
   });
 
+  test('refuses handoff after an unverified stop even when the session is no longer indexed', async () => {
+    const manager = makeManager(makeSessionManager());
+    const fake = makeFakeSession({ statusSequence: ['processing'] });
+    registerSession(manager, 'task-1', 'sess-1', fake.session);
+
+    expect(await manager.verifyPredecessorStoppedForHandoff('sess-1')).toBe(false);
+    expect(await manager.verifyPredecessorStoppedForHandoff('sess-1')).toBe(false);
+    expect(fake.calls.interrupts).toBe(2);
+  });
+
   test('reports stopped when escalation terminates the surviving process', async () => {
     const sessionManager = makeSessionManager();
     const manager = makeManager(sessionManager);
