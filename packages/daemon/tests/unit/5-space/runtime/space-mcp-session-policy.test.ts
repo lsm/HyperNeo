@@ -111,29 +111,6 @@ describe('resolveSpaceMcpSessionPolicy', () => {
     });
   });
 
-  test('treats a post-approval sub-session no execution backs as outside any Space', () => {
-    const session = makeSession({
-      id: 'space:space-1:task:task-1:post-approval:merger',
-      type: 'worker',
-      context: { spaceId: 'space-1', taskId: 'task-1' },
-    });
-    const policy = resolveSpaceMcpSessionPolicy(session, {
-      nodeExecutionRepo: {
-        getByAgentSessionId: () => null,
-        getById: () => null,
-      },
-      taskRepo: { getTask: () => makeTask({ id: 'task-1', spaceId: 'space-1' }) },
-    });
-
-    expect(policy).toMatchObject({
-      role: 'universal_read',
-      spaceId: undefined,
-      owner: 'none',
-      isWorkflowWorker: false,
-    });
-    expect(missingMcpServers(undefined, policy.requiredServers)).toEqual([]);
-  });
-
   test('routes workflow workers by node execution ownership, not session ID shape', () => {
     const session = makeSession({
       id: 'opaque-worker-session',
@@ -358,5 +335,18 @@ describe('missingMcpServers', () => {
     expect(
       missingMcpServers({ 'other-server': {} }, spaceWorkflowWorkerRequiredMcpServers())
     ).toEqual([...spaceWorkflowWorkerRequiredMcpServers()]);
+  });
+});
+
+describe('post-approval sessions', () => {
+  test('a post-approval sub-session with no node execution stays a workflow worker in its Space', () => {
+    const policy = resolveSpaceMcpSessionPolicy(
+      makeSession({
+        id: 'space:space-1:task:t1:post-approval:p1',
+        context: { spaceId: 'space-1', taskId: 't1' },
+      })
+    );
+    expect(policy.role).toBe('workflow_worker');
+    expect(policy.spaceId).toBe('space-1');
   });
 });

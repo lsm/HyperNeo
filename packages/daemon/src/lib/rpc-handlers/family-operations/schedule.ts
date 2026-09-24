@@ -13,6 +13,8 @@ export function registerScheduleOperations(context: FamilyOperationContext): Ope
     taskRepo: context.spaceTaskRepo,
     nodeExecutionRepo: context.nodeExecutionRepo,
     longHorizonAgentRepo: context.longHorizonAgentRepo,
+    hasDirectWorkerProvenance: context.hasDirectWorkerProvenance,
+    resolveDirectWorker: context.resolveDirectWorker,
   };
   return createScheduleOperations({
     schedules: context.scheduleService,

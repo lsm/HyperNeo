@@ -1,3 +1,4 @@
+import type { DirectTaskWorkerIdentity } from '../../tasks/direct-task-worker-identity.ts';
 import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository.ts';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
 import type { SpaceAgentGoalScopeRepository } from '../../../storage/repositories/space-agent-goal-scope-repository.ts';
@@ -46,6 +47,8 @@ export interface FamilyOperationContext {
   readonly spaceAgentTemplateManager: SpaceAgentTemplateManager;
   readonly spaceAgentReminderRepo: SpaceAgentReminderRepository;
   readonly spaceAgentSubscriptionRepo: SpaceAgentSubscriptionRepository;
+  readonly hasDirectWorkerProvenance: (sessionId: string) => boolean;
+  readonly resolveDirectWorker: (sessionId: string) => DirectTaskWorkerIdentity | null;
   readonly spaceSessionEventSubscriptionRepo: SpaceSessionEventSubscriptionRepository;
   readonly spaceAgentInactivityConfigRepo: SpaceAgentInactivityConfigRepository;
   readonly spaceAgentInactivityClaimRepo: SpaceAgentInactivityClaimRepository;

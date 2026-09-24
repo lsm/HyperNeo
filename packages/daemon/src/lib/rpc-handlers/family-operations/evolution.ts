@@ -9,6 +9,8 @@ export function registerEvolutionOperations(
   return createEvolutionOperations({
     getSession: (sessionId) => context.deps.db.getSession(sessionId),
     longHorizonAgentRepo: context.longHorizonAgentRepo,
+    hasDirectWorkerProvenance: context.hasDirectWorkerProvenance,
+    resolveDirectWorker: context.resolveDirectWorker,
     nodeExecutionRepo: context.nodeExecutionRepo,
     taskRepo: context.spaceTaskRepo,
     workflowRunRepo: context.spaceWorkflowRunRepo,

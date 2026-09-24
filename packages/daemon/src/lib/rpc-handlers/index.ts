@@ -1267,6 +1267,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     }
   });
 
+  const directTaskExecutionRepo = new DirectTaskExecutionRepository(deps.db.getDatabase());
+  const directTaskWorkerResolver = createDatabaseDirectTaskWorkerResolver(deps.db.getDatabase());
   const familyContext: FamilyOperationContext = {
     deps,
     spaceRuntimeService,
@@ -1282,6 +1284,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     spaceAgentReminderRepo,
     spaceAgentSubscriptionRepo,
     spaceSessionEventSubscriptionRepo,
+    hasDirectWorkerProvenance: (sessionId: string) =>
+      directTaskExecutionRepo.hasSessionProvenance(sessionId),
+    resolveDirectWorker: directTaskWorkerResolver,
     spaceAgentInactivityConfigRepo,
     spaceAgentInactivityClaimRepo,
     spaceGoalService,
@@ -1302,8 +1307,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   };
   const familyOperations = collectFamilyOperations(familyContext);
 
-  const directTaskExecutionRepo = new DirectTaskExecutionRepository(deps.db.getDatabase());
-  const directTaskWorkerResolver = createDatabaseDirectTaskWorkerResolver(deps.db.getDatabase());
   const spaceOperationRegistryProvider = createSpaceOperationRegistryProvider(
     deps.db,
     deps.jobQueue,

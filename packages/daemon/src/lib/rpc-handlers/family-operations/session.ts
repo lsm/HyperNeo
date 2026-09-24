@@ -13,6 +13,8 @@ export function registerSessionOperations(context: FamilyOperationContext): Oper
     taskRepo: context.spaceTaskRepo,
     nodeExecutionRepo: context.nodeExecutionRepo,
     longHorizonAgentRepo: context.longHorizonAgentRepo,
+    hasDirectWorkerProvenance: context.hasDirectWorkerProvenance,
+    resolveDirectWorker: context.resolveDirectWorker,
   };
   return createSessionOperations({
     getDatabase: () => context.deps.db.getDatabase(),

@@ -75,7 +75,7 @@ export function resolveSpaceMcpSessionPolicy(
   }
 
   const workflowExecution = resolveWorkflowExecution(session, context.nodeExecutionRepo);
-  if (workflowExecution) {
+  if (workflowExecution || isPostApprovalSession(session)) {
     const taskId = session.context?.taskId;
     const task = taskId ? (context.taskRepo?.getTask(taskId) ?? null) : null;
     const resolvedSpaceId = spaceId ?? task?.spaceId;
@@ -108,6 +108,10 @@ export function resolveSpaceMcpSessionPolicy(
     attachLongTermAgentTools: false,
     isWorkflowWorker: false,
   };
+}
+
+function isPostApprovalSession(session: Session): boolean {
+  return session.id.includes(':task:') && session.id.includes(':post-approval:');
 }
 
 export function resolveWorkflowExecution(

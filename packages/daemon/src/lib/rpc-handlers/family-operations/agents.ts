@@ -48,6 +48,8 @@ export function registerAgentOperations(context: FamilyOperationContext): Operat
     ...createAgentOperations({
       getSession: (sessionId) => context.deps.db.getSession(sessionId),
       longHorizonAgentRepo: context.longHorizonAgentRepo,
+      hasDirectWorkerProvenance: context.hasDirectWorkerProvenance,
+      resolveDirectWorker: context.resolveDirectWorker,
       reminderRepo: context.spaceAgentReminderRepo,
       occurrenceIsClaimed: (spaceId, agentId, idempotencyKey) => {
         const sessionId = resolveAgentSessionId(context.longHorizonAgentRepo, spaceId, agentId);
@@ -89,6 +91,8 @@ export function registerAgentOperations(context: FamilyOperationContext): Operat
       getDatabase: () => context.deps.db.getDatabase(),
       getSession: (sessionId) => context.deps.db.getSession(sessionId),
       longHorizonAgentRepo: context.longHorizonAgentRepo,
+      hasDirectWorkerProvenance: context.hasDirectWorkerProvenance,
+      resolveDirectWorker: context.resolveDirectWorker,
       templateManager: context.spaceAgentTemplateManager,
       subscriptionRepo: context.spaceAgentSubscriptionRepo,
       reminderRepo: context.spaceAgentReminderRepo,
@@ -110,6 +114,8 @@ export function registerAgentOperations(context: FamilyOperationContext): Operat
       taskRepo: context.spaceTaskRepo,
       nodeExecutionRepo: context.nodeExecutionRepo,
       longHorizonAgentRepo: context.longHorizonAgentRepo,
+      hasDirectWorkerProvenance: context.hasDirectWorkerProvenance,
+      resolveDirectWorker: context.resolveDirectWorker,
     }),
   ];
 }
