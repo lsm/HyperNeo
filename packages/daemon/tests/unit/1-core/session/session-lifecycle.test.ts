@@ -688,12 +688,15 @@ describe('SessionLifecycle', () => {
           metadata: expect.objectContaining({
             sessionType: 'worker',
             pairedSessionId: 'manager-id',
-            parentSessionId: 'parent-id',
             currentTaskId: 'task-123',
           }),
         }),
         expect.anything()
       );
+      const created = (mockDb.createSession as ReturnType<typeof mock>).mock.calls[0][0] as {
+        metadata: Record<string, unknown>;
+      };
+      expect('parentSessionId' in created.metadata).toBe(false);
     });
 
     it('creates a session with prompt provenance and a null parent link by default', async () => {
