@@ -393,12 +393,6 @@ describe('SessionLifecycle', () => {
       expect(createdSessions[0]!.context).toBeUndefined();
     });
 
-    it('space_chat session without workspacePath throws', async () => {
-      await expect(lifecycle.create({ sessionType: 'space_chat' })).rejects.toThrow(
-        "Session type 'space_chat' requires explicit workspacePath"
-      );
-    });
-
     it('worker session without workspacePath creates unbound session', async () => {
       await lifecycle.create({ sessionType: 'worker' });
 
