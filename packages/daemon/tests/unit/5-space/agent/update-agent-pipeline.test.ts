@@ -42,7 +42,7 @@ interface Harness {
   handles: string[];
   displayNames: string[];
   displayNameIds: string[];
-  sessions: Map<string, { type: string; spaceId: string | null }>;
+  sessions: Map<string, { type: string; spaceId: string | null; parentSessionId: string | null }>;
   sessionOwners: Map<string, string>;
 }
 
@@ -55,7 +55,9 @@ function makeHarness(agent = makeAgent()): Harness {
     handles: [agent.handle],
     displayNames: [agent.displayName],
     displayNameIds: [agent.id],
-    sessions: new Map([['session-free', { type: 'space_chat', spaceId: 'space-1' }]]),
+    sessions: new Map([
+      ['session-free', { type: 'space_chat', spaceId: 'space-1', parentSessionId: null }],
+    ]),
     sessionOwners: new Map(),
   };
 
@@ -140,7 +142,7 @@ describe('updateSpaceAgent', () => {
     });
 
     test('rejects a session from another space', async () => {
-      h.sessions.set('other', { type: 'space_chat', spaceId: 'space-2' });
+      h.sessions.set('other', { type: 'space_chat', spaceId: 'space-2', parentSessionId: null });
       expectKind(
         await run(h, { id: 'agent-1', sessionId: 'other' }),
         'session_invalid',
@@ -149,8 +151,21 @@ describe('updateSpaceAgent', () => {
     });
 
     test('rejects a task agent session', async () => {
-      h.sessions.set('task', { type: 'space_task_agent', spaceId: 'space-1' });
+      h.sessions.set('task', {
+        type: 'space_task_agent',
+        spaceId: 'space-1',
+        parentSessionId: null,
+      });
       expectKind(await run(h, { id: 'agent-1', sessionId: 'task' }), 'session_invalid');
+    });
+
+    test('rejects binding a spawned session as the primary', async () => {
+      h.sessions.set('clone', { type: 'worker', spaceId: 'space-1', parentSessionId: 'other' });
+      expectKind(
+        await run(h, { id: 'agent-1', sessionId: 'clone' }),
+        'session_invalid',
+        'spawned session'
+      );
     });
 
     test('rejects a session owned by another agent', async () => {

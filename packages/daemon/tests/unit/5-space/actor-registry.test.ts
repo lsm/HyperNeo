@@ -416,6 +416,31 @@ describe('SpaceActorRegistryAdapter', () => {
     expect(actor?.status).toBe('archived');
   });
 
+  it('never falls back to a clone as a migrated worker session', () => {
+    const space = spaceRepo.createSpace({
+      workspacePath: '/workspace/project',
+      slug: 'project',
+      name: 'Project',
+    });
+    const workerId = 'legacy-worker';
+    seedWorkerMirror(db, { id: workerId, spaceId: space.id, name: 'Legacy Worker' });
+    const provenance = { source: 'agent', hash: workerId, agentId: workerId };
+    const clone = makeSession('clone-of-worker', {
+      context: { spaceId: space.id },
+      parentSessionId: 'gone',
+    });
+    clone.metadata.promptProvenance = provenance;
+    sessionRepo.createSession(clone);
+
+    expect(registry.getActor(space.id, `agent:${workerId}`)?.status).toBe('inactive');
+
+    const primary = makeSession('worker-primary', { context: { spaceId: space.id } });
+    primary.metadata.promptProvenance = provenance;
+    sessionRepo.createSession(primary);
+
+    expect(registry.getActor(space.id, `agent:${workerId}`)?.status).toBe('active');
+  });
+
   it('keeps a paused migrated worker routable through its worker actor', () => {
     const space = spaceRepo.createSpace({
       workspacePath: '/workspace/project',

@@ -73,7 +73,10 @@ describe('setupSpaceAgentV2Handlers', () => {
   let templates: SpaceAgentTemplateRepository;
   let handlers: Map<string, RequestHandler>;
   let deps: SpaceAgentV2Deps;
-  let sessions: Map<string, { type: string; context?: { spaceId?: string | null } | null }>;
+  let sessions: Map<
+    string,
+    { type: string; context?: { spaceId?: string | null } | null; parentSessionId?: string | null }
+  >;
   let published: Array<{ topic: string; payload: unknown }>;
 
   beforeEach(() => {
@@ -699,6 +702,21 @@ describe('setupSpaceAgentV2Handlers', () => {
       await expect(
         call(handlers, 'spaceAgentV2.update', { id: created.id, sessionId: 'foreign' })
       ).rejects.toThrow('does not belong to space');
+    });
+
+    test('a clone of another agent session cannot be bound as a primary', async () => {
+      const owner = agents.create({ spaceId: 'space-1', handle: 'owner', sessionId: 'primary' });
+      const created = agents.create({ spaceId: 'space-1', handle: 'a' });
+      sessions.set('clone', {
+        type: 'worker',
+        context: { spaceId: 'space-1' },
+        parentSessionId: 'primary',
+      });
+
+      await expect(
+        call(handlers, 'spaceAgentV2.update', { id: created.id, sessionId: 'clone' })
+      ).rejects.toThrow('spawned session');
+      expect(agents.getById(owner.id)?.sessionId).toBe('primary');
     });
 
     test('leaves the row untouched when a gate rejects', async () => {
