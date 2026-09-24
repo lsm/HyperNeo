@@ -59,6 +59,21 @@ export interface ListDeliveriesDependencies extends EventCallerDependencies {
 interface DeliveryScope {
   spaceId: string;
   workflowRunId: string;
+  nodeId?: string;
+}
+
+function ownDeliveryScope(
+  spaceId: string,
+  caller: OperationCaller,
+  events: ListDeliveriesDependencies
+): DeliveryScope | null {
+  if (!caller.sessionId) return null;
+  if (caller.role === 'direct_task_worker') {
+    return { spaceId, workflowRunId: `session:${spaceId}`, nodeId: caller.sessionId };
+  }
+  if (caller.role !== 'long_term_agent') return null;
+  const agentId = events.getSession(caller.sessionId)?.metadata.promptProvenance?.agentId;
+  return agentId ? { spaceId, workflowRunId: `long_horizon:${spaceId}`, nodeId: agentId } : null;
 }
 
 export function admitDeliveryReader(input: Input, caller: OperationCaller) {
@@ -71,6 +86,8 @@ export function resolveDeliveryScope(
   events: ListDeliveriesDependencies,
   caller: OperationCaller
 ): { value: DeliveryScope } | { reason: Rejection } {
+  const own = input.workflowRunId === undefined ? ownDeliveryScope(spaceId, caller, events) : null;
+  if (own) return { value: own };
   const workflowRunId = input.workflowRunId ?? resolveWorkerNodeSlot(caller, events)?.workflowRunId;
   return workflowRunId ? { value: { spaceId, workflowRunId } } : { reason: 'run_unresolved' };
 }
@@ -83,7 +100,7 @@ export function readDeliveryLog(
   const records = events.eventStore.listDeliveryLog({
     spaceId: scope.spaceId,
     workflowRunId: scope.workflowRunId,
-    nodeId: input.nodeId,
+    nodeId: scope.nodeId ?? input.nodeId,
     status: input.state,
     limit: Math.min(input.limit ?? DEFAULT_DELIVERY_LIMIT, MAX_DELIVERY_LIMIT),
     offset: input.offset ?? 0,
@@ -114,7 +131,7 @@ export function readDeliveryLog(
 }
 
 const LIST_DELIVERIES_DESCRIPTION =
-  'List recent external-event deliveries for a workflow run with delivery state and event essence. Defaults to the calling worker own run; pass workflowRunId to inspect another run in the same Space. MCP callers are scoped to their own Space; RPC callers pass workflowRunId; omitted spaceId defaults to their trusted caller Space. scope reports the Space that answered. Rejects caller_denied without an admitted Space scope and run_unresolved when no workflow run can be determined.';
+  'List recent external-event deliveries for a workflow run with delivery state and event essence. Defaults to the calling worker own run, or to the deliveries made to a calling long-horizon agent or direct task worker; pass workflowRunId to inspect another run in the same Space. MCP callers are scoped to their own Space; RPC callers pass workflowRunId; omitted spaceId defaults to their trusted caller Space. scope reports the Space that answered. Rejects caller_denied without an admitted Space scope and run_unresolved when no workflow run can be determined.';
 
 export function createListDeliveriesOperation(events: ListDeliveriesDependencies) {
   const list = (superpipe({ events })('list-external-event-deliveries') as PipelineAPI)
@@ -126,7 +143,10 @@ export function createListDeliveriesOperation(events: ListDeliveriesDependencies
   return defineOperation({
     name: 'event.external.delivery.list',
     description: LIST_DELIVERIES_DESCRIPTION,
-    policy: { safetyClass: 'read', roles: NODE_EVENT_ROLES },
+    policy: {
+      safetyClass: 'read',
+      roles: [...NODE_EVENT_ROLES, 'long_term_agent', 'direct_task_worker'],
+    },
     inputSchema,
     resultSchema: z.union([
       z.object({ deliveries: z.array(DeliverySchema), scope: z.object({ spaceId: z.string() }) }),
