@@ -17,7 +17,6 @@ const MCP_ROLES: readonly OperationCallerRole[] = [
   'long_term_agent',
   'workflow_worker',
   'direct_task_worker',
-  'long_term_agent',
   'universal_read',
   'legacy_task_agent',
   'outside_space',
