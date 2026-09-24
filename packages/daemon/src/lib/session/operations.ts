@@ -388,12 +388,8 @@ export async function interruptSpaceSession(
 const READ_ADMISSION: SpaceCallerAdmission = { readOnly: true };
 const WRITE_ADMISSION: SpaceCallerAdmission = { readOnly: false };
 
-const READ_ROLES: readonly OperationCallerRole[] = [
-  'ad_hoc_member',
-  'long_term_agent',
-  'workflow_worker',
-];
-const WRITE_ROLES: readonly OperationCallerRole[] = ['ad_hoc_member', 'long_term_agent'];
+const READ_ROLES: readonly OperationCallerRole[] = ['long_term_agent', 'workflow_worker'];
+const WRITE_ROLES: readonly OperationCallerRole[] = ['long_term_agent'];
 
 const READ_POLICY: OperationPolicy = { safetyClass: 'read', roles: READ_ROLES };
 const MUTATE_POLICY: OperationPolicy = { safetyClass: 'mutate', roles: WRITE_ROLES };

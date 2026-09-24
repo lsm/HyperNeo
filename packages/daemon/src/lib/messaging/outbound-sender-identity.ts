@@ -30,7 +30,6 @@ export function outboundSenderLevel(
       return 'node-agent';
     case 'legacy_task_agent':
       return 'task-agent';
-    case 'ad_hoc_member':
     case 'direct_task_worker':
       return 'session-agent';
     default:

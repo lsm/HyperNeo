@@ -90,7 +90,7 @@ const AUDITED_SCOPE_GET_PARTS: readonly ScopeGetPart[] = ['lessons', 'proposals'
 
 const EVOLUTION_READ_POLICY = {
   safetyClass: 'read',
-  roles: ['ad_hoc_member', 'long_term_agent'],
+  roles: ['long_term_agent'],
 } as const satisfies OperationPolicy;
 
 const ScopeGetInputSchema = z

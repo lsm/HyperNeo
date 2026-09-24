@@ -213,7 +213,7 @@ export function createSendSessionMessageOperation(deps: SendSessionMessageDepend
   return defineOperation({
     name: 'session.message.send',
     description:
-      'Send a user message to an ad-hoc session in a Space and optionally clear a pending question; returns the delivery result.',
+      'Send a user message to a session in a Space and optionally clear a pending question; returns the delivery result.',
     inputSchema: SendSessionMessageInputSchema,
     resultSchema: SendSessionMessageResultSchema,
     execute: async (input) => {

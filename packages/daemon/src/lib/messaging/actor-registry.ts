@@ -1,5 +1,5 @@
 import type { ActorRef, ActorStatus } from '../../../../messaging/src/types.ts';
-import type { NodeExecution, Session, Space, SpaceLongHorizonAgent } from '@hyperneo/shared';
+import type { NodeExecution, Session, SpaceLongHorizonAgent } from '@hyperneo/shared';
 import type { NodeExecutionRepository } from '../../storage/repositories/node-execution-repository.ts';
 import type { SessionRepository } from '../../storage/repositories/session-repository.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
@@ -32,13 +32,6 @@ export class SpaceActorRegistryAdapter {
     if (!space) return [];
 
     const actors = new Map<string, ActorRef>();
-    const sessions = this.repos.sessionRepo.getSessionsByIds(space.sessionIds);
-    for (const session of sessions.values()) {
-      if (!isAdHocMemberSession(session)) continue;
-      this.add(actors, humanActorForSession(session, space));
-      const sessionActor = sessionActorForSession(session, spaceId);
-      if (sessionActor) this.add(actors, sessionActor);
-    }
 
     for (const actor of this.agentActors(spaceId)) {
       this.add(actors, actor);
@@ -97,30 +90,6 @@ export class SpaceActorRegistryAdapter {
 
     actors.set(actor.actorId, mergeActorRefs(existing, actor));
   }
-}
-
-function humanActorForSession(session: Session, space: Space): ActorRef {
-  return {
-    actorId: `human:${session.id}`,
-    kind: 'human',
-    spaceId: space.id,
-    handle: undefined,
-    roles: ['member'],
-    status: statusFromSession(session),
-  };
-}
-
-function sessionActorForSession(session: Session, spaceId: string): ActorRef | null {
-  if (!isAdHocMemberSession(session)) return null;
-
-  return {
-    actorId: `session:${session.id}`,
-    kind: 'session',
-    spaceId,
-    handle: `@session:${session.id}`,
-    roles: ['member-session'],
-    status: statusFromSession(session),
-  };
 }
 
 export function canonicalAgentHandle(
@@ -189,15 +158,6 @@ function encodeWorkerHandleSegment(value: string): string {
 
 function isSessionInSpace(session: Session, spaceId: string): boolean {
   return session.context?.spaceId === spaceId;
-}
-
-function isAdHocMemberSession(session: Session): boolean {
-  if (session.id.startsWith('space:agent:') || session.metadata.promptProvenance?.agentId)
-    return false;
-  if (session.type === 'space_chat' || session.type === 'space_task_agent') return false;
-  if (session.id.includes(':task:') && session.id.includes(':exec:')) return false;
-  if (session.metadata.promptProvenance?.workflowRunId) return false;
-  return true;
 }
 
 function statusFromSession(session: Session): ActorStatus {

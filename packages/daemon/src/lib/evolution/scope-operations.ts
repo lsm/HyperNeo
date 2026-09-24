@@ -68,12 +68,12 @@ type ScopeCreateRejection = (typeof SCOPE_CREATE_REJECTIONS)[number];
 
 const EVOLUTION_READ_POLICY = {
   safetyClass: 'read',
-  roles: ['ad_hoc_member', 'long_term_agent'],
+  roles: ['long_term_agent'],
 } as const satisfies OperationPolicy;
 
 const EVOLUTION_MUTATE_POLICY = {
   safetyClass: 'mutate',
-  roles: ['ad_hoc_member', 'long_term_agent'],
+  roles: ['long_term_agent'],
 } as const satisfies OperationPolicy;
 
 const SpaceScoped = {

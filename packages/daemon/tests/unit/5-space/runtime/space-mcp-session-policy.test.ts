@@ -5,7 +5,7 @@ import {
   missingMcpServers,
   resolveSpaceMcpSessionPolicy,
   type SpaceMcpSessionRole,
-  spaceAdHocMemberRequiredMcpServers,
+  spaceAgentRequiredMcpServers,
   spaceWorkflowWorkerRequiredMcpServers,
 } from '../../../../src/lib/space/runtime/space-mcp-session-policy.ts';
 
@@ -109,7 +109,7 @@ describe('resolveSpaceMcpSessionPolicy', () => {
       attachGenericSpaceTools: true,
       isWorkflowWorker: false,
     });
-    expect(policy.requiredServers).toEqual(spaceAdHocMemberRequiredMcpServers());
+    expect(policy.requiredServers).toEqual(spaceAgentRequiredMcpServers());
   });
 
   test('routes post-approval sub-sessions as ad-hoc members requiring space-actions (#852)', () => {
@@ -133,7 +133,7 @@ describe('resolveSpaceMcpSessionPolicy', () => {
       attachGenericSpaceTools: true,
       isWorkflowWorker: false,
     });
-    expect(policy.requiredServers).toEqual(spaceAdHocMemberRequiredMcpServers());
+    expect(policy.requiredServers).toEqual(spaceAgentRequiredMcpServers());
     expect(missingMcpServers(undefined, policy.requiredServers)).toEqual([
       ...policy.requiredServers,
     ]);
