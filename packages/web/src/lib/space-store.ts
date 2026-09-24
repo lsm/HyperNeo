@@ -1,6 +1,7 @@
 import type {
   CloneChildrenChoice,
   CloneSummary,
+  WorktreeCommitStatus,
   CreateSpaceAgentTemplateParams,
   CreateSpaceGoalParams,
   CreateSpaceLongHorizonAgentReminderParams,
@@ -2723,19 +2724,30 @@ class SpaceStore {
 
   async deleteAgent(
     agentId: string,
-    children?: CloneChildrenChoice
-  ): Promise<{ clones: CloneSummary[] } | null> {
+    children?: CloneChildrenChoice,
+    confirmed?: boolean
+  ): Promise<{ clones: CloneSummary[] } | { commitStatus: WorktreeCommitStatus } | null> {
     const spaceId = this.spaceId.value;
     if (!spaceId) throw new Error('No space selected');
 
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
 
-    const result = await hub.request<{ id: string } | { accepted: false; clones: CloneSummary[] }>(
-      'spaceAgentV2.delete',
-      { id: agentId, spaceId, ...(children ? { children } : {}) }
-    );
-    if ('accepted' in result && !result.accepted) return { clones: result.clones };
+    const result = await hub.request<
+      | { id: string }
+      | { accepted: false; reason: 'has_clones'; clones: CloneSummary[] }
+      | { accepted: false; reason: 'requires_confirmation'; commitStatus: WorktreeCommitStatus }
+    >('spaceAgentV2.delete', {
+      id: agentId,
+      spaceId,
+      ...(children ? { children } : {}),
+      ...(confirmed ? { confirmed } : {}),
+    });
+    if ('accepted' in result && !result.accepted) {
+      return result.reason === 'has_clones'
+        ? { clones: result.clones }
+        : { commitStatus: result.commitStatus };
+    }
     this.agents.value = this.agents.value.filter((agent) => agent.id !== agentId);
     return null;
   }
