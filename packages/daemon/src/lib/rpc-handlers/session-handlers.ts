@@ -130,8 +130,7 @@ export function createCloneLifecycleEffects(
   internalEventBus: Pick<InternalEventBus<DaemonInternalEventMap>, 'publish'>,
   getSession: (sessionId: string) => Session | null
 ): Pick<CloneCascadeDependencies, 'archiveChild' | 'deleteChild'> {
-  const evict = async (sessionId: string) => {
-    const spaceId = getSession(sessionId)?.context?.spaceId;
+  const evict = async (sessionId: string, spaceId: string | undefined) => {
     if (!spaceId) return;
     try {
       const space = await spaceManager.removeSession(spaceId, sessionId);
@@ -140,12 +139,14 @@ export function createCloneLifecycleEffects(
   };
   return {
     archiveChild: async (sessionId) => {
+      const spaceId = getSession(sessionId)?.context?.spaceId;
       await sessionManager.archiveSessionResources(sessionId, 'ui_session_archive');
-      await evict(sessionId);
+      await evict(sessionId, spaceId);
     },
     deleteChild: async (sessionId) => {
+      const spaceId = getSession(sessionId)?.context?.spaceId;
       await sessionManager.deleteSessionResources(sessionId, 'ui_session_delete');
-      await evict(sessionId);
+      await evict(sessionId, spaceId);
     },
   };
 }
@@ -469,10 +470,9 @@ export function setupSessionHandlers(
     const hadWorktree = !!session.worktree;
     const spaceIdForArchive = session.context?.spaceId;
     let commitsRemoved = 0;
-    const worktrees = [
-      session,
-      ...(children === 'cascade' ? (deps?.listClones?.(targetSessionId) ?? []) : []),
-    ]
+    const descendants = (parentId: string): Session[] =>
+      (deps?.listClones?.(parentId) ?? []).flatMap((clone) => [clone, ...descendants(clone.id)]);
+    const worktrees = [session, ...(children === 'cascade' ? descendants(targetSessionId) : [])]
       .map((candidate) => candidate.worktree)
       .filter((worktree): worktree is NonNullable<Session['worktree']> => !!worktree);
     if (worktrees.length > 0) {
