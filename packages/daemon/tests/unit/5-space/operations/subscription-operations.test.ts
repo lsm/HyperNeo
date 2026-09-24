@@ -461,12 +461,28 @@ describe('subscribe and unsubscribe take a subject', () => {
   test('an agent subject succeeds for a caller with no node execution behind it', async () => {
     const caller = member(memberSession('s-agent-nonode'));
     expect(await run('event.external.subscribe', { topicPattern: AGENT_TOPIC }, caller)).toBe(
-      'node_unresolved'
+      'agent_not_found'
     );
     const result = (await run(
       'event.external.subscribe',
       { topicPattern: AGENT_TOPIC, subject: { type: 'agent', agentId: AGENT } },
       caller
+    )) as { subscription: { agentId: string } };
+    expect(result.subscription.agentId).toBe(AGENT);
+  });
+
+  test('a long-horizon agent with no subject subscribes its own record', async () => {
+    const id = memberSession('s-agent-self');
+    sessions.updateSession(id, {
+      metadata: {
+        ...sessions.getSession(id)!.metadata,
+        promptProvenance: { source: 'test', hash: 'h', agentId: AGENT },
+      },
+    });
+    const result = (await run(
+      'event.external.subscribe',
+      { topicPattern: AGENT_TOPIC },
+      member(id)
     )) as { subscription: { agentId: string } };
     expect(result.subscription.agentId).toBe(AGENT);
   });
