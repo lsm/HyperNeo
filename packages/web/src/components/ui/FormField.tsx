@@ -10,6 +10,13 @@ export const FORM_CONTROL_CLASS =
 export const FORM_CHECKBOX_CLASS =
   'h-4 w-4 rounded border-line-strong bg-surface-raised text-accent focus:ring-accent focus:ring-offset-0';
 
+export function formControlClass(invalid = false): string {
+  return FORM_CONTROL_CLASS.replace(
+    'border-line',
+    invalid ? 'border-danger' : 'border-line'
+  ).replace('focus:border-accent', invalid ? 'focus:border-danger' : 'focus:border-accent');
+}
+
 export function FormField({
   label,
   required = false,

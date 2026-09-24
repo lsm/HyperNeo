@@ -54,6 +54,7 @@ vi.mock('../../ui/Button.tsx', () => ({
     children,
     variant,
     type,
+    form,
     onClick,
     disabled,
     loading,
@@ -61,6 +62,7 @@ vi.mock('../../ui/Button.tsx', () => ({
     children: import('preact').ComponentChildren;
     variant?: string;
     type?: 'button' | 'submit';
+    form?: string;
     onClick?: () => void;
     disabled?: boolean;
     loading?: boolean;
@@ -68,6 +70,7 @@ vi.mock('../../ui/Button.tsx', () => ({
     <button
       data-testid={`button-${variant ?? 'primary'}`}
       type={type ?? 'button'}
+      {...(form ? { form } : {})}
       disabled={disabled ?? loading}
       onClick={onClick}
     >

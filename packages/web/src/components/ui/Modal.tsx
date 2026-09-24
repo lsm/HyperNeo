@@ -16,6 +16,9 @@ export interface ModalProps {
 export const FOCUSABLE_SELECTOR =
   'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
 
+const modalStack: Array<() => void> = [];
+let openModalCount = 0;
+
 export function createFocusTrapHandler(
   firstElement: HTMLElement | null,
   lastElement: HTMLElement | null
@@ -68,20 +71,29 @@ export function Modal({
   const modalRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    if (!isOpen) return;
+
+    const close = () => onClose();
+    modalStack.push(close);
+    openModalCount += 1;
+    document.body.style.overflow = 'hidden';
+
     const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && isOpen) {
-        onClose();
+      if (e.key === 'Escape' && modalStack[modalStack.length - 1] === close) {
+        close();
       }
     };
-
-    if (isOpen) {
-      document.addEventListener('keydown', handleEscape);
-      document.body.style.overflow = 'hidden';
-    }
+    document.addEventListener('keydown', handleEscape);
 
     return () => {
       document.removeEventListener('keydown', handleEscape);
-      document.body.style.overflow = '';
+      const idx = modalStack.indexOf(close);
+      if (idx !== -1) modalStack.splice(idx, 1);
+      openModalCount -= 1;
+      if (openModalCount <= 0) {
+        openModalCount = 0;
+        document.body.style.overflow = '';
+      }
     };
   }, [isOpen, onClose]);
 

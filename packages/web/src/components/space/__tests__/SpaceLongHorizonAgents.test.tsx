@@ -86,6 +86,10 @@ vi.mock('../visual-editor/WorkflowModelSelect', () => ({
     <select
       data-testid={testId}
       value={value ?? ''}
+      onChange={(e) => {
+        const next = (e.target as HTMLSelectElement).value || undefined;
+        onChange(next, next ? { provider: 'anthropic', modelId: next } : undefined);
+      }}
       onInput={(e) => {
         const next = (e.target as HTMLSelectElement).value || undefined;
         onChange(next, next ? { provider: 'anthropic', modelId: next } : undefined);
@@ -193,14 +197,14 @@ function gutterNumbersFor(textarea: Element): string[] {
   return Array.from(gutter.querySelectorAll('span')).map((s) => s.textContent ?? '');
 }
 
-function chipLabel(container: Element, tool: string): HTMLElement {
-  const label = container.querySelector(`[data-testid="tools-editor-chip-${tool}"]`);
+function chipLabel(tool: string): HTMLElement {
+  const label = document.body.querySelector(`[data-testid="tools-editor-chip-${tool}"]`);
   expect(label, `chip ${tool} rendered`).toBeTruthy();
   return label as HTMLElement;
 }
 
-function chipInput(container: Element, tool: string): HTMLInputElement {
-  const input = chipLabel(container, tool).querySelector('input');
+function chipInput(tool: string): HTMLInputElement {
+  const input = chipLabel(tool).querySelector('input');
   expect(input, `chip ${tool} input rendered`).toBeTruthy();
   return input as HTMLInputElement;
 }
@@ -700,15 +704,13 @@ describe('SpaceLongHorizonAgents', () => {
   });
 
   it('mounts the tools editor in inherited mode inside the template editor', () => {
-    const { getByRole, getByText, container } = render(
-      <SpaceLongHorizonAgents spaceId="space-1" />
-    );
+    const { getByRole, getByText } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
 
     fireEvent.click(getByRole('button', { name: 'New Template' }));
 
-    expect(container.querySelector('[data-testid="tools-editor"]')).toBeTruthy();
+    expect(document.body.querySelector('[data-testid="tools-editor"]')).toBeTruthy();
     expect(getByText('(inherited)')).toBeTruthy();
-    expect(chipInput(container, 'Bash').disabled).toBe(true);
+    expect(chipInput('Bash').disabled).toBe(true);
   });
 
   it('creates a template carrying the tools selected in the editor', async () => {
@@ -1121,10 +1123,10 @@ describe('SpaceLongHorizonAgents', () => {
     mockAgents.value = [
       makeLongHorizonAgent({ toolPermissions: { mode: 'restricted', tools: ['Read'] } }),
     ];
-    const { getByRole, container } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+    const { getByRole } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
 
     fireEvent.click(getByRole('button', { name: 'Edit Research Long Horizon' }));
-    fireEvent.click(chipLabel(container, 'Bash'));
+    fireEvent.click(chipLabel('Bash'));
     fireEvent.click(getByRole('button', { name: 'Save changes' }));
 
     await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
@@ -1168,12 +1170,10 @@ describe('SpaceLongHorizonAgents', () => {
   });
 
   it('discards a pending scoped tool draft when a replacing preset is applied', async () => {
-    const { getByRole, getByTestId, container } = render(
-      <SpaceLongHorizonAgents spaceId="space-1" />
-    );
+    const { getByRole, getByTestId } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
 
     fireEvent.click(getByRole('button', { name: '+ Custom agent' }));
-    const textInputs = container.querySelectorAll('input[type="text"]');
+    const textInputs = document.body.querySelectorAll('input[type="text"]');
     fireEvent.input(textInputs[0], { target: { value: 'Runner' } });
     fireEvent.input(textInputs[1], { target: { value: 'runner' } });
     fireEvent.input(getByTestId('lh-agent-extra-tool-input'), {
@@ -1195,23 +1195,21 @@ describe('SpaceLongHorizonAgents', () => {
 
   it('opens the tools editor in inherited mode for an agent without tool overrides', () => {
     mockAgents.value = [makeLongHorizonAgent()];
-    const { getByRole, getByText, container } = render(
-      <SpaceLongHorizonAgents spaceId="space-1" />
-    );
+    const { getByRole, getByText } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
 
     fireEvent.click(getByRole('button', { name: 'Edit Research Long Horizon' }));
 
     expect(getByText('(inherited)')).toBeTruthy();
-    expect(chipInput(container, 'Bash').disabled).toBe(true);
+    expect(chipInput('Bash').disabled).toBe(true);
   });
 
   it('creates an agent with a multi-model pool and no pinned model', async () => {
-    const { getByRole, getByTestId, getAllByTestId, container } = render(
+    const { getByRole, getByTestId, getAllByTestId } = render(
       <SpaceLongHorizonAgents spaceId="space-1" />
     );
 
     fireEvent.click(getByRole('button', { name: '+ Custom agent' }));
-    const textInputs = container.querySelectorAll('input[type="text"]');
+    const textInputs = document.body.querySelectorAll('input[type="text"]');
     fireEvent.input(textInputs[0], { target: { value: 'Runner' } });
     fireEvent.input(textInputs[1], { target: { value: 'runner' } });
     fireEvent.click(getByTestId('pool-add-model-button'));
@@ -1234,12 +1232,10 @@ describe('SpaceLongHorizonAgents', () => {
   });
 
   it('stores a lone default pool entry as the scalar model, not a pool', async () => {
-    const { getByRole, getByTestId, container } = render(
-      <SpaceLongHorizonAgents spaceId="space-1" />
-    );
+    const { getByRole, getByTestId } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
 
     fireEvent.click(getByRole('button', { name: '+ Custom agent' }));
-    const textInputs = container.querySelectorAll('input[type="text"]');
+    const textInputs = document.body.querySelectorAll('input[type="text"]');
     fireEvent.input(textInputs[0], { target: { value: 'Runner' } });
     fireEvent.input(textInputs[1], { target: { value: 'runner' } });
     fireEvent.click(getByTestId('pool-add-model-button'));
@@ -1256,12 +1252,10 @@ describe('SpaceLongHorizonAgents', () => {
   });
 
   it('keeps a lone pool entry as a pool when its concurrency cap is not the default', async () => {
-    const { getByRole, getByTestId, container } = render(
-      <SpaceLongHorizonAgents spaceId="space-1" />
-    );
+    const { getByRole, getByTestId } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
 
     fireEvent.click(getByRole('button', { name: '+ Custom agent' }));
-    const textInputs = container.querySelectorAll('input[type="text"]');
+    const textInputs = document.body.querySelectorAll('input[type="text"]');
     fireEvent.input(textInputs[0], { target: { value: 'Runner' } });
     fireEvent.input(textInputs[1], { target: { value: 'runner' } });
     fireEvent.click(getByTestId('pool-add-model-button'));
@@ -1280,10 +1274,10 @@ describe('SpaceLongHorizonAgents', () => {
   });
 
   it('omits modelPool when the agent pool is left empty', async () => {
-    const { getByRole, container } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+    const { getByRole } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
 
     fireEvent.click(getByRole('button', { name: '+ Custom agent' }));
-    const textInputs = container.querySelectorAll('input[type="text"]');
+    const textInputs = document.body.querySelectorAll('input[type="text"]');
     fireEvent.input(textInputs[0], { target: { value: 'Runner' } });
     fireEvent.input(textInputs[1], { target: { value: 'runner' } });
     fireEvent.click(getByRole('button', { name: 'Create agent' }));
@@ -1584,11 +1578,11 @@ describe('SpaceLongHorizonAgents', () => {
   });
 
   it('persists an explicit setting sources selection on agent create', async () => {
-    const { getByRole, container } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+    const { getByRole } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
 
     fireEvent.click(getByRole('button', { name: '+ Custom agent' }));
     fireEvent.click(settingSourceCheckbox('local'));
-    const textInputs = container.querySelectorAll('input[type="text"]');
+    const textInputs = document.body.querySelectorAll('input[type="text"]');
     fireEvent.input(textInputs[0], { target: { value: 'Runner' } });
     fireEvent.input(textInputs[1], { target: { value: 'runner' } });
     fireEvent.click(getByRole('button', { name: 'Create agent' }));
@@ -1718,15 +1712,13 @@ describe('SpaceLongHorizonAgents', () => {
     mockTemplates.value = [
       makeTemplate({ toolPermissions: { tools: ['Read', 'Bash(gh pr view:*)'] } }),
     ];
-    const { getByText, getByRole, container } = render(
-      <SpaceLongHorizonAgents spaceId="space-1" />
-    );
+    const { getByText, getByRole } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
 
     fireEvent.click(getByText('Validates product quality.').closest('button')!);
 
-    expect(chipInput(container, 'Read').checked).toBe(true);
-    expect(chipInput(container, 'Read').disabled).toBe(false);
-    expect(chipInput(container, 'Bash').checked).toBe(false);
+    expect(chipInput('Read').checked).toBe(true);
+    expect(chipInput('Read').disabled).toBe(false);
+    expect(chipInput('Bash').checked).toBe(false);
     expect(getByText('Bash(gh pr view:*)')).toBeTruthy();
 
     fireEvent.click(getByRole('button', { name: 'Create agent' }));
@@ -1768,10 +1760,10 @@ describe('SpaceLongHorizonAgents', () => {
   });
 
   it('creates a custom agent with a null template key', async () => {
-    const { getByRole, container } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+    const { getByRole } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
 
     fireEvent.click(getByRole('button', { name: '+ Custom agent' }));
-    const textInputs = container.querySelectorAll('input[type="text"]');
+    const textInputs = document.body.querySelectorAll('input[type="text"]');
     fireEvent.input(textInputs[0], { target: { value: 'Runner' } });
     fireEvent.input(textInputs[1], { target: { value: 'runner' } });
     fireEvent.click(getByRole('button', { name: 'Create agent' }));
@@ -1790,12 +1782,10 @@ describe('SpaceLongHorizonAgents', () => {
   });
 
   it('creates a custom agent carrying the tools selected in the editor', async () => {
-    const { getByRole, getByTestId, container } = render(
-      <SpaceLongHorizonAgents spaceId="space-1" />
-    );
+    const { getByRole, getByTestId } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
 
     fireEvent.click(getByRole('button', { name: '+ Custom agent' }));
-    const textInputs = container.querySelectorAll('input[type="text"]');
+    const textInputs = document.body.querySelectorAll('input[type="text"]');
     fireEvent.input(textInputs[0], { target: { value: 'Runner' } });
     fireEvent.input(textInputs[1], { target: { value: 'runner' } });
     fireEvent.click(getByTestId('tools-editor-preset-read-only'));
@@ -1837,12 +1827,10 @@ describe('SpaceLongHorizonAgents', () => {
   });
 
   it('adds a scoped tool entry from the additional-tools input', async () => {
-    const { getByRole, getByTestId, container } = render(
-      <SpaceLongHorizonAgents spaceId="space-1" />
-    );
+    const { getByRole, getByTestId } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
 
     fireEvent.click(getByRole('button', { name: '+ Custom agent' }));
-    const textInputs = container.querySelectorAll('input[type="text"]');
+    const textInputs = document.body.querySelectorAll('input[type="text"]');
     fireEvent.input(textInputs[0], { target: { value: 'Runner' } });
     fireEvent.input(textInputs[1], { target: { value: 'runner' } });
     fireEvent.input(getByTestId('lh-agent-extra-tool-input'), {
@@ -1863,12 +1851,10 @@ describe('SpaceLongHorizonAgents', () => {
   });
 
   it('includes a pending scoped tool draft when saving without clicking Add', async () => {
-    const { getByRole, getByTestId, container } = render(
-      <SpaceLongHorizonAgents spaceId="space-1" />
-    );
+    const { getByRole, getByTestId } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
 
     fireEvent.click(getByRole('button', { name: '+ Custom agent' }));
-    const textInputs = container.querySelectorAll('input[type="text"]');
+    const textInputs = document.body.querySelectorAll('input[type="text"]');
     fireEvent.input(textInputs[0], { target: { value: 'Runner' } });
     fireEvent.input(textInputs[1], { target: { value: 'runner' } });
     fireEvent.input(getByTestId('lh-agent-extra-tool-input'), {

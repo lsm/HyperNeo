@@ -26,7 +26,7 @@ import { SpaceMcpSettings } from './SpaceMcpSettings.tsx';
 import { SpaceExternalEventsSettings } from './SpaceExternalEventsSettings.tsx';
 import { WorkflowModelSelect } from './visual-editor/WorkflowModelSelect.tsx';
 import { GLASS_TAB_PILL_CLASS, GLASS_TAB_STRIP_CLASS, GlassTabStrip } from './glass-workspace.tsx';
-import { FORM_CONTROL_CLASS, FORM_CHECKBOX_CLASS } from '../ui/FormField';
+import { FORM_CONTROL_CLASS, FORM_CHECKBOX_CLASS, formControlClass } from '../ui/FormField';
 
 interface SpaceSettingsProps {
   space: Space;
@@ -317,7 +317,7 @@ function SpaceWorkspacesList({ spaceId }: { spaceId: string }) {
                         }
                       }}
                       disabled={savingLabelId !== null}
-                      class={cn(FORM_CONTROL_CLASS, 'w-40')}
+                      class={formControlClass().replace('w-full', 'w-40')}
                     />
                     <button
                       type="button"

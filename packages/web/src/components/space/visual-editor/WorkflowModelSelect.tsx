@@ -154,24 +154,27 @@ export function WorkflowModelSelect({
     );
   }
 
+  const handleSelect = (e: Event) => {
+    const nextValue = (e.currentTarget as HTMLSelectElement).value;
+    if (!nextValue) {
+      setSelectedModelId(undefined);
+      setSelectedProvider(undefined);
+      onChange(undefined);
+      return;
+    }
+    const selection = decodeModelValue(nextValue, models);
+    setSelectedModelId(selection.modelId);
+    setSelectedProvider(selection.provider);
+    onChange(selection.modelId, selection);
+  };
+
   return (
     <select
       data-testid={testId}
       id={id}
       value={selectedValue}
-      onInput={(e) => {
-        const nextValue = (e.currentTarget as HTMLSelectElement).value;
-        if (!nextValue) {
-          setSelectedModelId(undefined);
-          setSelectedProvider(undefined);
-          onChange(undefined);
-          return;
-        }
-        const selection = decodeModelValue(nextValue, models);
-        setSelectedModelId(selection.modelId);
-        setSelectedProvider(selection.provider);
-        onChange(selection.modelId, selection);
-      }}
+      onChange={handleSelect}
+      onInput={handleSelect}
       class={className}
     >
       <option value="">— No override —</option>

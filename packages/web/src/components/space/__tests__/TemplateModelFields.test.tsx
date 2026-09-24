@@ -93,32 +93,35 @@ vi.mock('../visual-editor/WorkflowModelSelect', () => ({
       onModelsLoad?.(mockModels);
     }, []);
 
+    const handleSelect = (e: Event) => {
+      const select = e.currentTarget as HTMLSelectElement;
+      const nextValue = select.value || undefined;
+      const selected = select.selectedOptions[0];
+      const provider = selected?.getAttribute('data-provider') ?? 'anthropic';
+      const thinkingModes = selected?.getAttribute('data-thinking-modes') as
+        | 'off'
+        | 'on'
+        | 'granular'
+        | undefined;
+      onChange(
+        nextValue,
+        nextValue
+          ? {
+              provider,
+              modelId: nextValue,
+              ...(thinkingModes ? { thinkingModes } : {}),
+            }
+          : undefined
+      );
+    };
+
     return (
       <select
         data-testid={testId}
         id={id}
         value={value ?? ''}
-        onInput={(e) => {
-          const select = e.currentTarget as HTMLSelectElement;
-          const nextValue = select.value || undefined;
-          const selected = select.selectedOptions[0];
-          const provider = selected?.getAttribute('data-provider') ?? 'anthropic';
-          const thinkingModes = selected?.getAttribute('data-thinking-modes') as
-            | 'off'
-            | 'on'
-            | 'granular'
-            | undefined;
-          onChange(
-            nextValue,
-            nextValue
-              ? {
-                  provider,
-                  modelId: nextValue,
-                  ...(thinkingModes ? { thinkingModes } : {}),
-                }
-              : undefined
-          );
-        }}
+        onChange={handleSelect}
+        onInput={handleSelect}
         class={className}
       >
         <option value="">— No override —</option>

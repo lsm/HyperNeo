@@ -18,6 +18,7 @@ import {
   FORM_CONTROL_CLASS,
   FORM_LABEL_CLASS,
   FormActions,
+  formControlClass,
 } from '../ui/FormField.tsx';
 import { Modal } from '../ui/Modal.tsx';
 import {
@@ -349,7 +350,7 @@ function ModelEditor({
               const v = Number(e.currentTarget.value);
               if (Number.isFinite(v) && v > 0) updateCap('maxContextTokens', v);
             }}
-            class={cn(FORM_CONTROL_CLASS, 'w-24 text-xs')}
+            class={formControlClass().replace('w-full', 'w-24').replace('text-sm', 'text-xs')}
           />
           tokens
         </label>
@@ -366,7 +367,7 @@ function ModelEditor({
               const v = Number(e.currentTarget.value);
               if (Number.isFinite(v)) updateCap('autoCompactPercent', v);
             }}
-            class={cn(FORM_CONTROL_CLASS, 'w-14 text-xs')}
+            class={formControlClass().replace('w-full', 'w-14').replace('text-sm', 'text-xs')}
           />
           %
         </label>
@@ -470,7 +471,7 @@ export function EditorModal({
       size="lg"
       footer={
         <FormActions
-          error={validationError || fetchModelsError}
+          error={validationError}
           onCancel={onClose}
           submitLabel={state.mode === 'edit' ? 'Save changes' : 'Add endpoint'}
           submitting={saving}
@@ -499,11 +500,7 @@ export function EditorModal({
               value={state.id}
               placeholder="lmstudio"
               onInput={(e) => update({ id: e.currentTarget.value })}
-              class={cn(
-                FORM_CONTROL_CLASS,
-                'font-mono',
-                idConflict && 'border-danger focus:border-danger'
-              )}
+              class={cn(formControlClass(Boolean(idConflict)), 'font-mono')}
             />
             {idConflict && (
               <p class="text-xs text-danger mt-1">An endpoint with this id already exists</p>
@@ -568,7 +565,7 @@ export function EditorModal({
               value={state.headersText}
               placeholder={'HTTP-Referer: https://example.com\nX-Title: HyperNeo'}
               onInput={(e) => update({ headersText: e.currentTarget.value })}
-              class={cn(FORM_CONTROL_CLASS, 'h-20 font-mono text-xs')}
+              class={cn(formControlClass().replace('text-sm', 'text-xs'), 'h-20 font-mono')}
             />
           </label>
           <label class="block sm:col-span-2">
@@ -608,6 +605,8 @@ export function EditorModal({
               </Button>
             </div>
           </div>
+
+          {fetchModelsError && <p class="text-xs text-danger">{fetchModelsError}</p>}
 
           {fetchedModels && (
             <div class="rounded-lg border border-line bg-surface/60 px-3 py-2.5 space-y-2">

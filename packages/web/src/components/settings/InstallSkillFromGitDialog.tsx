@@ -1,7 +1,7 @@
 import { useState } from 'preact/hooks';
 import { skillsStore } from '../../lib/skills-store';
 import { toast } from '../../lib/toast';
-import { FORM_CONTROL_CLASS, FORM_LABEL_CLASS, FormActions } from '../ui/FormField';
+import { FORM_LABEL_CLASS, FormActions, formControlClass } from '../ui/FormField';
 import { Modal } from '../ui/Modal';
 import { cn } from '../../lib/utils';
 
@@ -128,11 +128,7 @@ export function InstallSkillFromGitDialog({ isOpen, onClose }: InstallSkillFromG
             type="text"
             value={form.repoUrl}
             onInput={(e) => handleUrlChange((e.target as HTMLInputElement).value)}
-            class={cn(
-              FORM_CONTROL_CLASS,
-              'font-mono',
-              errors.repoUrl && 'border-danger focus:border-danger'
-            )}
+            class={cn(formControlClass(Boolean(errors.repoUrl)), 'font-mono')}
             placeholder="https://github.com/owner/repo/tree/main/skills/my-skill"
             autoFocus
           />
@@ -153,11 +149,7 @@ export function InstallSkillFromGitDialog({ isOpen, onClose }: InstallSkillFromG
                 commandNameTouched: true,
               }))
             }
-            class={cn(
-              FORM_CONTROL_CLASS,
-              'font-mono',
-              errors.commandName && 'border-danger focus:border-danger'
-            )}
+            class={cn(formControlClass(Boolean(errors.commandName)), 'font-mono')}
             placeholder="e.g., playwright"
           />
           {errors.commandName && <p class="text-xs text-danger mt-1">{errors.commandName}</p>}

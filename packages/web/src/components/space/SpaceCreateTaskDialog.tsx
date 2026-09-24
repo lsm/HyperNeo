@@ -6,6 +6,7 @@ import {
   FormActions,
   FormField,
   FormSection,
+  formControlClass,
 } from '../ui/FormField';
 import { spaceStore } from '../../lib/space-store';
 import { toast } from '../../lib/toast';
@@ -290,6 +291,9 @@ export function SpaceCreateTaskDialog({ isOpen, onClose, onCreated }: SpaceCreat
         <FormField label="Priority">
           <select
             value={priority}
+            onChange={(e) =>
+              setPriority((e.target as HTMLSelectElement).value as SpaceTaskPriority)
+            }
             onInput={(e) => setPriority((e.target as HTMLSelectElement).value as SpaceTaskPriority)}
             class={FORM_CONTROL_CLASS}
           >
@@ -305,6 +309,7 @@ export function SpaceCreateTaskDialog({ isOpen, onClose, onCreated }: SpaceCreat
           <FormField label="Workspace">
             <select
               value={workspacePath ?? undefined}
+              onChange={(e) => setWorkspacePath((e.target as HTMLSelectElement).value)}
               onInput={(e) => setWorkspacePath((e.target as HTMLSelectElement).value)}
               data-testid="task-workspace-select"
               class={FORM_CONTROL_CLASS}
@@ -401,11 +406,10 @@ export function SpaceCreateTaskDialog({ isOpen, onClose, onCreated }: SpaceCreat
                   onInput={(e) => setCronExpression((e.target as HTMLInputElement).value)}
                   placeholder="0 9 * * 1"
                   class={cn(
-                    FORM_CONTROL_CLASS,
-                    'font-mono',
-                    cronExpression &&
-                      !isValidCronExpression(cronExpression) &&
-                      'border-danger focus:border-danger'
+                    formControlClass(
+                      Boolean(cronExpression && !isValidCronExpression(cronExpression))
+                    ),
+                    'font-mono'
                   )}
                 />
                 {cronExpression && !isValidCronExpression(cronExpression) && (
@@ -418,6 +422,7 @@ export function SpaceCreateTaskDialog({ isOpen, onClose, onCreated }: SpaceCreat
               <FormField label="Timezone">
                 <select
                   value={timezone}
+                  onChange={(e) => setTimezone((e.target as HTMLSelectElement).value)}
                   onInput={(e) => setTimezone((e.target as HTMLSelectElement).value)}
                   class={FORM_CONTROL_CLASS}
                 >

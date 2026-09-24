@@ -38,7 +38,7 @@ import { InspectBadge, InspectPanel, InspectPanelHeader } from '../ui/InspectPan
 import { Modal } from '../ui/Modal';
 import { SectionCard } from '../ui/SectionCard';
 import { formatGoalMetricSnapshot } from './goal-display-utils';
-import { FORM_CHECKBOX_CLASS, FORM_CONTROL_CLASS } from '../ui/FormField';
+import { FORM_CHECKBOX_CLASS, FORM_CONTROL_CLASS, formControlClass } from '../ui/FormField';
 import {
   WorkflowModelSelect,
   type WorkflowModelSelection,
@@ -320,7 +320,7 @@ function ScopeCreateDialog({ isOpen, spaceId, goals, onClose, onCreated }: Scope
             value={name}
             onInput={(event) => setName((event.target as HTMLInputElement).value)}
             placeholder="Improve code review loop"
-            class={cn(FORM_CONTROL_CLASS, 'px-4 py-2.5')}
+            class={cn(formControlClass().replace('px-2.5', 'px-4').replace('py-1.5', 'py-2.5'))}
             autoFocus
           />
         </div>
@@ -369,7 +369,10 @@ function ScopeCreateDialog({ isOpen, spaceId, goals, onClose, onCreated }: Scope
             onInput={(event) => setObjective((event.target as HTMLTextAreaElement).value)}
             placeholder="What should this scope prove or improve?"
             rows={3}
-            class={cn(FORM_CONTROL_CLASS, 'resize-none px-4 py-2.5')}
+            class={cn(
+              formControlClass().replace('px-2.5', 'px-4').replace('py-1.5', 'py-2.5'),
+              'resize-none'
+            )}
           />
         </div>
 
@@ -1944,7 +1947,7 @@ export function ScopeDetail({
                       })
                     }
                     data-testid="scope-completed-task-threshold-input"
-                    class={cn(FORM_CONTROL_CLASS, 'mt-1 w-32')}
+                    class={cn(formControlClass().replace('w-full', 'w-32'), 'mt-1')}
                   />
                 </label>
                 {savingCompletedTaskAutomation && <p class="text-xs text-fg-muted">Saving…</p>}
