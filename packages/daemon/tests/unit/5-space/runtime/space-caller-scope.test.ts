@@ -3,7 +3,6 @@ import type { NodeExecution, Session, SpaceLongHorizonAgent } from '@hyperneo/sh
 import { longTermAgentSessionId } from '../../helpers/legacy-agent-session-id';
 import {
   createSpaceCallerScopeResolver,
-  resolveSessionSpaceId,
   type SpaceCallerScopeDependencies,
 } from '../../../../src/lib/space/runtime/space-caller-scope';
 
