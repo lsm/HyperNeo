@@ -49,6 +49,7 @@ import { setupQuestionHandlers } from './question-handlers.ts';
 import { setupSpaceHandlers } from './space-handlers.ts';
 import { setupSpaceTaskMessageHandlers } from './space-task-message-handlers.ts';
 import { createResolveClones } from '../session/clone-cascade.ts';
+import { createCloneLifecycleEffects } from './session-handlers.ts';
 import { createDefaultSessionResolutionDeps } from '../session-resolution/default-deps.ts';
 import { ensureSession } from '../session-resolution/ensure-session.ts';
 import { NodeExecutionRepository } from '../../storage/repositories/node-execution-repository.ts';
@@ -1115,16 +1116,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
         deps.db.updateSession(sessionId, { metadata: { ...current.metadata, promptProvenance } });
       }
     },
-    archiveChild: async (sessionId) => {
-      const spaceId = deps.db.getSession(sessionId)?.context?.spaceId;
-      await deps.sessionManager.archiveSessionResources(sessionId, 'ui_session_archive');
-      if (spaceId) await deps.spaceManager.removeSession(spaceId, sessionId).catch(() => {});
-    },
-    deleteChild: async (sessionId) => {
-      const spaceId = deps.db.getSession(sessionId)?.context?.spaceId;
-      await deps.sessionManager.deleteSessionResources(sessionId, 'ui_session_delete');
-      if (spaceId) await deps.spaceManager.removeSession(spaceId, sessionId).catch(() => {});
-    },
+    ...createCloneLifecycleEffects(deps.sessionManager, deps.spaceManager, (id) =>
+      deps.db.getSession(id)
+    ),
   });
   spaceAgentV2Deps.resolveClones = resolveClones;
 

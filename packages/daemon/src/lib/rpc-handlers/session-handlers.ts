@@ -29,7 +29,11 @@ import {
   markRefreshAttemptedFor,
 } from '../model-service.js';
 import { getProviderRegistry, inferProviderForModel } from '../providers/registry.js';
-import { isCloneChoice, type ResolveClones } from '../session/clone-cascade.ts';
+import {
+  type CloneCascadeDependencies,
+  isCloneChoice,
+  type ResolveClones,
+} from '../session/clone-cascade.ts';
 import { admitUpdateSessionConfig } from '../session/create-session-config.ts';
 import { validateImageSizes } from '../session/message-persistence.ts';
 import {
@@ -117,6 +121,27 @@ function extractMessageText(content: unknown): string {
 export interface SessionHandlerDeps {
   ensureSession(target: SessionTarget): Promise<EnsureSessionOutcome>;
   resolveClones?: ResolveClones;
+}
+
+export function createCloneLifecycleEffects(
+  sessionManager: Pick<SessionManager, 'archiveSessionResources' | 'deleteSessionResources'>,
+  spaceManager: Pick<SpaceManager, 'removeSession'>,
+  getSession: (sessionId: string) => Session | null
+): Pick<CloneCascadeDependencies, 'archiveChild' | 'deleteChild'> {
+  const evict = async (sessionId: string) => {
+    const spaceId = getSession(sessionId)?.context?.spaceId;
+    if (spaceId) await spaceManager.removeSession(spaceId, sessionId).catch(() => {});
+  };
+  return {
+    archiveChild: async (sessionId) => {
+      await sessionManager.archiveSessionResources(sessionId, 'ui_session_archive');
+      await evict(sessionId);
+    },
+    deleteChild: async (sessionId) => {
+      await sessionManager.deleteSessionResources(sessionId, 'ui_session_delete');
+      await evict(sessionId);
+    },
+  };
 }
 
 export function setupSessionHandlers(
