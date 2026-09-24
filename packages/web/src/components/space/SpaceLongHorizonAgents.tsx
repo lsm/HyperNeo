@@ -256,26 +256,26 @@ function AgentEditor({
   };
 
   return (
-    <div class="fixed inset-0 z-50 flex items-end justify-center bg-scrim p-0 backdrop-blur-sm sm:items-center sm:p-5">
-      <div class="relative isolate max-h-[calc(100dvh-1rem)] w-full max-w-2xl overflow-hidden rounded-t-3xl border border-line bg-surface/95 glass-modal-surface sm:rounded-3xl">
-        <div class="flex items-start justify-between border-b border-line px-5 py-5 sm:px-7">
-          <div>
-            <p class="text-xl font-semibold tracking-tight text-fg">
-              {isEdit
-                ? `Edit ${agent?.displayName}`
-                : `New agent${template ? ` · ${template.displayName}` : ''}`}
-            </p>
-            <p class="mt-1 text-sm text-fg-muted">
-              Define the role, autonomy, and model for this space.
-            </p>
-          </div>
+    <div class="fixed inset-0 z-50 flex items-center justify-center bg-scrim p-4">
+      <div class="flex max-h-[90vh] w-full max-w-2xl flex-col rounded-lg border border-line-strong bg-surface-overlay shadow-xl">
+        <div class="flex items-center justify-between border-b border-line px-4 py-3">
+          <h3 class="text-sm font-semibold text-fg">
+            {isEdit
+              ? `Edit ${agent?.displayName}`
+              : `New agent${template ? ` · ${template.displayName}` : ''}`}
+          </h3>
           <button
             type="button"
             onClick={onCancel}
             aria-label="Close agent editor"
-            class="rounded-xl border border-transparent p-2 text-fg-muted transition-colors hover:border-line hover:bg-fill-soft hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warning/60"
+            class="rounded p-1 hover:bg-fill-strong"
           >
-            <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg
+              class="h-4 w-4 text-fg-muted"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
               <path
                 stroke-linecap="round"
                 stroke-linejoin="round"
@@ -285,32 +285,32 @@ function AgentEditor({
             </svg>
           </button>
         </div>
-        <div class="max-h-[calc(100dvh-11rem)] space-y-5 overflow-y-auto px-5 py-5 scrollbar-dark sm:px-7 sm:py-6">
-          <div class="grid grid-cols-2 gap-3">
+        <div class="flex-1 space-y-4 overflow-y-auto p-4 scrollbar-dark">
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div>
-              <label class="mb-2 block text-sm font-medium text-fg-soft">Name</label>
+              <label class="mb-1 block text-xs font-medium text-fg-muted">Name</label>
               <input
                 type="text"
                 value={displayName}
                 onInput={(e) => setDisplayName((e.target as HTMLInputElement).value)}
-                class="w-full rounded-xl border border-line bg-surface-overlay/90 px-4 py-3 text-sm text-fg placeholder-gray-600 glass-hairline transition-colors focus:border-warning/45 focus:outline-none focus:ring-2 focus:ring-warning/10"
+                class="w-full rounded border border-line bg-bg px-2 py-1.5 text-sm text-fg focus:border-accent focus:outline-none"
                 placeholder="e.g. Release Manager"
               />
             </div>
             <div>
-              <label class="mb-2 block text-sm font-medium text-fg-soft">Handle</label>
+              <label class="mb-1 block text-xs font-medium text-fg-muted">Handle</label>
               <input
                 type="text"
                 value={handle}
                 disabled={isEdit}
                 onInput={(e) => setHandle((e.target as HTMLInputElement).value)}
-                class="w-full rounded-xl border border-line bg-surface-overlay/90 px-4 py-3 text-sm text-fg placeholder-gray-600 glass-hairline transition-colors focus:border-warning/45 focus:outline-none focus:ring-2 focus:ring-warning/10 disabled:opacity-50"
+                class="w-full rounded border border-line bg-bg px-2 py-1.5 text-sm text-fg focus:border-accent focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
                 placeholder="e.g. release-manager"
               />
             </div>
           </div>
           <div>
-            <label class="mb-2 block text-sm font-medium text-fg-soft">Instructions</label>
+            <label class="mb-1 block text-xs font-medium text-fg-muted">Instructions</label>
             <LineNumberedTextarea
               value={instructions}
               onChange={setInstructions}
@@ -319,17 +319,17 @@ function AgentEditor({
             />
           </div>
           <div>
-            <label class="mb-2 block text-sm font-medium text-fg-soft">Autonomy level</label>
+            <label class="mb-1 block text-xs font-medium text-fg-muted">Autonomy level</label>
             <div class="flex gap-1.5">
               {[1, 2, 3, 4, 5].map((level) => (
                 <button
                   key={level}
                   type="button"
                   onClick={() => setAutonomyLevel(autonomyLevel === level ? null : level)}
-                  class={`flex-1 rounded-xl border py-2.5 text-sm font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warning/60 disabled:cursor-not-allowed disabled:opacity-50 ${
+                  class={`flex-1 rounded border py-1.5 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 disabled:cursor-not-allowed disabled:opacity-50 ${
                     autonomyLevel === level
-                      ? 'border-warning/40 bg-warning text-on-warning shadow-[0_8px_20px_rgba(251,191,36,0.14)]'
-                      : 'border-line bg-surface-overlay/85 text-fg-muted hover:border-line hover:bg-surface-raised hover:text-fg-soft'
+                      ? 'border-accent bg-accent text-accent-fg'
+                      : 'border-line bg-surface text-fg-muted hover:border-line-strong hover:text-fg-soft'
                   }`}
                 >
                   {level}
@@ -341,7 +341,7 @@ function AgentEditor({
             )}
           </div>
           <div>
-            <label class="mb-2 block text-sm font-medium text-fg-soft">Model</label>
+            <label class="mb-1 block text-xs font-medium text-fg-muted">Model</label>
             <ModelPoolEditor modelPool={modelPool} onModelPoolChange={setModelPool} />
             {modelPool.length > 1 && (
               <p class="mt-2 text-xs text-fg-muted">
@@ -368,14 +368,14 @@ function AgentEditor({
                     {extraTools.map((tool) => (
                       <span
                         key={tool}
-                        class="flex items-center gap-1 rounded-lg border border-line bg-surface-overlay/90 px-2.5 py-1 text-xs text-fg-soft"
+                        class="flex items-center gap-1 rounded border border-line bg-surface px-2 py-0.5 text-xs text-fg-soft"
                       >
                         <span class="font-mono">{tool}</span>
                         <button
                           type="button"
                           onClick={() => removeExtraTool(tool)}
                           aria-label={`Remove ${tool}`}
-                          class="rounded p-0.5 text-fg-faint transition-colors hover:bg-fill-soft hover:text-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger/60"
+                          class="rounded p-0.5 text-fg-faint transition-colors hover:text-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
                         >
                           ×
                         </button>
@@ -389,14 +389,14 @@ function AgentEditor({
                   type="text"
                   value={extraToolDraft}
                   onInput={(e) => setExtraToolDraft((e.target as HTMLInputElement).value)}
-                  class="w-full rounded-xl border border-line bg-surface-overlay/90 px-3 py-2 text-xs text-fg placeholder:text-fg-faint glass-hairline transition-colors focus:border-warning/45 focus:outline-none focus:ring-2 focus:ring-warning/10"
+                  class="w-full rounded border border-line bg-bg px-2 py-1.5 font-mono text-xs text-fg focus:border-accent focus:outline-none"
                   placeholder="Add scoped tool entry, e.g. Bash(gh pr view:*)"
                   data-testid="lh-agent-extra-tool-input"
                 />
                 <button
                   type="button"
                   onClick={addExtraTool}
-                  class="flex-shrink-0 rounded-xl border border-line px-3 py-2 text-xs text-fg-soft transition-colors hover:border-line-strong hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warning/60"
+                  class="flex-shrink-0 rounded border border-line px-2.5 py-1.5 text-xs text-fg-soft transition-colors hover:border-line-strong hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
                 >
                   Add
                 </button>
@@ -404,7 +404,7 @@ function AgentEditor({
             </div>
           </div>
           <div>
-            <label class="mb-2 block text-sm font-medium text-fg-soft">Setting sources</label>
+            <label class="mb-1 block text-xs font-medium text-fg-muted">Setting sources</label>
             <SettingSourcesEditor value={settingSources} onChange={setSettingSources} />
             {settingSources === null ? (
               <p class="mt-1 text-xs text-fg-muted">Inherits the space setting sources.</p>
@@ -420,17 +420,12 @@ function AgentEditor({
           </div>
           {error && <p class="text-xs text-danger">{error}</p>}
         </div>
-        <div class="flex justify-end gap-3 border-t border-line bg-scrim-soft px-5 py-4 sm:px-7">
-          <Button variant="ghost" size="md" onClick={onCancel} class="rounded-xl px-5">
+        <div class="flex items-center justify-end gap-2 border-t border-line px-4 py-3">
+          <Button variant="ghost" size="sm" onClick={onCancel}>
             Cancel
           </Button>
-          <Button
-            size="md"
-            onClick={handleSave}
-            disabled={saving}
-            class="rounded-xl bg-warning px-6 font-semibold text-on-warning shadow-[0_10px_28px_rgba(251,191,36,0.16)] hover:bg-amber-200"
-          >
-            {saving ? 'Saving…' : isEdit ? 'Save changes' : 'Create agent'}
+          <Button size="sm" onClick={handleSave} loading={saving}>
+            {isEdit ? 'Save changes' : 'Create agent'}
           </Button>
         </div>
       </div>
