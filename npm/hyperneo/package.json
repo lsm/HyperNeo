@@ -9,7 +9,8 @@
     "@hyperneo/cli-darwin-arm64": "0.41.0",
     "@hyperneo/cli-darwin-x64": "0.41.0",
     "@hyperneo/cli-linux-x64": "0.41.0",
-    "@hyperneo/cli-linux-arm64": "0.41.0"
+    "@hyperneo/cli-linux-arm64": "0.41.0",
+    "@hyperneo/cli-windows-x64": "0.41.0"
   },
   "files": [
     "bin/"

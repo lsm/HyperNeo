@@ -13,6 +13,7 @@ const PLATFORM_MAP = {
   'darwin-x64': '@hyperneo/cli-darwin-x64',
   'linux-x64': '@hyperneo/cli-linux-x64',
   'linux-arm64': '@hyperneo/cli-linux-arm64',
+  'win32-x64': '@hyperneo/cli-windows-x64',
 };
 
 const platformKey = `${process.platform}-${process.arch}`;
@@ -26,9 +27,11 @@ if (!packageName) {
   process.exit(1);
 }
 
+const binaryName = process.platform === 'win32' ? 'hyperneo.exe' : 'hyperneo';
+
 let binaryPath;
 try {
-  binaryPath = require.resolve(`${packageName}/bin/hyperneo`);
+  binaryPath = require.resolve(`${packageName}/bin/${binaryName}`);
 } catch {
   console.error(
     `Error: Could not find HyperNeo binary for ${platformKey}.\n` +
