@@ -29,6 +29,11 @@ import {
   markRefreshAttemptedFor,
 } from '../model-service.js';
 import { getProviderRegistry, inferProviderForModel } from '../providers/registry.js';
+import {
+  type CloneCascadeDependencies,
+  isCloneChoice,
+  type ResolveClones,
+} from '../session/clone-cascade.ts';
 import { admitUpdateSessionConfig } from '../session/create-session-config.ts';
 import { validateImageSizes } from '../session/message-persistence.ts';
 import {
@@ -115,6 +120,35 @@ function extractMessageText(content: unknown): string {
 
 export interface SessionHandlerDeps {
   ensureSession(target: SessionTarget): Promise<EnsureSessionOutcome>;
+  resolveClones?: ResolveClones;
+  listClones?: (parentId: string) => Session[];
+}
+
+export function createCloneLifecycleEffects(
+  sessionManager: Pick<SessionManager, 'archiveSessionResources' | 'deleteSessionResources'>,
+  spaceManager: Pick<SpaceManager, 'removeSession'>,
+  internalEventBus: Pick<InternalEventBus<DaemonInternalEventMap>, 'publish'>,
+  getSession: (sessionId: string) => Session | null
+): Pick<CloneCascadeDependencies, 'archiveChild' | 'deleteChild'> {
+  const evict = async (sessionId: string, spaceId: string | undefined) => {
+    if (!spaceId) return;
+    try {
+      const space = await spaceManager.removeSession(spaceId, sessionId);
+      await internalEventBus.publish('space.updated', { sessionId: 'global', spaceId, space });
+    } catch {}
+  };
+  return {
+    archiveChild: async (sessionId) => {
+      const spaceId = getSession(sessionId)?.context?.spaceId;
+      await sessionManager.archiveSessionResources(sessionId, 'ui_session_archive');
+      await evict(sessionId, spaceId);
+    },
+    deleteChild: async (sessionId) => {
+      const spaceId = getSession(sessionId)?.context?.spaceId;
+      await sessionManager.deleteSessionResources(sessionId, 'ui_session_delete');
+      await evict(sessionId, spaceId);
+    },
+  };
 }
 
 export function setupSessionHandlers(
@@ -384,7 +418,16 @@ export function setupSessionHandlers(
   });
 
   messageHub.onRequest('session.delete', async (data, _ctx) => {
-    const { sessionId: targetSessionId } = data as { sessionId: string };
+    const { sessionId: targetSessionId, children } = data as {
+      sessionId: string;
+      children?: unknown;
+    };
+    const clones = await deps?.resolveClones?.(
+      targetSessionId,
+      isCloneChoice(children) ? children : undefined,
+      'delete'
+    );
+    if (clones) return { success: false, ...clones };
 
     const agentSessionForDelete = sessionManager.getSession(targetSessionId);
     const contextForDelete = agentSessionForDelete?.getSessionData().context;
@@ -409,9 +452,14 @@ export function setupSessionHandlers(
   });
 
   messageHub.onRequest('session.archive', async (data, _ctx) => {
-    const { sessionId: targetSessionId, confirmed = false } = data as {
+    const {
+      sessionId: targetSessionId,
+      confirmed = false,
+      children,
+    } = data as {
       sessionId: string;
       confirmed?: boolean;
+      children?: unknown;
     };
 
     const session = sessionManager.getSessionFromDB(targetSessionId);
@@ -422,20 +470,33 @@ export function setupSessionHandlers(
     const hadWorktree = !!session.worktree;
     const spaceIdForArchive = session.context?.spaceId;
     let commitsRemoved = 0;
-    if (session.worktree) {
+    const descendants = (parentId: string): Session[] =>
+      (deps?.listClones?.(parentId) ?? []).flatMap((clone) => [clone, ...descendants(clone.id)]);
+    const worktrees = [session, ...(children === 'cascade' ? descendants(targetSessionId) : [])]
+      .map((candidate) => candidate.worktree)
+      .filter((worktree): worktree is NonNullable<Session['worktree']> => !!worktree);
+    if (worktrees.length > 0) {
       const { WorktreeManager } = await import('../worktree-manager.ts');
       const worktreeManager = new WorktreeManager();
-      const commitStatus = await worktreeManager.getCommitsAhead(session.worktree);
-
-      if (!confirmed && commitStatus.hasCommitsAhead) {
-        return {
-          success: false,
-          requiresConfirmation: true,
-          commitStatus,
-        };
+      for (const worktree of worktrees) {
+        const commitStatus = await worktreeManager.getCommitsAhead(worktree);
+        if (!confirmed && commitStatus.hasCommitsAhead) {
+          return {
+            success: false,
+            requiresConfirmation: true,
+            commitStatus,
+          };
+        }
+        commitsRemoved += commitStatus.commits.length;
       }
-      commitsRemoved = commitStatus.commits.length;
     }
+
+    const clones = await deps?.resolveClones?.(
+      targetSessionId,
+      isCloneChoice(children) ? children : undefined,
+      'archive'
+    );
+    if (clones) return { success: false, ...clones };
 
     try {
       await sessionManager.archiveSessionResources(targetSessionId, 'ui_session_archive');

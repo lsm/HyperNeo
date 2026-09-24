@@ -48,6 +48,9 @@ import { setupDialogHandlers } from './dialog-handlers.ts';
 import { setupQuestionHandlers } from './question-handlers.ts';
 import { setupSpaceHandlers } from './space-handlers.ts';
 import { setupSpaceTaskMessageHandlers } from './space-task-message-handlers.ts';
+import { publishUnifiedAgentCreated } from '../agents/unified-agent-events.ts';
+import { createResolveClones } from '../session/clone-cascade.ts';
+import { createCloneLifecycleEffects } from './session-handlers.ts';
 import { createDefaultSessionResolutionDeps } from '../session-resolution/default-deps.ts';
 import { ensureSession } from '../session-resolution/ensure-session.ts';
 import { NodeExecutionRepository } from '../../storage/repositories/node-execution-repository.ts';
@@ -1099,6 +1102,51 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     }),
   };
 
+  const resolveClones = createResolveClones({
+    listChildren: (parentId) => deps.db.listChildSessions(parentId),
+    detach: (sessionId) => {
+      deps.db.detachSessionFromParent(sessionId);
+      deps.db.notifyChange('sessions', { sessionId });
+    },
+    agentOwning: (sessionId) => {
+      const id = spaceAgentRepo.getBySessionId(sessionId)?.id;
+      return id ? longHorizonAgentRepo.getById(id) : null;
+    },
+    listAgents: (spaceId) => longHorizonAgentRepo.listBySpaceId(spaceId),
+    createAgent: (params) => {
+      const agent = longHorizonAgentRepo.create(params);
+      const created = spaceAgentRepo.getById(agent.id);
+      if (created) {
+        deps.internalEventBus
+          .publish('spaceAgentV2.created', {
+            sessionId: `space:${agent.spaceId}`,
+            spaceId: agent.spaceId,
+            agent: created,
+          })
+          .catch(() => {});
+        void publishUnifiedAgentCreated(deps.internalEventBus, agent).catch(() => {});
+      }
+      return agent;
+    },
+    stampProvenance: (sessionId, promptProvenance) => {
+      const current = deps.db.getSession(sessionId);
+      if (current) {
+        deps.db.updateSession(sessionId, { metadata: { ...current.metadata, promptProvenance } });
+        deps.db.notifyChange('sessions', { sessionId });
+      }
+    },
+    ...createCloneLifecycleEffects(
+      deps.sessionManager,
+      deps.spaceManager,
+      deps.internalEventBus,
+      (id) => deps.db.getSession(id)
+    ),
+  });
+  spaceAgentV2Deps.resolveClones = resolveClones;
+  spaceAgentV2Deps.listClones = (parentId) => deps.db.listChildSessions(parentId);
+  spaceAgentV2Deps.commitsAhead = (worktree) =>
+    deps.sessionManager.getWorktreeManager().getCommitsAhead(worktree);
+
   setupSpaceAgentV2Handlers(deps.messageHub, spaceAgentV2Deps);
 
   const createSeedAgent = buildAgentCreate(spaceAgentV2Deps);
@@ -1120,7 +1168,11 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.internalEventBus,
     deps.spaceManager,
     spaceRuntimeService,
-    { ensureSession: (target) => ensureSession(target, sessionResolutionDeps) }
+    {
+      ensureSession: (target) => ensureSession(target, sessionResolutionDeps),
+      resolveClones,
+      listClones: (parentId) => deps.db.listChildSessions(parentId),
+    }
   );
 
   setupTaskScheduleHandlers(deps.messageHub, {

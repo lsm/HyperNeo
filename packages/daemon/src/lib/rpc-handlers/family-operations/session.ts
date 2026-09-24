@@ -2,6 +2,7 @@ import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-l
 import { Logger } from '../../logger.ts';
 import type { OperationDefinition } from '../../operations/registry.ts';
 import { createSpawnSessionCloneOperation } from '../../session/clone-operations.ts';
+import { createReturnSessionCloneOperation } from '../../session/clone-return-operation.ts';
 import { createSessionOperations } from '../../session/operations.ts';
 import { resolveSpaceMcpSessionPolicy } from '../../space/runtime/space-mcp-session-policy.ts';
 import { resolveSessionSpaceId } from '../../space/runtime/space-caller-scope.ts';
@@ -32,8 +33,29 @@ export function registerSessionOperations(context: FamilyOperationContext): Oper
       context.spaceRuntimeService.reattachMemberSpaceTools(sessionId),
     jobQueue: context.deps.jobQueue,
   });
+  const returnToParent = createReturnSessionCloneOperation({
+    getSession: scopeDeps.getSession,
+    getSpace: (spaceId) => context.deps.spaceManager.getSpace(spaceId),
+    sessionSpaceId: (session) => resolveSessionSpaceId(session, scopeDeps),
+    getSessionStatus: (sessionId) =>
+      (
+        context.taskAgentManager?.getCachedAgentSessionById(sessionId) ??
+        context.deps.sessionManager.getCachedSession(sessionId)
+      )?.getProcessingState().status ?? '',
+    markReturned: (sessionId, returnedAt) => {
+      const current = context.deps.db.getSession(sessionId);
+      if (!current) return;
+      context.deps.db.updateSession(sessionId, {
+        metadata: { ...current.metadata, clone: { returnedAt } },
+      });
+    },
+    getDatabase: () => context.deps.db.getDatabase(),
+    getSdkMessageRepo: () => context.deps.db.getSDKMessageRepo(),
+    jobQueue: context.deps.jobQueue,
+  });
   return [
     spawn,
+    returnToParent,
     ...createSessionOperations({
       getDatabase: () => context.deps.db.getDatabase(),
       getLiveSession: (sessionId) =>

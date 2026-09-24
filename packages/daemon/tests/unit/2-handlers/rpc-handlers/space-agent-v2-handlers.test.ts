@@ -73,7 +73,10 @@ describe('setupSpaceAgentV2Handlers', () => {
   let templates: SpaceAgentTemplateRepository;
   let handlers: Map<string, RequestHandler>;
   let deps: SpaceAgentV2Deps;
-  let sessions: Map<string, { type: string; context?: { spaceId?: string | null } | null }>;
+  let sessions: Map<
+    string,
+    { type: string; context?: { spaceId?: string | null } | null; parentSessionId?: string | null }
+  >;
   let published: Array<{ topic: string; payload: unknown }>;
 
   beforeEach(() => {
@@ -701,6 +704,21 @@ describe('setupSpaceAgentV2Handlers', () => {
       ).rejects.toThrow('does not belong to space');
     });
 
+    test('a clone of another agent session cannot be bound as a primary', async () => {
+      const owner = agents.create({ spaceId: 'space-1', handle: 'owner', sessionId: 'primary' });
+      const created = agents.create({ spaceId: 'space-1', handle: 'a' });
+      sessions.set('clone', {
+        type: 'worker',
+        context: { spaceId: 'space-1' },
+        parentSessionId: 'primary',
+      });
+
+      await expect(
+        call(handlers, 'spaceAgentV2.update', { id: created.id, sessionId: 'clone' })
+      ).rejects.toThrow('spawned session');
+      expect(agents.getById(owner.id)?.sessionId).toBe('primary');
+    });
+
     test('leaves the row untouched when a gate rejects', async () => {
       const created = agents.create({ spaceId: 'space-1', handle: 'a', instructions: 'Keep.' });
       await expect(
@@ -724,6 +742,76 @@ describe('setupSpaceAgentV2Handlers', () => {
 
       expect(result.id).toBe(created.id);
       expect(agents.getById(created.id)).toBeNull();
+    });
+
+    test('an agent with clones needs a choice before it is removed', async () => {
+      const calls: unknown[] = [];
+      deps.resolveClones = async (parentId, choice, action) => {
+        calls.push([parentId, choice, action]);
+        return choice
+          ? null
+          : { accepted: false, reason: 'has_clones', clones: [{ id: 'c1', title: 'Clone' }] };
+      };
+      const created = agents.create({ spaceId: 'space-1', handle: 'a', sessionId: 'primary' });
+
+      const refused = await call<{ accepted: boolean }>(handlers, 'spaceAgentV2.delete', {
+        id: created.id,
+      });
+      expect(refused).toMatchObject({ accepted: false, reason: 'has_clones' });
+      expect(agents.getById(created.id)).not.toBeNull();
+
+      const result = await call<{ id: string }>(handlers, 'spaceAgentV2.delete', {
+        id: created.id,
+        children: 'flatten',
+      });
+      expect(result.id).toBe(created.id);
+      expect(agents.getById(created.id)).toBeNull();
+      expect(calls).toEqual([
+        ['primary', undefined, 'archive'],
+        ['primary', 'flatten', 'archive'],
+      ]);
+    });
+
+    test('a cascade delete asks for confirmation when a clone has commits ahead', async () => {
+      deps.resolveClones = async () => null;
+      deps.listClones = (parentId) =>
+        parentId === 'primary'
+          ? [
+              {
+                id: 'c1',
+                worktree: {
+                  isWorktree: true,
+                  worktreePath: '/wt',
+                  mainRepoPath: '/r',
+                  branch: 'b',
+                },
+              },
+            ]
+          : [];
+      deps.commitsAhead = async () => ({
+        hasCommitsAhead: true,
+        commits: [{ hash: 'h', message: 'm', author: 'a', date: 'd' }],
+        baseBranch: 'main',
+      });
+      const created = agents.create({ spaceId: 'space-1', handle: 'a', sessionId: 'primary' });
+
+      const refused = await call<{ accepted: boolean; reason: string }>(
+        handlers,
+        'spaceAgentV2.delete',
+        {
+          id: created.id,
+          children: 'cascade',
+        }
+      );
+      expect(refused).toMatchObject({ accepted: false, reason: 'requires_confirmation' });
+      expect(agents.getById(created.id)).not.toBeNull();
+
+      const result = await call<{ id: string }>(handlers, 'spaceAgentV2.delete', {
+        id: created.id,
+        children: 'cascade',
+        confirmed: true,
+      });
+      expect(result.id).toBe(created.id);
     });
 
     test('throws for an unknown id rather than silently succeeding', async () => {

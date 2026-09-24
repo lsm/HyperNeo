@@ -20,6 +20,8 @@ import {
   type UpdateSpaceAgentInput,
 } from '../agents/update-agent-pipeline.ts';
 import { getBuiltInSpaceAgentTemplates } from '../agents/template-manager.ts';
+import type { WorktreeCommitStatus, WorktreeMetadata } from '@hyperneo/shared';
+import { isCloneChoice, type ResolveClones } from '../session/clone-cascade.ts';
 import {
   publishUnifiedAgentCreated,
   publishUnifiedAgentDeleted,
@@ -31,6 +33,7 @@ const METHOD_PREFIX = 'spaceAgentV2';
 export interface SessionLookup {
   type?: string;
   context?: { spaceId?: string | null } | null;
+  parentSessionId?: string | null;
 }
 
 export interface SpaceAgentV2Deps {
@@ -48,11 +51,23 @@ export interface SpaceAgentV2Deps {
   ): { success: boolean; error?: string };
   clearSessionProvider?(spaceId: string, agentId: string): Promise<void>;
   seedTemplateExtras?(agent: SpaceAgent, template: SpaceAgentTemplate): void;
+  resolveClones?: ResolveClones;
+  listClones?: (parentId: string) => Array<{ id: string; worktree?: WorktreeMetadata }>;
+  commitsAhead?: (worktree: WorktreeMetadata) => Promise<WorktreeCommitStatus>;
+}
+
+function resolveSessionOwner(deps: SpaceAgentV2Deps, sessionId: string): string | null {
+  const parentId = deps.getSession(sessionId)?.parentSessionId ?? null;
+  return deps.agents.getBySessionId(parentId ?? sessionId)?.id ?? null;
 }
 
 export function toBindableSession(session: SessionLookup | null): BindableSession | null {
   if (!session) return null;
-  return { type: session.type ?? '', spaceId: session.context?.spaceId ?? null };
+  return {
+    type: session.type ?? '',
+    spaceId: session.context?.spaceId ?? null,
+    parentSessionId: session.parentSessionId ?? null,
+  };
 }
 
 async function publishAgentEvent(
@@ -110,7 +125,7 @@ export function buildAgentCreate(
 ): (input: CreateSpaceAgentInput) => Promise<SpaceAgent> {
   const run = buildCreateSpaceAgentPipeline({
     spaceExists: deps.spaceExists,
-    sessionOwner: (sessionId) => deps.agents.getBySessionId(sessionId)?.id ?? null,
+    sessionOwner: (sessionId) => resolveSessionOwner(deps, sessionId),
     getSession: (sessionId) => toBindableSession(deps.getSession(sessionId)),
     getTemplate: resolveTemplate(deps),
     listHandles: (spaceId) =>
@@ -141,7 +156,7 @@ export function buildAgentUpdate(
   const run = buildUpdateSpaceAgentPipeline({
     getAgent: (id) => deps.agents.getById(id),
     getSession: (sessionId) => toBindableSession(deps.getSession(sessionId)),
-    sessionOwner: (sessionId) => deps.agents.getBySessionId(sessionId)?.id ?? null,
+    sessionOwner: (sessionId) => resolveSessionOwner(deps, sessionId),
     listHandles: (spaceId) =>
       deps.agents.listIdentitiesBySpaceId(spaceId).map((agent) => agent.handle),
     listDisplayNames: (spaceId, excludeAgentId) =>
@@ -226,12 +241,36 @@ export function setupSpaceAgentV2Handlers(messageHub: MessageHub, deps: SpaceAge
   });
 
   messageHub.onRequest(method('delete'), async (data) => {
-    const params = data as { id?: string; spaceId?: string };
+    const params = data as {
+      id?: string;
+      spaceId?: string;
+      children?: unknown;
+      confirmed?: unknown;
+    };
     const id = requireString(params.id, 'id');
     const existing = deps.agents.getById(id);
     if (!existing) throw new Error(`Agent not found: ${id}`);
     if (params.spaceId && existing.spaceId !== params.spaceId) {
       throw new Error(`Agent ${id} does not belong to space ${params.spaceId}`);
+    }
+    if (existing.sessionId && isCloneChoice(params.children) && params.children === 'cascade') {
+      const descendants = (parentId: string): Array<{ id: string; worktree?: WorktreeMetadata }> =>
+        (deps.listClones?.(parentId) ?? []).flatMap((clone) => [clone, ...descendants(clone.id)]);
+      for (const clone of descendants(existing.sessionId)) {
+        if (!clone.worktree || !deps.commitsAhead || params.confirmed === true) continue;
+        const commitStatus = await deps.commitsAhead(clone.worktree);
+        if (commitStatus.hasCommitsAhead) {
+          return { accepted: false, reason: 'requires_confirmation', commitStatus };
+        }
+      }
+    }
+    if (existing.sessionId) {
+      const clones = await deps.resolveClones?.(
+        existing.sessionId,
+        isCloneChoice(params.children) ? params.children : undefined,
+        'archive'
+      );
+      if (clones) return clones;
     }
     deps.agents.delete(id);
     deps.removeAgentSubscriptions?.(existing.spaceId, id);

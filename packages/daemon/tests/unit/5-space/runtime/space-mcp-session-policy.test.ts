@@ -279,6 +279,96 @@ describe('resolveSpaceMcpSessionPolicy', () => {
     expect(policy.attachLongTermAgentTools).toBe(false);
   });
 
+  function cloneOf(parentId: string, overrides: Partial<Session> = {}): Session {
+    return makeSession({
+      id: 'clone-1',
+      parentSessionId: parentId,
+      context: { spaceId: 'space-1' },
+      metadata: {
+        messageCount: 0,
+        totalTokens: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        totalCost: 0,
+        toolCallCount: 0,
+        promptProvenance: { source: 'custom_agent', hash: 'hash', agentId: 'agent-1' },
+      },
+      ...overrides,
+    });
+  }
+
+  function agentRepo(status: SpaceLongHorizonAgent['status'] = 'active') {
+    return {
+      getById: () =>
+        ({
+          id: 'agent-1',
+          spaceId: 'space-1',
+          status,
+          sessionId: 'canonical',
+        }) as SpaceLongHorizonAgent,
+    };
+  }
+
+  test('a clone of the canonical agent session acts as the agent', () => {
+    const policy = resolveSpaceMcpSessionPolicy(cloneOf('canonical'), {
+      longHorizonAgentRepo: agentRepo(),
+    });
+    expect(policy.role).toBe('long_term_agent');
+    expect(policy.attachLongTermAgentTools).toBe(true);
+  });
+
+  test('a clone of a paused agent is demoted with it', () => {
+    const policy = resolveSpaceMcpSessionPolicy(cloneOf('canonical'), {
+      longHorizonAgentRepo: agentRepo('paused'),
+    });
+    expect(policy.role).toBe('universal_read');
+  });
+
+  test('a clone of some other session is not the agent, whatever its provenance says', () => {
+    const policy = resolveSpaceMcpSessionPolicy(cloneOf('somebody-else'), {
+      longHorizonAgentRepo: agentRepo(),
+    });
+    expect(policy.role).toBe('universal_read');
+  });
+
+  test('an agent without a canonical session admits no session at all', () => {
+    const parentless = makeSession({
+      id: 'loose',
+      context: { spaceId: 'space-1' },
+      metadata: {
+        messageCount: 0,
+        totalTokens: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        totalCost: 0,
+        toolCallCount: 0,
+        promptProvenance: { source: 'custom_agent', hash: 'hash', agentId: 'agent-1' },
+      },
+    });
+    const policy = resolveSpaceMcpSessionPolicy(
+      { ...parentless, parentSessionId: null },
+      {
+        longHorizonAgentRepo: {
+          getById: () =>
+            ({
+              id: 'agent-1',
+              spaceId: 'space-1',
+              status: 'active',
+              sessionId: null,
+            }) as SpaceLongHorizonAgent,
+        },
+      }
+    );
+    expect(policy.role).toBe('universal_read');
+  });
+
+  test('a grandchild of the canonical session is not the agent', () => {
+    const policy = resolveSpaceMcpSessionPolicy(cloneOf('clone-of-canonical'), {
+      longHorizonAgentRepo: agentRepo(),
+    });
+    expect(policy.role).toBe('universal_read');
+  });
+
   test.each(['paused', 'disabled', 'archived'] as const)(
     'demotes long-term agent identity when the repository reports status %s',
     (status) => {
