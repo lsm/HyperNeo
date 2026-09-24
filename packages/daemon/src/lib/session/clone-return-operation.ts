@@ -84,16 +84,15 @@ export async function loadParent(
   return { value: { clone, parent } };
 }
 
-export function buildReturnMessageUuid(cloneId: string, summary: string): string {
-  return `clone-return:${cloneId}:${hashString32(summary).toString(16)}`;
+export function buildReturnText(clone: Session, summary: string): string {
+  return `## 分身 returned: "${clone.title}" (${clone.id})\n\n${summary}`;
 }
 
-export function buildReturnMessage(
-  parent: Session,
-  clone: Session,
-  summary: string,
-  uuid: string
-): SDKUserMessage {
+export function buildReturnMessageUuid(cloneId: string, text: string): string {
+  return `clone-return:${cloneId}:${hashString32(text).toString(16)}`;
+}
+
+export function buildReturnMessage(parent: Session, text: string, uuid: string): SDKUserMessage {
   return {
     type: 'user',
     uuid: uuid as SDKUserMessage['uuid'],
@@ -103,9 +102,7 @@ export function buildReturnMessage(
     inputKind: 'system',
     message: {
       role: 'user',
-      content: [
-        { type: 'text', text: `## 分身 returned: "${clone.title}" (${clone.id})\n\n${summary}` },
-      ],
+      content: [{ type: 'text', text }],
     },
   } as SDKUserMessage;
 }
@@ -115,14 +112,15 @@ export function deliverReport(
   input: ReturnInput,
   deps: ReturnSessionCloneDependencies
 ): ReturnResult {
-  const uuid = buildReturnMessageUuid(clone.id, input.summary);
+  const text = buildReturnText(clone, input.summary);
+  const uuid = buildReturnMessageUuid(clone.id, text);
   const mechanics = deps.getSessionStatus(parent.id) === 'processing' ? 'steer' : 'turn';
   ensurePrompt({
     db: deps.getDatabase(),
     sdkMessageRepo: deps.getSdkMessageRepo(),
     jobQueue: deps.jobQueue,
     sessionId: parent.id,
-    message: buildReturnMessage(parent, clone, input.summary, uuid),
+    message: buildReturnMessage(parent, text, uuid),
     origin: 'system',
     delivery: {
       origin: 'space_inject',

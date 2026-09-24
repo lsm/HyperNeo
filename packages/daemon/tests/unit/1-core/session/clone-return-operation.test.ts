@@ -132,6 +132,14 @@ describe('session.clone.return', () => {
     expect(text).toContain('Summary text.');
   });
 
+  test('a renamed clone repeating its summary sends a fresh report instead of failing', async () => {
+    await run('Same.', { source: 'mcp', sessionId: 'clone' });
+    sessions.updateSession('clone', { title: 'Renamed' });
+    const again = await run('Same.', { source: 'mcp', sessionId: 'clone' });
+    expect(again).toMatchObject({ accepted: true });
+    expect(userRows('parent')).toBe(2);
+  });
+
   test('an identical repeat is a no-op; a new summary is a new report', async () => {
     const first = await run('Same.', { source: 'mcp', sessionId: 'clone' });
     const again = await run('Same.', { source: 'mcp', sessionId: 'clone' });
