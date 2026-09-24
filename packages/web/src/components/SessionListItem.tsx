@@ -13,6 +13,8 @@ interface SessionListItemProps {
   session: Session;
   onSessionClick: (sessionId: string) => void;
   onArchive: (sessionId: string) => void | Promise<void>;
+  onSpawn?: (sessionId: string) => void | Promise<void>;
+  nested?: boolean;
 }
 
 const ACTIVE_PROCESSING_STATUSES = new Set([
@@ -46,7 +48,10 @@ export default function SessionListItem({
   session,
   onSessionClick,
   onArchive,
+  onSpawn,
+  nested = false,
 }: SessionListItemProps) {
+  const returnedAt = session.metadata?.clone?.returnedAt;
   const isActive = currentSessionIdSignal.value === session.id;
   const [confirming, setConfirming] = useState(false);
   const [archiving, setArchiving] = useState(false);
@@ -67,6 +72,7 @@ export default function SessionListItem({
       data-testid="session-row"
       class={cn(
         'group/row relative flex items-stretch rounded-lg transition-colors',
+        nested && 'ml-4',
         isActive ? 'bg-fill' : 'hover:bg-fill-soft'
       )}
       onMouseLeave={() => {
@@ -92,6 +98,14 @@ export default function SessionListItem({
               isActive ? 'text-fg' : 'text-fg-muted group-hover/row:text-fg-soft'
             )}
           >
+            {nested && (
+              <span
+                class="flex-shrink-0 text-[10px] text-fg-faint"
+                data-testid="session-clone-glyph"
+              >
+                分身
+              </span>
+            )}
             <StatusIndicator session={session} sessionId={session.id} />
             <h3
               class={cn('flex-1 min-w-0 truncate text-sm', isActive && 'font-medium')}
@@ -100,6 +114,15 @@ export default function SessionListItem({
             >
               {session.title || 'New Session'}
             </h3>
+            {nested && returnedAt && (
+              <span
+                class="flex-shrink-0 text-xs text-fg-faint"
+                data-testid="session-clone-returned"
+                title={`Returned ${returnedAt}`}
+              >
+                ✓
+              </span>
+            )}
             {session.status === 'archived' && (
               <span class="text-warning flex-shrink-0" title="Archived session">
                 <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 16 16">
@@ -111,6 +134,25 @@ export default function SessionListItem({
 
           {session.status !== 'archived' && (
             <div class="flex items-center pr-1">
+              {onSpawn && !nested && !confirming && (
+                <button
+                  type="button"
+                  data-testid="session-spawn"
+                  onClick={() => onSpawn(session.id)}
+                  title="Spawn 分身"
+                  aria-label={`Spawn a clone of ${session.title || 'chat'}`}
+                  class="opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100 p-1 rounded text-fg-faint transition-colors hover:text-fg hover:bg-fill"
+                >
+                  <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width={1.75}
+                      d="M12 5v14m7-7H5"
+                    />
+                  </svg>
+                </button>
+              )}
               {confirming ? (
                 <button
                   type="button"
