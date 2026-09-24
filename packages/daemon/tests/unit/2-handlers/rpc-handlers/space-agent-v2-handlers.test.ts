@@ -73,7 +73,10 @@ describe('setupSpaceAgentV2Handlers', () => {
   let templates: SpaceAgentTemplateRepository;
   let handlers: Map<string, RequestHandler>;
   let deps: SpaceAgentV2Deps;
-  let sessions: Map<string, { type: string; context?: { spaceId?: string | null } | null }>;
+  let sessions: Map<
+    string,
+    { type: string; context?: { spaceId?: string | null } | null; parentSessionId?: string | null }
+  >;
   let published: Array<{ topic: string; payload: unknown }>;
 
   beforeEach(() => {
