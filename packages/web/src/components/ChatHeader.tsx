@@ -21,6 +21,7 @@ export interface ChatHeaderProps {
   toolInputsMap?: Map<string, unknown>;
   titleOverride?: string;
   onBack?: () => void;
+  onReturnToParent?: () => void;
 }
 
 export function ChatHeader({
@@ -39,7 +40,10 @@ export function ChatHeader({
   toolInputsMap = new Map(),
   titleOverride,
   onBack,
+  onReturnToParent,
 }: ChatHeaderProps) {
+  const returnedAt = session?.metadata.clone?.returnedAt;
+  const isClone = !!session?.parentSessionId;
   const rightPanelOpen = rightPanelTargetSignal.value !== null;
   const rightPanelAvailable = !!session?.id && Boolean(session.workspacePath || session.worktree);
 
@@ -82,7 +86,27 @@ export function ChatHeader({
           >
             {titleOverride || session?.title || 'New Session'}
           </h2>
+          {isClone && returnedAt && (
+            <span
+              class="flex-shrink-0 text-[11px] text-fg-faint"
+              data-testid="chat-header-returned"
+              title={`Returned ${returnedAt}`}
+            >
+              ✓ returned
+            </span>
+          )}
         </div>
+
+        {isClone && onReturnToParent && !readonly && session?.status === 'active' && (
+          <button
+            type="button"
+            onClick={onReturnToParent}
+            class="flex-shrink-0 rounded-md px-2 py-1 text-xs text-fg-muted transition-colors hover:bg-fill-strong hover:text-fg focus:outline-none focus:ring-1 focus:ring-gray-600"
+            data-testid="chat-header-return-to-parent"
+          >
+            Return to parent
+          </button>
+        )}
 
         <SessionInfoPanelButton
           session={session}

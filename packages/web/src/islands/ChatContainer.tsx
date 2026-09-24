@@ -173,6 +173,9 @@ interface ChatContainerProps {
   onRefreshAgent?: () => void;
 }
 
+const RETURN_TO_PARENT_PROMPT =
+  'Wrap up now: invoke the operation session.clone.return with a concise summary of what you learned and what is left, so your parent session can continue from it.';
+
 export default function ChatContainer({
   sessionId,
   readonly = false,
@@ -659,6 +662,10 @@ export default function ChatContainer({
     }, []),
     onMessageAccepted: handleMessageAccepted,
   });
+
+  const handleReturnToParent = useCallback(() => {
+    void sendMessage(RETURN_TO_PARENT_PROMPT);
+  }, [sendMessage]);
 
   const isNewMountRef = useRef(true);
 
@@ -1262,6 +1269,7 @@ export default function ChatContainer({
         resettingAgent={sessionActions.resettingAgent}
         readonly={readonly}
         onBack={onBack}
+        onReturnToParent={session?.parentSessionId ? handleReturnToParent : undefined}
         titleOverride={titleOverride}
         messages={messages}
         backgroundTaskMessages={backgroundTaskMessages}
