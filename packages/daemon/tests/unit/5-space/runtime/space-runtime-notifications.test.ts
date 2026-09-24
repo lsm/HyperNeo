@@ -566,7 +566,7 @@ describe('SpaceRuntime — notification events', () => {
   });
 
   describe('agent_crash', () => {
-    test('emits one event when a dead execution exhausts its retry budget', async () => {
+    test('blocks a dead execution for manual handoff without spawning a replacement', async () => {
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: STEP_A, name: 'Plan', agentId: AGENT_CODER },
       ]);
@@ -599,20 +599,16 @@ describe('SpaceRuntime — notification events', () => {
       });
 
       await runtime.executeTick();
-      expect(collector.events.filter((event) => event.kind === 'agent_crash')).toHaveLength(0);
 
-      await runtime.executeTick();
-      expect(collector.events.filter((event) => event.kind === 'agent_crash')).toHaveLength(0);
-
-      await runtime.executeTick();
-
-      const events = collector.events.filter((event) => event.kind === 'agent_crash');
+      const events = collector.events.filter((event) => event.kind === 'task_blocked');
       expect(events).toHaveLength(1);
       expect(events[0].payload['spaceId']).toBe(SPACE_ID);
       expect(events[0].payload['taskId']).toBe(tasks[0].id);
       expect(typeof events[0].payload['timestamp']).toBe('string');
       expect(taskRepo.getTask(tasks[0].id)?.status).toBe('blocked');
+      expect(taskRepo.getTask(tasks[0].id)?.blockReason).toBe('agent_handoff_required');
       expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
+      expect(spawnCount).toBe(0);
     });
   });
 

@@ -1041,7 +1041,9 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
     });
 
     test('multi-agent step: completion detected when canonical task flips terminal', async () => {
-      const rt = makeRuntimeWithTam();
+      const tam = new MockTaskAgentManager(nodeExecutionRepo);
+      tam.isSessionAlive = () => true;
+      const rt = makeRuntimeWithTam({ taskAgentManager: tam as unknown as TaskAgentManager });
       const workflow = workflowManager.createWorkflow({
         spaceId: SPACE_ID,
         name: `Staggered Complete ${Date.now()}`,
