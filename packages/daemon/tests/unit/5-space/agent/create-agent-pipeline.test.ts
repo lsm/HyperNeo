@@ -607,6 +607,11 @@ describe('gate order and rejection taxonomy', () => {
       expectRejection(await run(h, baseInput({ sessionId: 'task' })), 'Task agent sessions cannot');
     });
 
+    test('rejects binding a spawned session as the primary', async () => {
+      h.sessions.set('clone', { type: 'worker', spaceId: 'space-1', parentSessionId: 'other' });
+      expectRejection(await run(h, baseInput({ sessionId: 'clone' })), 'spawned session');
+    });
+
     test('rejects a duplicate display name case-insensitively', async () => {
       h.displayNames = ['My Agent'];
       expectRejection(await run(h, baseInput({ displayName: 'my agent' })), 'is already used');

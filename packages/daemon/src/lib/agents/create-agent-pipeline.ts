@@ -115,6 +115,9 @@ export function gateSession(
   if (session.type === 'space_task_agent') {
     return reject('session_invalid', 'Task agent sessions cannot be bound to a space agent');
   }
+  if (session.parentSessionId) {
+    return reject('session_invalid', 'A spawned session cannot become an agent primary session');
+  }
 
   const owner = sessionOwner(sessionId);
   if (owner) {
