@@ -389,6 +389,138 @@ describe('SpaceRuntime', () => {
       expect(nodeExecutionRepo.getById(execution.id)?.agentSessionId).toBe('session:predecessor');
     });
 
+    test('manual handoff preserves predecessor identity and transcript context for the successor', async () => {
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Handoff');
+      const task = tasks[0];
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      workflowRunRepo.transitionStatus(run.id, 'blocked');
+      taskRepo.updateTask(task.id, {
+        status: 'blocked',
+        blockReason: 'agent_handoff_required',
+      });
+      nodeExecutionRepo.update(execution.id, {
+        status: 'blocked',
+        agentSessionId: 'session:predecessor',
+        result: 'Same-session recovery failed; manual handoff required',
+        data: { handoffRequired: true },
+      });
+      new SDKMessageRepository(db).saveSDKMessage('session:predecessor', {
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'I changed the parser; tests remain to run.' }],
+        },
+      } as never);
+
+      const handoffRuntime = new SpaceRuntime({
+        db,
+        spaceManager,
+        longHorizonAgentRepo,
+        spaceWorkflowManager: workflowManager,
+        workflowRunRepo,
+        taskRepo,
+        nodeExecutionRepo,
+        taskAgentManager: {
+          verifyPredecessorStoppedForHandoff: async () => true,
+        } as never,
+      });
+      await handoffRuntime.recoverWorkflowBackedTask(SPACE_ID, task.id, 'in_progress', {
+        manualHandoff: true,
+      });
+
+      const handedOff = nodeExecutionRepo.getById(execution.id)!;
+      expect(handedOff.status).toBe('pending');
+      expect(handedOff.agentSessionId).toBeNull();
+      expect(handedOff.data?.predecessorSessionId).toBe('session:predecessor');
+      expect(handedOff.data?.restartRecoveryNote).toContain('I changed the parser');
+      expect(handedOff.data?.restartRecoveryNote).toContain('Same-session recovery failed');
+      expect(handedOff.data?.restartRecoveryNote).toContain('Verify repository');
+      expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
+    });
+
+    test('manual handoff refuses to start a successor while the predecessor may still run', async () => {
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Handoff');
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      workflowRunRepo.transitionStatus(run.id, 'blocked');
+      taskRepo.updateTask(tasks[0].id, {
+        status: 'blocked',
+        blockReason: 'agent_handoff_required',
+      });
+      nodeExecutionRepo.update(execution.id, {
+        status: 'blocked',
+        agentSessionId: 'session:predecessor',
+        data: { handoffRequired: true },
+      });
+      const handoffRuntime = new SpaceRuntime({
+        db,
+        spaceManager,
+        longHorizonAgentRepo,
+        spaceWorkflowManager: workflowManager,
+        workflowRunRepo,
+        taskRepo,
+        nodeExecutionRepo,
+        taskAgentManager: {
+          verifyPredecessorStoppedForHandoff: async () => false,
+        } as never,
+      });
+
+      await expect(
+        handoffRuntime.recoverWorkflowBackedTask(SPACE_ID, tasks[0].id, 'in_progress', {
+          manualHandoff: true,
+        })
+      ).rejects.toThrow('Cannot safely stop predecessor session');
+      expect(taskRepo.getTask(tasks[0].id)?.status).toBe('blocked');
+      expect(nodeExecutionRepo.getById(execution.id)?.agentSessionId).toBe('session:predecessor');
+    });
+
+    test('manual handoff does not reopen a task changed while its predecessor stops', async () => {
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Handoff');
+      const task = tasks[0];
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      workflowRunRepo.transitionStatus(run.id, 'blocked');
+      taskRepo.updateTask(task.id, {
+        status: 'blocked',
+        blockReason: 'agent_handoff_required',
+      });
+      nodeExecutionRepo.update(execution.id, {
+        status: 'blocked',
+        agentSessionId: 'session:predecessor',
+        data: { handoffRequired: true },
+      });
+      const handoffRuntime = new SpaceRuntime({
+        db,
+        spaceManager,
+        longHorizonAgentRepo,
+        spaceWorkflowManager: workflowManager,
+        workflowRunRepo,
+        taskRepo,
+        nodeExecutionRepo,
+        taskAgentManager: {
+          verifyPredecessorStoppedForHandoff: async () => {
+            taskRepo.updateTask(task.id, { status: 'done', blockReason: null });
+            return true;
+          },
+        } as never,
+      });
+
+      await expect(
+        handoffRuntime.recoverWorkflowBackedTask(SPACE_ID, task.id, 'in_progress', {
+          manualHandoff: true,
+        })
+      ).rejects.toThrow('no longer awaiting manual handoff');
+      expect(taskRepo.getTask(task.id)?.status).toBe('done');
+      expect(nodeExecutionRepo.getById(execution.id)?.agentSessionId).toBe('session:predecessor');
+    });
+
     test('resuming a blocked workflow task moves task and run in progress', async () => {
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },

@@ -2202,6 +2202,18 @@ class SpaceStore {
     return requireSynchronousTransition(await transitionTask(hub, { taskId, status }));
   }
 
+  async handoffWorkerSession(taskId: string): Promise<SpaceTask> {
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) throw new Error('Not connected');
+    const result = await invokeOperation<SpaceTask | string>(hub, 'task.workerSession.handoff', {
+      taskId,
+    });
+    if (typeof result === 'string') {
+      throw new Error(`Cannot hand off worker session: ${result}`);
+    }
+    return result;
+  }
+
   async publishTask(taskId: string): Promise<SpaceTask> {
     const spaceId = this.spaceId.value;
     if (!spaceId) throw new Error('No space selected');

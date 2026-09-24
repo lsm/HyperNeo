@@ -11,4 +11,5 @@ export const TASK_OPERATION_NAMES = [
   'task.start',
   'task.transition',
   'task.update',
+  'task.workerSession.handoff',
 ] as const;

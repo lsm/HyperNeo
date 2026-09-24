@@ -1017,6 +1017,18 @@ export function SpaceTaskPane({
     }
   };
 
+  const handleWorkerHandoff = async () => {
+    try {
+      setStatusTransitioning(true);
+      setThreadSendError(null);
+      await spaceStore.handoffWorkerSession(task.id);
+    } catch (err) {
+      setThreadSendError(formatTaskThreadError(err));
+    } finally {
+      setStatusTransitioning(false);
+    }
+  };
+
   const handleRunTaskDirectly = async () => {
     try {
       setStatusTransitioning(true);
@@ -1075,7 +1087,9 @@ export function SpaceTaskPane({
   const filteredTransitionActions =
     task.status === 'review' || task.pendingCheckpointType === 'task_completion'
       ? allTransitionActions.filter(({ target }) => target !== 'done' && target !== 'cancelled')
-      : allTransitionActions;
+      : task.blockReason === 'agent_handoff_required'
+        ? allTransitionActions.filter(({ target }) => target !== 'open' && target !== 'in_progress')
+        : allTransitionActions;
 
   const activeNodeSlots = new Set(
     activityMembers
@@ -1113,6 +1127,24 @@ export function SpaceTaskPane({
   const openableActivityMembers = activityMembers.filter(
     (m) => m.nodeExecution?.status !== 'pending'
   );
+  const predecessorExecutions = nodeExecutions.filter(
+    (execution) =>
+      execution.workflowRunId === task.workflowRunId &&
+      typeof execution.data?.predecessorSessionId === 'string'
+  );
+  for (const execution of predecessorExecutions) {
+    const predecessorSessionId = execution.data!.predecessorSessionId as string;
+    taskActionItems.push({
+      label: `Open previous ${execution.agentName} session`,
+      onClick: () =>
+        pushOverlayHistory(predecessorSessionId, execution.agentName, undefined, {
+          taskId: task.id,
+          agentName: execution.agentName,
+          sessionId: predecessorSessionId,
+          readonly: true,
+        }),
+    });
+  }
   const memberIsLive = (member: SpaceTaskActivityMember): boolean => {
     if (!taskAgentsLive) return false;
     if (member.kind === 'task_agent') {
@@ -1306,6 +1338,7 @@ export function SpaceTaskPane({
               task={resolvedTask ?? task}
               spaceId={runtimeSpaceId}
               onStatusTransition={handleStatusTransition}
+              onHandoff={handleWorkerHandoff}
             />
           ) : banner.kind === 'post_approval_blocked' ? (
             <PendingPostApprovalBanner task={task} spaceId={runtimeSpaceId} />
