@@ -12,6 +12,7 @@ import { CopyButton } from '../ui/CopyButton.tsx';
 import { Spinner } from '../ui/Spinner.tsx';
 import { GitHubHealthPanel } from './GitHubHealthPanel.tsx';
 import { QueueHealthSummary } from './QueueHealthSummary.tsx';
+import { FORM_CONTROL_CLASS, FORM_CHECKBOX_CLASS } from '../ui/FormField';
 
 interface SpaceExternalEventsSettingsProps {
   spaceId: string;
@@ -746,7 +747,7 @@ export function SpaceExternalEventsSettings({
                     disabled || !githubControlsEnabled || busy === 'space:github' || panelBusy
                   }
                   onChange={() => setSpaceEnabled(!githubSpaceEnabled)}
-                  class="h-4 w-4 rounded border-line-strong bg-fill-strong text-accent focus:ring-accent focus:ring-offset-dark-900"
+                  class={FORM_CHECKBOX_CLASS}
                 />
                 Enabled for this space
               </label>
@@ -783,7 +784,7 @@ export function SpaceExternalEventsSettings({
                     disabled || !githubControlsEnabled || busy === 'github:self-echo' || panelBusy
                   }
                   onChange={() => setFilterCurrentUser(!spaceFilterCurrentUser)}
-                  class="h-4 w-4 rounded border-line-strong bg-fill-strong text-accent focus:ring-accent focus:ring-offset-bg"
+                  class={FORM_CHECKBOX_CLASS}
                 />
                 Filter events by current login user
               </label>
@@ -802,7 +803,7 @@ export function SpaceExternalEventsSettings({
                 onInput={(event) => setRepoInput((event.target as HTMLInputElement).value)}
                 placeholder="owner/repository"
                 disabled={disabled || !githubControlsEnabled || panelBusy}
-                class="rounded-lg border border-line bg-surface-overlay px-3 py-2 text-sm text-fg placeholder-gray-600 focus:border-accent focus:outline-none"
+                class={FORM_CONTROL_CLASS}
               />
               <input
                 type="password"
@@ -810,7 +811,7 @@ export function SpaceExternalEventsSettings({
                 onInput={(event) => setWebhookSecret((event.target as HTMLInputElement).value)}
                 placeholder="Webhook secret (optional)"
                 disabled={disabled || !githubControlsEnabled || panelBusy}
-                class="rounded-lg border border-line bg-surface-overlay px-3 py-2 text-sm text-fg placeholder-gray-600 focus:border-accent focus:outline-none"
+                class={FORM_CONTROL_CLASS}
               />
               <Button
                 type="submit"
@@ -934,7 +935,7 @@ function DeliveryLogSection({
           onChange={(event) =>
             onStatusChange((event.target as HTMLSelectElement).value as typeof status)
           }
-          class="rounded-lg border border-line bg-surface-overlay px-3 py-2 text-xs text-fg focus:border-accent focus:outline-none"
+          class={FORM_CONTROL_CLASS}
           aria-label="Delivery status"
         >
           {DELIVERY_STATUSES.map((deliveryStatus) => (
@@ -951,7 +952,7 @@ function DeliveryLogSection({
             if (event.key === 'Enter') void onApplyAgentFilter();
           }}
           placeholder="filter agent"
-          class="rounded-lg border border-line bg-surface-overlay px-3 py-2 text-xs text-fg placeholder-gray-600 focus:border-accent focus:outline-none"
+          class={FORM_CONTROL_CLASS}
         />
         <Button type="button" size="sm" onClick={onApplyAgentFilter}>
           Apply
@@ -1124,7 +1125,7 @@ function ExtensionCard({ extension, disabled, onToggle }: ExtensionCardProps) {
         checked={extension.config.globallyEnabled}
         disabled={disabled}
         onChange={() => onToggle(!extension.config.globallyEnabled)}
-        class="mt-0.5 h-4 w-4 rounded border-line-strong bg-fill-strong text-accent focus:ring-accent focus:ring-offset-dark-900"
+        class={cn(FORM_CHECKBOX_CLASS, 'mt-0.5')}
       />
       <div class="min-w-0 flex-1">
         <div class="flex flex-wrap items-center gap-2">
@@ -1240,7 +1241,7 @@ function GitHubRepoRow({
             checked={repo.enabled}
             disabled={disabled}
             onChange={() => onUpdate({ enabled: !repo.enabled })}
-            class="h-4 w-4 rounded border-line-strong bg-fill-strong text-accent focus:ring-accent focus:ring-offset-dark-900"
+            class={FORM_CHECKBOX_CLASS}
           />
           Enabled
         </label>
@@ -1250,7 +1251,7 @@ function GitHubRepoRow({
             checked={repo.webhookEnabled}
             disabled={disabled}
             onChange={() => onUpdate({ webhookEnabled: !repo.webhookEnabled })}
-            class="h-4 w-4 rounded border-line-strong bg-fill-strong text-accent focus:ring-accent focus:ring-offset-dark-900"
+            class={FORM_CHECKBOX_CLASS}
           />
           Webhooks
         </label>
@@ -1260,7 +1261,7 @@ function GitHubRepoRow({
             checked={repo.pollingEnabled}
             disabled={disabled || !pollingEnabled}
             onChange={() => onUpdate({ pollingEnabled: !repo.pollingEnabled })}
-            class="h-4 w-4 rounded border-line-strong bg-fill-strong text-accent focus:ring-accent focus:ring-offset-dark-900"
+            class={FORM_CHECKBOX_CLASS}
           />
           Polling
         </label>
@@ -1395,7 +1396,7 @@ function GitHubConnectionCard({
             onInput={(event) => onTokenInputChange((event.target as HTMLInputElement).value)}
             placeholder="ghp_…"
             disabled={tokenWriteDisabled}
-            class="w-full rounded-lg border border-line bg-surface-overlay px-3 py-2 text-sm text-fg placeholder-gray-600 focus:border-accent focus:outline-none"
+            class={FORM_CONTROL_CLASS}
             aria-label="GitHub personal access token"
           />
           <div class="flex flex-wrap items-center gap-2">
@@ -1436,7 +1437,7 @@ function GitHubConnectionCard({
             checked={pollingEnabled}
             disabled={pollingDisabled}
             onChange={() => onTogglePolling(!pollingEnabled)}
-            class="h-4 w-4 rounded border-line-strong bg-fill-strong text-accent focus:ring-accent focus:ring-offset-dark-900"
+            class={FORM_CHECKBOX_CLASS}
             aria-label="Enable GitHub polling for this space"
           />
           Polling for this space (daemon-wide capability)

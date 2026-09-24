@@ -486,7 +486,7 @@ describe('Modal', () => {
           <p>Content</p>
         </Modal>
       );
-      const modal = document.body.querySelector('.bg-surface');
+      const modal = document.body.querySelector('.bg-surface-overlay');
       expect(modal?.className).toContain('max-w-lg');
     });
 
@@ -497,7 +497,7 @@ describe('Modal', () => {
           <p>Content</p>
         </Modal>
       );
-      const modal = document.body.querySelector('.bg-surface');
+      const modal = document.body.querySelector('.bg-surface-overlay');
       expect(modal?.className).toContain('max-w-md');
     });
 
@@ -508,7 +508,7 @@ describe('Modal', () => {
           <p>Content</p>
         </Modal>
       );
-      const modal = document.body.querySelector('.bg-surface');
+      const modal = document.body.querySelector('.bg-surface-overlay');
       expect(modal?.className).toContain('max-w-2xl');
     });
 
@@ -519,7 +519,7 @@ describe('Modal', () => {
           <p>Content</p>
         </Modal>
       );
-      const modal = document.body.querySelector('.bg-surface');
+      const modal = document.body.querySelector('.bg-surface-overlay');
       expect(modal?.className).toContain('max-w-4xl');
     });
   });
@@ -575,7 +575,7 @@ describe('Modal', () => {
         </Modal>
       );
 
-      const modalContent = document.body.querySelector('.bg-surface');
+      const modalContent = document.body.querySelector('.bg-surface-overlay');
       modalContent?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 
       expect(onClose).not.toHaveBeenCalled();
@@ -650,7 +650,7 @@ describe('Modal', () => {
           <button>Last Button</button>
         </Modal>
       );
-      const modal = document.body.querySelector('.bg-surface');
+      const modal = document.body.querySelector('.bg-surface-overlay');
       const buttons = modal?.querySelectorAll('button');
       const inputs = modal?.querySelectorAll('input');
       expect(buttons?.length).toBeGreaterThan(0);
@@ -1314,7 +1314,7 @@ describe('Modal', () => {
           <p>Content</p>
         </Modal>
       );
-      const modal = document.body.querySelector('.rounded-xl');
+      const modal = document.body.querySelector('.rounded-lg');
       expect(modal).toBeTruthy();
     });
 

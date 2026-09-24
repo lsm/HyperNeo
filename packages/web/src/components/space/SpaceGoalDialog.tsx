@@ -7,7 +7,14 @@ import type {
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { spaceStore } from '../../lib/space-store';
 import { toast } from '../../lib/toast';
-import { Button } from '../ui/Button';
+import { cn } from '../../lib/utils';
+import {
+  FORM_CHECKBOX_CLASS,
+  FORM_CONTROL_CLASS,
+  FormActions,
+  FormField,
+  FormSection,
+} from '../ui/FormField';
 import { Modal } from '../ui/Modal';
 
 interface SpaceGoalDialogProps {
@@ -234,49 +241,44 @@ export function SpaceGoalDialog({ isOpen, goal, onClose, onSaved }: SpaceGoalDia
       onClose={onClose}
       title={isEditing ? 'Edit Goal' : 'Create Goal'}
       size="lg"
+      footer={
+        <FormActions
+          error={error}
+          onCancel={onClose}
+          submitLabel={isEditing ? 'Save Goal' : 'Create Goal'}
+          submitting={submitting}
+          submitDisabled={scheduleLoading}
+          formId="space-goal-form"
+        />
+      }
     >
-      <form onSubmit={handleSubmit} class="space-y-4">
-        {error && (
-          <div class="rounded-lg border border-danger bg-danger/20 px-4 py-3 text-sm text-danger">
-            {error}
-          </div>
-        )}
+      <form id="space-goal-form" onSubmit={handleSubmit} class="space-y-4">
+        <FormField label="Title" required>
+          <input
+            type="text"
+            value={title}
+            onInput={(e) => setTitle((e.target as HTMLInputElement).value)}
+            placeholder="Keep release train healthy"
+            class={FORM_CONTROL_CLASS}
+          />
+        </FormField>
 
-        <div>
-          <label class="block">
-            <span class="mb-1.5 block text-sm font-medium text-fg-soft">
-              Title<span class="ml-1 text-danger">*</span>
-            </span>
-            <input
-              type="text"
-              value={title}
-              onInput={(e) => setTitle((e.target as HTMLInputElement).value)}
-              placeholder="Keep release train healthy"
-              class="w-full rounded-lg border border-line-strong bg-surface-raised px-4 py-2.5 text-sm text-fg placeholder-gray-600 focus:border-accent focus:outline-none"
-            />
-          </label>
-        </div>
-
-        <div>
-          <label class="block">
-            <span class="mb-1.5 block text-sm font-medium text-fg-soft">Description</span>
-            <textarea
-              value={description}
-              onInput={(e) => setDescription((e.target as HTMLTextAreaElement).value)}
-              rows={3}
-              placeholder="What should agents keep driving toward?"
-              class="w-full resize-none rounded-lg border border-line bg-surface-raised px-4 py-2.5 text-sm text-fg placeholder-gray-500 focus:border-accent focus:outline-none"
-            />
-          </label>
-        </div>
+        <FormField label="Description">
+          <textarea
+            value={description}
+            onInput={(e) => setDescription((e.target as HTMLTextAreaElement).value)}
+            rows={3}
+            placeholder="What should agents keep driving toward?"
+            class={cn(FORM_CONTROL_CLASS, 'resize-none')}
+          />
+        </FormField>
 
         <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <label class="block">
-            <span class="mb-1.5 block text-sm font-medium text-fg-soft">Type</span>
+          <FormField label="Type">
             <select
               value={type}
               onChange={(e) => setType((e.target as HTMLSelectElement).value as SpaceGoalType)}
-              class="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none"
+              class={FORM_CONTROL_CLASS}
             >
               {TYPE_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>
@@ -284,15 +286,14 @@ export function SpaceGoalDialog({ isOpen, goal, onClose, onSaved }: SpaceGoalDia
                 </option>
               ))}
             </select>
-          </label>
-          <label class="block">
-            <span class="mb-1.5 block text-sm font-medium text-fg-soft">Priority</span>
+          </FormField>
+          <FormField label="Priority">
             <select
               value={priority}
               onChange={(e) =>
                 setPriority((e.target as HTMLSelectElement).value as SpaceTaskPriority)
               }
-              class="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none"
+              class={FORM_CONTROL_CLASS}
             >
               {PRIORITY_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>
@@ -300,32 +301,32 @@ export function SpaceGoalDialog({ isOpen, goal, onClose, onSaved }: SpaceGoalDia
                 </option>
               ))}
             </select>
-          </label>
+          </FormField>
           {type !== 'recurring' ? (
-            <label class="block">
-              <span class="mb-1.5 block text-sm font-medium text-fg-soft">Progress</span>
+            <FormField label="Progress">
               <input
                 type="number"
                 min={0}
                 max={100}
                 value={progress}
                 onInput={(e) => setProgress((e.target as HTMLInputElement).value)}
-                class="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none"
+                class={FORM_CONTROL_CLASS}
               />
-            </label>
+            </FormField>
           ) : (
-            <div class="rounded-lg border border-line bg-surface-raised/60 px-3 py-2 text-xs text-fg-faint">
-              Recurring goals use activity and metrics instead of progress.
-            </div>
+            <FormField label="Progress">
+              <div class="rounded border border-line bg-surface px-2.5 py-1.5 text-xs text-fg-faint">
+                Recurring goals use activity and metrics instead of progress.
+              </div>
+            </FormField>
           )}
         </div>
 
-        <label class="block">
-          <span class="mb-1.5 block text-sm font-medium text-fg-soft">Preferred workflow</span>
+        <FormField label="Preferred workflow">
           <select
             value={preferredWorkflowId}
             onChange={(e) => setPreferredWorkflowId((e.target as HTMLSelectElement).value)}
-            class="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none"
+            class={FORM_CONTROL_CLASS}
           >
             <option value="">Auto-select workflow</option>
             {workflows.map((workflow) => (
@@ -334,72 +335,68 @@ export function SpaceGoalDialog({ isOpen, goal, onClose, onSaved }: SpaceGoalDia
               </option>
             ))}
           </select>
-        </label>
+        </FormField>
 
-        <label class="block">
-          <span class="mb-1.5 block text-sm font-medium text-fg-soft">Summary</span>
+        <FormField label="Summary">
           <textarea
             value={summary}
             onInput={(e) => setSummary((e.target as HTMLTextAreaElement).value)}
             rows={2}
             placeholder="Rolling state summary"
-            class="w-full resize-none rounded-lg border border-line bg-surface-raised px-4 py-2.5 text-sm text-fg placeholder-gray-500 focus:border-accent focus:outline-none"
+            class={cn(FORM_CONTROL_CLASS, 'resize-none')}
           />
-        </label>
+        </FormField>
 
         <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <label class="block">
-            <span class="mb-1.5 block text-sm font-medium text-fg-soft">Labels</span>
+          <FormField label="Labels">
             <input
               value={labels}
               onInput={(e) => setLabels((e.target as HTMLInputElement).value)}
               placeholder="release, health"
-              class="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-fg placeholder-gray-500 focus:border-accent focus:outline-none"
+              class={FORM_CONTROL_CLASS}
             />
-          </label>
-          <label class="block">
-            <span class="mb-1.5 block text-sm font-medium text-fg-soft">Metrics</span>
+          </FormField>
+          <FormField label="Metrics">
             <textarea
               value={metrics}
               onInput={(e) => setMetrics((e.target as HTMLTextAreaElement).value)}
               rows={2}
               placeholder={'build_health: green\nopen_bugs: 3'}
-              class="w-full resize-none rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-fg placeholder-gray-500 focus:border-accent focus:outline-none"
+              class={cn(FORM_CONTROL_CLASS, 'resize-none')}
             />
-          </label>
+          </FormField>
         </div>
 
-        <label class="block">
-          <span class="mb-1.5 block text-sm font-medium text-fg-soft">Next steps</span>
+        <FormField label="Next steps">
           <textarea
             value={nextSteps}
             onInput={(e) => setNextSteps((e.target as HTMLTextAreaElement).value)}
             rows={3}
             placeholder="One next step per line"
-            class="w-full resize-none rounded-lg border border-line bg-surface-raised px-4 py-2.5 text-sm text-fg placeholder-gray-500 focus:border-accent focus:outline-none"
+            class={cn(FORM_CONTROL_CLASS, 'resize-none')}
           />
-        </label>
+        </FormField>
 
         <label class="flex items-center gap-2 text-sm text-fg-soft">
           <input
             type="checkbox"
             checked={autoTriggerNext}
             onChange={(e) => setAutoTriggerNext((e.target as HTMLInputElement).checked)}
-            class="h-4 w-4 rounded border-line-strong bg-surface-raised text-accent"
+            class={FORM_CHECKBOX_CLASS}
           />
           Auto-trigger next task when current task finishes
         </label>
 
-        <div class="space-y-3 rounded-lg border border-line bg-surface-raised/50 p-4">
-          <p class="text-xs font-semibold uppercase tracking-wider text-fg-muted">Check-in</p>
-          <p class="text-xs text-fg-faint">
-            {isEditing
+        <FormSection
+          title="Check-in"
+          hint={
+            isEditing
               ? 'Edit the recurring check-in schedule. Clearing the cron removes it; changing it reschedules in place without affecting the active task.'
-              : 'Schedule recurring check-in tasks for this goal.'}
-          </p>
+              : 'Schedule recurring check-in tasks for this goal.'
+          }
+        >
           <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <label class="block">
-              <span class="mb-1.5 block text-sm font-medium text-fg-soft">Cron expression</span>
+            <FormField label="Cron expression">
               <input
                 value={checkInCronExpression}
                 onInput={(e) => {
@@ -407,18 +404,17 @@ export function SpaceGoalDialog({ isOpen, goal, onClose, onSaved }: SpaceGoalDia
                   setCheckInCronExpression((e.target as HTMLInputElement).value);
                 }}
                 placeholder="@daily or 0 9 * * 1"
-                class="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-fg placeholder-gray-500 focus:border-accent focus:outline-none"
+                class={FORM_CONTROL_CLASS}
               />
-            </label>
-            <label class="block">
-              <span class="mb-1.5 block text-sm font-medium text-fg-soft">Timezone</span>
+            </FormField>
+            <FormField label="Timezone">
               <select
                 value={checkInTimezone}
                 onChange={(e) => {
                   timezoneDirtyRef.current = true;
                   setCheckInTimezone((e.target as HTMLSelectElement).value);
                 }}
-                class="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none"
+                class={FORM_CONTROL_CLASS}
               >
                 {Array.from(
                   new Set(
@@ -432,7 +428,7 @@ export function SpaceGoalDialog({ isOpen, goal, onClose, onSaved }: SpaceGoalDia
                   </option>
                 ))}
               </select>
-            </label>
+            </FormField>
           </div>
           {!isEditing && (
             <label class="flex items-center gap-2 text-sm text-fg-soft">
@@ -440,21 +436,12 @@ export function SpaceGoalDialog({ isOpen, goal, onClose, onSaved }: SpaceGoalDia
                 type="checkbox"
                 checked={triggerImmediately}
                 onChange={(e) => setTriggerImmediately((e.target as HTMLInputElement).checked)}
-                class="h-4 w-4 rounded border-line-strong bg-surface-raised text-accent"
+                class={FORM_CHECKBOX_CLASS}
               />
               Create first task immediately
             </label>
           )}
-        </div>
-
-        <div class="flex gap-3 pt-1">
-          <Button type="button" variant="secondary" onClick={onClose} fullWidth>
-            Cancel
-          </Button>
-          <Button type="submit" loading={submitting} disabled={scheduleLoading} fullWidth>
-            {isEditing ? 'Save Goal' : 'Create Goal'}
-          </Button>
-        </div>
+        </FormSection>
       </form>
     </Modal>
   );

@@ -274,7 +274,7 @@ export function SpaceMemories({ spaceId }: SpaceMemoriesProps) {
               value={searchInput}
               onInput={(e) => handleSearchInput((e.target as HTMLInputElement).value)}
               placeholder="Search memories…"
-              class="w-full rounded-xl border border-line bg-bg/80 py-2.5 pl-10 pr-9 text-sm text-fg placeholder-gray-500 transition focus:border-accent/60 focus:outline-none"
+              class="w-full rounded-xl border border-line bg-bg/80 py-2.5 pl-10 pr-9 text-sm text-fg placeholder:text-fg-faint transition focus:border-accent/60 focus:outline-none"
               aria-label="Search memories"
               data-testid="memory-search-input"
             />

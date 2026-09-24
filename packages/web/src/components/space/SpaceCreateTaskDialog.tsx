@@ -1,8 +1,15 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import { Modal } from '../ui/Modal';
-import { Button } from '../ui/Button';
+import {
+  FORM_CHECKBOX_CLASS,
+  FORM_CONTROL_CLASS,
+  FormActions,
+  FormField,
+  FormSection,
+} from '../ui/FormField';
 import { spaceStore } from '../../lib/space-store';
 import { toast } from '../../lib/toast';
+import { cn } from '../../lib/utils';
 import type {
   SpaceTaskPriority,
   SpaceWorkspace,
@@ -243,51 +250,50 @@ export function SpaceCreateTaskDialog({ isOpen, onClose, onCreated }: SpaceCreat
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={handleClose} title="Create Task" size="md">
-      <form onSubmit={handleSubmit} class="space-y-4">
-        {error && (
-          <div class="bg-danger/20 border border-danger rounded-lg px-4 py-3 text-danger text-sm">
-            {error}
-          </div>
-        )}
-
-        <div>
-          <label class="block text-sm font-medium text-fg-soft mb-1.5">
-            Title
-            <span class="text-danger ml-1">*</span>
-          </label>
+    <Modal
+      isOpen={isOpen}
+      onClose={handleClose}
+      title="Create Task"
+      size="md"
+      footer={
+        <FormActions
+          error={error}
+          onCancel={handleClose}
+          submitLabel={scheduleEnabled ? 'Create Schedule' : 'Create Task'}
+          submitting={submitting}
+          formId="space-create-task-form"
+        />
+      }
+    >
+      <form id="space-create-task-form" onSubmit={handleSubmit} class="space-y-4">
+        <FormField label="Title" required>
           <input
             type="text"
             value={title}
             onInput={(e) => setTitle((e.target as HTMLInputElement).value)}
             placeholder="e.g., Implement authentication module"
-            class="w-full bg-surface-raised border border-line-strong rounded-lg px-4 py-2.5 text-fg placeholder-gray-600 focus:outline-none focus:border-accent text-sm"
+            class={FORM_CONTROL_CLASS}
             autoFocus
           />
-        </div>
+        </FormField>
 
-        <div>
-          <label class="block text-sm font-medium text-fg-soft mb-1.5">
-            Description
-            <span class="text-fg-muted text-xs ml-2">(optional)</span>
-          </label>
+        <FormField label="Description" optional>
           <textarea
             value={description}
             onInput={(e) => setDescription((e.target as HTMLTextAreaElement).value)}
             placeholder="Describe what this task should accomplish..."
             rows={3}
-            class="w-full bg-surface-raised border border-line rounded-lg px-4 py-2.5 text-fg placeholder-gray-500 focus:outline-none focus:border-accent resize-none text-sm"
+            class={cn(FORM_CONTROL_CLASS, 'resize-none')}
           />
-        </div>
+        </FormField>
 
-        <div>
-          <label class="block text-sm font-medium text-fg-soft mb-1.5">Priority</label>
+        <FormField label="Priority">
           <select
             value={priority}
             onChange={(e) =>
               setPriority((e.target as HTMLSelectElement).value as SpaceTaskPriority)
             }
-            class="w-full bg-surface-raised border border-line rounded-lg px-3 py-2 text-fg focus:outline-none focus:border-accent text-sm"
+            class={FORM_CONTROL_CLASS}
           >
             {PRIORITY_OPTIONS.map((opt) => (
               <option key={opt.value} value={opt.value}>
@@ -295,16 +301,15 @@ export function SpaceCreateTaskDialog({ isOpen, onClose, onCreated }: SpaceCreat
               </option>
             ))}
           </select>
-        </div>
+        </FormField>
 
         {workspaces && workspaces.length > 0 && !scheduleEnabled && (
-          <div>
-            <label class="block text-sm font-medium text-fg-soft mb-1.5">Workspace</label>
+          <FormField label="Workspace">
             <select
               value={workspacePath ?? undefined}
               onChange={(e) => setWorkspacePath((e.target as HTMLSelectElement).value)}
               data-testid="task-workspace-select"
-              class="w-full bg-surface-raised border border-line rounded-lg px-3 py-2 text-fg focus:outline-none focus:border-accent text-sm"
+              class={FORM_CONTROL_CLASS}
             >
               {workspaces.map((workspace) => (
                 <option key={workspace.id} value={workspace.path}>
@@ -313,33 +318,32 @@ export function SpaceCreateTaskDialog({ isOpen, onClose, onCreated }: SpaceCreat
                 </option>
               ))}
             </select>
-          </div>
+          </FormField>
         )}
 
         <div class="border-t border-line pt-4">
-          <label class="flex items-center gap-2 cursor-pointer">
+          <label class="flex items-center gap-2 text-sm text-fg-soft cursor-pointer">
             <input
               type="checkbox"
               checked={scheduleEnabled}
               onChange={(e) => setScheduleEnabled((e.target as HTMLInputElement).checked)}
-              class="w-4 h-4 rounded border-line-strong bg-surface-raised text-accent focus:ring-accent focus:ring-offset-dark-900"
+              class={FORM_CHECKBOX_CLASS}
             />
-            <span class="text-sm font-medium text-fg-soft">Schedule this task</span>
+            Schedule this task
           </label>
         </div>
 
         {scheduleEnabled && (
-          <div class="space-y-4 rounded-lg border border-line bg-surface-raised/50 p-4">
-            <div>
-              <label class="block text-sm font-medium text-fg-soft mb-1.5">Trigger</label>
-              <div class="flex gap-3">
+          <FormSection title="Schedule">
+            <FormField label="Trigger">
+              <div class="flex gap-2">
                 {TRIGGER_OPTIONS.map((opt) => (
                   <label
                     key={opt.value}
-                    class={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer text-sm transition-colors ${
+                    class={`flex items-center gap-2 px-3 py-1.5 rounded border cursor-pointer text-xs font-medium transition-colors ${
                       triggerType === opt.value
                         ? 'border-accent bg-accent/20 text-accent-soft'
-                        : 'border-line-strong text-fg-muted hover:border-line-strong'
+                        : 'border-line text-fg-muted hover:border-line-strong hover:text-fg-soft'
                     }`}
                   >
                     <input
@@ -359,14 +363,10 @@ export function SpaceCreateTaskDialog({ isOpen, onClose, onCreated }: SpaceCreat
                   </label>
                 ))}
               </div>
-            </div>
+            </FormField>
 
             {triggerType === 'at' && (
-              <div>
-                <label class="block text-sm font-medium text-fg-soft mb-1.5">
-                  Run at
-                  <span class="text-danger ml-1">*</span>
-                </label>
+              <FormField label="Run at" required>
                 <input
                   type="datetime-local"
                   value={runAt ? toDatetimeLocalValue(runAt) : ''}
@@ -374,59 +374,54 @@ export function SpaceCreateTaskDialog({ isOpen, onClose, onCreated }: SpaceCreat
                     const val = (e.target as HTMLInputElement).value;
                     setRunAt(val ? new Date(val).getTime() : null);
                   }}
-                  class="w-full bg-surface-raised border border-line-strong rounded-lg px-4 py-2.5 text-fg focus:outline-none focus:border-accent text-sm"
+                  class={FORM_CONTROL_CLASS}
                 />
-              </div>
+              </FormField>
             )}
 
             {triggerType === 'cron' && (
-              <div class="space-y-3">
-                <div>
-                  <label class="block text-sm font-medium text-fg-soft mb-1.5">
-                    Cron expression
-                    <span class="text-danger ml-1">*</span>
-                  </label>
-                  <div class="flex gap-2 flex-wrap mb-2">
-                    {CRON_PRESETS.map((preset) => (
-                      <button
-                        key={preset.value}
-                        type="button"
-                        onClick={() => setCronExpression(preset.value)}
-                        class={`px-2.5 py-1 text-xs rounded border transition-colors ${
-                          cronExpression === preset.value
-                            ? 'border-accent bg-accent/20 text-accent-soft'
-                            : 'border-line-strong text-fg-muted hover:border-line-strong hover:text-fg-soft'
-                        }`}
-                      >
-                        {preset.label}
-                      </button>
-                    ))}
-                  </div>
-                  <input
-                    type="text"
-                    value={cronExpression}
-                    onInput={(e) => setCronExpression((e.target as HTMLInputElement).value)}
-                    placeholder="0 9 * * 1"
-                    class={`w-full bg-surface-raised border rounded-lg px-4 py-2.5 text-fg placeholder-gray-600 focus:outline-none focus:border-accent text-sm ${
-                      cronExpression && !isValidCronExpression(cronExpression)
-                        ? 'border-danger focus:border-danger'
-                        : 'border-line-strong'
-                    }`}
-                  />
-                  {cronExpression && !isValidCronExpression(cronExpression) && (
-                    <p class="mt-1 text-xs text-danger">Invalid cron expression</p>
-                  )}
+              <FormField label="Cron expression" required>
+                <div class="flex gap-1.5 flex-wrap mb-2">
+                  {CRON_PRESETS.map((preset) => (
+                    <button
+                      key={preset.value}
+                      type="button"
+                      onClick={() => setCronExpression(preset.value)}
+                      class={`px-2 py-0.5 text-xs rounded border transition-colors ${
+                        cronExpression === preset.value
+                          ? 'border-accent bg-accent/20 text-accent-soft'
+                          : 'border-line text-fg-muted hover:border-line-strong hover:text-fg-soft'
+                      }`}
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
                 </div>
-              </div>
+                <input
+                  type="text"
+                  value={cronExpression}
+                  onInput={(e) => setCronExpression((e.target as HTMLInputElement).value)}
+                  placeholder="0 9 * * 1"
+                  class={cn(
+                    FORM_CONTROL_CLASS,
+                    'font-mono',
+                    cronExpression &&
+                      !isValidCronExpression(cronExpression) &&
+                      'border-danger focus:border-danger'
+                  )}
+                />
+                {cronExpression && !isValidCronExpression(cronExpression) && (
+                  <p class="mt-1 text-xs text-danger">Invalid cron expression</p>
+                )}
+              </FormField>
             )}
 
             {triggerType === 'cron' && (
-              <div>
-                <label class="block text-sm font-medium text-fg-soft mb-1.5">Timezone</label>
+              <FormField label="Timezone">
                 <select
                   value={timezone}
                   onChange={(e) => setTimezone((e.target as HTMLSelectElement).value)}
-                  class="w-full bg-surface-raised border border-line-strong rounded-lg px-3 py-2 text-fg focus:outline-none focus:border-accent text-sm"
+                  class={FORM_CONTROL_CLASS}
                 >
                   {COMMON_TIMEZONES.map((tz) => (
                     <option key={tz} value={tz}>
@@ -434,25 +429,16 @@ export function SpaceCreateTaskDialog({ isOpen, onClose, onCreated }: SpaceCreat
                     </option>
                   ))}
                 </select>
-              </div>
+              </FormField>
             )}
 
             {preview && (
-              <div class="text-xs text-fg-muted bg-surface/50 rounded px-3 py-2 border border-line">
+              <div class="text-xs text-fg-muted bg-surface/60 rounded px-2.5 py-1.5 border border-line">
                 {preview}
               </div>
             )}
-          </div>
+          </FormSection>
         )}
-
-        <div class="flex gap-3 pt-1">
-          <Button type="button" variant="secondary" onClick={handleClose} fullWidth>
-            Cancel
-          </Button>
-          <Button type="submit" loading={submitting} fullWidth>
-            {scheduleEnabled ? 'Create Schedule' : 'Create Task'}
-          </Button>
-        </div>
       </form>
     </Modal>
   );

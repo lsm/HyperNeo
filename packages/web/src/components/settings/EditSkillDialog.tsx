@@ -3,6 +3,7 @@ import type { AppSkill, AppSkillConfig } from '@hyperneo/shared';
 import type { AppMcpServer } from '@hyperneo/shared';
 import { skillsStore } from '../../lib/skills-store';
 import { toast } from '../../lib/toast';
+import { FORM_CONTROL_CLASS, FORM_LABEL_CLASS } from '../ui/FormField';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { cn } from '../../lib/utils';
@@ -127,13 +128,13 @@ export function EditSkillDialog({ skill, isOpen, onClose }: EditSkillDialogProps
       <form onSubmit={handleSubmit} class="space-y-4">
         <div class="grid grid-cols-2 gap-3">
           <div>
-            <label class="block text-xs font-medium text-fg-faint mb-1">ID</label>
+            <label class={FORM_LABEL_CLASS}>ID</label>
             <div class="text-xs text-fg-muted font-mono bg-surface border border-line rounded px-2 py-1.5 truncate">
               {skill.id}
             </div>
           </div>
           <div>
-            <label class="block text-xs font-medium text-fg-faint mb-1">Created</label>
+            <label class={FORM_LABEL_CLASS}>Created</label>
             <div class="text-xs text-fg-muted bg-surface border border-line rounded px-2 py-1.5 truncate">
               {createdDate}
             </div>
@@ -141,7 +142,7 @@ export function EditSkillDialog({ skill, isOpen, onClose }: EditSkillDialogProps
         </div>
 
         <div>
-          <label class="block text-sm font-medium text-fg-soft mb-1">
+          <label class={FORM_LABEL_CLASS}>
             Display Name <span class="text-danger">*</span>
           </label>
           <input
@@ -164,7 +165,7 @@ export function EditSkillDialog({ skill, isOpen, onClose }: EditSkillDialogProps
         </div>
 
         <div>
-          <label class="block text-sm font-medium text-fg-faint mb-1">Name</label>
+          <label class={FORM_LABEL_CLASS}>Name</label>
           <div class="text-sm text-fg-faint font-mono bg-surface border border-line rounded-lg px-3 py-2">
             {skill.name}
           </div>
@@ -172,7 +173,7 @@ export function EditSkillDialog({ skill, isOpen, onClose }: EditSkillDialogProps
         </div>
 
         <div>
-          <label class="block text-sm font-medium text-fg-soft mb-1">Description</label>
+          <label class={FORM_LABEL_CLASS}>Description</label>
           <input
             type="text"
             value={form.description}
@@ -182,13 +183,13 @@ export function EditSkillDialog({ skill, isOpen, onClose }: EditSkillDialogProps
                 description: (e.target as HTMLInputElement).value,
               }))
             }
-            class="w-full bg-surface-raised border border-line rounded-lg px-3 py-2 text-sm text-fg-soft focus:outline-none focus:ring-1 focus:ring-accent"
+            class={FORM_CONTROL_CLASS}
             placeholder="Optional description"
           />
         </div>
 
         <div>
-          <label class="block text-sm font-medium text-fg-faint mb-1">Source Type</label>
+          <label class={FORM_LABEL_CLASS}>Source Type</label>
           <div class="text-sm text-fg-faint bg-surface border border-line rounded-lg px-3 py-2 capitalize">
             {skill.sourceType === 'mcp_server'
               ? 'MCP Server'
@@ -200,7 +201,7 @@ export function EditSkillDialog({ skill, isOpen, onClose }: EditSkillDialogProps
 
         {skill.sourceType === 'builtin' && (
           <div>
-            <label class="block text-sm font-medium text-fg-soft mb-1">
+            <label class={FORM_LABEL_CLASS}>
               Command Name <span class="text-danger">*</span>
             </label>
             <input
@@ -228,7 +229,7 @@ export function EditSkillDialog({ skill, isOpen, onClose }: EditSkillDialogProps
 
         {skill.sourceType === 'plugin' && (
           <div>
-            <label class="block text-sm font-medium text-fg-soft mb-1">
+            <label class={FORM_LABEL_CLASS}>
               Plugin Directory Path <span class="text-danger">*</span>
             </label>
             <input
@@ -254,7 +255,7 @@ export function EditSkillDialog({ skill, isOpen, onClose }: EditSkillDialogProps
 
         {skill.sourceType === 'mcp_server' && (
           <div>
-            <label class="block text-sm font-medium text-fg-soft mb-1">
+            <label class={FORM_LABEL_CLASS}>
               MCP Server <span class="text-danger">*</span>
             </label>
             {mcpServers.length === 0 ? (

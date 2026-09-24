@@ -59,7 +59,7 @@ describe('ConfirmModal', () => {
           message="Message"
         />
       );
-      const modal = document.body.querySelector('.bg-surface');
+      const modal = document.body.querySelector('.bg-surface-overlay');
       expect(modal).toBeNull();
     });
 
@@ -456,7 +456,7 @@ describe('ConfirmModal', () => {
           message="Message"
         />
       );
-      const modal = document.body.querySelector('.bg-surface');
+      const modal = document.body.querySelector('.bg-surface-overlay');
       expect(modal?.className).toContain('max-w-md');
     });
   });

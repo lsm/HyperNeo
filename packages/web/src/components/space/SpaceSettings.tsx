@@ -26,6 +26,7 @@ import { SpaceMcpSettings } from './SpaceMcpSettings.tsx';
 import { SpaceExternalEventsSettings } from './SpaceExternalEventsSettings.tsx';
 import { WorkflowModelSelect } from './visual-editor/WorkflowModelSelect.tsx';
 import { GLASS_TAB_PILL_CLASS, GLASS_TAB_STRIP_CLASS, GlassTabStrip } from './glass-workspace.tsx';
+import { FORM_CONTROL_CLASS, FORM_CHECKBOX_CLASS } from '../ui/FormField';
 
 interface SpaceSettingsProps {
   space: Space;
@@ -95,7 +96,7 @@ function rpcErrorMessage(err: unknown): string {
 }
 
 const inputClass =
-  'rounded-lg border border-line bg-surface-overlay px-3 py-2 text-sm text-fg placeholder-gray-600 focus:border-accent focus:outline-none';
+  'rounded-lg border border-line bg-surface-overlay px-3 py-2 text-sm text-fg placeholder:text-fg-faint focus:border-accent focus:outline-none';
 
 function SpaceWorkspacesList({ spaceId }: { spaceId: string }) {
   const [workspaces, setWorkspaces] = useState<SpaceWorkspace[] | null>(null);
@@ -316,7 +317,7 @@ function SpaceWorkspacesList({ spaceId }: { spaceId: string }) {
                         }
                       }}
                       disabled={savingLabelId !== null}
-                      class="w-40 rounded border border-line bg-surface-overlay px-2 py-1 text-sm text-fg focus:border-accent focus:outline-none disabled:opacity-50"
+                      class={cn(FORM_CONTROL_CLASS, 'w-40')}
                     />
                     <button
                       type="button"
@@ -659,7 +660,7 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
                         type="text"
                         value={name}
                         onInput={(e) => setName((e.target as HTMLInputElement).value)}
-                        class="w-full rounded-lg border border-line bg-surface-overlay px-3 py-2 text-sm text-fg placeholder-gray-600 focus:border-accent focus:outline-none"
+                        class={FORM_CONTROL_CLASS}
                       />
                     </div>
                     <div>
@@ -682,7 +683,7 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
                         onInput={(e) => setDescription((e.target as HTMLTextAreaElement).value)}
                         placeholder="Brief description of this space..."
                         rows={2}
-                        class="w-full resize-none rounded-lg border border-line bg-surface-overlay px-3 py-2 text-sm text-fg placeholder-gray-600 focus:border-accent focus:outline-none"
+                        class={cn(FORM_CONTROL_CLASS, 'resize-none')}
                       />
                     </div>
                   </div>
@@ -712,7 +713,7 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
                       onInput={(e) => setInstructions((e.target as HTMLTextAreaElement).value)}
                       placeholder="e.g. Always use TypeScript strict mode. Prefer functional components..."
                       rows={7}
-                      class="w-full resize-y rounded-lg border border-line bg-surface-overlay px-3 py-2 text-sm text-fg placeholder-gray-600 focus:border-accent focus:outline-none"
+                      class={cn(FORM_CONTROL_CLASS, 'resize-y')}
                     />
                     <div class="mt-0.5 text-right text-xs text-fg-muted">
                       {instructions.length} characters
@@ -727,7 +728,7 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
                       onInput={(e) => setBackgroundContext((e.target as HTMLTextAreaElement).value)}
                       placeholder="e.g. This project uses Bun + Hono backend, Preact frontend with Tailwind CSS..."
                       rows={7}
-                      class="w-full resize-y rounded-lg border border-line bg-surface-overlay px-3 py-2 text-sm text-fg placeholder-gray-600 focus:border-accent focus:outline-none"
+                      class={cn(FORM_CONTROL_CLASS, 'resize-y')}
                     />
                     <div class="mt-0.5 text-right text-xs text-fg-muted">
                       {backgroundContext.length} characters
@@ -865,7 +866,7 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
                                 );
                               }}
                               disabled={clearSettingSources}
-                              class="mt-0.5 h-4 w-4 rounded border-line-strong text-accent focus:ring-accent focus:ring-offset-dark-900"
+                              class={cn(FORM_CHECKBOX_CLASS, 'mt-0.5')}
                             />
                             <span class="min-w-0">
                               <span class="block">{label}</span>

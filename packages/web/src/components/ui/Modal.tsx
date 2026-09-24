@@ -10,6 +10,7 @@ export interface ModalProps {
   title?: string;
   size?: 'sm' | 'md' | 'lg' | 'xl';
   showCloseButton?: boolean;
+  footer?: ComponentChildren;
 }
 
 export const FOCUSABLE_SELECTOR =
@@ -62,6 +63,7 @@ export function Modal({
   title,
   size = 'md',
   showCloseButton = true,
+  footer,
 }: ModalProps) {
   const modalRef = useRef<HTMLDivElement>(null);
 
@@ -107,22 +109,22 @@ export function Modal({
         role="dialog"
         aria-modal="true"
         class={cn(
-          'relative w-full bg-surface rounded-xl shadow-2xl border border-line animate-scaleIn flex flex-col max-h-[90vh]',
+          'relative w-full bg-surface-overlay rounded-lg shadow-xl border border-line-strong animate-scaleIn flex flex-col max-h-[90vh]',
           sizes[size]
         )}
         onClick={(e) => e.stopPropagation()}
       >
         {(title || showCloseButton) && (
-          <div class="flex items-center justify-between px-6 py-4 border-b border-line flex-shrink-0">
-            {title && <h2 class="text-lg font-semibold text-fg">{title}</h2>}
+          <div class="flex items-center justify-between px-4 py-3 border-b border-line flex-shrink-0">
+            {title && <h2 class="text-sm font-semibold text-fg">{title}</h2>}
             {showCloseButton && (
               <button
                 type="button"
                 onClick={onClose}
-                class="ml-auto text-fg-muted hover:text-fg transition-colors p-1 rounded-lg hover:bg-surface-raised"
+                class="ml-auto text-fg-muted hover:text-fg transition-colors p-1 rounded hover:bg-fill-strong"
                 aria-label="Close modal"
               >
-                <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path
                     stroke-linecap="round"
                     stroke-linejoin="round"
@@ -135,7 +137,8 @@ export function Modal({
           </div>
         )}
 
-        <div class="px-6 py-4 overflow-y-auto flex-1">{children}</div>
+        <div class="p-4 overflow-y-auto flex-1">{children}</div>
+        {footer && <div class="px-4 py-3 border-t border-line flex-shrink-0">{footer}</div>}
       </div>
     </div>
   );

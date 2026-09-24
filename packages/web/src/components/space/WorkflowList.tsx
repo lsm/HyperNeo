@@ -10,6 +10,8 @@ import { cn } from '../../lib/utils.ts';
 type WorkflowConditionType = 'always' | 'human' | 'condition' | 'task_result';
 import { connectionManager } from '../../lib/connection-manager.ts';
 import { toast } from '../../lib/toast.ts';
+import { FormActions } from '../ui/FormField.tsx';
+import { Modal } from '../ui/Modal.tsx';
 import { ImportPreviewDialog } from './ImportPreviewDialog.tsx';
 import type { ImportPreviewResult, ImportConflictResolution } from './ImportPreviewDialog.tsx';
 import { downloadBundle, pickImportFile } from './export-import-utils.ts';
@@ -365,16 +367,36 @@ function WorkflowCard({
       </div>
 
       {confirmDupResync && duplicateDrift && (
-        <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-scrim">
-          <div class="bg-surface-overlay border border-line rounded-lg p-5 max-w-md w-full shadow-xl">
-            <h3 class="text-sm font-semibold text-fg mb-2">Resync duplicate workflows?</h3>
-            <p class="text-xs text-fg-muted mb-1">
+        <Modal
+          isOpen
+          onClose={() => {
+            setConfirmDupResync(false);
+            setDupResyncError(null);
+          }}
+          title="Resync duplicate workflows?"
+          size="sm"
+          footer={
+            <FormActions
+              onCancel={() => {
+                setConfirmDupResync(false);
+                setDupResyncError(null);
+              }}
+              cancelDisabled={dupResyncing}
+              submitLabel="Delete older rows & resync"
+              submitting={dupResyncing}
+              submitVariant="warning"
+              onSubmit={handleResyncDuplicates}
+            />
+          }
+        >
+          <div class="space-y-2">
+            <p class="text-xs text-fg-muted">
               This space has{' '}
               <span class="font-medium text-fg-soft">{duplicateDrift.groupSize} rows</span> sharing
               the <span class="font-medium text-fg-soft">"{duplicateDrift.templateName}"</span>{' '}
               template (duplicate rows).
             </p>
-            <p class="text-xs text-fg-muted mb-1">
+            <p class="text-xs text-fg-muted">
               The newest row <span class="font-medium text-fg-soft">"{workflow.name}"</span> will be
               kept and resynced from the built-in template. The remaining{' '}
               <span class="font-medium text-fg-soft">
@@ -383,78 +405,60 @@ function WorkflowCard({
               </span>{' '}
               will be deleted.
             </p>
-            <p class="text-xs text-danger mb-4">
+            <p class="text-xs text-danger">
               Local edits to the older rows and any workflow runs attached to them will be
               permanently lost.
             </p>
             {dupResyncError && (
-              <div class="mb-3 px-3 py-1.5 bg-danger/20 border border-danger/40 rounded text-xs text-danger-soft">
+              <p class="text-xs text-danger" role="alert">
                 {dupResyncError}
-              </div>
+              </p>
             )}
-            <div class="flex items-center gap-2 justify-end">
-              <button
-                onClick={() => {
-                  setConfirmDupResync(false);
-                  setDupResyncError(null);
-                }}
-                disabled={dupResyncing}
-                class="px-3 py-1.5 text-xs text-fg-muted hover:text-fg-soft transition-colors disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleResyncDuplicates}
-                disabled={dupResyncing}
-                class="px-3 py-1.5 text-xs font-medium text-on-warning bg-warning hover:bg-warning rounded transition-colors disabled:opacity-50"
-              >
-                {dupResyncing ? 'Resyncing…' : 'Delete older rows & resync'}
-              </button>
-            </div>
           </div>
-        </div>
+        </Modal>
       )}
 
       {confirmSync && (
-        <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-scrim">
-          <div class="bg-surface-overlay border border-line rounded-lg p-5 max-w-md w-full shadow-xl">
-            <h3 class="text-sm font-semibold text-fg mb-2">Apply template update?</h3>
-            <p class="text-xs text-fg-muted mb-1">
+        <Modal
+          isOpen
+          onClose={() => {
+            setConfirmSync(false);
+            setSyncError(null);
+          }}
+          title="Apply template update?"
+          size="sm"
+          footer={
+            <FormActions
+              onCancel={() => {
+                setConfirmSync(false);
+                setSyncError(null);
+              }}
+              cancelDisabled={syncing}
+              submitLabel="Apply update"
+              submitting={syncing}
+              submitVariant="warning"
+              onSubmit={handleSyncFromTemplate}
+            />
+          }
+        >
+          <div class="space-y-2">
+            <p class="text-xs text-fg-muted">
               This updates <span class="font-medium text-fg-soft">"{workflow.name}"</span> to the
               latest version of the{' '}
               <span class="font-medium text-fg-soft">"{workflow.templateName}"</span> template
               (structure, instructions, and channels).
             </p>
-            <p class="text-xs text-fg-faint mb-4">
+            <p class="text-xs text-fg-faint">
               No edits were detected to this workflow's steps, instructions, or prompts — though
               applying still overwrites the full structure.
             </p>
             {syncError && (
-              <div class="mb-3 px-3 py-1.5 bg-danger/20 border border-danger/40 rounded text-xs text-danger-soft">
+              <p class="text-xs text-danger" role="alert">
                 {syncError}
-              </div>
+              </p>
             )}
-            <div class="flex items-center gap-2 justify-end">
-              <button
-                onClick={() => {
-                  setConfirmSync(false);
-                  setSyncError(null);
-                }}
-                disabled={syncing}
-                class="px-3 py-1.5 text-xs text-fg-muted hover:text-fg-soft transition-colors disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleSyncFromTemplate}
-                disabled={syncing}
-                class="px-3 py-1.5 text-xs font-medium text-accent-fg bg-yellow-700 hover:bg-yellow-600 rounded transition-colors disabled:opacity-50"
-              >
-                {syncing ? 'Applying…' : 'Apply update'}
-              </button>
-            </div>
           </div>
-        </div>
+        </Modal>
       )}
 
       {diffOpen && (

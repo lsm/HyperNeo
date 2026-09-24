@@ -654,7 +654,7 @@ describe('SpaceLongHorizonAgents', () => {
 
     expect(getByText('New template')).toBeTruthy();
     expect(getByRole('button', { name: 'Create template' })).toBeTruthy();
-    expect(getByRole('button', { name: 'Close template editor' })).toBeTruthy();
+    expect(getByRole('button', { name: 'Close modal' })).toBeTruthy();
   });
 
   it('creates a template from the modal and closes it on success', async () => {
@@ -1056,7 +1056,7 @@ describe('SpaceLongHorizonAgents', () => {
 
     expect(getByRole('region', { name: 'Agents' })).toBeTruthy();
     expect(getByRole('button', { name: 'Create agent' })).toBeTruthy();
-    expect(getByRole('button', { name: 'Close agent editor' })).toBeTruthy();
+    expect(getByRole('button', { name: 'Close modal' })).toBeTruthy();
   });
 
   it('edits agent instructions through the line-numbered textarea', async () => {

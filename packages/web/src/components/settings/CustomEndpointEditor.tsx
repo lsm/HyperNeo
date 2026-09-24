@@ -14,6 +14,13 @@ import { useEffect } from 'preact/hooks';
 import { cn } from '../../lib/utils.ts';
 import { Button } from '../ui/Button.tsx';
 import {
+  FORM_CHECKBOX_CLASS,
+  FORM_CONTROL_CLASS,
+  FORM_LABEL_CLASS,
+  FormActions,
+} from '../ui/FormField.tsx';
+import { Modal } from '../ui/Modal.tsx';
+import {
   CUSTOM_ENDPOINT_PRESETS,
   type CustomEndpointPreset,
   findPreset,
@@ -273,7 +280,7 @@ function ModelEditor({
             aria-label="Model id"
             value={model.id}
             onInput={(e) => update({ id: e.currentTarget.value })}
-            class="bg-bg border border-line rounded px-2 py-1 text-sm text-fg focus:outline-none focus:border-accent font-mono"
+            class={cn(FORM_CONTROL_CLASS, 'font-mono')}
           />
           <input
             type="text"
@@ -281,7 +288,7 @@ function ModelEditor({
             aria-label="Model display name"
             value={model.name ?? ''}
             onInput={(e) => update({ name: e.currentTarget.value || undefined })}
-            class="bg-bg border border-line rounded px-2 py-1 text-sm text-fg focus:outline-none focus:border-accent"
+            class={FORM_CONTROL_CLASS}
           />
           <input
             type="text"
@@ -289,7 +296,7 @@ function ModelEditor({
             aria-label="Upstream model id"
             value={model.providerModelId ?? ''}
             onInput={(e) => update({ providerModelId: e.currentTarget.value || undefined })}
-            class="bg-bg border border-line rounded px-2 py-1 text-sm text-fg focus:outline-none focus:border-accent font-mono"
+            class={cn(FORM_CONTROL_CLASS, 'font-mono')}
           />
         </div>
         <button
@@ -325,7 +332,7 @@ function ModelEditor({
               type="checkbox"
               checked={model.resolved[k]}
               onChange={(e) => updateCap(k, e.currentTarget.checked)}
-              class="rounded border-line-strong bg-surface text-accent focus:ring-accent focus:ring-offset-0"
+              class={FORM_CHECKBOX_CLASS}
             />
             {label}
           </label>
@@ -342,7 +349,7 @@ function ModelEditor({
               const v = Number(e.currentTarget.value);
               if (Number.isFinite(v) && v > 0) updateCap('maxContextTokens', v);
             }}
-            class="w-24 bg-bg border border-line rounded px-1.5 py-0.5 text-xs text-fg focus:outline-none focus:border-accent"
+            class={cn(FORM_CONTROL_CLASS, 'w-24 text-xs')}
           />
           tokens
         </label>
@@ -359,7 +366,7 @@ function ModelEditor({
               const v = Number(e.currentTarget.value);
               if (Number.isFinite(v)) updateCap('autoCompactPercent', v);
             }}
-            class="w-14 bg-bg border border-line rounded px-1.5 py-0.5 text-xs text-fg focus:outline-none focus:border-accent"
+            class={cn(FORM_CONTROL_CLASS, 'w-14 text-xs')}
           />
           %
         </label>
@@ -456,243 +463,212 @@ export function EditorModal({
   };
 
   return (
-    <div class="fixed inset-0 z-50 flex items-center justify-center bg-scrim p-4">
-      <div class="bg-surface-overlay border border-line-strong rounded-lg shadow-xl w-full max-w-3xl max-h-[90vh] flex flex-col">
-        <div class="flex items-center justify-between px-4 py-3 border-b border-line">
-          <h3 class="text-sm font-semibold text-fg">
-            {state.mode === 'edit' ? `Edit endpoint — ${state.id}` : 'Add custom endpoint'}
-          </h3>
-          <button type="button" onClick={onClose} class="p-1 rounded hover:bg-fill-strong">
-            <svg
-              class="w-4 h-4 text-fg-muted"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width={2}
-                d="M6 18L18 6M6 6l12 12"
-              />
-            </svg>
-          </button>
-        </div>
-
-        <div class="flex-1 overflow-y-auto p-4 space-y-4">
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <label class="block">
-              <span class="text-xs font-medium text-fg-muted mb-1 block">Endpoint id</span>
-              <input
-                type="text"
-                disabled={state.mode === 'edit'}
-                value={state.id}
-                placeholder="lmstudio"
-                onInput={(e) => update({ id: e.currentTarget.value })}
-                class={cn(
-                  'w-full bg-bg border rounded px-2 py-1.5 text-sm text-fg font-mono focus:outline-none focus:border-accent',
-                  idConflict ? 'border-danger' : 'border-line',
-                  state.mode === 'edit' && 'opacity-60 cursor-not-allowed'
-                )}
-              />
-              {idConflict && (
-                <p class="text-xs text-danger mt-1">An endpoint with this id already exists</p>
+    <Modal
+      isOpen
+      onClose={onClose}
+      title={state.mode === 'edit' ? `Edit endpoint — ${state.id}` : 'Add custom endpoint'}
+      size="lg"
+      footer={
+        <FormActions
+          error={validationError || fetchModelsError}
+          onCancel={onClose}
+          submitLabel={state.mode === 'edit' ? 'Save changes' : 'Add endpoint'}
+          submitting={saving}
+          submitDisabled={!!validationError || !!idConflict}
+          onSubmit={onSave}
+        >
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={onTest}
+            loading={testing}
+            disabled={!!validationError || saving || testing}
+          >
+            Test connection
+          </Button>
+        </FormActions>
+      }
+    >
+      <div class="space-y-4">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <label class="block">
+            <span class={FORM_LABEL_CLASS}>Endpoint id</span>
+            <input
+              type="text"
+              disabled={state.mode === 'edit'}
+              value={state.id}
+              placeholder="lmstudio"
+              onInput={(e) => update({ id: e.currentTarget.value })}
+              class={cn(
+                FORM_CONTROL_CLASS,
+                'font-mono',
+                idConflict && 'border-danger focus:border-danger'
               )}
-            </label>
-            <label class="block">
-              <span class="text-xs font-medium text-fg-muted mb-1 block">Display name</span>
-              <input
-                type="text"
-                value={state.name}
-                placeholder="LM Studio"
-                onInput={(e) => update({ name: e.currentTarget.value })}
-                class="w-full bg-bg border border-line rounded px-2 py-1.5 text-sm text-fg focus:outline-none focus:border-accent"
-              />
-            </label>
-            <label class="block">
-              <span class="text-xs font-medium text-fg-muted mb-1 block">Type</span>
-              <select
-                value={state.type}
-                onChange={(e) => {
-                  const nextType = e.currentTarget.value as CustomEndpointType;
-                  update({
-                    type: nextType,
-                    models: state.models.map((m) => ({
-                      ...m,
-                      resolved: resolveCapabilities(nextType, m.capabilities),
-                    })),
-                  });
-                }}
-                class="w-full bg-bg border border-line rounded px-2 py-1.5 text-sm text-fg focus:outline-none focus:border-accent"
-              >
-                {TYPE_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
+            />
+            {idConflict && (
+              <p class="text-xs text-danger mt-1">An endpoint with this id already exists</p>
+            )}
+          </label>
+          <label class="block">
+            <span class={FORM_LABEL_CLASS}>Display name</span>
+            <input
+              type="text"
+              value={state.name}
+              placeholder="LM Studio"
+              onInput={(e) => update({ name: e.currentTarget.value })}
+              class={FORM_CONTROL_CLASS}
+            />
+          </label>
+          <label class="block">
+            <span class={FORM_LABEL_CLASS}>Type</span>
+            <select
+              value={state.type}
+              onChange={(e) => {
+                const nextType = e.currentTarget.value as CustomEndpointType;
+                update({
+                  type: nextType,
+                  models: state.models.map((m) => ({
+                    ...m,
+                    resolved: resolveCapabilities(nextType, m.capabilities),
+                  })),
+                });
+              }}
+              class={FORM_CONTROL_CLASS}
+            >
+              {TYPE_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label class="block">
+            <span class={FORM_LABEL_CLASS}>API key (optional)</span>
+            <input
+              type="password"
+              value={state.apiKey}
+              placeholder="sk-..."
+              onInput={(e) => update({ apiKey: e.currentTarget.value })}
+              class={cn(FORM_CONTROL_CLASS, 'font-mono')}
+            />
+          </label>
+          <label class="block sm:col-span-2">
+            <span class={FORM_LABEL_CLASS}>Base URL</span>
+            <input
+              type="url"
+              value={state.baseUrl}
+              placeholder="http://localhost:1234/v1"
+              onInput={(e) => update({ baseUrl: e.currentTarget.value })}
+              class={cn(FORM_CONTROL_CLASS, 'font-mono')}
+            />
+          </label>
+          <label class="block sm:col-span-2">
+            <span class={FORM_LABEL_CLASS}>Extra headers (one per line, "Key: Value")</span>
+            <textarea
+              value={state.headersText}
+              placeholder={'HTTP-Referer: https://example.com\nX-Title: HyperNeo'}
+              onInput={(e) => update({ headersText: e.currentTarget.value })}
+              class={cn(FORM_CONTROL_CLASS, 'h-20 font-mono text-xs')}
+            />
+          </label>
+          <label class="block sm:col-span-2">
+            <span class={FORM_LABEL_CLASS}>Default model id (optional)</span>
+            <select
+              value={state.defaultModelId}
+              onChange={(e) => update({ defaultModelId: e.currentTarget.value })}
+              class={FORM_CONTROL_CLASS}
+            >
+              <option value="">— none —</option>
+              {state.models
+                .filter((m) => m.id.trim())
+                .map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.id}
                   </option>
                 ))}
-              </select>
-            </label>
-            <label class="block">
-              <span class="text-xs font-medium text-fg-muted mb-1 block">API key (optional)</span>
-              <input
-                type="password"
-                value={state.apiKey}
-                placeholder="sk-..."
-                onInput={(e) => update({ apiKey: e.currentTarget.value })}
-                class="w-full bg-bg border border-line rounded px-2 py-1.5 text-sm text-fg focus:outline-none focus:border-accent font-mono"
-              />
-            </label>
-            <label class="block sm:col-span-2">
-              <span class="text-xs font-medium text-fg-muted mb-1 block">Base URL</span>
-              <input
-                type="url"
-                value={state.baseUrl}
-                placeholder="http://localhost:1234/v1"
-                onInput={(e) => update({ baseUrl: e.currentTarget.value })}
-                class="w-full bg-bg border border-line rounded px-2 py-1.5 text-sm text-fg focus:outline-none focus:border-accent font-mono"
-              />
-            </label>
-            <label class="block sm:col-span-2">
-              <span class="text-xs font-medium text-fg-muted mb-1 block">
-                Extra headers (one per line, "Key: Value")
-              </span>
-              <textarea
-                value={state.headersText}
-                placeholder={'HTTP-Referer: https://example.com\nX-Title: HyperNeo'}
-                onInput={(e) => update({ headersText: e.currentTarget.value })}
-                class="w-full h-20 bg-bg border border-line rounded px-2 py-1.5 text-xs text-fg focus:outline-none focus:border-accent font-mono"
-              />
-            </label>
-            <label class="block sm:col-span-2">
-              <span class="text-xs font-medium text-fg-muted mb-1 block">
-                Default model id (optional)
-              </span>
-              <select
-                value={state.defaultModelId}
-                onChange={(e) => update({ defaultModelId: e.currentTarget.value })}
-                class="w-full bg-bg border border-line rounded px-2 py-1.5 text-sm text-fg focus:outline-none focus:border-accent"
+            </select>
+          </label>
+        </div>
+
+        <div class="space-y-2">
+          <div class="flex items-center justify-between">
+            <h4 class="text-xs font-semibold uppercase tracking-wider text-fg-muted">Models</h4>
+            <div class="flex items-center gap-2">
+              <Button
+                size="xs"
+                variant="secondary"
+                onClick={onFetchModels}
+                loading={fetchingModels}
+                disabled={!state.baseUrl.trim() || fetchingModels}
               >
-                <option value="">— none —</option>
-                {state.models
-                  .filter((m) => m.id.trim())
-                  .map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.id}
-                    </option>
-                  ))}
-              </select>
-            </label>
+                Fetch models
+              </Button>
+              <Button size="xs" variant="secondary" onClick={addModel}>
+                Add model
+              </Button>
+            </div>
           </div>
 
-          <div class="space-y-2">
-            <div class="flex items-center justify-between">
-              <h4 class="text-xs font-semibold uppercase tracking-wider text-fg-muted">Models</h4>
-              <div class="flex items-center gap-2">
-                <Button
-                  size="xs"
-                  variant="secondary"
-                  onClick={onFetchModels}
-                  loading={fetchingModels}
-                  disabled={!state.baseUrl.trim() || fetchingModels}
-                >
-                  Fetch models
-                </Button>
-                <Button size="xs" variant="secondary" onClick={addModel}>
-                  Add model
-                </Button>
-              </div>
-            </div>
-
-            {fetchModelsError && <p class="text-xs text-danger">{fetchModelsError}</p>}
-
-            {fetchedModels && (
-              <div class="rounded-lg border border-line bg-surface/60 px-3 py-2.5 space-y-2">
-                <div class="flex items-center justify-between">
-                  <span class="text-xs text-fg-soft">
-                    {fetchedModels.length} model{fetchedModels.length === 1 ? '' : 's'} found
-                    {fetchedAt && (
-                      <span class="text-fg-faint ml-1">
-                        · fetched {new Date(fetchedAt).toLocaleTimeString()}
-                      </span>
-                    )}
-                  </span>
-                  {selectableFetched.length > 0 && (
-                    <Button size="xs" variant="primary" onClick={addSelectedFetchedModels}>
-                      Add selected
-                    </Button>
+          {fetchedModels && (
+            <div class="rounded-lg border border-line bg-surface/60 px-3 py-2.5 space-y-2">
+              <div class="flex items-center justify-between">
+                <span class="text-xs text-fg-soft">
+                  {fetchedModels.length} model{fetchedModels.length === 1 ? '' : 's'} found
+                  {fetchedAt && (
+                    <span class="text-fg-faint ml-1">
+                      · fetched {new Date(fetchedAt).toLocaleTimeString()}
+                    </span>
                   )}
-                </div>
-                {selectableFetched.length === 0 ? (
-                  <p class="text-xs text-fg-faint italic">All fetched models are already added.</p>
-                ) : (
-                  <div class="max-h-40 overflow-y-auto space-y-1">
-                    {selectableFetched.map((m) => (
-                      <label
-                        key={m.id}
-                        class="flex items-center gap-2 text-xs text-fg-soft cursor-pointer hover:bg-fill-soft rounded px-1 py-0.5"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={(state.selectedFetchedModelIds ?? []).includes(m.id)}
-                          onChange={() => toggleFetchedModel(m.id)}
-                          class="rounded border-line-strong bg-surface text-accent focus:ring-accent focus:ring-offset-0"
-                        />
-                        <span class="font-mono">{m.id}</span>
-                        {m.name && m.name !== m.id && <span class="text-fg-faint">{m.name}</span>}
-                      </label>
-                    ))}
-                  </div>
+                </span>
+                {selectableFetched.length > 0 && (
+                  <Button size="xs" variant="primary" onClick={addSelectedFetchedModels}>
+                    Add selected
+                  </Button>
                 )}
               </div>
-            )}
+              {selectableFetched.length === 0 ? (
+                <p class="text-xs text-fg-faint italic">All fetched models are already added.</p>
+              ) : (
+                <div class="max-h-40 overflow-y-auto space-y-1">
+                  {selectableFetched.map((m) => (
+                    <label
+                      key={m.id}
+                      class="flex items-center gap-2 text-xs text-fg-soft cursor-pointer hover:bg-fill-soft rounded px-1 py-0.5"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={(state.selectedFetchedModelIds ?? []).includes(m.id)}
+                        onChange={() => toggleFetchedModel(m.id)}
+                        class={FORM_CHECKBOX_CLASS}
+                      />
+                      <span class="font-mono">{m.id}</span>
+                      {m.name && m.name !== m.id && <span class="text-fg-faint">{m.name}</span>}
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
-            {state.models.length === 0 ? (
-              <p class="text-xs text-fg-faint italic">
-                No models yet — add at least one to save the endpoint.
-              </p>
-            ) : (
-              <div class="space-y-2">
-                {state.models.map((m, i) => (
-                  <ModelEditor
-                    key={i}
-                    model={m}
-                    onChange={(next) => updateModel(i, next)}
-                    onRemove={() => removeModel(i)}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div class="px-4 py-3 border-t border-line flex items-center justify-between gap-2">
-          <div class="text-xs text-danger truncate">{validationError ?? ''}</div>
-          <div class="flex items-center gap-2">
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={onTest}
-              loading={testing}
-              disabled={!!validationError || saving || testing}
-            >
-              Test connection
-            </Button>
-            <Button size="sm" variant="ghost" onClick={onClose}>
-              Cancel
-            </Button>
-            <Button
-              size="sm"
-              variant="primary"
-              onClick={onSave}
-              loading={saving}
-              disabled={!!validationError || idConflict || saving}
-            >
-              {state.mode === 'edit' ? 'Save changes' : 'Add endpoint'}
-            </Button>
-          </div>
+          {state.models.length === 0 ? (
+            <p class="text-xs text-fg-faint italic">
+              No models yet — add at least one to save the endpoint.
+            </p>
+          ) : (
+            <div class="space-y-2">
+              {state.models.map((m, i) => (
+                <ModelEditor
+                  key={i}
+                  model={m}
+                  onChange={(next) => updateModel(i, next)}
+                  onRemove={() => removeModel(i)}
+                />
+              ))}
+            </div>
+          )}
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -703,44 +679,24 @@ export interface PresetPickerProps {
 
 export function PresetPicker({ onPick, onClose }: PresetPickerProps) {
   return (
-    <div class="fixed inset-0 z-50 flex items-center justify-center bg-scrim p-4">
-      <div class="bg-surface-overlay border border-line-strong rounded-lg shadow-xl w-full max-w-md max-h-[80vh] flex flex-col">
-        <div class="flex items-center justify-between px-4 py-3 border-b border-line">
-          <h3 class="text-sm font-semibold text-fg">Choose a preset</h3>
-          <button type="button" onClick={onClose} class="p-1 rounded hover:bg-fill-strong">
-            <svg
-              class="w-4 h-4 text-fg-muted"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width={2}
-                d="M6 18L18 6M6 6l12 12"
-              />
-            </svg>
+    <Modal isOpen onClose={onClose} title="Choose a preset" size="sm">
+      <div class="space-y-1">
+        {CUSTOM_ENDPOINT_PRESETS.map((preset) => (
+          <button
+            key={preset.key}
+            type="button"
+            onClick={() => onPick(preset)}
+            class="w-full text-left px-3 py-2 rounded hover:bg-fill-strong transition-colors"
+          >
+            <div class="text-sm text-fg font-medium">{preset.label}</div>
+            <div class="text-xs text-fg-faint mt-0.5">{preset.description}</div>
+            {preset.apiKeyRequired && (
+              <div class="text-[10px] text-warning mt-0.5">Requires API key</div>
+            )}
           </button>
-        </div>
-        <div class="flex-1 overflow-y-auto p-2 space-y-1">
-          {CUSTOM_ENDPOINT_PRESETS.map((preset) => (
-            <button
-              key={preset.key}
-              type="button"
-              onClick={() => onPick(preset)}
-              class="w-full text-left px-3 py-2 rounded hover:bg-fill-strong transition-colors"
-            >
-              <div class="text-sm text-fg font-medium">{preset.label}</div>
-              <div class="text-xs text-fg-faint mt-0.5">{preset.description}</div>
-              {preset.apiKeyRequired && (
-                <div class="text-[10px] text-warning mt-0.5">Requires API key</div>
-              )}
-            </button>
-          ))}
-        </div>
+        ))}
       </div>
-    </div>
+    </Modal>
   );
 }
 

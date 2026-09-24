@@ -15,6 +15,7 @@ import { ConfirmModal } from '../ui/ConfirmModal.tsx';
 import { Button } from '../ui/Button.tsx';
 import { cn } from '../../lib/utils.ts';
 import { computeMcpServerSkillLinkage } from '../ToolsModal.utils.ts';
+import { FORM_CONTROL_CLASS } from '../ui/FormField.tsx';
 
 interface FormData {
   name: string;
@@ -468,7 +469,7 @@ export function AppMcpServersSettings() {
               onChange={(e) =>
                 setFormData({ ...formData, description: (e.target as HTMLInputElement).value })
               }
-              class="w-full bg-surface-raised border border-line rounded-lg px-3 py-2 text-sm text-fg-soft focus:outline-none focus:ring-1 focus:ring-accent"
+              class={FORM_CONTROL_CLASS}
               placeholder="Optional description"
             />
           </div>
@@ -485,7 +486,7 @@ export function AppMcpServersSettings() {
                   sourceType: (e.target as HTMLSelectElement).value as AppMcpServerSourceType,
                 })
               }
-              class="w-full bg-surface-raised border border-line rounded-lg px-3 py-2 text-sm text-fg-soft focus:outline-none focus:ring-1 focus:ring-accent"
+              class={FORM_CONTROL_CLASS}
             >
               <option value="stdio">Stdio (local process)</option>
               <option value="sse">SSE (Server-Sent Events)</option>

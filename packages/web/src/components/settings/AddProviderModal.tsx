@@ -2,6 +2,7 @@ import { useState } from 'preact/hooks';
 import { createProvider, loginProvider, submitProviderCallback } from '../../lib/api-helpers.ts';
 import { toast } from '../../lib/toast.ts';
 import { Button } from '../ui/Button.tsx';
+import { Modal } from '../ui/Modal.tsx';
 import { OAuthModal, type OAuthFlowState } from './OAuthModal.tsx';
 import {
   EditorModal,
@@ -419,18 +420,25 @@ export function AddProviderModal({
 
   return (
     <>
-      <div class="fixed inset-0 z-50 flex items-center justify-center bg-scrim p-4">
-        <div class="bg-surface-overlay border border-line-strong rounded-lg shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col">
-          <div class="flex items-center justify-between px-4 py-3 border-b border-line">
-            <h3 class="text-sm font-semibold text-fg">Add Provider</h3>
+      <Modal isOpen onClose={onClose} title="Add Provider" size="lg">
+        <div class="space-y-4">
+          <div>
+            <h4 class="text-xs font-semibold uppercase tracking-wider text-fg-muted mb-2">
+              Quick Add
+            </h4>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {QUICK_ADD_PROVIDERS.map(renderProviderCard)}
+            </div>
+          </div>
+
+          <div>
             <button
               type="button"
-              onClick={onClose}
-              class="p-1 rounded hover:bg-fill-strong"
-              aria-label="Close"
+              onClick={() => setShowMore((v) => !v)}
+              class="flex items-center gap-1 text-xs font-medium text-fg-muted hover:text-fg-soft transition-colors"
             >
               <svg
-                class="w-4 h-4 text-fg-muted"
+                class={`w-3 h-3 transition-transform ${showMore ? 'rotate-90' : ''}`}
                 fill="none"
                 viewBox="0 0 24 24"
                 stroke="currentColor"
@@ -439,65 +447,32 @@ export function AddProviderModal({
                   stroke-linecap="round"
                   stroke-linejoin="round"
                   stroke-width={2}
-                  d="M6 18L18 6M6 6l12 12"
+                  d="M9 5l7 7-7 7"
                 />
               </svg>
+              More providers
+            </button>
+            {showMore && (
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
+                {MORE_PROVIDERS.map(renderProviderCard)}
+              </div>
+            )}
+          </div>
+
+          <div class="pt-2 border-t border-line">
+            <button
+              type="button"
+              onClick={() => setShowPresets(true)}
+              class="w-full text-left px-3 py-2.5 rounded-lg border border-dashed border-line-strong hover:border-line-strong hover:bg-fill-soft transition-colors"
+            >
+              <div class="text-sm font-medium text-fg-soft">Custom endpoint</div>
+              <div class="text-xs text-fg-faint mt-0.5">
+                Self-hosted or third-party API (Ollama, LM Studio, LiteLLM...)
+              </div>
             </button>
           </div>
-
-          <div class="flex-1 overflow-y-auto p-4 space-y-4">
-            <div>
-              <h4 class="text-xs font-semibold uppercase tracking-wider text-fg-muted mb-2">
-                Quick Add
-              </h4>
-              <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {QUICK_ADD_PROVIDERS.map(renderProviderCard)}
-              </div>
-            </div>
-
-            <div>
-              <button
-                type="button"
-                onClick={() => setShowMore((v) => !v)}
-                class="flex items-center gap-1 text-xs font-medium text-fg-muted hover:text-fg-soft transition-colors"
-              >
-                <svg
-                  class={`w-3 h-3 transition-transform ${showMore ? 'rotate-90' : ''}`}
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width={2}
-                    d="M9 5l7 7-7 7"
-                  />
-                </svg>
-                More providers
-              </button>
-              {showMore && (
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
-                  {MORE_PROVIDERS.map(renderProviderCard)}
-                </div>
-              )}
-            </div>
-
-            <div class="pt-2 border-t border-line">
-              <button
-                type="button"
-                onClick={() => setShowPresets(true)}
-                class="w-full text-left px-3 py-2.5 rounded-lg border border-dashed border-line-strong hover:border-line-strong hover:bg-fill-soft transition-colors"
-              >
-                <div class="text-sm font-medium text-fg-soft">Custom endpoint</div>
-                <div class="text-xs text-fg-faint mt-0.5">
-                  Self-hosted or third-party API (Ollama, LM Studio, LiteLLM...)
-                </div>
-              </button>
-            </div>
-          </div>
         </div>
-      </div>
+      </Modal>
 
       {showPresets && (
         <PresetPicker onPick={handlePickPreset} onClose={() => setShowPresets(false)} />

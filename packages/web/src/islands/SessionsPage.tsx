@@ -359,7 +359,7 @@ export function SessionsPage() {
               rows={3}
               disabled={submitting}
               autoFocus
-              class="w-full bg-transparent resize-none px-1.5 py-1 text-sm text-fg placeholder-gray-500 focus:outline-none disabled:opacity-60"
+              class="w-full bg-transparent resize-none px-1.5 py-1 text-sm text-fg placeholder:text-fg-faint focus:outline-none disabled:opacity-60"
             />
             <div class="flex items-center justify-between gap-2 pt-1">
               <NewChatModelPicker
@@ -447,7 +447,7 @@ export function SessionsPage() {
                     }}
                     placeholder="Project path"
                     autoFocus
-                    class="min-w-0 flex-1 rounded-lg border border-line bg-surface px-3 py-2 text-xs text-fg placeholder-gray-600 focus:border-line-strong focus:outline-none"
+                    class="min-w-0 flex-1 rounded-lg border border-line bg-surface px-3 py-2 text-xs text-fg placeholder:text-fg-faint focus:border-line-strong focus:outline-none"
                   />
                   <button
                     type="submit"

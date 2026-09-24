@@ -3,6 +3,7 @@ import type { SkillSourceType, AppSkillConfig } from '@hyperneo/shared';
 import type { AppMcpServer } from '@hyperneo/shared';
 import { skillsStore } from '../../lib/skills-store';
 import { toast } from '../../lib/toast';
+import { FORM_CONTROL_CLASS, FORM_LABEL_CLASS } from '../ui/FormField';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { cn } from '../../lib/utils';
@@ -141,7 +142,7 @@ export function AddSkillDialog({ isOpen, onClose }: AddSkillDialogProps) {
     <Modal isOpen={isOpen} onClose={handleClose} title="Add Skill" size="md">
       <form onSubmit={handleSubmit} class="space-y-4">
         <div>
-          <label class="block text-sm font-medium text-fg-soft mb-1">
+          <label class={FORM_LABEL_CLASS}>
             Display Name <span class="text-danger">*</span>
           </label>
           <input
@@ -160,7 +161,7 @@ export function AddSkillDialog({ isOpen, onClose }: AddSkillDialogProps) {
         </div>
 
         <div>
-          <label class="block text-sm font-medium text-fg-soft mb-1">
+          <label class={FORM_LABEL_CLASS}>
             Name <span class="text-danger">*</span>
           </label>
           <input
@@ -187,7 +188,7 @@ export function AddSkillDialog({ isOpen, onClose }: AddSkillDialogProps) {
         </div>
 
         <div>
-          <label class="block text-sm font-medium text-fg-soft mb-1">Description</label>
+          <label class={FORM_LABEL_CLASS}>Description</label>
           <input
             type="text"
             value={form.description}
@@ -197,13 +198,13 @@ export function AddSkillDialog({ isOpen, onClose }: AddSkillDialogProps) {
                 description: (e.target as HTMLInputElement).value,
               }))
             }
-            class="w-full bg-surface-raised border border-line rounded-lg px-3 py-2 text-sm text-fg-soft focus:outline-none focus:ring-1 focus:ring-accent"
+            class={FORM_CONTROL_CLASS}
             placeholder="Optional description of what this skill does"
           />
         </div>
 
         <div>
-          <label class="block text-sm font-medium text-fg-soft mb-2">
+          <label class={FORM_LABEL_CLASS}>
             Source Type <span class="text-danger">*</span>
           </label>
           <div class="flex gap-6">
@@ -227,7 +228,7 @@ export function AddSkillDialog({ isOpen, onClose }: AddSkillDialogProps) {
 
         {form.sourceType === 'builtin' && (
           <div>
-            <label class="block text-sm font-medium text-fg-soft mb-1">
+            <label class={FORM_LABEL_CLASS}>
               Command Name <span class="text-danger">*</span>
             </label>
             <input
@@ -255,7 +256,7 @@ export function AddSkillDialog({ isOpen, onClose }: AddSkillDialogProps) {
 
         {form.sourceType === 'plugin' && (
           <div>
-            <label class="block text-sm font-medium text-fg-soft mb-1">
+            <label class={FORM_LABEL_CLASS}>
               Plugin Directory Path <span class="text-danger">*</span>
             </label>
             <input
@@ -281,7 +282,7 @@ export function AddSkillDialog({ isOpen, onClose }: AddSkillDialogProps) {
 
         {form.sourceType === 'mcp_server' && (
           <div>
-            <label class="block text-sm font-medium text-fg-soft mb-1">
+            <label class={FORM_LABEL_CLASS}>
               MCP Server <span class="text-danger">*</span>
             </label>
             {mcpServers.length === 0 ? (

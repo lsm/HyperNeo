@@ -1,4 +1,5 @@
 import { useState } from 'preact/hooks';
+import { FORM_CONTROL_CLASS, FormActions } from './FormField.tsx';
 import { Modal } from './Modal.tsx';
 
 export interface RejectModalProps {
@@ -40,37 +41,36 @@ export function RejectModal({
   const isValid = feedback.trim().length > 0;
 
   return (
-    <Modal isOpen={isOpen} onClose={handleClose} title={title} size="md" showCloseButton={true}>
+    <Modal
+      isOpen={isOpen}
+      onClose={handleClose}
+      title={title}
+      size="md"
+      showCloseButton={true}
+      footer={
+        <FormActions
+          onCancel={handleClose}
+          cancelLabel={cancelText}
+          cancelDisabled={isLoading}
+          submitLabel={confirmText}
+          submitting={isLoading}
+          submitDisabled={!isValid}
+          submitVariant="danger"
+          onSubmit={handleConfirm}
+        />
+      }
+    >
       <div class="space-y-4">
         <p class="text-fg-soft text-sm leading-relaxed">{message}</p>
 
         <textarea
-          class="w-full h-32 bg-surface-raised border border-line-strong rounded-lg px-3 py-2 text-sm text-fg placeholder-gray-500 resize-none focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent"
+          class={`${FORM_CONTROL_CLASS} h-32 resize-none`}
           placeholder={placeholder}
           value={feedback}
           onInput={(e) => setFeedback((e.target as HTMLTextAreaElement).value)}
           disabled={isLoading}
           autoFocus
         />
-
-        <div class="flex items-center justify-end gap-3 pt-2">
-          <button
-            type="button"
-            onClick={handleClose}
-            disabled={isLoading}
-            class="px-4 py-2 text-sm font-medium text-fg-soft hover:text-fg bg-surface-raised hover:bg-fill-strong rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {cancelText}
-          </button>
-          <button
-            type="button"
-            onClick={handleConfirm}
-            disabled={isLoading || !isValid}
-            class="px-4 py-2 text-sm font-medium rounded-lg transition-colors disabled:cursor-not-allowed bg-danger hover:bg-danger text-on-danger disabled:bg-danger/50"
-          >
-            {isLoading ? 'Rejecting...' : confirmText}
-          </button>
-        </div>
       </div>
     </Modal>
   );

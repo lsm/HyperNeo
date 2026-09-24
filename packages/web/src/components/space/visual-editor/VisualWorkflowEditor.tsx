@@ -1112,7 +1112,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
                   onInput={(e) => setName((e.currentTarget as HTMLInputElement).value)}
                   placeholder="Workflow name…"
                   data-testid="workflow-name-input"
-                  class="w-full rounded-lg border border-line bg-surface-overlay px-3 py-2 text-sm text-fg-soft placeholder-gray-600 focus:border-accent focus:outline-none"
+                  class="w-full rounded-lg border border-line bg-surface-overlay px-3 py-2 text-sm text-fg-soft placeholder:text-fg-faint focus:border-accent focus:outline-none"
                 />
               </div>
               <div>
@@ -1125,7 +1125,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
                   onInput={(e) => setDescription((e.currentTarget as HTMLInputElement).value)}
                   placeholder="Description (optional)"
                   data-testid="workflow-description-input"
-                  class="w-full rounded-lg border border-line bg-surface-overlay px-3 py-2 text-sm text-fg-muted placeholder-gray-600 focus:border-accent focus:outline-none"
+                  class="w-full rounded-lg border border-line bg-surface-overlay px-3 py-2 text-sm text-fg-muted placeholder:text-fg-faint focus:border-accent focus:outline-none"
                 />
               </div>
               <label class="flex w-fit items-center gap-2 rounded-lg px-2 py-1 text-xs text-fg-muted transition-colors hover:bg-fill-soft cursor-pointer select-none">
@@ -1222,7 +1222,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
                     setTagInput('');
                   }
                 }}
-                class="min-w-[8rem] flex-1 bg-transparent px-1 py-1 text-xs text-fg-soft outline-none placeholder-gray-700"
+                class="min-w-[8rem] flex-1 bg-transparent px-1 py-1 text-xs text-fg-soft outline-none placeholder:text-fg-faint"
               />
             </div>
           </section>

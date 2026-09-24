@@ -316,7 +316,7 @@ export function HookEditorPanel({
               value={hook.label ?? ''}
               placeholder="Human-readable label"
               onInput={(e) => updateHook({ label: (e.currentTarget as HTMLInputElement).value })}
-              class={`w-full text-xs bg-surface-raised border rounded px-2 py-1.5 text-fg-soft focus:outline-none placeholder-gray-700 ${
+              class={`w-full text-xs bg-surface-raised border rounded px-2 py-1.5 text-fg-soft focus:outline-none placeholder:text-fg-faint ${
                 labelError
                   ? 'border-danger focus:border-danger'
                   : 'border-line-strong focus:border-accent'
@@ -401,7 +401,7 @@ export function HookEditorPanel({
               placeholder='{"key": "value"}'
               rows={4}
               onInput={(e) => updateTemplateData(e.currentTarget.value)}
-              class={`w-full text-xs bg-surface-raised border rounded px-2 py-1.5 text-fg-soft font-mono focus:outline-none placeholder-gray-700 resize-y leading-relaxed ${
+              class={`w-full text-xs bg-surface-raised border rounded px-2 py-1.5 text-fg-soft font-mono focus:outline-none placeholder:text-fg-faint resize-y leading-relaxed ${
                 templateDataError
                   ? 'border-danger focus:border-danger'
                   : 'border-line-strong focus:border-accent'
@@ -545,7 +545,7 @@ export function HookEditorPanel({
                   placeholder="# Enter your script here..."
                   rows={6}
                   onInput={(e) => updateValidator({ source: e.currentTarget.value })}
-                  class={`w-full text-xs bg-surface-raised border rounded px-2 py-1.5 text-fg-soft font-mono focus:outline-none placeholder-gray-700 resize-y leading-relaxed ${
+                  class={`w-full text-xs bg-surface-raised border rounded px-2 py-1.5 text-fg-soft font-mono focus:outline-none placeholder:text-fg-faint resize-y leading-relaxed ${
                     scriptSourceError
                       ? 'border-danger focus:border-danger'
                       : 'border-line-strong focus:border-accent'
@@ -651,7 +651,7 @@ export function HookEditorPanel({
                       agentSlots: slots.length > 0 ? slots : undefined,
                     });
                   }}
-                  class="w-full text-xs bg-surface border border-line rounded px-2 py-1 text-fg-soft font-mono focus:outline-none focus:border-accent placeholder-gray-700 disabled:opacity-50"
+                  class="w-full text-xs bg-surface border border-line rounded px-2 py-1 text-fg-soft font-mono focus:outline-none focus:border-accent placeholder:text-fg-faint disabled:opacity-50"
                 />
                 <p class="text-[10px] text-fg-faint">
                   Slot filters are not supported in this editor yet; empty means any slot.

@@ -38,6 +38,7 @@ import { InspectBadge, InspectPanel, InspectPanelHeader } from '../ui/InspectPan
 import { Modal } from '../ui/Modal';
 import { SectionCard } from '../ui/SectionCard';
 import { formatGoalMetricSnapshot } from './goal-display-utils';
+import { FORM_CHECKBOX_CLASS, FORM_CONTROL_CLASS } from '../ui/FormField';
 import {
   WorkflowModelSelect,
   type WorkflowModelSelection,
@@ -319,7 +320,7 @@ function ScopeCreateDialog({ isOpen, spaceId, goals, onClose, onCreated }: Scope
             value={name}
             onInput={(event) => setName((event.target as HTMLInputElement).value)}
             placeholder="Improve code review loop"
-            class="w-full rounded-lg border border-line bg-surface-raised px-4 py-2.5 text-sm text-fg placeholder-gray-600 focus:border-accent focus:outline-none"
+            class={cn(FORM_CONTROL_CLASS, 'px-4 py-2.5')}
             autoFocus
           />
         </div>
@@ -332,7 +333,7 @@ function ScopeCreateDialog({ isOpen, spaceId, goals, onClose, onCreated }: Scope
               onChange={(event) =>
                 setKind((event.target as HTMLSelectElement).value as EvolutionScopeKind)
               }
-              class="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none"
+              class={FORM_CONTROL_CLASS}
             >
               {SCOPE_KINDS.map((option) => (
                 <option key={option} value={option}>
@@ -349,7 +350,7 @@ function ScopeCreateDialog({ isOpen, spaceId, goals, onClose, onCreated }: Scope
               aria-label="Linked recurring goal"
               value={spaceGoalId}
               onInput={(event) => setSpaceGoalId((event.target as HTMLSelectElement).value)}
-              class="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none"
+              class={FORM_CONTROL_CLASS}
             >
               <option value="">None</option>
               {recurringGoals.map((goal) => (
@@ -368,7 +369,7 @@ function ScopeCreateDialog({ isOpen, spaceId, goals, onClose, onCreated }: Scope
             onInput={(event) => setObjective((event.target as HTMLTextAreaElement).value)}
             placeholder="What should this scope prove or improve?"
             rows={3}
-            class="w-full resize-none rounded-lg border border-line bg-surface-raised px-4 py-2.5 text-sm text-fg placeholder-gray-600 focus:border-accent focus:outline-none"
+            class={cn(FORM_CONTROL_CLASS, 'resize-none px-4 py-2.5')}
           />
         </div>
 
@@ -408,7 +409,7 @@ function ScopeCreateDialog({ isOpen, spaceId, goals, onClose, onCreated }: Scope
                       updateMetric(index, { key: (event.target as HTMLInputElement).value })
                     }
                     placeholder="key"
-                    class="rounded-md border border-line bg-surface-raised px-2 py-1.5 text-xs text-fg placeholder-gray-600 focus:border-accent focus:outline-none"
+                    class={FORM_CONTROL_CLASS}
                   />
                   <input
                     value={metric.label}
@@ -416,7 +417,7 @@ function ScopeCreateDialog({ isOpen, spaceId, goals, onClose, onCreated }: Scope
                       updateMetric(index, { label: (event.target as HTMLInputElement).value })
                     }
                     placeholder="Label"
-                    class="rounded-md border border-line bg-surface-raised px-2 py-1.5 text-xs text-fg placeholder-gray-600 focus:border-accent focus:outline-none"
+                    class={FORM_CONTROL_CLASS}
                   />
                   <select
                     value={metric.direction}
@@ -425,7 +426,7 @@ function ScopeCreateDialog({ isOpen, spaceId, goals, onClose, onCreated }: Scope
                         direction: (event.target as HTMLSelectElement).value as MetricDirection,
                       })
                     }
-                    class="rounded-md border border-line bg-surface-raised px-2 py-1.5 text-xs text-fg focus:border-accent focus:outline-none"
+                    class={FORM_CONTROL_CLASS}
                   >
                     {METRIC_DIRECTIONS.map((direction) => (
                       <option key={direction} value={direction}>
@@ -439,7 +440,7 @@ function ScopeCreateDialog({ isOpen, spaceId, goals, onClose, onCreated }: Scope
                       updateMetric(index, { unit: (event.target as HTMLInputElement).value })
                     }
                     placeholder="unit"
-                    class="rounded-md border border-line bg-surface-raised px-2 py-1.5 text-xs text-fg placeholder-gray-600 focus:border-accent focus:outline-none"
+                    class={FORM_CONTROL_CLASS}
                   />
                   <input
                     value={metric.targetValue}
@@ -447,7 +448,7 @@ function ScopeCreateDialog({ isOpen, spaceId, goals, onClose, onCreated }: Scope
                       updateMetric(index, { targetValue: (event.target as HTMLInputElement).value })
                     }
                     placeholder="target"
-                    class="rounded-md border border-line bg-surface-raised px-2 py-1.5 text-xs text-fg placeholder-gray-600 focus:border-accent focus:outline-none"
+                    class={FORM_CONTROL_CLASS}
                   />
                   <button
                     type="button"
@@ -594,7 +595,7 @@ function EvidenceTab({ scope }: { scope: EvolutionScope }) {
           onInput={(event) => setNote((event.target as HTMLTextAreaElement).value)}
           placeholder="What happened? What evidence should Evolve remember?"
           rows={3}
-          class="w-full resize-none rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-fg placeholder-gray-600 focus:border-accent focus:outline-none"
+          class={cn(FORM_CONTROL_CLASS, 'resize-none')}
         />
         <div class="mt-3 flex justify-end">
           <Button type="submit" size="sm" disabled={submitting || !note.trim()}>
@@ -1118,7 +1119,7 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
                   }
                   placeholder="Goal summary after this rollup"
                   rows={3}
-                  class="w-full resize-none rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-fg placeholder-gray-600 focus:border-accent focus:outline-none"
+                  class={cn(FORM_CONTROL_CLASS, 'resize-none')}
                 />
               </div>
               <textarea
@@ -1132,7 +1133,7 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
                 }
                 placeholder="One next step per line"
                 rows={2}
-                class="mt-3 w-full resize-none rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-fg placeholder-gray-600 focus:border-accent focus:outline-none"
+                class={cn(FORM_CONTROL_CLASS, 'mt-3 resize-none')}
               />
               <div class="mt-3 flex justify-end">
                 <Button size="sm" onClick={applyRollup} disabled={submitting}>
@@ -1222,7 +1223,7 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
                                 : current
                             )
                           }
-                          class="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none"
+                          class={FORM_CONTROL_CLASS}
                         />
                         <textarea
                           aria-label="Proposal description"
@@ -1238,7 +1239,7 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
                             )
                           }
                           rows={2}
-                          class="w-full resize-none rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none"
+                          class={cn(FORM_CONTROL_CLASS, 'resize-none')}
                         />
                         <textarea
                           aria-label="Proposal reason"
@@ -1254,7 +1255,7 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
                             )
                           }
                           rows={2}
-                          class="w-full resize-none rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none"
+                          class={cn(FORM_CONTROL_CLASS, 'resize-none')}
                         />
                         <select
                           aria-label="Proposal priority"
@@ -1270,7 +1271,7 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
                                 : current
                             )
                           }
-                          class="rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none"
+                          class={FORM_CONTROL_CLASS}
                         >
                           {(['low', 'normal', 'high', 'urgent'] as const).map((priority) => (
                             <option key={priority} value={priority}>
@@ -1602,7 +1603,7 @@ function MetricsTab({ scope }: { scope: EvolutionScope }) {
                       updateValue(index, (event.target as HTMLInputElement).value)
                     }
                     placeholder={metric?.unit ?? 'value'}
-                    class="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-fg placeholder-gray-600 focus:border-accent focus:outline-none"
+                    class={FORM_CONTROL_CLASS}
                   />
                 </label>
               );
@@ -1613,7 +1614,7 @@ function MetricsTab({ scope }: { scope: EvolutionScope }) {
             onInput={(event) => setNote((event.target as HTMLTextAreaElement).value)}
             placeholder="Optional snapshot note"
             rows={2}
-            class="mt-3 w-full resize-none rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-fg placeholder-gray-600 focus:border-accent focus:outline-none"
+            class={cn(FORM_CONTROL_CLASS, 'mt-3 resize-none')}
           />
           <div class="mt-3 flex justify-end">
             <Button type="submit" size="sm" disabled={submitting}>
@@ -1925,7 +1926,7 @@ export function ScopeDetail({
                         enabled: (event.currentTarget as HTMLInputElement).checked,
                       })
                     }
-                    class="h-4 w-4 rounded border-line-strong bg-surface-raised text-accent focus:ring-accent"
+                    class={FORM_CHECKBOX_CLASS}
                   />
                   Enable count-based episode drafts
                 </label>
@@ -1943,7 +1944,7 @@ export function ScopeDetail({
                       })
                     }
                     data-testid="scope-completed-task-threshold-input"
-                    class="mt-1 w-32 rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none disabled:opacity-50"
+                    class={cn(FORM_CONTROL_CLASS, 'mt-1 w-32')}
                   />
                 </label>
                 {savingCompletedTaskAutomation && <p class="text-xs text-fg-muted">Saving…</p>}

@@ -1,8 +1,8 @@
 import { useState } from 'preact/hooks';
 import { skillsStore } from '../../lib/skills-store';
 import { toast } from '../../lib/toast';
+import { FORM_CONTROL_CLASS, FORM_LABEL_CLASS, FormActions } from '../ui/FormField';
 import { Modal } from '../ui/Modal';
-import { Button } from '../ui/Button';
 import { cn } from '../../lib/utils';
 
 function deriveCommandName(url: string): string {
@@ -97,8 +97,21 @@ export function InstallSkillFromGitDialog({ isOpen, onClose }: InstallSkillFromG
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={handleClose} title="Install Skill from Git" size="md">
-      <form onSubmit={handleSubmit} class="space-y-4">
+    <Modal
+      isOpen={isOpen}
+      onClose={handleClose}
+      title="Install Skill from Git"
+      size="md"
+      footer={
+        <FormActions
+          onCancel={handleClose}
+          submitLabel="Install"
+          submitting={isSubmitting}
+          formId="install-skill-git-form"
+        />
+      }
+    >
+      <form id="install-skill-git-form" onSubmit={handleSubmit} class="space-y-4">
         <p class="text-xs text-fg-faint">
           Paste a GitHub tree URL (e.g.{' '}
           <code class="font-mono text-fg-muted">
@@ -108,7 +121,7 @@ export function InstallSkillFromGitDialog({ isOpen, onClose }: InstallSkillFromG
         </p>
 
         <div>
-          <label class="block text-sm font-medium text-fg-soft mb-1">
+          <label class={FORM_LABEL_CLASS}>
             URL <span class="text-danger">*</span>
           </label>
           <input
@@ -116,9 +129,9 @@ export function InstallSkillFromGitDialog({ isOpen, onClose }: InstallSkillFromG
             value={form.repoUrl}
             onInput={(e) => handleUrlChange((e.target as HTMLInputElement).value)}
             class={cn(
-              'w-full bg-surface-raised border rounded-lg px-3 py-2 text-sm text-fg-soft font-mono',
-              'focus:outline-none focus:ring-1 focus:ring-accent',
-              errors.repoUrl ? 'border-danger' : 'border-line'
+              FORM_CONTROL_CLASS,
+              'font-mono',
+              errors.repoUrl && 'border-danger focus:border-danger'
             )}
             placeholder="https://github.com/owner/repo/tree/main/skills/my-skill"
             autoFocus
@@ -127,7 +140,7 @@ export function InstallSkillFromGitDialog({ isOpen, onClose }: InstallSkillFromG
         </div>
 
         <div>
-          <label class="block text-sm font-medium text-fg-soft mb-1">
+          <label class={FORM_LABEL_CLASS}>
             Skill name <span class="text-danger">*</span>
           </label>
           <input
@@ -141,9 +154,9 @@ export function InstallSkillFromGitDialog({ isOpen, onClose }: InstallSkillFromG
               }))
             }
             class={cn(
-              'w-full bg-surface-raised border rounded-lg px-3 py-2 text-sm text-fg-soft font-mono',
-              'focus:outline-none focus:ring-1 focus:ring-accent',
-              errors.commandName ? 'border-danger' : 'border-line'
+              FORM_CONTROL_CLASS,
+              'font-mono',
+              errors.commandName && 'border-danger focus:border-danger'
             )}
             placeholder="e.g., playwright"
           />
@@ -153,15 +166,6 @@ export function InstallSkillFromGitDialog({ isOpen, onClose }: InstallSkillFromG
             <code class="font-mono">/playwright</code>) and install directory (
             <code class="font-mono">~/.hyperneo/skills/playwright/</code>).
           </p>
-        </div>
-
-        <div class="flex items-center justify-end gap-3 pt-2">
-          <Button type="button" variant="secondary" size="sm" onClick={handleClose}>
-            Cancel
-          </Button>
-          <Button type="submit" variant="primary" size="sm" loading={isSubmitting}>
-            Install
-          </Button>
         </div>
       </form>
     </Modal>

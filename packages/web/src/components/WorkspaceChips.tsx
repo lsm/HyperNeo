@@ -174,7 +174,7 @@ export function WorkspaceChips({
                 onInput={(e) => setBranchQuery((e.currentTarget as HTMLInputElement).value)}
                 placeholder="Search branches…"
                 autoFocus
-                class="w-full bg-surface border border-line rounded-md px-2 py-1.5 text-xs text-fg placeholder-gray-500 focus:outline-none focus:border-line-strong"
+                class="w-full bg-surface border border-line rounded-md px-2 py-1.5 text-xs text-fg placeholder:text-fg-faint focus:outline-none focus:border-line-strong"
               />
               <div class="mt-2 max-h-56 overflow-y-auto flex flex-col gap-0.5">
                 {shownBranches.length === 0 ? (

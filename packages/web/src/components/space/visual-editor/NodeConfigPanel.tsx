@@ -627,7 +627,7 @@ function AgentsSection({
                     );
                   }}
                   placeholder="node role"
-                  class="flex-1 text-xs font-mono bg-surface border border-line rounded px-1.5 py-0.5 text-fg-soft focus:outline-none focus:border-accent placeholder-gray-600 min-w-0"
+                  class="flex-1 text-xs font-mono bg-surface border border-line rounded px-1.5 py-0.5 text-fg-soft focus:outline-none focus:border-accent placeholder:text-fg-faint min-w-0"
                 />
                 <button
                   type="button"
@@ -857,7 +857,7 @@ function CustomPromptEditor({
         rows={rows}
         placeholder={placeholder}
         style={{ minHeight: `${rows * 1.5}rem` }}
-        class="w-full text-xs bg-surface-raised border border-line-strong rounded px-2 py-1.5 text-fg-soft focus:outline-none focus:border-accent placeholder-gray-700 resize-none overflow-y-auto max-h-96"
+        class="w-full text-xs bg-surface-raised border border-line-strong rounded px-2 py-1.5 text-fg-soft focus:outline-none focus:border-accent placeholder:text-fg-faint resize-none overflow-y-auto max-h-96"
       />
     </div>
   );
@@ -1271,7 +1271,7 @@ export function NodeConfigPanel({
               onUpdate({ ...step, name: (e.currentTarget as HTMLInputElement).value })
             }
             placeholder="e.g. Plan the approach"
-            class="w-full text-xs bg-surface-raised border border-line-strong rounded px-2 py-1.5 text-fg-soft focus:outline-none focus:border-accent placeholder-gray-700"
+            class="w-full text-xs bg-surface-raised border border-line-strong rounded px-2 py-1.5 text-fg-soft focus:outline-none focus:border-accent placeholder:text-fg-faint"
           />
         </div>
 
@@ -1389,7 +1389,7 @@ export function NodeConfigPanel({
               }
               placeholder="Instructions for the follow-up run…"
               rows={4}
-              class="mt-3 min-h-24 w-full resize-y rounded-lg border border-line bg-surface px-2 py-1.5 text-xs text-fg-soft placeholder-gray-600 focus:border-accent focus:outline-none"
+              class="mt-3 min-h-24 w-full resize-y rounded-lg border border-line bg-surface px-2 py-1.5 text-xs text-fg-soft placeholder:text-fg-faint focus:border-accent focus:outline-none"
             />
           ) : null}
         </div>

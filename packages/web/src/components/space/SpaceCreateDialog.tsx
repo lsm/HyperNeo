@@ -7,7 +7,13 @@ import {
   NATIVE_FOLDER_PICKER_TIMEOUT_MS,
 } from '../../lib/runtime-capabilities';
 import { toast } from '../../lib/toast';
-import { Button } from '../ui/Button';
+import { cn } from '../../lib/utils';
+import {
+  FORM_CHECKBOX_CLASS,
+  FORM_CONTROL_CLASS,
+  FORM_LABEL_CLASS,
+  FormActions,
+} from '../ui/FormField';
 import { Modal } from '../ui/Modal';
 
 interface SpaceCreateDialogProps {
@@ -164,20 +170,28 @@ export function SpaceCreateDialog({ isOpen, onClose }: SpaceCreateDialogProps) {
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={handleClose} title="Create Space" size="md">
-      <form onSubmit={handleSubmit} class="space-y-5">
-        {error && (
-          <div class="bg-danger/20 border border-danger rounded-lg px-4 py-3 text-danger text-sm">
-            {error}
-          </div>
-        )}
-
+    <Modal
+      isOpen={isOpen}
+      onClose={handleClose}
+      title="Create Space"
+      size="md"
+      footer={
+        <FormActions
+          error={error}
+          onCancel={handleClose}
+          submitLabel="Create Space"
+          submitting={submitting}
+          formId="space-create-form"
+        />
+      }
+    >
+      <form id="space-create-form" onSubmit={handleSubmit} class="space-y-4">
         <div>
-          <label class="block text-sm font-medium text-fg-soft mb-1.5">
+          <span class={FORM_LABEL_CLASS}>
             Workspace Path
-            <span class="text-danger ml-1">*</span>
-          </label>
-          <p class="text-xs text-fg-muted mb-2">
+            <span class="ml-1 text-danger">*</span>
+          </span>
+          <p class="mb-2 text-xs text-fg-faint">
             Absolute path to the project directory this Space operates on.
           </p>
           <div class="flex gap-2">
@@ -186,7 +200,7 @@ export function SpaceCreateDialog({ isOpen, onClose }: SpaceCreateDialogProps) {
               value={workspacePath}
               onInput={(e) => handlePathInput((e.target as HTMLInputElement).value)}
               placeholder="/Users/you/projects/my-app"
-              class="flex-1 min-w-0 bg-surface-raised border border-line-strong rounded-lg px-4 py-3 text-fg placeholder-gray-600 focus:outline-none focus:border-accent font-mono text-sm"
+              class={cn(FORM_CONTROL_CLASS, 'min-w-0 flex-1 font-mono')}
               autoFocus
             />
             {nativeFolderPickerAvailable && (
@@ -194,7 +208,7 @@ export function SpaceCreateDialog({ isOpen, onClose }: SpaceCreateDialogProps) {
                 type="button"
                 onClick={handleBrowse}
                 title="Browse on this computer"
-                class="px-4 py-3 rounded-lg bg-fill-strong hover:bg-line-strong text-fg-soft hover:text-fg border border-line-strong transition-colors shrink-0 text-sm font-medium"
+                class="shrink-0 rounded border border-line px-3 py-1.5 text-xs font-medium text-fg-soft transition-colors hover:border-line-strong hover:text-fg"
               >
                 Browse
               </button>
@@ -203,11 +217,11 @@ export function SpaceCreateDialog({ isOpen, onClose }: SpaceCreateDialogProps) {
         </div>
 
         <div>
-          <div class="flex items-center justify-between mb-1.5">
-            <label class="block text-sm font-medium text-fg-soft">
+          <div class="mb-1 flex items-center justify-between">
+            <span class={cn(FORM_LABEL_CLASS, 'mb-0')}>
               Additional Workspaces
-              <span class="text-fg-muted text-xs ml-2">(optional)</span>
-            </label>
+              <span class="ml-2 text-xs text-fg-faint">(optional)</span>
+            </span>
             <button
               type="button"
               disabled={extraWorkspaces.length >= MAX_ADDITIONAL_WORKSPACES}
@@ -222,17 +236,14 @@ export function SpaceCreateDialog({ isOpen, onClose }: SpaceCreateDialogProps) {
               + Add workspace
             </button>
           </div>
-          <p class="text-xs text-fg-muted mb-2">
+          <p class="mb-2 text-xs text-fg-faint">
             Extra project directories this Space can access. An invalid path rejects the whole
             create.
           </p>
           {extraWorkspaces.length > 0 && (
             <div class="space-y-2">
               {extraWorkspaces.map((row, index) => (
-                <div
-                  key={row.id}
-                  class="rounded-lg border border-line-strong bg-surface-raised/50 p-3 space-y-2"
-                >
+                <div key={row.id} class="space-y-2 rounded-lg border border-line bg-surface/60 p-3">
                   <div class="flex gap-2">
                     <input
                       type="text"
@@ -243,14 +254,14 @@ export function SpaceCreateDialog({ isOpen, onClose }: SpaceCreateDialogProps) {
                         })
                       }
                       placeholder="/Users/you/projects/other-repo"
-                      class="flex-1 min-w-0 bg-surface-raised border border-line-strong rounded-lg px-4 py-2.5 text-fg placeholder-gray-600 focus:outline-none focus:border-accent font-mono text-sm"
+                      class={cn(FORM_CONTROL_CLASS, 'min-w-0 flex-1 font-mono')}
                     />
                     {nativeFolderPickerAvailable && (
                       <button
                         type="button"
                         onClick={() => handleExtraBrowse(row.id)}
                         title="Browse on this computer"
-                        class="px-3 py-2.5 rounded-lg bg-fill-strong hover:bg-line-strong text-fg-soft hover:text-fg border border-line-strong transition-colors shrink-0 text-sm font-medium"
+                        class="shrink-0 rounded border border-line px-3 py-1.5 text-xs font-medium text-fg-soft transition-colors hover:border-line-strong hover:text-fg"
                       >
                         Browse
                       </button>
@@ -261,7 +272,7 @@ export function SpaceCreateDialog({ isOpen, onClose }: SpaceCreateDialogProps) {
                         setExtraWorkspaces((prev) => prev.filter((entry) => entry.id !== row.id))
                       }
                       aria-label={`Remove additional workspace ${index + 1}`}
-                      class="text-fg-muted hover:text-danger transition-colors shrink-0 px-1"
+                      class="shrink-0 px-1 text-fg-muted transition-colors hover:text-danger"
                     >
                       <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path
@@ -282,7 +293,7 @@ export function SpaceCreateDialog({ isOpen, onClose }: SpaceCreateDialogProps) {
                       })
                     }
                     placeholder="Label (optional)"
-                    class="w-full bg-surface-raised border border-line rounded-lg px-4 py-2 text-fg placeholder-gray-600 focus:outline-none focus:border-accent text-sm"
+                    class={FORM_CONTROL_CLASS}
                   />
                 </div>
               ))}
@@ -291,7 +302,7 @@ export function SpaceCreateDialog({ isOpen, onClose }: SpaceCreateDialogProps) {
         </div>
 
         <div>
-          <label class="block text-sm font-medium text-fg-soft mb-1.5">Name</label>
+          <span class={FORM_LABEL_CLASS}>Name</span>
           <input
             type="text"
             value={name}
@@ -303,21 +314,21 @@ export function SpaceCreateDialog({ isOpen, onClose }: SpaceCreateDialogProps) {
               setNameTouched(true);
             }}
             placeholder="e.g., My App"
-            class="w-full bg-surface-raised border border-line rounded-lg px-4 py-2.5 text-fg placeholder-gray-500 focus:outline-none focus:border-accent"
+            class={FORM_CONTROL_CLASS}
           />
         </div>
 
         <div>
-          <label class="block text-sm font-medium text-fg-soft mb-1.5">
+          <span class={FORM_LABEL_CLASS}>
             Description
-            <span class="text-fg-muted text-xs ml-2">(optional)</span>
-          </label>
+            <span class="ml-2 text-xs text-fg-faint">(optional)</span>
+          </span>
           <textarea
             value={description}
             onInput={(e) => setDescription((e.target as HTMLTextAreaElement).value)}
             placeholder="Briefly describe the purpose of this space..."
             rows={3}
-            class="w-full bg-surface-raised border border-line rounded-lg px-4 py-2.5 text-fg placeholder-gray-500 focus:outline-none focus:border-accent resize-none text-sm"
+            class={cn(FORM_CONTROL_CLASS, 'resize-none')}
           />
         </div>
 
@@ -327,25 +338,16 @@ export function SpaceCreateDialog({ isOpen, onClose }: SpaceCreateDialogProps) {
               type="checkbox"
               checked={seedAgent}
               onChange={(e) => setSeedAgent((e.target as HTMLInputElement).checked)}
-              class="w-4 h-4 mt-0.5 rounded border-line-strong text-accent focus:ring-accent focus:ring-offset-bg"
+              class={cn(FORM_CHECKBOX_CLASS, 'mt-0.5')}
             />
             <span>
               <span class="block text-sm font-medium text-fg-soft">Start with an agent</span>
-              <span class="block text-xs text-fg-muted mt-0.5">
+              <span class="mt-0.5 block text-xs text-fg-muted">
                 Adds a Task Manager agent that can approve work and own goals. Uncheck to create an
                 empty Space you staff yourself.
               </span>
             </span>
           </label>
-        </div>
-
-        <div class="flex gap-3 pt-1">
-          <Button type="button" variant="secondary" onClick={handleClose} fullWidth>
-            Cancel
-          </Button>
-          <Button type="submit" loading={submitting} fullWidth>
-            Create Space
-          </Button>
         </div>
       </form>
     </Modal>
