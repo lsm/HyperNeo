@@ -1,8 +1,10 @@
 import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository.ts';
 import { Logger } from '../../logger.ts';
 import type { OperationDefinition } from '../../operations/registry.ts';
+import { createSpawnSessionCloneOperation } from '../../session/clone-operations.ts';
 import { createReturnSessionCloneOperation } from '../../session/clone-return-operation.ts';
 import { createSessionOperations } from '../../session/operations.ts';
+import { resolveSpaceMcpSessionPolicy } from '../../space/runtime/space-mcp-session-policy.ts';
 import { resolveSessionSpaceId } from '../../space/runtime/space-caller-scope.ts';
 import type { FamilyOperationContext } from './context.ts';
 
@@ -17,6 +19,20 @@ export function registerSessionOperations(context: FamilyOperationContext): Oper
     hasDirectWorkerProvenance: context.hasDirectWorkerProvenance,
     resolveDirectWorker: context.resolveDirectWorker,
   };
+  const spawn = createSpawnSessionCloneOperation({
+    getSession: scopeDeps.getSession,
+    getSpace: (spaceId) => context.deps.spaceManager.getSpace(spaceId),
+    resolveRole: (session) => resolveSpaceMcpSessionPolicy(session, scopeDeps).role,
+    isGitRepo: async (workspacePath) =>
+      (await context.deps.sessionManager.getWorktreeManager().detectGitSupport(workspacePath))
+        .isGitRepo,
+    createSession: (params) => context.deps.sessionManager.createSession(params),
+    addSpaceSession: (spaceId, sessionId) =>
+      context.deps.spaceManager.addSession(spaceId, sessionId),
+    attachSpaceTools: (sessionId) =>
+      context.spaceRuntimeService.reattachMemberSpaceTools(sessionId),
+    jobQueue: context.deps.jobQueue,
+  });
   const returnToParent = createReturnSessionCloneOperation({
     getSession: scopeDeps.getSession,
     getSpace: (spaceId) => context.deps.spaceManager.getSpace(spaceId),
@@ -38,6 +54,7 @@ export function registerSessionOperations(context: FamilyOperationContext): Oper
     jobQueue: context.deps.jobQueue,
   });
   return [
+    spawn,
     returnToParent,
     ...createSessionOperations({
       getDatabase: () => context.deps.db.getDatabase(),
