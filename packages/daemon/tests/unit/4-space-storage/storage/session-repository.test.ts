@@ -59,6 +59,7 @@ describe('SessionRepository', () => {
 				available_commands TEXT,
 				processing_state TEXT,
 				archived_at TEXT,
+				parent_id TEXT,
 				type TEXT DEFAULT 'worker' CHECK(type IN ('worker', 'room', 'lobby')),
 				session_context TEXT,
 				room_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.roomId') END) VIRTUAL,
@@ -948,6 +949,43 @@ describe('SessionRepository', () => {
           config: { model: 'claude-sonnet-4-5-20250929', extra: circular } as SessionConfig,
         })
       ).toThrow(/updateSession: failed to serialize config/);
+    });
+  });
+
+  describe('parent link', () => {
+    it('round-trips parentSessionId through the parent_id column', () => {
+      repository.createSession(createDefaultSession({ id: 'parent' }));
+      repository.createSession(createDefaultSession({ id: 'child', parentSessionId: 'parent' }));
+
+      expect(repository.getSession('parent')?.parentSessionId).toBeNull();
+      expect(repository.getSession('child')?.parentSessionId).toBe('parent');
+    });
+
+    it('updateSession cannot set the parent link through metadata', () => {
+      repository.createSession(createDefaultSession({ id: 'loose' }));
+
+      repository.updateSession('loose', { metadata: { parentSessionId: 'parent' } as any });
+
+      expect(repository.getSession('loose')?.parentSessionId).toBeNull();
+    });
+
+    it('deleting a parent detaches its children', () => {
+      repository.createSession(createDefaultSession({ id: 'parent' }));
+      repository.createSession(createDefaultSession({ id: 'child', parentSessionId: 'parent' }));
+
+      repository.deleteSession('parent');
+
+      expect(repository.getSession('child')?.parentSessionId).toBeNull();
+    });
+
+    it('archiving a parent detaches its children', () => {
+      repository.createSession(createDefaultSession({ id: 'parent' }));
+      repository.createSession(createDefaultSession({ id: 'child', parentSessionId: 'parent' }));
+
+      repository.archiveSession('parent');
+
+      expect(repository.getSession('parent')?.status).toBe('archived');
+      expect(repository.getSession('child')?.parentSessionId).toBeNull();
     });
   });
 

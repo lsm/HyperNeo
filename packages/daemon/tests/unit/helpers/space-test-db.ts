@@ -621,6 +621,7 @@ export function createSpaceTables(db: BunDatabase): void {
 		ON sessions(space_id, json_extract(metadata, '$.promptProvenance.agentId'))`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sessions_room_id
 		ON sessions(room_id) WHERE room_id IS NOT NULL`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_id)`);
   createSessionCounters(db);
 
   db.exec(`

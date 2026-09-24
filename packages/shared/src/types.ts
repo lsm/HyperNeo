@@ -100,6 +100,7 @@ export interface SessionInfo {
   archivedAt?: string;
   type?: SessionType;
   context?: SessionContext;
+  parentSessionId?: string | null;
 }
 
 export type Session = SessionInfo;
@@ -339,6 +340,9 @@ export interface SessionMetadata {
   pairedSessionId?: string;
   parentSessionId?: string;
   currentTaskId?: string;
+  clone?: {
+    returnedAt?: string;
+  };
   recoveryContext?: {
     lastKnownState: string;
     pendingInstruction?: string;
