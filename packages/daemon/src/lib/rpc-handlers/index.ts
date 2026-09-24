@@ -1103,21 +1103,41 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
   const resolveClones = createResolveClones({
     listChildren: (parentId) => deps.db.listChildSessions(parentId),
-    detach: (sessionId) => deps.db.detachSessionFromParent(sessionId),
+    detach: (sessionId) => {
+      deps.db.detachSessionFromParent(sessionId);
+      deps.db.notifyChange('sessions', { sessionId });
+    },
     agentOwning: (sessionId) => {
       const id = spaceAgentRepo.getBySessionId(sessionId)?.id;
       return id ? longHorizonAgentRepo.getById(id) : null;
     },
     listAgents: (spaceId) => longHorizonAgentRepo.listBySpaceId(spaceId),
-    createAgent: (params) => longHorizonAgentRepo.create(params),
+    createAgent: (params) => {
+      const agent = longHorizonAgentRepo.create(params);
+      const created = spaceAgentRepo.getById(agent.id);
+      if (created) {
+        deps.internalEventBus
+          .publish('spaceAgentV2.created', {
+            sessionId: `space:${agent.spaceId}`,
+            spaceId: agent.spaceId,
+            agent: created,
+          })
+          .catch(() => {});
+      }
+      return agent;
+    },
     stampProvenance: (sessionId, promptProvenance) => {
       const current = deps.db.getSession(sessionId);
       if (current) {
         deps.db.updateSession(sessionId, { metadata: { ...current.metadata, promptProvenance } });
+        deps.db.notifyChange('sessions', { sessionId });
       }
     },
-    ...createCloneLifecycleEffects(deps.sessionManager, deps.spaceManager, (id) =>
-      deps.db.getSession(id)
+    ...createCloneLifecycleEffects(
+      deps.sessionManager,
+      deps.spaceManager,
+      deps.internalEventBus,
+      (id) => deps.db.getSession(id)
     ),
   });
   spaceAgentV2Deps.resolveClones = resolveClones;
@@ -1143,7 +1163,11 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.internalEventBus,
     deps.spaceManager,
     spaceRuntimeService,
-    { ensureSession: (target) => ensureSession(target, sessionResolutionDeps), resolveClones }
+    {
+      ensureSession: (target) => ensureSession(target, sessionResolutionDeps),
+      resolveClones,
+      listClones: (parentId) => deps.db.listChildSessions(parentId),
+    }
   );
 
   setupTaskScheduleHandlers(deps.messageHub, {

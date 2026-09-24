@@ -121,16 +121,22 @@ function extractMessageText(content: unknown): string {
 export interface SessionHandlerDeps {
   ensureSession(target: SessionTarget): Promise<EnsureSessionOutcome>;
   resolveClones?: ResolveClones;
+  listClones?: (parentId: string) => Session[];
 }
 
 export function createCloneLifecycleEffects(
   sessionManager: Pick<SessionManager, 'archiveSessionResources' | 'deleteSessionResources'>,
   spaceManager: Pick<SpaceManager, 'removeSession'>,
+  internalEventBus: Pick<InternalEventBus<DaemonInternalEventMap>, 'publish'>,
   getSession: (sessionId: string) => Session | null
 ): Pick<CloneCascadeDependencies, 'archiveChild' | 'deleteChild'> {
   const evict = async (sessionId: string) => {
     const spaceId = getSession(sessionId)?.context?.spaceId;
-    if (spaceId) await spaceManager.removeSession(spaceId, sessionId).catch(() => {});
+    if (!spaceId) return;
+    try {
+      const space = await spaceManager.removeSession(spaceId, sessionId);
+      await internalEventBus.publish('space.updated', { sessionId: 'global', spaceId, space });
+    } catch {}
   };
   return {
     archiveChild: async (sessionId) => {
@@ -463,19 +469,26 @@ export function setupSessionHandlers(
     const hadWorktree = !!session.worktree;
     const spaceIdForArchive = session.context?.spaceId;
     let commitsRemoved = 0;
-    if (session.worktree) {
+    const worktrees = [
+      session,
+      ...(children === 'cascade' ? (deps?.listClones?.(targetSessionId) ?? []) : []),
+    ]
+      .map((candidate) => candidate.worktree)
+      .filter((worktree): worktree is NonNullable<Session['worktree']> => !!worktree);
+    if (worktrees.length > 0) {
       const { WorktreeManager } = await import('../worktree-manager.ts');
       const worktreeManager = new WorktreeManager();
-      const commitStatus = await worktreeManager.getCommitsAhead(session.worktree);
-
-      if (!confirmed && commitStatus.hasCommitsAhead) {
-        return {
-          success: false,
-          requiresConfirmation: true,
-          commitStatus,
-        };
+      for (const worktree of worktrees) {
+        const commitStatus = await worktreeManager.getCommitsAhead(worktree);
+        if (!confirmed && commitStatus.hasCommitsAhead) {
+          return {
+            success: false,
+            requiresConfirmation: true,
+            commitStatus,
+          };
+        }
+        commitsRemoved += commitStatus.commits.length;
       }
-      commitsRemoved = commitStatus.commits.length;
     }
 
     const clones = await deps?.resolveClones?.(

@@ -74,6 +74,7 @@ export async function applyCloneChoice(
   if (choice === 'none') return true;
   if (choice === 'cascade') {
     for (const child of children) {
+      await applyCloneChoice('cascade', child.id, action, deps.listChildren(child.id), deps);
       await (action === 'delete' ? deps.deleteChild(child.id) : deps.archiveChild(child.id));
     }
     return true;

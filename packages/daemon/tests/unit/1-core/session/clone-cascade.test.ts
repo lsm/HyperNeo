@@ -69,7 +69,7 @@ function makeHarness(overrides: Partial<Harness> = {}): Harness {
     ...overrides,
   };
   h.deps = {
-    listChildren: () => h.children,
+    listChildren: (parentId) => (parentId === 'parent' ? h.children : []),
     detach: (id) => {
       h.detached.push(id);
     },
@@ -124,6 +124,15 @@ describe('resolveClones', () => {
     expect(await createResolveClones(d.deps)('parent', 'cascade', 'delete')).toBeNull();
     expect(d.deleted).toEqual(['c1', 'c2']);
     expect(d.archived).toEqual([]);
+  });
+
+  test('cascade reaches grandchildren before their parent', async () => {
+    const h = makeHarness({ children: [child('c1')] });
+    const grandchild = { ...child('g1'), parentSessionId: 'c1' };
+    h.deps.listChildren = (parentId) =>
+      parentId === 'parent' ? h.children : parentId === 'c1' ? [grandchild] : [];
+    expect(await createResolveClones(h.deps)('parent', 'cascade', 'archive')).toBeNull();
+    expect(h.archived).toEqual(['g1', 'c1']);
   });
 
   test('flatten detaches the clones of a plain session', async () => {
