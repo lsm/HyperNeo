@@ -1281,6 +1281,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     spaceAgentTemplateManager,
     spaceAgentReminderRepo,
     spaceAgentSubscriptionRepo,
+    spaceSessionEventSubscriptionRepo,
     spaceAgentInactivityConfigRepo,
     spaceAgentInactivityClaimRepo,
     spaceGoalService,
