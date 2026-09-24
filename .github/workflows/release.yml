@@ -99,6 +99,17 @@ jobs:
           fi
           echo "Commit $GITHUB_SHA is on dev branch"
 
+      - name: Verify dispatched publish targets the tagged commit
+        if: github.event_name == 'workflow_dispatch' && inputs.publish == true
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          TAG=$(git describe --exact-match --tags "$GITHUB_SHA" 2>/dev/null || true)
+          if [ "$TAG" != "v$VERSION" ]; then
+            echo "::error::workflow_dispatch with publish=true must run from the commit tagged v$VERSION (this commit carries '${TAG:-no tag}'). Use publish=false for build-only dry runs, or dispatch from the v$VERSION tag to retry a release."
+            exit 1
+          fi
+          echo "Dispatched publish anchored to tag $TAG"
+
       - name: Wait for CI to pass
         if: github.event_name == 'push'
         run: |

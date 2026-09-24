@@ -57,4 +57,4 @@ gh release create vX.Y.Z --title "vX.Y.Z" --notes "..."
 
 ## Dry runs (workflow_dispatch)
 
-`release.yml` can also be dispatched manually from any ref. With the `publish` input off (the default) it runs the build, desktop, and package jobs only — the way to validate new targets (e.g. the Windows legs) without touching npm or creating a GitHub Release. The dev-branch and CI-wait gates apply to tag pushes only. With `publish` on, a dispatch behaves like a tag release for that ref.
+`release.yml` can also be dispatched manually from any ref. With the `publish` input off (the default) it runs the build, desktop, and package jobs only — the way to validate new targets (e.g. the Windows legs) without touching npm or creating a GitHub Release. The dev-branch and CI-wait gates apply to tag pushes only. With `publish` on, the dispatch must run from the commit carrying the `v<version>` tag (the release-retry path); dispatching publish from an untagged ref fails in `wait-for-ci` so an existing release's assets can never be clobbered from a branch build.
