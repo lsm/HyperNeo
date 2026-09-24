@@ -41,7 +41,7 @@ interface Harness {
   templates: Map<string, SpaceAgentTemplate>;
   spaceExists: boolean;
   sessionOwners: Map<string, string>;
-  sessions: Map<string, { type: string; spaceId: string | null }>;
+  sessions: Map<string, { type: string; spaceId: string | null; parentSessionId: string | null }>;
   displayNames: string[];
   published: SpaceAgent[];
   seeded: Array<{ agentId: string; templateKey: string }>;
@@ -54,7 +54,9 @@ function makeHarness(): Harness {
     templates: new Map(),
     spaceExists: true,
     sessionOwners: new Map(),
-    sessions: new Map([['session-free', { type: 'space_chat', spaceId: 'space-1' }]]),
+    sessions: new Map([
+      ['session-free', { type: 'space_chat', spaceId: 'space-1', parentSessionId: null }],
+    ]),
     displayNames: [],
     published: [],
     seeded: [],
@@ -379,7 +381,11 @@ describe('createSpaceAgent', () => {
     });
 
     test('carries an explicit session binding through', async () => {
-      h.sessions.set('session-7', { type: 'space_chat', spaceId: 'space-1' });
+      h.sessions.set('session-7', {
+        type: 'space_chat',
+        spaceId: 'space-1',
+        parentSessionId: null,
+      });
       await expectAgent(h, baseInput({ sessionId: 'session-7' }));
       expect(h.created[0].sessionId).toBe('session-7');
     });
@@ -525,7 +531,11 @@ describe('gate order and rejection taxonomy', () => {
   });
   describe('session binding', () => {
     test('rejects a session already bound to another agent', async () => {
-      h.sessions.set('session-1', { type: 'space_chat', spaceId: 'space-1' });
+      h.sessions.set('session-1', {
+        type: 'space_chat',
+        spaceId: 'space-1',
+        parentSessionId: null,
+      });
       h.sessionOwners.set('session-1', 'agent-existing');
       const outcome = await run(h, baseInput({ sessionId: 'session-1' }));
 
@@ -534,7 +544,11 @@ describe('gate order and rejection taxonomy', () => {
     });
 
     test('does not persist when the session is taken', async () => {
-      h.sessions.set('session-1', { type: 'space_chat', spaceId: 'space-1' });
+      h.sessions.set('session-1', {
+        type: 'space_chat',
+        spaceId: 'space-1',
+        parentSessionId: null,
+      });
       h.sessionOwners.set('session-1', 'agent-existing');
       await run(h, baseInput({ sessionId: 'session-1' }));
 
@@ -558,7 +572,11 @@ describe('gate order and rejection taxonomy', () => {
     });
 
     test('a taken session is reported before an unknown template key', async () => {
-      h.sessions.set('session-1', { type: 'space_chat', spaceId: 'space-1' });
+      h.sessions.set('session-1', {
+        type: 'space_chat',
+        spaceId: 'space-1',
+        parentSessionId: null,
+      });
       h.sessionOwners.set('session-1', 'agent-existing');
       const outcome = await run(
         h,
@@ -576,12 +594,16 @@ describe('gate order and rejection taxonomy', () => {
     });
 
     test('rejects a session belonging to another space', async () => {
-      h.sessions.set('other', { type: 'space_chat', spaceId: 'space-2' });
+      h.sessions.set('other', { type: 'space_chat', spaceId: 'space-2', parentSessionId: null });
       expectRejection(await run(h, baseInput({ sessionId: 'other' })), 'does not belong to space');
     });
 
     test('rejects a task agent session', async () => {
-      h.sessions.set('task', { type: 'space_task_agent', spaceId: 'space-1' });
+      h.sessions.set('task', {
+        type: 'space_task_agent',
+        spaceId: 'space-1',
+        parentSessionId: null,
+      });
       expectRejection(await run(h, baseInput({ sessionId: 'task' })), 'Task agent sessions cannot');
     });
 
@@ -620,7 +642,11 @@ describe('gate order and rejection taxonomy', () => {
       h.deps.createAgent = () => {
         throw new Error('Session session-9 is already bound to agent agent-x');
       };
-      h.sessions.set('session-9', { type: 'space_chat', spaceId: 'space-1' });
+      h.sessions.set('session-9', {
+        type: 'space_chat',
+        spaceId: 'space-1',
+        parentSessionId: null,
+      });
 
       const outcome = await run(h, baseInput({ sessionId: 'session-9' }));
       expect(isCreateSpaceAgentRejection(outcome) && outcome.kind).toBe('session_taken');

@@ -77,7 +77,7 @@ export class SpaceActorRegistryAdapter {
     return (
       this.repos.sessionRepo
         .listSessionsBySpaceAgent(spaceId, agentId)
-        .find((session) => isSessionInSpace(session, spaceId)) ?? null
+        .find((session) => !session.parentSessionId && isSessionInSpace(session, spaceId)) ?? null
     );
   }
 

@@ -43,6 +43,7 @@ export type CreateSpaceAgentRejectionKind = SpaceAgentRejectionKind;
 export interface BindableSession {
   type: string;
   spaceId: string | null;
+  parentSessionId: string | null;
 }
 
 export interface SpaceAgentRejection {

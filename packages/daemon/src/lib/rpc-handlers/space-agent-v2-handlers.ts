@@ -31,6 +31,7 @@ const METHOD_PREFIX = 'spaceAgentV2';
 export interface SessionLookup {
   type?: string;
   context?: { spaceId?: string | null } | null;
+  parentSessionId?: string | null;
 }
 
 export interface SpaceAgentV2Deps {
@@ -50,9 +51,18 @@ export interface SpaceAgentV2Deps {
   seedTemplateExtras?(agent: SpaceAgent, template: SpaceAgentTemplate): void;
 }
 
+function resolveSessionOwner(deps: SpaceAgentV2Deps, sessionId: string): string | null {
+  const parentId = deps.getSession(sessionId)?.parentSessionId ?? null;
+  return deps.agents.getBySessionId(parentId ?? sessionId)?.id ?? null;
+}
+
 export function toBindableSession(session: SessionLookup | null): BindableSession | null {
   if (!session) return null;
-  return { type: session.type ?? '', spaceId: session.context?.spaceId ?? null };
+  return {
+    type: session.type ?? '',
+    spaceId: session.context?.spaceId ?? null,
+    parentSessionId: session.parentSessionId ?? null,
+  };
 }
 
 async function publishAgentEvent(
@@ -110,7 +120,7 @@ export function buildAgentCreate(
 ): (input: CreateSpaceAgentInput) => Promise<SpaceAgent> {
   const run = buildCreateSpaceAgentPipeline({
     spaceExists: deps.spaceExists,
-    sessionOwner: (sessionId) => deps.agents.getBySessionId(sessionId)?.id ?? null,
+    sessionOwner: (sessionId) => resolveSessionOwner(deps, sessionId),
     getSession: (sessionId) => toBindableSession(deps.getSession(sessionId)),
     getTemplate: resolveTemplate(deps),
     listHandles: (spaceId) =>
@@ -141,7 +151,7 @@ export function buildAgentUpdate(
   const run = buildUpdateSpaceAgentPipeline({
     getAgent: (id) => deps.agents.getById(id),
     getSession: (sessionId) => toBindableSession(deps.getSession(sessionId)),
-    sessionOwner: (sessionId) => deps.agents.getBySessionId(sessionId)?.id ?? null,
+    sessionOwner: (sessionId) => resolveSessionOwner(deps, sessionId),
     listHandles: (spaceId) =>
       deps.agents.listIdentitiesBySpaceId(spaceId).map((agent) => agent.handle),
     listDisplayNames: (spaceId, excludeAgentId) =>
