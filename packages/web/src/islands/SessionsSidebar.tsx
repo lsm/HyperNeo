@@ -1,5 +1,11 @@
 import { useEffect, useState } from 'preact/hooks';
-import type { Session, WorkspaceHistoryEntry, WorktreeCommitStatus } from '@hyperneo/shared';
+import type {
+  CloneChildrenChoice,
+  CloneSummary,
+  Session,
+  WorkspaceHistoryEntry,
+  WorktreeCommitStatus,
+} from '@hyperneo/shared';
 import { navigateToSession, navigateToSessions } from '../lib/router.ts';
 import { sessions } from '../lib/state.ts';
 import {
@@ -20,6 +26,7 @@ import {
 import SessionListItem from '../components/SessionListItem.tsx';
 import { SessionProjectGroup } from '../components/SessionProjectGroup.tsx';
 import { ArchiveConfirmDialog } from '../components/ArchiveConfirmDialog.tsx';
+import { CloneChoiceDialog } from '../components/CloneChoiceDialog.tsx';
 
 interface SessionsSidebarProps {
   onSessionSelect?: () => void;
@@ -81,8 +88,13 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
   const [archiveConfirm, setArchiveConfirm] = useState<{
     sessionId: string;
     commitStatus: WorktreeCommitStatus;
+    children?: CloneChildrenChoice;
   } | null>(null);
   const [archiveBusy, setArchiveBusy] = useState(false);
+  const [cloneChoice, setCloneChoice] = useState<{
+    sessionId: string;
+    clones: CloneSummary[];
+  } | null>(null);
   const [addProjectOpen, setAddProjectOpen] = useState(false);
   const [addProjectPath, setAddProjectPath] = useState('');
   const [addProjectError, setAddProjectError] = useState<string | null>(null);
@@ -172,16 +184,23 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
     }
   };
 
-  const handleArchive = async (sessionId: string) => {
+  const handleArchive = async (sessionId: string, children?: CloneChildrenChoice) => {
+    setArchiveBusy(true);
     try {
-      const result = await archiveSession(sessionId, false);
-      if (result.requiresConfirmation && result.commitStatus) {
-        setArchiveConfirm({ sessionId, commitStatus: result.commitStatus });
+      const result = await archiveSession(sessionId, false, children);
+      if (result.reason === 'has_clones' && result.clones) {
+        setCloneChoice({ sessionId, clones: result.clones });
+      } else if (result.requiresConfirmation && result.commitStatus) {
+        setCloneChoice(null);
+        setArchiveConfirm({ sessionId, commitStatus: result.commitStatus, children });
       } else if (result.success) {
+        setCloneChoice(null);
         toast.success('Chat archived');
       }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to archive chat');
+    } finally {
+      setArchiveBusy(false);
     }
   };
 
@@ -189,7 +208,7 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
     if (!archiveConfirm) return;
     setArchiveBusy(true);
     try {
-      const result = await archiveSession(archiveConfirm.sessionId, true);
+      const result = await archiveSession(archiveConfirm.sessionId, true, archiveConfirm.children);
       if (result.success) {
         toast.success('Chat archived');
         setArchiveConfirm(null);
@@ -355,6 +374,17 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
           </>
         )}
       </div>
+
+      {cloneChoice && (
+        <CloneChoiceDialog
+          clones={cloneChoice.clones}
+          action="archive"
+          subject="session"
+          busy={archiveBusy}
+          onChoose={(choice) => handleArchive(cloneChoice.sessionId, choice)}
+          onCancel={() => setCloneChoice(null)}
+        />
+      )}
 
       {archiveConfirm && (
         <ArchiveConfirmDialog

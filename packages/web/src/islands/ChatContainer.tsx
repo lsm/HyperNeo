@@ -16,6 +16,7 @@ import type { SDKMessage, SDKSystemMessage } from '@hyperneo/shared/sdk/sdk.d.ts
 import { useSignalEffect } from '@preact/signals';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { ArchiveConfirmDialog } from '../components/ArchiveConfirmDialog.tsx';
+import { CloneChoiceDialog } from '../components/CloneChoiceDialog.tsx';
 import { ChatComposer } from '../components/ChatComposer.tsx';
 import { ChatHeader } from '../components/ChatHeader.tsx';
 import { ImageDropOverlay } from '../components/ImageDropOverlay.tsx';
@@ -1271,7 +1272,7 @@ export default function ChatContainer({
         onToolsClick={toolsModal.open}
         onExportClick={sessionActions.handleExportChat}
         onResetClick={sessionActions.handleResetAgent}
-        onArchiveClick={sessionActions.handleArchiveClick}
+        onArchiveClick={() => sessionActions.handleArchiveClick()}
         onDeleteClick={deleteModal.open}
         archiving={sessionActions.archiving}
         resettingAgent={sessionActions.resettingAgent}
@@ -1462,7 +1463,7 @@ export default function ChatContainer({
             </Button>
             <Button
               variant="danger"
-              onClick={sessionActions.handleDeleteSession}
+              onClick={() => sessionActions.handleDeleteSession()}
               loading={sessionActions.deleting}
               data-testid="confirm-delete-session"
             >
@@ -1481,6 +1482,17 @@ export default function ChatContainer({
             onCancel={sessionActions.handleCancelArchive}
           />
         )}
+
+      {sessionActions.cloneChoiceDialog && (
+        <CloneChoiceDialog
+          clones={sessionActions.cloneChoiceDialog.clones}
+          action={sessionActions.cloneChoiceDialog.action}
+          subject="session"
+          busy={sessionActions.archiving || sessionActions.deleting}
+          onChoose={sessionActions.handleCloneChoice}
+          onCancel={sessionActions.handleCancelCloneChoice}
+        />
+      )}
 
       <ToolsModal isOpen={toolsModal.isOpen} onClose={toolsModal.close} session={session} />
 

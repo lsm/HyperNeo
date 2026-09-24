@@ -4,6 +4,8 @@ import type {
   ListSessionsResponse,
   UpdateSessionRequest,
   ArchiveSessionResponse,
+  CloneChildrenChoice,
+  DeleteSessionResponse,
   GetAuthStatusResponse,
   CreateAppMcpServerRequest,
   UpdateAppMcpServerRequest,
@@ -111,19 +113,27 @@ export async function switchSandboxMode(
   );
 }
 
-export async function deleteSession(sessionId: string): Promise<void> {
+export async function deleteSession(
+  sessionId: string,
+  children?: CloneChildrenChoice
+): Promise<DeleteSessionResponse> {
   const hub = getHubOrThrow();
-  await hub.request('session.delete', { sessionId });
+  return await hub.request<DeleteSessionResponse>('session.delete', {
+    sessionId,
+    ...(children ? { children } : {}),
+  });
 }
 
 export async function archiveSession(
   sessionId: string,
-  confirmed = false
+  confirmed = false,
+  children?: CloneChildrenChoice
 ): Promise<ArchiveSessionResponse> {
   const hub = getHubOrThrow();
   return await hub.request<ArchiveSessionResponse>('session.archive', {
     sessionId,
     confirmed,
+    ...(children ? { children } : {}),
   });
 }
 

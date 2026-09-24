@@ -1,4 +1,6 @@
 import type {
+  CloneChildrenChoice,
+  CloneSummary,
   CreateSpaceAgentTemplateParams,
   CreateSpaceGoalParams,
   CreateSpaceLongHorizonAgentReminderParams,
@@ -2719,15 +2721,23 @@ class SpaceStore {
     this.agentTemplates.value = next;
   }
 
-  async deleteAgent(agentId: string): Promise<void> {
+  async deleteAgent(
+    agentId: string,
+    children?: CloneChildrenChoice
+  ): Promise<{ clones: CloneSummary[] } | null> {
     const spaceId = this.spaceId.value;
     if (!spaceId) throw new Error('No space selected');
 
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
 
-    await hub.request('spaceAgentV2.delete', { id: agentId, spaceId });
+    const result = await hub.request<{ id: string } | { accepted: false; clones: CloneSummary[] }>(
+      'spaceAgentV2.delete',
+      { id: agentId, spaceId, ...(children ? { children } : {}) }
+    );
+    if ('accepted' in result && !result.accepted) return { clones: result.clones };
     this.agents.value = this.agents.value.filter((agent) => agent.id !== agentId);
+    return null;
   }
 
   async ensureAgentSession(agentId: string): Promise<string> {

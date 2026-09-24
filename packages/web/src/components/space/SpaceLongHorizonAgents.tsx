@@ -1,4 +1,6 @@
 import {
+  type CloneChildrenChoice,
+  type CloneSummary,
   type SettingSource,
   type SpaceLongHorizonAgent,
   type SpaceLongHorizonAgentTemplate,
@@ -14,6 +16,7 @@ import { extraToolsOf, withExtraTool, withoutExtraTool } from './template-extra-
 import { toast } from '../../lib/toast';
 import { Button } from '../ui/Button';
 import { ConfirmModal } from '../ui/ConfirmModal';
+import { CloneChoiceDialog } from '../CloneChoiceDialog';
 import { LineNumberedTextarea } from './LineNumberedTextarea';
 import {
   isStoredAsPool,
@@ -595,6 +598,7 @@ export function SpaceLongHorizonAgents({
   const [deletingAgent, setDeletingAgent] = useState<SpaceLongHorizonAgent | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleteClones, setDeleteClones] = useState<CloneSummary[] | null>(null);
 
   useEffect(() => {
     if (agents.length === 0) return;
@@ -622,14 +626,19 @@ export function SpaceLongHorizonAgents({
     setEditingAgent(null);
   };
 
-  const handleDeleteConfirm = async () => {
+  const handleDeleteConfirm = async (children?: CloneChildrenChoice) => {
     if (!deletingAgent) return;
     setDeleting(true);
     setDeleteError(null);
     try {
-      await spaceStore.deleteAgent(deletingAgent.id);
+      const refused = await spaceStore.deleteAgent(deletingAgent.id, children);
+      if (refused) {
+        setDeleteClones(refused.clones);
+        return;
+      }
       toast.success(`"${deletingAgent.displayName}" deleted`);
       setDeletingAgent(null);
+      setDeleteClones(null);
     } catch (err) {
       setDeleteError(err instanceof Error ? err.message : 'Failed to delete agent');
     } finally {
@@ -801,14 +810,28 @@ export function SpaceLongHorizonAgents({
         />
       )}
 
-      {deletingAgent && (
+      {deletingAgent && deleteClones && (
+        <CloneChoiceDialog
+          clones={deleteClones}
+          action="delete"
+          subject="agent"
+          busy={deleting}
+          onChoose={(choice) => handleDeleteConfirm(choice)}
+          onCancel={() => {
+            setDeleteClones(null);
+            setDeletingAgent(null);
+          }}
+        />
+      )}
+
+      {deletingAgent && !deleteClones && (
         <ConfirmModal
           isOpen
           onClose={() => {
             setDeletingAgent(null);
             setDeleteError(null);
           }}
-          onConfirm={handleDeleteConfirm}
+          onConfirm={() => handleDeleteConfirm()}
           title="Delete Agent"
           message={`Delete "${deletingAgent.displayName}"? This cannot be undone.`}
           confirmText="Delete"
