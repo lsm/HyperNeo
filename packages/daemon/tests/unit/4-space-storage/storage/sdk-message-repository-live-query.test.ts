@@ -92,6 +92,36 @@ describe('SDKMessageRepository → LiveQueryEngine reactivity (spaceSessions.byS
     ).not.toContain('worker-session');
   });
 
+  test('the panel row carries the parent link and the returned marker', () => {
+    const iso = new Date().toISOString();
+    bunDb
+      .prepare(
+        `INSERT INTO sessions (id, title, created_at, last_active_at, status, type, config, metadata, session_context, parent_id)
+         VALUES (?, 'Clone', ?, ?, 'active', 'worker', '{}', ?, ?, ?)`
+      )
+      .run(
+        'clone-session',
+        iso,
+        iso,
+        JSON.stringify({ clone: { returnedAt: '2026-09-24T00:00:00.000Z' } }),
+        JSON.stringify({ spaceId: SPACE_ID }),
+        SESSION_ID
+      );
+
+    const rows = bunDb.prepare(sql).all(SPACE_ID) as {
+      id: string;
+      parentSessionId: string | null;
+      returnedAt: string | null;
+    }[];
+    const clone = rows.find((row) => row.id === 'clone-session');
+    const parent = rows.find((row) => row.id === SESSION_ID);
+
+    expect(clone?.parentSessionId).toBe(SESSION_ID);
+    expect(clone?.returnedAt).toBe('2026-09-24T00:00:00.000Z');
+    expect(parent?.parentSessionId).toBeNull();
+    expect(parent?.returnedAt).toBeNull();
+  });
+
   test('a visible SDK message save re-evaluates the badge with the new count', async () => {
     const diffs: QueryDiff<SpaceSessionRow>[] = [];
     engine.subscribe(sql, [SPACE_ID], (diff) => diffs.push(diff));

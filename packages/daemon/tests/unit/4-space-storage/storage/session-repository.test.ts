@@ -952,34 +952,40 @@ describe('SessionRepository', () => {
     });
   });
 
-  describe('parent_id column', () => {
-    function parentIdOf(id: string): unknown {
-      return (db.prepare('SELECT parent_id FROM sessions WHERE id = ?').get(id) as any).parent_id;
-    }
+  describe('parent link', () => {
+    it('round-trips parentSessionId through the parent_id column', () => {
+      repository.createSession(createDefaultSession({ id: 'parent' }));
+      repository.createSession(createDefaultSession({ id: 'child', parentSessionId: 'parent' }));
 
-    it('createSession leaves parent_id NULL', () => {
-      repository.createSession(createDefaultSession());
-
-      expect(parentIdOf('session-1')).toBeNull();
+      expect(repository.getSession('parent')?.parentSessionId).toBeNull();
+      expect(repository.getSession('child')?.parentSessionId).toBe('parent');
     });
 
-    it('updateSession with metadata.parentSessionId leaves parent_id NULL', () => {
-      repository.createSession(createDefaultSession());
+    it('updateSession cannot set the parent link through metadata', () => {
+      repository.createSession(createDefaultSession({ id: 'loose' }));
 
-      repository.updateSession('session-1', { metadata: { parentSessionId: 'parent' } as any });
+      repository.updateSession('loose', { metadata: { parentSessionId: 'parent' } as any });
 
-      expect(parentIdOf('session-1')).toBeNull();
-      expect(repository.getSession('session-1')?.metadata.parentSessionId).toBe('parent');
+      expect(repository.getSession('loose')?.parentSessionId).toBeNull();
     });
 
-    it('updateSession with promptProvenance leaves parent_id NULL', () => {
-      repository.createSession(createDefaultSession());
+    it('deleting a parent detaches its children', () => {
+      repository.createSession(createDefaultSession({ id: 'parent' }));
+      repository.createSession(createDefaultSession({ id: 'child', parentSessionId: 'parent' }));
 
-      repository.updateSession('session-1', {
-        metadata: { promptProvenance: { source: 'x', hash: 'h', agentId: 'agent-1' } } as any,
-      });
+      repository.deleteSession('parent');
 
-      expect(parentIdOf('session-1')).toBeNull();
+      expect(repository.getSession('child')?.parentSessionId).toBeNull();
+    });
+
+    it('archiving a parent detaches its children', () => {
+      repository.createSession(createDefaultSession({ id: 'parent' }));
+      repository.createSession(createDefaultSession({ id: 'child', parentSessionId: 'parent' }));
+
+      repository.updateSession('parent', { status: 'archived' });
+
+      expect(repository.getSession('parent')?.status).toBe('archived');
+      expect(repository.getSession('child')?.parentSessionId).toBeNull();
     });
   });
 

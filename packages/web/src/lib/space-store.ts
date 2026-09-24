@@ -75,6 +75,8 @@ export interface SpaceSessionRow {
   processingState?: string;
   messageCount?: number;
   lastActiveAt: number;
+  parentSessionId?: string | null;
+  returnedAt?: string | null;
 }
 
 export type SummarySpaceTask = SpaceTask & {

@@ -1,5 +1,11 @@
 import { TITLE_GENERATION_PROMPT } from '@hyperneo/prompts';
-import type { MessageHub, Provider, Session, WorktreeMetadata } from '@hyperneo/shared';
+import type {
+  MessageHub,
+  Provider,
+  Session,
+  SessionMetadata,
+  WorktreeMetadata,
+} from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type { Database } from '../../storage/database.ts';
 import { isRunningUnderBun, resolveSDKCliPath } from '../agent/sdk-cli-resolver.js';
@@ -68,6 +74,7 @@ export interface CreateSessionParams {
   pairedSessionId?: string;
   parentSessionId?: string;
   currentTaskId?: string;
+  promptProvenance?: SessionMetadata['promptProvenance'];
 }
 
 export class SessionLifecycle {
@@ -232,7 +239,9 @@ export class SessionLifecycle {
         ...(params.pairedSessionId && { pairedSessionId: params.pairedSessionId }),
         ...(params.parentSessionId && { parentSessionId: params.parentSessionId }),
         ...(params.currentTaskId && { currentTaskId: params.currentTaskId }),
+        ...(params.promptProvenance && { promptProvenance: params.promptProvenance }),
       },
+      parentSessionId: params.parentSessionId ?? null,
       worktree: worktreeMetadata,
       gitBranch: currentBranch ?? undefined,
       context:
