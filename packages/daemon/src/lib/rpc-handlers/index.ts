@@ -1427,8 +1427,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   );
 
   deps.sessionManager.setDefaultOperationRegistryProvider(spaceOperationRegistryProvider);
-  const directTaskExecutionRepo = new DirectTaskExecutionRepository(deps.db.getDatabase());
-  const directTaskWorkerResolver = createDatabaseDirectTaskWorkerResolver(deps.db.getDatabase());
   deps.sessionManager.setCallerScopeResolver(
     createSpaceCallerScopeResolver({
       getSession: (sessionId) => deps.db.getSession(sessionId),

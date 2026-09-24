@@ -192,6 +192,20 @@ beforeEach(() => {
       return refreshOutcome;
     },
     getSession: (id) => sessions.getSession(id),
+    resolveDirectWorker: (id) =>
+      id.startsWith('s-direct')
+        ? {
+            role: 'direct_task_worker',
+            owner: 'direct-task-executor',
+            isWorkflowWorker: false,
+            sessionId: id,
+            spaceId: SPACE,
+            taskId: TASK,
+            attemptId: 'attempt-1',
+            generation: 1,
+            phase: 'running',
+          }
+        : null,
     taskRepo,
     nodeExecutionRepo: nodeExecutions,
     longHorizonAgentRepo: agents,
@@ -312,9 +326,13 @@ describe('node external-event subscription operations', () => {
       spaceId: SPACE,
       role: 'long_term_agent',
     };
-    expect(await run('event.external.subscribe', { topicPattern: 'github/a/b/*' }, caller)).toBe(
-      'node_unresolved'
-    );
+    expect(
+      await run(
+        'event.external.subscribe',
+        { topicPattern: 'github/a/b/*', subject: { type: 'node' } },
+        caller
+      )
+    ).toBe('node_unresolved');
     expect(registered).toEqual([]);
   });
 
@@ -476,9 +494,13 @@ describe('subscribe and unsubscribe take a subject', () => {
 
   test('an agent subject succeeds for a caller with no node execution behind it', async () => {
     const caller = member(memberSession('s-agent-nonode'));
-    expect(await run('event.external.subscribe', { topicPattern: AGENT_TOPIC }, caller)).toBe(
-      'agent_not_found'
-    );
+    expect(
+      await run(
+        'event.external.subscribe',
+        { topicPattern: AGENT_TOPIC, subject: { type: 'node' } },
+        caller
+      )
+    ).toBe('node_unresolved');
     const result = (await run(
       'event.external.subscribe',
       { topicPattern: AGENT_TOPIC, subject: { type: 'agent', agentId: AGENT } },
