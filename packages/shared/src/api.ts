@@ -231,16 +231,32 @@ export interface GitFileDiffResponse {
   error?: string;
 }
 
+export type CloneChildrenChoice = 'cascade' | 'flatten';
+
+export interface CloneSummary {
+  id: string;
+  title: string;
+}
+
 export interface ArchiveSessionRequest {
   sessionId: string;
   confirmed?: boolean;
+  children?: CloneChildrenChoice;
 }
 
 export interface ArchiveSessionResponse {
   success: boolean;
-  requiresConfirmation: boolean;
+  requiresConfirmation?: boolean;
   commitStatus?: WorktreeCommitStatus;
   commitsRemoved?: number;
+  reason?: 'has_clones';
+  clones?: CloneSummary[];
+}
+
+export interface DeleteSessionResponse {
+  success: boolean;
+  reason?: 'has_clones';
+  clones?: CloneSummary[];
 }
 
 export interface SendMessageRequest {

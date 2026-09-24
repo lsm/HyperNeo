@@ -41,9 +41,10 @@ const mockArchiveSession = vi.fn();
 const mockResetSessionQuery = vi.fn();
 
 vi.mock('../../lib/api-helpers', () => ({
-  deleteSession: (sessionId: string) => mockDeleteSession(sessionId),
+  deleteSession: (sessionId: string, children?: string) => mockDeleteSession(sessionId, children),
   listSessions: () => mockListSessions(),
-  archiveSession: (sessionId: string, force: boolean) => mockArchiveSession(sessionId, force),
+  archiveSession: (sessionId: string, force: boolean, children?: string) =>
+    mockArchiveSession(sessionId, force, children),
   resetSessionQuery: (sessionId: string) => mockResetSessionQuery(sessionId),
 }));
 
@@ -142,7 +143,7 @@ describe('useSessionActions', () => {
       });
 
       expect(onDeleteModalClose).toHaveBeenCalled();
-      expect(mockDeleteSession).toHaveBeenCalledWith('session-1');
+      expect(mockDeleteSession).toHaveBeenCalledWith('session-1', undefined);
       expect(mockListSessions).toHaveBeenCalled();
       expect(mockSessionsSignal.value).toEqual(updatedSessions);
       expect(mockToastSuccess).toHaveBeenCalledWith('Session deleted');
@@ -215,7 +216,7 @@ describe('useSessionActions', () => {
         await result.current.handleArchiveClick();
       });
 
-      expect(mockArchiveSession).toHaveBeenCalledWith('session-1', false);
+      expect(mockArchiveSession).toHaveBeenCalledWith('session-1', false, undefined);
       expect(mockToastSuccess).toHaveBeenCalledWith('Session archived successfully');
       expect(mockSessionsSignal.value).toEqual(updatedSessions);
       expect(result.current.archiving).toBe(false);
@@ -245,6 +246,77 @@ describe('useSessionActions', () => {
         commitStatus: { uncommittedChanges: true, aheadOfRemote: 2 },
       });
       expect(mockToastSuccess).not.toHaveBeenCalled();
+    });
+
+    it('asks for a clone choice and repeats the archive with it', async () => {
+      mockArchiveSession
+        .mockResolvedValueOnce({
+          success: false,
+          reason: 'has_clones',
+          clones: [{ id: 'c1', title: 'Clone' }],
+        })
+        .mockResolvedValueOnce({ success: true });
+
+      const { result } = renderHook(() =>
+        useSessionActions({
+          sessionId: 'session-1',
+          session: defaultSession,
+          onDeleteModalClose: vi.fn(),
+          onStateReset: vi.fn(),
+        })
+      );
+
+      await act(async () => {
+        await result.current.handleArchiveClick();
+      });
+      expect(result.current.cloneChoiceDialog).toEqual({
+        action: 'archive',
+        clones: [{ id: 'c1', title: 'Clone' }],
+      });
+      expect(mockToastSuccess).not.toHaveBeenCalled();
+
+      await act(async () => {
+        await result.current.handleCloneChoice('flatten');
+      });
+      expect(mockArchiveSession).toHaveBeenLastCalledWith('session-1', false, 'flatten');
+      expect(result.current.cloneChoiceDialog).toBeNull();
+      expect(mockToastSuccess).toHaveBeenCalledWith('Session archived successfully');
+    });
+
+    it('asks for a clone choice before deleting', async () => {
+      const onDeleteModalClose = vi.fn();
+      mockDeleteSession
+        .mockResolvedValueOnce({
+          success: false,
+          reason: 'has_clones',
+          clones: [{ id: 'c1', title: 'Clone' }],
+        })
+        .mockResolvedValueOnce({ success: true });
+
+      const { result } = renderHook(() =>
+        useSessionActions({
+          sessionId: 'session-1',
+          session: defaultSession,
+          onDeleteModalClose,
+          onStateReset: vi.fn(),
+        })
+      );
+
+      await act(async () => {
+        await result.current.handleDeleteSession();
+      });
+      expect(result.current.cloneChoiceDialog?.action).toBe('delete');
+      expect(onDeleteModalClose).not.toHaveBeenCalled();
+
+      await act(async () => {
+        await result.current.handleCloneChoice('cascade');
+      });
+      expect(mockDeleteSession).toHaveBeenLastCalledWith('session-1', 'cascade');
+      expect(onDeleteModalClose).toHaveBeenCalled();
+
+      await act(async () => {
+        vi.runAllTimers();
+      });
     });
 
     it('should handle archive error with Error instance', async () => {
@@ -305,7 +377,7 @@ describe('useSessionActions', () => {
       });
 
       expect(result.current.archiving).toBe(false);
-      expect(mockArchiveSession).toHaveBeenCalledWith('session-1', false);
+      expect(mockArchiveSession).toHaveBeenCalledWith('session-1', false, undefined);
     });
   });
 
@@ -328,7 +400,7 @@ describe('useSessionActions', () => {
         await result.current.handleConfirmArchive();
       });
 
-      expect(mockArchiveSession).toHaveBeenCalledWith('session-1', true);
+      expect(mockArchiveSession).toHaveBeenCalledWith('session-1', true, undefined);
       expect(mockToastSuccess).toHaveBeenCalledWith('Session archived (3 commits removed)');
       expect(result.current.archiveConfirmDialog).toBeNull();
       expect(mockSessionsSignal.value).toEqual(updatedSessions);

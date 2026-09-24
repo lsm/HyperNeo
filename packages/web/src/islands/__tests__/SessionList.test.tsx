@@ -238,7 +238,33 @@ describe('SessionsSidebar', () => {
     fireEvent.click(screen.getByTestId('session-archive'));
     fireEvent.click(screen.getByTestId('session-archive-confirm'));
 
-    await waitFor(() => expect(mockArchiveSession).toHaveBeenCalledWith('session-1', false));
+    await waitFor(() =>
+      expect(mockArchiveSession).toHaveBeenCalledWith('session-1', false, undefined)
+    );
+    expect(mockToastSuccess).toHaveBeenCalledWith('Chat archived');
+  });
+
+  it('asks what to do with clones before archiving a parent', async () => {
+    mockSessionsSignal.value = [createMockSession('parent', 'Parent', '/workspace/hyperneo')];
+    mockArchiveSession
+      .mockResolvedValueOnce({
+        success: false,
+        reason: 'has_clones',
+        clones: [{ id: 'c1', title: 'Parent · 分身' }],
+      })
+      .mockResolvedValueOnce({ success: true });
+
+    render(<SessionsSidebar />);
+    fireEvent.click(screen.getByTestId('session-archive'));
+    fireEvent.click(screen.getByTestId('session-archive-confirm'));
+
+    const dialog = await screen.findByTestId('clone-choice-dialog');
+    expect(dialog.textContent).toContain('Parent · 分身');
+    fireEvent.click(screen.getByTestId('clone-choice-cascade'));
+
+    await waitFor(() =>
+      expect(mockArchiveSession).toHaveBeenLastCalledWith('parent', false, 'cascade')
+    );
     expect(mockToastSuccess).toHaveBeenCalledWith('Chat archived');
   });
 });

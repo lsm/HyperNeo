@@ -2314,6 +2314,27 @@ describe('SpaceStore — CRUD methods', () => {
     expect(spaceStore.agents.value.some((agent) => agent.id === 'a1')).toBe(false);
   });
 
+  it('deleteAgent surfaces the clone choice and forwards it', async () => {
+    await spaceStore.selectSpace('space-1');
+    spaceStore.agents.value = [makeLongHorizonAgent('a1')];
+    mockHub.request.mockImplementationOnce(async () => ({
+      accepted: false,
+      reason: 'has_clones',
+      clones: [{ id: 'c1', title: 'Clone' }],
+    }));
+
+    expect(await spaceStore.deleteAgent('a1')).toEqual({ clones: [{ id: 'c1', title: 'Clone' }] });
+    expect(spaceStore.agents.value.some((agent) => agent.id === 'a1')).toBe(true);
+
+    expect(await spaceStore.deleteAgent('a1', 'flatten')).toBeNull();
+    expect(mockHub.request).toHaveBeenLastCalledWith('spaceAgentV2.delete', {
+      id: 'a1',
+      spaceId: 'space-1',
+      children: 'flatten',
+    });
+    expect(spaceStore.agents.value.some((agent) => agent.id === 'a1')).toBe(false);
+  });
+
   it('createAgent upserts RPC result already appended by created event', async () => {
     await spaceStore.selectSpace('space-1');
 
