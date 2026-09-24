@@ -48,6 +48,7 @@ import { setupDialogHandlers } from './dialog-handlers.ts';
 import { setupQuestionHandlers } from './question-handlers.ts';
 import { setupSpaceHandlers } from './space-handlers.ts';
 import { setupSpaceTaskMessageHandlers } from './space-task-message-handlers.ts';
+import { createResolveClones } from '../session/clone-cascade.ts';
 import { createDefaultSessionResolutionDeps } from '../session-resolution/default-deps.ts';
 import { ensureSession } from '../session-resolution/ensure-session.ts';
 import { NodeExecutionRepository } from '../../storage/repositories/node-execution-repository.ts';
@@ -1099,6 +1100,34 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     }),
   };
 
+  const resolveClones = createResolveClones({
+    listChildren: (parentId) => deps.db.listChildSessions(parentId),
+    detach: (sessionId) => deps.db.detachSessionFromParent(sessionId),
+    agentOwning: (sessionId) => {
+      const id = spaceAgentRepo.getBySessionId(sessionId)?.id;
+      return id ? longHorizonAgentRepo.getById(id) : null;
+    },
+    listAgents: (spaceId) => longHorizonAgentRepo.listBySpaceId(spaceId),
+    createAgent: (params) => longHorizonAgentRepo.create(params),
+    stampProvenance: (sessionId, promptProvenance) => {
+      const current = deps.db.getSession(sessionId);
+      if (current) {
+        deps.db.updateSession(sessionId, { metadata: { ...current.metadata, promptProvenance } });
+      }
+    },
+    archiveChild: async (sessionId) => {
+      const spaceId = deps.db.getSession(sessionId)?.context?.spaceId;
+      await deps.sessionManager.archiveSessionResources(sessionId, 'ui_session_archive');
+      if (spaceId) await deps.spaceManager.removeSession(spaceId, sessionId).catch(() => {});
+    },
+    deleteChild: async (sessionId) => {
+      const spaceId = deps.db.getSession(sessionId)?.context?.spaceId;
+      await deps.sessionManager.deleteSessionResources(sessionId, 'ui_session_delete');
+      if (spaceId) await deps.spaceManager.removeSession(spaceId, sessionId).catch(() => {});
+    },
+  });
+  spaceAgentV2Deps.resolveClones = resolveClones;
+
   setupSpaceAgentV2Handlers(deps.messageHub, spaceAgentV2Deps);
 
   const createSeedAgent = buildAgentCreate(spaceAgentV2Deps);
@@ -1120,7 +1149,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.internalEventBus,
     deps.spaceManager,
     spaceRuntimeService,
-    { ensureSession: (target) => ensureSession(target, sessionResolutionDeps) }
+    { ensureSession: (target) => ensureSession(target, sessionResolutionDeps), resolveClones }
   );
 
   setupTaskScheduleHandlers(deps.messageHub, {

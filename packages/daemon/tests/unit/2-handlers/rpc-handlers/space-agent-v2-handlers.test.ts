@@ -726,6 +726,34 @@ describe('setupSpaceAgentV2Handlers', () => {
       expect(agents.getById(created.id)).toBeNull();
     });
 
+    test('an agent with clones needs a choice before it is removed', async () => {
+      const calls: unknown[] = [];
+      deps.resolveClones = async (parentId, choice, action) => {
+        calls.push([parentId, choice, action]);
+        return choice
+          ? null
+          : { accepted: false, reason: 'has_clones', clones: [{ id: 'c1', title: 'Clone' }] };
+      };
+      const created = agents.create({ spaceId: 'space-1', handle: 'a', sessionId: 'primary' });
+
+      const refused = await call<{ accepted: boolean }>(handlers, 'spaceAgentV2.delete', {
+        id: created.id,
+      });
+      expect(refused).toMatchObject({ accepted: false, reason: 'has_clones' });
+      expect(agents.getById(created.id)).not.toBeNull();
+
+      const result = await call<{ id: string }>(handlers, 'spaceAgentV2.delete', {
+        id: created.id,
+        children: 'flatten',
+      });
+      expect(result.id).toBe(created.id);
+      expect(agents.getById(created.id)).toBeNull();
+      expect(calls).toEqual([
+        ['primary', undefined, 'archive'],
+        ['primary', 'flatten', 'archive'],
+      ]);
+    });
+
     test('throws for an unknown id rather than silently succeeding', async () => {
       await expect(call(handlers, 'spaceAgentV2.delete', { id: 'ghost' })).rejects.toThrow(
         'Agent not found: ghost'

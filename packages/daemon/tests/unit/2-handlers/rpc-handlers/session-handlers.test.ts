@@ -813,6 +813,49 @@ describe('Session RPC Handlers — models.list', () => {
       expect(archiveResourcesMock).not.toHaveBeenCalled();
     });
 
+    it('refuses to archive a parent with clones until a choice is made, then passes it on', async () => {
+      const resolveClones = mock(async (_id: string, choice?: string) =>
+        choice
+          ? null
+          : {
+              accepted: false as const,
+              reason: 'has_clones' as const,
+              clones: [{ id: 'c1', title: 'Clone' }],
+            }
+      );
+      const hub = createMockMessageHub();
+      const { setupSessionHandlers } = await import(
+        '../../../../src/lib/rpc-handlers/session-handlers'
+      );
+      const sessionManager = {
+        getSessionFromDB: mock(() => ({ id: 'sess-1', status: 'active', context: {} })),
+        archiveSessionResources: archiveResourcesMock,
+      } as unknown as SessionManager;
+      setupSessionHandlers(hub.hub, sessionManager, eventBus, {} as SpaceManager, undefined, {
+        ensureSession: async () => ({
+          kind: 'unresolved',
+          reason: 'session_resolution_unavailable',
+        }),
+        resolveClones,
+      });
+      const handler = hub.handlers.get('session.archive')!;
+
+      const refused = (await handler({ sessionId: 'sess-1', confirmed: true }, {})) as Record<
+        string,
+        unknown
+      >;
+      expect(refused).toMatchObject({ success: false, reason: 'has_clones' });
+      expect(archiveResourcesMock).not.toHaveBeenCalled();
+
+      const done = (await handler(
+        { sessionId: 'sess-1', confirmed: true, children: 'cascade' },
+        {}
+      )) as { success: boolean };
+      expect(done.success).toBe(true);
+      expect(resolveClones).toHaveBeenLastCalledWith('sess-1', 'cascade', 'archive');
+      expect(archiveResourcesMock).toHaveBeenCalledTimes(1);
+    });
+
     it('evicts the space session only after archive succeeds', async () => {
       const handler = messageHubData.handlers.get('session.archive');
       expect(handler).toBeDefined();

@@ -446,6 +446,17 @@ export class SessionRepository {
     tx(id);
   }
 
+  listChildren(parentId: string): Session[] {
+    const rows = this.db
+      .prepare(`SELECT * FROM sessions WHERE parent_id = ? AND status != 'archived'`)
+      .all(parentId) as Record<string, unknown>[];
+    return rows.map((row) => this.rowToSession(row));
+  }
+
+  detachFromParent(id: string): void {
+    this.db.prepare(`UPDATE sessions SET parent_id = NULL WHERE id = ?`).run(id);
+  }
+
   archiveSession(id: string): void {
     this.updateSession(id, { status: 'archived' });
   }

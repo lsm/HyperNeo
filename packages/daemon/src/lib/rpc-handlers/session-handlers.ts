@@ -29,6 +29,7 @@ import {
   markRefreshAttemptedFor,
 } from '../model-service.js';
 import { getProviderRegistry, inferProviderForModel } from '../providers/registry.js';
+import { isCloneChoice, type ResolveClones } from '../session/clone-cascade.ts';
 import { admitUpdateSessionConfig } from '../session/create-session-config.ts';
 import { validateImageSizes } from '../session/message-persistence.ts';
 import {
@@ -115,6 +116,7 @@ function extractMessageText(content: unknown): string {
 
 export interface SessionHandlerDeps {
   ensureSession(target: SessionTarget): Promise<EnsureSessionOutcome>;
+  resolveClones?: ResolveClones;
 }
 
 export function setupSessionHandlers(
@@ -384,7 +386,16 @@ export function setupSessionHandlers(
   });
 
   messageHub.onRequest('session.delete', async (data, _ctx) => {
-    const { sessionId: targetSessionId } = data as { sessionId: string };
+    const { sessionId: targetSessionId, children } = data as {
+      sessionId: string;
+      children?: unknown;
+    };
+    const clones = await deps?.resolveClones?.(
+      targetSessionId,
+      isCloneChoice(children) ? children : undefined,
+      'delete'
+    );
+    if (clones) return { success: false, ...clones };
 
     const agentSessionForDelete = sessionManager.getSession(targetSessionId);
     const contextForDelete = agentSessionForDelete?.getSessionData().context;
@@ -409,9 +420,14 @@ export function setupSessionHandlers(
   });
 
   messageHub.onRequest('session.archive', async (data, _ctx) => {
-    const { sessionId: targetSessionId, confirmed = false } = data as {
+    const {
+      sessionId: targetSessionId,
+      confirmed = false,
+      children,
+    } = data as {
       sessionId: string;
       confirmed?: boolean;
+      children?: unknown;
     };
 
     const session = sessionManager.getSessionFromDB(targetSessionId);
@@ -436,6 +452,13 @@ export function setupSessionHandlers(
       }
       commitsRemoved = commitStatus.commits.length;
     }
+
+    const clones = await deps?.resolveClones?.(
+      targetSessionId,
+      isCloneChoice(children) ? children : undefined,
+      'archive'
+    );
+    if (clones) return { success: false, ...clones };
 
     try {
       await sessionManager.archiveSessionResources(targetSessionId, 'ui_session_archive');

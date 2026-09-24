@@ -20,6 +20,7 @@ import {
   type UpdateSpaceAgentInput,
 } from '../agents/update-agent-pipeline.ts';
 import { getBuiltInSpaceAgentTemplates } from '../agents/template-manager.ts';
+import { isCloneChoice, type ResolveClones } from '../session/clone-cascade.ts';
 import {
   publishUnifiedAgentCreated,
   publishUnifiedAgentDeleted,
@@ -48,6 +49,7 @@ export interface SpaceAgentV2Deps {
   ): { success: boolean; error?: string };
   clearSessionProvider?(spaceId: string, agentId: string): Promise<void>;
   seedTemplateExtras?(agent: SpaceAgent, template: SpaceAgentTemplate): void;
+  resolveClones?: ResolveClones;
 }
 
 export function toBindableSession(session: SessionLookup | null): BindableSession | null {
@@ -226,12 +228,20 @@ export function setupSpaceAgentV2Handlers(messageHub: MessageHub, deps: SpaceAge
   });
 
   messageHub.onRequest(method('delete'), async (data) => {
-    const params = data as { id?: string; spaceId?: string };
+    const params = data as { id?: string; spaceId?: string; children?: unknown };
     const id = requireString(params.id, 'id');
     const existing = deps.agents.getById(id);
     if (!existing) throw new Error(`Agent not found: ${id}`);
     if (params.spaceId && existing.spaceId !== params.spaceId) {
       throw new Error(`Agent ${id} does not belong to space ${params.spaceId}`);
+    }
+    if (existing.sessionId) {
+      const clones = await deps.resolveClones?.(
+        existing.sessionId,
+        isCloneChoice(params.children) ? params.children : undefined,
+        'archive'
+      );
+      if (clones) return clones;
     }
     deps.agents.delete(id);
     deps.removeAgentSubscriptions?.(existing.spaceId, id);

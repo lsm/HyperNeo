@@ -223,6 +223,14 @@ export class Database {
     this.sessionRepo.deleteSession(id);
   }
 
+  listChildSessions(parentId: string): Session[] {
+    return this.sessionRepo.listChildren(parentId);
+  }
+
+  detachSessionFromParent(id: string): void {
+    this.sessionRepo.detachFromParent(id);
+  }
+
   saveSDKMessage(
     sessionId: string,
     message: SDKMessage,
