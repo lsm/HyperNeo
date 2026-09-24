@@ -136,6 +136,9 @@ export function decideStuckLadderAction(input: {
   if (state.lastAction === 'nag' && state.lastActionAt !== null) {
     if (now - state.lastActionAt < nagGraceMs) return { action: 'wait_nag_grace' };
   }
+  if (state.lastAction === 'restart' && state.lastActionAt !== null) {
+    if (now - state.lastActionAt < thresholdMs) return { action: 'within_threshold' };
+  }
   if (state.restartCount < MAX_AGENT_STUCK_RESTARTS) return { action: 'restart' };
   return { action: 'block' };
 }

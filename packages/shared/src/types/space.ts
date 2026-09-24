@@ -374,6 +374,7 @@ export type SpaceReportedStatus = 'done' | 'blocked' | 'cancelled';
 
 export type SpaceBlockReason =
   | 'agent_crashed'
+  | 'agent_handoff_required'
   | 'workflow_invalid'
   | 'execution_failed'
   | 'human_input_requested'

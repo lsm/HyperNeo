@@ -206,6 +206,36 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     restoreSpy?.mockRestore();
   });
 
+  test('resumes a persisted worker through the original session ID', async () => {
+    const { tam } = makeManager();
+    const fake = makeFakeAgentSession(SUB_SESSION_ID);
+    const config = tam as unknown as {
+      config: { db: { getSession?: (sessionId: string) => unknown } };
+    };
+    config.config.db.getSession = (sessionId) =>
+      sessionId === SUB_SESSION_ID
+        ? { id: SUB_SESSION_ID, status: 'active', sdkSessionId: 'sdk-predecessor' }
+        : null;
+    restoreSpy = spyOn(AgentSession, 'restore').mockReturnValue(fake.agentSession);
+
+    expect(await tam.resumePersistedSubSession(SUB_SESSION_ID)).toBe(true);
+    expect(restoreSpy).toHaveBeenCalledTimes(1);
+    expect(fake.state.calls).toContain('startStreamingQuery');
+    expect(tam.getAgentSessionById(SUB_SESSION_ID)).toBe(fake.agentSession);
+  });
+
+  test('refuses persisted recovery when no SDK conversation can be resumed', async () => {
+    const { tam } = makeManager();
+    const config = tam as unknown as {
+      config: { db: { getSession?: (sessionId: string) => unknown } };
+    };
+    config.config.db.getSession = () => ({ id: SUB_SESSION_ID, status: 'active' });
+    restoreSpy = spyOn(AgentSession, 'restore');
+
+    expect(await tam.resumePersistedSubSession(SUB_SESSION_ID)).toBe(false);
+    expect(restoreSpy).not.toHaveBeenCalled();
+  });
+
   test('isSessionAlive treats a cached-but-unindexed worker as alive', async () => {
     const { tam } = makeManager();
     const fake = makeFakeAgentSession(SUB_SESSION_ID);

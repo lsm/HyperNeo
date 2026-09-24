@@ -364,6 +364,31 @@ describe('SpaceRuntime', () => {
       expect(recoveredRun.failureReason).toBeUndefined();
     });
 
+    test('requires an explicit handoff for a blocked worker whose session cannot resume', async () => {
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Handoff');
+      const task = tasks[0];
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      workflowRunRepo.transitionStatus(run.id, 'blocked');
+      taskRepo.updateTask(task.id, {
+        status: 'blocked',
+        blockReason: 'agent_handoff_required',
+      });
+      nodeExecutionRepo.update(execution.id, {
+        status: 'blocked',
+        agentSessionId: 'session:predecessor',
+        result: 'Same-session recovery failed',
+      });
+
+      await expect(
+        runtime.recoverWorkflowBackedTask(SPACE_ID, task.id, 'in_progress')
+      ).rejects.toThrow('explicit handoff');
+      expect(taskRepo.getTask(task.id)?.status).toBe('blocked');
+      expect(nodeExecutionRepo.getById(execution.id)?.agentSessionId).toBe('session:predecessor');
+    });
+
     test('resuming a blocked workflow task moves task and run in progress', async () => {
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
@@ -1201,6 +1226,7 @@ describe('SpaceRuntime', () => {
         cancelBySessionId: overrides.cancelBySessionId ?? (() => {}),
         interruptBySessionId: overrides.interruptBySessionId ?? (async () => {}),
         getAgentSessionById: () => null,
+        resumePersistedSubSession: async () => false,
         rehydrate: overrides.rehydrate ?? (async () => {}),
         _spawned: spawned,
       };
@@ -1376,7 +1402,7 @@ describe('SpaceRuntime', () => {
       expect(spawnCount).toBe(1);
     });
 
-    test('crashed Task Agent resets to pending on first crash (retry) then needs_attention after max retries', async () => {
+    test('crashed Task Agent blocks for handoff without spawning a successor', async () => {
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
       ]);
@@ -1403,19 +1429,20 @@ describe('SpaceRuntime', () => {
 
       await rt.executeTick();
       let updated = taskRepo.getTask(tasks[0].id)!;
-      expect(updated.status).toBe('in_progress');
-      expect(spawnCount).toBe(1);
-
-      await rt.executeTick();
-      updated = taskRepo.getTask(tasks[0].id)!;
-      expect(updated.status).toBe('in_progress');
-      expect(spawnCount).toBe(2);
+      expect(updated.status).toBe('blocked');
+      expect(updated.blockReason).toBe('agent_handoff_required');
+      expect(spawnCount).toBe(0);
 
       await rt.executeTick();
       updated = taskRepo.getTask(tasks[0].id)!;
       expect(updated.status).toBe('blocked');
-      expect(updated.result).toContain('3 times');
-      expect(spawnCount).toBe(2);
+      expect(spawnCount).toBe(0);
+
+      await rt.executeTick();
+      updated = taskRepo.getTask(tasks[0].id)!;
+      expect(updated.status).toBe('blocked');
+      expect(updated.result).toContain('manual handoff required');
+      expect(spawnCount).toBe(0);
     });
 
     test('concurrency guard: isSpawning() prevents duplicate spawns during concurrent ticks', async () => {
@@ -1558,7 +1585,7 @@ describe('SpaceRuntime', () => {
       expect(updatedA.status).toBe('in_progress');
     });
 
-    test('liveness loop marks crashed task needs_attention after max retries exhausted', async () => {
+    test('liveness loop leaves crashed task blocked for manual handoff', async () => {
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
       ]);
@@ -1590,7 +1617,9 @@ describe('SpaceRuntime', () => {
 
       const updated = taskRepo.getTask(tasks[0].id)!;
       expect(updated.status).toBe('blocked');
-      expect(updated.result).toContain('3 times');
+      expect(updated.blockReason).toBe('agent_handoff_required');
+      expect(updated.result).toContain('manual handoff required');
+      expect(spawnCount).toBe(0);
     });
   });
 
