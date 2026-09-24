@@ -1,10 +1,11 @@
 export function parsePromptMarkdown(content: string, label: string): { id: string; body: string } {
-  if (!content.startsWith('---\n')) throw new Error(`${label}: missing frontmatter`);
-  const end = content.indexOf('\n---\n', 3);
+  const text = content.replace(/\r\n/g, '\n');
+  if (!text.startsWith('---\n')) throw new Error(`${label}: missing frontmatter`);
+  const end = text.indexOf('\n---\n', 3);
   if (end === -1) throw new Error(`${label}: unterminated frontmatter`);
-  const match = content.slice(4, end).match(/^id:[ \t]*(\S+)[ \t]*$/m);
+  const match = text.slice(4, end).match(/^id:[ \t]*(\S+)[ \t]*$/m);
   if (!match?.[1]) throw new Error(`${label}: missing id`);
-  let body = content.slice(end + 5);
+  let body = text.slice(end + 5);
   if (body.endsWith('\n')) body = body.slice(0, -1);
   return { id: match[1], body };
 }

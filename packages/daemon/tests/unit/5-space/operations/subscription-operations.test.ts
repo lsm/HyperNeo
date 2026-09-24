@@ -4,6 +4,7 @@ import { McpAuditLogRepository } from '../../../../src/storage/repositories/mcp-
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
+import { SpaceSessionEventSubscriptionRepository } from '../../../../src/storage/repositories/space-session-event-subscription-repository';
 import { SpaceAgentSubscriptionRepository } from '../../../../src/storage/repositories/space-agent-subscription-repository';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
@@ -24,6 +25,8 @@ let sessions: SessionRepository;
 let nodeExecutions: NodeExecutionRepository;
 let agents: SpaceLongHorizonAgentRepository;
 let agentSubscriptions: SpaceAgentSubscriptionRepository;
+let sessionSubscriptions: SpaceSessionEventSubscriptionRepository;
+let sessionRefreshed: string[];
 let auditLogRepo: McpAuditLogRepository;
 let operations: Map<string, OperationDefinition>;
 let registered: Array<{ slot: SubscriptionSlot; topicPattern: string }>;
@@ -151,6 +154,8 @@ beforeEach(() => {
   FOREIGN_AGENT = agents.create({ spaceId: OTHER_SPACE, handle: 'outsider' }).id;
   agentSubscriptions = new SpaceAgentSubscriptionRepository(db, new SpaceAgentRepository(db));
   auditLogRepo = new McpAuditLogRepository(db);
+  sessionSubscriptions = new SpaceSessionEventSubscriptionRepository(db);
+  sessionRefreshed = [];
   registered = [];
   unregistered = [];
   refreshed = [];
@@ -181,6 +186,11 @@ beforeEach(() => {
       success: true,
       result: { ...LIST_RESULT, workflowRunId },
     }),
+    sessionSubscriptions,
+    refreshSessionSubscription: (_spaceId, subscriptionId) => {
+      sessionRefreshed.push(subscriptionId);
+      return refreshOutcome;
+    },
     getSession: (id) => sessions.getSession(id),
     taskRepo,
     nodeExecutionRepo: nodeExecutions,
@@ -467,12 +477,28 @@ describe('subscribe and unsubscribe take a subject', () => {
   test('an agent subject succeeds for a caller with no node execution behind it', async () => {
     const caller = member(memberSession('s-agent-nonode'));
     expect(await run('event.external.subscribe', { topicPattern: AGENT_TOPIC }, caller)).toBe(
-      'node_unresolved'
+      'agent_not_found'
     );
     const result = (await run(
       'event.external.subscribe',
       { topicPattern: AGENT_TOPIC, subject: { type: 'agent', agentId: AGENT } },
       caller
+    )) as { subscription: { agentId: string } };
+    expect(result.subscription.agentId).toBe(AGENT);
+  });
+
+  test('a long-horizon agent with no subject subscribes its own record', async () => {
+    const id = memberSession('s-agent-self');
+    sessions.updateSession(id, {
+      metadata: {
+        ...sessions.getSession(id)!.metadata,
+        promptProvenance: { source: 'test', hash: 'h', agentId: AGENT },
+      },
+    });
+    const result = (await run(
+      'event.external.subscribe',
+      { topicPattern: AGENT_TOPIC },
+      member(id)
     )) as { subscription: { agentId: string } };
     expect(result.subscription.agentId).toBe(AGENT);
   });
@@ -634,6 +660,51 @@ describe('agent subscriptions written by the UI and by the door', () => {
     expect(agentSubscriptions.listSubscriptions(AGENT)).toEqual([]);
     expect(removed.map((entry) => entry.subscriptionId).sort()).toEqual(
       [fromUi.id, fromDoor.id].sort()
+    );
+  });
+});
+
+describe('the session subject', () => {
+  function directWorker(id: string): OperationCaller {
+    workerSession(id, { withExecution: false });
+    return { source: 'mcp', sessionId: id, spaceId: SPACE, role: 'direct_task_worker' };
+  }
+
+  test('a direct task worker with no subject subscribes its own session', async () => {
+    const caller = directWorker('s-direct');
+    expect(await run('event.external.subscribe', { topicPattern: AGENT_TOPIC }, caller)).toEqual({
+      ok: true,
+      topicPattern: AGENT_TOPIC,
+    });
+    const stored = sessionSubscriptions.listBySpace(SPACE);
+    expect(stored.map((row) => [row.sessionId, row.topic])).toEqual([['s-direct', AGENT_TOPIC]]);
+    expect(sessionRefreshed).toEqual([stored[0]!.id]);
+  });
+
+  test('unsubscribe drops the stored row and refreshes the trie, and is idempotent', async () => {
+    const caller = directWorker('s-direct-2');
+    await run('event.external.subscribe', { topicPattern: AGENT_TOPIC }, caller);
+    const id = sessionSubscriptions.listBySpace(SPACE)[0]!.id;
+    expect(await run('event.external.unsubscribe', { topicPattern: AGENT_TOPIC }, caller)).toEqual({
+      ok: true,
+      topicPattern: AGENT_TOPIC,
+    });
+    expect(sessionSubscriptions.listBySpace(SPACE)).toEqual([]);
+    expect(sessionRefreshed).toEqual([id, id]);
+    expect(await run('event.external.unsubscribe', { topicPattern: AGENT_TOPIC }, caller)).toEqual({
+      ok: true,
+      topicPattern: AGENT_TOPIC,
+    });
+  });
+
+  test('rejects an invalid pattern and a failed trie refresh', async () => {
+    const caller = directWorker('s-direct-3');
+    expect(await run('event.external.subscribe', { topicPattern: 'a/**/b/**' }, caller)).toBe(
+      'invalid_pattern'
+    );
+    refreshOutcome = { success: false, error: 'boom' };
+    expect(await run('event.external.subscribe', { topicPattern: AGENT_TOPIC }, caller)).toBe(
+      'refresh_failed'
     );
   });
 });

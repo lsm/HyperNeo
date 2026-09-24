@@ -51,6 +51,9 @@ export function registerExternalEventOperations(
           slot.agentName,
           topicPattern
         ),
+      sessionSubscriptions: context.spaceSessionEventSubscriptionRepo,
+      refreshSessionSubscription: (spaceId, subscriptionId) =>
+        context.spaceRuntimeService.refreshSessionSubscription(spaceId, subscriptionId),
       listRunSubscriptions: (workflowRunId, spaceId, nodeId) =>
         context.spaceRuntimeService.listSubscriptions(workflowRunId, spaceId, nodeId),
       getSession: (sessionId) => context.deps.db.getSession(sessionId),

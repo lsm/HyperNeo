@@ -8,6 +8,7 @@ import type {
 import type { SpaceAgentReminderRepository } from '../../../storage/repositories/space-agent-reminder-repository.ts';
 import type { SpaceAgentRepository } from '../../../storage/repositories/space-agent-repository.ts';
 import type { SpaceAgentSubscriptionRepository } from '../../../storage/repositories/space-agent-subscription-repository.ts';
+import type { SpaceSessionEventSubscriptionRepository } from '../../../storage/repositories/space-session-event-subscription-repository.ts';
 import type { SpaceAgentTemplateRepository } from '../../../storage/repositories/space-agent-template-repository.ts';
 import type { SpaceGoalEventRepository } from '../../../storage/repositories/space-goal-event-repository.ts';
 import type { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository.ts';
@@ -45,6 +46,7 @@ export interface FamilyOperationContext {
   readonly spaceAgentTemplateManager: SpaceAgentTemplateManager;
   readonly spaceAgentReminderRepo: SpaceAgentReminderRepository;
   readonly spaceAgentSubscriptionRepo: SpaceAgentSubscriptionRepository;
+  readonly spaceSessionEventSubscriptionRepo: SpaceSessionEventSubscriptionRepository;
   readonly spaceAgentInactivityConfigRepo: SpaceAgentInactivityConfigRepository;
   readonly spaceAgentInactivityClaimRepo: SpaceAgentInactivityClaimRepository;
   readonly spaceGoalService: SpaceGoalService;
