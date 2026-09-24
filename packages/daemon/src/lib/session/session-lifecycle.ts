@@ -237,7 +237,6 @@ export class SessionLifecycle {
             : undefined,
         ...(params.sessionType && { sessionType: params.sessionType }),
         ...(params.pairedSessionId && { pairedSessionId: params.pairedSessionId }),
-        ...(params.parentSessionId && { parentSessionId: params.parentSessionId }),
         ...(params.currentTaskId && { currentTaskId: params.currentTaskId }),
         ...(params.promptProvenance && { promptProvenance: params.promptProvenance }),
       },
