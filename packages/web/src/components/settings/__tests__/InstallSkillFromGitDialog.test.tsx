@@ -341,7 +341,7 @@ describe('InstallSkillFromGitDialog', () => {
 
   it('should close when Cancel is clicked', () => {
     render(<InstallSkillFromGitDialog isOpen onClose={onClose} />);
-    fireEvent.click(screen.getByTestId('button-secondary'));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(onClose).toHaveBeenCalled();
   });
 
@@ -353,7 +353,7 @@ describe('InstallSkillFromGitDialog', () => {
     );
     fireEvent.input(urlInput, { target: { value: 'https://example.com/skill' } });
 
-    fireEvent.click(screen.getByTestId('button-secondary'));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 
     cleanup();
     render(<InstallSkillFromGitDialog isOpen onClose={onClose} />);

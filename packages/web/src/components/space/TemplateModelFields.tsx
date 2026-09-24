@@ -131,6 +131,7 @@ export function TemplateModelFields({
           id={thinkingSelectId}
           value={value.thinkingLevel || ''}
           onChange={handleThinkingLevelChange}
+          onInput={handleThinkingLevelChange}
           data-testid={thinkingSelectId}
           class="w-full bg-surface-raised border border-line-strong rounded-lg px-4 py-2.5 text-fg focus:outline-none focus:border-accent"
         >
