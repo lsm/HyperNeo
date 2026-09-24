@@ -829,12 +829,15 @@ describe('Session RPC Handlers — models.list', () => {
           reason: 'session_resolution_unavailable',
         }),
         resolveClones,
-        listClones: () => [
-          {
-            id: 'c1',
-            worktree: { branch: 'clone', worktreePath: '/wt-c', mainRepoPath: '/repo' },
-          } as never,
-        ],
+        listClones: (parentId) =>
+          parentId === 'sess-1'
+            ? [
+                {
+                  id: 'c1',
+                  worktree: { branch: 'clone', worktreePath: '/wt-c', mainRepoPath: '/repo' },
+                } as never,
+              ]
+            : [],
       });
       const handler = hub.handlers.get('session.archive')!;
 

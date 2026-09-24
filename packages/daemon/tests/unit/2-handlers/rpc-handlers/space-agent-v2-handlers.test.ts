@@ -754,6 +754,48 @@ describe('setupSpaceAgentV2Handlers', () => {
       ]);
     });
 
+    test('a cascade delete asks for confirmation when a clone has commits ahead', async () => {
+      deps.resolveClones = async () => null;
+      deps.listClones = (parentId) =>
+        parentId === 'primary'
+          ? [
+              {
+                id: 'c1',
+                worktree: {
+                  isWorktree: true,
+                  worktreePath: '/wt',
+                  mainRepoPath: '/r',
+                  branch: 'b',
+                },
+              },
+            ]
+          : [];
+      deps.commitsAhead = async () => ({
+        hasCommitsAhead: true,
+        commits: [{ hash: 'h', message: 'm', author: 'a', date: 'd' }],
+        baseBranch: 'main',
+      });
+      const created = agents.create({ spaceId: 'space-1', handle: 'a', sessionId: 'primary' });
+
+      const refused = await call<{ accepted: boolean; reason: string }>(
+        handlers,
+        'spaceAgentV2.delete',
+        {
+          id: created.id,
+          children: 'cascade',
+        }
+      );
+      expect(refused).toMatchObject({ accepted: false, reason: 'requires_confirmation' });
+      expect(agents.getById(created.id)).not.toBeNull();
+
+      const result = await call<{ id: string }>(handlers, 'spaceAgentV2.delete', {
+        id: created.id,
+        children: 'cascade',
+        confirmed: true,
+      });
+      expect(result.id).toBe(created.id);
+    });
+
     test('throws for an unknown id rather than silently succeeding', async () => {
       await expect(call(handlers, 'spaceAgentV2.delete', { id: 'ghost' })).rejects.toThrow(
         'Agent not found: ghost'

@@ -48,6 +48,7 @@ import { setupDialogHandlers } from './dialog-handlers.ts';
 import { setupQuestionHandlers } from './question-handlers.ts';
 import { setupSpaceHandlers } from './space-handlers.ts';
 import { setupSpaceTaskMessageHandlers } from './space-task-message-handlers.ts';
+import { publishUnifiedAgentCreated } from '../agents/unified-agent-events.ts';
 import { createResolveClones } from '../session/clone-cascade.ts';
 import { createCloneLifecycleEffects } from './session-handlers.ts';
 import { createDefaultSessionResolutionDeps } from '../session-resolution/default-deps.ts';
@@ -1123,6 +1124,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
             agent: created,
           })
           .catch(() => {});
+        void publishUnifiedAgentCreated(deps.internalEventBus, agent).catch(() => {});
       }
       return agent;
     },
@@ -1141,6 +1143,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     ),
   });
   spaceAgentV2Deps.resolveClones = resolveClones;
+  spaceAgentV2Deps.listClones = (parentId) => deps.db.listChildSessions(parentId);
+  spaceAgentV2Deps.commitsAhead = (worktree) =>
+    deps.sessionManager.getWorktreeManager().getCommitsAhead(worktree);
 
   setupSpaceAgentV2Handlers(deps.messageHub, spaceAgentV2Deps);
 

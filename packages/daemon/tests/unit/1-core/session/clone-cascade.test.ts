@@ -163,6 +163,17 @@ describe('resolveClones', () => {
     expect(h.deleted).toEqual([]);
   });
 
+  test('flattened display names never collide and never end up empty', async () => {
+    const h = makeHarness({
+      owner: OWNER,
+      agents: [OWNER, { ...OWNER, id: 'x', handle: 'taken', displayName: 'Fix login' }],
+      children: [child('c1', 'Fix login'), child('c2', '   ')],
+    });
+    await createResolveClones(h.deps)('parent', 'flatten', 'archive');
+    expect(h.created[0]?.displayName).toBe('Fix login (2)');
+    expect(h.created[1]?.displayName).toBe(h.created[1]?.handle);
+  });
+
   test('flattened handles never collide with existing agents', async () => {
     const h = makeHarness({
       owner: OWNER,
