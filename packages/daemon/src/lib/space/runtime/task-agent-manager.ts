@@ -3023,6 +3023,16 @@ export class TaskAgentManager {
     }
   }
 
+  async verifyPredecessorStoppedForHandoff(agentSessionId: string): Promise<boolean> {
+    if (this.unsafeHandoffSessionIds.has(agentSessionId)) return false;
+    const [stopped] = await this.stopSessionsVerified([agentSessionId]);
+    if (!stopped?.stopped) {
+      this.unsafeHandoffSessionIds.add(agentSessionId);
+      return false;
+    }
+    return true;
+  }
+
   async resumePersistedSubSession(agentSessionId: string): Promise<boolean> {
     const stored = this.config.db.getSession(agentSessionId);
     if (!stored?.sdkSessionId || stored.status === 'archived' || stored.status === 'ended') {

@@ -9,6 +9,7 @@ interface TaskBlockedBannerProps {
   task: SpaceTask;
   spaceId: string;
   onStatusTransition?: (newStatus: SpaceTaskStatus) => void;
+  onHandoff?: () => void;
 }
 
 interface ReasonConfig {
@@ -23,6 +24,7 @@ const REASON_CONFIG: Partial<Record<SpaceBlockReason, ReasonConfig>> = {
   dependency_failed: { label: 'Blocked by Dependency', tone: 'gray', icon: '⛓️' },
   dependency_added: { label: 'Blocked by Dependency', tone: 'gray', icon: '⛓️' },
   workflow_invalid: { label: 'Invalid Workflow', tone: 'red', icon: '⚠️' },
+  agent_handoff_required: { label: 'Worker needs handoff', tone: 'red', icon: '⚠️' },
 };
 
 const FALLBACK_CONFIG: ReasonConfig = { label: 'Blocked', tone: 'amber', icon: '⚠️' };
@@ -31,16 +33,24 @@ export function TaskBlockedBanner({
   task,
   spaceId: _spaceId,
   onStatusTransition,
+  onHandoff,
 }: TaskBlockedBannerProps) {
   const reason = task.blockReason;
 
   const actions: InlineStatusBannerAction[] = [
-    {
-      label: 'Reopen',
-      onClick: () => onStatusTransition?.('in_progress'),
-      variant: 'secondary',
-      testId: 'task-blocked-reopen-btn',
-    },
+    reason === 'agent_handoff_required'
+      ? {
+          label: 'Handoff to new session',
+          onClick: () => onHandoff?.(),
+          variant: 'primary',
+          testId: 'task-blocked-handoff-btn',
+        }
+      : {
+          label: 'Reopen',
+          onClick: () => onStatusTransition?.('in_progress'),
+          variant: 'secondary',
+          testId: 'task-blocked-reopen-btn',
+        },
     {
       label: 'Cancel',
       onClick: () => onStatusTransition?.('cancelled'),

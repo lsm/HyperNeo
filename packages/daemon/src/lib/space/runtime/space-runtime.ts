@@ -4298,12 +4298,65 @@ export class SpaceRuntime {
       workflowNodeId?: string;
       agentName?: string;
       description?: string;
+      manualHandoff?: boolean;
     } & TaskTransitionExpectation = {}
   ): Promise<{ task: SpaceTask; run: SpaceWorkflowRun }> {
     if (targetStatus !== 'open' && targetStatus !== 'in_progress') {
       throw new Error(
         `Workflow task recovery only supports active target statuses: open, in_progress`
       );
+    }
+
+    const handoffNotes = new Map<string, { sessionId: string; note: string }>();
+    if (options.manualHandoff) {
+      const task = this.config.taskRepo.getTask(taskId);
+      if (
+        !task ||
+        task.spaceId !== spaceId ||
+        task.status !== 'blocked' ||
+        task.blockReason !== 'agent_handoff_required' ||
+        !task.workflowRunId
+      ) {
+        throw new Error(`Task ${taskId} has no worker awaiting manual handoff`);
+      }
+      const candidates = this.config.nodeExecutionRepo
+        .listByWorkflowRun(task.workflowRunId)
+        .filter(
+          (execution) =>
+            execution.status === 'blocked' &&
+            execution.agentSessionId &&
+            execution.data?.handoffRequired === true
+        );
+      if (candidates.length === 0) {
+        throw new Error(`Task ${taskId} has no predecessor session to hand off`);
+      }
+      const tam = this.config.taskAgentManager;
+      if (!tam) throw new Error(`Worker handoff is unavailable without a session manager`);
+      for (const execution of candidates) {
+        const sessionId = execution.agentSessionId!;
+        if (!(await tam.verifyPredecessorStoppedForHandoff(sessionId))) {
+          throw new Error(`Cannot safely stop predecessor session ${sessionId} for handoff`);
+        }
+        const messages = this.getSdkMessageRepo().getRenderableTextMessages(sessionId, 12);
+        const transcript = messages
+          .map((message) => `${message.type}: ${message.text.slice(0, 700)}`)
+          .join('\n\n')
+          .slice(-8_000);
+        handoffNotes.set(execution.id, {
+          sessionId,
+          note: [
+            '[Human-authorized worker session handoff]',
+            `Previous session: ${sessionId}`,
+            `Task: ${task.title}`,
+            `Node: ${execution.workflowNodeId}; agent: ${execution.agentName}`,
+            `Recovery failure: ${(execution.result ?? 'unknown').slice(0, 1_000)}`,
+            'The prior session could not be resumed. Its transcript is preserved. Verify repository, task, workflow, and artifact state before repeating interrupted work.',
+            transcript
+              ? `Recent predecessor messages:\n${transcript}`
+              : 'No readable predecessor messages were found.',
+          ].join('\n\n'),
+        });
+      }
     }
 
     const liveSessionIds = new Set<string>();
@@ -4315,7 +4368,13 @@ export class SpaceRuntime {
       if (!task.workflowRunId) {
         throw new Error(`Task ${taskId} is not backed by a workflow run`);
       }
-      if (task.blockReason === 'agent_handoff_required') {
+      if (
+        options.manualHandoff &&
+        (task.status !== 'blocked' || task.blockReason !== 'agent_handoff_required')
+      ) {
+        throw new Error(`Task ${taskId} is no longer awaiting manual handoff`);
+      }
+      if (task.blockReason === 'agent_handoff_required' && !options.manualHandoff) {
         throw new Error(`Task ${taskId} requires an explicit handoff to a new worker session`);
       }
       if (task.status !== targetStatus && !isValidSpaceTaskTransition(task.status, targetStatus)) {
@@ -4329,6 +4388,32 @@ export class SpaceRuntime {
       const workflow = this.config.spaceWorkflowManager.getWorkflowForRun(run);
       if (!workflow) {
         throw new Error(`Workflow not found: ${run.workflowId}`);
+      }
+
+      for (const [executionId, handoff] of handoffNotes) {
+        const execution = this.config.nodeExecutionRepo.getById(executionId);
+        if (
+          !execution ||
+          execution.workflowRunId !== run.id ||
+          execution.agentSessionId !== handoff.sessionId ||
+          execution.status !== 'blocked' ||
+          execution.data?.handoffRequired !== true
+        ) {
+          throw new Error(`Worker execution ${executionId} changed before handoff`);
+        }
+        this.config.nodeExecutionRepo.update(executionId, {
+          status: 'pending',
+          agentSessionId: null,
+          result: null,
+          startedAt: null,
+          completedAt: null,
+          data: {
+            ...execution.data,
+            handoffRequired: null,
+            predecessorSessionId: handoff.sessionId,
+            restartRecoveryNote: handoff.note,
+          },
+        });
       }
 
       let updatedRun =
@@ -4456,7 +4541,7 @@ export class SpaceRuntime {
           this.config.nodeExecutionRepo.update(execution.id, {
             status: 'pending',
             result: null,
-            data: null,
+            data: handoffNotes.has(execution.id) ? execution.data : null,
             startedAt: null,
             completedAt: null,
           });

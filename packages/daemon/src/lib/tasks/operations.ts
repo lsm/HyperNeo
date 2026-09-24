@@ -29,6 +29,10 @@ import {
   type TaskMemberRepositories,
 } from './list-task-members.ts';
 import { createRetryTaskOperation, type RetryTaskDependencies } from './retry-task.ts';
+import {
+  createHandoffWorkerSessionOperation,
+  type HandoffWorkerSessionDependencies,
+} from './handoff-worker-session.ts';
 import { listScopedTasks, readScopedTask, readScopedTaskByNumber } from './scoped-task-reads.ts';
 import { stampActiveAttempt, stampActiveAttempts } from './direct-attempt-flag.ts';
 import {
@@ -45,6 +49,10 @@ import { enqueueDirectOutcome } from './direct-outcome-jobs.ts';
 interface RetryTaskCapability {
   getTaskManager: RetryTaskDependencies['getTaskManager'];
   recoverWorkflowTask?: RetryTaskDependencies['recoverWorkflowTask'];
+}
+
+interface HandoffWorkerSessionCapability {
+  handoffWorkerSession?: HandoffWorkerSessionDependencies['handoff'];
 }
 
 interface TaskNumberRepository {
@@ -83,6 +91,7 @@ export function createSpaceOperationRegistryProvider(
     CancelPolicyContext &
     TaskMemberRepositories &
     RetryTaskCapability &
+    HandoffWorkerSessionCapability &
     TaskNumberRepository &
     PreferredWorkflowCapability &
     SessionMessagingCapability &
@@ -239,6 +248,14 @@ export function createSpaceOperationRegistryProvider(
               })
             : undefined,
       },
-      extra
+      tasks.taskRepo && tasks.handoffWorkerSession
+        ? [
+            ...extra,
+            createHandoffWorkerSessionOperation({
+              getTask: (taskId) => tasks.taskRepo!.getTask(taskId),
+              handoff: tasks.handoffWorkerSession,
+            }),
+          ]
+        : extra
     ));
 }

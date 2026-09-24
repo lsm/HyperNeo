@@ -1324,6 +1324,10 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
           taskId,
           targetStatus
         ),
+      handoffWorkerSession: (spaceId, taskId) =>
+        spaceRuntimeService.recoverWorkflowBackedTask(spaceId, taskId, 'in_progress', {
+          manualHandoff: true,
+        }),
       taskRepo: spaceTaskRepo,
       nodeExecutionRepo,
       longHorizonAgentRepo,
