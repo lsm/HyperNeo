@@ -684,12 +684,26 @@ describe('SessionLifecycle', () => {
 
       expect(mockDb.createSession).toHaveBeenCalledWith(
         expect.objectContaining({
+          parentSessionId: 'parent-id',
           metadata: expect.objectContaining({
             sessionType: 'worker',
             pairedSessionId: 'manager-id',
             parentSessionId: 'parent-id',
             currentTaskId: 'task-123',
           }),
+        }),
+        expect.anything()
+      );
+    });
+
+    it('creates a session with prompt provenance and a null parent link by default', async () => {
+      const provenance = { source: 'long_horizon_agent', hash: 'agent-1', agentId: 'agent-1' };
+      await lifecycle.create({ promptProvenance: provenance });
+
+      expect(mockDb.createSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          parentSessionId: null,
+          metadata: expect.objectContaining({ promptProvenance: provenance }),
         }),
         expect.anything()
       );

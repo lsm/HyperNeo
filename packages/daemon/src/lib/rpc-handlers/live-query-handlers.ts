@@ -3528,7 +3528,8 @@ SELECT
   s.processing_state as processingState,
   s.archived_at as archivedAt,
   s.type as type,
-  s.session_context as session_context
+  s.session_context as session_context,
+  s.parent_id as parentSessionId
 FROM sessions s
 WHERE ${humanSessionColumnsPredicate('s')}
   AND (s.status != 'archived' OR ?1 = 1)
@@ -3585,6 +3586,7 @@ function mapSessionRow(row: Record<string, unknown>): Record<string, unknown> {
     archivedAt: (row.archivedAt as string | null) ?? undefined,
     type: (row.type as string | null) ?? 'worker',
     context: sessionContext,
+    parentSessionId: (row.parentSessionId as string | null) ?? null,
   };
 }
 
@@ -3605,7 +3607,9 @@ SELECT
   -- visibility predicate (top-level rows, non-deferred user rows, non-hidden
   -- subtypes) on every sdk_messages mutation.
   s.visible_message_count as messageCount,
-  (unixepoch(s.last_active_at) - 0) * 1000 as lastActiveAt
+  (unixepoch(s.last_active_at) - 0) * 1000 as lastActiveAt,
+  s.parent_id as parentSessionId,
+  json_extract(s.metadata, '$.clone.returnedAt') as returnedAt
 FROM sessions s
 WHERE s.space_id = ? AND s.status != 'archived' AND s.type != 'space_chat'
 ORDER BY s.last_active_at DESC, s.id DESC
@@ -3619,6 +3623,8 @@ function mapSpaceSessionRow(row: Record<string, unknown>): Record<string, unknow
     processingState: (row.processingState as string | null) ?? undefined,
     messageCount: Number(row.messageCount ?? 0),
     lastActiveAt: Number(row.lastActiveAt ?? 0),
+    parentSessionId: (row.parentSessionId as string | null) ?? null,
+    returnedAt: (row.returnedAt as string | null) ?? null,
   };
 }
 

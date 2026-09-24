@@ -65,8 +65,8 @@ export class SessionRepository {
     options?: { enforceWorkspaceOwnership?: boolean; ownershipPath?: string }
   ): void {
     const stmt = this.db.prepare(
-      `INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, is_worktree, worktree_path, main_repo_path, worktree_branch, git_branch, sdk_session_id, acp_session_id, sdk_origin_path, available_commands, processing_state, archived_at, type, session_context)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, is_worktree, worktree_path, main_repo_path, worktree_branch, git_branch, sdk_session_id, acp_session_id, sdk_origin_path, available_commands, processing_state, archived_at, type, session_context, parent_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     const values = [
       session.id,
@@ -95,6 +95,7 @@ export class SessionRepository {
       session.archivedAt ?? null,
       session.type ?? 'worker',
       session.context ? JSON.stringify(session.context) : null,
+      session.parentSessionId ?? null,
     ];
 
     const spaceId = session.context?.spaceId;
@@ -298,6 +299,7 @@ export class SessionRepository {
       const shouldRebuildSearchRows =
         updates.status !== undefined || updates.type !== undefined || 'context' in updates;
       if (updates.status === 'archived') {
+        this.db.prepare(`UPDATE sessions SET parent_id = NULL WHERE parent_id = ?`).run(id);
         this.deleteMessageSearchRows(id);
       } else if (shouldRebuildSearchRows) {
         this.rebuildMessageSearchRows(id, now);
@@ -430,8 +432,12 @@ export class SessionRepository {
     const deleteTurnEndRows = this.tableExists('delivery_turn_end')
       ? this.db.prepare(`DELETE FROM delivery_turn_end WHERE session_id = ?`)
       : null;
+    const detachChildren = this.db.prepare(
+      `UPDATE sessions SET parent_id = NULL WHERE parent_id = ?`
+    );
     const deleteSession = this.db.prepare(`DELETE FROM sessions WHERE id = ?`);
     const tx = this.db.transaction((sessionId: string) => {
+      detachChildren.run(sessionId);
       deleteOverrides.run(sessionId);
       deleteSearchRows?.run(sessionId);
       deleteTurnEndRows?.run(sessionId);
@@ -441,9 +447,7 @@ export class SessionRepository {
   }
 
   archiveSession(id: string): void {
-    const stmt = this.db.prepare(`UPDATE sessions SET status = 'archived' WHERE id = ?`);
-    stmt.run(id);
-    this.deleteMessageSearchRows(id);
+    this.updateSession(id, { status: 'archived' });
   }
 
   rowToSession(row: Record<string, unknown>): Session {
@@ -486,6 +490,7 @@ export class SessionRepository {
       archivedAt: (row.archived_at as string | null) ?? undefined,
       type: (row.type as SessionType) ?? 'worker',
       context: sessionContext,
+      parentSessionId: (row.parent_id as string | null) ?? null,
     };
   }
 
