@@ -139,6 +139,9 @@ jobs:
       - name: Test daemon DB rebuild script
         run: bun run test:rebuild-daemon-db
 
+      - name: Test npm packaging script
+        run: bun run test:package-npm
+
       # Folded in from the former test-cli job: ~2s of tests that used to occupy
       # a whole runner. Gated to the same events test-cli ran on (push to dev
       # or a release tag, workflow_dispatch) — skipped on PRs, exactly as

@@ -144,14 +144,14 @@ process.on('SIGINT', () => {
 
 try {
   log('Test 1: Waiting for HTTP server...');
-  const html = await waitForHttp(`http://localhost:${port}/`, STARTUP_TIMEOUT);
+  const html = await waitForHttp(`http://127.0.0.1:${port}/`, STARTUP_TIMEOUT);
   if (!html.includes('<!doctype html>') && !html.includes('<!DOCTYPE html>')) {
     throw new SmokeTestError(`Expected HTML response, got: ${html.slice(0, 200)}`);
   }
   log('  PASS: Web UI served successfully');
 
   log('Test 2: Connecting WebSocket...');
-  const ws = await connectWebSocket(`ws://localhost:${port}/ws`);
+  const ws = await connectWebSocket(`ws://127.0.0.1:${port}/ws`);
 
   log('Test 3: system.health RPC...');
   const health = await rpcCall(ws, 'system.health');

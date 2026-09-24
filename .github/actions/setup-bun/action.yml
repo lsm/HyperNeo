@@ -26,4 +26,7 @@ runs:
       shell: bash
       env:
         BUN_VERSION: ${{ inputs.bun-version }}
-      run: ${{ github.action_path }}/setup.sh
+      # Use $GITHUB_ACTION_PATH (runtime env) instead of the ${{ github.action_path }}
+      # expression: on Windows runners the expression expands to a backslash path
+      # that Git Bash mangles (actions/runner#1066), while the env var is usable as-is.
+      run: "$GITHUB_ACTION_PATH/setup.sh"
