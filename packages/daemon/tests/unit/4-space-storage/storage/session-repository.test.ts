@@ -964,7 +964,9 @@ describe('SessionRepository', () => {
     it('updateSession cannot set the parent link through metadata', () => {
       repository.createSession(createDefaultSession({ id: 'loose' }));
 
-      repository.updateSession('loose', { metadata: { parentSessionId: 'parent' } as any });
+      repository.updateSession('loose', {
+        metadata: { ...createDefaultSession().metadata, parentSessionId: 'parent' } as any,
+      });
 
       expect(repository.getSession('loose')?.parentSessionId).toBeNull();
     });
