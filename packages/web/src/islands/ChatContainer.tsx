@@ -663,15 +663,17 @@ export default function ChatContainer({
     onMessageAccepted: handleMessageAccepted,
   });
 
-  const [returnRequestedAt, setReturnRequestedAt] = useState<string | null>(null);
+  const [returnPending, setReturnPending] = useState(false);
   const returnedAt = session?.metadata.clone?.returnedAt ?? null;
+  useEffect(() => {
+    setReturnPending(false);
+  }, [returnedAt]);
   const handleReturnToParent = useCallback(() => {
-    setReturnRequestedAt(returnedAt);
+    setReturnPending(true);
     void sendMessage(RETURN_TO_PARENT_PROMPT).then((sent) => {
-      if (!sent) setReturnRequestedAt(null);
+      if (!sent) setReturnPending(false);
     });
-  }, [sendMessage, returnedAt]);
-  const returnPending = returnRequestedAt !== null && returnRequestedAt === returnedAt;
+  }, [sendMessage]);
 
   const isNewMountRef = useRef(true);
 
