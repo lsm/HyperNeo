@@ -1505,6 +1505,7 @@ export class SpaceRuntimeService {
       workflowNodeId?: string;
       agentName?: string;
       description?: string;
+      manualHandoff?: boolean;
     } & TaskTransitionExpectation = {}
   ): Promise<SpaceTask> {
     const recovered = await this.runtime.recoverWorkflowBackedTask(

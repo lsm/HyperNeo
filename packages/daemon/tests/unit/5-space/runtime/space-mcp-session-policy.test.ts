@@ -249,6 +249,36 @@ describe('resolveSpaceMcpSessionPolicy', () => {
     expect(policy.role).toBe('long_term_agent');
   });
 
+  test('a second session stamped with the agent provenance is not the agent', () => {
+    const session = makeSession({
+      id: 'not-the-canonical-session',
+      context: { spaceId: 'space-1' },
+      metadata: {
+        messageCount: 0,
+        totalTokens: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        totalCost: 0,
+        toolCallCount: 0,
+        promptProvenance: { source: 'custom_agent', hash: 'hash', agentId: 'agent-1' },
+      },
+    });
+    const policy = resolveSpaceMcpSessionPolicy(session, {
+      longHorizonAgentRepo: {
+        getById: () =>
+          ({
+            id: 'agent-1',
+            spaceId: 'space-1',
+            status: 'active',
+            sessionId: longTermAgentSessionId('space-1', 'agent-1'),
+          }) as SpaceLongHorizonAgent,
+      },
+    });
+
+    expect(policy.role).toBe('universal_read');
+    expect(policy.attachLongTermAgentTools).toBe(false);
+  });
+
   function cloneOf(parentId: string, overrides: Partial<Session> = {}): Session {
     return makeSession({
       id: 'clone-1',

@@ -4298,12 +4298,65 @@ export class SpaceRuntime {
       workflowNodeId?: string;
       agentName?: string;
       description?: string;
+      manualHandoff?: boolean;
     } & TaskTransitionExpectation = {}
   ): Promise<{ task: SpaceTask; run: SpaceWorkflowRun }> {
     if (targetStatus !== 'open' && targetStatus !== 'in_progress') {
       throw new Error(
         `Workflow task recovery only supports active target statuses: open, in_progress`
       );
+    }
+
+    const handoffNotes = new Map<string, { sessionId: string; note: string }>();
+    if (options.manualHandoff) {
+      const task = this.config.taskRepo.getTask(taskId);
+      if (
+        !task ||
+        task.spaceId !== spaceId ||
+        task.status !== 'blocked' ||
+        task.blockReason !== 'agent_handoff_required' ||
+        !task.workflowRunId
+      ) {
+        throw new Error(`Task ${taskId} has no worker awaiting manual handoff`);
+      }
+      const candidates = this.config.nodeExecutionRepo
+        .listByWorkflowRun(task.workflowRunId)
+        .filter(
+          (execution) =>
+            execution.status === 'blocked' &&
+            execution.agentSessionId &&
+            execution.data?.handoffRequired === true
+        );
+      if (candidates.length === 0) {
+        throw new Error(`Task ${taskId} has no predecessor session to hand off`);
+      }
+      const tam = this.config.taskAgentManager;
+      if (!tam) throw new Error(`Worker handoff is unavailable without a session manager`);
+      for (const execution of candidates) {
+        const sessionId = execution.agentSessionId!;
+        if (!(await tam.verifyPredecessorStoppedForHandoff(sessionId))) {
+          throw new Error(`Cannot safely stop predecessor session ${sessionId} for handoff`);
+        }
+        const messages = this.getSdkMessageRepo().getRenderableTextMessages(sessionId, 12);
+        const transcript = messages
+          .map((message) => `${message.type}: ${message.text.slice(0, 700)}`)
+          .join('\n\n')
+          .slice(-8_000);
+        handoffNotes.set(execution.id, {
+          sessionId,
+          note: [
+            '[Human-authorized worker session handoff]',
+            `Previous session: ${sessionId}`,
+            `Task: ${task.title}`,
+            `Node: ${execution.workflowNodeId}; agent: ${execution.agentName}`,
+            `Recovery failure: ${(execution.result ?? 'unknown').slice(0, 1_000)}`,
+            'The prior session could not be resumed. Its transcript is preserved. Verify repository, task, workflow, and artifact state before repeating interrupted work.',
+            transcript
+              ? `Recent predecessor messages:\n${transcript}`
+              : 'No readable predecessor messages were found.',
+          ].join('\n\n'),
+        });
+      }
     }
 
     const liveSessionIds = new Set<string>();
@@ -4314,6 +4367,15 @@ export class SpaceRuntime {
       assertTaskTransitionSnapshot(task, options);
       if (!task.workflowRunId) {
         throw new Error(`Task ${taskId} is not backed by a workflow run`);
+      }
+      if (
+        options.manualHandoff &&
+        (task.status !== 'blocked' || task.blockReason !== 'agent_handoff_required')
+      ) {
+        throw new Error(`Task ${taskId} is no longer awaiting manual handoff`);
+      }
+      if (task.blockReason === 'agent_handoff_required' && !options.manualHandoff) {
+        throw new Error(`Task ${taskId} requires an explicit handoff to a new worker session`);
       }
       if (task.status !== targetStatus && !isValidSpaceTaskTransition(task.status, targetStatus)) {
         throw new Error(`Invalid status transition from '${task.status}' to '${targetStatus}'.`);
@@ -4326,6 +4388,32 @@ export class SpaceRuntime {
       const workflow = this.config.spaceWorkflowManager.getWorkflowForRun(run);
       if (!workflow) {
         throw new Error(`Workflow not found: ${run.workflowId}`);
+      }
+
+      for (const [executionId, handoff] of handoffNotes) {
+        const execution = this.config.nodeExecutionRepo.getById(executionId);
+        if (
+          !execution ||
+          execution.workflowRunId !== run.id ||
+          execution.agentSessionId !== handoff.sessionId ||
+          execution.status !== 'blocked' ||
+          execution.data?.handoffRequired !== true
+        ) {
+          throw new Error(`Worker execution ${executionId} changed before handoff`);
+        }
+        this.config.nodeExecutionRepo.update(executionId, {
+          status: 'pending',
+          agentSessionId: null,
+          result: null,
+          startedAt: null,
+          completedAt: null,
+          data: {
+            ...execution.data,
+            handoffRequired: null,
+            predecessorSessionId: handoff.sessionId,
+            restartRecoveryNote: handoff.note,
+          },
+        });
       }
 
       let updatedRun =
@@ -4453,7 +4541,7 @@ export class SpaceRuntime {
           this.config.nodeExecutionRepo.update(execution.id, {
             status: 'pending',
             result: null,
-            data: null,
+            data: handoffNotes.has(execution.id) ? execution.data : null,
             startedAt: null,
             completedAt: null,
           });
@@ -5940,10 +6028,56 @@ export class SpaceRuntime {
     return [
       '[Runtime session recovery]',
       '',
-      `Your previous agent session for node ${execution.workflowNodeId}, agent ${execution.agentName}, stopped making observable progress and was restarted by the runtime.`,
-      'Continue the same task from the current repository and workflow state. Inspect task/workflow status, recent messages, git state, PR state, and artifacts as needed before acting. Do not start from scratch blindly.',
+      `The process for your current session on node ${execution.workflowNodeId}, agent ${execution.agentName}, stopped making observable progress and was restarted by the runtime.`,
+      'Continue your work in this same session. Check the current repository and workflow state before repeating any interrupted action.',
       'If you are blocked, report the blocker clearly through the available workflow tools.',
     ].join('\n');
+  }
+
+  private async blockWorkerForManualHandoff(
+    runId: string,
+    spaceId: string,
+    canonicalTask: SpaceTask,
+    execution: NodeExecution,
+    reason: string
+  ): Promise<void> {
+    const now = Date.now();
+    this.config.nodeExecutionRepo.update(execution.id, {
+      status: 'blocked',
+      result: reason,
+      data: { ...execution.data, handoffRequired: true },
+    });
+    await this.transitionRunStatusAndEmit(runId, 'blocked');
+    if (
+      this.config.taskRepo.casStatus(canonicalTask.id, TASK_BLOCKABLE_FROM_STATUSES, 'blocked') ===
+      'superseded'
+    ) {
+      log.warn(
+        `SpaceRuntime: skipped blocking task ${canonicalTask.id} for execution ${execution.id} ` +
+          `in run ${runId}; task status changed concurrently`
+      );
+      return;
+    }
+    await this.updateTaskAndEmit(spaceId, canonicalTask.id, {
+      status: 'blocked',
+      result: reason,
+      blockReason: 'agent_handoff_required',
+      completedAt: null,
+    });
+    await this.safeNotify({
+      kind: 'task_blocked',
+      spaceId,
+      taskId: canonicalTask.id,
+      reason,
+      timestamp: new Date(now).toISOString(),
+    });
+    await this.safeNotify({
+      kind: 'workflow_run_blocked',
+      spaceId,
+      runId,
+      reason,
+      timestamp: new Date(now).toISOString(),
+    });
   }
 
   private async recoverPromptTooLongIdleExecution(
@@ -6156,47 +6290,13 @@ export class SpaceRuntime {
     spaceId: string,
     canonicalTask: SpaceTask,
     execution: NodeExecution,
-    now: number,
+    _now: number,
     reason: string,
-    manager: TaskAgentManager | undefined
+    _manager: TaskAgentManager | undefined
   ): Promise<void> {
     const key = `${runId}:${execution.id}`;
-    if (execution.agentSessionId) {
-      try {
-        manager?.cancelBySessionId?.(execution.agentSessionId);
-      } catch (err) {
-        log.warn(
-          `SpaceRuntime: failed to cancel session ${execution.agentSessionId} during prompt-too-long escalation: ${err instanceof Error ? err.message : String(err)}`
-        );
-      }
-    }
     this.promptTooLongRecovery.delete(key);
-    this.config.nodeExecutionRepo.update(execution.id, {
-      status: 'blocked',
-      result: reason,
-      agentSessionId: null,
-    });
-    await this.transitionRunStatusAndEmit(runId, 'blocked');
-    await this.updateTaskAndEmit(spaceId, canonicalTask.id, {
-      status: 'blocked',
-      result: reason,
-      blockReason: 'execution_failed',
-      completedAt: null,
-    });
-    await this.safeNotify({
-      kind: 'task_blocked',
-      spaceId,
-      taskId: canonicalTask.id,
-      reason,
-      timestamp: new Date(now).toISOString(),
-    });
-    await this.safeNotify({
-      kind: 'workflow_run_blocked',
-      spaceId,
-      runId,
-      reason,
-      timestamp: new Date(now).toISOString(),
-    });
+    await this.blockWorkerForManualHandoff(runId, spaceId, canonicalTask, execution, reason);
     log.warn(
       `SpaceRuntime: blocked execution ${execution.id} (agent ${execution.agentName}) — ${reason}`
     );
@@ -6287,66 +6387,37 @@ export class SpaceRuntime {
       }
 
       if (ladder.action === 'restart') {
-        await tam.restartStuckSubSession(execution.agentSessionId);
-        state.restartCount += 1;
-        state.lastAction = 'restart';
-        state.lastActionAt = now;
-        state.pendingRestartNotice = this.buildRuntimeRestartNotice(execution);
-        this.config.nodeExecutionRepo.update(execution.id, {
-          status: 'pending',
-          agentSessionId: null,
-          startedAt: null,
-          completedAt: null,
-          result: 'Runtime restarted agent session after no observable progress.',
-        });
-        log.warn(
-          `SpaceRuntime: restarted stuck agent execution ${execution.id} ` +
-            `(agent ${execution.agentName}, session ${execution.agentSessionId})`
-        );
-        return 'restarted';
+        try {
+          await tam.restartStuckSubSession(execution.agentSessionId);
+          state.restartCount += 1;
+          state.lastAction = 'restart';
+          state.lastActionAt = now;
+          try {
+            state.lastRuntimeNagMessageId = await tam.injectRuntimeRecoveryMessage(
+              execution.agentSessionId,
+              this.buildRuntimeRestartNotice(execution)
+            );
+          } catch (err) {
+            log.warn(
+              `SpaceRuntime: could not deliver recovery notice to resumed session ${execution.agentSessionId}: ${err instanceof Error ? err.message : String(err)}`
+            );
+          }
+          log.warn(
+            `SpaceRuntime: resumed stuck agent execution ${execution.id} in session ${execution.agentSessionId}`
+          );
+          return 'restarted';
+        } catch (err) {
+          log.warn(
+            `SpaceRuntime: same-session recovery failed for execution ${execution.id} ` +
+              `(session ${execution.agentSessionId}): ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
       }
 
-      const reason = `Agent stuck without observable progress after runtime nag/restart recovery: ${classification.reason}`;
+      const reason = `Agent stuck without observable progress after same-session recovery; manual handoff required: ${classification.reason}`;
       state.lastAction = 'blocked';
       state.lastActionAt = now;
-      this.config.nodeExecutionRepo.update(execution.id, {
-        status: 'blocked',
-        result: reason,
-      });
-      await this.transitionRunStatusAndEmit(runId, 'blocked');
-      if (
-        this.config.taskRepo.casStatus(
-          canonicalTask.id,
-          TASK_BLOCKABLE_FROM_STATUSES,
-          'blocked'
-        ) === 'superseded'
-      ) {
-        log.warn(
-          `SpaceRuntime: skipped blocking task ${canonicalTask.id} for execution ${execution.id} ` +
-            `in run ${runId}; task status changed concurrently — keeping the concurrent status`
-        );
-        return 'blocked';
-      }
-      await this.updateTaskAndEmit(spaceId, canonicalTask.id, {
-        status: 'blocked',
-        result: reason,
-        blockReason: 'execution_failed',
-        completedAt: null,
-      });
-      await this.safeNotify({
-        kind: 'task_blocked',
-        spaceId,
-        taskId: canonicalTask.id,
-        reason,
-        timestamp: new Date(now).toISOString(),
-      });
-      await this.safeNotify({
-        kind: 'workflow_run_blocked',
-        spaceId,
-        runId,
-        reason,
-        timestamp: new Date(now).toISOString(),
-      });
+      await this.blockWorkerForManualHandoff(runId, spaceId, canonicalTask, execution, reason);
       return 'blocked';
     }
     return 'none';
@@ -6678,6 +6749,19 @@ export class SpaceRuntime {
         }
 
         try {
+          if (await tam.resumePersistedSubSession(execution.agentSessionId)) {
+            log.warn(
+              `SpaceRuntime: restored worker execution ${execution.id} in session ${execution.agentSessionId}`
+            );
+            continue;
+          }
+        } catch (err) {
+          log.warn(
+            `SpaceRuntime: could not restore worker session ${execution.agentSessionId}: ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
+
+        try {
           const liveSession = tam.getAgentSessionById(execution.agentSessionId);
           if (liveSession) {
             await liveSession.markPendingQuestionOrphaned('agent_session_terminated');
@@ -6689,21 +6773,17 @@ export class SpaceRuntime {
           );
         }
 
-        const exhausted = this.resetWorkflowNodeExecutionForSpawnRetry(
+        if (runIsComplete) continue;
+
+        const reason = `Worker session ${execution.agentSessionId} is no longer alive and could not be restored; manual handoff required`;
+        await this.blockWorkerForManualHandoff(
           runId,
+          meta.spaceId,
+          canonicalTask,
           execution,
-          'agent session is no longer alive',
-          execution.agentSessionId
+          reason
         );
-        if (exhausted) {
-          blockedByCrash = true;
-          await this.safeNotify({
-            kind: 'agent_crash',
-            spaceId: meta.spaceId,
-            taskId: canonicalTask.id,
-            timestamp: new Date().toISOString(),
-          });
-        }
+        return { action: 'halted' };
       }
     }
 
@@ -7538,26 +7618,24 @@ export class SpaceRuntime {
       }
 
       if (!tam.isSessionAlive(sessionId)) {
-        const crashExhausted = this.resetWorkflowNodeExecutionForSpawnRetry(
-          runId,
-          execution,
-          `terminal-error session is no longer alive (subtype ${lastMessage.subtype})`,
-          sessionId
-        );
-        if (crashExhausted) {
-          await this.escalateTerminalErrorToBlocked(
+        let restored = false;
+        try {
+          restored = await tam.resumePersistedSubSession(sessionId);
+        } catch (err) {
+          log.warn(
+            `SpaceRuntime: could not restore terminal-error session ${sessionId}: ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
+        if (!restored) {
+          await this.blockWorkerForManualHandoff(
             runId,
             spaceId,
             canonicalTask,
             execution,
-            lastMessage,
-            tam,
-            `terminal-error session died and crash-retries exhausted (subtype ${lastMessage.subtype}, signature ${this.computeTerminalErrorSignature(lastMessage)})`
+            `Terminal-error worker session ${sessionId} could not be restored (subtype ${lastMessage.subtype}); manual handoff required`
           );
           return 'blocked';
         }
-        this.detachSessionFromAllExecutions(runId, sessionId);
-        continue;
       }
 
       const state =
@@ -7592,7 +7670,6 @@ export class SpaceRuntime {
           canonicalTask,
           execution,
           lastMessage,
-          tam,
           `runtime continue injection failed ${state.failedInjectionCount} consecutive time(s) for a live session (${signature})`
         );
         return 'blocked';
@@ -7609,7 +7686,6 @@ export class SpaceRuntime {
           canonicalTask,
           execution,
           lastMessage,
-          tam,
           `Terminal error recurred with an identical signature after a runtime continue (${signature})`
         );
         return 'blocked';
@@ -7622,7 +7698,6 @@ export class SpaceRuntime {
           canonicalTask,
           execution,
           lastMessage,
-          tam,
           `Terminal error persisted after ${state.continueCount} runtime continue(s) (${signature})`
         );
         return 'blocked';
@@ -7755,21 +7830,12 @@ export class SpaceRuntime {
     );
   }
 
-  private detachSessionFromAllExecutions(runId: string, sessionId: string): void {
-    for (const ex of this.config.nodeExecutionRepo.listByWorkflowRun(runId)) {
-      if (ex.agentSessionId === sessionId) {
-        this.config.nodeExecutionRepo.update(ex.id, { agentSessionId: null });
-      }
-    }
-  }
-
   private async escalateTerminalErrorToBlocked(
     runId: string,
     spaceId: string,
     canonicalTask: SpaceTask,
     execution: NodeExecution,
     errorResult: { subtype: string; errors?: string[]; result?: string },
-    tam: TaskAgentManager,
     detail: string
   ): Promise<void> {
     const errorDetails = (errorResult.errors ?? []).join('; ');
@@ -7779,48 +7845,7 @@ export class SpaceRuntime {
       `Agent session ended on a terminal error result and exhausted runtime auto-continue recovery ` +
       `(node ${execution.workflowNodeId}, agent ${execution.agentName}, subtype ${errorResult.subtype}): ` +
       `${detail}${errorSnippet ? ` — ${errorSnippet}` : ''}`;
-    if (execution.agentSessionId) {
-      try {
-        tam.cancelBySessionId(execution.agentSessionId);
-      } catch (err) {
-        log.warn(
-          `SpaceRuntime: failed to cancel stale terminal-error session ${execution.agentSessionId} during block escalation: ${err instanceof Error ? err.message : String(err)}`
-        );
-      }
-      this.detachSessionFromAllExecutions(runId, execution.agentSessionId);
-    }
-    this.config.nodeExecutionRepo.update(execution.id, {
-      status: 'blocked',
-      result: reason,
-      agentSessionId: null,
-      startedAt: null,
-      completedAt: null,
-    });
-    await this.transitionRunStatusAndEmit(runId, 'blocked');
-    await this.updateTaskAndEmit(spaceId, canonicalTask.id, {
-      status: 'blocked',
-      result: reason,
-      blockReason: 'execution_failed',
-      completedAt: null,
-    });
-    const dedupKey = `${canonicalTask.id}:blocked`;
-    if (!this.notifiedTaskSet.has(dedupKey)) {
-      this.notifiedTaskSet.add(dedupKey);
-      await this.safeNotify({
-        kind: 'task_blocked',
-        spaceId,
-        taskId: canonicalTask.id,
-        reason,
-        timestamp: new Date().toISOString(),
-      });
-    }
-    await this.safeNotify({
-      kind: 'workflow_run_blocked',
-      spaceId,
-      runId,
-      reason,
-      timestamp: new Date().toISOString(),
-    });
+    await this.blockWorkerForManualHandoff(runId, spaceId, canonicalTask, execution, reason);
   }
 
   private isRecoverableTerminalErrorResult(
@@ -8107,6 +8132,21 @@ export class SpaceRuntime {
     if (space?.paused || space?.stopped) return;
 
     const blockedReason = blockedExecutions[0].result ?? 'Unknown blocked reason';
+    if (canonicalTask.blockReason === 'agent_handoff_required') {
+      if (!this.notifiedTaskSet.has(blockedRunAttentionKey(runId))) {
+        this.notifiedTaskSet.add(blockedRunAttentionKey(runId));
+        await this.safeNotify({
+          kind: 'workflow_run_needs_attention',
+          spaceId: meta.spaceId,
+          runId,
+          taskId: canonicalTask.id,
+          reason: blockedReason,
+          retriesExhausted: retryCount,
+          timestamp: new Date().toISOString(),
+        });
+      }
+      return;
+    }
 
     const taskReopenedOutsideRuntime =
       canonicalTask.status === 'in_progress' || canonicalTask.status === 'open';

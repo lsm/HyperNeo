@@ -335,6 +335,7 @@ export class TaskAgentManager {
   private agentSessionIndex = new Map<string, AgentSession>();
 
   private cancellingSessions = new Set<string>();
+  private unsafeHandoffSessionIds = new Set<string>();
 
   private readonly sessionRestoreLocks = new Map<string, Promise<void>>();
 
@@ -2994,12 +2995,58 @@ export class TaskAgentManager {
     if (!session) {
       throw new Error(`Cannot restart stuck sub-session; session not found: ${agentSessionId}`);
     }
-    await this.stopSessionPreserveDb(agentSessionId, session, { strict: true });
-    this.forgetAgentSession(agentSessionId);
-    for (const [, nodeMap] of this.subSessions) {
-      nodeMap.delete(agentSessionId);
+    if (!session.getSessionData().sdkSessionId) {
+      throw new Error(
+        `Cannot resume stuck sub-session without an SDK conversation: ${agentSessionId}`
+      );
     }
-    await this.config.sessionManager.unregisterSession(agentSessionId);
+    let stopped: VerifiedSessionStop;
+    try {
+      stopped = await this.stopSessionVerified(agentSessionId);
+    } catch (err) {
+      this.unsafeHandoffSessionIds.add(agentSessionId);
+      throw err;
+    }
+    if (!stopped.stopped) {
+      this.unsafeHandoffSessionIds.add(agentSessionId);
+      throw new Error(`Cannot safely stop stuck sub-session ${agentSessionId}: ${stopped.detail}`);
+    }
+    let restored: AgentSession | null;
+    try {
+      restored = await this.rehydrateSubSession(agentSessionId);
+    } catch (err) {
+      this.unsafeHandoffSessionIds.add(agentSessionId);
+      throw err;
+    }
+    if (!restored || restored.getSessionData().id !== agentSessionId) {
+      throw new Error(`Cannot resume stuck sub-session in its original session: ${agentSessionId}`);
+    }
+  }
+
+  async verifyPredecessorStoppedForHandoff(agentSessionId: string): Promise<boolean> {
+    if (this.unsafeHandoffSessionIds.has(agentSessionId)) return false;
+    const [stopped] = await this.stopSessionsVerified([agentSessionId]);
+    if (!stopped?.stopped) {
+      this.unsafeHandoffSessionIds.add(agentSessionId);
+      return false;
+    }
+    return true;
+  }
+
+  async resumePersistedSubSession(agentSessionId: string): Promise<boolean> {
+    const stored = this.config.db.getSession(agentSessionId);
+    if (!stored?.sdkSessionId || stored.status === 'archived' || stored.status === 'ended') {
+      return false;
+    }
+    try {
+      const restored = await this.rehydrateSubSession(agentSessionId);
+      return (
+        restored?.getSessionData().id === agentSessionId && this.isSessionAlive(agentSessionId)
+      );
+    } catch (err) {
+      this.unsafeHandoffSessionIds.add(agentSessionId);
+      throw err;
+    }
   }
 
   async rehydrate(): Promise<void> {
