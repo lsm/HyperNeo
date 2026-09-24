@@ -1,4 +1,5 @@
 export const SESSION_OPERATION_NAMES = [
+  'session.clone.return',
   'session.get',
   'session.interrupt',
   'session.list',
