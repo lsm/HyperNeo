@@ -79,6 +79,40 @@ describe('ChatHeader', () => {
     });
   });
 
+  describe('Return to parent', () => {
+    it('is hidden for a session without a parent', () => {
+      const { queryByTestId } = render(
+        <ChatHeader {...defaultProps} onReturnToParent={vi.fn(() => {})} />
+      );
+      expect(queryByTestId('chat-header-return-to-parent')).toBeNull();
+      expect(queryByTestId('chat-header-returned')).toBeNull();
+    });
+
+    it('sends the wrap-up request for an active clone and shows the returned marker', () => {
+      const onReturnToParent = vi.fn(() => {});
+      const clone = {
+        ...mockSession,
+        parentSessionId: 'parent-1',
+        metadata: { ...mockSession.metadata, clone: { returnedAt: '2026-09-24T00:00:00.000Z' } },
+      };
+      const { getByTestId } = render(
+        <ChatHeader {...defaultProps} session={clone} onReturnToParent={onReturnToParent} />
+      );
+
+      getByTestId('chat-header-return-to-parent').click();
+      expect(onReturnToParent).toHaveBeenCalledOnce();
+      expect(getByTestId('chat-header-returned').textContent).toContain('returned');
+    });
+
+    it('is hidden for an archived clone', () => {
+      const clone = { ...mockSession, parentSessionId: 'parent-1', status: 'archived' };
+      const { queryByTestId } = render(
+        <ChatHeader {...defaultProps} session={clone} onReturnToParent={vi.fn(() => {})} />
+      );
+      expect(queryByTestId('chat-header-return-to-parent')).toBeNull();
+    });
+  });
+
   describe('Mobile Menu Button', () => {
     it('should render hamburger menu button', () => {
       const { container } = render(<ChatHeader {...defaultProps} />);
