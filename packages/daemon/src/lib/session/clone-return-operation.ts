@@ -44,8 +44,8 @@ export interface ReturnSessionCloneDependencies {
   readonly getSpace: (spaceId: string) => Promise<Space | null>;
   readonly getSessionStatus: (sessionId: string) => string;
   readonly markReturned: (sessionId: string, returnedAt: string) => void;
-  readonly db: BunDatabase;
-  readonly sdkMessageRepo: SDKMessageRepository;
+  readonly getDatabase: () => BunDatabase;
+  readonly getSdkMessageRepo: () => SDKMessageRepository;
   readonly jobQueue: JobQueueRepository;
 }
 
@@ -118,8 +118,8 @@ export function deliverReport(
   const uuid = buildReturnMessageUuid(clone.id, input.summary);
   const mechanics = deps.getSessionStatus(parent.id) === 'processing' ? 'steer' : 'turn';
   ensurePrompt({
-    db: deps.db,
-    sdkMessageRepo: deps.sdkMessageRepo,
+    db: deps.getDatabase(),
+    sdkMessageRepo: deps.getSdkMessageRepo(),
     jobQueue: deps.jobQueue,
     sessionId: parent.id,
     message: buildReturnMessage(parent, clone, input.summary, uuid),

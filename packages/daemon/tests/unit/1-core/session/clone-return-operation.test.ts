@@ -57,8 +57,8 @@ beforeEach(() => {
       const current = sessions.getSession(id)!;
       sessions.updateSession(id, { metadata: { ...current.metadata, clone: { returnedAt } } });
     },
-    db,
-    sdkMessageRepo: new SDKMessageRepository(db),
+    getDatabase: () => db,
+    getSdkMessageRepo: () => new SDKMessageRepository(db),
     jobQueue: new JobQueueRepository(db),
   };
 });

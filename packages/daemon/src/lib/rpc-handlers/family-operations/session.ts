@@ -29,8 +29,8 @@ export function registerSessionOperations(context: FamilyOperationContext): Oper
         metadata: { ...current.metadata, clone: { returnedAt } },
       });
     },
-    db: context.deps.db.getDatabase(),
-    sdkMessageRepo: context.deps.db.getSDKMessageRepo(),
+    getDatabase: () => context.deps.db.getDatabase(),
+    getSdkMessageRepo: () => context.deps.db.getSDKMessageRepo(),
     jobQueue: context.deps.jobQueue,
   });
   return [
