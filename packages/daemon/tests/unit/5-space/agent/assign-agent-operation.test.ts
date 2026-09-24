@@ -19,6 +19,7 @@ let db: Database;
 let agentRepo: SpaceLongHorizonAgentRepository;
 let goalScopeRepo: SpaceAgentGoalScopeRepository;
 let spaceId: string;
+let memberAgentId: string;
 let agent: SpaceLongHorizonAgent;
 let sessions: Map<string, Session>;
 let ownerChanges: string[];
@@ -50,7 +51,7 @@ function sessionRow(overrides: Partial<Session> & { id: string }): Session {
     status: 'active',
     type: 'space_chat',
     config: { model: 'm', provider: 'p', maxTokens: 1, temperature: 1 },
-    metadata: {},
+    metadata: { promptProvenance: { source: 'test', hash: 'h', agentId: memberAgentId } },
     context: { spaceId },
     ...overrides,
   } as unknown as Session;
@@ -133,6 +134,7 @@ beforeEach(() => {
     displayName: 'Planner',
     instructions: '',
   });
+  memberAgentId = agentRepo.create({ spaceId, handle: 'member', sessionId: MEMBER_SESSION }).id;
   sessions = new Map([
     [MEMBER_SESSION, sessionRow({ id: MEMBER_SESSION })],
     [
@@ -169,11 +171,11 @@ describe('goal.owner.set admission', () => {
     expect(agentRepo.listGoals(agent.id)).toHaveLength(1);
   });
 
-  test('an ad-hoc member session carrying no agent identity may reassign goal ownership', async () => {
+  test('a caller presenting no agent identity may reassign goal ownership', async () => {
     const outcome = await run(
       'goal.owner.set',
       { agentId: agent.id, goalId: GOAL_ID, assigned: true },
-      caller('ad_hoc_member')
+      caller('long_term_agent')
     );
     expect(outcome.value).toEqual({ accepted: true, assigned: true });
     expect(agentRepo.listGoals(agent.id).map((entry) => entry.goalId)).toEqual([GOAL_ID]);
@@ -189,7 +191,7 @@ describe('goal.owner.set admission', () => {
     const outcome = await run(
       'goal.owner.set',
       { agentId: agent.id, goalId: GOAL_ID, assigned: true },
-      caller('ad_hoc_member', stranger.id)
+      caller('long_term_agent', stranger.id)
     );
     expect(outcome.value?.reason).toBe('agent_denied');
     expect(agentRepo.listGoals(agent.id)).toHaveLength(0);
@@ -262,11 +264,11 @@ describe('goal.owner.set admission', () => {
 });
 
 describe('evolution.scope.owner.set admission', () => {
-  test('an ad-hoc member may assign a Forge scope, unlike goal ownership', async () => {
+  test('a Space agent may assign a Forge scope', async () => {
     const outcome = await run(
       'evolution.scope.owner.set',
       { agentId: agent.id, scopeId: SCOPE_ID, assigned: true },
-      caller('ad_hoc_member')
+      caller('long_term_agent')
     );
     expect(outcome.value).toEqual({ accepted: true, assigned: true });
     expect(agentRepo.listEvolutionScopes(agent.id).map((entry) => entry.scopeId)).toEqual([
@@ -278,7 +280,7 @@ describe('evolution.scope.owner.set admission', () => {
     await run(
       'evolution.scope.owner.set',
       { agentId: agent.id, scopeId: SCOPE_ID, assigned: true },
-      caller('ad_hoc_member')
+      caller('long_term_agent')
     );
     expect(ownerChanges).toEqual([]);
   });
@@ -288,7 +290,7 @@ describe('evolution.scope.owner.set admission', () => {
     const outcome = await run(
       'evolution.scope.owner.set',
       { agentId: agent.id, scopeId: 'scope-elsewhere', assigned: true },
-      caller('ad_hoc_member')
+      caller('long_term_agent')
     );
     expect(outcome.value?.reason).toBe('scope_not_found');
     expect(agentRepo.listEvolutionScopes(agent.id)).toHaveLength(0);
@@ -298,12 +300,12 @@ describe('evolution.scope.owner.set admission', () => {
     await run(
       'evolution.scope.owner.set',
       { agentId: agent.id, scopeId: SCOPE_ID, assigned: true },
-      caller('ad_hoc_member')
+      caller('long_term_agent')
     );
     const outcome = await run(
       'evolution.scope.owner.set',
       { agentId: agent.id, scopeId: SCOPE_ID, assigned: false },
-      caller('ad_hoc_member')
+      caller('long_term_agent')
     );
     expect(outcome.value).toEqual({ accepted: true, assigned: false });
     expect(agentRepo.listEvolutionScopes(agent.id)).toHaveLength(0);
@@ -314,7 +316,7 @@ describe('evolution.scope.owner.set admission', () => {
     const outcome = await run(
       'evolution.scope.owner.set',
       { agentId: agent.id, scopeId: SCOPE_ID, assigned: true },
-      caller('ad_hoc_member')
+      caller('long_term_agent')
     );
     expect(outcome.value?.reason).toBe('agent_denied');
     expect(agentRepo.listEvolutionScopes(agent.id)).toHaveLength(0);
@@ -330,7 +332,7 @@ describe('evolution.scope.owner.set admission', () => {
     const outcome = await run(
       'evolution.scope.owner.set',
       { agentId: stranger.id, scopeId: SCOPE_ID, assigned: true },
-      caller('ad_hoc_member')
+      caller('long_term_agent')
     );
     expect(outcome.value?.reason).toBe('agent_not_found');
     expect(agentRepo.listEvolutionScopes(stranger.id)).toHaveLength(0);
@@ -374,7 +376,7 @@ describe('the goal.owner.set and evolution.scope.owner.set operations', () => {
     const routed = await run(
       'evolution.scope.owner.set',
       { agentId: agent.id, scopeId: SCOPE_ID, assigned: true },
-      caller('ad_hoc_member')
+      caller('long_term_agent')
     );
     expect(routed.value).toEqual({ accepted: true, assigned: true });
     expect(agentRepo.listEvolutionScopes(agent.id).map((entry) => entry.scopeId)).toEqual([
@@ -384,7 +386,7 @@ describe('the goal.owner.set and evolution.scope.owner.set operations', () => {
     const stopped = await run(
       'evolution.scope.owner.set',
       { agentId: agent.id, scopeId: SCOPE_ID, assigned: false },
-      caller('ad_hoc_member')
+      caller('long_term_agent')
     );
     expect(stopped.value).toEqual({ accepted: true, assigned: false });
     expect(agentRepo.listEvolutionScopes(agent.id)).toHaveLength(0);
@@ -395,7 +397,7 @@ describe('the goal.owner.set and evolution.scope.owner.set operations', () => {
     const outcome = await run(
       'evolution.scope.owner.set',
       { agentId: agent.id, scopeId: SCOPE_ID, assigned: false },
-      caller('ad_hoc_member')
+      caller('long_term_agent')
     );
     expect(outcome.value).toEqual({ accepted: true, assigned: false });
   });
@@ -405,7 +407,7 @@ describe('the goal.owner.set and evolution.scope.owner.set operations', () => {
     const outcome = await run(
       'evolution.scope.owner.set',
       { agentId: agent.id, scopeId: 'scope-elsewhere', assigned: true },
-      caller('ad_hoc_member')
+      caller('long_term_agent')
     );
     expect(outcome.value?.reason).toBe('scope_not_found');
   });

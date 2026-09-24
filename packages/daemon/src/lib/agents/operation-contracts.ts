@@ -115,10 +115,7 @@ export interface AgentOperationDeps extends SpaceMcpSessionPolicyContext {
   readonly getSession: (sessionId: string) => Session | null;
 }
 
-export const AGENT_ROLES = [
-  'ad_hoc_member',
-  'long_term_agent',
-] as const satisfies readonly OperationCallerRole[];
+export const AGENT_ROLES = ['long_term_agent'] as const satisfies readonly OperationCallerRole[];
 
 export const AGENT_READ_POLICY: OperationPolicy = {
   safetyClass: 'read',

@@ -1,7 +1,9 @@
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import { admitSubmission } from '../../../../src/lib/tasks/submit-for-review';
-import type { CallContext, UpdateSpaceTaskParams } from '@hyperneo/shared';
+import type { CallContext, UpdateSpaceTaskParams, Session } from '@hyperneo/shared';
+import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
+import { createDatabaseDirectTaskWorkerResolver } from '../../../../src/lib/tasks/direct-task-worker-identity';
 import type { Database as AppDatabase } from '../../../../src/storage/database';
 import { createSpaceOperationRegistryProvider } from '../../../../src/lib/tasks/operations';
 import { createDatabaseOperationCatalog } from '../../../../src/lib/operations/database-catalog';
@@ -43,12 +45,40 @@ let attempts: DirectTaskExecutionRepository;
 let taskId: string;
 let sessionId: string;
 let attemptId: string;
+function sessionPolicy() {
+  return {
+    hasDirectWorkerProvenance: (id: string) => attempts.hasSessionProvenance(id),
+    resolveDirectWorker: createDatabaseDirectTaskWorkerResolver(db),
+    longHorizonAgentRepo: new SpaceLongHorizonAgentRepository(db),
+  };
+}
+function createAgentSession(base: Session, id: string, type: Session['type'], spaceId: string) {
+  const agent = new SpaceLongHorizonAgentRepository(db).create({
+    spaceId,
+    handle: id.replace(/[^a-z0-9-]/g, '-'),
+    sessionId: id,
+  });
+  sessions.createSession(
+    {
+      ...base,
+      id,
+      type,
+      context: { spaceId },
+      metadata: {
+        ...base.metadata,
+        promptProvenance: { source: 'test', hash: 'h', agentId: agent.id },
+      },
+    },
+    { enforceWorkspaceOwnership: false }
+  );
+}
 function canceller(policy: CancelPolicyContext) {
   return {
     execute: async (input: { taskId: string }, caller: OperationCaller) => {
-      const managed = await admitManagedCancellation(db, input, caller, policy);
+      const context = { ...sessionPolicy(), ...policy };
+      const managed = await admitManagedCancellation(db, input, caller, context);
       if ('reason' in managed) return managed.reason;
-      const direct = admitCancellation(db, input, caller, policy);
+      const direct = admitCancellation(db, input, caller, context);
       if ('reason' in direct) return direct.reason;
       return enqueueDirectOutcome(db, jobs, direct.value);
     },
@@ -256,6 +286,7 @@ test('configured shared catalog discovers lazily and both transports persist the
       notifyStandalone: () => {},
       emitTaskUpdated: async () => {},
       isWorkflowRunActive: () => false,
+      ...sessionPolicy(),
     }
   );
   const rpc = createOperationRpcHandler(provider, () => ({}));
@@ -288,10 +319,7 @@ test.each(['space_chat', 'general', 'space_task_agent'] as const)(
     const worker = sessions.getSession(sessionId)!;
     const callerId =
       type === 'space_chat' ? `space:chat:${worker.context!.spaceId}` : `caller-${type}`;
-    sessions.createSession(
-      { ...worker, id: callerId, type, context: { spaceId: worker.context!.spaceId } },
-      { enforceWorkspaceOwnership: false }
-    );
+    createAgentSession(worker, callerId, type, worker.context!.spaceId!);
     expect(
       await operation.execute({ taskId }, { source: 'mcp', sessionId: callerId })
     ).toMatchObject({ accepted: true });
@@ -422,10 +450,7 @@ test('MCP caller in the owning Space is admitted for a workflow-owned task', asy
   const worker = sessions.getSession(sessionId)!;
   const spaceId = worker.context!.spaceId!;
   tasks.updateTask(taskId, { workflowRunId: createWorkflowRunId(spaceId) });
-  sessions.createSession(
-    { ...worker, id: 'coordinator', type: 'space_chat', context: { spaceId } },
-    { enforceWorkspaceOwnership: false }
-  );
+  createAgentSession(worker, 'coordinator', 'space_chat', spaceId);
   const stopForStatus = mockStopForStatus();
   const workflowOp = canceller({ stopForStatus });
   expect(await workflowOp.execute({ taskId }, { source: 'mcp', sessionId: 'coordinator' })).toEqual(
@@ -651,6 +676,7 @@ function transitionOperation(overrides: Record<string, unknown> = {}) {
     emitTaskUpdated,
     isWorkflowRunActive: () => false,
     requestDirectOutcome: (input) => enqueueDirectOutcome(db, jobs, input),
+    ...sessionPolicy(),
     ...overrides,
   } as Parameters<typeof createSpaceTransitionTaskOperation>[0]);
   return { operation: operationUnderTest, emitTaskUpdated };

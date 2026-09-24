@@ -130,7 +130,7 @@ describe('describeResolvedOperations', () => {
       stubOperation('daemon.list', { safetyClass: 'human_only' }),
     ]);
 
-    expect(describeResolvedOperations(registry, { source: 'mcp', role: 'ad_hoc_member' })).toBe(
+    expect(describeResolvedOperations(registry, { source: 'mcp', role: 'long_term_agent' })).toBe(
       'operations.list shows this session 1 operation across 1 area: task.'
     );
     expect(describeResolvedOperations(registry, { source: 'mcp', role: 'workflow_worker' })).toBe(

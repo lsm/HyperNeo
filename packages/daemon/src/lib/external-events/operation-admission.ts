@@ -9,17 +9,13 @@ import {
 export type EventCallerRejection = 'caller_denied';
 
 export const EXTERNAL_EVENT_READ_ROLES: readonly OperationCallerRole[] = [
-  'ad_hoc_member',
   'long_term_agent',
   'workflow_worker',
 ];
 
 export const NODE_EVENT_ROLES: readonly OperationCallerRole[] = ['workflow_worker'];
 
-export const AGENT_EVENT_ROLES: readonly OperationCallerRole[] = [
-  'ad_hoc_member',
-  'long_term_agent',
-];
+export const AGENT_EVENT_ROLES: readonly OperationCallerRole[] = ['long_term_agent'];
 
 export interface EventCallerDependencies extends SpaceMcpSessionPolicyContext {
   getSession: (sessionId: string) => Session | null;

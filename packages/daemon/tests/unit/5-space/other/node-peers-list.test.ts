@@ -167,7 +167,7 @@ describe('createListNodePeersOperation', () => {
 
     const result = await operation.execute({}, {
       ...workerCaller,
-      role: 'ad_hoc_member',
+      role: 'long_term_agent',
     } as OperationCaller);
 
     expect(result).toBe('node_caller_denied');

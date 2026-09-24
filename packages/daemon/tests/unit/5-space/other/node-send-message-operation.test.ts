@@ -239,7 +239,7 @@ describe('createNodeSendMessageOperation', () => {
 
     const result = await operation.execute({ target: 'reviewer', message: 'ping' }, {
       ...workerCaller,
-      role: 'ad_hoc_member',
+      role: 'long_term_agent',
     } as OperationCaller);
 
     expect(result).toBe('node_caller_denied');

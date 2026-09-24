@@ -14,6 +14,9 @@ import { SessionRepository } from '../../../../src/storage/repositories/session-
 import { createStandaloneTask } from '../../../../src/storage/tasks/create-task';
 import { createSpaceTables } from '../../helpers/space-test-db';
 import { createTestSession } from '../../../helpers/database';
+import { agentOwnedMetadata } from '../../helpers/space-agent-owner';
+import type { DirectTaskWorkerIdentity } from '../../../../src/lib/tasks/direct-task-worker-identity';
+import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { SpaceTaskManager } from '../../../../src/lib/tasks/task-manager';
 import { createSpaceOperationRegistryProvider } from '../../../../src/lib/tasks/operations';
 import { createDatabaseOperationCatalog } from '../../../../src/lib/operations/database-catalog';
@@ -75,6 +78,7 @@ function provider(
         throw new Error('Unexpected workflow cleanup');
       },
       requiresPostApprovalOwner: () => false,
+      longHorizonAgentRepo: new SpaceLongHorizonAgentRepository(db),
       completionGate: async () => ({ ok: true as const }),
       ...extra,
     },
@@ -84,12 +88,14 @@ function provider(
   );
 }
 function member(id: string, owner?: string) {
+  const base = createTestSession(id);
   sessions.createSession(
     {
-      ...createTestSession(id),
+      ...base,
       workspacePath: '/repo',
       type: 'worker',
       context: owner ? { spaceId: owner } : {},
+      metadata: agentOwnedMetadata(db, id, owner, base.metadata),
     },
     { enforceWorkspaceOwnership: false }
   );
@@ -107,12 +113,29 @@ function taskWorker(id: string) {
   );
   return { sessionId: id };
 }
+function taskWorkerIdentity(id: string): DirectTaskWorkerIdentity | null {
+  const context = sessions.getSession(id)?.context;
+  if (!context?.taskId || !context.spaceId) return null;
+  return {
+    role: 'direct_task_worker',
+    owner: 'direct-task-executor',
+    isWorkflowWorker: false,
+    sessionId: id,
+    spaceId: context.spaceId,
+    taskId: context.taskId,
+    attemptId: `attempt-${id}`,
+    generation: 1,
+    phase: 'running',
+  };
+}
 function transitionDeps() {
   return {
     getSession: (id: string) => sessions.getSession(id),
     getTaskManager: (id: string) => new SpaceTaskManager(db, id),
     notifyStandalone: () => database.notifyChange('space_tasks'),
     emitTaskUpdated: emit,
+    longHorizonAgentRepo: new SpaceLongHorizonAgentRepository(db),
+    resolveDirectWorker: taskWorkerIdentity,
     isWorkflowRunActive: () => false,
   };
 }

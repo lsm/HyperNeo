@@ -196,7 +196,9 @@ describe('node topology read policy', () => {
     for (const operation of operations) {
       expect(operation.policy).toEqual({ safetyClass: 'read', roles: ['workflow_worker'] });
       expect(isOperationAdmitted(operation, workerCaller)).toBe(true);
-      expect(isOperationAdmitted(operation, { ...workerCaller, role: 'ad_hoc_member' })).toBe(true);
+      expect(isOperationAdmitted(operation, { ...workerCaller, role: 'long_term_agent' })).toBe(
+        true
+      );
       expect(isOperationAdmitted(operation, { ...workerCaller, role: 'universal_read' })).toBe(
         true
       );

@@ -3,6 +3,8 @@ import type { Database as AppDatabase } from '../../../../src/storage/database';
 import { createSpaceOperationRegistryProvider } from '../../../../src/lib/tasks/operations';
 import { createDatabaseOperationCatalog } from '../../../../src/lib/operations/database-catalog';
 import { SpaceTaskManager } from '../../../../src/lib/tasks/task-manager';
+import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
+import { agentOwnedMetadata } from '../../helpers/space-agent-owner';
 import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-adapter';
 import { createOperationRpcHandler } from '../../../../src/lib/operations/rpc-adapter';
 import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
@@ -12,6 +14,7 @@ import { SpaceRepository } from '../../../../src/storage/repositories/space-repo
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
 import { DirectTaskExecutionRepository } from '../../../../src/storage/repositories/direct-task-execution-repository';
+import { createDatabaseDirectTaskWorkerResolver } from '../../../../src/lib/tasks/direct-task-worker-identity';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
@@ -90,6 +93,8 @@ beforeEach(async () => {
   submit = submitter({
     getTaskManager: (id) => new SpaceTaskManager(db, id),
     emitTaskUpdated,
+    nodeExecutionRepo: new NodeExecutionRepository(db),
+    longHorizonAgentRepo: new SpaceLongHorizonAgentRepository(db),
   });
 });
 afterEach(() => db.close());
@@ -323,6 +328,7 @@ test('workflow-owned task via MCP caller in the owning Space is admitted', async
       id: 'caller-in-space',
       type: 'general',
       context: { spaceId: worker.context!.spaceId },
+      metadata: agentOwnedMetadata(db, 'caller-in-space', worker.context!.spaceId, worker.metadata),
     },
     { enforceWorkspaceOwnership: false }
   );
@@ -486,6 +492,10 @@ test('configured shared catalog discovers lazily and both transports persist the
       notifyStandalone: () => {},
       emitTaskUpdated: async () => {},
       isWorkflowRunActive: () => false,
+      hasDirectWorkerProvenance: (id) =>
+        new DirectTaskExecutionRepository(db).hasSessionProvenance(id),
+      resolveDirectWorker: createDatabaseDirectTaskWorkerResolver(db),
+      longHorizonAgentRepo: new SpaceLongHorizonAgentRepository(db),
     }
   );
   const rpc = createOperationRpcHandler(provider, () => ({}));

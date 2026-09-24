@@ -22,6 +22,7 @@ let agentRepo: SpaceLongHorizonAgentRepository;
 let templateRepo: SpaceAgentTemplateRepository;
 let reminderRepo: SpaceAgentReminderRepository;
 let spaceId: string;
+let memberAgentId: string;
 let otherSpaceId: string;
 let spaceAutonomyLevel: number;
 let sessions: Map<string, Session>;
@@ -30,7 +31,7 @@ let published: string[];
 
 const MEMBER_SESSION = 'space:chat:member';
 
-function memberCaller(role: OperationCallerRole = 'ad_hoc_member'): OperationCaller {
+function memberCaller(role: OperationCallerRole = 'long_term_agent'): OperationCaller {
   return { source: 'mcp', sessionId: MEMBER_SESSION, spaceId, role };
 }
 
@@ -43,7 +44,7 @@ function sessionRow(overrides: Partial<Session> & { id: string }): Session {
     status: 'active',
     type: 'space_chat',
     config: { model: 'm', provider: 'p', maxTokens: 1, temperature: 1 },
-    metadata: {},
+    metadata: { promptProvenance: { source: 'test', hash: 'h', agentId: memberAgentId } },
     context: { spaceId },
     ...overrides,
   } as unknown as Session;
@@ -100,6 +101,7 @@ beforeEach(() => {
   spaceId = spaceRepo.createSpace({ name: 'Home', slug: 'home', workspacePath: '/repo' }).id;
   otherSpaceId = spaceRepo.createSpace({ name: 'Away', slug: 'away', workspacePath: '/other' }).id;
   spaceAutonomyLevel = 5;
+  memberAgentId = agentRepo.create({ spaceId, handle: 'member', sessionId: MEMBER_SESSION }).id;
   sessions = new Map([[MEMBER_SESSION, sessionRow({ id: MEMBER_SESSION })]]);
   audited = [];
   published = [];
@@ -300,13 +302,13 @@ describe('the agent.template.instantiate operation', () => {
     const outcome = await run('agent.template.instantiate', { templateName: 'worker.nope' });
     expect(outcome.value?.reason).toBe('template_rejected');
     expect(outcome.value?.message).toContain('not found');
-    expect(agentRepo.listBySpaceId(spaceId)).toHaveLength(0);
+    expect(agentRepo.listBySpaceId(spaceId).map((agent) => agent.id)).toEqual([memberAgentId]);
   });
 
   test('the creating session must be active in the Space', async () => {
     sessions.set(MEMBER_SESSION, sessionRow({ id: MEMBER_SESSION, status: 'archived' }));
     const outcome = await run('agent.template.instantiate', { templateName: 'worker.swe' });
     expect(outcome.value?.reason).toBe('agent_denied');
-    expect(agentRepo.listBySpaceId(spaceId)).toHaveLength(0);
+    expect(agentRepo.listBySpaceId(spaceId).map((agent) => agent.id)).toEqual([memberAgentId]);
   });
 });

@@ -504,7 +504,7 @@ describe('TaskAgentManager — worker operations attach (#4600)', () => {
         description: name,
         inputSchema: z.object({}).passthrough(),
         resultSchema: z.unknown(),
-        policy: { safetyClass: 'mutate', roles: ['ad_hoc_member', 'long_term_agent'] },
+        policy: { safetyClass: 'mutate', roles: ['long_term_agent'] },
         execute: async () => `ran ${name}`,
       })
     );

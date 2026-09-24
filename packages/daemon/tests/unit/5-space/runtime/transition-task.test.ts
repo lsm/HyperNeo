@@ -22,6 +22,9 @@ import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { createStandaloneTask } from '../../../../src/storage/tasks/create-task';
 import { createTestSession } from '../../../helpers/database';
+import { agentOwnedMetadata } from '../../helpers/space-agent-owner';
+import type { DirectTaskWorkerIdentity } from '../../../../src/lib/tasks/direct-task-worker-identity';
+import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { createSpaceTables } from '../../helpers/space-test-db';
 
 let db: Database;
@@ -75,16 +78,34 @@ function createWorkflowRun() {
 }
 
 function worker(id: string, memberSpaceId?: string) {
+  const base = createTestSession(id);
   sessions.createSession(
     {
-      ...createTestSession(id),
+      ...base,
       workspacePath: '/repo',
       type: 'worker',
       context: memberSpaceId ? { spaceId: memberSpaceId } : {},
+      metadata: agentOwnedMetadata(db, id, memberSpaceId, base.metadata),
     },
     { enforceWorkspaceOwnership: false }
   );
   return { source: 'mcp' as const, sessionId: id };
+}
+
+function taskWorkerIdentity(id: string): DirectTaskWorkerIdentity | null {
+  const context = sessions.getSession(id)?.context;
+  if (!context?.taskId || !context.spaceId) return null;
+  return {
+    role: 'direct_task_worker',
+    owner: 'direct-task-executor',
+    isWorkflowWorker: false,
+    sessionId: id,
+    spaceId: context.spaceId,
+    taskId: context.taskId,
+    attemptId: `attempt-${id}`,
+    generation: 1,
+    phase: 'running',
+  };
 }
 
 function taskWorker(id: string, taskId: string) {
@@ -114,6 +135,8 @@ function deps(
   return {
     db,
     getSession: (id) => sessions.getSession(id),
+    longHorizonAgentRepo: new SpaceLongHorizonAgentRepository(db),
+    resolveDirectWorker: taskWorkerIdentity,
     getTaskManager: (id) => new SpaceTaskManager(db, id),
     notifyStandalone,
     emitTaskUpdated,

@@ -28,7 +28,7 @@ type Rejection = RetryTaskRejection;
 type Result = SpaceTask | Rejection;
 type RetryPlan = { task: SpaceTask; recoverTo?: 'open' | 'in_progress' };
 
-const RETRY_ROLES: readonly OperationCallerRole[] = ['ad_hoc_member', 'long_term_agent'];
+const RETRY_ROLES: readonly OperationCallerRole[] = ['long_term_agent'];
 const RETRYABLE_STATUSES: ReadonlySet<string> = new Set(['blocked', 'cancelled', 'done']);
 
 export interface RetryTaskDependencies extends SpaceMcpSessionPolicyContext {

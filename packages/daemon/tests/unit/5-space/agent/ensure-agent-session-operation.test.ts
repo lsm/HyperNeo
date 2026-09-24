@@ -15,6 +15,7 @@ import { invokeOperation } from '../../../../src/lib/operations/invoke';
 let db: Database;
 let agentRepo: SpaceLongHorizonAgentRepository;
 let spaceId: string;
+let memberAgentId: string;
 let agent: SpaceLongHorizonAgent;
 let sessions: Map<string, Session>;
 let ensureCalls: Array<{ spaceId: string; agentId: string }>;
@@ -32,7 +33,7 @@ function sessionRow(overrides: Partial<Session> & { id: string }): Session {
     status: 'active',
     type: 'space_chat',
     config: { model: 'm', provider: 'p', maxTokens: 1, temperature: 1 },
-    metadata: {},
+    metadata: { promptProvenance: { source: 'test', hash: 'h', agentId: memberAgentId } },
     context: { spaceId },
     ...overrides,
   } as unknown as Session;
@@ -84,6 +85,7 @@ beforeEach(() => {
     displayName: 'Task Manager',
     instructions: '',
   });
+  memberAgentId = agentRepo.create({ spaceId, handle: 'member', sessionId: MEMBER_SESSION }).id;
   sessions = new Map([[MEMBER_SESSION, sessionRow({ id: MEMBER_SESSION })]]);
   ensureCalls = [];
   ensureFault = undefined;
@@ -111,7 +113,7 @@ describe('the agent.session.ensure operation', () => {
   test('an agent session caller acts in its own Space without naming it', async () => {
     const outcome = await ensureSession(
       { agentId: agent.id },
-      { source: 'mcp', sessionId: MEMBER_SESSION, spaceId, role: 'ad_hoc_member' }
+      { source: 'mcp', sessionId: MEMBER_SESSION, spaceId, role: 'long_term_agent' }
     );
 
     expect(outcome.value).toEqual({ sessionId: `session-of-${agent.id}` });

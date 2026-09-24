@@ -14,8 +14,8 @@ import {
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
 
 const SPACE_ID = 'space-1';
-const READ_ROLES = ['ad_hoc_member', 'long_term_agent', 'workflow_worker'];
-const WRITE_ROLES = ['ad_hoc_member', 'long_term_agent'];
+const READ_ROLES = ['long_term_agent', 'workflow_worker'];
+const WRITE_ROLES = ['long_term_agent'];
 const OTHER_SPACE_ID = 'space-2';
 
 function schedule(overrides: Partial<TaskSchedule> = {}): TaskSchedule {
@@ -203,7 +203,7 @@ describe('schedule operation catalog', () => {
       registry,
       'schedule.delete',
       { scheduleId: 'sched-1' },
-      mcpCaller('ad_hoc_member', { spaceId: undefined })
+      mcpCaller('long_term_agent', { spaceId: undefined })
     );
     expect(outcome).toEqual({
       kind: 'completed',
@@ -234,7 +234,7 @@ describe('schedule operation catalog', () => {
 
   test('an MCP caller inherits its own space and may not override it', async () => {
     expect(
-      await run('schedule.list', { spaceId: OTHER_SPACE_ID }, mcpCaller('ad_hoc_member'))
+      await run('schedule.list', { spaceId: OTHER_SPACE_ID }, mcpCaller('long_term_agent'))
     ).toEqual({
       ok: false,
       reason: 'space_mismatch',
@@ -247,7 +247,7 @@ describe('schedule operation catalog', () => {
     const result = await run(
       'schedule.create',
       { title: 'Weekly', description: 'd', triggerType: 'cron', cronExpression: '@daily' },
-      mcpCaller('ad_hoc_member', { sessionId: 'member-1', agentName: 'planner' })
+      mcpCaller('long_term_agent', { sessionId: 'member-1', agentName: 'planner' })
     );
     expect(result).toMatchObject({
       ok: true,
@@ -269,7 +269,7 @@ describe('schedule operation catalog', () => {
       await run(
         'schedule.create',
         { title: 'Weekly', description: 'd', triggerType: 'cron', cronExpression: '@daily' },
-        mcpCaller('ad_hoc_member')
+        mcpCaller('long_term_agent')
       )
     ).toEqual({
       ok: false,
@@ -281,7 +281,7 @@ describe('schedule operation catalog', () => {
   test('a schedule owned by another space is not found', async () => {
     h.stored = [schedule({ id: 'sched-1', spaceId: OTHER_SPACE_ID })];
     expect(
-      await run('schedule.get', { scheduleId: 'sched-1' }, mcpCaller('ad_hoc_member'))
+      await run('schedule.get', { scheduleId: 'sched-1' }, mcpCaller('long_term_agent'))
     ).toEqual({
       ok: false,
       reason: 'schedule_not_found',
@@ -294,7 +294,7 @@ describe('schedule operation catalog', () => {
       await run(
         'schedule.update',
         { scheduleId: 'sched-1', status: 'paused' },
-        mcpCaller('ad_hoc_member')
+        mcpCaller('long_term_agent')
       )
     ).toEqual({ ok: true, schedule: schedule({ status: 'paused' }) });
     expect(h.calls).toEqual(['pauseSchedule']);
@@ -308,7 +308,7 @@ describe('schedule operation catalog', () => {
       await run(
         'schedule.update',
         { scheduleId: 'sched-1', status: 'active' },
-        mcpCaller('ad_hoc_member')
+        mcpCaller('long_term_agent')
       )
     ).toEqual({ ok: true, schedule: schedule({ status: 'active' }) });
     expect(h.calls).toEqual(['resumeSchedule']);
@@ -320,7 +320,7 @@ describe('schedule operation catalog', () => {
       await run(
         'schedule.update',
         { scheduleId: 'sched-1', status: 'active' },
-        mcpCaller('ad_hoc_member')
+        mcpCaller('long_term_agent')
       )
     ).toEqual({ ok: true, schedule: schedule() });
     expect(h.calls).toEqual([]);
@@ -334,7 +334,7 @@ describe('schedule operation catalog', () => {
       await run(
         'schedule.update',
         { scheduleId: 'sched-1', status: 'paused' },
-        mcpCaller('ad_hoc_member')
+        mcpCaller('long_term_agent')
       )
     ).toEqual({
       ok: false,
@@ -350,7 +350,7 @@ describe('schedule operation catalog', () => {
       await run(
         'schedule.update',
         { scheduleId: 'sched-1', status: 'paused' },
-        mcpCaller('ad_hoc_member')
+        mcpCaller('long_term_agent')
       )
     ).toEqual({
       ok: false,
@@ -363,7 +363,7 @@ describe('schedule operation catalog', () => {
   test('a concurrently advanced schedule reports modified_concurrently', async () => {
     h.deleteSucceeds = false;
     expect(
-      await run('schedule.delete', { scheduleId: 'sched-1' }, mcpCaller('ad_hoc_member'))
+      await run('schedule.delete', { scheduleId: 'sched-1' }, mcpCaller('long_term_agent'))
     ).toEqual({
       ok: false,
       reason: 'modified_concurrently',
@@ -375,7 +375,7 @@ describe('schedule operation catalog', () => {
 
   test('delete removes the schedule and records an audit entry', async () => {
     expect(
-      await run('schedule.delete', { scheduleId: 'sched-1' }, mcpCaller('ad_hoc_member'))
+      await run('schedule.delete', { scheduleId: 'sched-1' }, mcpCaller('long_term_agent'))
     ).toEqual({ ok: true });
     expect(h.stored).toEqual([]);
     expect(h.audits.map((entry) => entry.toolName)).toEqual(['schedule.delete']);
@@ -387,12 +387,12 @@ describe('schedule operation catalog', () => {
       await run(
         'schedule.create',
         { title: 'Weekly', description: 'd', triggerType: 'cron', cronExpression: '@daily' },
-        mcpCaller('ad_hoc_member')
+        mcpCaller('long_term_agent')
       )
     ).toMatchObject({ ok: true });
     expect(h.stored).toHaveLength(2);
     expect(
-      await run('schedule.delete', { scheduleId: 'sched-1' }, mcpCaller('ad_hoc_member'))
+      await run('schedule.delete', { scheduleId: 'sched-1' }, mcpCaller('long_term_agent'))
     ).toEqual({ ok: true });
     expect(h.stored.map((entry) => entry.id)).not.toContain('sched-1');
   });
@@ -435,7 +435,7 @@ describe('schedule operation role admission', () => {
   test('an archived caller session may not mutate, and nothing changes', async () => {
     h.sessions.set('member-1', session('archived', SPACE_ID));
     expect(
-      await run('schedule.delete', { scheduleId: 'sched-1' }, mcpCaller('ad_hoc_member'))
+      await run('schedule.delete', { scheduleId: 'sched-1' }, mcpCaller('long_term_agent'))
     ).toEqual({
       ok: false,
       reason: 'denied',
@@ -452,7 +452,7 @@ describe('schedule operation role admission', () => {
       await run(
         'schedule.update',
         { scheduleId: 'sched-1', status: 'paused' },
-        mcpCaller('ad_hoc_member')
+        mcpCaller('long_term_agent')
       )
     ).toEqual({
       ok: false,
@@ -474,7 +474,7 @@ describe('invokeOperation', () => {
         registry,
         'schedule.get',
         { scheduleId: 'sched-1' },
-        mcpCaller('ad_hoc_member')
+        mcpCaller('long_term_agent')
       )
     ).toEqual({ kind: 'completed', value: { ok: true, schedule: schedule() } });
     expect(
@@ -482,7 +482,7 @@ describe('invokeOperation', () => {
         registry,
         'schedule.delete',
         { scheduleId: 'sched-1' },
-        mcpCaller('ad_hoc_member')
+        mcpCaller('long_term_agent')
       )
     ).toEqual({ kind: 'completed', value: { ok: true } });
   });
@@ -494,14 +494,14 @@ describe('invokeOperation', () => {
         registry,
         'schedule.update',
         { scheduleId: 'sched-1', status: 'paused' },
-        mcpCaller('ad_hoc_member')
+        mcpCaller('long_term_agent')
       )
     ).toEqual({ kind: 'completed', value: { ok: true, schedule: schedule({ status: 'paused' }) } });
     const completed = await invokeOperation(
       registry,
       'schedule.update',
       { scheduleId: 'sched-1', status: 'completed' },
-      mcpCaller('ad_hoc_member')
+      mcpCaller('long_term_agent')
     );
     expect(completed.kind).toBe('failed');
   });

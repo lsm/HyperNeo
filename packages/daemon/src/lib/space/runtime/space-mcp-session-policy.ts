@@ -24,12 +24,11 @@ export interface SpaceMcpSessionPolicy {
   readonly spaceId?: string;
   readonly owner: 'space-runtime' | 'task-agent-manager' | 'direct-task-executor' | 'none';
   readonly requiredServers: readonly string[];
-  readonly attachGenericSpaceTools: boolean;
   readonly attachLongTermAgentTools: boolean;
   readonly isWorkflowWorker: boolean;
 }
 
-export function spaceAdHocMemberRequiredMcpServers(): readonly string[] {
+export function spaceAgentRequiredMcpServers(): readonly string[] {
   return [];
 }
 
@@ -59,7 +58,6 @@ export function resolveSpaceMcpSessionPolicy(
       spaceId: directWorker?.spaceId,
       owner: directWorker ? 'direct-task-executor' : 'none',
       requiredServers: [],
-      attachGenericSpaceTools: false,
       attachLongTermAgentTools: false,
       isWorkflowWorker: false,
     };
@@ -71,14 +69,13 @@ export function resolveSpaceMcpSessionPolicy(
       spaceId,
       owner: 'none',
       requiredServers: [],
-      attachGenericSpaceTools: false,
       attachLongTermAgentTools: false,
       isWorkflowWorker: false,
     };
   }
 
   const workflowExecution = resolveWorkflowExecution(session, context.nodeExecutionRepo);
-  if (workflowExecution) {
+  if (workflowExecution || isPostApprovalSession(session)) {
     const taskId = session.context?.taskId;
     const task = taskId ? (context.taskRepo?.getTask(taskId) ?? null) : null;
     const resolvedSpaceId = spaceId ?? task?.spaceId;
@@ -87,45 +84,34 @@ export function resolveSpaceMcpSessionPolicy(
       spaceId: resolvedSpaceId,
       owner: 'task-agent-manager',
       requiredServers: spaceWorkflowWorkerRequiredMcpServers(),
-      attachGenericSpaceTools: false,
       attachLongTermAgentTools: false,
       isWorkflowWorker: true,
     };
   }
 
-  if (!spaceId) {
-    return {
-      role: 'universal_read',
-      spaceId: undefined,
-      owner: 'none',
-      requiredServers: [],
-      attachGenericSpaceTools: false,
-      attachLongTermAgentTools: false,
-      isWorkflowWorker: false,
-    };
-  }
-
-  if (isLongTermAgentSession(session, spaceId, context.longHorizonAgentRepo)) {
+  if (spaceId && isLongTermAgentSession(session, spaceId, context.longHorizonAgentRepo)) {
     return {
       role: 'long_term_agent',
       spaceId,
       owner: 'space-runtime',
-      requiredServers: spaceAdHocMemberRequiredMcpServers(),
-      attachGenericSpaceTools: false,
+      requiredServers: spaceAgentRequiredMcpServers(),
       attachLongTermAgentTools: true,
       isWorkflowWorker: false,
     };
   }
 
   return {
-    role: 'ad_hoc_member',
-    spaceId,
-    owner: 'space-runtime',
-    requiredServers: spaceAdHocMemberRequiredMcpServers(),
-    attachGenericSpaceTools: true,
+    role: 'universal_read',
+    spaceId: undefined,
+    owner: 'none',
+    requiredServers: [],
     attachLongTermAgentTools: false,
     isWorkflowWorker: false,
   };
+}
+
+function isPostApprovalSession(session: Session): boolean {
+  return session.id.includes(':task:') && session.id.includes(':post-approval:');
 }
 
 export function resolveWorkflowExecution(

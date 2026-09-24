@@ -2,7 +2,6 @@ import type { OperationName } from '@hyperneo/shared/types/operation-names';
 import type { z } from 'zod';
 
 export type OperationCallerRole =
-  | 'ad_hoc_member'
   | 'workflow_worker'
   | 'direct_task_worker'
   | 'long_term_agent'

@@ -77,8 +77,8 @@ describe('createSpaceCallerScopeResolver', () => {
     expect(resolve('missing')).toBeNull();
   });
 
-  test('space chat sessions are ad hoc members of their space', () => {
-    expect(resolve('space:chat:space-9')).toEqual({ role: 'ad_hoc_member', spaceId: 'space-9' });
+  test('a space chat session no agent owns resolves outside any space', () => {
+    expect(resolve('space:chat:space-9')).toEqual({ role: 'universal_read' });
   });
 
   test('workflow workers carry their execution identity', () => {
@@ -103,10 +103,9 @@ describe('createSpaceCallerScopeResolver', () => {
     expect(resolve('direct-1')).toEqual({ role: 'direct_task_worker', spaceId: 'space-4' });
   });
 
-  test('members fall back to prompt provenance for agent identity', () => {
+  test('a session naming an agent the space does not hold resolves outside it', () => {
     expect(resolve('member-1')).toEqual({
-      role: 'ad_hoc_member',
-      spaceId: 'space-5',
+      role: 'universal_read',
       agentId: 'agent-5',
       agentName: 'reviewer',
     });

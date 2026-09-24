@@ -101,7 +101,7 @@ describe('createGetExternalEventOperation', () => {
       source: 'mcp',
       sessionId: session('s-member', SPACE),
       spaceId: SPACE,
-      role: 'ad_hoc_member',
+      role: 'long_term_agent',
     };
     const result = await run('event.external.get', { eventId: 'evt-1' }, caller);
     expect(result).toEqual({
@@ -116,7 +116,7 @@ describe('createGetExternalEventOperation', () => {
       source: 'mcp',
       sessionId: session('s-member2', SPACE),
       spaceId: SPACE,
-      role: 'ad_hoc_member',
+      role: 'long_term_agent',
     };
     expect(await run('event.external.get', { eventId: 'evt-2' }, caller)).toBe('event_not_found');
   });
@@ -202,7 +202,7 @@ describe('createListDeliveriesOperation', () => {
       source: 'mcp',
       sessionId: session('s-member4', SPACE),
       spaceId: SPACE,
-      role: 'ad_hoc_member',
+      role: 'long_term_agent',
     };
     const result = (await run('event.external.delivery.list', { workflowRunId: RUN }, caller)) as {
       deliveries: Array<{ eventId: string }>;

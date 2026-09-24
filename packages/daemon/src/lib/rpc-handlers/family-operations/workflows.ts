@@ -8,6 +8,8 @@ export function registerWorkflowOperations(context: FamilyOperationContext): Ope
     taskRepo: context.spaceTaskRepo,
     nodeExecutionRepo: context.nodeExecutionRepo,
     longHorizonAgentRepo: context.longHorizonAgentRepo,
+    hasDirectWorkerProvenance: context.hasDirectWorkerProvenance,
+    resolveDirectWorker: context.resolveDirectWorker,
     listWorkflowSummaries: (spaceId) => context.spaceWorkflowManager.listWorkflowSummaries(spaceId),
     getWorkflow: (workflowId) => context.spaceWorkflowManager.getWorkflow(workflowId),
     getWorkflowByHandle: (spaceId, handle) =>

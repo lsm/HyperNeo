@@ -48,7 +48,7 @@ function makeSession(id: string, spaceId: string): Session {
     lastActiveAt: new Date().toISOString(),
     status: 'active',
     config: { tools: {} },
-    metadata: {},
+    metadata: { promptProvenance: { source: 'test', hash: 'h', agentId: `agent-${id}` } },
     type: 'space_chat',
     context: { spaceId },
   } as unknown as Session;
@@ -99,6 +99,15 @@ function makeCtx() {
   const sessions = new Map<string, Session>([
     ['session-member', makeSession('session-member', SPACE_ID)],
   ]);
+  const sessionOwners = new SpaceLongHorizonAgentRepository(db);
+  for (const owned of sessions.values()) {
+    sessionOwners.create({
+      id: `agent-${owned.id}`,
+      spaceId: owned.context?.spaceId as string,
+      handle: owned.id,
+      sessionId: owned.id,
+    });
+  }
   const audited: EvolutionAuditEntry[] = [];
   const audit: EvolutionAuditWriter = (entry) => {
     audited.push(entry);
@@ -144,7 +153,7 @@ const memberCaller: OperationCaller = {
   source: 'mcp',
   sessionId: 'session-member',
   spaceId: SPACE_ID,
-  role: 'ad_hoc_member',
+  role: 'long_term_agent',
   agentName: 'alice',
 };
 const readerCaller: OperationCaller = {
@@ -156,7 +165,7 @@ const readerCaller: OperationCaller = {
 const spacelessCaller: OperationCaller = {
   source: 'mcp',
   sessionId: 'session-member',
-  role: 'ad_hoc_member',
+  role: 'long_term_agent',
 };
 
 function seedScope(ctx: Ctx, spaceId = SPACE_ID, goalId: string | null = null) {

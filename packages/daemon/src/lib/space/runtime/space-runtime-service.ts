@@ -189,7 +189,6 @@ export class SpaceRuntimeService {
   private readonly actorRegistry: SpaceActorRegistryAdapter | null;
   private readonly auditLogRepo: McpAuditLogRepository;
   private readonly templateManager: SpaceAgentTemplateManager;
-  private readonly memberSessionDbQueryServers = new Map<string, DbQueryMcpServer>();
   private readonly longTermAgentDbQueryServers = new Map<string, DbQueryMcpServer>();
   private resumeStalledRecoveryPromise: Promise<void> = Promise.resolve();
   private provisioningPromise: Promise<void> | null = null;
@@ -1165,15 +1164,6 @@ export class SpaceRuntimeService {
     }
     this.unsubscribers.length = 0;
 
-    for (const [sessionId, server] of this.memberSessionDbQueryServers) {
-      try {
-        server.close();
-      } catch (error) {
-        log.warn(`Failed to close db-query server for member session ${sessionId}:`, error);
-      }
-    }
-    this.memberSessionDbQueryServers.clear();
-
     for (const [sessionId, server] of this.longTermAgentDbQueryServers) {
       try {
         server.close();
@@ -1196,11 +1186,8 @@ export class SpaceRuntimeService {
     const unsubSessionCreated = internalEventBus.subscribe(
       'session.created',
       (event) => {
-        const policy = this.resolveMcpSessionPolicy(event.session);
-        const attachPromise = policy.attachLongTermAgentTools
-          ? this.attachLongTermAgentMcpServersForSession(event.session)
-          : this.attachSpaceToolsToMemberSession(event.session);
-        void attachPromise.catch((err) => {
+        if (!this.resolveMcpSessionPolicy(event.session).attachLongTermAgentTools) return;
+        void this.attachLongTermAgentMcpServersForSession(event.session).catch((err) => {
           log.error(
             `Failed to attach space tools to session ${event.sessionId} (space ${event.session.context?.spaceId ?? '?'}):`,
             err
@@ -1214,7 +1201,6 @@ export class SpaceRuntimeService {
     const unsubSessionDeleted = internalEventBus.subscribe(
       'session.deleted',
       (event) => {
-        this.releaseMemberSessionDbQuery(event.sessionId);
         this.releaseLongTermAgentDbQuery(event.sessionId);
       },
       { subscriberName: 'SpaceRuntimeService.sessionDeleted' }
@@ -1295,22 +1281,7 @@ export class SpaceRuntimeService {
     const policy = this.resolveMcpSessionPolicy(session);
     if (policy.attachLongTermAgentTools) {
       await this.attachLongTermAgentMcpServersForSession(session, options);
-      return;
     }
-    if (policy.attachGenericSpaceTools) {
-      await this.attachSpaceToolsToMemberSession(session, options);
-    }
-  }
-
-  private releaseMemberSessionDbQuery(sessionId: string): void {
-    const server = this.memberSessionDbQueryServers.get(sessionId);
-    if (!server) return;
-    try {
-      server.close();
-    } catch (err) {
-      log.warn(`Failed to close db-query server for member session ${sessionId}:`, err);
-    }
-    this.memberSessionDbQueryServers.delete(sessionId);
   }
 
   private async provisionExistingSpaces(): Promise<void> {
@@ -1337,8 +1308,6 @@ export class SpaceRuntimeService {
         try {
           if (policy.attachLongTermAgentTools) {
             await this.attachLongTermAgentMcpServersForSession(session);
-          } else if (policy.attachGenericSpaceTools) {
-            await this.attachSpaceToolsToMemberSession(session);
           }
         } catch (err) {
           log.error(
@@ -1350,84 +1319,6 @@ export class SpaceRuntimeService {
     } catch (err) {
       log.error('Failed to iterate existing sessions for space-tool attachment:', err);
     }
-  }
-
-  private sessionBelongsToLongHorizonAgent(spaceId: string, sessionId: string): boolean {
-    const repo = this.config.longHorizonAgentRepo;
-    if (!repo) return false;
-    return repo.listBySpaceId(spaceId).some((agent) => agent.sessionId === sessionId);
-  }
-
-  async attachSpaceToolsToMemberSession(
-    session: Session,
-    options: { replayPendingMessages?: boolean } = {}
-  ): Promise<void> {
-    const { sessionManager } = this.config;
-    if (!sessionManager) return;
-    const policy = this.resolveMcpSessionPolicy(session);
-    if (!policy.attachGenericSpaceTools || !policy.spaceId) return;
-    const spaceId = policy.spaceId;
-
-    const space = await this.config.spaceManager.getSpace(spaceId);
-    if (!space) {
-      log.warn(
-        `attachSpaceToolsToMemberSession: space "${spaceId}" not found (session ${session.id})`
-      );
-      return;
-    }
-
-    const agentSession = await sessionManager.getSessionAsync(session.id);
-    if (!agentSession) {
-      log.warn(`attachSpaceToolsToMemberSession: agent session not found for ${session.id}`);
-      return;
-    }
-
-    if (this.sessionBelongsToLongHorizonAgent(spaceId, session.id)) return;
-
-    this.taskAgentManager?.reattachSlotContextReset(agentSession);
-
-    const additional: Record<string, McpServerConfig> = {};
-    const capabilities: AuthoredCapabilityContribution[] = [];
-    if (this.config.memoryRepo) {
-      const memoryServer = createAgentMemoryMcpServer({
-        spaceId: space.id,
-        memoryRepo: this.config.memoryRepo,
-        mySessionId: session.id,
-      });
-      additional['agent-memory'] = memoryServer as unknown as McpServerConfig;
-      capabilities.push(agentMemoryCapabilityContribution(memoryServer));
-    }
-
-    if (this.config.dbPath) {
-      this.releaseMemberSessionDbQuery(session.id);
-      const dbQueryServer = createDbQueryMcpServer({
-        dbPath: this.config.dbPath,
-        scopeType: 'space',
-        scopeValue: space.id,
-      });
-      this.memberSessionDbQueryServers.set(session.id, dbQueryServer);
-      additional['db-query'] = dbQueryServer as unknown as McpServerConfig;
-      capabilities.push(dbQueryCapabilityContribution(dbQueryServer));
-    }
-
-    agentSession.mergeRuntimeMcpServers(additional);
-
-    agentSession.setAttachedCapabilities(capabilities);
-
-    agentSession.onMissingMemberSpaceMcpServers = async (_sessionId, missing) => {
-      log.warn(
-        `Space member session ${session.id} missing MCP servers [${missing.join(', ')}]; re-installing Space operations before query start`
-      );
-      await this.attachSpaceToolsToMemberSession(session, { replayPendingMessages: false });
-    };
-
-    if (options.replayPendingMessages !== false) {
-      await this.replayPendingMessagesAfterRuntimeProvisioning(agentSession);
-    }
-
-    log.info(
-      `Installed Space operations on member session ${session.id} (space ${space.id}, role ${policy.role}, type ${session.type ?? 'worker'})`
-    );
   }
 
   async reattachMemberSpaceTools(sessionId: string): Promise<void> {
@@ -1445,8 +1336,6 @@ export class SpaceRuntimeService {
       await this.attachLongTermAgentMcpServersForSession(session, {
         replayPendingMessages: false,
       });
-    } else if (policy.attachGenericSpaceTools) {
-      await this.attachSpaceToolsToMemberSession(session, { replayPendingMessages: false });
     }
   }
 

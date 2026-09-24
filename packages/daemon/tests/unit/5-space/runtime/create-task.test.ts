@@ -12,6 +12,8 @@ import { SpaceRepository } from '../../../../src/storage/repositories/space-repo
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { createTestSession } from '../../../helpers/database';
+import { agentOwnedMetadata } from '../../helpers/space-agent-owner';
+import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { createSpaceTables } from '../../helpers/space-test-db';
 
 let db: Database;
@@ -42,6 +44,7 @@ function deps(overrides: Partial<SpaceCreateTaskDependencies> = {}): SpaceCreate
   return {
     db,
     getSession: (id) => sessions.getSession(id),
+    longHorizonAgentRepo: new SpaceLongHorizonAgentRepository(db),
     getTaskManager: (id) => new SpaceTaskManager(db, id),
     notifyStandalone,
     emitTaskCreated,
@@ -67,9 +70,14 @@ function worker(id: string, memberSpaceId?: string, agentName?: string) {
       workspacePath: '/repo',
       type: 'worker',
       context: memberSpaceId ? { spaceId: memberSpaceId } : {},
-      metadata: agentName
-        ? { ...base.metadata, promptProvenance: { source: 'test', hash: 'h', agentName } }
-        : base.metadata,
+      metadata: agentOwnedMetadata(
+        db,
+        id,
+        memberSpaceId,
+        agentName
+          ? { ...base.metadata, promptProvenance: { source: 'test', hash: 'h', agentName } }
+          : base.metadata
+      ),
     },
     { enforceWorkspaceOwnership: false }
   );

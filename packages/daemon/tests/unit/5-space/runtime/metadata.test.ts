@@ -14,6 +14,8 @@ import { SessionRepository } from '../../../../src/storage/repositories/session-
 import { createStandaloneTask } from '../../../../src/storage/tasks/create-task';
 import { readTaskCore } from '../../../../src/storage/tasks/task-reader';
 import { SpaceTaskManager } from '../../../../src/lib/tasks/task-manager';
+import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
+import { agentOwnedMetadata } from '../../helpers/space-agent-owner';
 import {
   createSpaceTaskMetadataEditor,
   requireMetadataCallerScope,
@@ -103,11 +105,18 @@ test.each(['rpc', 'internal'] as const)(
 );
 
 test.each(['space_chat', 'space_task_agent', 'worker'] as const)(
-  'allows persisted matching %s sessions',
+  'allows persisted matching %s agent sessions',
   async (type) => {
-    const session = persistSession({ type, context: { spaceId } });
+    const session = persistSession({
+      type,
+      context: { spaceId },
+      metadata: agentOwnedMetadata(db, 'session-1', spaceId, createTestSession('s').metadata),
+    });
     expect(
-      await editor()({ taskId, title: 'Changed' }, { source: 'mcp', sessionId: session.id })
+      await editor({ longHorizonAgentRepo: new SpaceLongHorizonAgentRepository(db) })(
+        { taskId, title: 'Changed' },
+        { source: 'mcp', sessionId: session.id }
+      )
     ).toMatchObject({ title: 'Changed' });
     expect(getSession).toHaveBeenCalledWith(session.id);
     expect(emit).toHaveBeenCalledTimes(1);
@@ -143,9 +152,17 @@ test.each([undefined, {}, { spaceId: 'other' }])(
 test.each(['ended', 'archived', 'paused'] as const)(
   'refuses a %s session that still names the owning Space',
   async (status) => {
-    const session = persistSession({ type: 'worker', status, context: { spaceId } });
+    const session = persistSession({
+      type: 'worker',
+      status,
+      context: { spaceId },
+      metadata: agentOwnedMetadata(db, 'session-1', spaceId, createTestSession('s').metadata),
+    });
     await expect(
-      editor()({ taskId, title: 'Changed' }, { source: 'mcp', sessionId: session.id })
+      editor({ longHorizonAgentRepo: new SpaceLongHorizonAgentRepository(db) })(
+        { taskId, title: 'Changed' },
+        { source: 'mcp', sessionId: session.id }
+      )
     ).resolves.toEqual({ accepted: false, reason: 'task_update_denied' });
     expect(tasks.getTask(taskId)?.title).toBe('Original');
     expect(getTaskManager).not.toHaveBeenCalled();

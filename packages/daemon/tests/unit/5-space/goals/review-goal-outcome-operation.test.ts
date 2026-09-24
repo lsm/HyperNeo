@@ -23,6 +23,7 @@ import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 
 const SPACE_ID = 'space-goal-review';
 const SESSION_ID = 'session-goal-owner';
+const SESSION_OWNER_ID = 'agent-session-owner';
 
 function insertSpace(db: BunDatabase, spaceId: string): void {
   db.prepare(
@@ -38,7 +39,7 @@ function session(status: string): Session {
     type: 'space',
     status,
     context: { spaceId: SPACE_ID },
-    metadata: {},
+    metadata: { promptProvenance: { source: 'test', hash: 'h', agentId: SESSION_OWNER_ID } },
   } as unknown as Session;
 }
 
@@ -81,6 +82,8 @@ function makeCtx(sessionStatus = 'active') {
     })
   );
   const owner = longHorizonAgentRepo.create({
+    id: SESSION_OWNER_ID,
+    sessionId: SESSION_ID,
     spaceId: SPACE_ID,
     handle: 'owner-agent',
     displayName: 'Owner',
@@ -326,31 +329,6 @@ describe('the goal outcome operations door', () => {
       expect(result.reason).toBe('session_not_admitted');
       expect(ctx.goalService.getGoal(ctx.goal.id)?.summary).toBe('');
       expect(ctx.auditRows()).toEqual([]);
-    } finally {
-      ctx.db.close();
-    }
-  });
-
-  test('lists the owned notifications for an ad_hoc_member caller as well', async () => {
-    const ctx = makeCtx();
-    try {
-      const notification = ctx.notify();
-      const outcome = await invokeOperation(
-        ctx.registry,
-        'goal.outcome.list',
-        {},
-        {
-          source: 'mcp',
-          sessionId: SESSION_ID,
-          spaceId: SPACE_ID,
-          role: 'ad_hoc_member',
-          agentId: ctx.owner.id,
-        }
-      );
-      expect(outcome).toMatchObject({
-        kind: 'completed',
-        value: { accepted: true, notifications: [{ id: notification.id }] },
-      });
     } finally {
       ctx.db.close();
     }

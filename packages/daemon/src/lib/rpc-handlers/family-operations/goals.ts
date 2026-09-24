@@ -7,6 +7,8 @@ export function registerGoalOperations(context: FamilyOperationContext): Operati
   return createGoalOperations({
     goalService: context.spaceGoalService,
     longHorizonAgentRepo: context.longHorizonAgentRepo,
+    hasDirectWorkerProvenance: context.hasDirectWorkerProvenance,
+    resolveDirectWorker: context.resolveDirectWorker,
     nodeExecutionRepo: context.nodeExecutionRepo,
     taskRepo: context.spaceTaskRepo,
     goalScopeRepo: context.spaceAgentGoalScopeRepo,

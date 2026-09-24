@@ -93,7 +93,7 @@ describe('SpaceActorRegistryAdapter', () => {
     }
   );
 
-  it('seeds humans, ad-hoc sessions, agents, workers, and systems', () => {
+  it('seeds agents, workers, and systems but no actor for an unowned session', () => {
     const space = spaceRepo.createSpace({
       workspacePath: '/workspace/project',
       slug: 'project',
@@ -249,38 +249,7 @@ describe('SpaceActorRegistryAdapter', () => {
       '@coordinator-2'
     );
 
-    expect(actors).toContainEqual({
-      actorId: `human:${member.id}`,
-      kind: 'human',
-      spaceId: space.id,
-      handle: undefined,
-      roles: ['member'],
-      status: 'active',
-    });
-    expect(actors).toContainEqual({
-      actorId: `session:${member.id}`,
-      kind: 'session',
-      spaceId: space.id,
-      handle: `@session:${member.id}`,
-      roles: ['member-session'],
-      status: 'active',
-    });
-    expect(actors).toContainEqual({
-      actorId: `human:${legacyMember.id}`,
-      kind: 'human',
-      spaceId: space.id,
-      handle: undefined,
-      roles: ['member'],
-      status: 'active',
-    });
-    expect(actors).toContainEqual({
-      actorId: `session:${legacyMember.id}`,
-      kind: 'session',
-      spaceId: space.id,
-      handle: `@session:${legacyMember.id}`,
-      roles: ['member-session'],
-      status: 'active',
-    });
+    expect(actors.some((actor) => actor.kind === 'human' || actor.kind === 'session')).toBe(false);
     expect(actors).toContainEqual({
       actorId: `agent:${agent.id}`,
       kind: 'agent',

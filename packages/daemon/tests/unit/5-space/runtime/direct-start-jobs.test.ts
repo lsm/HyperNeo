@@ -9,6 +9,8 @@ import { createOperationRegistry } from '../../../../src/lib/operations/registry
 import { createOperationRpcHandler } from '../../../../src/lib/operations/rpc-adapter';
 import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-adapter';
 import { createTestSession } from '../../../helpers/database';
+import { agentOwnedMetadata } from '../../helpers/space-agent-owner';
+import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import type { CallContext } from '@hyperneo/shared';
 import { JobQueueProcessor } from '../../../../src/storage/job-queue-processor';
 import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
@@ -554,11 +556,22 @@ test('review submission cannot invalidate an unactivated direct request', async 
 });
 
 test('shared start transports return one durable receipt without preparing a session', async () => {
-  const operation = createStartTaskOperation(() => db, jobs, {}, { onTaskReopened: () => {} });
+  const operation = createStartTaskOperation(
+    () => db,
+    jobs,
+    { longHorizonAgentRepo: new SpaceLongHorizonAgentRepository(db) },
+    { onTaskReopened: () => {} }
+  );
   const registry = createOperationRegistry([operation]);
   const caller = 'member';
+  const spaceId = tasks.getTask(taskId)!.spaceId!;
+  const base = createTestSession(caller);
   sessions.createSession(
-    { ...createTestSession(caller), context: { spaceId: tasks.getTask(taskId)!.spaceId } },
+    {
+      ...base,
+      context: { spaceId },
+      metadata: agentOwnedMetadata(db, caller, spaceId, base.metadata),
+    },
     { enforceWorkspaceOwnership: false }
   );
   const invocation = { name: 'task.start', input: { taskId, requestKey: 'shared' } };

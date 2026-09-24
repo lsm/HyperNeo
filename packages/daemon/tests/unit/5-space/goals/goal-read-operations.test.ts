@@ -119,7 +119,7 @@ describe('goal.list through the operations door', () => {
     try {
       const active = ctx.seed(SPACE_ID, 'Active goal');
       ctx.goalService.updateGoal(ctx.seed(SPACE_ID, 'Paused goal').id, { status: 'paused' });
-      const all = await invoke(ctx, 'goal.list', {}, agent('ad_hoc_member'));
+      const all = await invoke(ctx, 'goal.list', {}, agent('long_term_agent'));
       expect(all.goals).toHaveLength(2);
       const onlyActive = await invoke(
         ctx,
@@ -140,13 +140,13 @@ describe('goal.list through the operations door', () => {
       const archived = ctx.goalService.updateGoal(ctx.seed(SPACE_ID, 'Old goal').id, {
         status: 'archived',
       });
-      const byDefault = await invoke(ctx, 'goal.list', {}, agent('ad_hoc_member'));
+      const byDefault = await invoke(ctx, 'goal.list', {}, agent('long_term_agent'));
       expect((byDefault.goals as SpaceGoal[]).map((goal) => goal.id)).toEqual([active.id]);
       const withArchived = await invoke(
         ctx,
         'goal.list',
         { includeArchived: true },
-        agent('ad_hoc_member')
+        agent('long_term_agent')
       );
       expect((withArchived.goals as SpaceGoal[]).map((goal) => goal.id).sort()).toEqual(
         [active.id, archived.id].sort()
@@ -167,7 +167,7 @@ describe('goal.list through the operations door', () => {
         ctx,
         'goal.list',
         { status: 'archived', includeArchived: false },
-        agent('ad_hoc_member')
+        agent('long_term_agent')
       );
       expect((result.goals as SpaceGoal[]).map((goal) => goal.id)).toEqual([archived.id]);
     } finally {
@@ -184,7 +184,7 @@ describe('goal.list through the operations door', () => {
         labels: ['infra'],
       });
       ctx.goalService.createGoal({ spaceId: SPACE_ID, title: 'Other goal', labels: ['docs'] });
-      const result = await invoke(ctx, 'goal.list', { label: 'infra' }, agent('ad_hoc_member'));
+      const result = await invoke(ctx, 'goal.list', { label: 'infra' }, agent('long_term_agent'));
       expect((result.goals as SpaceGoal[]).map((goal) => goal.id)).toEqual([labelled.id]);
     } finally {
       ctx.db.close();
@@ -201,7 +201,7 @@ describe('goal.list through the operations door', () => {
         description: 'Widen the door frame',
       });
       ctx.seed(SPACE_ID, 'Nothing to see');
-      const result = await invoke(ctx, 'goal.list', { search: 'DOOR' }, agent('ad_hoc_member'));
+      const result = await invoke(ctx, 'goal.list', { search: 'DOOR' }, agent('long_term_agent'));
       expect((result.goals as SpaceGoal[]).map((goal) => goal.id).sort()).toEqual(
         [byTitle.id, byDescription.id].sort()
       );
@@ -268,7 +268,7 @@ describe('goal.get through the operations door', () => {
     const ctx = makeCtx();
     try {
       const goal = ctx.seed(SPACE_ID, 'Readable goal');
-      const result = await invoke(ctx, 'goal.get', { goalId: goal.id }, agent('ad_hoc_member'));
+      const result = await invoke(ctx, 'goal.get', { goalId: goal.id }, agent('long_term_agent'));
       expect(result.accepted).toBe(true);
       expect(result.goal?.id).toBe(goal.id);
       expect(result.goal?.revision).toBe(goal.revision);

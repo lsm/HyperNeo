@@ -11,7 +11,6 @@ describe('outboundSenderLevel', () => {
     ['long_term_agent', 'long-horizon-agent'],
     ['workflow_worker', 'node-agent'],
     ['legacy_task_agent', 'task-agent'],
-    ['ad_hoc_member', 'session-agent'],
     ['direct_task_worker', 'session-agent'],
   ] as const)('maps %s to %s', (role, level) => {
     expect(outboundSenderLevel(role)).toBe(level);
@@ -47,13 +46,13 @@ describe('resolveOutboundSender', () => {
     const outcome = resolveOutboundSender({
       source: 'mcp',
       sessionId: 'session-2',
-      role: 'ad_hoc_member',
+      role: 'long_term_agent',
     });
     expect(outcome).toEqual({
       value: {
         sessionId: 'session-2',
-        level: 'session-agent',
-        displayName: 'space-member',
+        level: 'long-horizon-agent',
+        displayName: 'space-agent',
         replyTargetHandle: '@session:session-2',
       },
     });

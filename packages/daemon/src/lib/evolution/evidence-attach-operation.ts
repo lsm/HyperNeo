@@ -44,7 +44,7 @@ type EvidenceAttachRejection = (typeof EVIDENCE_ATTACH_REJECTIONS)[number];
 
 const EVOLUTION_MUTATE_POLICY = {
   safetyClass: 'mutate',
-  roles: ['ad_hoc_member', 'long_term_agent'],
+  roles: ['long_term_agent'],
 } as const satisfies OperationPolicy;
 
 const SpaceScoped = {

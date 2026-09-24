@@ -93,10 +93,11 @@ test.each(['archived', 'ended'] as const)(
   }
 );
 
-test('ordinary Space membership remains separate from stopped execution ownership', () => {
+test('without direct-worker evidence the session sits outside the Space whether or not the attempt stopped', () => {
   const before = resolveSpaceMcpSessionPolicy(sessions.getSession('worker-1')!);
   expect(before).toMatchObject({
-    role: 'ad_hoc_member',
+    role: 'universal_read',
+    spaceId: undefined,
     isWorkflowWorker: false,
   });
   attempts.stop('attempt-1', 'worker-1', 'stopped');

@@ -17,6 +17,7 @@ import { resolveSessionCallerScope } from '../../../../src/lib/space/runtime/spa
 let db: Database;
 let agentRepo: SpaceLongHorizonAgentRepository;
 let spaceId: string;
+let memberAgentId: string;
 let otherSpaceId: string;
 let agent: SpaceLongHorizonAgent;
 let sessions: Map<string, Session>;
@@ -24,7 +25,7 @@ let sessions: Map<string, Session>;
 const MEMBER_SESSION = 'space:chat:member';
 const READ_ONLY_SESSION = 'chat:read-only';
 
-function memberCaller(role: OperationCallerRole = 'ad_hoc_member'): OperationCaller {
+function memberCaller(role: OperationCallerRole = 'long_term_agent'): OperationCaller {
   return { source: 'mcp', sessionId: MEMBER_SESSION, spaceId, role };
 }
 
@@ -46,7 +47,7 @@ function sessionRow(overrides: Partial<Session> & { id: string }): Session {
     status: 'active',
     type: 'space_chat',
     config: { model: 'm', provider: 'p', maxTokens: 1, temperature: 1 },
-    metadata: {},
+    metadata: { promptProvenance: { source: 'test', hash: 'h', agentId: memberAgentId } },
     context: { spaceId },
     ...overrides,
   } as unknown as Session;
@@ -103,6 +104,7 @@ beforeEach(() => {
     displayName: 'Stranger',
     instructions: '',
   });
+  memberAgentId = agentRepo.create({ spaceId, handle: 'member', sessionId: MEMBER_SESSION }).id;
   sessions = new Map([
     [MEMBER_SESSION, sessionRow({ id: MEMBER_SESSION })],
     [
@@ -117,7 +119,11 @@ describe('the agent.list and agent.get operations', () => {
     const outcome = await invokeOperation(registry(), 'agent.list', {}, memberCaller());
     expect(outcome.kind).toBe('completed');
     const value = outcome as { kind: 'completed'; value: { agents: SpaceLongHorizonAgent[] } };
-    expect(value.value.agents.map((entry) => entry.handle).sort()).toEqual(['planner', 'retired']);
+    expect(value.value.agents.map((entry) => entry.handle).sort()).toEqual([
+      'member',
+      'planner',
+      'retired',
+    ]);
   });
 
   test('agent.list status filter keeps only agents in that lifecycle state', async () => {
@@ -184,7 +190,11 @@ describe('the agent.list and agent.get operations', () => {
     );
     const value = outcome as { kind: 'completed'; value: { agents: SpaceLongHorizonAgent[] } };
     expect(value.kind).toBe('completed');
-    expect(value.value.agents.map((entry) => entry.handle).sort()).toEqual(['planner', 'retired']);
+    expect(value.value.agents.map((entry) => entry.handle).sort()).toEqual([
+      'member',
+      'planner',
+      'retired',
+    ]);
   });
 
   test('an agent caller naming another Space is rejected rather than scoped to it', async () => {
@@ -207,7 +217,11 @@ describe('the agent.list and agent.get operations', () => {
   test('a human caller naming the Space reads its agents', async () => {
     const outcome = await invokeOperation(registry(), 'agent.list', { spaceId }, { source: 'rpc' });
     const value = outcome as { kind: 'completed'; value: { agents: SpaceLongHorizonAgent[] } };
-    expect(value.value.agents.map((entry) => entry.handle).sort()).toEqual(['planner', 'retired']);
+    expect(value.value.agents.map((entry) => entry.handle).sort()).toEqual([
+      'member',
+      'planner',
+      'retired',
+    ]);
   });
 
   test('agent.get returns the full record', async () => {
@@ -258,7 +272,7 @@ describe('admitAgentCaller', () => {
           'Agent operations require a human caller or an active Space member session in the owning Space.',
       },
     });
-    expect(agentRepo.listBySpaceId(spaceId)).toHaveLength(2);
+    expect(agentRepo.listBySpaceId(spaceId)).toHaveLength(3);
   });
 
   test('a session carrying no Space may not mutate', () => {

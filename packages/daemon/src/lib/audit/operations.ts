@@ -117,11 +117,7 @@ export function listAuditEntriesPage(
 
 const READ_ADMISSION: SpaceCallerAdmission = { readOnly: true };
 
-const READ_ROLES: readonly OperationCallerRole[] = [
-  'ad_hoc_member',
-  'long_term_agent',
-  'workflow_worker',
-];
+const READ_ROLES: readonly OperationCallerRole[] = ['long_term_agent', 'workflow_worker'];
 
 const READ_POLICY: OperationPolicy = { safetyClass: 'read', roles: READ_ROLES };
 

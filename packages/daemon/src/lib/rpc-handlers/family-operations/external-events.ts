@@ -15,6 +15,8 @@ export function registerExternalEventOperations(
       taskRepo: context.spaceTaskRepo,
       nodeExecutionRepo: context.nodeExecutionRepo,
       longHorizonAgentRepo: context.longHorizonAgentRepo,
+      hasDirectWorkerProvenance: context.hasDirectWorkerProvenance,
+      resolveDirectWorker: context.resolveDirectWorker,
     }),
     ...createAgentSubscriptionOperations({
       subscriptionRepo: context.spaceAgentSubscriptionRepo,
@@ -27,6 +29,8 @@ export function registerExternalEventOperations(
       taskRepo: context.spaceTaskRepo,
       nodeExecutionRepo: context.nodeExecutionRepo,
       longHorizonAgentRepo: context.longHorizonAgentRepo,
+      hasDirectWorkerProvenance: context.hasDirectWorkerProvenance,
+      resolveDirectWorker: context.resolveDirectWorker,
     }),
     ...createSubscriptionOperations({
       subscriptionRepo: context.spaceAgentSubscriptionRepo,
@@ -60,6 +64,8 @@ export function registerExternalEventOperations(
       taskRepo: context.spaceTaskRepo,
       nodeExecutionRepo: context.nodeExecutionRepo,
       longHorizonAgentRepo: context.longHorizonAgentRepo,
+      hasDirectWorkerProvenance: context.hasDirectWorkerProvenance,
+      resolveDirectWorker: context.resolveDirectWorker,
     }),
   ];
 }

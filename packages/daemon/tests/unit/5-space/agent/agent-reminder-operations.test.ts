@@ -24,6 +24,7 @@ let db: Database;
 let agentRepo: SpaceLongHorizonAgentRepository;
 let reminderRepo: SpaceAgentReminderRepository;
 let spaceId: string;
+let memberAgentId: string;
 let otherSpaceId: string;
 let agent: SpaceLongHorizonAgent;
 let stranger: SpaceLongHorizonAgent;
@@ -34,7 +35,7 @@ let occurrenceClaimed: boolean;
 const MEMBER_SESSION = 'space:chat:member';
 const READ_ONLY_SESSION = 'chat:read-only';
 
-function memberCaller(role: OperationCallerRole = 'ad_hoc_member'): OperationCaller {
+function memberCaller(role: OperationCallerRole = 'long_term_agent'): OperationCaller {
   return { source: 'mcp', sessionId: MEMBER_SESSION, spaceId, role };
 }
 
@@ -56,7 +57,7 @@ function sessionRow(overrides: Partial<Session> & { id: string }): Session {
     status: 'active',
     type: 'space_chat',
     config: { model: 'm', provider: 'p', maxTokens: 1, temperature: 1 },
-    metadata: {},
+    metadata: { promptProvenance: { source: 'test', hash: 'h', agentId: memberAgentId } },
     context: { spaceId },
     ...overrides,
   } as unknown as Session;
@@ -107,6 +108,7 @@ beforeEach(() => {
     displayName: 'Stranger',
     instructions: '',
   });
+  memberAgentId = agentRepo.create({ spaceId, handle: 'member', sessionId: MEMBER_SESSION }).id;
   sessions = new Map([
     [MEMBER_SESSION, sessionRow({ id: MEMBER_SESSION })],
     [

@@ -108,7 +108,7 @@ describe('workflow catalog read operations', () => {
       }),
       'workflow.list',
       {},
-      mcpCaller('ad_hoc_member')
+      mcpCaller('long_term_agent')
     );
     expect(seen).toEqual([SPACE_ID]);
     expect(value).toEqual({
@@ -138,7 +138,7 @@ describe('workflow catalog read operations', () => {
       deps(),
       'workflow.list',
       { spaceId: 'other-space' },
-      mcpCaller('ad_hoc_member')
+      mcpCaller('long_term_agent')
     );
     expect(value).toBe('caller_not_admitted');
   });
@@ -199,7 +199,7 @@ describe('workflow catalog read operations', () => {
       deps(),
       'workflow.get',
       { workflowId: 'wf-1' },
-      mcpCaller('ad_hoc_member')
+      mcpCaller('long_term_agent')
     );
     expect(value).toEqual(workflow());
   });
@@ -240,7 +240,7 @@ describe('workflow catalog read operations', () => {
       }),
       'workflow.get',
       { workflowId: 'wf-1', workflowHandle: 'other' },
-      mcpCaller('ad_hoc_member')
+      mcpCaller('long_term_agent')
     );
     expect(value).toEqual(byHandle);
   });
@@ -251,7 +251,7 @@ describe('workflow catalog read operations', () => {
       deps({ getWorkflow: () => disabled }),
       'workflow.get',
       { workflowId: 'wf-1' },
-      mcpCaller('ad_hoc_member')
+      mcpCaller('long_term_agent')
     );
     expect(value).toEqual(disabled);
   });
@@ -261,7 +261,7 @@ describe('workflow catalog read operations', () => {
       deps({ getWorkflow: () => workflow({ spaceId: 'other-space' }) }),
       'workflow.get',
       { workflowId: 'wf-1' },
-      mcpCaller('ad_hoc_member')
+      mcpCaller('long_term_agent')
     );
     expect(value).toBe('workflow_not_found');
   });
@@ -285,7 +285,12 @@ describe('workflow catalog read operations', () => {
 
   test('workflow.get rejects a call naming neither a workflowId nor a workflowHandle', async () => {
     const registry = createOperationRegistry(createWorkflowReadOperations(deps()));
-    const outcome = await invokeOperation(registry, 'workflow.get', {}, mcpCaller('ad_hoc_member'));
+    const outcome = await invokeOperation(
+      registry,
+      'workflow.get',
+      {},
+      mcpCaller('long_term_agent')
+    );
     expect(outcome.kind).toBe('failed');
   });
 });
@@ -300,7 +305,7 @@ describe('workflow optional Space scope', () => {
           return [];
         },
       });
-      const caller: OperationCaller = { source, spaceId: SPACE_ID, role: 'ad_hoc_member' };
+      const caller: OperationCaller = { source, spaceId: SPACE_ID, role: 'long_term_agent' };
       expect(await invoke(dependencies, 'workflow.list', {}, caller)).toEqual({
         workflows: [],
         scope: { spaceId: SPACE_ID },

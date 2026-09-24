@@ -1267,6 +1267,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     }
   });
 
+  const directTaskExecutionRepo = new DirectTaskExecutionRepository(deps.db.getDatabase());
+  const directTaskWorkerResolver = createDatabaseDirectTaskWorkerResolver(deps.db.getDatabase());
   const familyContext: FamilyOperationContext = {
     deps,
     spaceRuntimeService,
@@ -1282,6 +1284,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     spaceAgentReminderRepo,
     spaceAgentSubscriptionRepo,
     spaceSessionEventSubscriptionRepo,
+    hasDirectWorkerProvenance: (sessionId: string) =>
+      directTaskExecutionRepo.hasSessionProvenance(sessionId),
+    resolveDirectWorker: directTaskWorkerResolver,
     spaceAgentInactivityConfigRepo,
     spaceAgentInactivityClaimRepo,
     spaceGoalService,
@@ -1322,6 +1327,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       taskRepo: spaceTaskRepo,
       nodeExecutionRepo,
       longHorizonAgentRepo,
+      hasDirectWorkerProvenance: (sessionId) =>
+        directTaskExecutionRepo.hasSessionProvenance(sessionId),
+      resolveDirectWorker: directTaskWorkerResolver,
       notifyStandalone: () => deps.db.notifyChange('space_tasks'),
       workflowRunRepo: spaceWorkflowRunRepo,
       getWorkflowForRun: (run) => spaceWorkflowManager.getWorkflowForRun(run),
@@ -1393,6 +1401,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       taskRepo: spaceTaskRepo,
       nodeExecutionRepo,
       longHorizonAgentRepo,
+      hasDirectWorkerProvenance: (sessionId) =>
+        directTaskExecutionRepo.hasSessionProvenance(sessionId),
+      resolveDirectWorker: directTaskWorkerResolver,
       notifyStandalone: () => deps.db.notifyChange('space_tasks'),
       emitTaskUpdated: async (spaceId, task) => {
         await deps.internalEventBus.publish('space.task.updated', {
@@ -1419,8 +1430,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   );
 
   deps.sessionManager.setDefaultOperationRegistryProvider(spaceOperationRegistryProvider);
-  const directTaskExecutionRepo = new DirectTaskExecutionRepository(deps.db.getDatabase());
-  const directTaskWorkerResolver = createDatabaseDirectTaskWorkerResolver(deps.db.getDatabase());
   deps.sessionManager.setCallerScopeResolver(
     createSpaceCallerScopeResolver({
       getSession: (sessionId) => deps.db.getSession(sessionId),

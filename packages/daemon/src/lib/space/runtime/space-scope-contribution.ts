@@ -35,8 +35,6 @@ function roleLine(scope: SpaceSessionScope): string {
       return 'Your role in it is a worker session running one assigned Space task directly, outside any workflow.';
     case 'legacy_task_agent':
       return 'Your role in it is a task agent session working the Space tasks assigned to it.';
-    case 'ad_hoc_member':
-      return 'You are an ad-hoc member session: this Space has not assigned you an agent role.';
   }
 }
 

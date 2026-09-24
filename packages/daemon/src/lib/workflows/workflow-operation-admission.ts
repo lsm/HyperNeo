@@ -6,15 +6,11 @@ import type { SpaceMcpSessionPolicyContext } from '../space/runtime/space-mcp-se
 export type WorkflowScopeRejection = 'space_not_resolved' | 'caller_not_admitted';
 
 export const WORKFLOW_READ_ROLES: readonly OperationCallerRole[] = [
-  'ad_hoc_member',
   'long_term_agent',
   'workflow_worker',
 ];
 
-export const WORKFLOW_MUTATE_ROLES: readonly OperationCallerRole[] = [
-  'ad_hoc_member',
-  'long_term_agent',
-];
+export const WORKFLOW_MUTATE_ROLES: readonly OperationCallerRole[] = ['long_term_agent'];
 
 export interface WorkflowSessionAdmission extends SpaceMcpSessionPolicyContext {
   getSession: (sessionId: string) => Session | null;
