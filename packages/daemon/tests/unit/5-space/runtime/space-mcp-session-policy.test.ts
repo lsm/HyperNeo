@@ -301,6 +301,37 @@ describe('resolveSpaceMcpSessionPolicy', () => {
     expect(policy.role).toBe('universal_read');
   });
 
+  test('an agent without a canonical session admits no session at all', () => {
+    const parentless = makeSession({
+      id: 'loose',
+      context: { spaceId: 'space-1' },
+      metadata: {
+        messageCount: 0,
+        totalTokens: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        totalCost: 0,
+        toolCallCount: 0,
+        promptProvenance: { source: 'custom_agent', hash: 'hash', agentId: 'agent-1' },
+      },
+    });
+    const policy = resolveSpaceMcpSessionPolicy(
+      { ...parentless, parentSessionId: null },
+      {
+        longHorizonAgentRepo: {
+          getById: () =>
+            ({
+              id: 'agent-1',
+              spaceId: 'space-1',
+              status: 'active',
+              sessionId: null,
+            }) as SpaceLongHorizonAgent,
+        },
+      }
+    );
+    expect(policy.role).toBe('universal_read');
+  });
+
   test('a grandchild of the canonical session is not the agent', () => {
     const policy = resolveSpaceMcpSessionPolicy(cloneOf('clone-of-canonical'), {
       longHorizonAgentRepo: agentRepo(),

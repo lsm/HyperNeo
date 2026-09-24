@@ -147,6 +147,7 @@ function isLongTermAgentSession(
     agent !== null &&
     agent.spaceId === spaceId &&
     agent.status === 'active' &&
+    agent.sessionId !== null &&
     (session.id === agent.sessionId || session.parentSessionId === agent.sessionId)
   );
 }
