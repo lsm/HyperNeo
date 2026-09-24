@@ -19,7 +19,8 @@ import {
   currentSpaceTaskIdSignal,
   currentSpaceViewModeSignal,
 } from '../lib/signals';
-import { spaceStore } from '../lib/space-store';
+import { type SpaceSessionRow, spaceStore } from '../lib/space-store';
+import { toast } from '../lib/toast';
 import { isActionRequired, isActiveTask, isDraftTask } from '../lib/task-filters';
 import { getTaskStatusConfig } from '../lib/task-status';
 import {
@@ -231,6 +232,57 @@ export function SpaceDetailPanel({
   }, [spaceStore.sessions.value, spaceId]);
 
   const agents = spaceStore.agents.value.filter((agent) => agent.status !== 'archived');
+
+  const clonesByParent = useMemo(() => {
+    const groups = new Map<string, SpaceSessionRow[]>();
+    for (const row of spaceStore.sessions.value) {
+      if (!row.parentSessionId) continue;
+      const group = groups.get(row.parentSessionId) ?? [];
+      group.push(row);
+      groups.set(row.parentSessionId, group);
+    }
+    for (const group of groups.values()) {
+      group.sort((a, b) => (b.lastActiveAt ?? 0) - (a.lastActiveAt ?? 0));
+    }
+    return groups;
+  }, [spaceStore.sessions.value]);
+
+  const visibleClones = useCallback(
+    (parentSessionId: string | null): SpaceSessionRow[] => {
+      const all = parentSessionId ? (clonesByParent.get(parentSessionId) ?? []) : [];
+      const capped = all.slice(0, SIDEBAR_PREVIEW_LIMIT);
+      const selected = all.find((row) => row.id === selectedSessionId);
+      return selected && !capped.some((row) => row.id === selected.id)
+        ? [...capped, selected]
+        : capped;
+    },
+    [clonesByParent, selectedSessionId]
+  );
+
+  const [spawningAgentId, setSpawningAgentId] = useState<string | null>(null);
+  const handleSpawnClone = useCallback(
+    (agentId: string) => {
+      if (spawningAgentId) return;
+      setSpawningAgentId(agentId);
+      spaceStore
+        .spawnAgentClone(agentId)
+        .then((sessionId) => {
+          navigateToSpaceSession(routeSpaceId, sessionId);
+          onNavigate?.();
+        })
+        .catch((err) => toast.error(err instanceof Error ? err.message : 'Failed to spawn'))
+        .finally(() => setSpawningAgentId(null));
+    },
+    [routeSpaceId, onNavigate, spawningAgentId]
+  );
+
+  const handleCloneClick = useCallback(
+    (sessionId: string) => {
+      navigateToSpaceSession(routeSpaceId, sessionId);
+      onNavigate?.();
+    },
+    [routeSpaceId, onNavigate]
+  );
 
   const handleOverviewClick = useCallback(() => {
     navigateToSpace(routeSpaceId);
@@ -552,22 +604,64 @@ export function SpaceDetailPanel({
             <div class="px-4 py-2 text-xs text-fg-muted">No agents</div>
           ) : (
             agents.map((agent) => (
-              <button
-                key={agent.id}
-                type="button"
-                data-testid="space-detail-agent-row"
-                onClick={() => handleAgentClick(agent)}
-                class={`w-full flex items-center gap-2 rounded-md px-3 py-1.5 text-left text-sm transition-colors ${
-                  agent.sessionId !== null && agent.sessionId === selectedSessionId
-                    ? 'bg-fill-soft text-fg'
-                    : 'text-fg-soft hover:bg-fill-soft hover:text-fg'
-                }`}
-              >
-                <span class="min-w-0 flex-1 truncate">{agent.displayName}</span>
-                {agent.status !== 'active' && (
-                  <span class="text-[11px] text-fg-faint">{agent.status}</span>
-                )}
-              </button>
+              <div key={agent.id} class="group/agent">
+                <div
+                  class={`flex items-center rounded-md transition-colors ${
+                    agent.sessionId !== null && agent.sessionId === selectedSessionId
+                      ? 'bg-fill-soft text-fg'
+                      : 'text-fg-soft hover:bg-fill-soft hover:text-fg'
+                  }`}
+                >
+                  <button
+                    type="button"
+                    data-testid="space-detail-agent-row"
+                    onClick={() => handleAgentClick(agent)}
+                    class="min-w-0 flex-1 flex items-center gap-2 px-3 py-1.5 text-left text-sm"
+                  >
+                    <span class="min-w-0 flex-1 truncate">{agent.displayName}</span>
+                    {agent.status !== 'active' && (
+                      <span class="text-[11px] text-fg-faint">{agent.status}</span>
+                    )}
+                  </button>
+                  {agent.status === 'active' && (
+                    <button
+                      type="button"
+                      data-testid="space-detail-agent-spawn"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleSpawnClone(agent.id);
+                      }}
+                      disabled={spawningAgentId !== null}
+                      class="mr-1 rounded p-1 text-fg-faint opacity-0 transition-opacity hover:text-fg group-hover/agent:opacity-100 focus-visible:opacity-100 disabled:opacity-40"
+                      title={`New conversation with ${agent.displayName}`}
+                      aria-label={`New conversation with ${agent.displayName}`}
+                    >
+                      +
+                    </button>
+                  )}
+                </div>
+                {visibleClones(agent.sessionId).map((clone) => (
+                  <button
+                    key={clone.id}
+                    type="button"
+                    data-testid="space-detail-clone-row"
+                    onClick={() => handleCloneClick(clone.id)}
+                    class={`w-full flex items-center gap-2 rounded-md py-1 pl-7 pr-3 text-left text-xs transition-colors ${
+                      clone.id === selectedSessionId
+                        ? 'bg-fill-soft text-fg'
+                        : 'text-fg-muted hover:bg-fill-soft hover:text-fg'
+                    }`}
+                  >
+                    <span class="text-fg-faint">分身</span>
+                    <span class="min-w-0 flex-1 truncate">{clone.title}</span>
+                    {clone.returnedAt && (
+                      <span class="text-fg-faint" title={`Returned ${clone.returnedAt}`}>
+                        ✓
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
             ))
           )}
         </CollapsibleSection>

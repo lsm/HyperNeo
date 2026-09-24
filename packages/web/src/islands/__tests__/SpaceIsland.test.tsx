@@ -281,6 +281,8 @@ vi.mock('../../lib/space-store', () => ({
       workflowDetailsLoaded: { value: true },
       agents: mockAgents,
       sessions: { value: [] },
+      isAgentOwnedSession: (id: string | null) =>
+        mockAgents.value.some((a: { sessionId: string | null }) => a.sessionId === id),
       tasks: mockTasks,
       taskMessageActivity: mockTaskMessageActivity,
       hasTaskMessageActivity: (id: string) => {
