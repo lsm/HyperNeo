@@ -29,16 +29,22 @@ let OTHER_SPACE: string;
 let AGENT: string;
 
 function longTermSession(id: string, spaceId: string, status: 'active' | 'archived' = 'active') {
+  const base = createTestSession(id);
   sessions.createSession(
     {
-      ...createTestSession(id),
+      ...base,
       workspacePath: '/repo',
       type: 'worker',
       status,
       context: { spaceId },
+      metadata: {
+        ...base.metadata,
+        promptProvenance: { source: 'test', hash: 'h', agentId: AGENT },
+      },
     },
     { enforceWorkspaceOwnership: false }
   );
+  agentRepo.update(AGENT, { sessionId: id });
   return id;
 }
 

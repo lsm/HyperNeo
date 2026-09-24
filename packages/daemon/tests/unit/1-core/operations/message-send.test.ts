@@ -176,7 +176,7 @@ describe('shared message.send operation', () => {
       registry,
       'message.send',
       { sessionId: 'space-b-session', message },
-      { source: 'mcp', sessionId: 'space-a-session', spaceId: 'space-a', role: 'ad_hoc_member' }
+      { source: 'mcp', sessionId: 'space-a-session', spaceId: 'space-a', role: 'long_term_agent' }
     );
     expect(outcome.kind === 'completed' && outcome.value).toMatchObject({ kind: 'accepted' });
     expect(mailbox.rowCount()).toBe(1);

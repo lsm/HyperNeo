@@ -15,7 +15,7 @@ const AGENT: OperationCaller = {
   source: 'mcp',
   sessionId: 'agent-on-a',
   spaceId: 'space-a',
-  role: 'ad_hoc_member',
+  role: 'long_term_agent',
 };
 
 function daemonCatalog() {

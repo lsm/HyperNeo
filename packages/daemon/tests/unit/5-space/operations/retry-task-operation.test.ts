@@ -35,12 +35,12 @@ function memberSession(): Session {
     status: 'active',
     type: 'space_chat',
     context: { spaceId: SPACE_ID },
-    metadata: {},
+    metadata: { promptProvenance: { source: 'test', hash: 'h', agentId: 'agent-member' } },
   } as unknown as Session;
 }
 
 function memberCaller(overrides: Partial<OperationCaller> = {}): OperationCaller {
-  return { source: 'mcp', sessionId: 'space-chat-1', role: 'ad_hoc_member', ...overrides };
+  return { source: 'mcp', sessionId: 'space-chat-1', role: 'long_term_agent', ...overrides };
 }
 
 interface Harness {
@@ -53,6 +53,13 @@ interface Harness {
 
 function makeHarness(session: Session | null = memberSession()): Harness {
   const db = makeDb();
+  const agents = new SpaceLongHorizonAgentRepository(db);
+  agents.create({
+    id: 'agent-member',
+    spaceId: SPACE_ID,
+    handle: 'member',
+    sessionId: 'space-chat-1',
+  });
   const taskRepo = new SpaceTaskRepository(db);
   const retryTask = mock(async (taskId: string) => taskRepo.getTask(taskId) as SpaceTask);
   const recoverWorkflowTask = mock(async (_spaceId: string, taskId: string) => {
@@ -62,7 +69,7 @@ function makeHarness(session: Session | null = memberSession()): Harness {
     getSession: () => session,
     getTaskManager: () => ({ retryTask }),
     recoverWorkflowTask,
-    longHorizonAgentRepo: new SpaceLongHorizonAgentRepository(db),
+    longHorizonAgentRepo: agents,
     taskRepo,
   };
   const operation = createRetryTaskOperation(() => db, dependencies);
@@ -91,7 +98,7 @@ describe('task.retry operation', () => {
     }
   });
 
-  test('admits an ad_hoc_member session that is active in the owning space', async () => {
+  test('admits an agent session that is active in the owning space', async () => {
     const harness = makeHarness();
     try {
       const task = harness.taskRepo.createTask({
@@ -171,7 +178,7 @@ describe('task.retry operation', () => {
     try {
       expect(harness.operation.policy).toEqual({
         safetyClass: 'mutate',
-        roles: ['ad_hoc_member', 'long_term_agent'],
+        roles: ['long_term_agent'],
       });
       expect(isOperationAdmitted(harness.operation, memberCaller())).toBe(true);
       expect(

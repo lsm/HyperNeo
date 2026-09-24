@@ -5,7 +5,6 @@ import {
   missingMcpServers,
   resolveSpaceMcpSessionPolicy,
   type SpaceMcpSessionRole,
-  spaceAgentRequiredMcpServers,
   spaceWorkflowWorkerRequiredMcpServers,
 } from '../../../../src/lib/space/runtime/space-mcp-session-policy.ts';
 
@@ -97,22 +96,22 @@ function makeTask(overrides: Partial<SpaceTask> = {}): SpaceTask {
 }
 
 describe('resolveSpaceMcpSessionPolicy', () => {
-  test('routes ad-hoc Space sessions to SpaceRuntime generic member tools', () => {
+  test('treats a Space session no agent owns as outside any Space', () => {
     const policy = resolveSpaceMcpSessionPolicy(
-      makeSession({ id: 'ad-hoc-1', type: 'worker', context: { spaceId: 'space-1' } })
+      makeSession({ id: 'unowned-1', type: 'worker', context: { spaceId: 'space-1' } })
     );
 
-    expect(policy).toMatchObject({
-      role: 'ad_hoc_member',
-      spaceId: 'space-1',
-      owner: 'space-runtime',
-      attachGenericSpaceTools: true,
+    expect(policy).toEqual({
+      role: 'universal_read',
+      spaceId: undefined,
+      owner: 'none',
+      requiredServers: [],
+      attachLongTermAgentTools: false,
       isWorkflowWorker: false,
     });
-    expect(policy.requiredServers).toEqual(spaceAgentRequiredMcpServers());
   });
 
-  test('routes post-approval sub-sessions as ad-hoc members requiring space-actions (#852)', () => {
+  test('treats a post-approval sub-session no execution backs as outside any Space', () => {
     const session = makeSession({
       id: 'space:space-1:task:task-1:post-approval:merger',
       type: 'worker',
@@ -127,16 +126,12 @@ describe('resolveSpaceMcpSessionPolicy', () => {
     });
 
     expect(policy).toMatchObject({
-      role: 'ad_hoc_member',
-      spaceId: 'space-1',
-      owner: 'space-runtime',
-      attachGenericSpaceTools: true,
+      role: 'universal_read',
+      spaceId: undefined,
+      owner: 'none',
       isWorkflowWorker: false,
     });
-    expect(policy.requiredServers).toEqual(spaceAgentRequiredMcpServers());
-    expect(missingMcpServers(undefined, policy.requiredServers)).toEqual([
-      ...policy.requiredServers,
-    ]);
+    expect(missingMcpServers(undefined, policy.requiredServers)).toEqual([]);
   });
 
   test('routes workflow workers by node execution ownership, not session ID shape', () => {
@@ -157,7 +152,6 @@ describe('resolveSpaceMcpSessionPolicy', () => {
       role: 'workflow_worker',
       spaceId: 'space-1',
       owner: 'task-agent-manager',
-      attachGenericSpaceTools: false,
       isWorkflowWorker: true,
     });
     expect(policy.requiredServers).toEqual(spaceWorkflowWorkerRequiredMcpServers());
@@ -195,7 +189,6 @@ describe('resolveSpaceMcpSessionPolicy', () => {
       role: 'workflow_worker',
       spaceId: 'space-1',
       owner: 'task-agent-manager',
-      attachGenericSpaceTools: false,
       isWorkflowWorker: true,
     });
     expect(policy.requiredServers).toEqual(spaceWorkflowWorkerRequiredMcpServers());
@@ -220,13 +213,12 @@ describe('resolveSpaceMcpSessionPolicy', () => {
       role: 'workflow_worker',
       spaceId: 'space-1',
       owner: 'task-agent-manager',
-      attachGenericSpaceTools: false,
       isWorkflowWorker: true,
     });
     expect(policy.requiredServers).toEqual(spaceWorkflowWorkerRequiredMcpServers());
   });
 
-  test('fails closed (demotes to ad_hoc_member) for a canonical long-term-agent session when no context is given', () => {
+  test('fails closed (outside any Space) for a canonical long-term-agent session when no context is given', () => {
     const session = makeSession({
       id: longTermAgentSessionId('space-1', 'agent-1'),
       context: { spaceId: 'space-1' },
@@ -243,11 +235,10 @@ describe('resolveSpaceMcpSessionPolicy', () => {
     const policy = resolveSpaceMcpSessionPolicy(session);
 
     expect(policy).toMatchObject({
-      role: 'ad_hoc_member',
-      spaceId: 'space-1',
-      owner: 'space-runtime',
+      role: 'universal_read',
+      spaceId: undefined,
+      owner: 'none',
       attachLongTermAgentTools: false,
-      attachGenericSpaceTools: true,
       isWorkflowWorker: false,
     });
   });
@@ -337,7 +328,6 @@ describe('resolveSpaceMcpSessionPolicy', () => {
     expect(policy).toMatchObject({
       role: 'legacy_task_agent',
       owner: 'none',
-      attachGenericSpaceTools: false,
       isWorkflowWorker: false,
     });
     expect(policy.requiredServers).toEqual([]);
@@ -349,7 +339,6 @@ describe('resolveSpaceMcpSessionPolicy', () => {
     expect(policy).toMatchObject({
       role: 'universal_read',
       owner: 'none',
-      attachGenericSpaceTools: false,
       isWorkflowWorker: false,
     });
     expect(policy.spaceId).toBeUndefined();

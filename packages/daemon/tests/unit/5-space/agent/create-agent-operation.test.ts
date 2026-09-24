@@ -20,6 +20,7 @@ import { resolveSessionCallerScope } from '../../../../src/lib/space/runtime/spa
 let db: Database;
 let agentRepo: SpaceLongHorizonAgentRepository;
 let spaceId: string;
+let memberAgentId: string;
 let sessions: Map<string, Session>;
 let published: string[];
 let audited: Array<{ name: string; summary: Record<string, unknown> }>;
@@ -28,7 +29,7 @@ const MEMBER_SESSION = 'space:chat:member';
 const READ_ONLY_SESSION = 'chat:read-only';
 
 function memberCaller(
-  role: OperationCallerRole = 'ad_hoc_member',
+  role: OperationCallerRole = 'long_term_agent',
   agentId?: string
 ): OperationCaller {
   return { source: 'mcp', sessionId: MEMBER_SESSION, spaceId, role, agentId };
@@ -52,13 +53,17 @@ function sessionRow(overrides: Partial<Session> & { id: string }): Session {
     status: 'active',
     type: 'space_chat',
     config: { model: 'm', provider: 'p', maxTokens: 1, temperature: 1 },
-    metadata: {},
+    metadata: { promptProvenance: { source: 'test', hash: 'h', agentId: memberAgentId } },
     context: { spaceId },
     ...overrides,
   } as unknown as Session;
 }
 
 type AgentRepoSeam = Parameters<typeof createAgentOperations>[0]['longHorizonAgentRepo'];
+
+function agentsBesideCaller() {
+  return agentRepo.listBySpaceId(spaceId).filter((agent) => agent.id !== memberAgentId);
+}
 
 function registry(longHorizonAgentRepo: AgentRepoSeam = agentRepo) {
   return createOperationRegistry(
@@ -102,6 +107,7 @@ beforeEach(() => {
     slug: 'home',
     workspacePath: '/repo',
   }).id;
+  memberAgentId = agentRepo.create({ spaceId, handle: 'member', sessionId: MEMBER_SESSION }).id;
   sessions = new Map([
     [MEMBER_SESSION, sessionRow({ id: MEMBER_SESSION })],
     [
@@ -120,7 +126,7 @@ describe('the agent.create operation', () => {
     expect(value.value.agent.handle).toBe('release-captain');
     expect(value.value.agent.displayName).toBe('Release Captain');
     expect(value.value.agent.spaceId).toBe(spaceId);
-    expect(agentRepo.listBySpaceId(spaceId)).toHaveLength(1);
+    expect(agentsBesideCaller()).toHaveLength(1);
     expect(published).toEqual([value.value.agent.id]);
     expect(audited).toEqual([
       { name: 'agent.create', summary: { name: 'Release Captain', tools: undefined } },
@@ -138,7 +144,7 @@ describe('the agent.create operation', () => {
     const value = outcome as { kind: 'completed'; value: { reason: string; message: string } };
     expect(value.value.reason).toBe('invalid_tools');
     expect(value.value.message).toContain('Telepathy');
-    expect(agentRepo.listBySpaceId(spaceId)).toHaveLength(0);
+    expect(agentsBesideCaller()).toHaveLength(0);
     expect(published).toEqual([]);
   });
 
@@ -146,7 +152,7 @@ describe('the agent.create operation', () => {
     const outcome = await create({ name: '   ' });
     const value = outcome as { kind: 'completed'; value: { reason: string } };
     expect(value.value.reason).toBe('invalid_name');
-    expect(agentRepo.listBySpaceId(spaceId)).toHaveLength(0);
+    expect(agentsBesideCaller()).toHaveLength(0);
   });
 
   test('a name already used by a live agent is rejected', async () => {
@@ -154,7 +160,7 @@ describe('the agent.create operation', () => {
     const outcome = await create({ name: 'planner' });
     const value = outcome as { kind: 'completed'; value: { reason: string } };
     expect(value.value.reason).toBe('invalid_name');
-    expect(agentRepo.listBySpaceId(spaceId)).toHaveLength(1);
+    expect(agentsBesideCaller()).toHaveLength(1);
   });
 
   test('a name taken while the create is in flight is caught before the insert', async () => {
@@ -168,7 +174,7 @@ describe('the agent.create operation', () => {
     const value = outcome as { kind: 'completed'; value: { reason: string; message: string } };
     expect(value.value.reason).toBe('invalid_name');
     expect(value.value.message).toContain('Planner');
-    expect(agentRepo.listBySpaceId(spaceId)).toHaveLength(1);
+    expect(agentsBesideCaller()).toHaveLength(1);
     expect(published).toEqual([]);
   });
 
@@ -226,7 +232,7 @@ describe('the agent.create operation', () => {
           'Agent operations require a human caller or an active Space member session in the owning Space.',
       },
     });
-    expect(agentRepo.listBySpaceId(spaceId)).toHaveLength(0);
+    expect(agentsBesideCaller()).toHaveLength(0);
   });
 
   test('the operation itself also denies a session carrying no Space', async () => {
@@ -235,7 +241,7 @@ describe('the agent.create operation', () => {
       reason: string;
     };
     expect(outcome.reason).toBe('agent_denied');
-    expect(agentRepo.listBySpaceId(spaceId)).toHaveLength(0);
+    expect(agentsBesideCaller()).toHaveLength(0);
   });
 
   test('an archived session in the owning Space may not create agents', async () => {
@@ -243,7 +249,7 @@ describe('the agent.create operation', () => {
     const outcome = await create({ name: 'Planner' });
     const value = outcome as { kind: 'completed'; value: { reason: string } };
     expect(value.value.reason).toBe('agent_denied');
-    expect(agentRepo.listBySpaceId(spaceId)).toHaveLength(0);
+    expect(agentsBesideCaller()).toHaveLength(0);
     expect(published).toEqual([]);
   });
 });

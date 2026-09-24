@@ -59,10 +59,7 @@ function memberSession(
   return id;
 }
 
-function member(
-  sessionId: string,
-  role: 'ad_hoc_member' | 'long_term_agent' = 'long_term_agent'
-): OperationCaller {
+function member(sessionId: string, role: 'long_term_agent' = 'long_term_agent'): OperationCaller {
   return { source: 'mcp', sessionId, spaceId: SPACE, role, agentName: 'watcher' };
 }
 
@@ -111,7 +108,7 @@ describe('agent external-event subscription listing', () => {
     seed(TOPIC);
     seed('github/acme/widgets/issues/*');
     const archived = memberSession('s-list-archived', { status: 'archived' });
-    const result = (await run(LIST, { agent_id: AGENT }, member(archived, 'ad_hoc_member'))) as {
+    const result = (await run(LIST, { agent_id: AGENT }, member(archived))) as {
       subscriptions: Array<{ topic: string; source: string; status: string }>;
     };
     expect(result.subscriptions.map((subscription) => subscription.topic).sort()).toEqual([

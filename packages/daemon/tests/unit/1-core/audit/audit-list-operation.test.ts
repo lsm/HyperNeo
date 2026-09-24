@@ -13,7 +13,7 @@ import { createSpaceTables } from '../../helpers/space-test-db';
 
 const SPACE_ID = 'space-1';
 const OTHER_SPACE_ID = 'space-2';
-const READ_ROLES = ['ad_hoc_member', 'long_term_agent', 'workflow_worker'];
+const READ_ROLES = ['long_term_agent', 'workflow_worker'];
 
 interface SeededRow {
   id: string;
@@ -256,7 +256,7 @@ describe('space.audit.list operation', () => {
   });
 
   test('an MCP caller inherits the Space of its own session', async () => {
-    const result = await run({}, mcpCaller('ad_hoc_member'));
+    const result = await run({}, mcpCaller('long_term_agent'));
     expect(result).toMatchObject({
       entries: [{ id: 'e1' }, { id: 'e2' }, { id: 'e3' }],
       total: 3,
@@ -266,7 +266,7 @@ describe('space.audit.list operation', () => {
   test('an MCP caller may not list another Space', async () => {
     const result = await run(
       { spaceId: OTHER_SPACE_ID },
-      mcpCaller('ad_hoc_member', { spaceId: SPACE_ID })
+      mcpCaller('long_term_agent', { spaceId: SPACE_ID })
     );
     expect(result).toEqual({
       ok: false,
@@ -276,7 +276,7 @@ describe('space.audit.list operation', () => {
   });
 
   test('an MCP caller without a Space is told a scope is required', async () => {
-    const result = await run({}, mcpCaller('ad_hoc_member', { spaceId: undefined }));
+    const result = await run({}, mcpCaller('long_term_agent', { spaceId: undefined }));
     expect(result).toEqual({
       ok: false,
       reason: 'space_scope_required',

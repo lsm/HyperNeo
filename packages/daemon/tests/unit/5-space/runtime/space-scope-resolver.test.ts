@@ -62,15 +62,10 @@ describe('createSpaceScopeResolver', () => {
     expect(scope?.briefing).toContain('Your role in it is one of its standing Space agents.');
   });
 
-  test('tells an ad-hoc member it holds no agent role', () => {
-    const session = makeSessionOfKind('ad_hoc_member');
+  test('contributes nothing for a Space session no agent owns', () => {
+    const session = makeSessionOfKind('unowned_space');
 
-    const scope = createSpaceScopeResolver(deps('ad_hoc_member', session))(session.id);
-
-    expect(scope?.briefing).toContain(
-      'You are an ad-hoc member session: this Space has not assigned you an agent role.'
-    );
-    expect(scope?.briefing).not.toContain('Card Agent');
+    expect(createSpaceScopeResolver(deps('unowned_space', session))(session.id)).toBeUndefined();
   });
 
   test('names the workflow-node role for a workflow worker', () => {
@@ -95,23 +90,22 @@ describe('createSpaceScopeResolver', () => {
   });
 
   test('drops the standing-instructions section when the Space has none', () => {
-    const session = makeSessionOfKind('ad_hoc_member');
+    const session = makeSessionOfKind('agent_card');
 
     const scope = createSpaceScopeResolver(
-      deps('ad_hoc_member', session, { ...SPACE, instructions: '   ' })
+      deps('agent_card', session, { ...SPACE, instructions: '   ' })
     )(session.id);
 
+    expect(scope?.briefing).toContain('Card Agent');
     expect(scope?.briefing).not.toContain('### Space Standing Instructions');
   });
 
   test('contributes nothing for a session outside any Space, an unknown session, or a missing Space', () => {
     const outsider = makeSessionOfKind('non_space');
-    const member = makeSessionOfKind('ad_hoc_member');
+    const member = makeSessionOfKind('agent_card');
 
     expect(createSpaceScopeResolver(deps('non_space', outsider))(outsider.id)).toBeUndefined();
-    expect(createSpaceScopeResolver(deps('ad_hoc_member', member))('absent')).toBeUndefined();
-    expect(
-      createSpaceScopeResolver(deps('ad_hoc_member', member, null))(member.id)
-    ).toBeUndefined();
+    expect(createSpaceScopeResolver(deps('agent_card', member))('absent')).toBeUndefined();
+    expect(createSpaceScopeResolver(deps('agent_card', member, null))(member.id)).toBeUndefined();
   });
 });

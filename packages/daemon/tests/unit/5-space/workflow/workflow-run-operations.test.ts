@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import type {
   NodeExecution,
   Session,
+  SpaceLongHorizonAgent,
   SpaceWorkflow,
   SpaceWorkflowRun,
   WorkflowRunStatus,
@@ -12,7 +13,6 @@ import {
   type OperationCaller,
   type OperationCallerRole,
 } from '../../../../src/lib/operations/registry.ts';
-import { FAIL_CLOSED_LONG_HORIZON_AGENT_REPO } from '../../../../src/lib/space/runtime/space-mcp-session-policy.ts';
 import {
   createWorkflowRunOperations,
   type WorkflowRunDependencies,
@@ -21,6 +21,12 @@ import { createTestSession } from '../../../helpers/database.ts';
 
 const SPACE_ID = 'space-workflow-runs';
 const SESSION_ID = 'session-1';
+const SESSION_OWNER = {
+  id: 'agent-1',
+  spaceId: SPACE_ID,
+  status: 'active',
+  sessionId: SESSION_ID,
+} as SpaceLongHorizonAgent;
 
 function run(overrides: Partial<SpaceWorkflowRun> = {}): SpaceWorkflowRun {
   return {
@@ -76,13 +82,24 @@ function workflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
 }
 
 function activeSession(status: Session['status'] = 'active', spaceId = SPACE_ID): Session {
-  return { ...createTestSession(SESSION_ID), status, context: { spaceId } };
+  const base = createTestSession(SESSION_ID);
+  return {
+    ...base,
+    status,
+    context: { spaceId },
+    metadata: {
+      ...base.metadata,
+      promptProvenance: { source: 'test', hash: 'h', agentId: SESSION_OWNER.id },
+    },
+  };
 }
 
 function deps(overrides: Partial<WorkflowRunDependencies> = {}): WorkflowRunDependencies {
   return {
     getSession: () => activeSession(),
-    longHorizonAgentRepo: FAIL_CLOSED_LONG_HORIZON_AGENT_REPO,
+    longHorizonAgentRepo: {
+      getById: (id) => (id === SESSION_OWNER.id ? SESSION_OWNER : null),
+    },
     getRun: () => run(),
     updateRunDescription: (_runId, description) => run({ description }),
     listRunExecutions: () => [execution()],
@@ -140,7 +157,7 @@ describe('workflow run read operation', () => {
       deps({ getRun: () => run({ spaceId: 'other-space' }) }),
       'workflow.run.get',
       { runId: 'run-1' },
-      mcpCaller('ad_hoc_member')
+      mcpCaller('long_term_agent')
     );
     expect(value).toBe('run_not_found');
   });
@@ -186,7 +203,7 @@ describe('workflow run write operations', () => {
       }),
       'workflow.run.update',
       { runId: 'run-1', description: 'reworded' },
-      mcpCaller('ad_hoc_member')
+      mcpCaller('long_term_agent')
     );
     expect(written).toEqual(['reworded']);
     expect(cancelled).toBe(0);
@@ -228,7 +245,7 @@ describe('workflow run write operations', () => {
       }),
       'workflow.run.replace',
       { runId: 'run-1', workflowId: 'wf-2' },
-      mcpCaller('ad_hoc_member')
+      mcpCaller('long_term_agent')
     );
     expect(value).toEqual({
       outcome: 'switch_failed',
@@ -242,7 +259,7 @@ describe('workflow run write operations', () => {
       deps({ getRun: () => run({ status: 'done' }) }),
       'workflow.run.update',
       { runId: 'run-1', description: 'reworded' },
-      mcpCaller('ad_hoc_member')
+      mcpCaller('long_term_agent')
     );
     expect(value).toBe('run_finished');
   });
@@ -252,7 +269,7 @@ describe('workflow run write operations', () => {
       deps({ getWorkflow: () => workflow({ spaceId: 'other-space' }) }),
       'workflow.run.replace',
       { runId: 'run-1', workflowId: 'wf-2' },
-      mcpCaller('ad_hoc_member')
+      mcpCaller('long_term_agent')
     );
     expect(value).toBe('workflow_not_found');
   });
@@ -265,7 +282,7 @@ describe('workflow run write operations', () => {
       }),
       'workflow.run.replace',
       { runId: 'run-1', workflowId: 'wf-2' },
-      mcpCaller('ad_hoc_member')
+      mcpCaller('long_term_agent')
     );
     expect(value).toBe('workflow_disabled');
   });
@@ -286,7 +303,7 @@ describe('workflow run write operations', () => {
       }),
       'workflow.run.update',
       { runId: 'run-1', description: 'reworded' },
-      mcpCaller('ad_hoc_member')
+      mcpCaller('long_term_agent')
     );
     expect(value).toBe('caller_not_admitted');
     expect(calls).toEqual([]);
@@ -297,7 +314,7 @@ describe('workflow run write operations', () => {
       deps({ getSession: () => activeSession('active', 'other-space') }),
       'workflow.run.update',
       { runId: 'run-1', description: 'reworded' },
-      mcpCaller('ad_hoc_member')
+      mcpCaller('long_term_agent')
     );
     expect(value).toBe('caller_not_admitted');
   });
@@ -327,7 +344,7 @@ describe('workflow run write operations', () => {
       deps(),
       'workflow.run.replace',
       { runId: 'run-1' },
-      mcpCaller('ad_hoc_member')
+      mcpCaller('long_term_agent')
     );
     expect(outcome).toMatchObject({ kind: 'failed', code: 'invalid_input' });
   });
@@ -347,7 +364,7 @@ describe('workflow run write operations', () => {
       }),
       'workflow.run.update',
       { runId: 'run-1', description: 'reworded' },
-      mcpCaller('ad_hoc_member')
+      mcpCaller('long_term_agent')
     );
     expect(calls).toEqual([]);
   });

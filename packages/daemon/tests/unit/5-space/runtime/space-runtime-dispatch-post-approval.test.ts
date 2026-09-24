@@ -2,6 +2,7 @@ import { longTermAgentSessionId } from '../../helpers/legacy-agent-session-id';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import { DirectTaskExecutionRepository } from '../../../../src/storage/repositories/direct-task-execution-repository';
+import { createDatabaseDirectTaskWorkerResolver } from '../../../../src/lib/tasks/direct-task-worker-identity';
 import { createDirectTaskStarter } from '../../../../src/lib/tasks/start-direct-task';
 import { createDirectOutcomeHandler } from '../../../../src/lib/tasks/direct-outcome-jobs';
 import { createSpaceOperationRegistryProvider } from '../../../../src/lib/tasks/operations';
@@ -700,6 +701,10 @@ test.each(['rpc', 'mcp'] as const)(
           notifyStandalone: () => {},
           emitTaskUpdated,
           isWorkflowRunActive: () => false,
+          hasDirectWorkerProvenance: (id) =>
+            new DirectTaskExecutionRepository(db).hasSessionProvenance(id),
+          resolveDirectWorker: createDatabaseDirectTaskWorkerResolver(db),
+          longHorizonAgentRepo: new SpaceLongHorizonAgentRepository(db),
         }
       );
       const worker = createOperationMcpHandler(provider, () => ({

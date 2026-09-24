@@ -7039,7 +7039,7 @@ describe('AgentSession', () => {
           }),
         ])
       );
-      agentSession.setCallerScopeResolver(() => ({ spaceId: 'space-1', role: 'ad_hoc_member' }));
+      agentSession.setCallerScopeResolver(() => ({ spaceId: 'space-1', role: 'long_term_agent' }));
 
       expect(agentSession.getOperationsCapabilityContribution().briefing).toContain(
         'shows this session 1 operation across 1 area: task.'

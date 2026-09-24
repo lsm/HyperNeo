@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { Session, SpaceGoal, SpaceTask } from '@hyperneo/shared';
+import type { Session, SpaceGoal, SpaceLongHorizonAgent, SpaceTask } from '@hyperneo/shared';
 import { createGoalOperations } from '../../../../src/lib/goals/operations.ts';
 import { SpaceGoalService } from '../../../../src/lib/goals/service.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
@@ -21,6 +21,12 @@ import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 const SPACE_ID = 'space-goal-writes';
 const OTHER_SPACE_ID = 'space-goal-writes-other';
 const SESSION_ID = 'session-goal-writer';
+const SESSION_OWNER = {
+  id: 'agent-goal-writer',
+  spaceId: SPACE_ID,
+  status: 'active',
+  sessionId: SESSION_ID,
+} as SpaceLongHorizonAgent;
 
 function insertSpace(db: BunDatabase, spaceId: string): void {
   db.prepare(
@@ -36,7 +42,7 @@ function session(status: string, spaceId = SPACE_ID): Session {
     type: 'space',
     status,
     context: { spaceId },
-    metadata: {},
+    metadata: { promptProvenance: { source: 'test', hash: 'h', agentId: SESSION_OWNER.id } },
   } as unknown as Session;
 }
 
@@ -69,7 +75,9 @@ function makeCtx(sessionStatus = 'active') {
     createGoalOperations({
       goalService,
       taskRepo,
-      longHorizonAgentRepo: { getById: () => null },
+      longHorizonAgentRepo: {
+        getById: (id) => (id === SESSION_OWNER.id ? SESSION_OWNER : null),
+      },
       goalScopeRepo: { getPrimaryGoalOwner: () => ({ action: 'no_recipient' }) },
       getSession: (id) => (id === SESSION_ID ? session(sessionStatus) : null),
       auditLogRepo,
@@ -149,7 +157,7 @@ describe('goal.update through the operations door', () => {
         ctx,
         'goal.update',
         { goalId: goal.id, summary: 'Halfway', nextSteps: ['ship it'], progress: 50 },
-        agent('ad_hoc_member')
+        agent('long_term_agent')
       );
       expect(result.accepted).toBe(true);
       expect(result.goal?.summary).toBe('Halfway');
@@ -173,7 +181,7 @@ describe('goal.update through the operations door', () => {
         ctx,
         'goal.update',
         { goalId: goal.id, status: 'paused' },
-        agent('ad_hoc_member')
+        agent('long_term_agent')
       );
       expect(result.accepted).toBe(true);
       expect(result.goal?.status).toBe('paused');
@@ -210,7 +218,7 @@ describe('goal.update through the operations door', () => {
         ctx,
         'goal.update',
         { goalId: goal.id, summary: 'Moved', workspacePath: '/tmp/workspace/other-repo' },
-        agent('ad_hoc_member')
+        agent('long_term_agent')
       );
       expect(result.accepted).toBe(true);
       expect(result.goal?.workspacePath).toBe('/tmp/workspace/other-repo');

@@ -215,7 +215,7 @@ describe('operation listing by caller', () => {
     const names = await listedNames(policyFixture(), {
       source: 'mcp',
       sessionId: 'member',
-      role: 'ad_hoc_member',
+      role: 'long_term_agent',
     });
     expect(names).toEqual(UNRESTRICTED);
   });
@@ -229,7 +229,7 @@ describe('operation listing by caller', () => {
   test('all: true returns the full catalog to an MCP caller', async () => {
     const names = await listedNames(
       policyFixture(),
-      { source: 'mcp', sessionId: 'member', role: 'ad_hoc_member' },
+      { source: 'mcp', sessionId: 'member', role: 'long_term_agent' },
       { all: true }
     );
     expect(names).toEqual(ALL_NAMES);
@@ -237,7 +237,7 @@ describe('operation listing by caller', () => {
 
   test('an operation left off the list still describes as found', async () => {
     const registry = policyFixture();
-    const member: OperationCaller = { source: 'mcp', sessionId: 'member', role: 'ad_hoc_member' };
+    const member: OperationCaller = { source: 'mcp', sessionId: 'member', role: 'long_term_agent' };
     expect(
       await invokeOperation(registry, 'operations.describe', { name: 'family.human' }, member)
     ).toMatchObject({ kind: 'completed', value: { found: true, name: 'family.human' } });

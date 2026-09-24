@@ -55,7 +55,7 @@ const SCOPED_MCP: OperationCaller = {
   source: 'mcp',
   sessionId: 'session-in-alpha',
   spaceId: ALPHA.id,
-  role: 'ad_hoc_member',
+  role: 'long_term_agent',
 };
 const RPC: OperationCaller = { source: 'rpc', principal: 'local' };
 

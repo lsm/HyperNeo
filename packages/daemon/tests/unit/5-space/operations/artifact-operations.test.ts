@@ -246,7 +246,7 @@ describe('artifact operations', () => {
       source: 'mcp',
       sessionId,
       spaceId: SPACE,
-      role: 'ad_hoc_member',
+      role: 'long_term_agent',
     };
     expect(
       await run(operations, 'workflow.run.artifact.save', { shape: 'note', summary: 'x' }, caller)

@@ -293,7 +293,7 @@ test('target gates reject absent, standalone and non-review tasks', async () => 
 
 test.each([
   { taskId: 'task', approved: 'yes' },
-  { taskId: 'task', approved: true, role: 'ad_hoc_member' },
+  { taskId: 'task', approved: true, role: 'long_term_agent' },
 ])('schema rejects caller-controlled fields or wrong types %j', async (input) => {
   expect(await invoke(undefined, input, 'rpc')).toMatchObject({
     kind: 'failed',

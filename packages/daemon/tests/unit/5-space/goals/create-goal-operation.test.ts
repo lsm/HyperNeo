@@ -23,6 +23,7 @@ import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 const SPACE_ID = 'space-goal-create';
 const OTHER_SPACE_ID = 'space-goal-create-other';
 const SESSION_ID = 'session-goal-creator';
+const SESSION_OWNER_ID = 'agent-session-owner';
 
 function insertSpace(db: BunDatabase, spaceId: string): void {
   db.prepare(
@@ -38,7 +39,7 @@ function session(status: string): Session {
     type: 'space',
     status,
     context: { spaceId: SPACE_ID },
-    metadata: {},
+    metadata: { promptProvenance: { source: 'test', hash: 'h', agentId: SESSION_OWNER_ID } },
   } as unknown as Session;
 }
 
@@ -51,6 +52,12 @@ function makeCtx(sessionStatus = 'active') {
   const spaceRepo = new SpaceRepository(db);
   const taskRepo = new SpaceTaskRepository(db);
   const longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(db);
+  longHorizonAgentRepo.create({
+    id: SESSION_OWNER_ID,
+    spaceId: SPACE_ID,
+    handle: 'session-owner',
+    sessionId: SESSION_ID,
+  });
   const goalScopeRepo = new SpaceAgentGoalScopeRepository(db, longHorizonAgentRepo);
   const auditLogRepo = new McpAuditLogRepository(db);
   const goalService = new SpaceGoalService({
@@ -193,14 +200,14 @@ describe('goal.create through the operations door', () => {
     }
   });
 
-  test('refuses an ad_hoc_member naming an owner other than itself', async () => {
+  test('refuses a caller with no agent identity naming another owner', async () => {
     const ctx = makeCtx();
     try {
       const other = ctx.seedAgent(SPACE_ID, 'someone-else');
       const result = await invoke(
         ctx,
         { title: 'Delegated', ownerAgentId: other.id },
-        agent('ad_hoc_member')
+        agent('long_term_agent')
       );
       expect(result.accepted).toBe(false);
       expect(result.reason).toBe('owner_denied');

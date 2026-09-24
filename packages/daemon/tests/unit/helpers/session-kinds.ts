@@ -4,14 +4,14 @@ import type { SpaceMcpSessionPolicyContext } from '../../../src/lib/space/runtim
 
 export type SessionKind =
   | 'agent_card'
-  | 'ad_hoc_member'
+  | 'unowned_space'
   | 'workflow_worker'
   | 'direct_task_worker'
   | 'non_space';
 
 export const SESSION_KINDS: readonly SessionKind[] = [
   'agent_card',
-  'ad_hoc_member',
+  'unowned_space',
   'workflow_worker',
   'direct_task_worker',
   'non_space',
@@ -27,7 +27,7 @@ const NOW = Date.now();
 
 const SESSION_IDS: Record<SessionKind, string> = {
   agent_card: longTermAgentSessionId(SESSION_KIND_SPACE_ID, SESSION_KIND_AGENT_ID),
-  ad_hoc_member: 'session-ad-hoc-member',
+  unowned_space: 'session-unowned-space',
   workflow_worker: 'session-workflow-worker',
   direct_task_worker: 'session-direct-task-worker',
   non_space: 'session-outside-any-space',
@@ -81,7 +81,7 @@ function kindShape(kind: SessionKind): Partial<Session> {
           },
         },
       } as unknown as Partial<Session>;
-    case 'ad_hoc_member':
+    case 'unowned_space':
       return { context: { spaceId: SESSION_KIND_SPACE_ID } } as unknown as Partial<Session>;
     case 'workflow_worker':
       return {

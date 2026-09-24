@@ -98,7 +98,7 @@ describe('goal.task.list through the operations door', () => {
         ctx,
         'goal.task.list',
         { goalId: goal.id },
-        agent('ad_hoc_member')
+        agent('long_term_agent')
       );
       expect(result.accepted).toBe(true);
       expect(result.total).toBe(1);
@@ -200,7 +200,7 @@ describe('goal.event.list through the operations door', () => {
         ctx,
         'goal.event.list',
         { goalId: goal.id },
-        agent('ad_hoc_member')
+        agent('long_term_agent')
       );
       expect(result.accepted).toBe(true);
       expect(result.total).toBe(result.events?.length);

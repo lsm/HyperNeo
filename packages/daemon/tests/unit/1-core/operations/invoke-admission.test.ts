@@ -14,7 +14,7 @@ import {
 } from '../../../../src/lib/operations/registry';
 
 const MCP_ROLES: readonly OperationCallerRole[] = [
-  'ad_hoc_member',
+  'long_term_agent',
   'workflow_worker',
   'direct_task_worker',
   'long_term_agent',
@@ -71,7 +71,7 @@ describe('admitOperationCaller', () => {
   test('carries the prepared operation through for every caller, including one a human_only policy used to reject', () => {
     const { operation } = fixture({ safetyClass: 'human_only' });
     const prepared = { operation, input: { content: 'hello' } };
-    expect(admitOperationCaller(prepared, mcpCaller('ad_hoc_member'))).toEqual({
+    expect(admitOperationCaller(prepared, mcpCaller('long_term_agent'))).toEqual({
       value: prepared,
     });
   });
@@ -105,7 +105,7 @@ describe('invokeOperation caller admission', () => {
   test('admission no longer runs before input parsing; bad input still reports invalid_input', async () => {
     const { registry, execute } = fixture({ safetyClass: 'human_only' });
     expect(
-      await invokeOperation(registry, 'task.act', { content: '' }, mcpCaller('ad_hoc_member'))
+      await invokeOperation(registry, 'task.act', { content: '' }, mcpCaller('long_term_agent'))
     ).toMatchObject({ kind: 'failed', code: 'invalid_input' });
     expect(execute).not.toHaveBeenCalled();
   });

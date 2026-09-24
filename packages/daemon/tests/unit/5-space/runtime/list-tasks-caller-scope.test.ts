@@ -14,6 +14,8 @@ import { Database } from '../../../../src/storage/sqlite-compat';
 import { createStandaloneTask } from '../../../../src/storage/tasks/create-task';
 import { listTaskCores } from '../../../../src/storage/tasks/list-tasks';
 import { createTestSession } from '../../../helpers/database';
+import { agentOwnedMetadata } from '../../helpers/space-agent-owner';
+import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { createSpaceTables } from '../../helpers/space-test-db';
 
 let db: Database;
@@ -36,7 +38,7 @@ beforeEach(() => {
   sessions = new SessionRepository(db);
   admission = {
     getSession: (id: string) => sessions.getSession(id),
-    longHorizonAgentRepo: { getById: () => null },
+    longHorizonAgentRepo: new SpaceLongHorizonAgentRepository(db),
   } as unknown as TaskReadAdmission;
 });
 afterEach(() => db.close());
@@ -54,12 +56,14 @@ function invoke(input: unknown, caller: Parameters<typeof invokeOperation>[3]) {
 }
 
 function member(id: string, memberSpaceId?: string) {
+  const base = createTestSession(id);
   sessions.createSession(
     {
-      ...createTestSession(id),
+      ...base,
       workspacePath: '/repo',
       type: 'worker',
       context: memberSpaceId ? { spaceId: memberSpaceId } : {},
+      metadata: agentOwnedMetadata(db, id, memberSpaceId, base.metadata),
     },
     { enforceWorkspaceOwnership: false }
   );
@@ -75,12 +79,12 @@ function titles(outcome: Awaited<ReturnType<typeof invokeOperation>>): string[] 
   return value.tasks.map((task) => task.title).sort();
 }
 
-test('the door hands an ad_hoc_member session its Space as caller scope', () => {
+test('the door hands an agent session its Space as caller scope', () => {
   member('scoped-session', spaceId);
   const session = sessions.getSession('scoped-session');
   expect(session).not.toBeNull();
   expect(resolveSessionCallerScope(session!, admission)).toMatchObject({
-    role: 'ad_hoc_member',
+    role: 'long_term_agent',
     spaceId,
   });
 });

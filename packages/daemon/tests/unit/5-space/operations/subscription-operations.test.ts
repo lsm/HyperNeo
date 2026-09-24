@@ -82,16 +82,22 @@ function worker(sessionId: string): OperationCaller {
 }
 
 function memberSession(id: string) {
+  const base = createTestSession(id);
   sessions.createSession(
     {
-      ...createTestSession(id),
+      ...base,
       workspacePath: '/repo',
       type: 'space_chat',
       status: 'active',
       context: { spaceId: SPACE },
+      metadata: {
+        ...base.metadata,
+        promptProvenance: { source: 'test', hash: 'h', agentId: AGENT },
+      },
     },
     { enforceWorkspaceOwnership: false }
   );
+  agents.update(AGENT, { sessionId: id });
   return id;
 }
 
@@ -288,13 +294,13 @@ describe('node external-event subscription operations', () => {
     expect(unparseable.error?.issues[0]?.message).toBe('Could not parse GitHub PR URL: not-a-url');
   });
 
-  test('reports node_unresolved for a space member with no node execution', async () => {
-    const sessionId = workerSession('s-member', { withExecution: false });
+  test('reports node_unresolved for a space agent with no node execution', async () => {
+    const sessionId = memberSession('s-member');
     const caller: OperationCaller = {
       source: 'mcp',
       sessionId,
       spaceId: SPACE,
-      role: 'ad_hoc_member',
+      role: 'long_term_agent',
     };
     expect(await run('event.external.subscribe', { topicPattern: 'github/a/b/*' }, caller)).toBe(
       'node_unresolved'
@@ -314,10 +320,10 @@ describe('node external-event subscription operations', () => {
     expect(unregistered).toEqual([]);
   });
 
-  test('rejects node_unresolved when no node execution backs the session', async () => {
+  test('refuses a worker session no node execution backs as outside the Space', async () => {
     const caller = worker(workerSession('s-orphan', { withExecution: false }));
     expect(await run('event.external.subscribe', { topicPattern: 'github/a/b/*' }, caller)).toBe(
-      'node_unresolved'
+      'session_inactive'
     );
   });
 

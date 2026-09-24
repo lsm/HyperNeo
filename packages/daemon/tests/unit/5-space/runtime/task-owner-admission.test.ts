@@ -4,6 +4,7 @@ import { Database } from '../../../../src/storage/sqlite-compat';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
+import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { createStandaloneTask } from '../../../../src/storage/tasks/create-task';
 import { createSpaceTables } from '../../helpers/space-test-db';
 import { createTestSession } from '../../../helpers/database';
@@ -17,6 +18,7 @@ let db: Database;
 let spaces: SpaceRepository;
 let tasks: SpaceTaskRepository;
 let sessions: SessionRepository;
+let agents: SpaceLongHorizonAgentRepository;
 let spaceId: string;
 
 beforeEach(() => {
@@ -26,17 +28,27 @@ beforeEach(() => {
   spaceId = spaces.createSpace({ name: 'Space', slug: 'space', workspacePath: '/repo' }).id;
   tasks = new SpaceTaskRepository(db);
   sessions = new SessionRepository(db);
+  agents = new SpaceLongHorizonAgentRepository(db);
 });
 afterEach(() => db.close());
 
 function member(id: string, owner?: string, status: SessionStatus = 'active') {
+  const base = createTestSession(id);
+  const agent =
+    owner === spaceId ? agents.create({ spaceId: owner, handle: id, sessionId: id }) : null;
   sessions.createSession(
     {
-      ...createTestSession(id),
+      ...base,
       workspacePath: '/repo',
       type: 'worker',
       status,
       context: owner ? { spaceId: owner } : {},
+      metadata: agent
+        ? {
+            ...base.metadata,
+            promptProvenance: { source: 'test', hash: 'h', agentId: agent.id },
+          }
+        : base.metadata,
     },
     { enforceWorkspaceOwnership: false }
   );
@@ -44,7 +56,7 @@ function member(id: string, owner?: string, status: SessionStatus = 'active') {
 }
 
 function deps() {
-  return { getSession: (id: string) => sessions.getSession(id) };
+  return { getSession: (id: string) => sessions.getSession(id), longHorizonAgentRepo: agents };
 }
 
 test('resolveSpaceTaskOwner returns null for a missing task', () => {

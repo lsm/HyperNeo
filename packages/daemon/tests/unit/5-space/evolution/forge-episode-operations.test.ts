@@ -48,7 +48,7 @@ function makeSession(id: string, spaceId: string, status: string): Session {
     lastActiveAt: new Date().toISOString(),
     status,
     config: { tools: {} },
-    metadata: {},
+    metadata: { promptProvenance: { source: 'test', hash: 'h', agentId: `agent-${id}` } },
     type: 'space_chat',
     context: { spaceId },
   } as unknown as Session;
@@ -130,6 +130,15 @@ function makeCtx() {
     ['session-member', makeSession('session-member', SPACE_ID, 'active')],
     ['session-archived', makeSession('session-archived', SPACE_ID, 'archived')],
   ]);
+  const sessionOwners = new SpaceLongHorizonAgentRepository(db);
+  for (const owned of sessions.values()) {
+    sessionOwners.create({
+      id: `agent-${owned.id}`,
+      spaceId: owned.context?.spaceId as string,
+      handle: owned.id,
+      sessionId: owned.id,
+    });
+  }
 
   const audited: EvolutionAuditEntry[] = [];
   const audit: EvolutionAuditWriter = (entry) => {
@@ -173,7 +182,7 @@ const memberCaller: OperationCaller = {
   source: 'mcp',
   sessionId: 'session-member',
   spaceId: SPACE_ID,
-  role: 'ad_hoc_member',
+  role: 'long_term_agent',
   agentName: 'alice',
 };
 const workerCaller: OperationCaller = {
@@ -186,7 +195,7 @@ const archivedCaller: OperationCaller = {
   source: 'mcp',
   sessionId: 'session-archived',
   spaceId: SPACE_ID,
-  role: 'ad_hoc_member',
+  role: 'long_term_agent',
 };
 
 type Ctx = ReturnType<typeof makeCtx>;

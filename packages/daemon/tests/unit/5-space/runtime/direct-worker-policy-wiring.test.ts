@@ -54,7 +54,6 @@ test('reserved and running identities never inherit legacy or member tools', () 
       spaceId,
       isWorkflowWorker: false,
       requiredServers: [],
-      attachGenericSpaceTools: false,
       attachLongTermAgentTools: false,
     });
   }
@@ -65,7 +64,6 @@ test('stopped or mismatched provenance remains dormant without execution ownersh
   expect(policy()).toMatchObject({
     role: 'direct_task_worker',
     owner: 'none',
-    attachGenericSpaceTools: false,
   });
   sessions.updateSession('direct', { type: 'space_task_agent', context: { spaceId: 'other' } });
   expect(policy()).toMatchObject({
@@ -75,7 +73,7 @@ test('stopped or mismatched provenance remains dormant without execution ownersh
   });
 });
 
-test('unrelated ordinary Space membership remains unchanged', () => {
+test('an unowned Space session stays outside the Space with or without direct-worker lookups', () => {
   const session = { ...createTestSession('ordinary'), context: { spaceId } };
   const plain = resolveSpaceMcpSessionPolicy(session);
   const resolveDirectWorker = mock(createDatabaseDirectTaskWorkerResolver(db));
@@ -85,7 +83,7 @@ test('unrelated ordinary Space membership remains unchanged', () => {
       hasDirectWorkerProvenance: (id) => attempts.hasSessionProvenance(id),
     })
   ).toEqual(plain);
-  expect(plain.attachGenericSpaceTools).toBe(true);
+  expect(plain.role).toBe('universal_read');
   expect(resolveDirectWorker).not.toHaveBeenCalled();
 });
 
@@ -96,7 +94,7 @@ test.each([
   'mismatched',
   'task_deleted',
   'space_deleted',
-] as const)('member provisioning does not load or replay a %s direct session', async (state) => {
+] as const)('workflow provisioning does not load or replay a %s direct session', async (state) => {
   if (state === 'task_deleted') db.prepare('DELETE FROM space_tasks WHERE id = ?').run(taskId);
   if (state === 'space_deleted') db.prepare('DELETE FROM spaces WHERE id = ?').run(spaceId);
   if (state === 'task_deleted' || state === 'space_deleted') {
@@ -120,9 +118,6 @@ test.each([
       sessionManager: { getSessionAsync },
     },
   }) as SpaceRuntimeService;
-  await provisioner.attachSpaceToolsToMemberSession(sessions.getSession('direct')!, {
-    replayPendingMessages: true,
-  });
   const agent = { getSessionData: () => sessions.getSession('direct')! } as AgentSession;
   await provisioner.provisionWorkflowSession(agent, {
     startQuery: true,

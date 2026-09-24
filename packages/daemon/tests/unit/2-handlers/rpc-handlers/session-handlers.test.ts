@@ -2751,10 +2751,7 @@ describe('Session RPC Handlers — session.create universal-read operations inje
 
   it('refuses to create a session inside a Space', async () => {
     const fixture = makeSessionFixture({});
-    const attachSpaceToolsToMemberSession = mock(async () => {});
-    await setupWith(fixture.sessionManager, {
-      attachSpaceToolsToMemberSession,
-    });
+    await setupWith(fixture.sessionManager, {});
 
     const handler = messageHubData.handlers.get('session.create');
     expect(handler).toBeDefined();
@@ -2763,6 +2760,5 @@ describe('Session RPC Handlers — session.create universal-read operations inje
     ).rejects.toThrow('no longer created inside a Space');
 
     expect(fixture.sessionManager.createSession).not.toHaveBeenCalled();
-    expect(attachSpaceToolsToMemberSession).not.toHaveBeenCalled();
   });
 });

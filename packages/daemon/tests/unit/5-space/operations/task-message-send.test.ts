@@ -129,7 +129,7 @@ const baseCaller = {
   source: 'mcp' as const,
   sessionId: 'my-session-1',
   spaceId: SPACE_ID,
-  role: 'ad_hoc_member' as const,
+  role: 'long_term_agent' as const,
   agentName: 'tester',
 };
 
@@ -533,7 +533,7 @@ describe('sendTaskMessage — handle and role targets', () => {
   test('rejects a Space agent caller with no session id', async () => {
     const result = await sendTaskMessage(
       { ...baseInput, nodeId: 'coder' },
-      { source: 'mcp', spaceId: SPACE_ID, role: 'ad_hoc_member', agentName: 'tester' },
+      { source: 'mcp', spaceId: SPACE_ID, role: 'long_term_agent', agentName: 'tester' },
       baseDeps()
     );
     expect(result.success).toBe(false);
@@ -585,12 +585,12 @@ describe('sendTaskMessage — sender attribution', () => {
     expect(envelope).toContain('To reply, use: send_message with target "@task-manager"');
   });
 
-  test('names an unnamed member session by its kind and routes replies to its session', async () => {
+  test('names an unnamed direct task worker by its kind and routes replies to its session', async () => {
     const envelope = await deliverAs({
       source: 'mcp',
       sessionId: 'member-session',
       spaceId: SPACE_ID,
-      role: 'ad_hoc_member',
+      role: 'direct_task_worker',
     });
     expect(envelope).toContain('─── Message from space-member ───');
     expect(envelope).toContain('To reply, use: send_message with target "@session:member-session"');
@@ -605,7 +605,12 @@ describe('sendTaskMessage — sender attribution', () => {
     });
     await sendTaskMessage(
       { ...baseInput, target: '@role:task-manager' },
-      { ...baseCaller, sessionId: 'member-session', agentName: undefined },
+      {
+        ...baseCaller,
+        sessionId: 'member-session',
+        role: 'direct_task_worker',
+        agentName: undefined,
+      },
       baseDeps({
         messageResolver: messageResolverFor(actor, (target) => target.startsWith('@role:')),
         longTermAgentDelivery: {

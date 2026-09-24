@@ -98,10 +98,6 @@ const TEXT_MARKERS: ReadonlyArray<readonly [string, string]> = [
   ['space-identity', `the Space "${SPACE_NAME}" (id: ${SESSION_KIND_SPACE_ID})`],
   ['card-agent-role', 'Your role in it is the Space agent "Card Agent".'],
   [
-    'ad-hoc-role',
-    'You are an ad-hoc member session: this Space has not assigned you an agent role.',
-  ],
-  [
     'workflow-worker-role',
     'Your role in it is a worker session running one node of a Space workflow for an assigned task.',
   ],
@@ -380,13 +376,13 @@ describe('session kind injected text', () => {
       );
     });
 
-    test('tells an ad-hoc member it has no agent role, and drops the standing instructions when the Space has none', () => {
+    test('drops the standing instructions when the Space has none', () => {
       const briefing = assembleSessionBriefing({
         scope: [
           spaceScopeContribution({
             spaceId: SPACE.id,
             spaceName: SPACE.name,
-            role: 'ad_hoc_member',
+            role: 'workflow_worker',
             spaceInstructions: '',
           }),
         ],
@@ -398,7 +394,7 @@ describe('session kind injected text', () => {
         `You are working inside the Space "${SPACE_NAME}" (id: ${SESSION_KIND_SPACE_ID})`
       );
       expect(briefing).toContain(
-        'You are an ad-hoc member session: this Space has not assigned you an agent role.'
+        'Your role in it is a worker session running one node of a Space workflow for an assigned task.'
       );
       expect(briefing).toContain('mcp__hyperneo-operations__invoke');
       expect(briefing).not.toContain('### Space Standing Instructions');
@@ -434,7 +430,7 @@ describe('session kind injected text', () => {
           spaceScopeContribution({
             spaceId: SPACE.id,
             spaceName: SPACE.name,
-            role: 'ad_hoc_member',
+            role: 'workflow_worker',
             spaceInstructions: '',
           }),
         ],
@@ -472,19 +468,7 @@ describe('session kind injected text', () => {
             'space-standing-instructions',
           ],
         },
-        {
-          kind: 'ad_hoc_member',
-          scope: 'resolved',
-          says: [
-            'space-identity',
-            'ad-hoc-role',
-            'operations-door-tool',
-            'operations-discovery',
-            'agent-memory-briefing',
-            'db-query-briefing',
-            'space-standing-instructions',
-          ],
-        },
+        { kind: 'unowned_space', scope: 'none', says: [] },
         {
           kind: 'workflow_worker',
           scope: 'resolved',
@@ -512,14 +496,14 @@ describe('session kind injected text', () => {
     });
 
     test('briefs only the built-in servers the session was actually given', async () => {
-      const session = makeSessionOfKind('ad_hoc_member');
+      const session = makeSessionOfKind('agent_card');
       const recorded = makeCapabilityRecordingAgentSession(session);
-      const service = buildService('ad_hoc_member', recorded.agentSession);
+      const service = buildService('agent_card', recorded.agentSession);
       (service as unknown as { config: SpaceRuntimeServiceConfig }).config.dbPath = undefined;
 
-      await service.attachSpaceToolsToMemberSession(session, { replayPendingMessages: false });
+      await service.reattachMemberSpaceTools(session.id);
 
-      const scope = scopeFor('ad_hoc_member', session);
+      const scope = scopeFor('agent_card', session);
       const assembled = assembleSessionBriefing({
         scope: scope ? [scope] : [],
         capabilities: [OPERATIONS_CONTRIBUTION, ...recorded.capabilities],
@@ -527,7 +511,7 @@ describe('session kind injected text', () => {
 
       expect(markersIn(assembled)).toEqual([
         'space-identity',
-        'ad-hoc-role',
+        'card-agent-role',
         'operations-door-tool',
         'operations-discovery',
         'agent-memory-briefing',
@@ -617,19 +601,7 @@ describe('session kind injected text', () => {
             'scheduling-guardrail',
           ],
         },
-        {
-          kind: 'ad_hoc_member',
-          shape: 'claude-code-preset+append',
-          says: [
-            'space-identity',
-            'ad-hoc-role',
-            'operations-door-tool',
-            'operations-discovery',
-            'agent-memory-briefing',
-            'db-query-briefing',
-            'space-standing-instructions',
-          ],
-        },
+        { kind: 'unowned_space', shape: 'claude-code-preset', says: [] },
         {
           kind: 'workflow_worker',
           shape: 'claude-code-preset+append',
@@ -673,7 +645,7 @@ describe('session kind injected text', () => {
 
       expect(recording).toEqual([
         { kind: 'agent_card', recorded: false },
-        { kind: 'ad_hoc_member', recorded: false },
+        { kind: 'unowned_space', recorded: true },
         { kind: 'workflow_worker', recorded: false },
         { kind: 'direct_task_worker', recorded: false },
         { kind: 'non_space', recorded: true },

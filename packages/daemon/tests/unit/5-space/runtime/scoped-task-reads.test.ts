@@ -15,6 +15,8 @@ import {
 } from '../../../../src/lib/tasks/scoped-task-reads';
 import { createSpaceTables } from '../../helpers/space-test-db';
 import { createTestSession } from '../../../helpers/database';
+import { agentOwnedMetadata } from '../../helpers/space-agent-owner';
+import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 
 let db: Database;
 let sessions: SessionRepository;
@@ -36,18 +38,20 @@ beforeEach(() => {
   sessions = new SessionRepository(db);
   admission = {
     getSession: (id: string) => sessions.getSession(id),
-    longHorizonAgentRepo: { getById: () => null },
+    longHorizonAgentRepo: new SpaceLongHorizonAgentRepository(db),
   } as unknown as TaskReadAdmission;
 });
 afterEach(() => db.close());
 
 function member(id: string, owner?: string) {
+  const base = createTestSession(id);
   sessions.createSession(
     {
-      ...createTestSession(id),
+      ...base,
       workspacePath: '/repo',
       type: 'worker',
       context: owner ? { spaceId: owner } : {},
+      metadata: agentOwnedMetadata(db, id, owner, base.metadata),
     },
     { enforceWorkspaceOwnership: false }
   );

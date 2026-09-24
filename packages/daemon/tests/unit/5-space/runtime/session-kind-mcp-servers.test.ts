@@ -173,7 +173,7 @@ describe('session kind MCP server attachment', () => {
 
       expect(resolved).toEqual([
         ['agent_card', 'long_term_agent', 'space-runtime', []],
-        ['ad_hoc_member', 'ad_hoc_member', 'space-runtime', []],
+        ['unowned_space', 'universal_read', 'none', []],
         ['workflow_worker', 'workflow_worker', 'task-agent-manager', []],
         ['direct_task_worker', 'direct_task_worker', 'none', []],
         ['non_space', 'universal_read', 'none', []],
@@ -181,55 +181,8 @@ describe('session kind MCP server attachment', () => {
     });
   });
 
-  describe('SpaceRuntimeService.attachSpaceToolsToMemberSession', () => {
-    test('attaches agent-memory and db-query to an ad-hoc Space member and to nobody else', async () => {
-      const attached: Array<[SessionKind, string[]]> = [];
-      for (const kind of SESSION_KINDS) {
-        const session = makeSessionOfKind(kind);
-        const service = buildService(kind, makeRecordingAgentSession(session));
-        await service.attachSpaceToolsToMemberSession(session, { replayPendingMessages: false });
-        attached.push([kind, serverNames(session)]);
-      }
-
-      expect(attached).toEqual([
-        ['agent_card', []],
-        ['ad_hoc_member', ['agent-memory', 'db-query']],
-        ['workflow_worker', []],
-        ['direct_task_worker', []],
-        ['non_space', []],
-      ]);
-    });
-
-    test('gates agent-memory on memoryRepo and db-query on dbPath independently', async () => {
-      const withoutMemory = makeSessionOfKind('ad_hoc_member');
-      const serviceWithoutMemory = buildService(
-        'ad_hoc_member',
-        makeRecordingAgentSession(withoutMemory)
-      );
-      (serviceWithoutMemory as unknown as { config: SpaceRuntimeServiceConfig }).config.memoryRepo =
-        undefined;
-      await serviceWithoutMemory.attachSpaceToolsToMemberSession(withoutMemory, {
-        replayPendingMessages: false,
-      });
-
-      const withoutDbPath = makeSessionOfKind('ad_hoc_member');
-      const serviceWithoutDbPath = buildService(
-        'ad_hoc_member',
-        makeRecordingAgentSession(withoutDbPath)
-      );
-      (serviceWithoutDbPath as unknown as { config: SpaceRuntimeServiceConfig }).config.dbPath =
-        undefined;
-      await serviceWithoutDbPath.attachSpaceToolsToMemberSession(withoutDbPath, {
-        replayPendingMessages: false,
-      });
-
-      expect(serverNames(withoutMemory)).toEqual(['db-query']);
-      expect(serverNames(withoutDbPath)).toEqual(['agent-memory']);
-    });
-  });
-
   describe('SpaceRuntimeService.reattachMemberSpaceTools', () => {
-    test('attaches agent-memory and db-query to an agent-card session and to an ad-hoc member, and nothing to the rest', async () => {
+    test('attaches agent-memory and db-query to an agent-card session and nothing to the rest', async () => {
       const attached: Array<[SessionKind, string[]]> = [];
       for (const kind of SESSION_KINDS) {
         const session = makeSessionOfKind(kind, {
@@ -242,7 +195,7 @@ describe('session kind MCP server attachment', () => {
 
       expect(attached).toEqual([
         ['agent_card', ['agent-memory', 'db-query']],
-        ['ad_hoc_member', ['agent-memory', 'db-query']],
+        ['unowned_space', []],
         ['workflow_worker', []],
         ['direct_task_worker', []],
         ['non_space', []],
@@ -317,7 +270,7 @@ describe('session kind MCP server attachment', () => {
     test('adds hyperneo-operations on top of whatever each session kind was attached', () => {
       const attachedByKind: Record<SessionKind, string[]> = {
         agent_card: ['agent-memory', 'db-query'],
-        ad_hoc_member: ['agent-memory', 'db-query'],
+        unowned_space: [],
         workflow_worker: ['agent-memory', 'db-query'],
         direct_task_worker: [],
         non_space: [],
@@ -334,7 +287,7 @@ describe('session kind MCP server attachment', () => {
 
       expect(effective).toEqual([
         ['agent_card', ['agent-memory', 'db-query', 'hyperneo-operations']],
-        ['ad_hoc_member', ['agent-memory', 'db-query', 'hyperneo-operations']],
+        ['unowned_space', ['hyperneo-operations']],
         ['workflow_worker', ['agent-memory', 'db-query', 'hyperneo-operations']],
         ['direct_task_worker', ['hyperneo-operations']],
         ['non_space', ['hyperneo-operations']],
@@ -342,7 +295,7 @@ describe('session kind MCP server attachment', () => {
     });
 
     test('hands build() the same set and pins strictMcpConfig so .mcp.json is never auto-loaded', async () => {
-      const session = makeSessionOfKind('ad_hoc_member');
+      const session = makeSessionOfKind('agent_card');
       session.config.mcpServers = {
         'agent-memory': { type: 'sdk', name: 'agent-memory', instance: {} },
       } as Session['config']['mcpServers'];
@@ -394,7 +347,7 @@ describe('session kind MCP server attachment', () => {
         });
 
       const member = new QueryOptionsBuilder(
-        registryContext(makeSessionOfKind('ad_hoc_member'))
+        registryContext(makeSessionOfKind('agent_card'))
       ).getEffectiveMcpServers();
       const outsider = new QueryOptionsBuilder(
         registryContext(makeSessionOfKind('non_space'))
@@ -414,7 +367,7 @@ describe('session kind MCP server attachment', () => {
         env: {},
         enabled: true,
       };
-      const session = makeSessionOfKind('ad_hoc_member');
+      const session = makeSessionOfKind('agent_card');
       const builder = new QueryOptionsBuilder(
         makeBuilderContext(session, {
           appMcpServerRepo: {

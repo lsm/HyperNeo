@@ -314,7 +314,7 @@ describe('attaching a remote daemon', () => {
         registry,
         'daemon.attach',
         { daemonId: 'b', url: remote.url },
-        { source, sessionId: 'agent-on-a', spaceId: 'space-a', role: 'ad_hoc_member' }
+        { source, sessionId: 'agent-on-a', spaceId: 'space-a', role: 'long_term_agent' }
       );
       expect(attached).toMatchObject({
         kind: 'completed',

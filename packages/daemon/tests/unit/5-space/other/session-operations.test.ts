@@ -15,8 +15,8 @@ import {
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
 
 const SPACE_ID = 'space-1';
-const READ_ROLES = ['ad_hoc_member', 'long_term_agent', 'workflow_worker'];
-const WRITE_ROLES = ['ad_hoc_member', 'long_term_agent'];
+const READ_ROLES = ['long_term_agent', 'workflow_worker'];
+const WRITE_ROLES = ['long_term_agent'];
 const OTHER_SPACE_ID = 'space-2';
 const TARGET = 'target-1';
 
@@ -224,7 +224,7 @@ describe('session operation catalog', () => {
       registry,
       'session.state.update',
       { sessionId: TARGET, processingState: 'running' },
-      mcpCaller('ad_hoc_member', { spaceId: undefined })
+      mcpCaller('long_term_agent', { spaceId: undefined })
     );
     expect(outcome).toEqual({
       kind: 'completed',
@@ -271,7 +271,7 @@ describe('session operation catalog', () => {
       type: 'space_task_agent',
       processing_state: '{"status":"waiting_for_input"}',
     });
-    const byType = await run('session.list', { type: 'worker' }, mcpCaller('ad_hoc_member'));
+    const byType = await run('session.list', { type: 'worker' }, mcpCaller('long_term_agent'));
     expect(byType).toMatchObject({ ok: true });
     expect((byType as { sessions: Array<{ id: string }> }).sessions.map((s) => s.id)).toEqual([
       'worker-9',
@@ -279,7 +279,7 @@ describe('session operation catalog', () => {
     const byStatus = await run(
       'session.list',
       { status: 'waiting_for_input' },
-      mcpCaller('ad_hoc_member')
+      mcpCaller('long_term_agent')
     );
     expect((byStatus as { sessions: Array<{ id: string }> }).sessions.map((s) => s.id)).toEqual([
       'worker-9',
@@ -289,7 +289,7 @@ describe('session operation catalog', () => {
   test('a session in another space is not found', async () => {
     insertSession(h.db, { id: 'foreign-1', space_id: OTHER_SPACE_ID });
     expect(
-      await run('session.get', { sessionId: 'foreign-1' }, mcpCaller('ad_hoc_member'))
+      await run('session.get', { sessionId: 'foreign-1' }, mcpCaller('long_term_agent'))
     ).toEqual({
       ok: false,
       reason: 'session_not_found',
@@ -299,7 +299,7 @@ describe('session operation catalog', () => {
 
   test('detail carries raw status, parsed metadata, and the last messages', async () => {
     insertMessage(h.db, 'm1', '2026-01-03T00:00:00.000Z', 'hello   world');
-    const result = await run('session.get', { sessionId: TARGET }, mcpCaller('ad_hoc_member'));
+    const result = await run('session.get', { sessionId: TARGET }, mcpCaller('long_term_agent'));
     expect(result).toMatchObject({
       ok: true,
       session: {
@@ -330,7 +330,7 @@ describe('session operation catalog', () => {
     const all = await run(
       'session.message.list',
       { sessionId: TARGET },
-      mcpCaller('ad_hoc_member')
+      mcpCaller('long_term_agent')
     );
     expect((all as { messages: Array<{ id: string }> }).messages.map((m) => m.id)).toEqual([
       'm2',
@@ -339,7 +339,7 @@ describe('session operation catalog', () => {
     const paged = await run(
       'session.message.list',
       { sessionId: TARGET, before: '2026-01-04T00:00:00.000Z|m2' },
-      mcpCaller('ad_hoc_member')
+      mcpCaller('long_term_agent')
     );
     expect((paged as { messages: Array<{ id: string }> }).messages.map((m) => m.id)).toEqual([
       'm1',
@@ -352,7 +352,7 @@ describe('session state mutations', () => {
     const result = await run(
       'session.state.update',
       { sessionId: TARGET, processingState: 'running' },
-      mcpCaller('ad_hoc_member')
+      mcpCaller('long_term_agent')
     );
     expect(result).toEqual({
       ok: true,
@@ -369,7 +369,7 @@ describe('session state mutations', () => {
       await run(
         'session.state.update',
         { sessionId: TARGET, processingState: 'idle' },
-        mcpCaller('ad_hoc_member')
+        mcpCaller('long_term_agent')
       )
     ).toEqual({
       ok: false,
@@ -385,7 +385,7 @@ describe('session state mutations', () => {
       await run(
         'session.state.update',
         { sessionId: TARGET, processingState: 'waiting_for_input' },
-        mcpCaller('ad_hoc_member')
+        mcpCaller('long_term_agent')
       )
     ).toEqual({
       ok: false,
@@ -400,7 +400,7 @@ describe('session state mutations', () => {
       await run(
         'session.state.update',
         { sessionId: 'archived-1', processingState: 'idle' },
-        mcpCaller('ad_hoc_member')
+        mcpCaller('long_term_agent')
       )
     ).toEqual({
       ok: false,
@@ -424,20 +424,20 @@ describe('session state mutations', () => {
       await run(
         'session.state.update',
         { sessionId: TARGET, processingState: 'running' },
-        mcpCaller('ad_hoc_member')
+        mcpCaller('long_term_agent')
       )
     ).toMatchObject({ ok: true });
     expect(JSON.parse(storedProcessingState())).toEqual({ status: 'processing' });
     h.live.set(TARGET, fakeLiveSession(h, TARGET));
     expect(
-      await run('session.interrupt', { sessionId: TARGET }, mcpCaller('ad_hoc_member'))
+      await run('session.interrupt', { sessionId: TARGET }, mcpCaller('long_term_agent'))
     ).toEqual({ ok: true, interrupted: true });
     expect(h.interrupts).toEqual([TARGET]);
   });
 
   test('interrupt without a live session points at the cold-recovery path', async () => {
     expect(
-      await run('session.interrupt', { sessionId: TARGET }, mcpCaller('ad_hoc_member'))
+      await run('session.interrupt', { sessionId: TARGET }, mcpCaller('long_term_agent'))
     ).toEqual({
       ok: false,
       reason: 'live_session_required',
@@ -487,7 +487,7 @@ describe('session operation role admission', () => {
       await run(
         'session.state.update',
         { sessionId: TARGET, processingState: 'running' },
-        mcpCaller('ad_hoc_member')
+        mcpCaller('long_term_agent')
       )
     ).toEqual({
       ok: false,
@@ -504,7 +504,7 @@ describe('session operation role admission', () => {
       await run(
         'session.state.update',
         { sessionId: TARGET, processingState: 'running' },
-        mcpCaller('ad_hoc_member')
+        mcpCaller('long_term_agent')
       )
     ).toMatchObject({ ok: false, reason: 'denied' });
     expect(JSON.parse(storedProcessingState())).toEqual({ status: 'idle' });
@@ -512,7 +512,7 @@ describe('session operation role admission', () => {
 
   test('an MCP caller may not override its own space', async () => {
     expect(
-      await run('session.list', { spaceId: OTHER_SPACE_ID }, mcpCaller('ad_hoc_member'))
+      await run('session.list', { spaceId: OTHER_SPACE_ID }, mcpCaller('long_term_agent'))
     ).toEqual({
       ok: false,
       reason: 'space_mismatch',
@@ -529,7 +529,7 @@ describe('invokeOperation', () => {
         registry,
         'session.get',
         { sessionId: TARGET },
-        mcpCaller('ad_hoc_member')
+        mcpCaller('long_term_agent')
       )
     ).toMatchObject({ kind: 'completed' });
     expect(
@@ -537,7 +537,7 @@ describe('invokeOperation', () => {
         registry,
         'session.state.update',
         { sessionId: TARGET, processingState: 'idle' },
-        mcpCaller('ad_hoc_member')
+        mcpCaller('long_term_agent')
       )
     ).toMatchObject({ kind: 'completed' });
   });
