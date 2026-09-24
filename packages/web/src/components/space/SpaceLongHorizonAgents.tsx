@@ -2,6 +2,7 @@ import {
   type CloneChildrenChoice,
   type CloneSummary,
   type SettingSource,
+  type WorktreeCommitStatus,
   type SpaceLongHorizonAgent,
   type SpaceLongHorizonAgentTemplate,
   type AgentModelPoolEntry,
@@ -599,6 +600,7 @@ export function SpaceLongHorizonAgents({
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleteClones, setDeleteClones] = useState<CloneSummary[] | null>(null);
+  const [deleteCommits, setDeleteCommits] = useState<WorktreeCommitStatus | null>(null);
 
   useEffect(() => {
     if (agents.length === 0) return;
@@ -626,19 +628,24 @@ export function SpaceLongHorizonAgents({
     setEditingAgent(null);
   };
 
-  const handleDeleteConfirm = async (children?: CloneChildrenChoice) => {
+  const handleDeleteConfirm = async (children?: CloneChildrenChoice, confirmed?: boolean) => {
     if (!deletingAgent) return;
     setDeleting(true);
     setDeleteError(null);
     try {
-      const refused = await spaceStore.deleteAgent(deletingAgent.id, children);
-      if (refused) {
+      const refused = await spaceStore.deleteAgent(deletingAgent.id, children, confirmed);
+      if (refused && 'clones' in refused) {
         setDeleteClones(refused.clones);
+        return;
+      }
+      if (refused) {
+        setDeleteCommits(refused.commitStatus);
         return;
       }
       toast.success(`"${deletingAgent.displayName}" deleted`);
       setDeletingAgent(null);
       setDeleteClones(null);
+      setDeleteCommits(null);
     } catch (err) {
       setDeleteError(err instanceof Error ? err.message : 'Failed to delete agent');
     } finally {
@@ -810,7 +817,26 @@ export function SpaceLongHorizonAgents({
         />
       )}
 
-      {deletingAgent && deleteClones && (
+      {deletingAgent && deleteCommits && (
+        <ConfirmModal
+          isOpen
+          onClose={() => {
+            setDeleteCommits(null);
+            setDeleteClones(null);
+            setDeletingAgent(null);
+          }}
+          onConfirm={() => handleDeleteConfirm('cascade', true)}
+          title="Unpushed commits"
+          message={`A clone of "${deletingAgent.displayName}" has ${deleteCommits.commits.length} unpushed commit(s) on its worktree. Deleting the clones will discard them.`}
+          confirmText="Delete anyway"
+          confirmButtonVariant="danger"
+          isLoading={deleting}
+          error={deleteError}
+          confirmTestId="agent-delete-commits-confirm"
+        />
+      )}
+
+      {deletingAgent && deleteClones && !deleteCommits && (
         <CloneChoiceDialog
           clones={deleteClones}
           action="delete"
@@ -824,7 +850,7 @@ export function SpaceLongHorizonAgents({
         />
       )}
 
-      {deletingAgent && !deleteClones && (
+      {deletingAgent && !deleteClones && !deleteCommits && (
         <ConfirmModal
           isOpen
           onClose={() => {

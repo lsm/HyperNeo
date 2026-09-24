@@ -2335,6 +2335,26 @@ describe('SpaceStore — CRUD methods', () => {
     expect(spaceStore.agents.value.some((agent) => agent.id === 'a1')).toBe(false);
   });
 
+  it('deleteAgent surfaces a commit confirmation and forwards confirmed', async () => {
+    await spaceStore.selectSpace('space-1');
+    spaceStore.agents.value = [makeLongHorizonAgent('a1')];
+    const commitStatus = { hasCommitsAhead: true, commits: [], baseBranch: 'main' };
+    mockHub.request.mockImplementationOnce(async () => ({
+      accepted: false,
+      reason: 'requires_confirmation',
+      commitStatus,
+    }));
+
+    expect(await spaceStore.deleteAgent('a1', 'cascade')).toEqual({ commitStatus });
+    expect(await spaceStore.deleteAgent('a1', 'cascade', true)).toBeNull();
+    expect(mockHub.request).toHaveBeenLastCalledWith('spaceAgentV2.delete', {
+      id: 'a1',
+      spaceId: 'space-1',
+      children: 'cascade',
+      confirmed: true,
+    });
+  });
+
   it('createAgent upserts RPC result already appended by created event', async () => {
     await spaceStore.selectSpace('space-1');
 
