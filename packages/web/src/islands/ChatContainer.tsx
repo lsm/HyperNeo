@@ -663,9 +663,15 @@ export default function ChatContainer({
     onMessageAccepted: handleMessageAccepted,
   });
 
+  const [returnRequestedAt, setReturnRequestedAt] = useState<string | null>(null);
+  const returnedAt = session?.metadata.clone?.returnedAt ?? null;
   const handleReturnToParent = useCallback(() => {
-    void sendMessage(RETURN_TO_PARENT_PROMPT);
-  }, [sendMessage]);
+    setReturnRequestedAt(returnedAt);
+    void sendMessage(RETURN_TO_PARENT_PROMPT).then((sent) => {
+      if (!sent) setReturnRequestedAt(null);
+    });
+  }, [sendMessage, returnedAt]);
+  const returnPending = returnRequestedAt !== null && returnRequestedAt === returnedAt;
 
   const isNewMountRef = useRef(true);
 
@@ -1269,7 +1275,9 @@ export default function ChatContainer({
         resettingAgent={sessionActions.resettingAgent}
         readonly={readonly}
         onBack={onBack}
-        onReturnToParent={session?.parentSessionId ? handleReturnToParent : undefined}
+        onReturnToParent={
+          session?.parentSessionId && !returnPending ? handleReturnToParent : undefined
+        }
         titleOverride={titleOverride}
         messages={messages}
         backgroundTaskMessages={backgroundTaskMessages}
