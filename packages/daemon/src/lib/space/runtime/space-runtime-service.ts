@@ -1512,6 +1512,13 @@ export class SpaceRuntimeService {
     return this.runtime.refreshLongHorizonSubscription(spaceId, subscriptionId);
   }
 
+  refreshSessionSubscription(
+    spaceId: string,
+    subscriptionId: string
+  ): { success: boolean; error?: string } {
+    return this.runtime.refreshSessionSubscription(spaceId, subscriptionId);
+  }
+
   removeLongHorizonSubscription(spaceId: string, subscriptionId: string): void {
     this.runtime.removeLongHorizonSubscription(spaceId, subscriptionId);
   }

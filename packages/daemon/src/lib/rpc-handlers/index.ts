@@ -1281,6 +1281,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     spaceAgentTemplateManager,
     spaceAgentReminderRepo,
     spaceAgentSubscriptionRepo,
+    spaceSessionEventSubscriptionRepo,
     spaceAgentInactivityConfigRepo,
     spaceAgentInactivityClaimRepo,
     spaceGoalService,
@@ -1418,17 +1419,20 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   );
 
   deps.sessionManager.setDefaultOperationRegistryProvider(spaceOperationRegistryProvider);
+  const directTaskExecutionRepo = new DirectTaskExecutionRepository(deps.db.getDatabase());
+  const directTaskWorkerResolver = createDatabaseDirectTaskWorkerResolver(deps.db.getDatabase());
   deps.sessionManager.setCallerScopeResolver(
     createSpaceCallerScopeResolver({
       getSession: (sessionId) => deps.db.getSession(sessionId),
+      hasDirectWorkerProvenance: (sessionId) =>
+        directTaskExecutionRepo.hasSessionProvenance(sessionId),
+      resolveDirectWorker: directTaskWorkerResolver,
       taskRepo: spaceTaskRepo,
       nodeExecutionRepo,
       longHorizonAgentRepo,
     })
   );
 
-  const directTaskExecutionRepo = new DirectTaskExecutionRepository(deps.db.getDatabase());
-  const directTaskWorkerResolver = createDatabaseDirectTaskWorkerResolver(deps.db.getDatabase());
   deps.sessionManager.setSpaceScopeResolver(
     createSpaceScopeResolver({
       getSession: (sessionId) => deps.db.getSession(sessionId),

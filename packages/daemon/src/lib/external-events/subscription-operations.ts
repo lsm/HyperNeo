@@ -7,6 +7,7 @@ import {
   type OperationDefinition,
 } from '../operations/registry.ts';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
+import type { SpaceSessionEventSubscriptionRepository } from '../../storage/repositories/space-session-event-subscription-repository.ts';
 import {
   type AgentSubscriptionDependencies,
   type AgentSubscriptionScope,
@@ -37,6 +38,11 @@ export interface SubscriptionDependencies extends AgentSubscriptionDependencies 
   registerSubscription: (slot: SubscriptionSlot, topicPattern: string) => RunOutcome;
   unregisterSubscription: (slot: SubscriptionSlot, topicPattern: string) => RunOutcome;
   listRunSubscriptions: (workflowRunId: string, spaceId: string, nodeId?: string) => ListOutcome;
+  sessionSubscriptions: Pick<
+    SpaceSessionEventSubscriptionRepository,
+    'upsert' | 'listBySpace' | 'delete'
+  >;
+  refreshSessionSubscription: (spaceId: string, subscriptionId: string) => RunOutcome;
 }
 
 const REJECTIONS = z.enum(['caller_denied', 'session_inactive', 'node_unresolved']);
@@ -68,12 +74,14 @@ type AgentSubscribeOutcome = z.infer<typeof AgentSubscribeOutcomeSchema>;
 const SubjectSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('node') }).strict(),
   z.object({ type: z.literal('agent'), agentId: z.string().min(1) }).strict(),
+  z.object({ type: z.literal('session') }).strict(),
 ]);
 type Subject = z.infer<typeof SubjectSchema>;
 
 export type SubscriptionSubject =
   | { kind: 'node'; slot: SubscriptionSlot }
-  | { kind: 'agent'; scope: AgentSubscriptionScope };
+  | { kind: 'agent'; scope: AgentSubscriptionScope }
+  | { kind: 'session'; spaceId: string; sessionId: string };
 
 function resolveTopicPattern<Input extends { topicPattern?: string; prUrl?: string }>(
   input: Input,
@@ -190,6 +198,7 @@ export function defaultSubject(
   caller: OperationCaller,
   subs: SubscriptionDependencies
 ): Subject | null {
+  if (caller.role === 'direct_task_worker') return { type: 'session' };
   if (caller.role !== 'long_term_agent') return { type: 'node' };
   const session = caller.sessionId ? subs.getSession(caller.sessionId) : null;
   const agentId = session?.metadata.promptProvenance?.agentId;
@@ -207,6 +216,11 @@ export function resolveSubscriptionSubject(
   if (subject.type === 'node') {
     const slot = resolveWriterSlot(caller, subs);
     return 'reason' in slot ? slot : { value: { kind: 'node', slot: slot.value } };
+  }
+  if (subject.type === 'session') {
+    return caller.sessionId
+      ? { value: { kind: 'session', spaceId, sessionId: caller.sessionId } }
+      : { reason: 'caller_denied' };
   }
   const gated = gateAgentSubscription(spaceId, { agent_id: subject.agentId }, subs);
   return 'reason' in gated
@@ -262,6 +276,40 @@ function unsubscribeTopic(
   return applyOutcome(input.topicPattern, subs.unregisterSubscription(slot, input.topicPattern));
 }
 
+function subscribeSession(
+  subject: { spaceId: string; sessionId: string },
+  input: { topicPattern: string; label?: string },
+  subs: SubscriptionDependencies
+): Outcome | SubjectRejection {
+  const topicPattern = input.topicPattern.trim();
+  if (invalidPattern(topicPattern)) return 'invalid_pattern';
+  const stored = subs.sessionSubscriptions.upsert({
+    spaceId: subject.spaceId,
+    sessionId: subject.sessionId,
+    topic: topicPattern,
+    label: input.label,
+  });
+  const refreshed = subs.refreshSessionSubscription(subject.spaceId, stored.id);
+  return refreshed.success ? { ok: true, topicPattern } : 'refresh_failed';
+}
+
+function unsubscribeSession(
+  subject: { spaceId: string; sessionId: string },
+  input: { topicPattern: string },
+  subs: SubscriptionDependencies
+): Outcome | SubjectRejection {
+  const topicPattern = input.topicPattern.trim();
+  if (invalidPattern(topicPattern)) return 'invalid_pattern';
+  const stored = subs.sessionSubscriptions
+    .listBySpace(subject.spaceId)
+    .find((row) => row.sessionId === subject.sessionId && row.topic === topicPattern);
+  if (stored) {
+    subs.sessionSubscriptions.delete(stored.id);
+    subs.refreshSessionSubscription(subject.spaceId, stored.id);
+  }
+  return { ok: true, topicPattern };
+}
+
 function subscribeSubject(
   subject: SubscriptionSubject,
   input: z.infer<typeof SubscribeInput>,
@@ -269,6 +317,7 @@ function subscribeSubject(
   subs: SubscriptionDependencies
 ): Outcome | AgentSubscribeOutcome | SubjectRejection {
   if (subject.kind === 'node') return subscribeTopic(subject.slot, input, subs);
+  if (subject.kind === 'session') return subscribeSession(subject, input, subs);
   const result = subscribeAgentTopic(
     subject.scope,
     {
@@ -291,6 +340,7 @@ function unsubscribeSubject(
   subs: SubscriptionDependencies
 ): Outcome | SubjectRejection {
   if (subject.kind === 'node') return unsubscribeTopic(subject.slot, input, subs);
+  if (subject.kind === 'session') return unsubscribeSession(subject, input, subs);
   const result = unsubscribeAgentTopic(
     subject.scope,
     { agent_id: subject.scope.agentId, topic_pattern: input.topicPattern },
@@ -334,9 +384,13 @@ function subjectPipeline<Input extends { subject?: Subject }, Result>(
 }
 
 const SUBJECT_DOC =
-  'subject names what the subscription is recorded against and defaults to the caller itself: a long-horizon agent\'s own record, otherwise { type: "node" }. For the node subject the slot (workflow run, node, agent, task) is resolved from the calling session and never from input, so a worker can only change its own subscriptions. For { type: "agent", agentId } the target long-horizon agent must belong to the caller Space, which is derived from the calling session; an omitted spaceId defaults to that Space. Rejections are returned as a bare reason: caller_denied for a caller with no Space scope or one naming another Space, session_inactive when the calling session is not active in that Space, node_unresolved when no node execution backs a node-subject caller, agent_not_found when the named agent is unknown or belongs to another Space, and invalid_pattern when topicPattern is not a valid topic glob.';
+  'subject names what the subscription is recorded against and defaults to the caller itself: a long-horizon agent\'s own record, a direct task worker\'s own session ({ type: "session" }), otherwise { type: "node" }. For the node subject the slot (workflow run, node, agent, task) is resolved from the calling session and never from input, so a worker can only change its own subscriptions. For { type: "agent", agentId } the target long-horizon agent must belong to the caller Space, which is derived from the calling session; an omitted spaceId defaults to that Space. Rejections are returned as a bare reason: caller_denied for a caller with no Space scope or one naming another Space, session_inactive when the calling session is not active in that Space, node_unresolved when no node execution backs a node-subject caller, agent_not_found when the named agent is unknown or belongs to another Space, and invalid_pattern when topicPattern is not a valid topic glob.';
 
-const SUBSCRIPTION_ROLES = [...NODE_EVENT_ROLES, ...AGENT_EVENT_ROLES];
+const SUBSCRIPTION_ROLES = [
+  ...NODE_EVENT_ROLES,
+  ...AGENT_EVENT_ROLES,
+  'direct_task_worker' as const,
+];
 
 export function createSubscriptionOperations(
   subs: SubscriptionDependencies
