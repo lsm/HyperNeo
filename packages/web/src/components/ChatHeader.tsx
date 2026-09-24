@@ -101,7 +101,7 @@ export function ChatHeader({
           <button
             type="button"
             onClick={onReturnToParent}
-            class="flex-shrink-0 rounded-md px-2 py-1 text-xs text-fg-muted transition-colors hover:bg-fill-strong hover:text-fg focus:outline-none focus:ring-1 focus:ring-gray-600"
+            class="flex-shrink-0 rounded-md px-2 py-1 text-xs text-fg-muted transition-colors hover:bg-fill-strong hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
             data-testid="chat-header-return-to-parent"
           >
             Return to parent
