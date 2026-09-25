@@ -1178,6 +1178,10 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       ensureSession: (target) => ensureSession(target, sessionResolutionDeps),
       resolveClones,
       listClones: (parentId) => deps.db.listChildSessions(parentId),
+      primaryAgentFor: (sessionId) => {
+        const agent = spaceAgentRepo.getBySessionId(sessionId);
+        return agent ? { id: agent.id, displayName: agent.displayName } : null;
+      },
     }
   );
 
