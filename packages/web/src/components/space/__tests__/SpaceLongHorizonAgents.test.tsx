@@ -624,15 +624,14 @@ describe('SpaceLongHorizonAgents', () => {
 
     fireEvent.click(screen.getByLabelText('Delete Research Long Horizon'));
     fireEvent.click(await screen.findByTestId('agent-delete-confirm'));
-    await screen.findByTestId('clone-choice-dialog');
-    fireEvent.click(await screen.findByTestId('clone-choice-flatten'));
+    fireEvent.click(await screen.findByTestId('clone-choice-cascade'));
     fireEvent.click(await screen.findByTestId('agent-delete-commits-confirm'));
 
     await waitFor(() => expect(mockDeleteAgent).toHaveBeenCalledTimes(3));
     expect(mockDeleteAgent.mock.calls).toEqual([
       ['lh-1', undefined, undefined],
-      ['lh-1', 'flatten', undefined],
-      ['lh-1', 'flatten', true],
+      ['lh-1', 'cascade', undefined],
+      ['lh-1', 'cascade', true],
     ]);
   });
 
