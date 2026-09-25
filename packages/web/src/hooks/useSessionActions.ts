@@ -11,6 +11,14 @@ import { toast } from '../lib/toast';
 import { currentSessionIdSignal, sessionsSignal } from '../lib/signals';
 import { connectionState } from '../lib/state';
 
+function agentPrimarySessionMessage(
+  agentName: string | undefined,
+  action: 'archive' | 'delete'
+): string {
+  const owner = agentName ? `the agent "${agentName}"` : 'an agent';
+  return `This chat belongs to ${owner}. ${action === 'delete' ? 'Delete' : 'Archive'} the agent instead.`;
+}
+
 export interface ArchiveConfirmState {
   show: boolean;
   commitStatus?: ArchiveSessionResponse['commitStatus'];
@@ -67,6 +75,11 @@ export function useSessionActions({
       try {
         setDeleting(true);
         const result = await deleteSession(sessionId, children);
+        if (result.reason === 'agent_primary_session') {
+          onDeleteModalClose();
+          toast.error(agentPrimarySessionMessage(result.agentName, 'delete'));
+          return;
+        }
         if (result.reason === 'has_clones' && result.clones) {
           setCloneChoiceDialog({ action: 'delete', clones: result.clones });
           return;
@@ -93,7 +106,9 @@ export function useSessionActions({
       try {
         setArchiving(true);
         const result = await archiveSession(sessionId, false, children);
-        if (result.reason === 'has_clones' && result.clones) {
+        if (result.reason === 'agent_primary_session') {
+          toast.error(agentPrimarySessionMessage(result.agentName, 'archive'));
+        } else if (result.reason === 'has_clones' && result.clones) {
           setCloneChoiceDialog({ action: 'archive', clones: result.clones });
         } else if (result.requiresConfirmation && result.commitStatus) {
           setCloneChoiceDialog(null);

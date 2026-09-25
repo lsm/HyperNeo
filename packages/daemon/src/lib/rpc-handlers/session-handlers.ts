@@ -122,6 +122,22 @@ export interface SessionHandlerDeps {
   ensureSession(target: SessionTarget): Promise<EnsureSessionOutcome>;
   resolveClones?: ResolveClones;
   listClones?: (parentId: string) => Session[];
+  primaryAgentFor?: (sessionId: string) => { id: string; displayName: string } | null;
+}
+
+function agentPrimarySessionRefusal(
+  deps: SessionHandlerDeps | undefined,
+  sessionId: string
+): { success: false; reason: 'agent_primary_session'; agentId: string; agentName: string } | null {
+  const agent = deps?.primaryAgentFor?.(sessionId);
+  return agent
+    ? {
+        success: false,
+        reason: 'agent_primary_session',
+        agentId: agent.id,
+        agentName: agent.displayName,
+      }
+    : null;
 }
 
 export function createCloneLifecycleEffects(
@@ -422,6 +438,8 @@ export function setupSessionHandlers(
       sessionId: string;
       children?: unknown;
     };
+    const owned = agentPrimarySessionRefusal(deps, targetSessionId);
+    if (owned) return owned;
     const clones = await deps?.resolveClones?.(
       targetSessionId,
       isCloneChoice(children) ? children : undefined,
@@ -466,6 +484,8 @@ export function setupSessionHandlers(
     if (!session) {
       throw new Error('Session not found');
     }
+    const owned = agentPrimarySessionRefusal(deps, targetSessionId);
+    if (owned) return owned;
 
     const hadWorktree = !!session.worktree;
     const spaceIdForArchive = session.context?.spaceId;
