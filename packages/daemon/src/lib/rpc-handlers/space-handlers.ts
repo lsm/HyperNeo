@@ -155,7 +155,8 @@ export function setupSpaceHandlers(
   sessionManager?: SessionManager,
   spaceRuntimeService?: SpaceRuntimeService,
   seedAgents?: CreateSpaceDeps['seedAgents'],
-  stampTasks: (tasks: SpaceTask[]) => SpaceTask[] = (tasks) => tasks
+  stampTasks: (tasks: SpaceTask[]) => SpaceTask[] = (tasks) => tasks,
+  canHostTaskWorktree?: CreateSpaceDeps['canHostTaskWorktree']
 ): void {
   messageHub.onRequest('space.create', async (data) => {
     return createSpace(
@@ -171,6 +172,7 @@ export function setupSpaceHandlers(
           });
         },
         warn: (message, error) => log.warn(message, error),
+        ...(canHostTaskWorktree ? { canHostTaskWorktree } : {}),
       },
       data as CreateSpaceParams
     );

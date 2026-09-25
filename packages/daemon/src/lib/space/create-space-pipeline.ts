@@ -19,6 +19,7 @@ export interface CreateSpaceDeps {
   seedWorkflows(spaceId: string): { errors: ReadonlyArray<{ name: string; error: string }> };
   dispatchSpaceCreated(space: Space): Promise<void>;
   warn(message: string, error?: unknown): void;
+  canHostTaskWorktree?(path: string): Promise<boolean>;
 }
 
 export interface CreateSpaceCtx {
@@ -127,6 +128,19 @@ export function seedWorkflows(ctx: CreateSpaceCtx): CreateSpaceCtx {
   }
 }
 
+export async function warnIfWorkspaceNotGit(ctx: CreateSpaceCtx): Promise<CreateSpaceCtx> {
+  const space = requireSpace(ctx);
+  if (!ctx.deps.canHostTaskWorktree || (await ctx.deps.canHostTaskWorktree(space.workspacePath)))
+    return ctx;
+  const hasOtherWorkspaces = (ctx.params.additionalWorkspaces?.length ?? 0) > 0;
+  return withWarning(
+    ctx,
+    hasOtherWorkspaces
+      ? `${space.workspacePath} is not a git repository: tasks need an explicit git workspace from this Space`
+      : `${space.workspacePath} is not a git repository: agents can chat here, but tasks cannot run until a git workspace is registered`
+  );
+}
+
 export function publishSpaceCreated(ctx: CreateSpaceCtx): CreateSpaceCtx {
   ctx.deps.dispatchSpaceCreated(requireSpace(ctx)).catch((error) => {
     ctx.deps.warn('Failed to emit space.created', error);
@@ -146,6 +160,7 @@ const runCreateSpace = (superpipe()('createSpace') as PipelineAPI)
   .pipe(createSpaceRecord, 'ctx', 'ctx')
   .pipe(seedAgents, 'ctx', 'ctx')
   .pipe(seedWorkflows, 'ctx', 'ctx')
+  .pipe(warnIfWorkspaceNotGit, 'ctx', 'ctx')
   .pipe(publishSpaceCreated, 'ctx', 'ctx')
   .pipe(assembleResult, 'ctx', 'ctx')
   .endAsync('ctx') as (ctx: CreateSpaceCtx) => Promise<CreateSpaceCtx | Error>;

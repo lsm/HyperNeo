@@ -217,7 +217,7 @@ async function defaultTaskWorkspaceGuardPrimaryUsable(
   ctx: ValidateDefaultTaskWorkspaceCtx
 ): Promise<ValidateDefaultTaskWorkspaceCtx> {
   const space = ctx.space;
-  if (!space || !ctx.distinctPaths || ctx.distinctPaths.size <= 1) return ctx;
+  if (!space || !ctx.distinctPaths || ctx.distinctPaths.size === 0) return ctx;
   if (await ctx.io.canHostTaskWorktree(space.workspacePath)) return ctx;
   const usable: string[] = [];
   for (const row of ctx.rows ?? []) {
@@ -230,13 +230,16 @@ async function defaultTaskWorkspaceGuardPrimaryUsable(
     usable.length > 0
       ? ` Create the task with an explicit "workspace" parameter (usable workspaces: ${usable.join(', ')}).`
       : ' No registered workspace of this space can currently host a task worktree; register or repair a git-repository workspace and pass it as the explicit "workspace" parameter.';
+  const registered =
+    ctx.distinctPaths.size === 1
+      ? 'its only workspace'
+      : `${ctx.distinctPaths.size} registered workspaces and its primary workspace`;
   return {
     ...ctx,
     blockedMessage:
-      `Space ${ctx.spaceId} has ${ctx.distinctPaths.size} registered workspaces and its ` +
-      `primary workspace ${space.workspacePath} is not a git repository, so tasks created ` +
-      `without an explicit workspace cannot spawn (their task worktree would fail to be ` +
-      `created there).${guidance}`,
+      `Space ${ctx.spaceId} has ${registered} ${space.workspacePath} ` +
+      `which is not a git repository, so tasks created without an explicit workspace ` +
+      `cannot spawn (their task worktree would fail to be created there).${guidance}`,
   };
 }
 
