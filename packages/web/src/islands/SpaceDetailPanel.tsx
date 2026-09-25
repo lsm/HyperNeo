@@ -15,6 +15,7 @@ import {
   navigateToSpaceTasks,
 } from '../lib/router';
 import {
+  currentSpaceAgentHandleSignal,
   currentSpaceSessionIdSignal,
   currentSpaceTaskIdSignal,
   currentSpaceViewModeSignal,
@@ -136,6 +137,7 @@ export function SpaceDetailPanel({
   }
 
   const selectedSessionId = currentSpaceSessionIdSignal.value;
+  const selectedAgentHandle = currentSpaceAgentHandleSignal.value;
   const selectedTaskId = currentSpaceTaskIdSignal.value;
   const [taskTab, setTaskTab] = useState<TaskTab>('action');
 
@@ -334,9 +336,8 @@ export function SpaceDetailPanel({
   );
 
   const handleAgentClick = useCallback(
-    (agent: { handle: string; sessionId: string | null }) => {
-      if (agent.sessionId) navigateToSpaceSession(routeSpaceId, agent.sessionId);
-      else navigateToSpaceAgent(routeSpaceId, agent.handle);
+    (agent: { handle: string }) => {
+      navigateToSpaceAgent(routeSpaceId, agent.handle);
       onNavigate?.();
     },
     [routeSpaceId, onNavigate]
@@ -607,7 +608,8 @@ export function SpaceDetailPanel({
               <div key={agent.id} class="group/agent">
                 <div
                   class={`flex items-center rounded-md transition-colors ${
-                    agent.sessionId !== null && agent.sessionId === selectedSessionId
+                    (agent.sessionId !== null && agent.sessionId === selectedSessionId) ||
+                    agent.handle === selectedAgentHandle
                       ? 'bg-fill-soft text-fg'
                       : 'text-fg-soft hover:bg-fill-soft hover:text-fg'
                   }`}
