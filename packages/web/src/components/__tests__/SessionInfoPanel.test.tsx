@@ -50,11 +50,6 @@ function createMockSession(overrides: Partial<Session> = {}): Session {
 
 const defaultProps = {
   session: createMockSession(),
-  onToolsClick: vi.fn(),
-  onExportClick: vi.fn(),
-  onResetClick: vi.fn(),
-  onArchiveClick: vi.fn(),
-  onDeleteClick: vi.fn(),
   messages: [] as ChatMessage[],
   toolInputsMap: new Map<string, unknown>(),
 };
@@ -181,27 +176,14 @@ describe('SessionInfoPanel', () => {
       expect(panel).toBeTruthy();
     });
 
-    it('renders the action toolbar with all actions when connected and writable', () => {
+    it('renders only the rename action in the toolbar; session actions live in the header menu', () => {
       const { container } = render(<SessionInfoPanelButton {...defaultProps} />);
       openPanel(container);
 
       const toolbar = container.querySelector('[data-testid="session-info-toolbar"]')!;
       expect(toolbar).toBeTruthy();
-      expect(toolbar.querySelector('button[title="Tools"]')).toBeTruthy();
-      expect(toolbar.querySelector('button[title="Export chat"]')).toBeTruthy();
       expect(toolbar.querySelector('button[title="Rename session"]')).toBeTruthy();
-      expect(toolbar.querySelector('button[title="Reset agent"]')).toBeTruthy();
-      expect(toolbar.querySelector('button[title="Archive session"]')).toBeTruthy();
-      expect(toolbar.querySelector('button[title="Delete chat"]')).toBeTruthy();
-    });
-
-    it('hides the Tools action when readonly', () => {
-      const { container } = render(<SessionInfoPanelButton {...defaultProps} readonly />);
-      openPanel(container);
-
-      const toolbar = container.querySelector('[data-testid="session-info-toolbar"]')!;
-      expect(toolbar.querySelector('button[title="Tools"]')).toBeNull();
-      expect(toolbar.querySelector('button[title="Export chat"]')).toBeTruthy();
+      expect(toolbar.querySelectorAll('button')).toHaveLength(1);
     });
 
     it('renames the session inline from the toolbar', () => {
@@ -318,12 +300,11 @@ describe('SessionInfoPanel', () => {
       expect(renameMocks.updateSession).not.toHaveBeenCalled();
     });
 
-    it('hides the Rename action when readonly', () => {
+    it('hides the toolbar when readonly', () => {
       const { container } = render(<SessionInfoPanelButton {...defaultProps} readonly />);
       openPanel(container);
 
-      const toolbar = container.querySelector('[data-testid="session-info-toolbar"]')!;
-      expect(toolbar.querySelector('button[title="Rename session"]')).toBeNull();
+      expect(container.querySelector('[data-testid="session-info-toolbar"]')).toBeNull();
     });
 
     it('disables the Rename action when disconnected', () => {
@@ -333,41 +314,6 @@ describe('SessionInfoPanel', () => {
 
       const toolbar = container.querySelector('[data-testid="session-info-toolbar"]')!;
       expect(toolbar.querySelector('button[title="Rename session"]')?.disabled).toBe(true);
-    });
-
-    it('hides Archive and Delete when features.archive is false', () => {
-      const { container } = render(
-        <SessionInfoPanelButton {...defaultProps} features={{ archive: false }} />
-      );
-      openPanel(container);
-
-      const toolbar = container.querySelector('[data-testid="session-info-toolbar"]')!;
-      expect(toolbar.querySelector('button[title="Archive session"]')).toBeNull();
-      expect(toolbar.querySelector('button[title="Delete chat"]')).toBeNull();
-      expect(toolbar.querySelector('button[title="Export chat"]')).toBeTruthy();
-    });
-
-    it('disables tools/export/reset/delete actions when disconnected', () => {
-      connectionState.value = 'connecting';
-      const { container } = render(<SessionInfoPanelButton {...defaultProps} />);
-      openPanel(container);
-
-      const toolbar = container.querySelector('[data-testid="session-info-toolbar"]')!;
-      expect(toolbar.querySelector('button[title="Tools"]')?.disabled).toBe(true);
-      expect(toolbar.querySelector('button[title="Export chat"]')?.disabled).toBe(true);
-      expect(toolbar.querySelector('button[title="Reset agent"]')?.disabled).toBe(true);
-      expect(toolbar.querySelector('button[title="Delete chat"]')?.disabled).toBe(true);
-    });
-
-    it('invokes the action callback when an toolbar action is clicked', () => {
-      const onExportClick = vi.fn();
-      const { container } = render(
-        <SessionInfoPanelButton {...defaultProps} onExportClick={onExportClick} />
-      );
-      openPanel(container);
-
-      fireEvent.click(container.querySelector('button[title="Export chat"]')!);
-      expect(onExportClick).toHaveBeenCalledTimes(1);
     });
 
     it('renders metadata sections (Workspace, Configuration, Usage)', () => {
@@ -398,7 +344,7 @@ describe('SessionInfoPanel', () => {
       openPanel(container);
 
       const toolbar = container.querySelector('[data-testid="session-info-toolbar"]')!;
-      expect(toolbar.querySelector('button[title="Export chat"]')).toBeTruthy();
+      expect(toolbar.querySelector('button[title="Rename session"]')).toBeTruthy();
 
       const headers = Array.from(container.querySelectorAll('h3')).map((h) => h.textContent);
       expect(headers).not.toContain('Progress');

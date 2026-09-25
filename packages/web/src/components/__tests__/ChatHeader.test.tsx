@@ -1,10 +1,11 @@
 // @ts-nocheck
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-import { render, cleanup } from '@testing-library/preact';
+import { render, cleanup, fireEvent } from '@testing-library/preact';
 import type { Session } from '@hyperneo/shared';
 import { ChatHeader } from '../ChatHeader';
 import { contextPanelOpenSignal } from '../../lib/signals';
+import { connectionState } from '../../lib/state';
 
 describe('ChatHeader', () => {
   const mockSession: Session = {
@@ -151,13 +152,75 @@ describe('ChatHeader', () => {
       expect(infoButtons.length).toBe(1);
     });
 
-    it('does not render the old three-dots kebab / session-options menu', () => {
+    it('keeps session actions out of the header until the actions menu is opened', () => {
       const { container } = render(<ChatHeader {...defaultProps} />);
 
-      expect(container.querySelector('button[title="Session options"]')).toBeNull();
-      expect(container.textContent).not.toContain('Export Chat');
-      expect(container.textContent).not.toContain('Reset Agent');
-      expect(container.textContent).not.toContain('Archive Session');
+      expect(container.textContent).not.toContain('Export chat');
+      expect(container.textContent).not.toContain('Reset agent');
+      expect(container.textContent).not.toContain('Archive session');
+    });
+  });
+
+  describe('Actions Menu', () => {
+    beforeEach(() => {
+      connectionState.value = 'connected';
+    });
+
+    function openMenu(container: HTMLElement) {
+      fireEvent.click(container.querySelector('[data-testid="chat-menu-btn"]')!);
+      return container.querySelector('[role="menu"]')!;
+    }
+
+    it('lists Tools, Export, Reset, Archive and Delete for a writable session', () => {
+      const { container } = render(<ChatHeader {...defaultProps} />);
+      const menu = openMenu(container);
+
+      const titles = Array.from(menu.querySelectorAll('[role="menuitem"]')).map((b) =>
+        b.getAttribute('title')
+      );
+      expect(titles).toEqual([
+        'Tools',
+        'Export chat',
+        'Reset agent',
+        'Archive session',
+        'Delete chat',
+      ]);
+    });
+
+    it('hides Tools when readonly and Archive/Delete when features.archive is false', () => {
+      const { container } = render(
+        <ChatHeader {...defaultProps} readonly features={{ archive: false }} />
+      );
+      const menu = openMenu(container);
+
+      const titles = Array.from(menu.querySelectorAll('[role="menuitem"]')).map((b) =>
+        b.getAttribute('title')
+      );
+      expect(titles).toEqual(['Export chat', 'Reset agent']);
+    });
+
+    it('invokes the matching handler when an item is clicked', () => {
+      const onExportClick = vi.fn();
+      const onResetClick = vi.fn();
+      const { container } = render(
+        <ChatHeader {...defaultProps} onExportClick={onExportClick} onResetClick={onResetClick} />
+      );
+      const menu = openMenu(container);
+
+      fireEvent.click(menu.querySelector('button[title="Reset agent"]')!);
+      expect(onResetClick).toHaveBeenCalledTimes(1);
+      expect(onExportClick).not.toHaveBeenCalled();
+    });
+
+    it('disables Archive for an archived session', () => {
+      const { container } = render(
+        <ChatHeader {...defaultProps} session={{ ...mockSession, status: 'archived' }} />
+      );
+      const menu = openMenu(container);
+
+      expect(
+        (menu.querySelector('button[title="Archive session"]') as HTMLButtonElement).disabled
+      ).toBe(true);
     });
 
     it('shows the info button at every breakpoint (no longer lg-only)', () => {
