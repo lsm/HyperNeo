@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { MessageHub, SpaceAgentTemplate } from '@hyperneo/shared';
 import { setupSpaceAgentTemplateHandlers } from '../../../../src/lib/rpc-handlers/space-agent-template-handlers';
 import { SpaceAgentTemplateManager } from '../../../../src/lib/agents/template-manager';
+import { RESERVED_SPACE_AGENT_HANDLES } from '../../../../src/lib/space/slug';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
 import { SpaceAgentTemplateRepository } from '../../../../src/storage/repositories/space-agent-template-repository';
 import { runMigration226 } from '../../../../src/storage/schema/m226-space-agent-templates-version';
@@ -103,7 +104,10 @@ describe('spaceAgentTemplate RPC handlers', () => {
       );
 
       expect(result.templates.length).toBeGreaterThan(0);
-      expect(result.templates.map((t) => t.handle)).not.toContain('space-manager');
+      const handles = result.templates.map((template) => template.handle);
+      expect(handles).toContain('space-manager');
+      expect(handles).not.toContain('task-manager');
+      for (const reserved of RESERVED_SPACE_AGENT_HANDLES) expect(handles).not.toContain(reserved);
     });
 
     it('requires a spaceId', async () => {

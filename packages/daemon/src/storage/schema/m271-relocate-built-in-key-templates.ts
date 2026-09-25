@@ -10,6 +10,8 @@ interface CollidingTemplate {
   labels: string | null;
 }
 
+const HISTORICAL_BUILT_IN_TEMPLATE_KEYS = ['task-manager.default'] as const;
+
 function tableExists(db: BunDatabase, tableName: string): boolean {
   return !!db
     .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`)
@@ -58,7 +60,10 @@ function relocationTarget(
 export function runMigration271(db: BunDatabase): void {
   if (!tableExists(db, 'space_agent_templates')) return;
   if (!tableHasColumn(db, 'space_agent_templates', 'space_id')) return;
-  const builtInKeys = new Set(getLongHorizonAgentTemplates().map((template) => template.key));
+  const builtInKeys = new Set([
+    ...HISTORICAL_BUILT_IN_TEMPLATE_KEYS,
+    ...getLongHorizonAgentTemplates().map((template) => template.key),
+  ]);
   if (builtInKeys.size === 0) return;
   const placeholders = [...builtInKeys].map(() => '?').join(', ');
   const colliding = db
