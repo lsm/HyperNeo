@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, cleanup, fireEvent } from '@testing-library/preact';
 import type { Session } from '@hyperneo/shared';
 import { ChatHeader } from '../ChatHeader';
-import { contextPanelOpenSignal } from '../../lib/signals';
+import { contextPanelOpenSignal, rightPanelTargetSignal } from '../../lib/signals';
 import { connectionState } from '../../lib/state';
 
 describe('ChatHeader', () => {
@@ -145,11 +145,26 @@ describe('ChatHeader', () => {
   });
 
   describe('Info Button', () => {
+    beforeEach(() => {
+      rightPanelTargetSignal.value = null;
+    });
+
     it('renders exactly one far-right info button', () => {
       const { container } = render(<ChatHeader {...defaultProps} />);
 
       const infoButtons = container.querySelectorAll('button[title="Session info"]');
       expect(infoButtons.length).toBe(1);
+    });
+
+    it('toggles the session inspector in the right panel', () => {
+      const { container } = render(<ChatHeader {...defaultProps} />);
+      const button = container.querySelector('[data-testid="session-info-btn"]')!;
+
+      fireEvent.click(button);
+      expect(rightPanelTargetSignal.value).toEqual({ type: 'inspector', sessionId: 'session-1' });
+
+      fireEvent.click(button);
+      expect(rightPanelTargetSignal.value).toBeNull();
     });
 
     it('keeps session actions out of the header until the actions menu is opened', () => {

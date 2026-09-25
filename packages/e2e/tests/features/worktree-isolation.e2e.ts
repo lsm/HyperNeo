@@ -53,7 +53,7 @@ test.describe('Worktree Isolation', () => {
     const optionsButton = page.getByTestId('session-info-btn');
     await optionsButton.click();
 
-    await expect(page.getByTestId('session-info-toolbar')).toBeVisible();
+    await expect(page.getByTestId('session-inspector')).toBeVisible();
   });
 
   test.skip('should cleanup worktree when session is deleted', async ({ page }) => {

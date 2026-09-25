@@ -17,7 +17,8 @@ This document lists all the `data-testid` attributes used in the application for
 - `data-testid="send-btn"` - Send message button
 - `data-testid="chat-menu-btn"` - Chat actions menu trigger (menu items titled Tools, Export chat, Reset agent, Archive session, Delete chat)
 - `data-testid="confirm-reset-agent"` - Confirm button of the Reset agent dialog
-- `data-testid="session-info-btn"` - Session info panel trigger (Rename plus progress, background tasks, sources, metadata)
+- `data-testid="session-info-btn"` - Toggles the session inspector in the right column
+- `data-testid="session-inspector"` - Right-column inspector (tabs `inspector-tab-session`, `inspector-tab-work`, `inspector-tab-changes`; `inspector-close`; `inspector-rename-input`)
 - `data-testid="error-banner"` - Error message banner
 - `data-message-role="[user|assistant]"` - Role attribute for messages
 
