@@ -496,7 +496,7 @@ export function QuestionPrompt({
                 rows={3}
                 class={cn(
                   'w-full px-3 py-2 rounded-lg border resize-y min-h-[80px] max-h-[200px]',
-                  'bg-surface-raised/80 placeholder-gray-500',
+                  'bg-surface-raised/80 placeholder:text-fg-faint',
                   isResolved ? 'text-fg-muted cursor-default' : 'text-fg',
                   'focus:outline-none focus:border-rose-500 focus:ring-1 focus:ring-rose-500/50',
                   'border-line-strong'

@@ -29,16 +29,19 @@ vi.mock('../../ui/Modal.tsx', () => ({
     onClose,
     title,
     children,
+    footer,
   }: {
     isOpen: boolean;
     onClose: () => void;
     title: string;
     children: import('preact').ComponentChildren;
+    footer?: import('preact').ComponentChildren;
   }) =>
     isOpen ? (
       <div data-testid="modal">
         <h2 data-testid="modal-title">{title}</h2>
         <div data-testid="modal-content">{children}</div>
+        {footer && <div data-testid="modal-footer">{footer}</div>}
         <button data-testid="modal-close" onClick={onClose}>
           Close
         </button>
@@ -51,6 +54,7 @@ vi.mock('../../ui/Button.tsx', () => ({
     children,
     variant,
     type,
+    form,
     onClick,
     disabled,
     loading,
@@ -58,6 +62,7 @@ vi.mock('../../ui/Button.tsx', () => ({
     children: import('preact').ComponentChildren;
     variant?: string;
     type?: 'button' | 'submit';
+    form?: string;
     onClick?: () => void;
     disabled?: boolean;
     loading?: boolean;
@@ -65,6 +70,7 @@ vi.mock('../../ui/Button.tsx', () => ({
     <button
       data-testid={`button-${variant ?? 'primary'}`}
       type={type ?? 'button'}
+      {...(form ? { form } : {})}
       disabled={disabled ?? loading}
       onClick={onClick}
     >
@@ -335,7 +341,7 @@ describe('InstallSkillFromGitDialog', () => {
 
   it('should close when Cancel is clicked', () => {
     render(<InstallSkillFromGitDialog isOpen onClose={onClose} />);
-    fireEvent.click(screen.getByTestId('button-secondary'));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(onClose).toHaveBeenCalled();
   });
 
@@ -347,7 +353,7 @@ describe('InstallSkillFromGitDialog', () => {
     );
     fireEvent.input(urlInput, { target: { value: 'https://example.com/skill' } });
 
-    fireEvent.click(screen.getByTestId('button-secondary'));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 
     cleanup();
     render(<InstallSkillFromGitDialog isOpen onClose={onClose} />);

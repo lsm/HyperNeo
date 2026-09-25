@@ -245,7 +245,7 @@ describe('EditorModal — fetch models', () => {
 
   it('renders fetched models as checkboxes', async () => {
     const state = baseState();
-    const { container } = render(
+    render(
       <EditorModal
         state={state}
         existingIds={[]}
@@ -263,16 +263,16 @@ describe('EditorModal — fetch models', () => {
       />
     );
     await waitFor(() => {
-      expect(container.textContent).toContain('2 models found');
-      expect(container.textContent).toContain('gpt-4');
-      expect(container.textContent).toContain('GPT-3.5');
+      expect(document.body.textContent).toContain('2 models found');
+      expect(document.body.textContent).toContain('gpt-4');
+      expect(document.body.textContent).toContain('GPT-3.5');
     });
   });
 
   it('calls onChange with selected models when adding fetched models', async () => {
     let changedState: import('../CustomEndpointEditor.tsx').EditorState | null = null;
     const state = { ...baseState(), selectedFetchedModelIds: ['gpt-4'] };
-    const { container } = render(
+    render(
       <EditorModal
         state={state}
         existingIds={[]}
@@ -291,7 +291,7 @@ describe('EditorModal — fetch models', () => {
         fetchedAt={Date.now()}
       />
     );
-    const addBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+    const addBtn = Array.from(document.body.querySelectorAll('button')).find((b) =>
       b.textContent?.includes('Add selected')
     );
     expect(addBtn).toBeTruthy();
@@ -325,7 +325,7 @@ describe('EditorModal — fetch models', () => {
       />
     );
     await waitFor(() => {
-      expect(container.textContent).toContain('Connection refused');
+      expect(document.body.textContent).toContain('Connection refused');
     });
   });
 });

@@ -39,6 +39,10 @@ vi.mock('../visual-editor/WorkflowModelSelect', () => ({
         const next = (e.target as HTMLSelectElement).value || undefined;
         onChange(next, next ? { provider: 'anthropic', modelId: next } : undefined);
       }}
+      onInput={(e) => {
+        const next = (e.target as HTMLSelectElement).value || undefined;
+        onChange(next, next ? { provider: 'anthropic', modelId: next } : undefined);
+      }}
     >
       <option value="">— No override —</option>
       <option value="claude-sonnet-4-6">Claude Sonnet 4.6</option>
@@ -112,11 +116,11 @@ describe('TemplateEditor tools', () => {
   });
 
   it('mounts the tools editor in inherited mode for a new template', () => {
-    const { getByText, container } = renderEditor(null);
+    const { getByText } = renderEditor(null);
 
-    expect(container.querySelector('[data-testid="tools-editor"]')).toBeTruthy();
+    expect(document.body.querySelector('[data-testid="tools-editor"]')).toBeTruthy();
     expect(getByText('(inherited)')).toBeTruthy();
-    expect(chipInput(container, 'Bash').disabled).toBe(true);
+    expect(chipInput(document.body, 'Bash').disabled).toBe(true);
   });
 
   it('creates a template carrying the tools selected in the editor', async () => {

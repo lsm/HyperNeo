@@ -39,7 +39,7 @@ describe('OAuthModal', () => {
           onComplete={mockOnComplete}
         />
       );
-      const title = document.body.querySelector('h3');
+      const title = document.body.querySelector('h2');
       expect(title?.textContent).toBe('Authenticate with TestProvider');
     });
 

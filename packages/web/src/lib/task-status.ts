@@ -8,6 +8,8 @@ export interface TaskStatusClasses {
   border: string;
   soft: string;
   spinner: string;
+  wash: string;
+  rail: string;
 }
 
 const TASK_STATUS_TONE_CLASSES: Record<TaskStatusTone, TaskStatusClasses> = {
@@ -17,6 +19,8 @@ const TASK_STATUS_TONE_CLASSES: Record<TaskStatusTone, TaskStatusClasses> = {
     border: 'border-fg-faint/30',
     soft: 'border-fg-faint/30 bg-fg-faint/10 text-fg-muted',
     spinner: 'border-fg-faint',
+    wash: '',
+    rail: 'bg-fg-faint/50',
   },
   info: {
     bg: 'bg-accent',
@@ -24,6 +28,8 @@ const TASK_STATUS_TONE_CLASSES: Record<TaskStatusTone, TaskStatusClasses> = {
     border: 'border-accent/30',
     soft: 'border-accent/30 bg-accent/10 text-accent',
     spinner: 'border-accent',
+    wash: 'bg-accent/5',
+    rail: 'bg-accent',
   },
   success: {
     bg: 'bg-success',
@@ -31,6 +37,8 @@ const TASK_STATUS_TONE_CLASSES: Record<TaskStatusTone, TaskStatusClasses> = {
     border: 'border-success/30',
     soft: 'border-success/30 bg-success/10 text-success',
     spinner: 'border-success',
+    wash: 'bg-success/5',
+    rail: 'bg-success',
   },
   warning: {
     bg: 'bg-warning',
@@ -38,6 +46,8 @@ const TASK_STATUS_TONE_CLASSES: Record<TaskStatusTone, TaskStatusClasses> = {
     border: 'border-warning/30',
     soft: 'border-warning/30 bg-warning/10 text-warning',
     spinner: 'border-warning',
+    wash: 'bg-warning/5',
+    rail: 'bg-warning',
   },
   danger: {
     bg: 'bg-danger',
@@ -45,6 +55,8 @@ const TASK_STATUS_TONE_CLASSES: Record<TaskStatusTone, TaskStatusClasses> = {
     border: 'border-danger/30',
     soft: 'border-danger/30 bg-danger/10 text-danger',
     spinner: 'border-danger',
+    wash: 'bg-danger/5',
+    rail: 'bg-danger',
   },
   special: {
     bg: 'bg-cat-purple',
@@ -52,6 +64,8 @@ const TASK_STATUS_TONE_CLASSES: Record<TaskStatusTone, TaskStatusClasses> = {
     border: 'border-cat-purple/30',
     soft: 'border-cat-purple/30 bg-cat-purple/10 text-cat-purple',
     spinner: 'border-cat-purple',
+    wash: 'bg-cat-purple/5',
+    rail: 'bg-cat-purple',
   },
 };
 

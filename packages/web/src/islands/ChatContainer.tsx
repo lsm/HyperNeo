@@ -1103,7 +1103,7 @@ export default function ChatContainer({
           <div class="flex gap-2">
             <textarea
               ref={pendingTextareaRef}
-              class="flex-1 min-h-[44px] max-h-40 resize-none rounded-md bg-surface-overlay border border-line text-sm text-fg px-3 py-2 placeholder-gray-500 focus:outline-none focus:border-accent"
+              class="flex-1 min-h-[44px] max-h-40 resize-none rounded-md bg-surface-overlay border border-line text-sm text-fg px-3 py-2 placeholder:text-fg-faint focus:outline-none focus:border-accent"
               placeholder={
                 pendingWaitingForSession
                   ? `Send another message to ${pendingAgent.agentName}…`

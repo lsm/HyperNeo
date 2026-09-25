@@ -40,11 +40,13 @@ vi.mock('../../ui/Modal', () => ({
     children,
     title,
     onClose,
+    footer,
   }: {
     isOpen: boolean;
     children: unknown;
     title: string;
     onClose: () => void;
+    footer?: unknown;
   }) => {
     if (!isOpen) return null;
     return (
@@ -53,6 +55,7 @@ vi.mock('../../ui/Modal', () => ({
           X
         </button>
         {children}
+        {footer}
       </div>
     );
   },

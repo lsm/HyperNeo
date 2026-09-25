@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { AgentMemoryEntry } from '@hyperneo/shared';
-import { Button } from '../ui/Button';
+import { FORM_CONTROL_CLASS, FORM_LABEL_CLASS, FormActions } from '../ui/FormField';
 import { Modal } from '../ui/Modal';
 import { memoryStore } from '../../lib/memory-store';
 import { toast } from '../../lib/toast';
@@ -122,10 +122,20 @@ export function SpaceMemoryEditor({ memory, existingKeys, onClose }: SpaceMemory
       showCloseButton={!saving}
       title={isEditing ? 'Edit Memory' : 'New Memory'}
       size="md"
+      footer={
+        <FormActions
+          onCancel={onClose}
+          cancelDisabled={saving}
+          submitLabel={isEditing ? 'Save Changes' : 'Create Memory'}
+          submitting={saving}
+          onSubmit={handleSave}
+          submitTestId="memory-save-button"
+        />
+      }
     >
       <div class="space-y-4">
         <div>
-          <label class="mb-1 block text-xs font-medium text-fg-soft" htmlFor="memory-key">
+          <label class={FORM_LABEL_CLASS} htmlFor="memory-key">
             Key
           </label>
           <input
@@ -136,7 +146,7 @@ export function SpaceMemoryEditor({ memory, existingKeys, onClose }: SpaceMemory
             disabled={isEditing || saving}
             maxLength={KEY_MAX_LENGTH}
             placeholder="unique-key"
-            class="w-full rounded-lg border border-line bg-bg px-3 py-2 font-mono text-sm text-fg placeholder-gray-600 focus:border-accent focus:outline-none disabled:opacity-60"
+            class={`${FORM_CONTROL_CLASS} font-mono`}
             data-testid="memory-key-input"
           />
           <p class="mt-1 text-xs text-fg-faint">
@@ -152,7 +162,7 @@ export function SpaceMemoryEditor({ memory, existingKeys, onClose }: SpaceMemory
         </div>
 
         <div>
-          <label class="mb-1 block text-xs font-medium text-fg-soft" htmlFor="memory-content">
+          <label class={FORM_LABEL_CLASS} htmlFor="memory-content">
             Content
           </label>
           <textarea
@@ -163,7 +173,7 @@ export function SpaceMemoryEditor({ memory, existingKeys, onClose }: SpaceMemory
             maxLength={CONTENT_MAX_LENGTH}
             rows={6}
             placeholder="The fact, convention, or decision to remember…"
-            class="w-full resize-y rounded-lg border border-line bg-bg px-3 py-2 text-sm text-fg placeholder-gray-600 focus:border-accent focus:outline-none"
+            class={`${FORM_CONTROL_CLASS} resize-y`}
             data-testid="memory-content-input"
           />
           <p class="mt-1 text-right text-xs text-fg-faint">
@@ -172,7 +182,7 @@ export function SpaceMemoryEditor({ memory, existingKeys, onClose }: SpaceMemory
         </div>
 
         <div>
-          <label class="mb-1 block text-xs font-medium text-fg-soft" htmlFor="memory-tags">
+          <label class={FORM_LABEL_CLASS} htmlFor="memory-tags">
             Tags
           </label>
           <input
@@ -182,29 +192,17 @@ export function SpaceMemoryEditor({ memory, existingKeys, onClose }: SpaceMemory
             onInput={(e) => setTagsInput((e.target as HTMLInputElement).value)}
             disabled={saving}
             placeholder="convention, feedback, project"
-            class="w-full rounded-lg border border-line bg-bg px-3 py-2 text-sm text-fg placeholder-gray-600 focus:border-accent focus:outline-none"
+            class={FORM_CONTROL_CLASS}
             data-testid="memory-tags-input"
           />
           <p class="mt-1 text-xs text-fg-faint">Comma-separated keywords that improve retrieval.</p>
         </div>
 
         {error && (
-          <p
-            class="rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger-soft"
-            data-testid="memory-editor-error"
-          >
+          <p class="text-xs text-danger" role="alert" data-testid="memory-editor-error">
             {error}
           </p>
         )}
-
-        <div class="flex items-center justify-end gap-3 pt-1">
-          <Button variant="ghost" onClick={onClose} disabled={saving}>
-            Cancel
-          </Button>
-          <Button onClick={handleSave} loading={saving} data-testid="memory-save-button">
-            {isEditing ? 'Save Changes' : 'Create Memory'}
-          </Button>
-        </div>
       </div>
     </Modal>
   );

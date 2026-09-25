@@ -192,7 +192,7 @@ export function WorkspaceSelector({
                   onInput={(e) => setCustomPath((e.target as HTMLInputElement).value)}
                   placeholder="Project path"
                   autoFocus
-                  class="flex-1 bg-surface border border-line-strong rounded-lg px-3 py-2 text-sm text-fg placeholder-gray-500 focus:outline-none focus:border-accent"
+                  class="flex-1 bg-surface border border-line-strong rounded-lg px-3 py-2 text-sm text-fg placeholder:text-fg-faint focus:outline-none focus:border-accent"
                 />
                 {history.length > 0 && (
                   <button

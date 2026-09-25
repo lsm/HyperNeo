@@ -1,3 +1,4 @@
+import type { ComponentChildren } from 'preact';
 import { lazy, Suspense } from 'preact/compat';
 import { useState, useEffect } from 'preact/hooks';
 import {
@@ -13,6 +14,8 @@ import {
 import { navigateToSpace, navigateToSpaceTask, navigateToSpaceSession } from '../lib/router.ts';
 import { spaceStore } from '../lib/space-store.ts';
 import { isActionRequired, isActiveTask } from '../lib/task-filters.ts';
+import { getTaskStatusClasses, getTaskStatusConfig } from '../lib/task-status.ts';
+import { StatusBadge } from '../components/ui/StatusBadge.tsx';
 import { SpaceCreateDialog } from '../components/space/SpaceCreateDialog.tsx';
 import { BottomTabBar } from './BottomTabBar.tsx';
 import { VoiceRecordingIndicator } from '../components/voice/VoiceRecordingIndicator.tsx';
@@ -77,13 +80,30 @@ const lazyFallback = (
   </div>
 );
 
-const TASK_STATUS_LABEL: Record<string, string> = {
-  open: 'Open',
-  review: 'Review',
-  blocked: 'Blocked',
-  in_progress: 'In Progress',
-  approved: 'Approved',
-};
+function SpacesSection({
+  dotClass,
+  label,
+  count,
+  countClass,
+  children,
+}: {
+  dotClass: string;
+  label: string;
+  count: number;
+  countClass: string;
+  children: ComponentChildren;
+}) {
+  return (
+    <section class="flat-surface overflow-hidden rounded-2xl">
+      <div class="flex items-center gap-2 px-4 pb-2.5 pt-3">
+        <span class={`h-1.5 w-1.5 rounded-full flex-shrink-0 ${dotClass}`} />
+        <span class="text-xs font-semibold text-fg-muted uppercase tracking-wide">{label}</span>
+        <span class={`ml-auto text-xs font-medium tabular-nums ${countClass}`}>{count}</span>
+      </div>
+      <div class="divide-y divide-line border-t border-line">{children}</div>
+    </section>
+  );
+}
 
 function SpacesHome() {
   const [createSpaceOpen, setCreateSpaceOpen] = useState(false);
@@ -111,22 +131,39 @@ function SpacesHome() {
 
   const hasContent = actionItems.length > 0 || runningItems.length > 0 || activeSessions.length > 0;
 
+  const rowClass =
+    'flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-fill-soft transition-colors group';
+
   return (
-    <div class="relative flex-1 flex flex-col bg-app-content overflow-hidden">
+    <div class="glass-route-shell">
       <div class="desktop-empty-drag-strip" data-tauri-drag-region />
       <div class="flex-1 overflow-y-auto scrollbar-dark">
-        <div class="px-4 sm:px-6 py-4 sm:py-6 max-w-3xl mx-auto">
-          <div class="flex items-center gap-3 mb-6">
-            <div class="md:hidden">
-              <MobileMenuButton />
+        <div class="glass-content-container">
+          <div class="mb-4 flex items-center gap-3 md:hidden">
+            <MobileMenuButton />
+          </div>
+
+          <section
+            class="glass-surface mb-5 flex flex-col gap-4 rounded-2xl border p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6"
+            data-testid="spaces-introduction"
+            aria-label="Spaces overview"
+          >
+            <div class="max-w-2xl">
+              <div class="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-accent-soft">
+                <span class="h-1.5 w-1.5 rounded-full bg-accent" />
+                {spaces.length} {spaces.length === 1 ? 'space' : 'spaces'}
+              </div>
+              <h1 class="mt-2 text-lg font-semibold tracking-tight text-fg">Spaces</h1>
+              <p class="mt-1 text-sm leading-5 text-fg-soft">
+                Attention, active sessions, and in-progress work across every space.
+              </p>
             </div>
-            <h1 class="text-sm font-semibold text-fg flex-1">Spaces</h1>
             <button
               type="button"
               onClick={() => setCreateSpaceOpen(true)}
-              class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-accent-hover hover:bg-accent-hover text-sm font-medium text-accent-fg transition-colors flex-shrink-0"
+              class="glass-primary-button !h-9 !px-3.5 !text-xs"
             >
-              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path
                   stroke-linecap="round"
                   stroke-linejoin="round"
@@ -134,40 +171,42 @@ function SpacesHome() {
                   d="M12 4v16m8-8H4"
                 />
               </svg>
-              New Space
+              <span class="ml-1.5">New Space</span>
             </button>
-          </div>
+          </section>
 
           {spaces.length === 0 ? (
-            <div class="flex flex-col items-center py-20 text-center">
-              <svg
-                class="w-10 h-10 text-gray-700 mb-4"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width={1.5}
-                  d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"
-                />
-              </svg>
-              <p class="text-sm font-medium text-fg-soft">No spaces yet</p>
-              <p class="mt-1.5 text-xs text-fg-faint max-w-xs leading-relaxed">
+            <div class="flat-surface flex flex-col items-center justify-center rounded-2xl py-12 text-center">
+              <div class="mb-3 flex h-10 w-10 items-center justify-center rounded-lg border border-line bg-surface-raised">
+                <svg
+                  class="w-5 h-5 text-fg-muted"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width={1.5}
+                    d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"
+                  />
+                </svg>
+              </div>
+              <p class="text-sm text-fg-muted">No spaces yet</p>
+              <p class="mt-1 text-xs text-fg-muted">
                 Create a Space to coordinate agents around a project goal.
               </p>
               <button
                 type="button"
                 onClick={() => setCreateSpaceOpen(true)}
-                class="mt-6 flex items-center gap-2 px-4 py-2 rounded-lg bg-accent-hover hover:bg-accent-hover text-sm font-medium text-accent-fg transition-colors"
+                class="glass-primary-button mt-4 !h-9 !px-3.5 !text-xs"
               >
                 Create your first Space
               </button>
             </div>
           ) : !hasContent ? (
-            <div class="flex flex-col gap-6">
-              <div class="flex items-center gap-2.5 py-3 text-sm text-fg-faint">
+            <div class="flat-surface overflow-hidden rounded-2xl">
+              <div class="flex items-center gap-2.5 px-4 py-3 text-sm text-fg-faint">
                 <svg
                   class="w-4 h-4 text-success flex-shrink-0"
                   fill="none"
@@ -183,13 +222,13 @@ function SpacesHome() {
                 </svg>
                 All quiet — no active work across your spaces
               </div>
-              <div class="flex flex-col gap-1">
+              <div class="divide-y divide-line border-t border-line">
                 {spaces.map((space) => (
                   <button
                     key={space.id}
                     type="button"
                     onClick={() => navigateToSpace(space.slug)}
-                    class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-left hover:bg-fill-soft transition-colors group"
+                    class={rowClass}
                   >
                     <svg
                       class="w-4 h-4 text-fg-faint flex-shrink-0"
@@ -208,7 +247,7 @@ function SpacesHome() {
                       {space.name}
                     </span>
                     <svg
-                      class="w-3.5 h-3.5 text-gray-700 group-hover:text-fg-faint flex-shrink-0 transition-colors"
+                      class="w-3.5 h-3.5 text-fg-faint group-hover:text-fg-soft flex-shrink-0 transition-colors"
                       fill="none"
                       viewBox="0 0 24 24"
                       stroke="currentColor"
@@ -225,105 +264,93 @@ function SpacesHome() {
               </div>
             </div>
           ) : (
-            <div class="flex flex-col gap-6">
+            <div class="flex flex-col gap-5">
               {actionItems.length > 0 && (
-                <div>
-                  <div class="flex items-center gap-2 mb-2 px-1">
-                    <span class="w-1.5 h-1.5 rounded-full bg-warning flex-shrink-0" />
-                    <span class="text-xs font-semibold text-fg-muted uppercase tracking-wide">
-                      Needs Attention
-                    </span>
-                    <span class="ml-auto text-xs font-medium tabular-nums text-warning-soft">
-                      {actionItems.length}
-                    </span>
-                  </div>
-                  <div class="flex flex-col gap-0.5">
-                    {actionItems.map(({ task, space }) => (
+                <SpacesSection
+                  dotClass="bg-warning"
+                  label="Needs Attention"
+                  count={actionItems.length}
+                  countClass="text-warning-soft"
+                >
+                  {actionItems.map(({ task, space }) => {
+                    const statusConfig = getTaskStatusConfig(task.status);
+                    const statusClasses = getTaskStatusClasses(task.status);
+                    return (
                       <button
                         key={task.id}
                         type="button"
                         onClick={() => navigateToSpaceTask(space.slug, task.id)}
-                        class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-left hover:bg-fill-soft transition-colors group"
+                        class={`relative ${rowClass} ${statusClasses.wash}`}
                       >
-                        <div
-                          class={`w-2 h-2 rounded-full flex-shrink-0 ${task.status === 'review' ? 'bg-cat-purple' : 'bg-warning'}`}
+                        <span
+                          class={`absolute inset-y-0 left-0 w-[3px] ${statusClasses.rail}`}
+                          aria-hidden="true"
                         />
                         <div class="min-w-0 flex-1">
                           <div class="text-sm text-fg-soft truncate">{task.title}</div>
                           <div class="text-xs text-fg-faint truncate mt-0.5">{space.name}</div>
                         </div>
-                        <span
-                          class={`flex-shrink-0 text-[11px] font-medium px-1.5 py-0.5 rounded ${task.status === 'review' ? 'bg-cat-purple/20 text-cat-purple' : 'bg-warning/20 text-warning-soft'}`}
-                        >
-                          {TASK_STATUS_LABEL[task.status] ?? task.status}
-                        </span>
+                        <StatusBadge tone={statusConfig.tone} label={statusConfig.label} />
                       </button>
-                    ))}
-                  </div>
-                </div>
+                    );
+                  })}
+                </SpacesSection>
               )}
 
               {activeSessions.length > 0 && (
-                <div>
-                  <div class="flex items-center gap-2 mb-2 px-1">
-                    <span class="w-1.5 h-1.5 rounded-full bg-success flex-shrink-0" />
-                    <span class="text-xs font-semibold text-fg-muted uppercase tracking-wide">
-                      Active Sessions
-                    </span>
-                    <span class="ml-auto text-xs font-medium tabular-nums text-success">
-                      {activeSessions.length}
-                    </span>
-                  </div>
-                  <div class="flex flex-col gap-0.5">
-                    {activeSessions.map(({ session, space }) => (
-                      <button
-                        key={session.id}
-                        type="button"
-                        onClick={() => navigateToSpaceSession(space.slug, session.id)}
-                        class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-left hover:bg-fill-soft transition-colors group"
-                      >
-                        <div class="w-2 h-2 rounded-full bg-success flex-shrink-0" />
-                        <div class="min-w-0 flex-1">
-                          <div class="text-sm text-fg-soft truncate">{session.title}</div>
-                          <div class="text-xs text-fg-faint truncate mt-0.5">{space.name}</div>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                </div>
+                <SpacesSection
+                  dotClass="bg-success"
+                  label="Active Sessions"
+                  count={activeSessions.length}
+                  countClass="text-success"
+                >
+                  {activeSessions.map(({ session, space }) => (
+                    <button
+                      key={session.id}
+                      type="button"
+                      onClick={() => navigateToSpaceSession(space.slug, session.id)}
+                      class={rowClass}
+                    >
+                      <div class="w-2 h-2 rounded-full bg-success flex-shrink-0" />
+                      <div class="min-w-0 flex-1">
+                        <div class="text-sm text-fg-soft truncate">{session.title}</div>
+                        <div class="text-xs text-fg-faint truncate mt-0.5">{space.name}</div>
+                      </div>
+                    </button>
+                  ))}
+                </SpacesSection>
               )}
 
               {runningItems.length > 0 && (
-                <div>
-                  <div class="flex items-center gap-2 mb-2 px-1">
-                    <span class="w-1.5 h-1.5 rounded-full bg-accent flex-shrink-0" />
-                    <span class="text-xs font-semibold text-fg-muted uppercase tracking-wide">
-                      In Progress
-                    </span>
-                    <span class="ml-auto text-xs font-medium tabular-nums text-accent">
-                      {runningItems.length}
-                    </span>
-                  </div>
-                  <div class="flex flex-col gap-0.5">
-                    {runningItems.map(({ task, space }) => (
+                <SpacesSection
+                  dotClass="bg-accent"
+                  label="In Progress"
+                  count={runningItems.length}
+                  countClass="text-accent"
+                >
+                  {runningItems.map(({ task, space }) => {
+                    const statusConfig = getTaskStatusConfig(task.status);
+                    const statusClasses = getTaskStatusClasses(task.status);
+                    return (
                       <button
                         key={task.id}
                         type="button"
                         onClick={() => navigateToSpaceTask(space.slug, task.id)}
-                        class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-left hover:bg-fill-soft transition-colors group"
+                        class={`relative ${rowClass} ${statusClasses.wash}`}
                       >
-                        <div class="w-2 h-2 rounded-full bg-accent flex-shrink-0" />
+                        <span
+                          class={`absolute inset-y-0 left-0 w-[3px] ${statusClasses.rail}`}
+                          aria-hidden="true"
+                        />
                         <div class="min-w-0 flex-1">
                           <div class="text-sm text-fg-soft truncate">{task.title}</div>
                           <div class="text-xs text-fg-faint truncate mt-0.5">{space.name}</div>
                         </div>
-                        <span class="flex-shrink-0 text-[11px] font-medium px-1.5 py-0.5 rounded bg-accent/20 text-accent-soft">
-                          {TASK_STATUS_LABEL[task.status] ?? task.status}
-                        </span>
+                        <StatusBadge tone={statusConfig.tone} label={statusConfig.label} />
                       </button>
-                    ))}
-                  </div>
-                </div>
+                    );
+                  })}
+                </SpacesSection>
               )}
             </div>
           )}

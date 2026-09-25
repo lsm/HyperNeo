@@ -26,29 +26,33 @@ vi.mock('../visual-editor/WorkflowModelSelect', () => ({
     onModelsLoad?: (models: unknown[]) => void;
     testId: string;
     className?: string;
-  }) => (
-    <select
-      data-testid={testId}
-      value={value ?? ''}
-      ref={() => onModelsLoad?.(mockLoadedModels)}
-      onChange={(e) => {
-        const value = (e.target as HTMLSelectElement).value || undefined;
-        const loaded = mockLoadedModels.find((m) => m.id === value);
-        onChange(
-          value,
-          value ? { provider: loaded?.provider ?? 'anthropic', modelId: value } : undefined
-        );
-      }}
-      class={className}
-    >
-      <option value="">— No override —</option>
-      <option value="claude-sonnet-4-6">Claude Sonnet 4.6</option>
-      <option value="claude-haiku-4-5">Claude Haiku 4.5</option>
-      <option value="gpt-5.4">GPT-5.4</option>
-      <option value="kimi-k3">Kimi K3</option>
-      <option value="kimi-k2">Kimi K2</option>
-    </select>
-  ),
+  }) => {
+    const handleSelect = (e: Event) => {
+      const value = (e.target as HTMLSelectElement).value || undefined;
+      const loaded = mockLoadedModels.find((m) => m.id === value);
+      onChange(
+        value,
+        value ? { provider: loaded?.provider ?? 'anthropic', modelId: value } : undefined
+      );
+    };
+    return (
+      <select
+        data-testid={testId}
+        value={value ?? ''}
+        ref={() => onModelsLoad?.(mockLoadedModels)}
+        onChange={handleSelect}
+        onInput={handleSelect}
+        class={className}
+      >
+        <option value="">— No override —</option>
+        <option value="claude-sonnet-4-6">Claude Sonnet 4.6</option>
+        <option value="claude-haiku-4-5">Claude Haiku 4.5</option>
+        <option value="gpt-5.4">GPT-5.4</option>
+        <option value="kimi-k3">Kimi K3</option>
+        <option value="kimi-k2">Kimi K2</option>
+      </select>
+    );
+  },
 }));
 
 import { ModelPoolEditor } from '../ModelPoolEditor';

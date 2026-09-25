@@ -6,6 +6,7 @@ import { spaceStore } from '../../lib/space-store';
 import { currentSpaceConfigureTabSignal, currentSpaceIdSignal } from '../../lib/signals';
 import { navigateToSpaceConfigure } from '../../lib/router';
 import { cn } from '../../lib/utils';
+import { GLASS_TAB_PILL_CLASS, GLASS_TAB_STRIP_CLASS, GlassTabStrip } from './glass-workspace';
 
 const SpaceSettings = lazy(() =>
   import('./SpaceSettings').then((m) => ({ default: m.SpaceSettings }))
@@ -111,28 +112,34 @@ export function SpaceConfigurePage({ space }: SpaceConfigurePageProps) {
               navigateToSpaceConfigure(spaceId, CONFIGURE_TABS[index]?.id ?? 'workflows')
             }
           >
-            <TabList
-              class="flex h-[52px] flex-shrink-0 items-center gap-1 border-b border-line"
-              data-testid="space-configure-tab-bar"
-            >
-              {CONFIGURE_TABS.map((tab) => (
-                <Tab
-                  key={tab.id}
-                  data-testid={`space-configure-tab-${tab.id}`}
-                  class={cn(
-                    'flex h-[52px] items-center gap-2 border-b-2 px-3 text-sm font-medium transition-colors',
-                    effectiveTab === tab.id
-                      ? 'border-blue-400 text-fg'
-                      : 'border-transparent text-fg-muted hover:text-fg-soft'
-                  )}
-                >
-                  <span>{tab.label}</span>
-                  <span class="rounded-full bg-fill-soft px-1.5 py-px text-xs text-fg-muted">
-                    {tab.count({ workflowCount: workflows.length })}
-                  </span>
-                </Tab>
-              ))}
-            </TabList>
+            <GlassTabStrip>
+              <TabList class={GLASS_TAB_STRIP_CLASS} data-testid="space-configure-tab-bar">
+                {CONFIGURE_TABS.map((tab) => (
+                  <Tab
+                    key={tab.id}
+                    data-testid={`space-configure-tab-${tab.id}`}
+                    class={cn(
+                      GLASS_TAB_PILL_CLASS,
+                      effectiveTab === tab.id
+                        ? 'bg-accent/15 text-accent-soft'
+                        : 'text-fg-muted hover:bg-fill-soft hover:text-fg-soft'
+                    )}
+                  >
+                    <span>{tab.label}</span>
+                    <span
+                      class={cn(
+                        'shrink-0 rounded-full px-1.5 py-px text-xs',
+                        effectiveTab === tab.id
+                          ? 'bg-fill text-accent-soft'
+                          : 'bg-fill-soft text-fg-muted'
+                      )}
+                    >
+                      {tab.count({ workflowCount: workflows.length })}
+                    </span>
+                  </Tab>
+                ))}
+              </TabList>
+            </GlassTabStrip>
 
             <TabPanels class="min-h-0 flex-1 overflow-hidden">
               <TabPanel class="h-full min-h-0 overflow-hidden">

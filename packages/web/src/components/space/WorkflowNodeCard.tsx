@@ -280,7 +280,7 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
                   }}
                   placeholder="slot role"
                   data-testid="agent-role-input"
-                  class="flex-1 text-xs font-mono bg-surface border border-line rounded px-1.5 py-0.5 text-fg-soft focus:outline-none focus:border-accent placeholder-gray-600 min-w-0"
+                  class="flex-1 text-xs font-mono bg-surface border border-line rounded px-1.5 py-0.5 text-fg-soft focus:outline-none focus:border-accent placeholder:text-fg-faint min-w-0"
                 />
                 {hasOverrides && (
                   <span class="text-xs text-warning bg-warning/15 border border-warning/40 rounded px-1 py-0.5 flex-shrink-0">
@@ -340,7 +340,7 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
                   }
                   placeholder="Per-agent custom prompt (optional)…"
                   data-testid="agent-instructions-input"
-                  class="w-full text-xs bg-surface border border-line rounded px-2 py-1 text-fg-soft focus:outline-none focus:border-accent placeholder-gray-700"
+                  class="w-full text-xs bg-surface border border-line rounded px-2 py-1 text-fg-soft focus:outline-none focus:border-accent placeholder:text-fg-faint"
                 />
               </div>
               {isExpanded && (
@@ -356,7 +356,7 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
                       }
                       placeholder="e.g. claude-opus-4-6 (leave blank to use default)"
                       data-testid="agent-model-input"
-                      class="w-full text-xs bg-surface border border-line rounded px-2 py-1 text-fg-soft focus:outline-none focus:border-accent placeholder-gray-700"
+                      class="w-full text-xs bg-surface border border-line rounded px-2 py-1 text-fg-soft focus:outline-none focus:border-accent placeholder:text-fg-faint"
                     />
                   </div>
                 </div>
@@ -525,13 +525,13 @@ function ChannelFormBody({ knownRoles, onAdd }: ChannelFormBodyProps) {
         name="to"
         type="text"
         placeholder="To role(s) — comma-separated for fan-out, * for all"
-        class="w-full text-xs bg-surface border border-line rounded px-2 py-1 text-fg-soft focus:outline-none focus:border-accent placeholder-gray-600"
+        class="w-full text-xs bg-surface border border-line rounded px-2 py-1 text-fg-soft focus:outline-none focus:border-accent placeholder:text-fg-faint"
       />
       <input
         name="label"
         type="text"
         placeholder="Label (optional)"
-        class="w-full text-xs bg-surface border border-line rounded px-2 py-1 text-fg-soft focus:outline-none focus:border-accent placeholder-gray-600"
+        class="w-full text-xs bg-surface border border-line rounded px-2 py-1 text-fg-soft focus:outline-none focus:border-accent placeholder:text-fg-faint"
       />
       <button
         type="submit"
@@ -707,7 +707,7 @@ export function WorkflowNodeCard({
                 onUpdate({ ...node, name: (e.currentTarget as HTMLInputElement).value })
               }
               placeholder="e.g. Plan the approach"
-              class="w-full text-xs bg-surface-raised border border-line-strong rounded px-2 py-1.5 text-fg-soft focus:outline-none focus:border-accent placeholder-gray-700"
+              class="w-full text-xs bg-surface-raised border border-line-strong rounded px-2 py-1.5 text-fg-soft focus:outline-none focus:border-accent placeholder:text-fg-faint"
             />
           </div>
 
@@ -767,7 +767,7 @@ export function WorkflowNodeCard({
               placeholder="Node-specific prompt appended to the agent's custom prompt…"
               data-testid="single-agent-system-prompt"
               rows={4}
-              class="w-full text-xs bg-surface-raised border border-line-strong rounded px-2 py-1.5 text-fg-soft focus:outline-none focus:border-accent placeholder-gray-700 resize-y"
+              class="w-full text-xs bg-surface-raised border border-line-strong rounded px-2 py-1.5 text-fg-soft focus:outline-none focus:border-accent placeholder:text-fg-faint resize-y"
             />
           </div>
         </div>

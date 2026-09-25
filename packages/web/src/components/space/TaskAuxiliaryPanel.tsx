@@ -269,7 +269,7 @@ export function TaskAuxiliaryPanel({
         disabled={savingDescription || descriptionPending}
         rows={4}
         placeholder="Add a description…"
-        class="w-full resize-none rounded border border-line-strong bg-surface px-2 py-1.5 text-sm text-fg-soft placeholder-gray-600 focus:border-accent focus:outline-none disabled:opacity-50"
+        class="w-full resize-none rounded border border-line-strong bg-surface px-2 py-1.5 text-sm text-fg-soft placeholder:text-fg-faint focus:border-accent focus:outline-none disabled:opacity-50"
       />
       {descriptionPending && (
         <p class="mt-1 text-[11px] text-fg-muted">Loading full description…</p>

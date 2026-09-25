@@ -39,6 +39,10 @@ vi.mock('../visual-editor/WorkflowModelSelect', () => ({
         const next = (e.target as HTMLSelectElement).value || undefined;
         onChange(next, next ? { provider: 'anthropic', modelId: next } : undefined);
       }}
+      onInput={(e) => {
+        const next = (e.target as HTMLSelectElement).value || undefined;
+        onChange(next, next ? { provider: 'anthropic', modelId: next } : undefined);
+      }}
     >
       <option value="">— No override —</option>
       <option value="claude-sonnet-4-6">Claude Sonnet 4.6</option>

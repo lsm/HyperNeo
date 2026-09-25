@@ -316,7 +316,7 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
                     }}
                     placeholder="Project path"
                     autoFocus
-                    class="min-w-0 flex-1 rounded-md border border-line bg-surface px-2 py-1.5 text-xs text-fg placeholder-gray-600 focus:border-line-strong focus:outline-none"
+                    class="min-w-0 flex-1 rounded-md border border-line bg-surface px-2 py-1.5 text-xs text-fg placeholder:text-fg-faint focus:border-line-strong focus:outline-none"
                   />
                   <button
                     type="submit"

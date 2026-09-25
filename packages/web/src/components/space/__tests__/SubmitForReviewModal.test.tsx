@@ -77,7 +77,7 @@ describe('SubmitForReviewModal', () => {
     expect(confirm.disabled).toBe(true);
     expect(cancel.disabled).toBe(true);
     expect(reason.disabled).toBe(true);
-    expect(confirm.textContent).toContain('Submitting');
+    expect(confirm.querySelector('.animate-spin')).toBeTruthy();
   });
 
   it('busy=true does not call onCancel when cancel is clicked (button is inert)', () => {

@@ -3,7 +3,9 @@ import { useRef, useState } from 'preact/hooks';
 import { updateProvider, fetchAcpModels } from '../../lib/api-helpers.ts';
 import { toast } from '../../lib/toast.ts';
 import { Button } from '../ui/Button.tsx';
+import { FORM_CONTROL_CLASS, FORM_LABEL_CLASS } from '../ui/FormField.tsx';
 import { Modal } from '../ui/Modal.tsx';
+import { cn } from '../../lib/utils.ts';
 
 export interface AcpConfiguredModel {
   id: string;
@@ -148,7 +150,7 @@ export function AcpEditorModal({
     <Modal isOpen onClose={onClose} title={`Edit ${providerName}`} size="lg">
       <div class="space-y-4">
         <label class="block">
-          <span class="text-xs font-medium text-fg-muted mb-1 block">ACP command</span>
+          <span class={FORM_LABEL_CLASS}>ACP command</span>
           <input
             type="text"
             value={command}
@@ -158,7 +160,7 @@ export function AcpEditorModal({
               setFetching(false);
               setCommand(e.currentTarget.value);
             }}
-            class="w-full bg-bg border border-line rounded px-2 py-1.5 text-sm text-fg font-mono focus:outline-none focus:border-accent"
+            class={cn(FORM_CONTROL_CLASS, 'font-mono')}
           />
           <span class="text-[11px] text-fg-faint mt-1 block">
             Shell command that launches the ACP agent.

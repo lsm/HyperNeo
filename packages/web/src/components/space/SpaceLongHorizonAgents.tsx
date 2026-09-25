@@ -15,9 +15,10 @@ import { AUTONOMY_LABELS, toolPermissionsToolsList } from './agent-page-labels';
 import { SpaceTemplatesPanel } from './SpaceTemplatesPanel';
 import { extraToolsOf, withExtraTool, withoutExtraTool } from './template-extra-tools';
 import { toast } from '../../lib/toast';
-import { Button } from '../ui/Button';
 import { ConfirmModal } from '../ui/ConfirmModal';
 import { CloneChoiceDialog } from '../CloneChoiceDialog';
+import { FORM_CONTROL_CLASS, FormActions, FormField } from '../ui/FormField';
+import { Modal } from '../ui/Modal';
 import { LineNumberedTextarea } from './LineNumberedTextarea';
 import {
   isStoredAsPool,
@@ -257,185 +258,154 @@ function AgentEditor({
   };
 
   return (
-    <div class="fixed inset-0 z-50 flex items-end justify-center bg-scrim p-0 backdrop-blur-sm sm:items-center sm:p-5">
-      <div class="relative isolate max-h-[calc(100dvh-1rem)] w-full max-w-2xl overflow-hidden rounded-t-3xl border border-line bg-surface/95 shadow-[inset_0_1px_0_rgba(255,255,255,0.1),0_28px_90px_rgba(0,0,0,0.55)] before:pointer-events-none before:absolute before:inset-0 before:-z-10 before:bg-[radial-gradient(circle_at_4%_0%,rgba(145,77,108,0.22),transparent_34%),radial-gradient(circle_at_100%_6%,rgba(42,94,125,0.18),transparent_38%)] sm:rounded-3xl">
-        <div class="flex items-start justify-between border-b border-line px-5 py-5 sm:px-7">
-          <div>
-            <p class="text-xl font-semibold tracking-tight text-fg">
-              {isEdit
-                ? `Edit ${agent?.displayName}`
-                : `New agent${template ? ` · ${template.displayName}` : ''}`}
-            </p>
-            <p class="mt-1 text-sm text-fg-muted">
-              Define the role, autonomy, and model for this space.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={onCancel}
-            aria-label="Close agent editor"
-            class="rounded-xl border border-transparent p-2 text-fg-muted transition-colors hover:border-line hover:bg-fill-soft hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warning/60"
-          >
-            <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width={2}
-                d="M6 18L18 6M6 6l12 12"
-              />
-            </svg>
-          </button>
+    <Modal
+      isOpen
+      onClose={onCancel}
+      title={
+        isEdit
+          ? `Edit ${agent?.displayName}`
+          : `New agent${template ? ` · ${template.displayName}` : ''}`
+      }
+      size="lg"
+      footer={
+        <FormActions
+          error={error}
+          onCancel={onCancel}
+          submitLabel={isEdit ? 'Save changes' : 'Create agent'}
+          submitting={saving}
+          onSubmit={handleSave}
+        />
+      }
+    >
+      <div class="space-y-4">
+        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <FormField label="Name">
+            <input
+              type="text"
+              value={displayName}
+              onInput={(e) => setDisplayName((e.target as HTMLInputElement).value)}
+              class={FORM_CONTROL_CLASS}
+              placeholder="e.g. Release Manager"
+            />
+          </FormField>
+          <FormField label="Handle">
+            <input
+              type="text"
+              value={handle}
+              disabled={isEdit}
+              onInput={(e) => setHandle((e.target as HTMLInputElement).value)}
+              class={FORM_CONTROL_CLASS}
+              placeholder="e.g. release-manager"
+            />
+          </FormField>
         </div>
-        <div class="max-h-[calc(100dvh-11rem)] space-y-5 overflow-y-auto px-5 py-5 scrollbar-dark sm:px-7 sm:py-6">
-          <div class="grid grid-cols-2 gap-3">
-            <div>
-              <label class="mb-2 block text-sm font-medium text-fg-soft">Name</label>
-              <input
-                type="text"
-                value={displayName}
-                onInput={(e) => setDisplayName((e.target as HTMLInputElement).value)}
-                class="w-full rounded-xl border border-line bg-surface-overlay/90 px-4 py-3 text-sm text-fg placeholder-gray-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-colors focus:border-warning/45 focus:outline-none focus:ring-2 focus:ring-warning/10"
-                placeholder="e.g. Release Manager"
-              />
-            </div>
-            <div>
-              <label class="mb-2 block text-sm font-medium text-fg-soft">Handle</label>
-              <input
-                type="text"
-                value={handle}
-                disabled={isEdit}
-                onInput={(e) => setHandle((e.target as HTMLInputElement).value)}
-                class="w-full rounded-xl border border-line bg-surface-overlay/90 px-4 py-3 text-sm text-fg placeholder-gray-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-colors focus:border-warning/45 focus:outline-none focus:ring-2 focus:ring-warning/10 disabled:opacity-50"
-                placeholder="e.g. release-manager"
-              />
-            </div>
+        <FormField label="Instructions">
+          <LineNumberedTextarea
+            value={instructions}
+            onChange={setInstructions}
+            rows={5}
+            placeholder="What should this agent do?"
+          />
+        </FormField>
+        <FormField label="Autonomy level">
+          <div class="flex gap-1.5">
+            {[1, 2, 3, 4, 5].map((level) => (
+              <button
+                key={level}
+                type="button"
+                onClick={() => setAutonomyLevel(autonomyLevel === level ? null : level)}
+                class={`flex-1 rounded border py-1.5 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 disabled:cursor-not-allowed disabled:opacity-50 ${
+                  autonomyLevel === level
+                    ? 'border-accent bg-accent text-accent-fg'
+                    : 'border-line bg-surface text-fg-muted hover:border-line-strong hover:text-fg-soft'
+                }`}
+              >
+                {level}
+              </button>
+            ))}
           </div>
-          <div>
-            <label class="mb-2 block text-sm font-medium text-fg-soft">Instructions</label>
-            <LineNumberedTextarea
-              value={instructions}
-              onChange={setInstructions}
-              rows={5}
-              placeholder="What should this agent do?"
-            />
-          </div>
-          <div>
-            <label class="mb-2 block text-sm font-medium text-fg-soft">Autonomy level</label>
-            <div class="flex gap-1.5">
-              {[1, 2, 3, 4, 5].map((level) => (
-                <button
-                  key={level}
-                  type="button"
-                  onClick={() => setAutonomyLevel(autonomyLevel === level ? null : level)}
-                  class={`flex-1 rounded-xl border py-2.5 text-sm font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warning/60 disabled:cursor-not-allowed disabled:opacity-50 ${
-                    autonomyLevel === level
-                      ? 'border-warning/40 bg-warning text-on-warning shadow-[0_8px_20px_rgba(251,191,36,0.14)]'
-                      : 'border-line bg-surface-overlay/85 text-fg-muted hover:border-line hover:bg-surface-raised hover:text-fg-soft'
-                  }`}
-                >
-                  {level}
-                </button>
-              ))}
-            </div>
-            {autonomyLevel && (
-              <p class="mt-1 text-xs text-fg-muted">{AUTONOMY_LABELS[autonomyLevel]}</p>
-            )}
-          </div>
-          <div>
-            <label class="mb-2 block text-sm font-medium text-fg-soft">Model</label>
-            <ModelPoolEditor modelPool={modelPool} onModelPoolChange={setModelPool} />
-            {modelPool.length > 1 && (
-              <p class="mt-2 text-xs text-fg-muted">
-                This agent’s own session uses the first model. Pool weights apply to workflow tasks.
-              </p>
-            )}
-          </div>
-          <div>
-            <ToolsEditor
-              tools={toolsSelection.tools}
-              toolsOverridden={toolsSelection.toolsOverridden}
-              onChange={(next) => {
-                setToolsSelection(next);
-                setExtraToolDraft('');
-              }}
-            />
-            <div data-testid="lh-agent-extra-tools" class="mt-3">
-              {extraTools.length > 0 && (
-                <>
-                  <p class="mb-1.5 text-xs text-fg-muted">
-                    Scoped or custom tool entries on this profile:
-                  </p>
-                  <div class="mb-2 flex flex-wrap gap-1.5">
-                    {extraTools.map((tool) => (
-                      <span
-                        key={tool}
-                        class="flex items-center gap-1 rounded-lg border border-line bg-surface-overlay/90 px-2.5 py-1 text-xs text-fg-soft"
+          {autonomyLevel && (
+            <p class="mt-1 text-xs text-fg-muted">{AUTONOMY_LABELS[autonomyLevel]}</p>
+          )}
+        </FormField>
+        <FormField label="Model">
+          <ModelPoolEditor modelPool={modelPool} onModelPoolChange={setModelPool} />
+          {modelPool.length > 1 && (
+            <p class="mt-2 text-xs text-fg-muted">
+              This agent’s own session uses the first model. Pool weights apply to workflow tasks.
+            </p>
+          )}
+        </FormField>
+        <div>
+          <ToolsEditor
+            tools={toolsSelection.tools}
+            toolsOverridden={toolsSelection.toolsOverridden}
+            onChange={(next) => {
+              setToolsSelection(next);
+              setExtraToolDraft('');
+            }}
+          />
+          <div data-testid="lh-agent-extra-tools" class="mt-3">
+            {extraTools.length > 0 && (
+              <>
+                <p class="mb-1.5 text-xs text-fg-muted">
+                  Scoped or custom tool entries on this profile:
+                </p>
+                <div class="mb-2 flex flex-wrap gap-1.5">
+                  {extraTools.map((tool) => (
+                    <span
+                      key={tool}
+                      class="flex items-center gap-1 rounded border border-line bg-surface px-2 py-0.5 text-xs text-fg-soft"
+                    >
+                      <span class="font-mono">{tool}</span>
+                      <button
+                        type="button"
+                        onClick={() => removeExtraTool(tool)}
+                        aria-label={`Remove ${tool}`}
+                        class="rounded p-0.5 text-fg-faint transition-colors hover:text-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
                       >
-                        <span class="font-mono">{tool}</span>
-                        <button
-                          type="button"
-                          onClick={() => removeExtraTool(tool)}
-                          aria-label={`Remove ${tool}`}
-                          class="rounded p-0.5 text-fg-faint transition-colors hover:bg-fill-soft hover:text-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger/60"
-                        >
-                          ×
-                        </button>
-                      </span>
-                    ))}
-                  </div>
-                </>
-              )}
-              <div class="flex items-center gap-2">
-                <input
-                  type="text"
-                  value={extraToolDraft}
-                  onInput={(e) => setExtraToolDraft((e.target as HTMLInputElement).value)}
-                  class="w-full rounded-xl border border-line bg-surface-overlay/90 px-3 py-2 text-xs text-fg placeholder:text-fg-faint shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-colors focus:border-warning/45 focus:outline-none focus:ring-2 focus:ring-warning/10"
-                  placeholder="Add scoped tool entry, e.g. Bash(gh pr view:*)"
-                  data-testid="lh-agent-extra-tool-input"
-                />
-                <button
-                  type="button"
-                  onClick={addExtraTool}
-                  class="flex-shrink-0 rounded-xl border border-line px-3 py-2 text-xs text-fg-soft transition-colors hover:border-line-strong hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warning/60"
-                >
-                  Add
-                </button>
-              </div>
-            </div>
-          </div>
-          <div>
-            <label class="mb-2 block text-sm font-medium text-fg-soft">Setting sources</label>
-            <SettingSourcesEditor value={settingSources} onChange={setSettingSources} />
-            {settingSources === null ? (
-              <p class="mt-1 text-xs text-fg-muted">Inherits the space setting sources.</p>
-            ) : (
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              </>
+            )}
+            <div class="flex items-center gap-2">
+              <input
+                type="text"
+                value={extraToolDraft}
+                onInput={(e) => setExtraToolDraft((e.target as HTMLInputElement).value)}
+                class={`${FORM_CONTROL_CLASS} font-mono text-xs`}
+                placeholder="Add scoped tool entry, e.g. Bash(gh pr view:*)"
+                data-testid="lh-agent-extra-tool-input"
+              />
               <button
                 type="button"
-                onClick={() => setSettingSources(null)}
-                class="mt-1 text-xs font-medium text-accent-soft/85 underline-offset-4 transition-colors hover:text-accent-soft hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+                onClick={addExtraTool}
+                class="flex-shrink-0 rounded border border-line px-2.5 py-1.5 text-xs text-fg-soft transition-colors hover:border-line-strong hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
               >
-                Clear override — inherit from space
+                Add
               </button>
-            )}
+            </div>
           </div>
-          {error && <p class="text-xs text-danger">{error}</p>}
         </div>
-        <div class="flex justify-end gap-3 border-t border-line bg-scrim-soft px-5 py-4 sm:px-7">
-          <Button variant="ghost" size="md" onClick={onCancel} class="rounded-xl px-5">
-            Cancel
-          </Button>
-          <Button
-            size="md"
-            onClick={handleSave}
-            disabled={saving}
-            class="rounded-xl bg-warning px-6 font-semibold text-on-warning shadow-[0_10px_28px_rgba(251,191,36,0.16)] hover:bg-amber-200"
-          >
-            {saving ? 'Saving…' : isEdit ? 'Save changes' : 'Create agent'}
-          </Button>
-        </div>
+        <FormField label="Setting sources">
+          <SettingSourcesEditor value={settingSources} onChange={setSettingSources} />
+          {settingSources === null ? (
+            <p class="mt-1 text-xs text-fg-muted">Inherits the space setting sources.</p>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setSettingSources(null)}
+              class="mt-1 text-xs font-medium text-accent-soft/85 underline-offset-4 transition-colors hover:text-accent-soft hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+            >
+              Clear override — inherit from space
+            </button>
+          )}
+        </FormField>
       </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -484,7 +454,7 @@ function AgentCard({ agent, navigationSpaceId, reminderCount, onEdit, onDelete }
         if (e.target !== e.currentTarget) return;
         if (e.key === 'Enter' || e.key === ' ') openSession();
       }}
-      class="group flex min-h-32 cursor-pointer flex-col rounded-xl border border-line bg-surface-overlay/90 px-4 py-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-all hover:-translate-y-0.5 hover:border-line-strong hover:bg-surface-raised/95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+      class="group flex min-h-32 cursor-pointer flex-col rounded-xl px-4 py-3.5 flat-surface flat-hover transition-all hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
     >
       <div class="flex items-start justify-between gap-3">
         <div class="flex min-w-0 flex-1 items-start gap-3">

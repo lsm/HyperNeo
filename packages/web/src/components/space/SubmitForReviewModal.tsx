@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'preact/hooks';
+import { FORM_CONTROL_CLASS, FORM_LABEL_CLASS, FormActions } from '../ui/FormField.tsx';
 import { Modal } from '../ui/Modal.tsx';
 
 interface SubmitForReviewModalProps {
@@ -35,6 +36,19 @@ export function SubmitForReviewModal({
       }}
       title="Submit task for human review?"
       size="md"
+      footer={
+        <FormActions
+          onCancel={() => {
+            if (!busy) onCancel();
+          }}
+          cancelDisabled={busy}
+          submitLabel="Submit for Review"
+          submitting={busy}
+          submitVariant="warning"
+          onSubmit={handleConfirm}
+          submitTestId="submit-for-review-confirm"
+        />
+      }
     >
       <div class="space-y-4" data-testid="submit-for-review-modal-content">
         <p class="text-fg-soft text-sm leading-relaxed">
@@ -44,7 +58,7 @@ export function SubmitForReviewModal({
         </p>
 
         <div>
-          <label class="block text-[11px] text-fg-muted mb-1" for="submit-for-review-reason-input">
+          <label class={FORM_LABEL_CLASS} for="submit-for-review-reason-input">
             Reason (optional — visible in the approval banner)
           </label>
           <textarea
@@ -52,7 +66,7 @@ export function SubmitForReviewModal({
             data-testid="submit-for-review-reason"
             value={reason}
             onInput={(e) => setReason((e.target as HTMLTextAreaElement).value)}
-            class="w-full rounded border border-line-strong bg-surface-raised px-2 py-1 text-[11px] text-fg-soft focus:border-warning focus:outline-none"
+            class={`${FORM_CONTROL_CLASS} resize-y`}
             rows={3}
             disabled={busy}
             placeholder="What should the reviewer look at?"
@@ -64,28 +78,6 @@ export function SubmitForReviewModal({
             {error}
           </p>
         )}
-
-        <div class="flex items-center justify-end gap-3 pt-1">
-          <button
-            type="button"
-            onClick={() => {
-              if (!busy) onCancel();
-            }}
-            disabled={busy}
-            class="px-4 py-2 text-sm font-medium text-fg-soft hover:text-fg bg-surface-raised hover:bg-fill-strong rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={handleConfirm}
-            disabled={busy}
-            data-testid="submit-for-review-confirm"
-            class="px-4 py-2 text-sm font-medium rounded-lg transition-colors bg-warning hover:bg-warning text-on-warning disabled:bg-warning/50 disabled:cursor-not-allowed"
-          >
-            {busy ? 'Submitting...' : 'Submit for Review'}
-          </button>
-        </div>
       </div>
     </Modal>
   );

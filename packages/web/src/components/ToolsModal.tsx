@@ -537,7 +537,7 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
                       onInput={(e) => {
                         skillSearch.value = (e.target as HTMLInputElement).value;
                       }}
-                      class="w-full text-xs bg-surface border border-line rounded px-2.5 py-1.5 text-fg-soft placeholder-gray-600 focus:outline-none focus:border-accent/50"
+                      class="w-full text-xs bg-surface border border-line rounded px-2.5 py-1.5 text-fg-soft placeholder:text-fg-faint focus:outline-none focus:border-accent/50"
                     />
                   )}
                   {skillsRows.length === 0 ? (
@@ -664,7 +664,7 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
                       onInput={(e) => {
                         mcpServerSearch.value = (e.target as HTMLInputElement).value;
                       }}
-                      class="w-full text-xs bg-surface border border-line rounded px-2.5 py-1.5 text-fg-soft placeholder-gray-600 focus:outline-none focus:border-accent/50"
+                      class="w-full text-xs bg-surface border border-line rounded px-2.5 py-1.5 text-fg-soft placeholder:text-fg-faint focus:outline-none focus:border-accent/50"
                     />
                   )}
                   {mcpRows.length === 0 ? (
