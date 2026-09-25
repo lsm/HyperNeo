@@ -212,8 +212,10 @@ function SessionItem({ classified, spaceId }: { classified: ClassifiedSession; s
   const handleArchive = async () => {
     setBusy(true);
     try {
-      const result = await archiveSession(session.id, true);
+      const result = await archiveSession(session.id, false);
       if (result.success) toast.success('Session archived');
+      else if (result.requiresConfirmation)
+        toast.error('Archive this session from its chat to review its unmerged commits first');
       else if (result.reason === 'has_clones')
         toast.error('Archive this session from its chat to choose what happens to its clones');
       else if (result.reason === 'agent_primary_session')

@@ -83,10 +83,29 @@ describe('SpaceSessionsPage', () => {
 
     fireEvent.click(screen.getByTestId('space-session-archive'));
 
-    await waitFor(() => expect(mockArchiveSession).toHaveBeenCalledWith('s1', true));
+    await waitFor(() => expect(mockArchiveSession).toHaveBeenCalledWith('s1', false));
     expect(mockToast.error).toHaveBeenCalledWith(
       'This session belongs to an agent; archive the agent instead'
     );
+  });
+
+  it('never force-archives: unmerged commits send the user to the chat', async () => {
+    mockSessions.value = [row('s1')];
+    mockArchiveSession.mockResolvedValueOnce({
+      success: false,
+      requiresConfirmation: true,
+      commitStatus: { hasCommitsAhead: true, commits: ['abc'] },
+    });
+    render(<SpaceSessionsPage spaceId="space-1" />);
+
+    fireEvent.click(screen.getByTestId('space-session-archive'));
+
+    await waitFor(() =>
+      expect(mockToast.error).toHaveBeenCalledWith(
+        'Archive this session from its chat to review its unmerged commits first'
+      )
+    );
+    expect(mockArchiveSession).toHaveBeenCalledTimes(1);
   });
 
   it('opens the session when the row is clicked', () => {
