@@ -364,6 +364,26 @@ describe('setupSpaceAgentV2Handlers', () => {
       );
     });
 
+    test('stamps the bound session with the new agent', async () => {
+      const stamped: unknown[] = [];
+      deps.stampProvenance = (sessionId, provenance) => {
+        stamped.push([sessionId, provenance]);
+      };
+
+      const { agent } = await call<{ agent: SpaceAgent }>(handlers, 'spaceAgentV2.create', {
+        spaceId: 'space-1',
+        displayName: 'First',
+        sessionId: 'session-1',
+      });
+
+      expect(stamped).toEqual([
+        [
+          'session-1',
+          { source: 'converted_session', hash: agent.id, agentId: agent.id, agentName: 'first' },
+        ],
+      ]);
+    });
+
     test('rejects a session already bound to another agent', async () => {
       await call(handlers, 'spaceAgentV2.create', {
         spaceId: 'space-1',

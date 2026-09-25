@@ -1,4 +1,4 @@
-import type { MessageHub, SpaceAgent, SpaceAgentTemplate } from '@hyperneo/shared';
+import type { MessageHub, SessionMetadata, SpaceAgent, SpaceAgentTemplate } from '@hyperneo/shared';
 import type { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository.ts';
 import type { SpaceAgentReminderRepository } from '../../storage/repositories/space-agent-reminder-repository.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
@@ -54,6 +54,10 @@ export interface SpaceAgentV2Deps {
   resolveClones?: ResolveClones;
   listClones?: (parentId: string) => Array<{ id: string; worktree?: WorktreeMetadata }>;
   commitsAhead?: (worktree: WorktreeMetadata) => Promise<WorktreeCommitStatus>;
+  stampProvenance?: (
+    sessionId: string,
+    provenance: NonNullable<SessionMetadata['promptProvenance']>
+  ) => void;
 }
 
 function resolveSessionOwner(deps: SpaceAgentV2Deps, sessionId: string): string | null {
@@ -146,6 +150,14 @@ export function buildAgentCreate(
   return async (input) => {
     const outcome = await run(input);
     if (isCreateSpaceAgentRejection(outcome)) throw new Error(outcome.message);
+    if (input.sessionId) {
+      deps.stampProvenance?.(input.sessionId, {
+        source: 'converted_session',
+        hash: outcome.id,
+        agentId: outcome.id,
+        agentName: outcome.handle,
+      });
+    }
     return outcome;
   };
 }

@@ -189,6 +189,7 @@ export interface CreateSpaceAgentParams {
   status?: string;
   description?: string;
   modelPool?: SpaceLongHorizonAgent['modelPool'];
+  sessionId?: string;
 }
 
 export interface UpdateSpaceAgentParams {
@@ -2571,6 +2572,7 @@ class SpaceStore {
       thinkingLevel: params.thinkingLevel,
       settingSources: params.settingSources,
       tools: this.toolsListFrom(params) ?? [],
+      sessionId: params.sessionId,
     });
     const mapped = this.fromSpaceAgentV2(agent, templateKey);
     this.upsertAgent(mapped, spaceId);
