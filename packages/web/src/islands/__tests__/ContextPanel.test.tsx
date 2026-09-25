@@ -8,7 +8,6 @@ const {
   mockNavigateToSpace,
   mockNavigateToSpaceAgent,
   mockNavigateToSpaceConfigure,
-  mockNavigateToSpaceSessions,
   mockNavigateToSpaceGoals,
   mockNavigateToSpaceTasks,
   mockNavigateToSession,
@@ -19,7 +18,6 @@ const {
   mockNavigateToSpace: vi.fn(),
   mockNavigateToSpaceAgent: vi.fn(),
   mockNavigateToSpaceConfigure: vi.fn(),
-  mockNavigateToSpaceSessions: vi.fn(),
   mockNavigateToSpaceGoals: vi.fn(),
   mockNavigateToSpaceTasks: vi.fn(),
   mockNavigateToSession: vi.fn(),
@@ -36,9 +34,7 @@ let mockCurrentSpaceSessionIdSignal!: Signal<string | null>;
 let mockCurrentSpaceTasksFilterTabSignal!: Signal<
   'action' | 'active' | 'completed' | 'archived' | 'draft'
 >;
-let mockCurrentSpaceViewModeSignal!: Signal<
-  'overview' | 'goals' | 'tasks' | 'sessions' | 'configure'
->;
+let mockCurrentSpaceViewModeSignal!: Signal<'overview' | 'goals' | 'tasks' | 'configure'>;
 let mockSettingsSectionSignal!: Signal<
   'general' | 'providers' | 'app-mcp-servers' | 'skills' | 'models' | 'usage' | 'about'
 >;
@@ -143,7 +139,6 @@ vi.mock('../../lib/router.ts', () => ({
   navigateToSpace: mockNavigateToSpace,
   navigateToSpaceAgent: mockNavigateToSpaceAgent,
   navigateToSpaceConfigure: mockNavigateToSpaceConfigure,
-  navigateToSpaceSessions: mockNavigateToSpaceSessions,
   navigateToSpaceGoals: mockNavigateToSpaceGoals,
   navigateToSpaceTasks: mockNavigateToSpaceTasks,
 }));
@@ -224,7 +219,6 @@ describe('ContextPanel', () => {
     ['overview', mockNavigateToSpace, ['space-2']],
     ['goals', mockNavigateToSpaceGoals, ['space-2']],
     ['tasks', mockNavigateToSpaceTasks, ['space-2', 'active']],
-    ['sessions', mockNavigateToSpaceSessions, ['space-2']],
     ['configure', mockNavigateToSpaceConfigure, ['space-2', 'agents']],
   ] as const)(
     'preserves the %s view mode when switching spaces',

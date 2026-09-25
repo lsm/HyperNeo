@@ -226,16 +226,6 @@ vi.mock('../../components/space/SpaceGoals', () => ({
   ),
 }));
 
-vi.mock('../../components/space/SpaceSessionsPage', () => ({
-  SpaceSessionsPage: (props: { spaceId: string; navigationSpaceId?: string }) => (
-    <div
-      data-testid="space-sessions-page"
-      data-space-id={props.spaceId}
-      data-navigation-space-id={props.navigationSpaceId ?? ''}
-    />
-  ),
-}));
-
 vi.mock('../../components/space/SpaceLongHorizonAgents', () => ({
   SpaceLongHorizonAgents: (props: { spaceId: string; selectedHandle?: string | null }) => {
     const spaceAgent = mockAgents.value.find((agent) => agent.handle === props.selectedHandle);
@@ -365,7 +355,6 @@ beforeAll(async () => {
     import('../../components/space/SpaceOverview'),
     import('../../components/space/SpaceTaskPane'),
     import('../../components/space/SpaceTasks'),
-    import('../../components/space/SpaceSessionsPage'),
     import('../../components/space/SpaceLongHorizonAgents'),
   ]);
 });
@@ -498,9 +487,9 @@ describe('SpaceIsland — overlay inerts the base chat (task #873)', () => {
 
   it('inerts every base-content branch, not just session/task (review fix)', async () => {
     mockSpaceOverlaySessionIdSignal.value = 'overlay-session';
-    const { findByTestId } = render(<SpaceIsland spaceId="space-1" viewMode="sessions" />);
+    const { findByTestId } = render(<SpaceIsland spaceId="space-1" viewMode="goals" />);
     await findByTestId('agent-overlay-chat');
-    const view = await findByTestId('space-sessions-view');
+    const view = await findByTestId('space-goals-view');
     expect(view.hasAttribute('inert')).toBe(true);
     expect(view.getAttribute('aria-hidden')).toBe('true');
   });
@@ -818,39 +807,6 @@ describe('SpaceIsland — memories view', () => {
       'glass-workspace'
     );
     expect(getByRole('heading', { name: 'Memories' })).toBeTruthy();
-  });
-});
-
-describe('SpaceIsland — sessions view', () => {
-  it('offers no way to create a session inside a Space', async () => {
-    const { queryByLabelText, getByTestId } = render(
-      <SpaceIsland spaceId="space-1" viewMode="sessions" />
-    );
-    await waitFor(
-      () => {
-        expect(getByTestId('space-sessions-view')).toBeTruthy();
-      },
-      { timeout: LAZY_LOAD_TIMEOUT }
-    );
-    expect(queryByLabelText('Create session')).toBeNull();
-    expect(mockCreateSession).not.toHaveBeenCalled();
-  });
-
-  it('passes the route space id to sessions page navigation', async () => {
-    const { getByTestId } = render(
-      <SpaceIsland spaceId="space-1" routeSpaceId="space-slug" viewMode="sessions" />
-    );
-
-    await waitFor(
-      () => {
-        expect(getByTestId('space-sessions-page')).toBeTruthy();
-      },
-      { timeout: LAZY_LOAD_TIMEOUT }
-    );
-    expect(getByTestId('space-sessions-page').getAttribute('data-space-id')).toBe('space-1');
-    expect(getByTestId('space-sessions-page').getAttribute('data-navigation-space-id')).toBe(
-      'space-slug'
-    );
   });
 });
 

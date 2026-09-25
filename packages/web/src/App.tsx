@@ -35,7 +35,6 @@ import {
   navigateToSpacesPage,
   navigateToSpace,
   navigateToSpaceConfigure,
-  navigateToSpaceSessions,
   navigateToSpaceGoals,
   navigateToSpaceMemories,
   navigateToSpaceEvolve,
@@ -130,8 +129,6 @@ export function App() {
           navigateToSpaceAgent(spaceId, spaceAgentHandle ?? true, true);
         } else if (spaceSessionId && spaceId) {
           navigateToSpaceSession(spaceId, spaceSessionId, true);
-        } else if (spaceId && spaceViewMode === 'sessions') {
-          navigateToSpaceSessions(spaceId, true);
         } else if (spaceId && spaceViewMode === 'goals') {
           navigateToSpaceGoals(spaceId, true);
         } else if (spaceId && spaceViewMode === 'memories') {

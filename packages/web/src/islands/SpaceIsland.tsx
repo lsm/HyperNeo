@@ -36,9 +36,6 @@ import { SpaceAgentChat } from './SpaceAgentChat';
 const SpaceConfigurePage = lazy(() =>
   import('../components/space/SpaceConfigurePage').then((m) => ({ default: m.SpaceConfigurePage }))
 );
-const SpaceSessionsPage = lazy(() =>
-  import('../components/space/SpaceSessionsPage').then((m) => ({ default: m.SpaceSessionsPage }))
-);
 const SpaceTasks = lazy(() =>
   import('../components/space/SpaceTasks').then((m) => ({ default: m.SpaceTasks }))
 );
@@ -366,24 +363,6 @@ export default function SpaceIsland({
           fallback={lazyFallback}
         >
           <SpaceForge spaceId={spaceId} />
-        </GlassRouteShell>
-        {overlay}
-      </>
-    );
-  }
-
-  if (viewMode === 'sessions' && space) {
-    return (
-      <>
-        <GlassRouteShell
-          pageTitle="Sessions"
-          appearance="hero"
-          surfaceKey="sessions"
-          testId="space-sessions-view"
-          baseLayerProps={baseLayerProps}
-          fallback={lazyFallback}
-        >
-          <SpaceSessionsPage spaceId={spaceId} navigationSpaceId={navigationSpaceId} />
         </GlassRouteShell>
         {overlay}
       </>

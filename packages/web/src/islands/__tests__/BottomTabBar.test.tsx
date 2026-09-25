@@ -19,7 +19,6 @@ vi.mock('../../lib/router', () => ({
   navigateToSpaces: vi.fn(),
   navigateToSpace: vi.fn(),
   navigateToSpaceTasks: vi.fn(),
-  navigateToSpaceSessions: vi.fn(),
   navigateToSpaceAgent: vi.fn(),
   navigateToSpaceConfigure: vi.fn(),
 }));
@@ -79,12 +78,12 @@ describe('BottomTabBar space active tab', () => {
     expect(selectedTabLabel()).toBe('Overview');
   });
 
-  it('selects Sessions for ad-hoc space session chat', () => {
+  it('selects Agents for a space session chat', () => {
     currentSpaceSessionIdSignal.value = 'session-1';
 
     render(<BottomTabBar />);
 
-    expect(selectedTabLabel()).toBe('Sessions');
+    expect(selectedTabLabel()).toBe('Agents');
   });
 
   it('selects Tasks for task view', () => {
@@ -134,7 +133,7 @@ describe('BottomTabBar space active tab', () => {
     currentSpaceTaskIdSignal.value = null;
     currentSpaceSessionIdSignal.value = 'session-1';
     rerender(<BottomTabBar />);
-    expect(selectedTabLabel()).toBe('Sessions');
+    expect(selectedTabLabel()).toBe('Agents');
 
     spaceStore.agents.value = [makeLongHorizonAgent('session-agent-1')];
     currentSpaceSessionIdSignal.value = 'session-agent-1';

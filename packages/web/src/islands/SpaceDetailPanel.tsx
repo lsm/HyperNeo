@@ -10,7 +10,6 @@ import {
   navigateToSpaceEvolve,
   navigateToSpaceMemories,
   navigateToSpaceSession,
-  navigateToSpaceSessions,
   navigateToSpaceTask,
   navigateToSpaceTasks,
 } from '../lib/router';
@@ -183,7 +182,6 @@ export function SpaceDetailPanel({
   const isMemoriesSelected = currentSpaceViewModeSignal.value === 'memories';
   const isForgeSelected = currentSpaceViewModeSignal.value === 'forge';
   const isTasksSelected = currentSpaceViewModeSignal.value === 'tasks';
-  const isSessionsSelected = currentSpaceViewModeSignal.value === 'sessions';
 
   const { activeCount, actionCount, draftCount } = useMemo(() => {
     let active = 0;
@@ -221,17 +219,6 @@ export function SpaceDetailPanel({
     }
     return capped;
   }, [tasksForTab, selectedTaskId]);
-
-  const sessions = useMemo(() => {
-    const storeSessions = spaceStore.sessions.value;
-    const isSystemSpaceSession = (sessionId: string): boolean =>
-      sessionId.startsWith(`space:${spaceId}:task:`) ||
-      sessionId.startsWith(`space:${spaceId}:workflow:`);
-
-    return storeSessions
-      .filter((s) => !isSystemSpaceSession(s.id) && !s.taskId)
-      .sort((a, b) => (b.lastActiveAt ?? 0) - (a.lastActiveAt ?? 0));
-  }, [spaceStore.sessions.value, spaceId]);
 
   const agents = spaceStore.agents.value.filter((agent) => agent.status !== 'archived');
 
@@ -321,11 +308,6 @@ export function SpaceDetailPanel({
     },
     [routeSpaceId, actionCount, activeCount, onNavigate]
   );
-
-  const handleSessionsClick = useCallback(() => {
-    navigateToSpaceSessions(routeSpaceId);
-    onNavigate?.();
-  }, [routeSpaceId, onNavigate]);
 
   const handleTaskClick = useCallback(
     (taskId: string) => {
@@ -495,36 +477,6 @@ export function SpaceDetailPanel({
             actionCount > 0 ? (
               <span class="flex h-5 min-w-5 flex-shrink-0 items-center justify-center rounded-full bg-warning/15 px-1.5 text-xs font-medium tabular-nums text-warning-soft">
                 {actionCount}
-              </span>
-            ) : undefined
-          }
-        />
-        <SpaceNavItem
-          label="Sessions"
-          active={isSessionsSelected}
-          onClick={handleSessionsClick}
-          testId="space-detail-sessions"
-          accentClass="text-warning"
-          icon={
-            <svg
-              class="w-4 h-4"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              aria-hidden="true"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width={2}
-                d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"
-              />
-            </svg>
-          }
-          badge={
-            sessions.length > 0 ? (
-              <span class="flex-shrink-0 text-xs tabular-nums text-fg-muted">
-                {sessions.length}
               </span>
             ) : undefined
           }

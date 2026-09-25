@@ -4,14 +4,7 @@ import { Suspense } from 'preact/compat';
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import { SpacePageHeader } from './SpacePageHeader';
 
-type GlassSurfaceKey =
-  | 'overview'
-  | 'agents'
-  | 'goals'
-  | 'memories'
-  | 'forge'
-  | 'tasks'
-  | 'sessions';
+type GlassSurfaceKey = 'overview' | 'agents' | 'goals' | 'memories' | 'forge' | 'tasks';
 
 interface GlassRouteShellProps {
   pageTitle: string;

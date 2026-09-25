@@ -9,7 +9,6 @@ import {
   createSpaceForgePath,
   createSpacePath,
   createSpaceSessionPath,
-  createSpaceSessionsPath,
   createSpaceTaskPath,
   createSpaceTasksPath,
   getSessionIdFromPath,
@@ -119,7 +118,6 @@ describe('router', () => {
     expect(getSpaceForgeFromPath(`/space/${SPACE_ID}/evolve`)).toBe(SPACE_ID);
     expect(getSpaceIdFromPath(`/space/${SPACE_ID}/forge`)).toBe(SPACE_ID);
     expect(createSpaceTasksPath(SPACE_ID, 'action')).toBe(`/space/${SPACE_ID}/tasks/action`);
-    expect(createSpaceSessionsPath(SPACE_ID)).toBe(`/space/${SPACE_ID}/sessions`);
     expect(createSpaceAgentPath(SPACE_ID)).toBe(`/space/${SPACE_ID}/agents`);
     expect(createSpaceAgentPath(SPACE_ID, 'reviewer')).toBe(`/space/${SPACE_ID}/agent/reviewer`);
     expect(createSpaceSessionPath(SPACE_ID, SESSION_ID)).toBe(

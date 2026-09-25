@@ -16,7 +16,6 @@ import {
   navigateToSpace,
   navigateToSpaceAgent,
   navigateToSpaceConfigure,
-  navigateToSpaceSessions,
   navigateToSpaceGoals,
   navigateToSpaceEvolve,
   navigateToSpaceMemories,
@@ -230,9 +229,6 @@ export function ContextPanel() {
         break;
       case 'tasks':
         navigateToSpaceTasks(spaceId, currentSpaceTasksFilterTab);
-        break;
-      case 'sessions':
-        navigateToSpaceSessions(spaceId);
         break;
       case 'goals':
         navigateToSpaceGoals(spaceId);

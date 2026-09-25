@@ -21,7 +21,6 @@ export type SpaceViewMode =
   | 'overview'
   | 'goals'
   | 'tasks'
-  | 'sessions'
   | 'forge'
   | 'configure'
   | 'agents'
