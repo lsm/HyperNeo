@@ -216,9 +216,7 @@ export function BottomTabBar({ inline }: { inline?: boolean } = {}) {
 
   const isTabActive = (id: TabItem['id']): boolean => {
     if (isInSpaceContext) {
-      const isLongHorizonAgentSession =
-        spaceSessionId !== null &&
-        spaceStore.agents.value.some((agent) => agent.sessionId === spaceSessionId);
+      const isLongHorizonAgentSession = spaceStore.isAgentOwnedSession(spaceSessionId);
 
       if (id === 'space-settings') return spaceViewMode === 'configure';
       if (id === 'space-sessions')

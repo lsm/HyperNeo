@@ -104,6 +104,25 @@ describe('BottomTabBar space active tab', () => {
     expect(selectedTabLabel()).toBe('Agents');
   });
 
+  it('selects Agents for a clone of a long-horizon agent session', () => {
+    currentSpaceSessionIdSignal.value = 'clone-1';
+    spaceStore.agents.value = [makeLongHorizonAgent('session-agent-1')];
+    spaceStore.sessions.value = [
+      {
+        id: 'clone-1',
+        title: 'clone',
+        status: 'active',
+        lastActiveAt: 0,
+        parentSessionId: 'session-agent-1',
+      },
+    ];
+
+    render(<BottomTabBar />);
+
+    expect(selectedTabLabel()).toBe('Agents');
+    spaceStore.sessions.value = [];
+  });
+
   it('updates highlight when space subview signals change', () => {
     const { rerender } = render(<BottomTabBar />);
     expect(selectedTabLabel()).toBe('Overview');

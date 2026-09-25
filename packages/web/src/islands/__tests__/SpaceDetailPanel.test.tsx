@@ -32,10 +32,18 @@ let mockSpaceSignal!: Signal<Space | null>;
 let mockLoadingSignal!: Signal<boolean>;
 let mockSpaceIdSignal!: Signal<string | null>;
 let mockSessionsSignal!: Signal<
-  Array<{ id: string; title: string; status: string; lastActiveAt: number }>
+  Array<{
+    id: string;
+    title: string;
+    status: string;
+    lastActiveAt: number;
+    parentSessionId?: string | null;
+    returnedAt?: string | null;
+  }>
 >;
 let mockAgentsSignal!: Signal<unknown[]>;
 const mockEnsureConfigData = vi.fn(() => Promise.resolve());
+const mockSpawnAgentClone = vi.fn(() => Promise.resolve('clone-new'));
 let mockGoalsSignal!: Signal<[]>;
 let mockActiveRunsSignal!: Signal<Array<{ id: string }>>;
 let mockCurrentSpaceSessionIdSignal!: Signal<string | null>;
@@ -72,6 +80,7 @@ vi.mock('../../lib/space-store.ts', () => ({
       sessions: mockSessionsSignal,
       agents: mockAgentsSignal,
       ensureConfigData: mockEnsureConfigData,
+      spawnAgentClone: mockSpawnAgentClone,
       goals: mockGoalsSignal,
       activeRuns: mockActiveRunsSignal,
     };
@@ -332,6 +341,60 @@ describe('SpaceDetailPanel', () => {
 
     fireEvent.click(screen.getByText('Lead'));
     expect(mockNavigateToSpaceSession).toHaveBeenCalledWith('space-1', 'sess-a1');
+    expect(onNavigate).toHaveBeenCalledOnce();
+  });
+
+  it('nests clones under their agent, marks returned ones, and opens them on click', () => {
+    const onNavigate = vi.fn();
+    mockAgentsSignal.value = [
+      { id: 'a1', handle: 'lead', displayName: 'Lead', status: 'active', sessionId: 'sess-a1' },
+    ];
+    mockSessionsSignal.value = [
+      { id: 'sess-a1', title: 'Lead', status: 'active', lastActiveAt: 5 },
+      {
+        id: 'clone-1',
+        title: 'Lead · 分身',
+        status: 'active',
+        lastActiveAt: 3,
+        parentSessionId: 'sess-a1',
+        returnedAt: '2026-09-24T00:00:00.000Z',
+      },
+      {
+        id: 'clone-2',
+        title: 'Lead · 分身 2',
+        status: 'active',
+        lastActiveAt: 4,
+        parentSessionId: 'sess-a1',
+        returnedAt: null,
+      },
+      { id: 'stray', title: 'Stray', status: 'active', lastActiveAt: 9, parentSessionId: 'gone' },
+    ];
+    mockCurrentSpaceSessionIdSignal.value = 'clone-2';
+    render(<SpaceDetailPanel spaceId="space-1" onNavigate={onNavigate} />);
+
+    const rows = screen.getAllByTestId('space-detail-clone-row');
+    expect(rows.map((row) => row.textContent)).toEqual(['分身Lead · 分身 2', '分身Lead · 分身✓']);
+    expect(rows[0].className).toContain('bg-fill-soft');
+    expect(screen.queryByText('Stray')).toBeNull();
+
+    fireEvent.click(rows[1]);
+    expect(mockNavigateToSpaceSession).toHaveBeenCalledWith('space-1', 'clone-1');
+    expect(onNavigate).toHaveBeenCalledOnce();
+  });
+
+  it('spawns a new conversation from the agent row and opens it', async () => {
+    const onNavigate = vi.fn();
+    mockAgentsSignal.value = [
+      { id: 'a1', handle: 'lead', displayName: 'Lead', status: 'active', sessionId: 'sess-a1' },
+    ];
+    render(<SpaceDetailPanel spaceId="space-1" onNavigate={onNavigate} />);
+
+    fireEvent.click(screen.getByTestId('space-detail-agent-spawn'));
+    expect(mockSpawnAgentClone).toHaveBeenCalledWith('a1');
+    await waitFor(() =>
+      expect(mockNavigateToSpaceSession).toHaveBeenCalledWith('space-1', 'clone-new')
+    );
+    expect(mockNavigateToSpaceAgent).not.toHaveBeenCalled();
     expect(onNavigate).toHaveBeenCalledOnce();
   });
 

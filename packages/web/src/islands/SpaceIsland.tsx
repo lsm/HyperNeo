@@ -194,7 +194,7 @@ export default function SpaceIsland({
   }, [navigationSpaceId]);
 
   if (sessionViewId) {
-    const isAgentSession = spaceStore.agents.value.some((a) => a.sessionId === sessionViewId);
+    const isAgentSession = spaceStore.isAgentOwnedSession(sessionViewId);
     return (
       <>
         <div
