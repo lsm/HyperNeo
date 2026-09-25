@@ -1,8 +1,10 @@
 import type { ComponentChildren } from 'preact';
 import { useEffect, useMemo, useState } from 'preact/hooks';
+import { archiveSession } from '../../lib/api-helpers';
 import { navigateToSpaceSession } from '../../lib/router';
 import type { SpaceSessionRow } from '../../lib/space-store';
 import { spaceStore } from '../../lib/space-store';
+import { toast } from '../../lib/toast';
 import {
   getSpaceSessionUnreadCount,
   spaceSessionLastSeen,
@@ -175,6 +177,8 @@ function PaginatedSessionGroup({
 function SessionItem({ classified, spaceId }: { classified: ClassifiedSession; spaceId: string }) {
   const { session, runtimeKind, runtimeLabel, unreadCount } = classified;
   const title = session.title || session.id;
+  const [busy, setBusy] = useState(false);
+  const convertible = !session.parentSessionId && !spaceStore.isAgentOwnedSession(session.id);
   const runtimeTone =
     runtimeKind === 'waiting'
       ? 'text-warning-soft'
@@ -187,47 +191,97 @@ function SessionItem({ classified, spaceId }: { classified: ClassifiedSession; s
             : unreadCount > 0
               ? 'text-info-soft'
               : 'text-fg-muted';
+  const actionClass =
+    'rounded-md px-2 py-1 text-xs text-fg-muted transition hover:bg-fill hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warning/50 disabled:opacity-40';
+
+  const handleConvert = async () => {
+    setBusy(true);
+    try {
+      const agent = await spaceStore.createAgent({
+        displayName: session.title.trim() || 'Converted session',
+        sessionId: session.id,
+      });
+      toast.success(`Converted into agent ${agent.displayName}`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to convert session');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleArchive = async () => {
+    setBusy(true);
+    try {
+      const result = await archiveSession(session.id, false);
+      if (result.success) toast.success('Session archived');
+      else if (result.requiresConfirmation)
+        toast.error('Archive this session from its chat to review its unmerged commits first');
+      else if (result.reason === 'has_clones')
+        toast.error('Archive this session from its chat to choose what happens to its clones');
+      else if (result.reason === 'agent_primary_session')
+        toast.error('This session belongs to an agent; archive the agent instead');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to archive session');
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
-    <button
-      type="button"
-      class="group/open flex w-full items-start justify-between gap-3 px-5 py-4 text-left transition hover:bg-fill-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-warning/55"
-      onClick={() => navigateToSpaceSession(spaceId, session.id)}
-      aria-label={`Open session ${title}, ${runtimeLabel}${unreadCount > 0 ? `, ${unreadCount} unread` : ''}`}
+    <div
+      class="group/open flex w-full items-start gap-3 px-5 py-4 transition hover:bg-fill-soft"
       data-testid="space-session-item"
     >
-      <div class="min-w-0 flex-1">
-        <div class="flex items-center gap-2">
-          <h4 class="truncate text-[15px] font-semibold text-fg">{title}</h4>
-          {unreadCount > 0 && (
-            <span
-              class="inline-flex min-w-5 shrink-0 items-center justify-center rounded-md bg-sky-400/15 px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-info-soft"
-              aria-label={`${unreadCount} unread messages`}
-            >
-              {unreadCount}
-            </span>
-          )}
-        </div>
-        <div class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
-          <span class={runtimeTone}>{runtimeLabel}</span>
-          {session.lastActiveAt > 0 && (
-            <span class="text-fg-faint">Updated {getRelativeTime(session.lastActiveAt)}</span>
-          )}
-        </div>
-      </div>
-      <svg
-        class="mt-1 h-4 w-4 shrink-0 text-fg-faint transition group-hover/open:translate-x-0.5 group-hover/open:text-fg-soft"
-        viewBox="0 0 20 20"
-        fill="currentColor"
-        aria-hidden="true"
+      <button
+        type="button"
+        class="flex min-w-0 flex-1 items-start justify-between gap-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-warning/55"
+        onClick={() => navigateToSpaceSession(spaceId, session.id)}
+        aria-label={`Open session ${title}, ${runtimeLabel}${unreadCount > 0 ? `, ${unreadCount} unread` : ''}`}
+        data-testid="space-session-open"
       >
-        <path
-          fill-rule="evenodd"
-          d="M7.21 14.77a.75.75 0 010-1.06L10.94 10 7.21 6.29a.75.75 0 111.06-1.06l4.25 4.24a.75.75 0 010 1.06l-4.25 4.24a.75.75 0 01-1.06 0z"
-          clip-rule="evenodd"
-        />
-      </svg>
-    </button>
+        <div class="min-w-0 flex-1">
+          <div class="flex items-center gap-2">
+            <h4 class="truncate text-[15px] font-semibold text-fg">{title}</h4>
+            {unreadCount > 0 && (
+              <span
+                class="inline-flex min-w-5 shrink-0 items-center justify-center rounded-md bg-sky-400/15 px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-info-soft"
+                aria-label={`${unreadCount} unread messages`}
+              >
+                {unreadCount}
+              </span>
+            )}
+          </div>
+          <div class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+            <span class={runtimeTone}>{runtimeLabel}</span>
+            {session.lastActiveAt > 0 && (
+              <span class="text-fg-faint">Updated {getRelativeTime(session.lastActiveAt)}</span>
+            )}
+          </div>
+        </div>
+      </button>
+      <div class="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover/open:opacity-100 focus-within:opacity-100">
+        {convertible && (
+          <button
+            type="button"
+            class={actionClass}
+            onClick={handleConvert}
+            disabled={busy}
+            data-testid="space-session-convert"
+          >
+            Convert to agent
+          </button>
+        )}
+        <button
+          type="button"
+          class={actionClass}
+          onClick={handleArchive}
+          disabled={busy}
+          data-testid="space-session-archive"
+        >
+          Archive
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -247,7 +301,7 @@ export function SpaceSessionsPage({ spaceId, navigationSpaceId }: SpaceSessionsP
       sessionId.startsWith(`space:${spaceId}:workflow:`);
 
     return [...storeSessions]
-      .filter((session) => !isSystemSpaceSession(session.id))
+      .filter((session) => !isSystemSpaceSession(session.id) && !session.taskId)
       .sort((a, b) => (b.lastActiveAt ?? 0) - (a.lastActiveAt ?? 0));
   }, [storeSessions, spaceId]);
 

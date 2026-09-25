@@ -227,7 +227,7 @@ export function SpaceDetailPanel({
       sessionId.startsWith(`space:${spaceId}:workflow:`);
 
     return storeSessions
-      .filter((s) => !isSystemSpaceSession(s.id))
+      .filter((s) => !isSystemSpaceSession(s.id) && !s.taskId)
       .sort((a, b) => (b.lastActiveAt ?? 0) - (a.lastActiveAt ?? 0));
   }, [spaceStore.sessions.value, spaceId]);
 

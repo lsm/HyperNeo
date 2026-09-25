@@ -41,7 +41,10 @@ interface Harness {
   templates: Map<string, SpaceAgentTemplate>;
   spaceExists: boolean;
   sessionOwners: Map<string, string>;
-  sessions: Map<string, { type: string; spaceId: string | null; parentSessionId: string | null }>;
+  sessions: Map<
+    string,
+    { type: string; spaceId: string | null; parentSessionId: string | null; taskOwned?: boolean }
+  >;
   displayNames: string[];
   published: SpaceAgent[];
   seeded: Array<{ agentId: string; templateKey: string }>;
@@ -685,4 +688,33 @@ describe('gate order and rejection taxonomy', () => {
       expect(h.published).toHaveLength(0);
     });
   });
+});
+it('rejects a task-owned session', async () => {
+  const h = makeHarness();
+  h.sessions.set('task-session', {
+    type: 'worker',
+    spaceId: 'space-1',
+    parentSessionId: null,
+    taskOwned: true,
+  });
+  const run = buildCreateSpaceAgentPipeline(h.deps);
+
+  const outcome = await run({ spaceId: 'space-1', displayName: 'X', sessionId: 'task-session' });
+
+  expect(outcome).toMatchObject({ kind: 'session_invalid' });
+  expect(h.created).toHaveLength(0);
+});
+
+it('stamps the bound session with the created agent before publishing', async () => {
+  const h = makeHarness();
+  const order: string[] = [];
+  h.deps.stampSession = (sessionId, agent) => order.push(`stamp:${sessionId}:${agent.handle}`);
+  h.deps.publishCreated = async () => {
+    order.push('publish');
+  };
+  const run = buildCreateSpaceAgentPipeline(h.deps);
+
+  await run({ spaceId: 'space-1', displayName: 'Bound', sessionId: 'session-free' });
+
+  expect(order).toEqual(['stamp:session-free:bound', 'publish']);
 });
