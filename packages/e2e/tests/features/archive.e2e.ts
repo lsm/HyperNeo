@@ -37,19 +37,21 @@ test.describe('Session Archive - Menu Option', () => {
     }
   });
 
-  test('should show Archive Session option in session options menu', async ({ page }) => {
+  test('should show the Archive action in the session info panel', async ({ page }) => {
     await openSessionOptionsMenu(page);
 
-    await expect(page.locator('text=Archive Session')).toBeVisible();
+    await expect(page.getByTitle('Archive session')).toBeVisible();
   });
 
-  test('should show Tools, Export, Archive, and Delete options in menu', async ({ page }) => {
+  test('should show Tools, Export, Archive and Delete actions in the session info panel', async ({
+    page,
+  }) => {
     await openSessionOptionsMenu(page);
 
-    await expect(page.locator('text=Tools')).toBeVisible();
-    await expect(page.locator('text=Export Chat')).toBeVisible();
-    await expect(page.locator('text=Archive Session')).toBeVisible();
-    await expect(page.locator('text=Delete Chat')).toBeVisible();
+    await expect(page.getByTitle('Tools')).toBeVisible();
+    await expect(page.getByTitle('Export chat')).toBeVisible();
+    await expect(page.getByTitle('Archive session')).toBeVisible();
+    await expect(page.getByTitle('Delete chat')).toBeVisible();
   });
 });
 
@@ -110,7 +112,7 @@ test.describe('Session Archive - Archiving Flow', () => {
 
     await openSessionOptionsMenu(page);
 
-    const archiveItem = page.locator('text=Archive Session').first();
+    const archiveItem = page.getByTitle('Archive session').first();
     const _isDisabled =
       (await archiveItem.getAttribute('aria-disabled')) === 'true' ||
       (await archiveItem.locator('..').getAttribute('class'))?.includes('opacity') ||
@@ -220,7 +222,7 @@ test.describe('Session Archive - Edge Cases', () => {
 
     await openSessionOptionsMenu(page);
 
-    const deleteItem = page.locator('text=Delete Chat').first();
+    const deleteItem = page.getByTitle('Delete chat').first();
     await deleteItem.click();
 
     const confirmButton = page

@@ -10,7 +10,9 @@ test.describe('Session Export', () => {
 
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
-    await expect(page.getByRole('heading', { name: 'Neo Lobby' }).first()).toBeVisible();
+    await expect(
+      page.getByRole('heading', { name: 'What should we build?' }).first()
+    ).toBeVisible();
     await waitForWebSocketConnected(page);
     sessionId = null;
   });
@@ -29,11 +31,11 @@ test.describe('Session Export', () => {
   test('should show Export Chat option in session options menu', async ({ page }) => {
     sessionId = await createSessionViaUI(page);
 
-    const optionsButton = page.getByTitle('Session options');
+    const optionsButton = page.getByTestId('session-info-btn');
     await expect(optionsButton).toBeVisible();
     await optionsButton.click();
 
-    await expect(page.locator('text=Export Chat')).toBeVisible();
+    await expect(page.getByTitle('Export chat')).toBeVisible();
   });
 
   test('should export session to Markdown file', async ({ page }) => {
@@ -55,9 +57,9 @@ test.describe('Session Export', () => {
 
     const downloadPromise = page.waitForEvent('download');
 
-    const optionsButton = page.getByTitle('Session options');
+    const optionsButton = page.getByTestId('session-info-btn');
     await optionsButton.click();
-    await page.locator('text=Export Chat').click();
+    await page.getByTitle('Export chat').click();
 
     const download = await downloadPromise;
     expect(download.suggestedFilename()).toContain('.md');
@@ -82,9 +84,9 @@ test.describe('Session Export', () => {
 
     const downloadPromise = page.waitForEvent('download');
 
-    const optionsButton = page.getByTitle('Session options');
+    const optionsButton = page.getByTestId('session-info-btn');
     await optionsButton.click();
-    await page.locator('text=Export Chat').click();
+    await page.getByTitle('Export chat').click();
 
     const download = await downloadPromise;
     const content = await download.createReadStream().then(async (stream) => {
@@ -117,9 +119,9 @@ test.describe('Session Export', () => {
 
     const downloadPromise = page.waitForEvent('download');
 
-    const optionsButton = page.getByTitle('Session options');
+    const optionsButton = page.getByTestId('session-info-btn');
     await optionsButton.click();
-    await page.locator('text=Export Chat').click();
+    await page.getByTitle('Export chat').click();
 
     await downloadPromise;
 
@@ -131,9 +133,9 @@ test.describe('Session Export', () => {
   test('should disable Export when disconnected', async ({ page }) => {
     sessionId = await createSessionViaUI(page);
 
-    const optionsButton = page.getByTitle('Session options');
+    const optionsButton = page.getByTestId('session-info-btn');
     await optionsButton.click();
-    const exportOption = page.locator('[role="menuitem"]:has-text("Export Chat")');
+    const exportOption = page.getByTitle('Export chat');
     await expect(exportOption).toBeVisible();
     await expect(exportOption).not.toBeDisabled();
 
@@ -152,7 +154,7 @@ test.describe('Session Export', () => {
       timeout: 10000,
     });
 
-    const disabledOptionsButton = page.getByRole('button', { name: 'Not connected' }).first();
-    await expect(disabledOptionsButton).toBeDisabled();
+    await page.getByTestId('session-info-btn').click();
+    await expect(page.getByTitle('Export chat')).toBeDisabled();
   });
 });

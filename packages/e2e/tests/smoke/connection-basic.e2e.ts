@@ -7,7 +7,7 @@ test.describe('Smoke: Connection', () => {
 
     await waitForWebSocketConnected(page);
 
-    await expect(page.getByRole('button', { name: 'New Session', exact: true })).toBeVisible({
+    await expect(page.getByTestId('new-chat-button')).toBeVisible({
       timeout: 10000,
     });
   });

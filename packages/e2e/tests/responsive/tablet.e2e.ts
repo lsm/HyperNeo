@@ -16,7 +16,9 @@ test.describe('Tablet Responsiveness', () => {
 
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
-    await expect(page.getByRole('heading', { name: 'Neo Lobby' }).first()).toBeVisible();
+    await expect(
+      page.getByRole('heading', { name: 'What should we build?' }).first()
+    ).toBeVisible();
     await waitForWebSocketConnected(page);
     sessionId = null;
   });
@@ -33,10 +35,7 @@ test.describe('Tablet Responsiveness', () => {
   });
 
   test('should display desktop sidebar on tablet', async ({ page }) => {
-    const newSessionButton = page.getByRole('button', {
-      name: 'New Session',
-      exact: true,
-    });
+    const newSessionButton = page.getByTestId('new-chat-button');
 
     await expect(newSessionButton).toBeVisible({ timeout: 5000 });
 

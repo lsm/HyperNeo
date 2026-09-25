@@ -10,7 +10,7 @@ test.describe('2-Stage Session Creation', () => {
 
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
-    await expect(page.getByRole('button', { name: 'New Session', exact: true })).toBeVisible({
+    await expect(page.getByTestId('new-chat-button')).toBeVisible({
       timeout: 10000,
     });
     await page.waitForTimeout(500);

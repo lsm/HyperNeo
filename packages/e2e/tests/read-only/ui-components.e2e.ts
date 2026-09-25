@@ -8,10 +8,7 @@ test.describe('UI Components', () => {
 
   test.describe('Buttons', () => {
     test('should have hover effects on interactive elements', async ({ page }) => {
-      const newSessionButton = page.getByRole('button', {
-        name: 'New Session',
-        exact: true,
-      });
+      const newSessionButton = page.getByTestId('new-chat-button');
 
       await newSessionButton.hover();
 
@@ -23,10 +20,7 @@ test.describe('UI Components', () => {
 
   test.describe('Transitions and Animations', () => {
     test('should have smooth transitions', async ({ page }) => {
-      const button = page.getByRole('button', {
-        name: 'New Session',
-        exact: true,
-      });
+      const button = page.getByTestId('new-chat-button');
       await button.hover();
 
       await expect(button).toBeVisible();
@@ -43,8 +37,10 @@ test.describe('UI Components', () => {
       await page.reload();
       await page.waitForTimeout(500);
 
-      await expect(page.getByRole('heading', { name: 'Neo Lobby' }).first()).toBeVisible();
-      await expect(page.getByRole('button', { name: 'New Session', exact: true })).toBeVisible();
+      await expect(
+        page.getByRole('heading', { name: 'What should we build?' }).first()
+      ).toBeVisible();
+      await expect(page.getByTestId('new-chat-button')).toBeVisible();
     });
 
     test('should be usable on tablet viewports', async ({ page }) => {
@@ -53,8 +49,10 @@ test.describe('UI Components', () => {
       await page.reload();
       await page.waitForTimeout(500);
 
-      await expect(page.getByRole('heading', { name: 'Neo Lobby' }).first()).toBeVisible();
-      await expect(page.locator('text=Your agent command center')).toBeVisible();
+      await expect(
+        page.getByRole('heading', { name: 'What should we build?' }).first()
+      ).toBeVisible();
+      await expect(page.getByTestId('new-chat-button')).toBeVisible();
     });
   });
 
@@ -69,10 +67,7 @@ test.describe('UI Components', () => {
     });
 
     test('should have focusable interactive elements', async ({ page }) => {
-      const newSessionButton = page.getByRole('button', {
-        name: 'New Session',
-        exact: true,
-      });
+      const newSessionButton = page.getByTestId('new-chat-button');
 
       await newSessionButton.focus();
 

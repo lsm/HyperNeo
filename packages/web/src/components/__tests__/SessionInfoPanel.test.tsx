@@ -60,7 +60,7 @@ const defaultProps = {
 };
 
 function openPanel(container: HTMLElement) {
-  const trigger = container.querySelector('button[title="Session info"]')!;
+  const trigger = container.querySelector('[data-testid="session-info-btn"]')!;
   fireEvent.click(trigger);
   return container.querySelector('[data-testid="session-info-panel"]');
 }

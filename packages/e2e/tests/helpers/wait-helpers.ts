@@ -87,7 +87,7 @@ export async function waitForSessionCreated(page: Page): Promise<string> {
   await page.waitForTimeout(1500);
 
   await page.waitForFunction(
-    () => !document.querySelector('h2')?.textContent?.includes('Neo Lobby'),
+    () => !document.querySelector('h1')?.textContent?.includes('What should we build?'),
     { timeout: 10000 }
   );
 

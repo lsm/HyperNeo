@@ -563,6 +563,7 @@ export function SessionInfoPanelButton({
     <div ref={rootRef} class="relative">
       <IconButton
         title="Session info"
+        data-testid="session-info-btn"
         onClick={() => {
           commitRename();
           setOpen((value) => !value);

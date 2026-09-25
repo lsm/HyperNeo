@@ -11,7 +11,9 @@ test.describe('Tools Modal - Redesigned', () => {
 
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
-    await expect(page.getByRole('heading', { name: 'Neo Lobby' }).first()).toBeVisible();
+    await expect(
+      page.getByRole('heading', { name: 'What should we build?' }).first()
+    ).toBeVisible();
     await page.waitForTimeout(500);
     sessionId = null;
   });
@@ -27,14 +29,9 @@ test.describe('Tools Modal - Redesigned', () => {
 
   async function openToolsModal(page: import('@playwright/test').Page) {
     await waitForWebSocketConnected(page);
-    const optionsButton = page.getByTitle('Session options');
+    const optionsButton = page.getByTestId('session-info-btn');
     await optionsButton.click();
-    await page
-      .locator(
-        '[role="menu"] [role="menuitem"]:has-text("Tools"), [role="menuitem"]:has-text("Tools")'
-      )
-      .first()
-      .click();
+    await page.getByTitle('Tools').click();
     await expect(getModal(page)).toBeVisible({ timeout: 5000 });
     return getModal(page);
   }

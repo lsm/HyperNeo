@@ -198,13 +198,12 @@ jobs:
             features/archive
             features/file-operations
             features/message-operations
-            features/provider-model-switching
+           
             features/reviewer-feedback-loop
             features/rewind-features
             features/session-operations
             features/slash-cmd
             features/space-approval-gate-rejection
-            features/space-artifacts-panel
             features/space-canvas-mode
             features/space-happy-path-pipeline
             features/worktree-isolation

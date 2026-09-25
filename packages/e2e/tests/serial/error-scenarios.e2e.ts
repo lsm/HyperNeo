@@ -12,7 +12,7 @@ test.describe('Error Scenarios', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
 
-    await expect(page.getByRole('heading', { name: 'Neo Lobby' }).first()).toBeVisible({
+    await expect(page.getByRole('heading', { name: 'What should we build?' }).first()).toBeVisible({
       timeout: 10000,
     });
 
@@ -79,7 +79,9 @@ test.describe('Error Scenarios', () => {
 
     await page.waitForTimeout(3000);
 
-    const isOnHome = await page.locator('h2:has-text("Neo Lobby")').isVisible({ timeout: 5000 });
+    const isOnHome = await page
+      .locator('h1:has-text("What should we build?")')
+      .isVisible({ timeout: 5000 });
     const hasErrorToast = await page
       .locator('text=/session not found/i')
       .isVisible({ timeout: 2000 })
