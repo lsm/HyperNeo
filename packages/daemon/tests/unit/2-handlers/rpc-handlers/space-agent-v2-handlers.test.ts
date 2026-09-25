@@ -560,6 +560,87 @@ describe('setupSpaceAgentV2Handlers', () => {
   });
 
   describe('update', () => {
+    test('archiving an agent archives its clones and then its primary session', async () => {
+      const calls: unknown[] = [];
+      deps.resolveClones = async (parentId, choice, action) => {
+        calls.push(['clones', parentId, choice, action]);
+        return null;
+      };
+      deps.retirePrimarySession = async (sessionId, action) => {
+        calls.push(['retire', sessionId, action]);
+      };
+      const created = agents.create({ spaceId: 'space-1', handle: 'a', sessionId: 'primary' });
+
+      await handlers.get('spaceAgentV2.update')!({ id: created.id, status: 'archived' });
+      await handlers.get('spaceAgentV2.update')!({ id: created.id, displayName: 'B' });
+
+      expect(calls).toEqual([
+        ['clones', 'primary', 'cascade', 'archive'],
+        ['retire', 'primary', 'archive'],
+      ]);
+    });
+
+    test('archiving an agent asks for confirmation when a clone has commits ahead', async () => {
+      const calls: unknown[] = [];
+      deps.listClones = (parentId) =>
+        parentId === 'primary'
+          ? [{ id: 'c1', worktree: { branch: 'c', worktreePath: '/wt', mainRepoPath: '/repo' } }]
+          : [];
+      deps.commitsAhead = async () => ({ hasCommitsAhead: true, commits: ['abc'] }) as never;
+      deps.resolveClones = async (...args) => {
+        calls.push(args);
+        return null;
+      };
+      deps.retirePrimarySession = async () => {};
+      const created = agents.create({ spaceId: 'space-1', handle: 'a', sessionId: 'primary' });
+
+      const refused = await handlers.get('spaceAgentV2.update')!({
+        id: created.id,
+        status: 'archived',
+      });
+      expect(refused).toMatchObject({ accepted: false, reason: 'requires_confirmation' });
+      expect(agents.getById(created.id)?.status).toBe('active');
+      expect(calls).toEqual([]);
+
+      const { agent } = (await handlers.get('spaceAgentV2.update')!({
+        id: created.id,
+        status: 'archived',
+        confirmed: true,
+      })) as { agent: SpaceAgent };
+      expect(agent.status).toBe('archived');
+      expect(calls).toEqual([['primary', 'cascade', 'archive']]);
+    });
+
+    test('restoring an archived agent keeps a session the update explicitly binds', async () => {
+      deps.retirePrimarySession = async () => {};
+      const created = agents.create({ spaceId: 'space-1', handle: 'a', sessionId: 'primary' });
+      await handlers.get('spaceAgentV2.update')!({ id: created.id, status: 'archived' });
+
+      const { agent } = (await handlers.get('spaceAgentV2.update')!({
+        id: created.id,
+        status: 'active',
+        sessionId: 'session-2',
+      })) as { agent: SpaceAgent };
+
+      expect(agent.sessionId).toBe('session-2');
+    });
+
+    test('restoring an archived agent drops its archived session so a fresh one is started', async () => {
+      deps.retirePrimarySession = async () => {};
+      const created = agents.create({ spaceId: 'space-1', handle: 'a', sessionId: 'primary' });
+      await handlers.get('spaceAgentV2.update')!({ id: created.id, status: 'archived' });
+      published.length = 0;
+
+      const { agent } = (await handlers.get('spaceAgentV2.update')!({
+        id: created.id,
+        status: 'active',
+      })) as { agent: SpaceAgent };
+
+      expect(agent.sessionId).toBeNull();
+      expect(agents.getById(created.id)?.sessionId).toBeNull();
+      expect(published.filter((p) => p.topic === 'spaceAgentV2.updated')).toHaveLength(2);
+    });
+
     test('refreshes runtime subscriptions after a successful update', async () => {
       const created = agents.create({ spaceId: 'space-1', handle: 'a' });
       await handlers.get('spaceAgentV2.update')!({ id: created.id, status: 'disabled' });
@@ -762,6 +843,140 @@ describe('setupSpaceAgentV2Handlers', () => {
 
       expect(result.id).toBe(created.id);
       expect(agents.getById(created.id)).toBeNull();
+    });
+
+    test('archives the primary session before removing the agent row', async () => {
+      const retired: unknown[] = [];
+      deps.retirePrimarySession = async (sessionId, action) => {
+        retired.push([sessionId, action, agents.getById(created.id)?.id ?? null]);
+      };
+      const created = agents.create({ spaceId: 'space-1', handle: 'a', sessionId: 'primary' });
+
+      await call(handlers, 'spaceAgentV2.delete', { id: created.id });
+
+      expect(retired).toEqual([['primary', 'archive', created.id]]);
+      expect(agents.getById(created.id)).toBeNull();
+    });
+
+    test('asks for confirmation when the primary session itself has commits ahead', async () => {
+      sessions.set('primary', {
+        type: 'worker',
+        context: { spaceId: 'space-1' },
+        worktree: { branch: 'p', worktreePath: '/wt-p', mainRepoPath: '/repo' },
+      } as never);
+      deps.commitsAhead = async () => ({ hasCommitsAhead: true, commits: ['abc'] }) as never;
+      const retired: unknown[] = [];
+      deps.retirePrimarySession = async (...args) => {
+        retired.push(args);
+      };
+      const created = agents.create({ spaceId: 'space-1', handle: 'a', sessionId: 'primary' });
+
+      const refused = await call(handlers, 'spaceAgentV2.delete', { id: created.id });
+      expect(refused).toMatchObject({ accepted: false, reason: 'requires_confirmation' });
+      expect(agents.getById(created.id)).not.toBeNull();
+      expect(retired).toEqual([]);
+
+      const archived = await handlers.get('spaceAgentV2.update')!({
+        id: created.id,
+        status: 'archived',
+      });
+      expect(archived).toMatchObject({ accepted: false, reason: 'requires_confirmation' });
+
+      await call(handlers, 'spaceAgentV2.delete', { id: created.id, confirmed: true });
+      expect(retired).toEqual([['primary', 'delete']]);
+    });
+
+    test('offers the clone choice before the commits confirmation and gates the chosen scope', async () => {
+      sessions.set('primary', {
+        type: 'worker',
+        context: { spaceId: 'space-1' },
+        worktree: { branch: 'p', worktreePath: '/wt-p', mainRepoPath: '/repo' },
+      } as never);
+      deps.listClones = (parentId) =>
+        parentId === 'primary' ? [{ id: 'c1', title: 'Clone one' }] : [];
+      deps.commitsAhead = async () => ({ hasCommitsAhead: true, commits: ['abc'] }) as never;
+      const cloneCalls: unknown[] = [];
+      deps.resolveClones = async (...args) => {
+        cloneCalls.push(args);
+        return null;
+      };
+      deps.retirePrimarySession = async () => {};
+      const created = agents.create({ spaceId: 'space-1', handle: 'a', sessionId: 'primary' });
+
+      const first = await call(handlers, 'spaceAgentV2.delete', { id: created.id });
+      expect(first).toEqual({
+        accepted: false,
+        reason: 'has_clones',
+        clones: [{ id: 'c1', title: 'Clone one' }],
+      });
+
+      const second = await call(handlers, 'spaceAgentV2.delete', {
+        id: created.id,
+        children: 'flatten',
+      });
+      expect(second).toMatchObject({ accepted: false, reason: 'requires_confirmation' });
+      expect(cloneCalls).toEqual([]);
+
+      await call(handlers, 'spaceAgentV2.delete', {
+        id: created.id,
+        children: 'flatten',
+        confirmed: true,
+      });
+      expect(cloneCalls).toEqual([['primary', 'flatten', 'delete']]);
+      expect(agents.getById(created.id)).toBeNull();
+    });
+
+    test('archiving with a rebind gates the session being bound', async () => {
+      sessions.set('other', {
+        type: 'worker',
+        context: { spaceId: 'space-1' },
+        worktree: { branch: 'o', worktreePath: '/wt-o', mainRepoPath: '/repo' },
+      } as never);
+      deps.commitsAhead = async () => ({ hasCommitsAhead: true, commits: ['abc'] }) as never;
+      deps.retirePrimarySession = async () => {};
+      const created = agents.create({ spaceId: 'space-1', handle: 'a' });
+
+      const refused = await handlers.get('spaceAgentV2.update')!({
+        id: created.id,
+        status: 'archived',
+        sessionId: 'other',
+      });
+      expect(refused).toMatchObject({ accepted: false, reason: 'requires_confirmation' });
+      expect(agents.getById(created.id)?.status).toBe('active');
+    });
+
+    test('keeps the agent when retiring its session fails', async () => {
+      deps.retirePrimarySession = async () => {
+        throw new Error('disk full');
+      };
+      const created = agents.create({ spaceId: 'space-1', handle: 'a', sessionId: 'primary' });
+
+      await expect(call(handlers, 'spaceAgentV2.delete', { id: created.id })).rejects.toThrow(
+        'disk full'
+      );
+      expect(agents.getById(created.id)).not.toBeNull();
+    });
+
+    test('a confirmed delete deletes the primary session and cascades delete to clones', async () => {
+      const retired: unknown[] = [];
+      const cloneCalls: unknown[] = [];
+      deps.retirePrimarySession = async (sessionId, action) => {
+        retired.push([sessionId, action]);
+      };
+      deps.resolveClones = async (parentId, choice, action) => {
+        cloneCalls.push([parentId, choice, action]);
+        return null;
+      };
+      const created = agents.create({ spaceId: 'space-1', handle: 'a', sessionId: 'primary' });
+
+      await call(handlers, 'spaceAgentV2.delete', {
+        id: created.id,
+        children: 'cascade',
+        confirmed: true,
+      });
+
+      expect(cloneCalls).toEqual([['primary', 'cascade', 'delete']]);
+      expect(retired).toEqual([['primary', 'delete']]);
     });
 
     test('an agent with clones needs a choice before it is removed', async () => {

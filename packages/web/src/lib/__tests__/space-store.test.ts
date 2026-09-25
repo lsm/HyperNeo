@@ -2248,6 +2248,19 @@ describe('SpaceStore — CRUD methods', () => {
     );
   });
 
+  it('updateAgent surfaces a requires_confirmation refusal as an error', async () => {
+    await spaceStore.selectSpace('space-1');
+    mockHub.request.mockImplementationOnce(async () => ({
+      accepted: false,
+      reason: 'requires_confirmation',
+      commitStatus: { hasCommitsAhead: true, commits: ['x'] },
+    }));
+
+    await expect(spaceStore.updateAgent('a1', { status: 'archived' })).rejects.toThrow(
+      'unpushed commits'
+    );
+  });
+
   it('updateAgent calls spaceAgentV2.update RPC and upserts returned agent', async () => {
     await spaceStore.selectSpace('space-1');
     await spaceStore.updateAgent('a1', { displayName: 'Renamed' });

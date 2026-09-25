@@ -50,7 +50,12 @@ type Input = z.infer<typeof inputSchema>;
 type Result = { agent: SpaceLongHorizonAgent } | AgentRejection;
 type Gate<T> = { value: T } | { reason: AgentRejection };
 
+export type ArchiveAgentSessionsOutcome = { ok: true } | { ok: false; message: string };
+
 export interface UpdateAgentDependencies extends AgentOperationDeps {
+  readonly archiveAgentSessions?: (
+    agent: SpaceLongHorizonAgent
+  ) => Promise<ArchiveAgentSessionsOutcome>;
   readonly listAgents: (spaceId: string) => SpaceLongHorizonAgent[];
   readonly getAgent: (agentId: string) => SpaceLongHorizonAgent | null;
   readonly updateAgent: (
@@ -148,7 +153,17 @@ export async function applyAgentUpdate(
   deps: UpdateAgentDependencies
 ): Promise<Result> {
   const spaceId = existing.spaceId;
-  const agent = deps.updateAgent(input.agentId, updateParamsFromInput(input));
+  const archiving = input.status === 'archived' && existing.status !== 'archived';
+  if (archiving && existing.sessionId && deps.archiveAgentSessions) {
+    const outcome = await deps.archiveAgentSessions(existing);
+    if (!outcome.ok) return rejectAgent('session_unavailable', outcome.message);
+  }
+  const reviving =
+    existing.status === 'archived' && input.status !== undefined && input.status !== 'archived';
+  let agent = deps.updateAgent(input.agentId, updateParamsFromInput(input));
+  if (agent && reviving && existing.sessionId) {
+    agent = deps.updateAgent(input.agentId, { sessionId: null });
+  }
   if (input.provider === null) await deps.clearAgentSessionProvider(spaceId, input.agentId);
   const refresh = deps.refreshAgentSubscriptions(spaceId, input.agentId);
   if (!refresh.success) {
@@ -186,7 +201,7 @@ const resultSchema = z.union([
 const REJECTION_DOC =
   'Rejects agent_not_found when the agent is absent or belongs to another Space, invalid_name when the new name is blank or already used by a non-archived peer, invalid_tools for a tool outside the known allowlist, invalid_model when the resulting model and provider pair is unrecognized, and runtime_refresh_failed when the stored change landed but its event subscriptions could not be reloaded. Admitted for MCP callers whose session is active in the owning Space; a caller with no Space, or one whose session is not active in it, is rejected with agent_denied.';
 
-const UPDATE_AGENT_DESCRIPTION = `Update a long-horizon agent: name, lifecycle status, description, operator prompt, model, provider, thinking level, setting sources, or tool allowlist. Setting status is how an agent is paused, archived, and revived; see the status field for what each one leaves behind. Fields left out are untouched; null clears a clearable override, and tools set to null clears the allowlist. Clearing the provider also clears it from the agent's live session. Reviving an archived agent re-checks its name against live peers. ${REJECTION_DOC}`;
+const UPDATE_AGENT_DESCRIPTION = `Update a long-horizon agent: name, lifecycle status, description, operator prompt, model, provider, thinking level, setting sources, or tool allowlist. Setting status is how an agent is paused, archived, and revived; see the status field for what each one leaves behind. Fields left out are untouched; null clears a clearable override, and tools set to null clears the allowlist. Clearing the provider also clears it from the agent's live session. Archiving retires the agent's chat session and archives its clones, and is rejected with session_unavailable when one of them still has unpushed commits (confirm from the Agents page instead). Reviving an archived agent re-checks its name against live peers and starts a fresh session on next use. ${REJECTION_DOC}`;
 
 export function createUpdateAgentOperation(deps: UpdateAgentDependencies) {
   const update = buildUpdatePipeline(deps);

@@ -18,6 +18,10 @@ let spaceId: string;
 let memberAgentId: string;
 let agent: SpaceLongHorizonAgent;
 let sessions: Map<string, Session>;
+let archiveOutcome: { ok: true } | { ok: false; message: string } = { ok: true };
+let archiveAgentSessions:
+  | ((agent: SpaceLongHorizonAgent) => Promise<typeof archiveOutcome>)
+  | undefined;
 let updated: string[];
 let clearedProviders: string[];
 let refreshOutcome: { success: boolean; error?: string };
@@ -62,6 +66,7 @@ function registry() {
       clearAgentSessionProvider: async (_space, agentId) => {
         clearedProviders.push(agentId);
       },
+      archiveAgentSessions,
       audit: () => {},
     })
   );
@@ -99,6 +104,8 @@ beforeEach(() => {
   updated = [];
   clearedProviders = [];
   refreshOutcome = { success: true };
+  archiveOutcome = { ok: true };
+  archiveAgentSessions = undefined;
 });
 
 describe('the agent.update operation', () => {
@@ -162,6 +169,39 @@ describe('the agent.update operation', () => {
     const outcome = await run('agent.update', { agentId: agent.id, status: 'active' });
     expect((outcome.value.agent as SpaceLongHorizonAgent).status).toBe('active');
     expect(agentRepo.getById(agent.id)?.status).toBe('active');
+  });
+
+  test('status archived retires the agent sessions first and refuses when that is blocked', async () => {
+    const withSession = agentRepo.create({ spaceId, handle: 'scout', sessionId: 'scout-session' });
+    const archived: string[] = [];
+    archiveOutcome = { ok: false, message: 'unpushed commits' };
+    archiveAgentSessions = async (target) => {
+      archived.push(target.id);
+      return archiveOutcome;
+    };
+
+    const refused = await run('agent.update', { agentId: withSession.id, status: 'archived' });
+    expect(refused.value).toMatchObject({ rejected: true, reason: 'session_unavailable' });
+    expect(agentRepo.getById(withSession.id)?.status).toBe('active');
+
+    archiveOutcome = { ok: true };
+    const done = await run('agent.update', { agentId: withSession.id, status: 'archived' });
+    expect(done.kind).toBe('completed');
+    expect(archived).toEqual([withSession.id, withSession.id]);
+    expect(agentRepo.getById(withSession.id)?.status).toBe('archived');
+  });
+
+  test('reviving an archived agent drops its archived session id', async () => {
+    const withSession = agentRepo.create({
+      spaceId,
+      handle: 'scout',
+      sessionId: 'scout-session',
+      status: 'archived',
+    });
+
+    const revived = await run('agent.update', { agentId: withSession.id, status: 'active' });
+    expect(revived.kind).toBe('completed');
+    expect(agentRepo.getById(withSession.id)?.sessionId).toBeNull();
   });
 
   test('status archived frees the display name for a new agent', async () => {

@@ -172,6 +172,12 @@ export interface SpaceExternalEventDeliveryLogRecord {
   eventUpdatedAt: number;
 }
 
+function agentUpdateRefusalMessage(reason: string): string {
+  return reason === 'requires_confirmation'
+    ? 'This agent has conversations with unpushed commits; delete the agent to choose what happens to them.'
+    : `Agent update refused: ${reason}`;
+}
+
 export interface CreateSpaceAgentParams {
   id?: string;
   handle?: string;
@@ -2593,7 +2599,9 @@ class SpaceStore {
     const existing = this.agents.value.find((a) => a.id === agentId);
     const templateKey = existing?.templateKey ?? null;
     const tools = this.toolsListFrom(params);
-    const { agent } = await hub.request<{ agent: SpaceAgent }>('spaceAgentV2.update', {
+    const response = await hub.request<
+      { agent: SpaceAgent } | { accepted: false; reason: string; commitStatus?: unknown }
+    >('spaceAgentV2.update', {
       id: agentId,
       spaceId,
       handle: params.handle,
@@ -2609,6 +2617,8 @@ class SpaceStore {
       settingSources: params.settingSources,
       ...(tools !== undefined ? { tools } : {}),
     });
+    if ('accepted' in response) throw new Error(agentUpdateRefusalMessage(response.reason));
+    const { agent } = response;
     const mapped = this.fromSpaceAgentV2(agent, templateKey);
     this.upsertAgent(mapped, spaceId);
     return mapped;

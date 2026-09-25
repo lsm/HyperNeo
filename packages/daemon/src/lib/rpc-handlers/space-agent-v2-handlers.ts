@@ -35,6 +35,7 @@ export interface SessionLookup {
   context?: { spaceId?: string | null; taskId?: string | null } | null;
   parentSessionId?: string | null;
   metadata?: { promptProvenance?: { workflowRunId?: unknown } | null } | null;
+  worktree?: WorktreeMetadata | null;
 }
 
 export interface SpaceAgentV2Deps {
@@ -53,8 +54,11 @@ export interface SpaceAgentV2Deps {
   clearSessionProvider?(spaceId: string, agentId: string): Promise<void>;
   seedTemplateExtras?(agent: SpaceAgent, template: SpaceAgentTemplate): void;
   resolveClones?: ResolveClones;
-  listClones?: (parentId: string) => Array<{ id: string; worktree?: WorktreeMetadata }>;
+  listClones?: (
+    parentId: string
+  ) => Array<{ id: string; title?: string; worktree?: WorktreeMetadata }>;
   commitsAhead?: (worktree: WorktreeMetadata) => Promise<WorktreeCommitStatus>;
+  retirePrimarySession?: (sessionId: string, action: 'archive' | 'delete') => Promise<void>;
   stampProvenance?: (
     sessionId: string,
     provenance: NonNullable<SessionMetadata['promptProvenance']>
@@ -188,9 +192,21 @@ export function buildAgentUpdate(
   });
 
   return async (input) => {
+    const wasArchived = deps.agents.getById(input.id)?.status === 'archived';
     const outcome = await run(input);
     if (isCreateSpaceAgentRejection(outcome)) throw new Error(outcome.message);
-    return outcome;
+    if (
+      !wasArchived ||
+      outcome.status === 'archived' ||
+      !outcome.sessionId ||
+      input.sessionId !== undefined
+    ) {
+      return outcome;
+    }
+    deps.agents.update(outcome.id, { sessionId: null });
+    const restored = deps.agents.getById(outcome.id) ?? { ...outcome, sessionId: null };
+    await publishAgentEvent(deps, 'spaceAgentV2.updated', restored);
+    return restored;
   };
 }
 
@@ -206,6 +222,46 @@ export async function applyUpdateRuntimeEffects(
   if (refresh && !refresh.success) {
     throw new Error(refresh.error ?? 'Failed to refresh subscriptions');
   }
+  if (input.status === 'archived' && agent.sessionId) {
+    await deps.resolveClones?.(agent.sessionId, 'cascade', 'archive');
+    await deps.retirePrimarySession?.(agent.sessionId, 'archive');
+  }
+}
+
+async function firstSessionWithCommitsAhead(
+  deps: SpaceAgentV2Deps,
+  primarySessionId: string,
+  includeClones: boolean
+): Promise<WorktreeCommitStatus | null> {
+  if (!deps.commitsAhead) return null;
+  const descendants = (parentId: string): Array<{ id: string; worktree?: WorktreeMetadata }> =>
+    (deps.listClones?.(parentId) ?? []).flatMap((clone) => [clone, ...descendants(clone.id)]);
+  const primary = { id: primarySessionId, worktree: deps.getSession(primarySessionId)?.worktree };
+  const candidates = includeClones ? [primary, ...descendants(primarySessionId)] : [primary];
+  for (const candidate of candidates) {
+    if (!candidate.worktree) continue;
+    const commitStatus = await deps.commitsAhead(candidate.worktree);
+    if (commitStatus.hasCommitsAhead) return commitStatus;
+  }
+  return null;
+}
+
+export type ArchiveAgentSessionsOutcome = { ok: true } | { ok: false; message: string };
+
+export async function archiveAgentSessions(
+  deps: SpaceAgentV2Deps,
+  sessionId: string
+): Promise<ArchiveAgentSessionsOutcome> {
+  const commitStatus = await firstSessionWithCommitsAhead(deps, sessionId, true);
+  if (commitStatus) {
+    return {
+      ok: false,
+      message: `A session of this agent has ${commitStatus.commits.length} unpushed commit(s); archive or delete the agent from the Agents page to confirm discarding them.`,
+    };
+  }
+  await deps.resolveClones?.(sessionId, 'cascade', 'archive');
+  await deps.retirePrimarySession?.(sessionId, 'archive');
+  return { ok: true };
 }
 
 export function setupSpaceAgentV2Handlers(messageHub: MessageHub, deps: SpaceAgentV2Deps): void {
@@ -234,15 +290,19 @@ export function setupSpaceAgentV2Handlers(messageHub: MessageHub, deps: SpaceAge
   });
 
   messageHub.onRequest(method('update'), async (data) => {
-    const params = data as UpdateSpaceAgentInput & { spaceId?: string };
+    const params = data as UpdateSpaceAgentInput & { spaceId?: string; confirmed?: unknown };
     const id = requireString(params?.id, 'id');
-    if (params.spaceId) {
-      const existing = deps.agents.getById(id);
-      if (existing && existing.spaceId !== params.spaceId) {
-        throw new Error(`Agent ${id} does not belong to space ${params.spaceId}`);
-      }
+    const existing = deps.agents.getById(id);
+    if (params.spaceId && existing && existing.spaceId !== params.spaceId) {
+      throw new Error(`Agent ${id} does not belong to space ${params.spaceId}`);
     }
-    return { agent: await updateAgent(params) };
+    const archiveTarget = params.sessionId ?? existing?.sessionId;
+    if (params.status === 'archived' && archiveTarget && params.confirmed !== true) {
+      const commitStatus = await firstSessionWithCommitsAhead(deps, archiveTarget, true);
+      if (commitStatus) return { accepted: false, reason: 'requires_confirmation', commitStatus };
+    }
+    const { confirmed: _confirmed, ...input } = params;
+    return { agent: await updateAgent(input) };
   });
 
   messageHub.onRequest(method('listReminderCounts'), async (data) => {
@@ -268,25 +328,35 @@ export function setupSpaceAgentV2Handlers(messageHub: MessageHub, deps: SpaceAge
     if (params.spaceId && existing.spaceId !== params.spaceId) {
       throw new Error(`Agent ${id} does not belong to space ${params.spaceId}`);
     }
-    if (existing.sessionId && isCloneChoice(params.children) && params.children === 'cascade') {
-      const descendants = (parentId: string): Array<{ id: string; worktree?: WorktreeMetadata }> =>
-        (deps.listClones?.(parentId) ?? []).flatMap((clone) => [clone, ...descendants(clone.id)]);
-      for (const clone of descendants(existing.sessionId)) {
-        if (!clone.worktree || !deps.commitsAhead || params.confirmed === true) continue;
-        const commitStatus = await deps.commitsAhead(clone.worktree);
-        if (commitStatus.hasCommitsAhead) {
-          return { accepted: false, reason: 'requires_confirmation', commitStatus };
-        }
+    const choice = isCloneChoice(params.children) ? params.children : undefined;
+    if (existing.sessionId && !choice && deps.listClones) {
+      const clones = deps.listClones(existing.sessionId);
+      if (clones.length > 0) {
+        return {
+          accepted: false,
+          reason: 'has_clones',
+          clones: clones.map((clone) => ({ id: clone.id, title: clone.title ?? clone.id })),
+        };
       }
     }
+    if (existing.sessionId && params.confirmed !== true) {
+      const commitStatus = await firstSessionWithCommitsAhead(
+        deps,
+        existing.sessionId,
+        choice === 'cascade'
+      );
+      if (commitStatus) return { accepted: false, reason: 'requires_confirmation', commitStatus };
+    }
+    const action = params.confirmed === true ? 'delete' : 'archive';
     if (existing.sessionId) {
       const clones = await deps.resolveClones?.(
         existing.sessionId,
         isCloneChoice(params.children) ? params.children : undefined,
-        'archive'
+        action
       );
       if (clones) return clones;
     }
+    if (existing.sessionId) await deps.retirePrimarySession?.(existing.sessionId, action);
     deps.agents.delete(id);
     deps.removeAgentSubscriptions?.(existing.spaceId, id);
     await publishAgentDeleted(deps, existing.spaceId, id);

@@ -1,3 +1,4 @@
+import type { SpaceLongHorizonAgent } from '@hyperneo/shared';
 import type { DirectTaskWorkerIdentity } from '../../tasks/direct-task-worker-identity.ts';
 import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository.ts';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
@@ -67,4 +68,7 @@ export interface FamilyOperationContext {
   readonly artifactProfile: CodingArtifactProfile;
   readonly channelCycleRepo: ChannelCycleRepository;
   readonly replyRoutingRegistry: ReplyRoutingRegistry;
+  readonly archiveAgentSessions?: (
+    agent: SpaceLongHorizonAgent
+  ) => Promise<{ ok: true } | { ok: false; message: string }>;
 }

@@ -92,6 +92,7 @@ import { setupSpaceAgentTemplateHandlers } from './space-agent-template-handlers
 import {
   buildAgentCreate,
   type SpaceAgentV2Deps,
+  archiveAgentSessions,
   setupSpaceAgentV2Handlers,
 } from './space-agent-v2-handlers.ts';
 import { buildTemplateExtrasSeeder } from '../agents/template-extras-seeding.ts';
@@ -1103,6 +1104,12 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     }),
   };
 
+  const cloneLifecycle = createCloneLifecycleEffects(
+    deps.sessionManager,
+    deps.spaceManager,
+    deps.internalEventBus,
+    (id) => deps.db.getSession(id)
+  );
   const stampProvenance = (
     sessionId: string,
     promptProvenance: NonNullable<SessionMetadata['promptProvenance']>
@@ -1141,14 +1148,13 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       return agent;
     },
     stampProvenance,
-    ...createCloneLifecycleEffects(
-      deps.sessionManager,
-      deps.spaceManager,
-      deps.internalEventBus,
-      (id) => deps.db.getSession(id)
-    ),
+    ...cloneLifecycle,
   });
   spaceAgentV2Deps.resolveClones = resolveClones;
+  spaceAgentV2Deps.retirePrimarySession = (sessionId, action) =>
+    action === 'delete'
+      ? cloneLifecycle.deleteChild(sessionId)
+      : cloneLifecycle.archiveChild(sessionId);
   spaceAgentV2Deps.listClones = (parentId) => deps.db.listChildSessions(parentId);
   spaceAgentV2Deps.commitsAhead = (worktree) =>
     deps.sessionManager.getWorktreeManager().getCommitsAhead(worktree);
@@ -1367,6 +1373,10 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     artifactProfile,
     channelCycleRepo,
     replyRoutingRegistry,
+    archiveAgentSessions: (agent) =>
+      agent.sessionId
+        ? archiveAgentSessions(spaceAgentV2Deps, agent.sessionId)
+        : Promise.resolve({ ok: true }),
   };
   const familyOperations = collectFamilyOperations(familyContext);
 
