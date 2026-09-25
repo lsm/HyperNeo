@@ -297,6 +297,34 @@ test('rpc can move review to done with human approval', async () => {
   expect(tasks.getTask(task.id)?.approvalSource).toBe('human');
 });
 
+test('an agent asking for done before review is rejected on a plain Space task', async () => {
+  const task = tasks.createTask({ spaceId, title: 'T', description: '' });
+  tasks.updateTask(task.id, { status: 'in_progress' });
+  const caller = worker('member', spaceId);
+  const result = await invoke({ taskId: task.id, status: 'done', result: 'All green.' }, caller);
+  expect(result).toEqual({ kind: 'completed', value: 'completion_requires_review' });
+  expect(tasks.getTask(task.id)?.status).toBe('in_progress');
+  expect(emitTaskUpdated).not.toHaveBeenCalled();
+});
+
+test('an agent asking for done on a running direct attempt is rejected the same way', async () => {
+  const task = tasks.createTask({ spaceId, title: 'T', description: '' });
+  const caller = taskWorker('worker', task.id);
+  attempts.select(task.id);
+  attempts.claim(task.id, 'attempt', 'worker');
+  attempts.activate('attempt', 'worker');
+  tasks.updateTask(task.id, { status: 'in_progress', taskAgentSessionId: 'worker' });
+  const requestDirectOutcome = mock(() => ({ accepted: true as const, jobId: 'job-1' }));
+
+  const result = await invoke({ taskId: task.id, status: 'done', result: 'Done.' }, caller, {
+    requestDirectOutcome,
+  });
+
+  expect(result).toEqual({ kind: 'completed', value: 'completion_requires_review' });
+  expect(requestDirectOutcome).not.toHaveBeenCalled();
+  expect(tasks.getTask(task.id)?.status).toBe('in_progress');
+});
+
 test('mcp cannot move review to done directly', async () => {
   const task = tasks.createTask({ spaceId, title: 'T', description: '' });
   tasks.updateTask(task.id, { status: 'review' });

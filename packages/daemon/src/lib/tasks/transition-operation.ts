@@ -23,7 +23,8 @@ export type TransitionTaskRejection =
   | 'block_reason_requires_blocked'
   | 'review_reason_requires_review'
   | 'space_at_task_capacity'
-  | 'archive_active_run';
+  | 'archive_active_run'
+  | 'completion_requires_review';
 
 export type TransitionTaskOutput =
   | TransitionResult
@@ -88,6 +89,7 @@ export function createTransitionTaskOperation<Input = TransitionStandaloneTaskIn
         'review_reason_requires_review',
         'space_at_task_capacity',
         'archive_active_run',
+        'completion_requires_review',
       ]),
     ]),
     execute: async (input, caller) => transitionTask(input, caller),
