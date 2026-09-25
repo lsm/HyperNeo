@@ -26,6 +26,7 @@ import {
   runSpaceDeletion,
   type DeleteSpaceResult,
 } from '../space/managers/delete-space-pipeline.ts';
+import { nodeWorkspaceValidationIo } from '../workspaces/validation-pipeline.ts';
 import { createSpace, type CreateSpaceDeps } from '../space/create-space-pipeline.ts';
 import { seedBuiltInWorkflows } from '../workflows/seed-built-in-workflows.ts';
 import { Logger } from '../logger.ts';
@@ -171,6 +172,7 @@ export function setupSpaceHandlers(
           });
         },
         warn: (message, error) => log.warn(message, error),
+        canHostTaskWorktree: (path) => nodeWorkspaceValidationIo.canHostTaskWorktree(path),
       },
       data as CreateSpaceParams
     );

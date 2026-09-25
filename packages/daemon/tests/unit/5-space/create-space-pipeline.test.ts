@@ -10,6 +10,7 @@ import {
   seedAgents,
   seedWorkflows,
   validateParams,
+  warnIfWorkspaceNotGit,
 } from '../../../src/lib/space/create-space-pipeline.ts';
 
 const params: CreateSpaceParams = { workspacePath: '/workspace', name: 'Test Space' };
@@ -308,6 +309,24 @@ describe('createSpace pipeline stages', () => {
       await Promise.resolve();
       expect(warn).toHaveBeenCalledWith('Failed to emit space.created', failure);
       expect(ctx.warnings).toEqual([]);
+    });
+  });
+
+  describe('warnIfWorkspaceNotGit', () => {
+    test('adds a warning when the workspace cannot host task worktrees', async () => {
+      const deps = makeDeps({ canHostTaskWorktree: async () => false }).deps;
+      const result = await warnIfWorkspaceNotGit(makeCtx({ deps, space }));
+      expect(result.warnings).toHaveLength(1);
+      expect(result.warnings[0]).toContain('is not a git repository');
+    });
+
+    test('passes through for a git workspace or when no probe is wired', async () => {
+      const git = await warnIfWorkspaceNotGit(
+        makeCtx({ deps: makeDeps({ canHostTaskWorktree: async () => true }).deps, space })
+      );
+      expect(git.warnings).toEqual([]);
+      const unwired = await warnIfWorkspaceNotGit(makeCtx({ space }));
+      expect(unwired.warnings).toEqual([]);
     });
   });
 

@@ -634,20 +634,31 @@ describe('updateWorkspaceLabel', () => {
 });
 
 describe('validateDefaultTaskWorkspace', () => {
-  test('null for a single-workspace space even when the primary is not a git repo', async () => {
+  test('blocks a single-workspace space whose only workspace is not a git repo', async () => {
     const { manager } = newManager({
       workspaces: new FakeWorkspaces([row(SPACE_A, '/primary-a', 'w1', true)]),
       io: fakeIo({ canHostTaskWorktree: async () => false }),
     });
+    const message = await manager.validateDefaultTaskWorkspace(SPACE_A);
+    expect(message).toContain('its only workspace /primary-a which is not a git repository');
+    expect(message).toContain('No registered workspace of this space can currently host');
+  });
+
+  test('null for a single-workspace space whose workspace is a git repo', async () => {
+    const { manager } = newManager({
+      workspaces: new FakeWorkspaces([row(SPACE_A, '/primary-a', 'w1', true)]),
+      io: fakeIo({ canHostTaskWorktree: async () => true }),
+    });
     await expect(manager.validateDefaultTaskWorkspace(SPACE_A)).resolves.toBeNull();
   });
 
-  test('null when no workspace rows exist (no backfilled primary row)', async () => {
+  test('blocks when no workspace rows exist and the space path is not a git repo', async () => {
     const { manager } = newManager({
       workspaces: new FakeWorkspaces(),
       io: fakeIo({ canHostTaskWorktree: async () => false }),
     });
-    await expect(manager.validateDefaultTaskWorkspace(SPACE_A)).resolves.toBeNull();
+    const message = await manager.validateDefaultTaskWorkspace(SPACE_A);
+    expect(message).toContain('its only workspace');
   });
 
   test('null for a multi-workspace space whose primary is a git repo root', async () => {
