@@ -90,8 +90,9 @@ function connectWebSocket(url: string): Promise<WebSocket> {
 }
 
 const rawPath = process.argv[2];
-if (!rawPath) {
-  console.error('Usage: bun run scripts/smoke-test.ts <path-to-binary>');
+const daemonMode = process.argv.includes('--daemon');
+if (!rawPath || rawPath === '--daemon') {
+  console.error('Usage: bun run scripts/smoke-test.ts <path-to-binary> [--daemon]');
   process.exit(1);
 }
 const binaryPath = resolve(rawPath);
@@ -144,11 +145,19 @@ process.on('SIGINT', () => {
 
 try {
   log('Test 1: Waiting for HTTP server...');
-  const html = await waitForHttp(`http://127.0.0.1:${port}/`, STARTUP_TIMEOUT);
-  if (!html.includes('<!doctype html>') && !html.includes('<!DOCTYPE html>')) {
-    throw new SmokeTestError(`Expected HTML response, got: ${html.slice(0, 200)}`);
+  const body = await waitForHttp(`http://127.0.0.1:${port}/`, STARTUP_TIMEOUT);
+  if (daemonMode) {
+    const info = JSON.parse(body) as { name?: string };
+    if (info.name !== 'HyperNeo Daemon') {
+      throw new SmokeTestError(`Expected daemon info response, got: ${body.slice(0, 200)}`);
+    }
+    log('  PASS: Daemon info endpoint served successfully');
+  } else {
+    if (!body.includes('<!doctype html>') && !body.includes('<!DOCTYPE html>')) {
+      throw new SmokeTestError(`Expected HTML response, got: ${body.slice(0, 200)}`);
+    }
+    log('  PASS: Web UI served successfully');
   }
-  log('  PASS: Web UI served successfully');
 
   log('Test 2: Connecting WebSocket...');
   const ws = await connectWebSocket(`ws://127.0.0.1:${port}/ws`);

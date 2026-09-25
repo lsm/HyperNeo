@@ -61,6 +61,8 @@
       "!**/coverage",
       "!**/settings.local.json",
       "!packages/shared/src/sdk",
+      "!packages/cli/src/embedded-assets.ts",
+      "!packages/cli/src/embedded-skills.ts",
       "!.claude",
       "!.worktrees",
       "!**/.worktrees",

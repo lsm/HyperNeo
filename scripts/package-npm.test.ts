@@ -6,11 +6,11 @@ import { join } from 'node:path';
 
 const scriptPath = join(import.meta.dir, 'package-npm.ts');
 
-function writeDummyBinaries(binDir: string, targets: string[]) {
+function writeDummyBinaries(binDir: string, targets: string[], binaryName = 'hyperneo') {
   mkdirSync(binDir, { recursive: true });
   for (const target of targets) {
     const ext = target.includes('windows') ? '.exe' : '';
-    writeFileSync(join(binDir, `hyperneo-${target}${ext}`), `dummy-${target}`);
+    writeFileSync(join(binDir, `${binaryName}-${target}${ext}`), `dummy-${target}`);
   }
 }
 
@@ -73,6 +73,54 @@ describe('package-npm', () => {
       const launcher = readFileSync(join(npmDir, 'hyperneo', 'bin', 'hyperneo.js'), 'utf8');
       expect(launcher).toContain("'win32-x64': '@hyperneo/cli-windows-x64'");
       expect(launcher).toContain("process.platform === 'win32' ? 'hyperneo.exe' : 'hyperneo'");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('packages the standalone daemon for non-Windows platforms', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'package-npm-'));
+    try {
+      const binDir = join(dir, 'bin');
+      writeDummyBinaries(binDir, [
+        'darwin-arm64',
+        'darwin-x64',
+        'linux-x64',
+        'linux-arm64',
+        'windows-x64',
+      ]);
+      writeDummyBinaries(
+        binDir,
+        ['darwin-arm64', 'darwin-x64', 'linux-x64', 'linux-arm64'],
+        'hyperneod'
+      );
+      const npmDir = join(dir, 'npm');
+
+      const result = runPackager(binDir, npmDir);
+      expect(result.status).toBe(0);
+
+      const daemon = JSON.parse(
+        readFileSync(join(npmDir, 'hyperneod-darwin-arm64', 'package.json'), 'utf8')
+      );
+      expect(daemon.name).toBe('@hyperneo/hyperneod-darwin-arm64');
+      expect(daemon.bin).toEqual({ hyperneod: 'bin/hyperneod' });
+      expect(readFileSync(join(npmDir, 'hyperneod-darwin-arm64', 'bin', 'hyperneod'), 'utf8')).toBe(
+        'dummy-darwin-arm64'
+      );
+
+      expect(existsSync(join(npmDir, 'hyperneod-windows-x64'))).toBe(false);
+
+      const main = JSON.parse(readFileSync(join(npmDir, 'hyperneod', 'package.json'), 'utf8'));
+      expect(main.bin).toEqual({ hyperneod: 'bin/hyperneod.js' });
+      expect(main.optionalDependencies).toEqual({
+        '@hyperneo/hyperneod-darwin-arm64': '0.0.0-test',
+        '@hyperneo/hyperneod-darwin-x64': '0.0.0-test',
+        '@hyperneo/hyperneod-linux-x64': '0.0.0-test',
+        '@hyperneo/hyperneod-linux-arm64': '0.0.0-test',
+      });
+      expect(readFileSync(join(npmDir, 'hyperneod', 'bin', 'hyperneod.js'), 'utf8')).toContain(
+        "'darwin-arm64': '@hyperneo/hyperneod-darwin-arm64'"
+      );
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

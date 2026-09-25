@@ -618,6 +618,15 @@ jobs:
         env:
           GLM_API_KEY: smoke-test
 
+      - name: Compile daemon binary
+        run: bun build --compile --target=bun-linux-x64 --outfile=dist/bin/hyperneod-linux-x64 packages/cli/daemon-entry.ts
+
+      - name: Smoke test daemon binary
+        run: bun run scripts/smoke-test.ts ./dist/bin/hyperneod-linux-x64 --daemon
+        env:
+          GLM_API_KEY: smoke-test
+          HYPERNEO_DATA_DIR: /tmp/hyperneod-smoke-data
+
       - name: Upload binary artifact
         uses: actions/upload-artifact@v7
         with:

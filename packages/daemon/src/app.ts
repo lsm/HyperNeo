@@ -2,6 +2,7 @@ import type { TaskCore } from '@hyperneo/shared/types/task-core';
 import { stampActiveAttempt } from './lib/tasks/direct-attempt-flag.ts';
 import { homedir } from 'os';
 import { parsePositiveInt, type Config } from './config.ts';
+import daemonPackageJson from '../package.json' with { type: 'json' };
 import type { WebSocketData } from './types/websocket.ts';
 import { createHttpWsServer, type ServerHandle } from './lib/runtime-server/index.ts';
 import { Database } from './storage/database.ts';
@@ -925,7 +926,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           return Response.json(
             {
               name: 'HyperNeo Daemon',
-              version: '0.1.1',
+              version: daemonPackageJson.version,
               status: 'running',
               protocol: 'WebSocket-only (MessageHub RPC + Pub/Sub)',
               endpoints: {

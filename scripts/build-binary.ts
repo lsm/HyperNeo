@@ -28,10 +28,10 @@ function run(cmd: string) {
   execSync(cmd, { cwd: ROOT, stdio: 'inherit' });
 }
 
-function outputFileForTarget(target: string): string {
+function outputFileForTarget(target: string, binaryName = 'hyperneo'): string {
   const platformArch = target.replace('bun-', '');
   const extension = target.includes('windows') ? '.exe' : '';
-  return join(OUTPUT_DIR, `hyperneo-${platformArch}${extension}`);
+  return join(OUTPUT_DIR, `${binaryName}-${platformArch}${extension}`);
 }
 
 function verifyBundledDependency(outputPath: string, needle: string): void {
@@ -59,6 +59,18 @@ for (const target of targets) {
   console.log('  Verifying Copilot SDK bundle markers...');
   verifyBundledDependency(outputPath, '@github/copilot-sdk');
   verifyBundledDependency(outputPath, 'vscode-jsonrpc');
+
+  if (!target.includes('windows')) {
+    const daemonOutputPath = outputFileForTarget(target, 'hyperneod');
+    console.log(`  Compiling standalone daemon binary for ${target}...`);
+    run(
+      `bun build --compile --target=${target} --outfile=${daemonOutputPath} packages/cli/daemon-entry.ts`
+    );
+    console.log(`  -> ${daemonOutputPath}`);
+
+    verifyBundledDependency(daemonOutputPath, '@github/copilot-sdk');
+    verifyBundledDependency(daemonOutputPath, 'vscode-jsonrpc');
+  }
 }
 
 console.log('\nBuild complete!');
