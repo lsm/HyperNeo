@@ -199,7 +199,13 @@ export default function SpaceIsland({
     ? (spaceStore.agents.value.find((a) => a.sessionId === sessionViewId)?.handle ?? null)
     : null;
   useEffect(() => {
-    if (primaryAgentHandle) navigateToSpaceAgent(navigationSpaceId, primaryAgentHandle, true);
+    if (!primaryAgentHandle) return;
+    const redirect = () => navigateToSpaceAgent(navigationSpaceId, primaryAgentHandle, true);
+    redirect();
+    const retry = setTimeout(() => {
+      if (currentSpaceAgentHandleSignal.value !== primaryAgentHandle) redirect();
+    }, 0);
+    return () => clearTimeout(retry);
   }, [primaryAgentHandle, navigationSpaceId]);
 
   if (sessionViewId && primaryAgentHandle) return lazyFallback;

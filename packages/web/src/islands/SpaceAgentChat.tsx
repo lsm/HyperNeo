@@ -18,6 +18,8 @@ export function SpaceAgentChat({
 }: SpaceAgentChatProps) {
   const agent = spaceStore.agents.value.find((candidate) => candidate.handle === handle) ?? null;
   const loaded = spaceStore.configDataLoaded.value;
+  const agentsFailed = spaceStore.agentListState.value === 'error';
+  const [retrying, setRetrying] = useState(false);
   const agentId = agent?.id ?? null;
   const sessionId = agent?.sessionId ?? null;
   const [error, setError] = useState<string | null>(null);
@@ -50,22 +52,45 @@ export function SpaceAgentChat({
     );
   }
 
+  const retryAgents = () => {
+    setRetrying(true);
+    spaceStore.refreshAgents().finally(() => setRetrying(false));
+  };
+
   const message = !loaded
     ? null
-    : !agent
-      ? `No agent found for @${handle} in this space.`
-      : (error ?? 'Starting the agent session…');
+    : agentsFailed && !agent
+      ? 'Could not load the agents of this space.'
+      : !agent
+        ? `No agent found for @${handle} in this space.`
+        : (error ?? 'Starting the agent session…');
+  const testId = agent
+    ? 'space-agent-chat-pending'
+    : agentsFailed
+      ? 'space-agent-detail-unavailable'
+      : 'space-agent-detail-missing';
 
   return (
     <div
-      class="flex-1 flex items-center justify-center bg-app-content"
-      data-testid={agent ? 'space-agent-chat-pending' : 'space-agent-detail-missing'}
+      class="flex-1 flex flex-col items-center justify-center gap-3 bg-app-content"
+      data-testid={testId}
       data-space-id={spaceId}
     >
       {message ? (
         <p class="max-w-sm text-center text-sm text-fg-muted">{message}</p>
       ) : (
         <div class="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+      )}
+      {loaded && !agent && (
+        <button
+          type="button"
+          onClick={retryAgents}
+          disabled={retrying}
+          class="rounded-md border border-line px-3 py-1.5 text-xs text-fg-soft transition hover:bg-fill hover:text-fg disabled:opacity-50"
+          data-testid="space-agent-detail-retry"
+        >
+          {retrying ? 'Retrying…' : 'Retry'}
+        </button>
       )}
     </div>
   );

@@ -45,6 +45,8 @@ const { mockNavigateToSpaceSession, mockNavigateToSpaceTask, mockNavigateToSpace
     mockNavigateToSpaceAgent: vi.fn(),
   }));
 const mockEnsureAgentSession = vi.fn();
+const mockRefreshAgents = vi.fn().mockResolvedValue(undefined);
+const mockAgentListState = signal<'loading' | 'loaded' | 'error'>('loaded');
 
 const { mockCreateSession } = vi.hoisted(() => ({
   mockCreateSession: vi.fn(),
@@ -299,7 +301,8 @@ vi.mock('../../lib/space-store', () => ({
       configDataLoaded: mockConfigDataLoaded,
       ensureConfigData: mockEnsureConfigData,
       ensureWorkflowDetails: mockEnsureWorkflowDetails,
-      refreshAgents: vi.fn().mockResolvedValue(undefined),
+      refreshAgents: mockRefreshAgents,
+      agentListState: mockAgentListState,
       ensureAgentSession: (id: string) => mockEnsureAgentSession(id),
       ensureNodeExecutions: vi.fn().mockResolvedValue(undefined),
       selectSpace: mockSelectSpace,
@@ -441,6 +444,8 @@ beforeEach(() => {
   mockNavigateToSpaceTask.mockClear();
   mockNavigateToSpaceAgent.mockClear();
   mockEnsureAgentSession.mockReset();
+  mockRefreshAgents.mockClear();
+  mockAgentListState.value = 'loaded';
   mockCreateSession.mockClear();
   mockToastError.mockClear();
   connectMockHub.current = null;
@@ -910,6 +915,22 @@ describe('SpaceIsland — agents view', () => {
     const chat = await findByTestId('chat-container');
     expect(chat.getAttribute('data-session-id')).toBe('sess-fresh');
     expect(mockEnsureAgentSession).toHaveBeenCalledWith('agent-2');
+  });
+
+  it('offers a retry instead of "not found" when the agent list failed to load', async () => {
+    mockCurrentSpaceAgentHandleSignal.value = 'reviewer';
+    mockAgents.value = [];
+    mockAgentListState.value = 'error';
+
+    const { findByTestId, queryByTestId } = render(
+      <SpaceIsland spaceId="space-1" viewMode="agents" />
+    );
+
+    const unavailable = await findByTestId('space-agent-detail-unavailable');
+    expect(unavailable.textContent).toContain('Could not load the agents of this space.');
+    expect(queryByTestId('space-agent-detail-missing')).toBeNull();
+    fireEvent.click(await findByTestId('space-agent-detail-retry'));
+    expect(mockRefreshAgents).toHaveBeenCalledTimes(1);
   });
 
   it('redirects an agent primary session route to the agent route', async () => {
