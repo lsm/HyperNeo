@@ -196,6 +196,11 @@ export interface GitReviewSummary {
   githubError?: string;
 }
 
+export interface GitSessionStatusRequest {
+  sessionId: string;
+  includeGitHub?: boolean;
+}
+
 export interface GitSessionStatusResponse {
   sessionId: string;
   mode: GitSessionMode;

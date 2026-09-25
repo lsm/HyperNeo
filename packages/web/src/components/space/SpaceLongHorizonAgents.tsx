@@ -9,7 +9,7 @@ import {
 } from '@hyperneo/shared';
 import { useEffect, useState } from 'preact/hooks';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import { navigateToSpaceSession } from '../../lib/router';
+import { navigateToSpaceAgent, navigateToSpaceSession } from '../../lib/router';
 import { spaceStore } from '../../lib/space-store';
 import { AUTONOMY_LABELS, toolPermissionsToolsList } from './agent-page-labels';
 import { SpaceTemplatesPanel } from './SpaceTemplatesPanel';
@@ -425,24 +425,9 @@ function AgentCard({ agent, navigationSpaceId, reminderCount, onEdit, onDelete }
     archived: 'bg-fill-strong',
   };
 
-  const [opening, setOpening] = useState(false);
   const sessionId = agent.sessionId ?? null;
 
-  const openSession = () => {
-    if (opening) return;
-    if (sessionId) {
-      navigateToSpaceSession(navigationSpaceId, sessionId);
-      return;
-    }
-    setOpening(true);
-    spaceStore
-      .ensureAgentSession(agent.id)
-      .then((ensuredSessionId) => navigateToSpaceSession(navigationSpaceId, ensuredSessionId))
-      .catch((err) =>
-        toast.error(err instanceof Error ? err.message : 'Failed to open the agent session')
-      )
-      .finally(() => setOpening(false));
-  };
+  const openSession = () => navigateToSpaceAgent(navigationSpaceId, agent.handle);
 
   const [spawning, setSpawning] = useState(false);
   const spawnClone = () => {
@@ -461,7 +446,6 @@ function AgentCard({ agent, navigationSpaceId, reminderCount, onEdit, onDelete }
     <div
       role="button"
       tabIndex={0}
-      aria-busy={opening}
       onClick={openSession}
       onKeyDown={(e) => {
         if (e.target !== e.currentTarget) return;
@@ -486,7 +470,7 @@ function AgentCard({ agent, navigationSpaceId, reminderCount, onEdit, onDelete }
               />
               <span>{agent.status}</span>
               <span>·</span>
-              <span>{opening ? 'Opening…' : sessionId ? 'Session' : 'Start session'}</span>
+              <span>{sessionId ? 'Session' : 'Start session'}</span>
               {agent.autonomyLevel && (
                 <>
                   <span>·</span>

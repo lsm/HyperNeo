@@ -1,4 +1,4 @@
-import type { MessageHub, SpaceAgent, SpaceAgentTemplate } from '@hyperneo/shared';
+import type { MessageHub, SessionMetadata, SpaceAgent, SpaceAgentTemplate } from '@hyperneo/shared';
 import type { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository.ts';
 import type { SpaceAgentReminderRepository } from '../../storage/repositories/space-agent-reminder-repository.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
@@ -32,8 +32,9 @@ const METHOD_PREFIX = 'spaceAgentV2';
 
 export interface SessionLookup {
   type?: string;
-  context?: { spaceId?: string | null } | null;
+  context?: { spaceId?: string | null; taskId?: string | null } | null;
   parentSessionId?: string | null;
+  metadata?: { promptProvenance?: { workflowRunId?: unknown } | null } | null;
 }
 
 export interface SpaceAgentV2Deps {
@@ -54,6 +55,10 @@ export interface SpaceAgentV2Deps {
   resolveClones?: ResolveClones;
   listClones?: (parentId: string) => Array<{ id: string; worktree?: WorktreeMetadata }>;
   commitsAhead?: (worktree: WorktreeMetadata) => Promise<WorktreeCommitStatus>;
+  stampProvenance?: (
+    sessionId: string,
+    provenance: NonNullable<SessionMetadata['promptProvenance']>
+  ) => void;
 }
 
 function resolveSessionOwner(deps: SpaceAgentV2Deps, sessionId: string): string | null {
@@ -67,6 +72,9 @@ export function toBindableSession(session: SessionLookup | null): BindableSessio
     type: session.type ?? '',
     spaceId: session.context?.spaceId ?? null,
     parentSessionId: session.parentSessionId ?? null,
+    taskOwned:
+      typeof session.context?.taskId === 'string' ||
+      typeof session.metadata?.promptProvenance?.workflowRunId === 'string',
   };
 }
 
@@ -138,6 +146,13 @@ export function buildAgentCreate(
     createAgent: (params) => deps.agents.create(params),
     publishCreated: (agent) => publishAgentEvent(deps, 'spaceAgentV2.created', agent),
     seedTemplateExtras: deps.seedTemplateExtras,
+    stampSession: (sessionId, agent) =>
+      deps.stampProvenance?.(sessionId, {
+        source: 'converted_session',
+        hash: agent.id,
+        agentId: agent.id,
+        agentName: agent.handle,
+      }),
     validateTools: validateSpaceAgentTools,
     validateModel: (model, provider) => validateAgentModel(model, provider),
     validateModelPool: validateAgentModelPool,

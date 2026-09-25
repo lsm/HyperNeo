@@ -16,7 +16,10 @@ export function setupGitHandlers(
   });
 
   messageHub.onRequest('git.sessionStatus', async (data) => {
-    const { sessionId } = (data ?? {}) as { sessionId?: unknown };
+    const { sessionId, includeGitHub } = (data ?? {}) as {
+      sessionId?: unknown;
+      includeGitHub?: unknown;
+    };
     if (typeof sessionId !== 'string' || sessionId.trim().length === 0) {
       throw new Error('git.sessionStatus: "sessionId" is required');
     }
@@ -26,7 +29,7 @@ export function setupGitHandlers(
       throw new Error('Session not found');
     }
 
-    return worktreeManager.getSessionGitStatus(session);
+    return worktreeManager.getSessionGitStatus(session, { includeGitHub: includeGitHub !== false });
   });
 
   messageHub.onRequest('git.fileDiff', async (data) => {

@@ -18,6 +18,7 @@ const {
   mockUpdateAgent,
   mockEnsureAgentSession,
   mockNavigateToSpaceSession,
+  mockNavigateToSpaceAgent,
 } = vi.hoisted(() => {
   function makeSignal<T>(initial: T) {
     return { value: initial };
@@ -36,6 +37,7 @@ const {
     mockUpdateAgent: vi.fn().mockResolvedValue(undefined),
     mockEnsureAgentSession: vi.fn().mockResolvedValue('space:agent:space-1:lh-1'),
     mockNavigateToSpaceSession: vi.fn(),
+    mockNavigateToSpaceAgent: vi.fn(),
   };
 });
 
@@ -61,6 +63,7 @@ vi.mock('../../../lib/space-store', () => ({
 
 vi.mock('../../../lib/router', () => ({
   navigateToSpaceSession: mockNavigateToSpaceSession,
+  navigateToSpaceAgent: mockNavigateToSpaceAgent,
 }));
 
 vi.mock('../../../lib/toast', () => ({
@@ -226,6 +229,7 @@ describe('SpaceLongHorizonAgents', () => {
     mockEnsureAgentSession.mockClear();
     mockEnsureAgentSession.mockResolvedValue('space:agent:space-1:lh-1');
     mockNavigateToSpaceSession.mockClear();
+    mockNavigateToSpaceAgent.mockClear();
     vi.mocked(toast.error).mockClear();
   });
 
@@ -1901,7 +1905,8 @@ describe('SpaceLongHorizonAgents', () => {
 
     fireEvent.click(getByText('Research Long Horizon').closest('[role="button"]')!);
 
-    expect(mockNavigateToSpaceSession).toHaveBeenCalledWith('space-slug', 'session-research');
+    expect(mockNavigateToSpaceAgent).toHaveBeenCalledWith('space-slug', 'research');
+    expect(mockNavigateToSpaceSession).not.toHaveBeenCalled();
   });
 
   it('shows session presence on instance cards', () => {
@@ -1923,9 +1928,8 @@ describe('SpaceLongHorizonAgents', () => {
     expect(getByText('Start session')).toBeTruthy();
   });
 
-  it('opens the first session of a sessionless agent and navigates to it', async () => {
+  it('opens the agent route for a sessionless agent without starting a session', () => {
     mockAgents.value = [makeLongHorizonAgent({ sessionId: null })];
-    mockEnsureAgentSession.mockResolvedValue('space:agent:space-1:lh-1');
 
     const { getByText } = render(
       <SpaceLongHorizonAgents spaceId="space-1" navigationSpaceId="space-slug" />
@@ -1933,13 +1937,8 @@ describe('SpaceLongHorizonAgents', () => {
 
     fireEvent.click(getByText('Research Long Horizon').closest('[role="button"]')!);
 
-    await waitFor(() => {
-      expect(mockNavigateToSpaceSession).toHaveBeenCalledWith(
-        'space-slug',
-        'space:agent:space-1:lh-1'
-      );
-    });
-    expect(mockEnsureAgentSession).toHaveBeenCalledWith('lh-1');
+    expect(mockNavigateToSpaceAgent).toHaveBeenCalledWith('space-slug', 'research');
+    expect(mockEnsureAgentSession).not.toHaveBeenCalled();
   });
 
   it('ignores Enter on a nested action button instead of opening the session', () => {
@@ -1954,31 +1953,6 @@ describe('SpaceLongHorizonAgents', () => {
     });
 
     expect(mockEnsureAgentSession).not.toHaveBeenCalled();
-    expect(mockNavigateToSpaceSession).not.toHaveBeenCalled();
-  });
-
-  it('navigates to an existing session without opening a new one', () => {
-    mockAgents.value = [makeLongHorizonAgent()];
-
-    const { getByText } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
-
-    fireEvent.click(getByText('Research Long Horizon').closest('[role="button"]')!);
-
-    expect(mockNavigateToSpaceSession).toHaveBeenCalledWith('space-1', 'session-research');
-    expect(mockEnsureAgentSession).not.toHaveBeenCalled();
-  });
-
-  it('reports a failed session start instead of navigating nowhere', async () => {
-    mockAgents.value = [makeLongHorizonAgent({ sessionId: null })];
-    mockEnsureAgentSession.mockRejectedValue(new Error('Space is paused'));
-
-    const { getByText } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
-
-    fireEvent.click(getByText('Research Long Horizon').closest('[role="button"]')!);
-
-    await waitFor(() => {
-      expect(vi.mocked(toast.error)).toHaveBeenCalledWith('Space is paused');
-    });
     expect(mockNavigateToSpaceSession).not.toHaveBeenCalled();
   });
 
