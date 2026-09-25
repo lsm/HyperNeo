@@ -18,35 +18,42 @@ import { ToolsEditor, type ToolsSelection } from './ToolsEditor';
 
 export function TemplateEditor({
   template,
+  cloneFrom,
   onSaved,
   onCancel,
 }: {
   template: SpaceLongHorizonAgentTemplate | null;
+  cloneFrom?: SpaceLongHorizonAgentTemplate | null;
   onSaved: () => void;
   onCancel: () => void;
 }) {
   const isEdit = !!template;
-  const templateTools = template ? toolPermissionsToolsList(template) : [];
-  const [displayName, setDisplayName] = useState(template?.displayName ?? '');
+  const source = template ?? cloneFrom ?? null;
+  const templateTools = source ? toolPermissionsToolsList(source) : [];
+  const [displayName, setDisplayName] = useState(
+    template?.displayName ?? (cloneFrom ? `${cloneFrom.displayName} copy` : '')
+  );
   const [key, setKey] = useState(template?.key ?? '');
-  const [handle, setHandle] = useState(template?.handle ?? '');
-  const [description, setDescription] = useState(template?.description ?? '');
-  const [instructions, setInstructions] = useState(template?.instructions ?? '');
-  const [autonomyLevel, setAutonomyLevel] = useState<number>(template?.suggestedAutonomyLevel ?? 2);
+  const [handle, setHandle] = useState(
+    template?.handle ?? (cloneFrom ? `${cloneFrom.handle}-copy` : '')
+  );
+  const [description, setDescription] = useState(source?.description ?? '');
+  const [instructions, setInstructions] = useState(source?.instructions ?? '');
+  const [autonomyLevel, setAutonomyLevel] = useState<number>(source?.suggestedAutonomyLevel ?? 2);
   const [toolsSelection, setToolsSelection] = useState<ToolsSelection>({
     tools: templateTools,
     toolsOverridden: templateTools.length > 0,
   });
   const [modelFields, setModelFields] = useState<TemplateModelFieldsValue>({
-    model: template?.model ?? null,
-    provider: template?.provider ?? null,
-    thinkingLevel: template?.thinkingLevel ?? null,
+    model: source?.model ?? null,
+    provider: source?.provider ?? null,
+    thinkingLevel: source?.thinkingLevel ?? null,
   });
   const [settingSources, setSettingSources] = useState<SettingSource[] | null>(
-    template?.settingSources ?? null
+    source?.settingSources ?? null
   );
   const [modelPool, setModelPool] = useState<AgentModelPoolEntry[]>(() =>
-    poolFromModelConfig(withoutInheritedThinkingLevel(template))
+    poolFromModelConfig(withoutInheritedThinkingLevel(source))
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -97,7 +104,9 @@ export function TemplateEditor({
     <Modal
       isOpen
       onClose={onCancel}
-      title={isEdit ? 'Edit template' : 'New template'}
+      title={
+        isEdit ? 'Edit template' : cloneFrom ? `Clone ${cloneFrom.displayName}` : 'New template'
+      }
       size="lg"
       footer={
         <FormActions

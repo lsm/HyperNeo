@@ -5,11 +5,13 @@ export function TemplateListItem({
   isUserTemplate,
   onEdit,
   onDelete,
+  onClone,
 }: {
   template: SpaceLongHorizonAgentTemplate;
   isUserTemplate: boolean;
   onEdit?: () => void;
   onDelete?: () => void;
+  onClone?: () => void;
 }) {
   return (
     <div class="group flex items-start justify-between gap-4 px-4 py-3.5 transition-colors">
@@ -26,7 +28,7 @@ export function TemplateListItem({
           <p class="mt-1 line-clamp-2 text-xs leading-5 text-fg-muted">{template.description}</p>
         )}
       </div>
-      {(onEdit || onDelete) && (
+      {(onEdit || onDelete || onClone) && (
         <div class="flex flex-shrink-0 items-center gap-1.5 opacity-70 transition-opacity group-hover:opacity-100">
           {onEdit && (
             <button
@@ -36,6 +38,16 @@ export function TemplateListItem({
               class="rounded-md px-2 py-1 text-xs text-fg-muted transition-colors hover:bg-fill-soft hover:text-fg-soft"
             >
               Edit
+            </button>
+          )}
+          {onClone && (
+            <button
+              type="button"
+              onClick={onClone}
+              aria-label={`Clone template ${template.displayName}`}
+              class="rounded-md px-2 py-1 text-xs text-fg-muted transition-colors hover:bg-fill-soft hover:text-fg-soft"
+            >
+              Clone
             </button>
           )}
           {onDelete && (

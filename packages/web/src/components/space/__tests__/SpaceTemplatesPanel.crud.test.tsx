@@ -593,6 +593,44 @@ describe('SpaceTemplatesPanel — template CRUD', () => {
     expect(getByTestId('confirm-modal')).toBeTruthy();
   });
 
+  it('clones a built-in template into an editable draft', async () => {
+    mockTemplates.value = [
+      makeTemplate({
+        key: 'qa',
+        handle: 'qa',
+        displayName: 'QA Engineer',
+        description: 'Validates product quality.',
+        instructions: 'Test the product.',
+        suggestedAutonomyLevel: 3,
+      }),
+    ];
+
+    const { getByRole, getByDisplayValue, getByText, getByPlaceholderText } = renderPanel();
+
+    fireEvent.click(getByRole('button', { name: 'Clone template QA Engineer' }));
+
+    expect(getByText('Clone QA Engineer')).toBeTruthy();
+    expect(getByDisplayValue('QA Engineer copy')).toBeTruthy();
+    expect(getByDisplayValue('qa-copy')).toBeTruthy();
+    const keyInput = getByPlaceholderText('e.g. release-readiness.custom') as HTMLInputElement;
+    expect(keyInput.disabled).toBe(false);
+
+    fireEvent.input(keyInput, { target: { value: 'qa.custom' } });
+    fireEvent.click(getByRole('button', { name: 'Create template' }));
+
+    await waitFor(() => expect(mockCreateTemplate).toHaveBeenCalledTimes(1));
+    expect(mockCreateTemplate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        key: 'qa.custom',
+        handle: 'qa-copy',
+        displayName: 'QA Engineer copy',
+        instructions: 'Test the product.',
+        suggestedAutonomyLevel: 3,
+      })
+    );
+    expect(mockUpdateTemplate).not.toHaveBeenCalled();
+  });
+
   it('opens a dedicated template editor from New Template', () => {
     mockTemplates.value = [
       makeTemplate({
