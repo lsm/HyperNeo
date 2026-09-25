@@ -219,5 +219,6 @@ describe('session.clone.spawn', () => {
     );
     await run(g, {});
     expect(g.created[0]).toMatchObject({ worktreeMode: 'worktree', workspacePath: '/repo' });
+    expect(g.created[0].worktreeBaseBranch).toBe('session/parent');
   });
 });

@@ -993,6 +993,27 @@ export class WorktreeManager {
     }
   }
 
+  private async commitsOnlyOnBranch(repoPath: string, branch: string): Promise<Set<string> | null> {
+    const git = this.getGit(repoPath);
+    try {
+      const refs = (
+        await git.raw(['for-each-ref', '--format=%(refname)', 'refs/heads', 'refs/remotes'])
+      )
+        .split('\n')
+        .map((ref) => ref.trim())
+        .filter((ref) => ref && ref !== `refs/heads/${branch}`);
+      const output = await git.raw(['rev-list', branch, '--not', ...refs]);
+      return new Set(
+        output
+          .split('\n')
+          .map((line) => line.trim())
+          .filter(Boolean)
+      );
+    } catch {
+      return null;
+    }
+  }
+
   async getCommitsAhead(
     worktree: WorktreeMetadata,
     baseBranch?: string
@@ -1083,8 +1104,10 @@ export class WorktreeManager {
       }
 
       const unmergedCommits: CommitInfo[] = [];
+      const uniqueToBranch = await this.commitsOnlyOnBranch(mainRepoPath, branch);
 
       for (const commit of commits) {
+        if (uniqueToBranch && !uniqueToBranch.has(commit.fullHash)) continue;
         const isAncestor = await this.isCommitAncestor(mainRepoPath, commit.fullHash, base);
 
         if (!isAncestor) {

@@ -672,7 +672,9 @@ describe('WorktreeManager', () => {
         .mockResolvedValueOnce('merge-base-123')
         .mockResolvedValueOnce('file1.ts\nfile2.ts')
         .mockResolvedValueOnce('+ added line')
-        .mockResolvedValueOnce('abc1234|John Doe|2024-01-01 12:00:00|Fix bug');
+        .mockResolvedValueOnce('abc1234|John Doe|2024-01-01 12:00:00|Fix bug')
+        .mockResolvedValueOnce('refs/heads/main\nrefs/heads/session/test')
+        .mockResolvedValueOnce('abc1234');
 
       const result = await manager.getCommitsAhead({
         isWorktree: true,
@@ -689,6 +691,38 @@ describe('WorktreeManager', () => {
         date: '2024-01-01 12:00:00',
         message: 'Fix bug',
       });
+    });
+
+    it('ignores commits that another branch still contains', async () => {
+      mockGitRevparse.mockResolvedValue('abc123');
+      mockGitRaw
+        .mockResolvedValueOnce('origin/main')
+        .mockResolvedValueOnce('merge-base-123')
+        .mockResolvedValueOnce('file1.ts')
+        .mockResolvedValueOnce('+ added line')
+        .mockResolvedValueOnce(
+          'aaa1111|Parent|2024-01-01 12:00:00|On the parent branch\nbbb2222|Clone|2024-01-02 12:00:00|Only on the clone'
+        )
+        .mockResolvedValueOnce(
+          'refs/heads/main\nrefs/heads/session/parent\nrefs/heads/session/test'
+        )
+        .mockResolvedValueOnce('bbb2222');
+
+      const result = await manager.getCommitsAhead({
+        isWorktree: true,
+        worktreePath: '/test/worktree',
+        mainRepoPath: '/test/repo',
+        branch: 'session/test',
+      });
+
+      expect(mockGitRaw).toHaveBeenCalledWith([
+        'rev-list',
+        'session/test',
+        '--not',
+        'refs/heads/main',
+        'refs/heads/session/parent',
+      ]);
+      expect(result.commits.map((c) => c.hash)).toEqual(['bbb2222']);
     });
 
     it('should throw on git error', async () => {
