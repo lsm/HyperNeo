@@ -15,7 +15,7 @@ This document lists all the `data-testid` attributes used in the application for
 - `data-testid="confirm-delete-session"` - Confirm delete button in modal
 - `data-testid="message-input"` - Message input textarea
 - `data-testid="send-btn"` - Send message button
-- `data-testid="session-options-btn"` - Session options dropdown trigger
+- `data-testid="session-info-btn"` - Session info panel trigger (toolbar with Tools, Export chat, Rename, Reset, Archive session, Delete chat)
 - `data-testid="error-banner"` - Error message banner
 - `data-message-role="[user|assistant]"` - Role attribute for messages
 

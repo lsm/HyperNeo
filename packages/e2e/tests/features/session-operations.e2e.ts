@@ -31,7 +31,7 @@ test.describe('Session Export', () => {
   test('should show Export Chat option in session options menu', async ({ page }) => {
     sessionId = await createSessionViaUI(page);
 
-    const optionsButton = page.getByTitle('Session info');
+    const optionsButton = page.getByTestId('session-info-btn');
     await expect(optionsButton).toBeVisible();
     await optionsButton.click();
 
@@ -57,7 +57,7 @@ test.describe('Session Export', () => {
 
     const downloadPromise = page.waitForEvent('download');
 
-    const optionsButton = page.getByTitle('Session info');
+    const optionsButton = page.getByTestId('session-info-btn');
     await optionsButton.click();
     await page.getByTitle('Export chat').click();
 
@@ -84,7 +84,7 @@ test.describe('Session Export', () => {
 
     const downloadPromise = page.waitForEvent('download');
 
-    const optionsButton = page.getByTitle('Session info');
+    const optionsButton = page.getByTestId('session-info-btn');
     await optionsButton.click();
     await page.getByTitle('Export chat').click();
 
@@ -119,7 +119,7 @@ test.describe('Session Export', () => {
 
     const downloadPromise = page.waitForEvent('download');
 
-    const optionsButton = page.getByTitle('Session info');
+    const optionsButton = page.getByTestId('session-info-btn');
     await optionsButton.click();
     await page.getByTitle('Export chat').click();
 
@@ -133,7 +133,7 @@ test.describe('Session Export', () => {
   test('should disable Export when disconnected', async ({ page }) => {
     sessionId = await createSessionViaUI(page);
 
-    const optionsButton = page.getByTitle('Session info');
+    const optionsButton = page.getByTestId('session-info-btn');
     await optionsButton.click();
     const exportOption = page.getByTitle('Export chat');
     await expect(exportOption).toBeVisible();
@@ -154,7 +154,7 @@ test.describe('Session Export', () => {
       timeout: 10000,
     });
 
-    await page.getByTitle('Session info').click();
+    await page.getByTestId('session-info-btn').click();
     await expect(page.getByTitle('Export chat')).toBeDisabled();
   });
 });

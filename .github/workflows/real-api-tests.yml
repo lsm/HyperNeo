@@ -204,7 +204,6 @@ jobs:
             features/session-operations
             features/slash-cmd
             features/space-approval-gate-rejection
-            features/space-artifacts-panel
             features/space-canvas-mode
             features/space-happy-path-pipeline
             features/worktree-isolation

@@ -50,7 +50,7 @@ test.describe('Worktree Isolation', () => {
       timeout: 60000,
     });
 
-    const optionsButton = page.getByTitle('Session info');
+    const optionsButton = page.getByTestId('session-info-btn');
     await optionsButton.click();
 
     await expect(page.getByTestId('session-info-toolbar')).toBeVisible();
@@ -69,7 +69,7 @@ test.describe('Worktree Isolation', () => {
 
     const deletedSessionId = sessionId;
 
-    const optionsButton = page.getByTitle('Session info');
+    const optionsButton = page.getByTestId('session-info-btn');
     await optionsButton.click();
 
     await page.getByTitle('Delete chat').click();
