@@ -17,7 +17,7 @@ test.describe('Smoke: Message Send', () => {
 
   test('should send a message and receive response', async ({ page }) => {
     await page.goto('/');
-    await page.waitForSelector('text=New Session', { timeout: 10000 });
+    await page.getByTestId('new-chat-button').waitFor({ timeout: 10000 });
 
     sessionId = await createSessionViaUI(page);
 

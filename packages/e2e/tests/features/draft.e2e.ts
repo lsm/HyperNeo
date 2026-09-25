@@ -4,9 +4,7 @@ import { cleanupTestSession, createSessionViaUI } from '../helpers/wait-helpers'
 test.describe('Draft Persistence', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
-    await page
-      .getByRole('button', { name: 'New Session', exact: true })
-      .waitFor({ timeout: 10000 });
+    await page.getByTestId('new-chat-button').waitFor({ timeout: 10000 });
   });
 
   test.skip('should save draft text while typing', async ({ page }) => {
@@ -70,9 +68,7 @@ test.describe('Draft Persistence', () => {
     await page.waitForSelector(`text=${messageText}`, { timeout: 5000 });
 
     await page.reload();
-    await page
-      .getByRole('button', { name: 'New Session', exact: true })
-      .waitFor({ timeout: 10000 });
+    await page.getByTestId('new-chat-button').waitFor({ timeout: 10000 });
 
     const sessionButtons = await page
       .locator('button')
@@ -186,9 +182,7 @@ test.describe('Draft Persistence', () => {
 test.describe('Draft Clearing Bug Fix', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
-    await page
-      .getByRole('button', { name: 'New Session', exact: true })
-      .waitFor({ timeout: 10000 });
+    await page.getByTestId('new-chat-button').waitFor({ timeout: 10000 });
   });
 
   test('should NOT restore sent message as draft after session switch', async ({ page }) => {
@@ -240,9 +234,7 @@ test.describe('Draft Clearing Bug Fix', () => {
     const sessionId = await sessionButton.getAttribute('data-session-id');
 
     await page.reload();
-    await page
-      .getByRole('button', { name: 'New Session', exact: true })
-      .waitFor({ timeout: 10000 });
+    await page.getByTestId('new-chat-button').waitFor({ timeout: 10000 });
     await page.waitForTimeout(500);
 
     await page.click(`[data-session-id="${sessionId}"]`);

@@ -25,20 +25,14 @@ test.describe('Mobile Layout', () => {
     const heading = page.getByRole('heading', { name: 'What should we build?' }).first();
     await expect(heading).toBeVisible();
 
-    const newSessionButton = page.getByRole('button', {
-      name: 'New Session',
-      exact: true,
-    });
+    const newSessionButton = page.getByTestId('new-chat-button');
     await expect(newSessionButton).toBeVisible();
   });
 
   test('should have responsive sidebar behavior', async ({ page }) => {
     const menuButton = page.locator('button[aria-label="Open navigation menu"]');
     const closePanelButton = page.locator('button[title="Close panel"]');
-    const newSessionButton = page.getByRole('button', {
-      name: 'New Session',
-      exact: true,
-    });
+    const newSessionButton = page.getByTestId('new-chat-button');
 
     const hasMenuButton = (await menuButton.count()) > 0;
     const hasCloseButton = (await closePanelButton.count()) > 0;
@@ -116,10 +110,7 @@ test.describe('Mobile Input', () => {
   test('should have appropriately sized touch targets', async ({ page }) => {
     await openMobilePanel(page);
 
-    const newSessionButton = page.getByRole('button', {
-      name: 'New Session',
-      exact: true,
-    });
+    const newSessionButton = page.getByTestId('new-chat-button');
     await expect(newSessionButton).toBeVisible();
 
     const buttonBox = await newSessionButton.boundingBox();

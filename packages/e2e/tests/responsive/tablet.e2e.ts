@@ -35,10 +35,7 @@ test.describe('Tablet Responsiveness', () => {
   });
 
   test('should display desktop sidebar on tablet', async ({ page }) => {
-    const newSessionButton = page.getByRole('button', {
-      name: 'New Session',
-      exact: true,
-    });
+    const newSessionButton = page.getByTestId('new-chat-button');
 
     await expect(newSessionButton).toBeVisible({ timeout: 5000 });
 

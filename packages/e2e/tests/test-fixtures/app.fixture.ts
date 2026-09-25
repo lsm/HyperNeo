@@ -1,9 +1,7 @@
 import { test as base, expect, type Page } from '@playwright/test';
 
 async function waitForAppReady(page: Page) {
-  await page
-    .getByRole('button', { name: /New Session/i })
-    .waitFor({ state: 'visible', timeout: 10000 });
+  await page.getByTestId('new-chat-button').waitFor({ state: 'visible', timeout: 10000 });
 
   await page
     .locator('text=/Authentication|OAuth Token|Connected|Status/i')

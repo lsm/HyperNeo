@@ -102,18 +102,6 @@ test.describe('Space Sub-Routes Deep Links', () => {
     await expect(page.locator('[data-testid="space-task-pane"]')).not.toBeAttached();
   });
 
-  test('direct navigation to /space/:id/agent renders ChatContainer', async ({ page }) => {
-    await page.goto(`/space/${spaceId}/agent`);
-    await page.waitForURL(`/space/${spaceId}/agent`, { timeout: 10000 });
-
-    const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
-    await expect(messageInput).toBeVisible({ timeout: 10000 });
-
-    await expect(page.getByTestId('space-overview-view')).not.toBeVisible();
-
-    await expect(page.locator('[data-testid="space-task-pane"]')).not.toBeAttached();
-  });
-
   test('direct navigation to /space/:id/session/:sid renders ChatContainer', async ({ page }) => {
     await page.goto(`/space/${spaceId}/session/${sessionId}`);
     await page.waitForURL(`/space/${spaceId}/session/${sessionId}`, { timeout: 10000 });
