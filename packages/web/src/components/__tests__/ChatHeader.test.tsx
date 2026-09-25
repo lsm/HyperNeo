@@ -6,6 +6,7 @@ import type { Session } from '@hyperneo/shared';
 import { ChatHeader } from '../ChatHeader';
 import { contextPanelOpenSignal, rightPanelTargetSignal } from '../../lib/signals';
 import { connectionState } from '../../lib/state';
+import { sessionStore } from '../../lib/session-store';
 
 describe('ChatHeader', () => {
   const mockSession: Session = {
@@ -37,10 +38,12 @@ describe('ChatHeader', () => {
 
   beforeEach(() => {
     cleanup();
+    sessionStore.activeSessionId.value = 'session-1';
   });
 
   afterEach(() => {
     cleanup();
+    sessionStore.activeSessionId.value = null;
   });
 
   describe('Basic Rendering', () => {
@@ -147,6 +150,13 @@ describe('ChatHeader', () => {
   describe('Info Button', () => {
     beforeEach(() => {
       rightPanelTargetSignal.value = null;
+    });
+
+    it('hides the info button when the header is not for the globally active session', () => {
+      sessionStore.activeSessionId.value = 'other';
+      const { container } = render(<ChatHeader {...defaultProps} />);
+
+      expect(container.querySelector('[data-testid="session-info-btn"]')).toBeNull();
     });
 
     it('renders exactly one far-right info button', () => {

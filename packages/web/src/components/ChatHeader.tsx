@@ -1,5 +1,6 @@
 import type { Session, SessionFeatures } from '@hyperneo/shared';
 import { DEFAULT_WORKER_FEATURES } from '@hyperneo/shared';
+import { sessionStore } from '../lib/session-store.ts';
 import { rightPanelTargetSignal } from '../lib/signals.ts';
 import { cn } from '../lib/utils.ts';
 import { MobileMenuButton } from './ui/MobileMenuButton';
@@ -40,6 +41,7 @@ export function ChatHeader({
   const returnedAt = session?.metadata.clone?.returnedAt;
   const isClone = !!session?.parentSessionId;
   const target = rightPanelTargetSignal.value;
+  const inspectorAvailable = !!session && sessionStore.activeSessionId.value === session.id;
   const inspectorOpen = target?.type === 'inspector' && target.sessionId === session?.id;
   const toggleInspector = () => {
     if (!session) return;
@@ -118,22 +120,23 @@ export function ChatHeader({
           onArchiveClick={onArchiveClick}
           onDeleteClick={onDeleteClick}
         />
-        <IconButton
-          title="Session info"
-          data-testid="session-info-btn"
-          onClick={toggleInspector}
-          disabled={!session}
-          class={cn('flex-shrink-0 text-fg-muted', inspectorOpen && 'bg-fill text-fg')}
-        >
-          <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width={1.9}
-              d="M12 11.5v5M12 7.25h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"
-            />
-          </svg>
-        </IconButton>
+        {inspectorAvailable && (
+          <IconButton
+            title="Session info"
+            data-testid="session-info-btn"
+            onClick={toggleInspector}
+            class={cn('flex-shrink-0 text-fg-muted', inspectorOpen && 'bg-fill text-fg')}
+          >
+            <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width={1.9}
+                d="M12 11.5v5M12 7.25h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"
+              />
+            </svg>
+          </IconButton>
+        )}
       </div>
     </div>
   );

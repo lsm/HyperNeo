@@ -52,7 +52,12 @@ vi.mock('../../hooks/useSessionRename', () => ({
 
 import { rightPanelTargetSignal } from '../../lib/signals';
 import { connectionState } from '../../lib/state';
-import { SessionInspector, extractLatestTodos, formatDate } from '../SessionInspector';
+import {
+  SessionInspector,
+  collectToolInputs,
+  extractLatestTodos,
+  formatDate,
+} from '../SessionInspector';
 
 function session(overrides: Partial<Session> = {}): Session {
   return {
@@ -166,6 +171,32 @@ describe('SessionInspector', () => {
     mockSessionInfo.value = session({ workspacePath: null });
     render(<SessionInspector sessionId="s1" />);
     expect((screen.getByTestId('inspector-tab-changes') as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('labels background tasks with the tool command from the loaded messages', () => {
+    mockSdkMessages.value = [
+      {
+        type: 'assistant',
+        message: {
+          content: [
+            { type: 'tool_use', id: 'tool-1', name: 'Bash', input: { command: 'bun test' } },
+          ],
+        },
+      },
+    ] as unknown as ChatMessage[];
+    mockBackgroundMessages.value = [
+      {
+        type: 'system',
+        subtype: 'task_started',
+        task_id: 'task-1',
+        tool_use_id: 'tool-1',
+        description: 'Run tests',
+      },
+    ] as unknown as ChatMessage[];
+    render(<SessionInspector sessionId="s1" section="work" />);
+
+    expect(screen.getByTestId('inspector-background-tasks').textContent).toContain('bun test');
+    expect(collectToolInputs(mockSdkMessages.value).get('tool-1')).toEqual({ command: 'bun test' });
   });
 
   it('formatDate returns undefined for a missing date', () => {

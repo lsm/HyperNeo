@@ -72,6 +72,22 @@ export function extractLatestTodos(messages: ChatMessage[]): ProgressItem[] {
   return [];
 }
 
+export function collectToolInputs(messages: ChatMessage[]): Map<string, unknown> {
+  const inputs = new Map<string, unknown>();
+  for (const message of messages) {
+    const record = message as unknown as Record<string, unknown>;
+    if (record.type !== 'assistant' || !isRecord(record.message)) continue;
+    const content = record.message.content;
+    if (!Array.isArray(content)) continue;
+    for (const block of content) {
+      if (isRecord(block) && block.type === 'tool_use' && typeof block.id === 'string') {
+        inputs.set(block.id, block.input);
+      }
+    }
+  }
+  return inputs;
+}
+
 function StatusDot({ status }: { status: ProgressItem['status'] }) {
   if (status === 'completed') {
     return (
@@ -238,8 +254,8 @@ function WorkSection({ session }: { session: Session }) {
     ?.progress?.items;
   const items = useMemo(() => recorded ?? extractLatestTodos(messages), [recorded, messages]);
   const tasks = useMemo(
-    () => extractBackgroundTasks(backgroundMessages, new Map()),
-    [backgroundMessages]
+    () => extractBackgroundTasks(backgroundMessages, collectToolInputs(messages)),
+    [backgroundMessages, messages]
   );
   return (
     <>
