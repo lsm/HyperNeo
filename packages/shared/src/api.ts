@@ -249,14 +249,16 @@ export interface ArchiveSessionResponse {
   requiresConfirmation?: boolean;
   commitStatus?: WorktreeCommitStatus;
   commitsRemoved?: number;
-  reason?: 'has_clones';
+  reason?: 'has_clones' | 'agent_primary_session';
   clones?: CloneSummary[];
+  agentName?: string;
 }
 
 export interface DeleteSessionResponse {
   success: boolean;
-  reason?: 'has_clones';
+  reason?: 'has_clones' | 'agent_primary_session';
   clones?: CloneSummary[];
+  agentName?: string;
 }
 
 export interface SendMessageRequest {
