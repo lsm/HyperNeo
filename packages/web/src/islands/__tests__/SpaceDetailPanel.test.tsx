@@ -8,7 +8,6 @@ const {
   mockNavigateToSpaceAgent,
   mockNavigateToSpaceTask,
   mockNavigateToSpaceSession,
-  mockNavigateToSpaceSessions,
   mockNavigateToSpaceGoals,
   mockNavigateToSpaceTasks,
 } = vi.hoisted(() => ({
@@ -16,7 +15,6 @@ const {
   mockNavigateToSpaceAgent: vi.fn(),
   mockNavigateToSpaceTask: vi.fn(),
   mockNavigateToSpaceSession: vi.fn(),
-  mockNavigateToSpaceSessions: vi.fn(),
   mockNavigateToSpaceGoals: vi.fn(),
   mockNavigateToSpaceTasks: vi.fn(),
 }));
@@ -94,7 +92,6 @@ vi.mock('../../lib/router.ts', () => ({
   navigateToSpaceAgent: mockNavigateToSpaceAgent,
   navigateToSpaceTask: mockNavigateToSpaceTask,
   navigateToSpaceSession: mockNavigateToSpaceSession,
-  navigateToSpaceSessions: mockNavigateToSpaceSessions,
   navigateToSpaceGoals: mockNavigateToSpaceGoals,
   navigateToSpaceTasks: mockNavigateToSpaceTasks,
 }));

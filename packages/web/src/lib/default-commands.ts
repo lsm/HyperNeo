@@ -11,7 +11,6 @@ import {
   navigateToSettings,
   navigateToSpace,
   navigateToSpaceConfigure,
-  navigateToSpaceSessions,
   navigateToSpaceTasks,
   navigateToSpacesPage,
 } from './router.ts';
@@ -188,15 +187,6 @@ export const DEFAULT_COMMANDS: readonly CommandDescriptor[] = [
     run: requireSpace((spaceId) => {
       closePalette();
       navigateToSpaceTasks(spaceId);
-    }),
-  },
-  {
-    id: 'space.sessions',
-    label: 'Space: View sessions',
-    category: 'space',
-    run: requireSpace((spaceId) => {
-      closePalette();
-      navigateToSpaceSessions(spaceId);
     }),
   },
   {

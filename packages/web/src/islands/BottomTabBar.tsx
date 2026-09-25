@@ -14,7 +14,6 @@ import {
   navigateToSpaces,
   navigateToSpace,
   navigateToSpaceTasks,
-  navigateToSpaceSessions,
   navigateToSpaceAgent,
   navigateToSpaceConfigure,
 } from '../lib/router.ts';
@@ -22,13 +21,7 @@ import { spaceStore } from '../lib/space-store';
 import { isActionRequired, isActiveTask } from '../lib/task-filters';
 
 interface TabItem {
-  id:
-    | NavSection
-    | 'space-overview'
-    | 'space-tasks'
-    | 'space-sessions'
-    | 'space-agent'
-    | 'space-settings';
+  id: NavSection | 'space-overview' | 'space-tasks' | 'space-agent' | 'space-settings';
   label: string;
   icon: () => JSX.Element;
 }
@@ -105,17 +98,6 @@ const SpaceChatIcon = () => (
   </svg>
 );
 
-const SpaceSessionsIcon = () => (
-  <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-    <path
-      stroke-linecap="round"
-      stroke-linejoin="round"
-      stroke-width={2}
-      d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"
-    />
-  </svg>
-);
-
 const SpaceSettingsIcon = () => (
   <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
     <path
@@ -136,7 +118,6 @@ const SpaceSettingsIcon = () => (
 const SPACE_BOTTOM_TABS: TabItem[] = [
   { id: 'space-overview', label: 'Overview', icon: SpaceOverviewIcon },
   { id: 'space-tasks', label: 'Tasks', icon: SpaceTasksIcon },
-  { id: 'space-sessions', label: 'Sessions', icon: SpaceSessionsIcon },
   { id: 'space-agent', label: 'Agents', icon: SpaceChatIcon },
   { id: 'space-settings', label: 'Settings', icon: SpaceSettingsIcon },
 ];
@@ -202,9 +183,6 @@ export function BottomTabBar({ inline }: { inline?: boolean } = {}) {
         if (spaceId)
           navigateToSpaceTasks(spaceId, actionCount === 0 && activeCount > 0 ? 'active' : 'action');
         break;
-      case 'space-sessions':
-        if (spaceId) navigateToSpaceSessions(spaceId);
-        break;
       case 'space-agent':
         if (spaceId) navigateToSpaceAgent(spaceId);
         break;
@@ -216,12 +194,8 @@ export function BottomTabBar({ inline }: { inline?: boolean } = {}) {
 
   const isTabActive = (id: TabItem['id']): boolean => {
     if (isInSpaceContext) {
-      const isLongHorizonAgentSession = spaceStore.isAgentOwnedSession(spaceSessionId);
-
       if (id === 'space-settings') return spaceViewMode === 'configure';
-      if (id === 'space-sessions')
-        return spaceViewMode === 'sessions' || (!!spaceSessionId && !isLongHorizonAgentSession);
-      if (id === 'space-agent') return spaceViewMode === 'agents' || isLongHorizonAgentSession;
+      if (id === 'space-agent') return spaceViewMode === 'agents' || spaceSessionId !== null;
       if (id === 'space-tasks') return spaceViewMode === 'tasks' || spaceTaskId !== null;
       if (id === 'space-overview')
         return spaceViewMode === 'overview' && spaceTaskId === null && spaceSessionId === null;

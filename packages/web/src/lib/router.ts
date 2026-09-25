@@ -45,7 +45,6 @@ const SPACE_SESSION_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/session\/([a-zA-Z0-
 const SPACE_TASK_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/task\/([a-fA-F0-9-]+|[a-z]-[1-9]\d*)$/;
 const SPACE_TASK_VIEW_ROUTE_PATTERN =
   /^\/space\/([a-z0-9-]+)\/task\/([a-fA-F0-9-]+|[a-z]-[1-9]\d*)\/(thread|timeline|log|canvas|artifacts)$/;
-const SPACE_SESSIONS_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/sessions$/;
 const SETTINGS_SECTIONS = new Set<SettingsSection>([
   'general',
   'appearance',
@@ -110,9 +109,6 @@ export function getSpaceIdFromPath(path: string): string | null {
 
   const tasksMatch = path.match(SPACE_TASKS_ROUTE_PATTERN);
   if (tasksMatch) return tasksMatch[1];
-
-  const sessionsMatch = path.match(SPACE_SESSIONS_ROUTE_PATTERN);
-  if (sessionsMatch) return sessionsMatch[1];
 
   const agentDetailMatch = path.match(SPACE_AGENT_DETAIL_ROUTE_PATTERN);
   if (agentDetailMatch) return agentDetailMatch[1];
@@ -202,11 +198,6 @@ export function getSpaceTasksTabFromPath(path: string): {
   };
 }
 
-export function getSpaceSessionsListFromPath(path: string): string | null {
-  const match = path.match(SPACE_SESSIONS_ROUTE_PATTERN);
-  return match ? match[1] : null;
-}
-
 export function getSpaceSessionIdFromPath(
   path: string
 ): { spaceId: string; sessionId: string } | null {
@@ -287,10 +278,6 @@ export function createSpaceSessionPath(spaceId: string, sessionId: string): stri
 
 export function createSpaceTaskPath(spaceId: string, taskId: string, view?: string): string {
   return view ? `/space/${spaceId}/task/${taskId}/${view}` : `/space/${spaceId}/task/${taskId}`;
-}
-
-export function createSpaceSessionsPath(spaceId: string): string {
-  return `/space/${spaceId}/sessions`;
 }
 
 export function createSpaceAgentPath(spaceId: string, handle?: string): string {
@@ -610,29 +597,6 @@ export function navigateToSpaceTasks(
   navSectionSignal.value = 'spaces';
 }
 
-export function navigateToSpaceSessions(spaceId: string, replace = false): void {
-  if (routerState.isNavigating) return;
-
-  const targetPath = createSpaceSessionsPath(spaceId);
-  if (getCurrentPath() !== targetPath) {
-    routerState.isNavigating = true;
-    try {
-      pushPath(targetPath, { spaceId }, replace);
-    } finally {
-      finishNavigation();
-    }
-  }
-
-  setCurrentSpaceRouteId(spaceId);
-  currentSpaceViewModeSignal.value = 'sessions';
-  currentSpaceSessionIdSignal.value = null;
-  currentSpaceTaskIdSignal.value = null;
-  currentSpaceTaskViewTabSignal.value = 'thread';
-  currentSpaceAgentHandleSignal.value = null;
-  currentSessionIdSignal.value = null;
-  navSectionSignal.value = 'spaces';
-}
-
 export function navigateToSpaceSession(spaceId: string, sessionId: string, replace = false): void {
   if (routerState.isNavigating) return;
 
@@ -713,7 +677,15 @@ export function navigateToSpaceAgent(
   navSectionSignal.value = 'spaces';
 }
 
+const LEGACY_SPACE_SESSIONS_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/sessions$/;
+
 function applyPathToSignals(path: string, search = window.location.search): string | null {
+  const legacySessionsMatch = path.match(LEGACY_SPACE_SESSIONS_ROUTE_PATTERN);
+  if (legacySessionsMatch) {
+    path = createSpacePath(legacySessionsMatch[1]);
+    pushPath(path, { spaceId: legacySessionsMatch[1] }, true);
+  }
+
   const legacyArchivedTasksMatch = path.match(SPACE_TASKS_ARCHIVED_ROUTE_PATTERN);
   if (legacyArchivedTasksMatch) {
     pushPath(
@@ -750,7 +722,6 @@ function applyPathToSignals(path: string, search = window.location.search): stri
   const spaceTask = spaceTaskView
     ? { spaceId: spaceTaskView.spaceId, taskId: spaceTaskView.taskId }
     : getSpaceTaskIdFromPath(path);
-  const spaceSessions = getSpaceSessionsListFromPath(path);
   const spaceSession = getSpaceSessionIdFromPath(path);
   const spaceAgentDetail = getSpaceAgentDetailFromPath(path);
   const spaceAgent = getSpaceAgentFromPath(path);
@@ -823,15 +794,6 @@ function applyPathToSignals(path: string, search = window.location.search): stri
       setCurrentSpaceRouteId(spaceTasks);
       currentSpaceViewModeSignal.value = 'tasks';
       currentSpaceTasksFilterTabSignal.value = spaceTasksTab?.tab ?? 'active';
-      currentSpaceSessionIdSignal.value = null;
-      currentSpaceTaskIdSignal.value = null;
-      currentSpaceTaskViewTabSignal.value = 'thread';
-      currentSpaceAgentHandleSignal.value = null;
-      currentSessionIdSignal.value = null;
-      navSectionSignal.value = 'spaces';
-    } else if (spaceSessions) {
-      setCurrentSpaceRouteId(spaceSessions);
-      currentSpaceViewModeSignal.value = 'sessions';
       currentSpaceSessionIdSignal.value = null;
       currentSpaceTaskIdSignal.value = null;
       currentSpaceTaskViewTabSignal.value = 'thread';
