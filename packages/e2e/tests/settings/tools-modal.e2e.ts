@@ -29,7 +29,7 @@ test.describe('Tools Modal - Redesigned', () => {
 
   async function openToolsModal(page: import('@playwright/test').Page) {
     await waitForWebSocketConnected(page);
-    const optionsButton = page.getByTestId('session-info-btn');
+    const optionsButton = page.getByTestId('chat-menu-btn');
     await optionsButton.click();
     await page.getByTitle('Tools').click();
     await expect(getModal(page)).toBeVisible({ timeout: 5000 });
