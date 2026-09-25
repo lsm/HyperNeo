@@ -3,6 +3,9 @@
 import mdagentsLongHorizonOwnerReviewContract from './agents/long-horizon/owner-review-contract.md' with {
   type: 'text',
 };
+import mdagentsLongHorizonSpaceManager from './agents/long-horizon/space-manager.md' with {
+  type: 'text',
+};
 import mdagentsLongHorizonTaskManager from './agents/long-horizon/task-manager.md' with {
   type: 'text',
 };
@@ -127,6 +130,7 @@ import mdworkflowsReviewOnlyReviewPrompt from './workflows/review-only/review-pr
 const registry: Record<string, string> = {
   'agents/long-horizon-scheduling-guardrail.md': mdagentsLongHorizonSchedulingGuardrail,
   'agents/long-horizon/owner-review-contract.md': mdagentsLongHorizonOwnerReviewContract,
+  'agents/long-horizon/space-manager.md': mdagentsLongHorizonSpaceManager,
   'agents/long-horizon/task-manager.md': mdagentsLongHorizonTaskManager,
   'agents/non-delegating-general.md': mdagentsNonDelegatingGeneral,
   'agents/presets/coder.md': mdagentsPresetsCoder,
@@ -191,6 +195,7 @@ const registry: Record<string, string> = {
 export const {
   LONG_HORIZON_SCHEDULING_GUARDRAIL,
   LONG_HORIZON_OWNER_REVIEW_CONTRACT,
+  LH_SPACE_MANAGER_INSTRUCTIONS,
   LH_TASK_MANAGER_INSTRUCTIONS,
   NON_DELEGATING_GENERAL_PROMPT,
   PRESET_CODER_PROMPT,

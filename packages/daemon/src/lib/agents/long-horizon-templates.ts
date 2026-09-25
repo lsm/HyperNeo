@@ -1,21 +1,21 @@
-import { LH_TASK_MANAGER_INSTRUCTIONS } from '@hyperneo/prompts';
+import { LH_SPACE_MANAGER_INSTRUCTIONS } from '@hyperneo/prompts';
 import type { SpaceLongHorizonAgentTemplate } from '@hyperneo/shared';
 import { getPresetAgentTemplates } from './seed-agents.ts';
 
 const LONG_HORIZON_AGENT_TEMPLATES: SpaceLongHorizonAgentTemplate[] = [
   {
-    key: 'task-manager.default',
-    handle: 'task-manager',
-    displayName: 'Task Manager',
+    key: 'space-manager.default',
+    handle: 'space-manager',
+    displayName: 'Space Manager',
     description:
-      'Triages, tracks, and coordinates Space tasks and goals; summarizes state, nags stalled work, and proposes next slices.',
-    instructions: LH_TASK_MANAGER_INSTRUCTIONS,
-    suggestedAutonomyLevel: 2,
+      'Coordinates Space goals, tasks, workers, and workflows; routes work and follows outcomes.',
+    instructions: LH_SPACE_MANAGER_INSTRUCTIONS,
+    suggestedAutonomyLevel: 3,
     suggestedEventSubscriptions: [],
     reminderDefaults: [
       {
-        title: 'Review stalled work',
-        body: 'Review blocked, stale, and review-waiting tasks and goals, nag silent owners, and propose next slices.',
+        title: 'Review Space work',
+        body: 'Review goals, tasks, worker progress, and blocked work; route the next action or ask a human where required.',
         triggerType: 'cron',
         cronExpression: '0 9 * * 1-5',
         timezone: 'UTC',
@@ -25,8 +25,7 @@ const LONG_HORIZON_AGENT_TEMPLATES: SpaceLongHorizonAgentTemplate[] = [
       {
         target: 'goal',
         relationship: 'manager',
-        description:
-          'Keep goal progress summaries and task pointers current; flag goals drifting from their tasks.',
+        description: 'Keep goal ownership, progress, and task routing current across the Space.',
       },
     ],
     toolPermissions: {},
@@ -36,6 +35,7 @@ const LONG_HORIZON_AGENT_TEMPLATES: SpaceLongHorizonAgentTemplate[] = [
 export const WORKER_TEMPLATE_KEY_PREFIX = 'worker.';
 
 export const RETIRED_LONG_HORIZON_TEMPLATE_KEYS = [
+  'task-manager.default',
   'product-quality-manager.default',
   'release-manager.default',
   'security-auditor.default',

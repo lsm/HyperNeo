@@ -414,11 +414,26 @@ describe('SpaceAgentTemplateManager', () => {
     });
 
     test('rejects keys reserved for code built-in templates', async () => {
-      for (const key of ['worker.swe', 'worker.coder', 'worker.reviewer', 'task-manager.default']) {
+      for (const key of [
+        'worker.swe',
+        'worker.coder',
+        'worker.reviewer',
+        'space-manager.default',
+      ]) {
         const result = await manager.createIn(OWNER, { ...fullParams(), key });
         expect(result.ok, key).toBe(false);
         if (!result.ok) expect(result.error).toContain('reserved for a built-in agent template');
       }
+    });
+
+    test('does not allow reuse of the retired Task Manager key', async () => {
+      const result = await manager.createIn(OWNER, {
+        ...fullParams(),
+        key: 'task-manager.default',
+      });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toContain('retired');
     });
 
     test('rejects a blank model', async () => {
@@ -1230,7 +1245,7 @@ describe('SpaceAgentTemplateManager', () => {
 
     test('long-horizon built-ins still expose no tools', () => {
       const defaultManager = new SpaceAgentTemplateManager(repo);
-      const template = defaultManager.getIn(OWNER, 'task-manager.default');
+      const template = defaultManager.getIn(OWNER, 'space-manager.default');
       expect(template?.tools).toBeNull();
     });
 

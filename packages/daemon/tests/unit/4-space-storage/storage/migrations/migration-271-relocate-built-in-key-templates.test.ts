@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { runMigration271 } from '../../../../../src/storage/schema/m271-relocate-built-in-key-templates.ts';
+import { runMigrations } from '../../../../../src/storage/schema/migrations.ts';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
 
 function makeDb(): BunDatabase {
@@ -70,6 +71,24 @@ function templateRow(
 }
 
 describe('runMigration271', () => {
+  test('relocates historical worker built-in keys on a direct upgrade', () => {
+    const db = makeDb();
+    insertTemplate(db, 'space-1', 'worker.swe');
+    insertTemplate(db, 'space-1', 'worker.research');
+    insertTemplate(db, 'space-1', 'worker.reviewer');
+    insertTemplate(db, 'space-1', 'worker.qa');
+
+    runMigration271(db);
+
+    expect(templateKeys(db, 'space-1')).toEqual([
+      'worker.qa.migrated',
+      'worker.research.migrated',
+      'worker.reviewer.migrated',
+      'worker.swe.migrated',
+    ]);
+    db.close();
+  });
+
   test('relocates a stored template shadowed by the task-manager.default built-in', () => {
     const db = makeDb();
     insertTemplate(db, 'space-1', 'task-manager.default', ['ops']);
@@ -114,5 +133,56 @@ describe('runMigration271', () => {
     expect(templateRow(db, 'space-1', 'task-manager.default.migrated').labels).toEqual([
       'relocated-from:task-manager.default',
     ]);
+  });
+});
+
+describe('upgrading a database that already ran migration 271', () => {
+  test('preserves a custom space-manager.default template and its version sequence', () => {
+    const db = new BunDatabase(':memory:');
+    runMigrations(db, () => {});
+    db.prepare(`DELETE FROM migration_markers WHERE key = 'migration_276'`).run();
+    db.prepare(
+      `INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
+       VALUES ('space-1', 'space-1', '/tmp/space-1', 'Space', 1, 1)`
+    ).run();
+    insertTemplate(db, 'space-1', 'space-manager.default', ['custom']);
+    db.prepare(
+      `INSERT INTO space_workflows
+        (id, space_id, name, description, created_at, updated_at)
+       VALUES ('workflow-1', 'space-1', 'Workflow', '', 1, 1)`
+    ).run();
+    db.prepare(
+      `INSERT INTO space_workflow_nodes
+        (id, workflow_id, name, description, config, created_at, updated_at)
+       VALUES ('node-1', 'workflow-1', 'Node', '', ?, 1, 1)`
+    ).run(JSON.stringify({ agents: [{ name: 'Custom', templateKey: 'space-manager.default' }] }));
+    db.prepare(
+      `INSERT INTO space_long_horizon_agents
+        (id, space_id, handle, display_name, template_key, status, instructions,
+         tool_permissions_json, created_at, updated_at)
+       VALUES ('agent-1', 'space-1', 'custom', 'Custom', 'space-manager.default',
+               'active', '', '{}', 1, 1)`
+    ).run();
+
+    runMigrations(db, () => {});
+
+    expect(templateKeys(db, 'space-1')).toEqual(['space-manager.default.migrated']);
+    expect(templateRow(db, 'space-1', 'space-manager.default.migrated')).toEqual({
+      labels: ['custom', 'relocated-from:space-manager.default'],
+      instructions: 'custom instructions',
+    });
+    expect(versionSeqKeys(db, 'space-1')).toEqual(['space-manager.default.migrated']);
+    const node = db
+      .prepare(`SELECT config FROM space_workflow_nodes WHERE id = 'node-1'`)
+      .get() as {
+      config: string;
+    };
+    expect(
+      (JSON.parse(node.config) as { agents: Array<{ templateKey: string }> }).agents[0].templateKey
+    ).toBe('space-manager.default.migrated');
+    expect(
+      db.prepare(`SELECT template_key FROM space_long_horizon_agents WHERE id = 'agent-1'`).get()
+    ).toEqual({ template_key: 'space-manager.default.migrated' });
+    db.close();
   });
 });

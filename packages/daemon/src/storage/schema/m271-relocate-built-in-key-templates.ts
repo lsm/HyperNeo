@@ -1,7 +1,4 @@
-import {
-  getLongHorizonAgentTemplates,
-  RELOCATED_FROM_LABEL_PREFIX,
-} from '../../lib/agents/long-horizon-templates.ts';
+import { RELOCATED_FROM_LABEL_PREFIX } from '../../lib/agents/long-horizon-templates.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 
 interface CollidingTemplate {
@@ -56,9 +53,23 @@ function relocationTarget(
 }
 
 export function runMigration271(db: BunDatabase): void {
+  relocateBuiltInKeyTemplates(db, [
+    'task-manager.default',
+    'worker.swe',
+    'worker.research',
+    'worker.reviewer',
+    'worker.qa',
+  ]);
+}
+
+export function relocateBuiltInKeyTemplates(
+  db: BunDatabase,
+  keys: readonly string[],
+  onRelocated?: (spaceId: string, from: string, to: string) => void
+): void {
   if (!tableExists(db, 'space_agent_templates')) return;
   if (!tableHasColumn(db, 'space_agent_templates', 'space_id')) return;
-  const builtInKeys = new Set(getLongHorizonAgentTemplates().map((template) => template.key));
+  const builtInKeys = new Set(keys);
   if (builtInKeys.size === 0) return;
   const placeholders = [...builtInKeys].map(() => '?').join(', ');
   const colliding = db
@@ -90,6 +101,7 @@ export function runMigration271(db: BunDatabase): void {
       if (!labels.includes(marker)) labels.push(marker);
       relocateTemplate.run(target, JSON.stringify(labels), now, row.space_id, row.key);
       relocateVersionSeq?.run(target, row.space_id, row.key);
+      onRelocated?.(row.space_id, row.key, target);
     }
     db.exec('COMMIT');
   } catch (err) {

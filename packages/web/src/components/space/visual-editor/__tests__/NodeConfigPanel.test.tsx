@@ -139,7 +139,7 @@ const defaultAgentTemplates: SpaceLongHorizonAgentTemplate[] = [
   makeTemplate('planner-v1', 'Planner', 'planner', ['workflow-worker']),
   makeTemplate('coder-v1', 'Coder', 'coder', ['workflow-worker']),
   makeTemplate('coordinator-v1', 'Coordinator', 'coordinator', ['long-horizon']),
-  makeTemplate('task-manager.default', 'Task Manager', 'task-manager', ['long-horizon']),
+  makeTemplate('space-manager.default', 'Space Manager', 'space-manager', ['long-horizon']),
 ];
 
 function makeProps(overrides: Partial<NodeConfigPanelProps> = {}): NodeConfigPanelProps {
@@ -903,7 +903,7 @@ describe('NodeConfigPanel', () => {
       expect(optionValues).toContain('planner-v1');
       expect(optionValues).toContain('coder-v1');
       expect(optionValues).not.toContain('coordinator-v1');
-      expect(optionValues).not.toContain('task-manager.default');
+      expect(optionValues).not.toContain('space-manager.default');
     });
 
     it('keeps a legacy long-horizon slot selection visible as a disabled option (ATC-4)', () => {

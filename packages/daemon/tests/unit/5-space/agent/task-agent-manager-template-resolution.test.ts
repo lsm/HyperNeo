@@ -231,13 +231,13 @@ describe('resolveNodeTemplateSource ordering (ATC-1 pin)', () => {
 
   test('resolves a code built-in family template without consulting the template repo', () => {
     const h = makeTemplateResolutionHarness({
-      storedTemplates: [makeStoredTemplate({ key: 'task-manager.default' })],
+      storedTemplates: [makeStoredTemplate({ key: 'space-manager.default' })],
     });
 
-    const source = h.internals.resolveNodeTemplateSource('space-1', 'task-manager.default');
+    const source = h.internals.resolveNodeTemplateSource('space-1', 'space-manager.default');
 
-    expect(source?.key).toBe('task-manager.default');
-    expect(source?.handle).toBe('task-manager');
+    expect(source?.key).toBe('space-manager.default');
+    expect(source?.handle).toBe('space-manager');
     expect(h.templateRepoCalls).toEqual([]);
   });
 

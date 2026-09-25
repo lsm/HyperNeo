@@ -268,8 +268,8 @@ describe('SpaceLongHorizonAgents', () => {
     mockTemplates.value = [
       makeTemplate({ key: 'worker.swe', displayName: 'SWE Worker', labels: ['workflow-worker'] }),
       makeTemplate({
-        key: 'task-manager.default',
-        displayName: 'Task Manager',
+        key: 'space-manager.default',
+        displayName: 'Space Manager',
         labels: ['long-horizon'],
       }),
       makeTemplate({ key: 'scribe', displayName: 'Scribe' }),
@@ -282,7 +282,7 @@ describe('SpaceLongHorizonAgents', () => {
     const longHorizon = getByTestId('agent-template-group-long-horizon');
     const custom = getByTestId('agent-template-group-custom');
     expect(within(workers).getByText('SWE Worker')).toBeTruthy();
-    expect(within(longHorizon).getByText('Task Manager')).toBeTruthy();
+    expect(within(longHorizon).getByText('Space Manager')).toBeTruthy();
     expect(within(custom).getByText('Scribe')).toBeTruthy();
     expect(
       workers.compareDocumentPosition(longHorizon) & Node.DOCUMENT_POSITION_FOLLOWING

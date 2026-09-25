@@ -257,7 +257,7 @@ describe('SpaceCreateDialog', () => {
           workspacePath: '/projects/my-app',
           name: 'my-app',
           description: undefined,
-          seedAgentTemplateKeys: ['task-manager.default'],
+          seedAgentTemplateKeys: ['space-manager.default'],
         },
         {
           timeout: 10000,
@@ -292,7 +292,7 @@ describe('SpaceCreateDialog', () => {
     mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
     mockRequest.mockResolvedValue({
       ...SPACE_MOCK,
-      seedWarnings: ['Failed to seed agents: task-manager.default'],
+      seedWarnings: ['Failed to seed agents: space-manager.default'],
     });
 
     const { getByPlaceholderText, getByRole } = render(
@@ -307,7 +307,7 @@ describe('SpaceCreateDialog', () => {
     fireEvent.submit(form!);
 
     await waitFor(() => {
-      expect(toast.warning).toHaveBeenCalledWith('Failed to seed agents: task-manager.default');
+      expect(toast.warning).toHaveBeenCalledWith('Failed to seed agents: space-manager.default');
       expect(mockNavigateToSpace).toHaveBeenCalledWith('my-app');
       expect(onClose).toHaveBeenCalled();
     });
@@ -317,7 +317,7 @@ describe('SpaceCreateDialog', () => {
     mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
     mockRequest.mockResolvedValue({
       ...SPACE_MOCK,
-      seedWarnings: ['Failed to seed agents: task-manager.default', 'Failed to seed workflows'],
+      seedWarnings: ['Failed to seed agents: space-manager.default', 'Failed to seed workflows'],
     });
 
     const { getByPlaceholderText, getByRole } = render(
@@ -333,7 +333,7 @@ describe('SpaceCreateDialog', () => {
 
     await waitFor(() => {
       expect(toast.warning).toHaveBeenCalledWith(
-        'Failed to seed agents: task-manager.default · Failed to seed workflows'
+        'Failed to seed agents: space-manager.default · Failed to seed workflows'
       );
     });
   });
@@ -366,6 +366,7 @@ describe('SpaceCreateDialog', () => {
     );
 
     expect((getByLabelText(/Start with an agent/i) as HTMLInputElement).checked).toBe(true);
+    expect(getByRole('dialog').textContent).toContain('Adds a Space Manager agent');
 
     fireEvent.input(getByPlaceholderText('/Users/you/projects/my-app'), {
       target: { value: '/projects/my-app' },
@@ -375,7 +376,7 @@ describe('SpaceCreateDialog', () => {
     await waitFor(() => {
       expect(mockRequest).toHaveBeenCalledWith(
         'space.create',
-        expect.objectContaining({ seedAgentTemplateKeys: ['task-manager.default'] }),
+        expect.objectContaining({ seedAgentTemplateKeys: ['space-manager.default'] }),
         expect.anything()
       );
     });
@@ -514,7 +515,7 @@ describe('SpaceCreateDialog', () => {
             { path: '/projects/shared-lib', label: 'Shared lib' },
             { path: '/projects/tools' },
           ],
-          seedAgentTemplateKeys: ['task-manager.default'],
+          seedAgentTemplateKeys: ['space-manager.default'],
         },
         {
           timeout: 12000,
@@ -576,7 +577,7 @@ describe('SpaceCreateDialog', () => {
           workspacePath: '/projects/my-app',
           name: 'my-app',
           description: undefined,
-          seedAgentTemplateKeys: ['task-manager.default'],
+          seedAgentTemplateKeys: ['space-manager.default'],
         },
         {
           timeout: 10000,

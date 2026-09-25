@@ -343,8 +343,8 @@ export function SpaceCreateDialog({ isOpen, onClose }: SpaceCreateDialogProps) {
             <span>
               <span class="block text-sm font-medium text-fg-soft">Start with an agent</span>
               <span class="mt-0.5 block text-xs text-fg-muted">
-                Adds a Task Manager agent that can approve work and own goals. Uncheck to create an
-                empty Space you staff yourself.
+                Adds a Space Manager agent to coordinate goals, tasks, and workers. Uncheck to
+                create an empty Space you staff yourself.
               </span>
             </span>
           </label>
