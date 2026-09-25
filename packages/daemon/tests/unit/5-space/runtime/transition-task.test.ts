@@ -297,28 +297,17 @@ test('rpc can move review to done with human approval', async () => {
   expect(tasks.getTask(task.id)?.approvalSource).toBe('human');
 });
 
-test('an agent asking for done on a plain Space task is routed to review', async () => {
+test('an agent asking for done before review is rejected on a plain Space task', async () => {
   const task = tasks.createTask({ spaceId, title: 'T', description: '' });
   tasks.updateTask(task.id, { status: 'in_progress' });
   const caller = worker('member', spaceId);
-  const submitTaskForReview = mock(
-    async (taskId: string, opts: { submittedByNodeId: string | null; reason: string | null }) => {
-      tasks.updateTask(taskId, { status: 'review' });
-      return { ...tasks.getTask(taskId)!, pendingCompletionReason: opts.reason };
-    }
-  );
-  const result = await invoke({ taskId: task.id, status: 'done', result: 'All green.' }, caller, {
-    getTaskManager: () => managerStub({ submitTaskForReview }) as never,
-  });
-  expect(result).toMatchObject({ kind: 'completed', value: { accepted: true } });
-  expect(submitTaskForReview).toHaveBeenCalledWith(task.id, {
-    submittedByNodeId: null,
-    reason: 'All green.',
-  });
-  expect(tasks.getTask(task.id)?.status).toBe('review');
+  const result = await invoke({ taskId: task.id, status: 'done', result: 'All green.' }, caller);
+  expect(result).toEqual({ kind: 'completed', value: 'completion_requires_review' });
+  expect(tasks.getTask(task.id)?.status).toBe('in_progress');
+  expect(emitTaskUpdated).not.toHaveBeenCalled();
 });
 
-test('an agent asking for done on a running direct attempt submits it for review', async () => {
+test('an agent asking for done on a running direct attempt is rejected the same way', async () => {
   const task = tasks.createTask({ spaceId, title: 'T', description: '' });
   const caller = taskWorker('worker', task.id);
   attempts.select(task.id);
@@ -331,10 +320,9 @@ test('an agent asking for done on a running direct attempt submits it for review
     requestDirectOutcome,
   });
 
-  expect(result).toEqual({ kind: 'completed', value: { accepted: true, jobId: 'job-1' } });
-  expect(requestDirectOutcome).toHaveBeenCalledWith(
-    expect.objectContaining({ attemptId: 'attempt', status: 'review', reviewReason: 'Done.' })
-  );
+  expect(result).toEqual({ kind: 'completed', value: 'completion_requires_review' });
+  expect(requestDirectOutcome).not.toHaveBeenCalled();
+  expect(tasks.getTask(task.id)?.status).toBe('in_progress');
 });
 
 test('mcp cannot move review to done directly', async () => {
