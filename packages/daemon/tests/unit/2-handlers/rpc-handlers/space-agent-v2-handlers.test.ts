@@ -560,6 +560,37 @@ describe('setupSpaceAgentV2Handlers', () => {
       ]);
     });
 
+    test('archiving an agent asks for confirmation when a clone has commits ahead', async () => {
+      const calls: unknown[] = [];
+      deps.listClones = (parentId) =>
+        parentId === 'primary'
+          ? [{ id: 'c1', worktree: { branch: 'c', worktreePath: '/wt', mainRepoPath: '/repo' } }]
+          : [];
+      deps.commitsAhead = async () => ({ hasCommitsAhead: true, commits: ['abc'] }) as never;
+      deps.resolveClones = async (...args) => {
+        calls.push(args);
+        return null;
+      };
+      deps.retirePrimarySession = async () => {};
+      const created = agents.create({ spaceId: 'space-1', handle: 'a', sessionId: 'primary' });
+
+      const refused = await handlers.get('spaceAgentV2.update')!({
+        id: created.id,
+        status: 'archived',
+      });
+      expect(refused).toMatchObject({ accepted: false, reason: 'requires_confirmation' });
+      expect(agents.getById(created.id)?.status).toBe('active');
+      expect(calls).toEqual([]);
+
+      const { agent } = (await handlers.get('spaceAgentV2.update')!({
+        id: created.id,
+        status: 'archived',
+        confirmed: true,
+      })) as { agent: SpaceAgent };
+      expect(agent.status).toBe('archived');
+      expect(calls).toEqual([['primary', 'cascade', 'archive']]);
+    });
+
     test('restoring an archived agent drops its archived session so a fresh one is started', async () => {
       deps.retirePrimarySession = async () => {};
       const created = agents.create({ spaceId: 'space-1', handle: 'a', sessionId: 'primary' });

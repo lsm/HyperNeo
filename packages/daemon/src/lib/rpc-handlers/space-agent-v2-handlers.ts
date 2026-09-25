@@ -203,6 +203,21 @@ export async function applyUpdateRuntimeEffects(
   }
 }
 
+async function firstCloneWithCommitsAhead(
+  deps: SpaceAgentV2Deps,
+  parentSessionId: string
+): Promise<WorktreeCommitStatus | null> {
+  if (!deps.commitsAhead) return null;
+  const descendants = (parentId: string): Array<{ id: string; worktree?: WorktreeMetadata }> =>
+    (deps.listClones?.(parentId) ?? []).flatMap((clone) => [clone, ...descendants(clone.id)]);
+  for (const clone of descendants(parentSessionId)) {
+    if (!clone.worktree) continue;
+    const commitStatus = await deps.commitsAhead(clone.worktree);
+    if (commitStatus.hasCommitsAhead) return commitStatus;
+  }
+  return null;
+}
+
 export function setupSpaceAgentV2Handlers(messageHub: MessageHub, deps: SpaceAgentV2Deps): void {
   const createAgent = buildAgentCreate(deps);
   const updateAgent = buildAgentUpdate(deps);
@@ -229,15 +244,18 @@ export function setupSpaceAgentV2Handlers(messageHub: MessageHub, deps: SpaceAge
   });
 
   messageHub.onRequest(method('update'), async (data) => {
-    const params = data as UpdateSpaceAgentInput & { spaceId?: string };
+    const params = data as UpdateSpaceAgentInput & { spaceId?: string; confirmed?: unknown };
     const id = requireString(params?.id, 'id');
-    if (params.spaceId) {
-      const existing = deps.agents.getById(id);
-      if (existing && existing.spaceId !== params.spaceId) {
-        throw new Error(`Agent ${id} does not belong to space ${params.spaceId}`);
-      }
+    const existing = deps.agents.getById(id);
+    if (params.spaceId && existing && existing.spaceId !== params.spaceId) {
+      throw new Error(`Agent ${id} does not belong to space ${params.spaceId}`);
     }
-    return { agent: await updateAgent(params) };
+    if (params.status === 'archived' && existing?.sessionId && params.confirmed !== true) {
+      const commitStatus = await firstCloneWithCommitsAhead(deps, existing.sessionId);
+      if (commitStatus) return { accepted: false, reason: 'requires_confirmation', commitStatus };
+    }
+    const { confirmed: _confirmed, ...input } = params;
+    return { agent: await updateAgent(input) };
   });
 
   messageHub.onRequest(method('listReminderCounts'), async (data) => {
@@ -263,16 +281,14 @@ export function setupSpaceAgentV2Handlers(messageHub: MessageHub, deps: SpaceAge
     if (params.spaceId && existing.spaceId !== params.spaceId) {
       throw new Error(`Agent ${id} does not belong to space ${params.spaceId}`);
     }
-    if (existing.sessionId && isCloneChoice(params.children) && params.children === 'cascade') {
-      const descendants = (parentId: string): Array<{ id: string; worktree?: WorktreeMetadata }> =>
-        (deps.listClones?.(parentId) ?? []).flatMap((clone) => [clone, ...descendants(clone.id)]);
-      for (const clone of descendants(existing.sessionId)) {
-        if (!clone.worktree || !deps.commitsAhead || params.confirmed === true) continue;
-        const commitStatus = await deps.commitsAhead(clone.worktree);
-        if (commitStatus.hasCommitsAhead) {
-          return { accepted: false, reason: 'requires_confirmation', commitStatus };
-        }
-      }
+    if (
+      existing.sessionId &&
+      isCloneChoice(params.children) &&
+      params.children === 'cascade' &&
+      params.confirmed !== true
+    ) {
+      const commitStatus = await firstCloneWithCommitsAhead(deps, existing.sessionId);
+      if (commitStatus) return { accepted: false, reason: 'requires_confirmation', commitStatus };
     }
     const action = params.confirmed === true ? 'delete' : 'archive';
     if (existing.sessionId) {
