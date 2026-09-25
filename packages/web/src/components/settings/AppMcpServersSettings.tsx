@@ -9,7 +9,7 @@ import {
 import { appMcpStore } from '../../lib/app-mcp-store.ts';
 import { skillsStore } from '../../lib/skills-store.ts';
 import { toast } from '../../lib/toast.ts';
-import { SettingsSection, SettingsToggle } from './SettingsSection.tsx';
+import { SettingsGroup, SettingsSection, SettingsToggle } from './SettingsSection.tsx';
 import { Modal } from '../ui/Modal.tsx';
 import { ConfirmModal } from '../ui/ConfirmModal.tsx';
 import { Button } from '../ui/Button.tsx';
@@ -307,36 +307,25 @@ export function AppMcpServersSettings() {
 
   return (
     <>
-      <SettingsSection title="MCP Servers">
-        <div class="mb-4">
-          <p class="text-xs text-fg-faint mb-3">
-            MCP servers are available to any space or session. Configure external MCP servers here.
-            For API keys and secrets, set them in your system environment (e.g.,{' '}
-            <code class="text-xs bg-surface-raised px-1 py-0.5 rounded">export MY_API_KEY=...</code>
-            ) and reference them by name in the env vars field below. Values stored here are saved
-            in plain text.
-          </p>
+      <SettingsSection
+        title="MCP Servers"
+        description="MCP servers are available to any space or session. For API keys and secrets, set them in your system environment and reference them by name in the env vars field below. Values stored here are saved in plain text."
+        actions={
           <Button variant="primary" size="sm" onClick={openAddForm}>
             Add MCP Server
           </Button>
-        </div>
-
+        }
+      >
         {servers.length === 0 ? (
           <div class="text-sm text-fg-faint py-4">
             No MCP servers configured. Click "Add MCP Server" to add one.
           </div>
         ) : (
-          <div class="space-y-2">
+          <SettingsGroup>
             {servers.map((server) => {
               const linkedSkill = skillLinkage.get(server.id);
               return (
-                <div
-                  key={server.id}
-                  class={cn(
-                    'flex items-center justify-between gap-3 py-3 px-3',
-                    'bg-surface-raised/50 rounded-lg border border-line'
-                  )}
-                >
+                <div key={server.id} class="flex items-center justify-between gap-3 px-4 py-3">
                   <div class="flex-1 min-w-0">
                     <div class="text-sm text-fg-soft truncate font-medium">{server.name}</div>
                     <div class="text-xs text-fg-faint mt-0.5 flex items-center gap-2 flex-wrap">
@@ -430,7 +419,7 @@ export function AppMcpServersSettings() {
                 </div>
               );
             })}
-          </div>
+          </SettingsGroup>
         )}
       </SettingsSection>
 

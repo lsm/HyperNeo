@@ -27,8 +27,15 @@ export type SpaceViewMode =
   | 'memories';
 export const currentSpaceViewModeSignal = signal<SpaceViewMode>('overview');
 
-export type SpaceConfigureTab = 'agents' | 'workflows' | 'settings';
-export const currentSpaceConfigureTabSignal = signal<SpaceConfigureTab>('agents');
+export type SpaceSettingsTab =
+  | 'general'
+  | 'runtime'
+  | 'tools'
+  | 'events'
+  | 'agent-templates'
+  | 'workflow-templates'
+  | 'advanced';
+export const currentSpaceSettingsTabSignal = signal<SpaceSettingsTab>('general');
 
 export type SpaceTasksFilterTab = 'action' | 'active' | 'completed' | 'draft' | 'scheduled';
 export const currentSpaceTasksFilterTabSignal = signal<SpaceTasksFilterTab>('active');

@@ -44,6 +44,12 @@ vi.mock('../../../lib/runtime-capabilities', () => ({
   NATIVE_FOLDER_PICKER_TIMEOUT_MS: 605000,
 }));
 
+vi.mock('../SpaceMcpSettings', () => ({
+  SpaceMcpSettings: ({ spaceId }: { spaceId: string }) => (
+    <div data-testid="space-mcp-settings">MCP settings for {spaceId}</div>
+  ),
+}));
+
 vi.mock('../SpaceExternalEventsSettings', () => ({
   SpaceExternalEventsSettings: ({ spaceId }) => (
     <div data-testid="space-external-events-settings">External events for {spaceId}</div>
@@ -79,6 +85,8 @@ vi.mock('../../ui/Button', () => ({
 }));
 
 import { SpaceSettings } from '../SpaceSettings';
+import { currentSpaceSettingsTabSignal } from '../../../lib/signals';
+import { spaceStore } from '../../../lib/space-store';
 import { connectionState } from '../../../lib/state';
 import {
   hasNativeFolderPicker,
@@ -126,10 +134,6 @@ function stubHubRequests(workspaces: SpaceWorkspace[] = []) {
   });
 }
 
-function openTab(tab: string) {
-  fireEvent.click(screen.getByTestId(`space-settings-tab-${tab}`));
-}
-
 const mockConfirm = vi.fn();
 beforeEach(() => {
   (globalThis as unknown as { confirm: unknown }).confirm = mockConfirm;
@@ -146,6 +150,7 @@ describe('SpaceSettings', () => {
     mockToastError.mockReset();
     mockConfirm.mockReset();
     vi.mocked(hasNativeFolderPicker).mockReturnValue(false);
+    currentSpaceSettingsTabSignal.value = 'general';
   });
 
   afterEach(() => {
@@ -159,33 +164,38 @@ describe('SpaceSettings', () => {
     expect(getByDisplayValue('Original description')).toBeTruthy();
   });
 
-  it('renders the sub-tab navigation with General active by default', () => {
+  it('renders General, Workspaces, and Instructions sections on the general tab', () => {
     const space = makeSpace();
     render(<SpaceSettings space={space} />);
-    const general = screen.getByTestId('space-settings-tab-general');
-    expect(general.getAttribute('aria-selected')).toBe('true');
-    expect(
-      screen.getByTestId('space-settings-tab-instructions').getAttribute('aria-selected')
-    ).toBe('false');
-    expect(screen.getByTestId('space-settings-tab-events')).toBeTruthy();
-    expect(screen.getByTestId('space-settings-tab-advanced')).toBeTruthy();
+    for (const heading of ['General', 'Workspaces', 'Instructions']) {
+      expect(screen.getByRole('heading', { name: heading })).toBeTruthy();
+    }
+    expect(screen.queryByRole('heading', { name: 'Runtime' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Danger zone' })).toBeNull();
   });
 
-  it('marks form sub-tabs with an unsaved-changes dot when dirty', () => {
+  it('renders the runtime, tools, events, and advanced tabs on demand', () => {
     const space = makeSpace();
-    const { getByDisplayValue } = render(<SpaceSettings space={space} />);
-    expect(screen.queryByLabelText('unsaved changes')).toBeNull();
-    fireEvent.input(getByDisplayValue('My Space'), { target: { value: 'New Name' } });
-    expect(screen.getAllByLabelText('unsaved changes').length).toBe(3);
-  });
+    const { rerender } = render(<SpaceSettings space={space} tab="runtime" />);
+    expect(screen.getByRole('heading', { name: 'Runtime' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'General' })).toBeNull();
 
-  it('renders MCP settings on the Tools tab and external events on the Events tab', () => {
-    const space = makeSpace();
-    render(<SpaceSettings space={space} />);
-    openTab('tools');
+    rerender(<SpaceSettings space={space} tab="tools" />);
     expect(screen.getByTestId('space-mcp-settings')).toBeTruthy();
-    openTab('events');
+
+    rerender(<SpaceSettings space={space} tab="events" />);
     expect(screen.getByTestId('space-external-events-settings')).toBeTruthy();
+
+    rerender(<SpaceSettings space={space} tab="advanced" />);
+    expect(screen.getByRole('heading', { name: 'Advanced' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Danger zone' })).toBeTruthy();
+  });
+
+  it('defaults the active tab from the settings tab signal', () => {
+    currentSpaceSettingsTabSignal.value = 'runtime';
+    render(<SpaceSettings space={makeSpace()} />);
+    expect(screen.getByRole('heading', { name: 'Runtime' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'General' })).toBeNull();
   });
 
   describe('Workspaces', () => {
@@ -779,7 +789,8 @@ describe('SpaceSettings', () => {
       ]);
       const { findAllByTestId, findByTestId } = render(<SpaceSettings space={makeSpace()} />);
       expect(await findAllByTestId('workspace-remove')).toHaveLength(1);
-      const primaryRow = (await findByTestId('workspaces-list')).firstElementChild as HTMLElement;
+      const primaryRow = (await findByTestId('workspaces-list')).firstElementChild
+        ?.firstElementChild as HTMLElement;
       expect(primaryRow.querySelector('[data-testid="workspace-remove"]')).toBeNull();
       expect(primaryRow.querySelector('[data-testid="workspace-edit-label"]')).not.toBeNull();
     });
@@ -981,8 +992,8 @@ describe('SpaceSettings', () => {
     stubHubRequests();
 
     const space = makeSpace();
+    currentSpaceSettingsTabSignal.value = 'advanced';
     const { getByText } = render(<SpaceSettings space={space} />);
-    openTab('advanced');
     fireEvent.click(getByText('Archive'));
 
     await waitFor(() => {
@@ -994,16 +1005,16 @@ describe('SpaceSettings', () => {
   it('does not archive when confirm is dismissed', async () => {
     mockConfirm.mockReturnValue(false);
     const space = makeSpace();
+    currentSpaceSettingsTabSignal.value = 'advanced';
     const { getByText } = render(<SpaceSettings space={space} />);
-    openTab('advanced');
     fireEvent.click(getByText('Archive'));
     expect(mockRequest).not.toHaveBeenCalled();
   });
 
   it('Archive button is disabled when space is already archived', () => {
     const space = makeSpace({ status: 'archived' });
+    currentSpaceSettingsTabSignal.value = 'advanced';
     const { getByText } = render(<SpaceSettings space={space} />);
-    openTab('advanced');
     const archiveBtn = getByText('Archive').closest('button')!;
     expect(archiveBtn.disabled).toBe(true);
   });
@@ -1013,8 +1024,8 @@ describe('SpaceSettings', () => {
     stubHubRequests();
 
     const space = makeSpace();
+    currentSpaceSettingsTabSignal.value = 'advanced';
     const { getByText } = render(<SpaceSettings space={space} />);
-    openTab('advanced');
     fireEvent.click(getByText('Delete'));
 
     await waitFor(() => {
@@ -1030,8 +1041,8 @@ describe('SpaceSettings', () => {
   it('does not delete when confirm is dismissed', async () => {
     mockConfirm.mockReturnValue(false);
     const space = makeSpace();
+    currentSpaceSettingsTabSignal.value = 'advanced';
     const { getByText } = render(<SpaceSettings space={space} />);
-    openTab('advanced');
     fireEvent.click(getByText('Delete'));
     expect(mockRequest).not.toHaveBeenCalled();
   });
@@ -1058,8 +1069,8 @@ describe('SpaceSettings', () => {
     );
 
     const space = makeSpace();
+    currentSpaceSettingsTabSignal.value = 'advanced';
     const { getByText } = render(<SpaceSettings space={space} />);
-    openTab('advanced');
     fireEvent.click(getByText('Archive'));
 
     await waitFor(() => {
@@ -1082,8 +1093,8 @@ describe('SpaceSettings', () => {
     );
 
     const space = makeSpace();
+    currentSpaceSettingsTabSignal.value = 'advanced';
     const { getByText } = render(<SpaceSettings space={space} />);
-    openTab('advanced');
     fireEvent.click(getByText('Delete'));
 
     await waitFor(() => {
@@ -1099,7 +1110,6 @@ describe('SpaceSettings', () => {
       backgroundContext: 'Bun + Hono backend',
     });
     const { getByDisplayValue, getByText } = render(<SpaceSettings space={space} />);
-    openTab('instructions');
     expect(getByDisplayValue('Use TypeScript strict mode')).toBeTruthy();
     expect(getByDisplayValue('Bun + Hono backend')).toBeTruthy();
     expect(getByText('Instructions', { selector: 'h3' })).toBeTruthy();
@@ -1109,7 +1119,6 @@ describe('SpaceSettings', () => {
   it('shows Save Changes when instructions is changed', () => {
     const space = makeSpace();
     const { getByPlaceholderText, getByText } = render(<SpaceSettings space={space} />);
-    openTab('instructions');
     fireEvent.input(
       getByPlaceholderText(
         'e.g. Always use TypeScript strict mode. Prefer functional components...'
@@ -1122,7 +1131,6 @@ describe('SpaceSettings', () => {
   it('shows Save Changes when backgroundContext is changed', () => {
     const space = makeSpace();
     const { getByPlaceholderText, getByText } = render(<SpaceSettings space={space} />);
-    openTab('instructions');
     fireEvent.input(
       getByPlaceholderText(
         'e.g. This project uses Bun + Hono backend, Preact frontend with Tailwind CSS...'
@@ -1141,7 +1149,6 @@ describe('SpaceSettings', () => {
     );
 
     fireEvent.input(getByDisplayValue('My Space'), { target: { value: 'Updated' } });
-    openTab('instructions');
     fireEvent.input(
       getByPlaceholderText(
         'e.g. Always use TypeScript strict mode. Prefer functional components...'
@@ -1176,7 +1183,6 @@ describe('SpaceSettings', () => {
       backgroundContext: 'Original context',
     });
     const { getByDisplayValue, getByText, queryByText } = render(<SpaceSettings space={space} />);
-    openTab('instructions');
 
     fireEvent.input(getByDisplayValue('Original instructions'), {
       target: { value: 'Changed instructions' },
@@ -1195,7 +1201,6 @@ describe('SpaceSettings', () => {
       backgroundContext: 'world!',
     });
     const { getByText } = render(<SpaceSettings space={space} />);
-    openTab('instructions');
     expect(getByText('5 characters')).toBeTruthy();
     expect(getByText('6 characters')).toBeTruthy();
   });
@@ -1204,8 +1209,8 @@ describe('SpaceSettings', () => {
     stubHubRequests();
 
     const space = makeSpace();
+    currentSpaceSettingsTabSignal.value = 'advanced';
     const { getByText } = render(<SpaceSettings space={space} />);
-    openTab('advanced');
     fireEvent.click(getByText('Export Bundle'));
 
     await waitFor(() => {
@@ -1214,10 +1219,13 @@ describe('SpaceSettings', () => {
   });
 
   describe('Concurrent Tasks', () => {
+    beforeEach(() => {
+      currentSpaceSettingsTabSignal.value = 'runtime';
+    });
+
     it('renders concurrency slider with current value', () => {
       const space = makeSpace({ maxConcurrentTasks: 3 });
       const { container, getByTestId } = render(<SpaceSettings space={space} />);
-      openTab('runtime');
       expect(getByTestId('concurrent-tasks-value').textContent).toBe('3');
       expect(container.querySelector('[data-testid="concurrent-tasks-slider"]')).toBeTruthy();
     });
@@ -1225,7 +1233,6 @@ describe('SpaceSettings', () => {
     it('shows Save Changes when concurrency is changed', () => {
       const space = makeSpace({ maxConcurrentTasks: 1 });
       const { getByTestId, getByText } = render(<SpaceSettings space={space} />);
-      openTab('runtime');
       fireEvent.input(getByTestId('concurrent-tasks-slider'), { target: { value: '5' } });
       expect(getByText('Save Changes')).toBeTruthy();
     });
@@ -1235,7 +1242,6 @@ describe('SpaceSettings', () => {
 
       const space = makeSpace({ maxConcurrentTasks: 1 });
       const { getByTestId, getByText } = render(<SpaceSettings space={space} />);
-      openTab('runtime');
       fireEvent.input(getByTestId('concurrent-tasks-slider'), { target: { value: '4' } });
       fireEvent.click(getByText('Save Changes'));
 
@@ -1250,7 +1256,6 @@ describe('SpaceSettings', () => {
     it('Discard resets concurrency to original value', () => {
       const space = makeSpace({ maxConcurrentTasks: 2 });
       const { getByTestId, getByText, queryByText } = render(<SpaceSettings space={space} />);
-      openTab('runtime');
       fireEvent.input(getByTestId('concurrent-tasks-slider'), { target: { value: '8' } });
       expect(getByText('Save Changes')).toBeTruthy();
 

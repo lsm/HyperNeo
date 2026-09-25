@@ -187,7 +187,7 @@ export function BottomTabBar({ inline }: { inline?: boolean } = {}) {
         if (spaceId) navigateToSpaceAgent(spaceId);
         break;
       case 'space-settings':
-        if (spaceId) navigateToSpaceConfigure(spaceId, 'settings');
+        if (spaceId) navigateToSpaceConfigure(spaceId);
         break;
     }
   };

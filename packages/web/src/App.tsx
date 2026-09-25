@@ -17,9 +17,9 @@ import {
   currentSpaceAgentHandleSignal,
   currentSpaceIdSignal,
   currentSpaceSessionIdSignal,
+  currentSpaceSettingsTabSignal,
   currentSpaceTaskIdSignal,
   currentSpaceViewModeSignal,
-  currentSpaceConfigureTabSignal,
   currentSpaceTasksFilterTabSignal,
   currentSpaceTaskViewTabSignal,
   navSectionSignal,
@@ -97,7 +97,7 @@ export function App() {
       const spaceTaskId = currentSpaceTaskIdSignal.value;
       const spaceAgentHandle = currentSpaceAgentHandleSignal.value;
       const spaceViewMode = currentSpaceViewModeSignal.value;
-      const spaceConfigureTab = currentSpaceConfigureTabSignal.value;
+      const spaceConfigureTab = currentSpaceSettingsTabSignal.value;
       const spaceTasksFilterTab = currentSpaceTasksFilterTabSignal.value;
       const spaceTaskViewTab = currentSpaceTaskViewTabSignal.value;
       const navSection = navSectionSignal.value;
@@ -138,7 +138,11 @@ export function App() {
         } else if (spaceId && spaceViewMode === 'tasks') {
           navigateToSpaceTasks(spaceId, undefined, true);
         } else if (spaceId && spaceViewMode === 'configure') {
-          navigateToSpaceConfigure(spaceId, undefined, true);
+          navigateToSpaceConfigure(
+            spaceId,
+            spaceConfigureTab !== 'general' ? spaceConfigureTab : undefined,
+            true
+          );
         } else if (spaceId) {
           navigateToSpace(spaceId, true);
         } else if (navSection === 'spaces') {

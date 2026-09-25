@@ -3,15 +3,16 @@ import {
   currentSessionIdSignal,
   currentSpaceAgentHandleSignal,
   currentSpaceCanonicalIdSignal,
-  currentSpaceConfigureTabSignal,
   currentSpaceIdSignal,
   currentSpaceSessionIdSignal,
+  currentSpaceSettingsTabSignal,
   currentSpaceTaskIdSignal,
   currentSpaceTasksFilterTabSignal,
   currentSpaceTaskViewTabSignal,
   currentSpaceViewModeSignal,
   navSectionSignal,
   type SettingsSection,
+  type SpaceSettingsTab,
   type SpaceOverlayTaskContext,
   type SpaceTaskViewTab,
   settingsSectionSignal,
@@ -30,7 +31,7 @@ const SETTINGS_ROUTE_PATTERN = /^\/settings$/;
 const SPACE_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)$/;
 const SPACE_CONFIGURE_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/configure$/;
 const SPACE_CONFIGURE_TAB_ROUTE_PATTERN =
-  /^\/space\/([a-z0-9-]+)\/configure\/(agents|workflows|settings)$/;
+  /^\/space\/([a-z0-9-]+)\/configure\/(general|runtime|tools|events|agent-templates|workflow-templates|advanced|agents|workflows|settings)$/;
 const SPACE_GOALS_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/goals$/;
 const SPACE_MEMORIES_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/memories$/;
 const SPACE_EVOLVE_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/evolve$/;
@@ -151,10 +152,13 @@ export function getSpaceConfigureFromPath(path: string): string | null {
 
 export function getSpaceConfigureTabFromPath(
   path: string
-): { spaceId: string; tab: 'agents' | 'workflows' | 'settings' } | null {
+): { spaceId: string; tab: SpaceSettingsTab | 'agents' | 'workflows' | 'settings' } | null {
   const match = path.match(SPACE_CONFIGURE_TAB_ROUTE_PATTERN);
   if (!match) return null;
-  return { spaceId: match[1], tab: match[2] as 'agents' | 'workflows' | 'settings' };
+  return {
+    spaceId: match[1],
+    tab: match[2] as SpaceSettingsTab | 'agents' | 'workflows' | 'settings',
+  };
 }
 
 export function getSpaceGoalsFromPath(path: string): string | null {
@@ -249,7 +253,9 @@ export function createSpacePath(spaceId: string): string {
 }
 
 export function createSpaceConfigurePath(spaceId: string, tab?: string): string {
-  return tab ? `/space/${spaceId}/configure/${tab}` : `/space/${spaceId}/configure`;
+  return tab && tab !== 'general'
+    ? `/space/${spaceId}/configure/${tab}`
+    : `/space/${spaceId}/configure`;
 }
 
 export function createSpaceGoalsPath(spaceId: string): string {
@@ -470,7 +476,7 @@ export function navigateToSpace(spaceId: string, replace = false): void {
 
 export function navigateToSpaceConfigure(
   spaceId: string,
-  tab?: 'agents' | 'workflows' | 'settings',
+  tab?: SpaceSettingsTab,
   replace = false
 ): void {
   if (routerState.isNavigating) return;
@@ -487,7 +493,7 @@ export function navigateToSpaceConfigure(
 
   setCurrentSpaceRouteId(spaceId);
   currentSpaceViewModeSignal.value = 'configure';
-  currentSpaceConfigureTabSignal.value = tab ?? 'agents';
+  currentSpaceSettingsTabSignal.value = tab ?? 'general';
   currentSpaceSessionIdSignal.value = null;
   currentSpaceTaskIdSignal.value = null;
   currentSpaceTaskViewTabSignal.value = 'thread';
@@ -708,8 +714,25 @@ function applyPathToSignals(path: string, search = window.location.search): stri
     );
   }
 
-  const sessionId = getSessionIdFromPath(path);
+  const legacyConfigureTab = getSpaceConfigureTabFromPath(path);
+  if (
+    legacyConfigureTab &&
+    (legacyConfigureTab.tab === 'agents' ||
+      legacyConfigureTab.tab === 'workflows' ||
+      legacyConfigureTab.tab === 'settings')
+  ) {
+    const legacyTarget =
+      legacyConfigureTab.tab === 'workflows'
+        ? createSpaceConfigurePath(legacyConfigureTab.spaceId, 'workflow-templates')
+        : legacyConfigureTab.tab === 'agents'
+          ? createSpaceAgentPath(legacyConfigureTab.spaceId)
+          : createSpaceConfigurePath(legacyConfigureTab.spaceId);
+    pushPath(legacyTarget, { spaceId: legacyConfigureTab.spaceId }, true);
+    path = legacyTarget;
+  }
+
   const spaceConfigureTab = getSpaceConfigureTabFromPath(path);
+  const sessionId = getSessionIdFromPath(path);
   const spaceConfigure = spaceConfigureTab
     ? spaceConfigureTab.spaceId
     : getSpaceConfigureFromPath(path);
@@ -803,7 +826,8 @@ function applyPathToSignals(path: string, search = window.location.search): stri
     } else if (spaceConfigure) {
       setCurrentSpaceRouteId(spaceConfigure);
       currentSpaceViewModeSignal.value = 'configure';
-      currentSpaceConfigureTabSignal.value = spaceConfigureTab?.tab ?? 'agents';
+      currentSpaceSettingsTabSignal.value =
+        (spaceConfigureTab?.tab as SpaceSettingsTab | undefined) ?? 'general';
       currentSpaceSessionIdSignal.value = null;
       currentSpaceTaskIdSignal.value = null;
       currentSpaceTaskViewTabSignal.value = 'thread';

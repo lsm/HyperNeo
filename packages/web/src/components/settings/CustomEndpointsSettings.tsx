@@ -8,7 +8,7 @@ import {
 } from '../../lib/api-helpers.ts';
 import { connectionManager } from '../../lib/connection-manager';
 import { toast } from '../../lib/toast.ts';
-import { SettingsSection } from './SettingsSection.tsx';
+import { SettingsGroup, SettingsSection } from './SettingsSection.tsx';
 import { Button } from '../ui/Button.tsx';
 import { Spinner } from '../ui/Spinner';
 import {
@@ -143,13 +143,35 @@ export function CustomEndpointsSettings() {
   const existingIds = endpoints.map((e) => e.id.toLowerCase());
 
   return (
-    <SettingsSection title="Custom Endpoints">
-      <p class="text-xs text-fg-faint px-1">
-        User-defined API endpoints. Each entry registers a provider with id{' '}
-        <code class="bg-surface-raised px-1 rounded text-[11px]">custom:&lt;id&gt;</code>. Models
-        become selectable in the model picker.
-      </p>
-
+    <SettingsSection
+      title="Custom Endpoints"
+      description="User-defined API endpoints. Each registers a provider with id custom:<id>; its models become selectable in the model picker."
+      actions={
+        <>
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => {
+              void (async () => {
+                try {
+                  const hub = connectionManager.getHubIfConnected();
+                  if (!hub) return;
+                  await hub.request('models.list', { forceRefresh: true });
+                  toast.success('Models refreshed');
+                } catch (e) {
+                  toast.error(e instanceof Error ? e.message : 'Refresh failed');
+                }
+              })();
+            }}
+          >
+            Refresh models
+          </Button>
+          <Button size="sm" variant="primary" onClick={() => setShowPresets(true)}>
+            Add provider
+          </Button>
+        </>
+      }
+    >
       {loading ? (
         <div class="flex items-center gap-2 text-xs text-fg-faint px-1">
           <Spinner size="xs" />
@@ -163,11 +185,11 @@ export function CustomEndpointsSettings() {
           </p>
         </div>
       ) : (
-        <div class="space-y-2">
+        <SettingsGroup>
           {endpoints.map((endpoint) => {
             const type = endpoint.type ?? 'openai-chat';
             return (
-              <div key={endpoint.id} class="rounded-lg border border-line bg-fill-soft px-4 py-3">
+              <div key={endpoint.id} class="px-4 py-3">
                 <div class="flex items-start justify-between gap-3">
                   <div class="min-w-0 flex-1">
                     <div class="flex items-center gap-2 flex-wrap">
@@ -228,32 +250,8 @@ export function CustomEndpointsSettings() {
               </div>
             );
           })}
-        </div>
+        </SettingsGroup>
       )}
-
-      <div class="flex gap-2 pt-1">
-        <Button size="sm" variant="primary" onClick={() => setShowPresets(true)}>
-          Add provider
-        </Button>
-        <Button
-          size="sm"
-          variant="secondary"
-          onClick={() => {
-            void (async () => {
-              try {
-                const hub = connectionManager.getHubIfConnected();
-                if (!hub) return;
-                await hub.request('models.list', { forceRefresh: true });
-                toast.success('Models refreshed');
-              } catch (e) {
-                toast.error(e instanceof Error ? e.message : 'Refresh failed');
-              }
-            })();
-          }}
-        >
-          Refresh models
-        </Button>
-      </div>
 
       {showPresets && (
         <PresetPicker onPick={handlePickPreset} onClose={() => setShowPresets(false)} />

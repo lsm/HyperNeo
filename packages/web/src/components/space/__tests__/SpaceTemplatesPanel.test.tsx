@@ -27,7 +27,6 @@ function renderPanel(overrides: Partial<Parameters<typeof SpaceTemplatesPanel>[0
     spaceId: 'space-1',
     templates: [makeTemplate('researcher.v1')],
     userTemplateKeys: new Set<string>(),
-    onUseTemplate: vi.fn(),
     ...overrides,
   };
   return { props, ...render(<SpaceTemplatesPanel {...props} />) };
@@ -92,16 +91,6 @@ describe('SpaceTemplatesPanel', () => {
     const rows = getByTestId('agent-template-group-custom').lastElementChild as HTMLElement;
     expect(rows.children).toHaveLength(2);
     expect(rows.className).not.toContain('grid');
-  });
-
-  it('hands a clicked template back to the host rather than handling it', () => {
-    const { props, getByText } = renderPanel();
-
-    fireEvent.click(getByText('researcher.v1'));
-
-    expect(props.onUseTemplate).toHaveBeenCalledWith(
-      expect.objectContaining({ key: 'researcher.v1' })
-    );
   });
 
   it('opens its own editor for a new template', () => {

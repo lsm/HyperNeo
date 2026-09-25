@@ -2,19 +2,40 @@ import { ComponentChildren } from 'preact';
 import { cn } from '../../lib/utils.ts';
 
 export interface SettingsSectionProps {
-  title: string;
+  id?: string;
+  title: ComponentChildren;
+  description?: string;
+  actions?: ComponentChildren;
   children: ComponentChildren;
   class?: string;
 }
 
-export function SettingsSection({ title, children, class: className }: SettingsSectionProps) {
+export function SettingsSection({
+  id,
+  title,
+  description,
+  actions,
+  children,
+  class: className,
+}: SettingsSectionProps) {
   return (
-    <div class={cn('space-y-3 pb-6', className)}>
-      <div class="flex items-center gap-2 px-1">
-        <span class="h-4 w-1 rounded-full bg-accent/80" aria-hidden="true" />
-        <h3 class="text-xs font-semibold uppercase tracking-[0.16em] text-fg-muted">{title}</h3>
+    <section id={id} class={cn('scroll-mt-4 pb-8', className)}>
+      <div class="mb-3 flex items-end justify-between gap-4 px-1">
+        <div class="min-w-0">
+          <h3 class="text-sm font-semibold text-fg">{title}</h3>
+          {description && <p class="mt-0.5 text-xs text-fg-muted">{description}</p>}
+        </div>
+        {actions && <div class="flex flex-shrink-0 items-center gap-2">{actions}</div>}
       </div>
-      <div class="space-y-2">{children}</div>
+      <div class="space-y-4">{children}</div>
+    </section>
+  );
+}
+
+export function SettingsGroup({ children }: { children: ComponentChildren }) {
+  return (
+    <div class="divide-y divide-line overflow-hidden rounded-xl border border-line bg-surface">
+      {children}
     </div>
   );
 }
@@ -30,15 +51,15 @@ export function SettingsRow({ label, description, children, layout = 'inline' }:
   return (
     <div
       class={cn(
-        'rounded-lg border border-line bg-fill-soft px-4 py-3',
+        'px-4 py-3',
         layout === 'inline'
-          ? 'flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4'
-          : 'space-y-3'
+          ? 'flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between sm:gap-4'
+          : 'space-y-2.5'
       )}
     >
       <div class="flex-1 min-w-0">
-        <div class="text-sm font-medium text-fg-soft">{label}</div>
-        {description && <div class="text-xs text-fg-faint mt-0.5">{description}</div>}
+        <div class="text-[13px] font-medium text-fg">{label}</div>
+        {description && <div class="text-xs text-fg-muted mt-0.5">{description}</div>}
       </div>
       <div class={cn(layout === 'inline' ? 'flex-shrink-0' : 'min-w-0')}>{children}</div>
     </div>
@@ -59,10 +80,10 @@ export function SettingsSelect({ value, onChange, options, disabled }: SettingsS
       onChange={(e) => onChange((e.target as HTMLSelectElement).value)}
       disabled={disabled}
       class={cn(
-        'bg-surface-raised border border-line-strong rounded-lg px-3 py-1.5 text-sm text-fg-soft',
-        'focus:outline-none focus:ring-1 focus:ring-accent focus:border-accent',
+        'bg-surface border border-line rounded-md px-2.5 py-1 text-[13px] text-fg-soft',
+        'focus:outline-none focus:border-accent',
         'disabled:opacity-50 disabled:cursor-not-allowed',
-        'min-w-[140px]'
+        'min-w-[120px]'
       )}
     >
       {options.map((option) => (
@@ -93,7 +114,7 @@ export function SettingsToggle({ checked, onChange, disabled }: SettingsTogglePr
         'transition-colors duration-200 ease-in-out',
         'focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-2 focus:ring-offset-bg',
         'disabled:opacity-50 disabled:cursor-not-allowed',
-        checked ? 'bg-accent-hover' : 'bg-fill-strong'
+        checked ? 'bg-accent' : 'bg-fill-strong'
       )}
     >
       <span

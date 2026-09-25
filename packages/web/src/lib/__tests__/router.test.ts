@@ -40,8 +40,8 @@ import {
   currentSessionIdSignal,
   currentSpaceAgentHandleSignal,
   currentSpaceCanonicalIdSignal,
-  currentSpaceConfigureTabSignal,
   currentSpaceIdSignal,
+  currentSpaceSettingsTabSignal,
   currentSpaceSessionIdSignal,
   currentSpaceTaskIdSignal,
   currentSpaceTasksFilterTabSignal,
@@ -64,7 +64,7 @@ function resetSignals() {
   currentSpaceSessionIdSignal.value = null;
   currentSpaceTaskIdSignal.value = null;
   currentSpaceViewModeSignal.value = 'overview';
-  currentSpaceConfigureTabSignal.value = 'agents';
+  currentSpaceSettingsTabSignal.value = 'general';
   currentSpaceTasksFilterTabSignal.value = 'active';
   currentSpaceTaskViewTabSignal.value = 'thread';
   navSectionSignal.value = 'spaces';
@@ -105,9 +105,11 @@ describe('router', () => {
     expect(createSessionPath(SESSION_ID)).toBe(`/session/${SESSION_ID}`);
     expect(getSessionIdFromPath(`/session/${SESSION_ID}`)).toBe(SESSION_ID);
     expect(createSpacePath(SPACE_ID)).toBe(`/space/${SPACE_ID}`);
-    expect(createSpaceConfigurePath(SPACE_ID, 'settings')).toBe(
-      `/space/${SPACE_ID}/configure/settings`
+    expect(createSpaceConfigurePath(SPACE_ID)).toBe(`/space/${SPACE_ID}/configure`);
+    expect(createSpaceConfigurePath(SPACE_ID, 'agent-templates')).toBe(
+      `/space/${SPACE_ID}/configure/agent-templates`
     );
+    expect(createSpaceConfigurePath(SPACE_ID, 'general')).toBe(`/space/${SPACE_ID}/configure`);
     expect(createSpaceGoalsPath(SPACE_ID)).toBe(`/space/${SPACE_ID}/goals`);
     expect(getSpaceGoalsFromPath(`/space/${SPACE_ID}/goals`)).toBe(SPACE_ID);
     expect(createSpaceEvolvePath(SPACE_ID)).toBe(`/space/${SPACE_ID}/evolve`);
@@ -186,17 +188,50 @@ describe('router', () => {
     });
   });
 
-  it('initializes space configure and task list tabs', () => {
+  it('redirects the legacy configure/workflows URL to the workflow templates tab', () => {
     setPath(`/space/${SPACE_ID}/configure/workflows`);
     initializeRouter();
 
-    expect(getSpaceConfigureTabFromPath(`/space/${SPACE_ID}/configure/workflows`)).toEqual({
-      spaceId: SPACE_ID,
-      tab: 'workflows',
-    });
     expect(currentSpaceIdSignal.value).toBe(SPACE_ID);
     expect(currentSpaceViewModeSignal.value).toBe('configure');
-    expect(currentSpaceConfigureTabSignal.value).toBe('workflows');
+    expect(currentSpaceSettingsTabSignal.value).toBe('workflow-templates');
+    expect(window.history.replaceState).toHaveBeenLastCalledWith(
+      {
+        spaceId: SPACE_ID,
+        path: `/space/${SPACE_ID}/configure/workflow-templates`,
+        [IN_APP_HISTORY_DEPTH_KEY]: 0,
+      },
+      '',
+      `/space/${SPACE_ID}/configure/workflow-templates`
+    );
+  });
+
+  it('redirects the legacy configure/settings URL to the bare configure route', () => {
+    setPath(`/space/${SPACE_ID}/configure/settings`);
+    initializeRouter();
+
+    expect(currentSpaceIdSignal.value).toBe(SPACE_ID);
+    expect(currentSpaceViewModeSignal.value).toBe('configure');
+    expect(window.history.replaceState).toHaveBeenLastCalledWith(
+      {
+        spaceId: SPACE_ID,
+        path: `/space/${SPACE_ID}/configure`,
+        [IN_APP_HISTORY_DEPTH_KEY]: 0,
+      },
+      '',
+      `/space/${SPACE_ID}/configure`
+    );
+  });
+
+  it('initializes configure tabs and task list tabs', () => {
+    setPath(`/space/${SPACE_ID}/configure/agent-templates`);
+    initializeRouter();
+
+    expect(currentSpaceIdSignal.value).toBe(SPACE_ID);
+    expect(currentSpaceViewModeSignal.value).toBe('configure');
+    expect(currentSpaceSettingsTabSignal.value).toBe('agent-templates');
+    expect(currentSpaceSessionIdSignal.value).toBeNull();
+    expect(currentSpaceTaskIdSignal.value).toBeNull();
 
     cleanupRouter();
     setPath(`/space/${SPACE_ID}/tasks/completed`);
@@ -392,9 +427,13 @@ describe('router', () => {
     );
     finishNavigation();
 
-    navigateToSpaceConfigure(SPACE_ID, 'settings');
+    navigateToSpaceConfigure(SPACE_ID);
     expect(currentSpaceViewModeSignal.value).toBe('configure');
-    expect(currentSpaceConfigureTabSignal.value).toBe('settings');
+    expect(window.history.pushState).toHaveBeenLastCalledWith(
+      { spaceId: SPACE_ID, path: `/space/${SPACE_ID}/configure`, [IN_APP_HISTORY_DEPTH_KEY]: 5 },
+      '',
+      `/space/${SPACE_ID}/configure`
+    );
     finishNavigation();
 
     navigateToSpaceTask(SPACE_ID, TASK_ID, 'artifacts');

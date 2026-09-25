@@ -4,7 +4,8 @@ import { globalSettings } from '../../lib/state.ts';
 import { updateGlobalSettings } from '../../lib/api-helpers.ts';
 import { connectionManager } from '../../lib/connection-manager.ts';
 import { toast } from '../../lib/toast.ts';
-import { SettingsRow, SettingsSection, SettingsToggle } from './SettingsSection.tsx';
+import { FORM_CONTROL_CLASS } from '../ui/FormField.tsx';
+import { SettingsGroup, SettingsRow, SettingsSection, SettingsToggle } from './SettingsSection.tsx';
 
 const DEFAULT_VOICE: VoiceSettingsConfig = {
   enabled: false,
@@ -119,155 +120,159 @@ export function VoiceSettings() {
 
   return (
     <SettingsSection title="Voice Input">
-      <SettingsRow
-        label="Enable voice input"
-        description="Show a mic button in the composer and transcribe recorded WAV audio."
-      >
-        <SettingsToggle
-          checked={draft.enabled}
-          onChange={(enabled) => patch({ enabled })}
-          disabled={saving}
-        />
-      </SettingsRow>
-
-      <SettingsRow label="Preset" description="Prefill endpoint and model for common backends.">
-        <div class="flex gap-2">
-          <button
-            type="button"
-            onClick={() => applyPreset('openai')}
-            disabled={saving}
-            class="rounded-lg border border-line px-3 py-1.5 text-sm text-fg-soft hover:bg-fill-soft disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            OpenAI
-          </button>
-          <button
-            type="button"
-            onClick={() => applyPreset('local')}
-            disabled={saving}
-            class="rounded-lg border border-line px-3 py-1.5 text-sm text-fg-soft hover:bg-fill-soft disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            Local / custom
-          </button>
-        </div>
-      </SettingsRow>
-
-      <SettingsRow
-        label="Endpoint"
-        description="Full URL to /v1/audio/transcriptions."
-        layout="stacked"
-      >
-        <input
-          type="url"
-          value={draft.endpoint}
-          disabled={saving}
-          onInput={(event) => setDraft({ ...draft, endpoint: event.currentTarget.value })}
-          onBlur={() => patchOnBlur('endpoint')}
-          placeholder="https://api.openai.com/v1/audio/transcriptions"
-          class="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-fg-soft focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-        />
-      </SettingsRow>
-
-      <SettingsRow label="Model" description="Model names vary by backend." layout="stacked">
-        <input
-          type="text"
-          value={draft.model}
-          disabled={saving}
-          onInput={(event) => setDraft({ ...draft, model: event.currentTarget.value })}
-          onBlur={() => patchOnBlur('model')}
-          placeholder="whisper-1"
-          class="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-fg-soft focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-        />
-      </SettingsRow>
-
-      <SettingsRow
-        label="API key"
-        description="Optional. Leave blank for local backends that do not require Authorization."
-        layout="stacked"
-      >
-        <div class="space-y-2">
-          <input
-            type="password"
-            value={draft.apiKey ?? ''}
-            disabled={saving}
-            onInput={(event) => setDraft({ ...draft, apiKey: event.currentTarget.value })}
-            onBlur={() => {
-              const apiKey = draft.apiKey?.trim();
-              if (apiKey) void save({ ...draft, apiKey }, { silent: true });
-            }}
-            placeholder="sk-..."
-            class="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-fg-soft focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-          />
-          {draft.hasApiKey &&
-            !draft.apiKey &&
-            (() => {
-              const normalizeEndpoint = (url: string) => {
-                try {
-                  return new URL(url.trim()).toString();
-                } catch {
-                  return url.trim();
-                }
-              };
-              const keyScopedElsewhere =
-                draft.apiKeyEndpoint &&
-                draft.endpoint.trim() &&
-                normalizeEndpoint(draft.apiKeyEndpoint) !== normalizeEndpoint(draft.endpoint);
-              return (
-                <div class="flex items-center justify-between gap-3">
-                  <div class={keyScopedElsewhere ? 'text-xs text-warning' : 'text-xs text-success'}>
-                    {keyScopedElsewhere
-                      ? 'Saved key is scoped to a different endpoint. Re-enter it for this endpoint.'
-                      : 'Key saved. Enter a new key to replace it.'}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      void removeKey();
-                    }}
-                    disabled={saving}
-                    class="rounded-md border border-red-400/30 px-2 py-1 text-xs text-danger-soft hover:bg-danger/10 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    Remove key
-                  </button>
-                </div>
-              );
-            })()}
-        </div>
-      </SettingsRow>
-
-      <SettingsRow
-        label="Allow insecure TLS"
-        description="Only enable for trusted self-signed local gateways."
-      >
-        <SettingsToggle
-          checked={draft.allowInsecureTls ?? false}
-          onChange={(allowInsecureTls) => patch({ allowInsecureTls })}
-          disabled={saving}
-        />
-      </SettingsRow>
-
-      <SettingsRow
-        label="Allow private/LAN endpoints"
-        description="Only enable for trusted local ASR servers on private networks."
-      >
-        <SettingsToggle
-          checked={draft.allowPrivateNetwork ?? false}
-          onChange={(allowPrivateNetwork) => patch({ allowPrivateNetwork })}
-          disabled={saving}
-        />
-      </SettingsRow>
-
-      <SettingsRow label="Test connection" description="Sends a short silent WAV to the backend.">
-        <button
-          type="button"
-          onClick={() => {
-            void testConnection();
-          }}
-          disabled={testing || saving || !draft.enabled}
-          class="rounded-lg bg-accent-hover px-3 py-1.5 text-sm font-medium text-accent-fg hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+      <SettingsGroup>
+        <SettingsRow
+          label="Enable voice input"
+          description="Show a mic button in the composer and transcribe recorded WAV audio."
         >
-          {testing ? 'Testing…' : 'Test connection'}
-        </button>
-      </SettingsRow>
+          <SettingsToggle
+            checked={draft.enabled}
+            onChange={(enabled) => patch({ enabled })}
+            disabled={saving}
+          />
+        </SettingsRow>
+
+        <SettingsRow label="Preset" description="Prefill endpoint and model for common backends.">
+          <div class="flex gap-2">
+            <button
+              type="button"
+              onClick={() => applyPreset('openai')}
+              disabled={saving}
+              class="rounded-md border border-line px-2.5 py-1 text-xs text-fg-soft transition-colors hover:bg-fill-soft hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              OpenAI
+            </button>
+            <button
+              type="button"
+              onClick={() => applyPreset('local')}
+              disabled={saving}
+              class="rounded-md border border-line px-2.5 py-1 text-xs text-fg-soft transition-colors hover:bg-fill-soft hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Local / custom
+            </button>
+          </div>
+        </SettingsRow>
+
+        <SettingsRow
+          label="Endpoint"
+          description="Full URL to /v1/audio/transcriptions."
+          layout="stacked"
+        >
+          <input
+            type="url"
+            value={draft.endpoint}
+            disabled={saving}
+            onInput={(event) => setDraft({ ...draft, endpoint: event.currentTarget.value })}
+            onBlur={() => patchOnBlur('endpoint')}
+            placeholder="https://api.openai.com/v1/audio/transcriptions"
+            class={FORM_CONTROL_CLASS}
+          />
+        </SettingsRow>
+
+        <SettingsRow label="Model" description="Model names vary by backend." layout="stacked">
+          <input
+            type="text"
+            value={draft.model}
+            disabled={saving}
+            onInput={(event) => setDraft({ ...draft, model: event.currentTarget.value })}
+            onBlur={() => patchOnBlur('model')}
+            placeholder="whisper-1"
+            class={FORM_CONTROL_CLASS}
+          />
+        </SettingsRow>
+
+        <SettingsRow
+          label="API key"
+          description="Optional. Leave blank for local backends that do not require Authorization."
+          layout="stacked"
+        >
+          <div class="space-y-2">
+            <input
+              type="password"
+              value={draft.apiKey ?? ''}
+              disabled={saving}
+              onInput={(event) => setDraft({ ...draft, apiKey: event.currentTarget.value })}
+              onBlur={() => {
+                const apiKey = draft.apiKey?.trim();
+                if (apiKey) void save({ ...draft, apiKey }, { silent: true });
+              }}
+              placeholder="sk-..."
+              class={FORM_CONTROL_CLASS}
+            />
+            {draft.hasApiKey &&
+              !draft.apiKey &&
+              (() => {
+                const normalizeEndpoint = (url: string) => {
+                  try {
+                    return new URL(url.trim()).toString();
+                  } catch {
+                    return url.trim();
+                  }
+                };
+                const keyScopedElsewhere =
+                  draft.apiKeyEndpoint &&
+                  draft.endpoint.trim() &&
+                  normalizeEndpoint(draft.apiKeyEndpoint) !== normalizeEndpoint(draft.endpoint);
+                return (
+                  <div class="flex items-center justify-between gap-3">
+                    <div
+                      class={keyScopedElsewhere ? 'text-xs text-warning' : 'text-xs text-success'}
+                    >
+                      {keyScopedElsewhere
+                        ? 'Saved key is scoped to a different endpoint. Re-enter it for this endpoint.'
+                        : 'Key saved. Enter a new key to replace it.'}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void removeKey();
+                      }}
+                      disabled={saving}
+                      class="rounded-md border border-danger/40 px-2 py-1 text-xs text-danger-soft transition-colors hover:bg-danger/10 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Remove key
+                    </button>
+                  </div>
+                );
+              })()}
+          </div>
+        </SettingsRow>
+
+        <SettingsRow
+          label="Allow insecure TLS"
+          description="Only enable for trusted self-signed local gateways."
+        >
+          <SettingsToggle
+            checked={draft.allowInsecureTls ?? false}
+            onChange={(allowInsecureTls) => patch({ allowInsecureTls })}
+            disabled={saving}
+          />
+        </SettingsRow>
+
+        <SettingsRow
+          label="Allow private/LAN endpoints"
+          description="Only enable for trusted local ASR servers on private networks."
+        >
+          <SettingsToggle
+            checked={draft.allowPrivateNetwork ?? false}
+            onChange={(allowPrivateNetwork) => patch({ allowPrivateNetwork })}
+            disabled={saving}
+          />
+        </SettingsRow>
+
+        <SettingsRow label="Test connection" description="Sends a short silent WAV to the backend.">
+          <button
+            type="button"
+            onClick={() => {
+              void testConnection();
+            }}
+            disabled={testing || saving || !draft.enabled}
+            class="rounded-md bg-accent-hover px-2.5 py-1 text-xs font-medium text-accent-fg transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {testing ? 'Testing…' : 'Test connection'}
+          </button>
+        </SettingsRow>
+      </SettingsGroup>
     </SettingsSection>
   );
 }

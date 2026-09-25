@@ -93,7 +93,7 @@ describe('WorkflowList', () => {
 
   it('renders Workflows heading', () => {
     const { getByText } = render(<WorkflowList {...defaultProps} />);
-    expect(getByText('0 workflows')).toBeTruthy();
+    expect(getByText('0 workflow templates')).toBeTruthy();
   });
 
   it('renders Create Workflow button in header', () => {

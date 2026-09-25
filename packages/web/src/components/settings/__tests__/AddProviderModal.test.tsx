@@ -45,12 +45,14 @@ vi.mock('../../ui/Button.tsx', () => ({
     onClick,
     disabled,
     loading,
+    ...rest
   }: {
     children: import('preact').ComponentChildren;
     variant?: string;
     onClick?: () => void;
     disabled?: boolean;
     loading?: boolean;
+    [key: string]: unknown;
   }) => (
     <button
       data-testid={`button-${variant || 'primary'}`}

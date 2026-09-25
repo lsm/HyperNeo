@@ -648,7 +648,7 @@ export function WorkflowList({
       <div class="flat-surface mb-3 flex flex-shrink-0 flex-col items-stretch gap-3 rounded-xl p-4 sm:flex-row sm:items-center sm:justify-between">
         <div class="min-w-0">
           <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-accent-soft">
-            {workflows.length} {workflows.length === 1 ? 'workflow' : 'workflows'}
+            {workflows.length} {workflows.length === 1 ? 'workflow template' : 'workflow templates'}
           </p>
           <p class="mt-1 text-xs leading-5 text-fg-muted">
             Reusable multi-agent pipelines for this space.

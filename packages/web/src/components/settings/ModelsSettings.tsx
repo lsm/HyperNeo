@@ -668,10 +668,23 @@ export function ModelsSettings() {
   const overrideEntries = Object.entries(modelFallbackMap);
 
   return (
-    <SettingsSection title="Models">
-      <div class="space-y-3 rounded-lg border border-line bg-fill-soft px-4 py-3">
+    <SettingsSection
+      title="Models"
+      actions={
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={handleRefresh}
+          disabled={loading || refreshing}
+          loading={refreshing}
+        >
+          Refresh models
+        </Button>
+      }
+    >
+      <div class="space-y-3 rounded-xl border border-line bg-surface p-4">
         <div>
-          <h4 class="text-sm font-medium text-fg-soft">OpenRouter Model Allowlist</h4>
+          <h4 class="text-[13px] font-semibold text-fg">OpenRouter Model Allowlist</h4>
           <p class="text-xs text-fg-faint mt-0.5">
             OpenRouter does not expose dashboard-enabled account models through its public API. Add
             one model ID per line to limit model pickers and runtime validation to models you have
@@ -694,17 +707,6 @@ export function ModelsSettings() {
           Save OpenRouter allowlist
         </Button>
       </div>
-      <div class="flex items-center justify-end">
-        <Button
-          variant="secondary"
-          size="xs"
-          onClick={handleRefresh}
-          disabled={loading || refreshing}
-          loading={refreshing}
-        >
-          Refresh models
-        </Button>
-      </div>
       {loadError && (
         <div
           class="flex items-center justify-between gap-3 rounded-lg border border-danger-soft/20 px-4 py-3 text-sm text-danger-soft"
@@ -723,9 +725,9 @@ export function ModelsSettings() {
         </div>
       )}
       <div class="space-y-3">
-        <div class="space-y-3 rounded-lg border border-line bg-fill-soft px-4 py-3">
+        <div class="space-y-3 rounded-xl border border-line bg-surface p-4">
           <div>
-            <h4 class="text-sm font-medium text-fg-soft">Default Fallback Chain</h4>
+            <h4 class="text-[13px] font-semibold text-fg">Default Fallback Chain</h4>
             <p class="text-xs text-fg-faint mt-0.5">
               Applies to all models that don&apos;t have a specific override below.
             </p>
@@ -749,7 +751,7 @@ export function ModelsSettings() {
           )}
 
           <button
-            class="flex items-center gap-2 px-3 py-2 text-sm text-accent hover:text-accent-soft hover:bg-surface-raised rounded-lg border border-dashed border-line-strong hover:border-line-strong transition-colors disabled:opacity-50"
+            class="flex items-center gap-2 rounded-lg border border-dashed border-line px-3 py-1.5 text-xs text-fg-muted transition-colors hover:border-line-strong hover:text-fg-soft disabled:opacity-50"
             onClick={() => setShowAddModal(true)}
             disabled={loading}
           >
@@ -758,9 +760,9 @@ export function ModelsSettings() {
           </button>
         </div>
 
-        <div class="space-y-3 rounded-lg border border-line bg-fill-soft px-4 py-3">
+        <div class="space-y-3 rounded-xl border border-line bg-surface p-4">
           <div>
-            <h4 class="text-sm font-medium text-fg-soft">Model-Specific Overrides</h4>
+            <h4 class="text-[13px] font-semibold text-fg">Model-Specific Overrides</h4>
             <p class="text-xs text-fg-faint mt-0.5">
               Override the default chain for a specific model. Takes priority when that model hits a
               limit.
@@ -837,7 +839,7 @@ export function ModelsSettings() {
           )}
 
           <button
-            class="flex items-center gap-2 px-3 py-2 text-sm text-accent hover:text-accent-soft hover:bg-surface-raised rounded-lg border border-dashed border-line-strong hover:border-line-strong transition-colors disabled:opacity-50"
+            class="flex items-center gap-2 rounded-lg border border-dashed border-line px-3 py-1.5 text-xs text-fg-muted transition-colors hover:border-line-strong hover:text-fg-soft disabled:opacity-50"
             onClick={() => setOverrideModal({ open: true, editingKey: null })}
             disabled={loading}
           >

@@ -2,7 +2,9 @@ import { useEffect, useState } from 'preact/hooks';
 import { connectionManager } from '../../lib/connection-manager';
 import { invokeOperation } from '../../lib/operations.ts';
 import { toast } from '../../lib/toast.ts';
-import { SettingsSection } from './SettingsSection.tsx';
+import { FORM_CONTROL_CLASS } from '../ui/FormField.tsx';
+import { cn } from '../../lib/utils.ts';
+import { SettingsGroup, SettingsSection } from './SettingsSection.tsx';
 import { Button } from '../ui/Button.tsx';
 
 export interface AttachedDaemon {
@@ -25,9 +27,6 @@ type ProbeResult =
   | { kind: 'rejected'; reason: string };
 
 const DAEMON_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
-
-const FIELD_CLASS =
-  'w-full bg-bg border border-line rounded px-2 py-1.5 text-sm text-fg focus:outline-none focus:border-accent';
 
 export function validateAttachForm(daemonId: string, url: string): string | null {
   if (!daemonId) return 'Daemon id is required';
@@ -159,7 +158,7 @@ export function RemoteDaemonsSettings() {
         operation door is reachable.
       </div>
 
-      <div class="rounded-lg border border-line bg-fill-soft px-4 py-3 space-y-3">
+      <div class="space-y-3 rounded-xl border border-line bg-surface p-4">
         <div class="flex flex-col gap-3 sm:flex-row">
           <div class="sm:w-48">
             <label class="mb-1 block text-xs text-fg-muted" for="remote-daemon-id">
@@ -167,7 +166,7 @@ export function RemoteDaemonsSettings() {
             </label>
             <input
               id="remote-daemon-id"
-              class={FIELD_CLASS}
+              class={FORM_CONTROL_CLASS}
               value={daemonId}
               placeholder="staging"
               onInput={(e) => setDaemonId((e.target as HTMLInputElement).value)}
@@ -179,7 +178,7 @@ export function RemoteDaemonsSettings() {
             </label>
             <input
               id="remote-daemon-url"
-              class={`${FIELD_CLASS} font-mono`}
+              class={cn(FORM_CONTROL_CLASS, 'font-mono')}
               value={url}
               placeholder="ws://host:8484/ws"
               onInput={(e) => setUrl((e.target as HTMLInputElement).value)}
@@ -213,36 +212,35 @@ export function RemoteDaemonsSettings() {
       ) : daemons.length === 0 ? (
         <div class="px-1 text-xs text-fg-faint">No remote daemons attached.</div>
       ) : (
-        daemons.map((daemon) => (
-          <div
-            key={daemon.daemonId}
-            class="flex items-center gap-3 rounded-lg border border-line bg-fill-soft px-4 py-3"
-          >
-            <div class="min-w-0 flex-1">
-              <div class="truncate text-sm font-medium text-fg-soft">{daemon.daemonId}</div>
-              <div class="truncate font-mono text-xs text-fg-faint">{daemon.url}</div>
-              <div class="truncate font-mono text-xs text-fg-muted">{daemon.addressExample}</div>
+        <SettingsGroup>
+          {daemons.map((daemon) => (
+            <div key={daemon.daemonId} class="flex items-center gap-3 px-4 py-3">
+              <div class="min-w-0 flex-1">
+                <div class="truncate text-sm font-medium text-fg-soft">{daemon.daemonId}</div>
+                <div class="truncate font-mono text-xs text-fg-faint">{daemon.url}</div>
+                <div class="truncate font-mono text-xs text-fg-muted">{daemon.addressExample}</div>
+              </div>
+              <Button
+                size="xs"
+                variant="secondary"
+                loading={probingUrl === daemon.url}
+                disabled={probingUrl !== null || detachingId === daemon.daemonId}
+                onClick={() => void handleProbe(daemon.url)}
+              >
+                Test
+              </Button>
+              <Button
+                size="xs"
+                variant="danger"
+                loading={detachingId === daemon.daemonId}
+                disabled={detachingId === daemon.daemonId}
+                onClick={() => void handleDetach(daemon)}
+              >
+                Detach
+              </Button>
             </div>
-            <Button
-              size="xs"
-              variant="secondary"
-              loading={probingUrl === daemon.url}
-              disabled={probingUrl !== null || detachingId === daemon.daemonId}
-              onClick={() => void handleProbe(daemon.url)}
-            >
-              Test
-            </Button>
-            <Button
-              size="xs"
-              variant="danger"
-              loading={detachingId === daemon.daemonId}
-              disabled={detachingId === daemon.daemonId}
-              onClick={() => void handleDetach(daemon)}
-            >
-              Detach
-            </Button>
-          </div>
-        ))
+          ))}
+        </SettingsGroup>
       )}
     </SettingsSection>
   );
