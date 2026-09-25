@@ -1624,3 +1624,15 @@ describe('Modal', () => {
     });
   });
 });
+
+describe('Modal test ids', () => {
+  it('forwards data-testid to the dialog element', () => {
+    const { getByTestId } = render(
+      <Modal isOpen onClose={() => {}} title="T" data-testid="my-modal">
+        <p>body</p>
+      </Modal>
+    );
+    expect(getByTestId('my-modal').getAttribute('role')).toBe('dialog');
+    cleanup();
+  });
+});

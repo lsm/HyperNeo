@@ -11,6 +11,7 @@ export interface ModalProps {
   size?: 'sm' | 'md' | 'lg' | 'xl';
   showCloseButton?: boolean;
   footer?: ComponentChildren;
+  'data-testid'?: string;
 }
 
 export const FOCUSABLE_SELECTOR =
@@ -67,6 +68,7 @@ export function Modal({
   size = 'md',
   showCloseButton = true,
   footer,
+  'data-testid': testId,
 }: ModalProps) {
   const modalRef = useRef<HTMLDivElement>(null);
 
@@ -120,6 +122,7 @@ export function Modal({
         ref={modalRef}
         role="dialog"
         aria-modal="true"
+        data-testid={testId}
         class={cn(
           'relative w-full bg-surface-overlay rounded-lg shadow-xl border border-line-strong animate-scaleIn flex flex-col max-h-[90vh]',
           sizes[size]
