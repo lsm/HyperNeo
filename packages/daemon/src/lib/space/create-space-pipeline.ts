@@ -132,9 +132,12 @@ export async function warnIfWorkspaceNotGit(ctx: CreateSpaceCtx): Promise<Create
   const space = requireSpace(ctx);
   if (!ctx.deps.canHostTaskWorktree || (await ctx.deps.canHostTaskWorktree(space.workspacePath)))
     return ctx;
+  const hasOtherWorkspaces = (ctx.params.additionalWorkspaces?.length ?? 0) > 0;
   return withWarning(
     ctx,
-    `${space.workspacePath} is not a git repository: agents can chat here, but tasks cannot run until a git workspace is registered`
+    hasOtherWorkspaces
+      ? `${space.workspacePath} is not a git repository: tasks need an explicit git workspace from this Space`
+      : `${space.workspacePath} is not a git repository: agents can chat here, but tasks cannot run until a git workspace is registered`
   );
 }
 

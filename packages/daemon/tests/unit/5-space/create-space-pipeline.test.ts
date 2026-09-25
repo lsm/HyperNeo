@@ -320,6 +320,17 @@ describe('createSpace pipeline stages', () => {
       expect(result.warnings[0]).toContain('is not a git repository');
     });
 
+    test('points at explicit workspaces when additional git workspaces exist', async () => {
+      const deps = makeDeps({ canHostTaskWorktree: async () => false }).deps;
+      const ctx = makeCtx({
+        deps,
+        space,
+        params: { ...params, additionalWorkspaces: [{ path: '/repo-b' }] },
+      });
+      const result = await warnIfWorkspaceNotGit(ctx);
+      expect(result.warnings[0]).toContain('need an explicit git workspace');
+    });
+
     test('passes through for a git workspace or when no probe is wired', async () => {
       const git = await warnIfWorkspaceNotGit(
         makeCtx({ deps: makeDeps({ canHostTaskWorktree: async () => true }).deps, space })

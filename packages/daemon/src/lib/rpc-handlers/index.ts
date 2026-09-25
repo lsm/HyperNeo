@@ -50,6 +50,7 @@ import { setupSpaceHandlers } from './space-handlers.ts';
 import { setupSpaceTaskMessageHandlers } from './space-task-message-handlers.ts';
 import { publishUnifiedAgentCreated } from '../agents/unified-agent-events.ts';
 import { createResolveClones } from '../session/clone-cascade.ts';
+import { nodeWorkspaceValidationIo } from '../workspaces/validation-pipeline.ts';
 import { createCloneLifecycleEffects } from './session-handlers.ts';
 import { createDefaultSessionResolutionDeps } from '../session-resolution/default-deps.ts';
 import { ensureSession } from '../session-resolution/ensure-session.ts';
@@ -1198,7 +1199,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.sessionManager,
     spaceRuntimeService,
     seedSpaceAgents,
-    (tasks) => stampActiveAttemptList(deps.db.getDatabase(), tasks)
+    (tasks) => stampActiveAttemptList(deps.db.getDatabase(), tasks),
+    (path) => nodeWorkspaceValidationIo.canHostTaskWorktree(path)
   );
 
   deps.messageHub.onRequest('space.externalEvents.queueHealth', async () => {
