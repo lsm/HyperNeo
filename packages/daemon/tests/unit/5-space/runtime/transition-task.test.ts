@@ -297,6 +297,46 @@ test('rpc can move review to done with human approval', async () => {
   expect(tasks.getTask(task.id)?.approvalSource).toBe('human');
 });
 
+test('an agent asking for done on a plain Space task is routed to review', async () => {
+  const task = tasks.createTask({ spaceId, title: 'T', description: '' });
+  tasks.updateTask(task.id, { status: 'in_progress' });
+  const caller = worker('member', spaceId);
+  const submitTaskForReview = mock(
+    async (taskId: string, opts: { submittedByNodeId: string | null; reason: string | null }) => {
+      tasks.updateTask(taskId, { status: 'review' });
+      return { ...tasks.getTask(taskId)!, pendingCompletionReason: opts.reason };
+    }
+  );
+  const result = await invoke({ taskId: task.id, status: 'done', result: 'All green.' }, caller, {
+    getTaskManager: () => managerStub({ submitTaskForReview }) as never,
+  });
+  expect(result).toMatchObject({ kind: 'completed', value: { accepted: true } });
+  expect(submitTaskForReview).toHaveBeenCalledWith(task.id, {
+    submittedByNodeId: null,
+    reason: 'All green.',
+  });
+  expect(tasks.getTask(task.id)?.status).toBe('review');
+});
+
+test('an agent asking for done on a running direct attempt submits it for review', async () => {
+  const task = tasks.createTask({ spaceId, title: 'T', description: '' });
+  const caller = taskWorker('worker', task.id);
+  attempts.select(task.id);
+  attempts.claim(task.id, 'attempt', 'worker');
+  attempts.activate('attempt', 'worker');
+  tasks.updateTask(task.id, { status: 'in_progress', taskAgentSessionId: 'worker' });
+  const requestDirectOutcome = mock(() => ({ accepted: true as const, jobId: 'job-1' }));
+
+  const result = await invoke({ taskId: task.id, status: 'done', result: 'Done.' }, caller, {
+    requestDirectOutcome,
+  });
+
+  expect(result).toEqual({ kind: 'completed', value: { accepted: true, jobId: 'job-1' } });
+  expect(requestDirectOutcome).toHaveBeenCalledWith(
+    expect.objectContaining({ attemptId: 'attempt', status: 'review', reviewReason: 'Done.' })
+  );
+});
+
 test('mcp cannot move review to done directly', async () => {
   const task = tasks.createTask({ spaceId, title: 'T', description: '' });
   tasks.updateTask(task.id, { status: 'review' });
