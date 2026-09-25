@@ -1284,9 +1284,6 @@ export default function ChatContainer({
           session?.parentSessionId && !returnPending ? handleReturnToParent : undefined
         }
         titleOverride={titleOverride}
-        messages={messages}
-        backgroundTaskMessages={backgroundTaskMessages}
-        toolInputsMap={maps.toolInputsMap}
       />
 
       <div class="flex-1 relative min-h-0">

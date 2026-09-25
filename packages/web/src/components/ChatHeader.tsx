@@ -1,10 +1,11 @@
-import type { ChatMessage, Session, SessionFeatures } from '@hyperneo/shared';
+import type { Session, SessionFeatures } from '@hyperneo/shared';
 import { DEFAULT_WORKER_FEATURES } from '@hyperneo/shared';
+import { sessionStore } from '../lib/session-store.ts';
 import { rightPanelTargetSignal } from '../lib/signals.ts';
 import { cn } from '../lib/utils.ts';
 import { MobileMenuButton } from './ui/MobileMenuButton';
 import { ChatHeaderMenu } from './ChatHeaderMenu.tsx';
-import { SessionInfoPanelButton } from './SessionInfoPanel.tsx';
+import { IconButton } from './ui/IconButton.tsx';
 
 export interface ChatHeaderProps {
   session: Session | null;
@@ -17,9 +18,6 @@ export interface ChatHeaderProps {
   archiving?: boolean;
   resettingAgent?: boolean;
   readonly?: boolean;
-  messages?: ChatMessage[];
-  backgroundTaskMessages?: ChatMessage[];
-  toolInputsMap?: Map<string, unknown>;
   titleOverride?: string;
   onBack?: () => void;
   onReturnToParent?: () => void;
@@ -36,25 +34,26 @@ export function ChatHeader({
   archiving = false,
   resettingAgent = false,
   readonly = false,
-  messages = [],
-  backgroundTaskMessages = [],
-  toolInputsMap = new Map(),
   titleOverride,
   onBack,
   onReturnToParent,
 }: ChatHeaderProps) {
   const returnedAt = session?.metadata.clone?.returnedAt;
   const isClone = !!session?.parentSessionId;
-  const rightPanelOpen = rightPanelTargetSignal.value !== null;
-  const rightPanelAvailable = !!session?.id && Boolean(session.workspacePath || session.worktree);
+  const target = rightPanelTargetSignal.value;
+  const inspectorAvailable = !!session && sessionStore.activeSessionId.value === session.id;
+  const inspectorOpen = target?.type === 'inspector' && target.sessionId === session?.id;
+  const toggleInspector = () => {
+    if (!session) return;
+    rightPanelTargetSignal.value = inspectorOpen
+      ? null
+      : { type: 'inspector', sessionId: session.id };
+  };
 
   return (
     <div
       data-tauri-drag-region
-      class={cn(
-        'relative z-30 flex h-[52px] flex-shrink-0 items-center bg-app-content px-4',
-        rightPanelAvailable && !rightPanelOpen && 'pr-14'
-      )}
+      class="relative z-30 flex h-[52px] flex-shrink-0 items-center bg-app-content px-4"
     >
       <div class="flex-1 min-w-0 flex items-center gap-3" data-tauri-drag-region>
         {onBack ? (
@@ -121,14 +120,23 @@ export function ChatHeader({
           onArchiveClick={onArchiveClick}
           onDeleteClick={onDeleteClick}
         />
-        <SessionInfoPanelButton
-          session={session}
-          features={features}
-          readonly={readonly}
-          messages={messages}
-          backgroundTaskMessages={backgroundTaskMessages}
-          toolInputsMap={toolInputsMap}
-        />
+        {inspectorAvailable && (
+          <IconButton
+            title="Session info"
+            data-testid="session-info-btn"
+            onClick={toggleInspector}
+            class={cn('flex-shrink-0 text-fg-muted', inspectorOpen && 'bg-fill text-fg')}
+          >
+            <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width={1.9}
+                d="M12 11.5v5M12 7.25h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"
+              />
+            </svg>
+          </IconButton>
+        )}
       </div>
     </div>
   );

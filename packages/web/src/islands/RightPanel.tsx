@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'preact/hooks';
-import { GitPanel } from '../components/GitPanel.tsx';
 import { GoalDetailPanel } from '../components/space/GoalDetailPanel.tsx';
 import { ScopeDetailPanel } from '../components/space/ScopeDetailPanel.tsx';
 import { TaskAuxiliaryPanel } from '../components/space/TaskAuxiliaryPanel.tsx';
 import { IconButton } from '../components/ui/IconButton.tsx';
+import { SessionInspector } from './SessionInspector.tsx';
 import { sessionStore } from '../lib/session-store.ts';
 import {
   currentSpaceCanonicalIdSignal,
@@ -69,12 +69,6 @@ function useIsDesktopPanel(): boolean {
 
 function useToggleTarget(): RightPanelTarget | null {
   const activeSessionId = sessionStore.activeSessionId.value;
-  const sessionState = sessionStore.sessionState.value;
-  const session = sessionStore.sessionInfo.value;
-  const activeSession = session?.id === activeSessionId ? session : null;
-  const hasWorkspace = activeSessionId
-    ? sessionState === null || Boolean(activeSession?.workspacePath || activeSession?.worktree)
-    : false;
 
   const routeSpaceId = currentSpaceIdSignal.value;
   const inSpace = navSectionSignal.value === 'spaces' && routeSpaceId !== null;
@@ -84,9 +78,7 @@ function useToggleTarget(): RightPanelTarget | null {
   const scopeId = currentSpaceScopeIdSignal.value;
   const taskId = currentSpaceTaskIdSignal.value;
 
-  if (activeSessionId && hasWorkspace) {
-    return { type: 'git', sessionId: activeSessionId };
-  }
+  if (activeSessionId) return null;
   if (inSpace && spaceId && taskId) {
     return { type: 'task', spaceId, taskId, tab: 'details' };
   }
@@ -102,8 +94,8 @@ function useToggleTarget(): RightPanelTarget | null {
 function targetMatchesContext(target: RightPanelTarget, toggleTarget: RightPanelTarget | null) {
   if (!toggleTarget) return false;
   if (target.type !== toggleTarget.type) return false;
-  if (target.type === 'git') {
-    return toggleTarget.type === 'git' && target.sessionId === toggleTarget.sessionId;
+  if (target.type === 'inspector') {
+    return toggleTarget.type === 'inspector' && target.sessionId === toggleTarget.sessionId;
   }
   if (target.type === 'goal') {
     return (
@@ -129,10 +121,15 @@ function targetMatchesContext(target: RightPanelTarget, toggleTarget: RightPanel
 export function RightPanelToggle() {
   const target = rightPanelTargetSignal.value;
   const toggleTarget = useToggleTarget();
+  const activeSessionId = sessionStore.activeSessionId.value;
   const rightPanelOpen = target !== null && targetMatchesContext(target, toggleTarget);
 
   useEffect(() => {
     if (!target) return;
+    if (target.type === 'inspector') {
+      if (target.sessionId !== activeSessionId) rightPanelTargetSignal.value = null;
+      return;
+    }
     if (!toggleTarget) {
       rightPanelTargetSignal.value = null;
       return;
@@ -140,7 +137,7 @@ export function RightPanelToggle() {
     if (!targetMatchesContext(target, toggleTarget)) {
       rightPanelTargetSignal.value = toggleTarget.type === target.type ? toggleTarget : null;
     }
-  }, [target, toggleTarget]);
+  }, [target, toggleTarget, activeSessionId]);
 
   if (!toggleTarget) return null;
 
@@ -297,7 +294,13 @@ export function RightPanel() {
           >
             <div class="mx-auto h-full w-px bg-transparent transition-colors group-hover:bg-white/20 group-focus-visible:bg-white/30" />
           </div>
-          {renderedTarget?.type === 'git' && <GitPanel sessionId={renderedTarget.sessionId} />}
+          {renderedTarget?.type === 'inspector' && (
+            <SessionInspector
+              key={renderedTarget.sessionId}
+              sessionId={renderedTarget.sessionId}
+              section={renderedTarget.section}
+            />
+          )}
           {renderedTarget?.type === 'goal' && (
             <GoalDetailPanel
               spaceId={renderedTarget.spaceId}
