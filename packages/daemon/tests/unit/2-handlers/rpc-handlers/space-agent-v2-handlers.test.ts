@@ -858,6 +858,34 @@ describe('setupSpaceAgentV2Handlers', () => {
       expect(agents.getById(created.id)).toBeNull();
     });
 
+    test('asks for confirmation when the primary session itself has commits ahead', async () => {
+      sessions.set('primary', {
+        type: 'worker',
+        context: { spaceId: 'space-1' },
+        worktree: { branch: 'p', worktreePath: '/wt-p', mainRepoPath: '/repo' },
+      } as never);
+      deps.commitsAhead = async () => ({ hasCommitsAhead: true, commits: ['abc'] }) as never;
+      const retired: unknown[] = [];
+      deps.retirePrimarySession = async (...args) => {
+        retired.push(args);
+      };
+      const created = agents.create({ spaceId: 'space-1', handle: 'a', sessionId: 'primary' });
+
+      const refused = await call(handlers, 'spaceAgentV2.delete', { id: created.id });
+      expect(refused).toMatchObject({ accepted: false, reason: 'requires_confirmation' });
+      expect(agents.getById(created.id)).not.toBeNull();
+      expect(retired).toEqual([]);
+
+      const archived = await handlers.get('spaceAgentV2.update')!({
+        id: created.id,
+        status: 'archived',
+      });
+      expect(archived).toMatchObject({ accepted: false, reason: 'requires_confirmation' });
+
+      await call(handlers, 'spaceAgentV2.delete', { id: created.id, confirmed: true });
+      expect(retired).toEqual([['primary', 'delete']]);
+    });
+
     test('keeps the agent when retiring its session fails', async () => {
       deps.retirePrimarySession = async () => {
         throw new Error('disk full');

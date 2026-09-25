@@ -35,6 +35,7 @@ export interface SessionLookup {
   context?: { spaceId?: string | null; taskId?: string | null } | null;
   parentSessionId?: string | null;
   metadata?: { promptProvenance?: { workflowRunId?: unknown } | null } | null;
+  worktree?: WorktreeMetadata | null;
 }
 
 export interface SpaceAgentV2Deps {
@@ -225,16 +226,19 @@ export async function applyUpdateRuntimeEffects(
   }
 }
 
-async function firstCloneWithCommitsAhead(
+async function firstSessionWithCommitsAhead(
   deps: SpaceAgentV2Deps,
-  parentSessionId: string
+  primarySessionId: string,
+  includeClones: boolean
 ): Promise<WorktreeCommitStatus | null> {
   if (!deps.commitsAhead) return null;
   const descendants = (parentId: string): Array<{ id: string; worktree?: WorktreeMetadata }> =>
     (deps.listClones?.(parentId) ?? []).flatMap((clone) => [clone, ...descendants(clone.id)]);
-  for (const clone of descendants(parentSessionId)) {
-    if (!clone.worktree) continue;
-    const commitStatus = await deps.commitsAhead(clone.worktree);
+  const primary = { id: primarySessionId, worktree: deps.getSession(primarySessionId)?.worktree };
+  const candidates = includeClones ? [primary, ...descendants(primarySessionId)] : [primary];
+  for (const candidate of candidates) {
+    if (!candidate.worktree) continue;
+    const commitStatus = await deps.commitsAhead(candidate.worktree);
     if (commitStatus.hasCommitsAhead) return commitStatus;
   }
   return null;
@@ -273,7 +277,7 @@ export function setupSpaceAgentV2Handlers(messageHub: MessageHub, deps: SpaceAge
       throw new Error(`Agent ${id} does not belong to space ${params.spaceId}`);
     }
     if (params.status === 'archived' && existing?.sessionId && params.confirmed !== true) {
-      const commitStatus = await firstCloneWithCommitsAhead(deps, existing.sessionId);
+      const commitStatus = await firstSessionWithCommitsAhead(deps, existing.sessionId, true);
       if (commitStatus) return { accepted: false, reason: 'requires_confirmation', commitStatus };
     }
     const { confirmed: _confirmed, ...input } = params;
@@ -303,13 +307,12 @@ export function setupSpaceAgentV2Handlers(messageHub: MessageHub, deps: SpaceAge
     if (params.spaceId && existing.spaceId !== params.spaceId) {
       throw new Error(`Agent ${id} does not belong to space ${params.spaceId}`);
     }
-    if (
-      existing.sessionId &&
-      isCloneChoice(params.children) &&
-      params.children === 'cascade' &&
-      params.confirmed !== true
-    ) {
-      const commitStatus = await firstCloneWithCommitsAhead(deps, existing.sessionId);
+    if (existing.sessionId && params.confirmed !== true) {
+      const commitStatus = await firstSessionWithCommitsAhead(
+        deps,
+        existing.sessionId,
+        isCloneChoice(params.children) && params.children === 'cascade'
+      );
       if (commitStatus) return { accepted: false, reason: 'requires_confirmation', commitStatus };
     }
     const action = params.confirmed === true ? 'delete' : 'archive';
