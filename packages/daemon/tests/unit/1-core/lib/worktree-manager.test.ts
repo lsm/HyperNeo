@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeEach, afterEach, spyOn } from 'bun:test';
 import { vi } from 'vitest';
-import { WorktreeManager } from '../../../../src/lib/worktree-manager';
+import { WorktreeManager, normalizeBranchName } from '../../../../src/lib/worktree-manager';
 import { Logger } from '../../../../src/lib/logger';
 import type { Session } from '@hyperneo/shared';
 import type { SimpleGit } from 'simple-git';
@@ -833,6 +833,34 @@ describe('WorktreeManager', () => {
       expect(result.patch).toContain('+working tree line');
       expect(result.additions).toBe(8);
       expect(result.deletions).toBe(3);
+    });
+
+    it('never builds a branch range for a detached HEAD', async () => {
+      existsSyncResults.set('/test/repo/.git', true);
+      mockGitRevparse.mockResolvedValue('.git');
+      const commands: string[] = [];
+      mockGitRaw.mockImplementation(async (args: string[]) => {
+        const cmd = Array.isArray(args) ? args.join(' ') : String(args ?? '');
+        commands.push(cmd);
+        if (cmd.includes('symbolic-ref')) return 'origin/main';
+        if (cmd.includes('status --porcelain')) return ' M src/foo.ts\0';
+        if (cmd.includes('--numstat')) return '1\t0\tsrc/foo.ts\n';
+        if (cmd.includes('HEAD --')) return '+working tree line\n';
+        return '';
+      });
+
+      const session = {
+        id: 'session-1',
+        workspacePath: '/test/repo',
+        gitBranch: '(no branch)',
+      } as unknown as Session;
+      const result = await manager.getSessionFileDiff(session, 'src/foo.ts');
+
+      expect(result.patch).toContain('+working tree line');
+      expect(commands.some((cmd) => cmd.includes('...'))).toBe(false);
+      expect(normalizeBranchName('(no branch)')).toBeNull();
+      expect(normalizeBranchName('HEAD')).toBeNull();
+      expect(normalizeBranchName(' feature ')).toBe('feature');
     });
 
     it('skips the working-tree patch for untracked files', async () => {
